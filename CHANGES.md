@@ -12,6 +12,156 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   category mismatch. Per-target laws remain explicit mappings, and a simple law
   still cannot cross different category sets on a retained edge.
 
+### Named current shocks, exits and addressed draws
+
+- Current IID shocks are declared once, as `ShockGroup`s in `Model(shocks=...)`, and
+  each regime that reads a group lists it in `Regime(shocks=...)`. A function reads the
+  physical realization by the shock's name; no state grid or stored value axis is
+  added. See [IID shock declarations](docs/reference/shocks.md) and
+  [Declare current shocks independently of states](docs/user_guide/migrating_dated_regimes.md#declare-current-shocks-independently-of-states).
+- Reading `<shock>_code` of a continuous shock in a `shocks=` group raises
+  `ShockDeclarationError`: a physical draw has no quadrature-node position. Category
+  codes of `Discrete` shocks stay readable.
+- Node rules are `Product`, `MonteCarlo`, `QuasiMonteCarlo` and `UserNodes`; thin a
+  group of several shocks with `QuasiMonteCarlo`. `UserNodes` with a negative weight
+  raises `ShockDeclarationError` when it is declared.
+- `Regime(exits={name: Exit(...)})` declares a value-dependent move in the current
+  period, before the action, with `ExitTarget` destinations and a `"unilateral"`,
+  `"mutual"`, `Consent` or custom rule; see
+  [Current-period exits](docs/reference/model_and_regime.md#current-period-exits).
+- `simulate(shock_paths=...)` and tagged entries in mapping-form `initial_conditions`
+  override current shocks: `BaseInnovations(values=...)` supplies innovations
+  transformed through the current law, `PhysicalValues(values=...)` supplies physical
+  realizations. A path supersedes the entry value. See
+  [Typed draw inputs](docs/reference/shocks.md#typed-draw-inputs).
+- Simulated panels change once. Every draw is addressed by the seed, the subject's
+  original row in the initial conditions, the period, and the shock's name and
+  component (address version `pylcm.random.v1`). Draws no longer depend on the regime
+  path, other shocks, group membership or taste-shock toggles, and one seed gives the
+  same base draws across parameter values. Reordering initial-condition rows changes
+  which draws a subject receives.
+
+### Post-decision shocks are simulated with continuous draws
+
+- Post-decision shocks are simulated with continuous draws by default; panels change. A
+  shock read only as `next_<shock>` is still integrated over its nodes in the solve, but
+  simulation now draws it from its law. A `Model(shocks=...)` group always draws
+  continuously; an IID process state integrated out this way honours its
+  `simulated_draws`, whose default is `"continuous"`, and `simulated_draws="nodes"`
+  keeps the node lottery. Process states that carry an axis are unchanged. `NNBEGM` regimes
+  now integrate such a shock out as well, instead of keeping a node axis along which the
+  value was constant; their solve is cheaper and `repr(model)` lists the shock under
+  `integrated=`. See
+  [Shock timing is inferred](docs/user_guide/migrating_dated_regimes.md#shock-timing-is-inferred).
+
+### `simulate_draws` is renamed `simulated_draws`
+
+- Breaking API: the process keyword `simulate_draws=` is now `simulated_draws=`, on
+  every IID and AR(1) process and on `TauchenAR1Process.on_nodes`. The values stay
+  `"continuous"` and `"nodes"`. Passing the old keyword raises `TypeError` naming the
+  new one.
+
+### Folded-IID machinery removed
+
+- `lcm.solvers.SolverBuildContext.fold_state_names` is removed. No declaration could
+  set it since `fold=` was removed, so it was always empty. A custom solver that read it
+  must drop the read.
+
+### Arrival decisions are participation checks
+
+- Breaking API: `lcm.ArrivalDecision` is renamed `lcm.ParticipationCheck`,
+  `lcm.ArrivalRead` is `lcm.ParticipationRead`, and `Transition(arrivals=...)` is
+  `Transition(participation=...)`. The construct also re-checks continuing couples
+  (couple → couple, where failure means divorce); it is the per-period limited-commitment
+  participation constraint. There are no aliases; see
+  [Arrival → participation check](docs/user_guide/migrating_dated_regimes.md#arrival-participation-check).
+- The read-projection parameter path `params["edges"][source][target]["references"]`
+  is now `["reads"]`, named after `ParticipationCheck.reads`.
+- `SOLUTION_FORMAT_VERSION` is 3: archives store participation surfaces under renamed
+  manifest keys, and version-2 archives no longer load.
+
+### EGM regimes refuse fixed-node processes entering utility
+
+- An endogenous-grid regime (`DCEGM`, `NBEGM`, `NEGM`, `NNBEGM`) whose `utility` reads
+  a process state (IID or AR(1), such as Tauchen, Rouwenhorst or `on_nodes`) or a
+  `shocks=` draw other than through its resources function now raises
+  `ModelInitializationError` at `Model(...)`, unless the process state is declared with
+  `simulated_draws="nodes"`. Simulation used to blend the bracketing node policies for a
+  draw between nodes, an approximation for a process that changes preferences; node
+  draws read one node row exactly. Move the process into resources or solve the regime
+  with `GridSearch`. Otherwise, declare a process state with `simulated_draws="nodes"`;
+  a `shocks=` group has no draw mode of its own, so declare its shock as an IID process
+  state with `simulated_draws="nodes"`. See
+  [DC-EGM](docs/reference/solvers.md#api-dcegm).
+
+### Dissolution-flag artifact key removed
+
+- `lcm.solver_api.DISSOLUTION_FLAG` and `lcm.solvers.DISSOLUTION_FLAG` are removed, and
+  the type id `pylcm.collective.dissolution_flag` is no longer reserved. A collective
+  kernel no longer emits the flag on its solve-time channel; simulation recomputes an
+  empty feasible set at the realised state. External solvers that imported the key or
+  published under it must drop it.
+
+### Consent pricing evaluates observed target rows once
+
+- An exit that observes every shock of a target group prices that group's rows from one
+  representative, and query cells and information rows run as batched lanes. Values are
+  unchanged up to floating-point vectorization. Partly observed groups keep their rows.
+  Model build refuses an observed continuous caller law whose spread can vanish at the
+  caller but not at the target; see
+  [Current-period exits](docs/reference/model_and_regime.md#current-period-exits).
+
+### Shock timing is read off the model
+
+- Every stochastic process follows one rule. Reading `x` in a model function reads this
+  period's realization, known at the choice; reading `next_x` reads the draw after the
+  choice, which the solve integrates in the continuation. AR(1) and Markov states
+  already behaved this way.
+- A `ShockGroup` listed in `Regime(shocks=...)`, or an IID process declared as a state,
+  carries an axis only when some function of the regime reads its current value. A
+  shock read only as `next_x` by state transitions has no axis: the solve integrates
+  the transitions over its nodes and weights, and simulation draws it from its
+  continuous law. An initial value supplied for such a state is dropped.
+- Utility and constraints reading `next_x` are refused at model build. A group read both
+  as `x` and as `next_x` in one regime is refused; declare the shock as an IID process
+  state to carry the realization into the next period.
+- `repr(model)` lists, per regime, which shocks carry an axis and which are integrated
+  out.
+- The `fold=` argument of IID processes is removed and raises `TypeError` naming the
+  replacement. Drop `fold=`; see
+  [Shock timing is inferred](docs/user_guide/migrating_dated_regimes.md#shock-timing-is-inferred).
+
+### Gates route on states only
+
+- Value-reading gates, `Gate.references` and the dissolution-flag artifact are
+  removed. State-only gate routing keeps its behavior.
+- A `Gate` predicate naming `V_target`, `V_target_<s>` or `D_target` raises the new
+  `lcm.exceptions.GateReadsValueError` when the gate is declared, and
+  `Gate(references=...)` raises `TypeError`. Declare a value comparison made in the
+  current period as an `Exit` in `Regime(exits=...)`, and one made on landing as a
+  `ParticipationCheck` with named `ParticipationRead`s in `Transition(participation=...)`; see
+  [Gates route on states only](docs/user_guide/migrating_dated_regimes.md#gates-route-on-states-only).
+- `solve()` no longer publishes a `DISSOLUTION_FLAG` replay artifact, and
+  `simulate(solution=...)` reads none. A household landing in a gated target cell where
+  no action is feasible still takes its route's fallback.
+
+### MSS upper envelope removed
+
+- `MSSEnvelope` is no longer part of `lcm.solvers`: a timing study found it dominated
+  by `ExactEnvelope`. Select `ExactEnvelope` (the default), `FUESEnvelope`,
+  `RFCEnvelope` or `LTMEnvelope` instead. An interface for envelopes maintained outside
+  pylcm is planned in
+  [issue #632](https://github.com/OpenSourceEconomics/pylcm/issues/632).
+
+### Native current-IID EGM route removed
+
+- Named current-IID shocks in `DCEGM`, `NBEGM`, `NEGM` and `NNBEGM` regimes are solved
+  only on the node-state axis. The native route that solved them without it (Case-R
+  resources rows and banks, Case-U candidate reconstruction and the projected
+  continuation) is removed, together with its environment switch.
+- `DCEGM(current_iid_projection_capacity=...)` is removed; it sized only the native
+  route's projected continuation.
+
 ### Stochastic-volatility example
 
 - The shipped example now declares current Normal income with positive base
@@ -302,20 +452,22 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   one leave the solve unchanged. Unsupported requests are refused at model
   construction. See [Share a large action product over
   devices](docs/user_guide/tuning.md).
+
 ### A shock read only through its next-period draw stays in the regime
 
 - A law may read the draw `next_<process>` of a process state, for instance costs
-  realized after the period's choices and paid out of next period's wealth. Reading the
-  draw is now a read of the state: the regime that reads it keeps the state, whether the
-  state is declared at model level (broadcast pruning) or at regime level (the
-  unused-variable check). A persistent process's draw is conditional on the state's
-  current node. An IID process's draw is not, but it is still taken from the carried
-  state, so the state keeps its axis and the value is constant along it.
+  realized after the period's choices and paid out of next period's wealth. A
+  persistent process's draw is conditional on the state's current node, so reading it
+  is a read of the state: the regime that reads it keeps the state, whether the state is
+  declared at model level (broadcast pruning) or at regime level (the unused-variable
+  check). An IID process state read only through its draw carries no axis and is
+  integrated in the continuation; see
+  [Shock timing is read off the model](#shock-timing-is-read-off-the-model).
 - Toward a target that does not carry the process, the draw exists only inside the
   transition: it is taken from the source's process at the source's current node, read
   by the target's laws and discarded. A terminal regime valuing only wealth therefore
-  carries only wealth. `GridSearch`, `DCEGM` and `NBEGM` solve and simulate such
-  edges.
+  carries only wealth. `GridSearch`, `DCEGM`, `NBEGM` and `NNBEGM` solve and simulate
+  such edges.
 - The same holds for a Markov state (a `DiscreteGrid` with a `StochasticTransition`
   law): reading its draw `next_<state>` keeps the state in the reading regime, and
   toward a target that does not carry it the draw is taken from the source's Markov
@@ -327,8 +479,8 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 - A state law that reads `next_<state>` toward a target that neither carries the state
   nor receives a draw of it on that edge is refused when the model is built, naming
   the source, the target, the law and the `next_` argument.
-- `DCEGM` and `NBEGM` accept a liquid law that reads a draw, persisted or local to the
-  edge: the Euler state and its savings derivative are evaluated at every node of the
+- `DCEGM`, `NBEGM` and `NNBEGM` accept a liquid law that reads a draw, persisted or
+  local to the edge: the Euler state and its savings derivative are evaluated at every node of the
   draws the law reads. `NBEGM`'s save-to-cliff targets are inverted per node. Under the
   EGM solvers only the liquid law may read a draw; any other law reading one is refused
   at construction.

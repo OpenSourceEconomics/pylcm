@@ -9,6 +9,7 @@ reproduce the closed-form consumption, including at resources strictly between
 action-grid nodes (where a grid argmax cannot land).
 """
 
+import dataclasses
 from collections.abc import Mapping
 from typing import Unpack
 
@@ -24,13 +25,14 @@ from _lcm.utils.logging import get_logger
 from lcm import AgeGrid, LogSpacedGrid, Model
 from lcm.regime import Regime as UserRegime
 from lcm.solver_api import SIMULATION_POLICY, ArtifactRef
-from lcm.typing import ContinuousState, FloatND, RegimeName, UserParams
+from lcm.typing import ContinuousState, EGMReplay, FloatND, RegimeName, UserParams
 from lcm_examples.iskhakov_et_al_2017 import WEALTH_GRID
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
 from tests.solution._callback_types import RunPeriodKernelKwargs, RunPeriodKernelResult
 from tests.test_models import n_nbegm_toy
 from tests.test_models.deterministic import retirement_only
 from tests.test_models.deterministic.dcegm_variants import (
+    DCEGM_SOLVER,
     dcegm_retirement,
     get_graph_only_retirement_params,
 )
@@ -42,15 +44,20 @@ def _bequest_utility(*, wealth: ContinuousState, age: float) -> FloatND:
     return (age / 50.0) * jnp.log(wealth)
 
 
-def _two_period_bequest_model() -> Model:
-    """Two-period log-utility retirement model with a terminal bequest."""
+def _two_period_bequest_model(*, replay: EGMReplay = "candidate") -> Model:
+    """Two-period log-utility retirement model with a terminal bequest.
+
+    `replay="grid"` declares no simulation replay route (grid argmax).
+    """
     bequest_dead = UserRegime(
         states={"wealth": LogSpacedGrid(start=0.25, stop=400.0, n_points=400)},
         functions={"utility": _bequest_utility},
     )
     return Model(
         regimes={
-            "retirement": dcegm_retirement,
+            "retirement": dcegm_retirement.replace(
+                solver=dataclasses.replace(DCEGM_SOLVER, replay=replay)
+            ),
             "dead": bequest_dead,
         },
         ages=AgeGrid(start=40, inclusive_stop=50, step="10Y"),
@@ -65,9 +72,8 @@ def _kernel_published_policies(
 ) -> Mapping[int, Mapping[RegimeName, ArtifactPayload]]:
     """Return every simulation policy the model's kernels publish, by period.
 
-    No shipped DCEGM envelope currently opens the simulation read route. Request
-    this one exact artifact address so the internal solve dispatches the replay
-    specialization, then read the kernel's own publication off its output.
+    Request this one exact artifact address so the internal solve dispatches the
+    replay specialization, then read the kernel's own publication off its output.
     """
     published: dict[int, dict[RegimeName, ArtifactPayload]] = {}
     original = backward_induction._run_period_kernel

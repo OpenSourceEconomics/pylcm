@@ -7,13 +7,29 @@ dominate the best such action. The Euler interior path alone cannot guarantee
 this: at a continuation kink between savings nodes (the marginal continuation
 drops sharply, e.g. across a child-value interpolation node), the Euler
 inversion has no root, so the optimum there must be carried by an explicit
-savings-node candidate.
+savings-node candidate. Where the continuation is smooth, the floor must not
+displace the interior Euler optimum between two nodes.
 """
 
+import jax
 import jax.numpy as jnp
 import numpy as np
+import pytest
+from numpy.testing import assert_array_almost_equal
 
-from _lcm.egm.nbegm_step import nbegm_per_interval_continuation_step_savings
+from _lcm.egm import nbegm_step
+from _lcm.egm.comparison_arithmetic import ComparisonArithmetic
+from _lcm.egm.nbegm_step import (
+    nbegm_multi_interval_step_savings,
+    nbegm_per_interval_continuation_step_savings,
+)
+from _lcm.egm.preferences import Preferences
+from lcm.typing import FloatND
+from tests.conftest import (
+    DECIMAL_PRECISION,
+    EXACT_KERNEL_SKIP_REASON,
+    assert_agrees_to_ulp,
+)
 from tests.solution._crra_preferences import crra_preferences
 
 _CRRA = 3.84
@@ -86,3 +102,383 @@ def test_merged_value_dominates_every_feasible_savings_node_action():
         np.asarray(value),
         err_msg="merged value falls below the savings-node Bellman floor",
     )
+
+
+def _taste_log_preferences(*, taste: float) -> Preferences:
+    """Build the bundle `u(c) = taste * log(c)` with its marginal and inverse."""
+
+    def utility(consumption: FloatND) -> FloatND:
+        return taste * jnp.log(consumption)
+
+    def marginal_utility(consumption: FloatND) -> FloatND:
+        return taste / consumption
+
+    def inverse_marginal_utility(marginal_continuation: FloatND) -> FloatND:
+        return taste / marginal_continuation
+
+    return Preferences(
+        utility=utility,
+        marginal_utility=marginal_utility,
+        inverse_marginal_utility=inverse_marginal_utility,
+    )
+
+
+_HALF_COST_NODE = 0.5 * float(np.sqrt(3.0))
+
+
+@pytest.mark.parametrize(
+    "arithmetic",
+    [
+        "ordinary",
+        pytest.param(
+            "certified",
+            marks=pytest.mark.requires_exact_affine_kernel(
+                reason=EXACT_KERNEL_SKIP_REASON
+            ),
+        ),
+    ],
+)
+@pytest.mark.parametrize(
+    ("coh_intercept", "taste"),
+    [
+        (2.0 + _HALF_COST_NODE, 1.0),
+        (2.0 - _HALF_COST_NODE, 1.0),
+        (3.3, 1.0),
+        (2.0 - _HALF_COST_NODE, 1.5),
+    ],
+)
+@pytest.mark.parametrize("per_interval", [False, True])
+def test_off_node_query_publishes_the_interior_euler_policy(
+    *,
+    coh_intercept: float,
+    taste: float,
+    arithmetic: ComparisonArithmetic,
+    per_interval: bool,
+) -> None:
+    """Between savings nodes the published policy is the interior Euler solution.
+
+    Felicity `taste * log(c)` against the continuation `log(s)` with no discounting
+    has its optimum at `c = taste * R / (1 + taste)` for cash-on-hand `R`. The
+    savings grid steps by 1/2 and these cash-on-hand levels put every optimal saving
+    strictly between two nodes, where saving the nearest node is a feasible but
+    worse action: the published value stays at or above that node's value, and the
+    published policy is the interior optimum. The per-interval step reads the same
+    continuation row in each of two intervals of one smooth budget.
+    """
+    liquid_grid = jnp.linspace(1.0, 5.0, 5)
+    savings_grid = jnp.linspace(0.5, 6.0, 12)
+    preferences = _taste_log_preferences(taste=taste)
+    if per_interval:
+        value, _, policy = nbegm_per_interval_continuation_step_savings(
+            cont_value=jnp.tile(jnp.log(savings_grid), (2, 1)),
+            cont_marginal=jnp.tile(1.0 / savings_grid, (2, 1)),
+            liquid_grid=liquid_grid,
+            savings_grid=savings_grid,
+            discount_factor=jnp.asarray(1.0),
+            preferences=preferences,
+            coh_slopes=jnp.ones(2),
+            coh_intercepts=jnp.full(2, coh_intercept),
+            breakpoints=jnp.array([2.5]),
+            arithmetic=arithmetic,
+        )
+    else:
+        value, _, policy = nbegm_multi_interval_step_savings(
+            cont_value=jnp.log(savings_grid),
+            cont_marginal=1.0 / savings_grid,
+            liquid_grid=liquid_grid,
+            savings_grid=savings_grid,
+            discount_factor=jnp.asarray(1.0),
+            preferences=preferences,
+            coh_slopes=jnp.ones(1),
+            coh_intercepts=jnp.full(1, coh_intercept),
+            breakpoints=jnp.zeros(0),
+            arithmetic=arithmetic,
+        )
+
+    coh = np.asarray(liquid_grid) + coh_intercept
+    nodes = np.asarray(savings_grid)
+    assert not np.isin(coh / (1.0 + taste), nodes).any()
+    assert_array_almost_equal(
+        policy, taste * coh / (1.0 + taste), decimal=DECIMAL_PRECISION
+    )
+    node_consumption = coh[:, None] - nodes[None, :]
+    node_value = np.where(
+        node_consumption > 0.0,
+        taste * np.log(np.where(node_consumption > 0.0, node_consumption, 1.0))
+        + np.log(nodes)[None, :],
+        -np.inf,
+    )
+    np.testing.assert_array_less(
+        node_value.max(axis=1) - 10.0**-DECIMAL_PRECISION, np.asarray(value)
+    )
+
+
+def _kinked_continuation(savings_grid: FloatND) -> tuple[FloatND, FloatND]:
+    """A concave child value read linearly on a coarse grid, with its kinks."""
+    child_grid = jnp.array([0.1, 3.0, 6.0, 12.0])
+    child_value = jnp.log(child_grid)
+    next_liquid = _GROSS_RETURN * savings_grid + _INCOME
+    value = jnp.interp(next_liquid, child_grid, child_value)
+    slopes = jnp.diff(child_value) / jnp.diff(child_grid)
+    marginal = _GROSS_RETURN * slopes[jnp.searchsorted(child_grid, next_liquid) - 1]
+    return value, marginal
+
+
+def _multi_interval_step(
+    *, n_liquid: int, n_savings: int, whole_bank: bool, **kwargs
+) -> tuple[FloatND, ...]:
+    savings_grid = jnp.linspace(0.0, 9.0, n_savings)
+    cont_value, cont_marginal = _kinked_continuation(savings_grid)
+    liquid_grid = jnp.linspace(0.1, 10.0, n_liquid)
+    return nbegm_multi_interval_step_savings(
+        cont_value=cont_value,
+        cont_marginal=cont_marginal,
+        liquid_grid=liquid_grid,
+        savings_grid=savings_grid,
+        discount_factor=jnp.asarray(_DISCOUNT),
+        preferences=_taste_log_preferences(taste=1.0),
+        coh_slopes=jnp.array([1.0, 0.7]),
+        coh_intercepts=jnp.array([1.0, 2.5]),
+        breakpoints=jnp.array([5.0]),
+        query_grid=liquid_grid if whole_bank else None,
+        **kwargs,
+    )
+
+
+def _largest_intermediate(jaxpr) -> int:
+    largest = 0
+    for eqn in jaxpr.eqns:
+        for var in eqn.outvars:
+            largest = max(largest, int(np.prod(getattr(var.aval, "shape", ()))))
+        for param in eqn.params.values():
+            for sub in param if isinstance(param, (tuple, list)) else (param,):
+                inner = getattr(sub, "jaxpr", None)
+                if inner is not None:
+                    largest = max(
+                        largest, _largest_intermediate(getattr(inner, "jaxpr", inner))
+                    )
+    return largest
+
+
+@pytest.mark.parametrize("retain_query", [False, True])
+def test_dense_savings_node_read_grows_with_nodes_times_points(
+    *, retain_query: bool
+) -> None:
+    """No intermediate of the step is larger than a few node-by-point arrays.
+
+    Each savings-node candidate at a liquid point sits on that point alone, so
+    reading the dense node family at the liquid grid needs no array that pairs
+    every candidate with every query.
+    """
+    n_liquid, n_savings = 64, 32
+    jaxpr = jax.make_jaxpr(
+        lambda: _multi_interval_step(
+            n_liquid=n_liquid,
+            n_savings=n_savings,
+            whole_bank=False,
+            arithmetic="ordinary",
+            retain_query=retain_query,
+            return_owner=retain_query,
+        )
+    )()
+    assert _largest_intermediate(jaxpr.jaxpr) <= 8 * n_liquid * n_savings
+
+
+@pytest.mark.parametrize(
+    "arithmetic",
+    [
+        "ordinary",
+        pytest.param(
+            "certified",
+            marks=pytest.mark.requires_exact_affine_kernel(
+                reason=EXACT_KERNEL_SKIP_REASON
+            ),
+        ),
+    ],
+)
+@pytest.mark.parametrize("retain_query", [False, True])
+@pytest.mark.parametrize("euler_block", [None, 7])
+def test_dense_savings_node_read_matches_the_whole_bank_read(
+    *,
+    arithmetic: ComparisonArithmetic,
+    retain_query: bool,
+    euler_block: int | None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reading each node column at its own liquid point equals one whole-bank read.
+
+    An explicit query grid equal to the liquid grid reads the complete bank at
+    every query; the default reads each node column only at its own point and the
+    Euler links in blocks. Both select the same owner and publish the same
+    channels, to the few units in the last place that separately compiled reads
+    of one link can differ by, however small the Euler blocks are.
+    """
+    if euler_block is not None:
+        monkeypatch.setattr(nbegm_step, "_EULER_FOLD_BLOCK", euler_block)
+    kwargs = {"arithmetic": arithmetic, "retain_query": retain_query}
+    if retain_query:
+        kwargs["return_owner"] = True
+    by_column = _multi_interval_step(
+        n_liquid=40, n_savings=30, whole_bank=False, **kwargs
+    )
+    whole_bank = _multi_interval_step(
+        n_liquid=40, n_savings=30, whole_bank=True, **kwargs
+    )
+    for got, expected in zip(
+        jax.tree.leaves(by_column), jax.tree.leaves(whole_bank), strict=True
+    ):
+        if jnp.issubdtype(got.dtype, jnp.floating):
+            assert_agrees_to_ulp(got=got, expected=expected, n_ulp=4)
+        else:
+            np.testing.assert_array_equal(np.asarray(got), np.asarray(expected))
+
+
+@pytest.mark.parametrize(
+    "arithmetic",
+    [
+        "ordinary",
+        pytest.param(
+            "certified",
+            marks=pytest.mark.requires_exact_affine_kernel(
+                reason=EXACT_KERNEL_SKIP_REASON
+            ),
+        ),
+    ],
+)
+@pytest.mark.parametrize("retain_query", [False, True])
+def test_node_bank_beyond_int32_identities_publishes_the_same_envelope(
+    *,
+    arithmetic: ComparisonArithmetic,
+    retain_query: bool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A node bank whose one-shot identities exceed int32 reads the same envelope.
+
+    Placing the node cells behind a large virtual savings grid of empty rows
+    leaves the order of the candidates at every query unchanged, but pushes the
+    one-shot identities past the int32 maximum, as a dense XL grid does. The
+    channels stay bit for bit those of the small bank at either precision.
+    """
+    kwargs = {"arithmetic": arithmetic, "retain_query": retain_query}
+    small = _multi_interval_step(n_liquid=40, n_savings=30, whole_bank=False, **kwargs)
+    read = nbegm_step._read_euler_and_node_bank
+    n_points, shifted_rows = 40, 30_000_000
+    assert 4 * n_points * shifted_rows > jnp.iinfo(jnp.int32).max
+
+    def shifted(**read_kwargs):
+        return read(
+            **{
+                **read_kwargs,
+                "node_cell": read_kwargs["node_cell"] + shifted_rows * n_points,
+                "n_bank": read_kwargs["n_bank"] + 2 * shifted_rows * n_points,
+            }
+        )
+
+    monkeypatch.setattr(nbegm_step, "_read_euler_and_node_bank", shifted)
+    large = _multi_interval_step(n_liquid=40, n_savings=30, whole_bank=False, **kwargs)
+    for got, expected in zip(
+        jax.tree.leaves(large), jax.tree.leaves(small), strict=True
+    ):
+        np.testing.assert_array_equal(np.asarray(got), np.asarray(expected))
+
+
+def _intermediates(*, jaxpr, found: list[tuple[int, str]]) -> list[tuple[int, str]]:
+    for eqn in jaxpr.eqns:
+        found.extend(
+            (int(np.prod(getattr(var.aval, "shape", ()))), eqn.params.get("name", ""))
+            for var in eqn.outvars
+        )
+        for param in eqn.params.values():
+            for sub in param if isinstance(param, (tuple, list)) else (param,):
+                inner = getattr(sub, "jaxpr", None)
+                if inner is not None:
+                    _intermediates(jaxpr=getattr(inner, "jaxpr", inner), found=found)
+    return found
+
+
+def _step_intermediates(*, n_liquid: int, n_savings: int) -> list[tuple[int, str]]:
+    jaxpr = jax.make_jaxpr(
+        lambda: _multi_interval_step(
+            n_liquid=n_liquid,
+            n_savings=n_savings,
+            whole_bank=False,
+            arithmetic="ordinary",
+            retain_query=True,
+            return_owner=True,
+        )
+    )()
+    return _intermediates(jaxpr=jaxpr.jaxpr, found=[])
+
+
+def test_euler_links_are_read_in_blocks_of_queries_by_links() -> None:
+    """No intermediate pairs every query with every Euler link.
+
+    With far more savings nodes than liquid points the step's largest array is a
+    node-by-point array; the Euler links are read against the queries a block at
+    a time.
+    """
+    n_liquid, n_savings = 16, 4096
+    largest = max(
+        size for size, _ in _step_intermediates(n_liquid=n_liquid, n_savings=n_savings)
+    )
+    assert largest <= n_liquid * n_savings
+
+
+def test_savings_node_refinement_searches_no_bracket_per_point_and_node() -> None:
+    """The refined node actions read the continuation in the bracket they open.
+
+    A node's refined saving lies in its own savings bracket, so no bracket search
+    runs over the point-by-node array, only over rows of the grids.
+    """
+    n_liquid, n_savings = 64, 32
+    searched = [
+        size
+        for size, name in _step_intermediates(n_liquid=n_liquid, n_savings=n_savings)
+        if name == "searchsorted"
+    ]
+    assert searched
+    assert max(searched) < n_liquid * (n_savings - 1)
+
+
+def _loop_body_intermediates(*, jaxpr, found: list[int]) -> list[int]:
+    for eqn in jaxpr.eqns:
+        if eqn.primitive.name == "while":
+            body = eqn.params["body_jaxpr"]
+            found.extend(
+                size
+                for size, _ in _intermediates(
+                    jaxpr=getattr(body, "jaxpr", body), found=[]
+                )
+            )
+        for param in eqn.params.values():
+            for sub in param if isinstance(param, (tuple, list)) else (param,):
+                inner = getattr(sub, "jaxpr", None)
+                if inner is not None:
+                    _loop_body_intermediates(
+                        jaxpr=getattr(inner, "jaxpr", inner), found=found
+                    )
+    return found
+
+
+def test_savings_node_brackets_are_found_without_a_point_by_node_pass_per_loop() -> (
+    None
+):
+    """No loop of the step forms a point-by-node array.
+
+    The best node per point visits the brackets a point lies in; locating them
+    must not rescan every point against every node on each visit.
+    """
+    n_liquid, n_savings = 64, 32
+    jaxpr = jax.make_jaxpr(
+        lambda: _multi_interval_step(
+            n_liquid=n_liquid,
+            n_savings=n_savings,
+            whole_bank=False,
+            arithmetic="ordinary",
+            retain_query=True,
+            return_owner=True,
+        )
+    )()
+    in_loops = _loop_body_intermediates(jaxpr=jaxpr.jaxpr, found=[])
+    assert in_loops
+    assert max(in_loops) < n_liquid * (n_savings - 1)

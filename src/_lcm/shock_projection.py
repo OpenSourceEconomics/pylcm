@@ -35,7 +35,7 @@ from lcm.shocks import (
 from lcm.typing import FunctionName, ReferenceName, RegimeName, StateName, UserFunction
 
 type QueryKindName = Literal[
-    "Raw", "Participating", "Full", "Arrival", "IntegratedFull"
+    "Raw", "Participating", "Full", "Participation", "IntegratedFull"
 ]
 type OperandPath = tuple[str | int, ...]
 

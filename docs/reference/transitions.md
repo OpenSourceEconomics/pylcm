@@ -143,8 +143,8 @@ path of an edge-declared callable is its declaration path under `params["edges"]
 ```text
 params["edges"][source][arg]                       # a law over all targets
 params["edges"][source][target][arg]               # a per-target cell, gated or not
-params["edges"][source][target]["predicate"][arg]  # the target's Gate
-params["edges"][source][target]["references"][reference][state][arg]
+params["edges"][source][target]["predicate"][arg]  # the target's Gate or ParticipationCheck
+params["edges"][source][target]["reads"][read][state][arg]  # a ParticipationRead projection
 params["edges"][source][target]["routes"][route]["fallback"][state][arg]
 params["edges"][source][target]["routes"][route]["fallback"]["solve" | "simulate"][state][arg]
 ```

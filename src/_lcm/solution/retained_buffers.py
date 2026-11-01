@@ -189,11 +189,10 @@ class _RetainedBuffers:
             if generation is not None:
                 if type(generation) is not CanonicalModelGeneration:
                     raise _unsupported(generation)
-                self.collect(generation.roots)
+                self.collect(generation.live_roots())
             for name in (
                 "values",
                 "simulation_policies",
-                "dissolution_flags",
                 "replay_artifacts",
                 "authority",
             ):
@@ -254,17 +253,24 @@ class _RetainedBuffers:
     def collect_reader(self, value: _RetainedValue) -> None:
         """Read built-in future carries and prepared roots without building readers."""
         # Model imports the ownership boundary before simulation readers are complete.
-        from _lcm.egm.current_iid_case_u_replay import (  # noqa: PLC0415
-            CaseUReplayChildren,
-            CaseUReplayInput,
+        from _lcm.egm.upper_envelope.segment_envelope import (  # noqa: PLC0415
+            OwnedEnvelope,
         )
         from _lcm.simulation.replay_inputs import PreparedReplayReader  # noqa: PLC0415
+        from _lcm.solution.feasibility import (  # noqa: PLC0415
+            BoundInputStatus,
+            ContinuationReadCounts,
+            QueryInputStatus,
+        )
 
-        if type(value) is CaseUReplayInput:
-            self.collect(value.payload)
-            return
-        if type(value) is CaseUReplayChildren:
-            self.collect(value.child_values)
+        if type(value) in (
+            OwnedEnvelope,
+            BoundInputStatus,
+            QueryInputStatus,
+            ContinuationReadCounts,
+        ):
+            for child in tuple.__iter__(cast("tuple[_RetainedValue, ...]", value)):
+                self.collect(child)
             return
         if type(value) is not PreparedReplayReader:
             raise _unsupported(value)

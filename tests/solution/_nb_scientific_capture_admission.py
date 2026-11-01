@@ -117,7 +117,7 @@ def admit_processed_params(*, manifest, precision):
         filename = f"{solver}-{operation}-processed-params.npz"
         if (
             call.get("file") != filename
-            or call.get("method") != "lcm.model.Model._process_params"
+            or call.get("method") != "lcm.model.Model._canonicalize_params"
             or call.get("returned_original_mapping") is not True
             or not isinstance(call.get("returned_mapping_id"), int)
         ):

@@ -20,7 +20,10 @@ import pytest
 
 import hatch_build
 import lcm
-from _lcm.egm.upper_envelope._exact_affine.ffi import _installed_native_directory
+from _lcm.egm.upper_envelope._exact_affine.ffi import (
+    _installed_native_directory,
+    kernel_available_for_current_backend,
+)
 from _lcm.solution import backward_induction as engine
 from _lcm.solution.fingerprint import _semantic_fingerprint
 from _lcm.typing import JSONValue
@@ -77,7 +80,7 @@ pytestmark = [
 
 @pytest.mark.parametrize(
     "retention",
-    [ResultRetention.VALUES_AND_REPLAY, ResultRetention.ALL_PERSISTABLE_ARTIFACTS],
+    [ResultRetention.VALUES, ResultRetention.ALL_PERSISTABLE_ARTIFACTS],
     ids=["donated-continuation", "persisted-continuation"],
 )
 def test_public_gpu_lower_period_candidate_matches_solve(
@@ -110,8 +113,7 @@ def test_public_gpu_lower_period_candidate_matches_solve(
         and dispatched_keys[_candidate_address(manifest=manifest)]
         == manifest["primary_key"]
         and _candidate_address(manifest=manifest)[1] < model.n_periods - 1
-        and bool(manifest["primary_donated"])
-        == (retention is ResultRetention.VALUES_AND_REPLAY)
+        and bool(manifest["primary_donated"]) == (retention is ResultRetention.VALUES)
     ]
     assert matches, "No genuine primary continuation candidate reached dispatch"
     expected, expected_ir = matches[0]
@@ -340,6 +342,8 @@ def _sha256(path: Path) -> str:
 
 def _capture_gpu_source_runtime_identity() -> Mapping[str, JSONValue]:
     """Proposed CUDA12 source-checkout identity, independent of production code."""
+    # This diagnostic requires loaded native libraries; ordinary solves may not.
+    assert kernel_available_for_current_backend()
     root = Path(hatch_build.__file__).resolve().parent
     sources = tuple(
         (path.relative_to(root).as_posix(), _sha256(path=path))

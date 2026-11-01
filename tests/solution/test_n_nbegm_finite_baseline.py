@@ -6,6 +6,9 @@ independently reimplemented aggregation. The fixture
 (x64, 3 periods), every alive period's collapsed `V_arr` and complete
 candidate-bank `EGMCarry` leaves as returned by `_NNBEGMPeriodKernel.__call__`,
 plus the public `Model.solve` output.
+The `b0` capture was regenerated when the NB-EGM savings-node refinement replaced
+snapped node savings by the interior Euler saving; a dense-savings brute force of
+the last alive period's inner kernels lies closer to the regenerated values.
 
 The outer collapse is a host loop over the candidate nodes, so its dispatch
 width reschedules the loop without changing the fold order; every width is

@@ -32,7 +32,7 @@ from lcm import (
 )
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.regime import Regime as UserRegime
-from lcm.solvers import DCEGM, EULER_POINT_AXIS
+from lcm.solvers import DCEGM, EULER_POINT_AXIS, RFCEnvelope
 from lcm.typing import (
     ContinuousAction,
     ContinuousState,
@@ -132,6 +132,7 @@ def _model(width: int | None = None) -> Model:
         solver=DCEGM(
             savings_grid=SAVINGS_GRID,
             n_constrained_points=32,
+            envelope=RFCEnvelope(),
         ),
         liquid=LiquidMargin(
             state="wealth",
