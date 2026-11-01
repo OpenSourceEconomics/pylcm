@@ -42,6 +42,7 @@ from _lcm.persistence.solution import (
     DiskPolicyEntry,
     DiskValueEntry,
     StreamedSolutionArchive,
+    checkout_commit,
 )
 from _lcm.simulation import chunk_admission
 from _lcm.simulation import simulate as simulate_module
@@ -579,6 +580,56 @@ def test_disk_storage_writes_simulation_policies_to_the_archive(tmp_path: Path) 
         for solution in (device, load_solution(path=saved))
     ]
     assert panels[0].equals(panels[1])
+
+
+@pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
+def test_the_stored_form_of_disk_policies_reads_one_policy_per_lookup(
+    *, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The host-side policy check reads each policy only when it looks it up."""
+    solution = _nbegm_model(_disk(tmp_path)).solve(params=_PARAMS, log_level="off")
+    engine_view = solution._engine_view
+    assert engine_view is not None
+    reads = [0]
+    host_payload = DiskPolicyEntry.host_payload
+
+    def _counting_host_payload(self: DiskPolicyEntry) -> SimulationPolicy:
+        reads[0] += 1
+        return host_payload(self)
+
+    monkeypatch.setattr(DiskPolicyEntry, "host_payload", _counting_host_payload)
+    stored = host_values.stored_form(engine_view.simulation_policies)
+    period, regime = next(
+        (period, regime)
+        for period, regime_to_policy in stored.items()
+        for regime in regime_to_policy
+    )
+
+    assert reads[0] == 0
+    assert regime in stored[period]
+    assert reads[0] == 0
+    stored[period][regime]
+    assert reads[0] == 1
+
+
+def test_a_read_through_view_leaves_the_registry_with_the_view() -> None:
+    """A period kept beyond its view does not keep the view's id registered.
+
+    A new mapping that gets the id of a view gone is not taken for that view.
+    """
+    view = host_values.device_read_view(
+        values={0: copy_values_to_host(period=0, values={"a": _STORED_VALUE})}
+    )
+    period = view[0]
+    view_id = id(view)
+    assert host_values.device_copies_of_view(view_id=view_id) is not None
+
+    del view
+    gc.collect()
+
+    assert host_values.device_copies_of_view(view_id=view_id) is None
+    assert host_values.device_copies_of_view(view_id=id(period)) is None
+    assert len(period) == 1
 
 
 @pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
@@ -1215,6 +1266,38 @@ def test_disk_storage_keeps_at_most_two_unwritten_periods_in_host_memory(
 
     assert all(_bounded(resident=r, period=p) for p, r in disk), disk
     assert not all(_bounded(resident=r, period=p) for p, r in host), host
+
+
+def _git(*args: str, cwd: Path) -> str:
+    return subprocess.run(  # noqa: S603
+        [  # noqa: S607
+            "git",
+            "-c",
+            "user.name=test",
+            "-c",
+            "user.email=test@example.com",
+            *args,
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+        cwd=cwd,
+    ).stdout.strip()
+
+
+def test_the_recorded_commit_is_only_that_of_pylcms_own_checkout(
+    tmp_path: Path,
+) -> None:
+    """Installed inside another repository, pylcm records no commit from it."""
+    _git("init", "-q", cwd=tmp_path)
+    (tmp_path / "file.txt").write_text("x")
+    _git("add", "file.txt", cwd=tmp_path)
+    _git("commit", "-q", "-m", "init", cwd=tmp_path)
+    inside = tmp_path / ".venv" / "lib"
+    inside.mkdir(parents=True)
+
+    assert checkout_commit(checkout=tmp_path) == _git("rev-parse", "HEAD", cwd=tmp_path)
+    assert checkout_commit(checkout=inside) is None
 
 
 def _checkout_commit() -> str:

@@ -3380,6 +3380,10 @@ class BlockedSolutionArchive(_SolutionArchiveFile):
         )
 
 
+# The repository root of a source checkout of pylcm, this file's fourth parent.
+_PYLCM_CHECKOUT: Final = Path(__file__).resolve().parents[3]
+
+
 def pylcm_commit() -> str | None:
     """The git commit of the running pylcm, as an incomplete archive records it.
 
@@ -3388,35 +3392,39 @@ def pylcm_commit() -> str | None:
     Otherwise the commit the build recorded is used, then the one in the version
     string; `None` when neither names one.
     """
-    source = Path(__file__).resolve().parent
-    try:
-        head = subprocess.run(  # noqa: S603
-            ["git", "-C", str(source), "rev-parse", "HEAD"],  # noqa: S607
-            capture_output=True,
-            text=True,
-            check=True,
-        ).stdout.strip()
-        changed = subprocess.run(  # noqa: S603
-            [  # noqa: S607
-                "git",
-                "-C",
-                str(source),
-                "status",
-                "--porcelain",
-                "--untracked-files=no",
-            ],
-            capture_output=True,
-            text=True,
-            check=True,
-        ).stdout.strip()
-    except OSError, subprocess.CalledProcessError:
-        pass
-    else:
-        return head + ("-dirty" if changed else "")
+    commit = checkout_commit(checkout=_PYLCM_CHECKOUT)
+    if commit is not None:
+        return commit
     if _version.commit_id is not None:
         return _version.commit_id
     match = re.search(r"\+g([0-9a-f]+)", PYLCM_VERSION)
     return None if match is None else match.group(1)
+
+
+def checkout_commit(*, checkout: Path) -> str | None:
+    """The commit of the repository rooted at `checkout`, `-dirty` if changed.
+
+    `None` without git, or when `checkout` is not a repository's root: inside
+    another repository, as an install in a project's virtual environment is,
+    git would answer for that repository instead.
+    """
+
+    def git(*args: str) -> str:
+        return subprocess.run(  # noqa: S603
+            ["git", "-C", str(checkout), *args],  # noqa: S607
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+
+    try:
+        if Path(git("rev-parse", "--show-toplevel")).resolve() != checkout.resolve():
+            return None
+        head = git("rev-parse", "HEAD")
+        changed = git("status", "--porcelain", "--untracked-files=no")
+    except OSError, subprocess.CalledProcessError:
+        return None
+    return head + ("-dirty" if changed else "")
 
 
 class WrittenPeriod(NamedTuple):

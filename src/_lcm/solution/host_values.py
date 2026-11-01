@@ -8,7 +8,7 @@ are those of device storage.
 """
 
 import weakref
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Literal, cast
@@ -347,27 +347,31 @@ def stored_form[T](
     """Return a read-through view's stored contents for a host-side check.
 
     Host-memory arrays come as they are; a lazy entry is read onto the CPU device
-    (`host_payload`). Anything that is not a view comes back as it is.
+    (`host_payload`) when it is looked up, so a check walking the periods holds
+    one at a time. Anything that is not a view comes back as it is.
     """
-    copies = _VIEW_COPIES.get(id(values))
+    copies = _copies_of(view_id=id(values))
     if copies is None:
         return values
     return MappingProxyType(
         {
             period: MappingProxyType(
-                {
-                    regime: cast(
-                        "T",
-                        getattr(stored, "host_payload")()  # noqa: B009
-                        if isinstance(stored, _LazyEntry)
-                        else stored,
-                    )
-                    for regime, stored in regime_to_stored.items()
-                }
+                _LazyReadMapping[RegimeName, T](
+                    # The view stores what it was built from, `T` or lazy entries.
+                    entries=cast(
+                        "Mapping[RegimeName, T | _LazyEntry]", regime_to_stored
+                    ),
+                    read=lambda entry: cast("T", _host_payload(entry)),
+                )
             )
             for period, regime_to_stored in copies.stored.items()
         }
     )
+
+
+def _host_payload(entry: _LazyEntry) -> ArtifactPayload:
+    """Read a lazy entry onto the CPU device, as a disk policy entry does."""
+    return getattr(entry, "host_payload")()  # noqa: B009
 
 
 def device_read_view(
@@ -376,9 +380,8 @@ def device_read_view(
     """Return host-stored arrays as a mapping that hands out device copies.
 
     A value is copied when it is first read and kept while its period is one of
-    the three most recently read, so a reader that walks the periods in order
-    holds at most three periods on the device and copies each period once per
-    walk.
+    the four most recently read, so a reader that walks the periods in order holds
+    at most four periods on the device and copies each period once per walk.
     """
     copies = _RecentDeviceCopies(
         stand_in=MappingProxyType(
@@ -394,7 +397,7 @@ def device_read_view(
         ),
         stored=values,
     )
-    view = MappingProxyType(
+    periods = _ViewPeriods(
         {
             period: MappingProxyType(
                 _DeviceReadPeriod(period=period, stored=stored, copies=copies)
@@ -402,25 +405,39 @@ def device_read_view(
             for period, stored in values.items()
         }
     )
-    # Only the view reaches `copies`, so this entry goes with the view and a
-    # later object reusing its id finds nothing.
-    _VIEW_COPIES[id(view)] = copies
+    periods.copies = copies
+    view = MappingProxyType(periods)
+    # Only the view holds `periods`, so this entry goes with the view even while
+    # one of its periods lives on, and a later object reusing its id finds
+    # nothing.
+    _VIEW_COPIES[id(view)] = periods
     # A view of values hands out arrays; `policy_read_view` recasts its own.
     return cast("MappingProxyType[int, MappingProxyType[RegimeName, jax.Array]]", view)
 
 
 class _LazyReadMapping[K, V](Mapping[K, V]):
-    """A read-only mapping that reads each lazy entry when it is looked up."""
+    """A read-only mapping that reads each lazy entry when it is looked up.
 
-    def __init__(self, entries: Mapping[K, V | _LazyEntry]) -> None:
+    `read` reads an entry; `None` materializes it onto its devices.
+    """
+
+    def __init__(
+        self,
+        *,
+        entries: Mapping[K, V | _LazyEntry],
+        read: Callable[[_LazyEntry], V] | None = None,
+    ) -> None:
         self.entries: MappingProxyType[K, V | _LazyEntry] = MappingProxyType(
             dict(entries)
         )
+        self._read = read
 
     def __getitem__(self, key: K) -> V:
         entry = self.entries[key]
+        if not isinstance(entry, _LazyEntry):
+            return entry
         return (
-            cast("V", entry.materialize()) if isinstance(entry, _LazyEntry) else entry
+            cast("V", entry.materialize()) if self._read is None else self._read(entry)
         )
 
     def __contains__(self, key: object) -> bool:
@@ -442,7 +459,7 @@ def lazy_read_view[K, V](
     Nothing read is kept: each lookup reads the entry again, so the view holds
     no device memory.
     """
-    lazy = _LazyReadMapping[K, V](entries)
+    lazy = _LazyReadMapping[K, V](entries=entries)
     view = MappingProxyType(lazy)
     # Only the view reaches `lazy`, so this entry goes with the view.
     _LAZY_VIEWS[id(view)] = lazy
@@ -470,10 +487,24 @@ _LAZY_VIEWS: weakref.WeakValueDictionary[int, _LazyReadMapping] = (
     weakref.WeakValueDictionary()
 )
 
-# The copy cache of every live read-through view, by the view's id.
-_VIEW_COPIES: weakref.WeakValueDictionary[int, _RecentDeviceCopies] = (
+
+class _ViewPeriods(dict[int, MappingProxyType[RegimeName, _OnDevice]]):
+    """The periods of one read-through view, which only the view holds."""
+
+    copies: _RecentDeviceCopies
+    """The view's copy cache."""
+
+
+# The periods of every live read-through view, by the view's id.
+_VIEW_COPIES: weakref.WeakValueDictionary[int, _ViewPeriods] = (
     weakref.WeakValueDictionary()
 )
+
+
+def _copies_of(*, view_id: int) -> _RecentDeviceCopies | None:
+    """The copy cache of the live read-through view with `view_id`, else `None`."""
+    periods = _VIEW_COPIES.get(view_id)
+    return None if periods is None else periods.copies
 
 
 def is_device_read_view(values: _StoredValues) -> bool:
@@ -507,7 +538,7 @@ def planning_stand_in[T](values: T) -> T:
     policies; reading a view for them would copy each onto the device. A stand-in
     keeps a policy's structure with a `jax.ShapeDtypeStruct` for each array.
     """
-    copies = _VIEW_COPIES.get(id(values))
+    copies = _copies_of(view_id=id(values))
     return values if copies is None else cast("T", copies.stand_in)
 
 
@@ -516,7 +547,7 @@ def device_copies_of_view(*, view_id: int) -> tuple[jax.Array, ...] | None:
 
     `None` when no live view has that id, so a caller can ask of any object.
     """
-    copies = _VIEW_COPIES.get(view_id)
+    copies = _copies_of(view_id=view_id)
     if copies is None:
         return None
     return tuple(
