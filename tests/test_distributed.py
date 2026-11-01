@@ -329,10 +329,12 @@ def _assert_exact_layout_values(
             np.testing.assert_array_equal(value, expected[period][regime])
 
 
-# A GridSearch core sums its int32 empty-action and other-Inf counts over every
+# A GridSearch core sums its empty-action and other-Inf counts over every
 # state cell, so a state-sharded core reduces that one scalar pair across devices.
+_COUNTER_HLO_DTYPE = "s64" if jax.config.x64_enabled else "s32"
 _COUNTER_ALL_REDUCE = re.compile(
-    r"(%all-reduce[.\d]*) = \(s32\[\], s32\[\]\) all-reduce\("
+    rf"(%all-reduce[.\d]*) = \({_COUNTER_HLO_DTYPE}\[\], "
+    rf"{_COUNTER_HLO_DTYPE}\[\]\) all-reduce\("
 )
 _COLLECTIVES = (
     "all-gather",
@@ -359,14 +361,31 @@ def _collectives_beyond_feasibility_counts(*, hlo: str) -> list[str]:
     "line",
     [
         "%all-reduce.3 = f64[] all-reduce(%x), to_apply=%add",
-        "%all-reduce.4 = (s32[], s32[], s32[]) all-reduce(%a, %b, %c)",
+        (
+            f"%all-reduce.4 = ({_COUNTER_HLO_DTYPE}[], {_COUNTER_HLO_DTYPE}[], "
+            f"{_COUNTER_HLO_DTYPE}[]) all-reduce(%a, %b, %c)"
+        ),
         "%all-gather.1 = f64[8] all-gather(%v), dimensions={0}",
+        (
+            f"%all-reduce.5 = ({_COUNTER_HLO_DTYPE}[1], "
+            f"{_COUNTER_HLO_DTYPE}[1]) all-reduce(%a, %b)"
+        ),
+        "%all-reduce.6 = (s32[], s64[]) all-reduce(%a, %b)",
+        "%all-reduce.7 = (s32[], s32[]) all-reduce(%a, %b)"
+        if jax.config.x64_enabled
+        else "%all-reduce.7 = (s64[], s64[]) all-reduce(%a, %b)",
     ],
 )
 def test_the_collective_check_reports_anything_but_the_count_pair(line: str) -> None:
-    """Only the scalar int32 count pair and its unpacking are exempt."""
-    counter = "%all-reduce.2 = (s32[], s32[]) all-reduce(%e, %o), to_apply=%sum"
-    unpack = "%get-tuple-element.7 = s32[] get-tuple-element(%all-reduce.2), index=0"
+    """Only the configured scalar count pair and its unpacking are exempt."""
+    counter = (
+        f"%all-reduce.2 = ({_COUNTER_HLO_DTYPE}[], {_COUNTER_HLO_DTYPE}[]) "
+        "all-reduce(%e, %o), to_apply=%sum"
+    )
+    unpack = (
+        f"%get-tuple-element.7 = {_COUNTER_HLO_DTYPE}[] "
+        "get-tuple-element(%all-reduce.2), index=0"
+    )
 
     assert _collectives_beyond_feasibility_counts(
         hlo=f"{counter}\n{unpack}\n{line}"

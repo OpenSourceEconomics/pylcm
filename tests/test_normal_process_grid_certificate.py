@@ -108,6 +108,13 @@ def test_normal_controls_preserve_all_historical_populations() -> None:
         assert historical.isdisjoint(names)
         assert set(population).isdisjoint(names)
         historical.update(names)
+    exact_count_controls = {
+        "feasibility:exact_count_dtype_narrowed",
+        "feasibility:count_capacity_refusal_omitted",
+    }
+    assert exact_count_controls <= historical
+    assert len(historical) == 602
+    historical = historical - exact_count_controls
     added_feasibility_controls = {
         "feasibility_summary:published_value_changed",
         "feasibility_summary:empty_count_reversed",

@@ -1,4 +1,4 @@
-"""Independent byte-resealed controls for simulation feasibility admission."""
+"""Independent byte-resealed controls for feasibility counts and admission."""
 
 import ast
 import hashlib
@@ -9,6 +9,17 @@ import pytest
 
 from tests.candidate_certificate import direct_flow
 from tests.candidate_certificate.generate_sources import sha256_file
+
+_EXACT_COUNT_CONTROL_ERRORS = {
+    "feasibility:exact_count_dtype_narrowed": (
+        "native feasibility summary: exact callable corridor "
+        "'get_feasibility_count_dtype' changed"
+    ),
+    "feasibility:count_capacity_refusal_omitted": (
+        "native feasibility summary: exact callable corridor "
+        "'_fail_if_feasibility_count_exceeds_capacity' changed"
+    ),
+}
 
 
 def test_feasibility_wrapper_preserves_the_admitted_producer_handoff() -> None:
@@ -49,7 +60,9 @@ def test_feasibility_wrapper_preserves_the_admitted_producer_handoff() -> None:
 def test_feasibility_controls_are_complete_and_disjoint() -> None:
     root = Path(__file__).parents[1]
     population = direct_flow.feasibility_mutation_specs(repo_root=root)
-    assert len(population) == 11
+    assert len(population) == 13
+    assert _EXACT_COUNT_CONTROL_ERRORS.keys() <= population.keys()
+    assert len(population.keys() - _EXACT_COUNT_CONTROL_ERRORS.keys()) == 11
     assert (
         hashlib.sha256(("\n".join(sorted(population)) + "\n").encode()).hexdigest()
         == direct_flow.EXPECTED_FEASIBILITY_MUTATION_NAMES_SHA256
@@ -85,4 +98,7 @@ def test_feasibility_mutation_is_rejected_after_independent_byte_reseal(
     result = direct_flow.verify_direct_candidate_flow(repo_root=tmp_path)
     assert not result["ok"]
     assert result["offending_paths"] == [spec["path"]], result["errors"]
-    assert any("simulation owned-input corridor" in error for error in result["errors"])
+    expected_error = _EXACT_COUNT_CONTROL_ERRORS.get(
+        mutation, "simulation owned-input corridor"
+    )
+    assert any(expected_error in error for error in result["errors"])
