@@ -98,12 +98,10 @@ identical grids, which pylcm checks at build time.
 Use an age-specialized grid only for a continuous state whose points are known at model
 construction. Runtime-supplied points use `IrregSpacedGrid(n_points=...)` instead.
 
-## Gate references and leg fallbacks on an age-specialized regime
+## Leg fallbacks on an age-specialized regime
 
-A `Gate` reads other regimes' values within one period — its `references` read a
-reference regime's value function, and a shut gate reads the route's `fallback` regime's
-value at a projected coordinate. Either regime may hold its states on an
-`AgeSpecializedGrid`.
+A shut `Gate` reads the route's `fallback` regime's value within one period, at a
+projected coordinate. That regime may hold its states on an `AgeSpecializedGrid`.
 
 Every such read is measured against the grid of **the period whose value is being
 folded**, not against some other age at which that regime is also active. This is worth
@@ -127,9 +125,9 @@ StakeholderRoute(
 )
 ```
 
-A gate `references` projection instead owes one coordinate per state of the reference
-regime's *value function*, i.e. its solve states. The two sets differ only by the states
-a regime carries in simulation alone.
+A `ValueDependentConstraint` reference projection instead owes one coordinate per state
+of the reference regime's *value function*, i.e. its solve states. The two sets differ
+only by the states a regime carries in simulation alone.
 
 ## Before using it
 

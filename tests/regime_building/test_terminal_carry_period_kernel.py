@@ -30,7 +30,6 @@ from _lcm.typing import ArtifactPayload, FlatParams
 from _lcm.utils.logging import get_logger
 from lcm.ages import AgeGrid
 from lcm.solver_api import (
-    DISSOLUTION_FLAG,
     EGM_CONTINUATION,
     SIMULATION_POLICY,
     ArtifactKey,
@@ -137,11 +136,12 @@ def test_the_decorator_adds_the_carry_and_forwards_every_channel():
         marginal_utility=jnp.ones_like(grid),
     )
     flag = jnp.zeros(4, dtype=jnp.bool_)
+    solve_time_key = ArtifactKey(type_id="example.solve_time")
     auxiliary_key = ArtifactKey(type_id="example.auxiliary")
     auxiliary = cast("ArtifactPayload", object())
     base_output = KernelOutput(
         value=jnp.zeros(4),
-        solve_time_artifacts={DISSOLUTION_FLAG: flag},
+        solve_time_artifacts={solve_time_key: flag},
         replay={SIMULATION_POLICY: published},
         auxiliary={auxiliary_key: auxiliary},
     )
@@ -153,7 +153,7 @@ def test_the_decorator_adds_the_carry_and_forwards_every_channel():
     assert tuple(output.continuations) == (EGM_CONTINUATION,)
     assert isinstance(output.continuations[EGM_CONTINUATION], EGMCarry)
     assert output.replay[SIMULATION_POLICY] is published
-    assert output.solve_time_artifacts[DISSOLUTION_FLAG] is flag
+    assert output.solve_time_artifacts[solve_time_key] is flag
     assert output.auxiliary[auxiliary_key] is auxiliary
 
 

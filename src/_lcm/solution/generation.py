@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 import jax
 
 from _lcm.grids import DiscreteGrid
+from _lcm.materialization import DatedGenerationMaterializer
 from _lcm.params.edges import flat_namespaces
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.solution.fingerprint import (
@@ -21,16 +22,9 @@ from _lcm.solution.fingerprint import (
     _semantic_fingerprint,
 )
 from _lcm.typing import FlatParams, PytreeValue
-from lcm._solver_api.authority import ArtifactAuthority
-from lcm.exceptions import UnsupportedOperationError
-from lcm.typing import RegimeName
+from lcm._solver_api.authority import ArtifactAuthority, _ArrayCopier
 
 if TYPE_CHECKING:
-    from _lcm.continuation import ProjectedContinuationSpec
-    from _lcm.current_iid import CurrentIIDPlan
-    from _lcm.egm.step import _EGMStep
-    from _lcm.solution.contract import PeriodKernel, SolverBuildContext
-    from _lcm.solution.dcegm import EGMStepBuild, _BoundDCEGM
     from _lcm.solution.model_authority import SolutionAuthority
     from lcm.model import Model
 else:
@@ -38,13 +32,6 @@ else:
     # producer through its seal rather than importing the public class in a cycle.
     type Model = object
     type SolutionAuthority = object
-    type ProjectedContinuationSpec = object
-    type CurrentIIDPlan = object
-    type _EGMStep = object
-    type SolverBuildContext = object
-    type PeriodKernel = object
-    type EGMStepBuild = object
-    type _BoundDCEGM = object
 
 
 def canonical_parameter_schema(*, flat_params: FlatParams) -> str:
@@ -119,53 +106,9 @@ def canonical_generation_roots(
     return tuple(arrays)
 
 
-@dataclass(frozen=True, kw_only=True, eq=False)
-class GenerationSolverPreparation:
-    """Original numerical pieces retained by one real installed Model generation."""
-
-    generation: CanonicalModelGeneration
-    regime_name: RegimeName
-    period: int
-    context: SolverBuildContext
-    build: EGMStepBuild
-    step: _EGMStep
-    plan: CurrentIIDPlan | None
-    declarations: Mapping[RegimeName, ProjectedContinuationSpec]
-    installed_kernel: PeriodKernel
-    solver: _BoundDCEGM
-
-    def validate_owner(self) -> None:
-        """Refuse a substituted context/step/plan instead of accepting a token."""
-        actual = self.generation.solver_preparation(
-            regime_name=self.regime_name, period=self.period
-        )
-        for name in (
-            "context",
-            "build",
-            "step",
-            "plan",
-            "declarations",
-            "installed_kernel",
-            "solver",
-        ):
-            if getattr(self, name) is not getattr(actual, name):
-                raise TypeError(
-                    f"Canonical generation solver preparation substituted {name!r}."
-                )
-
-    @property
-    def code_roots(self) -> tuple[jax.Array, ...]:
-        """Borrow actual source/future grids and plans, without claiming admission."""
-        self.validate_owner()
-        return canonical_generation_roots(
-            declarations=(
-                self.context,
-                self.build,
-                self.step,
-                self.plan,
-                self.declarations,
-            )
-        )
+type _GenerationState = tuple[
+    str, str, Model, tuple[PytreeValue, ...], list[SolutionAuthority]
+]
 
 
 @dataclass(frozen=True, kw_only=True, eq=False, weakref_slot=True, slots=True)
@@ -179,51 +122,42 @@ class CanonicalModelGeneration:
     _authority: list[SolutionAuthority] = field(default_factory=list, repr=False)
     _authority_lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
-    def solver_preparation(
-        self, *, regime_name: RegimeName, period: int
-    ) -> GenerationSolverPreparation:
-        """Acquire genuine dated builder objects, never archive-supplied programs."""
-        from _lcm.egm.step import _EGMStep  # noqa: PLC0415 - Model import closure
+    def __getstate__(self) -> _GenerationState:
+        """Pickle every field but the lock, which belongs to one process."""
+        return (
+            self.key,
+            self.declaration_fingerprint,
+            self.execution,
+            self.roots,
+            self._authority,
+        )
 
-        self.execution._check_identity_runtime()  # noqa: SLF001 - actual canonical generation handoff
-        prepared = self.execution._dated_generation  # noqa: SLF001 - actual canonical generation handoff
-        if prepared is None:
-            raise UnsupportedOperationError(
-                "This generation has no genuine retained dated solver preparation."
-            )
-        numerical = prepared.preparation.numerical
-        if regime_name not in numerical.steps:
-            raise UnsupportedOperationError(
-                f"Generation source {regime_name!r} has no genuine DCEGM preparation."
-            )
-        build = numerical.steps[regime_name]
-        if type(period) is not int or period not in build.steps:
-            raise UnsupportedOperationError(
-                f"Generation source {regime_name!r} has no original date {period!r}."
-            )
-        context = numerical.contexts[regime_name]
-        step = build.steps[period]
-        if not isinstance(step, _EGMStep):
-            raise UnsupportedOperationError(
-                "Generation lacks original scalar Euler pieces."
-            )
-        kernel = self.execution._regimes[regime_name].solution.period_kernels[period]  # noqa: SLF001 - actual canonical generation handoff
-        original = prepared.regimes[regime_name].solution.period_kernels[period]
-        if kernel is not original or context.regime_name != regime_name:
-            raise TypeError(
-                "Installed generation substituted its original dated kernel."
-            )
-        return GenerationSolverPreparation(
-            generation=self,
-            regime_name=regime_name,
-            period=period,
-            context=context,
-            build=build,
-            step=step,
-            plan=context.current_iid_plans.get(period),
-            declarations=context.projected_continuation_declarations,
-            installed_kernel=kernel,
-            solver=numerical.solvers[regime_name],
+    def __setstate__(self, state: _GenerationState) -> None:
+        """Restore the fields and give the restored generation its own lock."""
+        key, declaration_fingerprint, execution, roots, authority = state
+        object.__setattr__(self, "key", key)
+        object.__setattr__(self, "declaration_fingerprint", declaration_fingerprint)
+        object.__setattr__(self, "execution", execution)
+        object.__setattr__(self, "roots", roots)
+        object.__setattr__(self, "_authority", authority)
+        object.__setattr__(self, "_authority_lock", threading.Lock())
+
+    def live_roots(self) -> tuple[PytreeValue, ...]:
+        """Borrow original roots and already-published authority template storage."""
+        from _lcm.solution.retained_buffers import (  # noqa: PLC0415 - ownership imports this generation record
+            retained_artifact_authority_buffers,
+        )
+
+        # Completed authorities are append-only. Do not take the authority lock:
+        # its producer may observe live roots while already holding that lock.
+        authorities = tuple(self._authority)
+        return (
+            *self.roots,
+            *(
+                retained_artifact_authority_buffers(authority=artifact)
+                for authority in authorities
+                for artifact in authority.artifacts.values()
+            ),
         )
 
     def declared_authority(
@@ -231,6 +165,8 @@ class CanonicalModelGeneration:
         *,
         flat_params: FlatParams,
         process_grid_resolver: ProcessGridResolver | None,
+        materializer: DatedGenerationMaterializer | None = None,
+        array_copier: _ArrayCopier | None = None,
     ) -> SolutionAuthority:
         """Derive authority at its original validation frontier, single-flight."""
         from _lcm.solution.model_authority import (  # noqa: PLC0415 - authority imports artifacts
@@ -245,6 +181,8 @@ class CanonicalModelGeneration:
                         flat_params=flat_params,
                         ages=self.execution._time,  # noqa: SLF001 - canonical generation owns this private lifecycle handoff
                         process_grid_resolver=process_grid_resolver,
+                        materializer=materializer,
+                        array_copier=array_copier,
                     )
                 )
             return self._authority[0]
@@ -289,4 +227,5 @@ class CanonicalGenerationCache:
     def roots(self) -> tuple[PytreeValue, ...]:
         """Return actual owners, leaving alias deduplication to buffer accounting."""
         with self._lock:
-            return tuple(generation.roots for generation in tuple(self._live.values()))
+            generations = tuple(self._live.values())
+        return tuple(generation.live_roots() for generation in generations)

@@ -153,7 +153,6 @@ def test_owned_and_every_previously_consumed_view_remain_in_inventory() -> None:
     """Earlier consumers' private values and policies stay charged with the source."""
     solution = _make_values_only_solution(value=[1.0], dtype="float32")
     arrays = tuple(jnp.arange(size, dtype=jnp.float32) for size in range(1, 8))
-    flags = jnp.array([True, False])
     empty = MappingProxyType({})
     view = OwnedSolutionView(
         model_instance_id="owner",
@@ -173,7 +172,6 @@ def test_owned_and_every_previously_consumed_view_remain_in_inventory() -> None:
                 )
             }
         ),
-        dissolution_flags=MappingProxyType({0: MappingProxyType({"working": flags})}),
         replay_artifacts=empty,
         authority=SolutionAuthority(values=empty, replay=empty),
     )
@@ -184,9 +182,9 @@ def test_owned_and_every_previously_consumed_view_remain_in_inventory() -> None:
     )
     solution._consumed_views[("second", "params")] = cast(
         "_ResolvedSolution",
-        ({0: {"working": arrays[5]}}, {}, {0: {"working": arrays[6]}}, {}, {}),
+        ({0: {"working": arrays[5]}}, {0: {"working": arrays[6]}}, {}, {}, {}),
     )
-    expected = (*_backing_values(solution), *arrays, flags)
+    expected = (*_backing_values(solution), *arrays)
     assert {id(array) for array in _buffers(solution)} == {
         id(array) for array in expected
     }
@@ -217,7 +215,7 @@ def test_consumed_reader_retains_snapshot_authorities_and_grid_context() -> None
     )
     solution = replace(base, replay_artifacts=ArtifactStore())
     solution._consumed_views[("consumer", "params")] = cast(
-        "_ResolvedSolution", ({}, {}, {}, {0: {"working": reader}}, {})
+        "_ResolvedSolution", ({}, {}, {0: {"working": reader}}, {}, {})
     )
     authority = base._artifact_authority[ref]
     binding = authority_module._ARTIFACT_AUTHORITY_TEMPLATE_BINDINGS[id(authority)]
@@ -326,103 +324,3 @@ def test_builtin_nested_policy_metadata_has_no_hidden_payload() -> None:
     assert {id(array) for array in _buffers(solution)} == {
         id(array) for array in _backing_values(solution)
     }
-
-
-def test_owned_case_u_children_are_inventoried_without_readers(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Charge original child arrays once; refuse foreign record subclasses."""
-    from _lcm.egm.carry import EGMCarry  # noqa: PLC0415
-    from _lcm.egm.current_iid_case_u_replay import (  # noqa: PLC0415
-        CASE_U_FUTURE_REPLAY,
-        CaseUReplayChildren,
-        CaseUReplayInput,
-    )
-    from lcm.solver_api import ArtifactRef  # noqa: PLC0415
-
-    solution = _make_values_only_solution(value=[1.0], dtype="float32")
-    arrays = tuple(jnp.arange(3, dtype=jnp.float32) + i for i in range(5))
-    scale = jnp.asarray(0.0, dtype=jnp.float32)
-    child = EGMCarry(
-        endog_grid=arrays[0],
-        value=arrays[1],
-        marginal_utility=arrays[2],
-        taste_shock_scale=scale,
-    )
-    future = CaseUReplayChildren(
-        source="parent",
-        period=0,
-        child_names=("first", "second"),
-        child_values=(child, replace(child, value=arrays[3])),
-    )
-    empty = MappingProxyType({})
-    ref = ArtifactRef(period=0, regime="parent", key=CASE_U_FUTURE_REPLAY)
-    view = OwnedSolutionView(
-        model_instance_id="owner",
-        params_fingerprint="0" * 64,
-        values=empty,
-        simulation_policies=empty,
-        dissolution_flags=empty,
-        replay_artifacts=MappingProxyType({ref: future}),
-        authority=SolutionAuthority(values=empty, replay=empty),
-    )
-    object.__setattr__(solution, "_engine_view", view)
-    consumed = CaseUReplayInput(
-        payload=replace(
-            future,
-            child_names=("third",),
-            child_values=(replace(child, value=arrays[4]),),
-        )
-    )
-    solution._consumed_views[("u", "params")] = (
-        empty,
-        empty,
-        empty,
-        empty,
-        MappingProxyType({0: MappingProxyType({"parent": consumed})}),
-        empty,
-    )
-
-    def forbidden(_self: CaseUReplayChildren) -> Never:
-        raise AssertionError("A replay reader was built during budget inventory")
-
-    monkeypatch.setattr(CaseUReplayChildren, "children", property(forbidden))
-    actual = _buffers(solution)
-    assert {id(array) for array in actual} == {
-        id(array) for array in (*_backing_values(solution), *arrays, scale)
-    }
-    assert len(actual) == len({id(array) for array in actual})
-
-    class ForeignInput(CaseUReplayInput):
-        """Unlisted authenticated-reader subclasses remain outside the census."""
-
-    solution._consumed_views[("foreign", "params")] = (
-        empty,
-        empty,
-        empty,
-        empty,
-        MappingProxyType(
-            {0: MappingProxyType({"parent": ForeignInput(payload=consumed.payload)})}
-        ),
-        empty,
-    )
-    with pytest.raises(ExecutionPlanningError, match="ForeignInput"):
-        _buffers(solution)
-    del solution._consumed_views[("foreign", "params")]
-
-    class ForeignChildren(CaseUReplayChildren):
-        """An unlisted record may own storage outside the built-in schema."""
-
-    foreign = ForeignChildren(
-        source=future.source,
-        period=future.period,
-        child_names=future.child_names,
-        child_values=future.child_values,
-    )
-    object.__setattr__(
-        solution,
-        "_engine_view",
-        replace(view, replay_artifacts=MappingProxyType({ref: foreign})),
-    )
-    with pytest.raises(ExecutionPlanningError, match="unsupported retained"):
-        _buffers(solution)

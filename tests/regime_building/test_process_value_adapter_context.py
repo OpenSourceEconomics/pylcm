@@ -104,7 +104,7 @@ def _model(*, reader_mode: str, reverse: bool, enable_jit: bool) -> Model:
                 n_std=2.0,
                 n_points=5,
                 gauss_hermite=False,
-                simulate_draws="nodes",
+                simulated_draws="nodes",
             )
         },
         actions=a_actions,

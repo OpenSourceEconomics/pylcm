@@ -149,7 +149,7 @@ grid-search-pair = "python -m benchmarks.grid_search_pair"
 [tool.pixi.feature.benchmarks.pypi-dependencies]
 # ACA benchmark uses folded health-cost shocks and additive asset transitions.
 # Keep an exact revision so benchmark model construction is reproducible.
-aca-model = { git = "https://github.com/OpenSourceEconomics/aca-model.git", rev = "bfcbbc3fc2be736a7ff2e976f12e14a70e60001d" }
+aca-model = { git = "https://github.com/OpenSourceEconomics/aca-model.git", rev = "2b9f127d3f4e0ca894b58a63c06e942be64cba6e" }
 [tool.pixi.feature.cuda12]
 platforms = [ "linux-64-cuda12" ]
 [tool.pixi.feature.cuda12.target.linux-64.dependencies]
@@ -491,6 +491,7 @@ ini_options.addopts = [
 ini_options.markers = [
   "ci(tier, paths): bounded CI policy tier and relevant source paths",
   "coverage(backends, precisions): backend and precision coverage obligations",
+  "egm_acceptance: compact S10 EGM acceptance set (issue 618 Batch 4)",
   "gpu: Tests that require a GPU (skipped on CPU-only machines)",
   "illustrative: Tests are designed for illustrative purposes",
   """\

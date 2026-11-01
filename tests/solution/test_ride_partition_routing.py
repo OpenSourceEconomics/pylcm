@@ -1,4 +1,4 @@
-"""The four NBEGM partition sites use the shared EGM batching contract."""
+"""The five NBEGM partition sites use the shared EGM batching contract."""
 
 import ast
 from collections import Counter
@@ -7,11 +7,12 @@ from pathlib import Path
 from _lcm.solution import nbegm
 
 
-def test_all_four_production_sites_call_the_shared_dispatcher() -> None:
-    """The source routes two ride and two branch axes through one dispatcher.
+def test_all_five_production_sites_call_the_shared_dispatcher() -> None:
+    """The source routes two ride and three branch axes through one dispatcher.
 
     Ride: the tile-local core's cell loop and the per-interval continuation
-    read. Branch: the continuation read's and the envelope solve's branch loops.
+    read. Branch: the continuation read's, the envelope solve's and the owned
+    current-IID solve's branch loops.
     """
     tree = ast.parse(Path(nbegm.__file__).read_text(encoding="utf-8"))
     names = Counter(
@@ -20,4 +21,4 @@ def test_all_four_production_sites_call_the_shared_dispatcher() -> None:
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
     )
 
-    assert names["map_over_leading_axis"] == 4
+    assert names["map_over_leading_axis"] == 5

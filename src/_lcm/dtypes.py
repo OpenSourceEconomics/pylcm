@@ -8,13 +8,11 @@ boundary it carries the canonical dtype unchanged through the simulate
 stack; downstream code does not re-cast.
 """
 
-from typing import Protocol, runtime_checkable
-
 import jax
 import jax.numpy as jnp
 import numpy as np
 
-from lcm.typing import FloatND, IntND, ValueND
+from lcm.typing import CanonicalArrayWriter, FloatND, IntND, ValueND
 
 _INT32_MIN = int(np.iinfo(np.int32).min)
 _INT32_MAX = int(np.iinfo(np.int32).max)
@@ -23,17 +21,6 @@ _FLOAT32_MAX = float(np.finfo(np.float32).max)
 # A numeric value crossing the boundary: a Python or NumPy scalar, or a host or
 # device array.
 type _NumericValue = int | float | np.integer | np.floating | np.ndarray | ValueND
-
-
-@runtime_checkable
-class CanonicalArrayWriter(Protocol):
-    """Allocate an already validated numeric leaf at an explicit destination."""
-
-    def __call__(
-        self, *, value: np.ndarray | jax.Array, dtype: np.dtype, name: str
-    ) -> jax.Array:
-        """Write one canonical leaf without changing its preceding validation."""
-        ...
 
 
 def canonical_float_dtype() -> type:  # noqa: PAN006 - JAX's scalar types are classes of a private metaclass, `Any` in JAX's stubs

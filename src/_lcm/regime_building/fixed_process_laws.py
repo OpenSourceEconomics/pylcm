@@ -28,7 +28,6 @@ from typing import cast, overload
 import jax.numpy as jnp
 from dags.tree import qname_from_tree_path, tree_path_from_qname
 
-from _lcm.dtypes import CanonicalArrayWriter
 from _lcm.grids import Grid
 from _lcm.params.processing import (
     cast_params_to_canonical_dtypes,
@@ -67,7 +66,6 @@ def bind_fixed_process_laws(
     *,
     user_regimes: Mapping[RegimeName, UserRegime],
     fixed_params: UserParams,
-    array_writer: CanonicalArrayWriter | None = None,
 ) -> tuple[MappingProxyType[RegimeName, UserRegime], UserParams, frozenset[str]]:
     """Bake `fixed_params` entries naming a process's law into that process.
 
@@ -94,7 +92,7 @@ def bind_fixed_process_laws(
 
     params_flat = flatten_regime_namespace(fixed_params)
     bound_values, consumed_keys = _resolve_process_law_params(
-        user_regimes=user_regimes, params_flat=params_flat, array_writer=array_writer
+        user_regimes=user_regimes, params_flat=params_flat
     )
     if not bound_values:
         return MappingProxyType(dict(user_regimes)), fixed_params, frozenset()
@@ -126,7 +124,6 @@ def _resolve_process_law_params(
     *,
     user_regimes: Mapping[RegimeName, UserRegime],
     params_flat: Mapping[QualifiedName, UserParamsLeaf],
-    array_writer: CanonicalArrayWriter | None = None,
 ) -> tuple[dict[RegimeName, dict[StateName, dict[str, _ProcessField]]], set[str]]:
     """Resolve every runtime process parameter against the user's `fixed_params`.
 
@@ -186,7 +183,6 @@ def _resolve_process_law_params(
             "FlatParams",
             MappingProxyType({k: MappingProxyType(v) for k, v in raw.items()}),
         ),
-        array_writer=array_writer,
     )
 
     resolved: dict[RegimeName, dict[StateName, dict[str, _ProcessField]]] = {}

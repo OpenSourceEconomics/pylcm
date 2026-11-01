@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING, Literal, NamedTuple, cast
 import jax
 import jax.numpy as jnp
 
-from _lcm.egm.projected_continuation import ProjectedChildAuthority
 from _lcm.post_decision_bound import PostDecisionBoundSpec
 from _lcm.typing import (
     DataclassInstance,
@@ -35,9 +34,7 @@ from lcm.typing import (
 
 type FeasibilityCounts = tuple[IntND, IntND]
 type CountedGridSearchOutput = (
-    tuple[FloatND, IntND, IntND]
-    | tuple[FloatND, BoolND, IntND, IntND]
-    | tuple[FloatND, IntND, IntND, ScalarBool]
+    tuple[FloatND, IntND, IntND] | tuple[FloatND, IntND, IntND, ScalarBool]
 )
 
 if TYPE_CHECKING:
@@ -525,30 +522,10 @@ def validate_runtime_bound_status(
             )
 
 
-def _is_projected_status(
-    *,
-    authority: PostDecisionBoundSpec | ProjectedChildAuthority,
-    target: RegimeName,
-    period: int,
-    nonfinite: bool,
-    invalid_grid: bool,
-) -> bool:
-    """Authenticate projected provenance and prohibit fictitious floor statuses."""
-    if not isinstance(authority, ProjectedChildAuthority):
-        return False
-    if target != authority.producer or period != authority.period:
-        raise TypeError("Projected child status has a different producer/date.")
-    if nonfinite or invalid_grid:
-        raise TypeError("Projected child reads cannot report a floor read.")
-    return True
-
-
 def validate_query_input_status(
     *,
     statuses: tuple[QueryInputStatus, ...] | None,
-    authorities: tuple[
-        tuple[RegimeName, int, PostDecisionBoundSpec | ProjectedChildAuthority], ...
-    ],
+    authorities: tuple[tuple[RegimeName, int, PostDecisionBoundSpec], ...],
 ) -> None:
     """Accept all child arithmetic before interpreting any query coverage failure."""
     if len(statuses or ()) != len(authorities):
@@ -565,15 +542,6 @@ def validate_query_input_status(
     for (target, period, bound), (nonfinite, invalid_grid, _) in zip(
         authorities, flags, strict=True
     ):
-        if isinstance(bound, ProjectedChildAuthority):
-            _is_projected_status(
-                authority=bound,
-                target=target,
-                period=period,
-                nonfinite=bool(nonfinite),
-                invalid_grid=bool(invalid_grid),
-            )
-            continue
         if nonfinite or invalid_grid:
             declarations = ", ".join(bound.declaration_names)
             reason = (
@@ -589,12 +557,6 @@ def validate_query_input_status(
         authorities, flags, strict=True
     ):
         if missing:
-            if isinstance(bound, ProjectedChildAuthority):
-                raise InvalidValueFunctionError(
-                    "Invalid projected continuation or unsupported pre-shock "
-                    f"domain in regime '{target}', period {period}, "
-                    f"liquid state '{bound.liquid_state}'."
-                )
             declarations = ", ".join(bound.declaration_names)
             raise InvalidValueFunctionError(
                 f"query_coverage_missing for borrowing bound '{declarations}' in "
@@ -769,6 +731,9 @@ class CountedGridSearch:
     ) -> CountedGridSearchOutput | BoundedResult[CountedGridSearchOutput]:
         """Count state cells, treating a household as a single decision."""
         evaluated = self.function(**kwargs)
+        bounded = evaluated if type(evaluated) is BoundedResult else None
+        if bounded is not None:
+            evaluated = bounded.output
         current_iid_invalid = None
         if self.current_iid:
             value, empty, invalid = cast(
@@ -776,27 +741,20 @@ class CountedGridSearch:
             )
             current_iid_invalid = jnp.any(invalid)
             evaluated = (value, empty)
-        value, empty = cast(
-            "tuple[FloatND, BoolND]",
-            evaluated.output if type(evaluated) is BoundedResult else evaluated,
-        )
+        value, empty = cast("tuple[FloatND, BoolND]", evaluated)
         infinite = jnp.isinf(value)
         if self.collective:
             infinite = jnp.any(infinite, axis=-1)
         empty_count = jnp.sum(empty, dtype=jnp.int32)
         other_inf_count = jnp.sum(infinite & ~empty, dtype=jnp.int32)
-        output: CountedGridSearchOutput = (
-            (value, empty, empty_count, other_inf_count)
-            if self.collective
-            else (value, empty_count, other_inf_count)
-        )
+        output: CountedGridSearchOutput = (value, empty_count, other_inf_count)
         if self.current_iid:
-            return cast("CountedGridSearchOutput", (*output, current_iid_invalid))
+            output = cast("CountedGridSearchOutput", (*output, current_iid_invalid))
         return (
             BoundedResult[CountedGridSearchOutput](
-                output=output, bound_status=evaluated.bound_status
+                output=output, bound_status=bounded.bound_status
             )
-            if type(evaluated) is BoundedResult
+            if bounded is not None
             else output
         )
 

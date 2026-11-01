@@ -23,8 +23,8 @@ from _lcm.egm.upper_envelope.fues import (
     _intersect_lines,
     refine_envelope,
 )
-from _lcm.egm.upper_envelope.mss import refine_envelope as refine_envelope_mss
-from tests.conftest import X64_ENABLED
+from _lcm.egm.upper_envelope.segment_envelope import refine_envelope_exact
+from tests.conftest import EXACT_KERNEL_SKIP_REASON, X64_ENABLED
 
 _ATOL = 1e-8 if X64_ENABLED else 1e-5
 
@@ -302,6 +302,7 @@ def test_carry_value_row_is_the_unfloored_envelope_while_published_v_is_floored(
         n_kept=jnp.int32(3),
         n_pad=n_pad,
         publish_resources=jnp.array([2.0]),
+        lowest_euler_point=refined_grid[0],
         borrowing_limit=jnp.asarray(0.0),
         utility_of_action=jnp.log,
         discounted_expected_value_at_limit=jnp.asarray(0.0),
@@ -429,8 +430,8 @@ def test_exact_node_tie_ordering_is_invariant_to_input_order():
         "coincident-group reducer keeps pointwise node maxima, so a branch lower at "
         "a shared node but owning the adjacent interval loses its slope anchor. The "
         "fast-scan lineage forbids coincident abscissae rather than solving them; "
-        "the correct backend for exact coincident-node handling is `mss` — pinned by "
-        "test_mss_resolves_the_coincident_interval_ownership. This strict xfail is a "
+        "the correct backend for exact coincident-node handling is `exact` — pinned by "
+        "test_exact_resolves_the_coincident_interval_ownership. This strict xfail is a "
         "sentinel: it fails loudly if FUES ever silently changes here."
     ),
     strict=True,
@@ -443,7 +444,7 @@ def test_pointwise_lower_branch_that_owns_an_interval_is_retained():
     `[9.92, ...]`. The exact read at R=9.5 is A's `(V,c)=(4.9375, 8)`. FUES keeps
     only the pointwise node maxima, drops A@10 and B@9, and bridges to B's read —
     so this assertion of the *correct* value is expected to fail on FUES. Use
-    `envelope="mss"` when exact coincident-node correctness is required.
+    `ExactEnvelope` when exact coincident-node correctness is required.
     """
     grid = jnp.asarray([9.0, 10.0, 9.0, 10.0, 11.0])
     policy = jnp.asarray([8.0, 8.0, 4.0, 4.0, 4.0])
@@ -461,22 +462,22 @@ def test_pointwise_lower_branch_that_owns_an_interval_is_retained():
     )
 
 
-def test_mss_resolves_the_coincident_interval_ownership():
-    """The `mss` backend reads the correct branch where FUES bridges the crossing.
+@pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
+def test_exact_resolves_the_coincident_interval_ownership():
+    """The exact backend reads the correct branch where FUES bridges the crossing.
 
     The escape hatch for the pinned FUES coincident-node limitation
     (`test_pointwise_lower_branch_that_owns_an_interval_is_retained`): the same
     two branches — A (`c=8`) owning `[9, 9.92]`, B (`c=4`) owning `[9.92, ...]`,
-    both sampled at R=9,10 — read at R=9.5 through `mss` give A's exact
-    `(V,c)=(4.9375, 8)`. The segment-envelope method keeps whole branches and
-    resolves interval ownership by construction, so the pointwise-lower interval
-    owner is never dropped.
+    both sampled at R=9,10 — read at R=9.5 through `ExactEnvelope` give A's exact
+    `(V,c)=(4.9375, 8)`. The exact envelope settles ownership per node cell, so
+    the pointwise-lower interval owner is never dropped.
     """
     grid = jnp.asarray([9.0, 10.0, 9.0, 10.0, 11.0])
     policy = jnp.asarray([8.0, 8.0, 4.0, 4.0, 4.0])
     value = jnp.asarray([4.875, 5.0, 4.76, 5.01, 5.26])
 
-    g, p, v, _ = refine_envelope_mss(
+    g, p, v, _ = refine_envelope_exact(
         endog_grid=grid, policy=policy, value=value, n_refined=12
     )
     kept = _kept_records(grid=g, policy=p, value=v)

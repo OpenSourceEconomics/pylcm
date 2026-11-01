@@ -15,8 +15,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from _lcm.dtypes import canonical_float_dtype
-from _lcm.egm.current_iid_replay_inputs import CurrentIIDReplayInputs
-from _lcm.egm.published_policy import NNBEGMSimPolicy
+from _lcm.egm.published_policy import EGMSimPolicy, NBEGMGridPolicy, NNBEGMSimPolicy
 from _lcm.engine import Regime, StateActionSpace
 from _lcm.execution.core_program import ValueRead
 from _lcm.execution.value_transfer import (
@@ -28,11 +27,9 @@ from _lcm.execution.value_transfer import (
 )
 from _lcm.grids import ContinuousGrid, DiscreteGrid
 from _lcm.processes import _ContinuousStochasticProcess
-from _lcm.regime_building.projected_forward import ProjectedForwardInputs
 from _lcm.simulation import (
     population_operations,
 )
-from _lcm.simulation.arrival_routing import record_arrival_entries
 from _lcm.simulation.assembly import (
     _concatenate_arrays,
     _slice_array,
@@ -85,7 +82,11 @@ from _lcm.simulation.membership import (
     _empty_subject_membership,
 )
 from _lcm.simulation.operand_placement import subject_operand_sharding
-from _lcm.simulation.policy_diagnostics import dropped_candidate_counts
+from _lcm.simulation.participation_routing import record_participation_entries
+from _lcm.simulation.participation_values import (
+    is_participation_surface,
+    stored_participation_surface,
+)
 from _lcm.simulation.program_arguments import gate_route_arguments
 from _lcm.simulation.programs import forward_regimes_by_period
 from _lcm.simulation.random import (
@@ -122,6 +123,7 @@ from _lcm.transition_checks import (
 )
 from _lcm.typing import (
     FlatParams,
+    PeriodToRegimeToParticipationSurfaces,
     RegimeName,
     RegimeNamesToIds,
     ShapeDtypePytree,
@@ -129,7 +131,7 @@ from _lcm.typing import (
 )
 from _lcm.utils.logging import LogLevel, get_logger
 from lcm.exceptions import ExecutionPlanningError
-from lcm.solver_api import DISSOLUTION_FLAG, SIMULATION_POLICY
+from lcm.solver_api import SIMULATION_POLICY
 
 type _FiniteRankOutput = tuple[
     Mapping[str, jax.ShapeDtypeStruct], jax.ShapeDtypeStruct, jax.ShapeDtypeStruct
@@ -150,7 +152,6 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
     flat_params: FlatParams,
     base_spaces: Mapping[str, StateActionSpace],
     values: Mapping[int, Mapping[str, jax.Array]],
-    flags: Mapping[int, Mapping[str, jax.Array]] = MappingProxyType({}),
     ages: TimeAxis,
     initial_conditions: Mapping[str, jax.Array],
     regime_names_to_ids: RegimeNamesToIds,
@@ -164,8 +165,9 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
     log_level: LogLevel,
     runtime_checks: bool = True,
     policies: Mapping[int, Mapping[RegimeName, SimulationPolicy]] | None = None,
-    current_iid_replay_inputs: CurrentIIDReplayInputs = MappingProxyType({}),
-    projected_forward_inputs: ProjectedForwardInputs = MappingProxyType({}),
+    participation_surfaces: PeriodToRegimeToParticipationSurfaces = MappingProxyType(
+        {}
+    ),
     max_compilation_workers: int | None = None,
     group_sizes: tuple[int, ...] | None = None,
     current_iid_override_schema: CurrentIIDOverrideSchema = (),
@@ -189,6 +191,7 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
     """
     # `simulate` reaches this module through chunk admission, so import lazily.
     from _lcm.simulation.simulate import (  # noqa: PLC0415
+        _active_subjects,
         _current_iid_invalid,
         _first_empty_action_row,
     )
@@ -282,7 +285,6 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
                     base=base_spaces[name],
                     base_spaces=base_spaces,
                     values=values,
-                    flags=flags,
                     ages=ages,
                     n_subjects=n_subjects,
                     widths=widths,
@@ -290,10 +292,6 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
                     ordinary_key=key,
                     taste_key=taste_key,
                     policy=(policies or {}).get(period, {}).get(name),
-                    projected_forward_inputs=projected_forward_inputs,
-                    current_iid_replay_input=current_iid_replay_inputs.get(
-                        period, {}
-                    ).get(name),
                     wave=wave,
                     current_iid_override_schema=current_iid_override_schema,
                 )
@@ -364,6 +362,7 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
             regime_names_to_ids=regime_names_to_ids,
             flat_params=flat_params,
             values=values,
+            surfaces=participation_surfaces,
             ages=ages,
             key=key,
             taste_key=taste_key,
@@ -395,7 +394,6 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
                 base=base_spaces[name],
                 base_spaces=base_spaces,
                 values=values,
-                flags=flags,
                 ages=ages,
                 n_subjects=n_subjects,
                 widths=widths,
@@ -403,10 +401,6 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
                 ordinary_key=key,
                 taste_key=taste_key,
                 policy=(policies or {}).get(period, {}).get(name),
-                projected_forward_inputs=projected_forward_inputs,
-                current_iid_replay_input=current_iid_replay_inputs.get(period, {}).get(
-                    name
-                ),
                 current_iid_override_schema=current_iid_override_schema,
                 prepared_decision=prepared_exits.get(name),
             )
@@ -470,99 +464,12 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
                     subject_arg_names=("mask",),
                     subject_outputs=True,
                 )
-            elif regime.simulation.uses_case_u_reconstruction:
-                from _lcm.simulation.case_u_replay import (  # noqa: PLC0415
-                    case_u_profile_output,
-                    case_u_status,
-                )
-
-                replayed = case_u_profile_output(
-                    output=_record_core(
-                        inventory=inventory,
-                        profile=cores["decision"],
-                        family="decision",
-                    ),
-                )
-                inventory.operation(
-                    function=case_u_status,
-                    arguments={
-                        "law_invalid": replayed.law_invalid,
-                        "invalid": replayed.invalid,
-                        "feasible": replayed.feasible,
-                        "in_regime": mask,
-                    },
-                    subject_arg_names=(
-                        "law_invalid",
-                        "invalid",
-                        "feasible",
-                        "in_regime",
-                    ),
-                )
-                actions, value, physical = (
-                    replayed.actions,
-                    replayed.value,
-                    replayed.physical,
-                )
-                fallback = inventory.operation(
-                    function=_empty_fallback,
-                    arguments={"mask": mask},
-                    subject_arg_names=("mask",),
-                    subject_outputs=True,
-                )
-            elif regime.simulation.case_r_replay_spec is not None:
-                from _lcm.simulation.case_r_replay import (  # noqa: PLC0415
-                    case_r_profile_output,
-                    case_r_status,
-                )
-
-                replayed = case_r_profile_output(
-                    output=_record_core(
-                        inventory=inventory,
-                        profile=cores["decision"],
-                        family="decision",
-                    ),
-                )
-                inventory.operation(
-                    function=case_r_status,
-                    arguments={
-                        "law_invalid": replayed.law_invalid,
-                        "invalid": replayed.invalid,
-                        "feasible": replayed.feasible,
-                        "in_regime": mask,
-                    },
-                    subject_arg_names=(
-                        "law_invalid",
-                        "invalid",
-                        "feasible",
-                        "in_regime",
-                    ),
-                )
-                actions, value, physical = (
-                    replayed.actions,
-                    replayed.value,
-                    replayed.physical,
-                )
-                fallback = inventory.operation(
-                    function=_empty_fallback,
-                    arguments={"mask": mask},
-                    subject_arg_names=("mask",),
-                    subject_outputs=True,
-                )
             elif regime.simulation.replay_route.consumer_route == "nnbegm_finite":
-                bank = cast(
-                    "tuple[jax.ShapeDtypeStruct, ...]",
-                    _record_core(
-                        inventory=inventory,
-                        profile=cores["policy_prepare"],
-                        family="policy_prepare",
-                    ),
+                _record_core(
+                    inventory=inventory,
+                    profile=cores["policy_prepare"],
+                    family="policy_prepare",
                 )
-                if runtime_checks:
-                    inventory.operation(
-                        function=dropped_candidate_counts,
-                        arguments={"live": bank[2], "represented": bank[3]},
-                        subject_arg_names=("live", "represented"),
-                    )
                 rank_outputs = cast(
                     "tuple[ShapeDtypePytree, ...]",
                     _record_core(
@@ -573,6 +480,18 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
                 )
                 actions, value, fallback = cast("_FiniteRankOutput", rank_outputs[:3])
             else:
+                if "policy_first" in cores:
+                    inventory.operation(
+                        function=_active_subjects,
+                        arguments={"in_regime": mask, "genuine": mask},
+                        subject_arg_names=("in_regime", "genuine"),
+                        subject_outputs=True,
+                    )
+                    _record_core(
+                        inventory=inventory,
+                        profile=cores["policy_first"],
+                        family="policy_first",
+                    )
                 decision = cores["decision"]
                 decision_outputs = cast(
                     "tuple[jax.ShapeDtypeStruct, ...]",
@@ -660,7 +579,6 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
                     own_roles=own_roles,
                     flat_params=flat_params,
                     values=values,
-                    flags=flags,
                     age=jax.ShapeDtypeStruct((), ages.values.dtype, sharding=shared),
                     widths=widths,
                     scalar_int=scalar_int,
@@ -703,10 +621,8 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
             source=_period_copy_reservation(
                 regimes=forward_regimes[period],
                 values=values,
-                flags=flags,
                 policies=policies,
-                current_iid_replay_inputs=current_iid_replay_inputs,
-                projected_forward_inputs=projected_forward_inputs,
+                participation_surfaces=participation_surfaces,
                 period=period,
                 devices=devices,
             ),
@@ -759,7 +675,6 @@ def _profile_next_subjects(
     own_roles: jax.ShapeDtypeStruct,
     flat_params: FlatParams,
     values: Mapping[int, Mapping[str, jax.Array]],
-    flags: Mapping[int, Mapping[str, jax.Array]] = MappingProxyType({}),
     age: jax.ShapeDtypeStruct,
     widths: Mapping[str, int],
     scalar_int: jax.ShapeDtypeStruct,
@@ -926,19 +841,11 @@ def _profile_next_subjects(
                 if target in values.get(period + 1, {})
             }
         )
-        edge_flags = MappingProxyType(
-            {
-                target: flags[period + 1][target]
-                for target in edge_values
-                if target in flags.get(period + 1, {})
-            }
-        )
         gate_profile = _profile_program(
             runtime=inventory.runtime,
             program=regime.simulation.programs.gate_route[period],
             arguments=gate_route_arguments(
                 edge_values=abstract_tree(tree=edge_values, sharding=shared),
-                edge_flags=abstract_tree(tree=edge_flags, sharding=shared),
                 next_states=gated_route_candidates(regime=regime, next_states=carrier),
                 new_subject_regime_ids=new_ids,
                 subjects_in_regime=mask,
@@ -993,15 +900,15 @@ def _profile_next_subjects(
             },
             subject_outputs=True,
         )
-    arrival_targets = tuple(
+    participation_targets = tuple(
         target
         for target in names
         if period + 1 in regimes[target].simulation.exit_queries
-        and name in regimes[target].simulation.exit_queries[period + 1].arrivals
+        and name in regimes[target].simulation.exit_queries[period + 1].participation
     )
-    if arrival_targets:
+    if participation_targets:
         inventory.operation(
-            function=record_arrival_entries,
+            function=record_participation_entries,
             arguments={
                 "drawn_ids": drawn_arrival_ids,
                 "routed_ids": new_ids,
@@ -1011,7 +918,7 @@ def _profile_next_subjects(
             static_arguments={
                 "source_id": int(regime_names_to_ids[name]),
                 "target_ids": tuple(
-                    int(regime_names_to_ids[target]) for target in arrival_targets
+                    int(regime_names_to_ids[target]) for target in participation_targets
                 ),
             },
             subject_arg_names=("drawn_ids", "routed_ids", "holders", "entries"),
@@ -1458,36 +1365,17 @@ def _period_copy_reservation(
     *,
     regimes: Mapping[str, Regime],
     values: Mapping[int, Mapping[str, jax.Array]],
-    flags: Mapping[int, Mapping[str, jax.Array]] = MappingProxyType({}),
     period: int,
     devices: tuple[jax.Device, ...],
     policies: Mapping[int, Mapping[RegimeName, SimulationPolicy]] | None = None,
-    current_iid_replay_inputs: CurrentIIDReplayInputs = MappingProxyType({}),
-    projected_forward_inputs: ProjectedForwardInputs = MappingProxyType({}),
+    participation_surfaces: PeriodToRegimeToParticipationSurfaces = MappingProxyType(
+        {}
+    ),
 ) -> dict[jax.Device, int]:
     """Reserve declared nonaligned copies once per period/address/ordered layout."""
     policy_sources = _policy_read_sources(
         policies=(policies or {}).get(period, {}), period=period
     )
-    from _lcm.egm.current_iid_replay_inputs import (  # noqa: PLC0415
-        native_replay_payload,
-        native_replay_program,
-    )
-
-    for replay in current_iid_replay_inputs.get(period, {}).values():
-        leaves = jax.tree.leaves(native_replay_payload(replay=replay))
-        if not all(isinstance(leaf, jax.Array) for leaf in leaves):
-            raise ExecutionPlanningError(
-                "Case-R copy profiles require canonical JAX rows."
-            )
-        policy_sources.update(
-            (read.target, leaf)
-            for read, leaf in zip(
-                replay.reads(core=native_replay_program(replay=replay)),
-                leaves,
-                strict=True,
-            )
-        )
     reads = tuple(
         read
         for regime in regimes.values()
@@ -1498,7 +1386,7 @@ def _period_copy_reservation(
             regime.simulation.programs.gate_route,
             regime.simulation.programs.exit_full,
             regime.simulation.programs.exit_participating,
-            *regime.simulation.programs.arrival_families,
+            *regime.simulation.programs.participation_families,
         )
         if period in family
         for read in family[period].requirements.value_reads
@@ -1516,9 +1404,8 @@ def _period_copy_reservation(
         source = _retained_read_source(
             read=read,
             values=values,
-            flags=flags,
             policy_sources=policy_sources,
-            projected_forward_inputs=projected_forward_inputs,
+            participation_surfaces=participation_surfaces,
         )
         required = simulation_value_sharding(
             stored_sharding=source.sharding, devices=devices
@@ -1584,9 +1471,10 @@ def _policy_read_sources(
     """Index canonical retained finite leaves by the actual period-owner addresses."""
     sources = {}
     for name, policy in policies.items():
-        if not isinstance(policy, NNBEGMSimPolicy):
+        if not isinstance(policy, NNBEGMSimPolicy | EGMSimPolicy | NBEGMGridPolicy):
             raise ExecutionPlanningError(
-                "Chunk policy copies require a finite retained payload schema."
+                "Chunk policy copies require a finite, flat EGM or NB-EGM payload "
+                "schema."
             )
         leaves = jax.tree.leaves(policy)
         if not all(isinstance(leaf, jax.Array) for leaf in leaves):
@@ -1610,26 +1498,19 @@ def _retained_read_source(
     *,
     read: ValueRead,
     values: Mapping[int, Mapping[str, jax.Array]],
-    flags: Mapping[int, Mapping[str, jax.Array]],
     policy_sources: Mapping[ValueArtifactAddress, jax.Array],
-    projected_forward_inputs: ProjectedForwardInputs = MappingProxyType({}),
+    participation_surfaces: PeriodToRegimeToParticipationSurfaces = MappingProxyType(
+        {}
+    ),
 ) -> jax.Array:
     """Resolve only the declared value and finite-policy storage classes."""
-    if read.target.kind is ValueArtifactKind.CONTINUATION_LEAF:
-        if read.target.regime not in projected_forward_inputs.get(
-            read.target.period, {}
-        ):
-            raise ExecutionPlanningError(
-                "Projected copy profile lacks its original source."
-            )
-        leaf = projected_forward_inputs[read.target.period][
-            read.target.regime
-        ].leaves()[read.target.leaf_path]
-        if not isinstance(leaf, jax.Array):
-            raise ExecutionPlanningError(
-                "Projected copy profile requires actual retained arrays."
-            )
-        return leaf
+    if is_participation_surface(address=read.target):
+        return cast(
+            "jax.Array",
+            stored_participation_surface(
+                address=read.target, surfaces=participation_surfaces
+            ),
+        )
     if read.target.kind is ValueArtifactKind.REGIME_VALUE:
         return values[read.target.period][read.target.regime]
     if (
@@ -1638,11 +1519,6 @@ def _retained_read_source(
         and read.target in policy_sources
     ):
         return policy_sources[read.target]
-    if (
-        read.target.kind is ValueArtifactKind.REPLAY_ARTIFACT_LEAF
-        and read.target.artifact_key == DISSOLUTION_FLAG
-    ):
-        return flags[read.target.period][read.target.regime]
     raise ExecutionPlanningError(
         "Chunk copies require an explicit retained artifact schema for "
         f"{read.target!r}."

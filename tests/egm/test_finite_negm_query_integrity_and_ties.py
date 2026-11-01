@@ -362,7 +362,6 @@ def test_full_three_jet_mixed_tie_uses_canonical_pointwise_owner(
     assert bool(raw.ordinary.supported)
     np.testing.assert_array_equal(raw.ordinary.value, 0.0)
     np.testing.assert_array_equal(raw.ordinary.marginal, 35.0 / 32.0)
-    np.testing.assert_array_equal(jnp.stack(raw.right_germ[1:]), [1.0, -1.0, 3.0])
     adjusted = {**pool, "new_stock": jnp.asarray(1.0)}
     preferences = query.build_preferences(adjusted)
     np.testing.assert_array_equal(preferences.utility(jnp.asarray(1.0)), 0.0)
@@ -381,17 +380,17 @@ def test_full_three_jet_mixed_tie_uses_canonical_pointwise_owner(
 
 
 @pytest.mark.parametrize(
-    "corner_tied", [False, True], ids=["ordinary-only-germ", "corner-presence"]
+    "corner_tied", [False, True], ids=["ordinary-only", "corner-presence"]
 )
 def test_tied_corner_presence_survives_its_local_row_priority(
     *, corner_tied: bool
 ) -> None:
-    """A tied actual corner never changes ordinary-only germ ownership.
+    """A tied actual corner never changes the lowest-O ordinary tie owner.
 
     The corner is an actual-state object that competes with the blended
     ordinary read, not inside a row's nodewise O maximum, and a supported
-    ordinary read wins an exact tie. So the right germ alone decides between
-    the tied O rows, with or without a corner at the same value.
+    ordinary read wins an exact tie. So the lowest tied O row owns the read,
+    with or without a corner at the same value.
     """
     query, pool = make_canonical_query()
     grid, value, marginal, data = _bank(query=query, keeper_row=True)
@@ -432,11 +431,11 @@ def test_tied_corner_presence_survives_its_local_row_priority(
             data, corner_continuation=jnp.full_like(data.corner_continuation, -100.0)
         )
     # O0 row V0,M17 and O1 row V0,M1 tie; the O1 corner also has V0. The
-    # ordinary-only right germ chooses O1 either way.
+    # value argmax chooses the lowest O, O0, either way.
     result = _read(query=query, pool=pool, bank=(grid, value, marginal, data))
     np.testing.assert_array_equal(result.coverage_missing, [False])
     np.testing.assert_array_equal(result.value, [0.0])
-    np.testing.assert_array_equal(result.marginal, [1.0])
+    np.testing.assert_array_equal(result.marginal, [17.0])
 
 
 def test_pointwise_corner_tie_keeps_signed_passive_marginal_algebra() -> None:

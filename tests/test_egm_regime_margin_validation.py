@@ -40,6 +40,7 @@ from lcm.solvers import (
     NEGM,
     GridSearch,
     OneMarginSolver,
+    RFCEnvelope,
     TwoMarginSolver,
 )
 from lcm.typing import ScalarInt
@@ -57,7 +58,7 @@ _DISCRETE_GRID = DiscreteGrid(category_class=_Employment)
 
 
 def _one_margin_solver() -> OneMarginSolver:
-    return DCEGM(savings_grid=_GRID)
+    return DCEGM(savings_grid=_GRID, envelope=RFCEnvelope())
 
 
 def _two_margin_solver() -> TwoMarginSolver:

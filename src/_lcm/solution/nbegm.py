@@ -3,7 +3,7 @@
 `NBEGM` solves a 1-D consumption-savings problem whose budget may carry
 declared breakpoints (kinks and cliffs): the budget is partitioned into
 affine-in-liquid intervals, each case piece is solved by EGM, and the pieces
-are merged by the MSS upper envelope. `build_period_kernels` returns one
+are merged by the query-side upper envelope. `build_period_kernels` returns one
 `PeriodKernel` per period — a non-jitted adapter that wraps the solver's
 shared jitted core (deduped by function identity, so periods sharing a core
 reuse one compiled program) and assembles a `KernelOutput` (value array,
@@ -88,6 +88,7 @@ from _lcm.egm.nbegm_probe_stages import (
     probe_greater,
     probe_grid_scalar,
     probe_int_fill,
+    probe_law_samples,
     probe_midpoint,
     probe_nextafter,
     probe_points,
@@ -99,16 +100,13 @@ from _lcm.egm.nbegm_probe_stages import (
 )
 from _lcm.egm.nbegm_query import NBEGMQuery
 from _lcm.egm.nbegm_query_model import NBEGMIntervalRecipe, NBEGMQueryModel
-from _lcm.egm.nbegm_resources import NBEGMResourcesBank
 from _lcm.egm.nbegm_step import (
     JumpPosition,
     _NBEGMDiscreteQueryStep,
     _NBEGMIntervalRows,
     _NBEGMQueryStep,
     _OwnedNBEGMQueryStep,
-    nbegm_continuous_resources_bank,
     nbegm_multi_interval_step,
-    nbegm_multi_interval_step_certified,
     nbegm_one_asset_step,
     nbegm_recurring_jump_step,
     nbegm_unified_step,
@@ -216,7 +214,7 @@ from _lcm.solution.periodization import (
     solver_period_group_key,
 )
 from _lcm.time import TimeAxis
-from _lcm.transition_plans import SupportOrigin
+from _lcm.transition_plans import SupportOrigin, draws_transition_local_lottery
 from _lcm.typing import (
     AnnotationForm,
     ArrayTree,
@@ -596,23 +594,25 @@ class NBEGM(OneMarginSolver):
     parent expectation; `"bridged"` does not expose an unfurled stochastic-row
     representation for a later fold.
     """
-    envelope_arithmetic: ComparisonArithmetic = "certified"
+    envelope_arithmetic: ComparisonArithmetic = "ordinary"
     """Which arithmetic decides ownership in the merged upper envelope.
 
     Every case, corner, and node candidate is read at each liquid query point and
     the largest owns it. How that comparison is made is this knob:
 
+    - `"ordinary"` (default) takes the largest read in the working format. It
+      decides every bracketed query at a fraction of the certified read's cost. Near
+      a crossing whose candidates differ by less than the format's resolution it can
+      pick a different owner or move the crossing slightly; the published value is
+      still read from one candidate together with its policy and marginal.
     - `"certified"` compares the exact affine values represented by the stored
       floating-point operands using fixed-width integer arithmetic. Exact value is
       ordered first, followed by deterministic geometric and stable-index tie-breaks.
       NaNs and other non-finite or invalid geometry are refused rather than ordered as
       ordinary candidates. This mode requires pylcm's installed exact-affine payload
       for the active backend and fails before returning a certified result when that
-      capability is unavailable.
-    - `"ordinary"` takes the largest read in the working format. It decides every
-      bracketed query at a fraction of the certified read's cost and is adequate only
-      where model-specific checks show candidates are separated by much more than the
-      format's resolution at their magnitude.
+      capability is unavailable. Select it when exact ownership is itself the object
+      of a check.
     """
     probe_failure: Literal["reject", "assume_declared"] = "reject"
     """What to do when a derivative probe cannot evaluate the model.
@@ -629,7 +629,7 @@ class NBEGM(OneMarginSolver):
       within-interval affinity, every liquid-reading law's interval-constancy,
       and the consumption flow's single-power form, to be validated empirically.
     """
-    probe_schedule: Literal["first_solve", "every_solve", "never"] = "every_solve"
+    probe_schedule: Literal["first_solve", "every_solve", "never"] = "never"
     """How often the parameter-dependent preconditions run.
 
     The affine-budget, interval-constancy, and single-power-flow probes
@@ -637,15 +637,16 @@ class NBEGM(OneMarginSolver):
     solve rather than at build. What they cost is therefore charged per solve,
     which an estimation loop pays on every criterion evaluation:
 
-    - `"every_solve"` — re-check every draw. This is the safe default because a
-      parameter can move a budget from affine to curved within an interval, or
+    - `"never"` (default) — skip all three, so a solve pays no probe cost; the
+      model author asserts each precondition. A model that violates one is solved
+      under a false structural assumption rather than refused.
+    - `"first_solve"` — check all three once per model and reuse their verdicts.
+      Use when parameter movement cannot change any precondition over the
+      supported parameter domain.
+    - `"every_solve"` — re-check every draw. Use while developing a model, or when
+      a parameter can move a budget from affine to curved within an interval,
       switch a law from piecewise-constant to smoothly varying, or turn a
       single-power flow into another functional form.
-    - `"first_solve"` — check all three once per model and reuse their verdicts.
-      Use only when the model author asserts that parameter movement cannot
-      change any precondition over the supported parameter domain.
-    - `"never"` — skip all three; the model author asserts each precondition and
-      validates the solve against an independent reference.
     """
 
     def _with_liquid_margin(self, margin: _BoundLiquidMargin) -> _BoundNBEGM:
@@ -747,10 +748,18 @@ class NBEGM(OneMarginSolver):
         from _lcm.egm.validation import (  # noqa: PLC0415
             fail_if_declared_lower_bound_disagrees_with_the_grid,
             fail_if_kernel_grids_withhold_their_points,
+            fail_if_off_node_process_enters_utility,
         )
 
         user_regime = context.user_regimes[context.regime_name]
         bound = cast("_BoundNBEGM", self)
+        fail_if_off_node_process_enters_utility(
+            regime_name=context.regime_name,
+            user_regime=user_regime,
+            resources=bound.budget_target,
+            solver_name="NBEGM",
+            shock_node_states=context.shock_node_states,
+        )
         liquid = bound.continuous_state
         fail_if_kernel_grids_withhold_their_points(
             grids={
@@ -767,7 +776,6 @@ class NBEGM(OneMarginSolver):
             user_regime=user_regime,
             solver=bound,
             solver_name="NBEGM",
-            materializer=context.materializer,
         )
         _validate_nbegm_case_piece_declarations(context=context, solver=self)
 
@@ -807,7 +815,12 @@ class NBEGM(OneMarginSolver):
             ),
         )
 
-    def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
+    def build_period_kernels(
+        self,
+        *,
+        context: SolverBuildContext,
+        materializer: DatedGenerationMaterializer | None = None,
+    ) -> SolutionKernels:
         """Build one case-piece EGM period adapter per active period."""
         from _lcm.egm.nbegm import collect_nbegm_metadata  # noqa: PLC0415
 
@@ -822,12 +835,21 @@ class NBEGM(OneMarginSolver):
             context=context,
             solver_path=("nbegm",),
         )
-        savings_grid = self.savings_grid.to_jax()
+        savings_grid = (
+            self.savings_grid.to_jax()
+            if materializer is None
+            else materializer.materialize_grid(spec=self.savings_grid)
+        )
 
         functions = context.solve_functions
         registry = collect_nbegm_metadata(functions=functions)
         has_discrete = bool(context.state_action_space.discrete_actions)
-        has_ride_along = self._schedule_has_ride_along(context=context)
+        draws_post_decision_shocks = draws_transition_local_lottery(
+            plans=context.transition_plans
+        )
+        has_ride_along = (
+            self._schedule_has_ride_along(context=context) or draws_post_decision_shocks
+        )
         _fail_if_feasibility_composition_is_unsupported(
             constraints=feasibility_constraints,
             registry=registry,
@@ -876,11 +898,14 @@ class NBEGM(OneMarginSolver):
                 consumption_action_name=bound.continuous_action,
                 probe_failure=self.probe_failure,
                 probe_schedule=self.probe_schedule,
+                materializer=materializer,
             )
             if is_schedule
             else None
         )
-        if schedule_spec is not None and schedule_spec.ride_along_state_names:
+        if schedule_spec is not None and (
+            schedule_spec.ride_along_state_names or draws_post_decision_shocks
+        ):
             if context.state_action_space.discrete_actions:
                 self._fail_if_unsupported_ride_discrete(
                     context=context, schedule_spec=schedule_spec
@@ -890,8 +915,22 @@ class NBEGM(OneMarginSolver):
                 savings_grid=savings_grid,
                 schedule_spec=schedule_spec,
                 feasibility_constraints=feasibility_constraints,
+                materializer=materializer,
             )
 
+        if draws_post_decision_shocks:
+            msg = (
+                f"Regime {context.regime_name!r} reads a post-decision shock, "
+                "which NBEGM integrates on its schedule route only. The "
+                "case-piece kernel (`lcm.case_boundary` / `lcm.piece`) reads no "
+                "draw. Declare the budget as a `lcm.piecewise_affine` schedule, "
+                "or use GridSearch() for this regime."
+            )
+            raise RegimeInitializationError(msg)
+        if materializer is not None:
+            raise UnsupportedOperationError(
+                "Owned nested NB requires its original ride-along schedule."
+            )
         return self._build_single_liquid_kernels(
             context=context,
             representative_context=representative_context,
@@ -1286,13 +1325,14 @@ class NBEGM(OneMarginSolver):
         liquid_state_name = cast("_BoundNBEGM", self).continuous_state
         return any(name != liquid_state_name for name in space.state_names)
 
-    def _build_ride_along_kernels(
+    def _build_ride_along_kernels(  # noqa: PLR0915 - original ride constructor and transient admission
         self,
         *,
         context: SolverBuildContext,
         savings_grid: Float1D,
         schedule_spec: _NBEGMScheduleSpec,
         feasibility_constraints: tuple[_NBEGMFeasibilityConstraint, ...] = (),
+        materializer: DatedGenerationMaterializer | None = None,
     ) -> SolutionKernels:
         """Build the case-piece kernels for a regime carrying a ride-along co-state.
 
@@ -1309,14 +1349,30 @@ class NBEGM(OneMarginSolver):
 
         bound = cast("_BoundNBEGM", self)
 
-        liquid_grid = context.grids[schedule_spec.liquid_state_name].to_jax()
+        liquid_grid = (
+            context.grids[schedule_spec.liquid_state_name].to_jax()
+            if materializer is None
+            else materializer.materialize_grid(
+                spec=context.grids[schedule_spec.liquid_state_name]
+            )
+        )
         ride_shape = tuple(
-            int(context.grids[name].to_jax().shape[0])
+            int(
+                (
+                    context.grids[name].to_jax()
+                    if materializer is None
+                    else materializer.materialize_grid(spec=context.grids[name])
+                ).shape[0]
+            )
             for name in schedule_spec.ride_along_state_names
         )
         query_model = context.nbegm_source_query_model or (
             context.nbegm_query_models or {}
         ).get(context.regime_name)
+        if materializer is not None and query_model is not None:
+            raise UnsupportedOperationError(
+                "Owned nested NB requires original query-free rows."
+            )
         query_template = (
             None
             if query_model is None
@@ -1447,6 +1503,7 @@ class NBEGM(OneMarginSolver):
                 consumption_action_name=bound.continuous_action,
                 probe_failure=self.probe_failure,
                 probe_schedule=self.probe_schedule,
+                materializer=materializer,
             )
             group_constraints = tuple(
                 replace(
@@ -1490,6 +1547,7 @@ class NBEGM(OneMarginSolver):
                     envelope_arithmetic=self.envelope_arithmetic,
                     publish_jump_topology=self.jump_read == "one_sided",
                     co_map_state_names=resolved.co_map_state_names,
+                    materializer=materializer,
                 )
                 # The Epstein-Zin kernels cover smooth and pure-kink budgets;
                 # the unified jump-and-kink candidate step is additive. Reject
@@ -1536,8 +1594,11 @@ class NBEGM(OneMarginSolver):
                 )
                 envelope_build = _build_nbegm_envelope_core(
                     savings_grid=savings_grid,
-                    schedule_spec=group_spec,
+                    schedule_spec=group_spec
+                    if materializer is None
+                    else replace(group_spec, param_checks=()),
                     statics=statics,
+                    materializer=materializer,
                     is_epstein_zin=_aggregates_nonlinearly(
                         context.certainty_equivalent
                     ),
@@ -1558,7 +1619,9 @@ class NBEGM(OneMarginSolver):
                     statics=statics,
                     regime_name=context.regime_name,
                     cliff_candidates=cliff_candidates,
-                    schedule_spec=group_spec,
+                    schedule_spec=group_spec
+                    if materializer is None
+                    else replace(group_spec, param_checks=()),
                     envelope_build=envelope_build,
                     state_action_space=resolved.state_action_space,
                     argument_builder=_RideAlongArgumentBuilder(
@@ -1574,6 +1637,7 @@ class NBEGM(OneMarginSolver):
                     ),
                     enable_jit=context.enable_jit,
                     query_template=query_template,
+                    materializer=materializer,
                 )
                 statics_by_key[key] = statics
                 cliff_candidates_by_key[key] = cliff_candidates
@@ -1612,6 +1676,7 @@ class NBEGM(OneMarginSolver):
                 if query_template is not None
                 else _shard_ride_carry_template(
                     template=_build_ride_along_carry_template(
+                        materializer=materializer,
                         liquid_grid=liquid_grid,
                         ride_shape=ride_shape,
                         n_breakpoints=n_carry_breakpoints,
@@ -2722,10 +2787,6 @@ def _validate_nbegm_case_piece_declarations(
     bound = cast("_BoundNBEGM", solver)
     functions = context.solve_functions
     registry = collect_nbegm_metadata(functions=functions)
-    if context.materializer is not None and registry.piece_sets:
-        raise UnsupportedOperationError(
-            "Cold NB case-piece smoothness probes require original admission."
-        )
     discrete_actions = frozenset(
         name
         for name, grid in user_regime.actions.items()
@@ -3208,7 +3269,7 @@ def _build_nbegm_core(
     functions: EconFunctionsMapping,
     consumption_action: ActionName,
     case_spec: _NBEGMCaseSpec,
-    envelope_arithmetic: ComparisonArithmetic = "certified",
+    envelope_arithmetic: ComparisonArithmetic = "ordinary",
 ) -> _NBEGMCaseCore:
     """Build the jittable case-piece EGM core closing over the case split.
 
@@ -3660,7 +3721,7 @@ def _budget_affinity_check(
     liquid_state_name: StateName,
     require_unit_slope: bool,
     probe_failure: Literal["reject", "assume_declared"],
-    probe_schedule: Literal["first_solve", "every_solve", "never"] = "every_solve",
+    probe_schedule: Literal["first_solve", "every_solve", "never"] = "never",
     breakpoint_sources: tuple[_NBEGMSource, ...] = (),
     materializer: DatedGenerationMaterializer | None = None,
 ) -> ParamCheck:
@@ -4631,7 +4692,7 @@ def _deferred_probe(
     probe: Callable[..., None],
     regime_name: RegimeName,
     probe_arguments: _ProbeArguments,
-    probe_schedule: Literal["first_solve", "every_solve", "never"] = "every_solve",
+    probe_schedule: Literal["first_solve", "every_solve", "never"] = "never",
     **bound: _ProbeBinding,
 ) -> ParamCheck:
     """Configure a probe at model build and run it as its schedule asks.
@@ -4798,6 +4859,8 @@ class _DeferredProbe:
         if (
             materializer is not None
             and self.probe is not _fail_if_budget_nonaffine_in_liquid
+            and self.probe
+            is not _fail_if_liquid_reading_next_state_varies_within_interval
         ):
             raise UnsupportedOperationError(
                 "Owned NB validation requires the original scalar affinity probe."
@@ -5305,6 +5368,7 @@ def _fail_if_liquid_reading_next_state_varies_within_interval(
     probe_arguments: _ProbeArguments,
     probe_failure: Literal["reject", "assume_declared"] = "reject",
     derivative_programs: Mapping[_ContinuationLaw, _LawProbeProgram] | None = None,
+    materializer: DatedGenerationMaterializer | None = None,
 ) -> None:
     """Reject a carried-state law that varies smoothly in the liquid state.
 
@@ -5344,6 +5408,7 @@ def _fail_if_liquid_reading_next_state_varies_within_interval(
             probe_arguments=probe_arguments,
             probe_failure=probe_failure,
             derivative_programs=derivative_programs,
+            materializer=materializer,
         )
         if worst is not None and worst > tol:
             msg = (
@@ -5368,6 +5433,7 @@ def _fail_if_liquid_reading_next_state_varies_within_interval(
         probe_arguments=probe_arguments,
         probe_failure=probe_failure,
         derivative_programs=derivative_programs,
+        materializer=materializer,
     )
     if worst is not None and worst > tol:
         msg = (
@@ -5391,6 +5457,7 @@ def _max_abs_first_liquid_derivative(
     probe_arguments: _ProbeArguments,
     probe_failure: Literal["reject", "assume_declared"],
     derivative_programs: Mapping[_ContinuationLaw, _LawProbeProgram] | None = None,
+    materializer: DatedGenerationMaterializer | None = None,
 ) -> float | None:
     """Largest absolute liquid derivative of `func` over the probe's fills.
 
@@ -5404,8 +5471,8 @@ def _max_abs_first_liquid_derivative(
         return None
 
     try:
-        return _evaluate_on_first_workable_fill(
-            functools.partial(
+        return _evaluate_probe_fill_rungs(
+            evaluate=functools.partial(
                 _worst_liquid_jacobian,
                 positional=_PositionalCall(func=func, arg_names=arg_names),
                 arg_names=arg_names,
@@ -5416,9 +5483,13 @@ def _max_abs_first_liquid_derivative(
                     if derivative_programs is not None
                     else None
                 ),
-            )
+                materializer=materializer,
+            ),
+            materializer=materializer,
         )
     except Exception as probe_error:
+        if materializer is not None and isinstance(probe_error, ExecutionPlanningError):
+            raise
         msg = (
             f"NBEGM could not verify that a liquid-reading law in regime "
             f"{regime_name!r} is piecewise-constant in the liquid state "
@@ -5473,10 +5544,19 @@ def _worst_liquid_jacobian(
     liquid_pos: int,
     probe_arguments: _ProbeArguments,
     program: _LawProbeProgram | None = None,
+    materializer: DatedGenerationMaterializer | None = None,
 ) -> float:
     """Largest absolute liquid-Jacobian entry over one fill rung's assignments."""
+    if materializer is not None and program is None:
+        raise UnsupportedOperationError(
+            "Owned NB probes require the original prepared derivative programs."
+        )
     worst = 0.0
-    samples = jnp.asarray(_LIQUID_PROBE_POINTS)
+    samples = evaluate_probe_stage(
+        function=functools.partial(probe_law_samples, values=_LIQUID_PROBE_POINTS),
+        arguments={},
+        materializer=materializer,
+    )
     sweeps = tuple(
         _int_code_sweeps(
             arg_names=arg_names,
@@ -5492,24 +5572,34 @@ def _worst_liquid_jacobian(
                     array_floats=array_floats,
                     array_rank=array_rank,
                     leaf_rank=leaf_rank,
+                    materializer=materializer,
                 )
                 if name not in overrides
-                else jnp.asarray(overrides[name], dtype=jnp.int32)
+                else evaluate_probe_stage(
+                    function=functools.partial(probe_int_fill, value=overrides[name]),
+                    arguments={},
+                    materializer=materializer,
+                )
                 for name, fill in zip(arg_names, fills, strict=True)
             ]
             # Every argument but the liquid one is constant for this rung,
             # so all probe points go through one compiled, vectorized call.
             jac = (
-                _evaluate_liquid_probe_program(
-                    program=program,
-                    points=samples,
+                evaluate_probe_stage(
+                    function=functools.partial(
+                        _evaluate_liquid_probe_program, program=program
+                    ),
                     arguments={
-                        name: arg
-                        for position, (name, arg) in enumerate(
-                            zip(arg_names, args, strict=True)
-                        )
-                        if position != liquid_pos
+                        "points": samples,
+                        "arguments": {
+                            name: arg
+                            for position, (name, arg) in enumerate(
+                                zip(arg_names, args, strict=True)
+                            )
+                            if position != liquid_pos
+                        },
                     },
+                    materializer=materializer,
                 )
                 if program is not None
                 else jax.jit(
@@ -5528,7 +5618,13 @@ def _worst_liquid_jacobian(
             worst = max(
                 [
                     worst,
-                    *(float(jnp.max(jnp.abs(leaf))) for leaf in leaves),
+                    *(
+                        float(jnp.max(jnp.abs(leaf)))
+                        if materializer is None
+                        # Owned leaves are read on the host; |.| and max are exact.
+                        else max(abs(v) for v in jax.device_get(leaf).ravel().tolist())
+                        for leaf in leaves
+                    ),
                 ]
             )
     return worst
@@ -5554,7 +5650,7 @@ def _collect_nbegm_schedule_spec(
     continuous_state: StateName,
     consumption_action_name: ActionName,
     probe_failure: Literal["reject", "assume_declared"] = "reject",
-    probe_schedule: Literal["first_solve", "every_solve", "never"] = "every_solve",
+    probe_schedule: Literal["first_solve", "every_solve", "never"] = "never",
     materializer: DatedGenerationMaterializer | None = None,
 ) -> _NBEGMScheduleSpec:
     """Collect a regime's piecewise-affine schedules into one breakpoint partition.
@@ -5994,68 +6090,6 @@ def _solve_cliffed_budget(
     )
 
 
-def _solve_certified_continuous_budget(
-    *,
-    next_value: Float1D,
-    next_marginal: Float1D,
-    liquid: Float1D,
-    next_liquid_grid: Float1D,
-    savings_grid: Float1D,
-    discount_factor: FloatND,
-    preferences: Preferences,
-    next_liquid: Float1D,
-    marginal_return: Float1D,
-    coh_slopes: Float1D,
-    coh_intercepts: Float1D,
-    breakpoints: Float1D,
-    is_single_jump: bool,
-    is_multi_jump: bool,
-    is_mixed: bool,
-    jump_mask: tuple[bool, ...],
-    flat_mask: tuple[bool, ...] | None,
-    feasibility_partition: ResolvedAxisPartition | None = None,
-    feasible_interval_mask: BoolND | None = None,
-    boundary_savings_targets: Float1D | None = None,
-    boundary_next_liquid: Float1D | None = None,
-    arithmetic: ComparisonArithmetic = "certified",
-    retain_query: bool = False,
-    return_owner: bool = False,
-    source_query: Float1D | None = None,
-    continuation_read: Callable[[FloatND, BoolND], tuple[FloatND, FloatND]]
-    | None = None,
-) -> _NBEGMStepChannels | _OwnedNBEGMQueryStep:
-    """Bind the original continuous certified bank before callback capture."""
-    if is_single_jump or is_multi_jump or is_mixed or (arithmetic != "certified"):
-        raise UnsupportedOperationError(
-            "Selected NB source requires continuous certified arithmetic."
-        )
-    del jump_mask
-    return nbegm_multi_interval_step_certified(
-        next_value=next_value,
-        next_marginal=next_marginal,
-        liquid_grid=liquid,
-        next_liquid_grid=next_liquid_grid,
-        savings_grid=savings_grid,
-        discount_factor=discount_factor,
-        preferences=preferences,
-        next_liquid=next_liquid,
-        marginal_return=marginal_return,
-        coh_slopes=coh_slopes,
-        coh_intercepts=coh_intercepts,
-        breakpoints=breakpoints,
-        flat_interval_mask=flat_mask,
-        arithmetic=arithmetic,
-        retain_query=retain_query,
-        return_owner=return_owner,
-        query_grid=source_query,
-        continuation_read=continuation_read,
-        feasibility_partition=feasibility_partition,
-        feasible_interval_mask=feasible_interval_mask,
-        boundary_savings_targets=boundary_savings_targets,
-        boundary_next_liquid=boundary_next_liquid,
-    )
-
-
 class _NBEGMSourcePoint(NamedTuple):
     """Original source result beside its separate native envelope owner."""
 
@@ -6240,41 +6274,6 @@ class _NBEGMContinuousCore:
             return BoundedResult(output=result, bound_status=(source_bound_status,))
         return result
 
-    def construct_resources_bank(
-        self,
-        *,
-        resources_support: Float1D,
-        next_liquid_grid: Float1D,
-        next_value: Float1D,
-        next_marginal: Float1D,
-        next_liquid: Float1D,
-        marginal_return: Float1D,
-        effective_savings_grid: Float1D,
-        **params: ValueND,
-    ) -> NBEGMResourcesBank:
-        """Retain the original NB bank before any resource-to-liquid inversion."""
-        if (
-            self.schedule_spec.breakpoint_kinds
-            or self.schedule_spec.threshold_param_names
-            or self.interval_recipe is not None
-            or self.feasibility_constraints
-            or self.schedule_spec.discount_factor_dag is not None
-        ):
-            raise UnsupportedOperationError(
-                "Original NB resources banks require global affine resource topology."
-            )
-        return nbegm_continuous_resources_bank(
-            next_value=next_value,
-            next_marginal=next_marginal,
-            next_liquid_grid=next_liquid_grid,
-            savings_grid=effective_savings_grid,
-            discount_factor=params["koopmans_aggregator__discount_factor"],
-            preferences=self.build_preferences(params),
-            next_liquid=next_liquid,
-            marginal_return=marginal_return,
-            resources_support=resources_support,
-        )
-
     def __call__(
         self,
         *,
@@ -6323,8 +6322,7 @@ def _build_nbegm_continuous_core(
     consumption_action: ActionName,
     schedule_spec: _NBEGMScheduleSpec,
     feasibility_constraints: tuple[_NBEGMFeasibilityConstraint, ...] = (),
-    envelope_arithmetic: ComparisonArithmetic = "certified",
-    materializer: DatedGenerationMaterializer | None = None,
+    envelope_arithmetic: ComparisonArithmetic = "ordinary",
 ) -> _NBEGMContinuousCore:
     """Build the jittable continuous-schedule EGM core for one continuation target.
 
@@ -6338,13 +6336,7 @@ def _build_nbegm_continuous_core(
         newton_action_ceiling,
     )
 
-    action_upper = (
-        newton_action_ceiling(savings_grid)
-        if materializer is None
-        else materializer.evaluate_validation(
-            function=newton_action_ceiling, arguments={"scale_grid": savings_grid}
-        )
-    )
+    action_upper = newton_action_ceiling(savings_grid)
     return _NBEGMContinuousCore(
         savings_grid=savings_grid,
         build_preferences=get_preferences_builder(
@@ -6541,7 +6533,9 @@ def _solve_ride_along_cell_step(
 
 
 def _ride_along_jump_config(
+    *,
     kinds: tuple[str, ...],
+    materializer: DatedGenerationMaterializer | None = None,
 ) -> tuple[BoolND, int, bool, tuple[int, ...], bool]:
     """Derive the merged partition's jump statics from the declared breakpoint kinds.
 
@@ -6564,7 +6558,14 @@ def _ride_along_jump_config(
     dynamic_jumps = 0 < n_jumps < len(kinds)
     return (
         # dtype pinned so the zero-breakpoint (empty) case stays boolean.
-        jnp.asarray(jump_flags, dtype=bool),
+        (
+            jnp.asarray(jump_flags, dtype=bool)
+            if materializer is None
+            else materializer.evaluate_validation(
+                function=functools.partial(jnp.asarray, jump_flags, dtype=bool),
+                arguments={},
+            )
+        ),
         n_jumps,
         n_jumps > 0,
         static_jump_positions,
@@ -6758,13 +6759,14 @@ def _nbegm_ride_along_statics(
     savings_grid: Float1D,
     schedule_spec: _NBEGMScheduleSpec,
     continuation_plan: ContinuationPlan,
-    envelope_arithmetic: ComparisonArithmetic = "certified",
+    envelope_arithmetic: ComparisonArithmetic = "ordinary",
     cell_width: int = 0,
     interval_width: int = 0,
     branch_width: int = 0,
     stochastic_node_width: int | None = None,
     publish_jump_topology: bool = True,
     co_map_state_names: tuple[StateName, ...] = (),
+    materializer: DatedGenerationMaterializer | None = None,
 ) -> _NBEGMRideAlongStatics:
     """Derive the static config of the ride-along tile-local core.
 
@@ -6784,7 +6786,7 @@ def _nbegm_ride_along_statics(
         )
         raise RegimeInitializationError(msg)
     jump_flags_arr, n_jumps, has_jump, static_jump_positions, dynamic_jumps = (
-        _ride_along_jump_config(kinds)
+        _ride_along_jump_config(kinds=kinds, materializer=materializer)
     )
 
     liquid_name = schedule_spec.liquid_state_name
@@ -7394,6 +7396,7 @@ def _ride_along_core_programs(
     argument_builder: _RideAlongArgumentBuilder,
     enable_jit: bool,
     query_template: EGMCarry | None = None,
+    materializer: DatedGenerationMaterializer | None = None,
 ) -> MappingProxyType[str, CoreProgram]:
     """Declare the ride-along kernel's `main` and `replay` programs.
 
@@ -7407,7 +7410,13 @@ def _ride_along_core_programs(
         name for name in statics.ride_names if name not in statics.co_map_state_names
     )
     n_cells = math.prod(
-        int(jnp.asarray(state_action_space.states[name]).shape[0])
+        int(
+            (
+                jnp.asarray(state_action_space.states[name])
+                if materializer is None
+                else state_action_space.states[name]
+            ).shape[0]
+        )
         for name in inner_names
     )
     interval_axes = (
@@ -8860,6 +8869,98 @@ def _split_cliff_columns(
     )
 
 
+@dataclass(frozen=True, eq=False, kw_only=True)
+class _NBEGMCellBinder:
+    """Bind one period's states and params into the per-cell envelope solve.
+
+    Calling it with the period's `kwargs` returns the bound cell solver, which
+    takes `ride_values` (every ride state's coordinate, co-mapped states first),
+    `cont_value`, `cont_marginal`, and optionally `cliff_savings` for one cell —
+    or an interval continuation reader — and returns that cell's packaged
+    result rows.
+    """
+
+    savings_grid: Float1D
+    """Exogenous post-decision savings grid the cells solve on."""
+
+    schedule_spec: _NBEGMScheduleSpec
+    """The composed budget, utility, discount factor, and discrete actions."""
+
+    statics: _NBEGMRideAlongStatics
+    """Build-time statics of the ride-along solve."""
+
+    is_epstein_zin: bool
+    """Whether the step inverts the recursive Euler equation."""
+
+    feasibility_constraints: tuple[_NBEGMFeasibilityConstraint, ...]
+    """Declared feasibility boundaries resolved per cell."""
+
+    action_lower: ScalarFloat
+    """Lower bracket of the numerical Euler inversion."""
+
+    action_upper: ScalarFloat
+    """Initial upper bracket of the numerical Euler inversion."""
+
+    utility_arg_names: frozenset[ReferenceName]
+    """The utility DAG's parameter names; an action binds only if named here."""
+
+    n_published_boundaries: int
+    """Jump preimages plus feasibility boundaries each carry row publishes."""
+
+    schedule_kinds: tuple[str, ...]
+    """Every declared breakpoint's kind, in source order."""
+
+    current_floor: _NBEGMFloor | None = field(
+        default=None, metadata={"fingerprint_omit_if_default": True}
+    )
+    """One canonical per-cell evaluator, shared by continuation and branch solves."""
+
+    query_model: NBEGMQueryModel | None = field(
+        default=None, metadata={"fingerprint_omit_if_default": True}
+    )
+    """Independent target authority requiring every conditional native tuple."""
+
+    current_predicates: tuple[Callable[..., BoolND], ...] | None = field(
+        default=None, metadata={"fingerprint_omit_if_default": True}
+    )
+    """Canonical nonbudget current-state predicates for feature counts and max."""
+
+    def __call__(self, kwargs: EconFunctionKwargs) -> _NBEGMCellSolver:
+        """Bind one period's inputs into the per-cell solve."""
+        dtype = canonical_float_dtype()
+        return _NBEGMCellSolver(
+            binder=self,
+            kwargs=kwargs,
+            dtype=dtype,
+            liquid=jnp.asarray(kwargs[self.statics.liquid_name], dtype=dtype),
+            coh_params={
+                name: kwargs[name] for name in self.schedule_spec.coh_param_names
+            },
+            utility_params={
+                name: kwargs[name] for name in self.statics.utility_param_names
+            },
+            discount_params={
+                name: kwargs[name] for name in self.statics.discount_param_names
+            },
+            # Epstein-Zin: the aggregator curvature is `rho = 1/psi` where `psi` is
+            # the Koopmans aggregator's `intertemporal_elasticity_of_substitution`.
+            # The step reads the continuation pair as `(nu, dnu/ds)` and inverts
+            # the recursive Euler equation; `None` keeps the additive
+            # expected-utility step.
+            inverse_eis=(
+                1.0
+                / cast(
+                    "ScalarFloat",
+                    kwargs[
+                        "koopmans_aggregator__intertemporal_elasticity_of_substitution"
+                    ],
+                )
+                if self.is_epstein_zin
+                else None
+            ),
+        )
+
+
 @dataclass(frozen=True, kw_only=True)
 class _NBEGMEnvelopeBuild:
     """The envelope half of a ride-along solve, as a per-cell binder."""
@@ -8885,6 +8986,7 @@ def _build_nbegm_envelope_core(
     query_model: NBEGMQueryModel | None = None,
     current_floor: _NBEGMFloor | None = None,
     current_predicates: tuple[Callable[..., BoolND], ...] | None = None,
+    materializer: DatedGenerationMaterializer | None = None,
 ) -> _NBEGMEnvelopeBuild:
     """Build the EGM/envelope half of the ride-along solve.
 
@@ -8909,8 +9011,23 @@ def _build_nbegm_envelope_core(
     # closed form to invert and its root is always bracketed numerically. The
     # clamped near-zero-marginal corner whose root exceeds the bracket lands far to
     # the right and is discarded by the upper envelope.
-    action_upper = newton_action_ceiling(savings_grid)
-    action_lower = jnp.asarray(NEWTON_ACTION_FLOOR, dtype=action_upper.dtype)
+    action_upper = (
+        newton_action_ceiling(savings_grid)
+        if materializer is None
+        else materializer.evaluate_validation(
+            function=newton_action_ceiling, arguments={"scale_grid": savings_grid}
+        )
+    )
+    action_lower = (
+        jnp.asarray(NEWTON_ACTION_FLOOR, dtype=action_upper.dtype)
+        if materializer is None
+        else materializer.evaluate_validation(
+            function=functools.partial(
+                jnp.asarray, NEWTON_ACTION_FLOOR, dtype=action_upper.dtype
+            ),
+            arguments={},
+        )
+    )
 
     n_feasibility_boundaries = sum(
         len(constraint.program.surfaces) for constraint in feasibility_constraints
@@ -9053,56 +9170,6 @@ class _NBEGMCellSolver:
 
     inverse_eis: FloatND | None
     """`1/psi` under Epstein-Zin, else `None` for the additive step."""
-
-    def construct_owned_query_row(
-        self,
-        *,
-        ride_values: tuple[_RideCoordinate, ...],
-        query: Float1D,
-        cont_value: FloatND,
-        cont_marginal: FloatND,
-    ) -> _OwnedNBEGMQueryStep:
-        """Keep the original continuous branch's full query and native-owner data.
-
-        Candidate geometry stays on the original liquid support. The separate
-        query operand supplies publication coordinates, including an exact
-        requested node; it never replaces that geometry.
-        """
-        binder = self.binder
-        statics = binder.statics
-        if (
-            binder.schedule_spec.discrete_actions
-            or statics.has_jump
-            or statics.continuation_reads_liquid
-            or self.inverse_eis is not None
-            or binder.current_predicates is not None
-            or binder.feasibility_constraints
-            or binder.n_published_boundaries
-            or binder.current_floor is not None
-        ):
-            raise UnsupportedOperationError(
-                "Owned nested NB rows require original continuous additive "
-                "literal-floor ordinary-child cells."
-            )
-        branch = _NBEGMBranchSolver(
-            cell_solver=self,
-            cell=MappingProxyType(
-                dict(zip(statics.ride_names, ride_values, strict=True))
-            ),
-            query_grid=self.liquid,
-            feasibility_partition=None,
-            feasible_interval_mask=None,
-            interval_continuation=None,
-        )
-        return branch.solve(
-            action_binding={},
-            branch_cont_value=cont_value,
-            branch_cont_marginal=cont_marginal,
-            branch_extra_cont_value=None,
-            branch_cliff_savings=None,
-            source_query=query,
-            return_owner=True,
-        )
 
     def construct_point(
         self,
@@ -9456,98 +9523,6 @@ def _finish_nbegm_cell_publication(
             continuation_read_counts=query_summary.continuation_read_counts,
         )
     return ordinary
-
-
-@dataclass(frozen=True, eq=False, kw_only=True)
-class _NBEGMCellBinder:
-    """Bind one period's states and params into the per-cell envelope solve.
-
-    Calling it with the period's `kwargs` returns the bound cell solver, which
-    takes `ride_values` (every ride state's coordinate, co-mapped states first),
-    `cont_value`, `cont_marginal`, and optionally `cliff_savings` for one cell —
-    or an interval continuation reader — and returns that cell's packaged
-    result rows.
-    """
-
-    savings_grid: Float1D
-    """Exogenous post-decision savings grid the cells solve on."""
-
-    schedule_spec: _NBEGMScheduleSpec
-    """The composed budget, utility, discount factor, and discrete actions."""
-
-    statics: _NBEGMRideAlongStatics
-    """Build-time statics of the ride-along solve."""
-
-    is_epstein_zin: bool
-    """Whether the step inverts the recursive Euler equation."""
-
-    feasibility_constraints: tuple[_NBEGMFeasibilityConstraint, ...]
-    """Declared feasibility boundaries resolved per cell."""
-
-    action_lower: ScalarFloat
-    """Lower bracket of the numerical Euler inversion."""
-
-    action_upper: ScalarFloat
-    """Initial upper bracket of the numerical Euler inversion."""
-
-    utility_arg_names: frozenset[ReferenceName]
-    """The utility DAG's parameter names; an action binds only if named here."""
-
-    n_published_boundaries: int
-    """Jump preimages plus feasibility boundaries each carry row publishes."""
-
-    schedule_kinds: tuple[str, ...]
-    """Every declared breakpoint's kind, in source order."""
-
-    current_floor: _NBEGMFloor | None = field(
-        default=None, metadata={"fingerprint_omit_if_default": True}
-    )
-    """One canonical per-cell evaluator, shared by continuation and branch solves."""
-
-    query_model: NBEGMQueryModel | None = field(
-        default=None, metadata={"fingerprint_omit_if_default": True}
-    )
-    """Independent target authority requiring every conditional native tuple."""
-
-    current_predicates: tuple[Callable[..., BoolND], ...] | None = field(
-        default=None, metadata={"fingerprint_omit_if_default": True}
-    )
-    """Canonical nonbudget current-state predicates for feature counts and max."""
-
-    def __call__(self, kwargs: EconFunctionKwargs) -> _NBEGMCellSolver:
-        """Bind one period's inputs into the per-cell solve."""
-        dtype = canonical_float_dtype()
-        return _NBEGMCellSolver(
-            binder=self,
-            kwargs=kwargs,
-            dtype=dtype,
-            liquid=jnp.asarray(kwargs[self.statics.liquid_name], dtype=dtype),
-            coh_params={
-                name: kwargs[name] for name in self.schedule_spec.coh_param_names
-            },
-            utility_params={
-                name: kwargs[name] for name in self.statics.utility_param_names
-            },
-            discount_params={
-                name: kwargs[name] for name in self.statics.discount_param_names
-            },
-            # Epstein-Zin: the aggregator curvature is `rho = 1/psi` where `psi` is
-            # the Koopmans aggregator's `intertemporal_elasticity_of_substitution`.
-            # The step reads the continuation pair as `(nu, dnu/ds)` and inverts
-            # the recursive Euler equation; `None` keeps the additive
-            # expected-utility step.
-            inverse_eis=(
-                1.0
-                / cast(
-                    "ScalarFloat",
-                    kwargs[
-                        "koopmans_aggregator__intertemporal_elasticity_of_substitution"
-                    ],
-                )
-                if self.is_epstein_zin
-                else None
-            ),
-        )
 
 
 @dataclass(frozen=True, eq=False, kw_only=True)
@@ -9957,7 +9932,7 @@ def _collect_nbegm_discrete_spec(
     post_decision_function: FunctionName,
     continuous_state: StateName,
     probe_failure: Literal["reject", "assume_declared"],
-    probe_schedule: Literal["first_solve", "every_solve", "never"] = "every_solve",
+    probe_schedule: Literal["first_solve", "every_solve", "never"] = "never",
 ) -> _NBEGMDiscreteSpec:
     """Collect the discrete actions of a smooth regime and their grid codes.
 
@@ -10014,7 +9989,7 @@ def _collect_nbegm_schedule_discrete_spec(
     continuous_state: StateName,
     post_decision_function: FunctionName,
     probe_failure: Literal["reject", "assume_declared"],
-    probe_schedule: Literal["first_solve", "every_solve", "never"] = "every_solve",
+    probe_schedule: Literal["first_solve", "every_solve", "never"] = "never",
 ) -> _NBEGMScheduleDiscreteSpec:
     """Collect the discrete actions layered over a single-liquid cliff schedule."""
     import inspect  # noqa: PLC0415
@@ -10141,7 +10116,7 @@ def _build_nbegm_schedule_discrete_core(
     consumption_action: ActionName,
     spec: _NBEGMScheduleDiscreteSpec,
     taste_shock_scale: float,
-    envelope_arithmetic: ComparisonArithmetic = "certified",
+    envelope_arithmetic: ComparisonArithmetic = "ordinary",
 ) -> _NBEGMScheduleDiscreteCore:
     """Build the discrete-envelope core over a cliffed single-liquid budget.
 
@@ -10331,7 +10306,7 @@ def _build_nbegm_discrete_core(
     consumption_action: ActionName,
     discrete_spec: _NBEGMDiscreteSpec,
     taste_shock_scale: float,
-    envelope_arithmetic: ComparisonArithmetic = "certified",
+    envelope_arithmetic: ComparisonArithmetic = "ordinary",
 ) -> _NBEGMDiscreteCore:
     """Build the jittable discrete-envelope core for one continuation target.
 
@@ -10548,7 +10523,6 @@ def _build_nbegm_single_axis_group(
     variable_names: frozenset[StateOrActionName],
     savings_grid: Float1D,
     feasibility_constraints: tuple[_NBEGMFeasibilityConstraint, ...],
-    materializer: DatedGenerationMaterializer | None = None,
 ) -> tuple[
     _NBEGMSingleAxisCore,
     Callable[..., tuple[Float1D, Float1D]],
@@ -10596,7 +10570,6 @@ def _build_nbegm_single_axis_group(
             consumption_action_name=solver.continuous_action,
             probe_failure=solver.probe_failure,
             probe_schedule=solver.probe_schedule,
-            materializer=materializer,
         )
         core = _build_nbegm_continuous_core(
             savings_grid=savings_grid,
@@ -10605,7 +10578,6 @@ def _build_nbegm_single_axis_group(
             schedule_spec=spec,
             feasibility_constraints=resolved_feasibility_constraints,
             envelope_arithmetic=solver.envelope_arithmetic,
-            materializer=materializer,
         )
         checks = spec.param_checks
     elif route == "discrete":
@@ -10836,6 +10808,7 @@ def _build_ride_along_carry_template(
     ride_shape: tuple[int, ...],
     n_breakpoints: int,
     carry_policy: bool,
+    materializer: DatedGenerationMaterializer | None = None,
 ) -> EGMCarry:
     """Build the all-finite case-piece carry template with ride-along axes leading.
 
@@ -10855,6 +10828,16 @@ def _build_ride_along_carry_template(
     # against this template) would have a different pytree than the runtime
     # carry. The NNBEGM collapse strips its own runtime leaf, so its
     # outer continuation stays policy-free against its own template.
+    if materializer is not None:
+        return materializer.evaluate_validation(
+            function=functools.partial(
+                _build_ride_along_carry_template,
+                ride_shape=ride_shape,
+                n_breakpoints=n_breakpoints,
+                carry_policy=carry_policy,
+            ),
+            arguments={"liquid_grid": liquid_grid},
+        )
     row = jnp.concatenate(
         [liquid_grid, jnp.repeat(liquid_grid[-1:], 2 * n_breakpoints)]
     )

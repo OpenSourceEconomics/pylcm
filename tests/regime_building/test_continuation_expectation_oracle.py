@@ -49,6 +49,7 @@ from lcm.typing import (
     UserParams,
     UserParamsNode,
 )
+from tests.conftest import X64_ENABLED
 
 
 @categorical(ordered=False)
@@ -434,53 +435,34 @@ _DRAW_CASES = [
     pytest.param(("income",), False, id="coordinate-one-slice-none"),
     pytest.param(("income", "bonus"), False, id="coordinate-several-slice-none"),
 ]
-_PRECISIONS = [
-    pytest.param("x64_enabled", 1e-10, 1e-12, id="fp64"),
-    pytest.param("x64_disabled", 2e-5, 1e-4, id="fp32"),
-]
+# Each CI precision lane runs the oracle at its own precision. Flipping x64
+# inside one process reaches float64 state cached by the earlier tests.
+_RTOL, _TIE_GAP = (1e-10, 1e-12) if X64_ENABLED else (2e-5, 1e-4)
 
 
-@pytest.mark.parametrize(("fixture_name", "rtol", "tie_gap"), _PRECISIONS)
 @pytest.mark.parametrize(("reads", "slice_draws"), _DRAW_CASES)
 def test_solved_value_matches_the_full_node_product_oracle(
-    *,
-    reads: _Reads,
-    slice_draws: bool,
-    fixture_name: str,
-    rtol: float,
-    tie_gap: float,
-    request: pytest.FixtureRequest,
+    *, reads: _Reads, slice_draws: bool
 ) -> None:
     """The period-0 value equals the literal expectation over all joint nodes."""
-    request.getfixturevalue(fixture_name)
-    del tie_gap
     model = _model(reads=reads, slice_draws=slice_draws)
     solution = model.solve(params=_params(), log_level="off")
     expected, _, _ = _oracle(reads=reads, slice_draws=slice_draws)
     np.testing.assert_allclose(
-        _solved_alive_values(model=model, solution=solution), expected, rtol=rtol
+        _solved_alive_values(model=model, solution=solution), expected, rtol=_RTOL
     )
 
 
-@pytest.mark.parametrize(("fixture_name", "rtol", "tie_gap"), _PRECISIONS)
 @pytest.mark.parametrize(("reads", "slice_draws"), _DRAW_CASES)
 def test_policy_matches_the_full_node_product_oracle(
-    *,
-    reads: _Reads,
-    slice_draws: bool,
-    fixture_name: str,
-    rtol: float,
-    tie_gap: float,
-    request: pytest.FixtureRequest,
+    *, reads: _Reads, slice_draws: bool
 ) -> None:
     """Away from numerical ties, the chosen consumption is the oracle's argmax."""
-    request.getfixturevalue(fixture_name)
-    del rtol
     model = _model(reads=reads, slice_draws=slice_draws)
     params = _params()
     solution = model.solve(params=params, log_level="off")
     _, expected, gap = _oracle(reads=reads, slice_draws=slice_draws)
-    decided = gap > tie_gap
+    decided = gap > _TIE_GAP
     assert decided.mean() > 0.9
     np.testing.assert_allclose(
         _policy_on_the_grid(model=model, solution=solution, params=params)[decided],
@@ -493,12 +475,9 @@ class _ExplicitLinearExpectation(LinearExpectation):
     """The linear expectation, declared as a type of its own."""
 
 
-@pytest.mark.parametrize(("fixture_name", "rtol"), [("x64_enabled", 1e-10)])
-def test_linear_expectation_subclass_agrees_with_the_oracle(
-    *, fixture_name: str, rtol: float, request: pytest.FixtureRequest
-) -> None:
+@pytest.mark.skipif(not X64_ENABLED, reason="1e-10 is a float64 tolerance")
+def test_linear_expectation_subclass_agrees_with_the_oracle() -> None:
     """A subclass of the linear expectation states the same continuation."""
-    request.getfixturevalue(fixture_name)
     model = _model(
         reads=("income",),
         slice_draws=True,
@@ -507,23 +486,20 @@ def test_linear_expectation_subclass_agrees_with_the_oracle(
     solution = model.solve(params=_params(), log_level="off")
     expected, _, _ = _oracle(reads=("income",), slice_draws=True)
     np.testing.assert_allclose(
-        _solved_alive_values(model=model, solution=solution), expected, rtol=rtol
+        _solved_alive_values(model=model, solution=solution), expected, rtol=1e-10
     )
 
 
-@pytest.mark.parametrize(("fixture_name", "rtol"), [("x64_enabled", 1e-9)])
-def test_power_mean_agrees_with_the_oracle(
-    *, fixture_name: str, rtol: float, request: pytest.FixtureRequest
-) -> None:
+@pytest.mark.skipif(not X64_ENABLED, reason="1e-9 is a float64 tolerance")
+def test_power_mean_agrees_with_the_oracle() -> None:
     """A power-mean continuation is the power mean over every joint node."""
-    request.getfixturevalue(fixture_name)
     model = _model(
         reads=("income",), slice_draws=True, certainty_equivalent=PowerMean()
     )
     solution = model.solve(params=_params(power_mean=True), log_level="off")
     expected, _, _ = _oracle(reads=("income",), slice_draws=True, power_mean=True)
     np.testing.assert_allclose(
-        _solved_alive_values(model=model, solution=solution), expected, rtol=rtol
+        _solved_alive_values(model=model, solution=solution), expected, rtol=1e-9
     )
 
 
