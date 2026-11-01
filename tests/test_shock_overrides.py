@@ -694,7 +694,13 @@ def test_complete_mixed_frame_recovers_canonical_witness(
         correlation=((1.0, rho), (rho, 1.0)),
         nodes=sh.MonteCarlo(1, seed=0),
     )
-    producing = group.transform(base_nodes=jnp.asarray([witness]))
+
+    # Produce in the recovery's own mode: eager and compiled code may differ in
+    # the last bit on some hosts, and the witness compares bits.
+    def produce(base_nodes: FloatND) -> sh.Realisation:
+        return group.transform(base_nodes=base_nodes)
+
+    producing = (jax.jit(produce) if compiled else produce)(jnp.asarray([witness]))
     producing.raise_if_invalid()
     baseline = {"a": jnp.asarray(-0.0), "b": jnp.asarray(-0.0)}
     supplied = {
@@ -754,7 +760,12 @@ def test_complete_mixed_actual_frame_keeps_original_addressed_custody(
     plan = _plan(group=group)
     keys = _keys(group=group)
     arguments = {"period": jnp.asarray(0, dtype=jnp.int32), "age": jnp.asarray(0.0)}
-    original = plan.realise(keys=keys, group_params={}, arguments=arguments)
+
+    # Draw the original in the replay's own mode; the comparison is bitwise.
+    def realise() -> CurrentIIDDrawFrame:
+        return plan.realise(keys=keys, group_params={}, arguments=arguments)
+
+    original = (jax.jit(realise) if compiled else realise)()
     assert bool(original.valid)
 
     def draw() -> CurrentIIDDrawFrame:

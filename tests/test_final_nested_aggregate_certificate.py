@@ -19,7 +19,6 @@ _EXPECTED_NAMES = frozenset(
         "final_nested:body:src/_lcm/egm/finite_negm_query.py::_read_finite_native_row",
         "final_nested:body:src/_lcm/egm/finite_negm_query.py::_read_finite_owned_side",
         "final_nested:body:src/_lcm/egm/finite_negm_query.py::_validate_finite_outer_rows",
-        "final_nested:body:src/_lcm/egm/finite_negm_query.py::_filter_finite_survivors",
         "final_nested:body:src/_lcm/egm/finite_negm_query.py::_select_finite_outer_profiles",
         "final_nested:body:src/_lcm/egm/finite_negm_query.py::_collapse_finite_selection",
         "final_nested:body:src/_lcm/egm/adaptive_nbegm_producer.py::_tuple_roles",
@@ -139,13 +138,13 @@ def test_final_nested_runner_keeps_a_distinct_required_population(
     report = direct_flow_controls.run(repo_root=_ROOT)
     assert report["clean"]["ok"]
     assert report["clean"]["errors"] == []
-    assert report["mutation_count"] == 421
-    assert report["supplemental_mutation_count"] == 97
-    assert report["retained_prefix_mutation_count"] == 113
+    assert report["mutation_count"] == 410
+    assert report["supplemental_mutation_count"] == 94
+    assert report["retained_prefix_mutation_count"] == 116
     assert report["outer_helper_mutation_count"] == 40
     cases = report["final_nested_mutations"]
     assert set(cases) == _EXPECTED_NAMES
-    assert report["final_nested_mutation_count"] == 104
+    assert report["final_nested_mutation_count"] == 103
     assert report["final_nested_names_match_expected"]
     assert report["admitted_final_nested_mutations"] == []
     assert report["all_rejected"]
@@ -213,16 +212,16 @@ def test_final_nested_failure_prevents_the_actual_runner_aggregate(
     report = direct_flow_controls.run(repo_root=_ROOT)
     assert report["clean"]["ok"]
     assert report["clean"]["errors"] == []
-    assert report["mutation_count"] == 421
-    assert report["supplemental_mutation_count"] == 97
-    assert report["retained_prefix_mutation_count"] == 113
+    assert report["mutation_count"] == 410
+    assert report["supplemental_mutation_count"] == 94
+    assert report["retained_prefix_mutation_count"] == 116
     assert report["outer_helper_mutation_count"] == 40
     assert not report["all_rejected"]
     if fault == "admitted":
         assert _PROBE in report["admitted_final_nested_mutations"]
         assert report["final_nested_names_match_expected"]
-        assert report["final_nested_mutation_count"] == 104
+        assert report["final_nested_mutation_count"] == 103
     else:
         assert _PROBE not in report["final_nested_mutations"]
         assert not report["final_nested_names_match_expected"]
-        assert report["final_nested_mutation_count"] == 103
+        assert report["final_nested_mutation_count"] == 102

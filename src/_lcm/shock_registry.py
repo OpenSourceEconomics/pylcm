@@ -96,7 +96,7 @@ class LegacyIIDAdapter:
     """Describe a legacy process without changing its type, timing or rule."""
 
     declaration: _IIDProcess | JointNormalIIDProcess
-    """Original physical-grid declaration, including fold and draw mode."""
+    """Original physical-grid declaration, including its draw mode."""
     physical_names: tuple[ShockName, ...]
     """Physical outputs; a joint declaration stays joint."""
     phase: Phase
@@ -124,8 +124,6 @@ class ShockRegistry:
     """Law input and parameter namespaces for every explicit consumer."""
     legacy: Mapping[tuple[RegimeName, Phase, StateName], LegacyIIDAdapter]
     """Unmodified legacy declarations, with their original ownership."""
-    signed_origins: frozenset[ShockGroupName]
-    """Declared signed ancestry, retained independently of evaluated weight signs."""
 
     @property
     def discrete_grids(self) -> Mapping[ShockName, DiscreteGrid]:
@@ -289,7 +287,7 @@ def create_shock_registry(  # noqa: C901 - bind declarations and phase-specific 
             if not isinstance(law, Discrete)
         )
         law = laws.get(regime_name)
-        _fail_if_arrival_shock_reads_are_unobserved(law=law, groups=groups)
+        _fail_if_participation_shock_reads_are_unobserved(law=law, groups=groups)
         ordinary = (law.transition, law.gated_edges) if law is not None else None
         for func in _iter_declared_callables((regime, ordinary)):
             if reads := set(inspect.signature(func).parameters) & continuous_codes:
@@ -376,9 +374,6 @@ def create_shock_registry(  # noqa: C901 - bind declarations and phase-specific 
         innovations=MappingProxyType(innovations),
         bindings=MappingProxyType(bindings),
         legacy=legacy,
-        signed_origins=frozenset(
-            name for name, group in groups.items() if group.signed
-        ),
     )
 
 
@@ -524,10 +519,10 @@ def _create_legacy_adapters(
     return MappingProxyType(records)
 
 
-def _fail_if_arrival_shock_reads_are_unobserved(
+def _fail_if_participation_shock_reads_are_unobserved(
     *, law: RegimeLaw | None, groups: Mapping[ShockGroupName, ShockGroup]
 ) -> None:
-    """Reserve global physical inputs before arrival edge-parameter discovery.
+    """Reserve global physical inputs before participation edge-parameter discovery.
 
     An observation may be supplied by a queried comparison or fallback rather
     than the landing regime. The query graph authenticates that producer later;
@@ -540,7 +535,7 @@ def _fail_if_arrival_shock_reads_are_unobserved(
         for group in groups.values()
         for name, distribution in group.shocks.items()
     }
-    for target, declaration in law.arrivals.items():
+    for target, declaration in law.participation.items():
         callbacks = [
             (declaration.predicate, frozenset(declaration.reads)),
             *(
@@ -562,7 +557,8 @@ def _fail_if_arrival_shock_reads_are_unobserved(
                     physical_name = name.removesuffix("_code")
                     if not isinstance(physical[physical_name], Discrete):
                         raise UnsupportedOperationError(
-                            f"Arrival input {name!r} cannot read a continuous physical "
+                            f"Participation input {name!r} cannot read a continuous "
+                            "physical "
                             "shock's code: a physical draw has no quadrature-node "
                             "position."
                         )
@@ -571,7 +567,7 @@ def _fail_if_arrival_shock_reads_are_unobserved(
                     and physical_name not in declaration.observes
                 ):
                     raise RegimeInitializationError(
-                        f"Arrival callback for {target!r} requires unobserved "
+                        f"Participation callback for {target!r} requires unobserved "
                         f"physical input {physical_name!r}."
                     )
 
@@ -585,7 +581,7 @@ def _fail_if_shock_reads_are_unlowered(
     if not shock_names:
         return
     for value in declaration:
-        # Typed arrival callbacks are lowered in their landed target context.
+        # Typed participation callbacks are lowered in their landed target context.
         ordinary = (
             (value.transition, value.gated_edges)
             if isinstance(value, RegimeLaw)

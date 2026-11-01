@@ -175,9 +175,6 @@ class ReplayReader(Protocol):
 # installed solver and pylcm always address the same schema.
 EGM_CONTINUATION = ArtifactKey(type_id="pylcm.egm.continuation", schema_version=2)
 SIMULATION_POLICY = ArtifactKey(type_id="pylcm.simulation.policy", schema_version=1)
-DISSOLUTION_FLAG = ArtifactKey(
-    type_id="pylcm.collective.dissolution_flag", schema_version=1
-)
 SOLVER_DIAGNOSTICS = ArtifactKey(type_id="pylcm.solver.diagnostics", schema_version=1)
 
 # The coordinate an EGM carry's rows are tabulated on. It is also the state such
@@ -229,6 +226,7 @@ _BUILT_IN_ROUTE_IDS: MappingProxyType[tuple[ReplayMode, str | None], str] = (
             (ReplayMode.VALID_RECOMPUTATION, None): "pylcm.grid_recomputation",
             (ReplayMode.UNSUPPORTED, None): "pylcm.replay_unsupported",
             (ReplayMode.EXACT_REPLAY, "egm_off_grid"): "pylcm.egm_off_grid",
+            (ReplayMode.EXACT_REPLAY, "nbegm_grid"): "pylcm.nbegm_grid",
             (ReplayMode.EXACT_REPLAY, "nnbegm_finite"): "pylcm.nnbegm_finite",
             (ReplayMode.EXACT_REPLAY, "nnbegm_nested"): "pylcm.nnbegm_nested",
             (ReplayMode.VALID_RECOMPUTATION, "nnbegm_finite"): "pylcm.nnbegm_finite",

@@ -11,6 +11,7 @@ type PythonSource = str
 
 _ROOT = Path(__file__).parents[1]
 _PROCESS_GRIDS = "src/_lcm/simulation/process_grids.py"
+_EAGER_STAGES = "src/_lcm/simulation/eager_stages.py"
 
 
 def _definition(*, tree: ast.Module, name: str) -> ast.FunctionDef:
@@ -50,7 +51,7 @@ def _mutate_definition(*, source: PythonSource, name: str, old: str, new: str) -
 
 
 def _runtime_process_admission_errors(  # noqa: C901, PLR0912, PLR0915
-    *, source: PythonSource
+    *, source: PythonSource, eager_source: PythonSource
 ) -> list[str]:
     tree = ast.parse(source)
     errors: list[str] = []
@@ -308,15 +309,28 @@ def _runtime_process_admission_errors(  # noqa: C901, PLR0912, PLR0915
             "process conversion strength must remain in compilation identity",
         ),
         (
+            "required=required",
+            "every process stage must emit on the selected devices",
+        ),
+    ):
+        if expression not in produce:
+            errors.append(message)
+
+    # The shared eager stage emits each process stage and completes it.
+    stage = ast.unparse(
+        _definition(tree=ast.parse(eager_source), name="run_eager_stage")
+    )
+    for expression, message in (
+        (
             "output_sharding=required",
             "every process stage must emit on the selected devices",
         ),
         (
-            "plan.compiled.executable(**placed).block_until_ready()",
+            "jax.block_until_ready(result)",
             "each stage must complete before its inputs can release",
         ),
     ):
-        if expression not in produce:
+        if expression not in stage:
             errors.append(message)
 
     operation = ast.unparse(_definition(tree=tree, name="_compute_process_stage"))
@@ -333,7 +347,8 @@ def _runtime_process_admission_errors(  # noqa: C901, PLR0912, PLR0915
 def test_runtime_process_admission_contract_is_complete() -> None:
     """The checked-in staged process route obeys its reviewed contract."""
     errors = _runtime_process_admission_errors(
-        source=(_ROOT / _PROCESS_GRIDS).read_text()
+        source=(_ROOT / _PROCESS_GRIDS).read_text(),
+        eager_source=(_ROOT / _EAGER_STAGES).read_text(),
     )
     assert not errors, errors
 
@@ -604,14 +619,20 @@ def test_runtime_process_admission_contract_is_complete() -> None:
         ),
         (
             "SimulationProcessGrids._produce",
+            "required=required",
+            "required=jax.sharding.SingleDeviceSharding(jax.devices()[0])",
+            "every process stage must emit on the selected devices",
+        ),
+        (
+            "run_eager_stage",
             "output_sharding=required",
             "output_sharding=None",
             "every process stage must emit on the selected devices",
         ),
         (
-            "SimulationProcessGrids._produce",
-            "plan.compiled.executable(**placed).block_until_ready()",
-            "plan.compiled.executable(**placed)",
+            "run_eager_stage",
+            "jax.block_until_ready(result)",
+            "result",
             "each stage must complete before its inputs can release",
         ),
         (
@@ -633,6 +654,12 @@ def test_runtime_process_admission_mutation_is_rejected(
 ) -> None:
     """Every independently named staged process weakening is rejected."""
     source = (_ROOT / _PROCESS_GRIDS).read_text()
-    mutated = _mutate_definition(source=source, name=definition, old=old, new=new)
-    errors = _runtime_process_admission_errors(source=mutated)
+    eager_source = (_ROOT / _EAGER_STAGES).read_text()
+    if definition == "run_eager_stage":
+        eager_source = _mutate_definition(
+            source=eager_source, name=definition, old=old, new=new
+        )
+    else:
+        source = _mutate_definition(source=source, name=definition, old=old, new=new)
+    errors = _runtime_process_admission_errors(source=source, eager_source=eager_source)
     assert expected in errors

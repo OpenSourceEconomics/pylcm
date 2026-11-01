@@ -12,7 +12,6 @@ import math
 from collections.abc import Mapping
 from types import MappingProxyType
 
-from _lcm.processes.iid import _IIDProcess
 from _lcm.regime_building.finalize import FinalizedUserRegime
 from _lcm.regime_building.processing import _declared_extent
 from _lcm.regime_law import RegimeLaws
@@ -45,7 +44,7 @@ def fail_if_action_partition_route_is_unsupported(
     - more devices than the model may use;
     - a terminal regime, a regime solved by another solver, or one declaring
       taste shocks, stakeholders, gated edges or same-period references;
-    - a folded process or a discrete sharded state;
+    - a discrete sharded state;
     - an action product with fewer than two actions, or fewer actions than
       devices;
     - a fixed action width leaving a device without a block.
@@ -135,11 +134,6 @@ def _request_failures(
         for name in regime.states
         if name in sharded_states and name != continuous_sharded_state
     )
-    folded = sorted(
-        name
-        for name, grid in regime.states.items()
-        if isinstance(grid, _IIDProcess) and grid.fold
-    )
     fixed_width = fixed_widths.get(ACTION_PRODUCT_AXIS)
     checks = (
         (
@@ -155,7 +149,6 @@ def _request_failures(
         (regime.stakeholders is not None, "is a collective regime"),
         (bool(law.gated_edges), "declares gated edges"),
         (bool(regime.same_period_refs), "declares same-period references"),
-        (bool(folded), f"folds the processes {folded!r}"),
         (
             bool(discrete_sharded),
             f"carries the discrete sharded states {discrete_sharded!r}",

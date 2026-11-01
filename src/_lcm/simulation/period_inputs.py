@@ -6,9 +6,6 @@ from typing import cast
 
 import jax
 
-from _lcm.egm.current_iid_replay_inputs import (
-    CurrentIIDReplayInput,
-)
 from _lcm.egm.published_policy import NNBEGMSimPolicy
 from _lcm.engine import Regime
 from _lcm.execution.core_program import ValueRead
@@ -19,12 +16,11 @@ from _lcm.execution.value_transfer import (
     ValueInputChannel,
 )
 from _lcm.regime_building.gated_edges import edge_may_fold_at_period
-from _lcm.regime_building.projected_forward import ProjectedForwardInputs
 from _lcm.simulation.replay_inputs import PreparedReplayReader, replay_payload_reads
 from _lcm.simulation.value_reads import PeriodSimulationReads
 from _lcm.solution.continuation_reads import rekeyed_value_reads
 from _lcm.typing import QAndFArg, QAndFKwargs, SimulationPolicy
-from lcm.solver_api import DISSOLUTION_FLAG, SIMULATION_POLICY, ReplayReader
+from lcm.solver_api import SIMULATION_POLICY, ReplayReader
 from lcm.typing import FloatND, ReferenceName, RegimeName
 
 GATE_FOLD = "simulation_gate_fold"
@@ -40,11 +36,6 @@ def decision_reads(
     reader: PreparedReplayReader | ReplayReader | None,
 ) -> tuple[ValueRead, ...]:
     """Name the actual decision adapter selected for this unit."""
-    if (
-        regime.simulation.case_r_replay_spec is not None
-        or regime.simulation.uses_case_u_reconstruction
-    ):
-        return ()
     reads = regime.simulation.programs.decision[period].requirements.value_reads
     if reader is not None:
         return rekeyed_value_reads(
@@ -68,35 +59,21 @@ def unit_value_reads(
     name: str,
     period: int,
     values: Mapping[int, Mapping[str, jax.Array]],
-    flags: Mapping[int, Mapping[str, jax.Array]],
     policy: SimulationPolicy | None,
     reader: PreparedReplayReader | ReplayReader | None,
-    current_iid_replay_input: CurrentIIDReplayInput | None = None,
 ) -> tuple[ValueRead, ...]:
     """Declare every occurrence, while the owner counts distinct regime units."""
     reads = list(
         decision_reads(regime=regime, period=period, policy=policy, reader=reader)
     )
-    if current_iid_replay_input is not None:
-        from _lcm.egm.current_iid_replay_inputs import (  # noqa: PLC0415
-            native_replay_program,
-        )
-
-        reads.extend(
-            current_iid_replay_input.reads(
-                core=native_replay_program(replay=current_iid_replay_input)
-            )
-        )
     for family in (
         regime.simulation.programs.exit_full,
         regime.simulation.programs.exit_participating,
-        *regime.simulation.programs.arrival_families,
+        *regime.simulation.programs.participation_families,
     ):
         if period in family:
             reads.extend(family[period].requirements.value_reads)
-    reads.extend(
-        gate_reads(regime=regime, name=name, period=period, values=values, flags=flags)
-    )
+    reads.extend(gate_reads(regime=regime, name=name, period=period, values=values))
     if policy is not None and reader is None:
         for family in (
             regime.simulation.programs.policy_prepare,
@@ -142,16 +119,13 @@ def gate_reads(
     name: str,
     period: int,
     values: Mapping[int, Mapping[str, jax.Array]],
-    flags: Mapping[int, Mapping[str, jax.Array]],
 ) -> tuple[ValueRead, ...]:
-    """Declare raw V and stored Boolean D for the fold and realized gate.
+    """Declare the raw target and reference V the fold and realized gate read.
 
-    Wbar belongs to the decision input. The realized gate instead consumes the
-    raw target/reference values and D, with D converted to the interpolation
-    dtype only after its Boolean stored artifact has been transferred.
+    Wbar belongs to the decision input. The realized gate consumes the raw
+    target/reference values.
     """
     landing_values = values.get(period + 1, {})
-    landing_flags = flags.get(period + 1, {})
     reads: list[ValueRead] = []
     for target, edge in regime.gated_edges.items():
         if not edge_may_fold_at_period(
@@ -181,25 +155,6 @@ def gate_reads(
                 )
                 for reference in dict.fromkeys((target, *edge.reference_regimes))
             )
-            if target in landing_flags:
-                reads.append(
-                    ValueRead(
-                        target=ValueArtifactAddress(
-                            kind=ValueArtifactKind.REPLAY_ARTIFACT_LEAF,
-                            period=period + 1,
-                            regime=target,
-                            artifact_key=DISSOLUTION_FLAG,
-                        ),
-                        source=ValueConsumerAddress(
-                            source_period=period,
-                            source_regime=name,
-                            core_key=core,
-                            channel=ValueInputChannel.NEXT_REPLAY_ARTIFACT,
-                            argument="edge_flags",
-                            path=(target,),
-                        ),
-                    )
-                )
     return tuple(reads)
 
 
@@ -209,33 +164,23 @@ def acquire_gate_inputs(
     owner: PeriodSimulationReads,
     name: str,
     values: Mapping[int, Mapping[str, jax.Array]],
-    flags: Mapping[int, Mapping[str, jax.Array]],
-) -> tuple[Mapping[str, Mapping[str, jax.Array]], Mapping[str, jax.Array]]:
+) -> Mapping[str, Mapping[str, jax.Array]]:
     """Acquire raw leaves into the exact argument paths the adapters consume.
 
     Every occurrence reads the original stored artifact. The owner shares its
     destination copy across edge references, fold/route families, and units.
     """
     placed_values: dict[str, dict[str, jax.Array]] = {}
-    placed_flags: dict[str, jax.Array] = {}
     for read in reads:
         target = read.target
-        is_flag = target.kind is ValueArtifactKind.REPLAY_ARTIFACT_LEAF
-        source = flags if is_flag else values
         array = owner.read(
-            unit=name, read=read, value=source[target.period][target.regime]
+            unit=name, read=read, value=values[target.period][target.regime]
         )
         edge_target = cast("str", read.source.path[0])
-        if is_flag:
-            placed_flags[edge_target] = array
-        else:
-            reference = cast("str", read.source.path[1])
-            placed_values.setdefault(edge_target, {})[reference] = array
-    return (
-        MappingProxyType(
-            {target: MappingProxyType(row) for target, row in placed_values.items()}
-        ),
-        MappingProxyType(placed_flags),
+        reference = cast("str", read.source.path[1])
+        placed_values.setdefault(edge_target, {})[reference] = array
+    return MappingProxyType(
+        {target: MappingProxyType(row) for target, row in placed_values.items()}
     )
 
 
@@ -247,50 +192,15 @@ def acquire_decision_inputs(
     next_values: Mapping[str, jax.Array],
     referenced: QAndFKwargs,
     stored_values: Mapping[int, Mapping[str, jax.Array]],
-    projected_forward_inputs: ProjectedForwardInputs = MappingProxyType({}),
 ) -> tuple[MappingProxyType[RegimeName, FloatND], dict[ReferenceName, QAndFArg]]:
     """Acquire the selected decision's V/Wbar leaves at their exact channels."""
-    projected_targets = {
-        read.target.regime
-        for read in reads
-        if read.target.kind is ValueArtifactKind.CONTINUATION_LEAF
-    }
     channels: dict[ReferenceName, QAndFArg] = {
-        "next_regime_to_V_arr": {
-            target: value
-            for target, value in next_values.items()
-            if target not in projected_targets
-        },
+        "next_regime_to_V_arr": dict(next_values),
         **referenced,
     }
     for read in reads:
         channel = read.source.argument or read.source.channel.value
         target = read.target
-        if target.kind is ValueArtifactKind.CONTINUATION_LEAF:
-            from lcm.solver_api import ArtifactRef  # noqa: PLC0415
-
-            if target.artifact_key is None:
-                raise TypeError("Projected forward leaf has no original artifact key.")
-            ref = ArtifactRef(
-                period=target.period, regime=target.regime, key=target.artifact_key
-            )
-            if (
-                ref.regime not in projected_forward_inputs.get(ref.period, {})
-                or read.source.path
-                or not read.source.argument
-            ):
-                raise TypeError(
-                    "Projected forward requested an absent or undeclared flat leaf."
-                )
-            stored = projected_forward_inputs[ref.period][ref.regime].leaves()[
-                target.leaf_path
-            ]
-            if not isinstance(stored, jax.Array):
-                raise TypeError(
-                    "Projected forward owner requires its retained numerical array."
-                )
-            channels[channel] = owner.read(unit=name, read=read, value=stored)
-            continue
         # Stored originals are authoritative even if another adapter already read
         # this value. A derived Wbar is created once inside this regime unit.
         stored = (
