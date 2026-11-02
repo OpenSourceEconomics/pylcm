@@ -14,7 +14,7 @@ from tests.regime_building.test_collective_regime_simulate import _solve_dissolu
 
 @pytest.fixture(scope="module")
 def dissolution():
-    """A real solved no-dissolution gate, with D true only at the middle wage."""
+    """A solved participation check, whose couple dissolves at the middle wage."""
     return _solve_dissolution()
 
 
@@ -24,7 +24,7 @@ def test_selected_external_reader_omits_unused_legacy_policy_occurrences(
     dissolution,
     external: bool,
 ) -> None:
-    _, regimes, _, _, values, flags = dissolution
+    _, regimes, _, _, values = dissolution
 
     def reader(*, states, fallback_actions):
         del states
@@ -35,7 +35,6 @@ def test_selected_external_reader_omits_unused_legacy_policy_occurrences(
         name="married",
         period=0,
         values=values,
-        flags=flags,
         policy=NBEGMGridPolicy(action=jnp.array([1.0, 2.0]), state_names=("wage",)),
         reader=reader if external else None,
     )

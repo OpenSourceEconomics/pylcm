@@ -356,7 +356,7 @@ def calculate_next_states(
     original_n_subjects: int | None = None,
     process_nodes: Mapping[str, PytreeValue] | None = None,
     memory: SimulationMemory | None = None,
-    supplied_shocks: Mapping[str, np.ndarray] = MappingProxyType({}),
+    supplied_shocks: Mapping[str, FloatND | np.ndarray] = MappingProxyType({}),
 ) -> StatesPerRegime:
     """Calculate next period states for subjects in a regime.
 

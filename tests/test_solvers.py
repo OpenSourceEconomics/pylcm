@@ -29,7 +29,7 @@ from lcm.solvers import (
     ExactEnvelope,
     FUESEnvelope,
     GridSearch,
-    MSSEnvelope,
+    LTMEnvelope,
     Solver,
 )
 from lcm_examples.iskhakov_et_al_2017 import (
@@ -179,7 +179,7 @@ def test_fues_zero_points_to_scan_is_rejected():
 def test_backend_specific_controls_are_not_fields_on_other_backends():
     """A backend configuration cannot carry controls belonging to another backend."""
     with pytest.raises(TypeError, match="n_points_to_scan"):
-        MSSEnvelope(n_points_to_scan=8)  # ty: ignore[unknown-argument]
+        LTMEnvelope(n_points_to_scan=8)  # ty: ignore[unknown-argument]
 
 
 def test_period_kernels_sharing_a_config_reuse_one_compiled_core():

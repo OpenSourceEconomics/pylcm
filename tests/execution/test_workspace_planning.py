@@ -915,3 +915,32 @@ def test_a_tiled_axis_frontier_respects_its_minimum_width() -> None:
     )
 
     assert {widths["cell"] for widths in candidates} == {4, 8}
+
+
+def test_budgeted_frontier_is_enumerated_once_per_axis_declaration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A repeated plan over the same axes reuses its enumerated frontier.
+
+    The budgeted frontier is the Cartesian product of per-axis width ladders
+    (thousands of candidates for an EGM period at production grid sizes) and
+    depends only on the axes and width policy, so every warm solve enumerated it
+    again in pure Python.
+    """
+    import _lcm.execution.workspace_planning as planning  # noqa: PLC0415
+
+    axes = (_tiled(name="cell", extent=14), _tiled(name="point", extent=4000))
+    first = workspace_width_candidates(axes=axes, budget_bytes=2**30)
+    built: list[tuple[int, ...]] = []
+    width_mapping = planning._width_mapping
+
+    def record(**kwargs):
+        built.append(kwargs["values"])
+        return width_mapping(**kwargs)
+
+    monkeypatch.setattr(planning, "_width_mapping", record)
+
+    again = workspace_width_candidates(axes=axes, budget_bytes=2**31)
+
+    assert again == first
+    assert not built

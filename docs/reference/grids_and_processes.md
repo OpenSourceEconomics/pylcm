@@ -103,16 +103,10 @@ one named process changes distribution across observable states without changing
 model's state vocabulary. The conditioning categories and parameter leaves must align
 with the declared categorical grid.
 
-Every IID process supports `fold=True` when used as a state. The solve still evaluates
-utility and the action choice at every shock node, then averages the process axis with
-its own weights before storing the period value. Simulation still draws and publishes
-the realized shock. Folding is a storage-topology optimization with a deliberately
-narrow contract: GridSearch, a singleton regime, fixed distribution parameters, linear
-expectation, and no taste shocks or node-dependent downstream transition/value gate. A
-state-conditioned folded shock additionally requires its conditioning state to remain
-fixed on the regime's own and every incoming edge. See
-[Folding an IID shock out of stored values](../user_guide/continuous_stochastic_processes.md#folding-an-iid-shock-out-of-stored-values)
-for the complete boundary.
+An IID process used as a state carries an axis in a regime only when the regime reads
+its current value. A regime whose state transitions read it only as `next_<state>`
+stores no axis for it and integrates the draw in the continuation. See
+[Shock timing](../user_guide/continuous_stochastic_processes.md#shock-timing-is-read-off-the-model).
 
 See [Grids](../user_guide/grids.md) and
 [Continuous stochastic processes](../user_guide/continuous_stochastic_processes.md) for

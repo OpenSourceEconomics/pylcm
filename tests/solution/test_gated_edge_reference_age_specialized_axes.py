@@ -1,6 +1,6 @@
-"""An explicit arrival reference reads its own age-specialized stored value.
+"""An explicit participation reference reads its own age-specialized stored value.
 
-The arrival decision names the index's IntegratedFull value representation.
+The participation check names the index's IntegratedFull value representation.
 Its own exact-date grid binds the landing projection before the strict Boolean
 hurdle. Canonical Participating target and fallback action problems remain
 separate from this comparison; a more valuable fallback cannot force rejection.
@@ -13,11 +13,11 @@ from numpy.testing import assert_array_almost_equal as aaae
 from lcm import (
     AgeGrid,
     AgeSpecializedGrid,
-    ArrivalDecision,
-    ArrivalRead,
     ByAge,
     LinSpacedGrid,
     Model,
+    ParticipationCheck,
+    ParticipationRead,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
@@ -89,7 +89,7 @@ def test_gated_edge_gate_ref_is_read_at_its_own_period_axes() -> None:
 def test_simulated_gated_edge_gate_ref_is_read_at_its_own_period_axes() -> None:
     """A simulated saver's value at age 1 reads `index` on age 2's grid.
 
-    Simulation reconstructs the same dated arrival read and canonical policy
+    Simulation reconstructs the same dated participation read and canonical policy
     as backward induction: an age-1 saver is worth `2`.
     """
     model = _build_model()
@@ -152,7 +152,7 @@ def _build_model() -> Model:
     - `account` pays out its balance, so its value is `[0, 4]`.
     - `annuity` pays $100 + \\text{principal}$ on `[0, 4, 8]`, so its value is
       `[100, 104, 108]`.
-    - The age-2 arrival reads the represented index at a level equal to balance:
+    - The age-2 participation reads the represented index at a level equal to balance:
       `0` at balance `0` and `4` at balance `4`. Only the latter clears the
       strict hurdle of `3`, selecting the account despite the higher annuity.
     - The saver enters at balance `4`, the top node of the account's grid, so
@@ -170,7 +170,7 @@ def _build_model() -> Model:
         cases={0: {"saver": staying_put, "account": opening}, 1: {"account": opening}}
     )
     saver_gates = {
-        "account": ArrivalDecision(
+        "account": ParticipationCheck(
             predicate=_index_clears_the_hurdle,
             routes={
                 "only": StakeholderRoute(
@@ -181,7 +181,7 @@ def _build_model() -> Model:
                 )
             },
             reads={
-                "index_value": ArrivalRead(
+                "index_value": ParticipationRead(
                     kind="IntegratedFull",
                     regime="index",
                     projection={"level": _level_from_balance},
@@ -221,7 +221,7 @@ def _build_model() -> Model:
             "saver": Transition(
                 targets={"saver": 0, "account": (0, 1), "annuity": (0, 1)},
                 law=saver_law,
-                arrivals=saver_gates,
+                participation=saver_gates,
             )
         },
     )

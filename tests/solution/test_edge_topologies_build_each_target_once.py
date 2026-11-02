@@ -83,8 +83,7 @@ def _edge(*, n_components: int = 1) -> _MockEdge:
     """An edge whose continuation stacks `n_components` channels."""
     return _MockEdge(
         channels=EdgeChannels(
-            component_names=tuple(f"V_target_{i}" for i in range(n_components)),
-            has_dissolution=False,
+            component_names=tuple(f"V_target_{i}" for i in range(n_components))
         )
     )
 

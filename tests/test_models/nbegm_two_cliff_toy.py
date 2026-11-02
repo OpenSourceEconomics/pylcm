@@ -12,6 +12,7 @@ import lcm
 from lcm import LinSpacedGrid, Model
 from lcm.typing import ContinuousState, FloatND, UserParamsNode
 from tests.test_models.nbegm_common import (
+    NBEGMKwargs,
     feasible,
     make_alive_dead_model,
     next_liquid_from_savings,
@@ -60,6 +61,7 @@ def build_model(
     liquid_max: float = 30.0,
     n_savings: int = 150,
     savings_max: float = 28.0,
+    nbegm_overrides: NBEGMKwargs | None = None,
 ) -> Model:
     """Create the two-regime (alive, dead) two-cliff one-asset toy."""
     alive_functions = {
@@ -71,6 +73,7 @@ def build_model(
     alive_solver = resolve_solver(
         variant=variant,
         savings_grid=LinSpacedGrid(start=0.0, stop=savings_max, n_points=n_savings),
+        **(nbegm_overrides or {}),
     )
 
     return make_alive_dead_model(

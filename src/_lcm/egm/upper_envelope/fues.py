@@ -42,9 +42,8 @@ Both are exact-endogenous-grid-coincidence degeneracies that the fast-scan
 (FUES) lineage does not resolve; the Dobrescu-Shanker reference and the
 `OpenSourceEconomics/upper-envelope` ancestor forbid coincident abscissae
 outright rather than solving them. A model that can realize exact coincidence
-and needs it handled must select a segment-envelope backend
-(`MSSEnvelope`, HARK's segment-crossing method), which resolves
-both by construction:
+and needs it handled must select `ExactEnvelope`, which settles ownership per
+node cell and resolves both by construction:
 
 - Pointwise vs interval dominance at a coincident node
   (`_reduce_coincident_groups`): two branches sampled at the same pair of
@@ -374,12 +373,10 @@ def _reduce_coincident_groups(
     outright — and is a deliberate cost of the single-pass scan, not a deferred
     fix. It is reachable within the class (a log-utility DC-EGM whose savings grid
     aligns two candidates on one endogenous node), so a model that needs exact
-    coincident-node correctness must select a segment-envelope backend
-    (`MSSEnvelope`, HARK's segment-crossing method), which resolves
+    coincident-node correctness must select `ExactEnvelope`, which resolves
     interval ownership by construction. See
     `test_pointwise_lower_branch_that_owns_an_interval_is_retained` (the pinned
-    FUES limitation) and `test_mss_resolves_the_coincident_interval_ownership`
-    (the correct backend on the same row).
+    FUES limitation).
     """
     n = grid_sorted.shape[0]
     finite = ~jnp.isnan(grid_sorted)

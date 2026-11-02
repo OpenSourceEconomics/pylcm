@@ -25,7 +25,6 @@ from _lcm.constraints.processed import (
 from _lcm.exits import exits_for_phase
 from _lcm.grids import Grid
 from _lcm.processes.base import _ContinuousStochasticProcess
-from _lcm.processes.iid import _IIDProcess
 from _lcm.regime_law import RegimeLaw, RegimeLaws
 from _lcm.typing import FunctionName, RegimeName, StateName
 from _lcm.utils.error_messages import format_messages
@@ -701,18 +700,10 @@ def _split_states(
             and isinstance(spec.simulate, _ContinuousStochasticProcess)
         ):
             distinct = not spec.solve.has_same_law_as(spec.simulate)
-            if distinct and any(
-                isinstance(side, _IIDProcess) and side.fold
-                for side in (spec.solve, spec.simulate)
-            ):
-                errors.append(
-                    f"states['{name}']: the solve and simulate laws differ, and "
-                    "distinct phased process laws do not support fold=True."
-                )
-            elif distinct and spec.simulate.simulate_draws == "nodes":
+            if distinct and spec.simulate.simulated_draws == "nodes":
                 errors.append(
                     f"states['{name}']: the solve and simulate laws differ, but "
-                    "simulate_draws='nodes' draws from the solve nodes; use "
+                    "simulated_draws='nodes' draws from the solve nodes; use "
                     "continuous draws for a distinct simulation law."
                 )
             else:

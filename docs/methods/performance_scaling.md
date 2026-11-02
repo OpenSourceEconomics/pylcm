@@ -60,13 +60,10 @@ path. Same-period value references, gated-target continuations, and edge-referen
 values and parameters therefore remain ordinary dynamic inputs to those blocks, so a
 value-dependent declaration does not by itself force dense action materialization.
 Ordinary co-mapped state routes preserve device-local continuation reads while streaming
-actions. Eligible singleton folded-state routes also stream their action product at each
-shock node and then apply the unchanged quadrature reduction; the fold-node axis itself
-is still evaluated and reduced in full. The classifier deliberately keeps co-map
-intersections with separate same-period or edge-reference channels, trivial action
-products, JIT-disabled and raw execution, and all simulation-policy construction dense.
-Simulation lies outside the solve classifier. Collective EV1, EV1 with a fold,
-collective hard max with a fold, and EV1 without a discrete action are unsupported by
+actions. The classifier deliberately keeps co-map intersections with separate
+same-period or edge-reference channels, trivial action products, JIT-disabled and raw
+execution, and all simulation-policy construction dense. Simulation lies outside the
+solve classifier. Collective EV1 and EV1 without a discrete action are unsupported by
 the streamed program. See the canonical
 [GridSearch route matrix](../reference/solvers.md#gridsearch-jit-route-matrix). The
 planner selects a private width keyword outside the complete model argument namespace,

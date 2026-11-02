@@ -25,7 +25,7 @@ from lcm import (
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.exceptions import InvalidValueFunctionError
 from lcm.regime import Regime as UserRegime
-from lcm.solvers import DCEGM
+from lcm.solvers import DCEGM, RFCEnvelope
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
 from lcm_examples.mortality import WEALTH_GRID
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
@@ -253,6 +253,7 @@ def test_dcegm_with_interest_matches_closed_form_on_dense_wealth_grid():
                 points=np.array(tuple(400.0 * (i / 199) ** 3 for i in range(200)))
             ),
             n_constrained_points=64,
+            envelope=RFCEnvelope(),
         ),
         liquid=LiquidMargin(
             state="wealth",

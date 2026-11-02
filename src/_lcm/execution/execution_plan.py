@@ -348,7 +348,6 @@ def resolve_execution_config(
     state_names: frozenset[StateName],
     regime_names: frozenset[RegimeName] = frozenset(),
     device_pool_limit_bytes: Mapping[int, int | None] = MappingProxyType({}),
-    hardware: ExecutionHardware | None = None,
 ) -> ResolvedExecution:
     """Check a configuration against the model and freeze it.
 
@@ -390,16 +389,11 @@ def resolve_execution_config(
     _fail_if_a_width_names_an_unknown_regime(
         widths_by_regime=widths_by_regime, regime_names=regime_names
     )
-    if hardware is None:
-        hardware = resolve_execution_hardware(
-            config=config,
-            visible_device_ids=visible_device_ids,
-            device_pool_limit_bytes=device_pool_limit_bytes,
-        )
-    elif hardware.config is not config:
-        raise ExecutionPlanningError(
-            "Constructor hardware belongs to another configuration."
-        )
+    hardware = resolve_execution_hardware(
+        config=config,
+        visible_device_ids=visible_device_ids,
+        device_pool_limit_bytes=device_pool_limit_bytes,
+    )
     selected_ids = hardware.device_ids
     selected_limits = hardware.device_pool_limit_bytes
     requested_bytes = hardware.requested_device_memory_bytes

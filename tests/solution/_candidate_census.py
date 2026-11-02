@@ -202,6 +202,8 @@ def donor_pair_model(
         n_liquid=8,
         n_savings=10,
         n_consumption=12,
+        # The census budgets were measured on the certified reader's footprint.
+        nbegm_overrides={"envelope_arithmetic": "certified"},
         execution_config=ExecutionConfig(
             device_memory_bytes=device_memory_bytes, axis_widths=dict(axis_widths)
         ),

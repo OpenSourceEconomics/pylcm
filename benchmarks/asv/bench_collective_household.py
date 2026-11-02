@@ -6,10 +6,10 @@ pays for, and each cost is measured on its own axis here:
 - **model construction** — the phase scan, the lowering of the collective
   declarations, and the per-edge parameter discovery, with nothing compiled;
 - **cold compilation** — the first solve, which traces and compiles every
-  regime's kernels and its declared arrival programs;
+  regime's kernels and its declared participation programs;
 - **warm solve** — the same solve with the compilation cache hot, which is what
   an estimation loop pays per parameter vector;
-- **simulation over cohort size** — arrival decisions route original subjects
+- **simulation over cohort size** — participation checks route original subjects
   before their final action each period, so this is where a cohort-size term
   would show;
 - **transitive reference depth** — a value constraint may read a regime that
@@ -187,7 +187,7 @@ class CollectiveHouseholdSolve:
 class CollectiveHouseholdSimulate:
     """Forward simulation, over cohort sizes.
 
-    Arrival decisions route each original subject before its final action.
+    Participation checks route each original subject before its final action.
     A cohort-size term that grew faster than linearly would show up between
     these points.
     """

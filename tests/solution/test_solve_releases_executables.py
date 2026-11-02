@@ -11,12 +11,18 @@ import gc
 import inspect
 import types
 import weakref
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 import jax
+import numpy as np
+import pytest
 
-from _lcm.solution import negm
-from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model
+from _lcm.solution import backward_induction, negm
+from lcm import AgeGrid, DiscreteGrid, ExecutionConfig, LinSpacedGrid, Model
 from lcm.solvers import AdaptiveOuterMesh, GridSearch
+from tests.solution.test_public_exit_queries import _sharing_control_model
+from tests.solution.test_solution_result import _small_grid_search_inputs
 from tests.test_models import n_nbegm_toy
 from tests.test_models.deterministic.regression import (
     START_AGE,
@@ -208,3 +214,122 @@ def test_the_nested_function_probe_counts_a_live_nested_function() -> None:
     _pinned_nested_function()
 
     assert _live_nested_functions(source_file=__file__) > baseline
+
+
+def _observe_collection(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Record the engine's collection calls while executing the real collector."""
+    events: list[str] = []
+
+    def collect(generation: int = 2) -> int:
+        events.append("collect")
+        return gc.collect(generation)
+
+    def freeze() -> None:
+        events.append("freeze")
+        gc.freeze()
+
+    def unfreeze() -> None:
+        events.append("unfreeze")
+        gc.unfreeze()
+
+    monkeypatch.setattr(
+        backward_induction,
+        "gc",
+        SimpleNamespace(collect=collect, freeze=freeze, unfreeze=unfreeze),
+    )
+    return events
+
+
+@pytest.mark.parametrize("state_count", [2, 65])
+def test_public_queries_without_continuations_do_not_collect(
+    *, monkeypatch: pytest.MonkeyPatch, state_count: int
+) -> None:
+    """Repeated public query solves need no explicit collection without carries."""
+    model = _sharing_control_model(state_count=state_count)
+    assert all(
+        regime.solution.continuation_spec is None for regime in model._regimes.values()
+    )
+    events = _observe_collection(monkeypatch)
+    dtype = np.float64 if jax.config.jax_enable_x64 else np.float32
+    expected = np.asarray(
+        [5 + 2 * index / (state_count - 1) for index in range(state_count)], dtype=dtype
+    )
+    for _ in range(2):
+        result = model.solve(params={}, runtime_checks=False, log_level="off")
+        np.testing.assert_array_equal(result.values[0]["single_f"], expected)
+        assert not result.retained_continuations
+        del result
+    assert events == []
+
+
+def test_multiperiod_value_only_solve_does_not_collect(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Rolling ordinary value functions requires no continuation collection."""
+    model, params, _ = _small_grid_search_inputs()
+    assert model._time.n_periods > 1
+    assert all(
+        regime.solution.continuation_spec is None for regime in model._regimes.values()
+    )
+    events = _observe_collection(monkeypatch)
+    for _ in range(2):
+        result = model.solve(params=params, runtime_checks=False, log_level="off")
+        assert len(result.values) == model._time.n_periods
+        assert not result.retained_continuations
+        del result
+    assert events == []
+
+
+def test_continuation_solve_keeps_collection_and_thaws(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A real continuation publisher retains the collect/freeze/release lifecycle."""
+    model = _negm_model()
+    assert any(
+        regime.solution.continuation_spec is not None
+        for regime in model._regimes.values()
+    )
+    events = _observe_collection(monkeypatch)
+    result = model.solve(
+        params={"discount_factor": 0.95}, runtime_checks=False, log_level="off"
+    )
+    assert result.values
+    assert events[:2] == ["collect", "freeze"]
+    assert events[-1] == "unfreeze"
+    assert events.count("collect") >= 2
+    assert events.count("freeze") == events.count("unfreeze") == 1
+
+
+@pytest.mark.parametrize("publishes_continuation", [False, True])
+def test_failed_public_solve_closes_work_and_thaws_publishers(
+    *, monkeypatch: pytest.MonkeyPatch, publishes_continuation: bool
+) -> None:
+    """Dispatch failure preserves completion cleanup and the applicable GC lifecycle."""
+    if publishes_continuation:
+        model = _negm_model()
+        params = {"discount_factor": 0.95}
+    else:
+        model, params, _ = _small_grid_search_inputs(
+            execution_config=ExecutionConfig(device_memory_bytes=128 * 1024 * 1024)
+        )
+    events = _observe_collection(monkeypatch)
+    closed: list[bool] = []
+    original_close = backward_induction.PendingSolveWork.close
+
+    def close(owner: backward_induction.PendingSolveWork) -> None:
+        closed.append(True)
+        original_close(owner)
+
+    monkeypatch.setattr(backward_induction.PendingSolveWork, "close", close)
+    monkeypatch.setattr(
+        backward_induction,
+        "_run_dispatch_unit",
+        Mock(side_effect=RuntimeError("collection unwind witness")),
+    )
+    with pytest.raises(RuntimeError, match="collection unwind witness"):
+        model.solve(params=params, runtime_checks=False, log_level="off")
+    if publishes_continuation:
+        assert events == ["collect", "freeze", "unfreeze"]
+    else:
+        assert events == []
+        assert closed == [True]

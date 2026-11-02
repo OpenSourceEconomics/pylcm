@@ -9,6 +9,7 @@ Six objects, each declared inside a slot that already exists:
 reading of another regime's value in the same period.
 """
 
+import inspect
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
@@ -19,7 +20,7 @@ from beartype import beartype
 from _lcm.beartype_conf import REGIME_CONF
 from _lcm.typing import RegimeName, StateName
 from _lcm.utils.containers import ensure_containers_are_immutable
-from lcm.exceptions import RegimeInitializationError
+from lcm.exceptions import GateReadsValueError, RegimeInitializationError
 from lcm.phased import Phased
 from lcm.typing import UserFunction
 
@@ -102,10 +103,9 @@ class ProjectedRegimeValue:
     - inside `ValueDependentConstraint.references` it projects from the
       DECLARING regime's state cell, receives that regime's `period` / `age`,
       and may introduce no free parameters;
-    - inside a `Gate` — as a `references` entry or a route's `fallback` — it
-      projects from the TARGET regime's grid, receives
-      that target fold's `period` / `age`, and its free arguments are collected
-      as that edge's own parameters.
+    - inside a `Gate` route's `fallback` it projects from the TARGET regime's
+      grid, receives that target fold's `period` / `age`, and its free
+      arguments are collected as that edge's own parameters.
     """
 
     regime: RegimeName
@@ -204,8 +204,8 @@ class ValueDependentConstraint:
 
     Declared inside the regime's `constraints`, beside the ordinary callables,
     so there is one constraint slot rather than two. The regime's mask is the
-    AND of both kinds, and a cell whose mask is empty publishes the regime's
-    dissolution flag.
+    AND of both kinds, and a cell whose mask is empty holds no viable
+    household.
 
     A participation constraint is the motivating case: a couple's cell is
     feasible only where each partner is at least as well off inside the
@@ -297,7 +297,7 @@ class StakeholderRoute:
 @beartype(conf=REGIME_CONF)
 @dataclass(frozen=True, kw_only=True)
 class Gate:
-    """A value-dependent branch on the transition into one target.
+    """A state-dependent branch on the transition into one target.
 
     Declared in `Transition(gates={target: Gate(...)})`, keyed by the target it
     gates. The `Transition`'s law supplies the probability of reaching that
@@ -306,33 +306,29 @@ class Gate:
     target is reached, and in both phases.
 
     **The key is always the GATE-OPEN target** — the regime a row enters when
-    the predicate is true. A dissolution edge is therefore keyed by the
-    CONTINUING collective regime under `predicate = ~D_target`, with each
-    partner's own regime as that partner's route fallback; keying it by one
-    partner's regime would send both partners there whenever the couple stays
-    together.
+    the predicate is true; each route's fallback is where the closed branch
+    sends that stakeholder.
 
     This is what unlocks mixed singleton/collective topologies — a singleton
-    regime reaching a collective one under mutual consent, a collective regime
-    routing per stakeholder into singleton ones on dissolution. A raw
-    transition between regimes of different stakeholder structure stays
-    rejected.
+    regime reaching a collective one, a collective regime routing per
+    stakeholder into singleton ones. A raw transition between regimes of
+    different stakeholder structure stays rejected.
+
+    A gate never reads a value. A move decided by comparing values is an `Exit`
+    declared in the source regime's `exits=`, or a `ParticipationCheck` in the
+    `Transition`'s `participation` when the comparison is made on landing.
     """
 
     predicate: UserFunction
     """Boolean predicate on the TARGET regime's grid, in the target fold's context.
 
-    May read the target's value — `V_target` for a singleton target,
-    `V_target_<s>` per stakeholder for a collective one — the target's
-    dissolution flag `D_target` (a collective target only; reading it on a
-    singleton target is rejected while the model is built), each key of
-    `references`, ordinary target states and params, and the target fold's
-    `period` / `age`. Mutual consent is the strict, unanimous predicate
-    `(V_target_f > V_single_f) & (V_target_m > V_single_m)`; "no dissolution
-    this period" is `~D_target`. A predicate returning a probability rather
-    than a Boolean is rejected when it is evaluated, i.e. on the first
-    `solve()` rather than at model build: the branch is selected with a strict
-    `where`, in which every nonzero value is true.
+    Reads ordinary target states, the edge's own params, and the target fold's
+    `period` / `age`. An argument named `V_target`, `V_target_<s>` or
+    `D_target` raises `GateReadsValueError` when the gate is declared. A
+    predicate returning a probability rather than a Boolean is rejected when it
+    is evaluated, i.e. on the first `solve()` rather than at model build: the
+    branch is selected with a strict `where`, in which every nonzero value is
+    true.
     """
 
     routes: Mapping[str, StakeholderRoute]
@@ -341,20 +337,13 @@ class Gate:
     A singleton source declares exactly one route, under any key.
     """
 
-    references: Mapping[str, ProjectedRegimeValue] = field(
-        default_factory=lambda: MappingProxyType({})
-    )
-    """The same-period reference values `predicate` reads, projected from the
-    target regime's grid, keyed by the name each one enters the predicate
-    under."""
-
     off_grid: Literal["pointwise", "reject"] = "pointwise"
     """What the gate promises about a landing point between the target's nodes.
 
     - `"pointwise"` (the default) reads every operand at the landing point and
-      applies the predicate there, in both phases. The operands are
-      interpolated, so the value carries the ordinary interpolation error of
-      any continuation — but it is a value one branch really delivers, and the
+      applies the predicate there, in both phases. The branch values are
+      interpolated, so they carry the ordinary interpolation error of any
+      continuation — but each is a value one branch really delivers, and the
       branch the solve priced is the branch simulation routes down.
     - `"reject"` demands that no such point exists: the model refuses to build
       unless the target regime's grid is reached exactly, i.e. it carries no
@@ -363,7 +352,22 @@ class Gate:
     """
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "routes", ensure_containers_are_immutable(self.routes))
-        object.__setattr__(
-            self, "references", ensure_containers_are_immutable(self.references)
+        value_operands = sorted(
+            name
+            for name in inspect.signature(self.predicate).parameters
+            if name in {"V_target", "D_target"} or name.startswith("V_target_")
         )
+        if value_operands:
+            msg = (
+                f"The gate predicate reads {value_operands}, a value of its "
+                "target regime. A gate routes on the target's states and "
+                "parameters only. Declare a move decided by comparing values "
+                "in the current period as an `Exit` in the source regime's "
+                "`exits=`, priced at the target's participating policy. Keep "
+                "a comparison made on landing in the next period at that "
+                "landing date with a `ParticipationCheck` in the `Transition`'s "
+                "`participation`, which reads values through explicit "
+                "`ParticipationRead`s."
+            )
+            raise GateReadsValueError(msg)
+        object.__setattr__(self, "routes", ensure_containers_are_immutable(self.routes))

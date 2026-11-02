@@ -14,6 +14,7 @@ from jax import config as jax_config
 from lcm import LinSpacedGrid
 from lcm.solvers import AdaptiveOuterMesh
 from lcm.typing import ContinuousState, FloatND
+from tests.simulation.test_nnbegm_candidate_ranking import _record_canonical_q_batching
 from tests.test_models import n_nbegm_toy as toy
 
 # The module-scoped simulation runs up against the per-test timeout on the
@@ -213,3 +214,33 @@ def test_a_legal_narrow_adjuster_mesh_preserves_the_exact_keeper() -> None:
     assert float(row["illiquid"] + row["illiquid_investment"]) == pytest.approx(
         0.0, abs=0.0
     )
+
+
+def test_nested_replay_scores_canonical_q_once_on_the_read_winner(
+    monkeypatch,
+) -> None:
+    """The nested read's winner is emitted; canonical Q scores only that pair.
+
+    No grid baseline and no keeper-plus-mesh bank is rescored: one canonical-Q
+    evaluation per regime-period, unbatched over any candidate axis.
+    """
+    calls = _record_canonical_q_batching(monkeypatch)
+    mesh = AdaptiveOuterMesh(
+        initial_grid=LinSpacedGrid(start=0.0, stop=20.0, n_points=5),
+        max_nodes=17,
+        max_refinement_rounds=2,
+        value_atol=1e-4,
+        value_rtol=1e-4,
+        golden_iterations=12,
+        fail_closed=False,
+    )
+    toy.build_model(variant="n_nbegm", n_periods=2, outer_search=mesh).simulate(
+        params=_PARAMS,
+        initial_conditions=dict(_INITIAL),
+        log_level="debug",
+        seed=42,
+    )
+    assert calls
+    assert all(actions == states for actions, states, _ in calls), calls
+    periods = [period for _, _, period in calls]
+    assert len(periods) == len(set(periods)), calls

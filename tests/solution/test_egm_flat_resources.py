@@ -34,7 +34,7 @@ from lcm import (
 )
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.regime import Regime as UserRegime
-from lcm.solvers import DCEGM
+from lcm.solvers import DCEGM, RFCEnvelope
 from lcm.typing import BoolND, ContinuousAction, ContinuousState, FloatND, UserParams
 from lcm_examples.iskhakov_et_al_2017 import dead
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
@@ -135,6 +135,7 @@ def _get_means_tested_model(variant: str) -> Model:
             solver=DCEGM(
                 savings_grid=SAVINGS_GRID,
                 n_constrained_points=64,
+                envelope=RFCEnvelope(),
             ),
             liquid=LiquidMargin(
                 state="wealth",
@@ -183,6 +184,7 @@ def _get_corner_model() -> Model:
         solver=DCEGM(
             savings_grid=CORNER_SAVINGS_GRID,
             n_constrained_points=64,
+            envelope=RFCEnvelope(),
         ),
         liquid=LiquidMargin(
             state="wealth",

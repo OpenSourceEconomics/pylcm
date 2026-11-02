@@ -25,7 +25,6 @@ from lcm import (
     IrregSpacedGrid,
     LinSpacedGrid,
     Model,
-    NormalIIDProcess,
     Regime,
     Transition,
     categorical,
@@ -39,7 +38,17 @@ from lcm.consumption_savings_regime import (
     outer_unchanged,
 )
 from lcm.exceptions import InvalidValueFunctionError
-from lcm.solvers import DCEGM, EGM, NBEGM, NEGM, NNBEGM, FiniteOuterGrid, GridSearch
+from lcm.shocks import GaussHermite, Normal, Product, ShockGroup
+from lcm.solvers import (
+    DCEGM,
+    EGM,
+    NBEGM,
+    NEGM,
+    NNBEGM,
+    FiniteOuterGrid,
+    GridSearch,
+    RFCEnvelope,
+)
 from lcm.transition import StochasticTransition
 from lcm.typing import (
     ActionName,
@@ -235,8 +244,9 @@ def _assert_same_public_result(
     states = {state_name: jnp.asarray([4.0, 7.0, 10.0])}
     if solver_kind in ("negm", "nnbegm"):
         states["illiquid"] = jnp.asarray([0.0, 1.0, 2.0])
-    # NNBEGM exposes its published policy through native replay, not lookup_policy.
-    for period in () if solver_kind == "nnbegm" else (0, 1):
+    # NNBEGM and DC-EGM expose their published policy through native replay
+    # (policy-first simulation), not lookup_policy; the paths below cover it.
+    for period in () if solver_kind in ("nnbegm", "dcegm") else (0, 1):
         expected_policy = model.lookup_policy(
             params=reference_params,
             solution=reference,
@@ -508,7 +518,7 @@ def _build_model(
         solver = (
             EGM(savings_grid=savings_grid)
             if solver_kind == "egm"
-            else DCEGM(savings_grid=savings_grid)
+            else DCEGM(savings_grid=savings_grid, envelope=RFCEnvelope())
             if solver_kind == "dcegm"
             else NBEGM(savings_grid=savings_grid)
         )
@@ -644,7 +654,9 @@ class _Health:
     unreachable: ScalarInt
 
 
-def _fold_cost(*, next_xi: ContinuousState, next_health: DiscreteState) -> FloatND:
+def _post_decision_cost(
+    *, next_xi: ContinuousState, next_health: DiscreteState
+) -> FloatND:
     return jnp.where(
         next_health == _Health.unreachable,
         100.0,
@@ -677,21 +689,24 @@ def _raw_domain_utility(
     )
 
 
-def _fold_bequest(*, wealth: ContinuousState, health: DiscreteState) -> FloatND:
+def _post_decision_bequest(
+    *, wealth: ContinuousState, health: DiscreteState
+) -> FloatND:
     return jnp.sqrt(wealth + 4.0) + 0.1 * health
 
 
-def _fold_model() -> Model:
+def _bill_shock() -> ShockGroup:
+    return ShockGroup(
+        shocks={"xi": Normal(mu=0.0, sigma=0.25)}, nodes=Product(xi=GaussHermite(3))
+    )
+
+
+def _post_decision_model() -> Model:
     wealth_grid = LinSpacedGrid(start=3.0, stop=15.0, n_points=13)
     health_grid = DiscreteGrid(_Health)
     alive = Regime(
-        states={
-            "wealth": wealth_grid,
-            "health": health_grid,
-            "xi": NormalIIDProcess(
-                n_points=3, mu=0.0, sigma=0.25, gauss_hermite=True, fold=True
-            ),
-        },
+        states={"wealth": wealth_grid, "health": health_grid},
+        shocks=("bill_shock",),
         actions={
             "consumption": IrregSpacedGrid(points=np.array([-1.0, 0.0, 1.0, 2.0, 3.0]))
         },
@@ -704,7 +719,7 @@ def _fold_model() -> Model:
         functions={
             "utility": _raw_domain_utility,
             "resources": _resources,
-            "cost": _fold_cost,
+            "cost": _post_decision_cost,
             "negative_cost": _negative_cost,
             "before_bill": _before_bill,
         },
@@ -713,7 +728,7 @@ def _fold_model() -> Model:
     )
     dead = Regime(
         states={"wealth": wealth_grid, "health": health_grid},
-        functions={"utility": _fold_bequest},
+        functions={"utility": _post_decision_bequest},
     )
     return Model(
         regimes={"alive": alive, "dead": dead},
@@ -726,6 +741,7 @@ def _fold_model() -> Model:
                 law=ByAge.until(stop_age_exclusive=2, law="alive", then="dead"),
             )
         },
+        shocks={"bill_shock": _bill_shock()},
     )
 
 
@@ -737,7 +753,7 @@ def _linear_read(*, at: float, nodes: np.ndarray, values: np.ndarray) -> float:
     return float((1.0 - fraction) * values[index] + fraction * values[index + 1])
 
 
-def _fold_enumerated_oracle() -> dict[int, np.ndarray]:
+def _post_decision_enumerated_oracle() -> dict[int, np.ndarray]:
     """Literal feasible-action and live-node enumeration with linear reads.
 
     The unreachable health node is omitted before interpolation. The live shock
@@ -746,11 +762,9 @@ def _fold_enumerated_oracle() -> dict[int, np.ndarray]:
     strictly positive actions and does not call the model's utility function.
     """
     nodes = np.linspace(3.0, 15.0, 13)
-    process = NormalIIDProcess(
-        n_points=3, mu=0.0, sigma=0.25, gauss_hermite=True, fold=True
-    )
-    shocks = np.asarray(process.to_jax())
-    weights = np.asarray(process.get_transition_probs())[0]
+    raw_nodes, raw_weights = np.polynomial.hermite.hermgauss(3)
+    shocks = 0.25 * np.sqrt(2.0) * raw_nodes
+    weights = raw_weights / np.sqrt(np.pi)
     continuation = np.sqrt(nodes + 4.0)[:, None] + 0.1 * np.arange(3)[None, :]
     result: dict[int, np.ndarray] = {}
     for period in (1, 0):
@@ -783,7 +797,7 @@ def _fold_enumerated_oracle() -> dict[int, np.ndarray]:
     return result
 
 
-def test_raw_domain_invalid_utility_matches_native_fold_and_literal_oracle() -> None:
+def test_raw_domain_invalid_utility_matches_post_decision_and_literal_oracle() -> None:
     """Invalid primal and marginal cells are harmless outside feasibility."""
     assert np.isnan(
         float(
@@ -801,13 +815,13 @@ def test_raw_domain_invalid_utility_matches_native_fold_and_literal_oracle() -> 
             )(jnp.asarray(-1.0))
         )
     )
-    model = _fold_model()
+    model = _post_decision_model()
     reference_params = {"discount_factor": 0.9, "unsafe": False}
     poisoned_params = {"discount_factor": 0.9, "unsafe": True}
     reference = model.solve(params=reference_params, log_level="off")
     poisoned = model.solve(params=poisoned_params, log_level="off")
     order = model.state_names(regime_name="alive")
-    for period, expected in _fold_enumerated_oracle().items():
+    for period, expected in _post_decision_enumerated_oracle().items():
         actual = np.transpose(
             np.asarray(poisoned.values[period]["alive"]),
             [order.index("wealth"), order.index("health")],
@@ -975,7 +989,10 @@ def _dead_branch_model(*, forbid_work: bool) -> Model:
             resources="resources",
             post_decision_state="savings",
         ),
-        solver=DCEGM(savings_grid=LinSpacedGrid(start=0.0, stop=15.0, n_points=40)),
+        solver=DCEGM(
+            savings_grid=LinSpacedGrid(start=0.0, stop=15.0, n_points=40),
+            envelope=RFCEnvelope(),
+        ),
     )
     dead = Regime(
         states={"wealth": wealth_grid, "status": status_grid},

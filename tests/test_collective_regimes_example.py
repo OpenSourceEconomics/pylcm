@@ -85,8 +85,8 @@ def test_dissolution_routes_the_simulated_person_to_their_single_regime():
     )
 
 
-def test_arrival_support_routes_without_retained_dissolution_artifacts():
-    """The arrival policy's feasible set routes each original role directly."""
+def test_participation_support_routes_without_retained_dissolution_artifacts():
+    """The participation policy's feasible set routes each original role directly."""
     model = get_dissolution_model()
     params = get_params()
     solution = model.solve(

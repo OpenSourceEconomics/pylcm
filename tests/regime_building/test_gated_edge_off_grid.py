@@ -13,6 +13,7 @@ The model below is exactly hand-computable, so every expected number is an
 integer or a half-integer rather than a tolerance-bounded approximation.
 """
 
+import logging
 from collections.abc import Callable
 from typing import Literal
 
@@ -22,8 +23,6 @@ import pytest
 
 from lcm import (
     AgeGrid,
-    ArrivalDecision,
-    ArrivalRead,
     ByAge,
     CollectiveUtility,
     DiscreteGrid,
@@ -33,6 +32,8 @@ from lcm import (
     Model,
     NormalIIDProcess,
     ParetoObjective,
+    ParticipationCheck,
+    ParticipationRead,
     Phased,
     ProjectedRegimeValue,
     Regime,
@@ -238,7 +239,6 @@ def _make_categorical_process_fallback_model(
                         mu=0.0,
                         sigma=1.0,
                         n_std=1.0,
-                        fold=False,
                     ),
                 },
                 functions={"utility": _utility_categorical_fallback},
@@ -301,14 +301,26 @@ def _project_unknown_category(category: DiscreteState) -> DiscreteState:
 
 
 @pytest.mark.coverage(backends=("cpu", "gpu-small"), precisions="both")
-def test_solve_rejects_unknown_categories_in_a_process_fallback() -> None:
-    """Codes outside the categorical domain cannot publish a finite value."""
+def test_solve_rejects_unknown_categories_in_a_process_fallback(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Codes outside the categorical domain cannot publish a finite value.
+
+    The stored values do not hold the gated continuation the regime read, so the
+    NaN report comes without the U/F/E/Q breakdown rather than from a failed
+    attempt to rebuild it.
+    """
     model = _make_categorical_process_fallback_model(
         category_projection=_project_unknown_category
     )
 
-    with pytest.raises(InvalidValueFunctionError, match="NaN"):
+    with (
+        caplog.at_level(logging.WARNING, logger="lcm"),
+        pytest.raises(InvalidValueFunctionError, match="NaN") as exc_info,
+    ):
         model.solve(params=_params(), log_level="debug")
+    assert exc_info.value.diagnostics is None
+    assert "Diagnostic enrichment failed" not in caplog.text
 
 
 def test_the_action_taken_is_the_one_the_gated_value_ranks_first() -> None:
@@ -595,8 +607,8 @@ def _witness_model() -> Model:
                 law=ByAge(
                     cases={0: {"target": StochasticTransition(func=_certain_target)}}
                 ),
-                gates={
-                    "target": Gate(
+                participation={
+                    "target": ParticipationCheck(
                         predicate=_witness_gate,
                         routes={
                             "only": StakeholderRoute(
@@ -606,10 +618,17 @@ def _witness_model() -> Model:
                                 )
                             )
                         },
-                        references={
-                            "V_reference": ProjectedRegimeValue(
-                                regime="reference", projection={"x": _identity_x}
-                            )
+                        reads={
+                            "V_target": ParticipationRead(
+                                kind="IntegratedFull",
+                                regime="target",
+                                projection={"x": _identity_x},
+                            ),
+                            "V_reference": ParticipationRead(
+                                kind="IntegratedFull",
+                                regime="reference",
+                                projection={"x": _identity_x},
+                            ),
                         },
                     )
                 },
@@ -686,7 +705,7 @@ def _risky_risk_only(risk: DiscreteState) -> BoolND:
     return risk == Risk.risky
 
 
-def _arrival_floor_model(
+def _participation_floor_model(
     *, nonfinite_risky: bool = False, safe_only: bool = False
 ) -> Model:
     """One actual edge and date, with optional impossible source-action landings."""
@@ -719,11 +738,11 @@ def _arrival_floor_model(
         edges={
             "source": Transition(
                 law=ByAge(cases={0: "target"}),
-                arrivals={
-                    "target": ArrivalDecision(
+                participation={
+                    "target": ParticipationCheck(
                         predicate=_crossing_floor,
                         reads={
-                            "V_target": ArrivalRead(
+                            "V_target": ParticipationRead(
                                 kind="Participating",
                                 regime="target",
                                 projection={"x": _identity_x},
@@ -743,7 +762,7 @@ def _arrival_floor_model(
     )
 
 
-def test_arrival_policy_floor_prices_the_actual_landing_action_problem() -> None:
+def test_participation_policy_floor_prices_the_actual_landing_action_problem() -> None:
     """A target's interior action crossing cannot manufacture a passing floor.
 
     Direct enumeration gives target action values (0, 1) at the safe landing
@@ -752,33 +771,33 @@ def test_arrival_policy_floor_prices_the_actual_landing_action_problem() -> None
     interpolating target maxima instead gives 0.5 and 0.75 and reverses choice.
     The rejected destination still beats fallback, so maximization cannot
     substitute for the declared Boolean rule.
-    Both time terms vanish at arrival; borrowing the source's period or age
+    Both time terms vanish at landing; borrowing the source's period or age
     changes the floor decision and therefore the selected source value.
     """
-    solution = _arrival_floor_model().solve(
+    solution = _participation_floor_model().solve(
         params={"discount_factor": 0.5}, log_level="off"
     )
     np.testing.assert_array_equal(np.asarray(solution.values[0]["source"]), 0.5)
 
 
-def test_arrival_integrity_ignores_a_genuinely_infeasible_source_action() -> None:
-    """An impossible source action cannot poison the valid action's arrival."""
-    solution = _arrival_floor_model(nonfinite_risky=True, safe_only=True).solve(
+def test_participation_integrity_ignores_a_genuinely_infeasible_source_action() -> None:
+    """An impossible source action cannot poison the valid action's participation."""
+    solution = _participation_floor_model(nonfinite_risky=True, safe_only=True).solve(
         params={"discount_factor": 0.5}, log_level="off"
     )
     np.testing.assert_array_equal(np.asarray(solution.values[0]["source"]), 0.5)
 
 
-def test_feasible_invalid_arrival_remains_mandatory_at_zero_discount() -> None:
+def test_feasible_invalid_participation_remains_mandatory_at_zero_discount() -> None:
     """Discounting cannot erase a feasible source action's unresolved reader."""
     with pytest.raises(ExecutionPlanningError, match="unresolved numerical status"):
-        _arrival_floor_model(nonfinite_risky=True).solve(
+        _participation_floor_model(nonfinite_risky=True).solve(
             params={"discount_factor": 0.0}, log_level="off", runtime_checks=False
         )
 
 
 @categorical(ordered=False)
-class _FutureArrivalRegimeId:
+class _FutureParticipationRegimeId:
     source: ScalarInt
     target: ScalarInt
     fallback: ScalarInt
@@ -791,7 +810,7 @@ def _future_crossing_target(
     return _crossing_target(x=x, risk=risk, period=period, age=age) - 0.5
 
 
-def _future_arrival_value(
+def _future_participation_value(
     *, x: ContinuousState, period: ScalarInt, age: FloatND
 ) -> FloatND:
     return 1.0 + 0.0 * x + (period - 2) + (age - 2)
@@ -805,13 +824,13 @@ def _settlement_x(x: ContinuousState) -> ContinuousState:
     return x + 0.25
 
 
-def _future_arrival_floor_model(
+def _future_participation_floor_model(
     *,
     force_risky: bool = False,
     phased_settlement: bool = False,
     allow_initial_target: bool = False,
 ) -> Model:
-    """The arrival's actual Q requires a genuinely later stored value."""
+    """The participation check's actual Q requires a genuinely later stored value."""
     actions = DiscreteGrid(category_class=Risk)
     return Model(
         regimes={
@@ -837,22 +856,22 @@ def _future_arrival_floor_model(
             ),
             "future": Regime(
                 states={"x": _WITNESS_X},
-                functions={"utility": _future_arrival_value},
+                functions={"utility": _future_participation_value},
             ),
         },
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
-        regime_id_class=_FutureArrivalRegimeId,
+        regime_id_class=_FutureParticipationRegimeId,
         initial_nodes={0: "source", 1: "target"}
         if allow_initial_target
         else {0: "source"},
         edges={
             "source": Transition(
                 law=ByAge(cases={0: "target"}),
-                arrivals={
-                    "target": ArrivalDecision(
+                participation={
+                    "target": ParticipationCheck(
                         predicate=_crossing_floor,
                         reads={
-                            "V_target": ArrivalRead(
+                            "V_target": ParticipationRead(
                                 kind="Participating",
                                 regime="target",
                                 projection={"x": _identity_x},
@@ -884,9 +903,9 @@ def _future_arrival_floor_model(
     )
 
 
-def test_nonterminal_arrival_prices_its_actual_future_continuation() -> None:
-    """Future value at date two restores the crossing at the true arrival date."""
-    solution = _future_arrival_floor_model().solve(
+def test_nonterminal_participation_prices_its_actual_future_continuation() -> None:
+    """Future value at date two restores the crossing at the true participation date."""
+    solution = _future_participation_floor_model().solve(
         params={"discount_factor": 0.5}, log_level="off"
     )
     np.testing.assert_array_equal(np.asarray(solution.values[2]["future"]), 1.0)
@@ -894,27 +913,29 @@ def test_nonterminal_arrival_prices_its_actual_future_continuation() -> None:
     np.testing.assert_array_equal(np.asarray(solution.values[0]["source"]), 0.5)
 
 
-def test_actual_arrival_publisher_borrows_its_declared_future_native_input(
+def test_actual_participation_publisher_borrows_its_declared_future_native_input(
     *, monkeypatch
 ) -> None:
     """The source really reads the original later buffer through its dated alias."""
-    from _lcm.arrival_continuation import (  # noqa: PLC0415
-        ARRIVAL_CONTINUATION,
-        ArrivalContinuation,
-    )
-    from _lcm.arrival_publication import _BorrowedArrivalKernel  # noqa: PLC0415
     from _lcm.execution.value_transfer import ValueArtifactKind  # noqa: PLC0415
+    from _lcm.participation_continuation import (  # noqa: PLC0415
+        PARTICIPATION_CONTINUATION,
+        ParticipationContinuation,
+    )
+    from _lcm.participation_publication import (  # noqa: PLC0415
+        _BorrowedParticipationKernel,
+    )
     from _lcm.policy_queries import _PolicyQueryKernel  # noqa: PLC0415
 
     published = []
     consumed = []
-    publish = _BorrowedArrivalKernel.__call__
+    publish = _BorrowedParticipationKernel.__call__
     consume = _PolicyQueryKernel.__call__
 
     def observe_publish(self, **arguments):
         output = publish(self, **arguments)
-        payload = output.continuations[ARRIVAL_CONTINUATION]
-        assert isinstance(payload, ArrivalContinuation)
+        payload = output.continuations[PARTICIPATION_CONTINUATION]
+        assert isinstance(payload, ParticipationContinuation)
         original = arguments["next_regime_to_V_arr"]["future"]
         assert payload.period == 1
         assert payload.regime == "target"
@@ -926,16 +947,16 @@ def test_actual_arrival_publisher_borrows_its_declared_future_native_input(
         if arguments["period"] == 0:
             payload, original = published[0]
             source_payload = arguments["next_regime_to_continuation"]["target"]
-            assert isinstance(source_payload, ArrivalContinuation)
+            assert isinstance(source_payload, ParticipationContinuation)
             assert source_payload.schema == payload.schema
             assert all(leaf is original for leaf in source_payload.leaves().values())
             assert not original.is_deleted()
             consumed.append(original)
         return consume(self, **arguments)
 
-    monkeypatch.setattr(_BorrowedArrivalKernel, "__call__", observe_publish)
+    monkeypatch.setattr(_BorrowedParticipationKernel, "__call__", observe_publish)
     monkeypatch.setattr(_PolicyQueryKernel, "__call__", observe_consume)
-    model = _future_arrival_floor_model()
+    model = _future_participation_floor_model()
     spec = model._regimes["target"].solution.continuation_spec
     assert spec is not None
     aliases = spec.stored_value_aliases()
@@ -966,11 +987,13 @@ def test_actual_arrival_publisher_borrows_its_declared_future_native_input(
 
 
 @pytest.mark.parametrize("corruption", ["missing", "wrong_date"])
-def test_arrival_source_refuses_a_missing_or_wrong_date_payload(
+def test_participation_source_refuses_a_missing_or_wrong_date_payload(
     *, monkeypatch, corruption: str
 ) -> None:
     """A failed actual source reader cannot commit or free its borrowed origin."""
-    from _lcm.arrival_continuation import ArrivalContinuation  # noqa: PLC0415
+    from _lcm.participation_continuation import (  # noqa: PLC0415
+        ParticipationContinuation,
+    )
     from _lcm.policy_queries import _PolicyQueryKernel  # noqa: PLC0415
 
     invoke = _PolicyQueryKernel.__call__
@@ -979,13 +1002,13 @@ def test_arrival_source_refuses_a_missing_or_wrong_date_payload(
     def corrupt_source(self, **arguments):
         if arguments["period"] == 0:
             payload = arguments["next_regime_to_continuation"]["target"]
-            assert isinstance(payload, ArrivalContinuation)
+            assert isinstance(payload, ParticipationContinuation)
             borrowed.extend(payload.leaves().values())
             arguments["next_regime_to_continuation"] = (
                 {}
                 if corruption == "missing"
                 else {
-                    "target": ArrivalContinuation(
+                    "target": ParticipationContinuation(
                         regime=payload.regime,
                         period=payload.period + 1,
                         schema=payload.schema,
@@ -997,7 +1020,7 @@ def test_arrival_source_refuses_a_missing_or_wrong_date_payload(
 
     monkeypatch.setattr(_PolicyQueryKernel, "__call__", corrupt_source)
     with pytest.raises(ExecutionPlanningError, match="producer-date operand payload"):
-        _future_arrival_floor_model().solve(
+        _future_participation_floor_model().solve(
             params={"discount_factor": 0.5}, log_level="off"
         )
     assert borrowed
@@ -1012,11 +1035,13 @@ def _joint_crossing_m(*, x: ContinuousState, risk: DiscreteState) -> FloatND:
     return jnp.where(risk == Risk.safe, 2 - x, 1 + x)
 
 
-def _joint_arrival_floor(*, V_target_f: FloatND, V_target_m: FloatND) -> BoolND:
+def _joint_participation_floor(*, V_target_f: FloatND, V_target_m: FloatND) -> BoolND:
     return (V_target_f > 1.5) & (V_target_m > 0.75)
 
 
-def test_public_collective_arrival_prices_one_actual_target_policy_tuple() -> None:
+def test_public_collective_participation_prices_one_actual_target_policy_tuple() -> (
+    None
+):
     """The source receives (1,.5), rather than independently maximized (1,1)."""
     actions = DiscreteGrid(category_class=Risk)
     objective = ParetoObjective(weights={"f": 0.75, "m": 0.25})
@@ -1058,11 +1083,11 @@ def test_public_collective_arrival_prices_one_actual_target_policy_tuple() -> No
         edges={
             "source": Transition(
                 law=ByAge(cases={0: "target"}),
-                arrivals={
-                    "target": ArrivalDecision(
-                        predicate=_joint_arrival_floor,
+                participation={
+                    "target": ParticipationCheck(
+                        predicate=_joint_participation_floor,
                         reads={
-                            f"V_target_{member}": ArrivalRead(
+                            f"V_target_{member}": ParticipationRead(
                                 kind="Participating",
                                 regime="target",
                                 stakeholder=member,
@@ -1090,9 +1115,9 @@ def test_public_collective_arrival_prices_one_actual_target_policy_tuple() -> No
     np.testing.assert_array_equal(np.asarray(solution.values[0]["source"]), [1.0, 0.5])
 
 
-def test_arrival_source_replay_uses_the_same_actual_future_price() -> None:
+def test_participation_source_replay_uses_the_same_actual_future_price() -> None:
     """Simulation selects the safe source action selected by the solved price."""
-    model = _future_arrival_floor_model()
+    model = _future_participation_floor_model()
     params = {"discount_factor": 0.5}
     solution = model.solve(params=params, log_level="off")
     frame = model.simulate(
@@ -1100,20 +1125,20 @@ def test_arrival_source_replay_uses_the_same_actual_future_price() -> None:
         solution=solution,
         initial_conditions={
             "age": jnp.asarray([0.0]),
-            "regime_id": jnp.asarray([_FutureArrivalRegimeId.source]),
+            "regime_id": jnp.asarray([_FutureParticipationRegimeId.source]),
             "x": jnp.asarray([0.0]),
         },
         log_level="off",
     ).to_dataframe(use_categorical_codes=True)
     np.testing.assert_array_equal(frame.query("period == 0")["risk"], [int(Risk.safe)])
-    arrival = frame.query("period == 1")
-    np.testing.assert_array_equal(arrival["regime_name"], ["target"])
-    np.testing.assert_array_equal(arrival["x"], [0.0])
+    participation = frame.query("period == 1")
+    np.testing.assert_array_equal(participation["regime_name"], ["target"])
+    np.testing.assert_array_equal(participation["x"], [0.0])
 
 
-def test_actual_arrival_applies_incoming_phased_settlement_once() -> None:
+def test_actual_participation_applies_incoming_phased_settlement_once() -> None:
     """Solve prices its own law while replay settles the rejected actual landing."""
-    model = _future_arrival_floor_model(force_risky=True, phased_settlement=True)
+    model = _future_participation_floor_model(force_risky=True, phased_settlement=True)
     params = {"discount_factor": 0.5}
     solution = model.solve(params=params, log_level="off")
     np.testing.assert_array_equal(np.asarray(solution.values[0]["source"]), -0.5)
@@ -1122,20 +1147,20 @@ def test_actual_arrival_applies_incoming_phased_settlement_once() -> None:
         solution=solution,
         initial_conditions={
             "age": jnp.asarray([0.0]),
-            "regime_id": jnp.asarray([_FutureArrivalRegimeId.source]),
+            "regime_id": jnp.asarray([_FutureParticipationRegimeId.source]),
             "x": jnp.asarray([0.0]),
         },
         log_level="off",
     ).to_dataframe(use_categorical_codes=True)
-    arrival = frame.query("period == 1")
-    np.testing.assert_array_equal(arrival["regime_name"], ["fallback"])
-    np.testing.assert_array_equal(arrival["x"], [0.75])
+    participation = frame.query("period == 1")
+    np.testing.assert_array_equal(participation["regime_name"], ["fallback"])
+    np.testing.assert_array_equal(participation["x"], [0.75])
     assert frame.query("period == 2").empty
 
 
-def test_initial_target_does_not_borrow_an_arrivals_incoming_route() -> None:
+def test_initial_target_does_not_borrow_a_participation_checks_incoming_route() -> None:
     """An initial target occupant has no incoming edge's fallback entitlement."""
-    model = _future_arrival_floor_model(
+    model = _future_participation_floor_model(
         force_risky=True, phased_settlement=True, allow_initial_target=True
     )
     params = {"discount_factor": 0.5}
@@ -1145,7 +1170,7 @@ def test_initial_target_does_not_borrow_an_arrivals_incoming_route() -> None:
         solution=solution,
         initial_conditions={
             "age": jnp.asarray([1.0]),
-            "regime_id": jnp.asarray([_FutureArrivalRegimeId.target]),
+            "regime_id": jnp.asarray([_FutureParticipationRegimeId.target]),
             "x": jnp.asarray([0.5]),
         },
         log_level="off",
@@ -1157,7 +1182,7 @@ def test_initial_target_does_not_borrow_an_arrivals_incoming_route() -> None:
 
 
 @categorical(ordered=False)
-class _SharedArrivalRegimeId:
+class _SharedParticipationRegimeId:
     single: ScalarInt
     pair: ScalarInt
     target: ScalarInt
@@ -1165,35 +1190,35 @@ class _SharedArrivalRegimeId:
     done: ScalarInt
 
 
-def _shared_arrival_landing() -> ContinuousState:
+def _shared_participation_landing() -> ContinuousState:
     return jnp.asarray(0.5)
 
 
-def _shared_arrival_target_f(risk: DiscreteState) -> FloatND:
+def _shared_participation_target_f(risk: DiscreteState) -> FloatND:
     return jnp.where(risk == Risk.safe, 2.0, 1.0)
 
 
-def _shared_arrival_target_m(risk: DiscreteState) -> FloatND:
+def _shared_participation_target_m(risk: DiscreteState) -> FloatND:
     return jnp.where(risk == Risk.safe, 1.0, 2.0)
 
 
-def _shared_arrival_fallback_f(x: ContinuousState) -> FloatND:
+def _shared_participation_fallback_f(x: ContinuousState) -> FloatND:
     return 10.0 + x
 
 
-def _shared_arrival_fallback_m(x: ContinuousState) -> FloatND:
+def _shared_participation_fallback_m(x: ContinuousState) -> FloatND:
     return 20.0 + x
 
 
-def _shared_arrival_done_m(x: ContinuousState) -> FloatND:
+def _shared_participation_done_m(x: ContinuousState) -> FloatND:
     return 2.0 + 0.0 * x
 
 
-def _shared_arrival_eighth(x: ContinuousState) -> ContinuousState:
+def _shared_participation_eighth(x: ContinuousState) -> ContinuousState:
     return x + 0.125
 
 
-def _shared_arrival_pair_floor(V_target_f: FloatND) -> BoolND:
+def _shared_participation_pair_floor(V_target_f: FloatND) -> BoolND:
     return V_target_f > 3.0
 
 
@@ -1204,7 +1229,7 @@ def test_distinct_incoming_sources_keep_their_own_tuple_routes() -> None:
         regimes={
             "single": Regime(
                 functions={"utility": _utility_zero},
-                state_transitions={"x": _shared_arrival_landing},
+                state_transitions={"x": _shared_participation_landing},
             ),
             "pair": Regime(
                 functions={
@@ -1213,7 +1238,7 @@ def test_distinct_incoming_sources_keep_their_own_tuple_routes() -> None:
                         objective=objective,
                     )
                 },
-                state_transitions={"x": _shared_arrival_landing},
+                state_transitions={"x": _shared_participation_landing},
             ),
             "target": Regime(
                 states={"x": _WITNESS_X},
@@ -1221,8 +1246,8 @@ def test_distinct_incoming_sources_keep_their_own_tuple_routes() -> None:
                 functions={
                     "utility": CollectiveUtility(
                         utilities={
-                            "f": _shared_arrival_target_f,
-                            "m": _shared_arrival_target_m,
+                            "f": _shared_participation_target_f,
+                            "m": _shared_participation_target_m,
                         },
                         objective=objective,
                     )
@@ -1234,21 +1259,21 @@ def test_distinct_incoming_sources_keep_their_own_tuple_routes() -> None:
                 functions={
                     "utility": CollectiveUtility(
                         utilities={
-                            "f": _shared_arrival_fallback_f,
-                            "m": _shared_arrival_fallback_m,
+                            "f": _shared_participation_fallback_f,
+                            "m": _shared_participation_fallback_m,
                         },
                         objective=objective,
                     )
                 },
-                state_transitions={"x": _shared_arrival_eighth},
+                state_transitions={"x": _shared_participation_eighth},
             ),
             "done": Regime(
                 states={"x": _WITNESS_X},
                 functions={
                     "utility": CollectiveUtility(
                         utilities={
-                            "f": _future_arrival_value,
-                            "m": _shared_arrival_done_m,
+                            "f": _future_participation_value,
+                            "m": _shared_participation_done_m,
                         },
                         objective=objective,
                     )
@@ -1256,16 +1281,16 @@ def test_distinct_incoming_sources_keep_their_own_tuple_routes() -> None:
             ),
         },
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
-        regime_id_class=_SharedArrivalRegimeId,
+        regime_id_class=_SharedParticipationRegimeId,
         initial_nodes={0: ("single", "pair")},
         edges={
             "single": Transition(
                 law=ByAge(cases={0: "target"}),
-                arrivals={
-                    "target": ArrivalDecision(
+                participation={
+                    "target": ParticipationCheck(
                         predicate=_crossing_floor,
                         reads={
-                            "V_target": ArrivalRead(
+                            "V_target": ParticipationRead(
                                 kind="Participating",
                                 regime="target",
                                 stakeholder="m",
@@ -1287,11 +1312,11 @@ def test_distinct_incoming_sources_keep_their_own_tuple_routes() -> None:
             ),
             "pair": Transition(
                 law=ByAge(cases={0: "target"}),
-                arrivals={
-                    "target": ArrivalDecision(
-                        predicate=_shared_arrival_pair_floor,
+                participation={
+                    "target": ParticipationCheck(
+                        predicate=_shared_participation_pair_floor,
                         reads={
-                            "V_target_f": ArrivalRead(
+                            "V_target_f": ParticipationRead(
                                 kind="Participating",
                                 regime="target",
                                 stakeholder="f",
@@ -1312,7 +1337,7 @@ def test_distinct_incoming_sources_keep_their_own_tuple_routes() -> None:
                                 fallback=ProjectedRegimeValue(
                                     regime="fallback",
                                     stakeholder="f",
-                                    projection={"x": _shared_arrival_eighth},
+                                    projection={"x": _shared_participation_eighth},
                                 ),
                             ),
                         },
@@ -1338,9 +1363,9 @@ def test_distinct_incoming_sources_keep_their_own_tuple_routes() -> None:
                 "age": jnp.asarray([0.0, 0.0, 0.0]),
                 "regime_id": jnp.asarray(
                     [
-                        _SharedArrivalRegimeId.single,
-                        _SharedArrivalRegimeId.pair,
-                        _SharedArrivalRegimeId.pair,
+                        _SharedParticipationRegimeId.single,
+                        _SharedParticipationRegimeId.pair,
+                        _SharedParticipationRegimeId.pair,
                     ]
                 ),
                 "own_stakeholder": jnp.asarray([-1, role["f"], role["m"]]),
@@ -1351,19 +1376,19 @@ def test_distinct_incoming_sources_keep_their_own_tuple_routes() -> None:
         .to_dataframe(use_categorical_codes=True)
         .sort_values(["period", "subject_id"])
     )
-    arrival = frame.query("period == 1")
-    np.testing.assert_array_equal(arrival["subject_id"], [0, 1, 2])
+    participation = frame.query("period == 1")
+    np.testing.assert_array_equal(participation["subject_id"], [0, 1, 2])
     np.testing.assert_array_equal(
-        arrival["regime_name"], ["target", "fallback", "fallback"]
+        participation["regime_name"], ["target", "fallback", "fallback"]
     )
     np.testing.assert_array_equal(
-        arrival["own_stakeholder"], [role["m"], role["m"], role["f"]]
+        participation["own_stakeholder"], [role["m"], role["m"], role["f"]]
     )
-    np.testing.assert_array_equal(arrival["x"], [0.5, 0.75, 0.625])
-    np.testing.assert_array_equal(arrival["value_f"], [2.5, 11.25, 11.125])
-    np.testing.assert_array_equal(arrival["value_m"], [2.0, 21.75, 21.625])
+    np.testing.assert_array_equal(participation["x"], [0.5, 0.75, 0.625])
+    np.testing.assert_array_equal(participation["value_f"], [2.5, 11.25, 11.125])
+    np.testing.assert_array_equal(participation["value_m"], [2.0, 21.75, 21.625])
     np.testing.assert_array_equal(
-        arrival.query("regime_name == 'target'")["risk"], [int(Risk.safe)]
+        participation.query("regime_name == 'target'")["risk"], [int(Risk.safe)]
     )
     final = frame.query("period == 2")
     np.testing.assert_array_equal(final["subject_id"], [0, 1, 2])
@@ -1391,7 +1416,7 @@ def _extra_origin_future_value(
     return payoff + 0.0 * x + (period - 2) + (age - 2)
 
 
-def _extra_origin_arrival_model() -> Model:
+def _extra_origin_participation_model() -> Model:
     """The rejected branch reads a later value outside target Full's inputs."""
     return Model(
         regimes={
@@ -1413,7 +1438,7 @@ def _extra_origin_arrival_model() -> Model:
             ),
             "future": Regime(
                 states={"x": _WITNESS_X},
-                functions={"utility": _future_arrival_value},
+                functions={"utility": _future_participation_value},
             ),
             "fallback_future": Regime(
                 states={"x": _WITNESS_X},
@@ -1426,11 +1451,11 @@ def _extra_origin_arrival_model() -> Model:
         edges={
             "source": Transition(
                 law=ByAge(cases={0: "target"}),
-                arrivals={
-                    "target": ArrivalDecision(
+                participation={
+                    "target": ParticipationCheck(
                         predicate=_crossing_floor,
                         reads={
-                            "V_target": ArrivalRead(
+                            "V_target": ParticipationRead(
                                 kind="Participating",
                                 regime="target",
                                 projection={"x": _identity_x},
@@ -1453,26 +1478,30 @@ def _extra_origin_arrival_model() -> Model:
     )
 
 
-def test_arrival_borrows_a_distinct_fallback_future_original(*, monkeypatch) -> None:
+def test_participation_borrows_a_distinct_fallback_future_original(
+    *, monkeypatch
+) -> None:
     """Extra native custody preserves the original that reverses the source rank."""
-    from _lcm.arrival_continuation import (  # noqa: PLC0415
-        ARRIVAL_CONTINUATION,
-        ArrivalContinuation,
-    )
-    from _lcm.arrival_publication import _BorrowedArrivalKernel  # noqa: PLC0415
     from _lcm.execution.value_transfer import ValueArtifactKind  # noqa: PLC0415
+    from _lcm.participation_continuation import (  # noqa: PLC0415
+        PARTICIPATION_CONTINUATION,
+        ParticipationContinuation,
+    )
+    from _lcm.participation_publication import (  # noqa: PLC0415
+        _BorrowedParticipationKernel,
+    )
     from _lcm.policy_queries import _PolicyQueryKernel  # noqa: PLC0415
 
     published = []
     consumed = []
-    publish = _BorrowedArrivalKernel.__call__
+    publish = _BorrowedParticipationKernel.__call__
     consume = _PolicyQueryKernel.__call__
 
     def observe_publish(self, **arguments):
         output = publish(self, **arguments)
         if self.template.regime == "target" and arguments["period"] == 1:
-            payload = output.continuations[ARRIVAL_CONTINUATION]
-            assert isinstance(payload, ArrivalContinuation)
+            payload = output.continuations[PARTICIPATION_CONTINUATION]
+            assert isinstance(payload, ParticipationContinuation)
             original = arguments["next_regime_to_V_arr"]["fallback_future"]
             names = [
                 name
@@ -1506,7 +1535,7 @@ def test_arrival_borrows_a_distinct_fallback_future_original(*, monkeypatch) -> 
         if self.root_context.regime_name == "source" and arguments["period"] == 0:
             published_payload, original, names = published[0]
             payload = arguments["next_regime_to_continuation"]["target"]
-            assert isinstance(payload, ArrivalContinuation)
+            assert isinstance(payload, ParticipationContinuation)
             assert payload.schema == published_payload.schema
             assert payload.period == 1
             assert all(payload.operands[name] is original for name in names)
@@ -1514,9 +1543,9 @@ def test_arrival_borrows_a_distinct_fallback_future_original(*, monkeypatch) -> 
             consumed.append(original)
         return consume(self, **arguments)
 
-    monkeypatch.setattr(_BorrowedArrivalKernel, "__call__", observe_publish)
+    monkeypatch.setattr(_BorrowedParticipationKernel, "__call__", observe_publish)
     monkeypatch.setattr(_PolicyQueryKernel, "__call__", observe_consume)
-    model = _extra_origin_arrival_model()
+    model = _extra_origin_participation_model()
     params = {"discount_factor": 0.5, "fallback_future": {"payoff": 6.0}}
     solution = model.solve(params=params, log_level="off")
     np.testing.assert_array_equal(
@@ -1543,29 +1572,33 @@ def test_arrival_borrows_a_distinct_fallback_future_original(*, monkeypatch) -> 
         log_level="off",
     ).to_dataframe(use_categorical_codes=True)
     np.testing.assert_array_equal(frame.query("period == 0")["risk"], [int(Risk.risky)])
-    arrival = frame.query("period == 1")
-    np.testing.assert_array_equal(arrival["regime_name"], ["fallback"])
-    np.testing.assert_array_equal(arrival["x"], [0.5])
-    np.testing.assert_array_equal(arrival["value"], [1.0])
+    participation = frame.query("period == 1")
+    np.testing.assert_array_equal(participation["regime_name"], ["fallback"])
+    np.testing.assert_array_equal(participation["x"], [0.5])
+    np.testing.assert_array_equal(participation["value"], [1.0])
     np.testing.assert_array_equal(
         frame.query("period == 2")["regime_name"], ["fallback_future"]
     )
 
 
 @pytest.mark.parametrize("extra_origin", [False, True])
-def test_arrival_publisher_reuses_stable_native_callable_identities(
+def test_participation_publisher_reuses_stable_native_callable_identities(
     *, extra_origin: bool
 ) -> None:
     """Authority, preparation and dispatch share the same native callables."""
     from types import MappingProxyType  # noqa: PLC0415
 
-    from _lcm.arrival_publication import _BorrowedArrivalKernel  # noqa: PLC0415
+    from _lcm.participation_publication import (  # noqa: PLC0415
+        _BorrowedParticipationKernel,
+    )
 
     model = (
-        _extra_origin_arrival_model() if extra_origin else _future_arrival_floor_model()
+        _extra_origin_participation_model()
+        if extra_origin
+        else _future_participation_floor_model()
     )
     kernel = model._regimes["target"].solution.period_kernels[1]
-    assert isinstance(kernel, _BorrowedArrivalKernel)
+    assert isinstance(kernel, _BorrowedParticipationKernel)
     graph = kernel.core_programs()
     assert graph is kernel.core_programs()
     for name, program in graph.items():

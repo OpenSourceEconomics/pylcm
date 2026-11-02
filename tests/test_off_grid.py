@@ -32,7 +32,7 @@ from _lcm.simulation.memory import SimulationMemory
 from _lcm.simulation.residency import measure_buffer_footprint
 from _lcm.simulation.transitions import _clip_next_states
 from _lcm.solution.feasibility import BoundedResult, BoundInputStatus
-from _lcm.typing import EconFunctionArg, EconFunctionKwargs
+from _lcm.typing import EconFunctionArg, EconFunctionKwargs, PytreeValue
 from benchmarks.asv._compile_counters import count_compile_requests
 from lcm import (
     AgeGrid,
@@ -91,6 +91,7 @@ from lcm.typing import (
     RegimeName,
     ScalarInt,
     StateName,
+    StateOrActionName,
 )
 from tests.conftest import DECIMAL_PRECISION
 from tests.simulation.test_entry_operation_reuse import _HostCompilation
@@ -626,33 +627,42 @@ def test_explicit_raise_is_mandatory_at_every_runtime_and_output_setting(
         )
 
 
+@pytest.mark.parametrize("log_level", ["off", "warning", "progress"])
 @pytest.mark.parametrize("off_grid", ["extrapolate", "clip_lookup", "clip_state"])
-def test_silent_solve_does_not_materialize_unreportable_off_grid_counts(
-    *, off_grid: OffGrid, monkeypatch: pytest.MonkeyPatch
+def test_non_debug_solve_does_not_materialize_count_only_off_grid_diagnostics(
+    *,
+    off_grid: OffGrid,
+    log_level: Literal["off", "warning", "progress"],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Hidden count diagnostics must not allocate a full phase Cartesian grid."""
+    """Below `"debug"`, a non-raise grid is neither counted nor reported."""
 
     def reject_count_sweep(**_kwargs) -> None:
-        pytest.fail("Silent solve expanded an optional off-grid diagnostic grid")
+        pytest.fail("A non-debug solve expanded an optional off-grid diagnostic grid")
 
     monkeypatch.setattr(
         transition_checks, "_off_grid_target_counts", reject_count_sweep
     )
-    solution = _model(off_grid=off_grid).solve(
+    _model(off_grid=off_grid).solve(
         params={"discount_factor": 1.0, "reward": 2.0},
-        log_level="off",
+        log_level=log_level,
         runtime_checks=True,
     )
-    assert np.isfinite(solution.values[0]["alive"]).all()
+    assert [
+        record.getMessage()
+        for record in caplog.records
+        if "Off-grid next states:" in record.getMessage()
+    ] == []
 
 
 @pytest.mark.parametrize("off_grid", ["extrapolate", "clip_lookup", "clip_state"])
-def test_checked_solve_reports_the_raw_count_before_clipping(
+def test_debug_solve_reports_the_raw_count_before_clipping(
     *, off_grid: OffGrid, caplog: pytest.LogCaptureFixture
 ) -> None:
     """Both clipped modes report the same original exterior cell as extrapolation."""
     model = _model(off_grid=off_grid)
-    model.solve(params={"discount_factor": 1.0, "reward": 2.0}, log_level="warning")
+    model.solve(params={"discount_factor": 1.0, "reward": 2.0}, log_level="debug")
     rows = [
         record.getMessage()
         for record in caplog.records
@@ -1436,7 +1446,9 @@ def test_budgeted_public_solve_admits_every_off_grid_count(
         arguments: Mapping[str, EconFunctionArg | EconFunctionKwargs],
         memory: SimulationMemory,
     ) -> IntND:
-        admitted.append(function.keywords["grid_names"])
+        # The regime-probability law shares this admission; record the counts.
+        if function.func is transition_checks._off_grid_counts_law:
+            admitted.append(function.keywords["grid_names"])
         return cast(
             "IntND", admit(function=function, arguments=arguments, memory=memory)
         )
@@ -1445,7 +1457,7 @@ def test_budgeted_public_solve_admits_every_off_grid_count(
         transition_checks, "_evaluate_admitted_transition_producer", _recording_admit
     )
     _wide_model(device_memory_bytes=2**28).solve(
-        params={"discount_factor": 1.0, "reward": 2.0}, log_level="warning"
+        params={"discount_factor": 1.0, "reward": 2.0}, log_level="debug"
     )
     assert admitted == [("wealth", "consumption")]
 
@@ -1560,10 +1572,12 @@ def test_budgeted_off_grid_count_narrows_its_block_until_admitted(
         arguments: Mapping[str, EconFunctionArg | EconFunctionKwargs],
         memory: SimulationMemory,
     ) -> IntND:
-        rows = function.keywords["block_rows"]
-        tried.append(rows)
-        if rows > 2 * transition_checks._OFF_GRID_BLOCK_ROWS:
-            raise ExecutionPlanningError("compiler reservation exceeds the budget")
+        # The regime-probability law shares this admission; only counts are blocked.
+        if function.func is transition_checks._off_grid_counts_law:
+            rows = function.keywords["block_rows"]
+            tried.append(rows)
+            if rows > 2 * transition_checks._OFF_GRID_BLOCK_ROWS:
+                raise ExecutionPlanningError("compiler reservation exceeds the budget")
         return cast(
             "IntND", admit(function=function, arguments=arguments, memory=memory)
         )
@@ -1938,3 +1952,185 @@ def test_gate_checks_only_the_branch_it_executes(
         log_level="off",
     )
     np.testing.assert_array_equal(solution.values[0]["source"], expected)
+
+
+def _counter_axis_utility(
+    *, wealth: ContinuousState, repeated: ContinuousState, consumption: ContinuousAction
+) -> FloatND:
+    return wealth + repeated - consumption
+
+
+def _counter_axis_landing(
+    *, wealth: ContinuousState, consumption: ContinuousAction
+) -> FloatND:
+    return jnp.where(consumption == 0, wealth + 1, jnp.inf)
+
+
+def _counter_axis_feasibility(*, repeated: ContinuousState) -> BoolND:
+    return repeated < 2
+
+
+def _counter_axis_sigma(*, repeated: ContinuousState, last_sigma: float) -> FloatND:
+    return jnp.where(repeated == 2, last_sigma, 1.0)
+
+
+def _counter_axis_model(
+    *, dependency: Literal["utility-only", "feasibility", "current-law"]
+) -> Model:
+    """A retained source axis, with independently selectable counter dependencies."""
+    current = dependency == "current-law"
+    wealth = LinSpacedGrid(start=0, stop=2, n_points=2, off_grid="extrapolate")
+    return Model(
+        regimes={
+            "alive": Regime(
+                functions={"utility": _counter_axis_utility},
+                states={
+                    "wealth": wealth,
+                    "repeated": LinSpacedGrid(start=0, stop=2, n_points=3),
+                },
+                actions={"consumption": LinSpacedGrid(start=0, stop=1, n_points=2)},
+                state_transitions={
+                    "wealth": _counter_axis_landing,
+                    "repeated": fixed_transition("repeated"),
+                },
+                constraints={"available": _counter_axis_feasibility}
+                if dependency == "feasibility"
+                else {},
+                shocks=("counter_noise",) if current else (),
+            ),
+            "terminal": Regime(
+                functions={"utility": _terminal}, states={"wealth": wealth}
+            ),
+        },
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
+        edges={"alive": {"terminal": 0}},
+        initial_nodes={0: "alive"},
+        regime_id_class=RegimeId,
+        execution_config=ExecutionConfig(device_memory_bytes=1 << 28),
+        shocks={
+            "counter_noise": ShockGroup(
+                shocks={"ignored": Normal(mu=0, sigma=_counter_axis_sigma)},
+                nodes=UserNodes(nodes=np.array([[0.0]]), weights=np.array([1.0])),
+            )
+        }
+        if current
+        else {},
+    )
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+@pytest.mark.parametrize("dependency", ["utility-only", "feasibility", "current-law"])
+def test_off_grid_counter_maps_only_complete_dependency_axes(
+    *,
+    dependency: Literal["utility-only", "feasibility", "current-law"],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Only independent count/status readers permit omitting a repeated axis."""
+    model = _counter_axis_model(dependency=dependency)
+    params = {
+        "discount_factor": 1.0,
+        **(
+            {"counter_noise": {"last_sigma": 2.0}}
+            if dependency == "current-law"
+            else {}
+        ),
+    }
+    np.testing.assert_array_equal(
+        model.state_grid(params=params, regime_name="alive", state_name="repeated"),
+        [0.0, 1.0, 2.0],
+    )
+    assert "repeated" in model._regimes["alive"].solution.state_names
+    observations: list[
+        tuple[
+            tuple[StateOrActionName, ...],
+            transition_checks._OffGridCell | transition_checks._CurrentIIDOffGridCell,
+            transition_checks._OffGridOutput,
+        ]
+    ] = []
+    original = transition_checks._evaluate_admitted_transition_producer
+
+    def observe(
+        *,
+        function: Callable[..., PytreeValue],
+        arguments: Mapping[str, PytreeValue],
+        memory: SimulationMemory,
+    ) -> PytreeValue:
+        result = original(function=function, arguments=arguments, memory=memory)
+        if (
+            isinstance(function, partial)
+            and function.func is transition_checks._off_grid_counts_law
+        ):
+            point = function.keywords["func"]
+            assert isinstance(
+                point,
+                transition_checks._OffGridCell
+                | transition_checks._CurrentIIDOffGridCell,
+            )
+            observations.append(
+                (
+                    cast(
+                        "tuple[StateOrActionName, ...]", function.keywords["grid_names"]
+                    ),
+                    point,
+                    cast("transition_checks._OffGridOutput", result),
+                )
+            )
+        return result
+
+    monkeypatch.setattr(
+        transition_checks, "_evaluate_admitted_transition_producer", observe
+    )
+    with caplog.at_level(logging.WARNING):
+        model.validate_transitions(params=params)
+    # The installed detector observed the actual admitted counter and a consumed axis.
+    assert observations
+    expected = [[6, 4]] if dependency == "feasibility" else [[9, 6]]
+    for _, _, output in observations:
+        if isinstance(output, transition_checks._CurrentIIDOffGridCounts):
+            assert not bool(output.invalid_law)
+            ordinary = output.counts
+        else:
+            ordinary = output
+        assert isinstance(ordinary, jax.Array)
+        # At each repeated value, c=0 gives landings 1/3, c=1 gives inf/inf.
+        # Feasibility retains repeated=0/1; the other cases retain 0/1/2.
+        np.testing.assert_array_equal(ordinary, expected)
+    assert any(
+        "Off-grid next states:" in record.getMessage()
+        and f"count={expected[0][0]}" in record.getMessage()
+        for record in caplog.records
+    )
+    for names, point, _ in observations:
+        assert "wealth" in names
+        assert "consumption" in names
+        cell = (
+            point.cell
+            if isinstance(point, transition_checks._CurrentIIDOffGridCell)
+            else point
+        )
+        assert isinstance(cell, transition_checks._OffGridCell)
+        if dependency == "feasibility":
+            assert isinstance(cell.feasibility, transition_checks._NamedArgumentsCall)
+            assert "repeated" in cell.feasibility.names
+            assert "repeated" in names
+        else:
+            for reader in (
+                cell.next_inputs,
+                cell.weights,
+                cell.feasibility,
+                cell.regime_law,
+                cell.reader,
+            ):
+                assert isinstance(reader, transition_checks._NamedArgumentsCall)
+                assert "repeated" not in reader.names
+                assert "ignored" not in reader.names
+            if dependency == "current-law":
+                assert isinstance(point, transition_checks._CurrentIIDOffGridCell)
+                assert point.plan.physical_names == {"ignored"}
+                assert "repeated" in point.plan.state_inputs
+                assert "repeated" in names
+                assert transition_checks._CURRENT_IID_ROW in names
+                assert point.plan.indices.shape == (1, 1)
+            else:
+                assert "repeated" not in names

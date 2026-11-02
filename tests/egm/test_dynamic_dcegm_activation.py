@@ -360,7 +360,14 @@ def _represented_dc_value(
     )
     corner = np.log(resources - borrowing_limit) + floor_continuation
     represented = _row_read(carry=carry, resources=resources, hermite=True)
-    return corner if resources <= grid[0] else max(corner, represented)
+    # The row leads with the constrained candidates; every later node is an Euler
+    # candidate. Below the lowest of those only the constrained branch exists.
+    solver = model.user_regimes[regime_name].solver
+    assert isinstance(solver, DCEGM)
+    lowest_euler_point = np.nanmin(grid[solver.n_constrained_points :])
+    if resources <= grid[0] or resources < lowest_euler_point:
+        return corner
+    return max(corner, represented)
 
 
 def _parent_represented_value(

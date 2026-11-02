@@ -1,14 +1,13 @@
 """A projected reference value reads the IID shock a household realises.
 
-A young single, a couple and an older single carry the same
-`NormalIIDProcess` state `wage_shock_f`, and the young single moves into the
-couple. The older single's value is read through a projection in two places:
+A young single, a couple and an older single carry the same `NormalIIDProcess` state
+`wage_shock_f`, and the young single moves into the couple through a state-only gate
+that is open at every landing. The older single's value is read through a projection in
+the couple's participation constraint, at the couple's own cell. A value read at the
+participation check itself is a `ParticipationCheck`, covered by
+`tests/regime_building/test_continuous_participation_physical_value.py`.
 
-- the couple's participation constraint, at the couple's own cell;
-- a gate on the edge from the young single into the couple, at the couple's
-  landing, whose closed branch puts the row into the older single regime.
-
-A projection and a gate name the shock in either spelling, in every context:
+A projection names the shock in either spelling:
 
 - `wage_shock_f` receives the shock value the household holds;
 - `wage_shock_f_code` receives the int32 position of the node it stands on.
@@ -48,7 +47,6 @@ from lcm import (
     categorical,
 )
 from lcm.exceptions import RegimeInitializationError
-from lcm.solver_api import DISSOLUTION_FLAG
 from lcm.transition import StochasticTransition
 from lcm.typing import (
     BoolND,
@@ -74,7 +72,7 @@ def _shock(*, spelling: Spelling, draws: Draws | None = None) -> NormalIIDProces
         mu=0.0,
         sigma=1.0,
         n_std=2.0,
-        simulate_draws=draws or ("continuous" if spelling == "value" else "nodes"),
+        simulated_draws=draws or ("continuous" if spelling == "value" else "nodes"),
     )
 
 
@@ -132,32 +130,9 @@ def _participation_f(*, Q_f: FloatND, V_single_f: FloatND) -> BoolND:
     return Q_f >= V_single_f
 
 
-def _reads_the_oracle(*, V_target_f: FloatND, V_single_f_ref: FloatND) -> BoolND:
-    """A working wife's surplus over a correct read is `_BRACKET`."""
-    return jnp.abs(V_target_f - V_single_f_ref - _BRACKET) <= 0.5 * _BRACKET
-
-
-def _gate_on_value(
-    *, V_target_f: FloatND, V_single_f_ref: FloatND, wage_shock_f: ContinuousState
-) -> BoolND:
-    """Open where the landing's shock is positive and the read is the oracle."""
-    reads = _reads_the_oracle(V_target_f=V_target_f, V_single_f_ref=V_single_f_ref)
-    return reads & (wage_shock_f > 0.0)
-
-
-def _gate_on_code(
-    *, V_target_f: FloatND, V_single_f_ref: FloatND, wage_shock_f_code: DiscreteState
-) -> BoolND:
-    """Open where the landing stands on a positive node and the read is the oracle."""
-    reads = _reads_the_oracle(V_target_f=V_target_f, V_single_f_ref=V_single_f_ref)
-    return reads & (wage_shock_f_code >= 3)
-
-
-_GATES = {"value": _gate_on_value, "code": _gate_on_code}
-
-
-def _no_dissolution(D_target: BoolND) -> BoolND:
-    return ~D_target
+def _always_open(wage_shock_f: ContinuousState) -> BoolND:
+    """Every landing enters the couple; the gate only routes the single's role."""
+    return jnp.isfinite(wage_shock_f)
 
 
 def _prob_one(age: FloatND) -> FloatND:
@@ -165,7 +140,7 @@ def _prob_one(age: FloatND) -> FloatND:
 
 
 def _build_model(
-    *, gated: bool, enable_jit: bool, spelling: Spelling, draws: Draws | None = None
+    *, enable_jit: bool, spelling: Spelling, draws: Draws | None = None
 ) -> Model:
     shock = _shock(spelling=spelling, draws=draws)
     projection = {"wage_shock_f": _PROJECTIONS[spelling]}
@@ -192,35 +167,24 @@ def _build_model(
     young_f = Regime(
         states={"wage_shock_f": shock}, functions={"utility": _single_f_utility}
     )
-    references = (
-        {
-            "V_single_f_ref": ProjectedRegimeValue(
-                regime="single_f", projection=projection
-            )
-        }
-        if gated
-        else {}
-    )
-    gates = {
-        "married": Gate(
-            predicate=_GATES[spelling] if gated else _no_dissolution,
-            routes={
-                "only": StakeholderRoute(
-                    target_stakeholder="f",
-                    fallback=ProjectedRegimeValue(
-                        regime="single_f", projection=projection
-                    ),
-                )
-            },
-            references=references,
-        )
-    }
     return Model(
         edges={
             "young_f": Transition(
                 targets={"married": 0, "single_f": 0},
                 law=ByAge(cases={0: {"married": StochasticTransition(func=_prob_one)}}),
-                gates=gates,
+                gates={
+                    "married": Gate(
+                        predicate=_always_open,
+                        routes={
+                            "only": StakeholderRoute(
+                                target_stakeholder="f",
+                                fallback=ProjectedRegimeValue(
+                                    regime="single_f", projection=projection
+                                ),
+                            )
+                        },
+                    )
+                },
             )
         },
         regimes={"young_f": young_f, "married": married, "single_f": single_f},
@@ -238,16 +202,14 @@ _PARAMS = {
 }
 
 
-def _solve(*, gated: bool, enable_jit: bool, spelling: Spelling):
-    return _build_model(gated=gated, enable_jit=enable_jit, spelling=spelling).solve(
+def _solve(*, enable_jit: bool, spelling: Spelling):
+    return _build_model(enable_jit=enable_jit, spelling=spelling).solve(
         params=_PARAMS, log_level="off"
     )
 
 
-def _simulate(
-    *, gated: bool, enable_jit: bool, spelling: Spelling, n_subjects: int = 64
-):
-    model = _build_model(gated=gated, enable_jit=enable_jit, spelling=spelling)
+def _simulate(*, enable_jit: bool, spelling: Spelling, n_subjects: int = 64):
+    model = _build_model(enable_jit=enable_jit, spelling=spelling)
     solution = model.solve(params=_PARAMS, log_level="off")
     result = model.simulate(
         params=_PARAMS,
@@ -266,94 +228,45 @@ def _simulate(
 
 
 _ENABLE_JIT = pytest.mark.parametrize("enable_jit", [True, False], ids=["jit", "eager"])
-_GATED = pytest.mark.parametrize("gated", [False, True], ids=["plain-gate", "ref-gate"])
 _SPELLING = pytest.mark.parametrize("spelling", ["value", "code"])
 
 
 @_SPELLING
-@_GATED
 @_ENABLE_JIT
 def test_value_constraint_reads_the_node_in_solve(
-    *, gated: bool, enable_jit: bool, spelling: Spelling
+    *, enable_jit: bool, spelling: Spelling
 ):
     """At every node the couple works: the wife holds the oracle plus the bracket."""
-    solution = _solve(gated=gated, enable_jit=enable_jit, spelling=spelling)
+    solution = _solve(enable_jit=enable_jit, spelling=spelling)
     V = np.asarray(solution.values.materialize()[1]["married"])
     expected = np.stack([_oracle(_NODES) + _BRACKET, np.zeros(5)], axis=-1)
     np.testing.assert_allclose(V, expected, atol=1e-4)
 
 
 @_SPELLING
-@_GATED
-@_ENABLE_JIT
-def test_value_constraint_leaves_every_node_feasible(
-    *, gated: bool, enable_jit: bool, spelling: Spelling
-):
-    """No node of the couple dissolves."""
-    solution = _solve(gated=gated, enable_jit=enable_jit, spelling=spelling)
-    D = solution.replay_artifacts.project(DISSOLUTION_FLAG)[1]["married"]
-    assert not np.asarray(D).any()
-
-
-@_SPELLING
-@_ENABLE_JIT
-def test_gate_reads_the_landing_node_in_solve(*, enable_jit: bool, spelling: Spelling):
-    """The young single's value opens the gate exactly at the positive nodes.
-
-    With discount one and the single's terminal value equal to the cubic, the
-    period-0 value is the cubic today plus the expectation over landing nodes of
-    the couple's wife value (oracle plus bracket) where the gate opens and the
-    single's value where it closes.
-    """
-    solution = _solve(gated=True, enable_jit=enable_jit, spelling=spelling)
-    V0 = np.asarray(solution.values.materialize()[0]["young_f"])
-    weights = np.asarray(_shock(spelling=spelling).get_transition_probs())[0]
-    continuation = _NODE_VALUES + _BRACKET * (_NODES > 0.0)
-    expected = _NODE_VALUES + weights @ continuation
-    np.testing.assert_allclose(V0, expected, atol=1e-4)
-
-
-@_SPELLING
-@_GATED
 @_ENABLE_JIT
 def test_simulated_couples_read_their_realised_shock(
-    *, gated: bool, enable_jit: bool, spelling: Spelling
+    *, enable_jit: bool, spelling: Spelling
 ):
     """Every simulated couple works, so each read matched its own realised shock."""
-    panel = _simulate(gated=gated, enable_jit=enable_jit, spelling=spelling).query(
+    panel = _simulate(enable_jit=enable_jit, spelling=spelling).query(
         "regime_name == 'married'"
     )
     assert len(panel) > 0
     assert panel["work"].tolist() == ["on"] * len(panel)
 
 
-@_SPELLING
-@_ENABLE_JIT
-def test_gate_opens_exactly_on_positive_landings(
-    *, enable_jit: bool, spelling: Spelling
-):
-    """Couples hold positive shocks; routed singles hold the rest of the draws."""
-    panel = _simulate(gated=True, enable_jit=enable_jit, spelling=spelling)
-    in_couple = panel["regime_name"].to_numpy() == "married"
-    positive = panel["wage_shock_f"].to_numpy() > 0.0
-    np.testing.assert_array_equal(in_couple, positive)
-
-
-@_GATED
-def test_continuous_draws_are_off_node_and_span_both_signs(*, gated: bool):
-    """The draws are realised values, not nodes, on both sides of the gate."""
-    shocks = _simulate(gated=gated, enable_jit=True, spelling="value")[
-        "wage_shock_f"
-    ].to_numpy()
+def test_continuous_draws_are_off_node_and_span_both_signs():
+    """The draws are realised values, not nodes, of both signs."""
+    shocks = _simulate(enable_jit=True, spelling="value")["wage_shock_f"].to_numpy()
     assert (shocks < -0.5).any()
     assert (shocks > 0.5).any()
     assert not np.isin(shocks, _NODES).any()
 
 
-@_GATED
-def test_node_draws_reach_every_node(*, gated: bool):
+def test_node_draws_reach_every_node():
     """Node draws land on each of the five nodes, so every position is read."""
-    shocks = _simulate(gated=gated, enable_jit=True, spelling="code", n_subjects=512)[
+    shocks = _simulate(enable_jit=True, spelling="code", n_subjects=512)[
         "wage_shock_f"
     ].to_numpy()
     np.testing.assert_array_equal(np.unique(shocks), _NODES)
@@ -361,5 +274,5 @@ def test_node_draws_reach_every_node(*, gated: bool):
 
 def test_a_code_read_of_a_process_drawn_between_nodes_is_refused():
     """A continuously drawn shock has no node position in simulation."""
-    with pytest.raises(RegimeInitializationError, match="simulate_draws='nodes'"):
-        _build_model(gated=True, enable_jit=False, spelling="code", draws="continuous")
+    with pytest.raises(RegimeInitializationError, match="simulated_draws='nodes'"):
+        _build_model(enable_jit=False, spelling="code", draws="continuous")

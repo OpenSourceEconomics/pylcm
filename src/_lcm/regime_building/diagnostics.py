@@ -162,7 +162,7 @@ def _build_compute_intermediates_per_period(
             regime_to_v_interpolation_info=continuation_info(representative_period),
         )
         # The combiner compiled for the period the source LANDS in, matching
-        # `_build_Q_and_F_per_period`: a gate reference on an age-specialized
+        # `_build_Q_and_F_per_period`: a leg fallback on an age-specialized
         # grid is read on that period's nodes.
         landing_period = representative_period + 1
         period_gated_continuations = MappingProxyType(

@@ -83,8 +83,9 @@ Model(
   is its declaration path under `params["edges"]` — `[source][arg]` for a law over all
   targets, `[source][target][arg]` for a per-target cell (gated or not), and
   `[source][target]["predicate"][arg]`,
-  `[source][target]["references"][reference][state][arg]`,
-  `[source][target]["routes"][route]["fallback"][state][arg]` for a target's `Gate`.
+  `[source][target]["routes"][route]["fallback"][state][arg]` for a target's `Gate` or
+  `ParticipationCheck`, and `[source][target]["reads"][read][state][arg]` for a
+  `ParticipationRead` projection.
   Values resolve from that path, `params["edges"][source][arg]` or the model level; a
   regime-level value never reaches an edge callable. Per-target state laws stay under
   their source regime.
@@ -107,7 +108,7 @@ Model(
 - Stochastic processes have intrinsic transitions and must NOT appear in
   `state_transitions`.
 - Terminal regimes must have empty `state_transitions`.
-- Regime, state, action, function, constraint, stakeholder, route and gate-reference
+- Regime, state, action, function, constraint, stakeholder and route
   names, and parameter arguments of model functions, cannot contain the reserved
   separator `__` and cannot start or end with `_`. `edges` is reserved as a regime, function
   and argument name
@@ -216,9 +217,6 @@ model's actual core programs declare.
   `SolutionResult`; value arrays live in `solution.values`
 - `model.simulate(params=params, initial_conditions=initial_conditions, solution=solution, log_level="debug")`
   \- Simulate forward from the complete result. Omit `solution` to solve automatically.
-- Collective dissolution flags are addressed replay artifacts in `SolutionResult`;
-  `simulate(solution=...)` validates and projects them. Automatic simulation threads
-  them directly.
 - `log_level` is **required** on both `solve()` and `simulate()`
   (`off < warning < progress < debug`) and controls console output.
 - `runtime_checks=True` is the default on both calls. Enabled numerical checks raise
@@ -296,14 +294,9 @@ Model(
             law={"couple": StochasticTransition(func=stays_married)},
             gates={
                 "couple": Gate(
-                    predicate=no_dissolution,  # Boolean, on the target's grid
+                    predicate=above_wealth_floor,  # Boolean, on the target's states
                     routes={
                         "f": StakeholderRoute(target_stakeholder="f", fallback=alone_f)
-                    },
-                    references={
-                        "V_alone_f": ProjectedRegimeValue(
-                            regime="single_f", projection={"wealth": half_of_wealth}
-                        )
                     },
                     off_grid="pointwise",  # or "reject"
                 )
@@ -314,9 +307,9 @@ Model(
 )
 ```
 
-- **The transition key is always the GATE-OPEN target.** A dissolution edge is keyed by
-  the *continuing* collective regime under `predicate = ~D_target`. Keying it by the
-  singleton would send both partners there whenever the couple stays together.
+- **The transition key is always the GATE-OPEN target.** An edge that may dissolve a
+  couple is keyed by the *continuing* collective regime. Keying it by the singleton
+  would send both partners there whenever the couple stays together.
 - `routes` is keyed by **source** stakeholder; a singleton source declares exactly one
   route. Each route owns four destinations: the open regime (the dict key) and role
   (`target_stakeholder`), and the closed regime and role (`fallback.regime`,
@@ -325,10 +318,13 @@ Model(
   never inside `ByAge` / `Phased` (only a route `fallback` may be `Phased`). With
   `Phased` edges, a target reached in both phases carries the equal `Gate` in both or
   none. A gate on a target the `Transition` never reaches is refused.
-- Predicate operands: `V_target` (singleton target) / `V_target_<s>` (collective
-  target), and `D_target`, which is **collective-only** — reading it on a singleton
-  target is refused at model build. The Boolean-dtype requirement is checked **at
-  evaluation**, i.e. on the first `solve()`, not at build.
+- A gate predicate reads target states, params, `period` and `age`, never a value: an
+  argument named `V_target`, `V_target_<s>` or `D_target` raises `GateReadsValueError`
+  when the `Gate` is declared, and `Gate` takes no `references`. A move decided by
+  comparing values is an `Exit` in the source's `Regime(exits=...)` (current period) or
+  a `ParticipationCheck` in `Transition(participation=...)` with named `ParticipationRead`s (on
+  landing). The Boolean-dtype requirement is checked **at evaluation**, i.e. on the
+  first `solve()`, not at build.
 - `ParetoObjective(weights=...)` scalarizes the household; a weight may read the
   regime's states and `period`/`age`, never an action. Its other arguments become free
   parameters under the `pareto_objective` key. Omit it for equal weights.

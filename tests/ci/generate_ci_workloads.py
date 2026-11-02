@@ -22,7 +22,9 @@ What it changes, and nothing else:
   recomputed the way `cpu.yml` selects it at run time
   (`shard_test_files tests/solution --weights-leg fp<p>-solution`): a new
   solution file joins one shard, and the weighted partition may move others.
-  Its `predicted_payload_minutes` is recomputed from the same partition.
+  Its `predicted_payload_minutes` is recomputed from the same partition;
+- sharded Linux fp64 coverage contributors follow the general and solution
+  shard counts; fixed contributors retain their relative order.
 
 With `--refresh-leg <leg> --junit <glob> --junit-source <text>` it first
 replaces that one leg's `leg_weights` with the summed JUnit testcase seconds and
@@ -229,6 +231,21 @@ def regenerate(
     updated["unweighted_files"] = sorted(
         {*updated["unweighted_files"], *(selected - weighted)}
     )
+    for family, group, leg in (
+        ("general", "general", "fp64-linux"),
+        ("solution", "solution", "fp64-solution"),
+    ):
+        prefix = f"coverage-{family}-"
+        contributors = updated["coverage_contributors"]
+        first = next(
+            index for index, name in enumerate(contributors) if name.startswith(prefix)
+        )
+        count = updated["shard_layout"][group][leg]["shards"]
+        updated["coverage_contributors"] = [
+            *contributors[:first],
+            *(f"{prefix}{index}" for index in range(1, count + 1)),
+            *(name for name in contributors[first:] if not name.startswith(prefix)),
+        ]
     _fail_if_missing_paths(repo_root=repo_root, universe=universe)
     return updated
 

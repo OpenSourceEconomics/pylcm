@@ -32,7 +32,7 @@ from lcm._solver_api.identity import (
     LoadState,
 )
 from lcm.exceptions import ExecutionPlanningError
-from lcm.typing import FloatND, RegimeName
+from lcm.typing import CanonicalArrayWriter, FloatND, RegimeName
 
 # The exact address of one value-store entry.
 type _ValueCoordinate = tuple[int, RegimeName]
@@ -490,10 +490,14 @@ class ArtifactStore(Mapping[ArtifactRef, ArtifactPayload]):
         ref: ArtifactRef,
         *,
         template_snapshot: _CanonicalArtifactTemplate | None,
+        array_writer: CanonicalArrayWriter | None = None,
+        array_copier: _ArrayCopier | None = None,
     ) -> ArtifactPayload:
         """Load one entry through an engine-owned cached PyTree declaration."""
         ref = _require_exact_artifact_ref(ref)
         return _materialize_entry(
             entry=self._entries[ref],
             template_snapshot=template_snapshot,
+            array_writer=array_writer,
+            array_copier=array_copier,
         )

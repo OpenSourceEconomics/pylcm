@@ -43,11 +43,9 @@ class OutputRole(Enum):
     """Logical role of one solve-core output leaf fixed by the value template."""
 
     VALUE = auto()
-    DISSOLUTION_FLAG = auto()
 
 
 VALUE = OutputRole.VALUE
-DISSOLUTION_FLAG = OutputRole.DISSOLUTION_FLAG
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -188,7 +186,6 @@ def resolve_output_layout(
     _validate_output_roles(
         roles=output_roles,
         core_key=core_key,
-        value_template=value_template,
         state_order=state_order,
     )
 
@@ -297,13 +294,7 @@ def _resolve_output_leaf(
             dtype=value_dtype,
             sharding=value_sharding,
         )
-    if role is DISSOLUTION_FLAG:
-        label = "dissolution"
-        role = StateAxesLeading(
-            state_names=state_order, dtype=jnp.dtype(bool), shape=value_shape[:-1]
-        )
-    else:
-        label = f"leaf {jax.tree_util.keystr(path)}"
+    label = f"leaf {jax.tree_util.keystr(path)}"
     if not isinstance(role, StateAxesLeading):
         msg = f"unreachable output role: {role!r}"
         raise TypeError(msg)
@@ -347,7 +338,6 @@ def _validate_output_roles(
     *,
     roles: OutputRoleTree,
     core_key: str,
-    value_template: ValueTemplate,
     state_order: tuple[StateName, ...],
 ) -> None:
     """Fail closed outside the supported logical output trees."""
@@ -382,15 +372,6 @@ def _validate_output_roles(
         msg = (
             f"Core {core_key!r} must declare exactly one VALUE leaf, in the first "
             f"position of its output-role tree; got {roles!r}."
-        )
-        raise ValueError(msg)
-    if (
-        any(role is DISSOLUTION_FLAG for role in role_leaves)
-        and getattr(value_template, "ndim", None) != len(state_order) + 1
-    ):
-        msg = (
-            f"Core {core_key!r} declared a dissolution output, but its value "
-            "template does not have exactly one trailing stakeholder axis."
         )
         raise ValueError(msg)
     for role in role_leaves:

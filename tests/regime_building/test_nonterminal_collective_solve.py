@@ -196,7 +196,6 @@ def test_nonterminal_collective_regime_solves_with_continuation():
     )
     solution = _bi_result.value_functions
     _sim_policies = _bi_result.simulation_policies
-    _dissolution_flags = _bi_result.dissolution_flags
 
     V_terminal = solution[1]["couple_terminal"]
     V_0 = solution[0]["couple"]
@@ -353,7 +352,6 @@ def test_nonterminal_collective_stochastic_state_expectation_is_per_stakeholder(
     )
     solution = _bi_result.value_functions
     _sim_policies = _bi_result.simulation_policies
-    _dissolution_flags = _bi_result.dissolution_flags
 
     V_terminal = solution[1]["couple_terminal"]
     V_0 = solution[0]["couple"]

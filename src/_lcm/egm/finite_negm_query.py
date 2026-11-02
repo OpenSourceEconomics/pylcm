@@ -22,11 +22,8 @@ from _lcm.egm.dcegm_query import (
 )
 from _lcm.egm.interp import (
     _hermite_query_derivative,
-    interp_left_germ_on_prepared_grid,
-    interp_right_germ_on_prepared_grid,
     prepare_padded_grid,
 )
-from _lcm.egm.outer_envelope import right_germ_winner
 from _lcm.egm.query_data import EGMQueryData, select_query_data
 from _lcm.grids.discrete import read_at_codes
 from _lcm.solution.feasibility import ContinuationReadCounts
@@ -46,22 +43,18 @@ from lcm.typing import (
     StateName,
 )
 
-type _Germ = tuple[BoolND, FloatND, FloatND, FloatND]
-
 
 class _FiniteRowRead(NamedTuple):
     """One native row's associated value and side-separated local payloads."""
 
     ordinary: OwnedRowRead
     left: OwnedRowRead
-    right_germ: _Germ
-    left_germ: _Germ
+    left_finite: BoolND
     right_derivative: FloatND
     left_derivative: FloatND
     first: FloatND
     last: FloatND
     has_first: BoolND
-    germ_invalid: BoolND
 
 
 class _FiniteOrdinaryRead(NamedTuple):
@@ -74,7 +67,6 @@ class _FiniteOrdinaryRead(NamedTuple):
     owner_id: IntND
     side_id: IntND
     dead: BoolND
-    germ: _Germ
 
 
 class _FiniteCornerRead(NamedTuple):
@@ -114,7 +106,6 @@ class _FiniteOuterProfile(NamedTuple):
     right: _FiniteOrdinaryRead
     left: _FiniteOrdinaryRead
     corner: _FiniteCornerRead
-    left_changed: BoolND
     coverage_missing: BoolND
 
 
@@ -712,25 +703,20 @@ def _read_finite_native_row(
         supported=supported,
         side_is_row_side=side_is_row_side,
     )
-    right_germ, right_derivative = read_side(row=ordinary, left_endpoint=False)
-    left_germ, left_derivative = read_side(row=left, left_endpoint=True)
+    _, right_derivative = read_side(row=ordinary, left_endpoint=False)
+    left_finite, left_derivative = read_side(row=left, left_endpoint=True)
     _, count = prepare_padded_grid(grid)
     first = jnp.min(jnp.where(supported, grid, jnp.inf))
     last = grid[jnp.maximum(count - 1, 0)]
     return _FiniteRowRead(
         ordinary=ordinary,
         left=left,
-        right_germ=right_germ,
-        left_germ=left_germ,
+        left_finite=left_finite,
         right_derivative=right_derivative,
         left_derivative=left_derivative,
         first=first,
         last=last,
         has_first=jnp.any(supported),
-        germ_invalid=(
-            (right_germ[0] & ~jnp.all(jnp.isfinite(jnp.stack(right_germ[1:]))))
-            | (left_germ[0] & ~jnp.all(jnp.isfinite(jnp.stack(left_germ[1:]))))
-        ),
     )
 
 
@@ -745,8 +731,13 @@ def _read_finite_owned_side(
     side_is_row_side: bool,
     row: OwnedRowRead,
     left_endpoint: bool,
-) -> tuple[_Germ, ScalarFloat]:
-    """Separate a directional owned value germ from its economic query derivative."""
+) -> tuple[ScalarBool, ScalarFloat]:
+    """Read a side's one-sided finiteness and its economic query derivative.
+
+    The finiteness flag says whether the side's local value piece stays finite
+    on its own one-sided neighborhood of the query; the derivative is the
+    economic marginal the parent Euler inversion consumes.
+    """
     search, count = prepare_padded_grid(grid)
     last = jnp.maximum(count - 1, 0)
     insertion = jnp.searchsorted(search, coordinate, side="right")
@@ -771,33 +762,28 @@ def _read_finite_owned_side(
         last=last,
     )
     indices, length, has_piece = piece(use_left=jnp.asarray(a=left_endpoint))
-    local_grid = grid[indices]
-    germ_function = (
-        interp_left_germ_on_prepared_grid
-        if left_endpoint
-        else interp_right_germ_on_prepared_grid
-    )
-    germ = germ_function(
-        x_query=coordinate,
-        search_grid=jnp.where(jnp.arange(2) < length, local_grid, jnp.inf),
-        valid_length=length,
-        xp=local_grid,
-        fp=value[indices],
-        fp_slopes=marginal[indices],
-    )
+    local_search = jnp.where(jnp.arange(2) < length, grid[indices], jnp.inf)
+    # The local piece is finite on the side's neighborhood unless a two-node
+    # bracket has a non-finite endpoint value; the clamp rays outside the piece
+    # are finite constants, and nothing lies left of the first node.
+    piece_first = local_search[0]
+    piece_last = local_search[jnp.maximum(length - 1, 0)]
+    endpoint_finite = (length < 2) | jnp.all(jnp.isfinite(value[indices]))  # noqa: PLR2004
+    if left_endpoint:
+        piece_finite = ((coordinate > piece_last) | endpoint_finite) & (
+            coordinate > piece_first
+        )
+    else:
+        piece_finite = (
+            (coordinate < piece_first) | (coordinate >= piece_last) | endpoint_finite
+        )
     clamp_ray = (
         (coordinate > grid[last] if left_endpoint else coordinate >= grid[last])
         & (count > 0)
         & supported[last]
     )
     represented = row.supported & jnp.isfinite(row.value)
-    finite = represented & (clamp_ray | (has_piece & germ[0]))
-    result: _Germ = (
-        finite,
-        jnp.where(finite & ~clamp_ray, germ[1], 0.0),
-        jnp.where(finite & ~clamp_ray, germ[2], 0.0),
-        jnp.where(finite & ~clamp_ray, germ[3], 0.0),
-    )
+    finite = represented & (clamp_ray | (has_piece & piece_finite))
     use_left: ScalarBool = (
         left_endpoint
         | (node_index == last)
@@ -813,7 +799,7 @@ def _read_finite_owned_side(
         fp=value[economic_indices],
         fp_slopes=marginal[economic_indices],
     )
-    return result, jnp.where(represented, derivative, 0.0)
+    return finite, jnp.where(represented, derivative, 0.0)
 
 
 def _validate_finite_outer_rows(
@@ -865,7 +851,7 @@ def _validate_finite_outer_rows(
     )
     right_supported = eligible & right_legal
     left_supported = (
-        eligible & left_legal & (raw.left_germ[0] | jnp.isneginf(left.value))
+        eligible & left_legal & (raw.left_finite | jnp.isneginf(left.value))
     )
     return _FiniteOuterProfile(
         right=_FiniteOrdinaryRead(
@@ -881,12 +867,6 @@ def _validate_finite_outer_rows(
             owner_id=row.owner_id,
             side_id=row.side_id,
             dead=~right_supported | (queries >= raw.last) | (row.side_id == -1),
-            germ=(
-                right_supported & raw.right_germ[0],
-                raw.right_germ[1],
-                raw.right_germ[2],
-                raw.right_germ[3],
-            ),
         ),
         left=_FiniteOrdinaryRead(
             value=jnp.where(left_supported, left.value, -jnp.inf),
@@ -901,12 +881,6 @@ def _validate_finite_outer_rows(
             owner_id=left.owner_id,
             side_id=left.side_id,
             dead=~left_supported | (queries <= raw.first) | (left.side_id == 1),
-            germ=(
-                left_supported & raw.left_germ[0],
-                raw.left_germ[1],
-                raw.left_germ[2],
-                raw.left_germ[3],
-            ),
         ),
         corner=_FiniteCornerRead(
             value=jnp.where(eligible & supported_corner, corner_value, -jnp.inf),
@@ -916,11 +890,9 @@ def _validate_finite_outer_rows(
             finite=eligible & finite_corner,
             invalid=invalid_corner,
         ),
-        left_changed=~left_legal | ~raw.left_germ[0],
         coverage_missing=(
             row.invalid_numeric
             | left.invalid_numeric
-            | raw.germ_invalid
             | paired_invalid
             | invalid_corner
             | ~jnp.isfinite(resources)
@@ -929,15 +901,15 @@ def _validate_finite_outer_rows(
     )
 
 
-def _filter_finite_survivors(*, survivors: BoolND, key: FloatND) -> BoolND:
-    """Apply one exact ordinary polynomial stage within its surviving tie set."""
-    stage = jnp.where(survivors, key, -jnp.inf)
-    return survivors & (stage >= jnp.max(stage, axis=-1, keepdims=True))
-
-
 def _select_finite_outer_profiles(*, profiles: _FiniteOuterProfile) -> _FiniteSelection:
-    """Select complete O/kind tuples under pointwise corner and ordinary side rules."""
-    right, left, corner = profiles.right, profiles.left, profiles.corner
+    """Select one complete O tuple by the pointwise value maximum.
+
+    Each O offers an ordinary right point and an actual corner; the winner is the
+    `argmax` of the working-dtype values over the flattened `(O, kind)` points,
+    so an exact tie goes to the lowest O and, within it, to the ordinary point.
+    Every returned channel is gathered from that one O.
+    """
+    right, corner = profiles.right, profiles.corner
     point_values = jnp.stack((right.value, corner.value), axis=-1)
     flat_values = point_values.reshape(*right.value.shape[:-1], -1)
     maximum = jnp.max(flat_values, axis=-1, keepdims=True)
@@ -946,78 +918,15 @@ def _select_finite_outer_profiles(*, profiles: _FiniteOuterProfile) -> _FiniteSe
     )
     point_ties = point_supported & (flat_values >= maximum)
     canonical_point = jnp.argmax(point_ties, axis=-1, keepdims=True).astype(jnp.int32)
-    point_corner = jnp.any(
-        corner.supported & (corner.value >= maximum), axis=-1, keepdims=True
-    )
-
-    survivors = right.supported & (right.value >= maximum)
-    for key in (
-        right.germ[0].astype(right.value.dtype),
-        right.germ[1],
-        right.germ[2],
-        right.germ[3],
-    ):
-        survivors = _filter_finite_survivors(survivors=survivors, key=key)
-    right_undecided = jnp.sum(survivors, axis=-1, keepdims=True) > 1
-    right_winner = jnp.argmax(survivors, axis=-1, keepdims=True).astype(jnp.int32)
-
-    # Preserve the shared primitive exactly when no discarded/recovered side or
-    # competitive corner changes an ordinary-only right-indistinguishable tie.
-    ordinary_winner, _ = right_germ_winner(
-        value=right.value, right_germ=right.germ, left_germ=left.germ
-    )
-    left_values = jnp.stack((left.value, corner.value), axis=-1)
-    allowed_left = jnp.stack((left.supported, corner.supported), axis=-1)
-    allowed_left &= survivors[..., None]
-    flat_left = jnp.where(allowed_left, left_values, -jnp.inf).reshape(
-        *right.value.shape[:-1], -1
-    )
-    left_maximum = jnp.max(flat_left, axis=-1, keepdims=True)
-    left_corner = jnp.any(
-        survivors & corner.supported & (corner.value >= left_maximum),
-        axis=-1,
-        keepdims=True,
-    )
-    changed_left = (
-        jnp.any(survivors & profiles.left_changed, axis=-1, keepdims=True) | left_corner
-    )
-    left_ties = allowed_left.reshape(*right.value.shape[:-1], -1) & (
-        flat_left >= left_maximum
-    )
-    canonical_left = jnp.argmax(left_ties, axis=-1, keepdims=True).astype(jnp.int32)
-    left_survivors = survivors & left.supported & (left.value >= left_maximum)
-    for key in (
-        left.germ[0].astype(left.value.dtype),
-        -left.germ[1],
-        left.germ[2],
-        -left.germ[3],
-    ):
-        left_survivors = _filter_finite_survivors(survivors=left_survivors, key=key)
-    left_winner = jnp.where(
-        left_corner,
-        canonical_left // 2,
-        jnp.argmax(left_survivors, axis=-1, keepdims=True).astype(jnp.int32),
-    )
-    left_winner = jnp.where(
-        jnp.any(left_ties, axis=-1, keepdims=True), left_winner, right_winner
-    )
-    winner = jnp.where(
-        point_corner,
-        canonical_point // 2,
-        jnp.where(
-            right_undecided,
-            jnp.where(changed_left, left_winner, ordinary_winner),
-            right_winner,
-        ),
-    )
+    winner = canonical_point // 2
 
     def gather(leaf: FloatND | IntND | BoolND) -> FloatND | IntND | BoolND:
         return jnp.take_along_axis(leaf, winner, axis=-1)
 
     selected_right = jax.tree.map(gather, right)
-    selected_left = jax.tree.map(gather, left)
+    selected_left = jax.tree.map(gather, profiles.left)
     selected_corner = jax.tree.map(gather, corner)
-    right_corner = point_corner & (canonical_point % 2 == 1)
+    right_corner = canonical_point % 2 == 1
     # A side's own complete tuple is selected after the owning O is fixed.
     left_corner_selected = selected_corner.supported & (
         ~selected_left.supported | (selected_corner.value > selected_left.value)

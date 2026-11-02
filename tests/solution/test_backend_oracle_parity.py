@@ -1,8 +1,8 @@
 """Parity of every upper-envelope backend against the exact branch-aware oracle.
 
-The four production backends (FUES, RFC, LTM, MSS) must agree with the
+The three heuristic production backends (FUES, RFC, LTM) must agree with the
 independent host-side oracle on cases their algorithm is supposed to handle.
-This closes the review's gap that MSS/LTM/RFC had no dedicated independent
+This closes the review's gap that LTM/RFC had no dedicated independent
 oracle — they were cross-checked only against each other and a dense VFI on
 solved values, never against an exact envelope on the candidate row itself.
 
@@ -20,7 +20,6 @@ import pytest
 from _lcm.egm.interp import interp_on_padded_grid
 from _lcm.egm.upper_envelope.fues import refine_envelope as refine_fues
 from _lcm.egm.upper_envelope.ltm import refine_envelope as refine_ltm
-from _lcm.egm.upper_envelope.mss import refine_envelope as refine_mss
 from _lcm.egm.upper_envelope.rfc import refine_envelope as refine_rfc
 from tests.solution._envelope_oracle import exact_envelope
 
@@ -41,16 +40,12 @@ def _run_backend(*, backend, endog_grid, policy, value, marginal_utility, n_refi
             search_radius=n_refined,
             jump_thresh=2.0,
         )
-    if backend == "ltm":
-        return refine_ltm(
-            endog_grid=endog_grid, policy=policy, value=value, n_refined=n_refined
-        )
-    return refine_mss(
+    return refine_ltm(
         endog_grid=endog_grid, policy=policy, value=value, n_refined=n_refined
     )
 
 
-@pytest.mark.parametrize("backend", ["fues", "rfc", "ltm", "mss"])
+@pytest.mark.parametrize("backend", ["fues", "rfc", "ltm"])
 def test_backend_deletes_a_strictly_dominated_branch(backend):
     """Every backend recovers the dominant branch when the other is strictly below.
 
@@ -96,7 +91,7 @@ def test_backend_deletes_a_strictly_dominated_branch(backend):
     np.testing.assert_allclose(got_policy, oracle_policy, atol=1e-6)
 
 
-@pytest.mark.parametrize("backend", ["fues", "rfc", "ltm", "mss"])
+@pytest.mark.parametrize("backend", ["fues", "rfc", "ltm"])
 def test_backend_is_identity_on_a_single_concave_branch(backend):
     """On a single concave branch every backend returns that branch's interpolant.
 

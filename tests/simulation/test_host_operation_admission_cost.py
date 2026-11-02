@@ -312,9 +312,9 @@ def test_every_budgeted_helper_admits_through_the_axis_free_plan(  # noqa: C901,
     assert counts["query_status_checks"] == len(native_consumers)
     families = {family for family, _period, _rows in native_consumers}
     assert {"exit_full", "exit_participating"} <= families
-    assert any(family.startswith("arrival_entry:") for family in families)
+    assert any(family.startswith("participation_entry:") for family in families)
     assert any(
-        family.startswith("arrival_entry:") and rows
+        family.startswith("participation_entry:") and rows
         for family, _period, rows in native_consumers
     )
     assert any(

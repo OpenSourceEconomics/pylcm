@@ -535,11 +535,7 @@ def _compile_cores_for_one_period(
             assert_width_invariant_internal_outputs(candidates=candidates)
             producers[core_name] = candidates
         state_action_space = cast("StateActionSpace", context.state_action_space)
-        state_order = tuple(
-            name
-            for name in state_action_space.states
-            if name not in regime.fold_state_names
-        )
+        state_order = tuple(state_action_space.states)
         layout = resolve_output_layout(
             core_key=core_name,
             value_template=context.next_regime_to_V_arr[kernel_kwargs["regime_name"]],

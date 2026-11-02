@@ -21,11 +21,10 @@ from typing import Literal, cast
 
 import jax
 import jax.numpy as jnp
-from dags import concatenate_functions, with_signature
+from dags import concatenate_functions
 from jax.typing import DTypeLike
 
 from _lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
-from _lcm.continuation import ProjectedContinuationSpec, ProjectedProducerDate
 from _lcm.dtypes import canonical_float_dtype
 from _lcm.egm.carry import (
     EGMCarry,
@@ -48,9 +47,7 @@ from _lcm.egm.ez_kernel import (
 )
 from _lcm.egm.interp import (
     interp_and_derivative_on_prepared_grid,
-    interp_left_germ_on_prepared_grid,
     interp_left_record_on_prepared_grid,
-    interp_right_germ_on_prepared_grid,
     locate_on_grid,
     prepare_padded_grid,
 )
@@ -60,9 +57,6 @@ from _lcm.egm.nbegm_query import (
     build_nbegm_query,
 )
 from _lcm.egm.nbegm_query_model import NBEGMQueryModel
-from _lcm.egm.outer_envelope import right_germ_winner
-from _lcm.egm.projected_child import ProjectedChildReader
-from _lcm.egm.projected_continuation import ProjectedEGMCarry
 from _lcm.egm.query_data import EGMQueryData, select_query_data
 from _lcm.egm.regime_introspection import (
     _get_child_discrete_actions,
@@ -76,10 +70,9 @@ from _lcm.execution.reductions import (
     BoundWeightedExpectationReduction,
     WeightedExpectationAccumulator,
 )
-from _lcm.grids import DiscreteGrid, Grid
+from _lcm.grids import Grid
 from _lcm.grids.discrete import read_at_codes
 from _lcm.logsum import logsum_and_softmax
-from _lcm.materialization import DatedGenerationMaterializer
 from _lcm.probability import (
     is_live,
     is_represented_zero,
@@ -97,7 +90,7 @@ from _lcm.regime_building.Q_and_F import (
     partition_continuation_targets,
 )
 from _lcm.regime_building.V import VInterpolationInfo
-from _lcm.regime_law import RegimeLaw, RegimeLaws
+from _lcm.regime_law import RegimeLaws
 from _lcm.solution.feasibility import (
     BoundedResult,
     ContinuationReadCounts,
@@ -139,7 +132,6 @@ from lcm.typing import (
     FloatND,
     IntND,
     ReferenceName,
-    ScalarBool,
     ScalarFloat,
     ScalarInt,
 )
@@ -376,8 +368,6 @@ class _ChildRead:
     """
     query: DCEGMQuery | NBEGMQuery | None = None
     """Canonical target-period query adapter, absent on raw child reads."""
-    projected_date: ProjectedProducerDate | None = None
-    """Actual immutable pre-shock date, independent of aggregate assembly."""
     query_target: RegimeName | None = None
     """Namespace owning the installed query's parameter leaves."""
     query_action_names: tuple[ActionName, ...] = ()
@@ -432,9 +422,7 @@ def bind_continuation(
     *,
     plan: ContinuationPlan,
     combo_pool: EconFunctionKwargs,
-    next_regime_to_continuation: MappingProxyType[
-        RegimeName, EGMCarry | ProjectedEGMCarry
-    ],
+    next_regime_to_continuation: MappingProxyType[RegimeName, EGMCarry],
     dtype: DTypeLike,
     stochastic_node_width: int | None = None,
     resolved_process_grids: Mapping[StateName, FloatND] = MappingProxyType({}),
@@ -563,9 +551,7 @@ class _BoundContinuation:
     child_readers: Mapping[RegimeName, Callable[[ScalarFloat], _ChildCarryResult]]
     """Per stateful target, the carry read at a savings node."""
 
-    next_regime_to_continuation: MappingProxyType[
-        RegimeName, EGMCarry | ProjectedEGMCarry
-    ]
+    next_regime_to_continuation: MappingProxyType[RegimeName, EGMCarry]
     """The next period's EGM carries (scalar targets read their constant)."""
 
     dtype: DTypeLike
@@ -800,12 +786,8 @@ def build_continuation_plan(
     risk_aversion_param_name: QualifiedName | None = None,
     dcegm_query_models: Mapping[RegimeName, DCEGMQueryModel] | None = None,
     nbegm_query_models: Mapping[RegimeName, NBEGMQueryModel] | None = None,
-    projected_specs: Mapping[
-        RegimeName, ProjectedContinuationSpec | ProjectedProducerDate
-    ] = MappingProxyType({}),
     source_period: int | None = None,
     certainty_equivalent: CertaintyEquivalent | None = None,
-    materializer: DatedGenerationMaterializer | None = None,
 ) -> ContinuationPlan:
     """Assemble a `ContinuationPlan` from the regime's continuation statics.
 
@@ -821,7 +803,6 @@ def build_continuation_plan(
 
     """
     child_reads = _build_child_reads(
-        materializer=materializer,
         user_regimes=user_regimes,
         laws=laws,
         functions=functions,
@@ -833,7 +814,6 @@ def build_continuation_plan(
         age_values=age_values,
         dcegm_query_models=dcegm_query_models,
         nbegm_query_models=nbegm_query_models,
-        projected_specs=projected_specs,
         source_period=source_period,
     )
     return ContinuationPlan(
@@ -848,7 +828,6 @@ def build_continuation_plan(
             target
             for target in stateful_targets
             if child_reads[target].query is not None
-            or child_reads[target].projected_date is not None
         ),
     )
 
@@ -907,7 +886,7 @@ def _with_co_map_states(
 def _get_child_carry_reader(
     *,
     read: _ChildRead,
-    carry: EGMCarry | ProjectedEGMCarry,
+    carry: EGMCarry,
     combo_pool: EconFunctionKwargs,
     post_decision_name: FunctionName,
     stochastic_node_width: int | None,
@@ -935,48 +914,6 @@ def _get_child_carry_reader(
     build-time NaN placeholder in `read.stochastic_node_values`, so a resources
     function reading the process node integrates over the resolved nodes.
     """
-    if isinstance(carry, ProjectedEGMCarry):
-        if read.projected_date is None:
-            raise TypeError("Projected child input lacks actual producer authority.")
-        if (
-            risk_aversion is not None
-            or read.stochastic_state_names
-            or read.local_draw_names
-        ):
-            raise ModelInitializationError(
-                "Projected child stochastic-node and nonlinear reads are not installed."
-            )
-        if read.passive_state_names:
-            if (
-                len(read.passive_state_names) != 1
-                or read.discrete_state_names
-                or read.euler_draw_names
-                or read.has_taste_shocks
-            ):
-                raise UnsupportedOperationError(
-                    "Projected passive reads require one deterministic state axis."
-                )
-            return _ProjectedPassiveCarryReader(
-                read=read,
-                carry=carry,
-                combo_pool=combo_pool,
-                post_decision_name=post_decision_name,
-                collect_read_counts=collect_continuation_read_counts,
-            )
-        return ProjectedChildReader.bind_date(
-            date=read.projected_date,
-            target=read.projected_date.authority.producer,
-            carry=carry,
-            next_liquid=_ChildEulerState(
-                next_state_func=read.euler_state_func,
-                combo_pool=combo_pool,
-                post_decision_name=post_decision_name,
-                next_state_key=read.next_state_key,
-            ),
-            collect_read_counts=collect_continuation_read_counts,
-        )
-    if read.projected_date is not None:
-        raise TypeError("Projected producer input is not a projected continuation.")
     stochastic_node_values, weight_vecs = _resolve_child_node_operands(
         read=read, combo_pool=combo_pool, resolved_process_grids=resolved_process_grids
     )
@@ -1040,44 +977,6 @@ def _resolve_child_node_operands(
     return stochastic_node_values, weight_vecs
 
 
-@dataclass(frozen=True, kw_only=True)
-class _ProjectedPassiveCarryReader:
-    """Bind the original parent state laws to an exact passive U artifact."""
-
-    read: _ChildRead
-    carry: ProjectedEGMCarry
-    combo_pool: EconFunctionKwargs
-    post_decision_name: FunctionName
-    collect_read_counts: bool = False
-
-    def __call__(self, savings: ScalarFloat) -> _ChildCarryResult:
-        from _lcm.egm.projected_passive import ProjectedPassiveReader  # noqa: PLC0415
-
-        read = self.read
-        if read.projected_date is None or len(read.passive_state_names) != 1:
-            raise TypeError("Passive projected input lost its actual dated read.")
-        next_states = read.next_state_func(
-            **self.combo_pool, **{self.post_decision_name: savings}
-        )
-        liquid = _ChildEulerState(
-            next_state_func=read.euler_state_func,
-            combo_pool=self.combo_pool,
-            post_decision_name=self.post_decision_name,
-            next_state_key=read.next_state_key,
-        )
-        return ProjectedPassiveReader(
-            date=read.projected_date,
-            target=read.projected_date.producer,
-            grid=read.passive_grids[0],
-        ).read(
-            carry=self.carry,
-            coordinate=liquid(savings),
-            jacobian=jax.grad(liquid)(savings),
-            passive=next_states[f"next_{read.passive_state_names[0]}"],
-            collect_read_counts=self.collect_read_counts,
-        )
-
-
 @dataclass(frozen=True, kw_only=True, eq=False)
 class _ChildCarryReader:
     """The per-savings-node carry read of one target for one combo.
@@ -1120,42 +1019,6 @@ class _ChildCarryReader:
     """The carry rows' valid prefix lengths."""
     collect_continuation_read_counts: bool = False
     """Static read specialization, shared across this target's node windows."""
-
-    def read_scalar_coordinate(
-        self, *, query: ScalarFloat, gradient: ScalarFloat
-    ) -> (
-        tuple[ScalarFloat, ScalarFloat] | BoundedResult[tuple[ScalarFloat, ScalarFloat]]
-    ):
-        """Use the original economic row for a scalar coordinate direction."""
-        read = self.read
-        if (
-            read.query is not None
-            or read.discrete_state_names
-            or read.passive_state_names
-            or read.row_block_shape
-            or read.n_outer_candidates
-            or read.has_taste_shocks
-            or read.stochastic_state_names
-            or read.local_draw_names
-            or self.risk_aversion is not None
-        ):
-            raise UnsupportedOperationError(
-                "Scalar economic coordinate reads require an unaggregated child row."
-            )
-        return _aggregate_child_choices(
-            carry=self.carry,
-            prepared_search_grid=self.prepared_search_grid,
-            prepared_valid_length=self.prepared_valid_length,
-            has_taste_shocks=False,
-            child_index=(),
-            child_passive_values=(),
-            child_passive_grids=(),
-            row_queries=query,
-            row_gradients=jnp.where(
-                jnp.isfinite(query) & jnp.isfinite(gradient), gradient, jnp.nan
-            ),
-            collect_continuation_read_counts=self.collect_continuation_read_counts,
-        )
 
     def __call__(
         self,
@@ -2876,14 +2739,9 @@ def _stacked_blend_payloads(
 
     Masks each candidate to `-inf` below its own first finite coh node (so the
     edge clamp cannot hand an infeasible lifted candidate a boundary value that
-    wins the max), reads the right/left germs and the left record, applies the
-    `(-inf, 0)` pin and the composed gradient scaling, and collapses the
-    candidate axis via `_collapse_stacked_candidates`. The germs of each
-    candidate's value read feed the tie rule at the candidate max; they need no
-    support mask of their own — the left germ is dead at or below the first
-    finite node by construction, and a below-support candidate enters the tie
-    set only when every candidate is below support, where all published
-    marginals are exactly zero regardless of the winner.
+    wins the max), reads the left record, applies the `(-inf, 0)` pin and the
+    composed gradient scaling, and collapses the candidate axis via
+    `_collapse_stacked_candidates`.
 
     Under `paired_marginal_read` both side payloads are the value
     interpolant's own one-sided derivatives (the Epstein-Zin transform
@@ -2896,14 +2754,11 @@ def _stacked_blend_payloads(
         payloads `(right_side, left_side, right_alive)` for the passive blend.
 
     """
-    right_germ_at_child, left_germ_at_child, left_marginal_at_child = jax.vmap(
-        _germ_and_left_record_rows
-    )(
+    left_marginal_at_child = jax.vmap(interp_left_record_on_prepared_grid)(
         search_grid=search_rows,
         valid_length=valid_rows,
         xp=grid_rows,
-        fp=value_rows,
-        fp_slopes=marginal_rows,
+        fp=marginal_rows,
         x_query=queries_flat,
     )
     # Only rows with a finite first node have a support to fall below;
@@ -2925,7 +2780,7 @@ def _stacked_blend_payloads(
     left_marginal_at_child = jnp.where(above_row_support, 0.0, left_marginal_at_child)
     # The paired (Epstein-Zin) marginal is the value interpolant's own
     # derivative; its left payload follows the same convention: the derivative
-    # of the value object seen from the LEFT of the query, so a left-owned tie
+    # of the value object seen from the LEFT of the query, so a right-dead winner
     # at a duplicated terminal abscissa publishes the left duplicate's piece
     # slope, not the ordinary right/clamp derivative.
     if paired_marginal_read:
@@ -2961,23 +2816,8 @@ def _stacked_blend_payloads(
         left_marginal_at_child=left_marginal_at_child.reshape(block_shape),
         right_dead_at_child=at_or_above_row_support.reshape(block_shape),
         left_dead_at_child=at_or_below_row_support.reshape(block_shape),
-        right_germ_at_child=_reshaped_germ(germ=right_germ_at_child, shape=block_shape),
-        left_germ_at_child=_reshaped_germ(germ=left_germ_at_child, shape=block_shape),
     )
     return value_at_child, (right_side, left_side, right_alive)
-
-
-def _reshaped_germ(
-    *, germ: tuple[BoolND, FloatND, FloatND, FloatND], shape: tuple[int, ...]
-) -> tuple[BoolND, FloatND, FloatND, FloatND]:
-    """Reshape every component of a value germ to `shape`."""
-    alive, first, second, third = germ
-    return (
-        alive.reshape(shape),
-        first.reshape(shape),
-        second.reshape(shape),
-        third.reshape(shape),
-    )
 
 
 def _choose_blended_side(
@@ -3016,7 +2856,7 @@ def _left_slope_row(
     The paired left payload: an on-node query lands in its LEFT bracket
     (evaluated at the bracket's right edge), so a duplicated terminal abscissa
     publishes the left duplicate's piece slope — the derivative of the value
-    object a left-owned tie selected — instead of the ordinary right/clamp
+    object a right-dead winner owns — instead of the ordinary right/clamp
     derivative.
     """
     return interp_and_derivative_on_prepared_grid(
@@ -3030,49 +2870,6 @@ def _left_slope_row(
     )[1]
 
 
-def _germ_and_left_record_rows(
-    *,
-    search_grid: Float1D,
-    valid_length: ScalarInt,
-    xp: Float1D,
-    fp: Float1D,
-    fp_slopes: Float1D,
-    x_query: ScalarFloat,
-) -> tuple[
-    tuple[ScalarBool, ScalarFloat, ScalarFloat, ScalarFloat],
-    tuple[ScalarBool, ScalarFloat, ScalarFloat, ScalarFloat],
-    ScalarFloat,
-]:
-    """Germs and left-record marginal of one row."""
-    right_germ = interp_right_germ_on_prepared_grid(
-        x_query=x_query,
-        search_grid=search_grid,
-        valid_length=valid_length,
-        xp=xp,
-        fp=fp,
-        fp_slopes=fp_slopes,
-    )
-    left_germ = interp_left_germ_on_prepared_grid(
-        x_query=x_query,
-        search_grid=search_grid,
-        valid_length=valid_length,
-        xp=xp,
-        fp=fp,
-        fp_slopes=fp_slopes,
-    )
-    # The payload companion of the left germ: the marginal row read
-    # left-continuously, so a left-owned tie publishes the record that
-    # justified ownership at a duplicated abscissa.
-    left_marginal = interp_left_record_on_prepared_grid(
-        x_query=x_query,
-        search_grid=search_grid,
-        valid_length=valid_length,
-        xp=xp,
-        fp=fp_slopes,
-    )
-    return right_germ, left_germ, left_marginal
-
-
 def _collapse_stacked_candidates(
     *,
     value_at_child: FloatND,
@@ -3080,23 +2877,13 @@ def _collapse_stacked_candidates(
     left_marginal_at_child: FloatND,
     right_dead_at_child: BoolND,
     left_dead_at_child: BoolND,
-    right_germ_at_child: tuple[BoolND, FloatND, FloatND, FloatND],
-    left_germ_at_child: tuple[BoolND, FloatND, FloatND, FloatND],
 ) -> tuple[FloatND, FloatND, FloatND, FloatND]:
-    """Collapse the candidate axis by the exact hard max at the query.
+    """Collapse the candidate axis by the hard max at the query.
 
     This runs *before* the passive blend, so the blend interpolates the
-    nodewise outer maximum. An exact value tie resolves right-continuously in
-    the value read itself: the tied candidates are compared by the complete
-    right germ of their own value interpolants (`right_germ_winner` —
-    right-finiteness, then the first three one-sided derivatives), so the
-    branch whose read actually wins immediately to the right owns the marginal
-    the parent's Euler inversion consumes; right-identical candidates (a shared
-    terminal abscissa, where every candidate clamps) are separated by their
-    left germs, and only branches identical on both sides fall back to the
-    lowest index. (The germs use the unscaled interpolant derivatives: the
-    composed gradient is shared by all candidates of a cell and positive, so
-    scaling could never reorder them.)
+    nodewise outer maximum. The winner is the `argmax` of the working-dtype
+    value reads; an exact value tie goes to the lowest candidate index. Every
+    published channel is then gathered from that one winner.
 
     Rather than commit the ownership side per cell, the collapse publishes both
     the winner's right-continuous marginal (zero once its right side is dead —
@@ -3106,7 +2893,7 @@ def _collapse_stacked_candidates(
     a single ownership side after interpolation instead of averaging
     independently side-committed marginals. The published payload is always the
     value-winning branch's economic marginal `u'(c)` — the two objects stay
-    separate: the value germ ranks branch ownership, the marginal row supplies
+    separate: the value read ranks branch ownership, the marginal row supplies
     the utility derivative the parent Euler inversion consumes. With no passive
     blend the choice
     reduces to the per-node contract: an interior winner publishes its ordinary
@@ -3125,10 +2912,6 @@ def _collapse_stacked_candidates(
             candidate's last finite node (its right side is a flat clamp).
         left_dead_at_child: Per candidate, whether the query is at or below the
             candidate's first finite node (its left side is a flat clamp).
-        right_germ_at_child: Tuple of the right-finiteness flag and the first
-            three right derivatives of the candidate value reads, same shape.
-        left_germ_at_child: Tuple of the left-finiteness flag and the first
-            three left derivatives of the candidate value reads, same shape.
 
     Returns:
         Tuple of the collapsed value maximum, the winner's right-continuous
@@ -3136,11 +2919,9 @@ def _collapse_stacked_candidates(
         (1.0 where the winner's right side is live, 0.0 where it is dead).
 
     """
-    winner = right_germ_winner(
-        value=value_at_child,
-        right_germ=right_germ_at_child,
-        left_germ=left_germ_at_child,
-    )[0]
+    # int32 winner indices: the candidate axis has at most a few hundred
+    # entries, so the x64-default int64 only doubles the gather-index buffers.
+    winner = jnp.argmax(value_at_child, axis=-1, keepdims=True).astype(jnp.int32)
     ordinary = jnp.take_along_axis(ordinary_marginal_at_child, winner, axis=-1)[..., 0]
     left_record = jnp.take_along_axis(left_marginal_at_child, winner, axis=-1)[..., 0]
     right_dead = jnp.take_along_axis(right_dead_at_child, winner, axis=-1)[..., 0]
@@ -3149,12 +2930,10 @@ def _collapse_stacked_candidates(
     left_side = jnp.where(left_dead, 0.0, left_record)
     right_alive = jnp.where(right_dead, 0.0, 1.0)
     # The published value is the maximum itself: identical to the winner's read
-    # at any tie, and NaN-propagating when a poisoned candidate row (whose NaN
-    # empties the tie set) must surface fail-loud. Both side payloads are
+    # at any tie, and NaN-propagating when a poisoned candidate row must
+    # surface fail-loud. Both side payloads are
     # pinned to NaN alongside so the published pair never looks healthy over a
-    # poisoned cell — the germ selector falls back to a finite competitor's
-    # index when the NaN empties the tie set, and that competitor's marginal
-    # must not ship beside a NaN value.
+    # poisoned cell.
     collapsed_value = jnp.max(value_at_child, axis=-1)
     poisoned = jnp.isnan(collapsed_value)
     return (
@@ -3163,68 +2942,6 @@ def _collapse_stacked_candidates(
         jnp.where(poisoned, jnp.nan, left_side),
         right_alive,
     )
-
-
-@dataclass(frozen=True, kw_only=True, eq=False)
-class _ProjectedLiquidCoordinate:
-    """Actual pre-shock child coordinate; no second current resources transform."""
-
-    name: StateName
-
-    def __call__(self, **kwargs: ScalarFloat) -> ScalarFloat:
-        return kwargs[self.name]
-
-
-def _validate_projected_child(
-    *,
-    spec: ProjectedContinuationSpec | ProjectedProducerDate | None,
-    source_period: int | None,
-    euler_state_name: StateName,
-    query: DCEGMQuery | NBEGMQuery | None,
-) -> int | None:
-    """Check the actual producer's pre-shock coordinate and date authority."""
-    if spec is None:
-        return None
-    if source_period is None:
-        raise TypeError("Projected child reads require an actual source period.")
-    date = (
-        spec
-        if isinstance(spec, ProjectedProducerDate)
-        else spec.date_at(period=source_period + 1)
-    )
-    authority = date.authority
-    if authority.period != source_period + 1:
-        raise TypeError("Projected child binding has a different actual date.")
-    if authority.liquid_state != euler_state_name or query is not None:
-        raise TypeError("Projected child coordinate/query authority disagrees.")
-    return authority.period
-
-
-def _child_resources_coordinate(
-    *,
-    target: RegimeName,
-    user_regime: UserRegime,
-    law: RegimeLaw,
-    projected: ProjectedContinuationSpec | ProjectedProducerDate | None,
-    euler_state_name: StateName,
-    discrete_state_names: tuple[StateName, ...],
-    passive_state_names: tuple[StateName, ...],
-    euler_draw_names: frozenset[TransitionFunctionName],
-) -> tuple[Callable[..., ScalarFloat], frozenset[ReferenceName]]:
-    """Preserve ordinary resource reads and projected physical-liquid reads."""
-    if projected is None:
-        return _get_child_resources(
-            regime_name=target, user_regime=user_regime, law=law
-        )
-    if discrete_state_names or len(passive_state_names) > 1 or euler_draw_names:
-        raise ModelInitializationError(
-            "Projected child carried/stochastic row selection is not installed."
-        )
-    return with_signature(
-        _ProjectedLiquidCoordinate(name=euler_state_name),
-        args=[euler_state_name],
-        enforce=False,
-    ), frozenset({euler_state_name})
 
 
 def _build_child_reads(
@@ -3240,11 +2957,7 @@ def _build_child_reads(
     age_values: FloatND | IntND,
     dcegm_query_models: Mapping[RegimeName, DCEGMQueryModel] | None = None,
     nbegm_query_models: Mapping[RegimeName, NBEGMQueryModel] | None = None,
-    projected_specs: Mapping[
-        RegimeName, ProjectedContinuationSpec | ProjectedProducerDate
-    ] = MappingProxyType({}),
     source_period: int | None = None,
-    materializer: DatedGenerationMaterializer | None = None,
 ) -> MappingProxyType[RegimeName, _ChildRead]:
     """Build the per-carry-target statics of the EGM kernel's child reads.
 
@@ -3258,6 +2971,7 @@ def _build_child_reads(
         Immutable mapping of carry-target names to their read statics.
 
     """
+
     functions_without_post = MappingProxyType(
         {name: func for name, func in functions.items() if name != post_decision_name}
     )
@@ -3271,13 +2985,6 @@ def _build_child_reads(
         target_info = regime_to_v_interpolation_info[target]
         target_regime = user_regimes[target]
         euler_state_name = _get_child_state_name(user_regime=target_regime)
-        projected = projected_specs.get(target)
-        projected_period = _validate_projected_child(
-            spec=projected,
-            source_period=source_period,
-            euler_state_name=euler_state_name,
-            query=query,
-        )
         discrete_state_names = _get_discrete_state_names(
             v_interpolation_info=target_info
         )
@@ -3304,28 +3011,6 @@ def _build_child_reads(
             )
             if is_stochastic
         )
-        if materializer is not None and (
-            stochastic_state_names
-            or _get_passive_state_names(
-                v_interpolation_info=target_info,
-                euler_state_name=euler_state_name,
-            )
-            or (
-                projected is None
-                and (
-                    target_regime.solver.egm_continuation_layout.retains_discrete_action_rows
-                )
-                and any(
-                    isinstance(grid, DiscreteGrid)
-                    for grid in target_regime.actions.values()
-                )
-            )
-            or query is not None
-        ):
-            raise UnsupportedOperationError(
-                "Cold child stochastic/passive/action/query row preparation "
-                "requires its original admitted node and mesh factories."
-            )
         # Process axes feed the continuous AR(1) grid points into the resources
         # query; Markov axes feed their integer category codes (`to_jax()`
         # returns `[0, 1, ...]`, which also equal the carry's leading-axis
@@ -3377,9 +3062,11 @@ def _build_child_reads(
             euler_state_name=euler_state_name,
         )
         passive_grids = tuple(
-            jnp.asarray(
-                target_info.continuous_states[name].to_jax(),
-                dtype=canonical_float_dtype(),
+            (
+                jnp.asarray(
+                    target_info.continuous_states[name].to_jax(),
+                    dtype=canonical_float_dtype(),
+                )
             )
             for name in passive_state_names
         )
@@ -3388,23 +3075,14 @@ def _build_child_reads(
         # publishes a value array already maxed over its discrete actions, so the
         # read carries no per-action rows; only a choice-retaining child (DC-EGM)
         # leaves them for the parent to aggregate.
-        if projected is None and (
-            query is not None or layout.retains_discrete_action_rows
-        ):
+        if query is not None or layout.retains_discrete_action_rows:
             action_names, action_values = _get_child_discrete_actions(
                 user_regime=target_regime
             )
         else:
             action_names, action_values = (), ()
-        resources_func, resources_arg_names = _child_resources_coordinate(
-            target=target,
-            user_regime=target_regime,
-            law=laws[target],
-            projected=projected,
-            euler_state_name=euler_state_name,
-            discrete_state_names=discrete_state_names,
-            passive_state_names=passive_state_names,
-            euler_draw_names=draw_reads.euler_draw_names,
+        resources_func, resources_arg_names = _get_child_resources(
+            regime_name=target, user_regime=target_regime, law=laws[target]
         )
         # Everything the resources function reads beyond the child's own
         # states and discrete actions is a (qualified) param or `age` /
@@ -3418,8 +3096,9 @@ def _build_child_reads(
         resources_param_names = resources_arg_names - child_binding_names
         row_grids = passive_grids + action_values
         if row_grids:
-            row_mesh = jnp.meshgrid(*row_grids, indexing="ij")
-            row_values = tuple(mesh.ravel() for mesh in row_mesh)
+            row_values = tuple(
+                mesh.ravel() for mesh in jnp.meshgrid(*row_grids, indexing="ij")
+            )
             row_block_shape = tuple(int(grid.shape[0]) for grid in row_grids)
         else:
             row_values = ()
@@ -3431,7 +3110,7 @@ def _build_child_reads(
         # folds its outer axis before publishing (the nested N-NB-EGM upper
         # envelope) carries no candidate axis, and broadcasting queries over a
         # phantom axis would desync rows and queries in the read.
-        n_outer_candidates = 0 if projected is not None else layout.n_stacked_candidates
+        n_outer_candidates = layout.n_stacked_candidates
         if query is not None:
             n_outer_candidates = query.model.authority.outer_capacity
             if action_names != query.model.authority.action_names:
@@ -3477,16 +3156,7 @@ def _build_child_reads(
             row_block_shape=row_block_shape,
             rows_share_state_grid=layout.rows_share_state_grid,
             query=query,
-            projected_date=(
-                None
-                if projected is None or projected_period is None
-                else (
-                    projected
-                    if isinstance(projected, ProjectedProducerDate)
-                    else projected.date_at(period=projected_period)
-                )
-            ),
-            query_target=target if query is not None or projected is not None else None,
+            query_target=target if query is not None else None,
             query_action_names=action_names,
             query_action_values=action_values,
             n_outer_candidates=n_outer_candidates,

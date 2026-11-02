@@ -163,7 +163,11 @@ def test_no_published_affine_read_approaches_the_subnormal_band(
     finfo = jnp.finfo(jnp.zeros(()).dtype)
     assert finfo.bits == 32, "this bound is stated at fp32; see the module docstring"
 
-    model = toy.build_model(variant="nbegm")
+    # `exact_affine_read` is the certified reader; the default ordinary one never
+    # reaches it.
+    model = toy.build_model(
+        variant="nbegm", nbegm_overrides={"envelope_arithmetic": "certified"}
+    )
     solution = model.solve(params=toy.build_params(), log_level="warning").values
     jax.block_until_ready(solution)
 

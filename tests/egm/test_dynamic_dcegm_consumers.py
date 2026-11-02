@@ -35,7 +35,7 @@ from lcm import (
 )
 from lcm.exceptions import InvalidValueFunctionError
 from lcm.solver_api import EGM_CONTINUATION, KernelOutput
-from lcm.solvers import MSSEnvelope
+from lcm.solvers import RFCEnvelope
 from lcm.typing import (
     Float1D,
     FloatND,
@@ -452,14 +452,14 @@ def test_actual_child_failure_survives_literal_source_with_optional_checks_off(
     assert "period 1" in str(error.value)
 
 
-def _mss_parent_model(*, literal_child: bool) -> Model:
+def _rfc_parent_model(*, literal_child: bool) -> Model:
     base = build_activation_model(
         floor=0.5, literal=literal_child, asset=False, parent=True
     )
     parent = base.user_regimes["parent"]
     parent = replace(
         parent,
-        solver=replace(cast("_BoundDCEGM", parent.solver), envelope=MSSEnvelope()),
+        solver=replace(cast("_BoundDCEGM", parent.solver), envelope=RFCEnvelope()),
     )
     return Model(
         regimes={**base.user_regimes, "parent": parent},
@@ -470,9 +470,9 @@ def _mss_parent_model(*, literal_child: bool) -> Model:
     )
 
 
-def test_literal_mss_parent_admits_the_literal_dc_corner_control() -> None:
-    """Reach the child's exact published corner node from a literal MSS source."""
-    model = _mss_parent_model(literal_child=True)
+def test_literal_rfc_parent_admits_the_literal_dc_corner_control() -> None:
+    """Reach the child's exact published corner node from a literal RFC source."""
+    model = _rfc_parent_model(literal_child=True)
     solution = model.solve(
         params=activation_params(floor=0.5, literal=True, parent=True),
         log_level="off",
@@ -485,11 +485,11 @@ def test_literal_mss_parent_admits_the_literal_dc_corner_control() -> None:
 
 
 @pytest.mark.parametrize("invalid", [False, True])
-def test_literal_mss_source_transports_child_status_without_source_query_payload(
+def test_literal_rfc_source_transports_child_status_without_source_query_payload(
     *, invalid: bool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Preserve MSS source rows and absent query data when reading a feature child."""
-    model = _mss_parent_model(literal_child=False)
+    """Preserve RFC source rows and absent query data when reading a feature child."""
+    model = _rfc_parent_model(literal_child=False)
     kernel, context = _capture_with_checks_off(
         model=model,
         params=activation_params(floor=0.5, literal=False, parent=True),

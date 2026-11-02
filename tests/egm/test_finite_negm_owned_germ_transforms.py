@@ -63,22 +63,12 @@ def test_owned_quadratic_profiles_match_under_scalar_and_batched_jit() -> None:
         np.testing.assert_array_equal(profile.left.savings, [0.125, 0.1875, 0.25, 0.25])
         np.testing.assert_array_equal(profile.left.supported, [True] * 4)
         np.testing.assert_array_equal(profile.left.invalid_numeric, [False] * 4)
-        np.testing.assert_array_equal(profile.right_germ[0], [True] * 4)
-        np.testing.assert_array_equal(profile.left_germ[0], [False, True, True, True])
-        np.testing.assert_array_equal(
-            jnp.stack(profile.right_germ[1:], axis=-1),
-            [[0.0, 2.0, 0.0], [2.0, 2.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]],
-        )
-        np.testing.assert_array_equal(
-            jnp.stack(profile.left_germ[1:], axis=-1),
-            [[0.0, 0.0, 0.0], [2.0, 2.0, 0.0], [4.0, 2.0, 0.0], [0.0, 0.0, 0.0]],
-        )
+        np.testing.assert_array_equal(profile.left_finite, [False, True, True, True])
         np.testing.assert_array_equal(profile.right_derivative, [0.0, 2.0, 4.0, 0.0])
         np.testing.assert_array_equal(profile.left_derivative, [0.0, 2.0, 4.0, 0.0])
         np.testing.assert_array_equal(profile.first, [1.0] * 4)
         np.testing.assert_array_equal(profile.last, [3.0] * 4)
         np.testing.assert_array_equal(profile.has_first, [True] * 4)
-        np.testing.assert_array_equal(profile.germ_invalid, [False] * 4)
 
     eager_profiles = tuple(read(coordinate) for coordinate in coordinates)
     eager = jax.tree.map(lambda *leaves: jnp.stack(leaves), *eager_profiles)

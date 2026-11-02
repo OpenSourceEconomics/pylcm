@@ -45,7 +45,6 @@ def replay_payload_reads(
     period: int,
     regime: RegimeName,
     core: str,
-    argument: ReferenceName = "payload",
 ) -> tuple[ValueRead, ...]:
     """Name every concrete array leaf passed to one replay adapter.
 
@@ -60,7 +59,6 @@ def replay_payload_reads(
             regime=regime,
             core=core,
             path=path,
-            argument=argument,
         )
         for path, leaf in jax.tree_util.tree_flatten_with_path(payload)[0]
         if isinstance(leaf, jax.Array | np.ndarray)

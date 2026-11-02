@@ -7,6 +7,7 @@ candidate, and returns the first feasible candidate — the already-compiled win
 for dispatch.
 """
 
+import functools
 import itertools
 import logging
 import math
@@ -1235,9 +1236,29 @@ def _workspace_width_candidates(
             ),
         )
 
+    # The frontier depends on the axes and width policy only, never on the
+    # budget's value, so a warm solve reuses it instead of enumerating the
+    # product again.
+    return _budgeted_frontier(
+        axes=axes,
+        fixed_widths=tuple(fixed_widths.items()),
+        width_ceilings=tuple(width_ceilings.items()),
+    )
+
+
+@functools.cache
+def _budgeted_frontier(
+    *,
+    axes: tuple[ReducedAxis | TiledOutputAxis, ...],
+    fixed_widths: tuple[tuple[str, int], ...],
+    width_ceilings: tuple[tuple[str, int], ...],
+) -> tuple[MappingProxyType[str, int], ...]:
+    """Enumerate the budgeted frontier of one axis declaration, widest first."""
     frontiers = tuple(
         _axis_frontier(
-            axis=axis, fixed_widths=fixed_widths, width_ceilings=width_ceilings
+            axis=axis,
+            fixed_widths=dict(fixed_widths),
+            width_ceilings=dict(width_ceilings),
         )
         for axis in axes
     )

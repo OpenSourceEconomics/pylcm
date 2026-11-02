@@ -39,24 +39,25 @@ the grid-argmax path:
   the stored policy solve the wrong simulate-phase FOC or puts the policy
   rows on the wrong coordinates;
 - every currently shipped upper-envelope backend — none has yet passed the
-  crossing- and support-completeness contract required by the read. MSS can
-  omit an owner that wins only inside one candidate interval; FUES can merge
+  crossing- and support-completeness contract required by the read. FUES can merge
   branches when its slope heuristic misses a switch; RFC and LTM leave
   switches between retained nodes; and the exact backend does not yet publish
   a support verdict for compacted gaps;
 - regimes with a passive continuous state — each row is the envelope policy
   conditional on one passive node, so blending rows across a passive-dimension
   branch switch would read an action from neither branch;
-- regimes with a continuous stochastic-process state — the process is a
-  node-valued row axis, but its simulation transition draws an off-node
-  continuous value that nearest-node row selection cannot resolve;
+- regimes with a continuous stochastic-process state whose nodes arrive as
+  runtime params or whose law is state-conditioned. A process with fixed,
+  unconditioned nodes is a node-valued row axis; an off-node simulated value
+  blends its two bracketing node rows linearly in the node coordinate, the
+  rule the process's transition weights follow off node;
 - asset-row DC-EGM regimes (a savings-stage function reads the Euler state) —
   the per-node solve publishes one point per exogenous asset node, not a
   crossing-complete row, so interpolating across nodes would mix branches;
 - regimes with EV1 taste shocks, whose realized draws perturb the decision.
-Publishing per-passive-node / per-process-node conditional values and
-re-deciding across those axes the way the discrete-action axis already is
-lifts the passive, process, and asset-row exclusions (the tracked follow-up).
+Publishing per-passive-node conditional values and re-deciding across those
+axes the way the discrete-action axis already is lifts the passive and
+asset-row exclusions (the tracked follow-up).
 
 Unlike the rolling `EGMCarry` (the cross-period continuation channel, overwritten
 each period), this is retained only when inspection or an eligible simulation
@@ -225,11 +226,12 @@ def egm_sim_policy_role_tree(
 class NBEGMGridPolicy:
     """Inner NBEGM action on the regime state grid.
 
-    This is an intermediate solve artifact. A nested outer solver stacks one
-    instance per candidate before publishing the joint replay payload. A
-    discrete inner envelope additionally retains every branch's conditional
-    action and value; smooth solves leave those optional banks absent so their
-    hot path and storage stay unchanged.
+    A standalone ride-along NB-EGM regime retains it as its simulation policy,
+    read at each subject's realized state (`NBEGMPolicyRead`). A nested outer
+    solver stacks one instance per candidate before publishing the joint replay
+    payload. A discrete inner envelope additionally retains every branch's
+    conditional action and value; smooth solves leave those optional banks
+    absent so their hot path and storage stay unchanged.
     """
 
     action: FloatND

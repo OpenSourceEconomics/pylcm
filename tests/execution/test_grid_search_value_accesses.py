@@ -21,6 +21,9 @@ from _lcm.solution.grid_search import (
     _value_reads,
 )
 from tests.simulation.test_aot_collective_and_gated import _make_consent_model
+from tests.solution.test_gated_edge_fold_reads import (
+    _model as _gated_full_topology_model,
+)
 
 
 def _kernel(
@@ -129,10 +132,14 @@ def test_final_period_processed_kernel_declares_no_next_value_accesses() -> None
 
 
 def test_edge_references_are_filtered_to_this_periods_reachable_targets() -> None:
-    """An edge outside the reachable-target set contributes no references."""
-    model = _make_consent_model()
+    """An edge outside the reachable-target set contributes no references.
+
+    `single_f`'s consent edge into `married` is state-gated, and its leg falls
+    back to `single_f_p1`, the one regime that edge reads.
+    """
+    model = _gated_full_topology_model()
     context = object.__new__(SolverBuildContext)
-    object.__setattr__(context, "regime_name", "single")
+    object.__setattr__(context, "regime_name", "single_f")
     object.__setattr__(context, "user_regimes", model.user_regimes)
     object.__setattr__(context, "laws", model.graph.laws)
 
@@ -145,5 +152,5 @@ def test_edge_references_are_filtered_to_this_periods_reachable_targets() -> Non
     )
     assert _edge_reference_regimes_for_targets(
         context=context,
-        target_regimes=("married_terminal",),
-    ) == ("single_terminal",)
+        target_regimes=("married",),
+    ) == ("single_f_p1",)

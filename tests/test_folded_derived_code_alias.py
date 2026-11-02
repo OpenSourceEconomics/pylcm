@@ -1,16 +1,15 @@
-"""A derived code read keeps the folded process that produces it.
+"""A derived code read keeps the IID process that produces it as a state.
 
 Reading `kind_code` is a read of `kind`, and `kind(z)` reads the current value of
 the process `z`. Every dependency walk that runs before user functions are
 adapted to their code arguments has to follow that chain, including the walk
-that decides which folded processes are draw-only. A folded process read within
-the period keeps its state: folding averages the stored value over the shock's
-nodes, it does not take the shock out of the period.
+that decides which IID processes are read only as their draw and so integrated
+out. A process read within the period keeps its state and its axis.
 
 Literal reference: the two-node `UniformIIDProcess(start=-1, stop=1)` has nodes
-`(-1, 1)` with weight `1/2` each, so `kind` has codes `(0, 1)`, the utility
-`1 + 2 * kind_code` is `(1, 3)`, and the folded value is `2`. The terminal
-regime contributes zero. An unrelated model-level state nobody reads is pruned.
+`(-1, 1)`, so `kind` has codes `(0, 1)` and the utility `1 + 2 * kind_code` is
+`(1, 3)` over the nodes. The terminal regime contributes zero. An unrelated
+model-level state nobody reads is pruned.
 """
 
 from typing import Literal
@@ -69,18 +68,16 @@ def _zero() -> FloatND:
 
 
 _CASES = pytest.mark.parametrize(
-    ("placement", "process_placement", "values", "fold", "code_phase", "enable_jit"),
+    ("placement", "process_placement", "values", "code_phase", "enable_jit"),
     [
         pytest.param(
             placement,
             process_placement,
             values,
-            fold,
             code_phase,
             enable_jit,
             id=(
                 f"{'jit' if enable_jit else 'eager'}-{code_phase}-"
-                f"{'folded' if fold else 'unfolded'}-"
                 f"{'value-grid' if values else 'category'}-"
                 f"{process_placement}-{placement}"
             ),
@@ -88,7 +85,6 @@ _CASES = pytest.mark.parametrize(
         for placement in ("model", "regime")
         for process_placement in ("model", "regime")
         for values in (False, True)
-        for fold in (True, False)
         for code_phase in ("both", "solve", "simulate")
         for enable_jit in (False, True)
     ],
@@ -100,7 +96,6 @@ def _make_model(
     placement: _Placement,
     process_placement: _Placement,
     values: bool,
-    fold: bool,
     code_phase: _CodePhase,
     enable_jit: bool,
 ) -> Model:
@@ -121,7 +116,7 @@ def _make_model(
             else _constant_utility,
         )
     )
-    process = UniformIIDProcess(start=-1.0, stop=1.0, n_points=2, fold=fold)
+    process = UniformIIDProcess(start=-1.0, stop=1.0, n_points=2)
     return Model(
         regimes={
             "live": Regime(
@@ -170,7 +165,6 @@ def test_derived_code_keeps_its_process_state(
     placement: _Placement,
     process_placement: _Placement,
     values: bool,
-    fold: bool,
     code_phase: _CodePhase,
     enable_jit: bool,
 ) -> None:
@@ -179,7 +173,6 @@ def test_derived_code_keeps_its_process_state(
         placement=placement,
         process_placement=process_placement,
         values=values,
-        fold=fold,
         code_phase=code_phase,
         enable_jit=enable_jit,
     )
@@ -192,7 +185,6 @@ def test_derived_code_keeps_its_process_initial_state(
     placement: _Placement,
     process_placement: _Placement,
     values: bool,
-    fold: bool,
     code_phase: _CodePhase,
     enable_jit: bool,
 ) -> None:
@@ -201,7 +193,6 @@ def test_derived_code_keeps_its_process_initial_state(
         placement=placement,
         process_placement=process_placement,
         values=values,
-        fold=fold,
         code_phase=code_phase,
         enable_jit=enable_jit,
     )
@@ -214,7 +205,6 @@ def test_unread_model_state_is_still_pruned(
     placement: _Placement,
     process_placement: _Placement,
     values: bool,
-    fold: bool,
     code_phase: _CodePhase,
     enable_jit: bool,
 ) -> None:
@@ -223,7 +213,6 @@ def test_unread_model_state_is_still_pruned(
         placement=placement,
         process_placement=process_placement,
         values=values,
-        fold=fold,
         code_phase=code_phase,
         enable_jit=enable_jit,
     )
@@ -231,29 +220,24 @@ def test_unread_model_state_is_still_pruned(
 
 
 @_CASES
-def test_derived_code_value_is_the_literal_fold(
+def test_derived_code_value_is_the_literal_utility(
     *,
     placement: _Placement,
     process_placement: _Placement,
     values: bool,
-    fold: bool,
     code_phase: _CodePhase,
     enable_jit: bool,
 ) -> None:
-    """The solved value is `2` folded, `[1, 3]` unfolded, `1` if solve ignores it."""
+    """The solved value is `[1, 3]` over the nodes, `[1, 1]` if solve ignores it."""
     model = _make_model(
         placement=placement,
         process_placement=process_placement,
         values=values,
-        fold=fold,
         code_phase=code_phase,
         enable_jit=enable_jit,
     )
     solution = model.solve(params={"discount_factor": 1.0}, log_level="off")
-    if code_phase == "simulate":
-        expected = 1.0 if fold else [1.0, 1.0]
-    else:
-        expected = 2.0 if fold else [1.0, 3.0]
+    expected = [1.0, 1.0] if code_phase == "simulate" else [1.0, 3.0]
     np.testing.assert_array_equal(np.asarray(solution.values[0]["live"]), expected)
 
 
@@ -263,7 +247,6 @@ def test_derived_code_flow_is_the_literal_utility(
     placement: _Placement,
     process_placement: _Placement,
     values: bool,
-    fold: bool,
     code_phase: _CodePhase,
     enable_jit: bool,
 ) -> None:
@@ -272,7 +255,6 @@ def test_derived_code_flow_is_the_literal_utility(
         placement=placement,
         process_placement=process_placement,
         values=values,
-        fold=fold,
         code_phase=code_phase,
         enable_jit=enable_jit,
     )

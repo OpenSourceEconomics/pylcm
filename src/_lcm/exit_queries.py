@@ -547,20 +547,24 @@ class _QueryGraphBuilder:
             regime_params_template=self.canonical_regimes[owner].regime_params_template,
             param_key=qname_from_tree_path(path),
         )
-        combined = concatenate_functions(
-            functions={**context.functions, "_lcm_exit_result": renamed},
-            targets="_lcm_exit_result",
-            enforce_signature=False,
-            set_annotations=True,
-        )
-        return rename_arguments(
-            combined,
-            mapper={
-                name: self.aliases[owner, name]
-                for name in inspect.signature(combined).parameters
-                if (owner, name) in self.aliases
-            },
-        )
+        # State-only projections need no generated DAG or its captured callbacks.
+        combined = renamed
+        if not inspect.isfunction(renamed) or (
+            inspect.signature(renamed).parameters.keys()
+            & (context.functions.keys() | {"_lcm_exit_result"})
+        ):
+            combined = concatenate_functions(
+                functions={**context.functions, "_lcm_exit_result": renamed},
+                targets="_lcm_exit_result",
+                enforce_signature=False,
+                set_annotations=True,
+            )
+        mapper = {
+            name: self.aliases[owner, name]
+            for name in inspect.signature(combined).parameters
+            if (owner, name) in self.aliases
+        }
+        return rename_arguments(combined, mapper=mapper) if mapper else combined
 
     def make(
         self,
@@ -731,6 +735,11 @@ class _QueryGraphBuilder:
             ),
             context=context,
             inputs=inputs,
+            own_raw=(
+                inputs[next(iter(reducer.consent_reads.values()))[0]]
+                if len(reducer.consent_reads) == 1
+                else None
+            ),
             participation=keep if exits else None,
             decision=decide if exits else None,
             available=_guard(guards),
@@ -1233,7 +1242,7 @@ def install_exit_policy_queries(
             ):
                 continue
             if (
-                context.arrival_queries.get(period)
+                context.participation_queries.get(period)
                 or context.user_regimes_at(period=period)[owner].exits
                 or (
                     context.stakeholders is not None
