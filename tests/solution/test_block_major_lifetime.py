@@ -783,7 +783,7 @@ def test_a_failing_component_publishes_nothing_and_releases_its_blocks(
 def test_a_block_major_result_outlives_its_model_and_frees_its_blocks() -> None:
     """The result reads its values after the model is gone, and owns them alone."""
     model, params = _workload(name="independent_types", schedule=_BLOCK_MAJOR)
-    reference, _ = _workload(name="independent_types", schedule=None)
+    reference, _ = _workload(name="independent_types", schedule=_PERIOD_MAJOR)
     want = _solution(model=reference, params=params).values
     solution = _solution(model=model, params=params)
     owner = weakref.ref(_retained(solution))
