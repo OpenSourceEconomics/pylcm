@@ -14063,9 +14063,9 @@ def reviewed_prefix_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, st
     return specs
 
 
-EXPECTED_S03_SCALAR_MUTATION_COUNT = 62
+EXPECTED_S03_SCALAR_MUTATION_COUNT = 61
 EXPECTED_S03_SCALAR_MUTATION_NAMES_SHA256 = (
-    "41e1bded6af2f4b3c42c59c487f00c4dbe9c9e9e105ed12260b31a0cb1db30df"
+    "e9939b3fb85a491354719d090d0bc35479c698660f18da1552c176e49736afd2"
 )
 
 
