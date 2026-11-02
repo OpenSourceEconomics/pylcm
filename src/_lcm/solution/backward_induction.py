@@ -211,6 +211,7 @@ from _lcm.solution.feasibility import (
     FeasibilityKernelOutput,
     QueryInputStatus,
     add_feasibility_counts,
+    get_feasibility_count_dtype,
     merge_bound_input_status,
     merge_continuation_read_counts,
     merge_query_input_status,
@@ -761,13 +762,15 @@ def solve(  # noqa: C901, PLR0912, PLR0915
         None if value_archive is None else PeriodValueWriter(archive=value_archive)
     )
     with solve_phase(name="backward_induction", logger=logger, call_id=call_id):
-        # Planning and compilation leave a large, long-lived object graph behind
-        # (programs, frontiers, executables). Freezing it after one collection
-        # keeps the per-period collection in `_release_rolled_continuations`
-        # from walking it every period; what the loop rolls off is created
-        # after the freeze and is still collected.
-        gc.collect()
-        gc.freeze()
+        # Only declared continuation publishers can reach per-period collection.
+        # Freeze the long-lived planning graph for those collections; rolled
+        # payloads are created after the freeze and remain collectible.
+        has_continuation_publishers = any(
+            regime.solution.continuation_spec is not None for regime in regimes.values()
+        )
+        if has_continuation_publishers:
+            gc.collect()
+            gc.freeze()
         try:
             for period in reversed(range(ages.n_periods)):
                 period_start = time.monotonic()
@@ -1529,7 +1532,8 @@ def solve(  # noqa: C901, PLR0912, PLR0915
             input_liveness.assert_solve_complete()
 
         finally:
-            gc.unfreeze()
+            if has_continuation_publishers:
+                gc.unfreeze()
             if pending_work is not None:
                 pending_work.close()
             if value_writer is not None:
@@ -3689,12 +3693,14 @@ def _period_feasibility_counter_reservations(
 ) -> MappingProxyType[int, int]:
     """Reserve the period's native feasibility counters until its barrier.
 
-    Every active regime publishes an int32 pair, and merging invariant blocks
-    holds one more. Each pair is charged on every device an active regime runs
-    on, which conservatively covers wherever a replicated counter is placed;
+    Every active regime can publish a native count pair, and merging invariant
+    blocks holds one more. The configured count dtype covers GridSearch's exact
+    summaries and conservatively covers narrower counters from other solvers.
+    Each pair is charged on every device an active regime runs on, which
+    conservatively covers wherever a replicated counter is placed;
     a device no active regime runs on holds none.
     """
-    size = 2 * np.dtype(np.int32).itemsize * (len(active) + 1)
+    size = 2 * get_feasibility_count_dtype().itemsize * (len(active) + 1)
     return MappingProxyType(
         dict.fromkeys(
             sorted(frozenset().union(*(device_ids_by_regime[name] for name in active))),

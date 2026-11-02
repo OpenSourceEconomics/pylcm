@@ -168,11 +168,16 @@ from _lcm.probability import (
     _IntegerTangent,
     _unbiased_exponent,
     is_live,
+    is_negative,
     is_represented_zero,
     scaled_by_power_of_two,
     scaled_down_by_power_of_two,
 )
-from _lcm.zero_safe import zero_safe_weighted_term
+from _lcm.zero_safe import (
+    relative_scales,
+    scaled_weighted_terms,
+    zero_safe_weighted_term,
+)
 from lcm.typing import FloatND, IntND
 
 
@@ -276,7 +281,23 @@ def zero_safe_average(
                 jnp.moveaxis(entry, axis, -1)
                 for entry in (values, coefficients, scales)
             )
-        return _scaled_mean_with_tangent(values, coefficients, scales)
+        # A process value beyond its nodes extrapolates the edge rows linearly,
+        # which can give a coefficient below zero in a row that still sums to
+        # one. That row is an extrapolation, not a malformed lottery, so it
+        # takes the signed reduction. The scaled mean, which poisons a negative
+        # coefficient, sees a placeholder row, and so does the signed reduction
+        # on every other row, so neither branch sends a NaN into a derivative.
+        signed = jnp.any(is_negative(coefficients), axis=-1)[..., None]
+        ones = jnp.ones_like(coefficients)
+        scaled = _scaled_mean_with_tangent(
+            values, jnp.where(signed, ones, coefficients), scales
+        )
+        extrapolated = _signed_scaled_mean(
+            values=jnp.where(signed, values, jnp.zeros_like(values)),
+            coefficients=jnp.where(signed, coefficients, ones),
+            shifts=jnp.where(signed, scales, jnp.zeros_like(scales)),
+        )
+        return jnp.where(signed[..., 0], extrapolated, scaled)
 
     total_weight = jnp.sum(weights_arr, axis=axis)
     _raise_if_concretely_zero(total_weight=total_weight, context="zero_safe_average")
@@ -299,6 +320,29 @@ def zero_safe_average(
     )
     numerator = jnp.sum(terms, axis=axis)
     return numerator / total_weight
+
+
+def _signed_scaled_mean(
+    *, values: FloatND, coefficients: FloatND, shifts: IntND
+) -> FloatND:
+    """Average a scaled row whose coefficients may be negative, over the last axis.
+
+    Numerator and mass are lowered onto the row's largest node, as
+    `scaled_weighted_terms` and `relative_scales` do for any signed weights.
+    """
+    mass = jnp.sum(
+        scaled_down_by_power_of_two(
+            values=coefficients, shift=relative_scales(shifts=shifts, axis=-1)
+        ),
+        axis=-1,
+    )
+    numerator = jnp.sum(
+        scaled_weighted_terms(
+            coefficients=coefficients, shifts=shifts, values=values, axis=-1
+        ),
+        axis=-1,
+    )
+    return numerator / mass
 
 
 # keyword-only-exempt: library-callback=jax.custom_jvp

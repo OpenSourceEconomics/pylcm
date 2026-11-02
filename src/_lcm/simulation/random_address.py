@@ -14,7 +14,7 @@ from jax._src.dtypes import ExtendedDType
 from jaxtyping import Key, UInt32
 
 from _lcm.dtypes import canonical_float_dtype
-from lcm.typing import Float1D, ScalarFloat, ScalarInt
+from lcm.typing import Float1D, LoopIndex, ScalarFloat, ScalarInt
 
 RANDOM_ADDRESS_VERSION = "pylcm.random.v1"
 
@@ -103,9 +103,7 @@ def draw_row_keys(
     period: int | Word | np.uint32,
 ) -> KeyBank:
     """Fold address words, original row high/low words, then period."""
-    addressed_key = key
-    for position in range(8):
-        addressed_key = jax.random.fold_in(addressed_key, address_words[position])
+    addressed_key = _fold_address_words(key=key, address_words=address_words)
     draw_axis = scalar_draw_axis(dtype=addressed_key.dtype)
     fold = (
         jax.custom_batching.sequential_vmap(_fold_subject_key)
@@ -167,6 +165,18 @@ def _row_offset_words(
     if len(low_blocks) == 1:
         return high_blocks[0], low_blocks[0]
     return jnp.concatenate(high_blocks), jnp.concatenate(low_blocks)
+
+
+@jax.jit
+def _fold_address_words(*, key: ScalarKey, address_words: AddressWords) -> ScalarKey:
+    """Fold the eight address words in one reusable staged loop."""
+    words = jnp.asarray(address_words)
+
+    # keyword-only-exempt: library-callback=jax.lax.fori_loop
+    def fold_address(position: LoopIndex, root: ScalarKey) -> ScalarKey:
+        return jax.random.fold_in(root, words[position])
+
+    return jax.lax.fori_loop(0, 8, fold_address, key)
 
 
 # keyword-only-exempt: library-callback=jax.vmap

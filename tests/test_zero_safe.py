@@ -733,3 +733,19 @@ def test_scaled_mean_keeps_floor_level_nodes_against_unequal_weights(
                 error = max(error - tiny, Fraction())
             worst = max(worst, error / abs(Fraction(exact)) if exact else error)
     assert worst <= tolerance
+
+
+def test_scaled_average_keeps_signed_extrapolation_coefficients():
+    """A row extrapolated past the edge node is averaged, not poisoned.
+
+    Continuation weights at a process value beyond its nodes extrapolate the
+    edge rows linearly, so a coefficient can be negative while the row still
+    sums to one. Such a row is an extrapolation, not a malformed lottery.
+    """
+    values = jnp.asarray([[1.0, 2.0, 4.0], [1.0, 2.0, 4.0]])
+    coefficients = jnp.asarray([[-0.25, 0.5, 0.75], [0.25, 0.25, 0.5]])
+    shifts = jnp.zeros((2, 3), dtype=jnp.int32)
+
+    result = zero_safe_average(a=values, weights=coefficients, shifts=shifts, axis=-1)
+
+    assert_allclose(result, [3.75, 2.75], rtol=10.0**-DECIMAL_PRECISION)
