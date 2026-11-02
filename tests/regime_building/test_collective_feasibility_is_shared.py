@@ -42,6 +42,7 @@ Non-terminal regime, constraint $u^f \\ge 25$ alone:
 import numpy as np
 import pytest
 
+from _lcm.typing import RegimeName
 from lcm import (
     AgeGrid,
     CollectiveUtility,
@@ -51,8 +52,9 @@ from lcm import (
     Regime,
     categorical,
 )
-from lcm.solver_api import DISSOLUTION_FLAG, SolutionResult
+from lcm.solver_api import SolutionResult
 from lcm.typing import BoolND, ContinuousState, DiscreteAction, FloatND, ScalarInt
+from tests.collective_fixtures import recorded_dissolution_flags
 
 
 @categorical(ordered=True)
@@ -141,6 +143,14 @@ def solved() -> SolutionResult:
     )
 
 
+@pytest.fixture(scope="module")
+def dissolution_flags() -> dict[int, dict[RegimeName, BoolND]]:
+    """Solve once and keep each collective kernel's dissolution flag."""
+    with recorded_dissolution_flags() as flags:
+        _make_model().solve(params={"discount_factor": _BETA}, log_level="off")
+    return flags
+
+
 def test_terminal_collective_values_come_from_the_wife_s_participation_mask(
     solved: SolutionResult,
 ) -> None:
@@ -153,13 +163,11 @@ def test_terminal_collective_values_come_from_the_wife_s_participation_mask(
 
 
 def test_terminal_collective_dissolution_flags_come_from_the_shared_mask(
-    solved: SolutionResult,
+    dissolution_flags: dict[int, dict[RegimeName, BoolND]],
 ) -> None:
     """The terminal regime dissolves exactly where the household mask is empty."""
-    flags = solved.replay_artifacts.project(DISSOLUTION_FLAG)
-
     np.testing.assert_array_equal(
-        np.asarray(flags[1]["couple_terminal"]), _EXPECTED_D_TERMINAL
+        np.asarray(dissolution_flags[1]["couple_terminal"]), _EXPECTED_D_TERMINAL
     )
 
 
@@ -175,12 +183,12 @@ def test_nonterminal_collective_values_come_from_the_wife_s_participation_mask(
 
 
 def test_nonterminal_collective_dissolution_flags_come_from_the_shared_mask(
-    solved: SolutionResult,
+    dissolution_flags: dict[int, dict[RegimeName, BoolND]],
 ) -> None:
     """No period-0 cell dissolves: leisure clears the wife's floor at every wage."""
-    flags = solved.replay_artifacts.project(DISSOLUTION_FLAG)
-
-    np.testing.assert_array_equal(np.asarray(flags[0]["couple"]), _EXPECTED_D_PERIOD_0)
+    np.testing.assert_array_equal(
+        np.asarray(dissolution_flags[0]["couple"]), _EXPECTED_D_PERIOD_0
+    )
 
 
 def test_the_two_stakeholders_action_values_genuinely_differ(

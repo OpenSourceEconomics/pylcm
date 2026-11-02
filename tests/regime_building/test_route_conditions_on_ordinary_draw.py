@@ -1,6 +1,6 @@
-"""Arrival decisions own only subjects drawn to their scheduled target.
+"""Participation checks own only subjects drawn to their scheduled target.
 
-A real ordinary lottery selects the incoming edge before arrival consent runs.
+A real ordinary lottery selects the incoming edge before participation consent runs.
 An unrelated draw keeps its regime, state and payoff even when another edge's
 consent would open or close there. Separate incoming decisions cannot overwrite
 one another when their declarations are reversed.
@@ -20,11 +20,11 @@ from numpy.testing import assert_array_almost_equal as aaae
 from lcm import (
     AgeGrid,
     AgeRange,
-    ArrivalDecision,
     ByAge,
     DiscreteGrid,
     LinSpacedGrid,
     Model,
+    ParticipationCheck,
     Phased,
     ProjectedRegimeValue,
     Regime,
@@ -254,8 +254,8 @@ _WAGE_2 = LinSpacedGrid(start=1.0, stop=2.0, n_points=2)
 
 
 def _dual_model(*, edge_order: tuple[RegimeName, RegimeName]) -> Model:
-    arrivals = {
-        name: ArrivalDecision(
+    participation = {
+        name: ParticipationCheck(
             predicate=_gate_always_open,
             routes={
                 "only": StakeholderRoute(
@@ -301,13 +301,15 @@ def _dual_model(*, edge_order: tuple[RegimeName, RegimeName]) -> Model:
                         }
                     }
                 ),
-                arrivals={name: arrivals[name] for name in edge_order},
+                participation={name: participation[name] for name in edge_order},
             )
         },
     )
 
 
-def test_multiple_arrivals_preserve_the_original_draw_under_reversed_order() -> None:
+def test_multiple_participation_preserve_the_original_draw_under_reversed_order() -> (
+    None
+):
     """Each offered target owns its subjects under either declaration order."""
     wages = jnp.tile(jnp.asarray([1.0, 2.0]), _N_SUBJECTS // 2)
     uniform = np.asarray(_ordinary_uniforms(n_subjects=_N_SUBJECTS))
@@ -338,7 +340,7 @@ def test_multiple_arrivals_preserve_the_original_draw_under_reversed_order() -> 
     pd.testing.assert_frame_equal(forward, reverse)
 
 
-def test_phased_law_prices_perceived_arrivals_and_settles_realized_draws() -> None:
+def test_phased_law_prices_perceived_participation_and_settles_realized_draws() -> None:
     """Perceived marriage prices coexist with a realized normalized meeting lottery."""
     original = _consent_laws()["single_f"]
     assert isinstance(original, Transition)

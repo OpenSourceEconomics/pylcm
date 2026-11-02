@@ -40,8 +40,6 @@ from _lcm.simulation.transitions import _count_drawn_off_grid_codes
 from lcm import (
     AgeGrid,
     AgeRange,
-    ArrivalDecision,
-    ArrivalRead,
     ByAge,
     CollectiveUtility,
     Decoupled,
@@ -52,6 +50,8 @@ from lcm import (
     LinSpacedGrid,
     Model,
     ParetoObjective,
+    ParticipationCheck,
+    ParticipationRead,
     Periods,
     Phased,
     ProjectedRegimeValue,
@@ -73,7 +73,7 @@ from lcm.exceptions import InvalidStateTransitionError, RegimeInitializationErro
 from lcm.regime import Regime as UserRegime
 from lcm.regime import StochasticTransition
 from lcm.solver_api import ResultRetention, SolutionResult
-from lcm.solvers import DCEGM
+from lcm.solvers import DCEGM, RFCEnvelope
 from lcm.transition import AgeSpecializedFunction
 from lcm.typing import (
     BoolND,
@@ -2031,7 +2031,10 @@ def test_dcegm_continuation_reads_nan_at_an_off_grid_child_code():
             "borrowing_limit": post_decision_lower_bound(margin=margin, lower=0.0)
         },
         liquid=margin,
-        solver=DCEGM(savings_grid=LinSpacedGrid(start=0.0, stop=3.0, n_points=7)),
+        solver=DCEGM(
+            savings_grid=LinSpacedGrid(start=0.0, stop=3.0, n_points=7),
+            envelope=RFCEnvelope(),
+        ),
     )
     dead = UserRegime(
         states={"wealth": wealth, "kind": DiscreteGrid(category_class=_TwoCodes)},
@@ -2136,11 +2139,11 @@ def _gated_model(
         edges={
             "source": Transition(
                 law="target",
-                arrivals={
-                    "target": ArrivalDecision(
+                participation={
+                    "target": ParticipationCheck(
                         predicate=gate,
                         reads={
-                            "V_target": ArrivalRead(
+                            "V_target": ParticipationRead(
                                 kind="Raw",
                                 regime="target",
                                 projection={"kind": fixed_transition("kind")},
@@ -2296,11 +2299,11 @@ def _between_nodes_model(
         return jnp.where(bad, bad_code, kind).astype(jnp.int32)
 
     kind = DiscreteGrid(category_class=_TwoCodes)
-    arrivals = {
-        "target": ArrivalDecision(
+    participation = {
+        "target": ParticipationCheck(
             predicate=_threshold_gate,
             reads={
-                "V_target": ArrivalRead(
+                "V_target": ParticipationRead(
                     kind="Raw",
                     regime="target",
                     projection={"kind": fixed_transition("kind")},
@@ -2344,7 +2347,7 @@ def _between_nodes_model(
         },
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         edges={
-            "source": Transition(law="target", arrivals=arrivals)
+            "source": Transition(law="target", participation=participation)
             if gated
             else {"target": 0}
         },
@@ -2934,10 +2937,10 @@ def _gated_income_model(*, values: bool, enable_jit: bool) -> Model:
             ("fallback", _twice_income),
         )
     }
-    arrival = ArrivalDecision(
+    participation = ParticipationCheck(
         predicate=convert(_gate_at_high_income),
         reads={
-            "V_target": ArrivalRead(
+            "V_target": ParticipationRead(
                 kind="Raw",
                 regime="target",
                 projection={"income": fixed_transition("income")},
@@ -2959,7 +2962,9 @@ def _gated_income_model(*, values: bool, enable_jit: bool) -> Model:
     return Model(
         regimes={"source": _income_regime(values=values), **terminal},
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
-        edges={"source": Transition(law="target", arrivals={"target": arrival})},
+        edges={
+            "source": Transition(law="target", participation={"target": participation})
+        },
         initial_nodes={0: "source"},
         regime_id_class=_SourceTargetFallback,
         enable_jit=enable_jit,
@@ -2976,7 +2981,7 @@ def test_gated_edge_reads_and_projects_the_values_of_a_value_grid(*, enable_jit)
     )
 
 
-def test_nonmonotone_arrival_window_keeps_only_the_middle_value() -> None:
+def test_nonmonotone_participation_window_keeps_only_the_middle_value() -> None:
     """The Boolean window keeps the middle even though every fallback pays more."""
     income = _income_grid(values=True)
     model = Model(
@@ -2994,11 +2999,11 @@ def test_nonmonotone_arrival_window_keeps_only_the_middle_value() -> None:
         edges={
             "source": Transition(
                 law="target",
-                arrivals={
-                    "target": ArrivalDecision(
+                participation={
+                    "target": ParticipationCheck(
                         predicate=_window_gate(center=0.5, width=0.2),
                         reads={
-                            "V_target": ArrivalRead(
+                            "V_target": ParticipationRead(
                                 kind="Raw",
                                 regime="target",
                                 projection={"income": fixed_transition("income")},

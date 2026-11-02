@@ -279,3 +279,19 @@ def test_dcegm_methods_notebook_ends_with_counterpart_links() -> None:
 
     for label in ("Guide", "Methods", "Example", "Reference"):
         assert f"**{label}:**" in final_source
+
+
+def test_removed_mss_envelope_points_to_the_external_envelope_issue() -> None:
+    """MSS is gone from the public docs, which link the external-envelope plan."""
+    issue = "https://github.com/OpenSourceEconomics/pylcm/issues/632"
+    pages = [
+        _DOCS / "reference" / "envelopes.md",
+        _DOCS / "reference" / "solvers.md",
+        _DOCS / "reference" / "public_api.md",
+        _DOCS / "getting_started" / "installation.md",
+    ]
+    texts = {page.name: page.read_text(encoding="utf-8") for page in pages}
+
+    assert all("MSSEnvelope" not in text for text in texts.values())
+    assert issue in texts["envelopes.md"]
+    assert issue in texts["solvers.md"]

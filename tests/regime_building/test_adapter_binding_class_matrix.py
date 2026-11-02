@@ -50,7 +50,7 @@ def test_complete_binding_is_invariant_under_callable_reuse(
                 n_std=2.0,
                 n_points=5,
                 gauss_hermite=False,
-                simulate_draws="nodes",
+                simulated_draws="nodes",
             )
         },
         actions={"k": DiscreteGrid(category_class=BinaryChoice)},

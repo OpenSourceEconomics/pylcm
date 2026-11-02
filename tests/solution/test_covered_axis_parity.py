@@ -186,7 +186,6 @@ def _covered_and_uncovered(
     return covered, uncovered
 
 
-@functools.cache
 def _simulate(
     *, solver: str, arm: str, covered: bool
 ) -> tuple[Model, Census, pd.DataFrame]:

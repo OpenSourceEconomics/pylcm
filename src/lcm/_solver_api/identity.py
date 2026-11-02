@@ -66,7 +66,7 @@ SOLVER_API_VERSION = 3
 SOLUTION_SCHEMA_VERSION = 3
 # Version of the labelled in-memory solution schema.
 
-SOLUTION_FORMAT_VERSION = 2
+SOLUTION_FORMAT_VERSION = 3
 # Version of the durable solution archive format.
 
 

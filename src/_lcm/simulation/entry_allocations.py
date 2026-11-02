@@ -23,14 +23,12 @@ import jax.numpy as jnp
 import numpy as np
 
 from _lcm.dtypes import canonical_float_dtype
-from _lcm.egm.current_iid_replay_inputs import CurrentIIDReplayInputs
 from _lcm.engine import Regime
 from _lcm.execution.core_program import core_program_graph
 from _lcm.grids import Grid
 from _lcm.grids.materialization import admitted_grid_extent, materialize_original_grid
 from _lcm.params.edges import EDGES, flat_namespaces
 from _lcm.processes.base import _ContinuousStochasticProcess
-from _lcm.regime_building.projected_forward import ProjectedForwardInputs
 from _lcm.simulation.entry_inputs import SimulationEntryInputs, SolutionResultBoundary
 from _lcm.simulation.host_operations import ProfiledSimulationOperations
 from _lcm.simulation.operand_placement import place_simulation_arguments
@@ -49,24 +47,23 @@ from _lcm.typing import (
     FlatRegimeParams,
     FootprintTree,
     InitialConditions,
+    PeriodToRegimeToParticipationSurfaces,
     PytreeByPeriod,
     PytreeValue,
     RegimeName,
     SimulationPolicy,
 )
-from lcm.typing import BoolND, Float1D, FloatND, Int1D
+from lcm.typing import Float1D, FloatND, Int1D
 
 # The replay inputs resolved from a solution, keyed by period and regime: values,
-# simulation policies, dissolution flags and replay readers, each `None` when the
-# solution provides none; empty before any solution is resolved.
+# simulation policies and replay readers, each `None` when the solution provides
+# none; empty before any solution is resolved.
 type _ResolvedInputs = (
     tuple[
         Mapping[int, Mapping[RegimeName, FloatND]] | None,
         Mapping[int, Mapping[RegimeName, SimulationPolicy]] | None,
-        Mapping[int, Mapping[RegimeName, BoolND]] | None,
         Mapping[int, Mapping[RegimeName, PreparedReplayReader]] | None,
-        CurrentIIDReplayInputs | None,
-        ProjectedForwardInputs | None,
+        PeriodToRegimeToParticipationSurfaces | None,
     ]
     | tuple[()]
 )
@@ -514,9 +511,6 @@ class SimulationEntryAllocations:
         from _lcm.constraints.dynamic_bound import (  # noqa: PLC0415
             _literal_bound_isfinite,
         )
-        from _lcm.egm.current_iid_declarations import (  # noqa: PLC0415
-            _projected_template,
-        )
         from _lcm.egm.validation_materialization import (  # noqa: PLC0415
             _validation_bound_disagrees,
             _validation_grid_first,
@@ -535,19 +529,16 @@ class SimulationEntryAllocations:
             SimulationMemory,
             run_simulation_producer,
         )
-        from _lcm.solution.current_iid_case_r import (  # noqa: PLC0415
-            _native_case_r_array_template,
+        from _lcm.solution.generation import canonical_generation_roots  # noqa: PLC0415
+        from _lcm.solution.model_authority import (  # noqa: PLC0415
             _zeros_for_template,
         )
-        from _lcm.solution.generation import canonical_generation_roots  # noqa: PLC0415
         from lcm.exceptions import ExecutionPlanningError  # noqa: PLC0415
 
         source = function.func if type(function) is partial else function
         if not any(
             source is candidate
             for candidate in (
-                _projected_template,
-                _native_case_r_array_template,
                 _zeros_for_template,
                 _grid_linspace,
                 _grid_log,

@@ -253,3 +253,35 @@ def test_critical_wrapper_refuses_mixed_operand_dtypes() -> None:
     arguments["a"] = arguments["a"].astype(jnp.float16)
     with pytest.raises(TypeError, match="share one dtype"):
         hermite_critical_bernstein_signs(**arguments)
+
+
+@_NATIVE_COVERAGE
+@pytest.mark.parametrize("significand", [1, 2, 7, 255, 4095])
+@pytest.mark.parametrize(
+    "subnormal_width", [False, True], ids=["scale-only", "width-and-values"]
+)
+def test_subnormal_operands_preserve_native_critical_controls(
+    *, significand: int, subnormal_width: bool
+) -> None:
+    """Positive represented subnormal widths and scales retain their exact signs."""
+    dtype = np.asarray(jnp.asarray(0.0)).dtype
+    word = np.uint64 if dtype.itemsize == 8 else np.uint32
+    small = np.asarray(significand, dtype=word).view(dtype)[()]
+    negative = np.asarray(
+        significand | (1 << (dtype.itemsize * 8 - 1)), dtype=word
+    ).view(dtype)[()]
+    maximum = np.finfo(dtype).max
+    values = (
+        (0.0, small, negative, small, negative, small, negative, small, 0.0, small)
+        if subnormal_width
+        else (0.0, 1.0, maximum, maximum, 0.0, 0.0, 0.0, small, 0.25, 0.75)
+    )
+    arguments = _arguments(values=tuple(float(value) for value in values))
+    for name, value in zip(_NAMES, values, strict=True):
+        np.testing.assert_array_equal(
+            np.asarray(arguments[name]).view(word),
+            np.asarray(value, dtype=dtype).view(word),
+        )
+    signs, status = jax.jit(hermite_critical_bernstein_signs)(**arguments)
+    assert int(status) == 0
+    np.testing.assert_array_equal(np.asarray(signs), _reference(arguments=arguments))

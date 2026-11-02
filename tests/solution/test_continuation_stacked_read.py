@@ -333,14 +333,13 @@ def test_stacked_read_with_a_singleton_candidate_is_differentiable():
     np.testing.assert_allclose(float(derivative), 0.0, atol=_READ_ATOL)
 
 
-def test_stacked_read_tie_publishes_the_right_continuous_marginal():
-    """At an exact candidate crossing the production read selects the right winner.
+def test_stacked_read_tie_publishes_the_lowest_index_marginal():
+    """At an exact candidate crossing the production read takes the lowest index.
 
     Keeper `K(q) = 1 - q` (marginal `-1`) and adjuster `A(q) = q` (marginal `+1`)
-    tie at the query `q = 0.5`. The right-continuous envelope's marginal there is
-    `+1` (times the composed gradient `2.0`); a first-index tie would publish the
-    keeper's `-1` — the branch that loses immediately to the right — into the
-    parent's Euler inversion.
+    tie at the query `q = 0.5`. The value argmax resolves the exact tie to the
+    lowest candidate index, so the keeper's own marginal `-1` (times the composed
+    gradient `2.0`) is published with the tied value.
     """
     carry = EGMCarry(
         endog_grid=jnp.stack([jnp.array([0.0, 1.0]), jnp.array([0.0, 1.0])])[
@@ -370,19 +369,16 @@ def test_stacked_read_tie_publishes_the_right_continuous_marginal():
     smoothed_value, smoothed_marginal = result
 
     np.testing.assert_allclose(float(smoothed_value), 0.5, atol=_READ_ATOL)
-    np.testing.assert_allclose(float(smoothed_marginal), 2.0, atol=_READ_ATOL)
+    np.testing.assert_allclose(float(smoothed_marginal), -2.0, atol=_READ_ATOL)
 
 
-def test_stacked_read_tie_owner_follows_the_limited_value_slope():
-    """At a tie the production read ranks by the value read's actual right slope.
+def test_stacked_read_tie_publishes_the_lowest_index_economic_marginal():
+    """At a tie the read publishes the lowest-index candidate's own marginal row.
 
-    Candidate A carries a raw node marginal of `100` at the tie query, but its
-    value row rises only by `0.1` per bracket, so the Fritsch-Carlson limiter
-    caps the value read's right slope at three times the secant (`0.3`).
-    Candidate B's value rises by `1.0` per bracket, so B actually wins
-    immediately right of the tie and B's gradient-scaled marginal (`1.0 * 2.0`)
-    must be published — ranking by the raw marginal would publish A's
-    `100 * 2.0`.
+    Candidate A carries a raw node marginal of `100` at the tie query while its
+    value row rises only by `0.1` per bracket; candidate B rises by `1.0`. The
+    exact value tie goes to A, and the published payload is A's economic
+    marginal row (`100 * 2.0`), not a slope reconstructed from the value read.
     """
     carry = EGMCarry(
         endog_grid=jnp.broadcast_to(jnp.array([0.0, 1.0, 2.0]), (1, 2, 3)),
@@ -412,17 +408,16 @@ def test_stacked_read_tie_owner_follows_the_limited_value_slope():
     smoothed_value, smoothed_marginal = result
 
     np.testing.assert_allclose(float(smoothed_value), 1.0, atol=_READ_ATOL)
-    np.testing.assert_allclose(float(smoothed_marginal), 2.0, atol=_READ_ATOL)
+    np.testing.assert_allclose(float(smoothed_marginal), 200.0, atol=_READ_ATOL)
 
 
-def test_stacked_read_tie_with_equal_right_slopes_follows_the_curvature():
-    """Equal first right derivatives at a tie resolve by the read's curvature.
+def test_stacked_read_tie_with_equal_right_slopes_takes_the_lowest_index():
+    """Equal values at a tie resolve to the lowest index, not by curvature.
 
-    Both candidates tie at the query `q = 1` with limited right derivative
-    exactly 3 (A's raw node slope 100 is limiter-capped, B's slope 3 passes),
-    but B's Hermite piece curves less steeply downward, so B's read is strictly
-    larger for every `q > 1`. The published marginal must be B's, scaled by the
-    composed gradient (`3.0 * 2.0`), not the lower-index candidate A's raw 100.
+    Both candidates tie at the query `q = 1`; B's read is strictly larger for
+    every `q > 1`, but the value argmax does not look right of the query. The
+    lower-index candidate A owns the tie and publishes its marginal row
+    (`100 * 2.0`).
     """
     carry = EGMCarry(
         endog_grid=jnp.broadcast_to(jnp.array([0.0, 1.0, 2.0]), (1, 2, 3)),
@@ -452,7 +447,7 @@ def test_stacked_read_tie_with_equal_right_slopes_follows_the_curvature():
     smoothed_value, smoothed_marginal = result
 
     np.testing.assert_allclose(float(smoothed_value), 0.0, atol=_READ_ATOL)
-    np.testing.assert_allclose(float(smoothed_marginal), 6.0, atol=_READ_ATOL)
+    np.testing.assert_allclose(float(smoothed_marginal), 200.0, atol=_READ_ATOL)
 
 
 def test_blend_of_a_dead_and_a_live_passive_node_keeps_the_infeasible_pair():
@@ -583,18 +578,6 @@ def test_a_poisoned_candidate_at_a_nonzero_index_keeps_the_collapse_nan():
         left_marginal_at_child=jnp.array([[1.0, jnp.nan]]),
         right_dead_at_child=jnp.array([[False, False]]),
         left_dead_at_child=jnp.array([[False, False]]),
-        right_germ_at_child=(
-            jnp.array([[True, False]]),
-            jnp.array([[0.0, 0.0]]),
-            jnp.array([[0.0, 0.0]]),
-            jnp.array([[0.0, 0.0]]),
-        ),
-        left_germ_at_child=(
-            jnp.array([[True, False]]),
-            jnp.array([[0.0, 0.0]]),
-            jnp.array([[0.0, 0.0]]),
-            jnp.array([[0.0, 0.0]]),
-        ),
     )
 
     assert bool(jnp.isnan(value[0]))
@@ -656,16 +639,12 @@ def test_a_carry_without_the_declared_candidate_axis_fails_with_a_contract_error
         )
 
 
-def test_stacked_read_terminal_tie_is_owned_by_the_left_envelope_owner():
-    """At a shared terminal abscissa the production read publishes the left owner.
+def test_stacked_read_terminal_tie_is_owned_by_the_lowest_index():
+    """At a shared terminal abscissa the production read takes the lowest index.
 
-    Both candidates end at the query `q = 2` with value 2 and identical clamp
-    right germs, so right-side ownership cannot discriminate. The stacked
-    envelope's left neighborhood belongs to the flatter candidate (marginal
-    row 1); the steeper candidate (index 0, marginal row 2) touches the
-    envelope only at the terminal point. The published marginal must be the
-    left owner's, scaled by the composed gradient (`1.0 * 2.0`), not the
-    lower-index candidate's `2.0 * 2.0`.
+    Both candidates end at the query `q = 2` with value 2. The exact tie goes to
+    candidate 0, whose right side is dead there, so its left record (marginal
+    row 2, scaled by the composed gradient to `4.0`) is published.
     """
     carry = EGMCarry(
         endog_grid=jnp.broadcast_to(jnp.array([0.0, 1.0, 2.0]), (1, 2, 3)),
@@ -695,7 +674,7 @@ def test_stacked_read_terminal_tie_is_owned_by_the_left_envelope_owner():
     smoothed_value, smoothed_marginal = result
 
     np.testing.assert_allclose(float(smoothed_value), 2.0, atol=_READ_ATOL)
-    np.testing.assert_allclose(float(smoothed_marginal), 2.0, atol=_READ_ATOL)
+    np.testing.assert_allclose(float(smoothed_marginal), 4.0, atol=_READ_ATOL)
 
 
 def test_stacked_read_terminal_duplicate_left_owner_publishes_left_record():
@@ -782,20 +761,16 @@ def test_stacked_read_earlier_clamp_winner_publishes_zero_marginal():
     np.testing.assert_allclose(float(smoothed_marginal), 0.0, atol=_READ_ATOL)
 
 
-def test_passive_blend_publishes_a_marginal_inside_the_clarke_interval():
-    """A passive blend of heterogeneous-support nodes stays a subgradient.
+def test_passive_blend_chooses_the_side_after_blending_tied_winners():
+    """A passive blend of heterogeneous-support nodes picks one side after it.
 
-    Two passive nodes are read at the same query `q = 2`. Node 0 is a
-    shared-terminal envelope (the query sits on its last valid node, so its
-    value read is flat to the right — one-sided derivatives 10 left, 0 right).
-    Node 1 is an interior tie (one-sided derivatives 1 left, 2 right). At the
-    passive weight `1/2` the blended value read has one-sided derivatives 5.5
-    (left) and 1 (right), so every subgradient — the published marginal
-    included — lies in the Clarke generalized gradient `[1, 5.5]`. Committing a
-    side per node *before* the blend (node 0 left-owned marginal 10, node 1
-    right-owned marginal 2) publishes `0.5*10 + 0.5*2 = 6`, outside the
-    interval; blending both side payloads and choosing the side after the blend
-    keeps it inside.
+    Two passive nodes are read at the same query `q = 2`, each with an exact
+    value tie that goes to candidate 0. Node 0's winner sits on its last valid
+    node (right side dead, left record 10); node 1's winner is interior (right
+    marginal 1). At the passive weight `1/2` some contributing node keeps a live
+    right side, so the blended right payload `0.5*0 + 0.5*1 = 0.5` is published
+    instead of averaging independently side-committed marginals
+    (`0.5*10 + 0.5*1`).
     """
     x_terminal = jnp.array([0.0, 1.0, 2.0, jnp.nan])
     x_interior = jnp.array([0.0, 1.0, 2.0, 3.0])
@@ -835,7 +810,7 @@ def test_passive_blend_publishes_a_marginal_inside_the_clarke_interval():
     value, marginal = result
 
     np.testing.assert_allclose(float(value), 100.0, atol=_READ_ATOL)
-    assert 1.0 - _READ_ATOL <= float(marginal) <= 5.5 + _READ_ATOL
+    np.testing.assert_allclose(float(marginal), 0.5, atol=_READ_ATOL)
 
 
 def test_passive_boundary_uses_nearest_segment_extrapolation() -> None:

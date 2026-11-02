@@ -57,10 +57,11 @@ _BYTES_PER_ACTION = 1000
 def _fixed_owner_bytes() -> int:
     """Three wealth and three consumption nodes, three params, four int32s.
 
-    Each period also reserves int32 feasibility counters: a pair for its one
-    active regime and a pair that merges invariant blocks.
+    Each period also reserves feasibility counters at the configured integer
+    precision: a pair for its active regime and a pair for invariant-block merges.
     """
-    return 9 * jnp.zeros(()).dtype.itemsize + 4 * 4 + 2 * 4 * (1 + 1)
+    count_bytes = np.dtype(np.int64 if jax.config.x64_enabled else np.int32).itemsize
+    return 9 * jnp.zeros(()).dtype.itemsize + 4 * 4 + 2 * count_bytes * (1 + 1)
 
 
 def _model(

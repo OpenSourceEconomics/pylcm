@@ -8,6 +8,7 @@ many", which the diagnostic says explicitly and which still refuses a
 
 import logging
 import os
+from functools import partial
 from types import MappingProxyType
 from typing import cast
 
@@ -358,3 +359,61 @@ def test_validate_refuses_two_to_the_32_exterior_landings() -> None:
     model = _exterior_model(n_states=1 << 18, n_actions=1 << 14)
     with pytest.raises(OffGridStateError):
         model.validate_transitions(params={"discount_factor": 1.0})
+
+
+def test_omitted_axis_multiplicity_preserves_saturated_counts_and_status() -> None:
+    """Compiled repeats preserve dynamic counts and independent true status flags."""
+    counts = jnp.array([[0, 1], [COUNT_CAPACITY // 2, COUNT_CAPACITY]], dtype=jnp.int32)
+
+    def point(*, counts: IntND) -> transition_checks._CurrentIIDOffGridCounts:
+        return transition_checks._CurrentIIDOffGridCounts(
+            counts=BoundedResult(
+                output=counts,
+                bound_status=(
+                    BoundInputStatus(
+                        nonfinite_floor=jnp.asarray(a=True),
+                        invalid_shifted_grid=jnp.asarray(a=True),
+                    ),
+                ),
+            ),
+            invalid_law=jnp.asarray(a=True),
+        )
+
+    record = point(counts=counts)
+    assert (
+        transition_checks._repeat_off_grid_counts(counts=record, multiplicity=1)
+        is record
+    )
+    with pytest.raises(ValueError, match="multiplicity must be positive"):
+        transition_checks._repeat_off_grid_counts(counts=record, multiplicity=0)
+    for supplied, multiplicity in (
+        (counts, 1),
+        (counts, 2),
+        (counts, COUNT_CAPACITY + 1),
+        (jnp.zeros_like(counts), 2),
+    ):
+        run = jax.jit(
+            partial(
+                transition_checks._off_grid_counts_law,
+                grid_names=(),
+                func=point,
+                multiplicity=multiplicity,
+            )
+        )
+        repeated = run(
+            grid_args={}, scalar_kwargs=MappingProxyType({"counts": supplied})
+        )
+        assert isinstance(repeated, transition_checks._CurrentIIDOffGridCounts)
+        assert isinstance(repeated.counts, BoundedResult)
+        expected = [
+            [min(int(value) * multiplicity, COUNT_CAPACITY) for value in row]
+            for row in np.asarray(supplied)
+        ]
+        np.testing.assert_array_equal(repeated.counts.output, expected)
+        assert bool(repeated.invalid_law)
+        assert len(repeated.counts.bound_status) == 1
+        status = repeated.counts.bound_status[0]
+        assert status.nonfinite_floor.shape == ()
+        assert status.invalid_shifted_grid.shape == ()
+        assert bool(status.nonfinite_floor)
+        assert bool(status.invalid_shifted_grid)

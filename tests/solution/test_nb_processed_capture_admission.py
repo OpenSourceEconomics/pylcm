@@ -37,7 +37,7 @@ def _manifest():
                     "solver": solver,
                     "operation": operation,
                     "file": filename,
-                    "method": "lcm.model.Model._process_params",
+                    "method": "lcm.model.Model._canonicalize_params",
                     "model_object_id": identity,
                     "returned_mapping_id": identity + 1,
                     "returned_original_mapping": True,

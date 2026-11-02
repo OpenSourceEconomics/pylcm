@@ -32,7 +32,7 @@ _EDGE_KEYS = (
     "final_age_alive",
     "dead__rate",
     "dead__predicate__min_wealth",
-    "dead__references__spouse__wealth__scale",
+    "dead__reads__spouse__wealth__scale",
     "dead__routes__husband__fallback__solve__wealth__scale",
 )
 

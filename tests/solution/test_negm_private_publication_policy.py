@@ -71,6 +71,7 @@ class _PublicationArguments(TypedDict):
     n_kept: ScalarInt
     n_pad: int
     publish_resources: FloatND
+    lowest_euler_point: ScalarFloat
     borrowing_limit: ScalarFloat
     utility_of_action: Callable[[ScalarFloat], ScalarFloat]
     discounted_expected_value_at_limit: ScalarFloat

@@ -1214,7 +1214,7 @@ def test_forged_beartype_wrappers_fail_closed() -> None:
     changed = _forge_beartype_wrapper(1)
     assert baseline(2) != changed(2)
 
-    changed.__module__ = "_lcm.solution.current_iid_case_u_build"
+    changed.__module__ = "_lcm.solution.backward_induction"
     for function in (baseline, changed):
         with pytest.raises(TypeError, match="uncaptured transparent beartype wrapper"):
             fingerprints._semantic_fingerprint(function)
@@ -1705,6 +1705,32 @@ def test_original_cond_operand_omission_has_closed_native_metadata() -> None:
     )
 
 
+@pytest.mark.parametrize("name", ["map", "leaves"])
+def test_jax_tree_functions_have_identity_and_code_sealed_native_metadata(
+    *, name: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    genuine = getattr(jax.tree, name)
+    assert isinstance(genuine, FunctionType)
+    assert fingerprints._native_numeric_callable_kind(genuine) == "jax-function"
+    baseline = fingerprints._semantic_fingerprint(genuine)
+    assert baseline == fingerprints._semantic_fingerprint(genuine)
+
+    nominal = FunctionType(genuine.__code__, genuine.__globals__)
+    nominal.__module__ = genuine.__module__
+    nominal.__name__ = genuine.__name__
+    nominal.__qualname__ = genuine.__qualname__
+    with monkeypatch.context() as binding_patch:
+        binding_patch.setattr(jax.tree, name, nominal)
+        assert fingerprints._native_numeric_callable_kind(nominal) is None
+
+    with monkeypatch.context() as code_patch:
+        code_patch.setattr(
+            genuine, "__code__", genuine.__code__.replace(co_name="changed_tree_code")
+        )
+        assert fingerprints._native_numeric_callable_kind(genuine) is None
+    assert baseline == fingerprints._semantic_fingerprint(genuine)
+
+
 @pytest.mark.parametrize(
     "scalar_type",
     [
@@ -2023,7 +2049,6 @@ def _fingerprint_regime(
                 active_regimes_by_period=(frozenset({"alive"}),) * 2
             ),
         ),
-        "fold_state_names": (),
         "stakeholders": None,
         "resolved_fixed_params": MappingProxyType({}),
     }.items():
@@ -2593,25 +2618,25 @@ def test_solver_scalar_default_identity_is_not_semantics() -> None:
     original = DCEGM(
         savings_grid=grid_declarations.IrregSpacedGrid(points=np.array([1.0, 2.0]))
     )
-    capacity = int(str(original.current_iid_projection_capacity))
+    factor = float(str(original.refined_grid_factor))
     replay = (" " + original.replay)[1:]
     accuracy = (" " + original.accuracy)[1:]
-    assert capacity == original.current_iid_projection_capacity
-    assert capacity is not original.current_iid_projection_capacity
+    assert factor == original.refined_grid_factor
+    assert factor is not original.refined_grid_factor
     assert replay == original.replay
     assert replay is not original.replay
     assert accuracy == original.accuracy
     assert accuracy is not original.accuracy
     restored = dataclasses.replace(
         original,
-        current_iid_projection_capacity=capacity,
+        refined_grid_factor=factor,
         replay=replay,
         accuracy=accuracy,
     )
     assert fingerprints._semantic_fingerprint(original) == (
         fingerprints._semantic_fingerprint(restored)
     )
-    changed = dataclasses.replace(original, current_iid_projection_capacity=4097)
+    changed = dataclasses.replace(original, refined_grid_factor=3.0)
     assert fingerprints._semantic_fingerprint(original) != (
         fingerprints._semantic_fingerprint(changed)
     )

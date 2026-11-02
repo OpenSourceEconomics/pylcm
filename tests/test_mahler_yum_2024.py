@@ -1,24 +1,17 @@
 """CPU semantic and GPU behavioral tests for the Mahler & Yum (2024) example.
 
-The CPU tests cover the retirement structure, transition routing, and public input
-factory. The GPU tests pin simulated lifecycle moments at
-`seed=32`, `n=10000`, so a change in the example's economics appears as a change
-in a readable quantity rather than an opaque pickle diff.
+The CPU tests cover retirement structure, transition routing, and the public input
+factory. GPU behavioral references use 10000 subjects initialized with seed 32
+and simulated with seed 42 under the versioned pylcm.random.v1 stream contract.
 
-The pinned numbers are a joint property of the example's economics and the
-engine's numerics, so a change to either moves them and they have to be
-re-frozen against a run whose correctness has been argued separately. They are
-for the explicit working, retirement, and dead regimes and are reproducible
-across GPUs at float64 — a re-freeze needs a fresh run, not a matching device.
-The simulated moments were frozen from the pull-request GPU CI run of commit
-56c465af at float64 under jax and jaxlib 0.11.1. The solved value function is
-pinned separately by `test_value_function_sums`, whose numbers do not depend on
-the simulation's random draws.
+The references jointly depend on the example's economics, engine numerics, and
+random mapping. A deliberate change requires a fresh full-panel capture whose
+correctness is argued separately, while preserving the assertion tolerances.
+The solved value function is pinned separately by test_value_function_sums and
+does not depend on simulation draws.
 
-The structural invariants at the bottom of the module are the stable half: they
-assert relations that hold for any correct solve, so they survive a re-freeze
-and are what catches an economics change that a shifted pin would merely
-absorb.
+The structural invariants are the stable half: they check economic relations and
+remain unchanged when the stochastic reference panel is refreshed.
 """
 
 from collections.abc import Mapping
@@ -325,7 +318,7 @@ def test_model_solves_and_simulates(*, mahler_gpu_model: Model) -> None:
 
 @pytest.fixture(scope="module")
 def simulation_result(*, mahler_gpu_model: Model) -> pd.DataFrame:
-    """Full simulation with START_PARAMS (seed=32, n=10000)."""
+    """Simulate 10000 subjects with population seed 32 and simulation seed 42."""
     model_params, initial_conditions = create_inputs(
         seed=32, n_simulation_subjects=10000, params=START_PARAMS
     )
@@ -344,10 +337,10 @@ def simulation_result(*, mahler_gpu_model: Model) -> pd.DataFrame:
     ("period", "expected_retired", "expected_part_time", "expected_full_time"),
     [
         (0, 633, 6219, 3148),
-        (1, 607, 7713, 1672),
-        (2, 588, 5889, 3510),
-        (3, 562, 6328, 3091),
-        (4, 460, 5343, 4164),
+        (1, 615, 7679, 1698),
+        (2, 532, 5912, 3538),
+        (3, 531, 6384, 3055),
+        (4, 484, 5346, 4125),
     ],
 )
 def test_labor_supply_distribution(
@@ -371,12 +364,12 @@ def test_labor_supply_distribution(
     ("period", "expected_mean_wealth"),
     [
         (0, 0.0),
-        (5, 0.3038),
-        (10, 1.0845),
-        (15, 2.3094),
-        (20, 2.8561),
-        (25, 1.9116),
-        (30, 0.9251),
+        (5, 0.3094),
+        (10, 1.0912),
+        (15, 2.3322),
+        (20, 2.8928),
+        (25, 1.9396),
+        (30, 0.9146),
     ],
 )
 def test_mean_wealth_profile(*, simulation_result, period, expected_mean_wealth):
@@ -390,9 +383,9 @@ def test_mean_wealth_profile(*, simulation_result, period, expected_mean_wealth)
     ("period", "expected_good_frac"),
     [
         (0, 0.9219),
-        (10, 0.9112),
-        (20, 0.8509),
-        (30, 0.7049),
+        (10, 0.9123),
+        (20, 0.8482),
+        (30, 0.6925),
     ],
 )
 def test_health_good_fraction(*, simulation_result, period, expected_good_frac):
@@ -407,10 +400,10 @@ def test_health_good_fraction(*, simulation_result, period, expected_good_frac):
 @pytest.mark.parametrize(
     ("period", "expected_alive"),
     [
-        (10, 9851),
-        (20, 9113),
-        (30, 5025),
-        (37, 501),
+        (10, 9856),
+        (20, 9121),
+        (30, 5044),
+        (37, 488),
     ],
 )
 def test_survival_counts(*, simulation_result, period, expected_alive):
@@ -423,10 +416,10 @@ def test_survival_counts(*, simulation_result, period, expected_alive):
 def test_effort_statistics(simulation_result):
     """Mean and std of effort_value across all periods must match reference."""
     np.testing.assert_allclose(
-        simulation_result["effort_value"].mean(), 0.8804, atol=0.005
+        simulation_result["effort_value"].mean(), 0.8812, atol=0.005
     )
     np.testing.assert_allclose(
-        simulation_result["effort_value"].std(), 0.2040, atol=0.005
+        simulation_result["effort_value"].std(), 0.2026, atol=0.005
     )
 
 
@@ -434,8 +427,8 @@ def test_effort_statistics(simulation_result):
 def test_consumption_by_health(simulation_result):
     """Consumption must be higher for good health than bad health."""
     cons = simulation_result.groupby("health")["consumption"].mean()
-    np.testing.assert_allclose(cons.loc["good"], 0.6884, atol=0.005)
-    np.testing.assert_allclose(cons.loc["bad"], 0.6080, atol=0.005)
+    np.testing.assert_allclose(cons.loc["good"], 0.6861, atol=0.005)
+    np.testing.assert_allclose(cons.loc["bad"], 0.6028, atol=0.005)
     assert cons.loc["good"] > cons.loc["bad"]
 
 
@@ -444,8 +437,8 @@ def test_income_by_education(simulation_result):
     """Mean income during working life must be higher for high education."""
     working = simulation_result[simulation_result["period"] < retirement_period]
     inc = working.groupby("education")["income"].mean()
-    np.testing.assert_allclose(inc.loc["low"], 0.7995, atol=0.01)
-    np.testing.assert_allclose(inc.loc["high"], 1.5638, atol=0.01)
+    np.testing.assert_allclose(inc.loc["low"], 0.7959, atol=0.01)
+    np.testing.assert_allclose(inc.loc["high"], 1.5422, atol=0.01)
     assert inc.loc["high"] > inc.loc["low"]
 
 
@@ -461,7 +454,7 @@ def test_retirement_regime_starts_at_retirement_period(simulation_result):
 @_gpu_x64
 def test_total_living_rows(simulation_result):
     """Total number of living-regime rows must match reference."""
-    assert abs(len(simulation_result) - 293892) <= 50
+    assert abs(len(simulation_result) - 293855) <= 50
 
 
 @_gpu_x64

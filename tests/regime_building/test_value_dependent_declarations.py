@@ -1,6 +1,6 @@
-"""Collective utilities, source arrivals, and current participation declarations.
+"""Collective utilities, source participation checks and current participation rules.
 
-Current dissolution belongs to an own Exit; a separate arrival decision reads
+Current dissolution belongs to an own Exit; a separate participation check reads
 its Part support after landing. Non-exit value constraints retain their own
 projected references. The public declaration paths determine roles, phases,
 parameter namespaces and the canonical policy problems the model evaluates.
@@ -22,13 +22,13 @@ from _lcm.regime_law import RegimeLaw, bind_regime_law
 from lcm import (
     AgeGrid,
     AgeRange,
-    ArrivalDecision,
-    ArrivalRead,
     ByAge,
     CollectiveUtility,
     DiscreteGrid,
     Model,
     ParetoObjective,
+    ParticipationCheck,
+    ParticipationRead,
     Phased,
     ProjectedRegimeValue,
     Regime,
@@ -74,12 +74,12 @@ class _Snapshot(TypedDict):
     pareto_objective: ParetoObjective | None
     value_constraints: dict[FunctionName, UserFunction]
     same_period_refs: dict[str, ProjectedRegimeValue]
-    arrivals: dict[
+    participation: dict[
         RegimeName,
         tuple[
             UserFunction,
             dict[str, tuple[str | None, ProjectedRegimeValue]],
-            dict[str, ArrivalRead],
+            dict[str, ParticipationRead],
         ],
     ]
     exits: dict[str, tuple[type[ExitRule], dict[str, ExitTarget]]]
@@ -171,7 +171,7 @@ def test_value_dependent_transition_keeps_the_ordinary_transition_entry():
 
 def test_value_dependent_transition_routes_each_stakeholder_to_her_own_fallback():
     """Each source stakeholder's route keeps all four of its destinations."""
-    edge = _bound_laws()["married"].arrivals["married_ir"]
+    edge = _bound_laws()["married"].participation["married_ir"]
 
     assert edge.routes["f"].target_stakeholder == "f"
     assert edge.routes["f"].solve_fallback.regime == "single_f"
@@ -219,7 +219,7 @@ def test_an_edge_inside_a_phased_transition_solves_to_the_unphased_values():
             law=ByAge(
                 cases={AgeRange(exclusive_stop=1): Phased(solve=law, simulate=law)}
             ),
-            arrivals=married.arrivals,
+            participation=married.participation,
         ),
     )
     unphased = _solve(regimes=_new_vocabulary_regimes(), married=married)
@@ -245,7 +245,7 @@ def _solve(*, regimes, married: Transition):
             "married": Transition(
                 targets={"married_ir": 0, "single_f": 0, "single_m": 0},
                 law=married.law,
-                arrivals=married.arrivals,
+                participation=married.participation,
             ),
             "married_ir": {"married_terminal": 1},
             "single_f": {"single_f_terminal": 1},
@@ -326,7 +326,7 @@ def _new_vocabulary_regimes() -> dict[str, Regime]:
 
 
 def _married_transition() -> Transition:
-    """`married`'s arrival decision into `married_ir` after age 0.
+    """`married`'s participation check into `married_ir` after age 0.
 
     Each stakeholder's route falls back to her own single regime, so a model
     declares `married` with `married_ir`, `single_f` and `single_m` as targets.
@@ -339,16 +339,16 @@ def _married_transition() -> Transition:
                 }
             }
         ),
-        arrivals={"married_ir": _dissolution_arrival()},
+        participation={"married_ir": _dissolution_participation()},
     )
 
 
-def _dissolution_arrival() -> ArrivalDecision:
-    """`married`'s arrival into `married_ir`, each route to her own single regime."""
-    return ArrivalDecision(
+def _dissolution_participation() -> ParticipationCheck:
+    """`married`'s check into `married_ir`, each route to its own single regime."""
+    return ParticipationCheck(
         predicate=_participation_support,
         reads={
-            "target_support": ArrivalRead(
+            "target_support": ParticipationRead(
                 regime="married_ir",
                 stakeholder="f",
                 kind="Participating",
@@ -419,7 +419,7 @@ def _phased_edge_law() -> RegimeLaw:
                         )
                     }
                 ),
-                arrivals={"married_ir": _dissolution_arrival()},
+                participation={"married_ir": _dissolution_participation()},
             )
         }
     )["married"]
@@ -431,12 +431,12 @@ def test_a_gate_beside_a_phased_law_is_one_edge():
     The perceived meeting probability and the realized one are a legitimate
     wedge, so the law may differ by phase. The gate, the routes, the
     references and the off-grid contract are declared once beside it, so the
-    law carries one `arrivals` entry and each phase keeps its own
+    law carries one `participation` entry and each phase keeps its own
     probability.
     """
     law = _phased_edge_law()
 
-    edge = law.arrivals["married_ir"]
+    edge = law.participation["married_ir"]
     assert edge.predicate is _participation_support
     assert set(edge.routes) == {"f", "m"}
 
@@ -458,7 +458,7 @@ def _derived_snapshot(*, regime: Regime, law: RegimeLaw) -> _Snapshot:
         "pareto_objective": regime.pareto_objective,
         "value_constraints": dict(regime.value_constraints),
         "same_period_refs": dict(regime.same_period_refs),
-        "arrivals": {
+        "participation": {
             target: (
                 decision.predicate,
                 {
@@ -467,7 +467,7 @@ def _derived_snapshot(*, regime: Regime, law: RegimeLaw) -> _Snapshot:
                 },
                 dict(decision.reads),
             )
-            for target, decision in law.arrivals.items()
+            for target, decision in law.participation.items()
         },
         "exits": {
             name: (type(declaration.rule), dict(declaration.targets))
@@ -477,7 +477,7 @@ def _derived_snapshot(*, regime: Regime, law: RegimeLaw) -> _Snapshot:
 
 
 def _expected_snapshots() -> dict[RegimeName, _Snapshot]:
-    """Canonical source arrivals and own current participation stay distinct."""
+    """Canonical source participation checks and current participation stay distinct."""
     fallback_f = ProjectedRegimeValue(
         regime="single_f", projection={"wage": _identity_wage}
     )
@@ -489,19 +489,19 @@ def _expected_snapshots() -> dict[RegimeName, _Snapshot]:
         "pareto_objective": None,
         "value_constraints": {},
         "same_period_refs": {},
-        "arrivals": {},
+        "participation": {},
         "exits": {},
     }
     return {
         "married": {
             **plain,
             "stakeholders": ("f", "m"),
-            "arrivals": {
+            "participation": {
                 "married_ir": (
                     _participation_support,
                     {"f": ("f", fallback_f), "m": ("m", fallback_m)},
                     {
-                        "target_support": ArrivalRead(
+                        "target_support": ParticipationRead(
                             regime="married_ir",
                             stakeholder="f",
                             kind="Participating",

@@ -493,7 +493,7 @@ def continuation_group_key(
             periods whose pool resolves to different closures never share a compiled
             kernel. `None` contributes a constant and collapses out of the grouping.
         gated_reference_regimes: Mapping of gated-edge target regime names to the
-            regimes that edge's gate references and leg fallbacks read. Those are
+            regimes that edge's leg fallbacks read. Those are
             interpolated at `period + 1` beside the target itself, so their grids
             belong in the continuation signature: without them two periods whose
             reference grids differ would share one compiled kernel, and the
@@ -549,7 +549,7 @@ class _ContinuationGroupKey:
             )
         )
         # Beside each continuation target, the grids a gated edge into that
-        # target reads: its gate references and leg fallbacks are interpolated
+        # target reads: its leg fallbacks are interpolated
         # at `period + 1` too, and a reference regime need not be a target.
         read_regimes = tuple(
             dict.fromkeys(

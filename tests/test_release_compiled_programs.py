@@ -16,7 +16,7 @@ counting against the worker.
 
 import gc
 import pathlib
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
@@ -103,7 +103,7 @@ def _releases_during_teardown(*, monkeypatch: pytest.MonkeyPatch, keep: bool) ->
     item = SimpleNamespace(
         config=SimpleNamespace(getoption=lambda _name: keep),
         session=SimpleNamespace(),
-        module=object(),
+        module=ModuleType("finished_test_module"),
     )
     conftest.pytest_runtest_teardown(item, None)
     return calls

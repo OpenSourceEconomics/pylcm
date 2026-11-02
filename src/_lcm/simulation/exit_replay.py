@@ -7,20 +7,17 @@ from typing import TYPE_CHECKING, cast
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 
 from _lcm.current_iid import CurrentIIDDrawFrame, CurrentIIDDrawPlan
 from _lcm.engine import Regime
 from _lcm.execution.core_program import CoreBuildContext
 from _lcm.execution.value_transfer import ValueArtifactKind
+from _lcm.grids.continuous import ContinuousGrid
+from _lcm.off_grid import count_off_grid, off_grid_message
+from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.regime_building.collective import NO_ROLE
 from _lcm.shock_registry import ShockBinding
-from _lcm.simulation.arrival_routing import (
-    arrival_frame_bases,
-    arrival_route_codes,
-    ordinary_exit_rows,
-    pending_arrival_rows,
-)
-from _lcm.simulation.arrival_values import arrival_replay_context
 from _lcm.simulation.chunk_operations import regime_mask
 from _lcm.simulation.current_iid import prepare_current_iid_keys
 from _lcm.simulation.current_iid_overrides import (
@@ -33,11 +30,24 @@ from _lcm.simulation.exits import (
     OriginalExitOutput,
     ParticipatingExitOutput,
     PreparedExitDecision,
-    arrival_entry_routes,
+    participation_entry_routes,
     route_original_subjects,
 )
 from _lcm.simulation.memory import SimulationMemory, run_simulation_operation
+from _lcm.simulation.participation_routing import (
+    ordinary_exit_rows,
+    participation_frame_bases,
+    participation_route_codes,
+    pending_participation_rows,
+)
+from _lcm.simulation.participation_values import (
+    ParticipationSurfaces,
+    is_participation_surface,
+    participation_replay_context,
+    stored_participation_surface,
+)
 from _lcm.simulation.runtime import SimulationRuntime, execute_simulation_program
+from _lcm.simulation.shock_paths import fail_if_a_held_process_code_is_off_node
 from _lcm.simulation.subject_groups import SubjectRows
 from _lcm.simulation.taste_stream import prepare_decision_taste_keys
 from _lcm.simulation.unit_executor import SimulationUnitExecutor
@@ -46,8 +56,8 @@ from _lcm.solution.landing_counts import fail_on_query_landings
 from _lcm.time import TimeAxis
 from _lcm.typing import (
     ArrayTree,
-    ArrivalQueryArguments,
     FlatParams,
+    ParticipationQueryArguments,
     PRNGKeyND,
     PytreeValue,
     QAndFKwargs,
@@ -58,10 +68,11 @@ from _lcm.utils.counts import sum_counts
 from lcm.exceptions import (
     ExecutionPlanningError,
     NoFeasibleActionError,
+    OffGridStateError,
     ShockDeclarationError,
 )
 from lcm.shocks import ShockName
-from lcm.typing import BoolND, FloatND, IntND, RegimeName
+from lcm.typing import BoolND, FloatND, IntND, RegimeName, StateName
 
 if TYPE_CHECKING:
     from _lcm.policy_queries import PolicyAnswer, ScalarPolicyQueries
@@ -90,6 +101,7 @@ def prepare_exit_period(  # noqa: C901, PLR0912, PLR0915 - retain replay's order
     values: Mapping[int, Mapping[RegimeName, FloatND]],
     owner: PeriodSimulationReads,
     key: PRNGKeyND,
+    surfaces: ParticipationSurfaces = MappingProxyType({}),
     subject_slice: slice | SubjectRows,
     original_n_subjects: int,
     memory: SimulationMemory | None,
@@ -97,6 +109,9 @@ def prepare_exit_period(  # noqa: C901, PLR0912, PLR0915 - retain replay's order
     taste_key: PRNGKeyND | None = None,
     taste_addresses: Mapping[
         tuple[int, RegimeName], tuple[int, ...]
+    ] = MappingProxyType({}),
+    process_code_reads: Mapping[
+        RegimeName, Mapping[StateName, _ContinuousStochasticProcess]
     ] = MappingProxyType({}),
 ) -> tuple[StatesPerRegime, IntND, IntND, Mapping[RegimeName, PreparedExitDecision]]:
     """Choose at entry, route simultaneously, reveal, then prepare final actions."""
@@ -155,12 +170,12 @@ def prepare_exit_period(  # noqa: C901, PLR0912, PLR0915 - retain replay's order
     routes = []
     pending_entries = {}
     for name, regime in actors.items():
-        for source in regime.simulation.exit_queries[period].arrivals:
+        for source in regime.simulation.exit_queries[period].participation:
             if entered_through is None or source_roles is None:
                 continue
             pending_entries[name, source] = run_simulation_operation(
                 memory=memory,
-                function=pending_arrival_rows,
+                function=pending_participation_rows,
                 arguments={
                     "regime_ids": regime_ids,
                     "entered_through": entered_through,
@@ -198,6 +213,7 @@ def prepare_exit_period(  # noqa: C901, PLR0912, PLR0915 - retain replay's order
             period=period,
             ages=ages,
             values=values,
+            surfaces=surfaces,
             owner=owner,
             unit=name,
             family="exit_full",
@@ -245,6 +261,9 @@ def prepare_exit_period(  # noqa: C901, PLR0912, PLR0915 - retain replay's order
             frame=frame,
             holders=holders,
             memory=memory,
+            regime_name=name,
+            period=period,
+            states=states[name],
         )
         root = plan.full.definitions[plan.full.root]
         for identifier, members in root.exit_targets.items():
@@ -269,14 +288,14 @@ def prepare_exit_period(  # noqa: C901, PLR0912, PLR0915 - retain replay's order
                     )
                 )
     decisions = {name: record[0][1] for name, record in originals.items()}
-    arrival_frames = {}
-    arrival_pending = {}
+    participation_frames = {}
+    participation_pending = {}
     for (name, source), holders in pending_entries.items():
         regime = actors[name]
         plan = regime.simulation.exit_queries[period]
-        entry = plan.arrivals[source]
+        entry = plan.participation[source]
         queries = entry.queries
-        family = f"arrival_entry:{source}"
+        family = f"participation_entry:{source}"
         output = _dispatch(
             regime=regime,
             family=family,
@@ -293,6 +312,7 @@ def prepare_exit_period(  # noqa: C901, PLR0912, PLR0915 - retain replay's order
                     period=period,
                     ages=ages,
                     values=values,
+                    surfaces=surfaces,
                     owner=owner,
                     unit=name,
                     family=family,
@@ -319,23 +339,53 @@ def prepare_exit_period(  # noqa: C901, PLR0912, PLR0915 - retain replay's order
                 adjustments,
                 overrides,
                 decisions,
-                arrival_frames,
+                participation_frames,
             ),
         )
         answer, frame_payload, entry_projections, entry_adjustments = cast(
             "OriginalExitOutput", output
         )
         frame = CurrentIIDDrawFrame(*frame_payload)
+        # Every fallback is priced for every arriving row, so a fallback regime
+        # reading a process's node position must receive a node from each one.
+        root = queries.definitions[queries.root]
+        for member, query in root.exit_targets.get(1, {}).items():
+            fallback = queries.definitions[query].read.target
+            _fail_if_a_fallback_lands_off_a_raise_grid(
+                fallback=regimes[fallback],
+                fallback_name=fallback,
+                regime_name=name,
+                period=period,
+                states=entry_projections[query],
+                holders=holders,
+            )
+            if process_code_reads.get(fallback):
+                fail_if_a_held_process_code_is_off_node(
+                    states=entry_projections[query],
+                    processes=process_code_reads[fallback],
+                    holders=holders,
+                    where=f"projected by route '{member}' of the participation check "
+                    f"from regime '{source}' into regime '{name}' onto its fallback "
+                    f"regime '{fallback}' at period {period}",
+                    memory=memory,
+                )
         _check_answer(
-            queries=queries, answer=answer, frame=frame, holders=holders, memory=memory
+            queries=queries,
+            answer=answer,
+            frame=frame,
+            holders=holders,
+            memory=memory,
+            regime_name=name,
+            period=period,
+            states=states[name],
         )
         edge = f"{name}:{source}"
-        arrival_frames[edge], arrival_pending[edge] = frame, holders
+        participation_frames[edge], participation_pending[edge] = frame, holders
         next_code = (
             min((-1, *(route.identifier for route in routes if route.source == name)))
             - 1
         )
-        entry_routes, codes, addresses = arrival_entry_routes(
+        entry_routes, codes, addresses = participation_entry_routes(
             regimes=regimes,
             target=name,
             source=source,
@@ -350,7 +400,7 @@ def prepare_exit_period(  # noqa: C901, PLR0912, PLR0915 - retain replay's order
             )
         decisions[name] = run_simulation_operation(
             memory=memory,
-            function=arrival_route_codes,
+            function=participation_route_codes,
             arguments={
                 "original": decisions[name],
                 "incoming": answer[1],
@@ -422,26 +472,27 @@ def prepare_exit_period(  # noqa: C901, PLR0912, PLR0915 - retain replay's order
         subject_outputs=True,
     )
     prepared = {}
-    if arrival_frames:
+    if participation_frames:
         bases, produced = run_simulation_operation(
             memory=memory,
-            function=arrival_frame_bases,
+            function=participation_frame_bases,
             arguments={
                 "bases": bases,
                 "produced": produced,
                 "incoming_bases": {
-                    edge: frame.held_bases for edge, frame in arrival_frames.items()
+                    edge: frame.held_bases
+                    for edge, frame in participation_frames.items()
                 },
                 "incoming_available": {
                     edge: frame.information_available
-                    for edge, frame in arrival_frames.items()
+                    for edge, frame in participation_frames.items()
                 },
-                "pending": arrival_pending,
+                "pending": participation_pending,
             },
             static_arguments={
                 "physical_names": tuple(
                     (edge, tuple(frame.physical))
-                    for edge, frame in arrival_frames.items()
+                    for edge, frame in participation_frames.items()
                 )
             },
             subject_arg_names=(
@@ -477,6 +528,7 @@ def prepare_exit_period(  # noqa: C901, PLR0912, PLR0915 - retain replay's order
             period=period,
             ages=ages,
             values=values,
+            surfaces=surfaces,
             owner=owner,
             unit=name,
             family="exit_participating",
@@ -532,6 +584,9 @@ def prepare_exit_period(  # noqa: C901, PLR0912, PLR0915 - retain replay's order
             frame=frame,
             holders=holders,
             memory=memory,
+            regime_name=name,
+            period=period,
+            states=final_states[name],
         )
         source_answer, source_frame = originals.get(name, (answer, frame))
         physical_names = plan.physical_names
@@ -597,7 +652,9 @@ def exit_bindings(
             *regime.simulation.exit_queries[period].participating.values(),
             *(
                 entry.queries
-                for entry in regime.simulation.exit_queries[period].arrivals.values()
+                for entry in regime.simulation.exit_queries[
+                    period
+                ].participation.values()
             ),
         )
         if queries is not None
@@ -619,6 +676,7 @@ def _query_arguments(
     values: Mapping[int, Mapping[RegimeName, FloatND]],
     owner: PeriodSimulationReads,
     unit: RegimeName,
+    surfaces: ParticipationSurfaces = MappingProxyType({}),
     family: str,
     regime: Regime,
 ) -> _QueryArguments:
@@ -628,9 +686,10 @@ def _query_arguments(
         {
             name: dict(row)
             for name, row in queries.arguments(
-                context=arrival_replay_context(
+                context=participation_replay_context(
                     queries=queries,
                     values=values,
+                    surfaces=surfaces,
                     context=CoreBuildContext(
                         state_action_space=replace(
                             context.state_action_space,
@@ -650,18 +709,22 @@ def _query_arguments(
         },
     )
     program = (
-        regime.simulation.programs.arrival_program(family=family, period=period)
-        if family.startswith("arrival_entry:")
+        regime.simulation.programs.participation_program(family=family, period=period)
+        if family.startswith("participation_entry:")
         else getattr(regime.simulation.programs, family)[period]
     )
     for read in program.requirements.value_reads:
-        if read.target.kind is not ValueArtifactKind.REGIME_VALUE:
+        if is_participation_surface(address=read.target):
+            stored = stored_participation_surface(
+                address=read.target, surfaces=surfaces
+            )
+        elif read.target.kind is ValueArtifactKind.REGIME_VALUE:
+            stored = values[read.target.period][read.target.regime]
+        else:
             raise ExecutionPlanningError(
                 "Exit replay needs canonical regime-value query operands."
             )
-        array = owner.read(
-            unit=unit, read=read, value=values[read.target.period][read.target.regime]
-        )
+        array = owner.read(unit=unit, read=read, value=cast("jax.Array", stored))
         _set_read(arguments=arguments, path=read.source.path, array=array)
     return arguments
 
@@ -681,8 +744,8 @@ def _replace_query_read(
     if not path:
         return array
     step, *remaining = path
-    if isinstance(node, ArrivalQueryArguments) and step == "by_target":
-        return ArrivalQueryArguments(
+    if isinstance(node, ParticipationQueryArguments) and step == "by_target":
+        return ParticipationQueryArguments(
             by_target=cast(
                 "Mapping[str, Mapping[str, QAndFKwargs]]",
                 _replace_query_read(
@@ -698,7 +761,8 @@ def _replace_query_read(
             ),
         }
     raise ExecutionPlanningError(
-        "A GridSearch query value read needs its declared mapping/arrival field path."
+        "A GridSearch query value read needs its declared mapping/participation field "
+        "path."
     )
 
 
@@ -742,6 +806,49 @@ def _dispatch(
         executor.close()
 
 
+def _fail_if_a_fallback_lands_off_a_raise_grid(
+    *,
+    fallback: Regime,
+    fallback_name: RegimeName,
+    regime_name: RegimeName,
+    period: int,
+    states: Mapping[str, FloatND | IntND],
+    holders: BoolND,
+) -> None:
+    """Refuse a participation fallback landing off a grid declared `off_grid="raise"`.
+
+    A `clip_state` grid's landing is clipped where the fallback is projected.
+    """
+    axes = fallback.solution.period_state_axes
+    for state, values in states.items():
+        grid = fallback.simulation.grids.get(state)
+        if (
+            not isinstance(grid, ContinuousGrid)
+            or isinstance(grid, _ContinuousStochasticProcess)
+            or grid.off_grid != "raise"
+        ):
+            continue
+        points = None if axes is None else axes.get(period, {}).get(state)
+        count = int(
+            count_off_grid(
+                values=jnp.asarray(values),
+                points=grid.to_jax() if points is None else jnp.asarray(points),
+                feasible=holders,
+            )
+        )
+        if count:
+            raise OffGridStateError(
+                off_grid_message(
+                    count=count,
+                    regime=regime_name,
+                    target=fallback_name,
+                    period=period,
+                    state=state,
+                    phase="participation fallback",
+                )
+            )
+
+
 def _answer_status(
     *, valid: BoolND, support: BoolND, law_valid: BoolND, holders: BoolND
 ) -> tuple[BoolND, BoolND]:
@@ -767,6 +874,9 @@ def _check_answer(
     frame: CurrentIIDDrawFrame,
     holders: BoolND,
     memory: SimulationMemory | None,
+    regime_name: RegimeName,
+    period: int,
+    states: Mapping[str, FloatND | IntND],
 ) -> None:
     invalid, empty = run_simulation_operation(
         memory=memory,
@@ -783,8 +893,11 @@ def _check_answer(
             "Current exit law or query is invalid or unresolved during replay."
         )
     if bool(empty):
+        row = int(np.flatnonzero(np.asarray(holders & ~answer[2]))[0])
+        state = {name: np.asarray(value)[row].item() for name, value in states.items()}
         raise NoFeasibleActionError(
-            "The final current-period policy has no feasible action."
+            f"Regime '{regime_name}', period {period}, state {state}: the final "
+            "current-period policy has no feasible action."
         )
     if queries.landing_checks:
         totals = run_simulation_operation(

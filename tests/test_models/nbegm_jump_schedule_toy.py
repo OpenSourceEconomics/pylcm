@@ -7,6 +7,8 @@ recognises the single jump and routes it to the binary case solver, so it must
 reproduce the dense `GridSearch` value across the cliff at every age.
 """
 
+from typing import Literal
+
 import jax.numpy as jnp
 
 import lcm
@@ -102,6 +104,7 @@ def build_model(
     non_additive_above_cliff: bool = False,
     nonlinear: bool = False,
     nonlinear_above_ten: bool = False,
+    probe_schedule: Literal["first_solve", "every_solve", "never"] = "never",
 ) -> Model:
     """Create the two-regime (alive, dead) jump-schedule one-asset toy.
 
@@ -133,6 +136,7 @@ def build_model(
     alive_solver = resolve_solver(
         variant=variant,
         savings_grid=LinSpacedGrid(start=0.0, stop=savings_max, n_points=n_savings),
+        probe_schedule=probe_schedule,
     )
 
     return make_alive_dead_model(

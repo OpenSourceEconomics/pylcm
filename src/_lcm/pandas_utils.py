@@ -817,7 +817,7 @@ def _edge_param_periods(
             }
         )
         is_gate = len(slot) > 1 and (
-            slot[0] in declaration.gates or slot[0] in declaration.arrivals
+            slot[0] in declaration.gates or slot[0] in declaration.participation
         )
         for period in periods:
             if period >= ages.n_periods - 1:

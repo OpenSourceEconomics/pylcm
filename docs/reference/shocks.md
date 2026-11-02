@@ -92,17 +92,16 @@ Discrete variables are independently enumerated exactly beside the continuous ru
 - `MonteCarlo(n, seed)` uses equal-weight PCG64 uniforms.
 - `QuasiMonteCarlo(n, seed, sequence="sobol")` uses scrambled Sobol LMS+shift points
   with a fixed bit budget and a power-of-two sample count. It retains every point in
-  sequence order. Unit endpoints are opened before inverse-normal transformation.
-- `Smolyak(level, signed=False)` uses zero-based difference levels with total component
-  level at most `level`. Its normal family is the bounded Genz-Keister-19 prefix: levels
-  zero through three have orders one, three, nine and nineteen; higher normal levels are
-  refused. The uniform family is Clenshaw-Curtis on the unit interval: level zero is the
-  midpoint, and subsequent orders are `2**level+1`. Shared nodes are merged by
-  master-table identifiers or reduced dyadic angles, never by approximate equality. The
-  rule validates its actual combined weights.
-- `UserNodes(nodes, weights, signed=False)` owns a finite `(K,d)` base-coordinate matrix
-  and `(K,)` weights. It preserves point order and copies mutable input arrays. Uniform
-  coordinates lie in the unit interval. It cannot replace exact category enumeration.
+  sequence order. Unit endpoints are opened before inverse-normal transformation. It is
+  the rule for thinning a group of several shocks, whose `Product` tensor grows
+  exponentially with the number of shocks.
+- `UserNodes(nodes, weights)` owns a finite `(K,d)` base-coordinate matrix and `(K,)`
+  weights. It preserves point order and copies mutable input arrays. Uniform coordinates
+  lie in the unit interval. It cannot replace exact category enumeration.
+
+`UserNodes` weights must be nonnegative. Negative weights raise `ShockDeclarationError`
+when the rule is declared, because pylcm takes the max over shocks and samples nodes by
+weight, both of which need probability weights.
 
 MC and QMC regenerate per exact age or explicitly labelled period from a canonical
 versioned seed, time-coordinate and group-name encoding. Parameters do not enter that
@@ -189,7 +188,29 @@ Cross-regime routing and EGM replay must preserve that producing context and bin
 own information/reconstruction contracts; a supplied input does not authorize policy
 conditioning on a hidden value.
 
-## Validity and signed provenance
+(current-iid-refusals)=
+
+### Combinations not yet composed with current shocks
+
+A group read only by `GridSearch` regimes stays on the integrated current-IID route.
+`Model(...)` raises `UnsupportedOperationError` ("Current IID in regime ... is not yet
+composed with ...") when a regime reading such a group also uses:
+
+- action partitions above one (`ExecutionConfig(action_partitions=...)`);
+- a `Decoupled` decision;
+- invariant state blocks (`ExecutionConfig(invariant_block_widths=...)`);
+- a gated value channel: gated edges out of or into the regime, or participation reads
+  of it;
+- a same-period value channel: `same_period_refs` from or to the regime;
+- a sharded discrete state whose law is the identity (a co-mapped state).
+
+`Model.lookup_policy` raises `UnsupportedOperationError` for such a regime: a current
+shock needs an explicit observation or conditional query, which the lookup does not
+take. A group that an endogenous-grid regime reads is solved on the node-state axis
+instead; see
+[Named current-IID shocks in endogenous-grid regimes](solvers.md#current-iid-egm).
+
+## Validity
 
 `Realisation` is a JAX-compatible tuple of physical values, joint weights and a scalar
 `valid` channel. Every consumer must enforce that status at its runtime boundary.
@@ -197,21 +218,9 @@ conditioning on a hidden value.
 into their runtime checks; they must never use an invalid value or silently replace it
 with a finite placeholder.
 
-`NodeSet.sum_abs_weights` records the conditioning of the continuous numerical rule. For
-exact categorical enumeration, `NodeSet.weights` repeats continuous weights; `realise`
-multiplies the cell's categorical probabilities before integration. The completed
-`Realisation.weights` is the joint integration operator.
-
-Negative concrete weights require `signed=True`. Signed provenance persists even when
-one concrete realization happens to have nonnegative weights.
-`NodeSet.admit(reader=...)` accepts only `ShockReader.LINEAR_EXPECTATION` for a signed
-producer. Discrete laws, constraints, regime transitions, exits, availability, gates,
-simulation draws, nonlinear certainty equivalents, inverse transforms, Euler inversion
-and root steps are refused. The producer and every derived stored channel must retain
-this provenance, so an indirect nonlinear reader is subject to the same refusal.
-
-A signed linear integral may lie outside the range of its node values. That is a
-property of the numerical operator. Its weights are not a probability law.
+For exact categorical enumeration, `NodeSet.weights` repeats continuous weights;
+`realise` multiplies the cell's categorical probabilities before integration. The
+completed `Realisation.weights` is the joint integration operator.
 
 ## Model registry and compatibility
 
@@ -228,17 +237,38 @@ before broadcast pruning. Runtime slots such as `eps__sigma`, callable parameter
 `corr` remain group-local metadata; they are not added to `Model.get_params_template()`
 as ordinary regime parameters. Integrated execution must explicitly project those slots
 from `params[group]`, bind correlation support and enforce per-invocation exact host
-correlation admission, numerical validity and signed ancestry.
+correlation admission and numerical validity.
+
+Timing is read off the regime's functions. A regime whose functions read a group's shock
+`x` sees this period's realization, known at the choice. A regime that reads the group
+only as `next_<shock>`, from its state transitions, sees the draw after the choice: the
+group carries no axis there, and the solve integrates the transitions over its nodes and
+weights. Simulation draws each subject's value from the shock's continuous law,
+addressed like every other draw: the nodes serve only the solve's integration, and the
+draw enters only next period's state law. Utility and constraints may not read
+`next_<shock>`, and a regime reading both `x` and `next_x` of one group is refused; an
+IID process state carries a realization into the next period. Each post-decision shock
+lowers to one fixed node set, so the group needs continuous laws with fixed parameters,
+independent shocks and a deterministic unsigned rule. A group read as a value in one
+regime and only as a draw in another is refused. A `shock_paths` entry for a
+post-decision shock is a plain array of physical values, on or off the nodes, dated at
+the destination period. `repr(model)` lists, per regime, which groups carry an axis and
+which are integrated out.
 
 Registry declarations can be inspected and persisted. Ordinary GridSearch consumers bind
-the current law inside their node decision and fresh simulation draw. Solver/query
-intersections require their corresponding integrated producer and otherwise refuse
-explicitly. An unlowered physical shock cannot silently become a free parameter.
+the current law inside their node decision and fresh simulation draw. A group that an
+endogenous-grid regime reads is solved on the node-state axis instead, for every reader
+of the group; `model.shocks` still lists it, published values integrate its nodes, and
+simulation draws and overrides keep the rules above. See
+[Named current-IID shocks in endogenous-grid regimes](solvers.md#current-iid-egm) for
+the supported laws and rules. Other solver/query intersections require their
+corresponding integrated producer and otherwise refuse explicitly. An unlowered physical
+shock cannot silently become a free parameter.
 
 Legacy IID state processes retain their public classes, state layouts, phase-specific
-laws, transition timing, fold flags and simulation draw modes. Compatibility records
-retain the original joint declaration and physical-grid rule. In particular, legacy
-normal-mixture CDF bins on a physical equally spaced grid are not a standard-normal base
-rule transformed through mixture quantiles. Persistent processes and transition-local
-state laws keep their existing consumers. An empty registry and empty regime references
-leave feature-free durable fingerprints unchanged.
+laws, transition timing and simulation draw modes. Compatibility records retain the
+original joint declaration and physical-grid rule. In particular, legacy normal-mixture
+CDF bins on a physical equally spaced grid are not a standard-normal base rule
+transformed through mixture quantiles. Persistent processes and transition-local state
+laws keep their existing consumers. An empty registry and empty regime references leave
+feature-free durable fingerprints unchanged.

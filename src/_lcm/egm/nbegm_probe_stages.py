@@ -60,6 +60,11 @@ def probe_sorted(*, values: FloatND) -> FloatND:
     return jnp.sort(a=values)
 
 
+def probe_law_samples(*, values: tuple[float, ...]) -> FloatND:
+    """Keep the original law probe's default-dtype sample vector."""
+    return jnp.asarray(values)
+
+
 def probe_int_fill(*, value: int) -> ScalarInt:
     """Keep the original int32 scalar fill for an override."""
     return jnp.asarray(value, dtype=jnp.int32)

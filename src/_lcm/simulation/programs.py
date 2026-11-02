@@ -63,8 +63,6 @@ from _lcm.regime_building.Q_and_F import (
     get_Q_and_F_parts,
     has_action_integrity,
     has_objective_profile,
-    has_projected_queries,
-    projected_forward_readers,
     runtime_bound_specs,
 )
 from _lcm.simulation.gated_routing import (
@@ -261,7 +259,6 @@ def build_simulation_programs(
                 ),
                 subject_arg_names=declared_lookup_subject_names,
                 n_bound_records=len(runtime_bound_specs(function=kernel)),
-                n_query_records=int(has_projected_queries(function=kernel)),
             )
         action_values[period] = dataclasses.replace(
             decision[period],
@@ -397,11 +394,7 @@ def _decision_programs(
                 ),
                 tiled_axes=(subject_axis(state_names=simulation_state_names),),
                 value_reads=rekeyed_value_reads(
-                    reads=_decision_value_reads(
-                        context=context,
-                        period=period,
-                        function=Q_and_F_functions[period],
-                    ),
+                    reads=_decision_value_reads(context=context, period=period),
                     core_key=DECISION_PROGRAM,
                 ),
             ),
@@ -546,6 +539,13 @@ def attach_gated_simulation_programs(
     return attached
 
 
+# Payload consumer routes whose forward reads chunk admission profiles: the finite
+# NNBEGM bank runs as declared programs, and the flat EGM and NB-EGM state-grid
+# policy-first reads (`egm_off_grid`, `nbegm_grid`) as one compiled producer
+# beside the grid-argmax fallback.
+PROFILED_POLICY_ROUTES = frozenset({"nnbegm_finite", "egm_off_grid", "nbegm_grid"})
+
+
 def budgeted_simulation_programs_ready(
     *, regimes: Mapping[RegimeName, Regime], n_periods: int, enable_jit: bool
 ) -> bool:
@@ -563,7 +563,8 @@ def budgeted_simulation_programs_ready(
         )
         and not (
             regime.simulation.replay_route.policy_applicable
-            and regime.simulation.replay_route.consumer_route != "nnbegm_finite"
+            and regime.simulation.replay_route.consumer_route
+            not in PROFILED_POLICY_ROUTES
         )
         and regime.simulation.external_replay_route is None
         for period, active in enumerate(
@@ -666,7 +667,6 @@ class _GateFoldArguments(TypedDict):
         Mapping[RegimeName, Mapping[StateName, ContinuousState | DiscreteState]] | None
     )
     edge_values: Mapping[RegimeName, Mapping[RegimeName, FloatND]]
-    edge_flags: Mapping[RegimeName, BoolND]
     flat_params: FlatParams
     fold_age: FoldAge
 
@@ -675,7 +675,6 @@ class _GateRouteArguments(TypedDict):
     """The arguments a gate-route program hands its body, besides the width."""
 
     edge_values: Mapping[RegimeName, Mapping[RegimeName, FloatND]]
-    edge_flags: Mapping[RegimeName, BoolND]
     next_states: StatesPerRegime
     new_subject_regime_ids: Int1D
     subjects_in_regime: Bool1D
@@ -699,7 +698,7 @@ _GATE_ROUTE_SUBJECT_ARG_NAMES = (
 class _GateFoldBody:
     """One period's gated continuations, folded on the regime-level grids.
 
-    The fold reads the next period's value and dissolution arrays over each
+    The fold reads the next period's value arrays over each
     target's own grid and writes the substituted continuation over that same
     grid. No operand and no output carries a subject axis, so the body is
     replicated rather than partitioned wherever the population is spread over
@@ -728,7 +727,6 @@ class _GateFoldBody:
             base_state_action_spaces=MappingProxyType({}),
             target_states_by_target=arguments["target_states_by_target"],
             edge_values=arguments["edge_values"],
-            edge_flags=arguments["edge_flags"],
             flat_params=arguments["flat_params"],
             fold_age=arguments["fold_age"],
         )
@@ -768,7 +766,6 @@ class _GateRouteBody:
             regime=self.regime,
             fold_period=self.fold_period,
             edge_values=arguments["edge_values"],
-            edge_flags=arguments["edge_flags"],
             candidate_states=arguments["next_states"],
             regime_names_to_ids=self.regime_names_to_ids,
             new_subject_regime_ids=arguments["new_subject_regime_ids"],
@@ -834,7 +831,7 @@ def _decision_subject_arg_names(*, context: SolverBuildContext) -> tuple[str, ..
 
 
 def _decision_value_reads(
-    *, context: SolverBuildContext, period: int, function: QAndFFunction
+    *, context: SolverBuildContext, period: int
 ) -> tuple[ValueRead, ...]:
     """Declare every stored value leaf one period's decision reads."""
     target_regimes = (
@@ -844,27 +841,15 @@ def _decision_value_reads(
             period=period, source=context.regime_name
         )
     )
-    readers = projected_forward_readers(function=function)
-    return (
-        *_value_reads(
-            regime_name=context.regime_name,
-            period=period,
-            target_regimes=tuple(
-                target for target in target_regimes if target not in readers
-            ),
-            same_period_ref_regimes=context.same_period_ref_regimes,
-            edge_reference_regimes=_edge_reference_regimes_for_targets(
-                context=context, target_regimes=target_regimes
-            ),
-            edge_target_regimes=context.edge_target_regimes,
+    return _value_reads(
+        regime_name=context.regime_name,
+        period=period,
+        target_regimes=target_regimes,
+        same_period_ref_regimes=context.same_period_ref_regimes,
+        edge_reference_regimes=_edge_reference_regimes_for_targets(
+            context=context, target_regimes=target_regimes
         ),
-        *(
-            read
-            for reader in readers.values()
-            for read in reader.reads(
-                source=context.regime_name, period=period, core=DECISION_PROGRAM
-            )
-        ),
+        edge_target_regimes=context.edge_target_regimes,
     )
 
 
@@ -872,10 +857,7 @@ def _bound_output_roles(*, function: QAndFFunction) -> tuple[StateAxesLeading, .
     """Declare one scalar Boolean leaf per mandatory canonical integrity flag."""
     return tuple(
         StateAxesLeading(state_names=(), dtype=jnp.bool_, shape=())
-        for _ in range(
-            2 * len(runtime_bound_specs(function=function))
-            + 3 * int(has_projected_queries(function=function))
-        )
+        for _ in range(2 * len(runtime_bound_specs(function=function)))
     )
 
 
@@ -917,13 +899,11 @@ def _decision_body(
 ) -> Callable[..., PytreeValue]:
     """Build one period group's decision body, tiled over the subject axis."""
     n_bound_records = len(runtime_bound_specs(function=Q_and_F))
-    n_query_records = int(has_projected_queries(function=Q_and_F))
     if not streams_actions:
         return _SubjectTiled(
             func=dense_reducer,
             subject_arg_names=subject_arg_names,
             n_bound_records=n_bound_records,
-            n_query_records=n_query_records,
         )
     from _lcm.regime_building.max_Q_over_a import (  # noqa: PLC0415
         _get_extra_param_names,
@@ -958,7 +938,6 @@ def _decision_body(
         func=cell,
         subject_arg_names=subject_arg_names,
         n_bound_records=n_bound_records,
-        n_query_records=n_query_records,
     )
 
 

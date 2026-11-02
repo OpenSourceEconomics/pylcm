@@ -4,6 +4,8 @@ The private adapter installed below is a stage fixture. Public Exit declarations
 and integrated collective publication are qualified by their own later stages.
 """
 
+import logging
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -17,9 +19,15 @@ import pytest
 
 import lcm
 from _lcm import policy_queries as queries
-from _lcm.arrival_queries import bind_arrival_query_graph
-from _lcm.execution.core_program import CoreBuildContext
+from _lcm.execution.core_program import (
+    CoreArgumentBuilder,
+    CoreBuildContext,
+    ValueRead,
+)
+from _lcm.execution.footprint import ResidentBreakdown
 from _lcm.execution.output_layout import StateAxesLeading, resolve_output_layout
+from _lcm.execution.value_transfer import ValueArtifactAddress, ValueArtifactKind
+from _lcm.participation_queries import bind_participation_query_graph
 from _lcm.policy_queries import (
     PolicyAnswer,
     QueryKind,
@@ -44,8 +52,8 @@ from lcm import (
     Regime,
     categorical,
 )
-from lcm.arrivals import ArrivalDecision, ArrivalRead
 from lcm.collective import ProjectedRegimeValue, StakeholderRoute
+from lcm.participation import ParticipationCheck, ParticipationRead
 from lcm.shocks import Normal, ShockGroup, UserNodes
 from lcm.solvers import EGM, GridSearch
 from lcm.typing import BoolND, FloatND, IntND, RegimeName, ScalarInt
@@ -107,25 +115,27 @@ def test_query_cycles_and_foreign_full_reads_refuse() -> None:
         )
 
 
-def test_integrated_value_reader_is_only_an_arrival_comparison_operand() -> None:
+def test_integrated_value_reader_is_only_a_participation_comparison_operand() -> None:
     """A represented Full payload cannot become a policy/support dependency."""
     reads = {
-        "arrival": _read(kind=QueryKind.ARRIVAL, target="target"),
+        "participation": _read(kind=QueryKind.PARTICIPATION, target="target"),
         "stored": _read(kind=QueryKind.INTEGRATED_FULL, target="target"),
     }
     assert demanded_query_order(
         reads=reads,
-        dependencies={"arrival": ("stored",), "stored": ()},
-        roots=("arrival",),
-    ) == ("stored", "arrival")
-    with pytest.raises(ValueError, match="Only an arrival comparison"):
+        dependencies={"participation": ("stored",), "stored": ()},
+        roots=("participation",),
+    ) == ("stored", "participation")
+    with pytest.raises(ValueError, match="Only a participation comparison"):
         demanded_query_order(
             reads={
                 **reads,
-                "arrival": replace(reads["arrival"], kind=QueryKind.PARTICIPATING),
+                "participation": replace(
+                    reads["participation"], kind=QueryKind.PARTICIPATING
+                ),
             },
-            dependencies={"arrival": ("stored",), "stored": ()},
-            roots=("arrival",),
+            dependencies={"participation": ("stored",), "stored": ()},
+            roots=("participation",),
         )
 
 
@@ -257,7 +267,6 @@ def _keep(*, q: FloatND, outside: PolicyAnswer) -> FloatND:
 def _native_model(
     *,
     enable_jit: bool,
-    recompute: bool = False,
     chunk_size: int = 2,
     source_size: int = 3,
     budget: int | None = None,
@@ -338,7 +347,6 @@ def _native_model(
         },
         root="root",
         chunk_size=chunk_size,
-        recompute=recompute,
     )
     canonical = model._regimes["root"]
     kernel = kernel.with_fixed_params(
@@ -367,8 +375,10 @@ def _native_model(
     return model
 
 
-def test_arrival_consumer_uses_boolean_rule_and_source_owned_answer_shape() -> None:
-    """A singleton arrival on a household context does not rerun its argmax."""
+def test_participation_consumer_uses_boolean_rule_and_source_owned_answer_shape() -> (
+    None
+):
+    """A singleton participation check in a household does not rerun the argmax."""
     _native_model(enable_jit=False)
 
     def decide(*, target: PolicyAnswer, outside: PolicyAnswer) -> PolicyAnswer:
@@ -382,7 +392,7 @@ def test_arrival_consumer_uses_boolean_rule_and_source_owned_answer_shape() -> N
         )
 
     node = QueryNode(
-        read=_read(kind=QueryKind.ARRIVAL, target="target"),
+        read=_read(kind=QueryKind.PARTICIPATION, target="target"),
         context=_CONTEXTS["target"],
         inputs={"target": "part", "outside": "outside"},
         operand_builder=lambda _context: {},
@@ -418,13 +428,15 @@ def test_arrival_consumer_uses_boolean_rule_and_source_owned_answer_shape() -> N
     assert bool(answer[3])
 
 
-def test_bound_arrival_strict_hurdle_uses_one_household_participating_tuple() -> None:
+def test_bound_participation_strict_hurdle_uses_one_household_participating_tuple() -> (
+    None
+):
     """An exact threshold can reject a target even when a member's fallback is worse."""
     model = _native_model(enable_jit=False)
-    declaration = ArrivalDecision(
+    declaration = ParticipationCheck(
         predicate=lambda benchmark: benchmark > 2.0,
         reads={
-            "benchmark": ArrivalRead(
+            "benchmark": ParticipationRead(
                 regime="target",
                 projection={"wealth": _identity},
                 stakeholder="f",
@@ -443,7 +455,7 @@ def test_bound_arrival_strict_hurdle_uses_one_household_participating_tuple() ->
             for member in ("f", "m")
         },
     )
-    plan = bind_arrival_query_graph(
+    plan = bind_participation_query_graph(
         contexts=_CONTEXTS,
         canonical_regimes=model._regimes,
         source="root",
@@ -532,8 +544,8 @@ def _keep_both(*, q: FloatND, left: PolicyAnswer, right: PolicyAnswer) -> FloatN
     return jnp.all(q >= left[0]) & jnp.all(q >= right[0])
 
 
-def test_recomputation_reruns_the_identical_native_producer(*, monkeypatch) -> None:
-    """A shared Raw query can be evicted and replayed byte for byte per chunk."""
+def test_one_raw_answer_feeds_both_readers_in_one_loop() -> None:
+    """A producer read by two queries is evaluated once per chunk for both."""
     model = _native_model(enable_jit=True)
     original = model._regimes["root"]
     initial = original.solution.period_kernels[0]
@@ -554,83 +566,39 @@ def test_recomputation_reruns_the_identical_native_producer(*, monkeypatch) -> N
         root="root",
         chunk_size=2,
     )
-    observations = []
-    runs = []
-    invoke = type(kernel).__call__
-
-    def record(*, name, compiled, arguments):
-        output = compiled(**arguments)
-        observations.append(
-            (
-                name,
-                id(getattr(compiled, "compiled", compiled)),
-                tuple(np.asarray(leaf).tobytes() for leaf in jax.tree.leaves(output)),
-            )
-        )
-        return output
-
-    def observe(self, **arguments):
-        cores = arguments["compiled_cores"]
-        arguments["compiled_cores"] = {
-            name: lambda _name=name, _compiled=compiled, **kwargs: record(
-                name=_name, compiled=_compiled, arguments=kwargs
-            )
-            for name, compiled in cores.items()
-        }
-        outputs = []
-        for recompute in (False, True):
-            observations.clear()
-            output = invoke(
-                self.with_recomputation() if recompute else self, **arguments
-            )
-            outputs.append(np.asarray(output.value).tobytes())
-            runs.append(tuple(observations))
-        assert outputs[0] == outputs[1]
-        return output
-
-    monkeypatch.setattr(type(kernel), "__call__", observe)
-
-    def install(selected):
-        object.__setattr__(
-            model,
-            "_regimes",
-            MappingProxyType(
-                dict(model._regimes)
-                | {
-                    "root": replace(
-                        original,
-                        solution=replace(
-                            original.solution,
-                            period_kernels=MappingProxyType({0: selected}),
-                        ),
-                    )
-                }
-            ),
-        )
-
-    install(kernel)
-    result = model.solve(params={}, log_level="off", runtime_checks=False)
-    retained_raw = [item for item in runs[0] if item[0] == "raw"]
-    recomputed_raw = [item for item in runs[1] if item[0] == "raw"]
-    assert len(retained_raw) == 2
-    assert len(recomputed_raw) == 4
-    assert [item[2] for item in recomputed_raw] == [
-        item[2] for item in retained_raw for _ in range(2)
-    ]
-    assert {item[1] for item in retained_raw} == {item[1] for item in recomputed_raw}
-    np.testing.assert_array_equal(
-        result.values[0]["root"], [[2, 0.5], [3, 1.5], [2, 5]]
+    object.__setattr__(
+        model,
+        "_regimes",
+        MappingProxyType(
+            dict(model._regimes)
+            | {
+                "root": replace(
+                    original,
+                    solution=replace(
+                        original.solution,
+                        period_kernels=MappingProxyType({0: kernel}),
+                    ),
+                )
+            }
+        ),
     )
+    calls, value = _solve_counting_dispatches(model=model)
+    assert calls == ["_initialize", "_chunks", "_finish"]
+    schedule = cast(
+        "queries._QueryChunks", kernel.programs["_chunks"].function
+    ).schedule
+    assert sorted(step.name for step in schedule) == ["left", "raw", "right", "root"]
+    np.testing.assert_array_equal(value, [[2, 0.5], [3, 1.5], [2, 5]])
 
 
 def test_native_query_bank_is_owned_and_published_by_native_programs(
     *, monkeypatch
 ) -> None:
-    """Host-loop output banks have declared storage and compiled write/read owners."""
+    """The chunk loop's bank has declared storage and compiled write/read owners."""
     model = _native_model(enable_jit=True)
     kernel = model._regimes["root"].solution.period_kernels[0]
     assert isinstance(kernel, queries._PolicyQueryKernel)
-    assert {"_initialize", "_source", "_publish", "_finish"} <= kernel.programs.keys()
+    assert kernel.programs.keys() == {"_initialize", "_chunks", "_finish"}
     for program in kernel.programs.values():
         banks = program.requirements.host_buffers["query_banks"]
         assert isinstance(banks, jax.ShapeDtypeStruct)
@@ -654,13 +622,84 @@ def test_native_query_bank_is_owned_and_published_by_native_programs(
 
     monkeypatch.setattr(type(kernel), "__call__", observe)
     result = model.solve(params={}, log_level="off", runtime_checks=False)
-    assert calls.count("_initialize") == 1
-    assert calls.count("_source") == 2
-    assert calls.count("_publish") == 2
-    assert calls.count("_finish") == 1
+    assert calls == ["_initialize", "_chunks", "_finish"]
     np.testing.assert_array_equal(
         result.values[0]["root"], [[2, 0.5], [3, 1.5], [2, 5]]
     )
+
+
+def test_query_period_compiles_only_its_dispatched_programs(*, monkeypatch) -> None:
+    """A query period lowers its bank, its chunk loop and its publication only."""
+    model = _native_model(enable_jit=True)
+    lowered = []
+    lower = backward._lower_resolved_candidate
+
+    def record(*, resolved, label, **kwargs):
+        if label.startswith("root "):
+            lowered.append(resolved.name)
+        return lower(resolved=resolved, label=label, **kwargs)
+
+    monkeypatch.setattr(backward, "_lower_resolved_candidate", record)
+    model.solve(params={}, log_level="off", runtime_checks=False)
+    assert sorted(lowered) == ["_chunks", "_finish", "_initialize"]
+
+
+def _solve_counting_dispatches(*, model: Model) -> tuple[list[str], FloatND]:
+    """Solve, returning every compiled query core dispatch and the root value."""
+    kernel = model._regimes["root"].solution.period_kernels[0]
+    calls = []
+    invoke = type(kernel).__call__
+
+    def record(*, name, compiled, arguments):
+        calls.append(name)
+        return compiled(**arguments)
+
+    def observe(self, **arguments):
+        cores = arguments["compiled_cores"]
+        arguments["compiled_cores"] = {
+            name: lambda _name=name, _compiled=compiled, **kwargs: record(
+                name=_name, compiled=_compiled, arguments=kwargs
+            )
+            for name, compiled in cores.items()
+        }
+        return invoke(self, **arguments)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(type(kernel), "__call__", observe)
+        result = model.solve(params={}, log_level="off", runtime_checks=False)
+    return calls, result.values[0]["root"]
+
+
+def test_query_dispatches_do_not_grow_with_the_number_of_chunks() -> None:
+    """One period's query closure dispatches a fixed number of executables."""
+    dispatches = {
+        chunk_size: _solve_counting_dispatches(
+            model=_native_model(enable_jit=True, source_size=8, chunk_size=chunk_size)
+        )[0]
+        for chunk_size in (1, 3, 8)
+    }
+    assert dispatches[1] == dispatches[3] == dispatches[8]
+
+
+@pytest.mark.parametrize("enable_jit", [False, True])
+def test_query_chunk_width_keeps_values_bitwise(*, enable_jit: bool) -> None:
+    """Unit, ragged-tail and whole-domain chunks publish identical value bits."""
+    values = {
+        chunk_size: np.asarray(
+            _solve_counting_dispatches(
+                model=_native_model(
+                    enable_jit=enable_jit, source_size=8, chunk_size=chunk_size
+                )
+            )[1]
+        )
+        for chunk_size in (1, 3, 8)
+    }
+    expected = [
+        [wealth + 2, wealth + 0.5] if wealth < 2 else [wealth, wealth + 3]
+        for wealth in range(8)
+    ]
+    np.testing.assert_array_equal(values[8], expected)
+    assert values[1].tobytes() == values[3].tobytes() == values[8].tobytes()
 
 
 def test_compiler_budget_selects_a_complete_smaller_common_chunk(
@@ -694,8 +733,8 @@ def test_compiler_budget_selects_a_complete_smaller_common_chunk(
     )
     result = model.solve(params={}, log_level="debug", runtime_checks=False)
     final = {item["triple"]: item for item in records}
-    target = final[("root", 0, "target")]
-    assert target["layout"].expected_value_shape[0] < 32
+    chunks = final[("root", 0, "_chunks")]
+    assert chunks["regime"].solution.period_kernels[0].chunk_size < 32
     assert all(
         item["memory"].reservation_bytes + item["resident_bytes"] <= narrow_total
         for item in final.values()
@@ -708,23 +747,15 @@ def test_compiler_budget_selects_a_complete_smaller_common_chunk(
 
 
 @pytest.mark.parametrize("failure", ["exception", "status"])
-def test_failed_query_reader_keeps_inputs_uncommitted_and_drains(
+def test_failed_query_chunks_never_publish_and_drain(
     *, monkeypatch, failure: str
 ) -> None:
-    """A failed reader neither releases its producer nor publishes a value bank."""
+    """A failed chunk loop or reader status publishes no value bank and drains."""
     model = _native_model(enable_jit=True)
     kernel = model._regimes["root"].solution.period_kernels[0]
-    ledgers = []
     events = []
-    held = []
-    ledger_type = queries.PlannedInputLiveness
     invoke = type(kernel).__call__
     close = queries.PendingSolveWork.close
-
-    def ledger(**kwargs):
-        instance = ledger_type(**kwargs)
-        ledgers.append(instance)
-        return instance
 
     def drain(self):
         events.append("drain")
@@ -732,45 +763,105 @@ def test_failed_query_reader_keeps_inputs_uncommitted_and_drains(
 
     def observe(self, **arguments):
         cores = dict(arguments["compiled_cores"])
-        target = cores["target"]
-        root = cores["root"]
-
-        def produce(**kwargs):
-            answer = target(**kwargs)
-            held.append(answer)
-            return answer
+        chunks = cores["_chunks"]
 
         def reject(**kwargs):
-            events.append("reader")
+            events.append("chunks")
             if failure == "exception":
                 raise RuntimeError("seeded query reader failure")
-            answer = root(**kwargs)
-            return (*answer[:3], jnp.zeros_like(answer[3]), answer[4])
+            bank, statuses, totals = chunks(**kwargs)
+            return bank, statuses.at[-1].set(False), totals
 
         def publish(**kwargs):
             del kwargs
             pytest.fail("A failed reader must never publish.")
 
-        arguments["compiled_cores"] = {
-            **cores,
-            "target": produce,
-            "root": reject,
-            "_publish": publish,
-        }
+        arguments["compiled_cores"] = {**cores, "_chunks": reject, "_finish": publish}
         return invoke(self, **arguments)
 
-    monkeypatch.setattr(queries, "PlannedInputLiveness", ledger)
     monkeypatch.setattr(queries.PendingSolveWork, "close", drain)
     monkeypatch.setattr(type(kernel), "__call__", observe)
     with pytest.raises(
-        (RuntimeError, backward.ExecutionPlanningError), match=r"failure|status"
+        (RuntimeError, backward.ExecutionPlanningError), match=r"failure|'root'.*status"
     ):
         model.solve(params={}, log_level="off", runtime_checks=False)
-    assert events == ["reader", "drain"]
-    assert not ledgers[0].is_release_eligible(artifact=(0, "target", 0, "answer"))
-    assert all(not array.is_deleted() for array in jax.tree.leaves(held))
-    with pytest.raises(RuntimeError, match="uncommitted"):
-        ledgers[0].assert_solve_complete()
+    assert events == ["chunks", "drain"]
+
+
+def test_query_closure_narrows_by_halving_the_chunk() -> None:
+    """Narrowing halves the common chunk and refuses below one source cell."""
+    kernel = (
+        _native_model(enable_jit=True, chunk_size=2)
+        ._regimes["root"]
+        .solution.period_kernels[0]
+    )
+    assert isinstance(kernel, queries._PolicyQueryKernel)
+    narrowed = kernel.narrow_workspace()
+    assert isinstance(narrowed, queries._PolicyQueryKernel)
+    assert narrowed.chunk_size == 1
+    assert narrowed.narrow_workspace() is None
+
+
+@pytest.mark.parametrize(
+    ("reservation", "chunk_size"),
+    [(1_000, 4), (1_001, 2), (2_000, 2), (2_001, 1), (10**9, 1)],
+)
+def test_refused_closure_narrows_to_its_fitting_width_in_one_pass(
+    *, reservation: int, chunk_size: int
+) -> None:
+    """A refusal halves the chunk as often as its reservation exceeds the room.
+
+    A reservation at most proportional to the chunk fits after those halvings, so
+    one planning pass reaches it and no fitting width is skipped.
+    """
+    model = _native_model(enable_jit=True, chunk_size=8, source_size=16)
+    error = backward._CellBudgetError(
+        message="refused",
+        triple=("root", 0, "_chunks"),
+        reservation_bytes=reservation,
+        resident_bytes=100,
+        budget_bytes=600,
+    )
+    regimes = backward._narrow_native_closure(regimes=model._regimes, error=error)
+    kernel = regimes["root"].solution.period_kernels[0]
+    assert isinstance(kernel, queries._PolicyQueryKernel)
+    assert kernel.chunk_size == chunk_size
+
+
+def test_narrowed_chunk_with_an_unchanged_bank_compiles_its_own_program(
+    *, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A budget that admits only the halved chunk solves at the halved chunk.
+
+    Four source cells pad to one bank shape at chunks 2 and 1, so the narrowed
+    program has the same arguments as the refused one. It must still be compiled
+    and admitted as its own executable, not stand in for the refused width.
+    """
+    records = []
+    log_record = backward._log_core_plan_record
+
+    def record(**kwargs):
+        records.append(kwargs)
+        return log_record(**kwargs)
+
+    monkeypatch.setattr(backward, "_log_core_plan_record", record)
+    _native_model(enable_jit=True, chunk_size=1, source_size=4, budget=2**30).solve(
+        params={}, log_level="debug", runtime_checks=False
+    )
+    budget = max(
+        item["memory"].reservation_bytes + item["resident_bytes"] for item in records
+    )
+    records.clear()
+    model = _native_model(enable_jit=True, chunk_size=2, source_size=4, budget=budget)
+    result = model.solve(params={}, log_level="debug", runtime_checks=False)
+    (chunks,) = (item for item in records if item["triple"][2] == "_chunks")
+    assert chunks["memory"].reservation_bytes + chunks["resident_bytes"] <= budget
+    np.testing.assert_array_equal(
+        result.values[0]["root"],
+        _native_model(enable_jit=True, chunk_size=1, source_size=4)
+        .solve(params={}, log_level="off", runtime_checks=False)
+        .values[0]["root"],
+    )
 
 
 def test_exhausted_common_chunk_refuses_without_dispatch(*, monkeypatch) -> None:
@@ -936,7 +1027,7 @@ def _finite_heavy_outside(*, q: FloatND, outside: PolicyAnswer) -> jax.Array:
     )
 
 
-def _fanout_kernel(*, model: Model, recompute: bool):
+def _fanout_kernel(*, model: Model, chunk_size: int = 2):
     original = model._regimes["root"]
     initial = original.solution.period_kernels[0]
     assert isinstance(initial, queries._PolicyQueryKernel)
@@ -957,8 +1048,7 @@ def _fanout_kernel(*, model: Model, recompute: bool):
         root_context=_CONTEXTS["root"],
         period=0,
         root="root",
-        chunk_size=2,
-        recompute=recompute,
+        chunk_size=chunk_size,
         definitions={
             "raw_a": raw,
             "raw_b": replace(raw, read=replace(raw.read, role="other")),
@@ -985,13 +1075,11 @@ def _fanout_kernel(*, model: Model, recompute: bool):
     return kernel
 
 
-def test_recomputation_materially_admits_a_smaller_native_budget(
-    *, monkeypatch
+def test_each_budget_narrowing_names_its_refused_cell(
+    *, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """Cheap readers do not require independent heavy answers to remain co-resident."""
+    """A narrowing retry logs the refused triple and its budget refusal."""
     records = []
-    selected = []
-    totals = {}
     log_record = backward._log_core_plan_record
 
     def record(**kwargs):
@@ -999,92 +1087,61 @@ def test_recomputation_materially_admits_a_smaller_native_budget(
         return log_record(**kwargs)
 
     monkeypatch.setattr(backward, "_log_core_plan_record", record)
-    for recompute in (False, True):
-        records.clear()
-        model = _native_model(enable_jit=True, target_roles=64, budget=2**26)
-        _fanout_kernel(model=model, recompute=recompute)
-        result = model.solve(params={}, log_level="debug", runtime_checks=False)
-        np.testing.assert_array_equal(
-            result.values[0]["root"], [[0, 3], [1, 4], [2, 5]]
-        )
-        totals[recompute] = max(
-            item["memory"].reservation_bytes + item["resident_bytes"]
-            for item in records
-        )
-    assert totals[True] < totals[False]
-    records.clear()
-    model = _native_model(enable_jit=True, target_roles=64, budget=totals[True])
-    kernel = _fanout_kernel(model=model, recompute=False)
-    invoke = type(kernel).__call__
-
-    def observe(self, **kwargs):
-        selected.append((self.recompute, self.chunk_size))
-        return invoke(self, **kwargs)
-
-    monkeypatch.setattr(type(kernel), "__call__", observe)
-    with monkeypatch.context() as blocked:
-        blocked.setattr(type(kernel), "narrow_workspace", lambda _self: None)
-        with pytest.raises(backward.ExecutionPlanningError, match="budget"):
-            model.solve(params={}, log_level="debug", runtime_checks=False)
-    assert not selected
-    result = model.solve(params={}, log_level="debug", runtime_checks=False)
-    assert selected == [(True, 2)]
-    np.testing.assert_array_equal(result.values[0]["root"], [[0, 3], [1, 4], [2, 5]])
+    model = _native_model(enable_jit=True, target_roles=64, budget=2**26)
+    _fanout_kernel(model=model, chunk_size=1)
+    model.solve(params={}, log_level="debug", runtime_checks=False)
+    budget = max(
+        item["memory"].reservation_bytes + item["resident_bytes"] for item in records
+    )
+    model = _native_model(enable_jit=True, target_roles=64, budget=budget)
+    _fanout_kernel(model=model)
+    with caplog.at_level(logging.INFO, logger="lcm"):
+        model.solve(params={}, log_level="progress", runtime_checks=False)
+    narrowings = [
+        record.getMessage()
+        for record in caplog.records
+        if record.getMessage().startswith("Workspace narrowing ")
+    ]
+    assert narrowings
+    for attempt, message in enumerate(narrowings, start=1):
+        assert message.startswith(f"Workspace narrowing {attempt}: ")
+        assert " at 'root' period 0 refused; " in message
+        assert "cannot select a workspace width" in message
 
 
-@pytest.mark.parametrize("mutation", ["missing", "generation", "omitted", "duplicate"])
-def test_closed_schedule_refuses_incomplete_or_wrong_generation_bindings(
-    mutation: str,
+def test_one_planning_pass_narrows_every_refused_cell(
+    *, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A claimed smaller frontier must match all actual native input references."""
+    """Two core refusals in one planning pass cost one narrowing and one re-plan.
+
+    Both refused cores belong to the root cell, whose single kernel serves them.
+    """
+    refusals = []
+    narrowed = []
+    passes = []
+    plan = backward.plan_workspace
+    compile_all = backward._compile_all_functions
+
+    def refuse_first_two_selections(**kwargs):
+        if len(refusals) < 2:
+            refusals.append(len(passes))
+            raise backward.WorkspaceBudgetError("refused")
+        return plan(**kwargs)
+
+    def count_passes(**kwargs):
+        passes.append(len(passes))
+        return compile_all(**kwargs)
+
+    def keep_kernel(*, regimes, error):
+        narrowed.append(error.triple[:2])
+        return regimes
+
+    monkeypatch.setattr(backward, "plan_workspace", refuse_first_two_selections)
+    monkeypatch.setattr(backward, "_compile_all_functions", count_passes)
+    monkeypatch.setattr(backward, "_narrow_native_closure", keep_kernel)
     model = _native_model(enable_jit=True, budget=2**26)
-    original = model._regimes["root"]
-    kernel = original.solution.period_kernels[0]
-    assert isinstance(kernel, queries._PolicyQueryKernel)
-    schedule = list(kernel.programs["root"].requirements.internal_schedule)
-    root = schedule[-2]
-    if mutation == "missing":
-        schedule[-2] = replace(
-            root, inputs={k: v for k, v in root.inputs.items() if k != "outside"}
-        )
-    elif mutation == "generation":
-        schedule[-2] = replace(root, inputs={**root.inputs, "outside": ("target", 99)})
-    elif mutation == "omitted":
-        schedule.pop(1)
-    else:
-        schedule.insert(1, schedule[1])
-    selected = replace(
-        kernel,
-        programs=MappingProxyType(
-            {
-                name: replace(
-                    program,
-                    requirements=replace(
-                        program.requirements, internal_schedule=tuple(schedule)
-                    ),
-                )
-                for name, program in kernel.programs.items()
-            }
-        ),
-    )
-    object.__setattr__(
-        model,
-        "_regimes",
-        MappingProxyType(
-            {
-                **model._regimes,
-                "root": replace(
-                    original,
-                    solution=replace(
-                        original.solution,
-                        period_kernels=MappingProxyType({0: selected}),
-                    ),
-                ),
-            }
-        ),
-    )
-    with pytest.raises(backward.ExecutionPlanningError, match="schedule"):
-        model.solve(params={}, log_level="off", runtime_checks=False)
+    model.solve(params={}, log_level="off", runtime_checks=False)
+    assert (narrowed, len(passes)) == ([("root", 0)], 2)
 
 
 def _vector_projection(wealth: FloatND) -> FloatND:
@@ -1294,7 +1351,7 @@ def test_unavailable_benchmark_guards_domain_poison_and_its_derivative() -> None
                 "period": jnp.int32(0),
                 "age": jnp.int32(0),
                 "action": context.state_action_space.actions["action"],
-                "next_regime_to_V_arr": {},
+                "next_regime_to_V_arr": MappingProxyType({}),
             }
         )
         return jnp.sum(jnp.where(answer[2][:, None], answer[0], 0.0))
@@ -1466,13 +1523,9 @@ def test_information_native_output_omits_hidden_policy_axes(
         queries._LIVE: live,
         queries._INFORMATION: information,
     }
-    program = kernel.programs["child"]
-    lowered = jax.jit(program.function).lower(**arguments)
+    cores = cast("queries._QueryChunks", kernel.programs["_chunks"].function).cores
+    lowered = jax.jit(cores["child"]).lower(**arguments)
     assert lowered.out_info[1].shape == live.shape
-    assert isinstance(program.output_roles, tuple)
-    action_role = program.output_roles[1]
-    assert isinstance(action_role, StateAxesLeading)
-    assert action_role.shape == live.shape
     actual = jax.block_until_ready(lowered.compile()(**arguments))
     np.testing.assert_array_equal(actual[1], -np.ones(live.shape, np.int32))
     assert actual[1].dtype == jnp.int32
@@ -1510,7 +1563,7 @@ def test_information_native_output_omits_hidden_policy_axes(
         jax.jit(lambda: jax.lax.map(scalar_parent, jnp.arange(2)))()
     )
     actual_parent = jax.block_until_ready(
-        jax.jit(kernel.programs["parent"].function)(**{**arguments, "outside": actual})
+        jax.jit(cores["parent"])(**{**arguments, "outside": actual})
     )
     np.testing.assert_array_equal(actual_parent[1], -np.ones(live.shape, np.int32))
     for index in (0, 2):
@@ -1705,3 +1758,168 @@ def test_information_mesh_unavailable_observation_keeps_producer_unexecuted(
         assert -1.0 in events["projection"]
         assert any(not np.isfinite(value) for value in events["law"])
         np.testing.assert_array_equal(valid[0], desired=False)
+
+
+def test_budget_narrowing_retries_reuse_executables_already_compiled(
+    *, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A narrowing retry compiles no lowering key an earlier attempt compiled."""
+    records = []
+    log_record = backward._log_core_plan_record
+
+    def record(**kwargs):
+        records.append(kwargs)
+        return log_record(**kwargs)
+
+    monkeypatch.setattr(backward, "_log_core_plan_record", record)
+    model = _native_model(enable_jit=True, target_roles=64, budget=2**26)
+    _fanout_kernel(model=model, chunk_size=1)
+    model.solve(params={}, log_level="debug", runtime_checks=False)
+    budget = max(
+        item["memory"].reservation_bytes + item["resident_bytes"] for item in records
+    )
+    compiled_keys = []
+    compile_and_log = backward._compile_and_log
+
+    def count(**kwargs):
+        compiled_keys.append(kwargs["lowering_key"])
+        return compile_and_log(**kwargs)
+
+    monkeypatch.setattr(backward, "_compile_and_log", count)
+    narrowings = []
+    narrow = backward._narrow_native_closure
+
+    def observe(**kwargs):
+        narrowings.append(kwargs["error"].triple)
+        return narrow(**kwargs)
+
+    monkeypatch.setattr(backward, "_narrow_native_closure", observe)
+    model = _native_model(enable_jit=True, target_roles=64, budget=budget)
+    _fanout_kernel(model=model)
+    model.solve(params={}, log_level="off", runtime_checks=False)
+    assert narrowings
+    assert len(compiled_keys) == len(set(compiled_keys))
+
+
+def test_budget_refusal_logs_the_resident_split_of_its_busiest_device(
+    *, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A budget refusal warns with resident components summing to its total."""
+    records = []
+    log_record = backward._log_core_plan_record
+
+    def record(**kwargs):
+        records.append(kwargs)
+        return log_record(**kwargs)
+
+    monkeypatch.setattr(backward, "_log_core_plan_record", record)
+    model = _native_model(enable_jit=True, target_roles=64, budget=2**26)
+    _fanout_kernel(model=model, chunk_size=1)
+    model.solve(params={}, log_level="debug", runtime_checks=False)
+    budget = max(
+        item["memory"].reservation_bytes + item["resident_bytes"] for item in records
+    )
+    model = _native_model(enable_jit=True, target_roles=64, budget=budget)
+    kernel = _fanout_kernel(model=model)
+    monkeypatch.setattr(type(kernel), "narrow_workspace", lambda _self, **_: None)
+    with (
+        caplog.at_level(logging.WARNING, logger="lcm"),
+        pytest.raises(backward.ExecutionPlanningError, match="budget") as error,
+    ):
+        model.solve(params={}, log_level="progress", runtime_checks=False)
+    (resident,) = (
+        int(value)
+        for value in re.findall(r"keeps (\d+) bytes resident", str(error.value))
+    )
+    splits = [
+        record.getMessage()
+        for record in caplog.records
+        if record.levelno == logging.WARNING
+        and record.getMessage().startswith("Resident split for regime 'root'")
+    ]
+    total, *components = (int(value) for value in re.findall(r"=(\d+)", splits[-1]))
+    assert (total, sum(components)) == (resident, resident)
+
+
+def test_resident_split_aggregates_owners_and_bounds_the_listing(
+    *, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Live groups sum per kind and owning regime; the smallest share a remainder."""
+    values = {
+        frozenset(
+            {
+                ValueArtifactAddress(
+                    kind=ValueArtifactKind.REGIME_VALUE, period=period, regime=name
+                )
+            }
+        ): size
+        for name, size in zip("abcdefghi", range(10, 100, 10), strict=True)
+        for period in (1, 2)
+    }
+    breakdown = ResidentBreakdown(
+        device_id=0,
+        live=MappingProxyType({**values, frozenset({"scratch"}): 1}),
+        peer_bytes=2,
+        internal_bytes=3,
+        fixed_bytes=4,
+        transfer_scratch_bytes=5,
+    )
+    with caplog.at_level(logging.WARNING, logger="lcm"):
+        backward._log_resident_split(
+            logger=logging.getLogger("lcm"),
+            triple=("root", 0, "core"),
+            breakdown=breakdown,
+        )
+    assert caplog.records[-1].getMessage() == (
+        "Resident split for regime 'root' period 0 core 'core' on device 0: "
+        "total=915 = live[regime_value:i]=180 + live[regime_value:h]=160 + "
+        "live[regime_value:g]=140 + live[regime_value:f]=120 + "
+        "live[regime_value:e]=100 + live[regime_value:d]=80 + "
+        "live[regime_value:c]=60 + live[regime_value:b]=40 + "
+        "live[remainder of 2 owners]=21 + internal=3 + peer_outputs=2 + "
+        "fixed_owners=4 + transfer_scratch=5"
+    )
+
+
+def test_query_core_repr_is_bounded_by_its_name() -> None:
+    """A jitted query core renders in a few hundred characters, whatever its graph."""
+    _native_model(enable_jit=False)
+    node = QueryNode(
+        read=_read(kind=QueryKind.PARTICIPATING, target="target"),
+        context=_CONTEXTS["target"],
+    )
+    definitions = {f"target_{i}": node for i in range(100)}
+    core = queries._QueryCore(
+        node=node, period=0, name="target_0", definitions=definitions
+    )
+    assert len(repr(core)) < 300
+
+
+def test_value_reads_walk_each_query_node_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every core key reuses one walk of the graph's continuation operands."""
+    _native_model(enable_jit=False)
+    node = QueryNode(
+        read=_read(kind=QueryKind.PARTICIPATING, target="target"),
+        context=_CONTEXTS["target"],
+    )
+    scalar = queries.ScalarPolicyQueries(
+        definitions={"first": node, "second": node}, root="first", period=0
+    )
+    walked = []
+    node_inputs = queries._node_inputs
+
+    def counted(
+        *, node: QueryNode, period: int
+    ) -> tuple[CoreArgumentBuilder, tuple[ValueRead, ...]]:
+        walked.append(node)
+        return node_inputs(node=node, period=period)
+
+    monkeypatch.setattr(queries, "_node_inputs", counted)
+    reads = {key: scalar.value_reads(core_key=key) for key in ("a", "b", "a")}
+    assert len(walked) == 2
+    assert {read.source.core_key for read in reads["a"]} <= {"a"}
+    assert [
+        replace(read, source=replace(read.source, core_key="a")) for read in reads["b"]
+    ] == list(reads["a"])

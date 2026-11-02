@@ -83,7 +83,6 @@ def lower_joint_normal_processes(
                 mu=0.0,
                 sigma=1.0,
                 n_std=declaration.n_std,
-                fold=declaration.fold,
                 joint=declaration,
                 group=group,
             )

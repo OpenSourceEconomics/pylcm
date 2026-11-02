@@ -269,7 +269,7 @@ def _get_V_interpolator_process_aware(
       instead of between two. The dropped corner carries weight zero, so the
       answer is the one an unpinned read gives; what changes is that the
       interpolation box no longer doubles per categorical axis.
-    - A non-folded process axis (`discrete_states`, `_ContinuousStochasticProcess`):
+    - A process axis (`discrete_states`, `_ContinuousStochasticProcess`):
       the incoming value is treated as a genuine VALUE in the process's own
       units (not a node index) and mapped to a fractional coordinate via
       `grid.get_coordinate`, clamped to the node range (see
@@ -452,7 +452,7 @@ def _get_process_coordinate_finder(
     Args:
         in_name: Name via which the value to be translated into a coordinate will be
             passed into the resulting function.
-        grid: The non-folded continuous stochastic process whose node axis the
+        grid: The continuous stochastic process whose node axis the
             value is translated onto.
 
     Returns:

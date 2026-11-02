@@ -11,7 +11,6 @@ from lcm.solvers import (
     ExactEnvelope,
     FUESEnvelope,
     LTMEnvelope,
-    MSSEnvelope,
     RFCEnvelope,
 )
 
@@ -20,7 +19,6 @@ _BACKEND_TYPES = (
     FUESEnvelope,
     RFCEnvelope,
     LTMEnvelope,
-    MSSEnvelope,
 )
 
 

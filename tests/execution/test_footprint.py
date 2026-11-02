@@ -767,3 +767,44 @@ def test_resident_inventory_refuses_plain_dict_reservations(*, field: str) -> No
     )
     with pytest.raises(BeartypeCallHintParamViolation, match=field):
         dataclasses.replace(inventory, **{field: {}})
+
+
+def test_resident_breakdown_splits_the_busiest_device_into_its_total() -> None:
+    """Every charge on the busiest device is named and sums to its total."""
+    stored = frozenset({"stored", "stored_alias"})
+    read = frozenset({"read"})
+    remote = frozenset({"remote"})
+    inventory = ResidentInventory(
+        device_ids=(0, 1),
+        live=MappingProxyType(
+            {
+                stored: {
+                    "stored": _footprint(size=40, devices=(0, 1)),
+                    "stored_alias": _footprint(size=50, devices=(0, 1)),
+                },
+                read: {"read": _footprint(size=1000, devices=(1,))},
+                remote: {"remote": _footprint(size=9, devices=(1,))},
+            }
+        ),
+        peer_bytes=MappingProxyType({0: 3, 1: 0}),
+        declared_inputs=("read",),
+        fixed_bytes=MappingProxyType({1: 5}),
+        shared_copies=MappingProxyType(
+            {"copy": ArtifactFootprint(bytes_per_device=100, device_ids=(1,))}
+        ),
+        transfer_scratch_bytes=MappingProxyType({1: 7}),
+        internal_bytes=11,
+    )
+
+    breakdown = inventory.resident_breakdown()
+
+    assert (
+        breakdown.device_id,
+        dict(breakdown.live),
+        breakdown.peer_bytes,
+        breakdown.internal_bytes,
+        breakdown.fixed_bytes,
+        breakdown.transfer_scratch_bytes,
+        breakdown.total,
+        inventory.resident_bytes(),
+    ) == (1, {stored: 50, remote: 9}, 0, 11, 5, 7, 82, 82)

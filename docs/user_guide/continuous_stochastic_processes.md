@@ -20,27 +20,33 @@ from lcm import NormalIIDProcess, TauchenAR1Process
 - `*AR1Process` — an AR(1) process with a chosen discretization scheme.
 
 > **Check solver support before adding the shock.** A process can enlarge the
-> continuation-node product or change stored value-array topology when `fold=True`.
-> EGM-family and collective regimes support narrower combinations than `GridSearch`;
-> build the intended specialized regime early and let model validation check it.
+> continuation-node product. EGM-family and collective regimes support narrower
+> combinations than `GridSearch`; build the intended specialized regime early and let
+> model validation check it.
+
+A shock drawn and used within one period can instead be declared as a named `ShockGroup`
+(`Model(shocks=...)`, `Regime(shocks=...)`). In an endogenous-grid regime such a group
+is solved as the IID node states described here, while its published values integrate
+the nodes; see
+[Named current-IID shocks in endogenous-grid regimes](../reference/solvers.md#current-iid-egm).
 
 ## Simulation draws
 
-Continuous process simulation defaults to `simulate_draws="continuous"`: draw from its
-distribution rather than from the discretization. Set `simulate_draws="nodes"` when
+Continuous process simulation defaults to `simulated_draws="continuous"`: draw from its
+distribution rather than from the discretization. Set `simulated_draws="nodes"` when
 simulation must stay on the solve support:
 
 ```python
 NormalIIDProcess(
-    n_points=7, gauss_hermite=True, mu=0.0, sigma=1.0, simulate_draws="nodes"
+    n_points=7, gauss_hermite=True, mu=0.0, sigma=1.0, simulated_draws="nodes"
 )
 ```
 
 Node mode samples the exact resolved physical solve nodes with the IID weights or
 current Markov transition row. It works with fixed and runtime parameters, supplied
-Tauchen nodes and ordinary folded IID declarations. It changes forward realizations; it
-leaves the solve grid and expectations alone. Transition-local shock lotteries already
-sample their declared support and retain that behavior in either mode.
+Tauchen nodes and IID declarations read only as their draw. It changes forward
+realizations; it leaves the solve grid and expectations alone. Transition-local shock
+lotteries already sample their declared support and retain that behavior in either mode.
 
 To solve under one process law and simulate a different continuous law, declare the
 process state with public `Phased`:
@@ -61,9 +67,9 @@ income = Phased(
 Put `income` in `states`, with no ordinary `state_transitions` entry. Values and
 continuation decisions use the solve law; realized shocks use the simulation law.
 Constructor parameters can hold separate estimates. A parameter left `None` in both
-variants uses the same runtime parameter name and value. Process/non-process pairs,
-folded phase pairs, and distinct simulation laws with node draws are rejected at
-construction. Ordinary node simulation is a bare process declaration.
+variants uses the same runtime parameter name and value. Process/non-process pairs, and
+distinct simulation laws with node draws are rejected at construction. Ordinary node
+simulation is a bare process declaration.
 
 ## IID Processes
 
@@ -129,13 +135,11 @@ state-conditioned law or a replacement for `JointTransition`.
 
 The internal Cartesian value axes are named `<group>_normal_<dimension>` and carry
 standard-normal coordinates. Physical correlated support is not Cartesian, so these axes
-differ from the physical names in the DAG and simulation. `fold=True` folds every
-internal coordinate and inherits the scalar IID solver and timing restrictions. It
-retains physical shocks in simulation output.
+differ from the physical names in the DAG and simulation. Simulation output carries the
+physical shocks.
 
 Initial-population recipes can inspect `model.initial_state_names(regime_name=...)` to
-obtain physical scalar names, including folded and carried states. For a continuous
-state,
+obtain physical scalar names, including carried states. For a continuous state,
 `model.initial_state_bounds(params=..., regime_name=..., state_name=..., period=...)`
 returns its marginal grid extents using the supplied runtime law. Supply the zero-based
 period for specialized grids. These intervals describe the discretized support; they
@@ -236,7 +240,7 @@ separated by adjacent midpoints; the first and last bins include the tails. `mu`
 defaults to zero. Set `rho`, `sigma`, or `mu` to `None` to supply that law parameter at
 solve or simulation time. The nodes remain fixed as parameters vary, and `rho=1` is
 supported. Simulation defaults to the continuous AR(1) law, as for ordinary Tauchen. Set
-`simulate_draws="nodes"` to sample these physical nodes with the transition rows.
+`simulated_draws="nodes"` to sample these physical nodes with the transition rows.
 
 Choose a different transition rule when the model specifies another discrete
 approximation:
@@ -388,91 +392,85 @@ params = {
 `n_points` and `gauss_hermite` are structural, not distribution parameters — they must
 always be given at construction.
 
-## Folding an IID shock out of stored values
+## Shock timing is read off the model
 
-An IID process used as a state may declare `fold=True`:
+Every stochastic process follows one rule, and nothing about timing is declared:
+
+- Reading `x` in any model function reads this period's realization, which is known at
+  the choice.
+- Reading `next_x` reads the draw after the choice, which the solve integrates in the
+  continuation. Only state transitions, and functions only they use, may read it.
+
+AR(1) and Markov states behave this way. For an IID shock the rule decides whether the
+regime stores an axis for it. A regime that reads the current value `x` keeps the
+shock's node axis. A regime whose state transitions read the shock only as `next_x`
+stores no axis for it: nothing chosen in the period can depend on a draw taken after the
+choice, so the regime's value does not depend on it.
+
+A shock realized after the period's choices, such as a bill taken off end-of-period
+wealth, is the typical case. Declare it as an IID process state, or as a `ShockGroup` in
+`Model(shocks=...)` listed in the regime's `shocks`:
 
 ```python
-income_shock = NormalIIDProcess(
-    n_points=7,
-    gauss_hermite=True,
-    mu=0.0,
-    sigma=1.0,
-    fold=True,
+from lcm import Regime
+from lcm.shocks import GaussHermite, Normal, Product, ShockGroup
+
+
+def medical_bill(next_xi):
+    return 0.4 * jnp.exp(0.5 * next_xi)
+
+
+def next_wealth(*, wealth, consumption, medical_bill):
+    return wealth - consumption - medical_bill
+
+
+shocks = {
+    "bill_shock": ShockGroup(
+        shocks={"xi": Normal(mu=0.0, sigma=1.0)},
+        nodes=Product(xi=GaussHermite(5)),
+    )
+}
+alive = Regime(
+    states={"wealth": wealth_grid},
+    actions={"consumption": consumption_grid},
+    state_transitions={"wealth": next_wealth},
+    functions={"utility": utility, "medical_bill": medical_bill},
+    shocks=("bill_shock",),
 )
 ```
 
-### Shocks observed before the within-period decision
+Declaring `"xi": NormalIIDProcess(n_points=5, gauss_hermite=True, mu=0.0, sigma=1.0)` in
+`states` instead gives the same solution: the state is read only as `next_xi`, so it is
+no state of `alive`, and an initial value supplied for it is dropped.
 
-Folding removes the process axis from each stored value function; it does **not** remove
-the shock from the economic model. The solve evaluates every shock node, evaluates the
-feasible action choice at that node, and only then averages the resulting values with
-the process's own quadrature weights. Consequently a folded period stores one fewer
-axis, but utility and the chosen action may still depend on the realized shock.
+The solve takes the expectation over the shock's nodes and weights inside the
+continuation, so the draw may change a next state. Nonlinear certainty equivalents apply
+their transform to each realized continuation value before averaging. The nodes serve
+only that integration: simulation draws each subject's value in each period from the
+shock's continuous law, since the draw enters only next period's state law and indexes
+no policy read. An IID process state declared with `simulated_draws="nodes"` keeps the
+node lottery; a `ShockGroup` has no such option. `shock_paths` accepts a plain array of
+physical values for the shock, on or off the nodes, dated at the destination period.
 
-For an eligible JIT `GridSearch` fold, pylcm evaluates the action product in bounded
-blocks at each shock node before applying that same quadrature. The fold-node axis
-itself is still evaluated and reduced in full: this route changes only action
-evaluation, not the stochastic rule or reduction order. Runtime and peak-memory effects
-require paired measurement.
+`repr(model)` lists, per regime, which shocks carry an axis and which are integrated
+out, for example
+`Model(n_regimes=2, n_periods=3, shocks={alive: integrated=[bill_shock]})`.
 
-Forward simulation is unchanged economically. A subject entering from another regime
-draws the shock on that transition; a subject whose initial regime is the folding regime
-must seed the process state in `initial_conditions`. Subsequent IID transitions redraw
-it, and the realized value remains available to utility, policy, and the output table.
-With the same seed, a folded model and its otherwise identical unfolded model produce
-the same simulated panel; only value-function storage differs.
+Utility and constraints are evaluated before the draw. A read of `next_xi` from either,
+directly or through a helper, is refused when the model is built, with the same message
+as for an AR(1) state. A group whose current value and draw are both read in one regime
+is refused too: a group's value is integrated within the period it is realized in, so no
+later period could condition on the draw. Declare such a shock as an IID process state;
+reading both its value and its draw keeps its axis and hands the draw to the next period
+as that state's value.
 
-This is a narrow exact reduction. Model construction enforces all of the following:
-
-- the declaration is an IID process state; persistent processes have no `fold` field;
-- the regime is singleton and uses `GridSearch`;
-- every distribution parameter is fixed when the process is constructed, because fold
-  weights are built with the kernels rather than read from runtime params;
-- continuation uses an absent or exact `LinearExpectation`, excluding nonlinear
-  certainty equivalents and custom subclasses;
-- the regime has no EV1 taste shocks;
-- no next-state or next-regime transition, including a transitive helper dependency,
-  reads the folded shock's realized node;
-- no same-period value-dependent predicate or projection owned by the folding regime
-  reads the folded realization;
-- the folding regime itself is not named as a gated-edge target, route fallback,
-  same-period reference, or gate reference. This endpoint ban is unconditional: those
-  readers need its per-node value even when their projections do not name the folded
-  shock.
-
-Those rules describe a shock observed before the within-period decision and averaged
-after optimizing at each realization. If that realization changes a later state, selects
-a regime, or is needed by a value-dependent endpoint, retain the ordinary unfolded axis.
-
-A folded `StateConditioned` IID shock has one further timing restriction. Within a
-non-terminal folding regime, every declared law for the conditioner must be
-`fixed_transition(conditioner_name)`; a terminal folding regime has no local law.
-Additionally, every structurally reachable incoming source's target-local cell **toward
-the folding regime** must be fixed. Such an incoming source may move the conditioner
-toward a different target. The shock entering period $t$ was drawn using the category at
-$t-1$, whereas the fold gathers a quadrature row along the category visible at $t$;
-those rows are the same only when the conditioner cannot move into the fold. A model
-that needs a moving conditioner there must use `fold=False`.
-
-### Shocks realized after choices and used only by a transition
-
-A folded IID shock without a conditioning state that nothing in a regime reads within
-the period — not utility, constraints, the regime transition or any law — is
-*transition-only* there. Only a law's read of its draw `next_<shock>` remains, for
-example a bill realized after the period's choices and taken off end-of-period wealth.
-Such a shock is no state of that regime: its value carries no axis and the period is not
-evaluated per node. No initial realization is required for that regime. A supplied
-column is ignored only when no simulation regime retains that name as a state; if
-another regime uses it within the period, entrants to that regime must seed it.
-
-Every edge whose laws read the draw takes it from the process's own nodes and weights,
-and the source's continuation enumerates those outcomes. This timing permits the draw to
-change a next state. It also preserves nonlinear certainty equivalents, which apply
-their transform to each realized continuation value before averaging. A law may not read
-the draw toward a target that folds the shock and does read it within its period; model
-construction refuses that combination because the target's averaged value and the
-source's draw would be correlated.
+A group read only as its draw is lowered to one fixed node set per shock. Its laws are
+continuous with fixed numeric parameters, its shocks independent, and its rule
+deterministic: `Product` of scalar rules, or `UserNodes` for a one-shock group. Runtime
+or state-dependent law parameters, `Discrete` laws, correlation and sampled
+(`MonteCarlo`, `QuasiMonteCarlo`) rules are refused when the model is built. A group
+read as a value in one regime and only as a draw in another is refused; declare a
+separate group for each timing.
 
 ### Precomputing continuation values for an additive transition
 
@@ -524,10 +522,7 @@ outcome enumeration, including subclasses of `LinearExpectation` that override i
 meaning. The same boundary applies to certainty equivalents supplied on the model or
 regime and survives archiving models built with these rules. Model archives preserve
 their economic closures and continuation logic; rebuild from declarations when adopting
-different solver numerics. This fallback does not relax the regime constructor's
-separate folding restrictions: a folded state combined with an explicit nonlinear regime
-certainty equivalent or custom `LinearExpectation` subclass is rejected before
-transition-only pruning. The additive declaration's dependency checks still run before
+different solver numerics. The additive declaration's dependency checks still run before
 fallback; an invalid decomposition raises a construction error. On the linear averaging
 route, gated, collective, entered or factored continuations are unsupported and raise a
 construction error; use a plain `base + shock` function there.

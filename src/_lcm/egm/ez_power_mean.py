@@ -64,6 +64,7 @@ def _unit_exponent_data(
 
     # keyword-only-exempt: library-callback=jax.vmap
     def row(
+        v: FloatND,
         d: FloatND,
         weights_log: FloatND,
         live: BoolND,
@@ -72,6 +73,7 @@ def _unit_exponent_data(
         valid: ScalarBool,
     ) -> tuple[ScalarFloat, ScalarFloat, ScalarFloat]:
         scaled = _unit_risk_exponent(
+            values=v,
             d=d,
             log_w=weights_log,
             positive=live,
@@ -111,6 +113,7 @@ def _unit_exponent_data(
         )
 
     coefficients, logabs, sign = jax.vmap(row)(
+        jnp.broadcast_to(safe_values, centered.shape).reshape((-1, width)),
         centered.reshape((-1, width)),
         log_w.reshape((-1, width)),
         positive.reshape((-1, width)),

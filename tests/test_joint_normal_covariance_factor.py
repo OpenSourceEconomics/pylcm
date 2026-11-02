@@ -241,14 +241,13 @@ def _spread_utility(
     return ((y - x) / shock_scale) ** 2
 
 
-def _spread_model(*, scale: float, fold: bool) -> lcm.Model:
+def _spread_model(*, scale: float) -> lcm.Model:
     process = lcm.JointNormalIIDProcess(
         states=("x", "y"),
         n_points=3,
         gauss_hermite=True,
         mean=(0.0, 0.0),
         cov=None,
-        fold=fold,
     )
     regime = lcm.Regime(
         states={"joint": process}, functions={"utility": _spread_utility}
@@ -271,16 +270,13 @@ def _spread_model(*, scale: float, fold: bool) -> lcm.Model:
 
 
 @pytest.mark.parametrize("exponent_sign", [-1, 0, 1])
-@pytest.mark.parametrize("fold", [False, True])
-def test_public_lookup_prices_the_independent_spread(
-    *, exponent_sign: int, fold: bool
-) -> None:
+def test_public_lookup_prices_the_independent_spread(*, exponent_sign: int) -> None:
     """At physical `(0, s)` utility is 1, its expectation 1 and the value 1.9."""
     dtype, _ = _dtype_and_extreme_exponent()
     scale, cov = _scaled_law(
         exponent_sign=exponent_sign, matrix=np.array(((1, 1), (1, 2)))
     )
-    model = _spread_model(scale=scale, fold=fold)
+    model = _spread_model(scale=scale)
     params = {name: {"joint": {"cov": cov}} for name in ("working", "done")}
     solution = model.solve(params=params, runtime_checks=True, log_level="off")
     lookup = model.lookup_policy(
@@ -304,15 +300,14 @@ def test_public_lookup_prices_the_independent_spread(
 
 
 @pytest.mark.parametrize("exponent_sign", [-1, 0, 1])
-@pytest.mark.parametrize("fold", [False, True])
 def test_simulation_publishes_the_supplied_physical_initial_state(
-    *, exponent_sign: int, fold: bool
+    *, exponent_sign: int
 ) -> None:
     """The physical initial state `(0, s)` survives lowering and publication."""
     scale, cov = _scaled_law(
         exponent_sign=exponent_sign, matrix=np.array(((1, 1), (1, 2)))
     )
-    model = _spread_model(scale=scale, fold=fold)
+    model = _spread_model(scale=scale)
     params = {name: {"joint": {"cov": cov}} for name in ("working", "done")}
     solution = model.solve(params=params, runtime_checks=True, log_level="off")
     result = model.simulate(
