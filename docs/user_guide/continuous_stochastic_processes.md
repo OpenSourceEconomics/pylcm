@@ -291,8 +291,8 @@ All rules support finite unit-root or explosive persistence on these fixed nodes
 also support a `StateConditioned` innovation scale. Quadrature target clipping is part
 of that transition rule; it does not change the model's `off_grid` policy.
 
-The selected rule changes Bellman integration and `simulate_draws="nodes"`. It does
-**not** change `simulate_draws="continuous"`: that mode still draws a normal innovation
+The selected rule changes Bellman integration and `simulated_draws="nodes"`. It does
+**not** change `simulated_draws="continuous"`: that mode still draws a normal innovation
 and can leave the state grid. Use node draws to simulate the same finite-state lottery
 that the solver integrates. These options apply only to `on_nodes`; ordinary
 `TauchenAR1Process(...)` retains its existing midpoint rule.

@@ -97,8 +97,11 @@ def clip_next_states(
         }
         for name in states[target]:
             grid = regime.simulation.grids[name]
-            if not isinstance(grid, ContinuousGrid) or isinstance(
-                grid, _ContinuousStochasticProcess
+            # A process value beyond its nodes is a state only its own
+            # `off_grid` rule acts on; its reads already follow that rule.
+            if not isinstance(grid, ContinuousGrid) or (
+                isinstance(grid, _ContinuousStochasticProcess)
+                and grid.off_grid not in ("raise", "clip_state")
             ):
                 continue
             check = validation_enabled(logger) or grid.off_grid == "raise"
