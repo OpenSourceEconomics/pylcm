@@ -23,6 +23,8 @@ neighbouring cells; the continuation's value interpolator is its only caller.
 - `-inf` marks a state at which no action is feasible. A read whose stencil
   gives such a corner a nonzero weight, of either sign, is itself `-inf`; a
   corner of exactly zero weight contributes nothing, whatever stands at it.
+- Finite extrapolation blends successive pairs of nodes, keeping constant
+  directions constant even when a coordinate lies far outside the grid.
 """
 
 import functools
@@ -31,11 +33,13 @@ import operator
 from collections.abc import Sequence
 
 import jax.numpy as jnp
-from jax import jit, lax
+from jax import custom_jvp, jit, jvp, lax
 
 from _lcm.probability import is_represented_zero
 from _lcm.zero_safe import zero_safe_weighted_term
-from lcm.typing import FloatND, IntND
+from lcm.typing import BoolND, FloatND, IntND
+
+type _ExtrapolationArguments = tuple[FloatND, tuple[FloatND, ...], FloatND]
 
 
 @functools.partial(jit, static_argnames=("pinned_axes",))
@@ -147,7 +151,152 @@ def map_coordinates(
     if jnp.issubdtype(input.dtype, jnp.integer):
         result = _round_half_away_from_zero(result)
 
-    return result.astype(input.dtype)
+    result = result.astype(input.dtype)
+    if not jnp.issubdtype(input.dtype, jnp.floating):
+        return result
+    return _stabilize_extrapolation(
+        values=input, coordinates=coordinates, original=result, pinned_axes=pinned_axes
+    )
+
+
+def _stabilize_extrapolation(
+    *,
+    values: FloatND,
+    coordinates: Sequence[FloatND | IntND] | FloatND | IntND,
+    original: FloatND,
+    pinned_axes: tuple[int, ...],
+) -> FloatND:
+    """Use a supported finite extension outside the grid, preserving interior bits."""
+    outside = jnp.zeros((), dtype=bool)
+    for axis, (coordinate, size) in enumerate(
+        zip(coordinates, values.shape, strict=True)
+    ):
+        if axis not in pinned_axes:
+            outside = outside | (coordinate < 0) | (coordinate > size - 1)
+
+    def extrapolated_read(original: FloatND) -> FloatND:
+        floating_coordinates = tuple(
+            jnp.asarray(coordinate, dtype=jnp.result_type(values, coordinate))
+            for coordinate in coordinates
+        )
+        finite = _finite_extrapolation_with_tangent(
+            values, floating_coordinates, original, pinned_axes
+        )
+        return jnp.where(outside & jnp.isfinite(finite), finite, original)
+
+    return lax.cond(
+        jnp.any(outside), extrapolated_read, lambda original: original, original
+    )
+
+
+@functools.partial(jit, static_argnames=("pinned_axes",))
+def _finite_extrapolation_value(
+    *,
+    values: FloatND,
+    coordinates: tuple[FloatND, ...],
+    pinned_axes: tuple[int, ...],
+) -> FloatND:
+    """Read a finite stencil with successive affine blends, or decline with NaN.
+
+    A rounded difference is shared by every consumer. Each constant direction
+    then contributes exactly zero, instead of cancelling large corner products.
+    Unsupported finite-range and nonfinite cases retain the guarded corner sum.
+    """
+    data = [
+        _compute_pinned_index_and_weight(coordinate=coordinate, input_size=size)
+        if axis in pinned_axes
+        else _compute_indices_and_weights(coordinate=coordinate, input_size=size)
+        for axis, (coordinate, size) in enumerate(
+            zip(coordinates, values.shape, strict=True)
+        )
+    ]
+
+    def read_box(*, axis: int, indices: tuple[IntND, ...]) -> tuple[FloatND, BoolND]:
+        if axis == len(data):
+            value = values[indices]
+            valid = jnp.isfinite(value)
+            return jnp.where(valid, value, 0), valid
+        left, valid = read_box(axis=axis + 1, indices=(*indices, data[axis][0][0]))
+        if len(data[axis]) == 1:
+            return left, valid
+        right, right_valid = read_box(
+            axis=axis + 1, indices=(*indices, data[axis][1][0])
+        )
+        weight = data[axis][1][1]
+        difference = lax.optimization_barrier(right - left)
+        valid = valid & right_valid & jnp.isfinite(difference) & jnp.isfinite(weight)
+        difference = jnp.where(valid, difference, 0)
+        weight = jnp.where(valid, weight, 0)
+        value = left + weight * difference
+        valid = valid & jnp.isfinite(value)
+        return jnp.where(valid, value, 0), valid
+
+    value, valid = read_box(axis=0, indices=())
+    value = value.astype(values.dtype)
+    valid = valid & jnp.isfinite(value)
+    return jnp.where(valid, value, jnp.asarray(jnp.nan, dtype=values.dtype))
+
+
+# keyword-only-exempt: library-callback=jax.custom_jvp
+def _finite_extrapolation(
+    values: FloatND,
+    coordinates: tuple[FloatND, ...],
+    original: FloatND,
+    pinned_axes: tuple[int, ...],
+) -> FloatND:
+    """Keep the guarded read's signed-zero representation of the same real zero."""
+    value = _finite_extrapolation_value(
+        values=values, coordinates=coordinates, pinned_axes=pinned_axes
+    )
+    both_zero = is_represented_zero(value) & is_represented_zero(original)
+    return jnp.where(both_zero, original, value)
+
+
+# keyword-only-exempt: library-callback=jax.custom_jvp.defjvp
+def _finite_extrapolation_jvp(
+    pinned_axes: tuple[int, ...],
+    primals: _ExtrapolationArguments,
+    tangents: _ExtrapolationArguments,
+) -> tuple[FloatND, FloatND]:
+    """Form coordinate slopes before transposition can magnify cancellation.
+
+    Basis slopes depend only on primals. Tangents enter through linear arithmetic;
+    the signed-zero reference affects representation alone, so has no derivative.
+    """
+    values, coordinates, original = primals
+    values_dot, coordinates_dot, _original_dot = tangents
+    primal = _finite_extrapolation_with_tangent(
+        values, coordinates, original, pinned_axes
+    )
+    _, tangent = jvp(
+        lambda data: _finite_extrapolation_value(
+            values=data, coordinates=coordinates, pinned_axes=pinned_axes
+        ),
+        (values,),
+        (values_dot,),
+    )
+    for axis, direction in enumerate(coordinates_dot):
+        if axis in pinned_axes:
+            continue
+        basis = tuple(
+            jnp.ones_like(coordinate) if index == axis else jnp.zeros_like(coordinate)
+            for index, coordinate in enumerate(coordinates)
+        )
+        _, coefficient = jvp(
+            lambda points: _finite_extrapolation_value(
+                values=values, coordinates=points, pinned_axes=pinned_axes
+            ),
+            (coordinates,),
+            (basis,),
+        )
+        tangent = tangent + coefficient * direction
+    return primal, jnp.where(jnp.isfinite(primal), tangent, 0)
+
+
+_finite_extrapolation_with_tangent = custom_jvp(
+    _finite_extrapolation, nondiff_argnums=(3,)
+)
+_finite_extrapolation_with_tangent.defjvp(_finite_extrapolation_jvp)
 
 
 def _compute_indices_and_weights(

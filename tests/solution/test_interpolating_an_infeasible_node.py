@@ -23,9 +23,11 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from numpy.typing import NDArray
 
 from _lcm.regime_building.ndimage import _compute_indices_and_weights, map_coordinates
 from lcm.typing import FloatND, IntND
+from tests.conftest import assert_agrees_to_ulp
 
 
 def _infeasible() -> float:
@@ -246,28 +248,46 @@ def test_a_zero_weight_infeasible_corner_leaves_the_read_feasible(
     [-1.62304782083577, -0.5, 3.25, 11.62304782083577, 13.5],
     ids=["far-below", "below", "inside", "above", "far-above"],
 )
-def test_a_finite_read_is_bitwise_the_plain_weighted_sum(
+def test_finite_reads_match_interior_and_extrapolation_references(
     *, dtype: type[np.float32 | np.float64], coordinate: float
 ) -> None:
-    """On a finite grid every read, extrapolated or not, is the bare corner sum."""
+    """Interior reads keep their bits; finite extensions match the exact stencil."""
     grid = jnp.asarray(np.linspace(-1.0, 3.0, 12) ** 3, dtype=dtype)
     coord = [jnp.asarray(coordinate, dtype=dtype)]
     assert grid.dtype == dtype
 
-    np.testing.assert_array_equal(
-        np.asarray(map_coordinates(input=grid, coordinates=coord)),
-        np.asarray(_bare_multiply_reference(grid=grid, coordinates=coord)),
-    )
+    actual = np.asarray(map_coordinates(input=grid, coordinates=coord))
+    query = float(coord[0])
+    if 0 <= query <= grid.size - 1:
+        np.testing.assert_array_equal(
+            actual, np.asarray(_bare_multiply_reference(grid=grid, coordinates=coord))
+        )
+    else:
+        expected = _rational_stencil_reference(
+            grid=np.asarray(grid), coordinates=(query,), pinned_axes=()
+        )
+        lower = min(max(int(np.floor(query)), 0), grid.size - 2)
+        left, right = float(grid[lower]), float(grid[lower + 1])
+        magnitude = abs(left) + abs(query - lower) * abs(right - left)
+        # A difference, product and sum each round in the active format.
+        assert_agrees_to_ulp(
+            got=actual,
+            expected=np.asarray(expected, dtype=actual.dtype),
+            n_ulp=4,
+            operand_magnitude=magnitude,
+        )
 
 
 def _rational_stencil_reference(
-    *, grid: np.ndarray, coordinates: tuple[float, ...], pinned_axes: tuple[int, ...]
+    *,
+    grid: NDArray[np.float32 | np.float64],
+    coordinates: tuple[float, ...],
+    pinned_axes: tuple[int, ...],
 ) -> float:
     """Evaluate one linear stencil exactly, with infeasibility decided per corner.
 
-    Independent of the production kernel: weights and finite values are exact
-    rationals, so the reference applies only to small grids whose coordinates
-    are integers or dyadic fractions and whose finite values are small integers.
+    Independent of the production kernel: represented binary coordinates and
+    finite values become exact rationals before any arithmetic is performed.
     A corner with an exactly zero weight contributes nothing; any other corner
     holding `-inf` makes the read `-inf`; otherwise any other NaN corner makes
     it NaN. A pinned coordinate names an existing node exactly.
