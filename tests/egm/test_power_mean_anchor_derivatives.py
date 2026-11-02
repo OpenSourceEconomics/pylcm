@@ -1,0 +1,523 @@
+"""Differentiate smooth power means independently of numerical anchor ties."""
+
+import math
+from collections.abc import Sequence
+from decimal import Decimal, localcontext
+from fractions import Fraction
+from typing import Literal
+
+import jax
+import jax.numpy as jnp
+import numpy as np
+import pytest
+
+from _lcm.egm.ez_power_mean import continuation_power_mean
+from _lcm.power_mean import weighted_power_mean, weighted_power_mean_of_pair
+from lcm.koopmans_aggregation import CESAggregator
+from lcm.typing import Float1D, FloatND, ScalarFloat
+
+
+def equal_payoff_direction(
+    *, weights: Sequence[float], directions: Sequence[float]
+) -> float:
+    """Return the defining economic derivative on the positive equal-payoff ray."""
+    if len(weights) != len(directions) or not weights:
+        raise ValueError("The oracle requires one direction per lottery node.")
+    with localcontext() as context:
+        context.prec = 80
+        w = tuple(Decimal(float(value)) for value in weights)
+        d = tuple(Decimal(float(value)) for value in directions)
+        if any(value < 0 for value in w) or sum(w, start=Decimal(0)) <= 0:
+            raise ValueError("The oracle requires nonnegative, positive-total mass.")
+        return float(
+            sum(
+                (weight * direction for weight, direction in zip(w, d, strict=True)),
+                start=Decimal(0),
+            )
+            / sum(w, start=Decimal(0))
+        )
+
+
+def power_mean_value_direction(
+    *,
+    values: Sequence[float],
+    weights: Sequence[float],
+    exponent: float,
+    value_directions: Sequence[float],
+    weight_directions: Sequence[float] | None = None,
+    exponent_direction: float = 0.0,
+) -> tuple[float, float]:
+    """Differentiate the defining normalized moment with 100-digit arithmetic.
+
+    Inputs are the exact real values of supplied binary floats. Values must be
+    positive; weights must be nonnegative with positive total mass. A direction
+    at a zero weight must be interpreted on an admissible one-sided path.
+    This scalar oracle uses no production anchoring, signed logs or AD rules.
+    """
+    if not len(values) == len(weights) == len(value_directions) or not values:
+        raise ValueError("Expected a nonempty common event roster.")
+    if weight_directions is None:
+        weight_directions = [0.0] * len(weights)
+    if len(weight_directions) != len(weights):
+        raise ValueError("Expected one weight direction per event.")
+
+    def D(number: float) -> Decimal:
+        return Decimal(float(number))
+
+    with localcontext() as context:
+        context.prec = 100
+        v, w = (tuple(map(D, values)), tuple(map(D, weights)))
+        dv, dw = (tuple(map(D, value_directions)), tuple(map(D, weight_directions)))
+        p, dp = (D(exponent), D(exponent_direction))
+        z, dz = (sum(w, start=Decimal(0)), sum(dw, start=Decimal(0)))
+        if any(x <= 0 for x in v) or any(x < 0 for x in w) or z <= 0:
+            raise ValueError(
+                "Positive payoffs and a valid positive-total lottery required."
+            )
+        logs = tuple(x.ln() for x in v)
+        if p == 0:
+            mu = (
+                sum((a * ell for a, ell in zip(w, logs, strict=True)), start=Decimal(0))
+                / z
+            )
+            value = mu.exp()
+            variance = (
+                sum(
+                    (a * (ell - mu) ** 2 for a, ell in zip(w, logs, strict=True)),
+                    start=Decimal(0),
+                )
+                / z
+            )
+            child = (
+                sum(
+                    (
+                        a * direction / payoff
+                        for a, direction, payoff in zip(w, dv, v, strict=True)
+                    ),
+                    start=Decimal(0),
+                )
+                / z
+            )
+            law = (
+                sum(
+                    (
+                        direction * (ell - mu)
+                        for direction, ell in zip(dw, logs, strict=True)
+                    ),
+                    start=Decimal(0),
+                )
+                / z
+            )
+            direction = value * (child + law + dp * variance / 2)
+        else:
+            powers = tuple((p * ell).exp() for ell in logs)
+            n = sum(
+                (a * power for a, power in zip(w, powers, strict=True)),
+                start=Decimal(0),
+            )
+            log_average = (n / z).ln()
+            value = (log_average / p).exp()
+            child_and_law = sum(
+                (
+                    power * (weight_dot + weight * p * value_dot / payoff)
+                    for power, weight_dot, weight, value_dot, payoff in zip(
+                        powers, dw, w, dv, v, strict=True
+                    )
+                ),
+                start=Decimal(0),
+            )
+            dp_channel = sum(
+                (
+                    weight * power * ell
+                    for weight, power, ell in zip(w, powers, logs, strict=True)
+                ),
+                start=Decimal(0),
+            )
+            direction = value * (
+                (child_and_law / n - dz / z) / p
+                + dp * (dp_channel / (p * n) - log_average / p**2)
+            )
+        return (float(value), float(direction))
+
+
+pytestmark = pytest.mark.coverage(backends=("cpu",), precisions="both")
+
+
+def _budget(dtype: np.dtype[np.float32 | np.float64]) -> float:
+    return max(1e-4, 8 * math.sqrt(np.finfo(dtype).eps))
+
+
+def test_minimal_equal_payoff_continuation_witness() -> None:
+    """sqrt((1+theta)*(1-theta)) has derivative zero at theta=0."""
+    weights = jnp.asarray([0.5, 0.5])
+    slopes = jnp.asarray([1.0, -1.0])
+    zero = jnp.asarray(0.0)
+
+    def evaluate(theta: ScalarFloat) -> ScalarFloat:
+        return continuation_power_mean(
+            values=1.0 + theta * slopes,
+            weights=weights,
+            exponent=zero,
+            shifts=jnp.zeros((2,), dtype=jnp.int32),
+        )
+
+    expected = equal_payoff_direction(weights=[0.5, 0.5], directions=[1.0, -1.0])
+    for apply in (evaluate, jax.jit(evaluate)):
+        value, direction = jax.jvp(apply, (zero,), (jnp.ones_like(zero),))
+        assert float(value) == 1.0
+        np.testing.assert_allclose(
+            float(direction), expected, rtol=0, atol=_budget(value.dtype)
+        )
+        np.testing.assert_allclose(
+            float(jax.grad(apply)(zero)), expected, rtol=0, atol=_budget(value.dtype)
+        )
+
+
+@pytest.mark.parametrize("psi", [1.0, 2.0])
+def test_public_ces_equal_payoff_stationary_point(*, psi: float) -> None:
+    """A smooth current/future tradeoff has zero derivative at its optimum."""
+    aggregator = CESAggregator()
+    zero = jnp.asarray(0.0)
+
+    def evaluate(theta: ScalarFloat) -> ScalarFloat:
+        return aggregator(
+            utility=1.0 + theta,
+            CE=1.0 - theta,
+            discount_factor=jnp.asarray(0.5),
+            intertemporal_elasticity_of_substitution=jnp.asarray(psi),
+        )
+
+    # psi=1: sqrt(1-theta**2); psi=2: (1+sqrt(1-theta**2))/2.
+    # Both are smooth, symmetric and strictly maximized at theta=0 locally.
+    for apply in (evaluate, jax.jit(evaluate)):
+        value, derivative = jax.jvp(apply, (zero,), (jnp.ones_like(zero),))
+        assert float(value) == 1.0
+        np.testing.assert_allclose(
+            float(derivative), 0.0, rtol=0, atol=_budget(value.dtype)
+        )
+        np.testing.assert_allclose(
+            float(jax.grad(apply)(zero)), 0.0, rtol=0, atol=_budget(value.dtype)
+        )
+
+
+@pytest.mark.parametrize("exponent", [0.0, 0.25, -0.5, 1e-8, -1e-8])
+@pytest.mark.parametrize(
+    ("weights", "directions", "payoff"),
+    [
+        ([0.25, 0.75], [1.0, -1.0], 1.0),
+        ([0.75, 0.25], [-1.0, 1.0], 1.0),  # identical lottery, permuted
+        ([0.125, 0.125, 0.75], [1.0, 1.0, -1.0], 1.0),  # duplicated first node
+        ([0.25, 0.75], [1.0, 1.0], 8.0),  # positive common-slope control
+    ],
+)
+def test_equal_payoff_direction_class(
+    *,
+    exponent: float,
+    weights: Sequence[float],
+    directions: Sequence[float],
+    payoff: float,
+) -> None:
+    """Near/unit/nonunit risk, permutation, duplication, scale and control."""
+    w = jnp.asarray(weights)
+    slopes = jnp.asarray(directions)
+    zero = jnp.asarray(0.0)
+    power = jnp.asarray(exponent)
+    expected = equal_payoff_direction(weights=weights, directions=directions)
+
+    def evaluate(theta: ScalarFloat) -> ScalarFloat:
+        return continuation_power_mean(
+            values=payoff + theta * slopes,
+            weights=w,
+            exponent=power,
+            shifts=jnp.zeros_like(w, dtype=jnp.int32),
+        )
+
+    value, direction = jax.jvp(evaluate, (zero,), (jnp.ones_like(zero),))
+    assert float(value) == payoff
+    np.testing.assert_allclose(
+        float(direction), expected, rtol=0, atol=_budget(value.dtype)
+    )
+
+
+@pytest.mark.parametrize("kernel", ["general", "pair", "continuation"])
+def test_equal_payoff_value_gradient(*, kernel: str) -> None:
+    """At equality the value gradient is the probability vector, not an owner."""
+    weights = jnp.asarray([0.25, 0.75])
+    values = jnp.asarray([2.0, 2.0])
+    exponent = jnp.asarray(-0.5)
+
+    def evaluate(lottery: FloatND) -> ScalarFloat:
+        if kernel == "pair":
+            return weighted_power_mean_of_pair(
+                first=lottery[0],
+                second=lottery[1],
+                first_weight=weights[0],
+                second_weight=weights[1],
+                exponent=exponent,
+            )
+        apply = (
+            continuation_power_mean if kernel == "continuation" else weighted_power_mean
+        )
+        return apply(
+            values=lottery,
+            weights=weights,
+            exponent=exponent,
+            shifts=jnp.zeros((2,), dtype=jnp.int32),
+        )
+
+    for apply in (evaluate, jax.jit(evaluate)):
+        actual = jax.grad(apply)(values)
+        assert actual.shape == values.shape
+        assert actual.dtype == values.dtype
+        np.testing.assert_allclose(
+            np.asarray(actual), [0.25, 0.75], rtol=0, atol=_budget(values.dtype)
+        )
+
+
+def test_equal_payoff_batched_rows_and_vmap() -> None:
+    """The same smooth identity holds independently for each broadcast row."""
+    weights = jnp.asarray([0.25, 0.75])
+    values = jnp.asarray([[1.0, 1.0], [8.0, 8.0]])
+    directions = jnp.asarray([[1.0, -1.0], [0.0, 2.0]])
+    shifts = jnp.zeros((2,), dtype=jnp.int32)
+
+    def row(lottery: FloatND) -> FloatND:
+        return continuation_power_mean(
+            values=lottery,
+            weights=weights,
+            exponent=jnp.asarray(0.0),
+            shifts=shifts,
+        )
+
+    expected = np.asarray(
+        [
+            equal_payoff_direction(weights=[0.25, 0.75], directions=[1.0, -1.0]),
+            equal_payoff_direction(weights=[0.25, 0.75], directions=[0.0, 2.0]),
+        ]
+    )
+    for apply in (row, jax.vmap(row), jax.jit(jax.vmap(row))):
+        primal, actual = jax.jvp(apply, (values,), (directions,))
+        assert actual.shape == primal.shape == (2,)
+        assert actual.dtype == values.dtype
+        np.testing.assert_allclose(
+            np.asarray(actual), expected, rtol=0, atol=_budget(values.dtype)
+        )
+
+
+@pytest.mark.parametrize("kernel", ["general", "continuation"])
+@pytest.mark.parametrize(
+    ("exponent", "values", "expected_value"),
+    [(1.0, [1.0, 1.0, 0.5], 5.0 / 6.0), (-1.0, [0.5, 0.5, 1.0], 3.0 / 5.0)],
+)
+def test_tied_extremum_in_nonconstant_lottery(
+    *, kernel: str, exponent: float, values: Sequence[float], expected_value: float
+) -> None:
+    """Tied anchor AD must agree even when the final deviation is nonzero."""
+    lottery = jnp.asarray(values)
+    weights = jnp.ones_like(lottery)  # normalized by the mathematical mean
+    slopes = jnp.asarray([1.0, -1.0, 0.0])
+    zero = jnp.asarray(0.0)
+
+    def evaluate(theta: ScalarFloat) -> ScalarFloat:
+        apply = (
+            continuation_power_mean if kernel == "continuation" else weighted_power_mean
+        )
+        return apply(
+            values=lottery + theta * slopes,
+            weights=weights,
+            exponent=jnp.asarray(exponent),
+            shifts=jnp.zeros_like(weights, dtype=jnp.int32),
+        )
+
+    # The first two terms exchange under theta -> -theta. The normalized
+    # defining moment is smooth and even here, hence its derivative is zero.
+    # p=1 has constant arithmetic sum 5/2, hence mean5/6. p=-1 at theta0
+    # has inverse-value sum2+2+1=5, hence harmonic mean3/5.
+    for apply in (evaluate, jax.jit(evaluate)):
+        value, derivative = jax.jvp(apply, (zero,), (jnp.ones_like(zero),))
+        np.testing.assert_allclose(
+            float(value),
+            expected_value,
+            rtol=0,
+            atol=max(1e-6, 64 * np.finfo(value.dtype).eps),
+        )
+        np.testing.assert_allclose(
+            float(derivative), 0.0, rtol=0, atol=_budget(value.dtype)
+        )
+        np.testing.assert_allclose(
+            float(jax.grad(apply)(zero)), 0.0, rtol=0, atol=_budget(value.dtype)
+        )
+
+
+def test_unit_exponent_correction_composes_once_with_payoff_and_weight_directions() -> (
+    None
+):
+    """The defining geometric-limit derivative includes each economic channel once."""
+    values = jnp.asarray([3.0, 5.0])
+    weights = jnp.asarray([0.25, 0.75])
+    value_directions = jnp.asarray([1.0, -0.5])
+    weight_directions = jnp.asarray([0.125, -0.125])
+    zero = jnp.asarray(0.0)
+    expected_value, expected_direction = power_mean_value_direction(
+        values=[3.0, 5.0],
+        weights=[0.25, 0.75],
+        exponent=0.0,
+        value_directions=[1.0, -0.5],
+        weight_directions=[0.125, -0.125],
+        exponent_direction=1.0,
+    )
+
+    def evaluate(parameter: ScalarFloat) -> ScalarFloat:
+        return continuation_power_mean(
+            values=values + parameter * value_directions,
+            weights=weights + parameter * weight_directions,
+            exponent=parameter,
+            shifts=jnp.zeros((2,), dtype=jnp.int32),
+        )
+
+    for apply in (evaluate, jax.jit(evaluate)):
+        value, direction = jax.jvp(apply, (zero,), (jnp.ones_like(zero),))
+        np.testing.assert_allclose(
+            float(value),
+            expected_value,
+            rtol=0,
+            atol=max(1e-6, 64 * np.finfo(value.dtype).eps),
+        )
+        np.testing.assert_allclose(
+            float(direction), expected_direction, rtol=0, atol=_budget(value.dtype)
+        )
+        np.testing.assert_allclose(
+            float(jax.grad(apply)(zero)),
+            expected_direction,
+            rtol=0,
+            atol=_budget(value.dtype),
+        )
+
+
+type AnchorSpanRoute = Literal["general", "pair", "continuation", "ces"]
+
+
+def _anchor_span_direction(*, slopes: Sequence[float]) -> float:
+    """Return the exact represented equal-weight economic direction."""
+    return float(sum((Fraction(slope) for slope in slopes), start=Fraction(0)) / 2)
+
+
+def _anchor_span_value(
+    *,
+    theta: ScalarFloat,
+    directions: Float1D,
+    payoff: float,
+    kernel: AnchorSpanRoute,
+) -> ScalarFloat:
+    """Read the same equal-payoff lottery through the actual selected caller."""
+    values = payoff + theta * directions
+    power = jnp.zeros_like(theta)
+    weights = jnp.asarray([0.5, 0.5], dtype=theta.dtype)
+    if kernel == "ces":
+        return CESAggregator()(
+            utility=values[0],
+            CE=values[1],
+            discount_factor=weights[0],
+            intertemporal_elasticity_of_substitution=jnp.ones_like(theta),
+        )
+    if kernel == "pair":
+        return weighted_power_mean_of_pair(
+            first=values[0],
+            second=values[1],
+            first_weight=weights[0],
+            second_weight=weights[1],
+            exponent=power,
+        )
+    apply = continuation_power_mean if kernel == "continuation" else weighted_power_mean
+    return apply(
+        values=values,
+        weights=weights,
+        exponent=power,
+        shifts=jnp.zeros((2,), dtype=jnp.int32),
+    )
+
+
+@pytest.mark.parametrize("kernel", ["general", "pair", "continuation", "ces"])
+@pytest.mark.parametrize("compiled", [False, True])
+@pytest.mark.parametrize("permuted", [False, True])
+def test_ordinary_equal_payoff_direction_is_independent_of_anchor_order(
+    *, kernel: AnchorSpanRoute, compiled: bool, permuted: bool
+) -> None:
+    """A normal immaterial channel cannot make a half-unit derivative refuse."""
+    slopes = (2.0**-70, 1.0)
+    if permuted:
+        slopes = slopes[::-1]
+    zero = jnp.asarray(0.0)
+    directions = jnp.asarray(slopes, dtype=zero.dtype)
+    represented = np.asarray(directions)
+    assert np.isfinite(represented).all()
+    assert np.all(represented > np.finfo(represented.dtype).tiny)
+    assert np.array_equal(represented, np.asarray(slopes, dtype=represented.dtype))
+    expected = _anchor_span_direction(slopes=slopes)
+
+    def evaluate(theta: ScalarFloat) -> ScalarFloat:
+        return _anchor_span_value(
+            theta=theta, directions=directions, payoff=1.0, kernel=kernel
+        )
+
+    apply = jax.jit(evaluate) if compiled else evaluate
+    value, forward = jax.jvp(apply, (zero,), (jnp.ones_like(zero),))
+    reverse = jax.grad(apply)(zero)
+    assert float(value) == 1.0
+    assert value.dtype == forward.dtype == reverse.dtype == zero.dtype
+    for actual in (forward, reverse):
+        assert np.isfinite(float(actual))
+        np.testing.assert_allclose(
+            float(actual), expected, rtol=0, atol=_budget(zero.dtype)
+        )
+
+
+@pytest.mark.parametrize("kernel", ["general", "pair", "continuation", "ces"])
+def test_batched_ordinary_anchor_span_directions_remain_usable(
+    *, kernel: AnchorSpanRoute
+) -> None:
+    """Span boundaries, normal scales and zero/opposing controls retain support."""
+    zero = jnp.asarray(0.0)
+    bits = np.finfo(zero.dtype).nmant
+    cases = (
+        (2.0 ** -(bits - 2), 1.0),
+        (2.0 ** -(bits + 2), 1.0),
+        (2.0**-70, 1.0),
+        (0.0, 1.0),
+        (1.0, 1.0),
+        (0.0, 0.0),
+        (1.0, -1.0),
+    )
+    slope_rows = tuple(
+        tuple(scale * value for value in ordered)
+        for slopes in cases
+        for scale in (0.5, 2.0)
+        for ordered in (slopes, slopes[::-1])
+    )
+    directions = jnp.asarray(slope_rows, dtype=zero.dtype)
+    represented = np.asarray(directions)
+    assert np.isfinite(represented).all()
+    assert np.array_equal(represented, np.asarray(slope_rows, dtype=represented.dtype))
+    expected = np.asarray(
+        [_anchor_span_direction(slopes=slopes) for slopes in slope_rows]
+    )
+
+    def read(slopes: Float1D) -> tuple[ScalarFloat, ScalarFloat, ScalarFloat]:
+        def evaluate(theta: ScalarFloat) -> ScalarFloat:
+            return _anchor_span_value(
+                theta=theta, directions=slopes, payoff=8.0, kernel=kernel
+            )
+
+        value, forward = jax.jvp(evaluate, (zero,), (jnp.ones_like(zero),))
+        return value, forward, jax.grad(evaluate)(zero)
+
+    values, forwards, reverses = jax.jit(jax.vmap(read))(directions)
+    assert values.shape == forwards.shape == reverses.shape == (len(slope_rows),)
+    assert values.dtype == forwards.dtype == reverses.dtype == zero.dtype
+    np.testing.assert_array_equal(np.asarray(values), np.full(len(slope_rows), 8.0))
+    for actual in (forwards, reverses):
+        assert np.isfinite(np.asarray(actual)).all()
+        assert np.all(
+            np.abs(np.asarray(actual) - expected)
+            <= _budget(zero.dtype) * np.maximum(1.0, np.abs(expected))
+        )

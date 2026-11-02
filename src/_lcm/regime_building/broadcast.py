@@ -38,6 +38,7 @@ from typing import Literal, TypedDict, cast, no_type_check
 
 from dags import get_ancestors
 
+from _lcm.exits import exit_functions
 from _lcm.processes import _ContinuousStochasticProcess, _IIDProcess
 from _lcm.reachability import PhaseName, candidate_targets_from_transition
 from _lcm.regime_building.age_specialization import resolve_node
@@ -272,6 +273,9 @@ def merge_model_slots(
 
 def prune_broadcast_variables(
     *,
+    current_iid_state_inputs: Mapping[
+        RegimeName, frozenset[StateName]
+    ] = MappingProxyType({}),
     user_regimes: Mapping[RegimeName, UserRegime],
     laws: RegimeLaws,
     broadcast_variables: Mapping[RegimeName, frozenset[StateOrActionName]],
@@ -333,6 +337,7 @@ def prune_broadcast_variables(
     )
     all_regime_names = frozenset(user_regimes)
     kept = compute_kept_variables(
+        current_iid_state_inputs=current_iid_state_inputs,
         user_regimes=user_regimes,
         laws=laws,
         candidates=broadcast_variables,
@@ -384,6 +389,9 @@ def prune_broadcast_variables(
 
 def compute_kept_variables(
     *,
+    current_iid_state_inputs: Mapping[
+        RegimeName, frozenset[StateName]
+    ] = MappingProxyType({}),
     user_regimes: Mapping[RegimeName, UserRegime],
     laws: RegimeLaws,
     candidates: Mapping[RegimeName, frozenset[StateOrActionName]],
@@ -453,6 +461,7 @@ def compute_kept_variables(
         regime_name: frozenset(
             (set(user_regime.states) | set(user_regime.actions))
             - candidates_by_regime[regime_name]
+            | current_iid_state_inputs.get(regime_name, frozenset())
         )
         for regime_name, user_regime in user_regimes.items()
     }
@@ -500,7 +509,7 @@ def _reachable_targets(
     )
 
 
-def split_transition_only_folds(
+def split_post_decision_states(
     *,
     user_regimes: Mapping[RegimeName, UserRegime],
     discrete_names: frozenset[str],
@@ -512,22 +521,21 @@ def split_transition_only_folds(
     MappingProxyType[RegimeName, UserRegime],
     MappingProxyType[RegimeName, MappingProxyType[StateName, _IIDProcess]],
 ]:
-    """Take folded IID shocks that only a transition reads out of the state space.
+    """Take IID process states that only a transition reads out of the state space.
 
-    A `fold=True` IID process without a conditioning state is *transition-only*
-    in a regime when nothing the regime computes within its period reads the
-    shock's current value: not its utility, constraints, regime transition or
-    any law of motion. Only the draw `next_<shock>` is read, by the laws toward
-    the next period. The regime's value then does not depend on the shock, so
-    the shock is no state of the regime: the value stores no axis for it and
-    the period is not evaluated per node. The draw is still taken on every
-    edge whose laws read it, from the process's own nodes and weights, as a
-    transition-local lottery the source's continuation sums over.
+    An IID process without a conditioning state is a *post-decision shock* in a regime
+    when nothing the regime computes reads the shock's current value: not its
+    utility, constraints, regime transition or any law of motion. Only the draw
+    `next_<shock>` is read, by the laws toward the next period. The regime's
+    value then does not depend on the shock, so the shock is no state of the
+    regime: the value stores no axis for it and the period is not evaluated per
+    node. The draw is still taken on every edge whose laws read it, from the
+    process's own nodes and weights, as a transition-local lottery the source's
+    continuation sums over. Simulation draws it as the process's
+    `simulated_draws` asks: from the continuous law by default.
 
-    A regime that folds a shock and does read it within its period keeps the
-    ordinary fold: its value is computed per node and averaged. A source law
-    that reads the draw toward such a target is refused, because the draw would
-    then be correlated with the node the target's value was averaged over.
+    A regime that reads the current value keeps the shock as an ordinary state,
+    so a source law reading the draw toward it hands over that state's value.
 
     Args:
         user_regimes: Mapping of regime names to pruned `Regime` instances.
@@ -539,142 +547,71 @@ def split_transition_only_folds(
         active_periods_by_regime: The per-regime coverage.
 
     Returns:
-        Tuple of the regimes without their transition-only shocks and, per
-        regime that has any, its transition-only shocks by state name.
-
-    Raises:
-        ModelInitializationError: If a source law reads the draw of a shock that
-            a target folds and reads within its period.
+        Tuple of the regimes without their post-decision shocks and, per
+        regime that has any, its post-decision shocks by state name.
 
     """
     specs = {
         name: normalize_regime_phases(regime, law=laws[name])
         for name, regime in user_regimes.items()
     }
-    reads = _NamesRead(
-        specs=specs,
-        discrete_names=discrete_names,
-        user_regimes=user_regimes,
-        laws=laws,
-        koopmans_aggregator=koopmans_aggregator,
-        ages=ages,
-        active_periods_by_regime=active_periods_by_regime,
-    )
     targets_by_source = _reachable_targets(user_regimes=user_regimes, laws=laws)
-    folded_by_regime = {
-        name: {
+    every_state_kept = {
+        name: frozenset(regime.states) for name, regime in user_regimes.items()
+    }
+    post_decision_states: dict[RegimeName, dict[StateName, _IIDProcess]] = {}
+    for name, regime in user_regimes.items():
+        candidates = {
             state: grid
             for state, grid in regime.states.items()
-            if isinstance(grid, _IIDProcess)
-            and grid.fold
-            and grid.state_conditioned is None
+            if isinstance(grid, _IIDProcess) and grid.state_conditioned is None
         }
-        for name, regime in user_regimes.items()
-    }
-    transition_only: dict[RegimeName, dict[StateName, _IIDProcess]] = {}
-    for name, folded in folded_by_regime.items():
-        within_period = (
-            reads(regime_name=name, candidate_targets=targets_by_source[name])
-            if folded
-            else set()
-        )
-        transition_only[name] = {
-            state: grid for state, grid in folded.items() if state not in within_period
-        }
-
-    errors: list[str] = []
-    for source_name in sorted(user_regimes):
-        for target_name in sorted(targets_by_source[source_name]):
-            read_folds = sorted(
-                state
-                for state in folded_by_regime[target_name]
-                if state not in transition_only[target_name]
+        if not candidates:
+            continue
+        within_period: set[str] = set()
+        for phase_name in ("solution", "simulation"):
+            within_period |= _needed_names(
+                phase_slice=getattr(specs[name], phase_name),
+                regime_name=name,
+                user_regime=regime,
+                laws=laws,
+                phase_name=phase_name,
+                koopmans_aggregator=koopmans_aggregator,
+                candidate_targets=targets_by_source[name],
+                kept=every_state_kept,
+                discrete_names=discrete_names,
+                ages=ages,
+                active_periods=(
+                    None
+                    if active_periods_by_regime is None
+                    else active_periods_by_regime.get(name, ())
+                ),
             )
-            if not read_folds:
-                continue
-            source_reads = reads(
-                regime_name=source_name, candidate_targets=frozenset({target_name})
-            )
-            errors += [
-                f"Regime '{target_name}' folds '{state}' and reads it within its "
-                f"period, so the laws from '{source_name}' toward it cannot read "
-                f"the draw 'next_{state}': the target's stored value is averaged "
-                f"over the shock's nodes, and a draw taken by the source would be "
-                f"correlated with that average. Stop reading '{state}' within "
-                f"'{target_name}', which takes the shock out of its state space, "
-                f"or drop `fold=True`."
-                for state in read_folds
-                if f"next_{state}" in source_reads
-            ]
-    if errors:
-        raise ModelInitializationError(format_messages(errors))
+        if unread := {
+            state: grid
+            for state, grid in candidates.items()
+            if state not in within_period
+        }:
+            post_decision_states[name] = unread
 
     regimes = {
         name: regime.replace(
             states={
                 state: grid
                 for state, grid in regime.states.items()
-                if state not in transition_only[name]
+                if state not in post_decision_states.get(name, {})
             }
         )
-        if transition_only[name]
+        if name in post_decision_states
         else regime
         for name, regime in user_regimes.items()
     }
     return MappingProxyType(regimes), MappingProxyType(
         {
             name: MappingProxyType(shocks)
-            for name, shocks in transition_only.items()
-            if shocks
+            for name, shocks in post_decision_states.items()
         }
     )
-
-
-@dataclass(frozen=True, kw_only=True)
-class _NamesRead:
-    """Every name a regime's computations read in either phase slice.
-
-    The roots are `root_functions`' plus the laws of motion toward the given
-    candidate targets, so a name in the result is read within the regime's
-    period or by a law it hands to one of those targets.
-
-    Every declared state counts as kept by its regime.
-    """
-
-    specs: Mapping[RegimeName, PhasedRegimeSpec]
-    discrete_names: frozenset[str]
-    user_regimes: Mapping[RegimeName, UserRegime]
-    laws: RegimeLaws
-    koopmans_aggregator: UserFunction
-    ages: TimeAxis | None
-    active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None
-
-    def __call__(
-        self, *, regime_name: RegimeName, candidate_targets: frozenset[RegimeName]
-    ) -> set[str]:
-        every_state_kept = {
-            name: frozenset(regime.states) for name, regime in self.user_regimes.items()
-        }
-        names: set[str] = set()
-        for phase_name in ("solution", "simulation"):
-            names |= _needed_names(
-                phase_slice=getattr(self.specs[regime_name], phase_name),
-                regime_name=regime_name,
-                user_regime=self.user_regimes[regime_name],
-                laws=self.laws,
-                phase_name=phase_name,
-                koopmans_aggregator=self.koopmans_aggregator,
-                candidate_targets=candidate_targets,
-                kept=every_state_kept,
-                discrete_names=self.discrete_names,
-                ages=self.ages,
-                active_periods=(
-                    None
-                    if self.active_periods_by_regime is None
-                    else self.active_periods_by_regime.get(regime_name, ())
-                ),
-            )
-        return names
 
 
 def root_functions(
@@ -701,12 +638,12 @@ def root_functions(
     - every value-constraint predicate;
     - every Pareto weight declared as a function;
     - every `same_period_refs` projection;
-    - for each gated edge *whose target is this regime*, the edge's gate, its
-      gate-reference projections, and its legs' fallback projections.
+    - for each gated edge *whose target is this regime*, the edge's gate and
+      its legs' fallback projections.
 
     That last group is why every regime's law is an argument: a gated edge is
-    declared on the SOURCE's law but gate, gate references and fallbacks are
-    all evaluated on the TARGET regime's grid, so nothing in the target's own
+    declared on the SOURCE's law but its gate and fallbacks are all
+    evaluated on the TARGET regime's grid, so nothing in the target's own
     slots mentions them and a walk over one regime in isolation cannot see the
     read.
 
@@ -741,6 +678,12 @@ def root_functions(
         | _transition_roots(regime=regime, law=laws[regime_name], phase=phase)
         | _value_aware_roots(regime=regime)
         | _incoming_edge_roots(regime_name=regime_name, laws=laws)
+        | {
+            "__".join(path): function
+            for path, function in exit_functions(
+                exits=regime.exits, phase=phase
+            ).items()
+        }
     )
 
 
@@ -869,11 +812,6 @@ def _incoming_edge_roots(
         if edge is None:
             continue
         roots[f"__incoming_gate__{source_name}"] = edge.gate
-        roots |= {
-            f"__incoming_gate_ref__{source_name}__{ref_name}__{state_name}": projection
-            for ref_name, ref in edge.gate_refs.items()
-            for state_name, projection in ref.projection.items()
-        }
         # Both phases of a `Phased` fallback are rooted: a state read only by
         # the settlement projection is still read, and pruning it would leave
         # the simulate leg with a coordinate it cannot form.
@@ -885,6 +823,30 @@ def _incoming_edge_roots(
             for phase, ref in (
                 ("solve", leg.solve_fallback),
                 ("simulate", leg.simulate_fallback),
+            )
+            for state_name, projection in ref.projection.items()
+        }
+    # A participation check into this regime is evaluated at its landing on this
+    # regime's states, like a gated edge: its predicate, read projections and fallback
+    # projections read them.
+    for source_name, law in laws.items():
+        decision = law.participation.get(regime_name)
+        if decision is None:
+            continue
+        roots[f"__incoming_participation__{source_name}"] = decision.predicate
+        roots |= {
+            f"__incoming_participation_read__{source_name}__{read_name}__"
+            f"{state_name}": projection
+            for read_name, read in decision.reads.items()
+            for state_name, projection in read.projection.items()
+        }
+        roots |= {
+            f"__incoming_participation_fallback__{source_name}__{route_name}__{phase}__"
+            f"{state_name}": projection
+            for route_name, route in decision.routes.items()
+            for phase, ref in (
+                ("solve", route.solve_fallback),
+                ("simulate", route.simulate_fallback),
             )
             for state_name, projection in ref.projection.items()
         }
@@ -1235,7 +1197,7 @@ def _needed_names(
     The roots are `root_functions`' — utility, derived categoricals,
     constraints, the Koopmans aggregator, the regime transition, the
     value-constraint predicates, the `same_period_refs` projections and the
-    incoming gated edges' gates, gate references and fallbacks — plus the laws
+    incoming gated edges' gates and fallbacks — plus the laws
     of motion toward candidate targets that keep the law's state, which are
     pruning's own: whatever such a law reads has to stay alive here so the
     target can be handed its value.

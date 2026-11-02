@@ -9,9 +9,17 @@ import pytest
 
 import lcm.model as model_module
 from _lcm.egm.published_policy import NNBEGMSimPolicy
+from _lcm.params.mapping_leaf import MappingLeaf
+from _lcm.simulation.residency import measure_buffer_footprint, union_buffer_footprints
 from _lcm.solution import model_authority
+from _lcm.solution.generation import (
+    canonical_generation_roots,
+    canonical_parameter_schema,
+)
+from _lcm.solution.retained_buffers import retained_artifact_authority_buffers
+from _lcm.typing import FlatParams
 from lcm.exceptions import InvalidSimulationInputError
-from lcm.solver_api import SIMULATION_POLICY, ArtifactStore
+from lcm.solver_api import SIMULATION_POLICY, ArtifactRef, ArtifactStore
 from tests.solution.test_solution_result import _small_grid_search_inputs
 from tests.test_models import n_nbegm_discrete_toy as discrete_toy
 from tests.test_models.n_nbegm_toy import RegimeId
@@ -193,3 +201,74 @@ def test_layout_without_a_policy_read_names_no_leaf_axes_read_only() -> None:
         policy_read=None, template_snapshot=None, period=0
     )
     assert type(layout.leaf_axis_names) is MappingProxyType
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+def test_published_generation_live_roots_include_lazy_authority_templates() -> None:
+    """Real policy authority storage joins its already-published generation roots."""
+    model = discrete_toy.build_model(variant="n_nbegm", n_periods=2)
+    flat, generation = model._prepare_call(params=_PARAMS)
+    assert model._generation_cache._cached[generation.key] is generation
+    assert not generation._authority
+    original = canonical_generation_roots(declarations=(generation.roots,))
+    assert original
+    before = canonical_generation_roots(declarations=model._generation_cache.roots())
+    assert any(array is original[0] for array in before)
+    original_footprint = measure_buffer_footprint(tree=original)
+    before_footprint = measure_buffer_footprint(tree=before)
+    assert (
+        union_buffer_footprints(footprints=(before_footprint, original_footprint)).spans
+        == before_footprint.spans
+    )
+
+    authority = generation.declared_authority(
+        flat_params=flat, process_grid_resolver=None
+    )
+    assert generation._authority[0] is authority
+    policy = authority.artifacts[
+        ArtifactRef(period=0, regime="alive", key=SIMULATION_POLICY)
+    ]
+    policy_arrays = retained_artifact_authority_buffers(authority=policy)
+    assert policy_arrays
+    policy_footprint = measure_buffer_footprint(tree=policy_arrays)
+    # A new Python wrapper is insufficient: require genuinely new live storage.
+    assert (
+        union_buffer_footprints(footprints=(before_footprint, policy_footprint)).spans
+        != before_footprint.spans
+    )
+    authority_arrays = tuple(
+        array
+        for artifact in authority.artifacts.values()
+        for array in retained_artifact_authority_buffers(authority=artifact)
+    )
+    expected = measure_buffer_footprint(tree=(original, authority_arrays))
+    live = canonical_generation_roots(declarations=model._generation_cache.roots())
+    assert any(array is original[0] for array in live)
+    observed = measure_buffer_footprint(tree=live)
+    assert (
+        union_buffer_footprints(footprints=(observed, expected)).spans == observed.spans
+    )
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+def test_canonical_group_mapping_leaf_schema_is_not_an_object_scalar() -> None:
+    """Raw namespaces lead to actual nested MappingLeaf dtype/shape signatures."""
+
+    def parameters(*, size: int, value: float) -> FlatParams:
+        return MappingProxyType(
+            {
+                "income": MappingProxyType(
+                    {"law": MappingLeaf({"array": jnp.full((size,), value)})}
+                ),
+                "edges": MappingProxyType(
+                    {"parent": MappingProxyType({"law__scale": jnp.asarray(1.0)})}
+                ),
+            }
+        )
+
+    assert canonical_parameter_schema(
+        flat_params=parameters(size=2, value=1.0)
+    ) == canonical_parameter_schema(flat_params=parameters(size=2, value=9.0))
+    assert canonical_parameter_schema(
+        flat_params=parameters(size=2, value=1.0)
+    ) != canonical_parameter_schema(flat_params=parameters(size=3, value=1.0))

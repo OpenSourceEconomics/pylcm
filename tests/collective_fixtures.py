@@ -13,16 +13,19 @@ OWN value at that shared argmax, so the two stakeholder slices genuinely
 differ and neither equals $O$.
 
 A collective regime's stored value function carries one axis per solve state
-plus one trailing stakeholder axis. A folded state is integrated out by
-quadrature when the value is stored and contributes no axis at all. The two
-never co-occur here: a collective regime may not declare a folded state, so
-`make_folding_singleton_model` is a singleton and
-`make_folding_collective_regime_kwargs` returns keyword arguments rather than a
-built model.
+plus one trailing stakeholder axis.
 """
 
-import jax.numpy as jnp
+from collections.abc import Generator
+from contextlib import contextmanager
+from typing import Unpack
 
+import jax.numpy as jnp
+import pytest
+
+from _lcm.solution import backward_induction
+from _lcm.solution.feasibility import FeasibilityKernelOutput
+from _lcm.typing import RegimeName
 from lcm import (
     AgeGrid,
     CollectiveUtility,
@@ -33,14 +36,78 @@ from lcm import (
     Regime,
     categorical,
 )
-from lcm.regime import RegimeReplacement
-from lcm.typing import ContinuousState, DiscreteAction, FloatND, IntND, ScalarInt
+from lcm.solver_api import KernelOutput
+from lcm.typing import (
+    BoolND,
+    ContinuousState,
+    DiscreteAction,
+    FloatND,
+    IntND,
+    ScalarInt,
+)
+from tests.solution.test_solution_result import _KernelKwargs
 
 # Nested `{regime: {function: {parameter: value}}}` params, as `solve` takes them.
 type ParamsDict = dict[str, dict[str, dict[str, float]]]
 
 # Flat `{state_name: column}` initial conditions, plus the `regime_id` column.
 type InitialConditions = dict[str, FloatND | IntND]
+
+
+@contextmanager
+def recorded_dissolution_flags() -> Generator[dict[int, dict[RegimeName, BoolND]]]:
+    """Record each collective kernel's dissolved cells while a solve runs.
+
+    A collective kernel writes the `-inf` sentinel into every stakeholder's value
+    on the state cells whose household action set is empty; solve publishes no
+    separate flag. The recorded flag `D` is `True` where every stakeholder slice
+    is `-inf`, so a feasible cell whose best value is itself `-inf` would also
+    count; the models these tests solve have none. The yielded mapping fills in,
+    by period and regime, as the solve runs.
+    """
+    flags: dict[int, dict[RegimeName, BoolND]] = {}
+    original = backward_induction._run_period_kernel
+
+    def recording(**kwargs: Unpack[_KernelKwargs]) -> KernelOutput:
+        output = original(**kwargs)
+        if kwargs["regime"].stakeholders is not None:
+            flags.setdefault(kwargs["period"], {})[kwargs["regime_name"]] = jnp.all(
+                jnp.isneginf(output.value), axis=-1
+            )
+        return output
+
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setattr(backward_induction, "_run_period_kernel", recording)
+        yield flags
+
+
+@contextmanager
+def recorded_feasibility_counts() -> Generator[
+    dict[int, dict[RegimeName, tuple[int, int]]]
+]:
+    """Record each kernel's `(empty, other -inf)` state-cell counts while a solve runs.
+
+    The first count is the kernel's own empty-feasible-set mask; the second counts
+    the cells whose value is infinite although some action is feasible. Together
+    they tell a dissolving cell from an on-path `-inf` value, which the value array
+    alone cannot.
+    """
+    counts: dict[int, dict[RegimeName, tuple[int, int]]] = {}
+    original = backward_induction._run_period_kernel
+
+    def recording(**kwargs: Unpack[_KernelKwargs]) -> KernelOutput:
+        output = original(**kwargs)
+        if isinstance(output, FeasibilityKernelOutput):
+            empty, other_inf = output.feasibility_counts
+            counts.setdefault(kwargs["period"], {})[kwargs["regime_name"]] = (
+                int(empty),
+                int(other_inf),
+            )
+        return output
+
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setattr(backward_induction, "_run_period_kernel", recording)
+        yield counts
 
 
 @categorical(ordered=True)
@@ -61,7 +128,7 @@ class CoupleRegimeId:
 
 @categorical(ordered=False)
 class ShockRegimeId:
-    """Regime ids of the folding singleton model."""
+    """Regime ids of the shocked singleton model."""
 
     shocked: ScalarInt  # code 0
     shocked_terminal: ScalarInt  # code 1
@@ -79,13 +146,11 @@ WAGE_GRID = LinSpacedGrid(start=8.0, stop=40.0, n_points=2)
 # `WAGE_GRID`'s two nodes, so initial conditions can name them directly.
 WAGE_GRID_POINTS = (8.0, 40.0)
 
-# Payoff of the folding singleton model's stateless terminal regime.
-FOLD_TERMINAL_PAYOFF = 4.0
+# Payoff of the shocked singleton model's stateless terminal regime.
+SHOCKED_TERMINAL_PAYOFF = 4.0
 
-# The folded IID shock of `make_folding_singleton_model`.
-FOLDED_SHOCK = NormalIIDProcess(
-    n_points=5, gauss_hermite=True, mu=0.0, sigma=2.0, fold=True
-)
+# The IID shock of `make_shocked_singleton_model`.
+WAGE_SHOCK = NormalIIDProcess(n_points=5, gauss_hermite=True, mu=0.0, sigma=2.0)
 
 # `make_two_stakeholder_model`'s value functions, indexed (wage, stakeholder).
 TWO_STAKEHOLDER_V_PERIOD_0 = ((46.0, 92.0), (78.0, 156.0))
@@ -95,9 +160,6 @@ TWO_STAKEHOLDER_V_TERMINAL = ((30.0, 0.0), (40.0, 80.0))
 # carries the stakeholder axis alone, the period-0 one (wage, stakeholder).
 STATELESS_TARGET_V_TERMINAL = (10.0, 0.0)
 STATELESS_TARGET_V_PERIOD_0 = ((39.5, 0.0), (49.5, 80.0))
-
-# `make_folding_singleton_model`'s period-0 value: rank zero, the shock folded out.
-FOLDING_SINGLETON_V_PERIOD_0 = 13.8
 
 
 def make_two_stakeholder_model() -> tuple[Model, ParamsDict]:
@@ -197,13 +259,13 @@ def make_stateless_collective_target_model() -> tuple[Model, ParamsDict]:
     return model, _couple_params()
 
 
-def make_folding_singleton_model() -> tuple[Model, ParamsDict]:
-    """Build a singleton model whose only state is a folded IID shock.
+def make_shocked_singleton_model() -> tuple[Model, ParamsDict]:
+    """Build a singleton model whose only state is an IID shock.
 
-    `shocked` declares `wage_shock` as a `NormalIIDProcess(fold=True)` that
-    enters only its own utility, so the quadrature is taken when the value is
-    stored and the stored value function is rank zero. `shocked_terminal`
-    declares no state and pays a constant, so the continuation is live.
+    `shocked` declares `wage_shock` as a `NormalIIDProcess` that enters its own
+    utility, so the stored value function carries the shock's axis.
+    `shocked_terminal` declares no state and pays a constant, so the
+    continuation is live.
 
     Hand computation: work pays $10 + \\varepsilon$ and leisure pays nothing, and
     $10 + \\varepsilon > 0$ at every node of a $\\sigma = 2$ shock, so work is
@@ -215,12 +277,12 @@ def make_folding_singleton_model() -> tuple[Model, ParamsDict]:
 
     """
     shocked = Regime(
-        states={"wage_shock": FOLDED_SHOCK},
+        states={"wage_shock": WAGE_SHOCK},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _shock_utility},
     )
     shocked_terminal = Regime(
-        functions={"utility": _fold_terminal_utility},
+        functions={"utility": _shocked_terminal_utility},
     )
     model = Model(
         regimes={"shocked": shocked, "shocked_terminal": shocked_terminal},
@@ -236,65 +298,10 @@ def make_folding_singleton_model() -> tuple[Model, ParamsDict]:
     return model, params
 
 
-def make_folding_collective_regime_kwargs() -> RegimeReplacement:
-    """Return the keyword arguments of a collective regime declaring a fold.
+def wage_shock_nodes() -> FloatND:
+    """Return `WAGE_SHOCK`'s quadrature nodes at the ambient float precision.
 
-    A collective regime may not integrate a shock out of its stored value, so
-    this combination is rejected when the model is built and no model can be
-    handed out. The regime itself is well formed: two stakeholders, a binary
-    action, and `wage_shock` as a `NormalIIDProcess(fold=True)` entering both
-    partners' utilities.
-
-    `make_folding_collective_regimes` pairs the regime these arguments describe
-    with the terminal regime it transitions into, which is what `Model` needs.
-
-    Returns:
-        Dict of the keyword arguments `Regime` takes.
-
-    """
-    return {
-        "states": {"wage_shock": FOLDED_SHOCK},
-        "actions": {"work": DiscreteGrid(category_class=Work)},
-        "functions": {
-            "utility": CollectiveUtility(
-                utilities={"f": _shock_utility_f, "m": _shock_utility_m}
-            )
-        },
-    }
-
-
-def make_folding_collective_regimes() -> dict[str, Regime]:
-    """Return the regimes of a model whose collective source declares a fold.
-
-    Pass straight to `Model(regimes=..., ages=AGES,
-    regime_id_class=CoupleRegimeId, edges={"couple": {"couple_terminal": 0}})`,
-    which is where the combination is rejected.
-
-    Returns:
-        Dict of regime names to regimes: the collective source `couple` built
-        from `make_folding_collective_regime_kwargs`, and the stateless
-        collective terminal `couple_terminal` it transitions into.
-
-    """
-    couple_terminal = Regime(
-        states={},
-        actions={"work": DiscreteGrid(category_class=Work)},
-        functions={
-            "utility": CollectiveUtility(
-                utilities={"f": _stateless_utility_f, "m": _stateless_utility_m}
-            )
-        },
-    )
-    return {
-        "couple": Regime(**make_folding_collective_regime_kwargs()),
-        "couple_terminal": couple_terminal,
-    }
-
-
-def folded_shock_nodes() -> FloatND:
-    """Return `FOLDED_SHOCK`'s quadrature nodes at the ambient float precision.
-
-    `make_folding_singleton_initial_conditions` seeds subject `i` at node
+    `make_shocked_singleton_initial_conditions` seeds subject `i` at node
     `i % 5`, so a test computing that subject's expected utility reads the node
     from here rather than hardcoding a value only one precision can represent.
 
@@ -302,7 +309,7 @@ def folded_shock_nodes() -> FloatND:
         Array of the five nodes, in the process's own order.
 
     """
-    return FOLDED_SHOCK.to_jax()
+    return WAGE_SHOCK.to_jax()
 
 
 def make_couple_initial_conditions(*, n_subjects: int = 2) -> InitialConditions:
@@ -329,13 +336,13 @@ def make_couple_initial_conditions(*, n_subjects: int = 2) -> InitialConditions:
     }
 
 
-def make_folding_singleton_initial_conditions(
+def make_shocked_singleton_initial_conditions(
     *, n_subjects: int = 2
 ) -> InitialConditions:
-    """Build initial conditions for `make_folding_singleton_model`.
+    """Build initial conditions for `make_shocked_singleton_model`.
 
     Every subject starts at age 0 in `shocked`, seeded at a node of
-    `FOLDED_SHOCK` — subject `i` at `folded_shock_nodes()[i % 5]` — so a test
+    `WAGE_SHOCK` — subject `i` at `wage_shock_nodes()[i % 5]` — so a test
     can state each subject's realized utility from the node it was given.
 
     Args:
@@ -346,7 +353,7 @@ def make_folding_singleton_initial_conditions(
         `n_subjects`.
 
     """
-    nodes = folded_shock_nodes()
+    nodes = wage_shock_nodes()
     return {
         "wage_shock": jnp.asarray(
             [nodes[index % len(nodes)] for index in range(n_subjects)]
@@ -404,6 +411,6 @@ def _shock_utility_m(*, wage_shock: FloatND, work: DiscreteAction) -> FloatND:
     return 2.0 * work * (10.0 + wage_shock)
 
 
-def _fold_terminal_utility() -> FloatND:
-    """Constant terminal payoff, so the folded regime has a live continuation."""
-    return jnp.asarray(FOLD_TERMINAL_PAYOFF)
+def _shocked_terminal_utility() -> FloatND:
+    """Constant terminal payoff, so the shocked regime has a live continuation."""
+    return jnp.asarray(SHOCKED_TERMINAL_PAYOFF)

@@ -56,13 +56,14 @@ def test_feasible_infinite_continuation_is_other_infinite(*, active: bool) -> No
     np.testing.assert_array_equal(jnp.stack(result), [0, int(active)])
 
 
-def test_feasibility_count_addition_saturates() -> None:
-    """Large state populations retain a positive bounded count."""
+def test_feasibility_count_addition_respects_configured_capacity() -> None:
+    """Large partial populations add exactly at x64 and saturate at int32."""
     result = feasibility.add_feasibility_counts(
         total=(jnp.asarray(COUNT_CAPACITY, jnp.int32), jnp.asarray(5, jnp.int32)),
         block=(jnp.asarray(1, jnp.int32), jnp.asarray(3, jnp.int32)),
     )
-    np.testing.assert_array_equal(jnp.stack(result), [COUNT_CAPACITY, 8])
+    expected = COUNT_CAPACITY + 1 if jax.config.x64_enabled else COUNT_CAPACITY
+    np.testing.assert_array_equal(jnp.stack(result), [expected, 8])
 
 
 @pytest.mark.parametrize("corner", ["compact", "liquid"])

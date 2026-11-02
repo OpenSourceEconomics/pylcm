@@ -115,6 +115,9 @@ class _ResolveArguments(TypedDict, closed=True):
     regimes: MappingProxyType[backward_induction.RegimeName, backward_induction.Regime]
     program_fingerprint: str
     flat_params: backward_induction.FlatParams
+    solve_parameter_views: NotRequired[
+        Mapping[backward_induction.RegimeName, backward_induction.FlatParams]
+    ]
     ages: backward_induction.TimeAxis
     next_regime_to_V_arr: MappingProxyType[
         backward_induction.RegimeName, backward_induction.FloatND
@@ -130,7 +133,6 @@ class _ResolveArguments(TypedDict, closed=True):
     enable_jit: bool
     continuous_sharded_state: NotRequired[backward_induction.StateName | None]
     donate_buffers: NotRequired[bool]
-    retain_all_artifacts: bool
     persistable_artifact_refs: frozenset[backward_induction.ArtifactRef]
     process_grid_resolver: NotRequired[backward_induction.ProcessGridResolver | None]
     structural_blueprints: NotRequired[
@@ -2184,9 +2186,10 @@ def test_solve_counter_reservation_keeps_every_original_fixed_owner(
     """Counter reserves add to execution devices and keep every original owner.
 
     Each predicted inventory charges every original fixed owner its original
-    bytes, adds two int32 feasibility counters per active regime plus one merge
-    pair on each execution device only, and admits every nonzero owner together
-    with the execution devices. The model keeps 8 bytes of codes on device 0.
+    bytes, adds two native feasibility counters per active regime plus one merge
+    pair at the configured integer precision on each execution device only, and
+    admits every nonzero owner together with the execution devices.
+    The model keeps 8 bytes of codes on device 0.
     """
     from tests.test_transition_checks import (  # noqa: PLC0415
         _health_probs_reading_effort,
@@ -2215,7 +2218,8 @@ def test_solve_counter_reservation_keeps_every_original_fixed_owner(
             n_active = sum(
                 period in regime.active_periods for regime in kwargs["regimes"].values()
             )
-            reserve = 2 * np.dtype(np.int32).itemsize * (n_active + 1)
+            count_dtype = np.int64 if jax.config.x64_enabled else np.int32
+            reserve = 2 * np.dtype(count_dtype).itemsize * (n_active + 1)
             expected.append(
                 (
                     {

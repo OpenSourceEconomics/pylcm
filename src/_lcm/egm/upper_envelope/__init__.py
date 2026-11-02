@@ -15,14 +15,10 @@ step itself. Currently implemented:
   jump-threshold heuristic identifies,
 - `RFCEnvelope` (`_lcm.egm.upper_envelope.rfc`), the Rooftop-Cut algorithm — a
   parallel dominance test that only deletes points (no crossing insertion) and
-  generalizes to multidimensional endogenous grids,
+  generalizes to multidimensional endogenous grids, and
 - `LTMEnvelope` (`_lcm.egm.upper_envelope.ltm`), the local-upper-bound brute method —
   an $O(K^2)$ dense segment scan that evaluates the envelope at every candidate
-  abscissa (the quadratic baseline of Dobrescu & Shanker 2024), and
-- `MSSEnvelope` (`_lcm.egm.upper_envelope.mss`), HARK's EGM upper envelope — a
-  left-to-right sweep that keeps the max-value branch at every abscissa *and*
-  inserts the exact segment-crossing point (the `MSS` method of Dobrescu &
-  Shanker 2024).
+  abscissa (the quadratic baseline of Dobrescu & Shanker 2024).
 
 All backends share one signature: they consume the candidate
 `(endog_grid, policy, value)` rows plus the candidate supgradient
@@ -38,7 +34,6 @@ from typing import Literal, NamedTuple, Protocol, cast, overload, runtime_checka
 
 import jax.numpy as jnp
 
-from _lcm.egm.comparison_arithmetic import ComparisonArithmetic
 from _lcm.egm.interp import prepare_padded_grid
 from _lcm.egm.upper_envelope.fues import (
     QueryBracket,
@@ -48,7 +43,6 @@ from _lcm.egm.upper_envelope.fues import (
     refine_envelope as refine_envelope_fues,
 )
 from _lcm.egm.upper_envelope.ltm import refine_envelope as refine_envelope_ltm
-from _lcm.egm.upper_envelope.mss import refine_envelope as refine_envelope_mss
 from _lcm.egm.upper_envelope.rfc import refine_envelope as refine_envelope_rfc
 from _lcm.egm.upper_envelope.segment_envelope import (
     OwnedEnvelope,
@@ -62,7 +56,6 @@ from _lcm.solution.dcegm import (
     ExactEnvelope,
     FUESEnvelope,
     LTMEnvelope,
-    MSSEnvelope,
     RFCEnvelope,
 )
 from lcm.typing import Float1D, FloatND, ScalarBool, ScalarFloat, ScalarInt
@@ -197,7 +190,7 @@ def get_upper_envelope(
     if isinstance(solver.envelope, ExactEnvelope):
         backend = functools.partial(
             _exact_backend,
-            envelope=solver.envelope,
+            max_runs=solver.envelope.max_runs,
             n_refined=n_refined,
             publish_provenance=publish_provenance,
         )
@@ -215,13 +208,6 @@ def get_upper_envelope(
 
     if isinstance(solver.envelope, LTMEnvelope):
         return functools.partial(_ltm_backend, n_refined=n_refined)
-
-    if isinstance(solver.envelope, MSSEnvelope):
-        return functools.partial(
-            _mss_backend,
-            n_refined=n_refined,
-            arithmetic=solver.envelope.arithmetic,
-        )
 
     msg = f"Unknown upper-envelope backend: {solver.envelope!r}."
     raise ValueError(msg)
@@ -299,17 +285,10 @@ def get_bracket_finder(
     if isinstance(solver.envelope, LTMEnvelope):
         return functools.partial(_ltm_bracket_finder, n_refined=n_refined)
 
-    if isinstance(solver.envelope, MSSEnvelope):
-        return functools.partial(
-            _mss_bracket_finder,
-            n_refined=n_refined,
-            arithmetic=solver.envelope.arithmetic,
-        )
-
     if isinstance(solver.envelope, ExactEnvelope):
         return functools.partial(
             _exact_bracket_finder,
-            envelope=solver.envelope,
+            max_runs=solver.envelope.max_runs,
             n_refined=n_refined,
             publish_provenance=publish_provenance,
         )
@@ -356,7 +335,7 @@ def _exact_backend(
     marginal_utility: Float1D,
     savings: Float1D,
     cell_width: int = 1,
-    envelope: ExactEnvelope,
+    max_runs: int,
     n_refined: int,
     publish_provenance: bool = False,
     _binding_source_count: int | None = None,
@@ -383,7 +362,7 @@ def _exact_backend(
                 policy=policy,
                 value=value,
                 n_refined=n_refined,
-                max_runs=envelope.max_runs,
+                max_runs=max_runs,
                 cell_width=cell_width,
                 savings=savings,
                 _binding_source_count=_binding_source_count,
@@ -394,7 +373,7 @@ def _exact_backend(
             policy=policy,
             value=value,
             n_refined=n_refined,
-            max_runs=envelope.max_runs,
+            max_runs=max_runs,
             cell_width=cell_width,
             _binding_source_count=_binding_source_count,
             _binding_queries=_binding_queries,
@@ -404,7 +383,7 @@ def _exact_backend(
         policy=policy,
         value=value,
         n_refined=n_refined,
-        max_runs=envelope.max_runs,
+        max_runs=max_runs,
         cell_width=cell_width,
         savings=savings if publish_provenance else None,
     )
@@ -460,32 +439,6 @@ def _ltm_backend(
         policy=policy,
         value=value,
         n_refined=n_refined,
-    )
-
-
-def _mss_backend(
-    *,
-    endog_grid: Float1D,
-    policy: Float1D,
-    value: Float1D,
-    marginal_utility: Float1D,
-    savings: Float1D,
-    cell_width: int = 1,
-    n_refined: int,
-    arithmetic: ComparisonArithmetic,
-) -> tuple[Float1D, Float1D, Float1D, ScalarInt]:
-    """Run HARK's EGM upper-envelope sweep with crossing insertion.
-
-    MSS recovers segment slopes from the candidate chain, so neither the
-    candidate supgradient nor the exogenous source savings are consumed.
-    """
-    del cell_width, marginal_utility, savings
-    return refine_envelope_mss(
-        endog_grid=endog_grid,
-        policy=policy,
-        value=value,
-        n_refined=n_refined,
-        arithmetic=arithmetic,
     )
 
 
@@ -600,45 +553,6 @@ def _ltm_bracket_finder(
     )
 
 
-def _mss_bracket_finder(
-    *,
-    endog_grid: Float1D,
-    policy: Float1D,
-    value: Float1D,
-    marginal_utility: Float1D,
-    savings: Float1D,
-    cell_width: int = 1,
-    x_query: ScalarFloat,
-    n_refined: int,
-    arithmetic: ComparisonArithmetic,
-) -> QueryBracket:
-    """Locate the query bracket from MSS's full refined envelope.
-
-    Runs the HARK sweep to a full NaN-padded envelope row, then reads the
-    bracket the row path would: the `searchsorted(side="right")` pair clamped to
-    `[1, max(n_kept - 1, 1)]` (the `interp_on_prepared_grid` rule), so the
-    published value cannot diverge from full-envelope-then-interpolate. Like
-    every backend — FUES's `refine_to_bracket` included — it materializes the
-    full `n_pad` row and slices; no backend streams an O(1) carry. The exogenous
-    source savings are a FUES-only refinement.
-    """
-    del cell_width, marginal_utility, savings
-    refined_grid, refined_policy, refined_value, n_kept = refine_envelope_mss(
-        endog_grid=endog_grid,
-        policy=policy,
-        value=value,
-        n_refined=n_refined,
-        arithmetic=arithmetic,
-    )
-    return _bracket_from_refined_row(
-        refined_grid=refined_grid,
-        refined_policy=refined_policy,
-        refined_value=refined_value,
-        n_kept=n_kept,
-        x_query=x_query,
-    )
-
-
 def _exact_bracket_finder(
     *,
     endog_grid: Float1D,
@@ -648,7 +562,7 @@ def _exact_bracket_finder(
     savings: Float1D,
     cell_width: int = 1,
     x_query: ScalarFloat,
-    envelope: ExactEnvelope,
+    max_runs: int,
     n_refined: int,
     publish_provenance: bool = False,
 ) -> QueryBracket | OwnedQueryBracket:
@@ -663,7 +577,7 @@ def _exact_bracket_finder(
         policy=policy,
         value=value,
         n_refined=n_refined,
-        max_runs=envelope.max_runs,
+        max_runs=max_runs,
         cell_width=cell_width,
         savings=savings if publish_provenance else None,
     )

@@ -1,9 +1,9 @@
-"""A gated-edge source solves in a model that also contains an endogenous-grid regime.
+"""A source with a participation check solves beside an endogenous-grid regime.
 
 Two independent branches share one lifecycle. On one branch a household chooses
 consumption on a liquid asset and is solved by `EGM`. On the other a household
 holds `wealth`, is solved by `GridSearch`, and reaches its terminal regime
-through a `GatedEdge`: it moves only where moving beats staying, and takes the
+through a `ParticipationCheck`: it moves only where moving beats staying, and takes the
 stay value everywhere else.
 
 Nothing connects the two branches — no transition, no same-period reference —
@@ -21,8 +21,8 @@ Hand computation on the `wealth` grid $\\{0, 2, 4\\}$ with $\\beta = 0.95$:
   $w + 0.95 \\bar W(w) = (2.85, 6.75, 11.6)$.
 
 Reading the raw target value instead of the gated one would give
-$(0, 5.8, 11.6)$, so the two closed nodes separate the gated fold from its
-absence.
+$(0, 5.8, 11.6)$, so the two closed nodes separate the selected continuation
+from the raw target.
 """
 
 import jax.numpy as jnp
@@ -33,10 +33,11 @@ from lcm import (
     AgeRange,
     ByAge,
     ConsumptionSavingsRegime,
-    Gate,
     LinSpacedGrid,
     LiquidMargin,
     Model,
+    ParticipationCheck,
+    ParticipationRead,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
@@ -153,22 +154,28 @@ def _mover_transition() -> Transition:
                 }
             }
         ),
-        gates={
-            "moved_terminal": Gate(
+        participation={
+            "moved_terminal": ParticipationCheck(
                 predicate=_move_gate,
                 routes={
-                    "own": StakeholderRoute(
+                    "self": StakeholderRoute(
                         fallback=ProjectedRegimeValue(
                             regime="stay_terminal",
                             projection={"wealth": _identity_wealth},
                         ),
                     )
                 },
-                references={
-                    "V_stay_ref": ProjectedRegimeValue(
+                reads={
+                    "V_target": ParticipationRead(
+                        kind="Raw",
+                        regime="moved_terminal",
+                        projection={"wealth": _identity_wealth},
+                    ),
+                    "V_stay_ref": ParticipationRead(
+                        kind="Raw",
                         regime="stay_terminal",
                         projection={"wealth": _identity_wealth},
-                    )
+                    ),
                 },
             )
         },

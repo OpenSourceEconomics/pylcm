@@ -77,6 +77,7 @@ from lcm.typing import (
 # Refined-row fields every envelope backend returns, ahead of the optional
 # read-support verdict.
 _REFINED_ROW_FIELDS: int = 4
+_MIN_RESOURCES_DOMAIN_POINTS: int = 2
 
 type _ComboRows = tuple[Float1D, Float1D, Float1D, Float1D, Float1D, ScalarBool]
 type _NodeOutput = tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat]
@@ -286,6 +287,29 @@ def _get_solve_one_combo(
     )
 
 
+@dataclass(frozen=True, kw_only=True)
+class _ConstructedCombo:
+    """Invocation-local producer state, consumed before numerical publication."""
+
+    pieces: _EgmKernelPieces
+    combo_pool: EconFunctionKwargs
+    discount_factor: ScalarFloat
+    utility_of_action: BoundUtilityOfAction
+    expected_values: FloatND
+    publish_resources: FloatND
+    candidate_dead: Bool1D
+    lowest_euler_point: ScalarFloat
+    refined: (
+        tuple[Float1D, Float1D, Float1D, ScalarInt]
+        | tuple[Float1D, Float1D, Float1D, ScalarInt, ScalarBool]
+        | OwnedEnvelope
+        | _NegmBindingEnvelope
+    )
+    binding_query: BoolND | None
+    child_status: tuple[QueryInputStatus, ...] | None
+    read_counts: ContinuationReadCounts | None
+
+
 @dataclass(frozen=True, kw_only=True, eq=False)
 class _SolveOneCombo:
     """The single-post-state EGM step for one kernel invocation, per combo.
@@ -334,123 +358,20 @@ class _SolveOneCombo:
             and exact node feasibility, with integrity carried as bounded auxiliary.
 
         """
-        pieces = self.pieces
+        constructed = self._construct(combo_values=combo_values)
         dtype = self.state_grid.dtype
-        combo_pool = {
-            **self.pool,
-            **dict(zip(pieces.combo_names, combo_values, strict=True)),
-        }
-        pieces = bind_cell_floor(pieces=pieces, pool=combo_pool)
-        # Validation pins the default Bellman aggregator, whose single
-        # non-(utility, CE) parameter is the discount factor.
-        (discount_factor_arg,) = tuple(pieces.build_W_kwargs(combo_pool).values())
-        discount_factor = cast("ScalarFloat", discount_factor_arg)
-        utility_of_action = BoundUtilityOfAction(
-            utility_func=pieces.utility_func,
-            action_name=pieces.action_name,
-            bound=combo_pool,
-        )
-        compute_node = _get_compute_node(
-            pieces=pieces,
-            combo_pool=combo_pool,
-            discount_factor=discount_factor,
-            utility_of_action=utility_of_action,
-            next_regime_to_continuation=self.next_regime_to_continuation,
-            dtype=dtype,
-            stochastic_node_width=self.stochastic_node_width,
-            resolved_process_grids=self.resolved_process_grids,
-        )
-        child_status = None
+        pieces = constructed.pieces
+        combo_pool = constructed.combo_pool
+        discount_factor = constructed.discount_factor
+        utility_of_action = constructed.utility_of_action
+        expected_values = constructed.expected_values
+        publish_resources = constructed.publish_resources
+        candidate_dead = constructed.candidate_dead
+        refined = constructed.refined
+        binding_query = constructed.binding_query
+        child_status = constructed.child_status
+        read_counts = constructed.read_counts
         conditional = pieces.query_spec is not None or pieces.check_query_construction
-        if conditional:
-            candidates, child_status, read_counts = _compute_nodes_after_first(
-                first=compute_node(pieces.savings_nodes[0]),
-                compute_node=compute_node,
-                savings_nodes=pieces.savings_nodes,
-                savings_point_width=self.savings_point_width,
-            )
-        else:
-            candidates, child_status, read_counts = (
-                _legacy_candidates_with_child_status(
-                    pieces=pieces,
-                    compute_node=compute_node,
-                    savings_point_width=self.savings_point_width,
-                )
-            )
-        actions, endog_grid, values, expected_values = candidates
-        own_resources_of_state = ResourcesOfState(
-            resources_func=pieces.own_resources_func,
-            euler_state_name=pieces.euler_state_name,
-            bound=combo_pool,
-        )
-        publish_resources = jax.vmap(own_resources_of_state)(self.state_grid)
-
-        constrained_actions, constrained_values = _compute_constrained_candidates(
-            first_endogenous_point=endog_grid[0],
-            publish_resources=publish_resources,
-            borrowing_limit=pieces.borrowing_limit,
-            n_constrained=pieces.n_constrained,
-            constrained_ratio=pieces.constrained_ratio,
-            utility_of_action=utility_of_action,
-            discounted_expected_value_at_limit=discount_factor * expected_values[0],
-        )
-
-        (
-            candidate_grid,
-            candidate_policy,
-            candidate_value,
-            candidate_savings,
-            candidate_dead,
-        ) = _assemble_combo_candidates(
-            pieces=pieces,
-            constrained_actions=constrained_actions,
-            constrained_values=constrained_values,
-            endog_grid=endog_grid,
-            actions=actions,
-            values=values,
-        )
-        candidate_marginal = _candidate_supgradient(
-            policy=candidate_policy,
-            dead=candidate_dead,
-            utility_of_action=utility_of_action,
-        )
-        # No explicit `segment_id` is passed: the candidate chain is a single
-        # connected branch (the constrained segment joins the unconstrained Euler
-        # branch continuously at the borrowing limit). Within-period discrete
-        # choices are maximized across combos in the V array, not stacked here, so
-        # `refine` never sees two unrelated branches that could be bridged. A
-        # future-kink-induced fold is data-emergent (the inverted endogenous grid
-        # decreases) rather than known a priori, so it is the backend's geometry —
-        # not an explicit label — that resolves it. Explicit topology is the
-        # oracle/test path (LTM/MSS/query accept `segment_id`); production has none
-        # to emit.
-        # A backend that cannot certify off-grid read support returns the
-        # four-element row and the read is treated as supported; only a backend
-        # that computes the flag can withhold it.
-        binding_request = (
-            {
-                "_binding_source_count": pieces.n_constrained + 1,
-                "_binding_queries": publish_resources,
-            }
-            if pieces._negm_current_publication  # noqa: SLF001
-            else {}
-        )
-        refined = pieces.refine(
-            cell_width=self.envelope_cell_width,
-            endog_grid=jnp.where(candidate_dead, jnp.nan, candidate_grid),
-            policy=jnp.where(candidate_dead, jnp.nan, candidate_policy),
-            value=jnp.where(candidate_dead, jnp.nan, candidate_value),
-            marginal_utility=candidate_marginal,
-            savings=jnp.where(candidate_dead, jnp.nan, candidate_savings),
-            **binding_request,
-        )
-        binding_query = (
-            refined.binding_query
-            if isinstance(refined, _NegmBindingEnvelope | _OwnedNegmBindingEnvelope)
-            else None
-        )
-        if isinstance(refined, _OwnedNegmBindingEnvelope):
-            refined = refined.owned
         refined_grid, refined_policy, refined_value, n_kept, read_supported = (
             _refined_rows(
                 refined=refined,
@@ -466,6 +387,7 @@ class _SolveOneCombo:
             n_kept=n_kept,
             n_pad=pieces.n_pad,
             publish_resources=publish_resources,
+            lowest_euler_point=constructed.lowest_euler_point,
             borrowing_limit=pieces.borrowing_limit,
             utility_of_action=utility_of_action,
             discounted_expected_value_at_limit=discount_factor * expected_values[0],
@@ -574,6 +496,149 @@ class _SolveOneCombo:
             continuation_read_counts=reduce_continuation_read_counts(
                 counts=read_counts, active=feasible
             ),
+        )
+
+    def _construct(
+        self,
+        *,
+        combo_values: tuple[ScalarInt | ScalarFloat, ...],
+    ) -> _ConstructedCombo:
+        """Run the shared candidate producer before publication chooses coordinates."""
+        pieces = self.pieces
+        dtype = self.state_grid.dtype
+        combo_pool = {
+            **self.pool,
+            **dict(zip(pieces.combo_names, combo_values, strict=True)),
+        }
+        pieces = bind_cell_floor(pieces=pieces, pool=combo_pool)
+        # Validation pins the default Bellman aggregator, whose single
+        # non-(utility, CE) parameter is the discount factor.
+        (discount_factor_arg,) = tuple(pieces.build_W_kwargs(combo_pool).values())
+        discount_factor = cast("ScalarFloat", discount_factor_arg)
+        utility_of_action = BoundUtilityOfAction(
+            utility_func=pieces.utility_func,
+            action_name=pieces.action_name,
+            bound=combo_pool,
+        )
+        compute_node = _get_compute_node(
+            pieces=pieces,
+            combo_pool=combo_pool,
+            discount_factor=discount_factor,
+            utility_of_action=utility_of_action,
+            next_regime_to_continuation=self.next_regime_to_continuation,
+            dtype=dtype,
+            stochastic_node_width=self.stochastic_node_width,
+            resolved_process_grids=self.resolved_process_grids,
+        )
+        child_status = None
+        conditional = pieces.query_spec is not None or pieces.check_query_construction
+        if conditional:
+            candidates, child_status, read_counts = _compute_nodes_after_first(
+                first=compute_node(pieces.savings_nodes[0]),
+                compute_node=compute_node,
+                savings_nodes=pieces.savings_nodes,
+                savings_point_width=self.savings_point_width,
+            )
+        else:
+            candidates, child_status, read_counts = (
+                _legacy_candidates_with_child_status(
+                    pieces=pieces,
+                    compute_node=compute_node,
+                    savings_point_width=self.savings_point_width,
+                )
+            )
+        actions, endog_grid, values, expected_values = candidates
+        own_resources_of_state = ResourcesOfState(
+            resources_func=pieces.own_resources_func,
+            euler_state_name=pieces.euler_state_name,
+            bound=combo_pool,
+        )
+        publish_resources = jax.vmap(own_resources_of_state)(self.state_grid)
+
+        constrained_actions, constrained_values = _compute_constrained_candidates(
+            first_endogenous_point=endog_grid[0],
+            publish_resources=(publish_resources),
+            borrowing_limit=pieces.borrowing_limit,
+            n_constrained=pieces.n_constrained,
+            constrained_ratio=pieces.constrained_ratio,
+            utility_of_action=utility_of_action,
+            discounted_expected_value_at_limit=discount_factor * expected_values[0],
+        )
+
+        (
+            candidate_grid,
+            candidate_policy,
+            candidate_value,
+            candidate_savings,
+            candidate_dead,
+        ) = _assemble_combo_candidates(
+            pieces=pieces,
+            constrained_actions=constrained_actions,
+            constrained_values=constrained_values,
+            endog_grid=endog_grid,
+            actions=actions,
+            values=values,
+        )
+        candidate_marginal = _candidate_supgradient(
+            policy=candidate_policy,
+            dead=candidate_dead,
+            utility_of_action=utility_of_action,
+        )
+        # No explicit `segment_id` is passed: the candidate chain is a single
+        # connected branch (the constrained segment joins the unconstrained Euler
+        # branch continuously at the borrowing limit). Within-period discrete
+        # choices are maximized across combos in the V array, not stacked here, so
+        # `refine` never sees two unrelated branches that could be bridged. A
+        # future-kink-induced fold is data-emergent (the inverted endogenous grid
+        # decreases) rather than known a priori, so it is the backend's geometry —
+        # not an explicit label — that resolves it. Explicit topology is the
+        # oracle/test path (LTM/query accept `segment_id`); production has none
+        # to emit.
+        # A backend that cannot certify off-grid read support returns the
+        # four-element row and the read is treated as supported; only a backend
+        # that computes the flag can withhold it.
+        binding_request = (
+            {
+                "_binding_source_count": pieces.n_constrained + 1,
+                "_binding_queries": publish_resources,
+            }
+            if pieces._negm_current_publication  # noqa: SLF001
+            else {}
+        )
+        refine = pieces.refine
+        refined = refine(
+            cell_width=self.envelope_cell_width,
+            endog_grid=jnp.where(candidate_dead, jnp.nan, candidate_grid),
+            policy=jnp.where(candidate_dead, jnp.nan, candidate_policy),
+            value=jnp.where(candidate_dead, jnp.nan, candidate_value),
+            marginal_utility=candidate_marginal,
+            savings=jnp.where(candidate_dead, jnp.nan, candidate_savings),
+            **binding_request,
+        )
+        binding_query = (
+            refined.binding_query
+            if isinstance(refined, _NegmBindingEnvelope | _OwnedNegmBindingEnvelope)
+            else None
+        )
+        if isinstance(refined, _OwnedNegmBindingEnvelope):
+            refined = refined.owned
+        return _ConstructedCombo(
+            pieces=pieces,
+            combo_pool=combo_pool,
+            discount_factor=discount_factor,
+            utility_of_action=utility_of_action,
+            expected_values=expected_values,
+            publish_resources=publish_resources,
+            candidate_dead=candidate_dead,
+            # A NaN Euler candidate keeps the minimum NaN, which disables the
+            # closed-form publication rather than reading past the poison.
+            lowest_euler_point=jnp.min(
+                jnp.where(candidate_dead[pieces.n_constrained :], jnp.inf, endog_grid)
+            ),
+            refined=refined,
+            binding_query=binding_query,
+            child_status=child_status,
+            read_counts=read_counts,
         )
 
 
@@ -972,16 +1037,24 @@ def _get_compute_node(
     dtype: np.dtype,
     stochastic_node_width: int | None,
     resolved_process_grids: Mapping[StateName, FloatND] = MappingProxyType({}),
+    economic_continuation: Callable[
+        [ScalarFloat], BoundedResult[tuple[ScalarFloat, ScalarFloat]]
+    ]
+    | None = None,
 ) -> Callable[[ScalarFloat], _NodeOutput | BoundedResult[_NodeOutput]]:
     """Build the per-savings-node Euler inversion for one discrete combo."""
-    continuation = bind_continuation(
-        plan=pieces.continuation_plan,
-        combo_pool=combo_pool,
-        next_regime_to_continuation=next_regime_to_continuation,
-        dtype=dtype,
-        stochastic_node_width=stochastic_node_width,
-        resolved_process_grids=resolved_process_grids,
-        collect_continuation_read_counts=pieces.collect_continuation_read_counts,
+    continuation = (
+        economic_continuation
+        if economic_continuation is not None
+        else bind_continuation(
+            plan=pieces.continuation_plan,
+            combo_pool=combo_pool,
+            next_regime_to_continuation=next_regime_to_continuation,
+            dtype=dtype,
+            stochastic_node_width=stochastic_node_width,
+            resolved_process_grids=resolved_process_grids,
+            collect_continuation_read_counts=pieces.collect_continuation_read_counts,
+        )
     )
 
     analytic_inverse = pieces.inverse_marginal_utility_func
@@ -1198,6 +1271,7 @@ def _publish_V_and_carry_rows(
     n_kept: ScalarInt,
     n_pad: int,
     publish_resources: FloatND,
+    lowest_euler_point: ScalarFloat,
     borrowing_limit: ScalarFloat,
     utility_of_action: Callable[[ScalarFloat], ScalarFloat],
     discounted_expected_value_at_limit: ScalarFloat,
@@ -1206,16 +1280,21 @@ def _publish_V_and_carry_rows(
 ) -> tuple[FloatND, Float1D, Float1D]:
     """Interpolate V onto the exogenous grid and finish the carry value rows.
 
-    Below the lowest refined envelope point the published value is the
-    closed-form constrained value — the exact value of saving exactly the
-    borrowing limit — substituted outright. It has to be substituted: the
-    interpolant continues the first bracket's secant below its first node
-    rather than clamping, so left to itself it would read the constrained
-    region off an extrapolant. Above that point, the refined
-    envelope is read with the cubic Hermite interpolant (the marginal-utility
-    row is the value row's exact slope by the envelope theorem), floored at
-    the constrained value, which remains a feasible-policy lower bound
-    everywhere.
+    The published value is the closed-form constrained value — the exact value
+    of saving exactly the borrowing limit — substituted outright
+
+    - below the lowest refined envelope point, where the interpolant would
+      continue the first bracket's secant rather than clamp, and
+    - below the lowest live Euler candidate, where the constrained candidates
+      are the only candidates, so the envelope there is the constrained branch
+      itself. A cubic through that fixed handful of candidates would carry an
+      interpolation error that no refinement of the savings or state grid
+      removes.
+
+    Elsewhere the refined envelope is read with the cubic Hermite interpolant
+    (the marginal-utility row is the value row's exact slope by the envelope
+    theorem), floored at the constrained value, which remains a feasible-policy
+    lower bound everywhere.
 
     Envelope overflow is not silent: the outputs are NaN-poisoned so the
     solve loop's NaN diagnostics surface the offending (regime, period).
@@ -1227,6 +1306,8 @@ def _publish_V_and_carry_rows(
         n_kept: Number of envelope points the backend kept.
         n_pad: Static length of the refined rows.
         publish_resources: Resources at the regime's exogenous state grid.
+        lowest_euler_point: Resources of the lowest live Euler candidate; NaN
+            disables the substitution below it.
         borrowing_limit: Lower bound of the savings grid.
         utility_of_action: Utility with everything but the continuous action
             bound.
@@ -1262,19 +1343,22 @@ def _publish_V_and_carry_rows(
         + discounted_expected_value_at_limit,
         -jnp.inf,
     )
-    # Below the lowest refined point the closed-form constrained value (the
-    # exact value of saving exactly the borrowing limit) is published outright,
-    # replacing the interpolant rather than agreeing with it: the interpolant
-    # continues the first bracket's secant below its first node. Everywhere
-    # else the constrained value is a feasible-policy floor under the Hermite
-    # read of the refined envelope:
-    # forcing it further up — e.g. to the first Euler point — would discard
-    # envelope information wherever degenerate inversions push that point
-    # right (a zero-ish marginal continuation makes it ~1/eps), and the
-    # constrained candidates inside the envelope already carry exact slopes.
+    # Below the lowest refined point, and below the lowest live Euler
+    # candidate, the closed-form constrained value (the exact value of saving
+    # exactly the borrowing limit) is published outright, replacing the
+    # interpolant rather than agreeing with it. Everywhere else the constrained
+    # value is a feasible-policy floor under the Hermite read of the refined
+    # envelope. The cut-off is the lowest live Euler candidate, never the first
+    # one: a degenerate inversion can push the first Euler point right (a
+    # zero-ish marginal continuation makes it ~1/eps) past Euler candidates that
+    # fold below it, and those must stay on the envelope read.
     refined_grid_start = refined_grid[0]
     V_row = jnp.where(
-        (closed_form_actions > 0.0) & (publish_resources <= refined_grid_start),
+        (closed_form_actions > 0.0)
+        & (
+            (publish_resources <= refined_grid_start)
+            | (publish_resources < lowest_euler_point)
+        ),
         value_constrained,
         jnp.maximum(value_interpolated, value_constrained),
     )

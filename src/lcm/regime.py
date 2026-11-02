@@ -29,6 +29,7 @@ from _lcm.regime_law import RegimeLaw
 from _lcm.typing import ActionName, FunctionName, RegimeName, StateName
 from _lcm.user_regime_validation import validate_regime
 from _lcm.utils.containers import ensure_containers_are_immutable
+from _lcm.utils.error_messages import path_segment_name_errors
 from lcm.certainty_equivalent import CertaintyEquivalent
 from lcm.collective import (
     CollectiveUtility,
@@ -41,7 +42,9 @@ from lcm.decoupled import (
     resolve_koopmans_aggregator,
 )
 from lcm.exceptions import RegimeInitializationError
+from lcm.exits import Exit
 from lcm.phased import Phased
+from lcm.shocks import ShockGroupName
 from lcm.taste_shocks import ExtremeValueTasteShocks
 from lcm.transition import (
     AgeSpecializedGrid,
@@ -92,6 +95,8 @@ class _SlotsBesideFunctions(TypedDict, total=False):
     derived_categoricals: Mapping[FunctionName, DiscreteGrid]
     solver: _solvers.Solver
     taste_shocks: ExtremeValueTasteShocks | None
+    shocks: tuple[ShockGroupName, ...]
+    exits: Mapping[str, Exit]
     koopmans_aggregator: UserFunction | Phased | Decoupled | None
     certainty_equivalent: CertaintyEquivalent | None
     description: str
@@ -144,8 +149,8 @@ class Regime:
     `state_transitions` entry.
     `Phased(solve=process, simulate=process)` keeps the perceived process for
     values and decisions and draws from the separate simulation process. Distinct
-    phase laws use continuous draws and cannot fold; runtime parameter names shared
-    by both declarations share one value, while constructor parameters may differ.
+    phase laws use continuous draws; runtime parameter names shared by both
+    declarations share one value, while constructor parameters may differ.
     An `AgeSpecializedGrid` value is a continuous state whose grid bounds vary
     with age (fixed `n_points`); it is resolved to a concrete grid per period at
     model build.
@@ -271,9 +276,8 @@ class Regime:
     `{"taste_shocks": {"scale": ...}}` and must be strictly positive; omit
     `taste_shocks` for a hard maximum. At least one discrete action is required.
     Taste shocks are currently supported by `GridSearch` and `DCEGM`. They are
-    rejected on a collective regime, on the source of a `Gate`, with a folded
-    IID state or nonlinear certainty equivalent, and with `NEGM`, `NBEGM`, or
-    `NNBEGM`.
+    rejected on a collective regime, on the source of a `Gate`, with a
+    nonlinear certainty equivalent, and with `NEGM`, `NBEGM`, or `NNBEGM`.
     """
 
     koopmans_aggregator: UserFunction | Phased | Decoupled | None = None
@@ -305,6 +309,20 @@ class Regime:
     equivalent. Terminal regimes have no continuation and cannot declare one.
     """
 
+    shocks: tuple[ShockGroupName, ...] = ()
+    """Model-level IID shock-group references, separate from state processes.
+
+    Each name references a `Model(shocks=...)` group. Reading a shock `x` reads
+    this period's realization, known at the choice, and gives the group a node
+    axis. A group the regime reads only as `next_x`, the draw after the choice,
+    has no axis: the solve integrates it out of the continuation. Utility and
+    constraints cannot read `next_x`. `repr(model)` lists, per regime, which
+    groups carry an axis and which are integrated out.
+    """
+
+    exits: Mapping[str, Exit] = field(default_factory=lambda: MappingProxyType({}))
+    """Named current-period choices to mapped destination policies."""
+
     description: str = ""
     """Description of the regime."""
 
@@ -334,13 +352,9 @@ class Regime:
     shocks, nonlinear certainty equivalents, and non-GridSearch solvers on a
     collective regime raise `NotImplementedError`.
 
-    A shock declared `fold=True` is refused when the model is built, naming the
-    regime and the state. A collective regime writes `-inf` where no action
-    satisfies every stakeholder's participation constraint — a sentinel a gated
-    edge resolves to the outside option, not a value on the household's own
-    scale — and quadrature over that sentinel is not an expectation: a
-    household dissolving at one node would be stored as dissolving at all of
-    them. The same shock folds normally in a singleton regime.
+    A collective regime writes `-inf` where no action satisfies every
+    stakeholder's participation constraint — a sentinel a gated edge resolves
+    to the outside option, not a value on the household's own scale.
 
     Three things to know before simulating one:
 
@@ -393,10 +407,10 @@ class Regime:
       constraint's name).
 
     The final action mask is the AND of ordinary constraints and all value
-    constraints; the household argmax runs over the masked set, and a state
-    cell whose mask is empty publishes the dissolution flag `D = True` (returned by
-    the solve alongside V — never conflated with a numeric `-inf` value, which
-    can occur on-path). A participation constraint takes the form
+    constraints; the household argmax runs over the masked set. A state cell
+    whose mask is empty holds no viable household; where its members go is
+    declared by a participation `Exit` or by a `ParticipationCheck` reading the
+    household's policy support. A participation constraint takes the form
     `Q_j >= V_single_j(pi_j(x)) - Delta_j` for each stakeholder `j`.
 
     A TERMINAL collective regime may declare them too — a household's last
@@ -440,6 +454,14 @@ class Regime:
         object.__setattr__(self, name, value)
 
     def __post_init__(self) -> None:
+        if len(set(self.shocks)) != len(self.shocks) or any(
+            not name.isidentifier()
+            or path_segment_name_errors(kind="Shock group", names=(name,))
+            for name in self.shocks
+        ):
+            raise RegimeInitializationError(
+                "shocks must contain unique ordinary group names."
+            )
         self._lower_value_dependent_declarations()
         self._fail_if_egm_solver_has_no_margin_declaration()
         # What depends on the law is validated once the model binds it from
@@ -459,6 +481,7 @@ class Regime:
         self._make_field_immutable(name="derived_categoricals")
         self._make_field_immutable(name="value_constraints")
         self._make_field_immutable(name="same_period_refs")
+        self._make_field_immutable(name="exits")
 
     def _lower_value_dependent_declarations(self) -> None:
         """Derive the engine-facing views of the collective declarations.

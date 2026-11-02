@@ -162,8 +162,13 @@ def _analytic_compute_node(
     dtype: np.dtype,
     stochastic_node_width: int | None,
     resolved_process_grids: Mapping[StateName, FloatND] = MappingProxyType({}),
+    economic_continuation: Callable[
+        [ScalarFloat], feasibility.BoundedResult[tuple[ScalarFloat, ScalarFloat]]
+    ]
+    | None = None,
 ) -> Callable[[ScalarFloat], tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat]]:
     """Return the exact Euler candidate for terminal log(3 a + 4)."""
+    assert economic_continuation is None
     del pieces, discount_factor, utility_of_action, next_regime_to_continuation
     del dtype, stochastic_node_width, resolved_process_grids
     wealth = cast("ScalarFloat", combo_pool.get("wealth", jnp.asarray(0.0)))
@@ -533,7 +538,6 @@ def test_cell_floor_is_evaluated_once_before_discrete_action_mapping(
             if asset_rows
             else step_core._get_solve_one_combo
         ),
-        mask_gap_rows=False,
         has_taste_shocks=False,
         own_discrete_state_names=(),
         own_passive_state_names=("z",),

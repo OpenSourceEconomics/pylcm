@@ -14,7 +14,7 @@ query, and utility, the bracket pair
 
 must equal the row-then-interpolate pair
 
-    refine(...) -> _publish_node_V_and_policy(...)
+    refine(...) -> interp_on_padded_grid(...) -> constrained-floor selection
 
 to floating-point tolerance. This is a pure unit equivalence — no brute oracle.
 The battery covers smooth, kinked, multi-crossing, all-dead, single-live, and
@@ -28,10 +28,8 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from _lcm.egm.asset_row import (
-    _publish_node_V_and_policy,
-    publish_node_from_bracket,
-)
+from _lcm.egm.asset_row import publish_node_from_bracket
+from _lcm.egm.interp import interp_on_padded_grid
 from _lcm.egm.upper_envelope import fues
 from tests.conftest import X64_ENABLED
 
@@ -153,17 +151,34 @@ def _reference(*, grid, policy, value, x_query, n_pad):
         value=jnp.where(dead, jnp.nan, value),
         n_refined=n_pad,
     )
-    return _publish_node_V_and_policy(
-        refined_grid=refined_grid,
-        refined_policy=refined_policy,
-        refined_value=refined_value,
-        n_kept=n_kept,
-        n_pad=n_pad,
-        resources_at_node=jnp.asarray(x_query),
-        borrowing_limit=jnp.asarray(_BORROWING_LIMIT),
-        utility_of_action=_utility_of_action,
-        discounted_expected_value_at_limit=jnp.asarray(_DISCOUNTED_EV_AT_LIMIT),
+    x_query = jnp.asarray(x_query)
+    marginal_utility = jax.vmap(jax.grad(_utility_of_action))(
+        jnp.where(jnp.isnan(refined_policy), 1.0, refined_policy)
     )
+    marginal_utility = jnp.where(jnp.isnan(refined_policy), jnp.nan, marginal_utility)
+    marginal_utility = jnp.where(jnp.isneginf(refined_value), 0.0, marginal_utility)
+    value_interpolated = interp_on_padded_grid(
+        x_query=x_query, xp=refined_grid, fp=refined_value, fp_slopes=marginal_utility
+    )
+    policy_interpolated = interp_on_padded_grid(
+        x_query=x_query, xp=refined_grid, fp=refined_policy
+    )
+    closed_form_action = x_query - _BORROWING_LIMIT
+    value_constrained = jnp.where(
+        closed_form_action > 0.0,
+        _utility_of_action(closed_form_action) + _DISCOUNTED_EV_AT_LIMIT,
+        -jnp.inf,
+    )
+    below_refined = (closed_form_action > 0.0) & (x_query <= refined_grid[0])
+    constrained_wins = below_refined | (value_constrained >= value_interpolated)
+    value = jnp.where(
+        below_refined,
+        value_constrained,
+        jnp.maximum(value_interpolated, value_constrained),
+    )
+    policy = jnp.where(constrained_wins, closed_form_action, policy_interpolated)
+    overflowed = n_kept > n_pad
+    return jnp.where(overflowed, jnp.nan, value), jnp.where(overflowed, jnp.nan, policy)
 
 
 def _streamed(*, grid, policy, value, x_query, n_pad):

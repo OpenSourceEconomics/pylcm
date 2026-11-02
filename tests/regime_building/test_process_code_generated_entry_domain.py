@@ -3,7 +3,8 @@
 Both public producer routes create z=0.25 after valid initial inputs:
 
 * an authored entry law from a source that does not carry z;
-* a forced closed gate's fallback projection, after node-valued candidate draws.
+* a forced closed participation check's fallback projection, after node-valued
+  candidate draws.
 
 There is no node at 0.25 on (-2, -1, 0, 1, 2). A code-reading destination must
 refuse before invoking its code consumer. Code-free destinations retain the
@@ -23,9 +24,10 @@ from lcm import (
     AgeGrid,
     ByAge,
     DiscreteGrid,
-    Gate,
     Model,
     NormalIIDProcess,
+    ParticipationCheck,
+    ParticipationRead,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
@@ -77,7 +79,7 @@ def _process():
         sigma=1.0,
         n_std=2.0,
         gauss_hermite=False,
-        simulate_draws="nodes",
+        simulated_draws="nodes",
     )
 
 
@@ -123,6 +125,10 @@ def _project_zero(z: ContinuousState) -> ContinuousState:
 
 def _closed(V_target: FloatND) -> BoolND:
     return V_target < 0.0
+
+
+def _landed_z(z: ContinuousState) -> ContinuousState:
+    return z
 
 
 def _prob_one(age: FloatND) -> FloatND:
@@ -171,9 +177,16 @@ def _model(*, route: str, code: bool, on_node: bool, enable_jit: bool) -> Model:
             "source": Transition(
                 targets={"landing": 0, "fallback": 0},
                 law=ByAge(cases={0: {"landing": StochasticTransition(func=_prob_one)}}),
-                gates={
-                    "landing": Gate(
+                participation={
+                    "landing": ParticipationCheck(
                         predicate=_closed,
+                        reads={
+                            "V_target": ParticipationRead(
+                                kind="Raw",
+                                regime="landing",
+                                projection={"z": _landed_z},
+                            )
+                        },
                         routes={
                             "only": StakeholderRoute(
                                 fallback=ProjectedRegimeValue(

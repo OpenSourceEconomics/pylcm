@@ -57,7 +57,6 @@ class PrepareChunkArguments(TypedDict):
     regimes: MappingProxyType[RegimeName, EngineRegime]
     flat_params: FlatParams
     values: Mapping[int, Mapping[RegimeName, jax.Array]]
-    flags: Mapping[int, Mapping[RegimeName, jax.Array]]
     ages: TimeAxis
     initial_conditions: Mapping[str, jax.Array]
     regime_names_to_ids: RegimeNamesToIds
@@ -380,7 +379,8 @@ def test_native_source_budget_includes_retained_bank_and_future_copy_scratch(
         _small_grid_search_inputs,
     )
 
-    budget = 4096
+    # Leave room for addressed keys; the excluded-source bank still fills the cap.
+    budget = 8192
     source_device = jax.devices()[3]
     selected = (jax.devices()[1], jax.devices()[2])
     model, params, initial = _small_grid_search_inputs(

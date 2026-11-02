@@ -65,7 +65,6 @@ from lcm.exceptions import ExecutionPlanningError, PyLCMError
 from lcm.model import Model
 from lcm.regime import Regime as UserRegime
 from lcm.result import SimulationResult
-from lcm.solver_api import DISSOLUTION_FLAG
 from lcm.typing import RegimeName, ScalarFloat, ScalarInt
 from tests.simulation._profile_comparison import (
     assert_values_agree as assert_agrees_to_ulp,
@@ -330,10 +329,12 @@ def _assert_exact_layout_values(
             np.testing.assert_array_equal(value, expected[period][regime])
 
 
-# A GridSearch core sums its int32 empty-action and other-Inf counts over every
+# A GridSearch core sums its empty-action and other-Inf counts over every
 # state cell, so a state-sharded core reduces that one scalar pair across devices.
+_COUNTER_HLO_DTYPE = "s64" if jax.config.x64_enabled else "s32"
 _COUNTER_ALL_REDUCE = re.compile(
-    r"(%all-reduce[.\d]*) = \(s32\[\], s32\[\]\) all-reduce\("
+    rf"(%all-reduce[.\d]*) = \({_COUNTER_HLO_DTYPE}\[\], "
+    rf"{_COUNTER_HLO_DTYPE}\[\]\) all-reduce\("
 )
 _COLLECTIVES = (
     "all-gather",
@@ -360,14 +361,31 @@ def _collectives_beyond_feasibility_counts(*, hlo: str) -> list[str]:
     "line",
     [
         "%all-reduce.3 = f64[] all-reduce(%x), to_apply=%add",
-        "%all-reduce.4 = (s32[], s32[], s32[]) all-reduce(%a, %b, %c)",
+        (
+            f"%all-reduce.4 = ({_COUNTER_HLO_DTYPE}[], {_COUNTER_HLO_DTYPE}[], "
+            f"{_COUNTER_HLO_DTYPE}[]) all-reduce(%a, %b, %c)"
+        ),
         "%all-gather.1 = f64[8] all-gather(%v), dimensions={0}",
+        (
+            f"%all-reduce.5 = ({_COUNTER_HLO_DTYPE}[1], "
+            f"{_COUNTER_HLO_DTYPE}[1]) all-reduce(%a, %b)"
+        ),
+        "%all-reduce.6 = (s32[], s64[]) all-reduce(%a, %b)",
+        "%all-reduce.7 = (s32[], s32[]) all-reduce(%a, %b)"
+        if jax.config.x64_enabled
+        else "%all-reduce.7 = (s64[], s64[]) all-reduce(%a, %b)",
     ],
 )
 def test_the_collective_check_reports_anything_but_the_count_pair(line: str) -> None:
-    """Only the scalar int32 count pair and its unpacking are exempt."""
-    counter = "%all-reduce.2 = (s32[], s32[]) all-reduce(%e, %o), to_apply=%sum"
-    unpack = "%get-tuple-element.7 = s32[] get-tuple-element(%all-reduce.2), index=0"
+    """Only the configured scalar count pair and its unpacking are exempt."""
+    counter = (
+        f"%all-reduce.2 = ({_COUNTER_HLO_DTYPE}[], {_COUNTER_HLO_DTYPE}[]) "
+        "all-reduce(%e, %o), to_apply=%sum"
+    )
+    unpack = (
+        f"%get-tuple-element.7 = {_COUNTER_HLO_DTYPE}[] "
+        "get-tuple-element(%all-reduce.2), index=0"
+    )
 
     assert _collectives_beyond_feasibility_counts(
         hlo=f"{counter}\n{unpack}\n{line}"
@@ -763,7 +781,9 @@ def test_planned_solve_rejects_a_replicated_output_injected_after_kernel_call(
 
     monkeypatch.setattr(backward_induction, "_run_period_kernel", emit_replicated_V)
 
-    with pytest.raises(AssertionError, match="post-run repair is not permitted"):
+    with pytest.raises(
+        AssertionError, match=r"An assembled period value.*is not its template"
+    ):
         model.solve(
             log_level="off",
             params={"discount_factor": 0.95},
@@ -1057,11 +1077,11 @@ def test_value_transfer_copies_a_named_target_onto_a_single_device_source():
 
 
 @_skip_pytest_parallel
-def test_collective_grid_search_value_and_dissolution_have_planned_state_layout():
-    """Collective V keeps its stakeholder axis replicated; D has state rank.
+def test_collective_grid_search_value_has_planned_state_layout():
+    """Collective V keeps its stakeholder axis replicated.
 
     Values agree across differently fused device topologies to dtype-scale rounding;
-    dissolution and layout remain exact.
+    layout remains exact.
     """
     distributed_model = _make_one_axis_collective_model(distributed=True)
     working_kernels = distributed_model._regimes["working"].solution.period_kernels
@@ -1081,12 +1101,10 @@ def test_collective_grid_search_value_and_dissolution_have_planned_state_layout(
         log_level="off",
         params={"discount_factor": 0.95},
     )
-    distributed_flags = distributed_values.replay_artifacts.project(DISSOLUTION_FLAG)
     single_values = single_model.solve(
         log_level="off",
         params={"discount_factor": 0.95},
     )
-    single_flags = single_values.replay_artifacts.project(DISSOLUTION_FLAG)
 
     for period, regime_to_value in distributed_values.values.items():
         for regime_name, value in regime_to_value.items():
@@ -1098,14 +1116,6 @@ def test_collective_grid_search_value_and_dissolution_have_planned_state_layout(
             reference = single_values.values[period][regime_name]
             eps = np.finfo(np.asarray(value).dtype).eps
             np.testing.assert_allclose(value, reference, rtol=2 * eps, atol=2 * eps)
-            dissolution = distributed_flags[period][regime_name]
-            assert isinstance(dissolution, jax.Array)
-            assert dissolution.shape == (4, 4)
-            assert isinstance(dissolution.sharding, NamedSharding)
-            assert dissolution.sharding.spec == PartitionSpec("type1", None)
-            np.testing.assert_array_equal(
-                dissolution, single_flags[period][regime_name]
-            )
 
 
 @_skip_pytest_parallel

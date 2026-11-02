@@ -6,12 +6,12 @@ pays for, and each cost is measured on its own axis here:
 - **model construction** — the phase scan, the lowering of the collective
   declarations, and the per-edge parameter discovery, with nothing compiled;
 - **cold compilation** — the first solve, which traces and compiles every
-  regime's kernels plus one fold per gated edge;
+  regime's kernels and its declared participation programs;
 - **warm solve** — the same solve with the compilation cache hot, which is what
   an estimation loop pays per parameter vector;
-- **simulation over cohort size** — the router evaluates each gate once per
-  edge per period over the whole population, so this is where a cohort-size
-  term would show;
+- **simulation over cohort size** — participation checks route original subjects
+  before their final action each period, so this is where a cohort-size term
+  would show;
 - **transitive reference depth** — a value constraint may read a regime that
   itself reads another, and the solver orders each period's regimes by that
   chain. Depth is the axis on which an accidental quadratic would appear.
@@ -187,10 +187,9 @@ class CollectiveHouseholdSolve:
 class CollectiveHouseholdSimulate:
     """Forward simulation, over cohort sizes.
 
-    Routing is the part of simulation that is specific to a gated model: one
-    gate evaluation per edge per period over the whole population. A
-    cohort-size term that grew faster than linearly would show up between
-    these three points.
+    Participation checks route each original subject before its final action.
+    A cohort-size term that grew faster than linearly would show up between
+    these points.
     """
 
     version = "1"

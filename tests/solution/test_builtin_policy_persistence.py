@@ -17,13 +17,12 @@ from pandas.testing import assert_frame_equal
 
 from _lcm.egm.nested_published_policy import NestedEGMSimPolicy
 from _lcm.egm.published_policy import NNBEGMSimPolicy
-from _lcm.solution.contract import BackwardInductionResult
+from _lcm.simulation.current_iid_overrides import SimulationInitialConditionsInput
 from _lcm.solution.solver_diagnostics import SolverDiagnostics
 from lcm import ExecutionConfig, Model
 from lcm.exceptions import ExecutionPlanningError, InvalidSimulationInputError
 from lcm.persistence import load_solution, save_solution
 from lcm.solver_api import (
-    DISSOLUTION_FLAG,
     EGM_CONTINUATION,
     SIMULATION_POLICY,
     SOLVER_DIAGNOSTICS,
@@ -44,15 +43,9 @@ from lcm.solver_api import (
     SolutionMetadata,
     SolutionResult,
     ValueArraySchema,
-    ValueStore,
 )
 from lcm.solvers import EGMContinuationSpec
-from lcm.typing import RegimeName
-from tests.collective_fixtures import (
-    ParamsDict,
-    make_couple_initial_conditions,
-    make_two_stakeholder_model,
-)
+from lcm.typing import RegimeName, UserParams
 from tests.simulation.test_nnbegm_split_workflow_parity import (
     _INITIAL,
     _N_PERIODS,
@@ -62,6 +55,8 @@ from tests.simulation.test_nnbegm_split_workflow_parity import (
 )
 from tests.solution.test_egm_published_policy import _two_period_bequest_model
 from tests.test_models import n_nbegm_toy as toy
+from tests.test_models import nbegm_tax_toy
+from tests.test_models.deterministic import dcegm_variants
 from tests.test_models.deterministic.dcegm_variants import (
     get_graph_only_retirement_params,
 )
@@ -133,178 +128,6 @@ def _artifact_descriptors_by_ref(
     ``SIMULATION_POLICY`` key.
     """
     return solution.metadata.artifact_descriptors
-
-
-def _solve_without_optional_dissolution_flags(
-    *, monkeypatch: pytest.MonkeyPatch
-) -> tuple[Model, ParamsDict, SolutionResult, tuple[ArtifactRef, ...]]:
-    """Solve after suppressing optional flags at the engine-result boundary."""
-    model, params = make_two_stakeholder_model()
-    original_solve = model._solve_compiled
-
-    def without_optional_flags[**P](
-        original_solve: Callable[P, BackwardInductionResult],
-    ) -> Callable[P, BackwardInductionResult]:
-        def solve_without_dissolution_flags(
-            *args: P.args, **kwargs: P.kwargs
-        ) -> BackwardInductionResult:
-            internal_result = original_solve(*args, **kwargs)
-            return dataclasses.replace(
-                internal_result,
-                dissolution_flags=MappingProxyType(
-                    {
-                        period: MappingProxyType({})
-                        for period in internal_result.dissolution_flags
-                    }
-                ),
-            )
-
-        return solve_without_dissolution_flags
-
-    monkeypatch.setattr(
-        model, "_solve_compiled", without_optional_flags(original_solve)
-    )
-
-    solution = model.solve(
-        params=params,
-        log_level="off",
-        retention=ResultRetention.VALUES_AND_REPLAY,
-    )
-    omitted_refs = tuple(
-        ref for ref in solution.omissions if ref.key == DISSOLUTION_FLAG
-    )
-    return model, params, solution, omitted_refs
-
-
-def _replace_manifest_omission_reason(
-    *, path: Path, ref: ArtifactRef, reason: OmissionReason
-) -> None:
-    """Mutate one omission reason while preserving the manifest checksum."""
-    with h5py.File(path, "r+") as archive:
-        manifest = cast(
-            "_ArchiveManifest",
-            json.loads(bytes(archive["manifest"][()])),
-        )
-        omissions = manifest["omissions"]
-        entry = next(
-            entry
-            for entry in omissions
-            if entry["period"] == ref.period
-            and entry["regime"] == ref.regime
-            and entry["type_id"] == ref.key.type_id
-            and entry["schema_version"] == ref.key.schema_version
-        )
-        entry["reason"] = reason.value
-        manifest_bytes = json.dumps(
-            manifest,
-            sort_keys=True,
-            separators=(",", ":"),
-            ensure_ascii=True,
-        ).encode("utf-8")
-        del archive["manifest"]
-        dataset = archive.create_dataset(
-            "manifest",
-            data=np.frombuffer(manifest_bytes, dtype=np.uint8),
-        )
-        dataset.attrs["sha256"] = hashlib.sha256(manifest_bytes).hexdigest()
-
-
-def test_missing_applicable_optional_artifact_is_recorded_as_unsupported(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The in-memory omission ledger distinguishes absence from inapplicability."""
-    _model, _params, solution, omitted_refs = _solve_without_optional_dissolution_flags(
-        monkeypatch=monkeypatch
-    )
-
-    assert omitted_refs
-    assert all(
-        solution._artifact_authority[ref].applicable
-        and not solution._artifact_authority[ref].required
-        for ref in omitted_refs
-    )
-    assert all(
-        solution.omissions[ref] is OmissionReason.UNSUPPORTED for ref in omitted_refs
-    )
-
-
-def test_simulation_leaves_unconsumed_optional_dissolution_flags_unloaded(
-    tmp_path: Path,
-) -> None:
-    """Replay preflight materializes only flags a declared gate consumes."""
-    source_model, params = make_two_stakeholder_model()
-    restored = load_solution(
-        path=save_solution(
-            solution=source_model.solve(params=params, log_level="off"),
-            path=tmp_path / "solution.lcm",
-        )
-    )
-    flag_refs = tuple(
-        ref for ref in restored.replay_artifacts if ref.key == DISSOLUTION_FLAG
-    )
-    assert flag_refs
-    assert all(
-        restored.replay_artifacts.load_state(ref) is LoadState.UNLOADED
-        for ref in flag_refs
-    )
-
-    fresh_model, _fresh_params = make_two_stakeholder_model()
-    fresh_model.simulate(
-        params=params,
-        initial_conditions=make_couple_initial_conditions(n_subjects=1),
-        solution=restored,
-        log_level="off",
-        seed=0,
-    )
-
-    assert all(
-        restored.replay_artifacts.load_state(ref) is LoadState.UNLOADED
-        for ref in flag_refs
-    )
-
-
-def test_model_rejects_persisted_not_applicable_lie_before_materialization(
-    *, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Fresh model authority rejects an applicable archive cell's false omission."""
-    _source_model, params, solution, omitted_refs = (
-        _solve_without_optional_dissolution_flags(monkeypatch=monkeypatch)
-    )
-    assert omitted_refs
-    tampered_ref = omitted_refs[0]
-    path = save_solution(solution=solution, path=tmp_path / "solution.lcm")
-    _replace_manifest_omission_reason(
-        path=path,
-        ref=tampered_ref,
-        reason=OmissionReason.NOT_APPLICABLE,
-    )
-
-    restored = load_solution(path=path)
-    assert isinstance(restored.values, ValueStore)
-    model, _fresh_params = make_two_stakeholder_model()
-    assert all(
-        restored.values.load_state(period=period, regime=regime) is LoadState.UNLOADED
-        for period in restored.values
-        for regime in restored.values[period]
-    )
-
-    with pytest.raises(
-        InvalidSimulationInputError,
-        match=r"omissions.*not_applicable.*unsupported",
-    ):
-        model.simulate(
-            params=params,
-            initial_conditions=make_couple_initial_conditions(n_subjects=1),
-            solution=restored,
-            log_level="off",
-            seed=0,
-        )
-
-    assert all(
-        restored.values.load_state(period=period, regime=regime) is LoadState.UNLOADED
-        for period in restored.values
-        for regime in restored.values[period]
-    )
 
 
 def test_builtin_egm_continuation_roundtrips_as_an_independent_lazy_entry(
@@ -941,3 +764,76 @@ def test_budgeted_simulation_from_a_foreign_nnbegm_solution_is_refused(
             log_level="off",
             seed=_SEED,
         )
+
+
+def _plain_dcegm(
+    execution_config: ExecutionConfig = ExecutionConfig(),  # noqa: B008
+) -> tuple[Model, UserParams, SimulationInitialConditionsInput]:
+    """Build the worker/retiree DC-EGM model outside its shared builder cache."""
+    n_periods = 3
+    model = dcegm_variants.get_full_model.__wrapped__(
+        solver="dcegm", n_periods=n_periods, execution_config=execution_config
+    )
+    initial = {
+        "wealth": jnp.asarray([10.0, 100.0, 300.0]),
+        "age": jnp.full(3, 40.0),
+        "regime_id": jnp.full(
+            3, model.regime_names_to_ids["working_life"], dtype=jnp.int32
+        ),
+    }
+    return model, dcegm_variants.get_full_params(n_periods=n_periods), initial
+
+
+def _budgeted_dcegm() -> tuple[Model, UserParams, SimulationInitialConditionsInput]:
+    """Build the DC-EGM model under an explicit budget, as a GPU default plans."""
+    return _plain_dcegm(ExecutionConfig(device_memory_bytes=2**31))
+
+
+def _plain_nbegm() -> tuple[Model, UserParams, SimulationInitialConditionsInput]:
+    """Build the one-asset tax-bracket NB-EGM toy."""
+    model = nbegm_tax_toy.build_model(variant="nbegm", n_periods=3)
+    initial = {
+        "liquid": jnp.asarray([1.0, 5.0, 20.0]),
+        "age": jnp.zeros(3),
+        "regime_id": jnp.full(3, model.regime_names_to_ids["alive"], dtype=jnp.int32),
+    }
+    return model, nbegm_tax_toy.build_params(), initial
+
+
+@pytest.mark.parametrize(
+    "build",
+    [
+        pytest.param(_plain_dcegm, id="dcegm"),
+        pytest.param(_budgeted_dcegm, id="dcegm-budgeted"),
+        pytest.param(_plain_nbegm, id="nbegm"),
+    ],
+)
+def test_a_saved_egm_solution_simulates_identically_in_a_fresh_model(
+    *,
+    build: Callable[[], tuple[Model, UserParams, SimulationInitialConditionsInput]],
+    tmp_path: Path,
+) -> None:
+    """A fresh model simulates a saved and reloaded EGM solution like the source."""
+    source_model, params, initial = build()
+    solution = source_model.solve(params=params, log_level="off")
+    expected = source_model.simulate(
+        params=params,
+        initial_conditions=initial,
+        solution=solution,
+        log_level="off",
+        seed=_SEED,
+    )
+    restored = load_solution(
+        path=save_solution(solution=solution, path=tmp_path / "solution.lcm")
+    )
+
+    fresh_model, _params, _initial = build()
+    actual = fresh_model.simulate(
+        params=params,
+        initial_conditions=initial,
+        solution=restored,
+        log_level="off",
+        seed=_SEED,
+    )
+
+    assert_frame_equal(actual.to_dataframe(), expected.to_dataframe())

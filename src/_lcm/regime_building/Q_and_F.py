@@ -15,7 +15,7 @@ import inspect
 import operator
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from types import MappingProxyType
+from types import FunctionType, MappingProxyType
 from typing import NamedTuple, cast, no_type_check
 
 import jax
@@ -70,6 +70,7 @@ from _lcm.typing import (
     EconFunction,
     EconFunctionArg,
     EconFunctionsMapping,
+    LandingCheck,
     NextStateSolutionFunction,
     ParamsLeaf,
     PytreeValue,
@@ -182,16 +183,44 @@ class _BoundUtilitiesAndF:
         )
 
 
-# One raw landing a solve kernel counts: the regime whose grid is read, and the
-# state whose `off_grid="raise"` grid the landing is checked against.
-type LandingCheck = tuple[RegimeName, StateName]
-
 # What the continuation aggregator returns at a cell: `CE` and the active
 # regimes' transition probabilities, then the landing counts when it counts any.
-type ContinuationAggregate = (
+type _PlainContinuationAggregate = (
     tuple[FloatND, MappingProxyType[RegimeName, FloatND]]
     | tuple[FloatND, MappingProxyType[RegimeName, FloatND], IntND]
 )
+type ContinuationAggregate = _PlainContinuationAggregate | CheckedContinuationEvaluation
+
+
+@dataclass(frozen=True, kw_only=True)
+class CheckedContinuationEvaluation:
+    """Continuation arithmetic and independently mandatory reader integrity."""
+
+    aggregate: _PlainContinuationAggregate
+    valid: BoolND
+
+
+def _continuation_evaluation(
+    result: ContinuationAggregate,
+) -> tuple[_PlainContinuationAggregate, BoolND | None]:
+    """Keep a reader's integrity distinct from its economic continuation value."""
+    if isinstance(result, CheckedContinuationEvaluation):
+        return result.aggregate, result.valid
+    return result, None
+
+
+def has_participation_queries(*, function: QAndFFunction) -> bool:
+    """Identify canonical Q/F with an independently checked participation value."""
+    return (
+        isinstance(function, _QAndF | _CollectiveQAndF)
+        and isinstance(function.compute_CE, _ComputeCE)
+        and function.compute_CE.has_participation_queries
+    )
+
+
+def has_action_integrity(*, function: Callable[..., PytreeValue]) -> bool:
+    """Name action kernels whose bound records ride the reduction transport."""
+    return bool(runtime_bound_specs(function=function))
 
 
 class QAndFParts(NamedTuple):
@@ -217,6 +246,9 @@ class QAndFParts(NamedTuple):
     Q_objective: FloatND | None = None
     """`W_objective(utility=U, CE=CE, ...)`, the value the action is chosen on,
     or `None` when the Koopmans aggregator also chooses."""
+
+    continuation_valid: BoolND | None = None
+    """Mandatory participation-read integrity, independent of discounting or utility."""
 
 
 class EvaluatedQAndF(NamedTuple):
@@ -301,6 +333,7 @@ class BoundedQAndF:
                 else (evaluated.parts.Q, evaluated.parts.F)
             ),
             bound_status=evaluated.bound_status,
+            query_status=None,
         )
 
 
@@ -313,6 +346,19 @@ def _evaluated_utilities_and_F(
     if type(function) is not _BoundUtilitiesAndF:
         raise TypeError("Bound-aware action evaluation requires canonical bound specs.")
     return cast("_BoundUtilitiesAndF", function).evaluated(**states_actions_params)
+
+
+def _evaluated_action_utilities_and_F(
+    *, function: Callable[..., UtilitiesAndF], states_actions_params: QAndFKwargs
+) -> EvaluatedUtilitiesAndF:
+    """Evaluate the admitted ordinary DAG or original bound flow exactly once."""
+    if type(function) is FunctionType:
+        return EvaluatedUtilitiesAndF(
+            utilities_and_F=function(**states_actions_params), bound_status=()
+        )
+    return _evaluated_utilities_and_F(
+        function=function, states_actions_params=states_actions_params
+    )
 
 
 def _terminal_parts(*, utilities_and_F: UtilitiesAndF, collective: bool) -> QAndFParts:
@@ -609,7 +655,9 @@ def get_Q_and_F(
     # read. So only the continuation needs a pool of its own, and the phase split
     # reduces to that one sub-DAG.
     U_and_F = _get_U_and_F(
-        functions=functions, constraints=constraints, bound_specs=bound_specs
+        functions=functions,
+        constraints=constraints,
+        bound_specs=bound_specs,
     )
     compute_CE, continuation_deps, continuation_arg_names = _get_compute_CE(
         flat_param_names=flat_param_names,
@@ -841,11 +889,15 @@ class _QAndF:
         # the state-independent F here and ANDs its value constraints in only
         # after computing Q^s.
         U_arr, F_arr = cast("tuple[FloatND, BoolND]", utilities_and_F)
-        CE, _, *landing_counts = self.compute_CE(
-            next_regime_to_V_arr=next_regime_to_V_arr,
-            zero=jnp.zeros_like(U_arr),
-            states_actions_params=states_actions_params,
+        U_arr = jnp.asarray(U_arr)
+        continuation, continuation_valid = _continuation_evaluation(
+            self.compute_CE(
+                next_regime_to_V_arr=next_regime_to_V_arr,
+                zero=jnp.zeros_like(U_arr),
+                states_actions_params=states_actions_params,
+            )
         )
+        CE, _, *landing_counts = continuation
         CE = cast("FloatND", CE)
 
         Q_arr = self.koopmans_aggregator(
@@ -878,6 +930,7 @@ class _QAndF:
             CE=jnp.asarray(CE),
             Q=jnp.asarray(Q_arr),
             Q_objective=Q_objective,
+            continuation_valid=continuation_valid,
         ), cast("tuple[IntND, ...]", tuple(landing_counts))
 
     def evaluated(
@@ -886,7 +939,7 @@ class _QAndF:
         **states_actions_params: QAndFArg,
     ) -> EvaluatedQAndF:
         """Evaluate canonical flow once and keep its integrity through continuation."""
-        flow = _evaluated_utilities_and_F(
+        flow = _evaluated_action_utilities_and_F(
             function=self.U_and_F, states_actions_params=states_actions_params
         )
         parts, landings = self._parts_from_utilities(
@@ -1031,11 +1084,14 @@ class _ComputeIntermediates:
     ) -> Intermediates:
         """Compute all Q_and_F intermediates."""
         U_arr, F_arr = self.U_and_F(**states_actions_params)
-        CE, active_regime_probs = self.compute_CE(
-            next_regime_to_V_arr=next_regime_to_V_arr,
-            zero=jnp.zeros_like(U_arr),
-            states_actions_params=states_actions_params,
+        continuation, _ = _continuation_evaluation(
+            self.compute_CE(
+                next_regime_to_V_arr=next_regime_to_V_arr,
+                zero=jnp.zeros_like(U_arr),
+                states_actions_params=states_actions_params,
+            )
         )
+        CE, active_regime_probs, *_ = continuation
 
         Q_arr = self.koopmans_aggregator(
             utility=U_arr,
@@ -1154,7 +1210,7 @@ class _TerminalQAndF:
         **states_actions_params: QAndFArg,
     ) -> EvaluatedQAndF:
         """Return terminal parts and mandatory flags from the same actual flow pass."""
-        flow = _evaluated_utilities_and_F(
+        flow = _evaluated_action_utilities_and_F(
             function=self.U_and_F, states_actions_params=states_actions_params
         )
         return EvaluatedQAndF(
@@ -1208,7 +1264,7 @@ def get_Q_and_F_terminal_collective(
             predicates (params already renamed to qnames). A terminal cell's
             action value IS its utility — there is no continuation — so a
             predicate's `Q_<s>` is stakeholder `s`'s terminal payoff. An
-            all-infeasible cell publishes the dissolution flag `D` and the
+            all-infeasible cell sets the dissolution flag `D` and the
             `-inf` sentinel; the engine resolves no outside option in its place,
             because a terminal regime has no continuation to route into.
         same_period_refs: Immutable mapping of reference-value names to resolved
@@ -1306,7 +1362,7 @@ class _TerminalCollectiveQAndF:
         **states_actions_params: QAndFArg,
     ) -> EvaluatedQAndF:
         """Keep shared bound integrity independently of household value predicates."""
-        flow = _evaluated_utilities_and_F(
+        flow = _evaluated_action_utilities_and_F(
             function=self.utilities_and_F, states_actions_params=states_actions_params
         )
         return EvaluatedQAndF(
@@ -1342,7 +1398,7 @@ class _TerminalCollectiveQAndF:
 # reference regimes to their current-period V arrays enters the kernel
 # signature. Only regimes declaring `same_period_refs` carry it.
 # Kernel argument holding each edge-reference regime's value array. A gated
-# edge's gate references and leg fallbacks are read where the SOURCE lands, but
+# edge's leg fallbacks are read where the SOURCE lands, but
 # the value they name belongs to the period the source lands IN. Backward
 # induction has already solved that period, so the arrays arrive here rolled
 # forward — and from the RAW rolled mapping, never the edge-substituted one,
@@ -1439,7 +1495,7 @@ class GatedContinuationSpec:
     """Target states the gate reads, supplied at the landing point."""
 
     projected_readers: tuple[ProjectedLandingReader, ...] = ()
-    """Gate references and leg fallbacks, read at the landing point."""
+    """Leg fallbacks, read at the landing point."""
 
     target_ages: Float1D
     """Age at each model period, indexed by the period the gate is read in.
@@ -1459,12 +1515,12 @@ class GatedContinuationSchedule:
     """Specs keyed by FOLD period. A source standing at `t` reads the `t + 1`
     entry: that is the period whose value arrays the edge folds, and whose
     grids its projected readers close over. Keyed by period for the reason
-    `ResolvedGatedEdge.folds_by_period` is — a gate reference on an
+    `ResolvedGatedEdge.folds_by_period` is — a leg fallback on an
     `AgeSpecializedGrid` is read on its own regime's nodes, which move with
     age while their shape does not."""
 
     reference_regimes: tuple[RegimeName, ...]
-    """Regimes this edge's gate references and leg fallbacks interpolate.
+    """Regimes this edge's leg fallbacks interpolate.
     Enters the Q_and_F grouping key, so two periods whose reference grids
     differ never share one compiled kernel."""
 
@@ -1571,7 +1627,7 @@ def _build_same_period_ref_reader(
     (interpolation-worthy, possibly off-grid) — unlike the ordinary
     continuation-value path, which always feeds a process axis its exact
     on-grid Markov-chain index. When the reference regime carries a
-    non-folded process state (`_ContinuousStochasticProcess`, classified
+    process state (`_ContinuousStochasticProcess`, classified
     `discrete_states` for the Markov-chain solve path but read here as a
     genuine value), `get_V_interpolator`'s process-aware mode
     (`interpolate_process_axes=True`) is used so that axis is linearly
@@ -1891,7 +1947,7 @@ def get_Q_and_F_collective(
             values, and ordinary states / actions / functions / params via the
             DAG; the results are ANDed into the feasibility mask, so the
             household argmax runs over `F ∧ g(Q^s, V_ref, ...)` and an
-            all-infeasible cell publishes the dissolution flag `D` downstream.
+            all-infeasible cell sets the kernel's dissolution flag `D`.
         same_period_refs: Immutable mapping of reference-value names to resolved
             same-period reference declarations. When non-empty, the returned
             `Q_and_F` carries the extra argument `SAME_PERIOD_V_ARG` — the
@@ -2080,13 +2136,25 @@ class _CollectiveQAndF:
         )
         return (parts.Q, parts.F, *landings)
 
+    def parts(
+        self,
+        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
+        **states_actions_params: QAndFArg,
+    ) -> QAndFParts:
+        """Keep household continuation integrity from the ordinary flow pass."""
+        return self._parts_from_utilities(
+            next_regime_to_V_arr=next_regime_to_V_arr,
+            utilities_and_F=self.utilities_and_F(**states_actions_params),
+            states_actions_params=states_actions_params,
+        )[0]
+
     def evaluated(
         self,
         next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
         **states_actions_params: QAndFArg,
     ) -> EvaluatedQAndF:
         """Preserve actual floor integrity through household continuation and F."""
-        flow = _evaluated_utilities_and_F(
+        flow = _evaluated_action_utilities_and_F(
             function=self.utilities_and_F, states_actions_params=states_actions_params
         )
         parts, landings = self._parts_from_utilities(
@@ -2115,11 +2183,14 @@ class _CollectiveQAndF:
         # The mass is stakeholder-independent — the regime transition is — so the
         # accumulator zero carries the cell shape, and the aggregator puts the
         # stakeholder axis back on the value it builds.
-        CE, _, *landing_counts = self.compute_CE(
-            next_regime_to_V_arr=next_regime_to_V_arr,
-            zero=jnp.zeros_like(U_stack[..., 0]),
-            states_actions_params=states_actions_params,
+        continuation, continuation_valid = _continuation_evaluation(
+            self.compute_CE(
+                next_regime_to_V_arr=next_regime_to_V_arr,
+                zero=jnp.zeros_like(U_stack[..., 0]),
+                states_actions_params=states_actions_params,
+            )
         )
+        CE, _, *landing_counts = continuation
         CE = cast("FloatND", CE)
 
         # W applied on the stacked arrays is W per stakeholder: `utility` and
@@ -2157,6 +2228,7 @@ class _CollectiveQAndF:
             F=jnp.asarray(F_arr),
             CE=CE,
             Q=jnp.asarray(Q_arr),
+            continuation_valid=continuation_valid,
         ), cast("tuple[IntND, ...]", tuple(landing_counts))
 
 
@@ -2307,12 +2379,18 @@ def _get_stakeholder_sliced_interpolator(
     The target regime's `next_V_arr` leaf has
     shape `(*target_state_axes, n_stakeholders)`; the base interpolator
     interpolates over the state axes of a plain `(*target_state_axes,)` array.
-    Calling it once per stakeholder on the slice `next_V_arr[..., s]` and
-    re-stacking on a trailing axis keeps the interpolation semantics untouched
-    and puts the stakeholder axis last by construction — no axis bookkeeping
-    can reorder it. The wrapper carries the base interpolator's exact argument
-    names so the stochastic-variable product-map and the extra-param discovery
-    treat it like the singleton interpolator.
+    The base interpolator is mapped over the trailing stakeholder axis of
+    `next_V_arr` alone, so each stakeholder's value is the singleton read of its
+    slice `next_V_arr[..., s]` and the stakeholder axis comes out last by
+    construction — no axis bookkeeping can reorder it. Only the value array is
+    mapped: the landing coordinates, corner indices and weights do not depend on
+    the stakeholder, so they are formed once and every stakeholder is read from
+    the same cells in one gather. Stacking separate per-slice reads instead
+    repeats the whole read per stakeholder and materializes the stack over every
+    lottery node before the expectation can reduce it. The wrapper carries the
+    base interpolator's exact argument names so the stochastic-variable
+    product-map and the extra-param discovery treat it like the singleton
+    interpolator.
 
     Args:
         base_interpolator: The singleton V-interpolator from
@@ -2359,15 +2437,11 @@ class _StakeholderSlicedInterpolator:
     @no_type_check
     def __call__(self, **kwargs: ParamsLeaf) -> FloatND:
         stacked_V_arr = cast("FloatND", kwargs.pop(self.V_arr_name))
-        return jnp.stack(
-            [
-                self.base_interpolator(
-                    **kwargs, **{self.V_arr_name: stacked_V_arr[..., s]}
-                )
-                for s in range(self.n_stakeholders)
-            ],
-            axis=-1,
-        )
+        return jax.vmap(
+            lambda V_arr: self.base_interpolator(**kwargs, **{self.V_arr_name: V_arr}),
+            in_axes=-1,
+            out_axes=-1,
+        )(stacked_V_arr)
 
 
 def evaluate_projected_readers(
@@ -2378,8 +2452,8 @@ def evaluate_projected_readers(
 ) -> MappingProxyType[str, FloatND]:
     """Read each projected reference at one landing point.
 
-    A gate reference and a leg fallback name another regime's value at
-    coordinates a projection produces, so both are evaluated AT the landing
+    A leg fallback names another regime's value at coordinates a projection
+    produces, so it is evaluated AT the landing
     rather than tabulated on the target's grid: pre-tabulating them would make
     the source interpolate `V_ref o projection`, which equals the value the
     branch pays only where the projection is affine.
@@ -2467,7 +2541,7 @@ def _get_pointwise_gated_interpolator(
         combine: The edge's gate, applied to the interpolated channels.
         gate_state_names: Target states the gate reads, supplied at the landing
             point under their own names.
-        projected_readers: Gate references and leg fallbacks. Each is evaluated
+        projected_readers: Leg fallbacks. Each is evaluated
             here, at the landing, rather than read off a channel: its projection
             maps onto ANOTHER regime's grid, so tabulating it on the target's
             grid would leave the source interpolating `V_ref o projection` where
@@ -2508,8 +2582,7 @@ def _get_pointwise_gated_interpolator(
             f"A gated edge's gate reads {co_mapped_reads}, which the "
             "continuation co-maps as fixed distributed state(s). A co-mapped "
             "axis is sliced off before the continuation is read, so there is "
-            "no landing coordinate to evaluate the gate at. Read the state "
-            "through a gate reference, or remove it from "
+            "no landing coordinate to evaluate the gate at. Remove it from "
             "ExecutionConfig.sharded_states."
         )
         raise ValueError(msg)
@@ -2630,7 +2703,7 @@ class _PointwiseGatedInterpolator:
     resolved_landing: frozenset[str]
     """Landing coordinates the node resolution produces."""
     projected_readers: tuple[ProjectedLandingReader, ...]
-    """Gate references and leg fallbacks, evaluated at the landing."""
+    """Leg fallbacks, evaluated at the landing."""
     arg_names: tuple[ReferenceName, ...]
     """The published argument names, in order."""
     landing_counter: Callable[..., IntND] | None = field(
@@ -3085,6 +3158,30 @@ class _ComputeCE:
         tuple[RegimeName, tuple[LandingCheck, ...]], ...
     ] = field(default=(), metadata={"fingerprint_omit_if_default": True})
     """Per gated stateless target with counted fallbacks, those fallbacks' checks."""
+    participation_scalar_readers: Mapping[
+        RegimeName,
+        Callable[..., tuple[FloatND, BoolND] | tuple[tuple[FloatND, BoolND], IntND]],
+    ] = field(
+        default_factory=lambda: MappingProxyType({}),
+        metadata={"fingerprint_omit_if_default": True},
+    )
+    """Boolean participation readers for actual stateless target landings."""
+    participation_scalar_landing_checks: tuple[
+        tuple[RegimeName, tuple[LandingCheck, ...]], ...
+    ] = field(default=(), metadata={"fingerprint_omit_if_default": True})
+    """Actual nested query identities in the scalar participation check count order."""
+    participation_scalar_arg_names: Mapping[RegimeName, tuple[str, ...]] = field(
+        default_factory=lambda: MappingProxyType({}),
+        metadata={"fingerprint_omit_if_default": True},
+    )
+
+    @property
+    def has_participation_queries(self) -> bool:
+        """Whether this continuation must report independent reader integrity."""
+        return bool(self.participation_scalar_readers) or any(
+            continuation.participation_query
+            for continuation in self.continuations.values()
+        )
 
     @property
     def landing_checks(self) -> tuple[LandingCheck, ...]:
@@ -3092,7 +3189,10 @@ class _ComputeCE:
         return (
             *(
                 check
-                for _, checks in self.gated_scalar_landing_checks
+                for _, checks in (
+                    *self.gated_scalar_landing_checks,
+                    *self.participation_scalar_landing_checks,
+                )
                 for check in checks
             ),
             *(
@@ -3103,7 +3203,7 @@ class _ComputeCE:
         )
 
     @no_type_check
-    def __call__(
+    def __call__(  # noqa: C901 - preserve original dense arithmetic beside the projected read
         self,
         *,
         next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
@@ -3193,10 +3293,12 @@ class _ComputeCE:
         # The accumulators are seeded with the stateless targets, which carry no
         # node axis of their own but do carry mass, a sign, and — under a
         # nonlinear certainty equivalent — one lottery node each.
-        gated_scalar_values, landing_counts = self._read_gated_scalar_targets(
-            next_regime_to_V_arr=next_regime_to_V_arr,
-            active_regime_probs=active_regime_probs,
-            states_actions_params=states_actions_params,
+        gated_scalar_values, landing_counts, participation_valid = (
+            self._read_scalar_targets(
+                next_regime_to_V_arr=next_regime_to_V_arr,
+                active_regime_probs=active_regime_probs,
+                states_actions_params=states_actions_params,
+            )
         )
         (
             mixture_terms,
@@ -3269,6 +3371,8 @@ class _ComputeCE:
                 if name not in self.co_map_next_names | fixed_slice_names
                 or name in continuation.co_mapped_landing_names
             }
+            if continuation.next_V is None:
+                raise TypeError("Ordinary continuation lost its dense value reader.")
             next_V_at_stochastic_states_arr = continuation.next_V(
                 **interpolator_coordinates,
                 next_V_arr=next_values,
@@ -3283,17 +3387,29 @@ class _ComputeCE:
                 next_V_at_stochastic_states_arr, node_counts = (
                     next_V_at_stochastic_states_arr
                 )
+
                 landing_counts.append(
                     _live_landing_counts(
-                        node_counts=node_counts,
+                        node_counts=node_counts.reshape((-1, node_counts.shape[-1]))
+                        if continuation.participation_query
+                        else node_counts,
                         target_probability=active_regime_probs[target_regime_name],
-                        node_weights=continuation.node_weights_at(
+                        node_weights=(joint_next_stochastic_states_weights.reshape(-1),)
+                        if continuation.participation_query
+                        else continuation.node_weights_at(
                             marginals=target_marginals[target_regime_name],
                             next_states=next_states,
                         ),
                     )
                 )
 
+            next_V_at_stochastic_states_arr, valid = _participation_value_and_integrity(
+                continuation=continuation,
+                result=next_V_at_stochastic_states_arr,
+                probability=active_regime_probs[target_regime_name],
+                weights=joint_next_stochastic_states_weights,
+            )
+            participation_valid &= valid
             # A node the target's own lottery gives zero probability is never
             # realized, so whatever a law names there -- a value off the target's
             # support, and so a NaN out of the interpolator -- is not part of the
@@ -3430,7 +3546,51 @@ class _ComputeCE:
                 jnp.nan,
             )
 
-        return (CE, active_regime_probs, *_concatenated(landing_counts))
+        return self._checked_result(
+            aggregate=(CE, active_regime_probs, *_concatenated(landing_counts)),
+            valid=participation_valid,
+        )
+
+    def _checked_result(
+        self, *, aggregate: _PlainContinuationAggregate, valid: BoolND
+    ) -> ContinuationAggregate:
+        if self.has_participation_queries:
+            return CheckedContinuationEvaluation(aggregate=aggregate, valid=valid)
+        return aggregate
+
+    @no_type_check
+    def _read_scalar_targets(
+        self,
+        *,
+        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
+        active_regime_probs: MappingProxyType[RegimeName, FloatND],
+        states_actions_params: QAndFKwargs,
+    ) -> tuple[dict[RegimeName, FloatND], list[IntND], BoolND]:
+        """Read scalar landings; retain any participation integrity separately."""
+        values, counts = self._read_gated_scalar_targets(
+            next_regime_to_V_arr=next_regime_to_V_arr,
+            active_regime_probs=active_regime_probs,
+            states_actions_params=states_actions_params,
+        )
+        valid = jnp.asarray(a=True)
+        counted = dict(self.participation_scalar_landing_checks)
+        for target, reader in self.participation_scalar_readers.items():
+            result = reader(
+                next_V_arr=next_regime_to_V_arr[target],
+                **{
+                    name: states_actions_params[name]
+                    for name in self.participation_scalar_arg_names[target]
+                },
+            )
+            if counted.get(target):
+                result, target_counts = result
+                counts.append(
+                    jnp.where(is_live(active_regime_probs[target]), target_counts, 0)
+                )
+            value, target_valid = result
+            values[target] = value
+            valid &= ~is_live(active_regime_probs[target]) | target_valid
+        return values, counts, valid
 
     @no_type_check
     def _read_gated_scalar_targets(
@@ -3466,6 +3626,20 @@ class _ComputeCE:
         return values, landing_counts
 
 
+def _participation_value_and_integrity(
+    *,
+    continuation: _TargetContinuation,
+    result: FloatND | tuple[FloatND, BoolND],
+    probability: FloatND,
+    weights: FloatND,
+) -> tuple[FloatND, BoolND]:
+    """Read the status at precisely the represented live landing nodes."""
+    if not continuation.participation_query:
+        return cast("FloatND", result), jnp.asarray(a=True)
+    value, valid = cast("tuple[FloatND, BoolND]", result)
+    return value, jnp.all(~is_live(probability) | ~is_live(weights) | valid)
+
+
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class _TargetContinuation:
     """Everything built once for one reachable target's continuation."""
@@ -3479,7 +3653,7 @@ class _TargetContinuation:
     joint_lottery_weights: Callable[..., tuple[FloatND, IntND]]
     """Outer product of the lottery marginals, over the node axes."""
 
-    next_V: Callable[..., FloatND | tuple[FloatND, IntND]]
+    next_V: Callable[..., FloatND | tuple[FloatND, IntND]] | None
     """Target's value function, product-mapped over its lottery axes.
 
     A declared entry gets no axis: its one value is interpolated on the target's
@@ -3553,6 +3727,10 @@ class _TargetContinuation:
 
     Set only beside `landing_checks`: a node counts only where it is live.
     """
+    participation_query: bool = field(
+        default=False, metadata={"fingerprint_omit_if_default": True}
+    )
+    """The mapped reader returns value plus mandatory participation integrity."""
 
     def node_weights_at(
         self,
@@ -3898,6 +4076,7 @@ def _build_target_continuation(
     restore_original_layout: bool = False,
     allowed_shock_inputs: frozenset[str] | None = None,
     count_raise_landings: bool = False,
+    participation_reader: Callable[..., FloatND] | None = None,
 ) -> _TargetContinuation:
     """Build one target's continuation machinery.
 
@@ -3995,6 +4174,7 @@ def _build_target_continuation(
         v_interpolation_info.continuous_states
         or basis_variables
         or gated_continuation is not None
+        or participation_reader is not None
     )
     original_axes = tuple(
         (axis, original_layouts[name].rest_of_code)
@@ -4003,14 +4183,18 @@ def _build_target_continuation(
     )
 
     V_arr_name = "next_V_arr"
-    next_V_interpolator = get_V_interpolator(
-        v_interpolation_info=v_interpolation_info,
-        state_prefix="next_",
-        V_arr_name=V_arr_name,
-        co_map_state_names=co_map_state_names,
-        entered_process_names=tuple(
-            name.removeprefix("next_") for name in basis_variables
-        ),
+    next_V_interpolator = (
+        participation_reader
+        if participation_reader is not None
+        else get_V_interpolator(
+            v_interpolation_info=v_interpolation_info,
+            state_prefix="next_",
+            V_arr_name=V_arr_name,
+            co_map_state_names=co_map_state_names,
+            entered_process_names=tuple(
+                name.removeprefix("next_") for name in basis_variables
+            ),
+        )
     )
 
     # A law reading one of this target's own draws has one value per node, so it
@@ -4096,7 +4280,7 @@ def _build_target_continuation(
         co_map_state_names=co_map_state_names,
     )
     # Validate the additive declaration even when its averaging route is ineligible.
-    if not allow_shock_average:
+    if not allow_shock_average or participation_reader is not None:
         shock_average = None
     averaged_inputs: tuple[str, ...] = ()
     integrated_weight_names: tuple[str, ...] = ()
@@ -4213,7 +4397,7 @@ def _build_target_continuation(
                 ),
             ),
         )
-    elif n_stakeholders is None:
+    elif n_stakeholders is None or participation_reader is not None:
         mapped_interpolator = landing_counting.paired_with(next_V_interpolator)
     else:
         mapped_interpolator = landing_counting.paired_with(
@@ -4276,6 +4460,7 @@ def _build_target_continuation(
         ),
         landing_checks=landing_counting.checks,
         node_weight_names=landing_counting.node_weight_names,
+        participation_query=participation_reader is not None,
     )
 
 

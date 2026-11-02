@@ -32,6 +32,8 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.current_iid import CurrentIIDDrawFrame
+from _lcm.engine import Regime
 from _lcm.execution.workspace_planning import (
     CompilerMemoryRecord,
     CompilerMemoryReservation,
@@ -39,7 +41,7 @@ from _lcm.execution.workspace_planning import (
     plan_axis_free_workspace,
     plan_workspace,
 )
-from _lcm.simulation import host_operations
+from _lcm.simulation import exit_replay, host_operations
 from _lcm.simulation.memory import SimulationMemory
 from _lcm.simulation.operand_placement import place_simulation_arguments
 from _lcm.simulation.residency import (
@@ -54,15 +56,18 @@ from _lcm.typing import FootprintTree, PytreeValue
 from benchmarks.asv._simulation_witnesses import dissolution
 from lcm.exceptions import ExecutionPlanningError
 from lcm.execution import ExecutionConfig
-from tests.simulation._callback_types import HostDispatch, WorkspacePlanning
+from tests.simulation._callback_types import (
+    HostDispatch,
+    ProducerAdmission,
+    WorkspacePlanning,
+)
 
 # The checked dissolution witness includes numerical preflight and outcome flags.
 # Its six realized off-grid counts (four where the gate routes, two where a
 # household without a feasible action takes its dissolution route) and its
 # per-period gated-entry carriers are helpers too. User-law producers also enter
 # the axis-free plan outside helper dispatch.
-_WITNESS_HELPER_OPERATIONS = 73
-_WITNESS_PRODUCER_ADMISSIONS = 5
+_WITNESS_HELPER_OPERATIONS = 66
 # Every owned decision checks its selected action before downstream indexing.
 _WITNESS_EMPTY_ACTION_CHECKS = 5
 
@@ -128,16 +133,11 @@ class _CountingCompiler[Compiled]:
 # --------------------------------------------------------------- one admission route
 
 
-@pytest.mark.parametrize(
-    ("runtime_checks", "helper_operations", "producer_admissions"),
-    [(False, 59, 0), (True, _WITNESS_HELPER_OPERATIONS, _WITNESS_PRODUCER_ADMISSIONS)],
-)
-def test_every_budgeted_helper_admits_through_the_axis_free_plan(
+@pytest.mark.parametrize("runtime_checks", [False, True])
+def test_every_budgeted_helper_admits_through_the_axis_free_plan(  # noqa: C901, PLR0915 - observe one real warm call across native guards and host admission
     *,
     monkeypatch: pytest.MonkeyPatch,
     runtime_checks: bool,
-    helper_operations: int,
-    producer_admissions: int,
 ) -> None:
     """One warm forward call plans each helper once, and never on the frontier."""
     counts: dict[str, int] = {
@@ -145,26 +145,118 @@ def test_every_budgeted_helper_admits_through_the_axis_free_plan(
         "axis_free": 0,
         "frontier": 0,
         "empty_action_checks": 0,
+        "query_status_checks": 0,
+        "producer_admissions": 0,
     }
     recording = {"on": False}
+    admitting: dict[str, str | None] = {"kind": None}
+    pending: dict[tuple[int, int, int, int], tuple[str, int, tuple[int, ...]]] = {}
+    native_consumers: list[tuple[str, int, tuple[int, ...]]] = []
 
     original_dispatch = host_operations.ProfiledSimulationOperations.dispatch
     original_axis_free = host_operations.plan_axis_free_workspace
+    original_producer = host_operations.ProfiledSimulationOperations.admit_producer
+    original_query = exit_replay._dispatch
+
+    def counted_query(
+        *,
+        regime: Regime,
+        family: str,
+        period: int,
+        arguments: Mapping[str, PytreeValue],
+        n_subjects: int,
+        memory: SimulationMemory | None,
+        roots: PytreeValue,
+    ) -> PytreeValue:
+        if recording["on"]:
+            assert not pending, pending
+        output = original_query(
+            regime=regime,
+            family=family,
+            period=period,
+            arguments=arguments,
+            n_subjects=n_subjects,
+            memory=memory,
+            roots=roots,
+        )
+        if recording["on"]:
+            assert isinstance(output, tuple)
+            answer = output[0]
+            assert isinstance(answer, tuple)
+            frame_payload = output[1]
+            assert isinstance(frame_payload, tuple)
+            law_valid = frame_payload[CurrentIIDDrawFrame._fields.index("valid")]
+            holders = np.asarray(arguments["_holders"])
+            assert holders.dtype == np.bool_
+            assert holders.shape == (n_subjects,)
+            consumer = (family, period, tuple(np.flatnonzero(holders).tolist()))
+            key = (
+                id(answer[3]),
+                id(answer[2]),
+                id(law_valid),
+                id(arguments["_holders"]),
+            )
+            assert key not in pending
+            pending[key] = consumer
+            native_consumers.append(consumer)
+        return output
 
     def counted_dispatch(
         self: host_operations.ProfiledSimulationOperations,
         **kwargs: Unpack[HostDispatch],
     ) -> PytreeValue:
+        if not recording["on"]:
+            return original_dispatch(self, **kwargs)
+        counts["dispatch"] += 1
+        if kwargs["function"] is exit_replay._answer_status:
+            arguments = kwargs["arguments"]
+            key = (
+                id(arguments["valid"]),
+                id(arguments["support"]),
+                id(arguments["law_valid"]),
+                id(arguments["holders"]),
+            )
+            assert key in pending, pending
+            pending.pop(key)
+            counts["query_status_checks"] += 1
+        else:
+            # The mandatory query status is checked before any later helper.
+            assert not pending, pending
+        if kwargs["function"] is _first_empty_action_row:
+            counts["empty_action_checks"] += 1
+        assert admitting["kind"] is None
+        admitting["kind"] = "helper"
+        before = counts["axis_free"]
+        try:
+            result = original_dispatch(self, **kwargs)
+            assert counts["axis_free"] == before + 1
+            return result
+        finally:
+            admitting["kind"] = None
+
+    def counted_producer(
+        self: host_operations.ProfiledSimulationOperations,
+        **kwargs: Unpack[ProducerAdmission],
+    ) -> jax.stages.Compiled:
+        before = counts["axis_free"]
         if recording["on"]:
-            counts["dispatch"] += 1
-            if kwargs["function"] is _first_empty_action_row:
-                counts["empty_action_checks"] += 1
-        return original_dispatch(self, **kwargs)
+            counts["producer_admissions"] += 1
+            assert admitting["kind"] is None
+            admitting["kind"] = "producer"
+        try:
+            result = original_producer(self, **kwargs)
+            if recording["on"]:
+                assert counts["axis_free"] == before + 1
+            return result
+        finally:
+            if recording["on"]:
+                admitting["kind"] = None
 
     def counted_axis_free[Compiled](
         **kwargs: Unpack[_AxisFreePlanning[Compiled]],
     ) -> WorkspacePlan[Compiled]:
         if recording["on"]:
+            assert admitting["kind"] in {"helper", "producer"}
             counts["axis_free"] += 1
         return original_axis_free(**kwargs)
 
@@ -179,6 +271,10 @@ def test_every_budgeted_helper_admits_through_the_axis_free_plan(
         host_operations.ProfiledSimulationOperations, "dispatch", counted_dispatch
     )
     monkeypatch.setattr(host_operations, "plan_axis_free_workspace", counted_axis_free)
+    monkeypatch.setattr(
+        host_operations.ProfiledSimulationOperations, "admit_producer", counted_producer
+    )
+    monkeypatch.setattr(exit_replay, "_dispatch", counted_query)
     monkeypatch.setattr(
         host_operations, "plan_workspace", counted_frontier, raising=False
     )
@@ -211,10 +307,24 @@ def test_every_budgeted_helper_admits_through_the_axis_free_plan(
     )
     recording["on"] = False
 
-    assert counts["empty_action_checks"] == _WITNESS_EMPTY_ACTION_CHECKS
-    total_helpers = helper_operations + _WITNESS_EMPTY_ACTION_CHECKS
-    assert counts["dispatch"] == total_helpers
-    assert counts["axis_free"] == total_helpers + producer_admissions
+    assert not pending, pending
+    assert native_consumers
+    assert counts["query_status_checks"] == len(native_consumers)
+    families = {family for family, _period, _rows in native_consumers}
+    assert {"exit_full", "exit_participating"} <= families
+    assert any(family.startswith("participation_entry:") for family in families)
+    assert any(
+        family.startswith("participation_entry:") and rows
+        for family, _period, rows in native_consumers
+    )
+    assert any(
+        family == "exit_participating" and rows
+        for family, _period, rows in native_consumers
+    )
+    assert counts["empty_action_checks"] > 0
+    assert counts["axis_free"] == counts["dispatch"] + counts["producer_admissions"]
+    if runtime_checks:
+        assert counts["producer_admissions"] > 0
     assert counts["frontier"] == 0
 
 

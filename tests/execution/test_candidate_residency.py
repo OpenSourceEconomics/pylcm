@@ -18,8 +18,117 @@ from _lcm.execution.core_program import (
 )
 from _lcm.execution.footprint import ArtifactFootprint, ScheduledUnit
 from _lcm.execution.liveness import PlannedInputLiveness
+from _lcm.execution.value_transfer import ValueArtifactAddress, ValueArtifactKind
+from _lcm.participation_continuation import (
+    PARTICIPATION_CONTINUATION,
+    ParticipationContinuation,
+    ParticipationContinuationSpec,
+)
 from _lcm.solution import backward_induction
+from _lcm.solution.fingerprint import fingerprint_model_structure
 from _lcm.typing import PytreeValue
+from tests.solution.test_policy_queries import _native_model
+
+
+class _ReachedDatedInventoryError(Exception):
+    """Stop at native admission before executing the test-owned publisher schema."""
+
+
+def test_same_shaped_participation_origins_change_the_native_model_identity() -> None:
+    """Equal numerical schema cannot authorize a different stored-value owner."""
+    model = _native_model(enable_jit=True, source_size=2)
+    payload = ParticipationContinuation(
+        regime="root",
+        period=0,
+        schema="read-owner-discriminator",
+        operands={"stored": jnp.zeros((2, 2))},
+    )
+    digests = []
+    for owner in ("root", "target"):
+        spec = ParticipationContinuationSpec(
+            template=payload,
+            artifact_key=PARTICIPATION_CONTINUATION,
+            templates_by_period={0: payload},
+            origins_by_period={
+                0: {
+                    "stored": ValueArtifactAddress(
+                        kind=ValueArtifactKind.REGIME_VALUE,
+                        period=0,
+                        regime=owner,
+                    )
+                }
+            },
+        )
+        root = model._regimes["root"]
+        digests.append(
+            fingerprint_model_structure(
+                ages=model._time,
+                regimes={
+                    **model._regimes,
+                    "root": replace(
+                        root,
+                        solution=replace(root.solution, continuation_spec=spec),
+                    ),
+                },
+                user_regimes=model.user_regimes,
+                laws=model._graph.laws,
+                regime_names_to_ids=model.regime_names_to_ids,
+            )
+        )
+    assert digests[0] != digests[1]
+
+
+def test_native_residency_inventories_dated_extra_leaves_and_concrete_owners(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The actual budget boundary sees a leaf absent from the representative."""
+    model = _native_model(enable_jit=True, budget=1_000_000_000)
+    representative = ParticipationContinuation(
+        regime="root", period=0, schema="representative", operands={}
+    )
+    dated_leaf = jnp.zeros(7, dtype=jnp.int32)
+    dated = ParticipationContinuation(
+        regime="root", period=0, schema="actual-date", operands={"extra": dated_leaf}
+    )
+    root = model._regimes["root"]
+    spec = ParticipationContinuationSpec(
+        template=representative,
+        artifact_key=PARTICIPATION_CONTINUATION,
+        templates_by_period={0: dated},
+    )
+    object.__setattr__(
+        model,
+        "_regimes",
+        MappingProxyType(
+            {
+                **model._regimes,
+                "root": replace(
+                    root, solution=replace(root.solution, continuation_spec=spec)
+                ),
+            }
+        ),
+    )
+    inventoried: list[jax.Array] = []
+    original = backward_induction.concrete_device_bytes
+
+    def fixed_owners(*, tree):
+        inventoried.extend(
+            leaf for leaf in jax.tree.leaves(tree) if isinstance(leaf, jax.Array)
+        )
+        return original(tree=tree)
+
+    def actual_inventory(*, templates, **_kwargs):
+        actual = templates.continuation_templates_by_period["root"][0]
+        assert actual.operands["extra"] is dated_leaf
+        assert any(leaf is dated_leaf for leaf in inventoried)
+        raise _ReachedDatedInventoryError
+
+    monkeypatch.setattr(backward_induction, "concrete_device_bytes", fixed_owners)
+    monkeypatch.setattr(
+        backward_induction, "_resident_inventory_by_triple", actual_inventory
+    )
+    with pytest.raises(_ReachedDatedInventoryError):
+        model.solve(params={}, log_level="off", runtime_checks=False)
 
 
 @pytest.mark.parametrize(

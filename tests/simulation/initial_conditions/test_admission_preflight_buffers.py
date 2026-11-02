@@ -13,6 +13,7 @@ import _lcm.simulation.initial_conditions as initial_module
 from _lcm.dtypes import canonical_float_dtype
 from _lcm.execution.execution_plan import ResolvedExecution
 from _lcm.params.processing import process_params
+from _lcm.simulation.current_iid_entry import SuppliedEntryFrames
 from _lcm.simulation.initial_conditions import (
     _InitialCohorts,
     _pack_initial_summary,
@@ -75,6 +76,7 @@ def test_runtime_checks_disabled_release_preflight_unit_on_structural_failure(
         regime_names_to_ids: initial_module.RegimeNamesToIds,
         ages: initial_module.TimeAxis,
         producers: initial_module.ProfiledSimulationOperations | None = None,
+        supplied_frames: SuppliedEntryFrames | None = None,
     ) -> SimulationMemory | None:
         memory = original(
             execution=execution,
@@ -85,6 +87,7 @@ def test_runtime_checks_disabled_release_preflight_unit_on_structural_failure(
             regime_names_to_ids=regime_names_to_ids,
             ages=ages,
             producers=producers,
+            supplied_frames=supplied_frames,
         )
         assert memory is not None
         captured.append(memory)

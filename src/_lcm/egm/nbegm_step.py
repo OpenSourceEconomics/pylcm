@@ -55,6 +55,11 @@ from _lcm.egm.ez_kernel import (
     ez_period_value,
 )
 from _lcm.egm.framed_arithmetic import binade_exponent, framed_difference
+from _lcm.egm.interp import (
+    interp_on_located_grid,
+    interp_on_prepared_grid,
+    prepare_padded_grid,
+)
 from _lcm.egm.nbegm_segments import (
     affords_an_action,
     mask_dead_candidates,
@@ -62,16 +67,21 @@ from _lcm.egm.nbegm_segments import (
 )
 from _lcm.egm.preferences import Preferences
 from _lcm.egm.query_data import EGMQueryData, QueryNodeKind
+from _lcm.egm.upper_envelope.certified_sign import backend_flushes_subnormals
 from _lcm.egm.upper_envelope.query import (
     ComparisonArithmetic,
+    EnvelopeQueryReader,
     EnvelopeWinner,
     _SavingsEnvelopeWinner,
     empty_envelope_winner,
     envelope_at_query,
     finish_envelope_winner,
+    fold_ascending_runs,
     merge_envelope_winner,
+    merge_query_point_columns,
     published_owner,
 )
+from _lcm.regime_building.argmax import max_and_smallest_id
 from _lcm.solution.feasibility import (
     BoundedResult,
     ContinuationReadCounts,
@@ -177,17 +187,17 @@ def _single_row_nbegm_query_step(
 
 
 class _OwnedNBEGMQueryStep(NamedTuple):
-    """Conditional query records and the separate native envelope owner."""
+    """Conditional query records and native owners with optional mapped axes."""
 
-    value: Float1D
+    value: FloatND
     """Value at each supplied liquid query."""
-    marginal: Float1D
+    marginal: FloatND
     """Native envelope marginal with respect to liquid."""
-    policy: Float1D
+    policy: FloatND
     """Consumption associated with the same winning record."""
     query_data: EGMQueryData
     """Conditional query records independent of native winner identity."""
-    owner: Int1D
+    owner: IntND
     """Existing stable native winner identity, or NO_OWNER."""
 
 
@@ -399,6 +409,7 @@ def nbegm_multi_interval_step(
     boundary_savings_targets: Float1D | None = None,
     boundary_next_liquid: Float1D | None = None,
     retain_query: Literal[False] = False,
+    query_grid: Float1D | None = None,
     continuation_read: Callable[[FloatND, BoolND], tuple[FloatND, FloatND]]
     | None = None,
 ) -> tuple[Float1D, Float1D, Float1D]: ...
@@ -426,9 +437,11 @@ def nbegm_multi_interval_step(
     boundary_savings_targets: Float1D | None = None,
     boundary_next_liquid: Float1D | None = None,
     retain_query: Literal[True],
+    return_owner: bool = False,
+    query_grid: Float1D | None = None,
     continuation_read: Callable[[FloatND, BoolND], tuple[FloatND, FloatND]]
     | None = None,
-) -> _NBEGMQueryStep: ...
+) -> _NBEGMQueryStep | _OwnedNBEGMQueryStep: ...
 
 
 @overload
@@ -453,9 +466,11 @@ def nbegm_multi_interval_step(
     boundary_savings_targets: Float1D | None = None,
     boundary_next_liquid: Float1D | None = None,
     retain_query: bool = False,
+    return_owner: bool = False,
+    query_grid: Float1D | None = None,
     continuation_read: Callable[[FloatND, BoolND], tuple[FloatND, FloatND]]
     | None = None,
-) -> tuple[Float1D, Float1D, Float1D] | _NBEGMQueryStep: ...
+) -> tuple[Float1D, Float1D, Float1D] | _NBEGMQueryStep | _OwnedNBEGMQueryStep: ...
 
 
 def nbegm_multi_interval_step(
@@ -479,9 +494,11 @@ def nbegm_multi_interval_step(
     boundary_savings_targets: Float1D | None = None,
     boundary_next_liquid: Float1D | None = None,
     retain_query: bool = False,
+    return_owner: bool = False,
+    query_grid: Float1D | None = None,
     continuation_read: Callable[[FloatND, BoolND], tuple[FloatND, FloatND]]
     | None = None,
-) -> tuple[Float1D, Float1D, Float1D] | _NBEGMQueryStep:
+) -> tuple[Float1D, Float1D, Float1D] | _NBEGMQueryStep | _OwnedNBEGMQueryStep:
     """Solve one period of a piecewise-affine, continuous-budget regime by EGM.
 
     The breakpoints partition the liquid axis into intervals on which cash-on-hand
@@ -559,23 +576,84 @@ def nbegm_multi_interval_step(
         policy, each on `liquid_grid`.
 
     """
+    return _nbegm_multi_interval_step_selected(
+        next_value=next_value,
+        next_marginal=next_marginal,
+        liquid_grid=liquid_grid,
+        next_liquid_grid=next_liquid_grid,
+        savings_grid=savings_grid,
+        discount_factor=discount_factor,
+        preferences=preferences,
+        next_liquid=next_liquid,
+        marginal_return=marginal_return,
+        coh_slopes=coh_slopes,
+        coh_intercepts=coh_intercepts,
+        breakpoints=breakpoints,
+        flat_interval_mask=flat_interval_mask,
+        arithmetic=arithmetic,
+        feasibility_partition=feasibility_partition,
+        feasible_interval_mask=feasible_interval_mask,
+        boundary_savings_targets=boundary_savings_targets,
+        boundary_next_liquid=boundary_next_liquid,
+        retain_query=retain_query,
+        return_owner=return_owner,
+        query_grid=query_grid,
+        continuation_read=continuation_read,
+        envelope_read=envelope_at_query,
+    )
+
+
+def _nbegm_multi_interval_step_selected(  # noqa: PLR0915 - unchanged original candidate construction/read order
+    *,
+    next_value: Float1D,
+    next_marginal: Float1D,
+    liquid_grid: Float1D,
+    next_liquid_grid: Float1D,
+    savings_grid: Float1D,
+    discount_factor: ScalarFloat | float,
+    preferences: Preferences,
+    next_liquid: Float1D,
+    marginal_return: Float1D,
+    coh_slopes: Float1D,
+    coh_intercepts: Float1D,
+    breakpoints: Float1D,
+    flat_interval_mask: tuple[bool, ...] | None = None,
+    arithmetic: ComparisonArithmetic = "certified",
+    feasibility_partition: ResolvedAxisPartition | None = None,
+    feasible_interval_mask: BoolND | None = None,
+    boundary_savings_targets: Float1D | None = None,
+    boundary_next_liquid: Float1D | None = None,
+    retain_query: bool = False,
+    return_owner: bool = False,
+    query_grid: Float1D | None = None,
+    continuation_read: Callable[[FloatND, BoolND], tuple[FloatND, FloatND]]
+    | None = None,
+    envelope_read: EnvelopeQueryReader,
+) -> tuple[Float1D, Float1D, Float1D] | _NBEGMQueryStep | _OwnedNBEGMQueryStep:
+    """Build the unchanged original bank and read it with selected arithmetic."""
     interval_of_grid = jnp.searchsorted(breakpoints, liquid_grid, side="right")
     coh_grid = (
         coh_slopes[interval_of_grid] * liquid_grid + coh_intercepts[interval_of_grid]
     )
-
-    if continuation_read is None:
-        value_next = _interp_continuation_value(
-            query=next_liquid, grid=next_liquid_grid, value=next_value
-        )
-        marginal_next = jnp.interp(next_liquid, next_liquid_grid, next_marginal)
+    query = liquid_grid if query_grid is None else query_grid
+    if query_grid is None:
+        coh_query = coh_grid
     else:
-        value_next, marginal_next = next_value, next_marginal
+        query_interval = jnp.searchsorted(breakpoints, query, side="right")
+        coh_query = coh_slopes[query_interval] * query + coh_intercepts[query_interval]
 
-    consumption = preferences.inverse_marginal_utility(
-        discount_factor * marginal_return * marginal_next
+    euler = _nbegm_continuous_euler_candidates(
+        next_value=next_value,
+        next_marginal=next_marginal,
+        next_liquid_grid=next_liquid_grid,
+        savings_grid=savings_grid,
+        discount_factor=discount_factor,
+        preferences=preferences,
+        next_liquid=next_liquid,
+        marginal_return=marginal_return,
+        continuation_read=continuation_read,
     )
-    coh_endog = consumption + savings_grid
+    value_next, marginal_next, consumption, coh_endog = euler[:4]
     # An endogenous cash-on-hand beyond the grid's coh range inverts to a liquid
     # beyond the grid; the boundary segments' slopes continue the inversion there,
     # so the branch's last live link still brackets the boundary query points.
@@ -586,8 +664,8 @@ def nbegm_multi_interval_step(
     # interval's at the recovered liquid (envelope theorem through the budget).
     endog_interval = jnp.searchsorted(breakpoints, liquid_endog, side="right")
     slope_endog = coh_slopes[endog_interval]
-    value_endog = preferences.utility(consumption) + discount_factor * value_next
-    marginal_endog = slope_endog * preferences.marginal_utility(consumption)
+    value_endog = euler.value
+    marginal_endog = slope_endog * euler.marginal
 
     upper_edges = jnp.concatenate([breakpoints, liquid_grid[-1:]])
     lower_edges = jnp.concatenate([liquid_grid[:1], breakpoints])
@@ -728,48 +806,61 @@ def nbegm_multi_interval_step(
             raise TypeError(
                 "NB original saving channels must accompany their candidates."
             )
-        value, policy, marginal, saving = envelope_at_query(
+        published = envelope_read(
             endog_grid=jnp.concatenate(endog_parts),
             policy=jnp.concatenate(policy_parts),
             value=jnp.concatenate(value_parts),
             marginal=jnp.concatenate(marginal_parts),
             segment_id=jnp.concatenate(segment_parts),
-            x_query=liquid_grid,
+            x_query=query,
             arithmetic=arithmetic,
             feasibility_partition=feasibility_partition,
             feasible_interval_mask=feasible_interval_mask,
             candidate_savings=jnp.concatenate(saving_parts),
+            return_owner=return_owner,
         )
+        value, policy, marginal, saving = published[:4]
         value, marginal, policy = _publish_no_action_carry(
             value=value,
             marginal=marginal,
             policy=policy,
-            coh=coh_grid,
+            coh=coh_query,
             lowest_savings=savings_grid[0],
         )
+        data = _make_nbegm_query_data(
+            value=value,
+            marginal=marginal,
+            policy=policy,
+            savings=saving,
+            floor_used=savings_grid[0],
+            liquid_grid=query,
+            breakpoints=breakpoints,
+            corner_continuation=jnp.broadcast_to(value_next[0], coh_slopes.shape),
+        )
+        if return_owner:
+            if len(published) != 5:  # noqa: PLR2004 - original value/policy/marginal/saving/owner ABI
+                raise TypeError("Owned NB publication lost its native winner readout.")
+            return _OwnedNBEGMQueryStep(
+                value,
+                marginal,
+                policy,
+                data,
+                published_owner(value=value, stable_index=published[4]),
+            )
         return _single_row_nbegm_query_step(
             value=value,
             marginal=marginal,
             policy=policy,
-            query_data=_make_nbegm_query_data(
-                value=value,
-                marginal=marginal,
-                policy=policy,
-                savings=saving,
-                floor_used=savings_grid[0],
-                liquid_grid=liquid_grid,
-                breakpoints=breakpoints,
-                corner_continuation=jnp.broadcast_to(value_next[0], coh_slopes.shape),
-            ),
+            query_data=data,
         )
 
-    value, policy, marginal = envelope_at_query(
+    value, policy, marginal = envelope_read(
         endog_grid=jnp.concatenate(endog_parts),
         policy=jnp.concatenate(policy_parts),
         value=jnp.concatenate(value_parts),
         marginal=jnp.concatenate(marginal_parts),
         segment_id=jnp.concatenate(segment_parts),
-        x_query=liquid_grid,
+        x_query=query,
         arithmetic=arithmetic,
         feasibility_partition=feasibility_partition,
         feasible_interval_mask=feasible_interval_mask,
@@ -778,8 +869,53 @@ def nbegm_multi_interval_step(
         value=value,
         marginal=marginal,
         policy=policy,
-        coh=coh_grid,
+        coh=coh_query,
         lowest_savings=savings_grid[0],
+    )
+
+
+class _NBEGMContinuousEulerCandidates(NamedTuple):
+    """Keep the original Euler operands before any liquid-coordinate inversion."""
+
+    value_next: Float1D
+    marginal_next: Float1D
+    consumption: Float1D
+    resources: Float1D
+    value: Float1D
+    marginal: Float1D
+
+
+def _nbegm_continuous_euler_candidates(
+    *,
+    next_value: Float1D,
+    next_marginal: Float1D,
+    next_liquid_grid: Float1D,
+    savings_grid: Float1D,
+    discount_factor: ScalarFloat | float,
+    preferences: Preferences,
+    next_liquid: Float1D,
+    marginal_return: Float1D,
+    continuation_read: Callable[[FloatND, BoolND], tuple[FloatND, FloatND]] | None,
+) -> _NBEGMContinuousEulerCandidates:
+    """Build the original continuous NB Euler path in resource coordinates."""
+    if continuation_read is None:
+        value_next = _interp_continuation_value(
+            query=next_liquid, grid=next_liquid_grid, value=next_value
+        )
+        marginal_next = jnp.interp(next_liquid, next_liquid_grid, next_marginal)
+    else:
+        value_next, marginal_next = next_value, next_marginal
+    consumption = preferences.inverse_marginal_utility(
+        discount_factor * marginal_return * marginal_next
+    )
+    coh_endog = consumption + savings_grid
+    return _NBEGMContinuousEulerCandidates(
+        value_next,
+        marginal_next,
+        consumption,
+        coh_endog,
+        preferences.utility(consumption) + discount_factor * value_next,
+        preferences.marginal_utility(consumption),
     )
 
 
@@ -1310,6 +1446,8 @@ def nbegm_multi_interval_step_savings(
     arithmetic: ComparisonArithmetic = ...,
     feasibility_partition: ResolvedAxisPartition | None = ...,
     feasible_interval_mask: BoolND | None = ...,
+    query_grid: Float1D | None = ...,
+    return_owner: Literal[False] = ...,
     retain_query: Literal[False] = ...,
 ) -> tuple[Float1D, Float1D, Float1D]: ...
 
@@ -1330,6 +1468,8 @@ def nbegm_multi_interval_step_savings(
     arithmetic: ComparisonArithmetic = ...,
     feasibility_partition: ResolvedAxisPartition | None = ...,
     feasible_interval_mask: BoolND | None = ...,
+    query_grid: Float1D | None = ...,
+    return_owner: Literal[False] = ...,
     retain_query: Literal[True],
 ) -> _NBEGMQueryStep: ...
 
@@ -1350,11 +1490,57 @@ def nbegm_multi_interval_step_savings(
     arithmetic: ComparisonArithmetic = ...,
     feasibility_partition: ResolvedAxisPartition | None = ...,
     feasible_interval_mask: BoolND | None = ...,
+    query_grid: Float1D | None = ...,
+    return_owner: Literal[False] = ...,
     retain_query: bool = ...,
 ) -> tuple[Float1D, Float1D, Float1D] | _NBEGMQueryStep: ...
 
 
+@overload
 def nbegm_multi_interval_step_savings(
+    *,
+    cont_value: Float1D,
+    cont_marginal: Float1D,
+    liquid_grid: Float1D,
+    savings_grid: Float1D,
+    discount_factor: ScalarFloat,
+    preferences: Preferences,
+    coh_slopes: Float1D,
+    coh_intercepts: Float1D,
+    breakpoints: Float1D,
+    inverse_eis: ScalarFloat | None = ...,
+    arithmetic: ComparisonArithmetic = ...,
+    feasibility_partition: ResolvedAxisPartition | None = ...,
+    feasible_interval_mask: BoolND | None = ...,
+    query_grid: Float1D | None = ...,
+    return_owner: Literal[True],
+    retain_query: Literal[True],
+) -> _OwnedNBEGMQueryStep: ...
+
+
+@overload
+def nbegm_multi_interval_step_savings(
+    *,
+    cont_value: Float1D,
+    cont_marginal: Float1D,
+    liquid_grid: Float1D,
+    savings_grid: Float1D,
+    discount_factor: ScalarFloat,
+    preferences: Preferences,
+    coh_slopes: Float1D,
+    coh_intercepts: Float1D,
+    breakpoints: Float1D,
+    inverse_eis: ScalarFloat | None = ...,
+    arithmetic: ComparisonArithmetic = ...,
+    feasibility_partition: ResolvedAxisPartition | None = ...,
+    feasible_interval_mask: BoolND | None = ...,
+    query_grid: Float1D | None = ...,
+    return_owner: bool,
+    retain_query: bool,
+) -> tuple[Float1D, Float1D, Float1D] | _NBEGMQueryStep | _OwnedNBEGMQueryStep: ...
+
+
+def nbegm_multi_interval_step_savings(  # noqa: C901, PLR0912, PLR0915 - preserve the original complete Euler and dense-corner candidate bank
     *,
     cont_value: Float1D,
     cont_marginal: Float1D,
@@ -1369,8 +1555,10 @@ def nbegm_multi_interval_step_savings(
     arithmetic: ComparisonArithmetic = "certified",
     feasibility_partition: ResolvedAxisPartition | None = None,
     feasible_interval_mask: BoolND | None = None,
+    query_grid: Float1D | None = None,
+    return_owner: bool = False,
     retain_query: bool = False,
-) -> tuple[Float1D, Float1D, Float1D] | _NBEGMQueryStep:
+) -> tuple[Float1D, Float1D, Float1D] | _NBEGMQueryStep | _OwnedNBEGMQueryStep:
     """Solve a continuous piecewise-affine regime against savings-space continuation.
 
     Same EGM geometry as `nbegm_multi_interval_step`, but the continuation is
@@ -1423,10 +1611,18 @@ def nbegm_multi_interval_step_savings(
         policy, each on `liquid_grid`.
 
     """
+    if return_owner and not retain_query:
+        raise ValueError("Native NB saving owners require retained query channels.")
     interval_of_grid = jnp.searchsorted(breakpoints, liquid_grid, side="right")
     coh_grid = (
         coh_slopes[interval_of_grid] * liquid_grid + coh_intercepts[interval_of_grid]
     )
+    query = liquid_grid if query_grid is None else query_grid
+    if query_grid is None:
+        coh_query = coh_grid
+    else:
+        query_interval = jnp.searchsorted(breakpoints, query, side="right")
+        coh_query = coh_slopes[query_interval] * query + coh_intercepts[query_interval]
 
     # The expected marginal is already in savings space (it carries `dR/ds`), so
     # the Euler inversion reads it directly — no explicit gross-return factor.
@@ -1492,102 +1688,165 @@ def nbegm_multi_interval_step_savings(
     # is the hard borrowing corner. Each point is its own zero-width self-pair
     # with a distinct segment id (below), so a node feasible at a single liquid
     # point stays bracketable by the link-only envelope at its own abscissa.
-    node_consumption = coh_grid[None, :] - savings_grid[:, None]
-    node_feasible = node_consumption > 0.0
-    node_consumption_safe = jnp.where(node_feasible, node_consumption, 1.0)
-    if inverse_eis is not None:
-        node_value_safe = ez_period_value(
-            flow=preferences.utility(node_consumption_safe),
-            nu=cont_value[:, None],
-            discount_factor=discount_factor,
-            inverse_eis=inverse_eis,
-        )
-        node_marginal_safe = ez_marginal_of_resource(
-            log_flow_marginal=log_flow_coefficient
-            + flow_exponent * jnp.log(node_consumption_safe),
-            value=node_value_safe,
-            discount_factor=discount_factor,
-            inverse_eis=inverse_eis,
-        )
-    else:
-        node_value_safe = preferences.utility(
-            node_consumption_safe
-        ) + _discounted_continuation(
-            discount_factor=discount_factor, cont_value=cont_value[:, None]
-        )
-        node_marginal_safe = preferences.marginal_utility(node_consumption_safe)
-    node_value = jnp.where(node_feasible, node_value_safe, jnp.nan)
-    node_endog = jnp.where(
-        node_feasible,
-        jnp.broadcast_to(liquid_grid, node_consumption.shape),
-        jnp.nan,
-    )
-    node_marginal = coh_slopes[interval_of_grid][None, :] * node_marginal_safe
-    node_segment = next_segment + jnp.arange(
-        node_consumption.size, dtype=liquid_grid.dtype
-    ).reshape(node_consumption.shape)
+    # Each node offers the Euler optimum inside the bracket it opens where that
+    # beats the node itself (see `_refine_savings_node_actions`).
+    n_points = liquid_grid.shape[0]
 
-    endog_parts = [liquid_endog, _as_pairs(node_endog.ravel())]
-    value_parts = [value_endog, _as_pairs(node_value.ravel())]
-    policy_parts = [consumption, _as_pairs(node_consumption_safe.ravel())]
-    marginal_parts = [marginal_endog, _as_pairs(node_marginal.ravel())]
-    segment_parts = [interior_segment, _as_pairs(node_segment.ravel())]
+    def node_channels(
+        *, saving: FloatND, continuation: FloatND
+    ) -> tuple[FloatND, FloatND, FloatND, FloatND, BoolND]:
+        node_consumption = coh_grid[None, :] - saving
+        feasible = node_consumption > 0.0
+        consumption_safe = jnp.where(feasible, node_consumption, 1.0)
+        if inverse_eis is not None:
+            value_safe = ez_period_value(
+                flow=preferences.utility(consumption_safe),
+                nu=continuation,
+                discount_factor=discount_factor,
+                inverse_eis=inverse_eis,
+            )
+            marginal_safe = ez_marginal_of_resource(
+                log_flow_marginal=log_flow_coefficient
+                + flow_exponent * jnp.log(consumption_safe),
+                value=value_safe,
+                discount_factor=discount_factor,
+                inverse_eis=inverse_eis,
+            )
+        else:
+            value_safe = preferences.utility(
+                consumption_safe
+            ) + _discounted_continuation(
+                discount_factor=discount_factor, cont_value=continuation
+            )
+            marginal_safe = preferences.marginal_utility(consumption_safe)
+        return (
+            jnp.where(
+                feasible, jnp.broadcast_to(liquid_grid, node_consumption.shape), jnp.nan
+            ),
+            consumption_safe,
+            jnp.where(feasible, value_safe, jnp.nan),
+            coh_slopes[interval_of_grid][None, :] * marginal_safe,
+            feasible,
+        )
+
+    refine = functools.partial(
+        _refine_savings_node_actions,
+        coh=coh_grid,
+        savings_grid=savings_grid,
+        cont_value=cont_value,
+        cont_marginal=cont_marginal,
+        euler_consumption=consumption,
+        discount_factor=discount_factor,
+        preferences=preferences,
+        inverse_eis=inverse_eis,
+    )
+    node_bank = None
+    if query_grid is None:
+        # Each point's best node is all the envelope reads of the family there.
+        node_index, node_savings, node_continuation = (
+            row[None, :]
+            for row in _best_savings_node_per_point(
+                coh=coh_grid,
+                savings_grid=savings_grid,
+                cont_value=cont_value,
+                cont_marginal=cont_marginal,
+                euler_consumption=consumption,
+                discount_factor=discount_factor,
+                preferences=preferences,
+                inverse_eis=inverse_eis,
+            )
+        )
+        if arithmetic == "ordinary" and backend_flushes_subnormals(liquid_grid.dtype):
+            # A stored subnormal anywhere in the family refuses every query.
+            dense_savings, dense_continuation = (a.T for a in refine())
+            *channels, feasible = node_channels(
+                saving=dense_savings, continuation=dense_continuation
+            )
+            node_bank = (
+                *channels,
+                *(
+                    (jnp.where(feasible, dense_savings, jnp.nan),)
+                    if retain_query
+                    else ()
+                ),
+            )
+    else:
+        node_savings, node_continuation = (a.T for a in refine())
+        node_index = jnp.broadcast_to(
+            jnp.arange(savings_grid.shape[0], dtype=jnp.int32)[:, None],
+            node_savings.shape,
+        )
+    node_endog, node_consumption_safe, node_value, node_marginal, node_feasible = (
+        node_channels(saving=node_savings, continuation=node_continuation)
+    )
+    node_cell = node_index * n_points + jnp.arange(n_points, dtype=jnp.int32)[None, :]
+    node_segment = next_segment + node_cell.astype(liquid_grid.dtype)
+    n_bank = liquid_endog.shape[0] + 2 * savings_grid.shape[0] * n_points
 
     if retain_query:
-        candidate_savings = jnp.concatenate(
-            [
-                jnp.where(degenerate, jnp.nan, savings_grid),
-                _as_pairs(
-                    jnp.where(
-                        node_feasible,
-                        jnp.broadcast_to(savings_grid[:, None], node_consumption.shape),
-                        jnp.nan,
-                    ).ravel()
-                ),
-            ]
-        )
-        value, policy, marginal, saving = envelope_at_query(
-            endog_grid=jnp.concatenate(endog_parts),
-            policy=jnp.concatenate(policy_parts),
-            value=jnp.concatenate(value_parts),
-            marginal=jnp.concatenate(marginal_parts),
-            segment_id=jnp.concatenate(segment_parts),
-            x_query=liquid_grid,
+        published = _read_euler_and_node_bank(
+            euler=(liquid_endog, consumption, value_endog, marginal_endog),
+            euler_segment=interior_segment,
+            node=(node_endog, node_consumption_safe, node_value, node_marginal),
+            node_segment=node_segment,
+            node_cell=node_cell,
+            n_bank=n_bank,
+            node_bank=node_bank,
+            euler_savings=jnp.where(degenerate, jnp.nan, savings_grid),
+            node_savings=jnp.where(node_feasible, node_savings, jnp.nan),
+            query=query,
+            nodes_on_query=query_grid is None,
             arithmetic=arithmetic,
             feasibility_partition=feasibility_partition,
             feasible_interval_mask=feasible_interval_mask,
-            candidate_savings=candidate_savings,
+            return_owner=return_owner,
         )
+        value, policy, marginal, saving = published[:4]
         value, marginal, policy = _publish_no_action_carry(
             value=value,
             marginal=marginal,
             policy=policy,
-            coh=coh_grid,
+            coh=coh_query,
             lowest_savings=savings_grid[0],
         )
-        return _single_row_nbegm_query_step(
+        data = _make_nbegm_query_data(
             value=value,
             marginal=marginal,
             policy=policy,
-            query_data=_make_nbegm_query_data(
-                value=value,
-                marginal=marginal,
-                policy=policy,
-                savings=saving,
-                floor_used=savings_grid[0],
-                liquid_grid=liquid_grid,
-                breakpoints=breakpoints,
-                corner_continuation=jnp.broadcast_to(cont_value[0], coh_slopes.shape),
-            ),
+            savings=saving,
+            floor_used=savings_grid[0],
+            liquid_grid=query,
+            breakpoints=breakpoints,
+            corner_continuation=jnp.broadcast_to(cont_value[0], coh_slopes.shape),
+        )
+        if return_owner:
+            if len(published) != len(
+                ("value", "policy", "marginal", "savings", "owner")
+            ):
+                raise TypeError(
+                    "Owned NB saving publication lost its original native owner."
+                )
+            return _OwnedNBEGMQueryStep(
+                value,
+                marginal,
+                policy,
+                data,
+                published_owner(value=value, stable_index=published[4]),
+            )
+        return _single_row_nbegm_query_step(
+            value=value, marginal=marginal, policy=policy, query_data=data
         )
 
-    value, policy, marginal = envelope_at_query(
-        endog_grid=jnp.concatenate(endog_parts),
-        policy=jnp.concatenate(policy_parts),
-        value=jnp.concatenate(value_parts),
-        marginal=jnp.concatenate(marginal_parts),
-        segment_id=jnp.concatenate(segment_parts),
-        x_query=liquid_grid,
+    value, policy, marginal = _read_euler_and_node_bank(
+        euler=(liquid_endog, consumption, value_endog, marginal_endog),
+        euler_segment=interior_segment,
+        node=(node_endog, node_consumption_safe, node_value, node_marginal),
+        node_segment=node_segment,
+        node_cell=node_cell,
+        n_bank=n_bank,
+        node_bank=node_bank,
+        query=query,
+        nodes_on_query=query_grid is None,
         arithmetic=arithmetic,
         feasibility_partition=feasibility_partition,
         feasible_interval_mask=feasible_interval_mask,
@@ -1596,9 +1855,207 @@ def nbegm_multi_interval_step_savings(
         value=value,
         marginal=marginal,
         policy=policy,
-        coh=coh_grid,
+        coh=coh_query,
         lowest_savings=savings_grid[0],
     )
+
+
+def _read_euler_and_node_bank(
+    *,
+    euler: tuple[Float1D, Float1D, Float1D, Float1D],
+    euler_segment: Float1D,
+    node: tuple[FloatND, FloatND, FloatND, FloatND],
+    node_segment: FloatND,
+    node_cell: IntND,
+    n_bank: int,
+    query: Float1D,
+    nodes_on_query: bool,
+    arithmetic: ComparisonArithmetic,
+    feasibility_partition: ResolvedAxisPartition | None,
+    feasible_interval_mask: BoolND | None,
+    euler_savings: Float1D | None = None,
+    node_savings: FloatND | None = None,
+    return_owner: bool = False,
+    node_bank: tuple[FloatND, ...] | None = None,
+) -> tuple[FloatND | IntND, ...]:
+    """Read the envelope of the Euler points and the dense savings-node family.
+
+    The bank is the Euler points followed by every `(node, liquid point)` corner
+    as a zero-width pair, channels `(endog, policy, value, marginal)`. Where the
+    queries are the liquid grid, each corner column sits on its own query, so the
+    Euler links are folded against every query and each corner column only
+    against its own (`merge_query_point_columns`), under the one-shot identities.
+    Otherwise the whole bank is read at once.
+
+    Where those identities would pass the int32 maximum, each query's candidates
+    are named in a bank of the Euler points and one corner column instead: the
+    order at every query is unchanged, so are the channels, and only a published
+    owner is then local to its query.
+    """
+    n_euler = euler[0].shape[0]
+    retain = euler_savings is not None
+    if not nodes_on_query:
+        return envelope_at_query(
+            endog_grid=jnp.concatenate([euler[0], _as_pairs(node[0].ravel())]),
+            policy=jnp.concatenate([euler[1], _as_pairs(node[1].ravel())]),
+            value=jnp.concatenate([euler[2], _as_pairs(node[2].ravel())]),
+            marginal=jnp.concatenate([euler[3], _as_pairs(node[3].ravel())]),
+            segment_id=jnp.concatenate(
+                [euler_segment, _as_pairs(node_segment.ravel())]
+            ),
+            x_query=query,
+            arithmetic=arithmetic,
+            feasibility_partition=feasibility_partition,
+            feasible_interval_mask=feasible_interval_mask,
+            **(
+                {
+                    "candidate_savings": jnp.concatenate(
+                        [
+                            euler_savings,
+                            _as_pairs(cast("FloatND", node_savings).ravel()),
+                        ]
+                    ),
+                    "return_owner": return_owner,
+                }
+                if retain
+                else {}
+            ),
+        )
+    if 2 * n_bank < jnp.iinfo(jnp.int32).max:
+        first_index = n_euler + 2 * node_cell
+    else:
+        # Column rows ascend in `node_cell` and a column meets its own query only.
+        n_rows = node_cell.shape[0]
+        n_bank = n_euler + 2 * n_rows
+        first_index = jnp.broadcast_to(
+            n_euler + 2 * jnp.arange(n_rows, dtype=jnp.int32)[:, None],
+            node_cell.shape,
+        )
+    empty = empty_envelope_winner(query=query, retain_savings=retain)
+    if arithmetic == "ordinary":
+        # The Euler segments are `segment_ids_from_folds` runs, which ascend.
+        held = fold_ascending_runs(
+            held=empty,
+            endog_grid=euler[0],
+            policy=euler[1],
+            value=euler[2],
+            marginal=euler[3],
+            segment_id=euler_segment,
+            stable_index=jnp.concatenate(
+                [
+                    jnp.arange(n_euler - 1, dtype=jnp.int32),
+                    n_bank - 1 + jnp.arange(n_euler, dtype=jnp.int32),
+                ]
+            ),
+            query=query,
+            feasibility_partition=feasibility_partition,
+            feasible_interval_mask=feasible_interval_mask,
+            candidate_savings=euler_savings,
+        )
+    else:
+        held = _fold_euler_blocks(
+            held=empty,
+            euler=(*euler, euler_segment),
+            euler_savings=euler_savings,
+            first_self_index=n_bank - 1,
+            query=query,
+            arithmetic=arithmetic,
+            feasibility_partition=feasibility_partition,
+            feasible_interval_mask=feasible_interval_mask,
+        )
+    held = merge_query_point_columns(  # ty: ignore[no-matching-overload]
+        held=held,
+        endog_grid=node[0],
+        policy=node[1],
+        value=node[2],
+        marginal=node[3],
+        segment_id=node_segment,
+        first_index=first_index,
+        first_self_index=n_bank - 1,
+        query=query,
+        arithmetic=arithmetic,
+        feasibility_partition=feasibility_partition,
+        feasible_interval_mask=feasible_interval_mask,
+        candidate_savings=node_savings,
+        bank=node_bank,
+    )
+    published = finish_envelope_winner(
+        winner=held,
+        query=query,
+        arithmetic=arithmetic,
+        feasibility_partition=feasibility_partition,
+        feasible_interval_mask=feasible_interval_mask,
+    )
+    return published if return_owner or not retain else published[:4]
+
+
+# Euler points folded per step: one block reads `(n_query, 2 * block + 1)` links.
+_EULER_FOLD_BLOCK = 512
+
+
+def _fold_euler_blocks(
+    *,
+    held: EnvelopeWinner | _SavingsEnvelopeWinner,
+    euler: tuple[Float1D, Float1D, Float1D, Float1D, Float1D],
+    euler_savings: Float1D | None,
+    first_self_index: int,
+    query: Float1D,
+    arithmetic: ComparisonArithmetic,
+    feasibility_partition: ResolvedAxisPartition | None,
+    feasible_interval_mask: BoolND | None,
+) -> EnvelopeWinner | _SavingsEnvelopeWinner:
+    """Fold the Euler points' links into the standing winner, a block at a time.
+
+    Channels are `(endog, policy, value, marginal, segment)`. Block `k` holds
+    points `k * B` through `k * B + B`, so consecutive blocks share one point and
+    every consecutive link lies in exactly one block; the shared point's
+    self-bracket enters twice under one identity, which a fold leaves unchanged.
+    Links carry their one-shot identities (consecutive link `c` is `c`, the
+    self-bracket of point `c` is `first_self_index + c`), so the winner does not
+    depend on the blocking, and no array pairs every query with every link.
+    """
+    n_euler = euler[0].shape[0]
+    block = max(1, min(_EULER_FOLD_BLOCK, n_euler - 1))
+    n_blocks = max(1, -(-(n_euler - 1) // block))
+    n_padded = n_blocks * block + 1
+    pad = n_padded - n_euler
+    columns = tuple(
+        jnp.concatenate([c, jnp.full((pad,), jnp.nan, dtype=c.dtype)])
+        for c in (*euler, *(() if euler_savings is None else (euler_savings,)))
+    )
+    last = jnp.iinfo(jnp.int32).max
+    point = jnp.arange(n_padded, dtype=jnp.int32)
+    link_identity = jnp.where(point < n_euler - 1, point, last)
+    self_identity = jnp.where(point < n_euler, first_self_index + point, last)
+
+    # keyword-only-exempt: library-callback=jax.lax.scan
+    def step(
+        standing: EnvelopeWinner | _SavingsEnvelopeWinner, start: IntND
+    ) -> tuple[EnvelopeWinner | _SavingsEnvelopeWinner, None]:
+        rows = [jax.lax.dynamic_slice(c, (start,), (block + 1,)) for c in columns]
+        identity = jnp.concatenate(
+            [
+                jax.lax.dynamic_slice(link_identity, (start,), (block,)),
+                jax.lax.dynamic_slice(self_identity, (start,), (block + 1,)),
+            ]
+        )
+        return merge_envelope_winner(  # ty: ignore[no-matching-overload]
+            held=standing,
+            endog_grid=rows[0],
+            policy=rows[1],
+            value=rows[2],
+            marginal=rows[3],
+            segment_id=rows[4],
+            stable_index=identity,
+            query=query,
+            arithmetic=arithmetic,
+            feasibility_partition=feasibility_partition,
+            feasible_interval_mask=feasible_interval_mask,
+            candidate_savings=None if euler_savings is None else rows[5],
+        ), None
+
+    folded, _ = jax.lax.scan(step, held, jnp.arange(n_blocks, dtype=jnp.int32) * block)
+    return folded
 
 
 def _interval_corner_candidates(
@@ -2169,6 +2626,7 @@ def nbegm_per_interval_continuation_step_savings(
         liquid_grid=liquid_grid,
         savings_grid=savings_grid,
         cont_value=cont_value,
+        cont_marginal=cont_marginal,
         discount_factor=discount_factor,
         preferences=preferences,
         coh_slopes=coh_slopes,
@@ -2188,6 +2646,7 @@ def nbegm_per_interval_continuation_step_savings(
             liquid_grid=liquid_grid,
             savings_grid=extra_savings,
             cont_value=extra_cont_value,
+            cont_marginal=None,
             discount_factor=discount_factor,
             preferences=preferences,
             coh_slopes=coh_slopes,
@@ -3038,6 +3497,7 @@ class _IntervalWinnerStep:
             liquid_grid=self.liquid_grid,
             savings_grid=self.savings_grid,
             cont_value=block_value,
+            cont_marginal=block_marginal,
             interval_indices=indices,
             interval_live=interval_live,
             discount_factor=self.discount_factor,
@@ -3054,6 +3514,7 @@ class _IntervalWinnerStep:
                 liquid_grid=self.liquid_grid,
                 savings_grid=block_cliff_savings,
                 cont_value=block_extra_value,
+                cont_marginal=None,
                 interval_indices=indices,
                 interval_live=interval_live,
                 discount_factor=self.discount_factor,
@@ -3097,6 +3558,14 @@ class _IntervalWinnerStep:
             layout=layout, indices=indices, n_extra=n_extra
         )
         total_candidates = layout.total_candidates(n_extra=n_extra)
+        if 2 * total_candidates >= jnp.iinfo(jnp.int32).max:
+            msg = (
+                f"The streamed interval bank of {total_candidates} candidates "
+                f"({self.liquid_grid.shape[0]} liquid by "
+                f"{self.savings_grid.shape[0]} savings points) has more link "
+                "identities than int32 can name."
+            )
+            raise ValueError(msg)
         stable_links = jnp.concatenate(
             [positions[:-1], (total_candidates - 1) + positions]
         )
@@ -3197,6 +3666,7 @@ def _savings_node_point_candidates_for_interval_block(
     liquid_grid: Float1D,
     savings_grid: FloatND,
     cont_value: FloatND,
+    cont_marginal: FloatND | None,
     interval_indices: IntND,
     interval_live: BoolND,
     discount_factor: ScalarFloat,
@@ -3213,6 +3683,7 @@ def _savings_node_point_candidates_for_interval_block(
     The arrays retain the canonical full point-family shape so the scan body is
     fixed across dynamic breakpoint placements.  Points outside the current
     interval block are NaN-dead; every point is live in exactly one block.
+    `cont_marginal` refines the nodes as in `_savings_node_point_candidates`.
     """
     interval_of_grid = jnp.searchsorted(breakpoints, liquid_grid, side="right")
     matches = (interval_of_grid[:, None] == interval_indices[None, :]) & interval_live[
@@ -3231,6 +3702,15 @@ def _savings_node_point_candidates_for_interval_block(
         if savings_grid.ndim > 1
         else jnp.broadcast_to(savings_grid[None, :], point_cont_value.shape)
     )
+    if cont_marginal is not None:
+        savings_at_grid, point_cont_value = _refine_savings_node_actions(
+            coh=point_coh,
+            savings_grid=savings_grid,
+            cont_value=point_cont_value,
+            cont_marginal=cont_marginal[local_interval],
+            discount_factor=discount_factor,
+            preferences=preferences,
+        )
     consumption = point_coh[:, None] - savings_at_grid
     feasible = affords_an_action(consumption) & belongs[:, None]
     safe_consumption = jnp.where(feasible, consumption, 1.0)
@@ -3275,6 +3755,7 @@ def _savings_node_point_candidates(
     liquid_grid: Float1D,
     savings_grid: FloatND,
     cont_value: FloatND,
+    cont_marginal: FloatND | None,
     discount_factor: ScalarFloat,
     preferences: Preferences,
     coh_slopes: Float1D,
@@ -3293,7 +3774,10 @@ def _savings_node_point_candidates(
     the inversion has no root) is still carried — and each pair is a segment
     the envelope brackets exactly at its own grid point, so visibility does not
     depend on how many grid points the interval holds. Infeasible entries
-    (consumption non-positive) are NaN-dead.
+    (consumption non-positive) are NaN-dead. With `cont_marginal`, a node whose
+    bracket holds the point's Euler optimum offers that optimum instead where it is
+    worth more (`_refine_savings_node_actions`); save-to-cliff targets pass `None`
+    and stay exact.
 
     Returns:
         Tuple of the flattened pair-interleaved `(endog, value, policy,
@@ -3315,13 +3799,23 @@ def _savings_node_point_candidates(
         if per_interval_savings
         else savings_grid[None, :]
     )
+    point_cont_value = cont_value[interval_of_grid]
+    if cont_marginal is not None:
+        savings_at_grid, point_cont_value = _refine_savings_node_actions(
+            coh=point_coh,
+            savings_grid=savings_grid,
+            cont_value=point_cont_value,
+            cont_marginal=cont_marginal[interval_of_grid],
+            discount_factor=discount_factor,
+            preferences=preferences,
+        )
     node_consumption = point_coh[:, None] - savings_at_grid
     node_feasible = affords_an_action(node_consumption)
     node_consumption_safe = jnp.where(node_feasible, node_consumption, 1.0)
     node_utility = preferences.utility(node_consumption_safe)
     node_value = jnp.where(
         node_feasible,
-        node_utility + discount_factor * cont_value[interval_of_grid],
+        node_utility + discount_factor * point_cont_value,
         jnp.nan,
     )
     node_endog = jnp.where(
@@ -3350,6 +3844,353 @@ def _savings_node_point_candidates(
         _as_pairs(node_consumption_safe),
         _as_pairs(node_marginal),
         _as_pairs(node_segment),
+    )
+
+
+def _refine_savings_node_actions(
+    *,
+    coh: Float1D,
+    savings_grid: Float1D,
+    cont_value: FloatND,
+    cont_marginal: FloatND,
+    discount_factor: ScalarFloat,
+    preferences: Preferences,
+    euler_consumption: FloatND | None = None,
+    inverse_eis: ScalarFloat | None = None,
+) -> tuple[FloatND, FloatND]:
+    """Move each savings-node action to the Euler optimum inside the bracket it opens.
+
+    The savings-node family offers every node as an exact action, while the Euler
+    path between two endogenous points is read along a chord that sags below the
+    concave value. Between two nodes the chord's sag and a node's misplacement
+    loss are of the same order, so a bare node would displace the interior
+    optimum. Where a point's cash-on-hand lies between the endogenous
+    cash-on-hand of nodes `s_i` and `s_{i+1}`, node `i` therefore offers instead
+    the saving the Euler path interpolates there, valued at the cubic Hermite read
+    of the continuation and its savings marginal, capped by the tangent at either
+    node — whenever that action is worth more than the node. The read is trusted
+    only on a bracket whose secant lies between its two positive endpoint
+    marginals, as a smooth increasing concave continuation's does, and such a
+    continuation lies below both tangents; a jump or a convex kink inside the
+    bracket fails the secant test and keeps the node.
+
+    Args:
+        coh: Cash-on-hand at each point, shape `(n_points,)`.
+        savings_grid: Post-decision savings nodes, shape `(n_nodes,)`.
+        cont_value: Continuation value at the nodes, shared `(n_nodes,)` or per
+            point `(n_points, n_nodes)`.
+        cont_marginal: The continuation's derivative in savings, same shape.
+        discount_factor: Discount factor.
+        preferences: The regime's felicity bundle.
+        euler_consumption: Consumption solving each node's Euler equation, same
+            shape; `None` inverts the additive Euler equation from
+            `cont_marginal`.
+        inverse_eis: Epstein-Zin inverse EIS; `None` selects the additive
+            aggregator.
+
+    Returns:
+        Tuple of the saving and the continuation level of each point's action per
+        node, each shaped `(n_points, n_nodes)`.
+
+    """
+    shape = (coh.shape[0], savings_grid.shape[0])
+    value_rows = jnp.broadcast_to(cont_value, shape)
+    marginal_rows = jnp.broadcast_to(cont_marginal, shape)
+    if euler_consumption is None:
+        euler_consumption = jax.vmap(
+            functools.partial(
+                _invert_euler_over_rows,
+                discount_factor=discount_factor,
+                preferences=preferences,
+            )
+        )(marginal_rows)
+    endog_coh = jnp.broadcast_to(euler_consumption + savings_grid, shape)
+    lower_coh, upper_coh = endog_coh[:, :-1], endog_coh[:, 1:]
+    node_step = jnp.diff(savings_grid)
+    secant = jnp.diff(value_rows, axis=1) / node_step
+    smooth = (
+        jnp.isfinite(lower_coh)
+        & jnp.isfinite(upper_coh)
+        & (upper_coh > lower_coh)
+        & (marginal_rows[:, 1:] > 0.0)
+        & (marginal_rows[:, 1:] <= secant)
+        & (secant <= marginal_rows[:, :-1])
+    )
+    share = (coh[:, None] - lower_coh) / jnp.where(smooth, upper_coh - lower_coh, 1.0)
+    inside = smooth & (share >= 0.0) & (share <= 1.0)
+    left_node = jnp.broadcast_to(savings_grid[:-1], lower_coh.shape)
+    link_saving = jnp.where(inside, left_node + share * node_step, left_node)
+    # A link saving lies in its own bracket `[s_i, s_i + step]`, which can round
+    # onto or just past `s_{i+1}`, so on a strictly increasing grid its
+    # right-sided search position is `i + 1`, or `i + 2` from `s_{i+1}` up.
+    located = jnp.arange(1, shape[1], dtype=jnp.int32) + (
+        link_saving >= savings_grid[1:]
+    ).astype(jnp.int32)
+    search_grid, valid_length = prepare_padded_grid(savings_grid)
+    link_continuation = jax.vmap(
+        functools.partial(
+            interp_on_located_grid,
+            search_grid=search_grid,
+            valid_length=valid_length,
+            xp=savings_grid,
+        )
+    )(
+        x_query=link_saving,
+        located=located,
+        fp=value_rows,
+        fp_slopes=marginal_rows,
+    )
+    # A concave continuation lies below its tangent at either node of the bracket.
+    link_continuation = jnp.minimum(
+        link_continuation,
+        jnp.minimum(
+            value_rows[:, :-1] + marginal_rows[:, :-1] * (link_saving - left_node),
+            value_rows[:, 1:] - marginal_rows[:, 1:] * (savings_grid[1:] - link_saving),
+        ),
+    )
+
+    def period_value(*, consumption: FloatND, continuation: FloatND) -> FloatND:
+        flow = preferences.utility(consumption)
+        if inverse_eis is not None:
+            return ez_period_value(
+                flow=flow,
+                nu=continuation,
+                discount_factor=discount_factor,
+                inverse_eis=inverse_eis,
+            )
+        return flow + _discounted_continuation(
+            discount_factor=discount_factor, cont_value=continuation
+        )
+
+    link_consumption = coh[:, None] - link_saving
+    node_consumption = coh[:, None] - left_node
+    link_feasible = (
+        inside & affords_an_action(link_consumption) & jnp.isfinite(link_continuation)
+    )
+    node_feasible = affords_an_action(node_consumption)
+    link_value = period_value(
+        consumption=jnp.where(link_feasible, link_consumption, 1.0),
+        continuation=link_continuation,
+    )
+    node_value = period_value(
+        consumption=jnp.where(node_feasible, node_consumption, 1.0),
+        continuation=value_rows[:, :-1],
+    )
+    take_link = link_feasible & (~node_feasible | (link_value > node_value))
+    saving = jnp.concatenate(
+        [
+            jnp.where(take_link, link_saving, left_node),
+            jnp.broadcast_to(savings_grid[-1:], (shape[0], 1)),
+        ],
+        axis=1,
+    )
+    continuation = jnp.concatenate(
+        [
+            jnp.where(take_link, link_continuation, value_rows[:, :-1]),
+            value_rows[:, -1:],
+        ],
+        axis=1,
+    )
+    return saving, continuation
+
+
+def _best_savings_node_per_point(  # noqa: PLR0915 - one fused pass, then the bracket visits that read it
+    *,
+    coh: Float1D,
+    savings_grid: Float1D,
+    cont_value: Float1D,
+    cont_marginal: Float1D,
+    euler_consumption: Float1D,
+    discount_factor: ScalarFloat,
+    preferences: Preferences,
+    inverse_eis: ScalarFloat | None = None,
+) -> tuple[IntND, Float1D, Float1D]:
+    """Return each point's best node of `_refine_savings_node_actions`' family.
+
+    For every point, the node `i` whose action (saving and continuation) gives the
+    largest period value with positive consumption, the smallest such `i` among
+    equals; that is the order an envelope read gives the family's zero-width
+    points at their own abscissa. Returns the node index, its saving and its
+    continuation per point, or index 0 with a dead node where none affords.
+
+    Equal to reducing the dense refined family, without forming it. A refined
+    action replaces its node only where it is worth more, so the best plain node
+    over all `i` and the refined actions that replace their node have the same
+    maximum and the same smallest maximizer as the refined family. A node is
+    refined only in a bracket whose endogenous cash-on-hand straddles the point;
+    those brackets are found by one search per ascending run of that grid.
+    """
+    n_nodes = savings_grid.shape[0]
+
+    def period_value(*, consumption: FloatND, continuation: FloatND) -> FloatND:
+        flow = preferences.utility(consumption)
+        if inverse_eis is not None:
+            return ez_period_value(
+                flow=flow,
+                nu=continuation,
+                discount_factor=discount_factor,
+                inverse_eis=inverse_eis,
+            )
+        return flow + _discounted_continuation(
+            discount_factor=discount_factor, cont_value=continuation
+        )
+
+    def published_value(*, saving: FloatND, continuation: FloatND) -> FloatND:
+        consumption = coh.reshape(-1, *([1] * (saving.ndim - 1))) - saving
+        affords = consumption > 0.0
+        value = period_value(
+            consumption=jnp.where(affords, consumption, 1.0), continuation=continuation
+        )
+        return jnp.where(affords & jnp.isfinite(value), value, -jnp.inf)
+
+    plain = published_value(
+        saving=savings_grid[None, :], continuation=cont_value[None, :]
+    )
+    node = jnp.arange(n_nodes, dtype=jnp.int32)
+    best_value, best_index = max_and_smallest_id(
+        values=plain,
+        ids=jnp.broadcast_to(node, plain.shape),
+        initial=-jnp.inf,
+    )
+    best_index = jnp.where(jnp.isfinite(best_value), best_index, 0)
+    best_saving = savings_grid[best_index]
+    best_continuation = cont_value[best_index]
+
+    endog_coh = euler_consumption + savings_grid
+    lower_coh, upper_coh = endog_coh[:-1], endog_coh[1:]
+    node_step = jnp.diff(savings_grid)
+    secant = jnp.diff(cont_value) / node_step
+    ascends = (
+        jnp.isfinite(lower_coh) & jnp.isfinite(upper_coh) & (upper_coh > lower_coh)
+    )
+    smooth = (
+        ascends
+        & (cont_marginal[1:] > 0.0)
+        & (cont_marginal[1:] <= secant)
+        & (secant <= cont_marginal[:-1])
+    )
+    width = jnp.where(smooth, upper_coh - lower_coh, 1.0)
+    search_grid, valid_length = prepare_padded_grid(savings_grid)
+
+    def offer(
+        *, i: IntND, held: tuple[FloatND, IntND, Float1D, Float1D]
+    ) -> tuple[FloatND, IntND, Float1D, Float1D]:
+        """Merge bracket `i`'s refined action at each point that lies inside it."""
+        value, index, saving, continuation = held
+        share = (coh - lower_coh[i]) / width[i]
+        live = smooth[i] & (share >= 0.0) & (share <= 1.0)
+        left_node = savings_grid[i]
+        link_saving = left_node + share * node_step[i]
+        located = i + 1 + (link_saving >= savings_grid[i + 1]).astype(jnp.int32)
+        link_continuation = interp_on_located_grid(
+            x_query=link_saving,
+            located=located,
+            search_grid=search_grid,
+            valid_length=valid_length,
+            xp=savings_grid,
+            fp=cont_value,
+            fp_slopes=cont_marginal,
+        )
+        link_continuation = jnp.minimum(
+            link_continuation,
+            jnp.minimum(
+                cont_value[i] + cont_marginal[i] * (link_saving - left_node),
+                cont_value[i + 1]
+                - cont_marginal[i + 1] * (savings_grid[i + 1] - link_saving),
+            ),
+        )
+        link_consumption = coh - link_saving
+        node_consumption = coh - left_node
+        link_feasible = (
+            live & affords_an_action(link_consumption) & jnp.isfinite(link_continuation)
+        )
+        node_feasible = affords_an_action(node_consumption)
+        link_value = period_value(
+            consumption=jnp.where(link_feasible, link_consumption, 1.0),
+            continuation=link_continuation,
+        )
+        node_value = period_value(
+            consumption=jnp.where(node_feasible, node_consumption, 1.0),
+            continuation=cont_value[i],
+        )
+        take_link = link_feasible & (~node_feasible | (link_value > node_value))
+        offered = jnp.where(
+            take_link,
+            published_value(saving=link_saving, continuation=link_continuation),
+            -jnp.inf,
+        )
+        better = jnp.isfinite(offered) & (
+            (offered > value) | ((offered == value) & (i < index))
+        )
+        return (
+            jnp.where(better, offered, value),
+            jnp.where(better, i, index),
+            jnp.where(better, link_saving, saving),
+            jnp.where(better, link_continuation, continuation),
+        )
+
+    # A smooth bracket ascends, so it lies in one maximal ascending run of the
+    # endogenous cash-on-hand, whose brackets tile the run in order. In a run, a
+    # point lies only in the bracket opened by the last node at or below it and
+    # in the bracket closed there; one search per run finds both. A bracket
+    # further below holds the point only where `share` rounds down to 1 across a
+    # whole further bracket, so the visit takes one more below as margin.
+    # ponytail: three brackets per run; widen if a grid ever needs more margin.
+    n_brackets = n_nodes - 1
+    previous = jnp.concatenate([jnp.zeros((1,), dtype=bool), ascends[:-1]])
+    following = jnp.concatenate([ascends[1:], jnp.zeros((1,), dtype=bool)])
+    run_first = jnp.nonzero(ascends & ~previous, size=n_brackets, fill_value=0)[0]
+    run_last = jnp.nonzero(ascends & ~following, size=n_brackets, fill_value=0)[0]
+    n_runs = jnp.sum(ascends & ~previous)
+
+    def visit_run(
+        state: tuple[IntND, FloatND, IntND, Float1D, Float1D],
+    ) -> tuple[IntND, FloatND, IntND, Float1D, Float1D]:
+        k, *_ = state
+        first = run_first[k].astype(jnp.int32)
+        last = run_last[k].astype(jnp.int32)
+        key = jnp.where(
+            node < first, -jnp.inf, jnp.where(node <= last + 1, endog_coh, jnp.inf)
+        )
+        at = jnp.searchsorted(key, coh, side="right").astype(jnp.int32) - 1
+        merged = (state[1], state[2], state[3], state[4])
+        for below in (2, 1, 0):
+            merged = offer(i=jnp.clip(at - below, first, last), held=merged)
+        return (k + 1, *merged)
+
+    if n_nodes < 2:  # noqa: PLR2004
+        return best_index, best_saving, best_continuation
+    _, _, best_index, best_saving, best_continuation = jax.lax.while_loop(
+        lambda state: state[0] < n_runs,
+        visit_run,
+        (jnp.int32(0), best_value, best_index, best_saving, best_continuation),
+    )
+    return best_index, best_saving, best_continuation
+
+
+# keyword-only-exempt: library-callback=jax.vmap
+def _invert_euler_over_rows(
+    row: Float1D, *, discount_factor: ScalarFloat, preferences: Preferences
+) -> Float1D:
+    """Euler-invert one row of savings-node marginal continuations."""
+    return _invert_euler_over_savings(
+        cont_marginal=row, discount_factor=discount_factor, preferences=preferences
+    )
+
+
+# keyword-only-exempt: library-callback=jax.vmap
+def _hermite_savings_read(
+    query: Float1D, values: Float1D, slopes: Float1D, *, savings_grid: Float1D
+) -> Float1D:
+    """Read one continuation row by cubic Hermite on the savings grid."""
+    search_grid, valid_length = prepare_padded_grid(savings_grid)
+    return interp_on_prepared_grid(
+        x_query=query,
+        search_grid=search_grid,
+        valid_length=valid_length,
+        xp=savings_grid,
+        fp=values,
+        fp_slopes=slopes,
     )
 
 
@@ -3598,6 +4439,7 @@ def nbegm_unified_step_savings(
                 extra_cont_value[None, :],
                 (coh_slopes.shape[0], extra_cont_value.shape[0]),
             ),
+            cont_marginal=None,
             discount_factor=discount_factor,
             preferences=preferences,
             coh_slopes=coh_slopes,

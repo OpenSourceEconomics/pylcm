@@ -195,7 +195,7 @@ def _process_regime(
         raise PyLCMError(msg)
 
     if coordinate_kind(ages) == "age":
-        data["age"] = ages.values[data["period"]]  # noqa: PD011
+        data["age"] = np.asarray(ages.values)[np.asarray(data["period"])]
     data["regime_name"] = [regime_name] * len(data["period"])
 
     _project_joint_shocks(
@@ -334,6 +334,7 @@ def _extract_period_data(
     for name in regime_actions:
         if name in result.actions:
             data[name] = result.actions[name]
+    data.update(result.shocks)
 
     return data
 

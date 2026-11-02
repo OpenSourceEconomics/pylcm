@@ -22,7 +22,6 @@ import lcm.model as model_module
 import lcm.solver_api as solver_api_module
 from _lcm.egm.nested_published_policy import NestedEGMSimPolicy
 from _lcm.egm.published_policy import EGMSimPolicy, NNBEGMSimPolicy
-from _lcm.regime_building import processing as regime_processing
 from _lcm.simulation import simulate as simulation_module
 from _lcm.simulation.entry_allocations import SimulationEntryAllocations
 from _lcm.solution import artifacts as private_artifacts
@@ -52,7 +51,6 @@ from lcm.exceptions import (
 )
 from lcm.persistence import load_solution
 from lcm.solver_api import (
-    DISSOLUTION_FLAG,
     EGM_CONTINUATION,
     SIMULATION_POLICY,
     SOLVER_DIAGNOSTICS,
@@ -70,7 +68,6 @@ from lcm.solver_api import (
     ValueArraySchema,
     ValueStore,
 )
-from lcm.solvers import MSSEnvelope
 from lcm.typing import (
     ActionName,
     FloatND,
@@ -152,12 +149,6 @@ class _SimulationKwargs(TypedDict):
     taste_shock_seed: NotRequired[int | None]
     subject_batch_size: NotRequired[int]
     original_n_subjects: NotRequired[int | None]
-    period_to_regime_to_dissolution_flags: NotRequired[
-        MappingProxyType[
-            int,
-            MappingProxyType[simulation_module.RegimeName, simulation_module.BoolND],
-        ]
-    ]
     device_ids: NotRequired[tuple[int, ...]]
     retained_footprint: NotRequired[simulation_module.DeviceBufferFootprint | None]
     prepared_chunks: NotRequired[simulation_module.PreparedSimulationChunks | None]
@@ -424,7 +415,7 @@ def test_flat_param_fingerprint_frames_marker_like_path_components() -> None:
 
 
 def test_model_solve_omits_policy_without_replay_route() -> None:
-    model = _two_period_bequest_model()
+    model = _two_period_bequest_model(replay="grid")
     params = get_graph_only_retirement_params(n_periods=2, discount_factor=0.98)
 
     result = model.solve(params=params, log_level="off")
@@ -449,7 +440,7 @@ def test_model_solve_omits_policy_without_replay_route() -> None:
 
 def test_model_rejects_a_present_inapplicable_artifact() -> None:
     """A false present payload cannot replace model authority's omission."""
-    model = _two_period_bequest_model()
+    model = _two_period_bequest_model(replay="grid")
     params = get_graph_only_retirement_params(n_periods=2, discount_factor=0.98)
     solution = model.solve(params=params, log_level="off")
     policy_ref = ArtifactRef(
@@ -481,8 +472,13 @@ def test_model_rejects_a_present_inapplicable_artifact() -> None:
 
 def test_model_rejects_a_present_artifact_not_selected_by_retention() -> None:
     """The metadata retention label constrains every present artifact channel."""
-    model = _make_dissolution_model()
-    solution = model.solve(params=_DISSOLUTION_PARAMS, log_level="off")
+    model = _build("adaptive")
+    solution = model.solve(
+        params=_PARAMS,
+        log_level="off",
+        retention=ResultRetention.VALUES_AND_REPLAY,
+    )
+    assert _policy_refs(solution)
     malformed = replace(
         solution,
         metadata=replace(solution.metadata, retention=ResultRetention.VALUES),
@@ -493,7 +489,7 @@ def test_model_rejects_a_present_artifact_not_selected_by_retention() -> None:
         match=r"present artifacts.*not selected by retention 'values'",
     ):
         model.simulate(
-            params=_DISSOLUTION_PARAMS,
+            params=_PARAMS,
             initial_conditions={},
             solution=malformed,
             log_level="off",
@@ -515,7 +511,7 @@ def test_solve_does_not_host_copy_policy_without_replay_route(
         return original_device_put(value, *args, **kwargs)
 
     monkeypatch.setattr(backward_induction.jax, "device_put", _reject_policy_host_copy)
-    model = _two_period_bequest_model()
+    model = _two_period_bequest_model(replay="grid")
     params = get_graph_only_retirement_params(n_periods=2, discount_factor=0.98)
 
     result = model.solve(params=params, log_level="off")
@@ -524,7 +520,7 @@ def test_solve_does_not_host_copy_policy_without_replay_route(
 
 
 def test_values_only_result_drops_replay_with_an_explicit_reason() -> None:
-    model = _two_period_bequest_model()
+    model = _two_period_bequest_model(replay="grid")
     params = get_graph_only_retirement_params(n_periods=2, discount_factor=0.98)
 
     result = model.solve(
@@ -625,13 +621,11 @@ def test_builtin_artifact_keys_are_stably_versioned() -> None:
         for key in (
             EGM_CONTINUATION,
             SIMULATION_POLICY,
-            DISSOLUTION_FLAG,
             SOLVER_DIAGNOSTICS,
         )
     } == {
         "pylcm.egm.continuation": 2,
         "pylcm.simulation.policy": 1,
-        "pylcm.collective.dissolution_flag": 1,
         "pylcm.solver.diagnostics": 1,
     }
 
@@ -639,7 +633,6 @@ def test_builtin_artifact_keys_are_stably_versioned() -> None:
 def test_private_artifact_key_aliases_are_the_public_singletons() -> None:
     assert private_artifacts.EGM_CONTINUATION is EGM_CONTINUATION
     assert private_artifacts.SIMULATION_POLICY is SIMULATION_POLICY
-    assert private_artifacts.DISSOLUTION_FLAG is DISSOLUTION_FLAG
     assert private_artifacts.SOLVER_DIAGNOSTICS is SOLVER_DIAGNOSTICS
 
 
@@ -673,15 +666,14 @@ def test_direct_solution_simulation_processes_params_once(
 ) -> None:
     model, params, initial_conditions = _small_grid_search_inputs()
     solution = model.solve(params=params, log_level="off")
-    original = model._process_params
+    original = model._canonicalize_params
     call_count = 0
 
     # keyword-only-exempt: primary-argument=raw_params
-    def _counted_process_params(
+    def _counted_canonicalize_params(
         raw_params: UserParams,
         *,
         array_writer: SimulationEntryAllocations | None = None,
-        runtime_checks: bool = True,
         use_categorical_codes: bool = False,
     ) -> FlatParams:
         nonlocal call_count
@@ -689,11 +681,10 @@ def test_direct_solution_simulation_processes_params_once(
         return original(
             raw_params,
             array_writer=array_writer,
-            runtime_checks=runtime_checks,
             use_categorical_codes=use_categorical_codes,
         )
 
-    monkeypatch.setattr(model, "_process_params", _counted_process_params)
+    monkeypatch.setattr(model, "_canonicalize_params", _counted_canonicalize_params)
     model.simulate(
         params=params,
         initial_conditions=initial_conditions,
@@ -1370,14 +1361,7 @@ def test_malformed_finite_nnbegm_payload_is_refused_before_forward(
 def test_declared_egm_policy_read_requires_a_valid_egm_payload_before_forward(
     *, payload: str | None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    get_full_model.cache_clear()
-    monkeypatch.setattr(
-        regime_processing,
-        "_CROSSING_COMPLETE_ENVELOPES",
-        (MSSEnvelope,),
-    )
-    model = get_full_model(solver="dcegm", n_periods=2, envelope="mss")
-    get_full_model.cache_clear()
+    model = get_full_model(solver="dcegm", n_periods=2, envelope="rfc")
     params = get_full_params(n_periods=2)
     initial_conditions = {
         "wealth": jnp.asarray([2.0]),
@@ -1540,99 +1524,6 @@ def test_policy_at_an_undeclared_coordinate_is_refused_before_forward(
         model.simulate(
             params=params,
             initial_conditions=initial_conditions,
-            solution=malformed,
-            log_level="off",
-        )
-
-
-def test_values_only_dissolution_result_is_refused_before_forward_simulation(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    model = _make_dissolution_model()
-    solution = model.solve(
-        params=_DISSOLUTION_PARAMS,
-        log_level="off",
-        retention=ResultRetention.VALUES,
-    )
-
-    def _forward_loop_must_not_run(**_kwargs: Unpack[_SimulationKwargs]) -> NoReturn:
-        raise AssertionError("forward simulation ran before dissolution preflight")
-
-    monkeypatch.setattr(model_module, "simulate", _forward_loop_must_not_run)
-    with pytest.raises(
-        InvalidSimulationInputError,
-        match=r"pylcm\.collective\.dissolution_flag.*not_requested",
-    ):
-        model.simulate(
-            params=_DISSOLUTION_PARAMS,
-            initial_conditions={},
-            solution=solution,
-            log_level="off",
-        )
-
-
-@pytest.mark.parametrize("defect", ["type", "dtype", "shape"])
-def test_malformed_dissolution_flag_is_refused_before_forward(
-    *, defect: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    model = _make_dissolution_model()
-    solution = model.solve(params=_DISSOLUTION_PARAMS, log_level="off")
-    flag_ref = next(
-        ref for ref in solution.replay_artifacts if ref.key == DISSOLUTION_FLAG
-    )
-    flag = solution.replay_artifacts[flag_ref]
-    if defect == "type":
-        malformed_flag = np.asarray(flag, dtype=np.bool_)
-    elif defect == "dtype":
-        malformed_flag = jnp.asarray(flag, dtype=jnp.float32)
-    else:
-        malformed_flag = jnp.reshape(jnp.asarray(flag), (*jnp.asarray(flag).shape, 1))
-    entries = dict(solution.replay_artifacts)
-    entries[flag_ref] = malformed_flag
-    malformed = replace(solution, replay_artifacts=ArtifactStore(entries))
-
-    def _forward_loop_must_not_run(**_kwargs: Unpack[_SimulationKwargs]) -> NoReturn:
-        raise AssertionError("forward simulation ran before dissolution preflight")
-
-    monkeypatch.setattr(model_module, "simulate", _forward_loop_must_not_run)
-    with pytest.raises(
-        InvalidSimulationInputError,
-        match=r"mismatched_payload|artifact payloads cannot be detached",
-    ):
-        model.simulate(
-            params=_DISSOLUTION_PARAMS,
-            initial_conditions={},
-            solution=malformed,
-            log_level="off",
-        )
-
-
-def test_dissolution_flag_is_refused_from_the_wrong_artifact_channel(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    model = _make_dissolution_model()
-    solution = model.solve(params=_DISSOLUTION_PARAMS, log_level="off")
-    flag_ref = next(
-        ref for ref in solution.replay_artifacts if ref.key == DISSOLUTION_FLAG
-    )
-    replay_entries = dict(solution.replay_artifacts)
-    flag = replay_entries.pop(flag_ref)
-    malformed = replace(
-        solution,
-        replay_artifacts=ArtifactStore(replay_entries),
-        auxiliary_artifacts=ArtifactStore(
-            dict(solution.auxiliary_artifacts) | {flag_ref: flag}
-        ),
-    )
-
-    def _forward_loop_must_not_run(**_kwargs: Unpack[_SimulationKwargs]) -> NoReturn:
-        raise AssertionError("forward simulation ran before dissolution preflight")
-
-    monkeypatch.setattr(model_module, "simulate", _forward_loop_must_not_run)
-    with pytest.raises(InvalidSimulationInputError, match="wrong channels"):
-        model.simulate(
-            params=_DISSOLUTION_PARAMS,
-            initial_conditions={},
             solution=malformed,
             log_level="off",
         )

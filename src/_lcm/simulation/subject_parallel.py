@@ -149,14 +149,12 @@ def _subject_extent(
     arguments: Mapping[str, ArgumentTree],
     subject_arg_names: tuple[ReferenceName, ...],
 ) -> int:
-    """Validate declared leading dimensions from metadata, never device values."""
+    """Validate leading dimensions; empty subtrees contribute no subject extent."""
     extents: set[int] = set()
     for name in subject_arg_names:
         if name not in arguments:
             raise ValueError(f"Declared subject argument {name!r} is missing.")
         leaves = jax.tree.leaves(arguments[name])
-        if not leaves:
-            raise ValueError(f"Declared subject argument {name!r} has no array leaves.")
         for leaf in leaves:
             shape = getattr(leaf, "shape", ())
             if not shape or type(shape[0]) is not int or shape[0] <= 0:

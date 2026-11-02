@@ -66,7 +66,6 @@ from lcm._solver_api.identity import (
     TreePath,
 )
 from lcm._solver_api.replay import (
-    DISSOLUTION_FLAG,
     EGM_CONTINUATION,
     EGM_ENDOGENOUS_COORDINATE,
     SIMULATION_POLICY,
@@ -94,7 +93,6 @@ from lcm._solver_api.stores import (
 )
 
 __all__ = [
-    "DISSOLUTION_FLAG",
     "EGM_CONTINUATION",
     "EGM_ENDOGENOUS_COORDINATE",
     "PYLCM_VERSION",

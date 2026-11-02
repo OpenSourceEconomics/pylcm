@@ -39,21 +39,21 @@ well as a value, so which link owns the interval beside a boundary still matters
 even where two of them round to the same value there. Ownership is therefore
 settled by certified comparison throughout, never by a rounded reading. Where a
 sign cannot be certified, where a live link escapes certification against the
-owners, or where the realized run count exceeds the static capacity, the row is
-NaN-poisoned and reported as an overflow so the solve loop's diagnostics name the
-offending cell instead of publishing a guess.
+owners, or where more runs cover one cell than the static capacity holds, the
+row is NaN-poisoned and reported as an overflow so the solve loop's diagnostics
+name the offending cell instead of publishing a guess.
 """
 
 import functools
-from collections.abc import Callable
-from typing import NamedTuple, overload
+from collections.abc import Callable, Iterable
+from typing import TYPE_CHECKING, NamedTuple, cast, overload
 
 import jax
 import jax.numpy as jnp
 
 from _lcm.egm.upper_envelope._exact_affine import exact_affine_read
 from _lcm.egm.upper_envelope.cell_hull import hull_owners
-from _lcm.egm.upper_envelope.topology import count_linked_runs, monotone_run_ids
+from _lcm.egm.upper_envelope.topology import monotone_run_ids
 from lcm.typing import (
     BoolND,
     Float1D,
@@ -65,9 +65,16 @@ from lcm.typing import (
     ScalarInt,
 )
 
-# Static capacity for the number of x-monotone runs a candidate chain may fold
-# into. One discrete action can fold arbitrarily often, so this is a validated
-# capacity, never an assumed bound: exceeding it poisons the row.
+if TYPE_CHECKING:
+    from _lcm.typing import PytreeChild
+else:
+    # The internal type vocabulary imports EGM carries and their owned rows.
+    type PytreeChild = object
+
+# Static capacity for the number of x-monotone runs that may cover one node cell.
+# One discrete action can fold arbitrarily often, so this is a validated capacity,
+# never an assumed bound: exceeding it poisons the row. The chain as a whole may
+# hold any number of runs.
 DEFAULT_MAX_RUNS: int = 24
 
 
@@ -91,6 +98,15 @@ class OwnedEnvelope(NamedTuple):
     link_valid: BoolND
     source_left_index: Int1D
     source_right_index: Int1D
+
+    def __reduce__(
+        self,
+    ) -> tuple[
+        Callable[[None, Iterable[PytreeChild]], OwnedEnvelope],
+        tuple[None, tuple[PytreeChild, ...]],
+    ]:
+        """Retain original candidate buffers through native artifact restoration."""
+        return _unflatten_owned_envelope, (None, tuple(self))
 
 
 class _NegmBindingEnvelope(NamedTuple):
@@ -198,7 +214,8 @@ def refine_envelope_exact(
         n_refined: Static length of the refined output arrays.
         segment_id: Optional per-candidate branch label. Runs are always split
             where resources stop increasing; a label change splits them further.
-        max_runs: Static capacity for the number of x-monotone runs.
+        max_runs: Static capacity for the number of x-monotone runs over one
+            node cell.
         cell_width: How many node cells the execution plan resolves together.
             The default visits one cell at a time. Cells are independent, so
             this partitions the work without changing any published value.
@@ -217,7 +234,6 @@ def refine_envelope_exact(
         raise ValueError("Binding queries require their source-prefix count.")
     dead = jnp.isnan(endog_grid) | jnp.isnan(value)
     run_id = monotone_run_ids(endog_grid=endog_grid, dead=dead, segment_id=segment_id)
-    n_runs = count_linked_runs(endog_grid=endog_grid, dead=dead, segment_id=segment_id)
 
     cell_left, cell_right, cell_live = _node_cells(endog_grid=endog_grid, dead=dead)
     runs = _run_node_order(
@@ -247,7 +263,7 @@ def refine_envelope_exact(
     )
     out_grid, out_policy, out_value, n_kept = emitted[:4]
 
-    uncertain = sub_cells.poisoned | (n_runs > max_runs)
+    uncertain = sub_cells.poisoned | runs.crowded
     overflow_marker = jnp.asarray(n_refined + 1, dtype=jnp.int32)
     n_kept = jnp.where(uncertain, overflow_marker, n_kept)
     poison = jnp.full((), jnp.nan, dtype=endog_grid.dtype)
@@ -291,25 +307,37 @@ def refine_envelope_exact(
 
 
 class _RunNodes:
-    """Every run's nodes in one ascending sequence, with each run's extent in it.
+    """Every slot's nodes in one ascending sequence, with each slot's extent in it.
 
-    Runs partition the candidates, so ordering by run and then by abscissa lays
-    each run's own nodes out contiguously in a single candidate-length sequence.
+    Each run that spans an interval holds one of `max_runs` slots, and the runs
+    sharing a slot never overlap, so ordering by slot and then by abscissa lays
+    each slot's runs out side by side in a single candidate-length sequence.
     Holding the runs this way keeps the topology linear in the candidates rather
     than the product of the candidates and the run capacity.
     """
 
     def __init__(
-        self, *, order: Int1D, node_x: Float1D, start: Int1D, n_nodes: Int1D
+        self,
+        *,
+        order: Int1D,
+        node_x: Float1D,
+        node_run: Int1D,
+        start: Int1D,
+        n_nodes: Int1D,
+        crowded: ScalarBool,
     ) -> None:
         self.order = order
-        """Candidate indices ordered by run, then abscissa, `(n_candidates,)`."""
+        """Candidate indices ordered by slot, then abscissa, `(n_candidates,)`."""
         self.node_x = node_x
         """The abscissae in that same order, `(n_candidates,)`."""
+        self.node_run = node_run
+        """The run of each candidate in that same order, `(n_candidates,)`."""
         self.start = start
-        """Where each run's block begins in that order, `(max_runs,)`."""
+        """Where each slot's block begins in that order, `(max_runs,)`."""
         self.n_nodes = n_nodes
-        """How many candidates each run owns, `(max_runs,)`."""
+        """How many candidates each slot holds, `(max_runs,)`."""
+        self.crowded = crowded
+        """Whether two runs sharing a slot overlap, so a cell lost a run."""
 
 
 class _SubCells:
@@ -439,28 +467,54 @@ def _node_cells(
 def _run_node_order(
     *, endog_grid: Float1D, run_id: Int1D, dead: BoolND, max_runs: int
 ) -> _RunNodes:
-    """Order the candidates by run, then by abscissa, and record each run's block.
+    """Assign the runs to slots, order them by slot, then by abscissa.
 
-    Locating the link a run contributes to a cell is a search in that run's own
+    Locating the link a run contributes to a cell is a search in its slot's
     nodes. The order does not depend on the cell, so it is established once here
-    rather than per cell. Ordering all runs together rather than each run over
+    rather than per cell. Ordering all slots together rather than each slot over
     the whole candidate array is what keeps this linear in the candidates: a
-    per-run order would carry a run axis alongside the candidate axis, and the
+    per-slot order would carry a slot axis alongside the candidate axis, and the
     row maps production adds would then multiply that product by the row count.
 
-    A candidate is absent from every run when the caller declared it dead, when
-    the run labelling gave it no run, or when its abscissa is not finite. All
-    three are asked here rather than re-deriving deadness from the abscissa
-    alone: a candidate carrying genuine poison keeps a finite abscissa, so an
-    abscissa test would read it as live and its NaN value would enter the node
-    list of whichever run its abscissa falls in.
+    The capacity bounds the runs over one cell, not the runs in the chain: a fine
+    savings grid resolves every small fold, so a chain can hold far more runs
+    than ever overlap. The `k`-th run that spans an interval takes slot
+    `k mod max_runs`, so runs sharing a slot lie `max_runs` folds apart along the
+    chain, and the slot holds them side by side. Should two of them overlap, a
+    cell would see only one of them; the row is then `crowded` and is poisoned.
+    A run spanning no interval carries no line and takes no slot.
+
+    A candidate is absent from every slot when the caller declared it dead, when
+    the run labelling gave it no run or a run spanning no interval, or when its
+    abscissa is not finite. These are asked here rather than re-deriving
+    deadness from the abscissa alone: a candidate carrying genuine poison keeps a
+    finite abscissa, so an abscissa test would read it as live and its NaN value
+    would enter the node list of whichever run its abscissa falls in.
     """
+    n_candidates = endog_grid.shape[0]
     absent = dead | (run_id < 0) | ~jnp.isfinite(endog_grid)
-    # Candidates belonging to no run get a block of their own past the last run,
-    # so they are outside every run's extent and can never be located.
-    block = jnp.where(absent, max_runs, jnp.clip(run_id, 0, max_runs))
+    segment = jnp.where(absent, n_candidates, run_id)
+    lowest = jax.ops.segment_min(
+        jnp.where(absent, jnp.inf, endog_grid), segment, num_segments=n_candidates + 1
+    )[:n_candidates]
+    highest = jax.ops.segment_max(
+        jnp.where(absent, -jnp.inf, endog_grid), segment, num_segments=n_candidates + 1
+    )[:n_candidates]
+    spans = highest > lowest
+    safe_run = jnp.clip(run_id, 0, n_candidates - 1)
+    absent = absent | ~spans[safe_run]
+    slot = (jnp.cumsum(spans) - 1)[safe_run] % max_runs
+    # Candidates in no slot get a block of their own past the last slot, so they
+    # are outside every slot's extent and can never be located.
+    block = jnp.where(absent, max_runs, slot)
+    # At an abscissa two runs of a slot share, the run starting further left
+    # comes first, so runs that only touch there stay contiguous.
     order = jnp.lexsort(
-        (jnp.where(absent, jnp.inf, endog_grid), block.astype(jnp.float32))
+        (
+            jnp.where(absent, jnp.inf, lowest[safe_run]),
+            jnp.where(absent, jnp.inf, endog_grid),
+            block.astype(jnp.float32),
+        )
     ).astype(jnp.int32)
     n_nodes = jax.ops.segment_sum(
         jnp.ones_like(block, dtype=jnp.int32), block, num_segments=max_runs + 1
@@ -468,15 +522,31 @@ def _run_node_order(
     start = jnp.concatenate(
         [jnp.zeros(1, dtype=jnp.int32), jnp.cumsum(n_nodes)[:-1].astype(jnp.int32)]
     )
+    # Runs sharing a slot are disjoint exactly when each one's nodes stay
+    # contiguous in the slot's order: one run change per further run.
+    node_run = run_id[order]
+    node_block = block[order]
+    run_changes = jnp.sum(
+        (node_block[1:] == node_block[:-1])
+        & (node_block[:-1] < max_runs)
+        & (node_run[1:] != node_run[:-1])
+    )
+    n_spanning = jnp.sum(spans)
+    crowded = run_changes != n_spanning - jnp.minimum(n_spanning, max_runs)
     return _RunNodes(
-        order=order, node_x=endog_grid[order], start=start, n_nodes=n_nodes
+        order=order,
+        node_x=endog_grid[order],
+        node_run=node_run,
+        start=start,
+        n_nodes=n_nodes,
+        crowded=crowded,
     )
 
 
 def _active_links_at_cell(
     *, runs: _RunNodes, cell_left: FloatND, cell_live: BoolND, n_candidates: int
 ) -> tuple[BoolND, IntND, IntND]:
-    """Return, for one node cell, the link each run contributes to it."""
+    """Return, for one node cell, the link each slot contributes to it."""
     locate = functools.partial(
         _locate_link_in_run,
         runs=runs,
@@ -576,11 +646,12 @@ def _locate_link_in_run(
     n_candidates: int,
     n_steps: int,
 ) -> tuple[BoolND, IntND, IntND]:
-    """Find the link one run contributes to the node cell opening at `cell_left`.
+    """Find the link one slot contributes to the node cell opening at `cell_left`.
 
-    A bisection over the run's block, carried as scalars. Searching the block in
+    A bisection over the slot's block, carried as scalars. Searching the block in
     place keeps the cell body free of any candidate-length array, so what a cell
-    holds is one entry per run and nothing that grows with the row.
+    holds is one entry per slot and nothing that grows with the row. A cell in
+    the gap between two runs of the slot gets no link from it.
     """
     low = jnp.zeros_like(n_nodes)
     high = n_nodes
@@ -594,9 +665,14 @@ def _locate_link_in_run(
     # The cell's left boundary is itself a node abscissa, so counting the
     # nodes at or below it lands one past the node opening the covering link.
     position = low - 1
-    live = cell_live & (position >= 0) & (position <= n_nodes - 2)
     safe = start + jnp.clip(position, 0, jnp.maximum(n_nodes - 2, 0))
     safe = jnp.clip(safe, 0, n_candidates - 2)
+    live = (
+        cell_live
+        & (position >= 0)
+        & (position <= n_nodes - 2)
+        & (runs.node_run[safe] == runs.node_run[safe + 1])
+    )
     return live, runs.order[safe], runs.order[safe + 1]
 
 
@@ -962,3 +1038,39 @@ def _link_channels(
         jnp.where(readable, read_value, jnp.asarray(jnp.nan, value.dtype)),
         jnp.where(readable, read_policy, jnp.asarray(jnp.nan, policy.dtype)),
     )
+
+
+def _flatten_owned_envelope(
+    record: OwnedEnvelope,
+) -> tuple[tuple[PytreeChild, ...], None]:
+    return tuple(record), None
+
+
+def _flatten_owned_envelope_with_keys(
+    record: OwnedEnvelope,
+) -> tuple[tuple[tuple[jax.tree_util.GetAttrKey, PytreeChild], ...], None]:
+    return tuple(
+        (jax.tree_util.GetAttrKey(name), leaf)
+        for name, leaf in zip(OwnedEnvelope._fields, record, strict=True)
+    ), None
+
+
+# keyword-only-exempt: library-callback=jax.tree_util.register_pytree_with_keys
+def _unflatten_owned_envelope(
+    metadata: None,
+    children: Iterable[PytreeChild],
+) -> OwnedEnvelope:
+    """Restore the unchanged candidate schema for abstract and role contexts."""
+    del metadata
+    leaves = tuple(children)
+    if len(leaves) != len(OwnedEnvelope._fields):
+        raise TypeError("Owned envelope reconstruction requires its exact fields.")
+    return cast("OwnedEnvelope", tuple.__new__(OwnedEnvelope, leaves))
+
+
+jax.tree_util.register_pytree_with_keys(
+    OwnedEnvelope,
+    _flatten_owned_envelope_with_keys,
+    _unflatten_owned_envelope,
+    _flatten_owned_envelope,
+)

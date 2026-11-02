@@ -72,20 +72,38 @@ _RANDOM_HELPER_MUTATIONS = {
     "simulation_random:population_split_context_ignored": (
         (
             '"partitionable": jax.config.jax_threefry_partitionable,\n'
-            '            "subject_window":'
+            '        "addresses":'
         ),
-        '"partitionable": False,\n            "subject_window":',
+        '"partitionable": False,\n        "addresses":',
     ),
     "simulation_random:declared_population_mode_ignored": (
-        "with jax.threefry_partitionable(partitionable):\n        for name in names:",
-        "with jax.threefry_partitionable(False):\n        for name in names:",
+        (
+            "with jax.threefry_partitionable(partitionable):\n        return {\n"
+            '            f"key_{name}": draw_window_keys('
+        ),
+        (
+            "with jax.threefry_partitionable(False):\n        return {\n"
+            '            f"key_{name}": draw_window_keys('
+        ),
     ),
 }
 
 _PROFILED_HELPER_MUTATIONS = {
     "automatic_params:consumer_devices_ignored": (
         "src/_lcm/simulation/entry_allocations.py",
-        "devices = phase.placed_devices()",
+        (
+            "devices = tuple(\n"
+            "                dict.fromkeys(\n"
+            "                    device\n"
+            "                    for phase in phases\n"
+            "                    for device in (\n"
+            "                        phase.placed_devices()\n"
+            "                        if phase.sharded_state_names\n"
+            "                        else phase.placed_devices()[:1]\n"
+            "                    )\n"
+            "                )\n"
+            "            )"
+        ),
         "devices = self.devices[:1]",
     ),
     "automatic_params:copies_not_owned": (
@@ -103,8 +121,14 @@ _PROFILED_HELPER_MUTATIONS = {
     ),
     "automatic_params:placed_binding_omitted": (
         "src/lcm/model.py",
-        "                flat_params=solve_params,",
-        "                flat_params=flat_params,",
+        (
+            "                solution = self._solve_from_flat_params(\n"
+            "                    flat_params=solve_params,"
+        ),
+        (
+            "                solution = self._solve_from_flat_params(\n"
+            "                    flat_params=flat_params,"
+        ),
     ),
     "simulation_index:scalar_profile_subject_sharding": (
         "src/_lcm/simulation/forward_program_profiles.py",
@@ -118,7 +142,11 @@ _PROFILED_HELPER_MUTATIONS = {
     ),
     "simulation_index:scalar_runtime_subject_role": (
         "src/_lcm/simulation/simulate.py",
-        'subject_arg_names=("flat_indices",) if indices_optimal_actions.ndim else (),',
+        (
+            'subject_arg_names=("flat_indices",)\n'
+            "                if indices_optimal_actions.ndim\n"
+            "                else (),"
+        ),
         'subject_arg_names=("flat_indices",),',
     ),
     "simulation_pandas:dataframe_writer_omitted": (
@@ -193,14 +221,12 @@ _PROFILED_HELPER_MUTATIONS = {
     "simulation_pandas:resolved_solution_owner_omitted": (
         "src/lcm/model.py",
         (
-            "                period_to_regime_to_replay_reader = None\n"
             '            with solve_phase(name="simulation_inputs", logger=log, '
             "call_id=call_id):\n"
             "                if entry_allocations is not None:\n"
             "                    entry_allocations.update_solution("
         ),
         (
-            "                period_to_regime_to_replay_reader = None\n"
             '            with solve_phase(name="simulation_inputs", logger=log, '
             "call_id=call_id):\n"
             "                if entry_allocations is not None:\n"
@@ -209,8 +235,15 @@ _PROFILED_HELPER_MUTATIONS = {
     ),
     "simulation_entry:automatic_solve_owners_omitted": (
         "src/lcm/model.py",
-        "else entry_allocations.solve_input_roots()",
-        "else ()",
+        (
+            "else entry_allocations.solve_input_roots()\n"
+            "                    ),\n"
+            "                    validation_materializer=entry_allocations,"
+        ),
+        (
+            "else ()\n                    ),\n"
+            "                    validation_materializer=entry_allocations,"
+        ),
     ),
     "simulation_entry:private_solve_owners_omitted": (
         "src/lcm/model.py",
@@ -235,13 +268,23 @@ _PROFILED_HELPER_MUTATIONS = {
     ),
     "simulation_entry:normalized_solve_inputs_omitted": (
         "src/_lcm/simulation/entry_allocations.py",
-        "            self.model_roots,\n            tuple(self._stages.values()),",
-        "            self.model_roots,\n            (),",
+        (
+            "            self.model_roots,\n"
+            "            self._retained_generation_roots(),\n"
+            "            tuple(self._stages.values()),"
+        ),
+        (
+            "            self.model_roots,\n"
+            "            self._retained_generation_roots(),\n            (),"
+        ),
     ),
     "simulation_entry:fixed_solve_inventory_omitted": (
         "src/_lcm/solution/backward_induction.py",
-        "        fixed_input_arrays=(\n            retained_input_arrays,",
-        "        fixed_input_arrays=(\n            (),",
+        (
+            "                fixed_input_arrays=(\n"
+            "                    retained_input_arrays,"
+        ),
+        "                fixed_input_arrays=(\n                    (),",
     ),
     "simulation_entry:fixed_solve_inputs_rebound": (
         "src/_lcm/solution/backward_induction.py",
@@ -255,8 +298,8 @@ _PROFILED_HELPER_MUTATIONS = {
     ),
     "simulation_entry:entry_model_roots_omitted": (
         "src/lcm/model.py",
-        "            model_roots=(\n                self._time.values,",
-        "            model_roots=() and (\n                self._time.values,",
+        "            model_roots=self._generation_roots(),",
+        "            model_roots=(),",
     ),
     "simulation_entry:preflight_owner_inventory_omitted": (
         "src/lcm/model.py",
@@ -286,8 +329,18 @@ _PROFILED_HELPER_MUTATIONS = {
     ),
     "simulation_entry:padding_budget_bypassed": (
         "src/_lcm/simulation/entry_allocations.py",
-        "                    budget_bytes=self.budget_bytes,",
-        "                    budget_bytes=2**63 - 1,",
+        (
+            "                    live_footprint=self.snapshot,\n"
+            "                    budget_devices=tuple(dict.fromkeys("
+            "(*self.devices, *live.spans))),\n"
+            "                    budget_bytes=self.budget_bytes,"
+        ),
+        (
+            "                    live_footprint=self.snapshot,\n"
+            "                    budget_devices=tuple(dict.fromkeys("
+            "(*self.devices, *live.spans))),\n"
+            "                    budget_bytes=2**63 - 1,"
+        ),
     ),
     "simulation_entry:excluded_source_inventory_omitted": (
         "src/_lcm/simulation/entry_allocations.py",
@@ -301,23 +354,18 @@ _PROFILED_HELPER_MUTATIONS = {
     ),
     "simulation_entry:parameter_writer_bypassed": (
         "src/lcm/model.py",
-        "flat_params, array_writer=array_writer",
-        "flat_params, array_writer=None",
+        "            flat_params, array_writer=array_writer\n",
+        "            flat_params, array_writer=None\n",
     ),
     "simulation_entry:integer_upload_bypassed": (
         "src/_lcm/dtypes.py",
         "return array_writer(value=np_value, dtype=np.dtype(np.int32), name=name)",
         "return jnp.asarray(np_value, dtype=jnp.int32)",
     ),
-    "simulation_finite_replay:diagnostic_bypassed": (
+    "simulation_finite_replay:feasibility_mask_bypassed": (
         "src/_lcm/simulation/simulate.py",
-        "        dropped=live & ~represented,",
-        "        dropped=jnp.zeros_like(live),",
-    ),
-    "simulation_finite_replay:canonical_ranking_bypassed": (
-        "src/_lcm/simulation/simulate.py",
-        "ranking_values = jnp.where(valid, canonical_values, -jnp.inf)",
-        "ranking_values = jnp.where(valid, candidate_inner, -jnp.inf)",
+        "ranking_values = jnp.where(represented & feasible, candidate_value, -jnp.inf)",
+        "ranking_values = jnp.where(represented, candidate_value, -jnp.inf)",
     ),
     "simulation_preflight:initial_feasibility_bypassed": (
         "src/_lcm/simulation/initial_conditions.py",
@@ -353,19 +401,14 @@ _PROFILED_HELPER_MUTATIONS = {
         "or False",
     ),
     "simulation_taste_stream:namespace_changed": (
-        "src/_lcm/simulation/taste_stream.py",
-        '"pylcm.taste-stream.v1",',
-        '"pylcm.taste-stream.v2",',
+        "src/_lcm/simulation/random_address.py",
+        'RANDOM_ADDRESS_VERSION = "pylcm.random.v1"',
+        'RANDOM_ADDRESS_VERSION = "pylcm.random.v2"',
     ),
-    "simulation_taste_stream:action_domain_ignored": (
+    "simulation_taste_stream:ordinary_root_advanced": (
         "src/_lcm/simulation/taste_stream.py",
-        "        domain,\n    )",
-        "        (),\n    )",
-    ),
-    "simulation_taste_stream:ordinary_carry_not_advanced": (
-        "src/_lcm/simulation/taste_stream.py",
-        "return next_key, taste_keys",
         "return key, taste_keys",
+        "return jax.random.fold_in(key, 1), taste_keys",
     ),
     "simulation_taste_stream:ambient_implementation_used": (
         "src/_lcm/simulation/taste_stream.py",
@@ -445,20 +488,20 @@ _PROFILED_HELPER_MUTATIONS = {
     "solution_runtime:fixed_source_owners_omitted": (
         "src/_lcm/solution/backward_induction.py",
         (
-            "        fixed_input_arrays=(\n"
-            "            retained_input_arrays,\n"
-            "            tuple(\n"
-            "                (space.states, space.discrete_actions, "
+            "                fixed_input_arrays=(\n"
+            "                    retained_input_arrays,\n"
+            "                    tuple(\n"
+            "                        (space.states, space.discrete_actions, "
             "space.continuous_actions)\n"
-            "                for space in base_state_action_spaces.values()"
+            "                        for space in base_state_action_spaces.values()"
         ),
         (
-            "        fixed_input_arrays=(\n"
-            "            retained_input_arrays,\n"
-            "            tuple(\n"
-            "                (space.states, space.discrete_actions, "
+            "                fixed_input_arrays=(\n"
+            "                    retained_input_arrays,\n"
+            "                    tuple(\n"
+            "                        (space.states, space.discrete_actions, "
             "space.continuous_actions)\n"
-            "                for space in ()"
+            "                        for space in ()"
         ),
     ),
     "solution_runtime:internal_output_reservation_omitted": (
@@ -798,6 +841,7 @@ _COMBINED_INPUT_MUTATIONS = {
         (
             "entry_allocations=entry_allocations,\n"
             "                        process_grid_resolver=process_grid_resolver,\n"
+            "                        generation=generation,\n"
             "                    )\n"
             "            else:\n"
             "                period_to_regime_to_V_arr = None"
@@ -805,6 +849,7 @@ _COMBINED_INPUT_MUTATIONS = {
         (
             "entry_allocations=None,\n"
             "                        process_grid_resolver=process_grid_resolver,\n"
+            "                        generation=generation,\n"
             "                    )\n"
             "            else:\n"
             "                period_to_regime_to_V_arr = None"
@@ -815,6 +860,7 @@ _COMBINED_INPUT_MUTATIONS = {
         (
             "entry_allocations=entry_allocations,\n"
             "                        process_grid_resolver=process_grid_resolver,\n"
+            "                        generation=generation,\n"
             "                    )\n"
             '            with solve_phase(name="solution_handover", logger=log, '
             "call_id=call_id):\n"
@@ -824,6 +870,7 @@ _COMBINED_INPUT_MUTATIONS = {
         (
             "entry_allocations=None,\n"
             "                        process_grid_resolver=process_grid_resolver,\n"
+            "                        generation=generation,\n"
             "                    )\n"
             '            with solve_phase(name="solution_handover", logger=log, '
             "call_id=call_id):\n"
@@ -924,11 +971,6 @@ _FINITE_BUDGET_MUTATIONS = {
         'profile=cores["policy_prepare"],',
         'profile=cores["decision"],',
     ),
-    "finite_budget:diagnostic_profile_replaced": (
-        "src/_lcm/simulation/chunk_profiles.py",
-        "function=dropped_candidate_counts,",
-        "function=_empty_fallback,",
-    ),
     "finite_budget:distinct_artifact_copies_merged": (
         "src/_lcm/simulation/chunk_profiles.py",
         "identity = (read.target, required)",
@@ -954,11 +996,6 @@ _FINITE_BUDGET_MUTATIONS = {
             '        "age": age,\n        "next_regime_to_V_arr": {},\n'
             "        **references,"
         ),
-    ),
-    "finite_budget:diagnostic_admission_bypassed": (
-        "src/_lcm/simulation/simulate.py",
-        "            memory=memory,\n            function=dropped_candidate_counts,",
-        "            memory=None,\n            function=dropped_candidate_counts,",
     ),
 }
 
@@ -1115,8 +1152,15 @@ _FINITE_POLICY_MUTATIONS = {
     ),
     "finite_policy:fixed_binding_declaration_bypassed": (
         "src/_lcm/model_processing.py",
-        "name: declare_finite_replay_programs(regime)",
-        "name: regime",
+        (
+            "name: declare_finite_replay_programs(regime)\n"
+            "            for name, regime in regimes.items()\n        }\n    )\n"
+            "    return regimes, params_template"
+        ),
+        (
+            "name: regime\n            for name, regime in regimes.items()\n"
+            "        }\n    )\n    return regimes, params_template"
+        ),
     ),
     "finite_policy:output_action_order_changed": (
         "src/_lcm/simulation/policy_programs.py",
@@ -1147,11 +1191,6 @@ _FINITE_POLICY_MUTATIONS = {
         "src/_lcm/simulation/policy_programs.py",
         "            values[0],",
         "            jnp.zeros_like(values[0]),",
-    ),
-    "finite_policy:actual_diagnostic_bypassed": (
-        "src/_lcm/simulation/simulate.py",
-        'arguments={"live": bank[2], "represented": bank[3]},',
-        'arguments={"live": bank[2], "represented": bank[2]},',
     ),
     "finite_policy:actual_rank_dispatch_replaced": (
         "src/_lcm/simulation/simulate.py",
@@ -1360,6 +1399,7 @@ def test_supplemental_sources_complete_the_pinned_registry_coverage() -> None:
     final_nested = direct_flow.final_nested_mutation_specs(repo_root=root)
     child_native = direct_flow.child_native_mutation_specs(repo_root=root)
     additional_helpers = direct_flow.additional_helper_mutation_specs(repo_root=root)
+    current_iid = direct_flow.current_iid_mutation_specs(repo_root=root)
 
     assert set(decoupled) == {
         "decoupled_bound:action_adapter_bypassed",
@@ -1373,10 +1413,10 @@ def test_supplemental_sources_complete_the_pinned_registry_coverage() -> None:
     }
 
     assert set(supplemental) == {
+        "simulation_taste_stream:destination_name_ignored",
         "solve_completion:conflict_wait_bypassed",
         "eager_core:planned_operand_placement_bypassed",
         "runtime_sharding:physical_partition_ignored",
-        "policy_diagnostics:represented_mask_ignored",
         "solve_descriptors:required_layout_replaced",
         "chunk_assembly:cpu_budget_exclusion_broadened",
         "chunk_admission:setup_fulfilled_by_unrelated_inputs",
@@ -1454,8 +1494,6 @@ def test_supplemental_sources_complete_the_pinned_registry_coverage() -> None:
         "s02_status:bounded_aux_executable",
         "s02_status:bounded_keyed_leaf_swapped",
         "s02_status:bounded_reconstruction_status_swapped",
-        "s02_status:fold_weight_call_seam_replaced",
-        "s02_status:fold_weight_helper_changes_row",
         "s02_status:initial_host_call_seam_replaced",
         "s02_status:initial_host_helper_omits_status",
         "s02_status:landing_reducer_status_omitted",
@@ -1485,6 +1523,7 @@ def test_supplemental_sources_complete_the_pinned_registry_coverage() -> None:
         final_nested,
         child_native,
         additional_helpers,
+        current_iid,
     )
     for index, left in enumerate(families):
         for right in families[index + 1 :]:

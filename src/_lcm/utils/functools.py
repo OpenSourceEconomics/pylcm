@@ -9,7 +9,7 @@ and `dags` see the function they stand in for.
 """
 
 import inspect
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import TypeIs, TypeVar, cast
@@ -18,7 +18,14 @@ import jax.numpy as jnp
 from jax import Array
 
 from _lcm.typing import PytreeValue
-from lcm.typing import ReferenceName, UserFunction, UserFunctionResult, ValueND
+from lcm.typing import (
+    FloatND,
+    IntND,
+    ReferenceName,
+    UserFunction,
+    UserFunctionResult,
+    ValueND,
+)
 
 ReturnType = TypeVar("ReturnType")
 
@@ -33,6 +40,57 @@ _WRAPPER_ASSIGNMENTS: tuple[str, ...] = (
     "__doc__",
     "__type_params__",
 )
+
+
+def call_with_declared_arguments[T](
+    *, function: Callable[..., T], operands: Mapping[ReferenceName, PytreeValue]
+) -> T:
+    """Call a bound helper using exactly its declared named operands."""
+    return function(
+        **{name: operands[name] for name in inspect.signature(function).parameters}
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class NamedOperand:
+    """An immutable named identity, using the canonical adapter capture module."""
+
+    name: ReferenceName
+    """Exact scalar state operand, without a captured numeric value."""
+
+    def __call__(self, **operands: PytreeValue) -> FloatND | IntND:
+        return cast("FloatND | IntND", operands[self.name])
+
+
+@dataclass(frozen=True, kw_only=True)
+class ComposedProjection:
+    """Apply a bound helper after mapped states and its producing physical frame."""
+
+    projection: Mapping[ReferenceName, Callable[..., PytreeValue]]
+    """Complete mapped state helpers consumed by this callback."""
+    function: Callable[..., PytreeValue]
+    """The canonically bound callback, preserving captured authored state."""
+    source: ReferenceName
+    """Exact producing query whose physical operands the callback may read."""
+    context_argument: ReferenceName
+    """Reserved operand holding producing-context physical frames."""
+
+    def __call__(self, **operands: PytreeValue) -> UserFunctionResult:
+        mapped = {
+            name: call_with_declared_arguments(function=helper, operands=operands)
+            for name, helper in self.projection.items()
+        }
+        contexts = cast(
+            "Mapping[str, Mapping[ReferenceName, PytreeValue]]",
+            operands.get(self.context_argument, {}),
+        )
+        return cast(
+            "UserFunctionResult",
+            call_with_declared_arguments(
+                function=self.function,
+                operands={**operands, **mapped, **contexts.get(self.source, {})},
+            ),
+        )
 
 
 def allow_only_kwargs(

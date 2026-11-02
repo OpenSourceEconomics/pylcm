@@ -97,7 +97,7 @@ def test_model_with_process(distribution_type):
     ).to_dataframe()
 
     expected_simulate = pd.read_pickle(
-        TEST_DATA / "processes" / f"simulation_{distribution_type}.pkl"
+        TEST_DATA / "processes" / "random-v1" / f"simulation_{distribution_type}.pkl"
     )
     expected_solve = pd.read_pickle(
         TEST_DATA / "processes" / f"solution_{distribution_type}.pkl"

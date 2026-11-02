@@ -43,6 +43,7 @@ from _lcm.continuation import (
     EGMContinuationSpec,
     FiniteOuterQuerySpec,
 )
+from _lcm.current_iid import CurrentIIDDrawPlan, CurrentIIDPlan
 from _lcm.dtypes import canonical_float_dtype
 from _lcm.egm.budget import (
     DCEGM_BUDGET_CONSTRAINT_NAME,
@@ -68,6 +69,7 @@ from _lcm.egm.validation import savings_stage_reads_euler_state
 from _lcm.engine import (
     EGMPolicyRead,
     FeasibilityPoolsByPeriod,
+    NBEGMPolicyRead,
     NNBEGMPolicyRead,
     Regime,
     SimulationPhase,
@@ -77,7 +79,10 @@ from _lcm.engine import (
     _fail_if_template_is_misplaced,
     placed_devices_for_ids,
 )
-from _lcm.execution.core_program import CoreProgram, CoreProgramGraphAware
+from _lcm.execution.core_program import (
+    CoreProgram,
+    CoreProgramGraphAware,
+)
 from _lcm.execution.execution_plan import (
     ResolvedExecution,
     execution_over_visible_devices,
@@ -87,6 +92,7 @@ from _lcm.execution.placement import (
     SubmeshPlacement,
     plan_submesh_placement,
 )
+from _lcm.exits import ExitFunctionDemand
 from _lcm.grids import (
     ContinuousGrid,
     DiscreteGrid,
@@ -102,6 +108,8 @@ from _lcm.params.edges import (
 from _lcm.params.processing import get_flat_param_names
 from _lcm.params.regime_template import (
     EdgeVocabulary,
+    _collect_all_functions_for_template,
+    _undemanded_exit_helpers,
     create_edge_params_template,
     create_edge_vocabulary,
     create_regime_params_template,
@@ -174,6 +182,7 @@ from _lcm.regime_building.phases import (
     phase_variation_paths,
 )
 from _lcm.regime_law import RegimeLaw, RegimeLaws
+from _lcm.shock_registry import ShockBinding
 from _lcm.simulation.program_types import (
     _PerSubjectFunction,
     route_output_roles,
@@ -183,6 +192,8 @@ from _lcm.simulation.programs import (
     attach_gated_simulation_programs,
     build_simulation_programs,
 )
+from lcm.shocks import ShockGroupName
+from lcm.typing import Phase
 
 if TYPE_CHECKING:
     from _lcm.solution.dcegm import _BoundDCEGM
@@ -244,7 +255,7 @@ from _lcm.solution.shipped_solvers import (
     fail_if_solver_is_not_shipped,
 )
 from _lcm.state_action_space import create_state_action_space
-from _lcm.time import TimeAxis, coordinate_at
+from _lcm.time import TimeAxis, coordinate_at, coordinate_kind
 from _lcm.transition_plans import (
     InterpolationBasisInfo,
     LotteryIndexCoordinate,
@@ -259,6 +270,7 @@ from _lcm.transition_plans import (
     TargetTransitionPlans,
     TransitionLotteryInfo,
     TransitionOutputInfo,
+    draws_transition_local_lottery,
 )
 from _lcm.typing import (
     AnnotationForm,
@@ -291,7 +303,7 @@ from _lcm.typing import (
 from _lcm.utils.containers import ensure_containers_are_immutable
 from _lcm.utils.dispatchers import simulation_spacemap, vmap_1d
 from _lcm.utils.error_messages import format_messages
-from _lcm.utils.functools import get_union_of_args, is_user_function
+from _lcm.utils.functools import get_union_of_args, is_user_function, publish_signature
 from _lcm.utils.namespace import flatten_regime_namespace, unflatten_regime_namespace
 from _lcm.variables import (
     from_regime,
@@ -303,6 +315,7 @@ from lcm.exceptions import (
     InvalidRegimeTransitionProbabilitiesError,
     ModelInitializationError,
     RegimeInitializationError,
+    UnsupportedOperationError,
 )
 from lcm.phased import Phased
 from lcm.regime import ProjectedRegimeValue, StateTransitionEntry
@@ -318,10 +331,11 @@ from lcm.solver_api import (
 )
 from lcm.solvers import (
     DCEGM,
+    NBEGM,
     NNBEGM,
     AdaptiveOuterMesh,
-    EnvelopeConfig,
     FiniteOuterGrid,
+    GridSearch,
     Solver,
     UniformObservedFixedCost,
 )
@@ -350,6 +364,26 @@ class PreparedModelStructure:
 
     representative_user_regimes: MappingProxyType[RegimeName, FinalizedUserRegime]
     """Age-normalized user regimes used for phase compilation."""
+
+    value_periods_by_regime: MappingProxyType[RegimeName, tuple[int, ...]] | None = None
+    """Actual stored Full periods; query-only contexts publish no value bank."""
+    original_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] = MappingProxyType(
+        {}
+    )
+    """Physical entry cohorts, before any same-period exit routes them."""
+
+    query_periods_by_phase: MappingProxyType[
+        str, MappingProxyType[RegimeName, tuple[int, ...]]
+    ] = MappingProxyType({})
+    """Canonical query Q/F periods, independent of physical source occupancy."""
+
+    exit_function_demand: ExitFunctionDemand | None = None
+    """Exact phase callback paths demanded by Full/Participating policy contexts."""
+
+    current_iid_bindings: Mapping[
+        tuple[RegimeName, Phase, ShockGroupName], ShockBinding
+    ] = MappingProxyType({})
+    """Current-phase innovation bindings supplied by model authority."""
 
     laws: RegimeLaws
     """Each regime's law, bound from `Model(edges=...)`, by regime name."""
@@ -383,13 +417,14 @@ class PreparedModelStructure:
     """Per regime, the names it declares before demand prunes any, which the
     declared laws read as variables rather than parameters."""
 
-    draw_only_processes: MappingProxyType[
+    post_decision_shocks: MappingProxyType[
         RegimeName, MappingProxyType[StateName, _IIDProcess]
     ] = MappingProxyType({})
-    """Per regime, the folded IID shocks only its transitions read.
+    """Per regime, the post-decision shocks its transitions read.
 
     They are no states of the regime; a law toward any target that reads one's
-    draw takes it from these processes as a transition-local lottery.
+    draw takes it from these nodes as a transition-local lottery. Simulation draws
+    it from the shock's law unless its process asks for its nodes.
     """
 
     broadcast_variables: MappingProxyType[RegimeName, frozenset[StateOrActionName]] = (
@@ -419,7 +454,15 @@ def prepare_model_structure(
     declared_transitions: Mapping[RegimeName, tuple[Transition, ...]],
     declared_edge_vocabulary: Mapping[RegimeName, EdgeVocabulary],
     visited_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
-    draw_only_processes: Mapping[RegimeName, Mapping[StateName, _IIDProcess]]
+    value_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
+    original_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] = MappingProxyType(
+        {}
+    ),
+    query_periods_by_phase: Mapping[
+        str, Mapping[RegimeName, tuple[int, ...]]
+    ] = MappingProxyType({}),
+    exit_function_demand: ExitFunctionDemand | None = None,
+    post_decision_shocks: Mapping[RegimeName, Mapping[StateName, _IIDProcess]]
     | None = None,
     broadcast_variables: Mapping[RegimeName, frozenset[StateOrActionName]]
     | None = None,
@@ -436,12 +479,25 @@ def prepare_model_structure(
     per regime, the state names merged in from `Model(states=...)`.
     """
     raw_phase_specs = normalize_all_regime_phases(user_regimes=user_regimes, laws=laws)
+    simulation_context_periods = {
+        name: tuple(
+            sorted(
+                set(
+                    (visited_periods_by_regime or active_periods_by_regime).get(
+                        name, ()
+                    )
+                )
+                | set(query_periods_by_phase.get("simulation", {}).get(name, ()))
+            )
+        )
+        for name in user_regimes
+    }
     age_normalization = normalize_age_specialization(
         user_regimes=user_regimes,
         phased_specs=raw_phase_specs,
         ages=ages,
         active_periods_by_regime=active_periods_by_regime,
-        visited_periods_by_regime=visited_periods_by_regime,
+        visited_periods_by_regime=simulation_context_periods,
     )
     phased_specs = age_normalization.phased_specs
     try:
@@ -455,6 +511,17 @@ def prepare_model_structure(
     except ValueError as error:
         raise ModelInitializationError(str(error)) from error
     return PreparedModelStructure(
+        original_periods_by_regime=MappingProxyType(dict(original_periods_by_regime)),
+        exit_function_demand=exit_function_demand,
+        value_periods_by_regime=None
+        if value_periods_by_regime is None
+        else MappingProxyType(dict(value_periods_by_regime)),
+        query_periods_by_phase=MappingProxyType(
+            {
+                phase: MappingProxyType(dict(periods))
+                for phase, periods in query_periods_by_phase.items()
+            }
+        ),
         representative_user_regimes=age_normalization.representative_user_regimes,
         laws=laws,
         phased_specs=phased_specs,
@@ -465,10 +532,10 @@ def prepare_model_structure(
         gated_source_periods=gated_source_periods,
         declared_transitions=MappingProxyType(dict(declared_transitions)),
         declared_edge_vocabulary=MappingProxyType(dict(declared_edge_vocabulary)),
-        draw_only_processes=MappingProxyType(
+        post_decision_shocks=MappingProxyType(
             {
                 name: MappingProxyType(dict(processes))
-                for name, processes in (draw_only_processes or {}).items()
+                for name, processes in (post_decision_shocks or {}).items()
             }
         ),
         broadcast_variables=MappingProxyType(dict(broadcast_variables or {})),
@@ -484,6 +551,34 @@ def process_regimes(
     prepared_structure: PreparedModelStructure,
     execution: ResolvedExecution | None = None,
 ) -> MappingProxyType[RegimeName, Regime]:
+    """Preserve the ordinary preparation/finalization schedule."""
+    builder = prepare_regime_builder(
+        ages=ages,
+        user_regimes=user_regimes,
+        regime_names_to_ids=regime_names_to_ids,
+        enable_jit=enable_jit,
+        prepared_structure=prepared_structure,
+        execution=execution,
+    )
+    return finish_regime_builder(
+        builder=builder,
+        ages=ages,
+        user_regimes=user_regimes,
+        prepared_structure=prepared_structure,
+        enable_jit=enable_jit,
+        regime_names_to_ids=regime_names_to_ids,
+    )
+
+
+def prepare_regime_builder(
+    *,
+    user_regimes: Mapping[RegimeName, FinalizedUserRegime],
+    ages: TimeAxis,
+    regime_names_to_ids: RegimeNamesToIds,
+    enable_jit: bool,
+    prepared_structure: PreparedModelStructure,
+    execution: ResolvedExecution | None = None,
+) -> _CanonicalRegimeBuilder:
     """Process finalized regimes into canonical regimes.
 
     Normalizes phases, then age specialization (the single model-level boundary
@@ -647,13 +742,15 @@ def process_regimes(
                 PlacementRequest(
                     regime_name=regime_name,
                     distributed_extents=tuple(
-                        _declared_extent(grid=all_grids[regime_name][name])
+                        _declared_extent(
+                            grid=all_grids[regime_name][name],
+                        )
                         for name in all_grids[regime_name]
                         if name in sharded_state_names_by_regime[regime_name]
                     ),
                     active_periods=tuple(regimes_to_active_periods[regime_name]),
                     template_bytes=_value_template_bytes(
-                        state_grids=state_grids[regime_name]
+                        state_grids=state_grids[regime_name],
                     ),
                     action_partitions=resolved_execution.action_partitions_for(
                         regime_name=regime_name
@@ -685,23 +782,6 @@ def process_regimes(
         }
     )
 
-    # Regimes whose EVERY state is a folded IID
-    # process. Their stored V has all state axes integrated out
-    # (`_get_regime_V_shapes_and_shardings`), so V is a scalar (per any trailing
-    # stakeholder axis). Such a regime reached ONLY via a regime transition has
-    # no ordinary state law and no source-carried process edge, so its
-    # transition bundle would be empty and it would be silently dropped from
-    # the continuation graph / E[V]. The solve phase keeps it enumerable with an
-    # explicit empty bundle and reads its scalar continuation (see
-    # `_process_regime_core` and `_build_solution_phase`).
-    fold_only_regimes = frozenset(
-        regime_name
-        for regime_name in user_regimes
-        if (state_names := state_action_spaces[regime_name].state_names)
-        and _fold_state_names(state_names=state_names, grids=all_grids[regime_name])
-        == state_names
-    )
-
     # Same-period reference declarations are a
     # cross-regime contract — validate it (existence, stakeholder layout,
     # projection coverage, co-activity) and reject reference cycles before any
@@ -727,22 +807,6 @@ def process_regimes(
         regimes_to_active_periods=regimes_to_active_periods,
         gated_source_periods=prepared_structure.gated_source_periods,
     )
-
-    # `fold=True` on a regime that another regime's gate reads nodewise (as a
-    # gated-edge target, a leg fallback, or a same-period reference) is
-    # rejected here, regardless of stakeholder cardinality: folding averages
-    # the node axis away before value constraints or gated edges can route or
-    # read per node — see the function docstring.
-    #
-    # Ordering is load-bearing, not incidental: this walks each edge's endpoints
-    # and stakeholders by name, so it needs the call above to have established
-    # that each one exists. Run first, it raises `KeyError` on an edge naming an
-    # unknown regime and `ValueError` on one naming a missing stakeholder,
-    # instead of the diagnostic that call produces. Reporting a folded endpoint
-    # ahead of a short projection therefore needs the endpoint-existence checks
-    # split out of `_fail_if_gated_edges_invalid` first, not the two calls
-    # swapped.
-    _fail_if_folded_regime_is_same_period_endpoint(user_regimes=user_regimes, laws=laws)
 
     # The regimes a continuation-based solver can transition into. Only these
     # owe a continuation carry, so only these get the engine-side carry producer
@@ -773,13 +837,28 @@ def process_regimes(
     # representative regime's names with those the regime declares before demand
     # prunes any: a declared law, and a regime function nothing demands, keeps
     # every variable it reads as a variable.
-    runtime_edge_vocabulary = create_edge_vocabulary(representative_user_regimes)
+    runtime_edge_vocabulary = create_edge_vocabulary(
+        user_regimes=representative_user_regimes
+    )
     edge_vocabulary = MappingProxyType(
         {
             name: vocabulary | prepared_structure.declared_edge_vocabulary[name]
             for name, vocabulary in runtime_edge_vocabulary.items()
         }
     )
+    current_iid_helpers = {
+        regime_name: frozenset(
+            name
+            for (
+                owner,
+                _,
+                _,
+            ), binding in prepared_structure.current_iid_bindings.items()
+            if owner == regime_name
+            for name in binding.functions
+        )
+        for regime_name in representative_user_regimes
+    }
     regime_to_params_template = MappingProxyType(
         {
             # The representative regime already carries first-active concrete
@@ -787,9 +866,18 @@ def process_regimes(
             # from it and needs no age argument of its own. The other regimes'
             # state names are what let a `next_<state>` argument be classified by
             # the role that reads it rather than mistaken for a parameter. A
-            # transition-only shock is no state of any regime, but its draw is
-            # a transition value all the same.
+            # post-decision shock is no state of any regime, but its draw is a
+            # transition value all the same.
             regime_name: create_regime_params_template(
+                exit_helper_roots=_ordinary_query_helper_roots(
+                    regime_name=regime_name,
+                    user_regime=user_regime,
+                    laws=laws,
+                ),
+                exit_function_paths=None
+                if prepared_structure.exit_function_demand is None
+                else prepared_structure.exit_function_demand[regime_name],
+                current_iid_helpers=current_iid_helpers[regime_name],
                 user_regime=user_regime,
                 law=laws[regime_name],
                 other_regime_state_names=frozenset(
@@ -800,10 +888,20 @@ def process_regimes(
                 )
                 | frozenset(
                     state_name
-                    for shocks in prepared_structure.draw_only_processes.values()
+                    for shocks in prepared_structure.post_decision_shocks.values()
                     for state_name in shocks
                 ),
-                declared_variables=edge_vocabulary[regime_name].variables,
+                declared_variables=edge_vocabulary[regime_name].variables
+                | frozenset(
+                    name
+                    for (
+                        owner,
+                        _,
+                        _,
+                    ), binding in prepared_structure.current_iid_bindings.items()
+                    if owner == regime_name
+                    for name in binding.group.shocks
+                ),
             )
             for regime_name, user_regime in representative_user_regimes.items()
         }
@@ -848,12 +946,36 @@ def process_regimes(
                     regime_name
                 ],
                 edge_params_template=regime_to_edge_params_template[regime_name],
+                participation_targets=frozenset(laws[regime_name].participation),
             )
             for regime_name in user_regimes
         }
     )
 
-    build_canonical_regimes = _CanonicalRegimeBuilder(
+    specs = MappingProxyType(
+        {
+            name: _without_undemanded_exit_helpers(
+                spec=specs[name],
+                excluded=_undemanded_exit_helpers(
+                    user_regime=user_regime,
+                    template_functions=_collect_all_functions_for_template(
+                        user_regime, law=laws[name]
+                    ),
+                    exit_function_paths=None
+                    if prepared_structure.exit_function_demand is None
+                    else prepared_structure.exit_function_demand[name],
+                    current_iid_helpers=current_iid_helpers[name],
+                    ordinary_roots=_ordinary_query_helper_roots(
+                        regime_name=name, user_regime=user_regime, laws=laws
+                    ),
+                ),
+            )
+            for name, user_regime in representative_user_regimes.items()
+        }
+    )
+
+    return _CanonicalRegimeBuilder(
+        current_iid_bindings=prepared_structure.current_iid_bindings,
         ages=ages,
         post_decision_bounds=MappingProxyType(
             {
@@ -871,9 +993,9 @@ def process_regimes(
         axis_widths=resolved_execution.axis_widths,
         axis_widths_by_regime=resolved_execution.axis_widths_by_regime,
         egm_continuation_targets=egm_continuation_targets,
+        continuation_demands=continuation_demands,
         enable_jit=enable_jit,
-        fold_only_regimes=fold_only_regimes,
-        draw_only_processes=prepared_structure.draw_only_processes,
+        post_decision_shocks=prepared_structure.post_decision_shocks,
         grid_schedule=grid_schedule,
         period_regimes=prepared_structure.period_regimes,
         period_to_regime_v_interp=period_to_regime_v_interp,
@@ -891,6 +1013,9 @@ def process_regimes(
         regime_to_v_interpolation_info=regime_to_v_interpolation_info,
         regime_to_variables=regime_to_variables,
         regimes_to_active_periods=regimes_to_active_periods,
+        value_periods_by_regime=prepared_structure.value_periods_by_regime,
+        original_periods_by_regime=prepared_structure.original_periods_by_regime,
+        query_periods_by_phase=prepared_structure.query_periods_by_phase,
         representative_user_regimes=representative_user_regimes,
         laws=laws,
         simulate_nested_transitions=MappingProxyType(simulate_nested_transitions),
@@ -900,9 +1025,23 @@ def process_regimes(
         state_grids=state_grids,
     )
 
-    canonical_regimes = build_canonical_regimes(
-        gated_continuations_by_source=MappingProxyType({})
-    )
+
+def finish_regime_builder(
+    *,
+    builder: _CanonicalRegimeBuilder,
+    ages: TimeAxis,
+    user_regimes: Mapping[RegimeName, FinalizedUserRegime],
+    prepared_structure: PreparedModelStructure,
+    enable_jit: bool,
+    regime_names_to_ids: RegimeNamesToIds,
+) -> MappingProxyType[RegimeName, Regime]:
+    """Finish genuine prepared metadata through the original canonical builder."""
+    laws = builder.laws
+    regime_to_v_interpolation_info = builder.regime_to_v_interpolation_info
+    period_to_regime_v_interp = builder.period_to_regime_v_interp
+    grid_schedule = builder.grid_schedule
+    continuation_demands = builder.continuation_demands
+    canonical_regimes = builder(gated_continuations_by_source=MappingProxyType({}))
 
     # Build the gated-edge folds in a second pass, now
     # that every regime's grid and processed functions are known. Each edge's
@@ -929,7 +1068,7 @@ def process_regimes(
     )
     if gated_continuations_by_source:
         canonical_regimes = _attach_gated_edge_folds(
-            canonical_regimes=build_canonical_regimes(
+            canonical_regimes=builder(
                 gated_continuations_by_source=gated_continuations_by_source
             ),
             gated_source_periods=prepared_structure.gated_source_periods,
@@ -951,15 +1090,72 @@ def process_regimes(
         user_regimes=user_regimes,
     )
 
+    if prepared_structure.value_periods_by_regime is not None:
+        canonical_regimes = MappingProxyType(
+            {
+                name: dataclass_replace(
+                    regime,
+                    active_periods=prepared_structure.value_periods_by_regime.get(
+                        name, ()
+                    ),
+                )
+                for name, regime in canonical_regimes.items()
+            }
+        )
     return ensure_containers_are_immutable(canonical_regimes)
 
 
-def _value_template_bytes(*, state_grids: Mapping[StateName, Grid]) -> int:
+def _without_undemanded_exit_helpers(
+    *, spec: PhasedRegimeSpec, excluded: frozenset[FunctionName]
+) -> PhasedRegimeSpec:
+    """Prune the same exclusive callback closure from canonical runtime pools."""
+    return dataclass_replace(
+        spec,
+        **{
+            phase: dataclass_replace(
+                getattr(spec, phase),
+                functions=MappingProxyType(
+                    {
+                        name: function
+                        for name, function in getattr(spec, phase).functions.items()
+                        if name not in excluded
+                    }
+                ),
+            )
+            for phase in ("solution", "simulation")
+        },
+    )
+
+
+def _ordinary_query_helper_roots(
+    *, regime_name: RegimeName, user_regime: FinalizedUserRegime, laws: RegimeLaws
+) -> Mapping[Phase, tuple[UserFunction, ...]]:
+    """Protect helpers read by valuation, reports, laws and incoming edge callbacks."""
+    from _lcm.regime_building.broadcast import (  # noqa: PLC0415 - canonical phase root walk
+        root_functions,
+    )
+
+    return MappingProxyType(
+        {
+            phase: tuple(
+                function
+                for name, function in root_functions(
+                    regime_name=regime_name, regime=user_regime, laws=laws, phase=phase
+                ).items()
+                if not name.startswith("exits__")
+            )
+            for phase in ("solve", "simulate")
+        }
+    )
+
+
+def _value_template_bytes(
+    *,
+    state_grids: Mapping[StateName, Grid],
+) -> int:
     """Return the bytes of a regime's value template, the planner's footprint weight.
 
-    Every state grid contributes its declared extent; a folded state is
-    integrated out of the stored value, so this over-counts a folding regime by
-    the fold's extent, which only weights a tie-break between devices.
+    Every state grid contributes its declared extent.
 
     Args:
         state_grids: Mapping of the regime's state names to their grids.
@@ -1024,6 +1220,27 @@ def _declared_extent(*, grid: Grid) -> int:
     return int(declared)
 
 
+@dataclass(frozen=True, kw_only=True)
+class _PreparedCanonicalSolution:
+    """Source metadata shared by genuine solve and simulation phase assembly."""
+
+    solution: _PreparedSolutionPhase
+    value_aware_feasibility: _ValueAwareFeasibility
+    invariant_bindings: tuple[StateName, ...]
+    gated_continuations: Mapping[RegimeName, GatedContinuationSchedule]
+
+
+@dataclass(frozen=True, kw_only=True)
+class RegimeParameterMetadata:
+    """Actual normalized namespaces and demand clocks, before solver programs."""
+
+    regime_params_template: RegimeParamsTemplate
+    edge_params_template: EdgeParamsTemplate
+    granular_param_expansions: MappingProxyType[FunctionName, tuple[str, ...]]
+    active_periods: tuple[int, ...]
+    required_periods: tuple[int, ...]
+
+
 @dataclass(frozen=True, kw_only=True, eq=False)
 class _CanonicalRegimeBuilder:
     """Build every regime's canonical form from one model's resolved declarations.
@@ -1035,6 +1252,11 @@ class _CanonicalRegimeBuilder:
 
     ages: TimeAxis
     """The AgeGrid for the model."""
+
+    current_iid_bindings: Mapping[
+        tuple[RegimeName, Phase, ShockGroupName], ShockBinding
+    ] = MappingProxyType({})
+    """Model-owned innovation declarations by consumer and phase."""
 
     post_decision_bounds: MappingProxyType[
         RegimeName, tuple[PostDecisionBoundSpec, ...]
@@ -1050,19 +1272,19 @@ class _CanonicalRegimeBuilder:
     axis_widths_by_regime: MappingProxyType[RegimeName, MappingProxyType[str, int]]
     """Widths overriding the model-resolved ones, by regime name then axis name."""
 
+    continuation_demands: tuple[tuple[RegimeName, RegimeName, ArtifactKey], ...]
+    """The original single demand enumeration shared by producer and final audit."""
+
     egm_continuation_targets: frozenset[RegimeName]
     """Regimes an EGM source carries into, which owe an engine-produced carry."""
 
     enable_jit: bool
     """Whether to jit the functions of the canonical regimes."""
 
-    fold_only_regimes: frozenset[RegimeName]
-    """Regimes whose every state is a folded IID process, so whose V is a scalar."""
-
-    draw_only_processes: MappingProxyType[
+    post_decision_shocks: MappingProxyType[
         RegimeName, MappingProxyType[StateName, _IIDProcess]
     ]
-    """Per regime, the folded IID shocks only its transitions read."""
+    """Per regime, the post-decision shocks its transitions read."""
 
     grid_schedule: AgeGridSchedule | None
     """Concrete period grids for age-specialized states, or `None`."""
@@ -1119,6 +1341,14 @@ class _CanonicalRegimeBuilder:
     regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]]
     """Immutable mapping of regime names to the periods in which they are active."""
 
+    value_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None
+    original_periods_by_regime: Mapping[RegimeName, tuple[int, ...]]
+    """Actual original occupants, distinct from stored Full and final actors."""
+    """Actual Full roots; query-only contexts are retained without publication."""
+
+    query_periods_by_phase: Mapping[str, Mapping[RegimeName, tuple[int, ...]]]
+    """Additional actual Q/F periods for each query phase."""
+
     representative_user_regimes: MappingProxyType[RegimeName, FinalizedUserRegime]
     """Immutable mapping of regime names to their age-normalized user regimes."""
 
@@ -1155,6 +1385,284 @@ class _CanonicalRegimeBuilder:
             return self.axis_widths
         return MappingProxyType({**self.axis_widths, **override})
 
+    def _prepare_regime_solution(
+        self,
+        *,
+        regime_name: RegimeName,
+        gated_continuations_by_source: Mapping[
+            RegimeName, Mapping[RegimeName, GatedContinuationSchedule]
+        ],
+        scalar_query_models: Mapping[RegimeName, ScalarEGMQueryModel] | None,
+        dcegm_query_models: Mapping[RegimeName, DCEGMQueryModel] | None,
+        nbegm_query_models: Mapping[RegimeName, NBEGMQueryModel] | None,
+        prepare_solution: Callable[..., _PreparedSolutionPhase],
+    ) -> _PreparedCanonicalSolution:
+        """Prepare actual source economics once, retaining shared phase objects."""
+        user_regime = self.representative_user_regimes[regime_name]
+        spec = self.specs[regime_name]
+        regime_params_template = self.regime_to_params_template[regime_name]
+        edge_params_template = self.regime_to_edge_params_template[regime_name]
+        granular_param_expansions = self.regime_to_granular_param_expansions[
+            regime_name
+        ]
+
+        # Resolve the household Pareto weights once (equal weights when
+        # undeclared) and thread the stakeholder names / weights into both
+        # phase builds. Both are `None` for a singleton (non-collective)
+        # regime, which is what the downstream builds branch on.
+        stakeholders = user_regime.stakeholders
+        pareto_weights = _resolve_pareto_weights(user_regime=user_regime, spec=spec)
+        # The (deduplicated, order-preserving) regimes
+        # whose same-period V this regime reads; drives the within-period
+        # topological solve order and the kernel's same-period V threading.
+        same_period_ref_regimes = tuple(
+            dict.fromkeys(ref.regime for ref in user_regime.same_period_refs.values())
+        )
+        # A gated edge's leg fallbacks are read where
+        # the SOURCE lands, inside the source's own kernel — but the value
+        # they name belongs to the period the source lands IN. Backward
+        # induction has already solved that period, so these regimes need
+        # no ordering constraint, only their own grid params threaded to
+        # the kernel beside the rolled V arrays.
+        edge_reference_regimes = _edge_reference_regimes(law=self.laws[regime_name])
+        # One resolution, both phases: the value-aware feasibility mask the
+        # solved value function applied is the mask the simulated argmax
+        # chooses under, so the two phases share the object rather than each
+        # re-deriving it from the user spec.
+        value_aware_feasibility = _resolve_value_aware_feasibility(
+            user_regime=user_regime,
+            user_regimes=self.representative_user_regimes,
+            regime_params_template=regime_params_template,
+        )
+        invariant_bindings = bound_state_names(
+            user_regime=user_regime,
+            law=self.laws[regime_name],
+            block_widths=self.invariant_block_widths,
+            state_names=self.state_action_spaces[regime_name].state_names,
+        )
+        _fail_if_blocked_regime_reads_unsupported_inputs(
+            regime_name=regime_name,
+            invariant_bindings=invariant_bindings,
+            edge_reference_regimes=edge_reference_regimes,
+        )
+        # Empty on the first build, and for every regime declaring no
+        # gated edge.
+        gated_continuations = MappingProxyType(
+            dict(gated_continuations_by_source.get(regime_name, {}))
+        )
+
+        solution = prepare_solution(
+            query_periods=self.query_periods_by_phase.get("solution", {}).get(
+                regime_name, ()
+            ),
+            current_iid_bindings=MappingProxyType(
+                {
+                    group: binding
+                    for (
+                        owner,
+                        phase,
+                        group,
+                    ), binding in self.current_iid_bindings.items()
+                    if owner == regime_name and phase == "solve"
+                }
+            ),
+            spec=spec,
+            scalar_query_models=scalar_query_models,
+            dcegm_query_models=dcegm_query_models,
+            nbegm_query_models=nbegm_query_models,
+            post_decision_bounds=self.post_decision_bounds[regime_name],
+            regime_name=regime_name,
+            # Representative, not raw: these reach `SolverBuildContext`, and
+            # a solver reading a state grid off them wants a concrete
+            # `Grid`. Every such read is of a shape trait (extent or
+            # the `ContinuousGrid` kind), which is invariant across ages,
+            # so the representative grid answers it exactly. Node *values*,
+            # which do vary by age, come from the period's own axes.
+            user_regimes=self.representative_user_regimes,
+            laws=self.laws,
+            declared_regime_transition=self.phased_specs[
+                regime_name
+            ].solution.regime_transition,
+            phase_reachability=self.reachability.solution,
+            nested_transitions=self.solve_nested_transitions[regime_name],
+            all_grids=self.all_grids,
+            state_grids=self.state_grids,
+            regime_params_template=regime_params_template,
+            edge_params_template=edge_params_template,
+            granular_param_expansions=granular_param_expansions,
+            regime_to_flat_param_names=self.regime_to_flat_param_names,
+            regime_names_to_ids=self.regime_names_to_ids,
+            variables=self.regime_to_variables[regime_name],
+            regimes_to_active_periods=self.regimes_to_active_periods,
+            regime_to_v_interpolation_info=self.regime_to_v_interpolation_info,
+            period_to_regime_v_interp=self.period_to_regime_v_interp,
+            grid_schedule=self.grid_schedule,
+            period_regimes=self.period_regimes,
+            state_action_space=self.state_action_spaces[regime_name],
+            submesh_device_ids=self.placement.devices_for(regime_name=regime_name),
+            axis_widths=self._widths_for(regime_name=regime_name),
+            sharded_state_names=self.sharded_state_names_by_regime[regime_name],
+            ages=self.ages,
+            enable_jit=self.enable_jit,
+            certainty_equivalent=user_regime.certainty_equivalent,
+            solver=user_regime.solver,
+            continuation_demanded=regime_name in self.egm_continuation_targets,
+            has_taste_shocks=user_regime.taste_shocks is not None,
+            value_aware_feasibility=value_aware_feasibility,
+            stakeholders=stakeholders,
+            pareto_weights=pareto_weights,
+            same_period_ref_regimes=same_period_ref_regimes,
+            edge_reference_regimes=edge_reference_regimes,
+            edge_target_regimes=tuple(self.laws[regime_name].gated_edges),
+            invariant_bindings=invariant_bindings,
+            action_partitions=self.action_partitions.get(regime_name, 1),
+            post_decision_shocks=self.post_decision_shocks.get(
+                regime_name, MappingProxyType({})
+            ),
+            gated_continuations=gated_continuations,
+        )
+        return _PreparedCanonicalSolution(
+            solution=solution,
+            value_aware_feasibility=value_aware_feasibility,
+            invariant_bindings=invariant_bindings,
+            gated_continuations=gated_continuations,
+        )
+
+    def _finish_regime(
+        self,
+        *,
+        regime_name: RegimeName,
+        prepared: _PreparedCanonicalSolution,
+        solution_build: _SolutionBuild,
+        stakeholder_names_to_ids: MappingProxyType[str, int],
+    ) -> tuple[Regime, _SimulationBuild]:
+        """Reuse original simulation/context assembly with the real solve phase."""
+        user_regime = self.representative_user_regimes[regime_name]
+        solution = solution_build.phase
+        spec = self.specs[regime_name]
+        regime_params_template = self.regime_to_params_template[regime_name]
+        edge_params_template = self.regime_to_edge_params_template[regime_name]
+        granular_param_expansions = self.regime_to_granular_param_expansions[
+            regime_name
+        ]
+        stakeholders = user_regime.stakeholders
+        pareto_weights = prepared.solution.pareto_weights
+        same_period_ref_regimes = prepared.solution.context.same_period_ref_regimes
+        edge_reference_regimes = prepared.solution.context.edge_reference_regimes
+        value_aware_feasibility = prepared.value_aware_feasibility
+        invariant_bindings = prepared.invariant_bindings
+        gated_continuations = prepared.gated_continuations
+        solution = solution_build.phase
+
+        simulation_build = _build_simulation_phase(
+            query_periods=self.query_periods_by_phase.get("simulation", {}).get(
+                regime_name, ()
+            ),
+            current_iid_bindings=MappingProxyType(
+                {
+                    name: binding
+                    for (
+                        owner,
+                        phase,
+                        name,
+                    ), binding in self.current_iid_bindings.items()
+                    if owner == regime_name and phase == "simulate"
+                }
+            ),
+            spec=spec,
+            post_decision_bounds=solution.post_decision_bounds,
+            user_regime=user_regime,
+            law=self.laws[regime_name],
+            regime_name=regime_name,
+            solution_reachability=self.reachability.solution,
+            simulation_reachability=self.reachability.simulation,
+            nested_transitions=self.simulate_nested_transitions[regime_name],
+            all_grids=MappingProxyType(
+                {
+                    name: MappingProxyType(
+                        {
+                            **grids,
+                            **{
+                                state: grid
+                                for state, grid in self.phased_specs[
+                                    name
+                                ].simulation.grid_states.items()
+                                if isinstance(grid, Grid)
+                            },
+                        }
+                    )
+                    for name, grids in self.all_grids.items()
+                }
+            ),
+            state_grids=self.state_grids,
+            regime_params_template=regime_params_template,
+            edge_params_template=edge_params_template,
+            granular_param_expansions=granular_param_expansions,
+            regime_names_to_ids=self.regime_names_to_ids,
+            variables=self.regime_to_variables[regime_name],
+            simulation_variables=simulate_variables_from_regime(
+                user_regime=user_regime,
+                sharded_state_names=self.sharded_state_names_by_regime[regime_name],
+            ),
+            regimes_to_active_periods=self.regimes_to_active_periods,
+            regime_to_v_interpolation_info=self.regime_to_v_interpolation_info,
+            period_to_regime_v_interp=self.period_to_regime_v_interp,
+            grid_schedule=self.grid_schedule,
+            state_action_space=self.state_action_spaces[regime_name],
+            ages=self.ages,
+            enable_jit=self.enable_jit,
+            # The perceived law a simulated agent prices its continuation with.
+            # Age-specialized functions are still unresolved in this pool, so each
+            # period resolves them at its own age rather than inheriting the one
+            # age frozen into `solution.functions`.
+            solve_functions=solution.continuation_functions,
+            solve_transitions=solution.transitions,
+            solve_transition_plans=solution.transition_plans,
+            solve_compute_regime_transition_probs=solution.compute_regime_transition_probs,
+            solve_has_compiled_constraint_boundaries=(
+                solution.has_compiled_constraint_boundaries
+            ),
+            solver_context=solution_build.context,
+            external_replay_route=solution.external_replay_route,
+            replay_unsupported=solution.replay_unsupported,
+            has_taste_shocks=user_regime.taste_shocks is not None,
+            solver=solution_build.solver,
+            certainty_equivalent=user_regime.certainty_equivalent,
+            value_aware_feasibility=value_aware_feasibility,
+            stakeholders=stakeholders,
+            pareto_weights=pareto_weights,
+            post_decision_shocks=self.post_decision_shocks.get(
+                regime_name, MappingProxyType({})
+            ),
+            gated_continuations=gated_continuations,
+            invariant_bindings=invariant_bindings,
+        )
+        simulation = simulation_build.phase
+
+        stochastic_state_transitions = collect_stochastic_state_transitions(
+            user_regime=user_regime,
+            user_regimes=self.representative_user_regimes,
+        )
+
+        regime = Regime(
+            name=regime_name,
+            terminal=self.laws[regime_name].terminal,
+            active_periods=tuple(self.regimes_to_active_periods[regime_name]),
+            regime_params_template=regime_params_template,
+            edge_params_template=edge_params_template,
+            solution=solution,
+            simulation=simulation,
+            stochastic_state_transitions=stochastic_state_transitions,
+            granular_param_expansions=granular_param_expansions,
+            has_taste_shocks=user_regime.taste_shocks is not None,
+            certainty_equivalent=user_regime.certainty_equivalent,
+            stakeholders=stakeholders,
+            stakeholder_names_to_ids=stakeholder_names_to_ids,
+            same_period_ref_regimes=same_period_ref_regimes,
+            edge_reference_regimes=edge_reference_regimes,
+        )
+        return regime, simulation_build
+
     def __call__(
         self,
         *,
@@ -1188,232 +1696,105 @@ class _CanonicalRegimeBuilder:
         )
         canonical_regimes: dict[RegimeName, Regime] = {}
         solution_builds: dict[RegimeName, _SolutionBuild] = {}
+        simulation_builds: dict[RegimeName, _SimulationBuild] = {}
         scalar_query_models = _prepare_scalar_egm_query_models(processor=self)
         dcegm_query_models = _prepare_dcegm_query_models(processor=self)
         nbegm_query_models = _prepare_nbegm_query_models(processor=self)
         # Iterate the representative-resolved regimes: identical to the user regimes
         # except that any `AgeSpecializedGrid` state is a concrete representative-age
         # grid, so every grid-derived call below is age-invariant.
-        for regime_name, user_regime in self.representative_user_regimes.items():
-            spec = self.specs[regime_name]
-            regime_params_template = self.regime_to_params_template[regime_name]
-            edge_params_template = self.regime_to_edge_params_template[regime_name]
-            granular_param_expansions = self.regime_to_granular_param_expansions[
-                regime_name
-            ]
-
-            # Resolve the household Pareto weights once (equal weights when
-            # undeclared) and thread the stakeholder names / weights into both
-            # phase builds. Both are `None` for a singleton (non-collective)
-            # regime, which is what the downstream builds branch on.
-            stakeholders = user_regime.stakeholders
-            pareto_weights = _resolve_pareto_weights(user_regime=user_regime, spec=spec)
-            # The (deduplicated, order-preserving) regimes
-            # whose same-period V this regime reads; drives the within-period
-            # topological solve order and the kernel's same-period V threading.
-            same_period_ref_regimes = tuple(
-                dict.fromkeys(
-                    ref.regime for ref in user_regime.same_period_refs.values()
-                )
-            )
-            # A gated edge's gate references and leg fallbacks are read where
-            # the SOURCE lands, inside the source's own kernel — but the value
-            # they name belongs to the period the source lands IN. Backward
-            # induction has already solved that period, so these regimes need
-            # no ordering constraint, only their own grid params threaded to
-            # the kernel beside the rolled V arrays.
-            edge_reference_regimes = _edge_reference_regimes(law=self.laws[regime_name])
-            # One resolution, both phases: the value-aware feasibility mask the
-            # solved value function applied is the mask the simulated argmax
-            # chooses under, so the two phases share the object rather than each
-            # re-deriving it from the user spec.
-            value_aware_feasibility = _resolve_value_aware_feasibility(
-                user_regime=user_regime,
-                user_regimes=self.representative_user_regimes,
-                regime_params_template=regime_params_template,
-            )
-            # Folded IID-process states — collected purely from this regime's own
-            # states and grids, so (unlike `co_map_state_names`) the caller can
-            # compute it before `_build_solution_phase` builds `core.transitions`.
-            fold_state_names = _fold_state_names(
-                state_names=self.state_action_spaces[regime_name].state_names,
-                grids=self.all_grids[regime_name],
-            )
-            invariant_bindings = bound_state_names(
-                user_regime=user_regime,
-                law=self.laws[regime_name],
-                block_widths=self.invariant_block_widths,
-                state_names=self.state_action_spaces[regime_name].state_names,
-            )
-            _fail_if_blocked_regime_reads_unsupported_inputs(
+        for regime_name in self.representative_user_regimes:
+            prepared = self._prepare_regime_solution(
                 regime_name=regime_name,
-                invariant_bindings=invariant_bindings,
-                fold_state_names=fold_state_names,
-                edge_reference_regimes=edge_reference_regimes,
-            )
-            # Empty on the first build, and for every regime declaring no
-            # gated edge.
-            gated_continuations = MappingProxyType(
-                dict(gated_continuations_by_source.get(regime_name, {}))
-            )
-
-            solution_build = _build_solution_phase(
-                spec=spec,
+                gated_continuations_by_source=gated_continuations_by_source,
                 scalar_query_models=scalar_query_models,
                 dcegm_query_models=dcegm_query_models,
                 nbegm_query_models=nbegm_query_models,
-                post_decision_bounds=self.post_decision_bounds[regime_name],
-                regime_name=regime_name,
-                # Representative, not raw: these reach `SolverBuildContext`, and
-                # a solver reading a state grid off them wants a concrete
-                # `Grid`. Every such read is of a shape trait (extent or
-                # the `ContinuousGrid` kind), which is invariant across ages,
-                # so the representative grid answers it exactly. Node *values*,
-                # which do vary by age, come from the period's own axes.
-                user_regimes=self.representative_user_regimes,
-                laws=self.laws,
-                declared_regime_transition=self.phased_specs[
-                    regime_name
-                ].solution.regime_transition,
-                phase_reachability=self.reachability.solution,
-                nested_transitions=self.solve_nested_transitions[regime_name],
-                all_grids=self.all_grids,
-                state_grids=self.state_grids,
-                regime_params_template=regime_params_template,
-                edge_params_template=edge_params_template,
-                granular_param_expansions=granular_param_expansions,
-                regime_to_flat_param_names=self.regime_to_flat_param_names,
-                regime_names_to_ids=self.regime_names_to_ids,
-                variables=self.regime_to_variables[regime_name],
-                regimes_to_active_periods=self.regimes_to_active_periods,
-                regime_to_v_interpolation_info=self.regime_to_v_interpolation_info,
-                period_to_regime_v_interp=self.period_to_regime_v_interp,
-                grid_schedule=self.grid_schedule,
-                period_regimes=self.period_regimes,
-                state_action_space=self.state_action_spaces[regime_name],
-                submesh_device_ids=self.placement.devices_for(regime_name=regime_name),
-                axis_widths=self._widths_for(regime_name=regime_name),
-                sharded_state_names=self.sharded_state_names_by_regime[regime_name],
-                ages=self.ages,
-                enable_jit=self.enable_jit,
-                certainty_equivalent=user_regime.certainty_equivalent,
-                solver=user_regime.solver,
-                continuation_demanded=regime_name in self.egm_continuation_targets,
-                has_taste_shocks=user_regime.taste_shocks is not None,
-                value_aware_feasibility=value_aware_feasibility,
-                stakeholders=stakeholders,
-                pareto_weights=pareto_weights,
-                same_period_ref_regimes=same_period_ref_regimes,
-                edge_reference_regimes=edge_reference_regimes,
-                edge_target_regimes=tuple(self.laws[regime_name].gated_edges),
-                fold_state_names=fold_state_names,
-                invariant_bindings=invariant_bindings,
-                action_partitions=self.action_partitions.get(regime_name, 1),
-                fold_only_regimes=self.fold_only_regimes,
-                draw_only_processes=self.draw_only_processes.get(
-                    regime_name, MappingProxyType({})
-                ),
-                gated_continuations=gated_continuations,
+                prepare_solution=_prepare_solution_phase,
             )
+            solution_build = _finish_solution_phase(prepared=prepared.solution)
             solution_builds[regime_name] = solution_build
-            solution = solution_build.phase
-
-            simulation = _build_simulation_phase(
-                spec=spec,
-                post_decision_bounds=solution.post_decision_bounds,
-                user_regime=user_regime,
-                law=self.laws[regime_name],
+            regime, simulation_build = self._finish_regime(
                 regime_name=regime_name,
-                solution_reachability=self.reachability.solution,
-                simulation_reachability=self.reachability.simulation,
-                nested_transitions=self.simulate_nested_transitions[regime_name],
-                all_grids=MappingProxyType(
-                    {
-                        name: MappingProxyType(
-                            {
-                                **grids,
-                                **{
-                                    state: grid
-                                    for state, grid in self.phased_specs[
-                                        name
-                                    ].simulation.grid_states.items()
-                                    if isinstance(grid, Grid)
-                                },
-                            }
-                        )
-                        for name, grids in self.all_grids.items()
-                    }
-                ),
-                state_grids=self.state_grids,
-                regime_params_template=regime_params_template,
-                edge_params_template=edge_params_template,
-                granular_param_expansions=granular_param_expansions,
-                regime_names_to_ids=self.regime_names_to_ids,
-                variables=self.regime_to_variables[regime_name],
-                simulation_variables=simulate_variables_from_regime(
-                    user_regime=user_regime,
-                    sharded_state_names=self.sharded_state_names_by_regime[regime_name],
-                ),
-                regimes_to_active_periods=self.regimes_to_active_periods,
-                regime_to_v_interpolation_info=self.regime_to_v_interpolation_info,
-                period_to_regime_v_interp=self.period_to_regime_v_interp,
-                grid_schedule=self.grid_schedule,
-                state_action_space=self.state_action_spaces[regime_name],
-                ages=self.ages,
-                enable_jit=self.enable_jit,
-                # The perceived law a simulated agent prices its continuation with.
-                # Age-specialized functions are still unresolved in this pool, so each
-                # period resolves them at its own age rather than inheriting the one
-                # age frozen into `solution.functions`.
-                solve_functions=solution.continuation_functions,
-                solve_transitions=solution.transitions,
-                solve_transition_plans=solution.transition_plans,
-                solve_compute_regime_transition_probs=solution.compute_regime_transition_probs,
-                solve_has_compiled_constraint_boundaries=(
-                    solution.has_compiled_constraint_boundaries
-                ),
-                solver_context=solution_build.context,
-                external_replay_route=solution.external_replay_route,
-                replay_unsupported=solution.replay_unsupported,
-                has_taste_shocks=user_regime.taste_shocks is not None,
-                solver=solution_build.solver,
-                certainty_equivalent=user_regime.certainty_equivalent,
-                value_aware_feasibility=value_aware_feasibility,
-                stakeholders=stakeholders,
-                pareto_weights=pareto_weights,
-                fold_only_regimes=self.fold_only_regimes,
-                draw_only_processes=self.draw_only_processes.get(
-                    regime_name, MappingProxyType({})
-                ),
-                gated_continuations=gated_continuations,
-                invariant_bindings=invariant_bindings,
-            )
-
-            stochastic_state_transitions = collect_stochastic_state_transitions(
-                user_regime=user_regime,
-                user_regimes=self.representative_user_regimes,
-            )
-
-            canonical_regimes[regime_name] = Regime(
-                name=regime_name,
-                terminal=self.laws[regime_name].terminal,
-                active_periods=tuple(self.regimes_to_active_periods[regime_name]),
-                regime_params_template=regime_params_template,
-                edge_params_template=edge_params_template,
-                solution=solution,
-                simulation=simulation,
-                stochastic_state_transitions=stochastic_state_transitions,
-                granular_param_expansions=granular_param_expansions,
-                has_taste_shocks=user_regime.taste_shocks is not None,
-                certainty_equivalent=user_regime.certainty_equivalent,
-                stakeholders=stakeholders,
+                prepared=prepared,
+                solution_build=solution_build,
                 stakeholder_names_to_ids=stakeholder_names_to_ids,
-                same_period_ref_regimes=same_period_ref_regimes,
-                edge_reference_regimes=edge_reference_regimes,
-                fold_state_names=fold_state_names,
             )
-        return _with_declared_continuation_reads(
+            canonical_regimes[regime_name] = regime
+            simulation_builds[regime_name] = simulation_build
+        return self._finish_model_reads(
+            canonical_regimes=canonical_regimes,
+            solution_builds=solution_builds,
+            simulation_builds=simulation_builds,
+        )
+
+    def _finish_model_reads(
+        self,
+        *,
+        canonical_regimes: dict[RegimeName, Regime],
+        solution_builds: Mapping[RegimeName, _SolutionBuild],
+        simulation_builds: Mapping[RegimeName, _SimulationBuild],
+    ) -> MappingProxyType[RegimeName, Regime]:
+        """Install the original identity/read/participation/exit declarations."""
+        declared = _with_declared_continuation_reads(
             canonical_regimes=canonical_regimes, solution_builds=solution_builds
+        )
+        solution_contexts = {
+            name: build.context for name, build in solution_builds.items()
+        }
+        if any(law.participation for law in self.laws.values()):
+            from _lcm.participation_queries import (  # noqa: PLC0415 - all canonical action contexts must exist first
+                install_participation_source_queries,
+            )
+
+            solution_contexts = install_participation_source_queries(
+                canonical_regimes=declared, contexts=solution_contexts
+            )
+        if not any(
+            regime.exits
+            or (
+                regime.stakeholders is not None
+                and any(solution_builds[name].context.current_iid_plans.values())
+            )
+            for name, regime in self.representative_user_regimes.items()
+        ) and not any(
+            context.participation_queries for context in solution_contexts.values()
+        ):
+            return declared
+        from _lcm.exit_queries import install_exit_policy_queries  # noqa: PLC0415
+
+        declared = install_exit_policy_queries(
+            canonical_regimes=declared,
+            contexts=solution_contexts,
+            value_periods_by_regime=self.value_periods_by_regime,
+        )
+        if any(context.participation_queries for context in solution_contexts.values()):
+            from _lcm.participation_publication import (  # noqa: PLC0415 - requires complete canonical query graphs
+                install_participation_publishers,
+            )
+
+            declared = install_participation_publishers(
+                canonical_regimes=declared, contexts=solution_contexts
+            )
+        from _lcm.simulation.exits import (  # noqa: PLC0415
+            install_exit_simulation_queries,
+        )
+
+        simulation_contexts = {
+            name: build.context for name, build in simulation_builds.items()
+        }
+        if any(context.participation_queries for context in solution_contexts.values()):
+            from _lcm.participation_queries import (  # noqa: PLC0415 - both actual flow and pricing contexts exist
+                install_participation_replay_sources,
+            )
+
+            simulation_contexts = install_participation_replay_sources(
+                contexts=simulation_contexts, pricing_contexts=solution_contexts
+            )
+        return install_exit_simulation_queries(
+            canonical_regimes=declared,
+            contexts=simulation_contexts,
+            original_periods_by_regime=self.original_periods_by_regime,
         )
 
 
@@ -2308,7 +2689,7 @@ def _gated_continuation_specs(
 
     Each target's specs are keyed by the FOLD period, for the reason
     `folds_by_period` is: the combiner carries this edge's projected readers,
-    and a gate reference on an `AgeSpecializedGrid` is read on its own regime's
+    and a leg fallback on an `AgeSpecializedGrid` is read on its own regime's
     nodes, which move with age. A source period must therefore take the
     combiner compiled for the period it LANDS in.
 
@@ -2389,8 +2770,8 @@ def _attach_gated_edge_folds(
     Which grids each closes over differs, so they group separately
     (`_edge_grid_group_key`):
 
-    - the fold interpolates the gate references' and leg fallbacks' own grids,
-      and takes the target's value array as a runtime argument;
+    - the fold interpolates the leg fallbacks' own grids, and takes the
+      target's value array as a runtime argument;
     - the gate evaluator interpolates those AND the target's own grid, because
       it re-evaluates the predicate at a realized target-state point.
 
@@ -2420,30 +2801,6 @@ def _attach_gated_edge_folds(
                 transitions=target_solution.transitions,
                 transition_plans=target_solution.transition_plans,
             )
-            # The simulate-side
-            # router needs its own gate re-evaluated at a REALIZED (candidate
-            # target-state) point, rather than by interpolating the fold's
-            # baked boolean `gate` array and thresholding it (which does not
-            # commute with a nonlinear predicate), but by recomputing the
-            # predicate from interpolated VALUE operands
-            # (`get_edge_simulate_gate_evaluator`). The candidate target
-            # state fed in at simulate is a genuine (possibly off-grid) VALUE
-            # for every target state — including a non-folded process state
-            # (`_ContinuousStochasticProcess`, classified `discrete_states`
-            # for the Markov-chain solve path but never fed an exact on-grid
-            # index here). Mirror `_build_same_period_ref_reader`'s
-            # (`Q_and_F.py`) auto-select of `get_V_interpolator`'s
-            # process-aware mode so that axis is linearly interpolated
-            # instead of integer-looked-up; a target without a process state
-            # takes the ordinary integer-lookup path. A process state is never
-            # age-specialized, so this is a property of the edge, not of one
-            # period.
-            target_has_process_axis = any(
-                isinstance(grid, _ContinuousStochasticProcess)
-                for grid in regime_to_v_interpolation_info[
-                    target_name
-                ].discrete_states.values()
-            )
             # The periods the edge can ever fold at: those after a source
             # period whose selected law declares this gate, where the target
             # holds a value. Backward induction folds at the target's own
@@ -2462,9 +2819,8 @@ def _attach_gated_edge_folds(
             # The fold takes the target's value array as a RUNTIME argument and
             # needs only its state names, so it groups on the grids its own
             # readers interpolate -- `interpolated_regimes`, which names the
-            # target when a reference names it and omits it otherwise. The gate
-            # evaluator interpolates that array at a realized point, so the
-            # target's grid enters it whether or not a reference names it.
+            # target when a fallback names it and omits it otherwise. The gate
+            # evaluator is grouped over the target's grid as well.
             fold_read_regimes = resolved_edge.interpolated_regimes
             grouped_fold_periods = group_periods_by_key(
                 active_periods=fold_periods,
@@ -2520,9 +2876,7 @@ def _attach_gated_edge_folds(
                     target_v_info=v_info[target_name],
                     target_functions=target_solution.functions,
                     target_deterministic_transitions=target_deterministic_transitions,
-                    reference_v_info=v_info,
                     target_stakeholders=user_regimes[target_name].stakeholders,
-                    target_has_process_axis=target_has_process_axis,
                 )
             folds_by_period = expand_groups_to_periods(
                 grouped_periods=grouped_fold_periods, built_by_group=folds_by_group
@@ -2736,8 +3090,7 @@ def _resolve_gated_edge(
                 ),
             )
         )
-    gate_refs = {name: _resolve_ref(ref) for name, ref in edge.gate_refs.items()}
-    # The target is excluded even when a fallback or gate ref names it (a
+    # The target is excluded even when a fallback names it (a
     # self-referencing edge): every consumer already carries the target's own
     # same-period V and params under the target's key
     # (`build_same_period_mapping_for_fold` seeds it, and both the solve-side
@@ -2746,16 +3099,12 @@ def _resolve_gated_edge(
     # re-derive what those consumers hold.
     reference_regimes = tuple(
         regime_name
-        for regime_name in dict.fromkeys(
-            [leg.fallback.regime for leg in legs]
-            + [ref.regime for ref in gate_refs.values()]
-        )
+        for regime_name in dict.fromkeys(leg.fallback.regime for leg in legs)
         if regime_name != target_name
     )
     return ResolvedGatedEdge(
         target=target_name,
         gate=edge.gate,
-        gate_refs=MappingProxyType(gate_refs),
         legs=tuple(legs),
         reference_regimes=reference_regimes,
     )
@@ -2766,10 +3115,9 @@ def _edge_reference_regimes(
 ) -> tuple[RegimeName, ...]:
     """Return the regimes one regime's gated edges read a projected value from.
 
-    Both a gate reference and a leg fallback name another regime's CURRENT
-    period value at projected coordinates. Neither is tabulated on the target's
-    grid, so both are read where the source lands, and the reading happens in
-    the source's own kernel.
+    A leg fallback names another regime's CURRENT period value at projected
+    coordinates. It is not tabulated on the target's grid, so it is read where
+    the source lands, and the reading happens in the source's own kernel.
 
     Args:
         law: The regime's law, bound from `Model(edges=...)`.
@@ -2864,9 +3212,10 @@ def _fail_if_collective_regime_targets_unsupported(
     source expects every target leaf to carry the identical trailing
     stakeholder axis, and a singleton source expects none. Per-stakeholder
     routing across stakeholder layouts (dissolution into `single_f`/`single_m`,
-    marriage formation) is the gated-edge machinery, so any
-    non-terminal regime whose reachable target declares a different
-    `stakeholders` tuple is rejected here. Both-`None` (the singleton default)
+    marriage formation) requires a declared gated edge or typed participation check.
+    Each returns a continuation in the original source's stakeholder layout.
+    An ordinary non-terminal transition whose reachable target declares a
+    different `stakeholders` tuple is rejected here. Both-`None` (the singleton default)
     never enters the comparison, so today's path is untouched.
 
     Args:
@@ -2889,10 +3238,14 @@ def _fail_if_collective_regime_targets_unsupported(
                 continue
             if user_regime.stakeholders is None and target_regime.stakeholders is None:
                 continue
-            # A target reached through a DECLARED gated
-            # edge is exempt — the edge folds a gated continuation object matching
-            # the SOURCE's stakeholder layout, so the mixed-topology read is safe.
-            if target_regime_name in laws[regime_name].gated_edges:
+            # Declared gates and participation checks return source-owned continuation
+            # values through explicit member routes. Ordinary transitions still
+            # require identical layouts; declaration of another target grants
+            # no exemption to this one.
+            if (
+                target_regime_name in laws[regime_name].gated_edges
+                or target_regime_name in laws[regime_name].participation
+            ):
                 continue
             if user_regime.stakeholders != target_regime.stakeholders:
                 msg = (
@@ -2903,9 +3256,9 @@ def _fail_if_collective_regime_targets_unsupported(
                     "target of a collective regime must be a collective regime "
                     "with the identical `stakeholders` tuple (and a singleton "
                     "regime cannot target a collective one). Per-stakeholder "
-                    "routing to different regimes (e.g. dissolution into "
-                    "single-person regimes) is the gated-edge machinery and "
-                    "is not yet implemented. Declare a `GatedEdge` instead."
+                    "routing across these layouts requires a `GatedEdge` or "
+                    "a `ParticipationCheck` with explicit stakeholder routes "
+                    "for this target."
                 )
                 raise NotImplementedError(msg)
 
@@ -3118,11 +3471,11 @@ def _fail_if_gated_edges_invalid(
 
     Checks, per edge: the target regime exists; each
     leg's OPEN-branch target component names a target stakeholder (or is `None`
-    for a singleton target); each fallback and gate reference names an existing
+    for a singleton target); each fallback names an existing
     regime, with a stakeholder iff that regime is collective, and a projection
     covering exactly the states that reference's own consumer needs
     (`_fail_if_ref_invalid`); and every regime the edge reads
-    (fallbacks + gate references) is active in every period its target is active
+    (its fallbacks) is active in every period its target is active
     (co-activity: the edge's Wbar reads those same-period Vs whenever the
     target is solved, so a reference that was never solved cannot be read).
 
@@ -3180,15 +3533,6 @@ def _fail_if_gated_edges_invalid(
                         projection_phase="simulate",
                     )
             _fail_if_duplicate_fallback_regimes(prefix=prefix, edge=edge)
-            for ref_name, ref in edge.gate_refs.items():
-                _fail_if_ref_invalid(
-                    prefix=f"{prefix}gate_refs['{ref_name}'] ",
-                    ref=ref,
-                    user_regimes=user_regimes,
-                    representative_user_regimes=representative_user_regimes,
-                    regime_to_v_interpolation_info=regime_to_v_interpolation_info,
-                    projection_phase="solve",
-                )
             _fail_if_gated_edge_references_inactive(
                 prefix=prefix,
                 source_name=regime_name,
@@ -3201,6 +3545,64 @@ def _fail_if_gated_edges_invalid(
                 prefix=prefix,
                 edge=edge,
                 target=representative_user_regimes[target_name],
+            )
+        _fail_if_participation_invalid(
+            regime_name=regime_name,
+            laws=laws,
+            user_regimes=user_regimes,
+            representative_user_regimes=representative_user_regimes,
+            regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+        )
+
+
+def _fail_if_participation_invalid(
+    *,
+    regime_name: RegimeName,
+    laws: RegimeLaws,
+    user_regimes: Mapping[RegimeName, UserRegime],
+    representative_user_regimes: Mapping[RegimeName, FinalizedUserRegime],
+    regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
+) -> None:
+    """Validate one source's participation fallbacks and reads like a gated edge's.
+
+    A participation check's fallbacks are the same consumer as a gated edge's leg
+    fallbacks, and its reads project from the same target grid; both owe the
+    same coverage.
+
+    Raises:
+        ModelInitializationError: On the first violated declaration.
+    """
+    for target_name, decision in laws[regime_name].participation.items():
+        prefix = f"Regime {regime_name!r}, participation check into {target_name!r}: "
+        for route_name, route in decision.routes.items():
+            phases: tuple[
+                tuple[Literal["solve", "simulate"], ProjectedRegimeValue], ...
+            ] = (
+                (
+                    ("solve", route.solve_fallback),
+                    ("simulate", route.simulate_fallback),
+                )
+                if route.fallback_is_phased
+                else (("simulate", route.solve_fallback),)
+            )
+            for phase, fallback in phases:
+                label = f"({phase}) " if route.fallback_is_phased else ""
+                _fail_if_ref_invalid(
+                    prefix=f"{prefix}route '{route_name}': fallback {label}",
+                    ref=fallback,
+                    user_regimes=user_regimes,
+                    representative_user_regimes=representative_user_regimes,
+                    regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+                    projection_phase=phase,
+                )
+        for read_name, read in decision.reads.items():
+            _fail_if_ref_invalid(
+                prefix=f"{prefix}reads['{read_name}'] ",
+                ref=read,
+                user_regimes=user_regimes,
+                representative_user_regimes=representative_user_regimes,
+                regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+                projection_phase="solve",
             )
 
 
@@ -3248,12 +3650,12 @@ def _fail_if_gated_edge_references_inactive(
     regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
     gated_periods: tuple[int, ...],
 ) -> None:
-    """Reject a gated edge whose fallback / gate reference is not co-active with
-    its target on every period whose `Wbar` is actually consumed.
+    """Reject a gated edge whose fallback is not co-active with its target on
+    every period whose `Wbar` is actually consumed.
 
     `_roll_gated_edges` folds the edge's `Wbar`
-    in each period $t$ the TARGET regime is solved, reading each fallback's and
-    gate reference's SAME-PERIOD V, and that `Wbar` is consumed by the SOURCE
+    in each period $t$ the TARGET regime is solved, reading each fallback's
+    SAME-PERIOD V, and that `Wbar` is consumed by the SOURCE
     one period earlier (at $t-1$). If a referenced regime is inactive in a
     period whose `Wbar` is consumed, its V does not exist and silently rolling
     the previous period's `Wbar` would feed the source a STALE later-period value.
@@ -3267,11 +3669,9 @@ def _fail_if_gated_edge_references_inactive(
     active on every consumed period, so the roll is well defined wherever its
     result is used.
     """
-    reference_regime_names = (
-        {leg.solve_fallback.regime for leg in edge.legs.values()}
-        | {leg.simulate_fallback.regime for leg in edge.legs.values()}
-        | {ref.regime for ref in edge.gate_refs.values()}
-    )
+    reference_regime_names = {
+        leg.solve_fallback.regime for leg in edge.legs.values()
+    } | {leg.simulate_fallback.regime for leg in edge.legs.values()}
     source_active_periods = set(gated_periods)
     consumed_periods = {
         period
@@ -3378,13 +3778,13 @@ def _fail_if_ref_invalid(
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     projection_phase: Literal["solve", "simulate"],
 ) -> None:
-    """Reject an edge fallback / gate reference with an invalid endpoint.
+    """Reject an edge fallback / participation read with an invalid endpoint.
 
     `projection_phase` says which of the reference regime's state sets the
     projection owes a coordinate function for, and the two consumers of a
     `ProjectedRegimeValue` answer that differently:
 
-    - `"solve"` — a GATE REFERENCE only reads the reference regime's value
+    - `"solve"` — a participation read only reads the reference regime's value
       function, whose axes are that regime's solve states. A coordinate on a
       state the solve grid has no axis for would have nothing to index.
     - `"simulate"` — a LEG FALLBACK additionally writes the dissolved
@@ -3512,136 +3912,6 @@ class _SamePeriodRefSearch:
         self.stack.pop()
         self.visiting.discard(node)
         self.done.add(node)
-
-
-def _fail_if_folded_regime_is_same_period_endpoint(
-    *, user_regimes: Mapping[RegimeName, UserRegime], laws: RegimeLaws
-) -> None:
-    """Reject `fold=True` on a regime read nodewise by another gate/reference.
-
-    `fold=True` integrates a shock's node axis out of a regime's
-    stored V — and, for a COLLECTIVE regime, additionally collapses its
-    dissolution flag `D` by `jnp.any` — immediately after that regime's OWN
-    period solve (`_wrap_with_fold_reduction` in
-    `regime_building/max_Q_over_a.py`). Gated-edge routing and same-period
-    value reads both require gate-THEN-integrate: each realized shock
-    node must be routed through its own gate / consent decision before any
-    node is averaged away (`jnp.where(gate, V_target, V_fallback)` per node,
-    then integrate — never integrate first and gate the average). If the
-    folding regime is itself read nodewise by another regime's gate or
-    same-period reference, the two orderings conflict: the reader only ever
-    sees the already-averaged V (and, if collective, the already-`jnp.any`-
-    reduced D), not the per-node values gate-then-integrate needs.
-    Counterexample: target node values `[-inf, 1]`, nodewise dissolution
-    `[True, False]`, fallback `0`, equal weights — the correct
-    route-then-average is `0.5`, but fold-first (`D_any=True`) routes the
-    whole cell to the fallback, `0.0`.
-
-    A regime is unsafe to fold when it is any of:
-
-    - an inbound gated-edge TARGET — named as a key of another regime's
-      `gated_edges`, so its V/D would be read nodewise by that edge's gate
-      and the leg routing;
-    - a gated-edge leg FALLBACK — named by the `regime` of a
-      `gated_edges[...].legs[...].fallback` entry: `get_edge_fold` reads the
-      fallback nodewise, `jnp.where(gate, V_target, V_fallback)`, at every
-      target grid node, BEFORE any integration — the same ordering hazard as
-      the edge target itself; or
-    - a same-period REFERENCE — named by the `regime` of another regime's
-      `same_period_refs` entry, or of a `gated_edges[...].gate_refs` entry —
-      so its per-node V would be read through a projection.
-
-    This applies regardless of stakeholder cardinality: gate-then-integrate
-    is violated whether the folding regime is collective or a SINGLETON — a
-    singleton has a node-valued V (just no D) that a gate/reference reads
-    exactly the same way.
-
-    The combination is rejected at construction rather than executed: no
-    transient per-node `V_node` / `D_node` survives the fold reduction, so a
-    gate reading such a regime has nothing to route on and there is no correct
-    ordering left to pick. A folded regime that is none of the above — neither
-    a gated-edge target, a leg fallback, nor a same-period reference — stays
-    allowed. Like the cross-regime graph walks in
-    `_fail_if_same_period_refs_invalid` / `_fail_if_gated_edges_invalid` above,
-    this runs once every regime's declarations are known, not in the
-    regime-local `_validate_fold_declarations`.
-
-    Raises:
-        ModelInitializationError: Naming every offending regime, its folded
-            state(s), and which role(s) (gated-edge target / leg fallback /
-            same-period reference) make the fold unsafe.
-    """
-    gated_edge_targets: set[RegimeName] = {
-        target_name for law in laws.values() for target_name in law.gated_edges
-    }
-    # Build the reference set from each resolved edge's COMPLETE reference
-    # set (fallbacks + gate_refs), rather than re-enumerating `edge.legs` /
-    # `edge.gate_refs` by hand here — `_resolve_gated_edge` is the single
-    # source of truth for "which regimes does this edge read nodewise", and
-    # every named regime is already known to exist
-    # (`_fail_if_gated_edges_invalid` runs before this).
-    same_period_reference_regimes: set[RegimeName] = {
-        ref.regime
-        for regime in user_regimes.values()
-        for ref in regime.same_period_refs.values()
-    } | {
-        reference_name
-        for source_name, law in laws.items()
-        for target_name, edge in law.gated_edges.items()
-        for reference_name in _resolve_gated_edge(
-            source_name=source_name,
-            target_name=target_name,
-            edge=edge,
-            user_regimes=user_regimes,
-        ).reference_regimes
-    }
-
-    error_messages: list[str] = []
-    for regime_name, regime in user_regimes.items():
-        fold_names = sorted(
-            name
-            for name, grid in regime.states.items()
-            if isinstance(grid, _IIDProcess) and grid.fold
-        )
-        if not fold_names:
-            continue
-
-        roles: list[str] = []
-        if regime_name in gated_edge_targets:
-            roles.append("the TARGET of another regime's gated edge")
-        if regime_name in same_period_reference_regimes:
-            roles.append(
-                "a same-period REFERENCE (named by another regime's "
-                "`same_period_refs`, `gated_edges[...].gate_refs`, or "
-                "`gated_edges[...].legs[...].fallback`)"
-            )
-        if not roles:
-            continue
-
-        d_clause = (
-            " (and collapses its dissolution flag D by `jnp.any`)"
-            if regime.stakeholders is not None
-            else ""
-        )
-        cardinality = (
-            f"a collective (stakeholders={regime.stakeholders}) regime"
-            if regime.stakeholders is not None
-            else "a singleton regime"
-        )
-        error_messages.append(
-            f"Regime '{regime_name}' declares fold=True on state(s) "
-            f"{fold_names} while being {cardinality} that is "
-            f"{' and '.join(roles)}. Folding integrates the shock's node "
-            f"axis out of this regime's stored V{d_clause} before that gate "
-            "/ reference can route or read per node: value constraints and "
-            "gated edges require gate-then-integrate, not "
-            "integrate-then-gate. Drop "
-            "`fold=True` on this regime, or stop targeting / referencing it "
-            "from a gated edge or same-period reference."
-        )
-
-    if error_messages:
-        raise ModelInitializationError(format_messages(error_messages))
 
 
 def _period_to_state_nodes(
@@ -4078,8 +4348,10 @@ def _fail_if_a_continuation_demand_is_unmet(
 
     """
     unmet: dict[tuple[RegimeName, ArtifactKey], list[str]] = {}
-    for source, target, key in demands:
+    for source, target, declared_key in demands:
         spec = canonical_regimes[target].solution.continuation_spec
+        key = declared_key
+        demanded = user_regimes[source].solver.required_continuation_capabilities
         if spec is None or spec.artifact_key != key:
             publishes = (
                 "publishes no continuation"
@@ -4091,7 +4363,6 @@ def _fail_if_a_continuation_demand_is_unmet(
             )
             unmet.setdefault((source, key), []).append(f"'{target}' {publishes}")
             continue
-        demanded = user_regimes[source].solver.required_continuation_capabilities
         if demanded == ContinuationCapabilities():
             # A source that asks its target's payload nothing reads the rolled
             # artifact's own fields, so any keyed payload serves it.
@@ -4171,6 +4442,118 @@ def _missing_capabilities(
 
 
 @dataclass(frozen=True, kw_only=True)
+class _SimulationBuild:
+    """Actual forward phase beside the context its policy queries consume."""
+
+    phase: SimulationPhase
+    """Canonical forward programs and realized state laws."""
+
+    context: SolverBuildContext
+    """Actual simulate Q/F and helper closures, rather than solve surrogates."""
+
+
+@dataclass(frozen=True)
+class _ConstraintRoutingResult:
+    """The retained route ledger and the constraints evaluated numerically."""
+
+    plan: ConstraintPlan | None
+    """Complete route ledger, or `None` when the solver declares no routes."""
+
+    evaluated_names: frozenset[FunctionName]
+    """Constraint names every applicable route evaluates."""
+
+
+@dataclass(frozen=True)
+class _CoreResult:
+    """Result of core regime function processing for one phase."""
+
+    functions: EconFunctionsMapping
+    """User functions (utility, helpers) with params renamed to qnames."""
+
+    constraints: ConstraintFunctionsMapping
+    """Constraint callables retained in the numerical feasibility kernel."""
+
+    constraint_functions: ConstraintFunctionsMapping
+    """Every declared constraint callable, including compiled and proved ones."""
+
+    processed_constraints: ProcessedConstraintsMapping
+    """Every declared constraint in normalized form, for solver reasoning.
+
+    Not a second source of truth: `constraint_functions` is built from this
+    mapping at one site, so compiled structure and executable predicates cannot
+    disagree about what was declared."""
+
+    transitions: TransitionFunctionsMapping
+    """Nested mapping of transition names to transition functions."""
+
+    transition_plans: TargetTransitionPlans
+    """Immutable mapping of target regime names to their transition laws."""
+
+    next_regime_func: TransitionFunction | None
+    """The coarse regime transition function; `None` for terminal regimes and
+    for per-target regime transitions."""
+
+    next_regime_cells: MappingProxyType[RegimeName, EconFunction] | None
+    """Per-target regime transition probability functions (params renamed),
+    or `None` when the regime transition is coarse or absent."""
+
+    koopmans_aggregator: EconFunction | None
+    """The Bellman aggregator with params renamed to qnames; `None` in a
+    terminal regime."""
+
+    objective_aggregator: EconFunction | None
+    """The aggregator the actions are chosen with, params renamed to qnames;
+    `None` when the Bellman aggregator also chooses."""
+
+
+@runtime_checkable
+class _PeriodGroupKey(Protocol):
+    """Callable mapping a period to the key its group was built under."""
+
+    def __call__(self, *, period: int) -> Hashable:
+        """Return the grouping key `period` was assigned."""
+
+
+@dataclass(frozen=True, kw_only=True)
+class _PreparedSolutionPhase:
+    """Actual processed economics and typed inputs before any solver program."""
+
+    action_partitions: int
+    all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]]
+    compute_intermediates: MappingProxyType[
+        int, Callable[..., Mapping[str, FloatND | Mapping[RegimeName, FloatND]]]
+    ]
+    compute_regime_transition_probs: RegimeTransitionFunction | None
+    context: SolverBuildContext
+    continuation_demanded: bool
+    core: _CoreResult
+    counts_raise_landings: bool
+    decision_group_key: _PeriodGroupKey | None
+    enable_jit: bool
+    grid_schedule: AgeGridSchedule | None
+    laws: RegimeLaws
+    pareto_weights: ParetoWeights | None
+    period_to_state_nodes: (
+        MappingProxyType[int, MappingProxyType[StateName, Float1D]] | None
+    )
+    phase_reachability: PhaseReachability
+    post_decision_bounds: tuple[PostDecisionBoundSpec, ...]
+    query_model: ScalarEGMQueryModel | DCEGMQueryModel | NBEGMQueryModel | None
+    query_Q_and_F_functions: MappingProxyType[int, QAndFFunction]
+    regime_name: RegimeName
+    regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]]
+    routing: _ConstraintRoutingResult
+    sharded_state_names: frozenset[StateName]
+    solver: Solver
+    state_action_space: StateActionSpace
+    submesh_device_ids: tuple[int, ...]
+    user_regimes: Mapping[RegimeName, UserRegime]
+    validation_regime_transition_probs: RegimeTransitionFunction | None
+    variables: Variables
+    zero_node: bool
+
+
+@dataclass(frozen=True, kw_only=True)
 class _SolutionBuild:
     """One regime's built solve phase beside what a later pass re-reads.
 
@@ -4236,8 +4619,10 @@ def _solver_with_query_authority(
     return solver
 
 
-def _build_solution_phase(  # noqa: PLR0915
+def _build_solution_phase(
     *,
+    query_periods: tuple[int, ...] = (),
+    current_iid_bindings: Mapping[ShockGroupName, ShockBinding] = MappingProxyType({}),
     spec: PhasedRegimeSpec,
     regime_name: RegimeName,
     user_regimes: Mapping[RegimeName, UserRegime],
@@ -4276,11 +4661,9 @@ def _build_solution_phase(  # noqa: PLR0915
     same_period_ref_regimes: tuple[RegimeName, ...] = (),
     edge_reference_regimes: tuple[RegimeName, ...] = (),
     edge_target_regimes: tuple[RegimeName, ...] = (),
-    fold_state_names: tuple[StateName, ...] = (),
     invariant_bindings: tuple[StateName, ...] = (),
     action_partitions: int = 1,
-    fold_only_regimes: frozenset[RegimeName] = frozenset(),
-    draw_only_processes: Mapping[StateName, _IIDProcess] = MappingProxyType({}),
+    post_decision_shocks: Mapping[StateName, _IIDProcess] = MappingProxyType({}),
     gated_continuations: Mapping[RegimeName, GatedContinuationSchedule] = (
         MappingProxyType({})
     ),
@@ -4289,73 +4672,313 @@ def _build_solution_phase(  # noqa: PLR0915
     dcegm_query_models: Mapping[RegimeName, DCEGMQueryModel] | None = None,
     nbegm_query_models: Mapping[RegimeName, NBEGMQueryModel] | None = None,
 ) -> _SolutionBuild:
-    """Build all compiled functions for the backward-induction (solve) phase.
+    """Prepare and finish the canonical phase through the ordinary build route."""
+    return _finish_solution_phase(
+        prepared=_prepare_solution_phase(
+            query_periods=query_periods,
+            current_iid_bindings=current_iid_bindings,
+            spec=spec,
+            regime_name=regime_name,
+            user_regimes=user_regimes,
+            laws=laws,
+            declared_regime_transition=declared_regime_transition,
+            phase_reachability=phase_reachability,
+            nested_transitions=nested_transitions,
+            all_grids=all_grids,
+            state_grids=state_grids,
+            regime_params_template=regime_params_template,
+            edge_params_template=edge_params_template,
+            granular_param_expansions=granular_param_expansions,
+            regime_to_flat_param_names=regime_to_flat_param_names,
+            regime_names_to_ids=regime_names_to_ids,
+            variables=variables,
+            regimes_to_active_periods=regimes_to_active_periods,
+            regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+            period_to_regime_v_interp=period_to_regime_v_interp,
+            grid_schedule=grid_schedule,
+            period_regimes=period_regimes,
+            state_action_space=state_action_space,
+            submesh_device_ids=submesh_device_ids,
+            axis_widths=axis_widths,
+            sharded_state_names=sharded_state_names,
+            ages=ages,
+            enable_jit=enable_jit,
+            certainty_equivalent=certainty_equivalent,
+            solver=solver,
+            continuation_demanded=continuation_demanded,
+            has_taste_shocks=has_taste_shocks,
+            value_aware_feasibility=value_aware_feasibility,
+            stakeholders=stakeholders,
+            pareto_weights=pareto_weights,
+            same_period_ref_regimes=same_period_ref_regimes,
+            edge_reference_regimes=edge_reference_regimes,
+            edge_target_regimes=edge_target_regimes,
+            invariant_bindings=invariant_bindings,
+            action_partitions=action_partitions,
+            post_decision_shocks=post_decision_shocks,
+            gated_continuations=gated_continuations,
+            post_decision_bounds=post_decision_bounds,
+            scalar_query_models=scalar_query_models,
+            dcegm_query_models=dcegm_query_models,
+            nbegm_query_models=nbegm_query_models,
+        )
+    )
 
-    Args:
-        spec: The regime's per-phase specification.
-        regime_name: The name of the regime.
-        user_regimes: Mapping of regime names to user-provided `Regime`
-            instances.
-        laws: Each regime's law, bound from `Model(edges=...)`, by regime name.
-        declared_regime_transition: Solve transition before temporal filtering.
-        phase_reachability: Static graph for the solution phase.
-        nested_transitions: Per-target transition bundles for internal
-            processing.
-        all_grids: Immutable mapping of regime names to Grid spec objects.
-        state_grids: Immutable mapping of regime names to the Grid spec objects
-            of their states only, which is what a target offers a source to enter.
-        regime_params_template: The regime's parameter template.
-        granular_param_expansions: Immutable mapping of coarse-template law
-            keys to granular qname prefixes.
-        regime_to_flat_param_names: Immutable mapping of every regime name to
-            its flat param names in the engine's binding vocabulary. A DC-EGM
-            source carrying into a different target regime reads the target's
-            params in its per-asset-node solve, so the kernel build needs the
-            whole mapping, not only the source regime's own params.
-        regime_names_to_ids: Immutable mapping of regime names to integer indices.
-        variables: States and actions of the regime with kind/topology/process tags.
-        regimes_to_active_periods: Mapping of regime names to active period tuples.
-        regime_to_v_interpolation_info: Mapping of regime names to state space info.
-        state_action_space: The state-action space for this regime.
-        submesh_device_ids: Ascending ids of the devices the planner assigned
-            this regime's nodes; empty means every device the model uses.
-        axis_widths: Model-resolved widths the solver's host dispatch loops read.
-        sharded_state_names: The regime's states carrying a device axis.
-        ages: The AgeGrid for the model.
-        enable_jit: Whether to jit the internal functions.
-        certainty_equivalent: Nonlinear certainty equivalent declared by the
-            regime, or `None`.
-        solver: The regime's solver; the engine calls `validate` then
-            `build_period_kernels` on it to obtain the per-period kernels.
-        continuation_demanded: Whether an incoming edge from a continuation-
-            based source reaches this regime in any active period. Only demanded
-            targets receive an engine-produced EGM continuation.
-        has_taste_shocks: Whether the regime declares EV1 taste shocks on its
-            discrete actions.
-        value_aware_feasibility: The regime's value constraints and resolved
-            same-period references, resolved once for both phases so the two
-            apply the identical mask. Empty for a singleton regime.
-        invariant_bindings: Invariant states the solve evaluates one code at a
-            time. The solve `Q_and_F` reads each one's continuation at the
-            evaluated code, so its coordinate is dropped like a co-mapped
-            state's. Empty when nothing is blocked.
-        action_partitions: Devices sharing the regime's action product, from
-            `ExecutionConfig.action_partitions`; one when it is not shared.
-        gated_continuations: Mapping of target regime names to the gated-edge
-            continuation schedule that target's leaf is read under, keyed by the
-            period the edge folds at. Empty for a
-            regime without gated edges.
 
-    Returns:
-        The complete solve functions container beside the solver, kernels and
-        context the continuation-read declaration pass re-reads.
-
-    """
+def _prepare_solution_phase(
+    *,
+    query_periods: tuple[int, ...] = (),
+    current_iid_bindings: Mapping[ShockGroupName, ShockBinding] = MappingProxyType({}),
+    spec: PhasedRegimeSpec,
+    regime_name: RegimeName,
+    user_regimes: Mapping[RegimeName, UserRegime],
+    laws: RegimeLaws,
+    declared_regime_transition: _PhaseRegimeTransition,
+    phase_reachability: PhaseReachability,
+    nested_transitions: _TransitionBundles,
+    all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
+    state_grids: MappingProxyType[RegimeName, MappingProxyType[StateName, Grid]],
+    regime_params_template: RegimeParamsTemplate,
+    edge_params_template: EdgeParamsTemplate,
+    granular_param_expansions: MappingProxyType[FunctionName, tuple[str, ...]],
+    regime_to_flat_param_names: MappingProxyType[RegimeName, frozenset[str]],
+    regime_names_to_ids: RegimeNamesToIds,
+    variables: Variables,
+    regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
+    regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
+    period_to_regime_v_interp: (
+        MappingProxyType[int, MappingProxyType[RegimeName, VInterpolationInfo]] | None
+    ) = None,
+    grid_schedule: AgeGridSchedule | None = None,
+    period_regimes: PeriodRegimes | None = None,
+    state_action_space: StateActionSpace,
+    submesh_device_ids: tuple[int, ...],
+    axis_widths: MappingProxyType[str, int],
+    sharded_state_names: frozenset[StateName],
+    ages: TimeAxis,
+    enable_jit: bool,
+    certainty_equivalent: CertaintyEquivalent | None,
+    solver: Solver,
+    continuation_demanded: bool,
+    has_taste_shocks: bool,
+    value_aware_feasibility: _ValueAwareFeasibility,
+    stakeholders: tuple[str, ...] | None = None,
+    pareto_weights: ParetoWeights | None = None,
+    same_period_ref_regimes: tuple[RegimeName, ...] = (),
+    edge_reference_regimes: tuple[RegimeName, ...] = (),
+    edge_target_regimes: tuple[RegimeName, ...] = (),
+    invariant_bindings: tuple[StateName, ...] = (),
+    action_partitions: int = 1,
+    post_decision_shocks: Mapping[StateName, _IIDProcess] = MappingProxyType({}),
+    gated_continuations: Mapping[RegimeName, GatedContinuationSchedule] = (
+        MappingProxyType({})
+    ),
+    post_decision_bounds: tuple[PostDecisionBoundSpec, ...] = (),
+    scalar_query_models: Mapping[RegimeName, ScalarEGMQueryModel] | None = None,
+    dcegm_query_models: Mapping[RegimeName, DCEGMQueryModel] | None = None,
+    nbegm_query_models: Mapping[RegimeName, NBEGMQueryModel] | None = None,
+) -> _PreparedSolutionPhase:
+    """Prepare canonical economics and context without building CorePrograms."""
     query_model = (
         (scalar_query_models or {}).get(regime_name)
         or (dcegm_query_models or {}).get(regime_name)
         or (nbegm_query_models or {}).get(regime_name)
     )
+    if current_iid_bindings:
+        unsupported = [
+            label
+            for active, label in (
+                (not isinstance(solver, GridSearch), "non-GridSearch solver"),
+                (action_partitions > 1, "action partitions"),
+                (
+                    spec.solution.objective_aggregator is not None
+                    or spec.simulation.objective_aggregator is not None,
+                    "Decoupled decision",
+                ),
+                (bool(invariant_bindings), "invariant blocks"),
+                (query_model is not None, "query reconstruction"),
+                (
+                    bool(gated_continuations)
+                    or bool(laws[regime_name].gated_edges)
+                    or any(
+                        regime_name
+                        in (*law.gated_edges, *_edge_reference_regimes(law=law))
+                        for law in laws.values()
+                    ),
+                    "gated value channel",
+                ),
+                (
+                    bool(same_period_ref_regimes)
+                    or any(
+                        ref.regime == regime_name
+                        for other in user_regimes.values()
+                        for ref in other.same_period_refs.values()
+                    ),
+                    "same-period value channel",
+                ),
+            )
+            if active
+        ]
+        if unsupported:
+            raise UnsupportedOperationError(
+                f"Current IID in regime {regime_name!r} is not yet composed "
+                f"with {', '.join(unsupported)}."
+            )
+    return _prepare_numerical_solution_phase(
+        query_periods=query_periods,
+        current_iid_bindings=current_iid_bindings,
+        spec=spec,
+        regime_name=regime_name,
+        user_regimes=user_regimes,
+        laws=laws,
+        declared_regime_transition=declared_regime_transition,
+        phase_reachability=phase_reachability,
+        nested_transitions=nested_transitions,
+        all_grids=all_grids,
+        state_grids=state_grids,
+        regime_params_template=regime_params_template,
+        edge_params_template=edge_params_template,
+        granular_param_expansions=granular_param_expansions,
+        regime_to_flat_param_names=regime_to_flat_param_names,
+        regime_names_to_ids=regime_names_to_ids,
+        variables=variables,
+        regimes_to_active_periods=regimes_to_active_periods,
+        regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+        period_to_regime_v_interp=period_to_regime_v_interp,
+        grid_schedule=grid_schedule,
+        period_regimes=period_regimes,
+        state_action_space=state_action_space,
+        submesh_device_ids=submesh_device_ids,
+        axis_widths=axis_widths,
+        sharded_state_names=sharded_state_names,
+        ages=ages,
+        enable_jit=enable_jit,
+        certainty_equivalent=certainty_equivalent,
+        solver=solver,
+        continuation_demanded=continuation_demanded,
+        has_taste_shocks=has_taste_shocks,
+        value_aware_feasibility=value_aware_feasibility,
+        stakeholders=stakeholders,
+        pareto_weights=pareto_weights,
+        same_period_ref_regimes=same_period_ref_regimes,
+        edge_reference_regimes=edge_reference_regimes,
+        edge_target_regimes=edge_target_regimes,
+        invariant_bindings=invariant_bindings,
+        action_partitions=action_partitions,
+        post_decision_shocks=post_decision_shocks,
+        gated_continuations=gated_continuations,
+        post_decision_bounds=post_decision_bounds,
+        scalar_query_models=scalar_query_models,
+        dcegm_query_models=dcegm_query_models,
+        nbegm_query_models=nbegm_query_models,
+    )
+
+
+def _prepare_numerical_solution_phase(  # noqa: PLR0915 - native route admission
+    *,
+    query_periods: tuple[int, ...] = (),
+    current_iid_bindings: Mapping[ShockGroupName, ShockBinding] = MappingProxyType({}),
+    spec: PhasedRegimeSpec,
+    regime_name: RegimeName,
+    user_regimes: Mapping[RegimeName, UserRegime],
+    laws: RegimeLaws,
+    declared_regime_transition: _PhaseRegimeTransition,
+    phase_reachability: PhaseReachability,
+    nested_transitions: _TransitionBundles,
+    all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
+    state_grids: MappingProxyType[RegimeName, MappingProxyType[StateName, Grid]],
+    regime_params_template: RegimeParamsTemplate,
+    edge_params_template: EdgeParamsTemplate,
+    granular_param_expansions: MappingProxyType[FunctionName, tuple[str, ...]],
+    regime_to_flat_param_names: MappingProxyType[RegimeName, frozenset[str]],
+    regime_names_to_ids: RegimeNamesToIds,
+    variables: Variables,
+    regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
+    regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
+    period_to_regime_v_interp: (
+        MappingProxyType[int, MappingProxyType[RegimeName, VInterpolationInfo]] | None
+    ) = None,
+    grid_schedule: AgeGridSchedule | None = None,
+    period_regimes: PeriodRegimes | None = None,
+    state_action_space: StateActionSpace,
+    submesh_device_ids: tuple[int, ...],
+    axis_widths: MappingProxyType[str, int],
+    sharded_state_names: frozenset[StateName],
+    ages: TimeAxis,
+    enable_jit: bool,
+    certainty_equivalent: CertaintyEquivalent | None,
+    solver: Solver,
+    continuation_demanded: bool,
+    has_taste_shocks: bool,
+    value_aware_feasibility: _ValueAwareFeasibility,
+    stakeholders: tuple[str, ...] | None = None,
+    pareto_weights: ParetoWeights | None = None,
+    same_period_ref_regimes: tuple[RegimeName, ...] = (),
+    edge_reference_regimes: tuple[RegimeName, ...] = (),
+    edge_target_regimes: tuple[RegimeName, ...] = (),
+    invariant_bindings: tuple[StateName, ...] = (),
+    action_partitions: int = 1,
+    post_decision_shocks: Mapping[StateName, _IIDProcess] = MappingProxyType({}),
+    gated_continuations: Mapping[RegimeName, GatedContinuationSchedule] = (
+        MappingProxyType({})
+    ),
+    post_decision_bounds: tuple[PostDecisionBoundSpec, ...] = (),
+    scalar_query_models: Mapping[RegimeName, ScalarEGMQueryModel] | None = None,
+    dcegm_query_models: Mapping[RegimeName, DCEGMQueryModel] | None = None,
+    nbegm_query_models: Mapping[RegimeName, NBEGMQueryModel] | None = None,
+) -> _PreparedSolutionPhase:
+    """Prepare canonical economics and context without building CorePrograms."""
+    query_model = (
+        (scalar_query_models or {}).get(regime_name)
+        or (dcegm_query_models or {}).get(regime_name)
+        or (nbegm_query_models or {}).get(regime_name)
+    )
+    if current_iid_bindings:
+        unsupported = [
+            label
+            for active, label in (
+                (action_partitions > 1, "action partitions"),
+                (
+                    spec.solution.objective_aggregator is not None
+                    or spec.simulation.objective_aggregator is not None,
+                    "Decoupled decision",
+                ),
+                (bool(invariant_bindings), "invariant blocks"),
+                (
+                    (
+                        any(bound.kind == "dag" for bound in post_decision_bounds)
+                        and not isinstance(solver, GridSearch)
+                    )
+                    or query_model is not None,
+                    "callable bound or query reconstruction",
+                ),
+                (
+                    bool(gated_continuations)
+                    or bool(laws[regime_name].gated_edges)
+                    or any(
+                        regime_name
+                        in (*law.gated_edges, *_edge_reference_regimes(law=law))
+                        for law in laws.values()
+                    ),
+                    "gated value channel",
+                ),
+                (
+                    bool(same_period_ref_regimes)
+                    or any(
+                        ref.regime == regime_name
+                        for other in user_regimes.values()
+                        for ref in other.same_period_refs.values()
+                    ),
+                    "same-period value channel",
+                ),
+            )
+            if active
+        ]
+        if unsupported:
+            raise UnsupportedOperationError(
+                f"Current IID in regime {regime_name!r} is not yet composed "
+                f"with {', '.join(unsupported)}."
+            )
     if query_model is not None:
         solver = _solver_with_query_authority(solver=solver, query_model=query_model)
         post_decision_bounds = (query_model.authority.bound,)
@@ -4363,6 +4986,7 @@ def _build_solution_phase(  # noqa: PLR0915
         regime_params_template=regime_params_template,
         granular_param_expansions=granular_param_expansions,
         edge_params_template=edge_params_template,
+        participation_targets=frozenset(laws[regime_name].participation),
     )
 
     routing_functions, routing_constraints = _canonical_constraint_routing_inputs(
@@ -4401,25 +5025,10 @@ def _build_solution_phase(  # noqa: PLR0915
         regime_params_template=regime_params_template,
         edge_params_template=edge_params_template,
         variables=variables,
-        fold_only_regimes=fold_only_regimes,
-        draw_only_processes=draw_only_processes,
+        post_decision_shocks=post_decision_shocks,
         phase_reachability=phase_reachability,
         # `source_regime_name` is already passed above; only `phase_name` is new.
         phase_name="solution",
-    )
-
-    # A folded-only target enters `core.transitions`
-    # with an EMPTY bundle (see `_process_regime_core`). Its stored V has the
-    # folded axes integrated out, but its `VInterpolationInfo` still lists the
-    # folded states, so the continuation interpolator would otherwise demand a
-    # `next_<shock>` coordinate the source cannot supply and index an axis the
-    # scalar V no longer has. Strip the folded axes from the interpolation info
-    # of exactly those empty-bundle folded targets so the continuation is read
-    # as the scalar V (no coordinate). Only the Q-and-F continuation read is
-    # overridden; every other consumer keeps the unstripped info.
-    regime_to_v_interpolation_info_for_Q = _strip_folded_axes_from_continuation_targets(
-        regime_to_v_interpolation_info=regime_to_v_interpolation_info,
-        all_grids=all_grids,
     )
 
     # Fixed, distributed states are co-mapped with the continuation V so the solve
@@ -4441,6 +5050,7 @@ def _build_solution_phase(  # noqa: PLR0915
     # Set by whichever branch below builds the decision kernels, to the key
     # their periods were grouped by; `None` where one closure serves every period.
     decision_group_key: _PeriodGroupKey | None = None
+    query_Q_and_F_functions: MappingProxyType[int, QAndFFunction] = MappingProxyType({})
     zero_node = _is_zero_node_regime(
         law=laws[regime_name],
         regime_name=regime_name,
@@ -4525,6 +5135,11 @@ def _build_solution_phase(  # noqa: PLR0915
             transitions=core.transitions,
             grids=all_grids[regime_name],
         )
+        if current_iid_bindings and co_map_state_names:
+            raise UnsupportedOperationError(
+                f"Current IID in regime {regime_name!r} is not yet composed "
+                "with co-map."
+            )
         # A co-mapped state's axis is sliced only off the leaves that carry it; a
         # target regime where the state is pruned keeps its full leaf (`None`).
         co_map_v_arr_in_axes = tuple(
@@ -4538,7 +5153,8 @@ def _build_solution_phase(  # noqa: PLR0915
             )
             for state in co_map_state_names
         )
-        grouped_Q_and_F = _build_Q_and_F_per_period(
+        decision_Q_and_F = functools.partial(
+            _build_Q_and_F_per_period,
             bound_specs=tuple(
                 bound for bound in post_decision_bounds if bound.kind == "dag"
             ),
@@ -4550,7 +5166,7 @@ def _build_solution_phase(  # noqa: PLR0915
             transitions=core.transitions,
             transition_plans=core.transition_plans,
             compute_regime_transition_probs=compute_regime_transition_probs,
-            regime_to_v_interpolation_info=regime_to_v_interpolation_info_for_Q,
+            regime_to_v_interpolation_info=regime_to_v_interpolation_info,
             flat_param_names=flat_param_names,
             period_to_regime_v_interp=period_to_regime_v_interp,
             # A blocked program reads every continuation carrying a bound state
@@ -4566,7 +5182,17 @@ def _build_solution_phase(  # noqa: PLR0915
             gated_continuations=gated_continuations,
             count_raise_landings=counts_raise_landings,
         )
+        grouped_Q_and_F = decision_Q_and_F()
         Q_and_F_functions = grouped_Q_and_F.by_period
+        # Queries receive parent coordinates outside the source's own preflight.
+        # Their counters must not change the ordinary solver's Q/F contract.
+        query_Q_and_F_functions = (
+            decision_Q_and_F(
+                active_periods=query_periods, count_raise_landings=True
+            ).by_period
+            if query_periods
+            else MappingProxyType({})
+        )
         decision_group_key = grouped_Q_and_F.group_key
         if stakeholders is not None:
             # The NaN-diagnostics intermediates mirror
@@ -4585,14 +5211,7 @@ def _build_solution_phase(  # noqa: PLR0915
                 transitions=core.transitions,
                 transition_plans=core.transition_plans,
                 compute_regime_transition_probs=compute_regime_transition_probs,
-                # The same stripped info the solve kernel reads. Both partition
-                # the graph targets into stateful and scalar ones off this
-                # mapping, so handing the diagnostics the unstripped info would
-                # make them classify a folded-only target as stateful, demand a
-                # continuation coordinate for an axis its scalar V does not
-                # have, and report a `map_coordinates` shape error in place of
-                # the NaN they were built to localize.
-                regime_to_v_interpolation_info=regime_to_v_interpolation_info_for_Q,
+                regime_to_v_interpolation_info=regime_to_v_interpolation_info,
                 state_action_space=state_action_space,
                 enable_jit=enable_jit,
                 koopmans_aggregator=cast("EconFunction", core.koopmans_aggregator),
@@ -4610,6 +5229,18 @@ def _build_solution_phase(  # noqa: PLR0915
     # plus the regime's continuation template. `GridSearch` wraps the
     # max-Q-over-a grid search; `DCEGM` wraps the EGM step.
     context = SolverBuildContext(
+        current_iid_plans=MappingProxyType(
+            {
+                period: CurrentIIDPlan.create(
+                    bindings=current_iid_bindings,
+                    age=ages.exact_values[period],
+                    coordinate_kind=coordinate_kind(ages),
+                )
+                for period in Q_and_F_functions
+            }
+        )
+        if current_iid_bindings
+        else MappingProxyType({}),
         regime_name=regime_name,
         scalar_query_models=scalar_query_models,
         dcegm_query_models=dcegm_query_models,
@@ -4661,13 +5292,95 @@ def _build_solution_phase(  # noqa: PLR0915
         same_period_ref_regimes=same_period_ref_regimes,
         edge_reference_regimes=edge_reference_regimes,
         edge_target_regimes=edge_target_regimes,
-        fold_state_names=fold_state_names,
     )
     _fail_if_solver_cannot_consume_transition_local_lotteries(
         solver=solver,
         regime_name=regime_name,
         transition_plans=core.transition_plans,
     )
+    return _PreparedSolutionPhase(
+        action_partitions=action_partitions,
+        all_grids=all_grids,
+        compute_intermediates=compute_intermediates,
+        compute_regime_transition_probs=compute_regime_transition_probs,
+        context=context,
+        continuation_demanded=continuation_demanded,
+        core=core,
+        counts_raise_landings=counts_raise_landings,
+        decision_group_key=decision_group_key,
+        enable_jit=enable_jit,
+        grid_schedule=grid_schedule,
+        laws=laws,
+        pareto_weights=pareto_weights,
+        period_to_state_nodes=period_to_state_nodes,
+        phase_reachability=phase_reachability,
+        post_decision_bounds=post_decision_bounds,
+        query_model=query_model,
+        query_Q_and_F_functions=query_Q_and_F_functions,
+        regime_name=regime_name,
+        regimes_to_active_periods=regimes_to_active_periods,
+        routing=routing,
+        sharded_state_names=sharded_state_names,
+        solver=solver,
+        state_action_space=state_action_space,
+        submesh_device_ids=submesh_device_ids,
+        user_regimes=user_regimes,
+        validation_regime_transition_probs=validation_regime_transition_probs,
+        variables=variables,
+        zero_node=zero_node,
+    )
+
+
+def _prepare_child_carry_publication(
+    *,
+    prepared: _PreparedSolutionPhase,
+    solver_produces_carry: bool,
+) -> tuple[EGMCarryProducer | None, EGMCarry | None]:
+    """Prepare the genuine existing terminal publisher from canonical economics."""
+    return _build_egm_child_carry_producer(
+        user_regime=prepared.user_regimes[prepared.regime_name],
+        law=prepared.laws[prepared.regime_name],
+        functions=prepared.core.functions,
+        variables=prepared.variables,
+        grids=prepared.all_grids[prepared.regime_name],
+        sharded_state_names=prepared.sharded_state_names,
+        continuation_demanded=prepared.continuation_demanded,
+        solver_produces_carry=solver_produces_carry,
+        enable_jit=prepared.enable_jit,
+        devices=placed_devices_for_ids(submesh_device_ids=prepared.submesh_device_ids),
+    )
+
+
+def _finish_solution_phase(
+    *,
+    prepared: _PreparedSolutionPhase,
+) -> _SolutionBuild:
+    """Assemble the actual prepared economics and one genuine solver result."""
+    action_partitions = prepared.action_partitions
+    all_grids = prepared.all_grids
+    compute_intermediates = prepared.compute_intermediates
+    compute_regime_transition_probs = prepared.compute_regime_transition_probs
+    context = prepared.context
+    core = prepared.core
+    counts_raise_landings = prepared.counts_raise_landings
+    decision_group_key = prepared.decision_group_key
+    grid_schedule = prepared.grid_schedule
+    laws = prepared.laws
+    pareto_weights = prepared.pareto_weights
+    period_to_state_nodes = prepared.period_to_state_nodes
+    phase_reachability = prepared.phase_reachability
+    post_decision_bounds = prepared.post_decision_bounds
+    query_model = prepared.query_model
+    regime_name = prepared.regime_name
+    regimes_to_active_periods = prepared.regimes_to_active_periods
+    routing = prepared.routing
+    sharded_state_names = prepared.sharded_state_names
+    solver = prepared.solver
+    state_action_space = prepared.state_action_space
+    submesh_device_ids = prepared.submesh_device_ids
+    validation_regime_transition_probs = prepared.validation_regime_transition_probs
+    variables = prepared.variables
+    zero_node = prepared.zero_node
     if zero_node:
         # No required problem solves this regime, so its solver builds nothing
         # and simulation never enters it.
@@ -4696,17 +5409,9 @@ def _build_solution_phase(  # noqa: PLR0915
     # and marginal utility. Build the producer engine-side and compose it as an
     # output decorator around each period adapter, so the solver stays unaware
     # of the continuation it is being asked to emit.
-    egm_carry_producer, egm_carry_template = _build_egm_child_carry_producer(
-        user_regime=user_regimes[regime_name],
-        law=laws[regime_name],
-        functions=core.functions,
-        variables=variables,
-        grids=all_grids[regime_name],
-        sharded_state_names=sharded_state_names,
-        continuation_demanded=continuation_demanded,
+    egm_carry_producer, egm_carry_template = _prepare_child_carry_publication(
+        prepared=prepared,
         solver_produces_carry=solver_kernels.continuation_spec is not None,
-        enable_jit=enable_jit,
-        devices=placed_devices_for_ids(submesh_device_ids=submesh_device_ids),
     )
     period_kernels = solver_kernels.period_kernels
     continuation_spec = solver_kernels.continuation_spec
@@ -4761,6 +5466,7 @@ def _build_solution_phase(  # noqa: PLR0915
     )
 
     phase = SolutionPhase(
+        current_iid_plans=context.current_iid_plans,
         continuation_reader_capabilities=solver_kernels.continuation_reader_capabilities,
         _variables=variables,
         query_authority=None if query_model is None else query_model.authority,
@@ -4830,16 +5536,17 @@ def _build_solution_phase(  # noqa: PLR0915
             period_kernels=period_kernels,
             continuation_spec=continuation_spec,
         ),
-        context=context,
+        context=(
+            dataclass_replace(
+                context,
+                Q_and_F_functions=MappingProxyType(
+                    {**context.Q_and_F_functions, **prepared.query_Q_and_F_functions}
+                ),
+            )
+            if prepared.query_Q_and_F_functions
+            else context
+        ),
     )
-
-
-@runtime_checkable
-class _PeriodGroupKey(Protocol):
-    """Callable mapping a period to the key its group was built under."""
-
-    def __call__(self, *, period: int) -> Hashable:
-        """Return the grouping key `period` was assigned."""
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -4960,8 +5667,8 @@ def _gated_edge_group_components(
 
     The evaluator half is fingerprinted here because one grouping produces both,
     so a period pair this component merges is a pair that shares each object.
-    The read set passed for either is the edge's declared gate references and leg
-    fallbacks, a superset of the regimes the compiled objects interpolate, which
+    The read set passed for either is the edge's declared leg fallbacks, a
+    superset of the regimes the compiled objects interpolate, which
     keeps the component at least as fine as the grouping it stands for.
 
     Args:
@@ -5225,13 +5932,15 @@ def _build_egm_child_carry_producer(
                 continuous_state_order=continuous_state_names,
             )
             leading_shape = tuple(
-                int(grids[name].to_jax().shape[0])
+                int((grids[name].to_jax()).shape[0])
                 for name in discrete_state_names + passive_state_names
             )
             template = shard_carry_template(
-                template=build_template_egm_carry(
-                    n_rows=int(grids[euler_state_name].to_jax().shape[0]),
-                    leading_shape=leading_shape,
+                template=(
+                    build_template_egm_carry(
+                        n_rows=int(grids[euler_state_name].to_jax().shape[0]),
+                        leading_shape=leading_shape,
+                    )
                 ),
                 grids=grids,
                 sharded_state_names=sharded_state_names,
@@ -5257,12 +5966,12 @@ def _build_egm_child_carry_producer(
             continuous_state_order=continuous_state_names,
         )
         leading_shape = tuple(
-            int(grids[name].to_jax().shape[0])
+            int((grids[name].to_jax()).shape[0])
             for name in discrete_state_names + passive_state_names
         )
         template = shard_carry_template(
             template=build_template_egm_carry(
-                n_rows=int(grids[euler_state_name].to_jax().shape[0]),
+                n_rows=int((grids[euler_state_name].to_jax()).shape[0]),
                 leading_shape=leading_shape,
             ),
             grids=grids,
@@ -5425,6 +6134,9 @@ def _share_finite_nbegm_policy_floor(
 
 def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
     *,
+    current_iid_bindings: Mapping[ShockGroupName, ShockBinding] = MappingProxyType({}),
+    query_periods: tuple[int, ...] = (),
+    acting_periods: tuple[int, ...] = (),
     spec: PhasedRegimeSpec,
     user_regime: UserRegime,
     law: RegimeLaw,
@@ -5463,14 +6175,13 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
     value_aware_feasibility: _ValueAwareFeasibility,
     stakeholders: tuple[str, ...] | None = None,
     pareto_weights: ParetoWeights | None = None,
-    fold_only_regimes: frozenset[RegimeName] = frozenset(),
-    draw_only_processes: Mapping[StateName, _IIDProcess] = MappingProxyType({}),
+    post_decision_shocks: Mapping[StateName, _IIDProcess] = MappingProxyType({}),
     gated_continuations: Mapping[RegimeName, GatedContinuationSchedule] = (
         MappingProxyType({})
     ),
     invariant_bindings: tuple[StateName, ...] = (),
     post_decision_bounds: tuple[PostDecisionBoundSpec, ...] = (),
-) -> SimulationPhase:
+) -> _SimulationBuild:
     """Build all compiled functions for the forward-simulation phase.
 
     The decision functions (Q_and_F, argmax, regime-transition probs) are
@@ -5554,11 +6265,22 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
         Complete simulate functions container.
 
     """
-    # A regime is simulated only where a subject can stand in it, so no
-    # simulate-side program, factory or route exists at a value-only period.
+    # Occupied/acting periods own forward subject programs. Demanded query-only
+    # periods additionally need evaluator contexts, without gaining subject routes.
     simulated_periods = _simulated_periods(
         phase_reachability=simulation_reachability,
         regimes_to_active_periods=regimes_to_active_periods,
+    )
+    simulated_periods = MappingProxyType(
+        {
+            **simulated_periods,
+            regime_name: tuple(
+                sorted(set(simulated_periods[regime_name]) | set(acting_periods))
+            ),
+        }
+    )
+    context_periods = tuple(
+        sorted(set(simulated_periods[regime_name]) | set(query_periods))
     )
     carried_only = spec.carried_only_state_names
     decision_functions = dict(spec.simulation.functions) | {
@@ -5568,6 +6290,7 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
         regime_params_template=regime_params_template,
         granular_param_expansions=granular_param_expansions,
         edge_params_template=edge_params_template,
+        participation_targets=frozenset(law.participation),
     )
 
     routing = _route_constraints(
@@ -5578,7 +6301,7 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
         functions=MappingProxyType(decision_functions),
         variables=variables,
         flat_param_names=flat_param_names,
-        active_periods=simulated_periods[regime_name],
+        active_periods=context_periods,
         grids=all_grids[regime_name],
     )
 
@@ -5598,8 +6321,7 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
         regime_params_template=regime_params_template,
         edge_params_template=edge_params_template,
         variables=variables,
-        fold_only_regimes=fold_only_regimes,
-        draw_only_processes=draw_only_processes,
+        post_decision_shocks=post_decision_shocks,
         phase_reachability=simulation_reachability,
         # `source_regime_name` is already passed above; only `phase_name` is new.
         phase_name="simulation",
@@ -5694,12 +6416,10 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
     type_local_Q_and_F_functions: MappingProxyType[int, QAndFFunction] = (
         MappingProxyType({})
     )
-    if _is_zero_node_regime(
-        law=law,
-        regime_name=regime_name,
-        regimes_to_active_periods=simulated_periods,
-    ):
-        # A nonterminal regime no required problem solves is never simulated.
+    query_Q_and_F_functions: MappingProxyType[int, QAndFFunction] = MappingProxyType({})
+    if not law.terminal and not context_periods:
+        # Neither an occupied/acting period nor a query demands this nonterminal.
+        # Subject programs remain restricted to simulated_periods below.
         compute_regime_transition_probs = None
         per_subject_route = None
         realized_validation_probs = None
@@ -5798,20 +6518,6 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
         # because `dags` resolves a law's arguments against the pool it is handed,
         # transitively. The contract, and its one exception for carried states, is
         # documented on `lcm.phased.Phased`.
-        #
-        # A folded-only target's stored V is a
-        # scalar with its folded axes integrated out, while its `VInterpolationInfo`
-        # still lists them — so the unstripped info makes the continuation read demand
-        # a `next_<shock>` coordinate the source never realises. Strip those folded
-        # axes for the simulate Q read exactly as the solve phase does (reusing the
-        # same helper, keyed on the transitions the Q read actually enumerates); every
-        # other simulate consumer keeps the unstripped info.
-        regime_to_v_interpolation_info_for_Q = (
-            _strip_folded_axes_from_continuation_targets(
-                regime_to_v_interpolation_info=regime_to_v_interpolation_info,
-                all_grids=all_grids,
-            )
-        )
         # The decision functions evaluate the solve representation, so any
         # weight law the solve phase built and this phase did not — the split
         # of a declared entry law into a process — is supplied from there.
@@ -5828,7 +6534,7 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
             bound_specs=tuple(
                 bound for bound in post_decision_bounds if bound.kind == "dag"
             ),
-            active_periods=simulated_periods[regime_name],
+            active_periods=context_periods,
             phase_reachability=solution_reachability,
             source_regime_name=regime_name,
             functions=decision_functions_pool,
@@ -5836,7 +6542,7 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
             transitions=solve_transitions,
             transition_plans=solve_transition_plans,
             compute_regime_transition_probs=solve_compute_regime_transition_probs,
-            regime_to_v_interpolation_info=regime_to_v_interpolation_info_for_Q,
+            regime_to_v_interpolation_info=regime_to_v_interpolation_info,
             flat_param_names=flat_param_names,
             period_to_regime_v_interp=period_to_regime_v_interp,
             koopmans_aggregator=cast("EconFunction", core.koopmans_aggregator),
@@ -5850,6 +6556,16 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
             gated_continuations=gated_continuations,
         )
         Q_and_F_functions = decision_Q_and_F().by_period
+        # Typed queries may receive parent coordinates outside this source's
+        # stored grid. Keep their original landing counters separate from the
+        # ordinary simulation reducers, whose Q/F output remains a pair.
+        query_Q_and_F_functions = (
+            decision_Q_and_F(
+                active_periods=query_periods, count_raise_landings=True
+            ).by_period
+            if query_periods
+            else MappingProxyType({})
+        )
         # Grouped forward simulation reads each continuation carrying a blocked
         # state through the dispatched code's block, which has that axis removed.
         if invariant_bindings:
@@ -5857,7 +6573,18 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
                 co_map_state_names=invariant_bindings
             ).by_period
 
+    # Terminal builders span the horizon; query contexts retain only actual demand.
+    Q_and_F_functions = MappingProxyType(
+        {
+            period: function
+            for period, function in Q_and_F_functions.items()
+            if period in context_periods
+        }
+    )
     per_subject_decisions = _build_per_subject_decisions_per_period(
+        current_iid_draw_plan=CurrentIIDDrawPlan(bindings=current_iid_bindings)
+        if current_iid_bindings
+        else None,
         state_action_space=state_action_space,
         Q_and_F_functions=Q_and_F_functions,
         has_taste_shocks=has_taste_shocks,
@@ -5891,20 +6618,15 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
     )
     next_state = next_state_build.by_period
 
-    # Replaying a solve-phase EGM policy is disabled until an envelope backend
-    # proves the complete read contract. The required proof covers both branch
-    # topology (every interior and exact-node switch is represented with
-    # one-sided records) and row support (a compacted gap is reported rather
-    # than bridged by interpolation). No shipped backend currently proves both:
-    # MSS can omit an owner that wins only inside one candidate interval, FUES
-    # can merge branches when its slope heuristic misses a switch, RFC and LTM
-    # leave switches between retained nodes, and the exact backend publishes no
-    # support verdict for a split segment chain.
-    #
-    # The remaining conditions below define the other invariants a future
-    # crossing-complete backend must satisfy: standalone DC-EGM, phase-invariant
-    # declarations, no taste shocks, no process or passive continuous-state row
-    # axes, and the single-post-state kernel.
+    # Simulation reads the solve-phase EGM policy (policy-first) wherever the
+    # published rows sit on the coordinates the subject is read at: standalone
+    # DC-EGM with its default `replay="candidate"`, phase-invariant
+    # declarations, no taste shocks, no passive continuous-state row axes,
+    # process row axes only with fixed, unconditioned nodes, a scalar savings
+    # floor, and the single-post-state kernel. Every upper-envelope backend
+    # qualifies; a read that leaves its row support falls back to the grid
+    # argmax per subject. A ride-along NB-EGM regime reads its state-grid policy
+    # under the same conditions.
     phase_invariant = (
         not regime_declares_phased(user_regime, law=law)
         and not spec.carried_only_state_names
@@ -6061,10 +6783,15 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
         )
     elif (
         bound_solver is not None
-        and _envelope_publishes_crossings(bound_solver)
+        and bound_solver.replay == "candidate"
+        and external_replay_route is None
+        and not replay_unsupported
+        # The read checks one scalar savings floor; a state-dependent (DAG)
+        # borrowing limit keeps the grid argmax.
+        and not any(bound.kind == "dag" for bound in post_decision_bounds)
         and phase_invariant
         and not has_taste_shocks
-        and not _regime_has_process_state(own_v_info)
+        and not _regime_has_unread_process_state(own_v_info)
         and not _regime_has_passive_state(
             v_interpolation_info=own_v_info,
             euler_state_name=bound_solver.continuous_state,
@@ -6101,6 +6828,59 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
                 grid_schedule=grid_schedule,
             ),
             float_dtype=str(np.dtype(canonical_float_dtype())),
+        )
+    elif (
+        isinstance(solver, NBEGM)
+        and external_replay_route is None
+        and not replay_unsupported
+        and not any(bound.kind == "dag" for bound in post_decision_bounds)
+        and phase_invariant
+        and not has_taste_shocks
+        and not _regime_has_unread_process_state(own_v_info)
+        and not _regime_has_passive_state(
+            v_interpolation_info=own_v_info,
+            euler_state_name=cast("_BoundNBEGM", solver).continuous_state,
+        )
+        # Only the ride-along kernel, built for a state besides the liquid one
+        # or for a draw local to the transition, publishes the policy on the
+        # state grid.
+        and (
+            any(
+                name != cast("_BoundNBEGM", solver).continuous_state
+                for name in state_action_space.states
+            )
+            or draws_transition_local_lottery(plans=solver_context.transition_plans)
+        )
+    ):
+        bound_nbegm = cast("_BoundNBEGM", solver)
+        state_names = tuple(state_action_space.states)
+        discrete_action_names = tuple(state_action_space.discrete_actions)
+        egm_policy_read = NBEGMPolicyRead(
+            action_name=bound_nbegm.continuous_action,
+            resources_target=bound_nbegm.budget_target,
+            savings_lower_bound=float(bound_nbegm.savings_grid.to_jax()[0]),
+            liquid_state_name=bound_nbegm.continuous_state,
+            state_names=state_names,
+            state_axis_lengths_by_period=_replay_axis_lengths_by_period(
+                axis_names=state_names,
+                regime_name=regime_name,
+                active_periods=simulated_periods[regime_name],
+                grids=all_grids[regime_name],
+                grid_schedule=grid_schedule,
+            ),
+            discrete_action_names=discrete_action_names,
+            branch_discrete_action_codes=tuple(
+                product(
+                    *(
+                        cast("DiscreteGrid", all_grids[regime_name][name]).codes
+                        for name in discrete_action_names
+                    )
+                )
+            )
+            if discrete_action_names
+            else (),
+            float_dtype=str(np.dtype(canonical_float_dtype())),
+            integer_dtype=str(np.dtype(jnp.int32)),
         )
 
     # Inventory the periodized nodes the additional-target guard must reject —
@@ -6147,8 +6927,31 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
         else constraints
     )
 
+    simulation_context = dataclass_replace(
+        solver_context,
+        Q_and_F_functions=Q_and_F_functions,
+        functions=simulate_functions,
+        constraints=constraints,
+        constraint_functions=core.constraint_functions,
+        processed_constraints=core.processed_constraints,
+        constraint_plan=routing.plan,
+        grids=simulate_grids,
+        state_action_space=create_state_action_space(
+            variables=simulation_variables, grids=simulate_grids
+        ),
+        # Only demanded exit queries need integration banks in the forward phase.
+        current_iid_plans=MappingProxyType({}),
+        current_iid_draw_plan=CurrentIIDDrawPlan(bindings=current_iid_bindings)
+        if current_iid_bindings
+        else None,
+    )
     programs = build_simulation_programs(
-        context=solver_context,
+        # Ordinary replay supplies the solve-state roster plus actual carried
+        # law inputs. Exit queries retain the complete simulate-state context
+        # above, so a carried callback reads its actual mapped coordinates.
+        context=dataclass_replace(
+            simulation_context, state_action_space=state_action_space
+        ),
         Q_and_F_functions=Q_and_F_functions,
         per_subject_decisions=per_subject_decisions,
         per_subject_transitions=next_state_build.per_subject_by_period,
@@ -6160,7 +6963,10 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
         type_local_per_subject_decisions=type_local_per_subject_decisions,
     )
 
-    return SimulationPhase(
+    phase = SimulationPhase(
+        current_iid_draw_plan=CurrentIIDDrawPlan(bindings=current_iid_bindings)
+        if current_iid_bindings
+        else None,
         _variables=simulation_variables,
         grids=simulate_grids,
         carried_only_state_names=frozenset(carried_grids),
@@ -6205,60 +7011,34 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
         external_replay_route=external_replay_route,
         replay_unsupported=replay_unsupported,
     )
+    return _SimulationBuild(
+        phase=phase,
+        context=(
+            dataclass_replace(
+                simulation_context,
+                Q_and_F_functions=MappingProxyType(
+                    {**Q_and_F_functions, **query_Q_and_F_functions}
+                ),
+            )
+            if query_Q_and_F_functions
+            else simulation_context
+        ),
+    )
 
 
-# Upper envelopes whose published row carries every switch a read crosses.
-# Empty: no shipped backend provides the guarantee, so the branch-faithful policy
-# read is off and simulation keeps its grid-argmax. An envelope earns a place here
-# by passing the crossing- and support-completeness suites, not by intending to.
-_CROSSING_COMPLETE_ENVELOPES: tuple[type[EnvelopeConfig], ...] = ()
-
-
-def _envelope_publishes_crossings(solver: DCEGM) -> bool:
-    """Whether the solver's upper envelope certifies every segment crossing.
-
-    No shipped backend qualifies, so the read is off everywhere and simulation
-    keeps its grid-argmax. A branch-faithful policy read interpolates a row whose
-    envelope switches sit at duplicated abscissae carrying both branch records:
-
-    - `MSSEnvelope` ⇒ no: the refinement inserts crossings only between adjacent query
-      winners, so a branch that owns ground strictly inside one candidate
-      interval leaves no record in the row. Opening the read on such a row does
-      not merely blur a switch — it publishes a different action, and one the
-      canonical-Q safeguard cannot recover, because that safeguard rescores the
-      emitted candidate against the finite action grid and an omitted owner is
-      in neither set.
-    - `ExactEnvelope` ⇒ no: ownership is resolved per node cell and certified,
-      a boundary whose sides differ in value or policy emits both one-sided
-      records, and a chain with more owned sub-cells than the row has slots
-      overflows loudly through `n_kept`. The backend nevertheless publishes no
-      read-support verdict, so a row whose segment chain splits (NaN-dead
-      candidates, or a value decrease between consecutive candidates) carries
-      no signal that the reader would be bridging a gap rather than
-      interpolating one branch.
-    - `FUESEnvelope` ⇒ no: segment identity is decided by thresholding the
-      implied-savings slope (`FUESEnvelope.jump_thresh`) — a heuristic — and the
-      DC-EGM kernel supplies no segment labels. Two value branches whose
-      cross-segment slope stays below the threshold merge into one row with
-      no crossing inserted; the row then bridges the switch, and neither an
-      exhaustive scan nor a wider window repairs that, because the scan can
-      only search within the segment identity it was given. A FUES row is
-      therefore not certified crossing-complete for the read.
-    - `RFCEnvelope` / `LTMEnvelope` ⇒ no: the switch lands between retained
-      nodes.
-    """
-    return isinstance(solver.envelope, _CROSSING_COMPLETE_ENVELOPES)
-
-
-def _regime_has_process_state(v_interpolation_info: VInterpolationInfo) -> bool:
-    """Whether the regime carries a continuous stochastic-process state.
+def _regime_has_unread_process_state(v_interpolation_info: VInterpolationInfo) -> bool:
+    """Whether a process state's rows cannot be blended at a simulated value.
 
     A process is stored among the node-valued discrete states, so its policy
-    row is a discrete axis. Its simulation transition draws a continuous value
-    off the process grid, which a nearest-node row read cannot resolve.
+    row is a discrete axis, and its simulation transition may draw a value
+    between nodes. The policy read blends the two bracketing node rows linearly
+    in the node coordinate, the rule the process's transition weights follow
+    off node. That needs nodes fixed at build time, and an unconditioned law:
+    a state-conditioned process computes its weights directly at the value.
     """
     return any(
         isinstance(grid, _ContinuousStochasticProcess)
+        and (not grid.is_fully_specified or grid.state_conditioned is not None)
         for grid in v_interpolation_info.discrete_states.values()
     )
 
@@ -6314,60 +7094,6 @@ def regime_declares_phased(user_regime: UserRegime, *, law: RegimeLaw) -> bool:
     aggregator, is classified by the shared phase-normalization helper.
     """
     return bool(phase_variation_paths(user_regime=user_regime, law=law))
-
-
-@dataclass(frozen=True)
-class _ConstraintRoutingResult:
-    """The retained route ledger and the constraints evaluated numerically."""
-
-    plan: ConstraintPlan | None
-    """Complete route ledger, or `None` when the solver declares no routes."""
-
-    evaluated_names: frozenset[FunctionName]
-    """Constraint names every applicable route evaluates."""
-
-
-@dataclass(frozen=True)
-class _CoreResult:
-    """Result of core regime function processing for one phase."""
-
-    functions: EconFunctionsMapping
-    """User functions (utility, helpers) with params renamed to qnames."""
-
-    constraints: ConstraintFunctionsMapping
-    """Constraint callables retained in the numerical feasibility kernel."""
-
-    constraint_functions: ConstraintFunctionsMapping
-    """Every declared constraint callable, including compiled and proved ones."""
-
-    processed_constraints: ProcessedConstraintsMapping
-    """Every declared constraint in normalized form, for solver reasoning.
-
-    Not a second source of truth: `constraint_functions` is built from this
-    mapping at one site, so compiled structure and executable predicates cannot
-    disagree about what was declared."""
-
-    transitions: TransitionFunctionsMapping
-    """Nested mapping of transition names to transition functions."""
-
-    transition_plans: TargetTransitionPlans
-    """Immutable mapping of target regime names to their transition laws."""
-
-    next_regime_func: TransitionFunction | None
-    """The coarse regime transition function; `None` for terminal regimes and
-    for per-target regime transitions."""
-
-    next_regime_cells: MappingProxyType[RegimeName, EconFunction] | None
-    """Per-target regime transition probability functions (params renamed),
-    or `None` when the regime transition is coarse or absent."""
-
-    koopmans_aggregator: EconFunction | None
-    """The Bellman aggregator with params renamed to qnames; `None` in a
-    terminal regime."""
-
-    objective_aggregator: EconFunction | None
-    """The aggregator the actions are chosen with, params renamed to qnames;
-    `None` when the Bellman aggregator also chooses."""
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -6509,8 +7235,7 @@ def _process_regime_core(
     regime_params_template: RegimeParamsTemplate,
     edge_params_template: EdgeParamsTemplate,
     variables: Variables,
-    fold_only_regimes: frozenset[RegimeName] = frozenset(),
-    draw_only_processes: Mapping[StateName, _IIDProcess] = MappingProxyType({}),
+    post_decision_shocks: Mapping[StateName, _IIDProcess] = MappingProxyType({}),
     phase_reachability: PhaseReachability,
     phase_name: PhaseName,
     scalar_query_model: ScalarEGMQueryModel
@@ -6546,13 +7271,10 @@ def _process_regime_core(
         state_grids: Immutable mapping of regime names to their state grids.
         regime_params_template: The regime's parameter template.
         variables: States and actions of the regime with kind/topology/process tags.
-        fold_only_regimes: Regime names whose every state is a folded IID process
-            (scalar stored V). A reachable target in this set that would otherwise
-            get an empty bundle is kept enumerable with an explicit empty
-            bundle, so its scalar continuation enters E[V].
-        draw_only_processes: The folded IID shocks of this regime that only its
-            transitions read. They are no states of the regime; a law that reads
-            one's draw takes it from the process as a transition-local lottery.
+        post_decision_shocks: The post-decision shocks of this regime. They are no
+            states of the regime; a law that reads one's draw takes it from its
+            nodes as a transition-local lottery, which simulation draws from the
+            shock's law unless its process asks for its nodes.
         phase_reachability: This phase's static regime graph, the sole source
             of which targets need a continuation built.
         phase_name: Phase being built. Only the solution phase reads a target's
@@ -6684,23 +7406,6 @@ def _process_regime_core(
         if user_regime in continuation_targets
         for process, grid in grids.items()
         if isinstance(grid, _ContinuousStochasticProcess)
-        # A folded process gets no SOLVE continuation transition, whether or not
-        # the source carries it. Its stored V has no such axis in any period, so
-        # there is no coordinate for an edge to place and no axis for the
-        # continuation to interpolate over; the source reads the already-averaged
-        # value directly (`_strip_folded_axes_from_continuation_targets`). This
-        # has to be decided here: the process names come off the TARGET's own
-        # grids, so a folded process the source does not carry reaches synthesis
-        # at this point and no earlier stage can filter it out.
-        #
-        # Simulation is the opposite case and takes the edge. A fold removes an
-        # axis from STORAGE, not a shock from the world: a subject in the regime
-        # still realizes one each period, and its own utility and policy read
-        # that realization. Without the law the period simulates with an unset
-        # shock, so its value and every action that depends on it come out unset
-        # too. The decision functions evaluate the solve representation, so the
-        # axis stays integrated out where it was.
-        if phase_name != "solution" or not getattr(grid, "fold", False)
     }
     # A process the source carries is transitioned from its current value. One
     # it does not carry is entered at its own law -- unless the source declared
@@ -6777,7 +7482,7 @@ def _process_regime_core(
                 grid=grid,
                 grids=all_grids[user_regime],
                 clip_coordinate=phase_name == "simulation"
-                and grid.simulate_draws == "nodes",
+                and grid.simulated_draws == "nodes",
             )
             for (user_regime, process), grid in carried_process_grids.items()
         }
@@ -6838,7 +7543,7 @@ def _process_regime_core(
             )
             or state in markov_draw_laws
         }
-        | dict(draw_only_processes),
+        | dict(post_decision_shocks),
         state_grids=state_grids,
     )
     _fail_if_a_law_reads_a_draw_the_edge_lacks(
@@ -6851,7 +7556,7 @@ def _process_regime_core(
         processed_functions=processed_functions,
         source_draw_grids=source_draw_grids,
         source_grids=all_grids[source_regime_name],
-        draw_only_processes=draw_only_processes,
+        post_decision_shocks=post_decision_shocks,
         markov_draw_laws=markov_draw_laws,
         regime_params_template=regime_params_template,
     )
@@ -6904,21 +7609,6 @@ def _process_regime_core(
     )
 
     nested_transitions_by_target = unflatten_regime_namespace(internal_transition)
-    # A graph-retained target whose ONLY state is a
-    # target-local folded IID process has no ordinary state law and no
-    # source-carried process edge, so it is absent from
-    # `nested_transitions_by_target` and would be silently dropped from
-    # the continuation graph / E[V] — valuing the source action that routes to it
-    # as worthless (a reversed policy). Its stored V is a SCALAR (the folded
-    # axis is integrated out), so it needs no continuation coordinate: keep an
-    # explicit EMPTY bundle so it stays enumerable and its scalar V enters E[V]
-    # (the solve phase strips the folded axis from its interpolation info; see
-    # `_build_solution_phase`). Scoped strictly to folded-only targets; the
-    # general non-folded empty-bundle hole (an ordinary state reached only via
-    # the regime transition) stays deferred.
-    for target in continuation_targets:
-        if target in fold_only_regimes and target not in nested_transitions_by_target:
-            nested_transitions_by_target[target] = {}
     transitions = _wrap_transitions(nested_transitions_by_target)
 
     transition_plans = _build_transition_plans(
@@ -6935,7 +7625,7 @@ def _process_regime_core(
         phase_name=phase_name,
         original_lottery_layouts=original_lottery_layouts,
         source_draws=frozenset(source_draw_grids),
-        draw_only_processes=draw_only_processes,
+        post_decision_shocks=post_decision_shocks,
     )
 
     fail_if_transition_namespaces_are_mixed(
@@ -7077,7 +7767,7 @@ def _add_source_draw_functions(
     source_grids: Mapping[StateOrActionName, Grid],
     markov_draw_laws: Mapping[StateName, StochasticTransition],
     regime_params_template: RegimeParamsTemplate,
-    draw_only_processes: Mapping[StateName, _IIDProcess] = MappingProxyType({}),
+    post_decision_shocks: Mapping[StateName, _IIDProcess] = MappingProxyType({}),
 ) -> tuple[str, ...]:
     """Add each transition-local draw's node axis, support and weights.
 
@@ -7085,7 +7775,7 @@ def _add_source_draw_functions(
     values, and the weights are the source's law at the source's current value:
 
     - a process: its nodes, and its transition row;
-    - a transition-only shock: its nodes, and its unconditional weights, since
+    - a post-decision shock: its nodes, and its unconditional weights, since
       the source holds no current value of it;
     - a Markov state: its codes, and the probabilities of its law declared once
       for every target, with that law's parameters.
@@ -7104,9 +7794,9 @@ def _add_source_draw_functions(
             )
             processed_functions[f"weight_{axis_name}"] = (
                 _get_entry_weights_for_process(
-                    name=state, grid=draw_only_processes[state]
+                    name=state, grid=post_decision_shocks[state]
                 )
-                if state in draw_only_processes
+                if state in post_decision_shocks
                 else _get_weights_func_for_process(
                     name=state, grid=grid, grids=source_grids
                 )
@@ -7255,6 +7945,24 @@ def _literal_joint_support(
     return cast("EconFunction", provide)
 
 
+def _continuous_post_decision_draw(
+    *, process: _IIDProcess | None, phase_name: PhaseName
+) -> _IIDProcess | None:
+    """Return the post-decision shock a simulation draws from its law, else `None`.
+
+    The nodes are the solve's integration rule. The draw enters only next period's
+    state law, so simulation takes it from the continuous law unless the process
+    asks for its nodes.
+    """
+    if (
+        process is None
+        or phase_name != "simulation"
+        or process.simulated_draws == "nodes"
+    ):
+        return None
+    return process
+
+
 def _build_transition_plans(
     *,
     source_regime_name: RegimeName,
@@ -7270,14 +7978,14 @@ def _build_transition_plans(
         {}
     ),
     source_draws: frozenset[tuple[RegimeName, ProcessName]] = frozenset(),
-    draw_only_processes: Mapping[StateName, _IIDProcess] = MappingProxyType({}),
+    post_decision_shocks: Mapping[StateName, _IIDProcess] = MappingProxyType({}),
 ) -> TargetTransitionPlans:
     """Lower ordinary and joint declarations into complete target-edge plans.
 
     `source_draws` names the `(target, process)` pairs whose draw is taken from
     the source's process inside the transition: a law toward `target` reads it,
     and `target` does not carry the process. Each is a transition-local lottery
-    on the source's process nodes; a process in `draw_only_processes` is no
+    on the source's process nodes; a process in `post_decision_shocks` is no
     state of the source and supplies its nodes from there.
     """
     plans: dict[RegimeName, TargetTransitionPlan] = {}
@@ -7337,8 +8045,8 @@ def _build_transition_plans(
                 support_provider_name = f"support_{next_state_name}"
                 weight_name = f"weight_{qualified_name}"
                 source_grid = (
-                    draw_only_processes[source_draw[1]]
-                    if source_draw[1] in draw_only_processes
+                    post_decision_shocks[source_draw[1]]
+                    if source_draw[1] in post_decision_shocks
                     else all_grids[source_regime_name][source_draw[1]]
                 )
                 is_process = isinstance(source_grid, _ContinuousStochasticProcess)
@@ -7364,6 +8072,10 @@ def _build_transition_plans(
                     node_annotation="ContinuousState"
                     if is_process
                     else "DiscreteState",
+                    continuous_draw=_continuous_post_decision_draw(
+                        process=post_decision_shocks.get(source_draw[1]),
+                        phase_name=phase_name,
+                    ),
                 )
                 continue
             if next_state_name.startswith("support_next_") and (
@@ -7797,6 +8509,7 @@ def _engine_flat_param_names(
     regime_params_template: RegimeParamsTemplate,
     granular_param_expansions: MappingProxyType[FunctionName, tuple[str, ...]],
     edge_params_template: EdgeParamsTemplate,
+    participation_targets: frozenset[RegimeName],
 ) -> frozenset[str]:
     """Return the regime's flat param names in the engine's binding vocabulary.
 
@@ -7804,9 +8517,10 @@ def _engine_flat_param_names(
     by their per-target spellings (`<target>__<law>__<param>`); everything
     else passes through unchanged. A source's kernels evaluate its
     regime-transition law, so its law's edge slots join the vocabulary under
-    their `flat_params["edges"][source]` keys. The gate and projection slots do
-    not: the edge fold binds those on the target's grid, and no regime kernel
-    reads them.
+    their `flat_params["edges"][source]` keys. Declared participation predicate and
+    projection slots join them: native participation queries read these source-owned
+    edge parameters at their actual destination date. Legacy Gate slots stay
+    excluded because their fold binds them separately on the target's grid.
     """
     names: set[str] = set()
     for name in get_flat_param_names(regime_params_template):
@@ -7818,15 +8532,22 @@ def _engine_flat_param_names(
             )
         else:
             names.add(name)
-    return frozenset(names) | _law_param_names(
-        edge_params_template=edge_params_template
+    return (
+        frozenset(names)
+        | _law_param_names(edge_params_template=edge_params_template)
+        | frozenset(
+            name
+            for name in get_flat_param_names(edge_params_template)
+            if is_gated_cell_slot(name)
+            and tree_path_from_qname(name)[0] in participation_targets
+        )
     )
 
 
 def _law_param_names(*, edge_params_template: EdgeParamsTemplate) -> frozenset[str]:
     """Return the flat names of a source's regime-transition law parameters.
 
-    These are the edge slots outside a gate's predicate, references and routes:
+    These are the edge slots outside a gate's predicate and routes:
     a law over all targets and a per-target cell.
 
     Args:
@@ -8256,61 +8977,6 @@ def _get_conditioned_weights_func(
         )
 
     return weights_func_conditioned
-
-
-def get_conditioned_fold_weights_by_code(
-    *,
-    name: ProcessName,
-    grid: _ContinuousStochasticProcess,
-    grids: Mapping[StateOrActionName, Grid],
-) -> FloatND:
-    """Return one fold quadrature row per category of the conditioning state.
-
-    Row `c` is the folded process's own marginal under the `sigma` that
-    category `c` selects, binned on the fixed common nodes. Rows are ordered by
-    the conditioning categorical's integer **code**, which is also the position
-    of that category along the conditioning state's grid axis, so the fold
-    reduction gathers a row by the axis index it is already reducing against.
-
-    Only an IID process carries `fold`, so the row does not depend on a
-    from-value and the returned array is a plain build-time constant.
-
-    Args:
-        name: Name of the folded process state.
-        grid: The folded process, whose `state_conditioned` is set.
-        grids: Grid mapping of the regime declaring it, used to resolve the
-            conditioning state.
-
-    Returns:
-        Array of shape `(n_categories, n_points)`, each row summing to one.
-
-    """
-    sc = grid.state_conditioned
-    if sc is None:
-        msg = (
-            f"Fold state '{name}' is not state-conditioned, so it has no "
-            "per-category quadrature rows."
-        )
-        raise ModelInitializationError(msg)
-    conditioning_grid, family = _validate_conditioned_process(
-        name=name, grid=grid, sc=sc, grids=grids
-    )
-    nodes = grid.get_gridpoints()
-    fixed = dict(grid.params)
-    return jnp.stack(
-        [
-            conditioned_row(
-                family=family,
-                nodes=nodes,
-                sigma=sigma,
-                # Unused for an IID family, and only an IID process folds.
-                from_value=0.0,
-                mu=fixed["mu"],
-                rho=fixed.get("rho"),
-            )
-            for sigma in sigma_array_by_code(cond_grid=conditioning_grid, by=sc.by)
-        ]
-    )
 
 
 def _get_weights_func_for_process(
@@ -9291,20 +9957,18 @@ def _fail_if_blocked_regime_reads_unsupported_inputs(
     *,
     regime_name: RegimeName,
     invariant_bindings: tuple[StateName, ...],
-    fold_state_names: tuple[StateName, ...],
     edge_reference_regimes: tuple[RegimeName, ...],
 ) -> None:
-    """Refuse blocking a regime that folds a process or reads an edge reference.
+    """Refuse blocking a regime that reads an edge reference.
 
     Raises:
-        ExecutionPlanningError: The regime binds an invariant state and folds a
-            process or reads a gated-edge reference value.
+        ExecutionPlanningError: The regime binds an invariant state and reads a
+            gated-edge reference value.
 
     """
     if not invariant_bindings:
         return
     failures = [
-        *(f"folds the process {name!r}" for name in fold_state_names),
         *(
             f"reads the edge-reference value of {name!r}"
             for name in edge_reference_regimes
@@ -9318,76 +9982,6 @@ def _fail_if_blocked_regime_reads_unsupported_inputs(
             "to solve it unblocked."
         )
         raise ExecutionPlanningError(msg)
-
-
-def _fold_state_names(
-    *,
-    state_names: tuple[StateName, ...],
-    grids: MappingProxyType[StateOrActionName, Grid],
-) -> tuple[StateName, ...]:
-    """Return the IID-process states declared `fold=True`, in state-axis order.
-
-    A folded state is integrated out of the stored value by quadrature
-    immediately after the period's max-over-actions / collective readout — a
-    state-topology property collected the same way `_co_map_state_names`
-    collects distributed states, not a per-node computation.
-    """
-    return tuple(
-        name
-        for name in state_names
-        if isinstance(grid := grids.get(name), _IIDProcess) and grid.fold
-    )
-
-
-def _strip_folded_axes_from_continuation_targets(
-    *,
-    regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
-    all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
-) -> MappingProxyType[RegimeName, VInterpolationInfo]:
-    """Override the continuation interpolation info of every folded target.
-
-    A folded state's stored V has that axis integrated out
-    (`_get_regime_V_shapes_and_shardings`) in every period the regime is active,
-    and no solve-phase continuation edge places a coordinate on it. But
-    `create_v_interpolation_info` still lists the state, so the ordinary
-    continuation interpolator would demand a `next_<shock>` coordinate no source
-    realises and index an axis the stored V does not have. Strip those states, so
-    the interpolation runs over exactly the axes the array carries and the fold's
-    own quadrature is what integrates the shock — one step earlier than the
-    continuation would have. Every regime that folds nothing is passed through
-    unchanged.
-
-    Args:
-        regime_to_v_interpolation_info: The model's per-regime interpolation info.
-        all_grids: Immutable mapping of regime names to Grid spec objects.
-
-    Returns:
-        The interpolation-info mapping with each folded regime stripped of its
-        folded axes (a copy only when an override is needed).
-
-    """
-    overridden: dict[RegimeName, VInterpolationInfo] = {}
-    for target, info in regime_to_v_interpolation_info.items():
-        grids = all_grids.get(target, MappingProxyType({}))
-        folded = {
-            name
-            for name in info.state_names
-            if isinstance(grid := grids.get(name), _IIDProcess) and grid.fold
-        }
-        if not folded:
-            continue
-        overridden[target] = VInterpolationInfo(
-            state_names=tuple(n for n in info.state_names if n not in folded),
-            discrete_states=MappingProxyType(
-                {k: v for k, v in info.discrete_states.items() if k not in folded}
-            ),
-            continuous_states=MappingProxyType(
-                {k: v for k, v in info.continuous_states.items() if k not in folded}
-            ),
-        )
-    if not overridden:
-        return regime_to_v_interpolation_info
-    return MappingProxyType({**regime_to_v_interpolation_info, **overridden})
 
 
 def _build_period_state_axes(
@@ -9792,6 +10386,7 @@ def _build_Q_and_F_per_period(
 
 def _build_per_subject_decisions_per_period(
     *,
+    current_iid_draw_plan: CurrentIIDDrawPlan | None = None,
     state_action_space: StateActionSpace,
     Q_and_F_functions: MappingProxyType[int, QAndFFunction],
     has_taste_shocks: bool = False,
@@ -9831,6 +10426,8 @@ def _build_per_subject_decisions_per_period(
                 stakeholders=stakeholders,
                 pareto_weights=pareto_weights,
             )
+            if current_iid_draw_plan is not None:
+                built[q_id] = current_iid_draw_plan.wrap(built[q_id])
         result[period] = built[q_id]
     return MappingProxyType(result)
 
@@ -9853,7 +10450,7 @@ def _build_pointwise_Q_and_F_per_period(
     """
     from _lcm.regime_building.Q_and_F import (  # noqa: PLC0415
         BoundedQAndF,
-        runtime_bound_specs,
+        has_action_integrity,
     )
 
     subject_mapped_names = (
@@ -9869,22 +10466,89 @@ def _build_pointwise_Q_and_F_per_period(
             # A terminal period's Q_and_F takes no actions, so only the names it
             # actually declares can be mapped over the subject axis.
             declared = frozenset(inspect.signature(Q_and_F).parameters)
-            bounded = bool(runtime_bound_specs(function=Q_and_F))
+            bounded = has_action_integrity(function=Q_and_F)
             actual = BoundedQAndF(function=Q_and_F) if bounded else Q_and_F
             func = jax.jit(actual) if enable_jit else actual
+            mapped = simulation_spacemap(
+                func=func,
+                action_names=(),
+                bound_summary=False,
+                state_names=tuple(
+                    name for name in subject_mapped_names if name in declared
+                ),
+            )
             built[q_id] = cast(
                 "QAndFFunction[PytreeValue]",
-                simulation_spacemap(
-                    func=func,
-                    action_names=(),
-                    bound_summary=bounded,
-                    state_names=tuple(
-                        name for name in subject_mapped_names if name in declared
-                    ),
-                ),
+                _SubjectPointwiseQAndF(function=mapped) if bounded else mapped,
             )
         result[period] = built[q_id]
     return MappingProxyType(result)
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _SubjectPointwiseQAndF:
+    """Summarize actual-action integrity over its source subject holders."""
+
+    function: Callable[..., PytreeValue]
+
+    def __post_init__(self) -> None:
+        from _lcm.simulation.program_arguments import (  # noqa: PLC0415 - forward operand namespace
+            ACTIVE_SUBJECTS_ARGUMENT,
+        )
+
+        signature = inspect.signature(self.function)
+        publish_signature(
+            target=self,
+            signature=signature.replace(
+                parameters=(
+                    *signature.parameters.values(),
+                    inspect.Parameter(
+                        ACTIVE_SUBJECTS_ARGUMENT,
+                        inspect.Parameter.KEYWORD_ONLY,
+                        default=None,
+                    ),
+                )
+            ),
+        )
+
+    def __call__(self, **kwargs: PytreeValue) -> PytreeValue:
+        from _lcm.simulation.program_arguments import (  # noqa: PLC0415 - forward operand namespace
+            ACTIVE_SUBJECTS_ARGUMENT,
+        )
+        from _lcm.solution.feasibility import (  # noqa: PLC0415 - pointwise status owner
+            BoundedResult,
+            reduce_bound_input_status,
+            reduce_continuation_read_counts,
+            reduce_query_input_status,
+        )
+
+        active = cast("BoolND | None", kwargs.pop(ACTIVE_SUBJECTS_ARGUMENT, None))
+        result = self.function(**kwargs)
+        if type(result) is not BoundedResult:
+            raise TypeError("Pointwise integrity requires its original bounded result.")
+        records = (*result.bound_status, *(result.query_status or ()))
+        if not records:
+            raise TypeError("Pointwise integrity requires declared status records.")
+        shape = records[0].nonfinite_floor.shape
+        if active is None:
+            active = jnp.ones(shape, dtype=jnp.bool_)
+        else:
+            if active.ndim != 1 or active.dtype != jnp.bool_:
+                raise TypeError("Pointwise activity must be a Boolean row mask.")
+            if not shape:
+                active = jnp.any(active)
+        return dataclass_replace(
+            result,
+            bound_status=reduce_bound_input_status(
+                statuses=result.bound_status, active=active
+            ),
+            query_status=reduce_query_input_status(
+                statuses=result.query_status, active=active
+            ),
+            continuation_read_counts=reduce_continuation_read_counts(
+                counts=result.continuation_read_counts, active=active
+            ),
+        )
 
 
 def _build_nnbegm_outer_target_functions(
@@ -10003,7 +10667,7 @@ def _build_next_state_vmapped(
                 for target, grids in all_grids.items()
                 for state, grid in grids.items()
                 if isinstance(grid, _ContinuousStochasticProcess)
-                and grid.simulate_draws == "nodes"
+                and grid.simulated_draws == "nodes"
             }
         )
         vmap_variables = tuple(arg for arg in sig_args if arg not in non_vmap)

@@ -1,5 +1,9 @@
 """Chunk starts share code while retaining the exact full-population RNG stream."""
 
+import hashlib
+import json
+import struct
+
 import jax
 import numpy as np
 import pytest
@@ -22,9 +26,22 @@ def test_budgeted_chunk_windows_share_one_profile_and_preserve_every_key(
             expected_carry = key
             expected = {}
             for name in ("health", "shock"):
-                split = jax.random.split(expected_carry, original + 1)
-                expected_carry = split[0]
-                raw = np.asarray(jax.random.key_data(split[1:]))
+                encoded = json.dumps(
+                    ("pylcm.random.v1", "state", name, 0), separators=(",", ":")
+                ).encode("utf-8")
+                base = key
+                for word in struct.unpack(">8I", hashlib.sha256(encoded).digest()):
+                    base = jax.random.fold_in(base, np.uint32(word))
+                raw = np.stack(
+                    [
+                        jax.random.key_data(
+                            jax.random.fold_in(
+                                jax.random.fold_in(jax.random.fold_in(base, 0), row), 0
+                            )
+                        )
+                        for row in range(original)
+                    ]
+                )
                 padded = np.concatenate(
                     [raw, np.repeat(raw[-1:], 9 - original, axis=0)]
                 )

@@ -73,6 +73,9 @@ class _CompilationKwargs(TypedDict):
     regimes: MappingProxyType[backward_induction.RegimeName, backward_induction.Regime]
     program_fingerprint: str
     flat_params: backward_induction.FlatParams
+    solve_parameter_views: NotRequired[
+        Mapping[backward_induction.RegimeName, backward_induction.FlatParams]
+    ]
     ages: backward_induction.TimeAxis
     next_regime_to_V_arr: MappingProxyType[
         backward_induction.RegimeName, backward_induction.FloatND
@@ -86,7 +89,6 @@ class _CompilationKwargs(TypedDict):
     enable_jit: bool
     execution: backward_induction.ResolvedExecution
     retain_replay: bool
-    retain_all_artifacts: bool
     persistable_artifact_refs: frozenset[backward_induction.ArtifactRef]
     max_compilation_workers: int | None
     logger: logging.Logger
@@ -103,6 +105,7 @@ class _CompilationKwargs(TypedDict):
         Mapping[backward_induction.RegimeName, backward_induction.StateActionSpace]
         | None
     ]
+    collect_continuation_read_counts: NotRequired[bool]
 
 
 class _ReservationKwargs(TypedDict):
@@ -199,6 +202,8 @@ def donor_pair_model(
         n_liquid=8,
         n_savings=10,
         n_consumption=12,
+        # The census budgets were measured on the certified reader's footprint.
+        nbegm_overrides={"envelope_arithmetic": "certified"},
         execution_config=ExecutionConfig(
             device_memory_bytes=device_memory_bytes, axis_widths=dict(axis_widths)
         ),

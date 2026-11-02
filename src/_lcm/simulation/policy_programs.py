@@ -116,7 +116,12 @@ def declare_finite_replay_programs(regime: Regime) -> Regime:
             subject_names=("states",),
             state_names=regime.simulation.state_names,
             reads=payload_reads,
-            roles=("inner_candidate", "outer_candidate", "live", "represented"),
+            roles=(
+                "inner_candidate",
+                "outer_candidate",
+                "candidate_value",
+                "represented",
+            ),
         )
         value_reads = rekeyed_value_reads(
             reads=decision.requirements.value_reads, core_key=POLICY_RANK
@@ -296,6 +301,7 @@ class _Rank:
         ranked = _rank_nnbegm_candidate_bank(
             candidate_inner=bank[0][:, None],
             candidate_outer=bank[1][:, None],
+            candidate_value=bank[2][:, None],
             represented=bank[3][:, None],
             optimal_actions=MappingProxyType({}),
             regime=self.regime,

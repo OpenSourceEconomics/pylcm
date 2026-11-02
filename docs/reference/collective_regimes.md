@@ -13,20 +13,20 @@ Six declarations express this, and each one goes inside an argument `Regime` or 
 already has — a regime slot, or a `Transition` in `Model(edges=...)` — so a collective
 model has no extra constructor arguments to learn.
 
-| Declaration                | Where it is declared                                                        | What it expresses                                   |
-| -------------------------- | --------------------------------------------------------------------------- | --------------------------------------------------- |
-| `CollectiveUtility`        | `functions={"utility": ...}`                                                | the regime's stakeholders and their flow utilities  |
-| `ParetoObjective`          | `CollectiveUtility(objective=...)`                                          | how stakeholder action values are scalarized        |
-| `ValueDependentConstraint` | `constraints={"name": ...}`                                                 | a feasibility predicate that may read values        |
-| `Gate`                     | `Transition(gates=...)` in `Model(edges=...)`, keyed by target              | a transition into one target, gated on values there |
-| `StakeholderRoute`         | `Gate(routes=...)`                                                          | where one source stakeholder goes on each branch    |
-| `ProjectedRegimeValue`     | a constraint's `references`, a gate's `references`, or a route's `fallback` | another regime's current-period value, at a mapping |
+| Declaration                | Where it is declared                                           | What it expresses                                   |
+| -------------------------- | -------------------------------------------------------------- | --------------------------------------------------- |
+| `CollectiveUtility`        | `functions={"utility": ...}`                                   | the regime's stakeholders and their flow utilities  |
+| `ParetoObjective`          | `CollectiveUtility(objective=...)`                             | how stakeholder action values are scalarized        |
+| `ValueDependentConstraint` | `constraints={"name": ...}`                                    | a feasibility predicate that may read values        |
+| `Gate`                     | `Transition(gates=...)` in `Model(edges=...)`, keyed by target | a transition into one target, gated on its state    |
+| `StakeholderRoute`         | `Gate(routes=...)`                                             | where one source stakeholder goes on each branch    |
+| `ProjectedRegimeValue`     | a constraint's `references` or a route's `fallback`            | another regime's current-period value, at a mapping |
 
 All six are frozen, keyword-only dataclasses defined in `src/lcm/collective.py` and
 exported from `lcm`. A type violation on any of them raises `RegimeInitializationError`.
 
 For the modelling narrative — why a household declares its weights instead of summing
-them, what the dissolution flag means economically — see
+them, where a household goes when no action is feasible — see
 [Households and value-dependent choice](../user_guide/collective_regimes.md).
 
 (api-collective-utility)=
@@ -122,7 +122,7 @@ references: Mapping[str, ProjectedRegimeValue] = field(
 
 Declared inside `constraints`, beside the ordinary callables, so a regime has one
 constraint slot rather than two. The regime's mask is the AND of both kinds, and a state
-cell whose mask is empty publishes the regime's dissolution flag `D`.
+cell whose mask is empty carries the `-inf` sentinel.
 
 `predicate` returns `True` where the cell is feasible. It may read:
 
@@ -174,7 +174,6 @@ a coordinate function for:
 | Position                              | Projects from               | May introduce free params | Owes one coordinate per                          |
 | ------------------------------------- | --------------------------- | ------------------------- | ------------------------------------------------ |
 | `ValueDependentConstraint.references` | the DECLARING regime's cell | no                        | state of the reference regime's value function   |
-| `Gate.references`                     | the TARGET regime's grid    | yes, as edge params       | state of the reference regime's value function   |
 | `StakeholderRoute.fallback`           | the TARGET regime's grid    | yes, as edge params       | state the reference regime carries in simulation |
 
 The fallback owes the larger set because a route does not only price the closed branch,
@@ -185,7 +184,7 @@ the same projection still serves the fold's value read.
 
 A `ProjectedRegimeValue` on an age-specialized reference regime is measured against the
 grid of the period whose value is being folded; see
-[Gate references and leg fallbacks on an age-specialized regime](../user_guide/age_specialized.md#gate-references-and-leg-fallbacks-on-an-age-specialized-regime).
+[Leg fallbacks on an age-specialized regime](../user_guide/age_specialized.md#leg-fallbacks-on-an-age-specialized-regime).
 
 (api-stakeholder-route)=
 
@@ -228,9 +227,6 @@ Three read-only properties resolve the declaration:
 ```python
 predicate: UserFunction
 routes: Mapping[str, StakeholderRoute]
-references: Mapping[str, ProjectedRegimeValue] = field(
-    default_factory=lambda: MappingProxyType({})
-)
 off_grid: Literal["pointwise", "reject"] = "pointwise"
 ```
 
@@ -241,7 +237,7 @@ the gated target:
 edges = {
     "couple": Transition(
         law={"couple": StochasticTransition(func=probability_one)},
-        gates={"couple": Gate(predicate=no_dissolution, routes=...)},
+        gates={"couple": Gate(predicate=above_wealth_floor, routes=...)},
     ),
 }
 ```
@@ -259,10 +255,10 @@ age has a single outgoing edge, because the gate adds routing that the edge alon
 not state.
 
 **The key is always the gate-open target** — the regime a row enters when the predicate
-is true. A dissolution edge is therefore keyed by the *continuing* collective regime
-under `predicate = ~D_target`, with each partner's own regime as that partner's route
-fallback. Keying it by one partner's regime would send both partners there whenever the
-couple stays together.
+is true. An edge that may dissolve a couple is therefore keyed by the *continuing*
+collective regime, with each partner's own regime as that partner's route fallback.
+Keying it by one partner's regime would send both partners there whenever the couple
+stays together.
 
 `routes` holds one route per **source** stakeholder, keyed by stakeholder name. A
 singleton source declares exactly one route, under any key.
@@ -278,23 +274,16 @@ reaches is refused.
 ### Predicate operands
 
 `predicate` is a Boolean predicate evaluated pointwise on the **target** regime's grid,
-in the target fold's context. It may read:
+in the target fold's context. It reads target states, params, `period` and `age`.
 
-| Operand                                | Available when                                            |
-| -------------------------------------- | --------------------------------------------------------- |
-| `V_target`                             | the target regime is a singleton                          |
-| `V_target_<s>`                         | the target regime is collective, one per its stakeholders |
-| `D_target`                             | the target regime is collective — its dissolution flag    |
-| each `references` key                  | always, bound to that reference's interpolated value      |
-| target states, params, `period`, `age` | always                                                    |
+A gate routes on states, never on a value. A predicate argument named `V_target`,
+`V_target_<s>` or `D_target` raises `GateReadsValueError`, a
+`RegimeInitializationError`, when the `Gate` is constructed. A move decided by comparing
+values is declared where its comparison is made:
 
-Mutual consent is the strict, unanimous predicate
-`(V_target_f > V_single_f) & (V_target_m > V_single_m)`; "no dissolution this period" is
-`~D_target`.
-
-The whole `V_target` vocabulary is reserved to the engine, so a gate `references` key
-spelled `V_target`, `V_target_<s>` or `D_target` is rejected rather than silently
-preempted by the built-in operand.
+- in the current period, as an `Exit` of the source regime in `Regime(exits=...)`;
+- on landing, as a `ParticipationCheck` in `Transition(participation=...)`, whose
+  `reads` name each value the predicate compares.
 
 At the end of each period's solve, the engine folds one gated continuation per declared
 edge and source stakeholder $s$ on the target regime's grid,
@@ -311,10 +300,10 @@ and the source's continuation reads $\bar W$ in place of the raw target value.
 
 What the edge promises about a landing point between the target's nodes.
 
-- `"pointwise"` (the default) reads every operand at the landing point and applies the
-  predicate there, in both phases. The operands are interpolated, so the value carries
-  the ordinary interpolation error of any continuation — but it is a value one branch
-  really delivers, and the branch the solve priced is the branch simulation routes down.
+- `"pointwise"` (the default) applies the predicate at the landing point, in both
+  phases, and interpolates each branch's value there. That value carries the ordinary
+  interpolation error of any continuation — but it is a value one branch really
+  delivers, and the branch the solve priced is the branch simulation routes down.
 - `"reject"` demands that no such point exists: the model refuses to build unless the
   target regime's grid is reached exactly, i.e. it carries no continuous state. Declare
   it where a straddled gate would be an economic error rather than an approximation.
@@ -334,6 +323,7 @@ checked at evaluation only fires once the model runs.
 | a **constant** weight is finite and non-negative; the constants leave a positive total                                     | `Regime` construction                                             | `RegimeInitializationError` |
 | a `ValueDependentConstraint` on a singleton regime                                                                         | `Regime` construction                                             | `RegimeInitializationError` |
 | a regime-level reference projection introduces no free parameter                                                           | `Regime` construction                                             | `RegimeInitializationError` |
+| a gate's `predicate` reads no `V_target`, `V_target_<s>` or `D_target`                                                     | `Gate` construction                                               | `GateReadsValueError`       |
 | a gate's `predicate` is a plain callable, not a `StochasticTransition`                                                     | model build, binding the edge law to its source                   | `RegimeInitializationError` |
 | `routes` covers the source's stakeholder structure                                                                         | model build, binding the edge law to its source                   | `RegimeInitializationError` |
 | a gate sits on a target its `Transition` reaches; a target reached in both phases carries one equal `Gate` in both or none | model build                                                       | `ModelInitializationError`  |
@@ -342,9 +332,7 @@ checked at evaluation only fires once the model runs.
 | a reference or fallback regime exists, and `stakeholder` matches its structure                                             | model build                                                       | `ModelInitializationError`  |
 | a projection covers exactly the states its position owes                                                                   | model build                                                       | `ModelInitializationError`  |
 | the same-period reference graph is acyclic                                                                                 | model build                                                       | `ModelInitializationError`  |
-| a predicate reads `D_target` on a **singleton** target                                                                     | model build                                                       | `ModelInitializationError`  |
 | a predicate or projection argument names a node of the target's own DAG                                                    | model build                                                       | `ModelInitializationError`  |
-| a gate `references` key aliases `V_target` / `V_target_<s>` / `D_target`                                                   | model build                                                       | `ModelInitializationError`  |
 | `off_grid="reject"` on a target carrying a continuous state                                                                | model build                                                       | `ModelInitializationError`  |
 | an ungated transition between regimes of different stakeholder structure                                                   | model build                                                       | `NotImplementedError`       |
 | **the predicate's realized return dtype is Boolean**                                                                       | **evaluation — every `solve()`, and again in the simulate phase** | `RegimeInitializationError` |
@@ -392,7 +380,6 @@ under the source regime:
 | ------------------------------------------------------- | ------------------------------------------------------------------ |
 | `[arg]`                                                 | the law's `StochasticTransition` cell for the target, gated or not |
 | `["predicate"][arg]`                                    | the gate's `predicate`                                             |
-| `["references"][reference][state][arg]`                 | one gate `references` projection                                   |
 | `["routes"][route]["fallback"][state][arg]`             | one route fallback projection                                      |
 | `["routes"][route]["fallback"]["solve"][state][arg]`    | the solve side of a `Phased` fallback                              |
 | `["routes"][route]["fallback"]["simulate"][state][arg]` | the simulate side of a `Phased` fallback                           |
@@ -403,21 +390,23 @@ every edge callable of the source, at `params["edges"][source][arg]`, or at the 
 level; a value under the source regime never reaches a gate or projection. See
 [Edge parameter paths](transitions.md#api-edge-parameters).
 
-For a source regime whose gate predicate takes `marriage_bonus`, with a parameterized
-reference, and a `Phased` fallback whose simulate side takes `settlement_share`:
+For a source regime whose gate predicate takes `wealth_floor`, and a `Phased` fallback
+whose simulate side takes `settlement_share`:
 
 ```python
 template["edges"]["source"]["target"] == {
-    "predicate": {"marriage_bonus": "float"},
-    "references": {"V_outside": {"x": {"ref_share": "float"}}},
+    "predicate": {"wealth_floor": "float"},
     "routes": {"f": {"fallback": {"simulate": {"x": {"settlement_share": "float"}}}}},
 }
 ```
 
 ## Solve and simulate
 
-A gate that reads `D_target` consumes the addressed dissolution artifact from the
-complete solution:
+A solution carries no dissolution artifact. A household landing in a gated target cell
+where no action is feasible takes its route's fallback when simulated;
+`SimulationResult.dissolution_fallbacks` records those rows when runtime checks are on.
+Pass the complete solution to `simulate(solution=...)`, or omit it to let simulation
+solve first:
 
 ```python
 solution = model.solve(
@@ -432,9 +421,6 @@ result = model.simulate(
     log_level="debug",
 )
 ```
-
-`simulate(solution=solution)` validates and projects the required artifact. Omitting
-`solution` asks simulation to solve and thread the same result automatically.
 
 ### Roles are carried per row
 
@@ -497,13 +483,6 @@ or not it is collective: it reads the folded continuation through the grid-searc
 machinery, which a DC-EGM, taste-shock or certainty-equivalent source does not have. A
 source restriction raises at model build, when the edge law is bound to its source,
 since a `Regime` on its own declares no edge.
-
-A `fold=True` IID process is a further restriction, and a different one: a fold
-integrates the shock's node axis away immediately after the period's collective readout,
-so no same-period gate, value-constraint predicate or reference projection may read the
-shock's realized value. That is rejected at `Regime` construction for a regime's own
-declarations, and at model build for a folded regime read as another regime's
-same-period endpoint.
 
 Finally, an ungated transition between regimes of different stakeholder structure stays
 rejected at model build. Mixed singleton/collective topologies go through a `Gate`,

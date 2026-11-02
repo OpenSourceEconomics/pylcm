@@ -10,7 +10,7 @@ from typing import cast
 
 from _lcm.solution.contract import SolutionKernels, SolverBuildContext
 from _lcm.solution.dcegm import _BoundDCEGM
-from lcm.solvers import DCEGM
+from lcm.solvers import DCEGM, RFCEnvelope
 from tests.test_models import dcegm_paper_twin
 
 _SAVINGS_GRID = dcegm_paper_twin.DCEGM_SOLVER.savings_grid
@@ -66,7 +66,7 @@ def test_binding_resolves_the_regimes_roles_onto_the_subclass() -> None:
 
 def test_binding_a_plain_solver_is_unaffected() -> None:
     """A stock solver binds exactly as before, whatever a subclass would do."""
-    bound = _bound_solver(DCEGM(savings_grid=_SAVINGS_GRID))
+    bound = _bound_solver(DCEGM(savings_grid=_SAVINGS_GRID, envelope=RFCEnvelope()))
 
     assert type(bound).__name__ == "_BoundDCEGM"
 

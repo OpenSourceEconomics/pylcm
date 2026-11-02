@@ -13,8 +13,8 @@ reads the user's coarseness off it.
 """
 
 import inspect
-from collections.abc import Mapping
-from dataclasses import dataclass
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import Literal, cast, no_type_check
 
@@ -37,16 +37,14 @@ from _lcm.regime_building.value_adapter import (
     ValueAdapter,
     adapt_collective_utility,
     adapt_entry,
+    adapt_user_function,
     bind_reading_regimes,
     collect_adapter_grids,
     encoding_grid,
 )
 from _lcm.regime_law import RegimeLaws
 from _lcm.typing import EconFunctionArg, FunctionName, RegimeName
-from _lcm.user_regime_validation import (
-    _fail_if_collective_regime_folds,
-    _validate_completeness,
-)
+from _lcm.user_regime_validation import _validate_completeness
 from _lcm.utils.error_messages import format_messages
 from lcm.case_piece import CaseBoundary
 from lcm.collective import CollectiveUtility
@@ -57,6 +55,7 @@ from lcm.consumption_savings_regime import (
 )
 from lcm.decoupled import Decoupled
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
+from lcm.exits import Consent, Exit, RuleResult
 from lcm.phased import Phased
 from lcm.regime import ConstraintEntry, StateEntry, StateTransitionEntry
 from lcm.regime import Regime as UserRegime
@@ -113,7 +112,6 @@ def finalize_regimes(
             prefixed.
 
     """
-    _fail_if_collective_regime_folds(user_regimes=user_regimes)
     _fail_if_a_joint_coordinate_is_a_discrete_state(user_regimes=user_regimes)
     _fail_if_continuation_slot_is_mixed(
         user_regimes=user_regimes, laws=laws, slot="koopmans_aggregator"
@@ -244,6 +242,12 @@ def finalize_regimes(
                 ),
             ),
             certainty_equivalent=regime_certainty_equivalent,
+            exits=_adapt_exits(
+                exits=user_regime.exits,
+                source_grids=value_grids,
+                grids_by_regime=value_grids_by_regime,
+                adapters=adapters,
+            ),
         )
         error_messages = _validate_completeness(
             regime=finalized,
@@ -256,6 +260,86 @@ def finalize_regimes(
             )
         finalized._validate_finalized_structure(regime_name=regime_name)  # noqa: SLF001
         result[regime_name] = finalized
+    return MappingProxyType(result)
+
+
+def _adapt_exits(
+    *,
+    exits: Mapping[str, Exit],
+    source_grids: Mapping[str, AdapterGrid],
+    grids_by_regime: Mapping[RegimeName, Mapping[str, AdapterGrid]],
+    adapters: AdapterMemo,
+) -> Mapping[str, Exit]:
+    """Decode source reads and encode only projected destination-state outputs."""
+
+    def adapted(function: UserFunction | None) -> UserFunction | None:
+        if function is None:
+            return None
+        return adapt_user_function(
+            func=cast("UserFunction", _authored(function)),
+            value_grids=source_grids,
+            encode=None,
+            adapters=adapters,
+        )
+
+    def projection(
+        *, value: Mapping[str, UserFunction] | Phased, destination: RegimeName
+    ) -> Mapping[str, UserFunction] | Phased:
+        if isinstance(value, Phased):
+            solve = projection(value=value.solve, destination=destination)
+            return Phased(
+                solve=solve,
+                simulate=solve
+                if value.solve is value.simulate
+                else projection(value=value.simulate, destination=destination),
+            )
+        return MappingProxyType(
+            {
+                name: adapt_user_function(
+                    func=cast("UserFunction", _authored(function)),
+                    value_grids=source_grids,
+                    encode=encoding_grid(
+                        value_grids=grids_by_regime[destination], name=name
+                    ),
+                    adapters=adapters,
+                )
+                for name, function in value.items()
+            }
+        )
+
+    result = {}
+    for name, declaration in exits.items():
+        rule = declaration.rule
+        if isinstance(rule, Consent):
+            counterparty = rule.counterparty
+            rule = replace(
+                rule,
+                counterparty=replace(
+                    counterparty,
+                    projection=projection(
+                        value=counterparty.projection, destination=counterparty.regime
+                    ),
+                ),
+            )
+        elif callable(rule):
+            rule = cast(
+                "Callable[..., RuleResult]", adapted(cast("UserFunction", rule))
+            )
+        result[name] = replace(
+            declaration,
+            rule=rule,
+            available=adapted(declaration.available),
+            targets={
+                role: replace(
+                    target,
+                    projection=projection(
+                        value=target.projection, destination=target.regime
+                    ),
+                    utility_adjustment=adapted(target.utility_adjustment),
+                )
+                for role, target in declaration.targets.items()
+            },
+        )
     return MappingProxyType(result)
 
 

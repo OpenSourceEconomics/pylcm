@@ -6,8 +6,7 @@ feasibility, tie-breaking, and global action identity across block boundaries. T
 collective route retains every stakeholder's value at one shared household winner;
 the EV1 route hard-maxes continuous cells within each discrete prefix before logsum.
 Compiler fusion, rematerialization, and allocation still determine measured runtime
-and peak memory. Eligible folded routes stream actions before their unchanged full
-quadrature reduction, and supported co-mapped routes preserve device-local continuation
+and peak memory. Supported co-mapped routes preserve device-local continuation
 reads. Co-map intersections with separate reference-value channels remain dense.
 """
 
@@ -22,7 +21,7 @@ import jax.numpy as jnp
 from jax._src.interpreters import partial_eval
 
 from _lcm.regime_building.collective import _weighted_sum
-from _lcm.regime_building.Q_and_F import BoundedQAndF, runtime_bound_specs
+from _lcm.regime_building.Q_and_F import BoundedQAndF, has_action_integrity
 from _lcm.solution.action_reduction import (
     COLLECTIVE_HARD_MAX_REDUCTION,
     HARD_MAX_REDUCTION,
@@ -37,8 +36,11 @@ from _lcm.solution.action_reduction import (
 from _lcm.solution.feasibility import (
     BoundedResult,
     BoundInputStatus,
+    QueryInputStatus,
     merge_bound_input_status,
+    merge_query_input_status,
     reduce_bound_input_status,
+    reduce_query_input_status,
 )
 from _lcm.solution.logsumexp_action_reduction import (
     BoundLogSumExpReduction,
@@ -365,7 +367,7 @@ class _StreamingHardMax:
     def __call__(
         self, **kwargs: QAndFArg
     ) -> HardMaxResult | BoundedResult[HardMaxResult]:
-        if runtime_bound_specs(function=self.Q_and_F):
+        if has_action_integrity(function=self.Q_and_F):
             return cast(
                 "BoundedResult[HardMaxResult]",
                 _bounded_hard_max(
@@ -440,6 +442,7 @@ def _bounded_hard_max(
                     accumulator=collective_reduced
                 ),
                 bound_status=result.bound_status,
+                query_status=result.query_status,
             )
         reduced = HARD_MAX_REDUCTION.add(
             accumulator=HARD_MAX_REDUCTION.initialize(
@@ -452,6 +455,7 @@ def _bounded_hard_max(
         return BoundedResult(
             output=HARD_MAX_REDUCTION.finalize(accumulator=reduced),
             bound_status=result.bound_status,
+            query_status=result.query_status,
         )
     grids, fixed, sizes, n_actions = _prepare_action_call(
         action_names=action_names,
@@ -486,6 +490,9 @@ def _bounded_hard_max(
             output=(values, feasible & active, identities),
             bound_status=reduce_bound_input_status(
                 statuses=result.bound_status, active=active
+            ),
+            query_status=reduce_query_input_status(
+                statuses=result.query_status, active=active
             ),
         )
 
@@ -525,6 +532,7 @@ def _bounded_hard_max(
     carry = BoundedResult(
         output=_typed_like(accumulator=initial, arrays=trace.read_arrays),
         bound_status=_empty_bound_status(evaluate_block=window),
+        query_status=_empty_query_status(evaluate_block=window),
     )
 
     # keyword-only-exempt: library-callback=jax.lax.scan
@@ -537,7 +545,13 @@ def _bounded_hard_max(
             merge_bound_input_status(left=left, right=right)
             for left, right in zip(carry.bound_status, block.bound_status, strict=True)
         )
-        return BoundedResult(output=ordinary, bound_status=statuses), None
+        return BoundedResult(
+            output=ordinary,
+            bound_status=statuses,
+            query_status=merge_query_input_status(
+                left=carry.query_status, right=block.query_status
+            ),
+        ), None
 
     carry, _history = jax.lax.scan(
         add_window,
@@ -557,6 +571,7 @@ def _bounded_hard_max(
             )
         ),
         bound_status=carry.bound_status,
+        query_status=carry.query_status,
     )
 
 
@@ -585,6 +600,10 @@ class _PartitionedStreamingHardMax:
                 ),
                 bound_status=reduce_bound_input_status(
                     statuses=gathered.bound_status,
+                    active=jnp.ones((self.n_partitions,), dtype=bool),
+                ),
+                query_status=reduce_query_input_status(
+                    statuses=gathered.query_status,
                     active=jnp.ones((self.n_partitions,), dtype=bool),
                 ),
             )
@@ -620,7 +639,7 @@ class _PartitionedStreamingHardMax:
             block_width=self.block_width,
             block_offsets=jnp.arange(self.block_width, dtype=jnp.int32),
         )
-        if runtime_bound_specs(function=self.Q_and_F):
+        if has_action_integrity(function=self.Q_and_F):
             owned_block = cast(
                 "Callable[..., _BoundedBlock]",
                 partial(
@@ -633,6 +652,7 @@ class _PartitionedStreamingHardMax:
             initial = BoundedResult(
                 output=_empty_reduction(evaluate_block=owned_block),
                 bound_status=_empty_bound_status(evaluate_block=owned_block),
+                query_status=_empty_query_status(evaluate_block=owned_block),
             )
 
             # keyword-only-exempt: library-callback=jax.lax.scan
@@ -647,6 +667,9 @@ class _PartitionedStreamingHardMax:
                         for left, right in zip(
                             carry.bound_status, block.bound_status, strict=True
                         )
+                    ),
+                    query_status=merge_query_input_status(
+                        left=carry.query_status, right=block.query_status
                     ),
                 ), None
 
@@ -753,7 +776,7 @@ class _StreamingEV1ExpectedMax:
             n_blocks=n_blocks,
             blocks_per_branch_group=blocks_per_branch_group,
             reduction=reduction,
-            bound_summary=bool(runtime_bound_specs(function=self.Q_and_F)),
+            bound_summary=bool(has_action_integrity(function=self.Q_and_F)),
         )
         statuses = ()
         if isinstance(accumulator, BoundedResult):
@@ -782,7 +805,7 @@ class _StreamingCollectiveHardMax:
     def __call__(
         self, **kwargs: QAndFArg
     ) -> CollectiveHardMaxResult | BoundedResult[CollectiveHardMaxResult]:
-        if runtime_bound_specs(function=self.Q_and_F):
+        if has_action_integrity(function=self.Q_and_F):
             return cast(
                 "BoundedResult[CollectiveHardMaxResult]",
                 _bounded_hard_max(
@@ -885,7 +908,7 @@ def _evaluate_block(
     safe_offsets = jnp.minimum(block_offsets, remaining - 1)
     global_ids = block_start + safe_offsets
 
-    bounded = bool(runtime_bound_specs(function=Q_and_F))
+    bounded = bool(has_action_integrity(function=Q_and_F))
     evaluate_one = partial(
         _evaluate_one_action,
         Q_and_F=cast("_BoundedActionEvaluator", BoundedQAndF(function=Q_and_F))
@@ -914,6 +937,9 @@ def _evaluate_block(
             bound_status=reduce_bound_input_status(
                 statuses=statuses,
                 active=valid,
+            ),
+            query_status=reduce_query_input_status(
+                statuses=bounded_result.query_status, active=valid
             ),
         )
         if bounded
@@ -944,6 +970,9 @@ def _evaluate_owned_block(
                     invalid_shifted_grid=owned & status.invalid_shifted_grid,
                 )
                 for status in evaluated.bound_status
+            ),
+            query_status=reduce_query_input_status(
+                statuses=evaluated.query_status, active=owned
             ),
         )
         if isinstance(evaluated, BoundedResult)
@@ -989,7 +1018,7 @@ def _evaluate_ev1_branch_block(
     )
     valid = valid_branches[:, jnp.newaxis] & valid_continuous[jnp.newaxis, :]
 
-    bounded = bool(runtime_bound_specs(function=Q_and_F))
+    bounded = bool(has_action_integrity(function=Q_and_F))
     evaluate_one = partial(
         _evaluate_one_action,
         Q_and_F=cast("_BoundedActionEvaluator", BoundedQAndF(function=Q_and_F))
@@ -1021,6 +1050,9 @@ def _evaluate_ev1_branch_block(
             bound_status=reduce_bound_input_status(
                 statuses=statuses,
                 active=valid,
+            ),
+            query_status=reduce_query_input_status(
+                statuses=bounded_result.query_status, active=valid
             ),
         )
         if bounded
@@ -1158,6 +1190,21 @@ def _empty_bound_status(
     # refuse abstract leaves.
     template = jax.eval_shape(
         lambda: evaluate_block(block_index=jnp.int32(0)).bound_status
+    )
+    return _typed_like(
+        accumulator=jax.tree.map(
+            lambda leaf: jnp.zeros(leaf.shape, dtype=leaf.dtype), template
+        ),
+        arrays=_trace_block(evaluate_block=evaluate_block).read_arrays,
+    )
+
+
+def _empty_query_status(
+    *, evaluate_block: Callable[..., _BoundedBlock]
+) -> tuple[QueryInputStatus, ...] | None:
+    """Use the original paired-read record shapes as the empty OR identity."""
+    template = jax.eval_shape(
+        lambda: evaluate_block(block_index=jnp.int32(0)).query_status
     )
     return _typed_like(
         accumulator=jax.tree.map(
@@ -1369,6 +1416,7 @@ def _scan_ev1_blocks(
         initial = BoundedResult(
             output=accumulator,
             bound_status=_empty_bound_status(evaluate_block=bounded_evaluate_block),
+            query_status=_empty_query_status(evaluate_block=bounded_evaluate_block),
         )
 
         # keyword-only-exempt: library-callback=jax.lax.scan
@@ -1389,6 +1437,9 @@ def _scan_ev1_blocks(
                     for left, right in zip(
                         carry.bound_status, block.bound_status, strict=True
                     )
+                ),
+                query_status=merge_query_input_status(
+                    left=carry.query_status, right=block.query_status
                 ),
             ), None
 

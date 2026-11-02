@@ -7,14 +7,15 @@ they are re-exported here so engine-internal code can import everything from
 `_lcm.typing`.
 """
 
-from collections.abc import Hashable, Mapping, Sequence
-from dataclasses import Field
+from collections.abc import Hashable, Iterable, Mapping, Sequence
+from dataclasses import Field, dataclass
 from types import MappingProxyType
 from typing import (
     TYPE_CHECKING,
     ClassVar,
     Literal,
     Protocol,
+    cast,
     runtime_checkable,
 )
 
@@ -58,6 +59,11 @@ from lcm.typing import (
     TransitionFunctionName,
     ValueND,
 )
+
+type QueryLandingCheck = tuple[RegimeName, int, RegimeName, StateName]
+# Actual source/date/target/state of a nested reached landing.
+type LandingCheck = tuple[RegimeName, StateName] | QueryLandingCheck
+# Local checks inherit their kernel date; nested queries retain their own.
 
 # A `__`-joined path through the params or function namespace, such as
 # `"utility__risk_aversion"`. Flat params are keyed by these names, while a
@@ -113,12 +119,39 @@ type EconFunctionKwargs = Mapping[ReferenceName, EconFunctionArg]
 # Programs are lowered against the abstract form and called with the concrete one.
 type ValueTemplate = FloatND | jax.ShapeDtypeStruct
 
+
+@dataclass(frozen=True, kw_only=True)
+class ParticipationQueryArguments:
+    """Declared dynamic Q operands for each incoming target's dated query graph."""
+
+    by_target: Mapping[RegimeName, Mapping[str, QAndFKwargs]]
+
+    def __post_init__(self) -> None:
+        """Freeze query-name/argument bindings while retaining numeric leaves."""
+        object.__setattr__(
+            self,
+            "by_target",
+            MappingProxyType(
+                {
+                    target: MappingProxyType(
+                        {
+                            name: MappingProxyType(dict(arguments))
+                            for name, arguments in queries.items()
+                        }
+                    )
+                    for target, queries in self.by_target.items()
+                }
+            ),
+        )
+
+
 # One argument of a generated `QAndFFunction` or `MaxQOverAFunction`: an argument
 # of a user function, or a per-regime mapping of value arrays or of flat params.
 type QAndFArg = (
     EconFunctionArg
     | Mapping[RegimeName, FloatND]
     | Mapping[RegimeName, Mapping[QualifiedName, ParamsLeaf]]
+    | ParticipationQueryArguments
 )
 type QAndFKwargs = Mapping[ReferenceName, QAndFArg]
 
@@ -348,6 +381,40 @@ else:
     # `object()` sentinels), so the claw accepts any child.
     type PytreeChild = object
 
+
+def _flatten_participation_arguments(
+    arguments: ParticipationQueryArguments,
+) -> tuple[tuple[PytreeChild, ...], None]:
+    """Expose the dynamic query operands under their declared field name."""
+    return (cast("PytreeChild", arguments.by_target),), None
+
+
+def _flatten_participation_arguments_with_keys(
+    arguments: ParticipationQueryArguments,
+) -> tuple[tuple[tuple[jax.tree_util.GetAttrKey, PytreeChild], ...], None]:
+    children, metadata = _flatten_participation_arguments(arguments)
+    return ((jax.tree_util.GetAttrKey("by_target"), children[0]),), metadata
+
+
+# keyword-only-exempt: library-callback=jax.tree_util.register_pytree_with_keys
+def _unflatten_participation_arguments(
+    metadata: None, children: Iterable[PytreeChild]
+) -> ParticipationQueryArguments:
+    """Rebuild JAX's abstract placeholders outside the checked runtime boundary."""
+    del metadata
+    (by_target,) = children
+    arguments = object.__new__(ParticipationQueryArguments)
+    object.__setattr__(arguments, "by_target", by_target)
+    return arguments
+
+
+jax.tree_util.register_pytree_with_keys(
+    ParticipationQueryArguments,
+    _flatten_participation_arguments_with_keys,
+    _unflatten_participation_arguments,
+    _flatten_participation_arguments,
+)
+
 if TYPE_CHECKING:
     from _lcm.egm.nested_floor import PreparedNestedFloor
 else:
@@ -450,14 +517,9 @@ type SimulationPolicy = (
 type PeriodToRegimeToSimulationPolicy = MappingProxyType[
     int, MappingProxyType[RegimeName, SimulationPolicy]
 ]
-# Sparse over regimes: the inner mapping carries an entry only for COLLECTIVE
-# regimes. `True` on the state cells whose action mask is empty
-# (distinct from a numeric `-inf` value); empty inner mappings for models
-# without collective regimes. Returned as `backward_induction.solve`'s third
-# element and consumed by `simulate` to route a dissolution-gated edge whose gate
-# reads `D_target`.
-type PeriodToRegimeToDissolutionFlags = MappingProxyType[
-    int, MappingProxyType[RegimeName, BoolND]
+# Stored participation surfaces by period, publishing regime and payload leaf name.
+type PeriodToRegimeToParticipationSurfaces = MappingProxyType[
+    int, MappingProxyType[RegimeName, MappingProxyType[str, FloatND]]
 ]
 
 

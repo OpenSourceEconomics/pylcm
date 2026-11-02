@@ -47,7 +47,7 @@ streamed branch-hard-max then dynamically bound log-sum-exp composition,
 per-discrete-cell mean-zero Gumbel noise, and flat-index reconstruction, including the
 deep shared helper bodies. The construction and correctness of Q/F values
 and feasibility—including user DAGs, constraints, transitions, interpolation,
-continuation arithmetic, and folded-process weights—is outside this certificate
+and continuation arithmetic—is outside this certificate
 and remains owned by its dedicated semantic tests.
 
 The executable sweep remains deliberately finite: two action grids, six
@@ -81,7 +81,6 @@ from _lcm.simulation import programs as simulation_programs_module
 from _lcm.simulation import runtime as simulation_runtime_module
 from _lcm.simulation import taste_stream as taste_stream_module
 from _lcm.simulation.memory import SimulationMemory
-from _lcm.simulation.subject_groups import SubjectRows
 from _lcm.solution import action_streaming as action_streaming_module
 from _lcm.solution import grid_search as grid_search_module
 from _lcm.solution.action_reduction import HardMaxResult
@@ -117,10 +116,12 @@ from lcm.typing import (
     ReferenceName,
     RegimeName,
     ScalarInt,
+    UserFacingRegimeParamsTemplate,
     UserParams,
     UserParamsLeaf,
     UserParamsNode,
 )
+from tests.candidate_certificate import direct_flow
 from tests.candidate_certificate.direct_flow import (
     _DECOUPLED_BOUND_MUTATION_NAMES,
     _decoupled_bound_transport_errors,
@@ -153,26 +154,19 @@ type _SuppliedModelParams = dict[
 ]
 
 
-class _AverageArguments(TypedDict, closed=True):
-    a: FloatND
-    weights: FloatND
-    shifts: IntND | None
-    axis: NotRequired[int | None]
-
-
 class _KernelOutputArguments(TypedDict, closed=True):
     value: FloatND
     solve_time_artifacts: NotRequired[Mapping[ArtifactKey, ArtifactPayload]]
     feasibility_counts: tuple[IntND, IntND]
 
 
-class _SimulationKeyArguments(TypedDict, closed=True):
+class _TasteKeyArguments(TypedDict, closed=True):
     key: PRNGKeyND
-    names: list[str]
-    n_initial_states: int
-    subject_slice: NotRequired[slice | SubjectRows | None]
-    original_n_subjects: NotRequired[int | None]
-    memory: NotRequired[SimulationMemory | None]
+    address_words: tuple[int, ...]
+    subject_slice: slice
+    original_n_subjects: int
+    memory: SimulationMemory | None
+    period: NotRequired[int]
 
 
 class _EvaluateBlockArguments(TypedDict, closed=True):
@@ -196,7 +190,9 @@ class _EvaluateBlock(Protocol):
 def _mutable_params_template(*, model: Model) -> _ModelParams:
     """Copy annotation leaves into a mutable tree accepting supplied values."""
     params: _ModelParams = {}
-    for regime, functions in model.get_params_template().items():
+    for regime, functions in cast(
+        "dict[str, UserFacingRegimeParamsTemplate]", model.get_params_template()
+    ).items():
         regime_params: dict[FunctionName | RegimeName, dict[str, _TemplateNode]] = {}
         for name, branch in functions.items():
             regime_params[name] = dict(branch)
@@ -424,8 +420,8 @@ def test_feasibility_summary_rejects_changed_native_values() -> None:
     """Changing only the wrapper's value readout breaks its transport proof."""
     source = (_SRC_ROOT / "_lcm/solution/feasibility.py").read_text(encoding="utf-8")
     changed = source.replace(
-        "else (value, empty_count, other_inf_count)",
-        "else (-value, empty_count, other_inf_count)",
+        "output: CountedGridSearchOutput = (value, empty_count, other_inf_count)",
+        "output: CountedGridSearchOutput = (-value, empty_count, other_inf_count)",
     )
     assert changed != source
     assert _feasibility_summary_errors(ast.parse(changed))
@@ -631,6 +627,7 @@ def test_q_and_f_arrays_reach_full_reducers_without_candidate_transformation():
     assert isinstance(_parse("src/_lcm/simulation/result_metadata.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/simulation/additional_targets.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/simulation/random.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/simulation/random_address.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/regime_building/zero_safe.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/solution/contract.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/grids/__init__.py"), ast.Module)
@@ -647,6 +644,7 @@ def test_q_and_f_arrays_reach_full_reducers_without_candidate_transformation():
     assert isinstance(_parse("src/_lcm/params/regime_template.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/params/processing.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/dtypes.py"), ast.Module)
+    assert isinstance(_parse("src/lcm/typing.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/simulation/entry_allocations.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/utils/namespace.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/pandas_utils.py"), ast.Module)
@@ -675,6 +673,7 @@ def test_uniform_process_sources_have_literal_inventory_obligations() -> None:
     """Include the producer, resolver and every support interpretation consumer."""
     assert isinstance(_parse("src/_lcm/processes/grid_resolution.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/simulation/process_grids.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/simulation/eager_stages.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/solution/fingerprint.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/solution/model_authority.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/solution/preconditions.py"), ast.Module)
@@ -685,11 +684,6 @@ def test_uniform_process_sources_have_literal_inventory_obligations() -> None:
 def test_action_grid_admission_has_a_literal_inventory_obligation() -> None:
     """Include the call-owned Cartesian preflight producer and its cleanup."""
     assert isinstance(_parse("src/_lcm/simulation/action_grids.py"), ast.Module)
-
-
-def test_finite_policy_diagnostic_is_a_literal_certificate_obligation():
-    """Include the profiled live-versus-represented candidate diagnostic."""
-    assert isinstance(_parse("src/_lcm/simulation/policy_diagnostics.py"), ast.Module)
 
 
 def test_eager_dependencies_are_literal_certificate_obligations():
@@ -776,76 +770,12 @@ def test_structural_blueprint_mutation_is_rejected(*, tmp_path: Path, mutation: 
     assert result["offending_paths"] == [_STRUCTURAL_BLUEPRINT_SOURCE]
 
 
-_MAX_Q_SOURCE = "src/_lcm/regime_building/max_Q_over_a.py"
-_FOLDED_BODY_MUTATIONS = {
-    "width_forwarding_filtered": (
-        (
-            "        out = self.mapped(\n"
-            "            next_regime_to_V_arr=next_regime_to_V_arr, "
-            "**states_actions_params\n"
-            "        )"
-        ),
-        (
-            "        out = self.mapped(\n"
-            "            next_regime_to_V_arr=next_regime_to_V_arr,\n"
-            "            **{\n"
-            "                name: value\n"
-            "                for name, value in states_actions_params.items()\n"
-            "                if name != '_lcm_action_block_width'\n"
-            "            },\n"
-            "        )"
-        ),
-    ),
-    "published_value_changed": (
-        "output=V_arr if empty is None else (V_arr, empty),",
-        "output=-V_arr if empty is None else (-V_arr, empty),",
-    ),
-    "empty_support_dropped": (
-        "empty = jnp.any(empty & support, axis=axis)",
-        "empty = jnp.any(empty, axis=axis)",
-    ),
-}
-
-
-@pytest.mark.parametrize("mutation", tuple(_FOLDED_BODY_MUTATIONS))
-def test_folded_kernel_mutation_is_rejected_after_byte_reseal(
-    *, mutation: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Resealing the source bytes cannot hide a changed folded-kernel body."""
-    root = _SRC_ROOT.parent
-    marker, replacement = _FOLDED_BODY_MUTATIONS[mutation]
-    source = (root / _MAX_Q_SOURCE).read_text(encoding="utf-8")
-    sources = verify_direct_candidate_flow(repo_root=root)["certified_corridor_sources"]
-    for relative in sources:
-        target = tmp_path / relative
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(
-            source.replace(marker, replacement, 1)
-            if relative == _MAX_Q_SOURCE
-            else (root / relative).read_text(encoding="utf-8"),
-            encoding="utf-8",
-        )
-    monkeypatch.setattr(
-        "tests.candidate_certificate.direct_flow._SOURCE_SEALS",
-        {relative: sha256_file(tmp_path / relative) for relative in sources},
-    )
-
-    result = verify_direct_candidate_flow(repo_root=tmp_path)
-
-    assert (
-        source.count(marker),
-        any("source seal mismatch" in error for error in result["errors"]),
-        result["offending_paths"],
-        any("streamed max-Q builder" in error for error in result["errors"]),
-    ) == (1, False, [_MAX_Q_SOURCE], True)
-
-
 _BACKWARD_SOURCE = "src/_lcm/solution/backward_induction.py"
-# The continuation reservation repeats the size line, so the docstring tail
-# pins the feasibility reservation.
+# The docstring tail pins the feasibility reservation.
 _COUNTER_SIZE_PREFIX = 'a device no active regime runs on holds none.\n    """\n    '
 _COUNTER_SIZE = (
-    f"{_COUNTER_SIZE_PREFIX}size = 2 * np.dtype(np.int32).itemsize * (len(active) + 1)"
+    f"{_COUNTER_SIZE_PREFIX}size = 2 * get_feasibility_count_dtype().itemsize "
+    "* (len(active) + 1)"
 )
 _COUNTER_DEVICES = (
     "sorted(frozenset().union(*(device_ids_by_regime[name] for name in active)))"
@@ -854,7 +784,10 @@ _COUNTER_RESERVATION_MUTATIONS = {
     "zero_charge": (_COUNTER_SIZE, f"{_COUNTER_SIZE_PREFIX}size = 0"),
     "half_pair": (
         _COUNTER_SIZE,
-        f"{_COUNTER_SIZE_PREFIX}size = np.dtype(np.int32).itemsize * (len(active) + 1)",
+        (
+            f"{_COUNTER_SIZE_PREFIX}size = get_feasibility_count_dtype().itemsize "
+            "* (len(active) + 1)"
+        ),
     ),
     "omit_peer_devices": (_COUNTER_DEVICES, f"{_COUNTER_DEVICES}[:1]"),
 }
@@ -1095,7 +1028,6 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate():
         "native_graph:function_wrapped",
         "native_graph:argument_builder_wrapped",
         "native_graph:requirements_erased",
-        "native_graph:collective_output_role_dropped",
         "native_graph:planned_disposition_forced_dense",
         "native_graph:dense_reason_erased",
         "native_graph:donation_candidates_changed",
@@ -1121,16 +1053,10 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate():
         "streaming_width_transport:core_program_keyword_desynchronized",
         "streaming_width_transport:colliding_q_argument_filtered",
         "streaming_width_transport:colliding_q_argument_substituted",
-        "streaming_fold:width_keyword_renamed",
         "streaming_width_builder:collision_validation_removed",
-        "streaming_provider:fold_route_disabled",
         "streaming_provider:co_map_route_disabled",
         "streaming_provider:co_map_reference_guard_bypassed",
-        "streaming_fold:rejection_restored",
-        "streaming_fold:productmap_output_filtered",
         "streaming_classifier:collective_ev1_admitted",
-        "streaming_classifier:ev1_fold_admitted",
-        "streaming_classifier:collective_fold_admitted",
         "streaming_classifier:ev1_without_discrete_action_admitted",
         "streaming_classifier:jit_disabled_gate_reintroduced",
         "streaming_classifier:trivial_product_admitted",
@@ -1141,10 +1067,6 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate():
         "streaming_classifier:collective_resource_gate_bypassed",
         "streaming_classifier:ev1_precedes_trivial_product",
         "streaming_classifier:collective_precedes_co_map",
-        "streaming_fold:reduction_after_co_map",
-        "streaming_fold:signature_positionalized",
-        "streaming_fold:width_signature_dropped",
-        "streaming_fold:width_forwarding_filtered",
         "streaming_co_map:inner_state_reincluded",
         "streaming_co_map:state_order_reversed",
         "streaming_co_map:continuation_axes_broadcast",
@@ -1153,7 +1075,6 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate():
         "streaming_dispatch:bypass_compiled_core",
         "streaming_collective:builder_dissolution_inverted",
         "streaming_collective:builder_stakeholder_axis_sliced",
-        "streaming_collective:published_dissolution_inverted",
         "streaming_ev1:runtime_scale_constant",
         "streaming_ev1:scale_signature_dropped",
         "streaming_ev1:published_value_negated",
@@ -1271,27 +1192,27 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate():
     original_names = {
         name for name in names if not name.startswith("simulation_adapter:")
     }
-    assert len(original_names) == 391
+    assert len(original_names) == 380
     assert (
         hashlib.sha256(("\n".join(sorted(original_names)) + "\n").encode()).hexdigest()
-        == "e98342d0cc2f4c7f98d4b3140dc437e1262eed7065612bc965fbf3edfb3a3180"
+        == "73b99cc5e6503e740328b3923fe0684799d8d11030bf9fd6ba6e083159946f15"
     )
     historical_names = {
         name
         for name in names
         if not name.startswith("simulation_adapter:initial_physical_")
     }
-    assert len(historical_names) == 409
+    assert len(historical_names) == 398
     assert (
         hashlib.sha256(
             ("\n".join(sorted(historical_names)) + "\n").encode()
         ).hexdigest()
-        == "3c5fdaf1c4a0eb22ad92ac592d4ca84cef0c97a4b94bc525a7f8592d886880a7"
+        == "a00c2dd641b34fdfa7f618fb19d3e79648c1082583727f15fafbb004d62faf6d"
     )
-    assert len(names) == 421
+    assert len(names) == 410
     assert (
         hashlib.sha256(("\n".join(sorted(names)) + "\n").encode()).hexdigest()
-        == "f58754206b785f05a7dff36c690946024effc931c888c72383fc0bd98be060cd"
+        == "c94857b93f5a6254cbda1aa14b3658232da1df482f907578db49540ac23aeb6c"
     )
 
 
@@ -2367,7 +2288,7 @@ def _folded_terminal_utility(*, folded_shock: FloatND, work: DiscreteAction) -> 
 
 
 def _build_zero_weight_fold_model() -> Model:
-    """Build a folded process whose quadrature weights are exactly ``[0, 1, 0]``."""
+    """Build an IID process whose quadrature weights are exactly ``[0, 1, 0]``."""
     src = Regime(
         states={"wealth": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
         state_transitions={"wealth": fixed_transition("wealth")},
@@ -2382,7 +2303,6 @@ def _build_zero_weight_fold_model() -> Model:
                 mu=0.0,
                 sigma=1.0,
                 n_std=100.0,
-                fold=True,
             )
         },
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -2436,26 +2356,9 @@ def _simulate_zero_weight_fold(model: Model) -> tuple[list[int], list[int], list
 
 
 def test_zero_weight_fold_average_preserves_the_public_candidate():
-    """The zero-mass fold nodes contribute nothing to the selected policy."""
+    """The zero-mass shock nodes contribute nothing to the selected policy."""
     observed = _simulate_zero_weight_fold(_build_zero_weight_fold_model())
     assert observed == ([1], [1], [1])
-
-
-def test_negating_the_fold_average_reverses_the_public_candidate(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    """The synchronized folded-average mutation is behaviorally live."""
-    baseline = _simulate_zero_weight_fold(_build_zero_weight_fold_model())
-    original = max_Q_over_a_module.zero_safe_average
-
-    def negated_average(**kwargs: Unpack[_AverageArguments]) -> FloatND:
-        return -original(**kwargs)
-
-    monkeypatch.setattr(max_Q_over_a_module, "zero_safe_average", negated_average)
-    shifted = _simulate_zero_weight_fold(_build_zero_weight_fold_model())
-
-    assert baseline == ([1], [1], [1])
-    assert shifted == ([0], [0], [0])
 
 
 def test_negating_kernel_output_reverses_the_public_candidate(
@@ -2541,18 +2444,15 @@ def test_reassigning_taste_keys_changes_the_public_candidate(
         subject_width=_RNG_SUBJECT_BATCH_SIZE,
     )
     baseline = _simulate_seeded_taste_routing(model=model)
-    original = taste_stream_module.generate_simulation_keys
+    original = taste_stream_module.generate_taste_shock_keys
 
     def reassigned_keys(
-        **kwargs: Unpack[_SimulationKeyArguments],
-    ) -> tuple[PRNGKeyND, dict[str, PRNGKeyND]]:
-        next_key, keys = original(**kwargs)
-        return next_key, {
-            name: jnp.roll(values, 1, axis=0) for name, values in keys.items()
-        }
+        **kwargs: Unpack[_TasteKeyArguments],
+    ) -> PRNGKeyND:
+        return jnp.roll(original(**kwargs), 1, axis=0)
 
     monkeypatch.setattr(
-        taste_stream_module, "generate_simulation_keys", reassigned_keys
+        taste_stream_module, "generate_taste_shock_keys", reassigned_keys
     )
     shifted = _simulate_seeded_taste_routing(model=model)
 
@@ -2911,7 +2811,6 @@ _S02_IMPORTED_HELPERS = (
     ("src/_lcm/solution/feasibility.py", "_unflatten_bounded_result"),
     ("src/_lcm/transition_checks.py", "_validate_off_grid_bound_status"),
     ("src/_lcm/simulation/initial_conditions.py", "_validate_initial_bound_status"),
-    ("src/_lcm/solution/grid_search.py", "_grid_search_fold_weights"),
     ("src/_lcm/solution/backward_induction.py", "_accumulate_landing_totals"),
     ("src/_lcm/utils/functools.py", "publish_signature"),
     ("src/_lcm/continuation.py", "_query_bound_evaluator_targets"),
@@ -3250,3 +3149,175 @@ def test_final_nested_sources_have_literal_inventory_obligations() -> None:
     assert isinstance(
         _parse("src/_lcm/egm/upper_envelope/segment_envelope.py"), ast.Module
     )
+
+
+def test_current_iid_adapter_contract_preserves_canonical_decision_transport() -> None:
+    """Preserve the canonical reducer and mandatory publication status."""
+
+    trees = {
+        "src/_lcm/current_iid.py": _parse("src/_lcm/current_iid.py"),
+        "src/lcm/shocks.py": _parse("src/lcm/shocks.py"),
+        "src/_lcm/shock_overrides.py": _parse("src/_lcm/shock_overrides.py"),
+        "src/_lcm/simulation/current_iid_overrides.py": _parse(
+            "src/_lcm/simulation/current_iid_overrides.py"
+        ),
+        "src/_lcm/simulation/current_iid.py": _parse(
+            "src/_lcm/simulation/current_iid.py"
+        ),
+        "src/_lcm/regime_building/max_Q_over_a.py": _parse(
+            "src/_lcm/regime_building/max_Q_over_a.py"
+        ),
+        "src/_lcm/regime_building/processing.py": _parse(
+            "src/_lcm/regime_building/processing.py"
+        ),
+        "src/_lcm/simulation/programs.py": _parse("src/_lcm/simulation/programs.py"),
+        "src/_lcm/solution/feasibility.py": _parse("src/_lcm/solution/feasibility.py"),
+        "src/_lcm/solution/grid_search.py": _parse("src/_lcm/solution/grid_search.py"),
+        "src/_lcm/solution/backward_induction.py": _parse(
+            "src/_lcm/solution/backward_induction.py"
+        ),
+        "src/_lcm/simulation/simulate.py": _parse("src/_lcm/simulation/simulate.py"),
+    }
+    assert hasattr(direct_flow, "current_iid_adapter_errors")
+    assert direct_flow.current_iid_adapter_errors(trees=trees) == []
+
+
+_CURRENT_IID_ADAPTER_MUTATIONS = (
+    (
+        "missing_override_gather_proof",
+        "src/_lcm/simulation/current_iid_overrides.py",
+        "def gather_current_iid_overrides(",
+        "def unavailable_override_gather_proof(",
+    ),
+    (
+        "missing_override_callable_proof",
+        "src/_lcm/shock_overrides.py",
+        "def apply_overrides(",
+        "def unavailable_override_proof(",
+    ),
+    (
+        "missing_factor_callable_proof",
+        "src/lcm/shocks.py",
+        "def _correlation_factor(",
+        "def _unavailable_factor_proof(",
+    ),
+    (
+        "omit_dense_wrap",
+        "src/_lcm/regime_building/max_Q_over_a.py",
+        "        max_Q_over_a = current_iid_plan.wrap(max_Q_over_a)",
+        "        pass",
+    ),
+    (
+        "wrong_dense_guard",
+        "src/_lcm/regime_building/max_Q_over_a.py",
+        "if current_iid_plan is not None:",
+        "if current_iid_plan is None:",
+    ),
+    (
+        "rewire_dense_reducer",
+        "src/_lcm/regime_building/max_Q_over_a.py",
+        "current_iid_plan.wrap(max_Q_over_a)",
+        "current_iid_plan.wrap(Q_and_F)",
+    ),
+    (
+        "omit_stream_wrap",
+        "src/_lcm/regime_building/max_Q_over_a.py",
+        "        streamed_max_Q_over_a = current_iid_plan.wrap(streamed_max_Q_over_a)",
+        "        pass",
+    ),
+    (
+        "rewire_physical_reducer",
+        "src/_lcm/current_iid.py",
+        "partial(_evaluate_node, function=self.function, arguments=arguments)",
+        (
+            "partial(_evaluate_node, function=lambda **kwargs: (0.0, False), "
+            "arguments=arguments)"
+        ),
+    ),
+    (
+        "omit_solve_status",
+        "src/_lcm/current_iid.py",
+        "return jnp.sum(terms), jnp.any(support & empty), ~valid",
+        "return jnp.sum(terms), jnp.any(support & empty), False",
+    ),
+    (
+        "omit_replay_status",
+        "src/_lcm/current_iid.py",
+        "return index, value, dict(physical), ~valid",
+        "return index, value, dict(physical), False",
+    ),
+    (
+        "omit_publication_status",
+        "src/_lcm/solution/grid_search.py",
+        "current_iid_invalid=current_iid_invalid,",
+        "current_iid_invalid=None,",
+    ),
+    (
+        "rewire_key_producer",
+        "src/_lcm/simulation/current_iid.py",
+        "function=draw_window_keys,",
+        "function=lambda **kwargs: None,",
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    ("name", "source", "before", "after"), _CURRENT_IID_ADAPTER_MUTATIONS
+)
+def test_current_iid_adapter_rejects_rewiring(
+    *, name: str, source: direct_flow.SourcePath, before: str, after: str
+) -> None:
+    """Each new adapter obligation must independently reject its defect."""
+
+    trees = {
+        path: _parse(path)
+        for path in (
+            "src/_lcm/current_iid.py",
+            "src/lcm/shocks.py",
+            "src/_lcm/shock_overrides.py",
+            "src/_lcm/simulation/current_iid_overrides.py",
+            "src/_lcm/simulation/current_iid.py",
+            "src/_lcm/regime_building/max_Q_over_a.py",
+            "src/_lcm/regime_building/processing.py",
+            "src/_lcm/simulation/programs.py",
+            "src/_lcm/solution/feasibility.py",
+            "src/_lcm/solution/grid_search.py",
+            "src/_lcm/solution/backward_induction.py",
+            "src/_lcm/simulation/simulate.py",
+        )
+    }
+    assert direct_flow.current_iid_adapter_errors(trees=trees) == []
+    text = (Path(__file__).parents[1] / source).read_text()
+    assert before in text, name
+    trees[source] = ast.parse(text.replace(before, after, 1))
+    assert direct_flow.current_iid_adapter_errors(trees=trees), name
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "src/_lcm/current_iid.py",
+        "src/lcm/shocks.py",
+        "src/_lcm/shock_overrides.py",
+        "src/_lcm/simulation/current_iid_overrides.py",
+    ],
+)
+def test_current_iid_adapter_requires_implementation_proof(
+    *, source: direct_flow.SourcePath
+) -> None:
+    trees = {path: _parse(path) for path in direct_flow._CERTIFIED_CORRIDOR_SOURCES}
+    assert direct_flow.current_iid_adapter_errors(trees=trees) == []
+    del trees[source]
+    assert (
+        f"current IID adapter: missing source {source}"
+        in direct_flow.current_iid_adapter_errors(trees=trees)
+    )
+
+
+def test_current_iid_projection_does_not_change_unrelated_ast() -> None:
+    tree = ast.parse("def unrelated(x):\n    return x + 1")
+    projected = direct_flow._candidate_value_projection(tree)
+    assert ast.dump(projected, include_attributes=False) == ast.dump(
+        tree, include_attributes=False
+    )
+    assert direct_flow._current_iid_builder_guard_errors(tree)

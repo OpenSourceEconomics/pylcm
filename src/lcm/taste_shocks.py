@@ -31,11 +31,24 @@ class ExtremeValueTasteShocks:
     grid-restricted and need not reproduce its off-grid solve value or choice
     probabilities.
 
+    With built-in current-period exits, Full appends one source taste component
+    per exit in declaration order after the discrete-action combinations.
+    Continuous optimization still precedes taste: continuous action points do
+    not receive separate components. Full solve takes the logsum over admitted
+    stay-combination maxima and admitted exit payoffs. Dissolution remains a
+    fallback when its kept stay set is empty; strict Consent governs formation.
+    Full simulation uses one
+    draw at the source regime's existing taste address for that entire roster,
+    mapping the selected component back to its stable stay action or exit ID.
+    Publication remains the selected unshocked value. Destination taste is
+    separately hidden-priced at its logsum and drawn at its own address only
+    when acting there. Arbitrary custom Full selectors with source EV1 taste
+    shocks are unsupported and explicitly refused.
+
     At least one discrete action is required. The implemented solver routes are
     `GridSearch` and `DCEGM`. The declaration is rejected for `NEGM`, `NBEGM`,
     and `NNBEGM`; for collective regimes; on a source regime with a
-    `Gate`; together with an IID state declared
-    `fold=True`; and together with a nonlinear certainty equivalent. These
+    `Gate`; and together with a nonlinear certainty equivalent. These
     combinations are rejected during `Regime` declaration or `Model`
     construction, before solve, rather than silently dropping the shocks.
 

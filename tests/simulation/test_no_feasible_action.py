@@ -1,11 +1,13 @@
 """Report empty action sets without confusing them with feasible infinite values."""
 
 import ast
+import logging
 import re
 from contextlib import nullcontext
 from pathlib import Path
 from typing import Literal
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -91,8 +93,8 @@ def test_native_counter_domain_is_bounded_before_cartesian_allocation(
 ) -> None:
     """Real node vectors can declare the boundary without solving their product."""
     outcome = (
-        pytest.raises(exceptions.ExecutionPlanningError, match="int32 feasibility")
-        if overflows
+        pytest.raises(exceptions.ExecutionPlanningError, match="feasibility count")
+        if overflows and not jax.config.x64_enabled
         else nullcontext()
     )
     with outcome:
@@ -261,13 +263,17 @@ def test_simulation_reports_an_empty_initial_state(*, enable_jit: bool) -> None:
 
 
 @pytest.mark.parametrize("enable_jit", [False, True])
-def test_a_fully_feasible_solve_has_only_off_grid_warning(
+def test_a_fully_feasible_debug_solve_has_only_off_grid_warning(
     *, enable_jit: bool, caplog: pytest.LogCaptureFixture
 ) -> None:
     """Feasible actions can leave the hull without empty-action/value warnings."""
     model = _model(enable_jit=enable_jit, constrained=False)
-    model.solve(params={"discount_factor": 0.5}, log_level="warning")
-    assert [record.getMessage() for record in caplog.records] == [
+    model.solve(params={"discount_factor": 0.5}, log_level="debug")
+    assert [
+        record.getMessage()
+        for record in caplog.records
+        if record.levelno >= logging.WARNING
+    ] == [
         (
             "Off-grid next states: regime='working', target='working', "
             "period=0, state='wealth', phase='solve', count=2"
@@ -677,7 +683,6 @@ def _joint_empty_model(
     *,
     constrained: bool,
     runtime: bool,
-    fold: bool,
     memory_budget: int | None,
     fixed_law: bool = False,
 ) -> Model:
@@ -705,7 +710,6 @@ def _joint_empty_model(
                         gauss_hermite=True,
                         mean=None if runtime else (2.0, -1.0),
                         cov=None if runtime else ((1.0, 0.4), (0.4, 2.0)),
-                        fold=fold,
                     ),
                 },
                 actions={"consumption": LinSpacedGrid(start=1, stop=2, n_points=2)},
@@ -769,10 +773,9 @@ def _assert_joint_empty_matches_native_control(
 
 
 @pytest.mark.parametrize("runtime", [False, True])
-@pytest.mark.parametrize("fold", [False, True])
 @pytest.mark.parametrize("memory_budget", [None, 64 * 1024**2])
 def test_reached_joint_empty_state_reports_physical_values(
-    *, runtime: bool, fold: bool, memory_budget: int | None
+    *, runtime: bool, memory_budget: int | None
 ) -> None:
     """Error state agrees with the actual reached state of a matching native run."""
     params = (
@@ -795,30 +798,27 @@ def test_reached_joint_empty_state_reports_physical_values(
         "regime_id": jnp.asarray([DecisionId.working], dtype=jnp.int32),
     }
     control = _joint_empty_model(
-        constrained=False, runtime=runtime, fold=fold, memory_budget=memory_budget
+        constrained=False, runtime=runtime, memory_budget=memory_budget
     )
     model = _joint_empty_model(
-        constrained=True, runtime=runtime, fold=fold, memory_budget=memory_budget
+        constrained=True, runtime=runtime, memory_budget=memory_budget
     )
     _assert_joint_empty_matches_native_control(
         control=control, model=model, params=params, initial=initial
     )
 
 
-@pytest.mark.parametrize("fold", [False, True])
-def test_reached_joint_empty_state_uses_fixed_runtime_law(*, fold: bool) -> None:
+def test_reached_joint_empty_state_uses_fixed_runtime_law() -> None:
     """A runtime-declared law supplied by Model.fixed_params stays physical."""
     control = _joint_empty_model(
         constrained=False,
         runtime=True,
-        fold=fold,
         memory_budget=64 * 1024**2,
         fixed_law=True,
     )
     model = _joint_empty_model(
         constrained=True,
         runtime=True,
-        fold=fold,
         memory_budget=64 * 1024**2,
         fixed_law=True,
     )
@@ -834,19 +834,16 @@ def test_reached_joint_empty_state_uses_fixed_runtime_law(*, fold: bool) -> None
     )
 
 
-@pytest.mark.parametrize("fold", [False, True])
-def test_reached_joint_empty_state_uses_each_current_runtime_law(*, fold: bool) -> None:
+def test_reached_joint_empty_state_uses_each_current_runtime_law() -> None:
     """Changed then original laws on the same Models cannot bind a stale law."""
     control = _joint_empty_model(
         constrained=False,
         runtime=True,
-        fold=fold,
         memory_budget=64 * 1024**2,
     )
     model = _joint_empty_model(
         constrained=True,
         runtime=True,
-        fold=fold,
         memory_budget=64 * 1024**2,
     )
     original_mean = (2.0, -1.0)
@@ -884,12 +881,10 @@ def test_reached_joint_empty_state_uses_each_current_runtime_law(*, fold: bool) 
 
 
 @pytest.mark.parametrize("runtime", [False, True])
-@pytest.mark.parametrize("fold", [False, True])
 @pytest.mark.parametrize("log_level", ["off", "warning", "progress", "debug"])
 def test_initial_joint_error_preserves_public_physical_states(
     *,
     runtime: bool,
-    fold: bool,
     log_level: Literal["off", "warning", "progress", "debug"],
 ) -> None:
     """An adopted initial error must describe physical inputs, not lowered slots."""
@@ -912,9 +907,7 @@ def test_initial_joint_error_preserves_public_physical_states(
         "y": jnp.asarray([-1.3]),
         "regime_id": jnp.asarray([DecisionId.working], dtype=jnp.int32),
     }
-    control = _joint_empty_model(
-        constrained=False, runtime=runtime, fold=fold, memory_budget=None
-    )
+    control = _joint_empty_model(constrained=False, runtime=runtime, memory_budget=None)
     positive = control.simulate(
         params=params,
         initial_conditions=initial,
@@ -930,9 +923,7 @@ def test_initial_joint_error_preserves_public_physical_states(
     np.testing.assert_array_almost_equal(
         first[list(names)].to_numpy(dtype=float), expected, decimal=DECIMAL_PRECISION
     )
-    model = _joint_empty_model(
-        constrained=True, runtime=runtime, fold=fold, memory_budget=None
-    )
+    model = _joint_empty_model(constrained=True, runtime=runtime, memory_budget=None)
     with pytest.raises(
         exceptions.NoFeasibleActionError, match=r"working.*period 0"
     ) as caught:
@@ -961,14 +952,12 @@ def test_initial_joint_error_preserves_public_physical_states(
 @pytest.mark.parametrize(
     ("runtime", "fixed_law"), [(False, False), (True, False), (True, True)]
 )
-@pytest.mark.parametrize("fold", [False, True])
 @pytest.mark.parametrize("memory_budget", [None, 64 * 1024**2])
 @pytest.mark.parametrize("log_level", ["off", "warning", "progress", "debug"])
 def test_initial_joint_empty_state_reports_physical_values(
     *,
     runtime: bool,
     fixed_law: bool,
-    fold: bool,
     memory_budget: int | None,
     log_level: Literal["off", "warning", "progress", "debug"],
 ) -> None:
@@ -977,7 +966,6 @@ def test_initial_joint_empty_state_reports_physical_values(
         constrained=True,
         runtime=runtime,
         fixed_law=fixed_law,
-        fold=fold,
         memory_budget=memory_budget,
     )
     params = (
@@ -1014,7 +1002,6 @@ def test_initial_joint_empty_state_reports_physical_values(
         constrained=False,
         runtime=runtime,
         fixed_law=fixed_law,
-        fold=fold,
         memory_budget=memory_budget,
     )
     for current_params in parameter_calls:
@@ -1121,18 +1108,17 @@ def _initial_joint_states(
 
 
 @pytest.mark.parametrize("checks", [True, False])
-@pytest.mark.parametrize("fold", [False, True])
 @pytest.mark.parametrize("memory_budget", [None, 64 * 1024**2])
 def test_initial_joint_empty_state_reports_entered_physical_values(
-    *, checks: bool, fold: bool, memory_budget: int | None
+    *, checks: bool, memory_budget: int | None
 ) -> None:
     """An initial empty-set error names the physical state the subject entered."""
     state, entered = _initial_joint_states(
         control=_joint_empty_model(
-            constrained=False, runtime=False, fold=fold, memory_budget=memory_budget
+            constrained=False, runtime=False, memory_budget=memory_budget
         ),
         model=_joint_empty_model(
-            constrained=True, runtime=False, fold=fold, memory_budget=memory_budget
+            constrained=True, runtime=False, memory_budget=memory_budget
         ),
         params={},
         x=2.0,
@@ -1145,16 +1131,14 @@ def test_initial_joint_empty_state_reports_entered_physical_values(
 
 @pytest.mark.parametrize("law", ["declared", "runtime", "fixed"])
 @pytest.mark.parametrize(("x", "y"), [(2.0, -1.0), (3.0, 0.5)])
-@pytest.mark.parametrize("fold", [False, True])
 def test_initial_joint_empty_state_uses_the_current_law(
-    *, law: Literal["declared", "runtime", "fixed"], x: float, y: float, fold: bool
+    *, law: Literal["declared", "runtime", "fixed"], x: float, y: float
 ) -> None:
     """Declared, runtime and fixed laws all report the entered physical state."""
     models = [
         _joint_empty_model(
             constrained=constrained,
             runtime=law != "declared",
-            fold=fold,
             memory_budget=64 * 1024**2,
             fixed_law=law == "fixed",
         )
@@ -1172,13 +1156,10 @@ def test_initial_joint_empty_state_uses_the_current_law(
     assert state == pytest.approx(entered, abs=10.0**-DECIMAL_PRECISION)
 
 
-@pytest.mark.parametrize("fold", [False, True])
-def test_initial_joint_empty_state_uses_each_current_runtime_law(*, fold: bool) -> None:
+def test_initial_joint_empty_state_uses_each_current_runtime_law() -> None:
     """Changed then original laws on the same Models report each entered state."""
     control, model = (
-        _joint_empty_model(
-            constrained=constrained, runtime=True, fold=fold, memory_budget=None
-        )
+        _joint_empty_model(constrained=constrained, runtime=True, memory_budget=None)
         for constrained in (False, True)
     )
     changed = {

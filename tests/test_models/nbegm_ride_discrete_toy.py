@@ -508,8 +508,7 @@ def build_model(  # noqa: C901, PLR0912
     solver_kwargs: NBEGMKwargs = {}
     if probe_failure != "reject":
         solver_kwargs["probe_failure"] = probe_failure
-    if probe_schedule != "every_solve":
-        solver_kwargs["probe_schedule"] = probe_schedule
+    solver_kwargs["probe_schedule"] = probe_schedule
     alive_solver = resolve_solver(
         variant=variant,
         savings_grid=LinSpacedGrid(start=0.0, stop=savings_max, n_points=n_savings),

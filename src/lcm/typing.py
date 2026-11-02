@@ -10,7 +10,7 @@ live in `_lcm.typing`.
 
 from collections.abc import Callable, Mapping
 from fractions import Fraction
-from typing import TYPE_CHECKING, Literal, TypeAliasType
+from typing import TYPE_CHECKING, Literal, Protocol, TypeAliasType, runtime_checkable
 
 import numpy as np
 import pandas as pd
@@ -36,6 +36,18 @@ type AgeLabel = int | float | Fraction | np.integer | np.floating
 type TimeLabel = PeriodLabel | AgeLabel
 
 from lcm.params import TimeVarying, UserMappingLeaf, UserSequenceLeaf  # noqa: E402
+
+
+@runtime_checkable
+class CanonicalArrayWriter(Protocol):
+    """Allocate an already validated numeric leaf at an explicit destination."""
+
+    def __call__(
+        self, *, value: np.ndarray | Array, dtype: np.dtype, name: str
+    ) -> Array:
+        """Write one canonical leaf without changing its preceding validation."""
+        ...
+
 
 if TYPE_CHECKING:
     from _lcm.typing import (
@@ -107,6 +119,9 @@ type StateOrActionName = str
 type ProcessName = str
 type FunctionName = str
 type ParameterName = str
+type EGMReplay = Literal["candidate", "grid"]
+type EGMAccuracy = Literal["balanced", "certified"]
+
 type MarginRoleName = str
 type ReferenceName = (
     StateName | ActionName | FunctionName | ParameterName | MarginRoleName
@@ -169,12 +184,15 @@ type UserParams = Mapping[str, UserParamsNode]
 # User-facing templates keep the first regime and function/target levels
 # structurally visible to type checkers; below them a branch nests as deep as its
 # declaration path does — a joint kernel's `support`/`probabilities` role, or an
-# `edges` slot's target, gate reference or route — before rendered annotation
+# `edges` slot's target, participation read or route — before rendered annotation
 # leaves. The `edges` branch maps each source regime to its slots.
 type _UserFacingTemplateNode = str | dict[str, _UserFacingTemplateNode]
+type UserFacingRegimeParamsTemplate = dict[
+    FunctionName | RegimeName, dict[str, _UserFacingTemplateNode]
+]
 type UserFacingParamsTemplate = dict[
     RegimeName,
-    dict[FunctionName | RegimeName, dict[str, _UserFacingTemplateNode]],
+    UserFacingRegimeParamsTemplate | dict[ParameterName, str],
 ]
 
 

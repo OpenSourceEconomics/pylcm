@@ -21,11 +21,18 @@ import lcm.model as model_module
 from _lcm.persistence import solution as archive
 from _lcm.simulation.entry_allocations import SimulationEntryAllocations
 from _lcm.simulation.entry_inputs import SimulationEntryInputs
-from _lcm.simulation.residency import measure_buffer_footprint, resident_bytes_by_device
+from _lcm.simulation.residency import (
+    measure_buffer_footprint,
+    resident_bytes_by_device,
+    union_buffer_footprints,
+)
 from _lcm.solution import native_values as native_module
 from _lcm.solution.native_values import NativeValueMaterializer
+from _lcm.solution.result_snapshot import snapshot_artifact_template_declaration
+from _lcm.solution.retained_buffers import retained_artifact_authority_buffers
 from _lcm.typing import ArtifactPayload, PytreeValue
 from lcm import ExecutionConfig
+from lcm._solver_api.entries import _LazyEntry
 from lcm.exceptions import (
     ExecutionPlanningError,
     IncompatibleSolutionError,
@@ -33,12 +40,16 @@ from lcm.exceptions import (
     SolutionIntegrityError,
 )
 from lcm.persistence import load_solution
-from lcm.solver_api import LoadState, SolutionResult, ValueStore
+from lcm.solver_api import ArtifactStore, LoadState, SolutionResult, ValueStore
 from tests.simulation.test_foreign_result_allocation import (
     _capture_owner,
     _EntryOwnerInputs,
 )
-from tests.solution.test_solution_persistence import _make_values_only_solution
+from tests.solution.test_solution_persistence import (
+    _make_stateful_pytree_solution,
+    _make_values_only_solution,
+    _StatefulPersistenceTree,
+)
 from tests.solution.test_solution_result import _small_grid_search_inputs
 
 
@@ -528,3 +539,294 @@ def _native_cache(entry: archive._LazyHdf5Entry) -> archive._LoadedEntryPayload:
     cached = entry._cache.value
     assert isinstance(cached, archive._LoadedEntryPayload)
     return cached
+
+
+def _pytree_archive_owner(
+    *, tmp_path: Path
+) -> tuple[
+    archive._LazyHdf5Entry,
+    archive._CanonicalArtifactTemplate,
+    SimulationEntryAllocations,
+]:
+    """Use the complete original PyTree fixture and its real sealed declaration."""
+    source, ref = _make_stateful_pytree_solution()
+    loaded = load_solution(path=source.save(path=tmp_path / "pytree-admission.lcm"))
+    authority = source._artifact_authority[ref]
+    declaration = snapshot_artifact_template_declaration(authority)
+    assert declaration is not None
+    entry = loaded.replay_artifacts._entries[ref]
+    assert type(entry) is archive._LazyHdf5Entry
+    assert entry.payload_kind != "array"
+    assert entry.load_state is LoadState.UNLOADED
+    owner = SimulationEntryAllocations(
+        original_inputs=SimulationEntryInputs(arrays=()),
+        solution=loaded,
+        model_roots=(
+            declaration.leaves,
+            retained_artifact_authority_buffers(authority=authority),
+        ),
+        devices=(jax.devices()[0],),
+        budget_bytes=2**20,
+    )
+    _StatefulPersistenceTree.reset()
+    return entry, declaration, owner
+
+
+@pytest.mark.parametrize("exhausted", [False, True])
+def test_pytree_upload_admits_verified_leaves_before_device_put(  # noqa: PLR0915 - real archive verification, live-budget and same-run effect controls
+    *, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, exhausted: bool
+) -> None:
+    """A complete PyTree uploads only after its real owner admits the verified leaf."""
+    owner = None
+    try:
+        entry, declaration, owner = _pytree_archive_owner(tmp_path=tmp_path)
+        verified: list[np.ndarray] = []
+        effects: list[str] = []
+        probing = False
+        original_read = archive._read_and_verify_leaves
+        original_put = jax.device_put
+
+        def wrap_put[Value, **P, Result](
+            original: Callable[Concatenate[Value, P], Result],
+        ) -> Callable[Concatenate[Value, P], Result]:
+            def guard(value: Value, /, *args: P.args, **kwargs: P.kwargs) -> Result:
+                if any(value is array for array in verified):
+                    effects.append("probe" if probing else "upload")
+                    if probing or exhausted:
+                        raise _UnadmittedAllocationError(
+                            "Verified PyTree leaf uploaded without headroom"
+                        )
+                return original(value, *args, **kwargs)
+
+            return guard
+
+        def read(**kwargs: Unpack[_NativeReadInputs]) -> tuple[np.ndarray, ...]:
+            nonlocal probing
+            arrays = original_read(**kwargs)
+            verified.extend(arrays)
+            assert owner is not None
+            if exhausted:
+                live = owner.snapshot()
+                owner.budget_bytes = max(
+                    sum(stop - start for start, stop in spans)
+                    for spans in live.spans.values()
+                )
+                assert owner.budget_bytes > 1
+            probing = True
+            try:
+                with pytest.raises(_UnadmittedAllocationError):
+                    jax.device_put(arrays[0])
+            finally:
+                probing = False
+            return arrays
+
+        monkeypatch.setattr(archive, "_read_and_verify_leaves", read)
+        monkeypatch.setattr(jax, "device_put", wrap_put(original_put))
+        if exhausted:
+            with pytest.raises(ExecutionPlanningError):
+                entry._materialize(
+                    template=None,
+                    template_snapshot=declaration,
+                    array_writer=owner,
+                    array_copier=owner.copy_solution_leaf,
+                )
+            assert effects == ["probe"]
+            assert entry.load_state is LoadState.UNLOADED
+            assert not owner._pending
+            assert not owner._foreign_copies
+        else:
+            payload = entry._materialize(
+                template=None,
+                template_snapshot=declaration,
+                array_writer=owner,
+                array_copier=owner.copy_solution_leaf,
+            )
+            assert isinstance(payload, _StatefulPersistenceTree)
+            actual = cast("_StatefulPersistenceTree[jax.Array]", payload)
+            cache = _native_cache(entry)
+            assert effects == ["probe", "upload"]
+            assert entry.load_state is LoadState.LOADED
+            assert actual.value is not cache.leaves[0]
+            assert actual.value.shape == (2,)
+            assert actual.value.dtype == np.dtype("float32")
+            assert actual.value.sharding == cache.leaves[0].sharding
+            np.testing.assert_array_equal(
+                actual.value, np.asarray([10.0, 20.0], dtype=np.float32)
+            )
+            expected = measure_buffer_footprint(
+                tree=(cache.leaves, actual.value, declaration.leaves)
+            )
+            live = owner.snapshot()
+            assert (
+                union_buffer_footprints(footprints=(live, expected)).spans == live.spans
+            )
+        assert verified
+        assert _StatefulPersistenceTree.flatten_sources == []
+        assert _StatefulPersistenceTree.emitted_leaves == []
+        assert _StatefulPersistenceTree.unflatten_count == 0
+    finally:
+        if owner is not None:
+            owner.close()
+        _StatefulPersistenceTree.reset()
+
+
+def test_pytree_completed_cache_and_copy_bank_admit_before_next_dispatch(  # noqa: PLR0915 - real copy, same-run dispatch probe, live-budget and cache-only controls
+    *, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A cached PyTree charges its first copy before planning another."""
+    owner = None
+    try:
+        entry, declaration, owner = _pytree_archive_owner(tmp_path=tmp_path)
+        completed: list[weakref.ReferenceType[jax.Array]] = []
+        requested: list[bool] = []
+        snapshots: list[bool] = []
+        compiled: list[jax.stages.Compiled] = []
+        original_dispatch = jax.stages.Compiled.__call__
+
+        def dispatch(
+            self: jax.stages.Compiled, *args: PytreeValue, **kwargs: PytreeValue
+        ) -> PytreeValue:
+            if completed:
+                raise _UnadmittedAllocationError(
+                    "Another PyTree detached copy dispatched without headroom"
+                )
+            compiled.append(self)
+            return original_dispatch(self, *args, **kwargs)
+
+        monkeypatch.setattr(
+            SimulationEntryAllocations,
+            "copy_solution_leaf",
+            partialmethod(
+                _limit_after_first_copy,
+                original=SimulationEntryAllocations.copy_solution_leaf,
+                completed=completed,
+                requested=requested,
+                snapshots=snapshots,
+            ),
+        )
+        monkeypatch.setattr(jax.stages.Compiled, "__call__", dispatch)
+        payload = entry._materialize(
+            template=None,
+            template_snapshot=declaration,
+            array_writer=owner,
+            array_copier=owner.copy_solution_leaf,
+        )
+        assert isinstance(payload, _StatefulPersistenceTree)
+        actual = cast("_StatefulPersistenceTree[jax.Array]", payload)
+        cache = _native_cache(entry)
+        assert entry.load_state is LoadState.LOADED
+        assert requested == [True]
+        assert snapshots == [True]
+        assert actual.value is not cache.leaves[0]
+        np.testing.assert_array_equal(
+            actual.value, np.asarray([10.0, 20.0], dtype=np.float32)
+        )
+        assert compiled
+        with pytest.raises(_UnadmittedAllocationError):
+            compiled[0]()
+
+        def forbidden_read(**kwargs: Unpack[_NativeReadInputs]) -> Never:
+            del kwargs
+            raise AssertionError("A loaded PyTree unexpectedly read its archive again")
+
+        # keyword-only-exempt: library-callback=SimulationEntryAllocations.__call__
+        def forbidden_write(
+            self: SimulationEntryAllocations,
+            *,
+            value: np.ndarray | jax.Array,
+            dtype: np.dtype,
+            name: str,
+        ) -> Never:
+            del self, value, dtype, name
+            raise AssertionError("A loaded PyTree unexpectedly uploaded again")
+
+        with monkeypatch.context() as patch:
+            patch.setattr(archive, "_read_and_verify_leaves", forbidden_read)
+            patch.setattr(SimulationEntryAllocations, "__call__", forbidden_write)
+            with pytest.raises(ExecutionPlanningError):
+                entry._materialize(
+                    template=None,
+                    template_snapshot=declaration,
+                    array_writer=owner,
+                    array_copier=owner.copy_solution_leaf,
+                )
+        assert requested == [True, True]
+        assert snapshots == [True]
+        assert len(completed) == 1
+        assert _native_cache(entry) is cache
+        assert not cache.leaves[0].is_deleted()
+        assert not actual.value.is_deleted()
+        expected = measure_buffer_footprint(
+            tree=(cache.leaves, actual.value, declaration.leaves)
+        )
+        live = owner.snapshot()
+        assert union_buffer_footprints(footprints=(live, expected)).spans == live.spans
+        assert _StatefulPersistenceTree.flatten_sources == []
+        assert _StatefulPersistenceTree.emitted_leaves == []
+        assert _StatefulPersistenceTree.unflatten_count == 0
+    finally:
+        if owner is not None:
+            owner.close()
+        _StatefulPersistenceTree.reset()
+
+
+def test_owned_artifact_store_refuses_unknown_entry_before_override(
+    *, tmp_path: Path
+) -> None:
+    """An owned artifact store refuses unknown decoder overrides before dispatch."""
+    owner = None
+    effects: list[str] = []
+
+    class UnknownEntry(_LazyEntry):
+        @property
+        def load_state(self) -> LoadState:
+            return LoadState.UNLOADED
+
+        def materialize(self, *, template: ArtifactPayload | None = None) -> Never:
+            del template
+            effects.append("materialize")
+            raise _UnadmittedAllocationError("Unknown decoder executed")
+
+        def materialize_from_template_snapshot(
+            self,
+            *,
+            template_snapshot: archive._CanonicalArtifactTemplate,
+            array_writer: native_module.CanonicalArrayWriter | None = None,
+            array_copier: native_module._ArrayCopier | None = None,
+        ) -> Never:
+            del template_snapshot, array_writer, array_copier
+            effects.append("snapshot")
+            raise _UnadmittedAllocationError("Unknown snapshot override executed")
+
+    try:
+        original, declaration, owner = _pytree_archive_owner(tmp_path=tmp_path)
+        assert isinstance(owner.solution, SolutionResult)
+        ref = next(
+            ref
+            for ref, entry in owner.solution.replay_artifacts._entries.items()
+            if entry is original
+        )
+        unknown = UnknownEntry()
+        with pytest.raises(_UnadmittedAllocationError):
+            unknown.materialize_from_template_snapshot(template_snapshot=declaration)
+        assert effects == ["snapshot"]
+        effects.clear()
+        store = ArtifactStore({ref: unknown})
+        # Unknown entries must be rejected before their snapshot override runs.
+        materialize = cast(
+            "Callable[..., ArtifactPayload]", store._materialize_from_template_snapshot
+        )
+        with pytest.raises(ExecutionPlanningError):
+            materialize(
+                ref,
+                template_snapshot=declaration,
+                array_writer=owner,
+                array_copier=owner.copy_solution_leaf,
+            )
+        assert effects == []
+        assert unknown.load_state is LoadState.UNLOADED
+        assert original.load_state is LoadState.UNLOADED
+    finally:
+        if owner is not None:
+            owner.close()
+        _StatefulPersistenceTree.reset()

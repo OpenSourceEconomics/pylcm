@@ -24,7 +24,7 @@ from lcm.solver_api import (
     ReplayRouteSnapshot,
     SimulationBuildContext,
 )
-from lcm.typing import RegimeName
+from lcm.typing import ReferenceName, RegimeName
 
 # One step of a JAX key path into a replay payload.
 type _PathStep = (
@@ -53,7 +53,13 @@ def replay_payload_reads(
     follows the actual payload container. A root-array payload has an empty path.
     """
     return tuple(
-        _payload_read(key=key, period=period, regime=regime, core=core, path=path)
+        _payload_read(
+            key=key,
+            period=period,
+            regime=regime,
+            core=core,
+            path=path,
+        )
         for path, leaf in jax.tree_util.tree_flatten_with_path(payload)[0]
         if isinstance(leaf, jax.Array | np.ndarray)
     )
@@ -67,6 +73,7 @@ def place_replay_payload[T](
     regime: RegimeName,
     core: str,
     owner: PeriodSimulationReads,
+    argument: ReferenceName = "payload",
 ) -> T:
     """Acquire the declared payload leaves and preserve its exact pytree shape."""
 
@@ -77,7 +84,12 @@ def place_replay_payload[T](
         return owner.read(
             unit=regime,
             read=_payload_read(
-                key=key, period=period, regime=regime, core=core, path=path
+                key=key,
+                period=period,
+                regime=regime,
+                core=core,
+                path=path,
+                argument=argument,
             ),
             value=leaf,
         )
@@ -92,6 +104,7 @@ def _payload_read(
     regime: RegimeName,
     core: str,
     path: _PayloadPath,
+    argument: ReferenceName = "payload",
 ) -> ValueRead:
     """Build the same leaf address for declaration and acquisition."""
     return ValueRead(
@@ -107,7 +120,7 @@ def _payload_read(
             source_regime=regime,
             core_key=core,
             channel=ValueInputChannel.CURRENT_REPLAY_ARTIFACT,
-            argument="payload",
+            argument=argument,
             path=tuple(_consumer_step(step) for step in path),
         ),
     )

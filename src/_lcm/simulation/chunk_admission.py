@@ -32,6 +32,7 @@ from _lcm.simulation.chunk_planning import (
 )
 from _lcm.simulation.chunk_profile_cache import profile_cache_registry
 from _lcm.simulation.chunk_profiles import profile_simulation_chunk
+from _lcm.simulation.current_iid_overrides import CurrentIIDOverrideSchema
 from _lcm.simulation.memory import SimulationMemory
 from _lcm.simulation.programs import budgeted_simulation_programs_ready
 from _lcm.simulation.residency import (
@@ -45,7 +46,13 @@ from _lcm.simulation.runtime import SimulationRuntime
 from _lcm.simulation.subject_groups import grouped_extent
 from _lcm.solution.backward_induction import _abstract_value_key, _hashable_metadata
 from _lcm.time import TimeAxis
-from _lcm.typing import FlatParams, RegimeName, RegimeNamesToIds, SimulationPolicy
+from _lcm.typing import (
+    FlatParams,
+    PeriodToRegimeToParticipationSurfaces,
+    RegimeName,
+    RegimeNamesToIds,
+    SimulationPolicy,
+)
 from _lcm.utils.logging import LogLevel
 from lcm.exceptions import ExecutionPlanningError
 
@@ -126,7 +133,6 @@ def prepare_simulation_chunks(
     regimes: MappingProxyType[RegimeName, Regime],
     flat_params: FlatParams,
     values: Mapping[int, Mapping[str, jax.Array]],
-    flags: Mapping[int, Mapping[str, jax.Array]],
     ages: TimeAxis,
     initial_conditions: Mapping[str, jax.Array],
     regime_names_to_ids: RegimeNamesToIds,
@@ -138,9 +144,13 @@ def prepare_simulation_chunks(
     log_level: LogLevel,
     runtime_checks: bool = True,
     policies: Mapping[int, Mapping[RegimeName, SimulationPolicy]] | None = None,
+    participation_surfaces: PeriodToRegimeToParticipationSurfaces = MappingProxyType(
+        {}
+    ),
     process_grid_resolver: ProcessGridResolver | None = None,
     max_compilation_workers: int | None = None,
     group_sizes: tuple[int, ...] | None = None,
+    current_iid_override_schema: CurrentIIDOverrideSchema = (),
 ) -> PreparedSimulationChunks:
     """Select a complete admitted outer cohort with the top-first planner.
 
@@ -170,7 +180,13 @@ def prepare_simulation_chunks(
         footprints=(
             retained_footprint,
             measure_buffer_footprint(
-                tree=(flat_params, initial_conditions, values, flags, ages.values)
+                tree=(
+                    flat_params,
+                    initial_conditions,
+                    values,
+                    ages.values,
+                    participation_surfaces,
+                )
             ),
         )
     )
@@ -215,8 +231,8 @@ def prepare_simulation_chunks(
         regimes=regimes,
         call_inputs=call_inputs,
         values=values,
-        flags=flags,
         policies=policies,
+        participation_surfaces=participation_surfaces,
         ages=ages,
         initial_conditions=initial_conditions,
         regime_names_to_ids=regime_names_to_ids,
@@ -231,6 +247,7 @@ def prepare_simulation_chunks(
         devices=devices,
         max_compilation_workers=max_compilation_workers,
         group_sizes=group_sizes,
+        current_iid_override_schema=current_iid_override_schema,
     )
     plan = _plan_independent_chunks(profiler=profiler, alignment=alignment)
     return PreparedSimulationChunks(
@@ -247,8 +264,10 @@ def _simulation_chunk_profile_key(
     regimes: Mapping[str, Regime],
     call_inputs: SimulationCallInputs,
     values: Mapping[int, Mapping[str, jax.Array]],
-    flags: Mapping[int, Mapping[str, jax.Array]],
     policies: Mapping[int, Mapping[RegimeName, SimulationPolicy]] | None,
+    participation_surfaces: PeriodToRegimeToParticipationSurfaces = MappingProxyType(
+        {}
+    ),
     ages: TimeAxis,
     initial_conditions: Mapping[str, jax.Array],
     regime_names_to_ids: RegimeNamesToIds,
@@ -262,6 +281,7 @@ def _simulation_chunk_profile_key(
     log_level: LogLevel,
     runtime_checks: bool = True,
     group_sizes: tuple[int, ...] | None = None,
+    current_iid_override_schema: CurrentIIDOverrideSchema = (),
 ) -> tuple[Hashable, ...]:
     """Return the canonical, versioned cache key for `profile_simulation_chunk`.
 
@@ -288,7 +308,7 @@ def _simulation_chunk_profile_key(
       that leaves every covered shape untouched (extremely unlikely given how
       regimes are constructed) would not be distinguished by this key.
     """
-    version = 2  # bump when any component below changes meaning
+    version = 4  # bump when any component below changes meaning
     key_version = ("chunk-profile-key", version)
     program_identity = (
         tuple(sorted(regimes)),
@@ -301,6 +321,7 @@ def _simulation_chunk_profile_key(
     )
     axes_and_widths = tuple(sorted(widths.items()))
     argument_metadata = (
+        current_iid_override_schema,
         _abstract_value_key(value=call_inputs.flat_params),
         _abstract_value_key(
             value=tuple(
@@ -308,8 +329,8 @@ def _simulation_chunk_profile_key(
                 for space in call_inputs.base_state_action_spaces.values()
             )
         ),
+        _abstract_value_key(value=participation_surfaces),
         _abstract_value_key(value=values),
-        _abstract_value_key(value=flags),
         _abstract_value_key(value=initial_conditions),
         _abstract_value_key(value=ages.values),
     )
@@ -354,7 +375,6 @@ class _ChunkProfiler:
     regimes: Mapping[str, Regime]
     call_inputs: SimulationCallInputs
     values: Mapping[int, Mapping[str, jax.Array]]
-    flags: Mapping[int, Mapping[str, jax.Array]]
     ages: TimeAxis
     initial_conditions: Mapping[str, jax.Array]
     regime_names_to_ids: RegimeNamesToIds
@@ -368,8 +388,10 @@ class _ChunkProfiler:
     resident: Mapping[jax.Device, int]
     devices: tuple[jax.Device, ...]
     policies: Mapping[int, Mapping[RegimeName, SimulationPolicy]] | None = None
+    participation_surfaces: PeriodToRegimeToParticipationSurfaces = MappingProxyType({})
     max_compilation_workers: int | None = None
     group_sizes: tuple[int, ...] | None = None
+    current_iid_override_schema: CurrentIIDOverrideSchema = ()
 
     def planning_population(self, *, alignment: int) -> int:
         """Return the largest extent one chunk can need: a group, or everyone."""
@@ -430,8 +452,8 @@ class _ChunkProfiler:
             "runtime": self.runtime,
             "regimes": self.regimes,
             "values": self.values,
-            "flags": self.flags,
             "policies": self.policies,
+            "participation_surfaces": self.participation_surfaces,
             "ages": self.ages,
             "initial_conditions": self.initial_conditions,
             "regime_names_to_ids": self.regime_names_to_ids,
@@ -445,6 +467,7 @@ class _ChunkProfiler:
             "log_level": self.log_level,
             "runtime_checks": self.runtime_checks,
             "group_sizes": self.group_sizes,
+            "current_iid_override_schema": self.current_iid_override_schema,
         }
         return profile_cache_registry().get_or_build(
             runtime_token=self.runtime.profile_cache_token,

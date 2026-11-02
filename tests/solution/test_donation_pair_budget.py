@@ -23,6 +23,12 @@ from tests.solution._callback_types import (
 )
 from tests.test_models import nbegm_ride_along_toy
 
+# At this size the ordinary variant needs exactly the donated bytes more than the
+# donating one at both precisions. At 10 savings points XLA:CPU packs the
+# ordinary variant's float32 temporaries tighter by that same amount, so the two
+# tie and no budget lies between them.
+_N_SAVINGS = 12
+
 
 def test_budget_admits_both_real_variants_before_any_donating_dispatch(
     *,
@@ -64,7 +70,7 @@ def test_budget_admits_both_real_variants_before_any_donating_dispatch(
     model = nbegm_ride_along_toy.build_model(
         variant="nbegm",
         n_liquid=8,
-        n_savings=10,
+        n_savings=_N_SAVINGS,
         n_consumption=12,
         execution_config=ExecutionConfig(
             device_memory_bytes=10**8, axis_widths={"cell": 2}
@@ -143,7 +149,7 @@ def test_budget_admits_both_real_variants_before_any_donating_dispatch(
     tight = nbegm_ride_along_toy.build_model(
         variant="nbegm",
         n_liquid=8,
-        n_savings=10,
+        n_savings=_N_SAVINGS,
         n_consumption=12,
         execution_config=ExecutionConfig(
             device_memory_bytes=donor_ceiling, axis_widths={"cell": 2}

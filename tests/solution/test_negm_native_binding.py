@@ -186,6 +186,8 @@ def test_a_compacted_gap_keeps_the_owned_query_and_rejects_the_gap_query() -> No
 
 def test_overflow_keeps_the_original_poison_and_withholds_all_certificates() -> None:
     """Exceeding the existing run capacity cannot acquire binding authority."""
+    # Five rising runs, of which four cover the cells between 13 and 14, so a
+    # capacity of three runs per cell overflows there.
     grid = [10.0, 14.0, 11.0, 17.0, 12.0, 20.0, 13.0, 23.0, 15.0, 26.0]
     row = _refine(
         grid=grid,
@@ -193,7 +195,7 @@ def test_overflow_keeps_the_original_poison_and_withholds_all_certificates() -> 
         value=[float(i) for i in range(len(grid))],
         floor_sources=2,
         queries=[10.0, 14.0, 20.0],
-        max_runs=4,
+        max_runs=3,
     )
     assert int(row.n_kept) > 64
     assert np.isnan(np.asarray(row.grid)).all()
@@ -233,7 +235,7 @@ def test_exact_backend_uses_saving_sources_without_owned_emission() -> None:
         value=jnp.asarray([2.0, 0.0, 0.0, 2.0]),
         marginal_utility=jnp.ones(4),
         savings=jnp.asarray([0.25, 0.25, 1.0, 2.0]),
-        envelope=ExactEnvelope(),
+        max_runs=ExactEnvelope().max_runs,
         n_refined=16,
         publish_provenance=False,
         _binding_source_count=2,

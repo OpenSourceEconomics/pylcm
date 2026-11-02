@@ -7,6 +7,7 @@ labelled-result preflight has one immutable source for shapes, dtypes, routes, a
 applicability.
 """
 
+import functools
 import itertools
 import math
 from collections.abc import Hashable, Mapping
@@ -35,22 +36,24 @@ from _lcm.egm.nested_published_policy import NestedEGMSimPolicy, OuterPolicyBank
 from _lcm.egm.outer_inversion import DeclaredOuterInverse
 from _lcm.egm.outer_replay_capability import OuterReplayCapability
 from _lcm.egm.outer_search import AdaptiveOuterMesh
-from _lcm.egm.published_policy import EGMSimPolicy, NNBEGMSimPolicy
-from _lcm.engine import EGMPolicyRead, NNBEGMPolicyRead, Regime, StateActionSpace
+from _lcm.egm.published_policy import EGMSimPolicy, NBEGMGridPolicy, NNBEGMSimPolicy
+from _lcm.engine import (
+    EGMPolicyRead,
+    NBEGMPolicyRead,
+    NNBEGMPolicyRead,
+    Regime,
+    StateActionSpace,
+)
 from _lcm.execution.core_program import (
     core_program_graph,
     retained_artifact_payload_type,
 )
 from _lcm.execution.output_layout import StateAxesLeading
 from _lcm.grids.discrete import DiscreteGrid
+from _lcm.materialization import DatedGenerationMaterializer
 from _lcm.params.edges import regime_kernel_params
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.regime_building.age_normalization import resolve_periodized_nodes
-from _lcm.regime_building.gated_edges import (
-    edge_may_fold_at_period,
-    gate_reads_dissolution_flag,
-    source_reads_folded_wbar,
-)
 from _lcm.solution.artifacts import _canonical_value_axis_names
 from _lcm.solution.contract import BackwardInductionResult
 from _lcm.solution.nnbegm import derive_nnbegm_replay_capability
@@ -73,9 +76,10 @@ from _lcm.typing import (
     RegimeName,
     StateName,
 )
+from lcm._solver_api.authority import _ArrayCopier
 from lcm._solver_api.identity import ArtifactRuntimeType
+from lcm.exceptions import ExecutionPlanningError
 from lcm.solver_api import (
-    DISSOLUTION_FLAG,
     SIMULATION_POLICY,
     SOLVER_DIAGNOSTICS,
     ArtifactAuthority,
@@ -109,10 +113,6 @@ _EGM_CONTINUATION_ROUTE = ReplayRouteIdentity(
     route_id="pylcm.egm_continuation",
     route_version=1,
 )
-_DISSOLUTION_ROUTE = ReplayRouteIdentity(
-    route_id="pylcm.gated_edge_dissolution",
-    route_version=1,
-)
 _NNBEGM_NESTED_ROUTE = "nnbegm_nested"
 _NNBEGM_CANDIDATE_AXIS = "pylcm:nnbegm:outer_candidate"
 
@@ -133,7 +133,7 @@ class ReplayCellDescriptor:
 
     ref: ArtifactRef
     payload_type: ArtifactRuntimeType | tuple[ArtifactRuntimeType, ...] | None
-    route: EGMPolicyRead | NNBEGMPolicyRead | None
+    route: EGMPolicyRead | NBEGMPolicyRead | NNBEGMPolicyRead | None
     shape: tuple[int, ...] | None
     dtype: str | None
     applicable: bool
@@ -163,7 +163,10 @@ class SolutionAuthority:
         return tuple(ref for ref in self.replay if ref.key == key)
 
 
-def snapshot_solution_authority(authority: SolutionAuthority) -> SolutionAuthority:
+# keyword-only-exempt: primary-argument=authority
+def snapshot_solution_authority(
+    authority: SolutionAuthority, *, array_copier: _ArrayCopier | None = None
+) -> SolutionAuthority:
     """Detach every authority wrapper reused after a lazy value callback."""
     if type(authority) is not SolutionAuthority:
         raise TypeError("Solution authority must be exact SolutionAuthority.")
@@ -183,7 +186,9 @@ def snapshot_solution_authority(authority: SolutionAuthority) -> SolutionAuthori
         snapshot_artifact_ref(ref): _snapshot_replay_cell_descriptor(descriptor)
         for ref, descriptor in authority.replay.items()
     }
-    artifacts = snapshot_artifact_authorities(authority.artifacts)
+    artifacts = snapshot_artifact_authorities(
+        authority.artifacts, array_copier=array_copier
+    )
     artifact_descriptors = MappingProxyType(
         {
             snapshot_artifact_ref(ref): snapshot_artifact_descriptor(descriptor)
@@ -265,11 +270,13 @@ def _snapshot_replay_cell_descriptor(
 
     route = descriptor.route
     if type(route) is EGMPolicyRead:
-        copied_route: EGMPolicyRead | NNBEGMPolicyRead | None = (
+        copied_route: EGMPolicyRead | NBEGMPolicyRead | NNBEGMPolicyRead | None = (
             _snapshot_egm_policy_read(route)
         )
     elif type(route) is NNBEGMPolicyRead:
         copied_route = _snapshot_nnbegm_policy_read(route)
+    elif type(route) is NBEGMPolicyRead:
+        copied_route = _snapshot_nbegm_policy_read(route)
     else:
         copied_route = None
 
@@ -314,9 +321,11 @@ def _validate_replay_cell_descriptor(  # noqa: C901
     elif payload_type is not None and not isinstance(payload_type, type):
         raise TypeError("Replay payload_type must be a type, exact tuple, or None.")
     route_type = type(descriptor.route)
-    if descriptor.route is not None and (
-        route_type is not EGMPolicyRead and route_type is not NNBEGMPolicyRead
-    ):
+    if descriptor.route is not None and route_type not in {
+        EGMPolicyRead,
+        NBEGMPolicyRead,
+        NNBEGMPolicyRead,
+    }:
         raise TypeError("Replay authority has an unsupported route wrapper.")
     if descriptor.shape is not None:
         _require_exact_shape(value=descriptor.shape, label="replay authority shape")
@@ -385,6 +394,49 @@ def _snapshot_egm_policy_read(route: EGMPolicyRead) -> EGMPolicyRead:
                 period: tuple(lengths)
                 for period, lengths in route.row_axis_lengths_by_period.items()
             }
+        ),
+    )
+
+
+def _snapshot_nbegm_policy_read(route: NBEGMPolicyRead) -> NBEGMPolicyRead:
+    """Copy an NB-EGM state-grid route after validating every structural field."""
+    for value, label in (
+        (route.action_name, "NB-EGM action_name"),
+        (route.resources_target, "NB-EGM resources_target"),
+        (route.liquid_state_name, "NB-EGM liquid_state_name"),
+        (route.float_dtype, "NB-EGM float_dtype"),
+        (route.integer_dtype, "NB-EGM integer_dtype"),
+    ):
+        _require_nonempty_exact_str(value=value, label=label)
+    _require_exact_float(
+        value=route.savings_lower_bound, label="NB-EGM savings_lower_bound"
+    )
+    _require_exact_names(value=route.state_names, label="NB-EGM state_names")
+    _require_exact_names(
+        value=route.discrete_action_names, label="NB-EGM discrete_action_names"
+    )
+    _require_exact_period_lengths(
+        value=route.state_axis_lengths_by_period,
+        label="NB-EGM state_axis_lengths_by_period",
+    )
+    if route.liquid_state_name not in route.state_names or any(
+        len(codes) != len(route.discrete_action_names)
+        or any(type(code) is not int for code in codes)
+        for codes in route.branch_discrete_action_codes
+    ):
+        raise TypeError("An NB-EGM route has an inconsistent state or branch layout.")
+    return replace(
+        route,
+        state_names=tuple(route.state_names),
+        state_axis_lengths_by_period=MappingProxyType(
+            {
+                period: tuple(lengths)
+                for period, lengths in route.state_axis_lengths_by_period.items()
+            }
+        ),
+        discrete_action_names=tuple(route.discrete_action_names),
+        branch_discrete_action_codes=tuple(
+            tuple(codes) for codes in route.branch_discrete_action_codes
         ),
     )
 
@@ -707,6 +759,8 @@ def build_solution_authority(  # noqa: C901, PLR0915
     flat_params: FlatParams,
     ages: TimeAxis,
     process_grid_resolver: ProcessGridResolver | None = None,
+    materializer: DatedGenerationMaterializer | None = None,
+    array_copier: _ArrayCopier | None = None,
 ) -> SolutionAuthority:
     """Derive active value and replay descriptions solely from the model.
 
@@ -714,6 +768,12 @@ def build_solution_authority(  # noqa: C901, PLR0915
     state-action spaces here therefore gives the same exact axis lengths as the period
     kernels without consulting any returned value or replay payload.
     """
+    if materializer is None and array_copier is not None:
+        raise ExecutionPlanningError(
+            "Authority copies require the original template producer owner."
+        )
+    if materializer is not None and array_copier is None:
+        array_copier = materializer.copy_solution_leaf
     canonical_float = str(np.dtype(canonical_float_dtype()))
     topology = _get_regime_V_shapes_and_shardings(
         regimes=regimes,
@@ -723,7 +783,6 @@ def build_solution_authority(  # noqa: C901, PLR0915
     values: dict[tuple[int, RegimeName], ValueCellDescriptor] = {}
     replay: dict[ArtifactRef, ReplayCellDescriptor] = {}
     artifacts: dict[ArtifactRef, ArtifactAuthority] = {}
-    required_dissolution_cells = _required_dissolution_cells(regimes=regimes)
 
     for regime_name, regime in regimes.items():
         value_descriptor = ValueCellDescriptor(
@@ -746,8 +805,6 @@ def build_solution_authority(  # noqa: C901, PLR0915
         policy_required = False if external_route is not None else route.policy_required
         consumer_route = None if external_route is not None else route.consumer_route
 
-        flag_applicable = regime.stakeholders is not None
-        flag_shape = value_descriptor.shape[:-1] if flag_applicable else None
         # Always resolve named state/action axes from canonical runtime parameters.
         # A plugin build context can carry placeholder nodes for runtime irregular
         # grids; those values are descriptive input, never model authority.
@@ -771,6 +828,7 @@ def build_solution_authority(  # noqa: C901, PLR0915
                         authority=custom_authority,
                         regime=regime,
                         state_action_space=state_action_space,
+                        array_copier=array_copier,
                     )
                     for key, custom_authority in (
                         regime.solution.artifact_authorities.items()
@@ -782,6 +840,8 @@ def build_solution_authority(  # noqa: C901, PLR0915
                 period=period,
                 continuation_spec=regime.solution.continuation_spec,
                 custom_authorities=custom_authorities,
+                materializer=materializer,
+                array_copier=array_copier,
             )
             _validate_artifact_producer_types(
                 regime_name=regime_name,
@@ -841,6 +901,7 @@ def build_solution_authority(  # noqa: C901, PLR0915
                     policy_read=policy_read,
                     policy_shape=policy_shape,
                     expected_replay_capability=expected_capability,
+                    materializer=materializer,
                 )
                 if policy_template is None:
                     policy_snapshot = None
@@ -850,6 +911,7 @@ def build_solution_authority(  # noqa: C901, PLR0915
                         _snapshot_artifact_template_once(
                             template=policy_template,
                             payload_runtime_type=policy_type,
+                            array_copier=array_copier,
                         )
                     )
                 policy_layout = _policy_artifact_layout(
@@ -871,11 +933,13 @@ def build_solution_authority(  # noqa: C901, PLR0915
                     consumer_route=route_identity,
                     applicable=policy_applicable,
                     required=policy_required,
+                    array_copier=array_copier,
                 )
                 artifacts[policy_ref] = _bind_model_owned_artifact_facts(
                     authority=policy_authority,
                     regime=regime,
                     state_action_space=state_action_space,
+                    array_copier=array_copier,
                 )
             elif (
                 dormant_policy_type := producer_payload_types.get(SIMULATION_POLICY)
@@ -900,72 +964,16 @@ def build_solution_authority(  # noqa: C901, PLR0915
                     axes=policy_layout.axes,
                     state_roles=policy_layout.state_roles,
                     action_roles=policy_layout.action_roles,
-                    consumer_route=None,
                     applicable=False,
                     required=False,
+                    array_copier=array_copier,
                 )
                 artifacts[policy_ref] = _bind_model_owned_artifact_facts(
                     authority=dormant_authority,
                     regime=regime,
                     state_action_space=state_action_space,
+                    array_copier=array_copier,
                 )
-            flag_ref = ArtifactRef(
-                period=period,
-                regime=regime_name,
-                key=DISSOLUTION_FLAG,
-            )
-            replay[flag_ref] = ReplayCellDescriptor(
-                ref=flag_ref,
-                payload_type=Array if flag_applicable else None,
-                route=None,
-                shape=flag_shape,
-                dtype="bool" if flag_applicable else None,
-                applicable=flag_applicable,
-                required=coordinate in required_dissolution_cells,
-                consumer_route=("gated_edge_dissolution" if flag_applicable else None),
-            )
-            if flag_applicable and flag_shape is not None:
-                flag_axis_names = value_descriptor.axis_names[: len(flag_shape)]
-                flag_axes = tuple(
-                    AxisAuthority(
-                        name=name,
-                        length=length,
-                        role=(
-                            AxisRole.STATE
-                            if name in state_action_space.states
-                            else AxisRole.OTHER
-                        ),
-                        coordinates=(
-                            ()
-                            if name in state_action_space.states
-                            else tuple(range(length))
-                        ),
-                    )
-                    for name, length in zip(flag_axis_names, flag_shape, strict=True)
-                )
-                flag_authority = _authority_from_template(
-                    key=DISSOLUTION_FLAG,
-                    channel=ArtifactChannel.REPLAY,
-                    persistence=PersistencePolicy.MODEL_VERIFIABLE,
-                    payload_runtime_type=Array,
-                    template=jnp.zeros(flag_shape, dtype=bool),
-                    leaf_axis_names=MappingProxyType({(): flag_axis_names}),
-                    axes=flag_axes,
-                    state_roles=tuple(
-                        name
-                        for name in flag_axis_names
-                        if name in state_action_space.states
-                    ),
-                    consumer_route=_DISSOLUTION_ROUTE,
-                    applicable=True,
-                    required=coordinate in required_dissolution_cells,
-                )
-                artifacts[flag_ref] = _bind_model_owned_artifact_facts(
-                    authority=flag_authority,
-                    regime=regime,
-                    state_action_space=state_action_space,
-                )
-
             for key, custom_authority in custom_authorities.items():
                 if key != custom_authority.descriptor.key:
                     raise TypeError(
@@ -983,13 +991,17 @@ def build_solution_authority(  # noqa: C901, PLR0915
             if (
                 continuation_spec is not None
                 and continuation_spec.artifact_key not in custom_authorities
+                and (
+                    not continuation_spec.templates_by_period
+                    or period in continuation_spec.templates_by_period
+                )
             ):
                 continuation_ref = ArtifactRef(
                     period=period,
                     regime=regime_name,
                     key=continuation_spec.artifact_key,
                 )
-                continuation_template = continuation_spec.template
+                continuation_template = continuation_spec.template_at(period=period)
                 if isinstance(continuation_spec, EGMContinuationSpec):
                     _validate_model_query_spec(
                         regime=regime,
@@ -1005,6 +1017,7 @@ def build_solution_authority(  # noqa: C901, PLR0915
                     _snapshot_artifact_template_once(
                         template=continuation_template,
                         payload_runtime_type=type(continuation_template),
+                        array_copier=array_copier,
                     )
                 )
                 continuation_layout = (
@@ -1051,12 +1064,14 @@ def build_solution_authority(  # noqa: C901, PLR0915
                     ),
                     applicable=True,
                     required=True,
+                    array_copier=array_copier,
                 )
                 artifacts[continuation_ref] = (
                     _bind_model_owned_artifact_facts(
                         authority=continuation_authority,
                         regime=regime,
                         state_action_space=state_action_space,
+                        array_copier=array_copier,
                     )
                     if continuation_layout is not None
                     else continuation_authority
@@ -1078,6 +1093,8 @@ def _validate_custom_continuation_authorities(
     period: int,
     continuation_spec: ContinuationSpec | None,
     custom_authorities: MappingProxyType[ArtifactKey, ArtifactAuthority],
+    materializer: DatedGenerationMaterializer | None = None,
+    array_copier: _ArrayCopier | None = None,
 ) -> None:
     """Require a custom continuation authority to agree with its producer spec.
 
@@ -1143,6 +1160,8 @@ def _validate_custom_continuation_authorities(
         _canonicalize_artifact_payload(
             payload=continuation_spec.template,
             authority=authority,
+            array_writer=materializer,
+            array_copier=array_copier,
         )
     except (TypeError, ValueError) as error:
         raise TypeError(
@@ -1326,13 +1345,19 @@ def _validate_artifact_producer_types(
 
 def _policy_artifact_layout(
     *,
-    policy_read: EGMPolicyRead | NNBEGMPolicyRead | None,
+    policy_read: EGMPolicyRead | NBEGMPolicyRead | NNBEGMPolicyRead | None,
     template_snapshot: _CanonicalArtifactTemplate | None,
     period: int,
 ) -> _ArtifactLayout:
     """Describe every built-in policy leaf with its mathematical axes."""
     if isinstance(policy_read, EGMPolicyRead):
         return _egm_policy_artifact_layout(
+            policy_read=policy_read,
+            template_snapshot=template_snapshot,
+            period=period,
+        )
+    if isinstance(policy_read, NBEGMPolicyRead):
+        return _nbegm_policy_artifact_layout(
             policy_read=policy_read,
             template_snapshot=template_snapshot,
             period=period,
@@ -1398,6 +1423,70 @@ def _egm_policy_artifact_layout(
         axes=axes,
         state_roles=row_state_names,
         action_roles=_unique_names((policy_read.action_name, *row_action_names)),
+    )
+
+
+def _nbegm_policy_artifact_layout(
+    *,
+    policy_read: NBEGMPolicyRead,
+    template_snapshot: _CanonicalArtifactTemplate | None,
+    period: int,
+) -> _ArtifactLayout:
+    """Return the state axes of an NB-EGM policy and its optional branch banks.
+
+    Leaves follow `NBEGMGridPolicy`'s flatten order: the collapsed action, then,
+    with discrete actions, the branch action and value banks (branch axis
+    leading) and the branch-code matrix.
+    """
+    state_names = policy_read.state_names
+    axes = _model_role_axes(
+        names=state_names,
+        lengths=policy_read.state_axis_lengths_by_period[period],
+        state_names=state_names,
+        action_names=(),
+    )
+    branch_axis = "pylcm:nbegm:branch"
+    field_axis = "pylcm:nbegm:discrete_action_field"
+    leaf_axis_names = (
+        (
+            state_names,
+            (branch_axis, *state_names),
+            (branch_axis, *state_names),
+            (branch_axis, field_axis),
+        )
+        if policy_read.discrete_action_names
+        else (state_names,)
+    )
+    paths = () if template_snapshot is None else template_snapshot.leaf_paths
+    if paths and len(paths) != len(leaf_axis_names):
+        raise TypeError("An NB-EGM policy template has inconsistent leaves.")
+    leaf_axes: dict[TreePath, tuple[str, ...]] = dict(
+        zip(paths, leaf_axis_names[: len(paths)], strict=True)
+    )
+    if policy_read.discrete_action_names:
+        n_branches = len(policy_read.branch_discrete_action_codes)
+        axes = (
+            *axes,
+            AxisAuthority(
+                name=branch_axis,
+                length=n_branches,
+                role=AxisRole.CANDIDATE,
+                coordinates=tuple(range(n_branches)),
+            ),
+            AxisAuthority(
+                name=field_axis,
+                length=len(policy_read.discrete_action_names),
+                role=AxisRole.OTHER,
+                coordinates=tuple(policy_read.discrete_action_names),
+            ),
+        )
+    return _ArtifactLayout(
+        leaf_axis_names=MappingProxyType(leaf_axes),
+        axes=tuple(axes),
+        state_roles=state_names,
+        action_roles=_unique_names(
+            (policy_read.action_name, *policy_read.discrete_action_names)
+        ),
     )
 
 
@@ -2123,9 +2212,9 @@ def _authority_from_template(
     state_roles: tuple[str, ...] = (),
     action_roles: tuple[str, ...] = (),
     categorical_domains: dict[str, CategoryDomain] | None = None,
-    consumer_route: ReplayRouteIdentity | None = None,
     applicable: bool,
     required: bool,
+    array_copier: _ArrayCopier | None = None,
 ) -> ArtifactAuthority:
     """Observe one engine template once, then build its exact authority."""
     if template is None:
@@ -2135,6 +2224,7 @@ def _authority_from_template(
         template_snapshot, containers = _snapshot_artifact_template_once(
             template=template,
             payload_runtime_type=payload_runtime_type,
+            array_copier=array_copier,
         )
     return _authority_from_observed_template(
         key=key,
@@ -2148,9 +2238,9 @@ def _authority_from_template(
         state_roles=state_roles,
         action_roles=action_roles,
         categorical_domains=categorical_domains,
-        consumer_route=consumer_route,
         applicable=applicable,
         required=required,
+        array_copier=array_copier,
     )
 
 
@@ -2170,6 +2260,7 @@ def _authority_from_observed_template(
     consumer_route: ReplayRouteIdentity | None = None,
     applicable: bool,
     required: bool,
+    array_copier: _ArrayCopier | None = None,
 ) -> ArtifactAuthority:
     """Build an exact authority from one already observed engine template."""
     categories = {} if categorical_domains is None else categorical_domains
@@ -2265,6 +2356,7 @@ def _authority_from_observed_template(
         consumer_route=consumer_route,
         applicable=applicable,
         required=required,
+        array_copier=array_copier,
     )
 
 
@@ -2280,9 +2372,12 @@ def _bind_model_owned_artifact_facts(  # noqa: C901
     authority: ArtifactAuthority,
     regime: Regime,
     state_action_space: StateActionSpace,
+    array_copier: _ArrayCopier | None = None,
 ) -> ArtifactAuthority:
     """Replace declared state/action coordinates with canonical model values."""
-    template_snapshot = _artifact_authority_template_snapshot(authority)
+    template_snapshot = _artifact_authority_template_snapshot(
+        authority, array_copier=array_copier
+    )
     if authority.descriptor.channel is ArtifactChannel.DIAGNOSTIC:
         raise TypeError(
             "Custom DIAGNOSTIC authorities are unsupported because KernelOutput "
@@ -2357,6 +2452,7 @@ def _bind_model_owned_artifact_facts(  # noqa: C901
         consumer_route=authority.consumer_route,
         applicable=authority.applicable,
         required=authority.required,
+        array_copier=array_copier,
     )
 
 
@@ -2430,6 +2526,7 @@ def bind_generated_solution_authority(
     internal_result: BackwardInductionResult,
     regimes: MappingProxyType[RegimeName, Regime],
     flat_params: FlatParams,
+    array_copier: _ArrayCopier | None = None,
 ) -> SolutionAuthority:
     """Bind the outer nodes an adaptive solve settled on into the solve's authority.
 
@@ -2442,6 +2539,10 @@ def bind_generated_solution_authority(
     presents them to its consumer through that descriptor, see
     `bind_declared_adaptive_authority`.
     """
+    if array_copier is not None and internal_result.generated_replay_authorities:
+        raise ExecutionPlanningError(
+            "Budgeted adaptive replay templates require producer admission."
+        )
     bound = _AuthorityBinding(authority=authority)
     for (
         period,
@@ -2495,6 +2596,7 @@ def bind_generated_solution_authority(
                     key=SOLVER_DIAGNOSTICS,
                 ),
                 template=diagnostics,
+                array_copier=array_copier,
             )
     return bound.authority_with_bindings()
 
@@ -2505,6 +2607,7 @@ def bind_declared_solution_authority(
     artifact_descriptors: Mapping[ArtifactRef, ArtifactDescriptor],
     regimes: MappingProxyType[RegimeName, Regime],
     flat_params: FlatParams,
+    array_copier: _ArrayCopier | None = None,
 ) -> SolutionAuthority:
     """Bind everything a result declares about its own solve into model authority.
 
@@ -2516,6 +2619,13 @@ def bind_declared_solution_authority(
     checks; the consumer then compares every descriptor against the bound
     authority.
     """
+    if array_copier is not None and (
+        any(_is_applicable_nested_policy(item) for item in authority.replay.values())
+        or any(ref.key == SOLVER_DIAGNOSTICS for ref in artifact_descriptors)
+    ):
+        raise ExecutionPlanningError(
+            "Budgeted adaptive/diagnostics templates require producer admission."
+        )
     bound = _AuthorityBinding(
         authority=bind_declared_adaptive_authority(
             authority=authority,
@@ -2724,7 +2834,11 @@ class _AuthorityBinding:
         self.bound_refs.add(ref)
 
     def bind_diagnostics(
-        self, *, ref: ArtifactRef, template: SolverDiagnostics
+        self,
+        *,
+        ref: ArtifactRef,
+        template: SolverDiagnostics,
+        array_copier: _ArrayCopier | None = None,
     ) -> None:
         """Describe one retained diagnostics payload from the payload itself.
 
@@ -2744,6 +2858,7 @@ class _AuthorityBinding:
             template=template,
             applicable=True,
             required=False,
+            array_copier=array_copier,
         )
         self.artifacts[ref] = authority
         self.artifact_descriptors[ref] = authority.descriptor
@@ -2764,7 +2879,7 @@ class _AuthorityBinding:
 def _policy_shape_and_node_count(
     *,
     regime: Regime,
-    policy_read: EGMPolicyRead | NNBEGMPolicyRead | None,
+    policy_read: EGMPolicyRead | NBEGMPolicyRead | NNBEGMPolicyRead | None,
     period: int,
 ) -> tuple[tuple[int, ...] | None, int | None]:
     """Return model-owned primary-array shape and EGM trailing-node length."""
@@ -2775,6 +2890,8 @@ def _policy_shape_and_node_count(
             raise TypeError(msg)
         node_count = int(template.value.shape[-1])
         return (*policy_read.row_axis_lengths_by_period[period], node_count), node_count
+    if isinstance(policy_read, NBEGMPolicyRead):
+        return policy_read.state_axis_lengths_by_period[period], None
     if not isinstance(policy_read, NNBEGMPolicyRead):
         return None, None
     if not policy_read.replay_policy_is_nested:
@@ -2793,17 +2910,38 @@ def _policy_shape_and_node_count(
     return (*policy_read.row_axis_lengths_by_period[period], node_count), node_count
 
 
+def _zeros_for_template(*, schema: jax.ShapeDtypeStruct) -> jax.Array:
+    """Materialize a zero template from its exact metadata schema."""
+    return jnp.zeros(schema.shape, dtype=schema.dtype)
+
+
+def _materialize_authority_zeros(
+    *, schema: jax.ShapeDtypeStruct, materializer: DatedGenerationMaterializer
+) -> jax.Array:
+    """Admit the original zero-template factory from its exact metadata schema."""
+    return materializer.produce(
+        function=functools.partial(_zeros_for_template, schema=schema), arguments={}
+    )
+
+
 def _policy_persistence_and_template(
     *,
-    policy_read: EGMPolicyRead | NNBEGMPolicyRead | None,
+    policy_read: EGMPolicyRead | NBEGMPolicyRead | NNBEGMPolicyRead | None,
     policy_shape: tuple[int, ...] | None,
     expected_replay_capability: OuterReplayCapability | None,
-) -> tuple[PersistencePolicy, EGMSimPolicy | NNBEGMSimPolicy | None]:
+    materializer: DatedGenerationMaterializer | None = None,
+) -> tuple[PersistencePolicy, EGMSimPolicy | NBEGMGridPolicy | NNBEGMSimPolicy | None]:
     """Return the route's persistence policy and model-built PyTree template."""
     if isinstance(policy_read, EGMPolicyRead):
         if policy_shape is None:
             raise TypeError("An EGM replay route has no model-owned policy shape.")
-        row = jnp.zeros(policy_shape, dtype=policy_read.float_dtype)
+        if materializer is None:
+            row = jnp.zeros(policy_shape, dtype=policy_read.float_dtype)
+        else:
+            row = _materialize_authority_zeros(
+                schema=jax.ShapeDtypeStruct(policy_shape, policy_read.float_dtype),
+                materializer=materializer,
+            )
         return PersistencePolicy.MODEL_VERIFIABLE, EGMSimPolicy(
             endog_grid=row,
             policy=row,
@@ -2812,6 +2950,18 @@ def _policy_persistence_and_template(
             row_discrete_state_names=policy_read.row_discrete_state_names,
             row_passive_state_names=policy_read.row_passive_state_names,
             row_discrete_action_names=policy_read.row_discrete_action_names,
+        )
+
+    if isinstance(policy_read, NBEGMPolicyRead):
+        return PersistencePolicy.MODEL_VERIFIABLE, _nbegm_policy_template(
+            policy_read=policy_read,
+            policy_shape=policy_shape,
+            materializer=materializer,
+        )
+
+    if materializer is not None and isinstance(policy_read, NNBEGMPolicyRead):
+        raise ExecutionPlanningError(
+            "Budgeted nested policy authority requires producer admission."
         )
 
     if isinstance(policy_read, NNBEGMPolicyRead):
@@ -2857,6 +3007,41 @@ def _policy_persistence_and_template(
         )
 
     return PersistencePolicy.NOT_PERSISTED, None
+
+
+def _nbegm_policy_template(
+    *,
+    policy_read: NBEGMPolicyRead,
+    policy_shape: tuple[int, ...] | None,
+    materializer: DatedGenerationMaterializer | None,
+) -> NBEGMGridPolicy:
+    """Build the NB-EGM state-grid policy template from the route's facts."""
+    if policy_shape is None:
+        raise TypeError("An NB-EGM replay route has no model-owned policy shape.")
+    action = (
+        jnp.zeros(policy_shape, dtype=policy_read.float_dtype)
+        if materializer is None
+        else _materialize_authority_zeros(
+            schema=jax.ShapeDtypeStruct(policy_shape, policy_read.float_dtype),
+            materializer=materializer,
+        )
+    )
+    if not policy_read.discrete_action_names:
+        return NBEGMGridPolicy(action=action, state_names=policy_read.state_names)
+    bank = jnp.broadcast_to(
+        action, (len(policy_read.branch_discrete_action_codes), *policy_shape)
+    )
+    return NBEGMGridPolicy(
+        action=action,
+        state_names=policy_read.state_names,
+        branch_inner_action=bank,
+        branch_value=bank,
+        branch_discrete_actions=jnp.asarray(
+            policy_read.branch_discrete_action_codes,
+            dtype=policy_read.integer_dtype,
+        ),
+        discrete_action_names=policy_read.discrete_action_names,
+    )
 
 
 def _inner_policy_from_array(
@@ -2923,38 +3108,6 @@ def _adaptive_policy_template(
         value_atol=policy_read.value_atol,
         value_rtol=policy_read.value_rtol,
     )
-
-
-def _required_dissolution_cells(
-    *, regimes: MappingProxyType[RegimeName, Regime]
-) -> frozenset[tuple[int, RegimeName]]:
-    """Return every target cell whose flag a canonical gated route consumes."""
-    solved_by_period: dict[int, set[RegimeName]] = {}
-    for regime_name, regime in regimes.items():
-        for period in regime.active_periods:
-            solved_by_period.setdefault(period, set()).add(regime_name)
-
-    required: set[tuple[int, RegimeName]] = set()
-    for source_name, source in regimes.items():
-        for edge in source.gated_edges.values():
-            if not gate_reads_dissolution_flag(edge=edge):
-                continue
-            for period, solved_regimes in solved_by_period.items():
-                source_reads = source_reads_folded_wbar(
-                    source_active_periods=source.active_periods,
-                    fold_period=period,
-                )
-                if not source_reads:
-                    continue
-                if edge_may_fold_at_period(
-                    edge=edge,
-                    source_name=source_name,
-                    fold_period=period,
-                    solved_regimes=solved_regimes,
-                    source_reads_wbar=True,
-                ):
-                    required.add((period, edge.target))
-    return frozenset(required)
 
 
 __all__ = [

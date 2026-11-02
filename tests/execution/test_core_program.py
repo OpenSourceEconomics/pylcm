@@ -29,7 +29,6 @@ from _lcm.execution.core_program import (
     resolve_core_program_candidates,
 )
 from _lcm.execution.output_layout import (
-    DISSOLUTION_FLAG,
     VALUE,
     StateAxesLeading,
     resolve_output_layout,
@@ -66,9 +65,10 @@ from tests.test_models.nbegm_common import (
 _WIDTH_KEYWORD = "_lcm_action_block_width"
 
 # A GridSearch core also publishes its empty-action and other-Inf state counts.
+_FEASIBILITY_COUNT_DTYPE = jnp.int64 if jax.config.x64_enabled else jnp.int32
 _FEASIBILITY_COUNT_ROLES = (
-    StateAxesLeading(state_names=(), dtype=jnp.int32, shape=()),
-    StateAxesLeading(state_names=(), dtype=jnp.int32, shape=()),
+    StateAxesLeading(state_names=(), dtype=_FEASIBILITY_COUNT_DTYPE, shape=()),
+    StateAxesLeading(state_names=(), dtype=_FEASIBILITY_COUNT_DTYPE, shape=()),
 )
 
 _SCHEDULED_SOURCE = ("source", 0, "main")
@@ -622,11 +622,7 @@ def test_collective_grid_search_plans_cells_with_canonical_action_reduction() ->
 
     assert program.disposition is CoreExecutionDisposition.PLANNED
     assert program.disposition_reason is None
-    assert program.output_roles == (
-        VALUE,
-        DISSOLUTION_FLAG,
-        *_FEASIBILITY_COUNT_ROLES,
-    )
+    assert program.output_roles == (VALUE, *_FEASIBILITY_COUNT_ROLES)
     assert program.requirements.reduced_axes == ()
 
     resolved = resolve_core_program(
@@ -643,10 +639,7 @@ def test_collective_grid_search_plans_cells_with_canonical_action_reduction() ->
     assert jax.tree.structure(output) == jax.tree.structure(program.output_roles)
     assert isinstance(output, tuple)
     assert isinstance(output[0], jax.ShapeDtypeStruct)
-    assert isinstance(output[1], jax.ShapeDtypeStruct)
     assert output[0].shape == next_V["couple"].shape
-    assert output[1].shape == next_V["couple"].shape[:-1]
-    assert output[1].dtype == jnp.bool_
 
 
 def test_ev1_grid_search_plans_cells_with_canonical_action_reduction() -> None:

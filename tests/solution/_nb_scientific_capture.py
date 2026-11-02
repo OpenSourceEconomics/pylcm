@@ -289,13 +289,13 @@ def _save_processed_params(*, result, model, solver, operation, save, calls):
             "solver": solver,
             "operation": operation,
             "file": filename,
-            "method": "lcm.model.Model._process_params",
+            "method": "lcm.model.Model._canonicalize_params",
             "model_object_id": id(model),
             "returned_mapping_id": id(result),
             "returned_original_mapping": True,
             "leaves": leaves,
             "scope": (
-                "actual post-validation canonical method result; "
+                "actual canonical method result the call consumes; "
                 "no nominal substitution"
             ),
         }
@@ -579,7 +579,7 @@ def capture_original_nb_income(
     original_step = nbegm._solve_ride_along_cell_step
     original_solve = Model.solve
     original_simulate = Model.simulate
-    original_process = Model._process_params
+    original_process = Model._canonicalize_params
 
     files = _source_files(
         original_step=original_step,
@@ -632,7 +632,7 @@ def capture_original_nb_income(
 
     actions = {}
     with _CAPTURE_LOCK, monkeypatch.context() as hooks:
-        hooks.setattr(Model, "_process_params", observe_process)
+        hooks.setattr(Model, "_canonicalize_params", observe_process)
         hooks.setattr(nbegm, "_solve_ride_along_cell_step", observe_step)
         hooks.setattr(Model, "solve", observe_solve)
         hooks.setattr(Model, "simulate", observe_simulate)

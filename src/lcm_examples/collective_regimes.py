@@ -2,13 +2,18 @@
 
 The first model isolates the household's shared argmax with stakeholder-specific
 values, declared as a single `CollectiveUtility`. The second adds same-period outside
-options through `ValueDependentConstraint`, and a dissolution edge through a
-`Gate`, while keeping the state and action spaces hand-checkable.
+options through a current `Exit` participation rule, and a `ParticipationCheck`
+that reads actual participating-policy support. The participation thresholds
+allow slack without deducting it from the single payoff on dissolution. The
+state and action spaces remain hand-checkable.
 
-The dissolution gate is keyed by the CONTINUING collective regime under
-`predicate = ~D_target`: the gate-open branch is staying together, and each
-stakeholder's route fallback is that stakeholder's own singleton regime.
+The participation check belongs to the incoming married edge. Its admitted branch
+is the continuing collective regime; each stakeholder's fallback is that
+stakeholder's own singleton regime.
 """
+
+from collections.abc import Mapping
+from typing import ClassVar
 
 import jax.numpy as jnp
 
@@ -18,24 +23,26 @@ from lcm import (
     ByAge,
     CollectiveUtility,
     DiscreteGrid,
-    Gate,
     LinSpacedGrid,
     Model,
+    ParticipationCheck,
+    ParticipationRead,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
     StochasticTransition,
     Transition,
-    ValueDependentConstraint,
     categorical,
     fixed_transition,
 )
 from lcm.execution import ExecutionConfig
+from lcm.exits import Exit, ExitTarget, RuleResult
 from lcm.typing import (
     BoolND,
     ContinuousState,
     DiscreteAction,
     FloatND,
+    IntND,
     ScalarInt,
 )
 
@@ -194,8 +201,40 @@ def _participation_m(
     return Q_m >= V_single_m_ref - 0.2
 
 
-def _no_dissolution(D_target: BoolND) -> BoolND:
-    return ~D_target
+class _ParticipationRule:
+    """Choose one common action satisfying both participation thresholds."""
+
+    reads_outside_values: ClassVar[bool] = True
+
+    def __call__(
+        self,
+        *,
+        Q_f: FloatND,
+        Q_m: FloatND,
+        exit_payoffs: Mapping[str, Mapping[str, FloatND]],
+        alternative_ids: IntND,
+        pareto_weights: Mapping[str, FloatND],
+    ) -> RuleResult:
+        q_f, q_m = Q_f.reshape(-1), Q_m.reshape(-1)
+        outside = exit_payoffs["dissolve"]
+        kept = (
+            jnp.isfinite(q_f)
+            & jnp.isfinite(q_m)
+            & _participation_f(Q_f=q_f, V_single_f_ref=outside["f"])
+            & _participation_m(Q_m=q_m, V_single_m_ref=outside["m"])
+        )
+        # Mask zero-weight members before multiplying ordinary-infeasible -inf.
+        objective = pareto_weights["f"] * jnp.where(
+            pareto_weights["f"] == 0, 0.0, q_f
+        ) + pareto_weights["m"] * jnp.where(pareto_weights["m"] == 0, 0.0, q_m)
+        stay = jnp.argmax(jnp.where(kept, objective, -jnp.inf))
+        return RuleResult(
+            action=alternative_ids[jnp.where(jnp.any(kept), stay, q_f.size)]
+        )
+
+
+def _has_policy_support(target_support: BoolND) -> BoolND:
+    return target_support
 
 
 def get_dissolution_model(
@@ -205,8 +244,9 @@ def get_dissolution_model(
     """Build a three-period collective model with participation and dissolution.
 
     At wage two, neither household action satisfies both participation constraints.
-    The target regime publishes a dissolution flag, and the source's value-dependent
-    transition routes each stakeholder to their own singleton fallback.
+    The participation check reads the couple's participating policy support on
+    landing, and routes each stakeholder to their own singleton fallback where it
+    is empty.
     """
     single_f = Regime(
         states={"wage": _DISSOLUTION_WAGE_GRID},
@@ -225,31 +265,22 @@ def get_dissolution_model(
                 utilities={"f": _participation_utility_f, "m": _participation_utility_m}
             )
         },
-        constraints={
-            "participation_f": ValueDependentConstraint(
-                predicate=_participation_f,
-                references={
-                    "V_single_f_ref": ProjectedRegimeValue(
-                        regime="single_f",
-                        projection={"wage": _identity_wage},
-                    )
+        exits={
+            "dissolve": Exit(
+                targets={
+                    "f": ExitTarget(
+                        regime="single_f", projection={"wage": _identity_wage}
+                    ),
+                    "m": ExitTarget(
+                        regime="single_m", projection={"wage": _identity_wage}
+                    ),
                 },
-            ),
-            "participation_m": ValueDependentConstraint(
-                predicate=_participation_m,
-                references={
-                    "V_single_m_ref": ProjectedRegimeValue(
-                        regime="single_m",
-                        projection={"wage": _identity_wage},
-                    )
-                },
-            ),
+                rule=_ParticipationRule(),
+            )
         },
     )
-    # Keyed by the gate-open target: the couple that keeps going. The
-    # gate-closed branch is each stakeholder's own single regime, so keying
-    # this edge by one of them would send both partners there whenever the
-    # household stays together.
+    # The scheduled target is the continuing couple; support is queried only
+    # after landing there, before the household or its fallback acts.
     married_law = ByAge(
         cases={
             AgeRange(exclusive_stop=1): {
@@ -259,9 +290,18 @@ def get_dissolution_model(
             }
         }
     )
-    married_gates = {
-        "married_with_participation": Gate(
-            predicate=_no_dissolution,
+    married_participation = {
+        "married_with_participation": ParticipationCheck(
+            predicate=_has_policy_support,
+            reads={
+                "target_support": ParticipationRead(
+                    regime="married_with_participation",
+                    stakeholder="f",
+                    kind="Participating",
+                    field="support",
+                    projection={"wage": _identity_wage},
+                )
+            },
             routes={
                 "f": StakeholderRoute(
                     target_stakeholder="f",
@@ -301,7 +341,7 @@ def get_dissolution_model(
     )
     return Model(
         edges={
-            "married": Transition(law=married_law, gates=married_gates),
+            "married": Transition(law=married_law, participation=married_participation),
             "married_with_participation": {"married_terminal": 1},
         },
         regimes={
@@ -314,6 +354,7 @@ def get_dissolution_model(
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=DissolutionRegimeId,
         initial_nodes={0: "married"},
-        description="Participation constraints and a gated dissolution edge.",
+        description="Participation constraints and a participation check dissolution "
+        "decision.",
         execution_config=execution_config,
     )

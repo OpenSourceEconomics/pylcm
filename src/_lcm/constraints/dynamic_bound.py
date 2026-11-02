@@ -38,10 +38,12 @@ from lcm.typing import (
 )
 
 if TYPE_CHECKING:
+    from _lcm.materialization import DatedGenerationMaterializer
     from lcm.regime import Regime as UserRegime
 else:
     # Regime imports constraint normalization, so the claw needs a runtime fallback.
     type UserRegime = object
+    type DatedGenerationMaterializer = object
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)
@@ -168,6 +170,11 @@ def _bound_surface(
     return roles, surface.right
 
 
+def _literal_bound_isfinite(*, value: jax.Array) -> jax.Array:
+    """Original finite predicate, separated from its admitted scalar upload."""
+    return jnp.isfinite(value)
+
+
 def validate_declared_bounds(
     *,
     user_regime: UserRegime,
@@ -206,9 +213,10 @@ def validate_declared_bounds(
         roles, right = recognized
         post = roles[3]
         if isinstance(right, Const):
-            if not bool(
-                jnp.isfinite(jnp.asarray(right.value, dtype=canonical_float_dtype()))
-            ):
+            finite = jnp.isfinite(
+                jnp.asarray(right.value, dtype=canonical_float_dtype())
+            )
+            if not bool(finite):
                 raise ModelInitializationError(
                     f"Borrowing bound '{name}' in regime '{regime_name}' must "
                     f"be finite in the canonical float dtype."

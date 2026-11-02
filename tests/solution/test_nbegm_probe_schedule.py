@@ -5,11 +5,12 @@ differentiate the model's DAG against real parameter values, so they cannot run
 at model build and are charged per solve instead — which an estimation loop pays
 on every criterion evaluation. `probe_schedule` decides how often they run:
 
-- `"every_solve"` — check every draw; the safe default because parameters can
-  invalidate a declaration after an earlier draw passed.
+- `"never"` — the default; skip them entirely, and the model author asserts all
+  three preconditions.
 - `"first_solve"` — check once per model, then trust the author's assertion that
   validity is parameter-invariant over the supported domain.
-- `"never"` — skip them entirely; the model author asserts all three preconditions.
+- `"every_solve"` — check every draw, because parameters can invalidate a
+  declaration after an earlier draw passed.
 """
 
 from collections.abc import Mapping
@@ -201,16 +202,17 @@ def _counting_model(
     return model, calls
 
 
-def test_probe_schedule_defaults_to_every_solve() -> None:
-    """A model that does not opt out revalidates every parameter draw."""
-    assert NBEGM.__dataclass_fields__["probe_schedule"].default == "every_solve"
+def test_probe_schedule_defaults_to_never() -> None:
+    """A model that does not opt in pays no per-solve probe cost."""
+    assert NBEGM.__dataclass_fields__["probe_schedule"].default == "never"
 
 
-def test_default_rejects_a_later_draw_that_invalidates_budget_affinity() -> None:
+def test_every_solve_rejects_a_later_draw_that_invalidates_budget_affinity() -> None:
     """A valid first draw must not license a curved second draw on the same model."""
     model = ride_toy.build_model(
         variant="nbegm",
         nonlinear_budget_above_ten=True,
+        probe_schedule="every_solve",
     )
     _run_probes(
         model=model,

@@ -14,7 +14,7 @@ from lcm import (
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.exceptions import ModelInitializationError
 from lcm.regime import Regime
-from lcm.solvers import DCEGM, EGM, NBEGM, GridSearch, OneMarginSolver
+from lcm.solvers import DCEGM, EGM, NBEGM, GridSearch, OneMarginSolver, RFCEnvelope
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
 
 
@@ -103,7 +103,7 @@ _SAVINGS_GRID = LinSpacedGrid(start=0.0, stop=10.0, n_points=20)
     "solver",
     [
         EGM(savings_grid=_SAVINGS_GRID),
-        DCEGM(savings_grid=_SAVINGS_GRID),
+        DCEGM(savings_grid=_SAVINGS_GRID, envelope=RFCEnvelope()),
         NBEGM(savings_grid=_SAVINGS_GRID),
     ],
     ids=["EGM", "DCEGM", "NBEGM"],

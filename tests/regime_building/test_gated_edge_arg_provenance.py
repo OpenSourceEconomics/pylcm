@@ -6,47 +6,42 @@ bound from a regime that does not own it, because the callable did not record
 
 The three provenances an edge-side callable mixes, all in one signature:
 
-1. The TARGET's candidate states, and (simulate only) the TARGET's own V/`D`
-   interpolation grid.
+1. The TARGET's candidate states.
 2. The SOURCE's edge params: the gate predicate's own free params, and the free
-   params of the source-declared gate-ref / fallback projections. They live in
-   the source's edge namespace, `flat_params["edges"][source]` (read through
+   params of the source-declared fallback projections. They live in the
+   source's edge namespace, `flat_params["edges"][source]` (read through
    `edge_params`), apart from the params of the source regime's own functions in
    `flat_params[source]`. `backward_induction._evaluate_edge_fold` binds every
    param the SOLVE-side fold needs from that edge namespace, so this is not a
    preference between two merges — it is what makes simulate evaluate the same
    object solve folded.
-3. Each REFERENCE regime's own interpolation grid, for a gate ref's or a leg
-   fallback's read of that regime's V.
+3. Each REFERENCE regime's own interpolation grid, for a leg fallback's,
+   same-period reference's or participation read's read of that regime's V.
 
 Covered here:
 
-- **Completeness of the gate-ref reader's provenance.** A reader's signature
-  mixes all three of the above, so assigning its arguments WHOLESALE to the
-  target namespace would read a SOURCE-declared projection param out of the
-  TARGET's params — silently, when the target happens to declare the same
-  qname, and as a crash when it does not. (The disjointness half — two regimes'
-  identically named `x__points` — is pinned in
-  `test_simulate_gate_param_and_leg_selection.py`.)
 - **The fallback projector's params.** `route_gated_edges` must project a
   coordinate with the same `flat_params["edges"][source]` the fold projected it
   with.
   Calling the projector with `{**candidate_target_states, **flat_params[target]}`
   instead puts the row in the right fallback REGIME at a STATE the solved policy
   never priced, and carries it into the next period.
-- **The reference regime's interpolation params.** A gate ref's or leg
-  fallback's read of another regime's V needs that regime's own grid helpers.
-  Exposing them under the PREFIXED coordinate name
-  (`__same_period_ref__x__points`) — which no params template emits and no
-  caller supplies — makes every reference to a runtime irregular grid raise a
-  missing-argument error, on all four consumers of that reader. Coordinate
-  variables stay prefixed; the PARAMS resolve against the reference regime's own
-  namespace (`SAME_PERIOD_PARAMS_ARG`).
+- **The reference regime's interpolation params.** A read of another regime's V
+  needs that regime's own grid helpers. Exposing them under the PREFIXED
+  coordinate name (`__same_period_ref__x__points`) — which no params template
+  emits and no caller supplies — makes every reference to a runtime irregular
+  grid raise a missing-argument error. Coordinate variables stay prefixed; the
+  PARAMS resolve against the reference regime's own namespace
+  (`SAME_PERIOD_PARAMS_ARG`).
+
+Value-reading gates and their references are retired in favour of
+`ParticipationCheck`; their parameter namespaces are pinned in
+`tests/params/test_gate_reads_on_the_target_domain.py`.
 
 Fixture discipline: every one of these is only a repro if the two candidate
 bindings genuinely disagree, so each fixture gives the two regimes DIFFERENT
-values for the contested name (`_SRC_SHIFT` != `_TARGET_SHIFT`, `_REF_POINTS`
-!= `_SRC_POINTS`) and asserts the disagreement itself.
+values for the contested name (`_PROJ_SRC_SHIFT` != `_PROJ_TARGET_SHIFT`,
+`_REF_POINTS` != `_SRC_POINTS`) and asserts the disagreement itself.
 """
 
 import re
@@ -65,10 +60,8 @@ from _lcm.regime_building.collective import NO_ROLE
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.gated_edges import (
     SOURCE_PARAMS,
-    TARGET_PARAMS,
     ResolvedProjectedRegimeValue,
     _fence_edge_consumer,
-    _reject_gate_operand_state_name_collision,
     _with_qualified_params,
 )
 from _lcm.regime_building.processing import process_regimes
@@ -82,10 +75,9 @@ from _lcm.regime_building.Q_and_F import (
     _build_same_period_ref_reader,
     evaluate_projected_readers,
 )
-from _lcm.regime_building.V import create_v_interpolation_info, get_V_interpolator
+from _lcm.regime_building.V import create_v_interpolation_info
 from _lcm.regime_law import RegimeLawDeclaration
 from _lcm.simulation.gated_routing import (
-    _call_vmapped_with_accepted_kwargs,
     bind_provenance_params,
     route_gated_edges,
     substitute_gated_edge_continuations,
@@ -102,6 +94,9 @@ from lcm import (
     Gate,
     IrregSpacedGrid,
     LinSpacedGrid,
+    Model,
+    ParticipationCheck,
+    ParticipationRead,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
@@ -124,9 +119,6 @@ from lcm.typing import (
     UserFunction,
 )
 from tests.conftest import bind_laws, build_prepared_structure
-from tests.regime_building.test_simulate_gate_param_and_leg_selection import (
-    exposed_param_name,
-)
 
 _BETA = 0.95
 _AGES = AgeGrid(start=0, inclusive_stop=2, step="Y")
@@ -225,7 +217,6 @@ def _solve_fixture(*, spec: _Spec, flat_params):
     )
     solution = _bi_result.value_functions
     _sim_policies = _bi_result.simulation_policies
-    _dissolution_flags = _bi_result.dissolution_flags
     return regimes, regime_names_to_ids, solution
 
 
@@ -242,324 +233,9 @@ def _same_period_mappings(*, regimes, flat_params, solution):
         next_regime_to_V_arr=solution[1],
         base_state_action_spaces=base_state_action_spaces,
         period_to_regime_to_V_arr=solution,
-        period_to_regime_to_dissolution_flags=MappingProxyType({}),
         flat_params=flat_params,
     )
     return mappings
-
-
-# Completeness: a SOURCE-declared gate-ref projection's free param.
-
-# The contested qname. The SOURCE declares the projection, so `shift` is the
-# source's parameter; the target's identically named one exists only to make the
-# target-bound misbinding SILENT rather than a crash (both halves are asserted below).
-#
-# An edge callable's parameter is keyed by its declaration path below
-# `params["edges"]["src"]` (target, `references`, reference, projected state,
-# parameter), the name both the fold and the simulate evaluator declare. The
-# TARGET's competing entry is spelled identically here so the contest stays a
-# contest: two namespaces, one qname, different values.
-_SHIFT_QNAME = "target__references__ref_v__x__shift"
-_SRC_SHIFT = 0.1
-_TARGET_SHIFT = 0.9
-
-
-def _project_to_shift(shift: FloatND) -> FloatND:
-    """The gate ref's projection: read the reference regime's V at `shift`.
-
-    Declared on the SOURCE (inside its `gated_edges`), so `shift` is a parameter
-    of the SOURCE — that is the namespace the solve-side fold binds it from.
-    """
-    return shift
-
-
-def _ref_gate(*, V_target: FloatND, ref_v: FloatND) -> BoolND:
-    """`V_target(0.6) = 0.6` vs the reference value AT the projected point.
-
-    With `V_ref(x) = x`, `ref_v` IS whichever `shift` the projection was given:
-    the source's 0.1 (gate OPEN, `0.6 > 0.1`) or the target's 0.9 (gate CLOSED,
-    `0.6 > 0.9`) — the reviewer's exact counterexample.
-    """
-    return V_target > ref_v
-
-
-def _make_shift_regimes() -> _Spec:
-    src = (
-        Regime(
-            states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-            state_transitions={"x": _next_x_offgrid},
-            actions={"work": DiscreteGrid(category_class=Work)},
-            functions={"utility": _u_src},
-        ),
-        Transition(
-            law=ByAge(
-                cases={
-                    AgeRange(exclusive_stop=1): {
-                        "target": StochasticTransition(func=_prob_one)
-                    }
-                }
-            ),
-            gates={
-                "target": Gate(
-                    predicate=_ref_gate,
-                    routes={
-                        "only": StakeholderRoute(
-                            fallback=ProjectedRegimeValue(
-                                regime="fallback", projection={"x": _identity_x}
-                            )
-                        )
-                    },
-                    references={
-                        "ref_v": ProjectedRegimeValue(
-                            regime="refregime", projection={"x": _project_to_shift}
-                        )
-                    },
-                )
-            },
-        ),
-    )
-    target = (
-        Regime(
-            states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-            functions={"utility": _u_identity},
-        ),
-        None,
-    )
-    refregime = (
-        Regime(
-            states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-            functions={"utility": _u_identity},
-        ),
-        None,
-    )
-    fallback = (
-        Regime(
-            states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-            functions={"utility": _u_identity},
-        ),
-        None,
-    )
-    return _split(
-        {
-            "src": src,
-            "target": target,
-            "refregime": refregime,
-            "fallback": fallback,
-        }
-    )
-
-
-def _shift_flat_params(*, target_declares_shift: bool = True):
-    target_params = (
-        {_SHIFT_QNAME: jnp.asarray(_TARGET_SHIFT)} if target_declares_shift else {}
-    )
-    return MappingProxyType(
-        {
-            "src": MappingProxyType(
-                {"koopmans_aggregator__discount_factor": jnp.asarray(_BETA)}
-            ),
-            "target": MappingProxyType(target_params),
-            "refregime": MappingProxyType({}),
-            "fallback": MappingProxyType({}),
-            "edges": MappingProxyType(
-                {"src": MappingProxyType({_SHIFT_QNAME: jnp.asarray(_SRC_SHIFT)})}
-            ),
-        }
-    )
-
-
-def test_gate_ref_projection_param_is_bound_from_the_source_not_the_target():
-    """A gate-ref projection's param binds from the SOURCE, not the target.
-
-    A gate-ref reader's arguments have THREE provenances. Publishing all of them
-    as target-owned (`args_from_target_params = ... | union(gate_ref_args)`)
-    would have the router filter this SOURCE-declared projection param out of
-    `flat_params[target]`.
-
-    Shown here on the production evaluator, in this process: binding `shift`
-    from the target's namespace (replayed by feeding that value into the leaf)
-    CLOSES the gate, binding it from the source's OPENS it,
-    and the two differ. The published provenance says SOURCE — matching the
-    solve-side fold, which bound this same argument from
-    `flat_params["edges"]["src"]`.
-    """
-    flat_params = _shift_flat_params()
-    regimes, regime_names_to_ids, solution = _solve_fixture(
-        spec=_make_shift_regimes(), flat_params=flat_params
-    )
-    src = regimes["src"]
-    evaluator = src.gated_edges["target"].simulate_gate_evaluator_at(period=1)
-    mappings = _same_period_mappings(
-        regimes=regimes, flat_params=flat_params, solution=solution
-    )
-
-    # The provenance attributes `shift` to the SOURCE, and to nothing else.
-    shift_arg = exposed_param_name(
-        evaluator=evaluator, qname=_SHIFT_QNAME, namespace=SOURCE_PARAMS
-    )
-    assert (
-        TARGET_PARAMS,
-        _SHIFT_QNAME,
-    ) not in evaluator.arg_provenance.params.values()
-
-    # The fixture is a genuine counterexample only if the two namespaces
-    # disagree about the contested qname.
-    assert float(flat_params["edges"]["src"][_SHIFT_QNAME]) != float(
-        flat_params["target"][_SHIFT_QNAME]
-    )
-
-    def _gate(shift_value: float) -> bool:
-        return bool(
-            np.asarray(
-                _call_vmapped_with_accepted_kwargs(
-                    func=evaluator,
-                    batched_kwargs={"x": jnp.array([_REALIZED_X])},
-                    static_kwargs={
-                        shift_arg: jnp.asarray(shift_value),
-                        SAME_PERIOD_V_ARG: mappings["target"],
-                        SAME_PERIOD_PARAMS_ARG: MappingProxyType(
-                            {
-                                name: flat_params[name]
-                                for name in ("target", "refregime", "fallback")
-                            }
-                        ),
-                    },
-                    axis_size=1,
-                )
-            )[0]
-        )
-
-    # V_target(0.6) = 0.6: open against the source's 0.1, closed against the
-    # target's 0.9 — the two bindings decide the gate opposite ways, on the same
-    # evaluator.
-    assert _gate(_SRC_SHIFT)
-    assert not _gate(_TARGET_SHIFT)
-
-    # The production router binds it from the SOURCE, so the row is routed to
-    # the target — not to the fallback a target-binding would select.
-    next_states = MappingProxyType(
-        {
-            "target": MappingProxyType({"x": jnp.array([_REALIZED_X])}),
-            "refregime": MappingProxyType({"x": jnp.array([0.0])}),
-            "fallback": MappingProxyType({"x": jnp.array([-999.0])}),
-        }
-    )
-    _states, routed_ids, _routed_roles, _closed_masks = route_gated_edges(
-        # The source is simulated at period 0, so the gate is decided on
-        # the value it would enter at period 1.
-        fold_period=1,
-        regime=src,
-        same_period_mappings=mappings,
-        next_states=next_states,
-        regime_names_to_ids=regime_names_to_ids,
-        new_subject_regime_ids=jnp.array(
-            [regime_names_to_ids["target"]], dtype=jnp.int32
-        ),
-        subjects_in_regime=jnp.array([True]),
-        flat_params=flat_params,
-        own_stakeholder=jnp.full_like(jnp.array([True]), NO_ROLE, dtype=jnp.int32),
-        new_own_stakeholder=jnp.full_like(jnp.array([True]), NO_ROLE, dtype=jnp.int32),
-    )
-    np.testing.assert_array_equal(
-        np.asarray(routed_ids), [regime_names_to_ids["target"]]
-    )
-    assert int(np.asarray(routed_ids)[0]) != int(regime_names_to_ids["fallback"])
-
-
-def test_gate_ref_projection_param_absent_from_the_target_still_routes():
-    """A gate-ref projection param absent from the target still routes.
-
-    A target-owned misclassification is only SILENT when the target happens to
-    declare the same qname. A target that does not — the ordinary case, since
-    `shift` belongs to the source's edge declaration and nothing obliges the
-    target to have heard of it — makes a target-namespace filter
-    (`{name: value for name, value in flat_params[target].items() if name in
-    from_target}`) yield nothing, and the evaluator is then called without a
-    required argument, crashing a valid topology. The source-bound provenance
-    simply routes it.
-    """
-    flat_params = _shift_flat_params(target_declares_shift=False)
-    regimes, regime_names_to_ids, solution = _solve_fixture(
-        spec=_make_shift_regimes(), flat_params=flat_params
-    )
-    src = regimes["src"]
-    evaluator = src.gated_edges["target"].simulate_gate_evaluator_at(period=1)
-    mappings = _same_period_mappings(
-        regimes=regimes, flat_params=flat_params, solution=solution
-    )
-
-    assert _SHIFT_QNAME not in flat_params["target"]
-    shift_arg = exposed_param_name(
-        evaluator=evaluator, qname=_SHIFT_QNAME, namespace=SOURCE_PARAMS
-    )
-
-    # The target-namespace binding, on the production evaluator: `shift` filtered
-    # out of the target's (empty) params is simply not passed, and the call dies.
-    with pytest.raises(Exception, match="missing required argument"):
-        _call_vmapped_with_accepted_kwargs(
-            func=evaluator,
-            batched_kwargs={"x": jnp.array([_REALIZED_X])},
-            static_kwargs={
-                SAME_PERIOD_V_ARG: mappings["target"],
-                SAME_PERIOD_PARAMS_ARG: MappingProxyType(
-                    {
-                        name: flat_params[name]
-                        for name in ("target", "refregime", "fallback")
-                    }
-                ),
-            },
-            axis_size=1,
-        )
-
-    # ...and the provenance binder finds it in the namespace that owns it.
-    bound = bind_provenance_params(
-        provenance=evaluator.arg_provenance,
-        flat_params=flat_params,
-        source_name="src",
-        target_name="target",
-    )
-    # WHICH namespace the value came from is a discrete fact -- the source declares 0.1,
-    # the target 0.9 -- so exact equality against a decimal literal is the wrong
-    # instrument for it. float32 cannot represent 0.1: `float()` widens the bound array
-    # to 0.10000000149011612 and the identity fails on the format rather than on the
-    # provenance, which is what broke the `--precision=32` leg. Assert the decision
-    # itself first, exactly and with no tolerance, then the value to the working
-    # precision.
-    got = float(bound[shift_arg])  # ty: ignore[invalid-argument-type]
-    assert abs(got - _SRC_SHIFT) < abs(got - _TARGET_SHIFT), (
-        f"bound {got}, which is nearer the TARGET's {_TARGET_SHIFT} than the source's "
-        f"{_SRC_SHIFT} -- provenance resolved to the wrong namespace"
-    )
-    np.testing.assert_allclose(
-        got, _SRC_SHIFT, rtol=8.0 * float(np.finfo(jnp.zeros(()).dtype).eps)
-    )
-
-    next_states = MappingProxyType(
-        {
-            "target": MappingProxyType({"x": jnp.array([_REALIZED_X])}),
-            "refregime": MappingProxyType({"x": jnp.array([0.0])}),
-            "fallback": MappingProxyType({"x": jnp.array([-999.0])}),
-        }
-    )
-    _states, routed_ids, _routed_roles, _closed_masks = route_gated_edges(
-        # The source is simulated at period 0, so the gate is decided on
-        # the value it would enter at period 1.
-        fold_period=1,
-        regime=src,
-        same_period_mappings=mappings,
-        next_states=next_states,
-        regime_names_to_ids=regime_names_to_ids,
-        new_subject_regime_ids=jnp.array(
-            [regime_names_to_ids["target"]], dtype=jnp.int32
-        ),
-        subjects_in_regime=jnp.array([True]),
-        flat_params=flat_params,
-        own_stakeholder=jnp.full_like(jnp.array([True]), NO_ROLE, dtype=jnp.int32),
-        new_own_stakeholder=jnp.full_like(jnp.array([True]), NO_ROLE, dtype=jnp.int32),
-    )
-    np.testing.assert_array_equal(
-        np.asarray(routed_ids), [regime_names_to_ids["target"]]
-    )
 
 
 # The fallback projector must project the coordinate the FOLD projected.
@@ -594,8 +270,8 @@ def _project_x_plus_shift(*, x: ContinuousState, shift: FloatND) -> FloatND:
     return x + shift
 
 
-def _always_closed_gate(V_target: FloatND) -> BoolND:
-    """A gate that is CLOSED on the whole target grid.
+def _always_closed_gate(x: ContinuousState) -> BoolND:
+    """A gate that is CLOSED on the whole target grid `x in [0, 1]`.
 
     `Wbar` then equals the CLOSED branch everywhere — `V_fallback(pi(x))` — and
     with `V_fallback(z) = z` (linear, so interpolated exactly) the fold's own
@@ -603,7 +279,7 @@ def _always_closed_gate(V_target: FloatND) -> BoolND:
     makes the solve-vs-simulate equality below an observation rather than a
     reimplementation: nothing here recomputes `pi`.
     """
-    return V_target < -1e10
+    return x < -1e10
 
 
 def _u_fallback_identity(z: ContinuousState) -> FloatND:
@@ -825,7 +501,6 @@ def _same_period_channels(*, regimes, flat_params, solution):
             for name, regime in regimes.items()
         },
         period_to_regime_to_V_arr=solution,
-        period_to_regime_to_dissolution_flags=MappingProxyType({}),
         flat_params=flat_params,
     )
     return substituted["target"]
@@ -893,64 +568,11 @@ _REF_POINTS = (0.0, 1.0)
 _SRC_POINTS = (0.0, 10.0)
 
 
-def test_prefixed_reference_grid_param_is_satisfiable_by_no_regime():
-    """The PREFIXED reference-grid param name is unsatisfiable by every regime.
-
-    `get_V_interpolator(state_prefix=_REF_STATE_PREFIX)` derives a runtime
-    irregular grid's helper name from the COORDINATE variable it was handed, so
-    it asks for `__same_period_ref__x__points`. Exposing that name verbatim as
-    an outer argument of the reader cannot work — no params template anywhere
-    emits it: `_add_runtime_grid_params` names the very same quantity
-    `x__points`, in the reference regime's own template. Read from production
-    code alone, this is the missing-argument error such an argument raises on
-    all four consumers of the reader.
-    """
-    regimes_dict, laws = _make_ref_grid_regimes()
-    flat_params = _ref_grid_flat_params()
-    regimes, _ids, _solution = _solve_fixture(
-        spec=(regimes_dict, laws), flat_params=flat_params
-    )
-
-    interpolator = get_V_interpolator(
-        v_interpolation_info=create_v_interpolation_info(
-            user_regime=regimes_dict["refregime"]
-        ),
-        state_prefix=_REF_STATE_PREFIX,
-        V_arr_name="__v__",
-    )
-    prefixed = f"{_REF_STATE_PREFIX}x__points"
-    assert prefixed in get_union_of_args([interpolator])
-
-    # No regime's params carry it — not the reference's, not the reader's own.
-    for regime_name, params in flat_params.items():
-        assert prefixed not in params, regime_name
-    # The reference regime DOES carry the unprefixed qname; keeping the
-    # coordinate variable separate from the parameter qname is what makes the
-    # read satisfiable.
-    assert "x__points" in flat_params["refregime"]
-
-    # And the production reader does not expose the unsatisfiable name. The
-    # gate reference is read at the landing rather than tabulated on the
-    # target's grid, so it lives on the combiner's projected readers; the fold
-    # surfaces underneath must not carry the name either.
-    fold = regimes["src"].gated_edges["target"].fold_at(period=1)
-    reader_args = {
-        arg
-        for reader in fold.combine.projected_readers
-        for arg in (*reader.state_args, *reader.other_args)
-    }
-    assert prefixed not in get_union_of_args([fold.surfaces])
-    assert prefixed not in reader_args
-    # It takes a satisfiable engine params mapping instead, keyed by regime, so
-    # the reference regime's own `x__points` is found under its own name.
-    assert EDGE_REF_PARAMS_ARG in reader_args
-
-
 def _gate_ref_only(ref_v: FloatND) -> BoolND:
     """`V_ref` read at the projected coordinate 0.6, on the REFERENCE's grid.
 
     `V_ref(x) = x`, so on the reference's own points (0, 1) the read is 0.6 and
-    the gate OPENS; on the source's identically named (0, 10) the coordinate
+    the decision OPENS; on the source's identically named (0, 10) the coordinate
     collapses to 0.06 and it CLOSES.
     """
     return ref_v > 0.5
@@ -960,171 +582,80 @@ def _project_realized(x: ContinuousState) -> FloatND:
     return jnp.full_like(jnp.asarray(x, dtype=float), _REALIZED_X)
 
 
-def _make_ref_grid_regimes() -> _Spec:
-    """The gate ref's reference regime carries a RUNTIME irregular grid, and the
-    source declares an identically named state on a DIFFERENT runtime grid."""
-    src = (
-        Regime(
-            states={"x": IrregSpacedGrid(n_points=2)},
-            state_transitions={"x": _next_x_offgrid},
-            actions={"work": DiscreteGrid(category_class=Work)},
-            functions={"utility": _u_src},
-        ),
-        Transition(
-            law=ByAge(
-                cases={
-                    AgeRange(exclusive_stop=1): {
-                        "target": StochasticTransition(func=_prob_one)
-                    }
-                }
-            ),
-            gates={
-                "target": Gate(
-                    predicate=_gate_ref_only,
-                    routes={
-                        "only": StakeholderRoute(
-                            fallback=ProjectedRegimeValue(
-                                regime="fallback", projection={"x": _identity_x}
-                            )
-                        )
-                    },
-                    references={
-                        "ref_v": ProjectedRegimeValue(
-                            regime="refregime", projection={"x": _project_realized}
-                        )
-                    },
-                )
-            },
-        ),
-    )
-    target = (
-        Regime(
-            states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-            functions={"utility": _u_identity},
-        ),
-        None,
-    )
-    refregime = (
-        Regime(
-            states={"x": IrregSpacedGrid(n_points=2)},
-            functions={"utility": _u_identity},
-        ),
-        None,
-    )
-    fallback = (
-        Regime(
-            states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-            functions={"utility": _u_identity},
-        ),
-        None,
-    )
-    return _split(
-        {"src": src, "target": target, "refregime": refregime, "fallback": fallback}
-    )
+@categorical(ordered=False)
+class _RefGridRegimeId:
+    src: ScalarInt
+    target: ScalarInt
+    refregime: ScalarInt
+    fallback: ScalarInt
 
 
-def _ref_grid_flat_params():
-    return MappingProxyType(
-        {
-            "src": MappingProxyType(
-                {
-                    "koopmans_aggregator__discount_factor": jnp.asarray(_BETA),
-                    # The collision: the SOURCE's own `x` grid points, named
-                    # exactly like the reference regime's.
-                    "x__points": jnp.asarray(_SRC_POINTS),
-                }
-            ),
-            "target": MappingProxyType({}),
-            "refregime": MappingProxyType({"x__points": jnp.asarray(_REF_POINTS)}),
-            "fallback": MappingProxyType({}),
-        }
-    )
+def _u_zero_x(x: ContinuousState) -> FloatND:
+    return 0.0 * x
 
 
-def test_gate_ref_reads_the_reference_regimes_own_runtime_grid():
-    """A gate-ref reads the REFERENCE regime's own runtime grid.
+def test_participation_read_uses_the_reference_regimes_own_runtime_grid() -> None:
+    """A participation read interpolates on the REFERENCE regime's own runtime points.
 
-    A prefixed reference-grid param is satisfiable by no regime (see
-    `test_prefixed_reference_grid_param_is_satisfiable_by_no_regime`), so this
-    topology must solve and route with the reader interpolating on the REFERENCE
-    regime's points, not on the source's identically named ones. Binding the
-    reference's grid from the reading regime's namespace — the merge that
-    prefix-stripping would invite — is run here by handing the reader a params
-    mapping in which
-    `refregime`'s points are the source's, and it returns the OPPOSITE gate.
+    The source declares an identically named runtime grid on (0, 10). Read on the
+    reference's own (0, 1), `V_ref(0.6) = 0.6` opens the decision and the source
+    earns `0.95 * V_target(0.6) = 0.57`; read on the source's points the
+    coordinate collapses to 0.06, closing it onto the zero-valued fallback.
     """
-    flat_params = _ref_grid_flat_params()
-    regimes, regime_names_to_ids, solution = _solve_fixture(
-        spec=_make_ref_grid_regimes(), flat_params=flat_params
+    grid = LinSpacedGrid(start=0.0, stop=1.0, n_points=2)
+    model = Model(
+        regimes={
+            "src": Regime(
+                states={"x": IrregSpacedGrid(n_points=2)},
+                state_transitions={"x": _next_x_offgrid},
+                actions={"work": DiscreteGrid(category_class=Work)},
+                functions={"utility": _u_src},
+            ),
+            "target": Regime(states={"x": grid}, functions={"utility": _u_identity}),
+            "refregime": Regime(
+                states={"x": IrregSpacedGrid(n_points=2)},
+                functions={"utility": _u_identity},
+            ),
+            "fallback": Regime(states={"x": grid}, functions={"utility": _u_zero_x}),
+        },
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
+        regime_id_class=_RefGridRegimeId,
+        initial_nodes={0: "src"},
+        edges={
+            "src": Transition(
+                law=ByAge(cases={0: {"target": StochasticTransition(func=_prob_one)}}),
+                participation={
+                    "target": ParticipationCheck(
+                        predicate=_gate_ref_only,
+                        reads={
+                            "ref_v": ParticipationRead(
+                                kind="IntegratedFull",
+                                regime="refregime",
+                                projection={"x": _project_realized},
+                            )
+                        },
+                        routes={
+                            "only": StakeholderRoute(
+                                fallback=ProjectedRegimeValue(
+                                    regime="fallback", projection={"x": _identity_x}
+                                )
+                            )
+                        },
+                    )
+                },
+            )
+        },
     )
-    src = regimes["src"]
-    evaluator = src.gated_edges["target"].simulate_gate_evaluator_at(period=1)
-    mappings = _same_period_mappings(
-        regimes=regimes, flat_params=flat_params, solution=solution
+    solution = model.solve(
+        params={
+            "discount_factor": _BETA,
+            "src": {"x": {"points": jnp.asarray(_SRC_POINTS)}},
+            "refregime": {"x": {"points": jnp.asarray(_REF_POINTS)}},
+        },
+        log_level="off",
     )
-
-    # The two namespaces genuinely disagree about `x__points`.
-    assert not np.array_equal(
-        np.asarray(flat_params["refregime"]["x__points"]),
-        np.asarray(flat_params["src"]["x__points"]),
-    )
-
-    def _gate(ref_points) -> bool:
-        return bool(
-            np.asarray(
-                _call_vmapped_with_accepted_kwargs(
-                    func=evaluator,
-                    batched_kwargs={"x": jnp.array([_REALIZED_X])},
-                    static_kwargs={
-                        SAME_PERIOD_V_ARG: mappings["target"],
-                        SAME_PERIOD_PARAMS_ARG: MappingProxyType(
-                            {
-                                "target": flat_params["target"],
-                                "refregime": MappingProxyType(
-                                    {"x__points": jnp.asarray(ref_points)}
-                                ),
-                                "fallback": flat_params["fallback"],
-                            }
-                        ),
-                    },
-                    axis_size=1,
-                )
-            )[0]
-        )
-
-    assert _gate(_REF_POINTS), "0.6 on the reference's own (0, 1) -> V_ref = 0.6"
-    assert not _gate(_SRC_POINTS), (
-        "0.6 on the source's (0, 10) collapses to coordinate 0.06 -> V_ref ~ "
-        "0.06; the two namespaces must genuinely disagree here, or the "
-        "reference-provenance half of this test is vacuous."
-    )
-
-    # The production router picks the reference regime's own points.
-    next_states = MappingProxyType(
-        {
-            "target": MappingProxyType({"x": jnp.array([_REALIZED_X])}),
-            "refregime": MappingProxyType({"x": jnp.array([0.0])}),
-            "fallback": MappingProxyType({"x": jnp.array([-999.0])}),
-        }
-    )
-    _states, routed_ids, _routed_roles, _closed_masks = route_gated_edges(
-        # The source is simulated at period 0, so the gate is decided on
-        # the value it would enter at period 1.
-        fold_period=1,
-        regime=src,
-        same_period_mappings=mappings,
-        next_states=next_states,
-        regime_names_to_ids=regime_names_to_ids,
-        new_subject_regime_ids=jnp.array(
-            [regime_names_to_ids["target"]], dtype=jnp.int32
-        ),
-        subjects_in_regime=jnp.array([True]),
-        flat_params=flat_params,
-        own_stakeholder=jnp.full_like(jnp.array([True]), NO_ROLE, dtype=jnp.int32),
-        new_own_stakeholder=jnp.full_like(jnp.array([True]), NO_ROLE, dtype=jnp.int32),
-    )
-    np.testing.assert_array_equal(
-        np.asarray(routed_ids), [regime_names_to_ids["target"]]
+    np.testing.assert_allclose(
+        np.asarray(solution.values[0]["src"]), [_BETA * _REALIZED_X] * 2, rtol=1e-6
     )
 
 
@@ -1260,8 +791,8 @@ def _ir_f(*, Q_f: FloatND, V_single_f_ref: FloatND) -> BoolND:
     (0, 10), the read is coordinate 0.1 -> `V_single_f = 1.0`, so the constraint
     holds and the cell is feasible. Read on the MARRIED regime's identically
     named points (0, 1) instead, the same value lands on coordinate 1.0 ->
-    `V_single_f = 10.0`, the mask empties, and the cell publishes `D = True`
-    with `V = -inf`. Two very different models, one qname.
+    `V_single_f = 10.0`, the mask empties, and the cell publishes `V = -inf`.
+    Two very different models, one qname.
     """
     return Q_f >= V_single_f_ref
 
@@ -1380,20 +911,16 @@ def test_e2_same_period_ref_reads_the_reference_regimes_own_runtime_grid():
         enable_jit=False,
     )
     solution = _bi_result.value_functions
-    _sim_policies = _bi_result.simulation_policies
-    dissolution_flags = _bi_result.dissolution_flags
 
     # V_single_f = wage on ITS OWN points (0, 10).
     np.testing.assert_allclose(np.asarray(solution[0]["single_f"]), [0.0, 10.0])
 
     # At married's node wage = 1.0 the reference read is 1.0 (coordinate 0.1 on
-    # single_f's points) -> `5 >= 1` holds -> feasible, V_f = 5, D = False.
+    # single_f's points) -> `5 >= 1` holds -> feasible, V_f = 5.
     # Had the read used married's own points, it would have been 10.0 -> `5 >=
-    # 10` fails -> empty mask -> D = True and V_f = -inf.
+    # 10` fails -> empty mask -> V_f = -inf.
     V_married = np.asarray(solution[0]["married"])
-    D_married = np.asarray(dissolution_flags[0]["married"])
     np.testing.assert_allclose(V_married[1, 0], 5.0)
-    assert not bool(D_married[1])
     assert np.isfinite(V_married[1, 0])
 
     # The fixture is only a repro if the contested binding actually decides the
@@ -1433,7 +960,7 @@ def test_e2_same_period_ref_reads_the_reference_regimes_own_runtime_grid():
     assert _ref_value(_SINGLE_POINTS) == 1.0  # the reference regime's own grid
     assert _ref_value(_MARRIED_POINTS) == 10.0  # the reading regime's — the bug
     # ...and 10.0 is exactly the value that empties the mask (`5 >= 10` fails),
-    # so the solved `D = False` above is the reference regime's grid winning and
+    # so the finite solved value above is the reference regime's grid winning and
     # nothing else.
     assert _ref_value(_MARRIED_POINTS) > 5.0
     assert _ref_value(_SINGLE_POINTS) <= 5.0
@@ -1454,196 +981,19 @@ def _target_scaled_x(*, x: ContinuousState, target_scale: FloatND) -> FloatND:
     return x * target_scale
 
 
-def _gate_reads_target_helper(*, V_target: FloatND, target_scaled_x: FloatND) -> BoolND:
-    """A source gate that routes through the target regime's `target_scaled_x`."""
-    return V_target > target_scaled_x
-
-
-def _make_target_helper_regimes() -> _Spec:
-    src = (
-        Regime(
-            states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-            state_transitions={"x": _next_x_offgrid},
-            actions={"work": DiscreteGrid(category_class=Work)},
-            functions={"utility": _u_src},
-        ),
-        Transition(
-            law=ByAge(
-                cases={
-                    AgeRange(exclusive_stop=1): {
-                        "target": StochasticTransition(func=_prob_one)
-                    }
-                }
-            ),
-            gates={
-                "target": Gate(
-                    predicate=_gate_reads_target_helper,
-                    routes={
-                        "only": StakeholderRoute(
-                            fallback=ProjectedRegimeValue(
-                                regime="fallback", projection={"x": _identity_x}
-                            )
-                        )
-                    },
-                )
-            },
-        ),
-    )
-    target = (
-        Regime(
-            states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-            functions={"utility": _u_identity, "target_scaled_x": _target_scaled_x},
-        ),
-        None,
-    )
-    fallback = (
-        Regime(
-            states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-            functions={"utility": _u_identity},
-        ),
-        None,
-    )
-    return _split({"src": src, "target": target, "fallback": fallback})
-
-
-def test_gate_reaching_a_target_function_param_is_rejected_not_misbound():
-    """A gate naming a target-regime function is refused at construction, and the
-    message names that function, so its parameter is never bound from the source."""
-    flat_params = MappingProxyType(
-        {
-            "src": MappingProxyType(
-                {"koopmans_aggregator__discount_factor": jnp.asarray(_BETA)}
-            ),
-            "target": MappingProxyType(
-                {"target_scale": jnp.asarray(_HELPER_TARGET_SCALE)}
-            ),
-            "fallback": MappingProxyType({}),
-        }
-    )
-    with pytest.raises(
-        ModelInitializationError,
-        match=(
-            r"get_edge_fold \(solve-side gate\): the edge to regime 'target' "
-            r"declares gate/projection argument\(s\) \['target_scaled_x'\] that "
-            r"name the TARGET regime's own function"
-        ),
-    ):
-        _solve_fixture(spec=_make_target_helper_regimes(), flat_params=flat_params)
-
-
 # Every target-DAG-concatenating consumer is fenced, not only the gate predicate:
-# a gate-REFERENCE projection or a leg-fallback projection naming a target helper
-# is compiled on a separate path and is refused the same way. A target node whose
-# name collides with an injected gate-ref key is refused by its own guard.
+# a leg-fallback projection naming a target helper is compiled on a separate path
+# and is refused the same way.
 
 
 def _project_through_target_helper(target_scaled_x: FloatND) -> FloatND:
-    """A gate-REFERENCE projection routed through the target regime's own helper.
+    """A projection routed through the target regime's own helper.
 
     The projected coordinate is `target_scaled_x(x, target_scale)`, so
-    `target_scale` is a TARGET-owned param reached by a gate-ref READER — the
-    fourth target-DAG-concatenating path, which a direct-gate fence does not
-    inspect.
+    `target_scale` is a TARGET-owned param reached by a projection, which a
+    direct-gate fence does not inspect.
     """
     return target_scaled_x
-
-
-def _gate_ref_value_only(*, V_target: FloatND, scaled_ref: FloatND) -> BoolND:
-    return V_target > scaled_ref
-
-
-def _make_gate_ref_target_helper_regimes() -> _Spec:
-    src = (
-        Regime(
-            states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-            state_transitions={"x": _next_x_offgrid},
-            actions={"work": DiscreteGrid(category_class=Work)},
-            functions={"utility": _u_src},
-        ),
-        Transition(
-            law=ByAge(
-                cases={
-                    AgeRange(exclusive_stop=1): {
-                        "target": StochasticTransition(func=_prob_one)
-                    }
-                }
-            ),
-            gates={
-                "target": Gate(
-                    predicate=_gate_ref_value_only,
-                    routes={
-                        "only": StakeholderRoute(
-                            fallback=ProjectedRegimeValue(
-                                regime="fallback", projection={"x": _identity_x}
-                            )
-                        )
-                    },
-                    references={
-                        "scaled_ref": ProjectedRegimeValue(
-                            regime="refregime",
-                            projection={"x": _project_through_target_helper},
-                        )
-                    },
-                )
-            },
-        ),
-    )
-    target = (
-        Regime(
-            states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-            functions={"utility": _u_identity, "target_scaled_x": _target_scaled_x},
-        ),
-        None,
-    )
-    refregime = (
-        Regime(
-            states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-            functions={"utility": _u_identity},
-        ),
-        None,
-    )
-    fallback = (
-        Regime(
-            states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-            functions={"utility": _u_identity},
-        ),
-        None,
-    )
-    return _split(
-        {"src": src, "target": target, "refregime": refregime, "fallback": fallback}
-    )
-
-
-def test_gate_ref_projection_reaching_a_target_param_is_rejected_not_misbound():
-    """A gate-ref projection naming a target helper is refused at construction.
-
-    The gate-ref reader is compiled apart from the gate predicate, and binding its
-    args from the source would read the target-owned `target_scale` from the
-    source in both the solve fold and the simulate gate.
-    """
-    flat_params = MappingProxyType(
-        {
-            "src": MappingProxyType(
-                {"koopmans_aggregator__discount_factor": jnp.asarray(_BETA)}
-            ),
-            "target": MappingProxyType(
-                {"target_scale": jnp.asarray(_HELPER_TARGET_SCALE)}
-            ),
-            "refregime": MappingProxyType({}),
-            "fallback": MappingProxyType({}),
-        }
-    )
-    with pytest.raises(
-        ModelInitializationError,
-        match=(
-            r"get_edge_fold \(solve-side gate-ref 'scaled_ref' projection\): the "
-            r"edge to regime 'target' declares gate/projection argument\(s\) "
-            r"\['target_scaled_x'\] that name the TARGET regime's own function"
-        ),
-    ):
-        _solve_fixture(
-            spec=_make_gate_ref_target_helper_regimes(), flat_params=flat_params
-        )
 
 
 def _make_leg_fallback_target_helper_regimes() -> _Spec:
@@ -1664,7 +1014,7 @@ def _make_leg_fallback_target_helper_regimes() -> _Spec:
             ),
             gates={
                 "target": Gate(
-                    predicate=_gate_uses_v_target,
+                    predicate=_always_closed_gate,
                     routes={
                         "only": StakeholderRoute(
                             fallback=ProjectedRegimeValue(
@@ -1825,11 +1175,11 @@ def test_fence_edge_consumer_accepts_arguments_naming_no_target_node(
 
 
 def _gate_reads_own_target_scale(
-    *, V_target: FloatND, x: ContinuousState, target_scale: FloatND
+    *, x: ContinuousState, target_scale: FloatND
 ) -> BoolND:
     """A source gate whose OWN parameter shares its name with the parameter of the
     target's `target_scaled_x` helper."""
-    return V_target > x * target_scale
+    return x * target_scale > 0.5
 
 
 def _make_own_param_named_like_target_helper_param_regimes() -> _Spec:
@@ -1896,119 +1246,12 @@ def test_gate_param_named_like_a_target_helper_param_builds_as_a_source_param():
     assert source_qnames == ["target__predicate__target_scale"]
 
 
-# An injected gate-ref key that collides with a target function name must be
-# rejected, not silently shadowed by the target node in the concatenated DAG.
-def _target_outside(x: ContinuousState) -> FloatND:
-    return jnp.full_like(jnp.asarray(x, dtype=float), 0.9)
-
-
-def _gate_reads_outside(*, V_target: FloatND, outside: FloatND) -> BoolND:
-    return V_target > outside
-
-
-def _make_gate_ref_name_collision_regimes() -> _Spec:
-    src = (
-        Regime(
-            states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-            state_transitions={"x": _next_x_offgrid},
-            actions={"work": DiscreteGrid(category_class=Work)},
-            functions={"utility": _u_src},
-        ),
-        Transition(
-            law=ByAge(
-                cases={
-                    AgeRange(exclusive_stop=1): {
-                        "target": StochasticTransition(func=_prob_one)
-                    }
-                }
-            ),
-            gates={
-                "target": Gate(
-                    predicate=_gate_reads_outside,
-                    routes={
-                        "only": StakeholderRoute(
-                            fallback=ProjectedRegimeValue(
-                                regime="fallback", projection={"x": _identity_x}
-                            )
-                        )
-                    },
-                    references={
-                        # Injected operand named exactly like the target's
-                        # `outside` function below: the concatenated DAG
-                        # resolves the gate's `outside` arg to the target NODE
-                        # (0.9), not this ref (~0.6).
-                        "outside": ProjectedRegimeValue(
-                            regime="refregime", projection={"x": _project_realized}
-                        )
-                    },
-                )
-            },
-        ),
-    )
-    target = (
-        Regime(
-            states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-            functions={"utility": _u_identity, "outside": _target_outside},
-        ),
-        None,
-    )
-    refregime = (
-        Regime(
-            states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-            functions={"utility": _u_identity},
-        ),
-        None,
-    )
-    fallback = (
-        Regime(
-            states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-            functions={"utility": _u_identity},
-        ),
-        None,
-    )
-    return _split(
-        {"src": src, "target": target, "refregime": refregime, "fallback": fallback}
-    )
-
-
-def test_injected_gate_ref_name_colliding_with_a_target_node_is_rejected():
-    """A gate-ref key equal to a target function/transition name must raise,
-    rather than let the target node shadow the injected reference value.
-
-    `concatenate_functions({**dag_pool, "__gate__": gate})` resolves the gate's
-    `outside` argument to the target's `outside` function (0.9) instead of the
-    declared gate-ref (~0.6), silently reversing the gate. Construction raises on
-    the collision rather than building with the wrong operand.
-    """
-    flat_params = MappingProxyType(
-        {
-            "src": MappingProxyType(
-                {"koopmans_aggregator__discount_factor": jnp.asarray(_BETA)}
-            ),
-            "target": MappingProxyType({}),
-            "refregime": MappingProxyType({}),
-            "fallback": MappingProxyType({}),
-        }
-    )
-    with pytest.raises(
-        ModelInitializationError,
-        match=r"outside.*collide",
-    ):
-        _solve_fixture(
-            spec=_make_gate_ref_name_collision_regimes(),
-            flat_params=flat_params,
-        )
-
-
-# Two residual namespace defects survive the fences above:
-#   - a gate/projection arg naming a STATE-ONLY target node: name-based
-#     concatenation rebinds the arg to the node and drops a same-named source
-#     parameter (a silent gate reversal / wrong projected fallback state);
-#   - a gate-ref KEY spelled `V_target` / `D_target` aliases a built-in injected
-#     operand; the `injected_names` SET collapses the duplicate and the built-in
-#        wins, silently discarding the computed reference value.
-# The fixtures give the two candidate bindings different meanings so each is a
-# genuine repro, and each fence rejects the topology at construction.
+# A residual namespace defect survives the fences above: a gate/projection arg
+# naming a STATE-ONLY target node, which name-based concatenation rebinds to the
+# node, dropping a same-named source parameter (a silent gate reversal / wrong
+# projected fallback state). The fixture gives the two candidate bindings
+# different meanings so it is a genuine repro, and the fence rejects the topology
+# at construction.
 
 
 def _target_threshold(x: ContinuousState) -> FloatND:
@@ -2017,11 +1260,11 @@ def _target_threshold(x: ContinuousState) -> FloatND:
     return 0.9 + 0.0 * x
 
 
-def _gate_reads_shadowed_threshold(*, V_target: FloatND, threshold: FloatND) -> BoolND:
+def _gate_reads_shadowed_threshold(*, x: ContinuousState, threshold: FloatND) -> BoolND:
     """The source MEANS `threshold` as its own param (0.1); the target declares a
     state-only node `threshold(x)=0.9`, which name-based concatenation binds instead,
     silently reversing the gate."""
-    return V_target > threshold
+    return x > threshold
 
 
 def _make_threshold_shadow_regimes() -> _Spec:
@@ -2076,7 +1319,7 @@ def test_gate_arg_shadowed_by_state_only_target_node_is_rejected():
 
     The node reads only the target state `x`, yet `concatenate_functions` would
     bind the gate's `threshold` to `_target_threshold`, dropping the source's
-    `threshold` parameter and evaluating `V_target > 0.9` where the source meant
+    `threshold` parameter and evaluating `x > 0.9` where the source meant
     `> 0.1`. The build must raise rather than silently misbind.
     """
     flat_params = MappingProxyType(
@@ -2096,248 +1339,6 @@ def test_gate_arg_shadowed_by_state_only_target_node_is_rejected():
         match=r"threshold.*TARGET regime's own function",
     ):
         _solve_fixture(spec=_make_threshold_shadow_regimes(), flat_params=flat_params)
-
-
-def _gate_uses_v_target(V_target: FloatND) -> BoolND:
-    return V_target > 0.5
-
-
-def _make_gate_ref_v_target_alias_regimes() -> _Spec:
-    src = (
-        Regime(
-            states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-            state_transitions={"x": _next_x_offgrid},
-            actions={"work": DiscreteGrid(category_class=Work)},
-            functions={"utility": _u_src},
-        ),
-        Transition(
-            law=ByAge(
-                cases={
-                    AgeRange(exclusive_stop=1): {
-                        "target": StochasticTransition(func=_prob_one)
-                    }
-                }
-            ),
-            gates={
-                "target": Gate(
-                    predicate=_gate_uses_v_target,
-                    routes={
-                        "only": StakeholderRoute(
-                            fallback=ProjectedRegimeValue(
-                                regime="fallback", projection={"x": _identity_x}
-                            )
-                        )
-                    },
-                    references={
-                        # Aliases the built-in target-value operand `V_target`.
-                        "V_target": ProjectedRegimeValue(
-                            regime="refregime", projection={"x": _identity_x}
-                        )
-                    },
-                )
-            },
-        ),
-    )
-    target = (
-        Regime(
-            states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-            functions={"utility": _u_identity},
-        ),
-        None,
-    )
-    refregime = (
-        Regime(
-            states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-            functions={"utility": _u_identity},
-        ),
-        None,
-    )
-    fallback = (
-        Regime(
-            states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-            functions={"utility": _u_identity},
-        ),
-        None,
-    )
-    return _split(
-        {"src": src, "target": target, "refregime": refregime, "fallback": fallback}
-    )
-
-
-def test_gate_ref_key_aliasing_v_target_is_rejected():
-    """A gate-ref key that aliases a built-in injected operand is rejected.
-
-    `injected_names` is a SET, so a `gate_refs` key spelled `V_target` collapses onto
-    the target value component; `_assemble_gate_kwargs` resolves the target component
-    first and silently discards the computed reference. The build must raise.
-    """
-    flat_params = MappingProxyType(
-        {
-            "src": MappingProxyType(
-                {"koopmans_aggregator__discount_factor": jnp.asarray(_BETA)}
-            ),
-            "target": MappingProxyType({}),
-            "refregime": MappingProxyType({}),
-            "fallback": MappingProxyType({}),
-        }
-    )
-    with pytest.raises(
-        ModelInitializationError,
-        match=r"V_target.*alias a built-in injected gate operand",
-    ):
-        _solve_fixture(
-            spec=_make_gate_ref_v_target_alias_regimes(),
-            flat_params=flat_params,
-        )
-
-
-# The gate-operand namespace must be disjoint from target STATE names.
-# `_assemble_gate_kwargs` resolves target value component(s) and gate-ref
-# values BEFORE the target state mesh, so a target state named `V_target` (or a
-# gate-ref key equal to a target state name) is silently preempted -- the gate reads
-# the injected value / reference instead of the realized state, reversing routing
-# with no error. `_reject_gate_operand_state_name_collision` closes both.
-
-
-def test_reject_gate_operand_state_name_collision_flags_a_value_operand_alias():
-    """Unit: a target state named like a built-in value/D operand is rejected."""
-    with pytest.raises(
-        ModelInitializationError,
-        match=r"alias a built-in injected value/D operand",
-    ):
-        _reject_gate_operand_state_name_collision(
-            state_names=("V_target", "x"),
-            reserved_operand_names=frozenset({"V_target", "D_target"}),
-            gate_ref_names=(),
-            edge_target="target",
-            context="unit",
-        )
-
-
-def test_reject_gate_operand_state_name_collision_flags_a_gate_ref_alias():
-    """Unit: a gate-ref key equal to a target state name is rejected."""
-    with pytest.raises(
-        ModelInitializationError,
-        match=r"alias a gate-ref key",
-    ):
-        _reject_gate_operand_state_name_collision(
-            state_names=("x", "z"),
-            reserved_operand_names=frozenset({"V_target", "D_target"}),
-            gate_ref_names=("x",),
-            edge_target="target",
-            context="unit",
-        )
-
-
-def test_reject_gate_operand_state_name_collision_passes_when_disjoint():
-    """Unit: disjoint operand/gate-ref/state namespaces raise nothing."""
-    _reject_gate_operand_state_name_collision(
-        state_names=("x", "z"),
-        reserved_operand_names=frozenset({"V_target", "D_target"}),
-        gate_ref_names=("ref_v",),
-        edge_target="target",
-        context="unit",
-    )
-
-
-def _gate_reads_x_operand(*, V_target: FloatND, x: FloatND) -> BoolND:
-    """The source MEANS `x` as the target's realized STATE. A gate-ref keyed `x`
-    injects the projected reference value under the SAME name; `_assemble_gate_kwargs`
-    resolves the gate ref BEFORE the state mesh, so the gate silently reads the
-    reference value instead of the state."""
-    return V_target > x
-
-
-def _make_gate_ref_key_aliases_target_state_regimes() -> _Spec:
-    src = (
-        Regime(
-            states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-            state_transitions={"x": _next_x_offgrid},
-            actions={"work": DiscreteGrid(category_class=Work)},
-            functions={"utility": _u_src},
-        ),
-        Transition(
-            law=ByAge(
-                cases={
-                    AgeRange(exclusive_stop=1): {
-                        "target": StochasticTransition(func=_prob_one)
-                    }
-                }
-            ),
-            gates={
-                "target": Gate(
-                    predicate=_gate_reads_x_operand,
-                    routes={
-                        "only": StakeholderRoute(
-                            fallback=ProjectedRegimeValue(
-                                regime="fallback", projection={"x": _identity_x}
-                            )
-                        )
-                    },
-                    references={
-                        # Aliases the TARGET STATE `x` (not a value/D operand,
-                        # so the gate-ref alias fence stays silent).
-                        "x": ProjectedRegimeValue(
-                            regime="refregime", projection={"x": _identity_x}
-                        )
-                    },
-                )
-            },
-        ),
-    )
-    target = (
-        Regime(
-            states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-            functions={"utility": _u_identity},
-        ),
-        None,
-    )
-    refregime = (
-        Regime(
-            states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-            functions={"utility": _u_identity},
-        ),
-        None,
-    )
-    fallback = (
-        Regime(
-            states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-            functions={"utility": _u_identity},
-        ),
-        None,
-    )
-    return _split(
-        {"src": src, "target": target, "refregime": refregime, "fallback": fallback}
-    )
-
-
-def test_gate_ref_key_aliasing_a_target_state_is_rejected():
-    """The builder wires the state-collision fence (integration).
-
-    A gate-ref key `x` equals the target state `x`. `_reject_gate_ref_operand_alias`
-    only checks gate-ref keys against the value/D built-ins, so it stays silent; but
-    `_assemble_gate_kwargs` resolves the gate-ref value before the state mesh, so
-    `gate(x)` would read the projected reference instead of the realized state and
-    silently change routing, so the build must raise.
-    """
-    flat_params = MappingProxyType(
-        {
-            "src": MappingProxyType(
-                {"koopmans_aggregator__discount_factor": jnp.asarray(_BETA)}
-            ),
-            "target": MappingProxyType({}),
-            "refregime": MappingProxyType({}),
-            "fallback": MappingProxyType({}),
-        }
-    )
-    with pytest.raises(
-        ModelInitializationError,
-        match=r"alias a gate-ref key",
-    ):
-        _solve_fixture(
-            spec=_make_gate_ref_key_aliases_target_state_regimes(),
-            flat_params=flat_params,
-        )
 
 
 # A gate argument named like a target state reads that state. A source function's
@@ -2376,8 +1377,8 @@ def _u_src_no_param(*, y: ContinuousState, work: DiscreteAction) -> FloatND:
     return jnp.zeros_like(y) * work
 
 
-def _gate_reads_x(*, V_target: FloatND, x: FloatND) -> BoolND:
-    return V_target > x
+def _gate_reads_x(x: FloatND) -> BoolND:
+    return x > 0.5
 
 
 def _make_gate_param_aliases_target_state_regimes(
@@ -2476,13 +1477,13 @@ def test_gate_reading_a_target_state_solves_beside_a_source_param_of_its_name(
 # while the period context stays the engine's. A target STATE spelled like an
 # engine argument would share one fold leaf with it, so those names are reserved.
 def _gate_reads_params_engine_arg(
-    *, V_target: FloatND, same_period_regime_to_params: FloatND
+    *, x: ContinuousState, same_period_regime_to_params: FloatND
 ) -> BoolND:
-    return V_target > same_period_regime_to_params
+    return x > same_period_regime_to_params
 
 
-def _gate_reads_period_engine_arg(*, V_target: FloatND, period: ScalarInt) -> BoolND:
-    return V_target > period
+def _gate_reads_period_engine_arg(*, x: ContinuousState, period: ScalarInt) -> BoolND:
+    return x > period
 
 
 def _make_gated_source_regimes(gate: UserFunction) -> _Spec:
@@ -2543,10 +1544,8 @@ def _identity_v_arg_state(
     return same_period_regime_to_V_arr
 
 
-def _gate_reads_v_arg_state(
-    *, V_target: FloatND, same_period_regime_to_V_arr: FloatND
-) -> BoolND:
-    return V_target > same_period_regime_to_V_arr
+def _gate_reads_v_arg_state(same_period_regime_to_V_arr: FloatND) -> BoolND:
+    return same_period_regime_to_V_arr > 0.5
 
 
 def _make_target_state_aliases_engine_v_regimes() -> _Spec:
@@ -2604,12 +1603,12 @@ def _make_target_state_aliases_engine_v_regimes() -> _Spec:
     [
         pytest.param(
             _gate_reads_params_engine_arg,
-            {"V_target", f"target__predicate__{SAME_PERIOD_PARAMS_ARG}"},
+            {"x", f"target__predicate__{SAME_PERIOD_PARAMS_ARG}"},
             id="engine-params-spelling-is-a-gate-slot",
         ),
         pytest.param(
             _gate_reads_period_engine_arg,
-            {"V_target", "period"},
+            {"x", "period"},
             id="period-stays-the-engine-context",
         ),
     ],
@@ -2619,7 +1618,7 @@ def test_gate_arguments_spelled_like_engine_names_are_bound_apart_from_them(
 ) -> None:
     """A gate parameter takes its slot name; the period context keeps its own."""
     qualified = _with_qualified_params(
-        func=gate, path=("target", "predicate"), wired_names=frozenset()
+        func=gate, path=("target", "predicate"), wired_names=frozenset({"x"})
     )
     assert set(signature(qualified).parameters) == expected
 
@@ -2647,9 +1646,9 @@ def test_target_state_aliasing_the_engine_v_arg_is_rejected():
 
 
 def _gate_near_engine_name(
-    *, V_target: FloatND, same_period_regime_to_params_user: FloatND
+    *, x: ContinuousState, same_period_regime_to_params_user: FloatND
 ) -> BoolND:
-    return V_target > same_period_regime_to_params_user
+    return x > same_period_regime_to_params_user
 
 
 @pytest.mark.parametrize(

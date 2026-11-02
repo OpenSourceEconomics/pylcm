@@ -801,7 +801,16 @@ def _materialize_abstract(
         context=_build_context(arguments=arguments, period=period),
     )
     _require_abstract_arguments(arguments=materialized.arguments)
-    return materialized
+    # Match dispatch's container structure without placing any concrete leaf.
+    return dataclasses.replace(
+        materialized,
+        arguments=place_simulation_arguments(
+            arguments=materialized.arguments,
+            subject_arg_names=program.argument_builder.subject_arg_names,
+            value_reads=materialized.requirements.value_reads,
+            devices=runtime.subject_devices,
+        ),
+    )
 
 
 def _with_compiler_memory(
@@ -1017,9 +1026,13 @@ def execute_simulation_program(
         "gate_route": programs.gate_route,
         "policy_prepare": programs.policy_prepare,
         "policy_rank": programs.policy_rank,
+        "exit_full": programs.exit_full,
+        "exit_participating": programs.exit_participating,
     }
     return programs.executor.dispatch(
-        program=families[family][period],
+        program=programs.participation_program(family=family, period=period)
+        if family.startswith("participation_entry:")
+        else families[family][period],
         arguments=arguments,
         period=period,
         n_subjects=n_subjects,

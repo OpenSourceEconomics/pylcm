@@ -33,7 +33,7 @@ inspect grids, signatures, and Python source) are a separate concern.
 import inspect
 import logging
 import struct
-from collections.abc import Callable, Generator, Mapping
+from collections.abc import Callable, Generator, Iterable, Mapping
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field, replace
 from functools import partial
@@ -47,8 +47,15 @@ import numpy as np
 import pandas as pd
 from dags import concatenate_functions
 from dags.tree import tree_path_from_qname
-from jaxtyping import Int, Scalar
 
+from _lcm.current_iid import (
+    CURRENT_IID_ARGUMENT,
+    CURRENT_IID_NODES_ARGUMENT,
+    CURRENT_IID_ROWS_ARGUMENT,
+    AdmittedGroupParams,
+    CurrentIIDPlan,
+    NodeOperands,
+)
 from _lcm.engine import (
     Regime,
     SimulationPhase,
@@ -62,7 +69,7 @@ from _lcm.params.edges import regime_kernel_params
 from _lcm.params.mapping_leaf import MappingLeaf
 from _lcm.params.sequence_leaf import SequenceLeaf
 from _lcm.post_decision_bound import PostDecisionBoundSpec
-from _lcm.probability import is_live
+from _lcm.probability import is_live, is_represented_zero
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.reachability import PhaseReachability
@@ -76,6 +83,7 @@ from _lcm.regime_building.Q_and_F import (
     _publish_signature,
 )
 from _lcm.regime_building.schedules import Side
+from _lcm.shock_registry import ShockBinding
 from _lcm.simulation.host_operations import (
     ProfiledSimulationOperations,
     StaticArgument,
@@ -113,6 +121,7 @@ from _lcm.typing import (
     FlatParams,
     FlatRegimeParams,
     HostArray,
+    PytreeChild,
     PytreeValue,
     RegimeName,
     RegimeTransitionFunction,
@@ -121,7 +130,7 @@ from _lcm.typing import (
     TransitionFunction,
     TransitionFunctionName,
 )
-from _lcm.utils.counts import add_counts, sum_counts
+from _lcm.utils.counts import COUNT_CAPACITY, add_counts, sum_counts
 from _lcm.utils.dispatchers import productmap
 from _lcm.utils.logging import raise_or_warn, validation_enabled
 from _lcm.utils.namespace import ParamsQnameDepth
@@ -132,7 +141,9 @@ from lcm.exceptions import (
     InvalidStateTransitionProbabilitiesError,
     OffGridStateError,
     RegimeInitializationError,
+    ShockDeclarationError,
 )
+from lcm.shocks import ShockGroupName
 from lcm.typing import (
     Bool1D,
     BoolND,
@@ -159,6 +170,63 @@ _OFF_GRID_MAX_BLOCK_ROWS = 1 << 22
 _NO_EXTRA_GRIDS: Mapping[StateOrActionName, FloatND | IntND] = MappingProxyType({})
 _NO_FUNCTIONS: EconFunctionsMapping = MappingProxyType({})
 _NO_FUNCTION_PARAMS: FlatRegimeParams = MappingProxyType({})
+_CURRENT_IID_ROW = "__off_grid_current_row"
+_CURRENT_IID_SUPPORT = "__off_grid_current_support"
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _CurrentIIDOffGridCounts:
+    """Keep current-law integrity separate from landings and bound integrity."""
+
+    counts: IntND | BoundedResult[IntND]
+    """Saturating landing counts beside any canonical bound-integrity status."""
+    invalid_law: BoolND
+    """Mandatory producing-law invalidity, before or after mapped reduction."""
+
+
+def _flatten_current_iid_off_grid_counts(
+    result: _CurrentIIDOffGridCounts,
+) -> tuple[tuple[PytreeValue | PytreeChild, ...], None]:
+    return (result.counts, result.invalid_law), None
+
+
+def _flatten_current_iid_off_grid_counts_with_keys(
+    result: _CurrentIIDOffGridCounts,
+) -> tuple[
+    tuple[tuple[jax.tree_util.GetAttrKey, PytreeValue | PytreeChild], ...], None
+]:
+    return (
+        (
+            (jax.tree_util.GetAttrKey("counts"), result.counts),
+            (jax.tree_util.GetAttrKey("invalid_law"), result.invalid_law),
+        ),
+        None,
+    )
+
+
+# keyword-only-exempt: library-callback=jax.tree_util.register_pytree_with_keys
+def _unflatten_current_iid_off_grid_counts(
+    _aux: None, children: Iterable[PytreeValue | PytreeChild]
+) -> _CurrentIIDOffGridCounts:
+    """Restore JAX transport leaves without widening checked numeric construction."""
+    counts, invalid_law = children
+    result = object.__new__(_CurrentIIDOffGridCounts)
+    object.__setattr__(result, "counts", counts)
+    object.__setattr__(result, "invalid_law", invalid_law)
+    return result
+
+
+jax.tree_util.register_pytree_with_keys(
+    _CurrentIIDOffGridCounts,
+    _flatten_current_iid_off_grid_counts_with_keys,
+    _unflatten_current_iid_off_grid_counts,
+    _flatten_current_iid_off_grid_counts,
+)
+
+
+type _OffGridOutput = IntND | BoundedResult[IntND] | _CurrentIIDOffGridCounts
+type _OffGridGrid = Mapping[StateOrActionName, FloatND | IntND | HostArray]
+type _OffGridArguments = Mapping[ReferenceName, PytreeValue]
 
 
 class _OffGridCellInputs(TypedDict):
@@ -173,6 +241,8 @@ class _OffGridCellInputs(TypedDict):
     states: tuple[StateName, ...]
     bound_specs: NotRequired[tuple[PostDecisionBoundSpec, ...]]
     bound_periods: NotRequired[tuple[int, ...]]
+    current_iid_plan: NotRequired[CurrentIIDPlan]
+    current_iid_bindings: NotRequired[Mapping[ShockGroupName, ShockBinding] | None]
 
 
 type _RegimeProbabilityOutput = tuple[
@@ -435,9 +505,13 @@ def validate_transitions(
             logger=logger,
             summary=summary,
             process_grid_resolver=process_grid_resolver,
+            simulation_memory=memory,
+            simulation_producers=producers,
         )
         return
-    pending = _ValidationSummary(process_grid_resolver=process_grid_resolver)
+    pending = _ValidationSummary(
+        memory=memory, producers=producers, process_grid_resolver=process_grid_resolver
+    )
     try:
         try:
             _validate_transition_sequence(
@@ -465,6 +539,8 @@ def validate_transitions(
             logger=logger,
             summary=None,
             process_grid_resolver=process_grid_resolver,
+            simulation_memory=memory,
+            simulation_producers=producers,
         )
     _validate_off_grid_under(
         memory=memory,
@@ -516,18 +592,21 @@ def validate_off_grid_transitions(
     summary: _ValidationSummary | None = None,
     process_grid_resolver: ProcessGridResolver | None = None,
 ) -> None:
-    """Count raw landings, or only enforce mandatory raise policy in preflight.
+    """Enforce `off_grid="raise"` grids, and count every grid at `"debug"`.
+
+    A `"raise"` grid is always counted and refuses an exterior landing. The
+    count-only diagnostics for the other rules run only when the call's
+    `log_level` is `"debug"`, runtime checks are enabled and `mandatory_only`
+    is false, since each count can expand a full phase Cartesian grid.
 
     A regime whose solve kernels count its landings is left out: its value
     constraints or gated edges decide which landings are reached only once
     values are known. Its realized landings are counted as simulation advances.
     """
-    # Count-only diagnostics can expand simulation-only axes during solve, so a
-    # logger that would not report the counts skips them.
     checked = (
         validation_enabled(logger)
         and not mandatory_only
-        and logger.isEnabledFor(logging.WARNING)
+        and logger.isEnabledFor(logging.DEBUG)
     )
     for period in range(ages.n_periods - 1):
         for name, regime in regimes.items():
@@ -616,12 +695,18 @@ def validate_off_grid_transitions(
 
 def _validate_off_grid_bound_status(
     *,
-    counts: IntND | BoundedResult[IntND],
+    counts: _OffGridOutput,
     phase: SolutionPhase | SimulationPhase,
     regime_name: RegimeName,
     period: int,
 ) -> IntND:
     """Validate canonical bound integrity before interpreting reached landings."""
+    if isinstance(counts, _CurrentIIDOffGridCounts):
+        if bool(counts.invalid_law):
+            raise ShockDeclarationError(
+                f"Invalid current IID law in regime {regime_name!r}, period {period}."
+            )
+        counts = counts.counts
     if isinstance(counts, BoundedResult):
         validate_runtime_bound_status(
             statuses=counts.bound_status,
@@ -635,7 +720,7 @@ def _validate_off_grid_bound_status(
     return cast("IntND", counts)
 
 
-def _off_grid_target_counts(
+def _off_grid_target_counts(  # noqa: C901 - keep admitted pruning separate from the unchanged unbudgeted route
     *,
     regime: Regime,
     phase: SolutionPhase | SimulationPhase,
@@ -648,7 +733,7 @@ def _off_grid_target_counts(
     ages: TimeAxis,
     summary: _ValidationSummary | None,
     process_grid_resolver: ProcessGridResolver | None,
-) -> IntND | BoundedResult[IntND]:
+) -> _OffGridOutput:
     """Reuse canonical DAG/node resolution and admitted Cartesian-law execution."""
     params = regime_kernel_params(flat_params, regime_name=regime.name)
     base = (
@@ -672,6 +757,12 @@ def _off_grid_target_counts(
         "law": law,
         "states": tuple(points),
     }
+    current_plan = regime.solution.current_iid_plans.get(period)
+    if current_plan is not None:
+        builder_inputs["current_iid_plan"] = current_plan
+        builder_inputs["current_iid_bindings"] = _off_grid_current_bindings(
+            regime=regime, phase=phase
+        )
     if any(bound.kind == "dag" for bound in phase.post_decision_bounds):
         builder_inputs.update(
             bound_specs=tuple(
@@ -680,24 +771,41 @@ def _off_grid_target_counts(
             bound_periods=(period,),
         )
     owned_inputs = cast("Mapping[str, _BuilderInput]", builder_inputs)
-    available = {**space.states, **space.actions}
+    available: dict[StateOrActionName, FloatND | IntND | HostArray] = {
+        **space.states,
+        **space.actions,
+    }
     if phase is regime.simulation:
         available |= dict(_phase_extra_grids(regime=regime, phase="simulate"))
+    if current_plan is not None:
+        available[_CURRENT_IID_ROW] = np.arange(
+            current_plan.indices.shape[0], dtype=np.int32
+        )
     grid_names = tuple(available)
-    scalar_kwargs = MappingProxyType(
-        {
-            **regime.resolved_fixed_params,
-            **params,
-            "age": ages.values[period],  # noqa: PD011
-            "period": jnp.int32(period),
-            **{f"__off_grid_points_{state}": nodes for state, nodes in points.items()},
-            **{
-                f"__off_grid_nodes_{name}": target_axes[name.removeprefix("next_")]
-                for name, lottery in plan.lotteries.items()
-                if lottery.support_provider_name is None
-            },
-        }
-    )
+    scalar_inputs: dict[ReferenceName, PytreeValue] = {
+        **regime.resolved_fixed_params,
+        **params,
+        "age": ages.values[period],  # noqa: PD011
+        "period": jnp.int32(period),
+        **{f"__off_grid_points_{state}": nodes for state, nodes in points.items()},
+        **{
+            f"__off_grid_nodes_{name}": target_axes[name.removeprefix("next_")]
+            for name, lottery in plan.lotteries.items()
+            if lottery.support_provider_name is None
+        },
+    }
+    if current_plan is not None:
+        scalar_inputs.update(
+            {
+                CURRENT_IID_ARGUMENT: {
+                    name: flat_params.get(name, {})
+                    for name, _, _ in current_plan.bindings
+                },
+                CURRENT_IID_NODES_ARGUMENT: current_plan.node_operands,
+                CURRENT_IID_ROWS_ARGUMENT: current_plan.indices,
+            }
+        )
+    scalar_kwargs = MappingProxyType(scalar_inputs)
     if memory is None:
         owner = None if summary is None else summary.producers
         n_rows = prod(jnp.shape(axis)[0] for axis in available.values())
@@ -727,11 +835,25 @@ def _off_grid_target_counts(
         builder=_build_off_grid_cell,
         **owned_inputs,
     )
+    consumed = _off_grid_consumed_names(func=point_call)
+    multiplicity = 1
+    if consumed is not None and all(
+        jnp.shape(axis)[0] > 0 for axis in available.values()
+    ):
+        grid_names = tuple(name for name in available if name in consumed)
+        multiplicity = min(
+            prod(
+                jnp.shape(axis)[0]
+                for name, axis in available.items()
+                if name not in consumed
+            ),
+            COUNT_CAPACITY,
+        )
     arguments = {"grid_args": available, "scalar_kwargs": scalar_kwargs}
 
-    def admitted_count(block_rows: int) -> IntND | BoundedResult[IntND]:
+    def admitted_count(block_rows: int) -> _OffGridOutput:
         return cast(
-            "IntND | BoundedResult[IntND]",
+            "_OffGridOutput",
             _evaluate_admitted_transition_producer(
                 function=partial(
                     _off_grid_counts_law,
@@ -739,6 +861,7 @@ def _off_grid_target_counts(
                     func=point_call,
                     block_rows=block_rows,
                     largest_count=1,
+                    multiplicity=multiplicity,
                 ),
                 arguments=arguments,
                 memory=memory,
@@ -752,6 +875,18 @@ def _off_grid_target_counts(
         with suppress(ExecutionPlanningError):
             return admitted_count(block_rows)
     return admitted_count(narrowest)
+
+
+def _off_grid_current_bindings(
+    *, regime: Regime, phase: SolutionPhase | SimulationPhase
+) -> Mapping[ShockGroupName, ShockBinding] | None:
+    """Use actual simulation laws on the model's exact-age solve support."""
+    if phase is not regime.simulation:
+        return None
+    draw_plan = regime.simulation.current_iid_draw_plan
+    if draw_plan is None:
+        raise ShockDeclarationError("Current IID simulation bindings are missing.")
+    return draw_plan.bindings
 
 
 def _off_grid_block_candidates(*, n_rows: int) -> tuple[int, ...]:
@@ -781,7 +916,9 @@ def _build_unbudgeted_off_grid_count(
     states: tuple[StateName, ...],
     bound_specs: tuple[PostDecisionBoundSpec, ...] = (),
     bound_periods: tuple[int, ...] = (),
-) -> Callable[..., IntND | BoundedResult[IntND]]:
+    current_iid_plan: CurrentIIDPlan | None = None,
+    current_iid_bindings: Mapping[ShockGroupName, ShockBinding] | None = None,
+) -> Callable[..., _OffGridOutput]:
     """Compile one cell's whole count, reused for as long as its owner keeps it."""
     return jax.jit(
         partial(
@@ -797,6 +934,8 @@ def _build_unbudgeted_off_grid_count(
                 states=states,
                 bound_specs=bound_specs,
                 bound_periods=bound_periods,
+                current_iid_plan=current_iid_plan,
+                current_iid_bindings=current_iid_bindings,
             ),
             largest_count=1,
         )
@@ -814,7 +953,9 @@ def _build_off_grid_cell(
     states: tuple[StateName, ...],
     bound_specs: tuple[PostDecisionBoundSpec, ...] = (),
     bound_periods: tuple[int, ...] = (),
-) -> Callable[..., IntND | BoundedResult[IntND]]:
+    current_iid_plan: CurrentIIDPlan | None = None,
+    current_iid_bindings: Mapping[ShockGroupName, ShockBinding] | None = None,
+) -> Callable[..., _OffGridOutput]:
     """Compose a model-owned cell while leaving all numerical nodes as operands."""
     feasibility = _get_feasibility(
         functions=functions,
@@ -871,7 +1012,7 @@ def _build_off_grid_cell(
         transitions=bundle,
         transition_plans=transition_plans,
     )
-    return _OffGridCell(
+    cell = _OffGridCell(
         next_inputs=_NamedArgumentsCall(
             func=next_inputs, names=frozenset(inspect.signature(next_inputs).parameters)
         ),
@@ -889,17 +1030,35 @@ def _build_off_grid_cell(
         ),
         target=target,
     )
+    if current_iid_plan is None:
+        return cell
+    if current_iid_bindings is not None:
+        if set(current_iid_bindings) != {
+            name for name, _, _ in current_iid_plan.bindings
+        }:
+            raise ShockDeclarationError(
+                "Current IID phase bindings differ from solve support."
+            )
+        current_iid_plan = CurrentIIDPlan(
+            bindings=tuple(
+                (name, current_iid_bindings[name], nodes)
+                for name, _, nodes in current_iid_plan.bindings
+            ),
+            indices=current_iid_plan.indices,
+        )
+    return _CurrentIIDOffGridCell(cell=cell, plan=current_iid_plan)
 
 
 def _off_grid_counts_law(
     *,
-    grid_args: Mapping[StateOrActionName, FloatND | IntND],
-    scalar_kwargs: EconFunctionKwargs,
+    grid_args: _OffGridGrid,
+    scalar_kwargs: _OffGridArguments,
     grid_names: tuple[StateOrActionName, ...],
-    func: Callable[..., IntND | BoundedResult[IntND]],
+    func: Callable[..., _OffGridOutput],
     block_rows: int | None = None,
     largest_count: int | None = None,
-) -> IntND | BoundedResult[IntND]:
+    multiplicity: int = 1,
+) -> _OffGridOutput:
     """Reduce saturating integer counts block by block inside one producer.
 
     `func` returns one point's counts with the checked states and the
@@ -922,9 +1081,15 @@ def _off_grid_counts_law(
     rows = _OFF_GRID_BLOCK_ROWS if block_rows is None else block_rows
     point = _GridPointCall(names=grid_names, scalar_kwargs=scalar_kwargs, func=func)
 
-    def reduce_rows(
-        *, counts: IntND | BoundedResult[IntND], n_rows: int | None
-    ) -> IntND | BoundedResult[IntND]:
+    def reduce_rows(*, counts: _OffGridOutput, n_rows: int | None) -> _OffGridOutput:
+        if isinstance(counts, _CurrentIIDOffGridCounts):
+            return _CurrentIIDOffGridCounts(
+                counts=cast(
+                    "IntND | BoundedResult[IntND]",
+                    reduce_rows(counts=counts.counts, n_rows=n_rows),
+                ),
+                invalid_law=jnp.any(counts.invalid_law),
+            )
         bounded = isinstance(counts, BoundedResult)
         ordinary = cast("IntND", counts.output if bounded else counts)
         result = sum_counts(
@@ -945,7 +1110,9 @@ def _off_grid_counts_law(
         )
 
     if not grid_names:
-        return reduce_rows(counts=point(), n_rows=None)
+        return _repeat_off_grid_counts(
+            counts=reduce_rows(counts=point(), n_rows=None), multiplicity=multiplicity
+        )
     axes = tuple(jnp.asarray(grid_args[name]) for name in grid_names)
     split = len(axes)
     block = 1
@@ -955,7 +1122,7 @@ def _off_grid_counts_law(
     outer, inner = axes[:split], axes[split:]
     outer_shape = tuple(axis.shape[0] for axis in outer)
 
-    def count_block(index: ScalarInt) -> IntND | BoundedResult[IntND]:
+    def count_block(index: ScalarInt) -> _OffGridOutput:
         fixed = tuple(
             axis[position]
             for axis, position in zip(
@@ -971,7 +1138,9 @@ def _off_grid_counts_law(
         )
 
     if not outer:
-        return count_block(jnp.int32(0))
+        return _repeat_off_grid_counts(
+            counts=count_block(jnp.int32(0)), multiplicity=multiplicity
+        )
     n_blocks = prod(outer_shape)
     if n_blocks > np.iinfo(np.int32).max:
         raise ExecutionPlanningError(
@@ -979,38 +1148,85 @@ def _off_grid_counts_law(
             "loop can address."
         )
     shape = jax.eval_shape(count_block, jnp.int32(0))
-    if isinstance(shape, BoundedResult):
-        # keyword-only-exempt: library-callback=jax.lax.fori_loop
-        def add_block(
-            index: int | Int[Scalar, ""], total: BoundedResult[IntND]
-        ) -> BoundedResult[IntND]:
-            block = cast(
-                "BoundedResult[IntND]", count_block(jnp.asarray(index, dtype=jnp.int32))
-            )
-            return BoundedResult(
-                output=add_counts(left=total.output, right=block.output),
-                bound_status=tuple(
-                    merge_bound_input_status(left=left, right=right)
-                    for left, right in zip(
-                        total.bound_status, block.bound_status, strict=True
-                    )
-                ),
-            )
-
-        return jax.lax.fori_loop(
+    return _repeat_off_grid_counts(
+        counts=jax.lax.fori_loop(
             jnp.int32(0),
             jax.lax.optimization_barrier(jnp.int32(n_blocks)),
-            add_block,
+            lambda index, total: _merge_off_grid_counts(
+                left=total, right=count_block(jnp.asarray(index, dtype=jnp.int32))
+            ),
             jax.tree.map(lambda leaf: jnp.zeros(leaf.shape, dtype=leaf.dtype), shape),
-        )
-    return jax.lax.fori_loop(
-        jnp.int32(0),
-        jax.lax.optimization_barrier(jnp.int32(n_blocks)),
-        lambda index, total: add_counts(
-            left=total, right=cast("IntND", count_block(index.astype(jnp.int32)))
         ),
-        jnp.zeros(shape.shape, dtype=shape.dtype),
+        multiplicity=multiplicity,
     )
+
+
+def _repeat_off_grid_counts(
+    *, counts: _OffGridOutput, multiplicity: int
+) -> _OffGridOutput:
+    """Restore positive repeated cells through the original saturation/status merge."""
+    if multiplicity < 1:
+        raise ValueError("Off-grid count multiplicity must be positive.")
+    result = counts
+    for bit in bin(min(multiplicity, COUNT_CAPACITY))[3:]:
+        result = _merge_off_grid_counts(left=result, right=result)
+        if bit == "1":
+            result = _merge_off_grid_counts(left=result, right=counts)
+    return result
+
+
+def _off_grid_consumed_names(
+    *, func: Callable[..., _OffGridOutput]
+) -> frozenset[ReferenceName] | None:
+    """Keep every actual cell/status dependency, or decline pruning unknown records."""
+    if type(func) is _CurrentIIDOffGridCell:
+        names = _off_grid_consumed_names(func=func.cell)
+        return (
+            None
+            if names is None
+            else names | func.plan.state_inputs | {_CURRENT_IID_ROW}
+        )
+    if type(func) is not _OffGridCell:
+        return None
+    names: set[ReferenceName] = set()
+    for reader in (
+        func.next_inputs,
+        func.weights,
+        func.feasibility,
+        func.regime_law,
+        func.reader,
+    ):
+        if type(reader) is not _NamedArgumentsCall:
+            return None
+        names.update(reader.names)
+    return frozenset(names)
+
+
+def _merge_off_grid_counts(
+    *, left: _OffGridOutput, right: _OffGridOutput
+) -> _OffGridOutput:
+    """Accumulate landings, bound status and current-law integrity separately."""
+    if isinstance(left, _CurrentIIDOffGridCounts):
+        other = cast("_CurrentIIDOffGridCounts", right)
+        return _CurrentIIDOffGridCounts(
+            counts=cast(
+                "IntND | BoundedResult[IntND]",
+                _merge_off_grid_counts(left=left.counts, right=other.counts),
+            ),
+            invalid_law=left.invalid_law | other.invalid_law,
+        )
+    if isinstance(left, BoundedResult):
+        other_bound = cast("BoundedResult[IntND]", right)
+        return BoundedResult(
+            output=add_counts(left=left.output, right=other_bound.output),
+            bound_status=tuple(
+                merge_bound_input_status(left=a, right=b)
+                for a, b in zip(
+                    left.bound_status, other_bound.bound_status, strict=True
+                )
+            ),
+        )
+    return add_counts(left=left, right=cast("IntND", right))
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)
@@ -1079,11 +1295,12 @@ class _OffGridCell:
 
     @no_type_check
     def __call__(self, **kwargs: EconFunctionArg) -> IntND | BoundedResult[IntND]:
+        support = kwargs.pop(_CURRENT_IID_SUPPORT, jnp.asarray(a=True))
         evaluated = self.feasibility(**kwargs)
         feasible = (
             evaluated.output if isinstance(evaluated, BoundedResult) else evaluated
         )
-        reached = feasible & is_live(self.regime_law(**kwargs)[self.target])
+        reached = support & feasible & is_live(self.regime_law(**kwargs)[self.target])
         counts = self.reader(
             **{
                 **kwargs,
@@ -1093,9 +1310,48 @@ class _OffGridCell:
             }
         )
         return (
-            BoundedResult(output=counts, bound_status=evaluated.bound_status)
+            BoundedResult(
+                output=counts,
+                bound_status=reduce_bound_input_status(
+                    statuses=evaluated.bound_status, active=support
+                ),
+            )
             if isinstance(evaluated, BoundedResult)
             else counts
+        )
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _CurrentIIDOffGridCell:
+    """Realize one exact joint-support row inside the existing bounded producer."""
+
+    cell: _OffGridCell
+    plan: CurrentIIDPlan
+
+    def __call__(
+        self,
+        *,
+        _lcm_current_iid: AdmittedGroupParams,
+        _lcm_current_iid_nodes: NodeOperands,
+        _lcm_current_iid_rows: IntND,
+        **kwargs: EconFunctionArg,
+    ) -> _CurrentIIDOffGridCounts:
+        row = kwargs.pop(_CURRENT_IID_ROW)
+        physical, factors, valid = self.plan.realise_nodes(
+            arguments=kwargs,
+            group_params=_lcm_current_iid,
+            node_operands=_lcm_current_iid_nodes,
+            indices=jnp.take(_lcm_current_iid_rows, jnp.asarray(row)[None], axis=0),
+        )
+        return _CurrentIIDOffGridCounts(
+            counts=self.cell(
+                **{
+                    **kwargs,
+                    **{name: values[0] for name, values in physical.items()},
+                    _CURRENT_IID_SUPPORT: jnp.all(~is_represented_zero(factors[:, 0])),
+                }
+            ),
+            invalid_law=~valid,
         )
 
 
@@ -1108,6 +1364,7 @@ def _validate_transition_sequence(
     summary: _ValidationSummary | None,
     process_grid_resolver: ProcessGridResolver | None = None,
     simulation_memory: SimulationMemory | None = None,
+    simulation_producers: ProfiledSimulationOperations | None = None,
 ) -> None:
     """Preserve family and item ordering for collection and serial diagnostics."""
     memory = (
@@ -1150,6 +1407,7 @@ def _validate_transition_sequence(
         summary=summary,
         process_grid_resolver=process_grid_resolver,
         memory=memory,
+        producers=simulation_producers,
     )
 
 
@@ -1976,6 +2234,7 @@ def validate_discrete_state_laws_all_periods(
     summary: _ValidationSummary | None = None,
     process_grid_resolver: ProcessGridResolver | None = None,
     memory: SimulationMemory | None = None,
+    producers: ProfiledSimulationOperations | None = None,
 ) -> None:
     """Validate that every deterministic law of a discrete state stays on its grid.
 
@@ -2040,6 +2299,11 @@ def validate_discrete_state_laws_all_periods(
                         {**regime.resolved_fixed_params, **regime_params}
                     ),
                     memory=current_memory,
+                    producers=(
+                        summary.producers
+                        if summary is not None and summary.producers is not None
+                        else producers
+                    ),
                 )
             except InvalidStateTransitionError as error:
                 if summary is not None:
@@ -2047,7 +2311,7 @@ def validate_discrete_state_laws_all_periods(
                 raise_or_warn(logger=logger, error=error)
 
 
-def _validate_discrete_state_laws(
+def _validate_discrete_state_laws(  # noqa: C901
     *,
     regimes: MappingProxyType[RegimeName, Regime],
     regime_name: RegimeName,
@@ -2056,6 +2320,7 @@ def _validate_discrete_state_laws(
     state_action_space: StateActionSpace,
     params: FlatRegimeParams,
     memory: SimulationMemory | None,
+    producers: ProfiledSimulationOperations | None = None,
 ) -> None:
     """Check one regime's deterministic discrete laws at one period, each phase.
 
@@ -2188,50 +2453,353 @@ def _validate_discrete_state_laws(
                         f"__support_{name}_{index}": leaf
                         for index, leaf in enumerate(leaves)
                     }
-            law_names = frozenset(inspect.signature(laws).parameters)
-            law_codes, _, _ = _evaluate_feasible_rows(
-                law=_NamedArgumentsCall(func=laws, names=law_names),
-                feasibility=_NamedArgumentsCall(
-                    func=_every_cell_feasible, names=frozenset()
-                ),
-                grid_args=MappingProxyType(
-                    {k: v for k, v in law_grids.items() if k in law_names}
-                ),
-                scalar_kwargs=MappingProxyType(
-                    {k: v for k, v in scalar_kwargs.items() if k in law_names}
-                ),
-                memory=memory,
-            )
-            if not any(
-                _off_grid_rows(
-                    codes=law_codes[name],
-                    feasible=_every_cell_feasible(),
-                    target_grid=grid,
-                ).any()
-                for name, grid in target_grids.items()
+            # Preserve the old all-output coordinate order for diagnostics only.
+            # Each law below evaluates only its own actual DAG dependencies.
+            all_law_names = frozenset(inspect.signature(laws).parameters)
+            if any(
+                axis.shape[0] == 0
+                for key, axis in law_grids.items()
+                if key in all_law_names
             ):
                 continue
-            codes, feasible, point = _evaluate_on_feasible_rows(
-                law=laws,
-                phase=phase,
-                period=period,
-                grids=law_grids,
-                scalar_kwargs=scalar_kwargs,
-                memory=memory,
+            owner = memory.producers if memory is not None else producers
+            feasibility = _discrete_law_feasibility(
+                phase=phase, period=period, owner=owner
+            )
+            feasibility_names = frozenset(inspect.signature(feasibility).parameters)
+            diagnostic_names = tuple(
+                name for name in law_grids if name in all_law_names | feasibility_names
             )
             for name, target_grid in target_grids.items():
-                _fail_if_codes_leave_the_grid(
-                    codes=codes[name],
-                    feasible=feasible,
-                    point={k.removeprefix("__node_"): v for k, v in point.items()},
-                    target_grid=target_grid,
+                inputs = {
+                    "transitions": transitions,
+                    "functions": functions,
+                    "targets": (name,),
+                    "excluded": tuple(sorted(stochastic | lotteries)),
+                }
+                single = (
+                    _build_single_discrete_law(
+                        transitions=transitions,
+                        functions=functions,
+                        targets=(name,),
+                        excluded=tuple(sorted(stochastic | lotteries)),
+                    )
+                    if owner is None
+                    else owner.built(
+                        builder=_build_single_discrete_law,
+                        **cast("Mapping[str, _BuilderInput]", inputs),
+                    )
+                )
+                single_reads = frozenset(inspect.signature(single).parameters)
+                single_supports = {
+                    draw: events
+                    for draw, events in supports.items()
+                    if draw in single_reads
+                }
+                if single_supports:
+                    single = _AtSupportEvents(
+                        law=single,
+                        supports=tuple(
+                            (draw, jax.tree_util.tree_structure(events), len(leaves))
+                            for draw, events in single_supports.items()
+                            for leaves in (jax.tree_util.tree_leaves(events),)
+                        ),
+                    )
+                if not _consume_discrete_off_grid_flag(
+                    memory=memory,
+                    result=_find_discrete_law_off_grid(
+                        law=single,
+                        feasibility=_every_cell_feasible,
+                        name=name,
+                        target_size=len(target_grid.codes),
+                        grids=law_grids,
+                        scalar_kwargs=scalar_kwargs,
+                        memory=memory,
+                        owner=owner,
+                    ),
+                ):
+                    continue
+                cell = _consume_discrete_off_grid_cell(
+                    memory=memory,
+                    result=_find_discrete_law_off_grid(
+                        law=single,
+                        feasibility=feasibility,
+                        name=name,
+                        target_size=len(target_grid.codes),
+                        grids=law_grids,
+                        scalar_kwargs=scalar_kwargs,
+                        memory=memory,
+                        owner=owner,
+                    ),
+                    diagnostic_names=diagnostic_names,
+                    law_grids=law_grids,
                     source_grids=phase.grids,
+                )
+                if cell is None:
+                    continue
+                _raise_off_grid_at_cell(
+                    cell=cell,
+                    target_grid=target_grid,
                     description=(
                         f"In regime '{regime_name}' at age {age} (period {period}), "
                         f"the law '{name}' to regime '{target}'"
                     ),
                     value_dependent=regime.solution.counts_raise_landings,
                 )
+
+
+def _consume_discrete_off_grid_cell(
+    *,
+    memory: SimulationMemory | None,
+    result: tuple[BoolND, Mapping[str, FloatND | IntND]],
+    diagnostic_names: tuple[StateOrActionName, ...],
+    law_grids: Mapping[StateOrActionName, FloatND | IntND],
+    source_grids: Mapping[StateOrActionName, Grid],
+) -> Mapping[str, int | float | str] | None:
+    """Consume the wider witness without retaining device roots in the law loop."""
+    with _own_transition_outputs(memory=memory, outputs=result):
+        found, point = result
+        if not bool(np.asarray(found)):
+            return None
+        # Restore irrelevant axes at their first occurrence in the old ij product.
+        return {
+            key.removeprefix("__node_"): _cell_label(
+                code=point[key] if key in point else law_grids[key][0],
+                grid=source_grids.get(key.removeprefix("__node_")),
+            )
+            for key in diagnostic_names
+        }
+
+
+def _consume_discrete_off_grid_flag(
+    *,
+    memory: SimulationMemory | None,
+    result: tuple[BoolND, Mapping[str, FloatND | IntND]],
+) -> bool:
+    """Own and release the compact law-only witness before any wider producer."""
+    with _own_transition_outputs(memory=memory, outputs=result):
+        return bool(np.asarray(result[0]))
+
+
+def _build_single_discrete_law(
+    *,
+    transitions: Mapping[TransitionFunctionName, TransitionFunction],
+    functions: EconFunctionsMapping,
+    targets: tuple[TransitionFunctionName, ...],
+    excluded: tuple[str, ...],
+) -> Callable[..., _FeasibleRowsLawOutput]:
+    """Cache per-output composition against the original immutable phase pools."""
+    return get_next_state_function_for_solution(
+        transitions=MappingProxyType(
+            {key: value for key, value in transitions.items() if key not in excluded}
+        ),
+        functions=functions,
+        targets=targets,
+    )
+
+
+def _discrete_law_feasibility(
+    *,
+    phase: SolutionPhase | SimulationPhase,
+    period: int,
+    owner: ProfiledSimulationOperations | None,
+) -> ConstraintFunction:
+    """Bind the original phase's ordinary constraints at this exact date."""
+    functions, constraints = phase.feasibility_pools_by_period[period]
+    return cast(
+        "ConstraintFunction",
+        _get_feasibility(functions=functions, constraints=constraints)
+        if owner is None
+        else owner.built(
+            builder=_get_feasibility, functions=functions, constraints=constraints
+        ),
+    )
+
+
+def _find_discrete_law_off_grid(
+    *,
+    law: Callable[..., _FeasibleRowsLawOutput],
+    feasibility: Callable[..., BoolND],
+    name: str,
+    target_size: int,
+    grids: Mapping[StateOrActionName, FloatND | IntND],
+    scalar_kwargs: Mapping[ReferenceName, EconFunctionArg],
+    memory: SimulationMemory | None,
+    owner: ProfiledSimulationOperations | None,
+) -> tuple[BoolND, Mapping[str, FloatND | IntND]]:
+    """Reduce the complete actual read population to its first invalid cell."""
+    reads = frozenset(inspect.signature(law).parameters) | frozenset(
+        inspect.signature(feasibility).parameters
+    )
+    grid_args = {key: value for key, value in grids.items() if key in reads}
+    arguments = {
+        "grid_args": grid_args,
+        "scalar_kwargs": {
+            key: value for key, value in scalar_kwargs.items() if key in reads
+        },
+    }
+    widths = (
+        (_OFF_GRID_BLOCK_ROWS,)
+        if memory is None
+        else _off_grid_block_candidates(
+            n_rows=prod(axis.shape[0] for axis in grid_args.values())
+        )
+    )
+
+    def evaluate(width: int) -> tuple[BoolND, Mapping[str, FloatND | IntND]]:
+        inputs = {
+            "law": law,
+            "feasibility": feasibility,
+            "name": name,
+            "grid_names": tuple(grid_args),
+            "limits": (target_size, width),
+        }
+        function = (
+            _build_discrete_off_grid_search(
+                law=law,
+                feasibility=feasibility,
+                name=name,
+                grid_names=tuple(grid_args),
+                limits=(target_size, width),
+            )
+            if owner is None
+            else owner.built(
+                builder=_build_discrete_off_grid_search,
+                **cast("Mapping[str, _BuilderInput]", inputs),
+            )
+        )
+        return cast(
+            "tuple[BoolND, Mapping[str, FloatND | IntND]]",
+            function(**arguments)
+            if memory is None
+            else _evaluate_admitted_transition_producer(
+                function=function, arguments=arguments, memory=memory
+            ),
+        )
+
+    # Only planning refusals retry, before an executable is dispatched.
+    for width in widths[:-1]:
+        with suppress(ExecutionPlanningError):
+            return evaluate(width)
+    return evaluate(widths[-1])
+
+
+def _build_discrete_off_grid_search(
+    *,
+    law: Callable[..., _FeasibleRowsLawOutput],
+    feasibility: Callable[..., BoolND],
+    name: str,
+    grid_names: tuple[StateOrActionName, ...],
+    limits: tuple[int, int],
+) -> Callable[..., PytreeValue]:
+    """Retain one block traversal under the original model-owned producers."""
+    return jax.jit(
+        partial(
+            _discrete_off_grid_search,
+            law=_NamedArgumentsCall(
+                func=law, names=frozenset(inspect.signature(law).parameters)
+            ),
+            feasibility=_NamedArgumentsCall(
+                func=feasibility,
+                names=frozenset(inspect.signature(feasibility).parameters),
+            ),
+            name=name,
+            grid_names=grid_names,
+            target_size=limits[0],
+            block_rows=limits[1],
+        )
+    )
+
+
+def _discrete_off_grid_search(  # noqa: C901
+    *,
+    grid_args: Mapping[StateOrActionName, FloatND | IntND],
+    scalar_kwargs: EconFunctionKwargs,
+    law: Callable[..., _FeasibleRowsLawOutput],
+    feasibility: Callable[..., BoolND],
+    name: str,
+    grid_names: tuple[StateOrActionName, ...],
+    target_size: int,
+    block_rows: int,
+) -> tuple[BoolND, Mapping[str, FloatND | IntND]]:
+    """Visit every declared row with block-bounded scratch and scalar witnesses.
+
+    The trailing-axis layout is the existing off-grid count layout. Complete
+    traversal preserves all declared support events regardless of their mass.
+    The witness consists of scalar coordinates, never a global int32 row id.
+    """
+    if block_rows < 1 or block_rows > np.iinfo(np.int32).max:
+        raise ExecutionPlanningError("Discrete validation needs int32 block offsets.")
+    axes = tuple(jnp.asarray(grid_args[key]) for key in grid_names)
+    if any(axis.ndim != 1 for axis in axes):
+        raise ValueError("Discrete validation grids must be one-dimensional.")
+
+    def at_point(**kwargs: EconFunctionArg) -> BoolND:
+        code = jnp.asarray(law(**kwargs)[name])
+        return jnp.any(feasibility(**kwargs) & ((code < 0) | (code >= target_size)))
+
+    point = _GridPointCall(names=grid_names, scalar_kwargs=scalar_kwargs, func=at_point)
+    if not axes:
+        return point(), {}
+    neutral = (
+        jnp.zeros((), dtype=bool),
+        {
+            key: jnp.zeros((), dtype=axis.dtype)
+            for key, axis in zip(grid_names, axes, strict=True)
+        },
+    )
+    if any(axis.shape[0] == 0 for axis in axes):
+        return neutral
+    split = len(axes)
+    block = 1
+    while split and block * axes[split - 1].shape[0] <= block_rows:
+        split -= 1
+        block *= axes[split].shape[0]
+    outer, inner = axes[:split], axes[split:]
+    outer_shape = tuple(axis.shape[0] for axis in outer)
+    n_blocks = prod(outer_shape)
+    if n_blocks > np.iinfo(np.int32).max:
+        raise ExecutionPlanningError(
+            "Discrete validation has more outer blocks than an int32 loop can address."
+        )
+
+    def scan_block(
+        index: ScalarInt | int,
+    ) -> tuple[BoolND, Mapping[str, FloatND | IntND]]:
+        fixed = tuple(
+            axis[position]
+            for axis, position in zip(
+                outer, jnp.unravel_index(index, outer_shape), strict=True
+            )
+        )
+        if not inner:
+            return point(*fixed), dict(zip(grid_names, fixed, strict=True))
+        mesh = tuple(array.ravel() for array in jnp.meshgrid(*inner, indexing="ij"))
+        invalid = jax.vmap(partial(point, *fixed))(*mesh)
+        first = jnp.argmax(invalid).astype(jnp.int32)
+        coordinates = (*fixed, *(array[first] for array in mesh))
+        return jnp.any(invalid), dict(zip(grid_names, coordinates, strict=True))
+
+    # keyword-only-exempt: library-callback=jax.lax.fori_loop
+    def merge(
+        index: ScalarInt | int,
+        current: tuple[BoolND, Mapping[str, FloatND | IntND]],
+    ) -> tuple[BoolND, Mapping[str, FloatND | IntND]]:
+        found, coordinates = scan_block(index)
+        take = ~current[0] & found
+        return current[0] | found, {
+            key: jnp.where(take, coordinates[key], current[1][key])
+            for key in grid_names
+        }
+
+    if not outer:
+        return scan_block(jnp.int32(0))
+    return jax.lax.fori_loop(
+        jnp.int32(0),
+        jax.lax.optimization_barrier(jnp.int32(n_blocks)),
+        merge,
+        neutral,
+    )
 
 
 def _support_events(
@@ -2359,6 +2927,22 @@ def _fail_if_codes_leave_the_grid(
         name: _cell_label(code=values[row], grid=source_grids.get(name))
         for name, values in point.items()
     }
+    _raise_off_grid_at_cell(
+        cell=cell,
+        target_grid=target_grid,
+        description=description,
+        value_dependent=value_dependent,
+    )
+
+
+def _raise_off_grid_at_cell(
+    *,
+    cell: Mapping[str, int | float | str],
+    target_grid: DiscreteGrid,
+    description: str,
+    value_dependent: bool,
+) -> None:
+    """Keep the existing first-cell diagnostic for compact and array readers."""
     raise InvalidStateTransitionError(
         f"{description} leaves its grid at the feasible cell {cell}. "
         + _off_grid_remedy(target_grid)
@@ -3431,7 +4015,7 @@ def _evaluate_state_probability_law(
 def _evaluate_admitted_transition_producer(
     *,
     function: Callable[..., PytreeValue],
-    arguments: Mapping[str, EconFunctionArg | EconFunctionKwargs | HostArray],
+    arguments: Mapping[str, PytreeValue],
     memory: SimulationMemory,
 ) -> PytreeValue:
     """Place, profile, admit, and complete one transition validation producer."""
@@ -3771,7 +4355,7 @@ class _GridPointCall[R]:
 
     names: tuple[str, ...]
     """Grid variable names, in the order the positional values arrive."""
-    scalar_kwargs: EconFunctionKwargs = field(repr=False)
+    scalar_kwargs: _OffGridArguments = field(repr=False)
     """Arguments held fixed across grid points."""
     func: Callable[..., R] = field(repr=False)
     """The transition function."""

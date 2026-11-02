@@ -159,6 +159,7 @@ class SimulationResult:
         simulation_output_dtypes: Mapping[str, pd.CategoricalDtype],
         subject_batch_size: int | None = None,
         nested_policy_regimes: frozenset[RegimeName] = frozenset(),
+        randomness: Mapping[str, str] = MappingProxyType({}),
     ) -> None:
         self._raw_results = raw_results
         self._regimes = regimes
@@ -182,8 +183,14 @@ class SimulationResult:
             simulation_output_dtypes=simulation_output_dtypes,
             ages=ages,
             nested_policy_regimes=nested_policy_regimes,
+            randomness=randomness,
         )
         self._available_targets = tuple(sorted(_collect_all_available_targets(regimes)))
+
+    @property
+    def randomness(self) -> MappingProxyType[str, str]:
+        """Random-address version, PRNG implementations and precision of the run."""
+        return self._metadata.randomness
 
     @property
     def raw_results(
@@ -240,9 +247,8 @@ class SimulationResult:
 
         A household that enters a gated target regime and finds no feasible
         action at its realised state takes the dissolution route of the gate it
-        came through in that same period. Under a `~D_target` gate that is how
-        every dissolution the realised state forces is carried out, so these are
-        ordinary events of the model. With runtime checks on, each one is
+        came through in that same period, so these are ordinary events of the
+        model. With runtime checks on, each one is
         recorded here with the subject, period, regime, full state, source and
         fallback regime; with them off this is empty and a count per
         regime-period is logged. Diagnostic only, like `plan_summary`: empty
@@ -808,6 +814,7 @@ def _raw_results_to_array_tree(
                 "V_arr": data.V_arr,
                 "actions": dict(data.actions),
                 "states": dict(data.states),
+                **({"shocks": dict(data.shocks)} if data.shocks else {}),
                 "in_regime": data.in_regime,
                 "own_stakeholder": data.own_stakeholder,
                 "nested_policy_fallback": data.nested_policy_fallback,
@@ -848,6 +855,7 @@ def _restored_period_data(tree: Mapping[str, ArrayTree]) -> PeriodRegimeSimulati
         V_arr=_restored_array(tree["V_arr"]),
         actions=_restored_arrays(tree["actions"]),
         states=_restored_arrays(tree["states"]),
+        shocks=_restored_arrays(tree.get("shocks", {})),
         in_regime=in_regime,
         own_stakeholder=jnp.full_like(in_regime, NO_ROLE, dtype=jnp.int32)
         if own_stakeholder is None
