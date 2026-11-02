@@ -670,7 +670,7 @@ _SOURCE_SEALS = {
     SIMULATION_OPERANDS_SOURCE: "69c4d3a3574405911eadf22ce698f2d8476038bf2b1ab6450d4bec99cbe79d41",
     SIMULATION_UNIT_SOURCE: "74859e03e21e9861cc7847f49a8cde2301700b656b2556ad0fb47334d6e809c6",
     SIMULATION_HOST_SOURCE: "9165cfb70789209277b8cd6f423b3074b36815a58928c2c18401d7521b58ab5b",
-    SIMULATION_MEMORY_SOURCE: "26856b23317124b6221b00a04f8d7b52c1071644f4a4e026d42ca7da09ccbed5",
+    SIMULATION_MEMORY_SOURCE: "91e1712df965e266e8c9187353b37811241382d0b8b2717357f1d2146041c2f5",
     SIMULATION_PERIOD_INPUTS_SOURCE: "767130bd46d791eee1c6dfa69a70c1bc695eb395f65df8a07d266c9700dcf673",
     SIMULATION_REPLAY_INPUTS_SOURCE: "4234adc44743ef852dc788ec8a38f3440849b9f4404e5e15ee6b547da8bc33de",
     SIMULATION_VALUE_READS_SOURCE: "4ed63570347beab876c3ff87854dae6d84e9e9f2aa8755a261d65897ea0eba32",
@@ -1252,7 +1252,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     SIMULATION_MEMORY_SOURCE: (
-        "450708e0973082ecf8daab7526b8dbd9dbd62a9cb7e824fe5d5407c0d9475d2b",
+        "3b5dad460962d80812017ad89aed3cbaeb024b25205788a988f5640c8be821ce",
         {
             "SimulationMemory.__setattr__": "f1f1f1e5c28e4d0099b7ed4b0c8fad853cd447efb65ea98af0268f8a5e16c5ff",
             "SimulationMemory._period_snapshot": "5c2d15995d981f85cea04e2d0c6b608dbd33916c604115b122a17efd69a7b774",
@@ -1267,7 +1267,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "SimulationMemory.check_resident": "2dc1e19c92cffb46032324e68a41c655a31cf77c702f060caa1b328516988c92",
             "SimulationMemory.run": "5f032e3774d15890471a774391ffb79b18bda53f8e5d7e95b7076a3f3a69db60",
             "SimulationMemory.close_unit": "ad93e305391d4eea94af93d4561ff2ff0a699c691f24084f5f1bcb63ae589838",
-            "run_simulation_operation": "e7113ea2849245cd18779eb8f15e3a83a6d59389b6baec8be5254cd5d26e53d8",
+            "run_simulation_operation": "695313b523ef0d52b96d88431460e33e60f7fe408dc365ab988bca1d27a88c5e",
             "run_simulation_producer": "a04ae6add579d765738f5a57b20e79a9f20b991ee0dfe63ab9eb6646d9fd10af",
             "SimulationMemory.__post_init__": "1df0e2ec9057b88a7547c16aefb671617055808c1aefe7db8ce6a2849445cabb",
         },
