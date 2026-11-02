@@ -20,9 +20,10 @@ from jax.scipy.stats.norm import cdf
 
 from _lcm.grids import ContinuousGrid
 from _lcm.grids import coordinates as grid_coordinates
+from _lcm.grids.continuous import _validate_off_grid
 from _lcm.typing import PRNGKeyND
 from lcm.exceptions import GridInitializationError
-from lcm.typing import Float1D, FloatND, ScalarFloat, ScalarInt, StateName
+from lcm.typing import Float1D, FloatND, OffGrid, ScalarFloat, ScalarInt, StateName
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -151,6 +152,23 @@ class _ContinuousStochasticProcess(ContinuousGrid):
     simulated_draws: Literal["continuous", "nodes"] = "continuous"
     """Draw from the continuous law, or sample the solve nodes with their weights."""
 
+    off_grid: OffGrid = field(
+        default="extrapolate", metadata={"fingerprint_omit_if_default": True}
+    )
+    """How a value beyond the outer nodes is read, as on a continuous grid.
+
+    - `"extrapolate"`: transition rows, continuations and policies extend
+      linearly along the edge segment.
+    - `"clip_lookup"`: those reads use the nearest edge node; the state keeps
+      its value.
+    - `"clip_state"`: a simulated value is additionally clipped to the outer
+      nodes.
+    - `"raise"`: a simulated value beyond the outer nodes is refused.
+
+    A `simulated_draws="nodes"` draw samples the nearest edge node's row under
+    every rule, since an extrapolated row can carry negative weights.
+    """
+
     state_conditioned: StateConditioned | None = field(init=False, default=None)
     """The conditioning declaration, when `sigma` was given as one.
 
@@ -167,7 +185,7 @@ class _ContinuousStochasticProcess(ContinuousGrid):
     """
 
     _NON_PARAM_FIELDS: ClassVar[frozenset[str]] = frozenset(
-        {"n_points", "state_conditioned", "simulated_draws"}
+        {"n_points", "state_conditioned", "simulated_draws", "off_grid"}
     )
     """Dataclass field names that are not distribution parameters.
 
@@ -184,6 +202,7 @@ class _ContinuousStochasticProcess(ContinuousGrid):
         if self.simulated_draws not in {"continuous", "nodes"}:
             msg = "simulated_draws must be 'continuous' or 'nodes'."
             raise GridInitializationError(msg)
+        _validate_off_grid(self.off_grid)
         self._resolve_conditioned_sigma()
 
     def has_same_law_as(self, other: _ContinuousStochasticProcess) -> bool:

@@ -36,7 +36,15 @@ from _lcm.processes.base import (
 from _lcm.processes.state_conditioned import tauchen_row
 from _lcm.typing import PRNGKeyND
 from lcm.exceptions import GridInitializationError
-from lcm.typing import Bool1D, Float1D, FloatND, IntND, ScalarFloat, ScalarInt
+from lcm.typing import (
+    Bool1D,
+    Float1D,
+    FloatND,
+    IntND,
+    OffGrid,
+    ScalarFloat,
+    ScalarInt,
+)
 
 type TransitionRule = Literal["midpoint", "innovation_quadrature", "density"]
 
@@ -116,6 +124,7 @@ class TauchenAR1Process(_AR1Process):
         *,
         nodes: UserVector,
         simulated_draws: Literal["continuous", "nodes"] = "continuous",
+        off_grid: OffGrid = "extrapolate",
         rho: float | None = None,
         sigma: float | StateConditioned | None = None,
         mu: float | None = 0.0,
@@ -137,7 +146,9 @@ class TauchenAR1Process(_AR1Process):
         (default 9 Gauss-Hermite points), or both innovation arrays. Weights must be
         finite, nonnegative, and have positive total mass; they are normalized.
         Continuous simulation still draws the normal law. Node simulation samples
-        the selected transition matrix. Ordinary Tauchen construction is unchanged.
+        the selected transition matrix. `off_grid` sets how a value beyond the
+        first or last node is read, as on a continuous grid. Ordinary Tauchen
+        construction is unchanged.
         The nodes do not depend on stationarity, so unit roots are supported.
         Unspecified law parameters are supplied at solve or simulation time.
         `nodes` is a one-dimensional NumPy or JAX array of integer or floating
@@ -165,6 +176,7 @@ class TauchenAR1Process(_AR1Process):
             innovation_weights=quadrature_weights,
             nodes=tuple(float(node) for node in np.asarray(nodes).tolist()),
             simulated_draws=simulated_draws,
+            off_grid=off_grid,
             n_points=len(nodes),
             gauss_hermite=False,
             rho=rho,
