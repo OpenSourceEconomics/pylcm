@@ -267,7 +267,7 @@ class _TauchenOnNodesProcess(TauchenAR1Process):
         return isinstance(other, _TauchenOnNodesProcess) and all(
             getattr(self, spec.name) == getattr(other, spec.name)
             for spec in fields(self)
-            if spec.name != "simulate_draws"
+            if spec.name != "simulated_draws"
         )
 
     def __post_init__(self) -> None:
