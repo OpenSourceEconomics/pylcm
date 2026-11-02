@@ -290,9 +290,17 @@ def run_simulation_operation[T: PytreeValue](
     static_arguments: Mapping[str, StaticArgument] = MappingProxyType({}),
     subject_outputs: bool = False,
 ) -> T:
-    """Execute a pure operation under the current optional workspace budget."""
+    """Execute a pure operation under the current optional workspace budget.
+
+    Unbudgeted operations run eagerly, so an operand committed to one device,
+    such as a grid's points, is first replicated onto the mesh of the subject
+    rows it meets; JAX refuses to combine operands committed to different
+    device sets.
+    """
     if memory is None:
-        return function(**arguments, **static_arguments)
+        return function(
+            **_replicate_onto_subject_mesh(arguments=arguments), **static_arguments
+        )
     return memory.run(
         function=function,
         arguments=arguments,
@@ -352,3 +360,35 @@ def run_simulation_producer[T: PytreeValue](
     jax.block_until_ready(result)
     memory.hold(tree=result)
     return cast("T", result)
+
+
+def _replicate_onto_subject_mesh(
+    *, arguments: Mapping[ReferenceName, PytreeValue]
+) -> dict[ReferenceName, PytreeValue]:
+    """Replicate single-device operands onto the one mesh sharding the others.
+
+    Arguments are returned unchanged unless exactly one multi-device mesh
+    places some of them; operands already on that mesh's devices keep their
+    placement.
+    """
+    leaves = [
+        leaf for leaf in jax.tree.leaves(arguments) if isinstance(leaf, jax.Array)
+    ]
+    meshes = {
+        leaf.sharding.mesh
+        for leaf in leaves
+        if isinstance(leaf.sharding, jax.NamedSharding)
+        and len(leaf.sharding.device_set) > 1
+    }
+    if len(meshes) != 1:
+        return dict(arguments)
+    (mesh,) = meshes
+    devices = set(mesh.devices.flat)
+    replicated = jax.NamedSharding(mesh, jax.P())
+
+    def place(leaf: PytreeValue) -> PytreeValue:
+        if isinstance(leaf, jax.Array) and leaf.sharding.device_set != devices:
+            return jax.device_put(leaf, replicated)
+        return leaf
+
+    return {name: jax.tree.map(place, value) for name, value in arguments.items()}
