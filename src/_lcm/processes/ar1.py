@@ -36,7 +36,15 @@ from _lcm.processes.base import (
 from _lcm.processes.state_conditioned import tauchen_row
 from _lcm.typing import PRNGKeyND
 from lcm.exceptions import GridInitializationError
-from lcm.typing import Bool1D, Float1D, FloatND, IntND, ScalarFloat, ScalarInt
+from lcm.typing import (
+    Bool1D,
+    Float1D,
+    FloatND,
+    IntND,
+    OffGrid,
+    ScalarFloat,
+    ScalarInt,
+)
 
 type TransitionRule = Literal["midpoint", "innovation_quadrature", "density"]
 
@@ -116,6 +124,7 @@ class TauchenAR1Process(_AR1Process):
         *,
         nodes: UserVector,
         simulated_draws: Literal["continuous", "nodes"] = "continuous",
+        off_grid: OffGrid = "extrapolate",
         rho: float | None = None,
         sigma: float | StateConditioned | None = None,
         mu: float | None = 0.0,
@@ -137,7 +146,9 @@ class TauchenAR1Process(_AR1Process):
         (default 9 Gauss-Hermite points), or both innovation arrays. Weights must be
         finite, nonnegative, and have positive total mass; they are normalized.
         Continuous simulation still draws the normal law. Node simulation samples
-        the selected transition matrix. Ordinary Tauchen construction is unchanged.
+        the selected transition matrix. `off_grid` sets how a value beyond the
+        first or last node is read, as on a continuous grid. Ordinary Tauchen
+        construction is unchanged.
         The nodes do not depend on stationarity, so unit roots are supported.
         Unspecified law parameters are supplied at solve or simulation time.
         `nodes` is a one-dimensional NumPy or JAX array of integer or floating
@@ -165,6 +176,7 @@ class TauchenAR1Process(_AR1Process):
             innovation_weights=quadrature_weights,
             nodes=tuple(float(node) for node in np.asarray(nodes).tolist()),
             simulated_draws=simulated_draws,
+            off_grid=off_grid,
             n_points=len(nodes),
             gauss_hermite=False,
             rho=rho,
@@ -227,6 +239,23 @@ class TauchenAR1Process(_AR1Process):
             [first_col, jnp.diff(cdf_vals, axis=1), last_col], axis=1
         )
 
+    def transition_row_at(
+        self, *, from_value: ScalarFloat, **kwargs: ScalarFloat | ScalarInt
+    ) -> Float1D:
+        """Return the law's transition row from any current value, on the nodes.
+
+        The row bins the conditional law at the nodes' midpoints, exactly as
+        `compute_transition_probs` does at each node, so it is a probability
+        distribution wherever the current value lies.
+        """
+        return tauchen_row(
+            nodes=self.compute_gridpoints(**kwargs),
+            rho=kwargs["rho"],
+            sigma=kwargs["sigma"],
+            from_value=from_value,
+            mu=kwargs["mu"],
+        )
+
     def draw_shock(
         self,
         *,
@@ -267,7 +296,7 @@ class _TauchenOnNodesProcess(TauchenAR1Process):
         return isinstance(other, _TauchenOnNodesProcess) and all(
             getattr(self, spec.name) == getattr(other, spec.name)
             for spec in fields(self)
-            if spec.name != "simulate_draws"
+            if spec.name != "simulated_draws"
         )
 
     def __post_init__(self) -> None:
@@ -310,6 +339,14 @@ class _TauchenOnNodesProcess(TauchenAR1Process):
     def compute_transition_probs(self, **kwargs: ScalarFloat | ScalarInt) -> FloatND:
         """Evaluate the selected transition row at each supplied source node."""
         return jax.vmap(partial(self.compute_transition_row, **kwargs))(self.to_jax())
+
+    def transition_row_at(
+        self, *, from_value: ScalarFloat, **kwargs: ScalarFloat | ScalarInt
+    ) -> Float1D:
+        """Return the selected rule's row from any current value."""
+        return self.compute_transition_row(
+            from_value, rho=kwargs["rho"], sigma=kwargs["sigma"], mu=kwargs["mu"]
+        )
 
     # keyword-only-exempt: library-callback=jax.vmap
     def compute_transition_row(
@@ -1041,6 +1078,23 @@ class TauchenNormalMixtureAR1Process(_AR1Process):
         P = upper - lower
         P = P.at[:, 0].set(upper[:, 0])
         return P.at[:, -1].set(1 - lower[:, -1])
+
+    def transition_row_at(
+        self, *, from_value: ScalarFloat, **kwargs: ScalarFloat | ScalarInt
+    ) -> Float1D:
+        """Return the law's transition row from any current value, on the nodes.
+
+        Each node's bin reaches half a step to either side, the first and last
+        bins open, as in `compute_transition_probs`.
+        """
+        x = self.compute_gridpoints(**kwargs)
+        mixture = {name: kwargs[name] for name in ("p1", "mu1", "sigma1", "mu2")}
+        half_step = 0.5 * (x[-1] - x[0]) / (self.n_points - 1)
+        z = x - kwargs["mu"] - kwargs["rho"] * from_value
+        upper = _mixture_cdf(x=z + half_step, sigma2=kwargs["sigma2"], **mixture)
+        lower = _mixture_cdf(x=z - half_step, sigma2=kwargs["sigma2"], **mixture)
+        row = (upper - lower).at[0].set(upper[0])
+        return row.at[-1].set(1 - lower[-1])
 
     def draw_shock(
         self,

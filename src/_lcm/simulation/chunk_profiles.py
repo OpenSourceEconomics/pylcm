@@ -994,8 +994,11 @@ def _profile_clip_next_states(
         }
         for state, values in carrier[target].items():
             grid = target_regime.simulation.grids.get(state)
-            if not isinstance(grid, ContinuousGrid) or isinstance(
-                grid, _ContinuousStochasticProcess
+            # A process value beyond its nodes is a state only its own
+            # `off_grid` rule acts on; its reads already follow that rule.
+            if not isinstance(grid, ContinuousGrid) or (
+                isinstance(grid, _ContinuousStochasticProcess)
+                and grid.off_grid not in ("raise", "clip_state")
             ):
                 continue
             check = runtime_checks or grid.off_grid == "raise"
