@@ -38,6 +38,35 @@ from tests.simulation._node_axis_models import (
 )
 
 
+@pytest.mark.coverage(backends=("cpu", "gpu-small", "gpu-large"), precisions="both")
+@pytest.mark.parametrize("seed", [0, 29])
+def test_consumed_cell_keys_preserve_original_row_addresses(*, seed: int) -> None:
+    """Each cell folds its named address, both row words, then its own period."""
+    key = jax.random.key(seed, impl="threefry2x32")
+    address_words = np.asarray(
+        RandomAddress(kind="shock", name="eps").words(), dtype=np.uint32
+    )
+    row_high = np.asarray([0, 1, 0xFFFFFFFF], dtype=np.uint32)
+    row_low = np.asarray([0xFFFFFFFF, 0, 7], dtype=np.uint32)
+    periods = np.asarray([0, 1, 0xFFFFFFFF], dtype=np.uint32)
+    expected = []
+    for high, low, period in zip(row_high, row_low, periods, strict=True):
+        cell = key
+        for word in (*address_words, high, low, period):
+            cell = jax.random.fold_in(cell, word)
+        expected.append(np.asarray(jax.random.key_data(cell)))
+    actual = _addressed_cell_keys(
+        key=key,
+        address_words=address_words,
+        row_high=row_high,
+        row_low=row_low,
+        periods=periods,
+    )
+    np.testing.assert_array_equal(
+        jax.random.key_data(actual), np.stack(expected)[:, None]
+    )
+
+
 @pytest.mark.coverage(backends=("cpu",), precisions="both")
 def test_unread_adapter_path_cells_do_not_condition_the_draw() -> None:
     """Only column one is consumed; both outside-support columns are unread."""
