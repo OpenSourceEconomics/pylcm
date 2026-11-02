@@ -4573,7 +4573,11 @@ def _contract_target_lotteries(
     contraction the inputs come back unchanged.
     """
     unchanged = (None, bundle, transition_plans, v_interpolation_info)
-    if source is None or not ordinary_reader:
+    if (
+        source is None
+        or not ordinary_reader
+        or target_regime_name in source.rebound_targets
+    ):
         return unchanged
     lottery_names = tuple(
         key for key in bundle if transition_plans[target_regime_name].is_lottery(key)

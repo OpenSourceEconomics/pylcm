@@ -1046,6 +1046,7 @@ def test_process_lottery_axes_follow_declaration_order_across_hash_seeds(
         import numpy as np
         from lcm import (AgeGrid, Model, Regime, UniformIIDProcess,
                          categorical)
+        from lcm.solvers import GridSearch
         from lcm.typing import ContinuousState, FloatND, ScalarInt
         from _lcm.regime_building import Q_and_F
 
@@ -1077,6 +1078,10 @@ def test_process_lottery_axes_follow_declaration_order_across_hash_seeds(
                             'beta': UniformIIDProcess(n_points=3, start=0, stop=2),
                         },
                         functions={'utility': utility},
+                        # Contraction would sum these IID draws into the value
+                        # array, leaving the solve continuation no lottery axis
+                        # whose order could be observed.
+                        solver=GridSearch(lottery_contraction=False),
                     ),
                     'dead': Regime(functions={'utility': lambda: 0.0}),
                 },

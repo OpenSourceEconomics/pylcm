@@ -35,8 +35,9 @@ and no law of motion reads the drawn value. Spousal income, a Markov health stat
 income process are typical cases. The solve then reads one pre-averaged value per
 candidate instead of averaging over the draw at every state-action candidate. Values
 agree with the per-candidate expectation to rounding. The contraction applies only under
-the linear expectation; `GridSearch(lottery_contraction=False)` keeps every draw a node
-axis of the continuation.
+the linear expectation, and not to a target reached through a participation check or to a
+stochastic process whose nodes come from runtime parameters.
+`GridSearch(lottery_contraction=False)` keeps every draw a node axis of the continuation.
 
 ## Capability table
 

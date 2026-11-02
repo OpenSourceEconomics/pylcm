@@ -5186,6 +5186,7 @@ def _prepare_numerical_solution_phase(  # noqa: PLR0915 - native route admission
                 LotteryContractionSource(
                     state_grids=state_grids[regime_name],
                     action_names=frozenset(state_action_space.action_names),
+                    rebound_targets=frozenset(laws[regime_name].participation),
                 )
                 if isinstance(solver, GridSearch) and solver.lottery_contraction
                 else None

@@ -11,7 +11,13 @@ Some draws only select a slice of $V'$. A draw `next_<state>` qualifies when
   so they are the same at every cell sharing a value of `<state>`;
 - no law of the target reads the draw, so it moves no interpolation coordinate;
 - it is a genuine draw onto the target's grid of `<state>`, persisted as that
-  state, and the source carries `<state>` on a grid with static nodes.
+  state, and the source carries `<state>` on a grid with static nodes: a
+  stochastic process whose nodes come from runtime parameters keeps its axis;
+- no later stage rebinds the target's reader, as a participation check does.
+
+Weights that do not read `<state>` itself, as an IID draw's, give every row the
+same expectation; the continuation then reads the first row and no current value,
+so it stays constant along `<state>`.
 
 For such a draw the expectation over its nodes commutes with the read of every
 other coordinate: interpolation is linear in the node values, so
@@ -93,6 +99,13 @@ class LotteryContractionSource:
     action_names: frozenset[ActionName]
     """The source's action names."""
 
+    rebound_targets: frozenset[RegimeName] = frozenset()
+    """Targets whose continuation a later stage rebinds around the built reader.
+
+    A participation check replaces the reader of the continuation it is built
+    on, so that continuation must keep every draw as a node axis.
+    """
+
 
 @dataclass(frozen=True, kw_only=True, eq=False)
 class ContractedLottery:
@@ -113,6 +126,10 @@ class ContractedLottery:
     source_nodes: tuple[int, ...] | tuple[float, ...]
     """The values the current state takes on the source's grid, in node order."""
 
+    is_discrete: bool
+    """Whether the state is discrete, its nodes being its integer codes; a
+    stochastic process otherwise."""
+
     weights: StochasticWeightsFunction
     """The draw's marginal over the target's nodes, at one current value."""
 
@@ -120,9 +137,13 @@ class ContractedLottery:
     """The arguments `weights` reads: the state, the period, the age, parameters."""
 
     @property
-    def is_discrete(self) -> bool:
-        """Whether the state is discrete, its nodes being its integer codes."""
-        return all(isinstance(node, int) for node in self.source_nodes)
+    def reads_state(self) -> bool:
+        """Whether the weights read the drawn state's current value.
+
+        Weights that do not read it, as an IID draw's, give every row of the table
+        the same expectation, so one row stands for all of them.
+        """
+        return self.state_name in self.weight_arg_names
 
     @property
     def source_node_array(self) -> FloatND | IntND:
@@ -150,6 +171,17 @@ class ContractedLottery:
             for name in self.weight_arg_names
             if name != self.state_name
         }
+        if not self.reads_state:
+            # Every row is the same expectation: compute it once and broadcast
+            # it, so the table still has one row per source node without the
+            # rows being stored apart.
+            row = self.weights(**invariant)[self.weight_name]
+            single = _contract_rows(
+                values=values, rows=jnp.expand_dims(row, 0), axis=self.axis
+            )
+            shape = list(single.shape)
+            shape[self.axis] = len(self.source_nodes)
+            return jnp.broadcast_to(single, tuple(shape))
 
         def _row(node: EconFunctionArg) -> FloatND:
             return self.weights(**invariant, **{self.state_name: node})[
@@ -157,31 +189,7 @@ class ContractedLottery:
             ]
 
         rows = jax.vmap(_row)(self.source_node_array)
-        moved = jnp.moveaxis(values, self.axis, -1)
-        last = moved.ndim - 1
-
-        def _average(row: FloatND) -> FloatND:
-            # Each node's weight carries its own base-two scale, exactly as a
-            # node of the joint lottery does, so a rare node against a large
-            # value and an ordinary node against a near-maximal one both stay
-            # inside the format.
-            coefficients, shifts = jax.vmap(_scaled_node_weight)(row)
-            mean = zero_safe_average(
-                a=moved, weights=coefficients, shifts=shifts, axis=last
-            )
-            # A mean lies between its smallest and largest live value. The
-            # rounded sum of near-maximal terms can land past the largest
-            # finite value, which the joint lottery never forms on its own,
-            # since there every term also carries the other draws' weights.
-            # Holding the mean to its exact bounds removes only that rounding;
-            # a NaN or an infinity at a live node passes through unchanged.
-            live = is_live(row)
-            lower = jnp.min(jnp.where(live, moved, jnp.inf), axis=last)
-            upper = jnp.max(jnp.where(live, moved, -jnp.inf), axis=last)
-            return jnp.minimum(jnp.maximum(mean, lower), upper)
-
-        contracted = jax.vmap(_average, out_axes=-1)(rows)
-        return jnp.moveaxis(contracted, -1, self.axis)
+        return _contract_rows(values=values, rows=rows, axis=self.axis)
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)
@@ -395,8 +403,9 @@ def _plan_one_lottery(
         or law_name in read_draws
     ):
         return None
+    source_grid = source.state_grids.get(state_name)
     source_nodes = _static_source_nodes(
-        source_grid=source.state_grids.get(state_name),
+        source_grid=source_grid,
         target_grid=v_interpolation_info.discrete_states[state_name],
     )
     if source_nodes is None:
@@ -419,6 +428,7 @@ def _plan_one_lottery(
         weight_name=info.weight_name,
         axis=received_state_names.index(state_name),
         source_nodes=source_nodes,
+        is_discrete=isinstance(source_grid, DiscreteGrid),
         weights=weights,
         weight_arg_names=weight_arg_names,
     )
@@ -445,6 +455,44 @@ def _is_pure_index(
     )
 
 
+def _contract_rows(*, values: FloatND, rows: FloatND, axis: int) -> FloatND:
+    """Replace `axis` of `values` by one weighted mean per row of `rows`.
+
+    Args:
+        values: The value array, the draw's target nodes along `axis`.
+        rows: One weight vector over the target nodes per output row.
+        axis: The draw's axis.
+
+    Returns:
+        The array with `axis` holding one mean per row of `rows`.
+
+    """
+    moved = jnp.moveaxis(values, axis, -1)
+    last = moved.ndim - 1
+
+    def _average(row: FloatND) -> FloatND:
+        # Each node's weight carries its own base-two scale, exactly as a node of
+        # the joint lottery does, so a rare node against a large value and an
+        # ordinary node against a near-maximal one both stay inside the format.
+        coefficients, shifts = jax.vmap(_scaled_node_weight)(row)
+        mean = zero_safe_average(
+            a=moved, weights=coefficients, shifts=shifts, axis=last
+        )
+        # A mean lies between its smallest and largest live value. The rounded
+        # sum of near-maximal terms can land past the largest finite value, which
+        # the joint lottery never forms on its own, since there every term also
+        # carries the other draws' weights. Holding the mean to its exact bounds
+        # removes only that rounding; a NaN or an infinity at a live node passes
+        # through unchanged.
+        live = is_live(row)
+        lower = jnp.min(jnp.where(live, moved, jnp.inf), axis=last)
+        upper = jnp.max(jnp.where(live, moved, -jnp.inf), axis=last)
+        return jnp.minimum(jnp.maximum(mean, lower), upper)
+
+    contracted = jax.vmap(_average, out_axes=-1)(rows)
+    return jnp.moveaxis(contracted, -1, axis)
+
+
 def _scaled_node_weight(weight: FloatND) -> tuple[FloatND, IntND]:
     """Return one node's weight as a coefficient and its base-two scale."""
     return scaled_joint_weight(jnp.expand_dims(weight, 0))
@@ -456,8 +504,9 @@ def _static_source_nodes(
     """Return the source grid's node values, or `None` when they are not static.
 
     A discrete grid's codes must be its node positions, and a stochastic process
-    must not take its nodes from runtime parameters. Source and target must be
-    grids of the same kind, so the contracted axis keeps the target's reader.
+    must not take its nodes from runtime parameters: at build time those nodes are
+    unknown, held as non-finite placeholders or refused outright. Source and target
+    must be grids of the same kind, so the contracted axis keeps the target's reader.
     """
     if isinstance(source_grid, DiscreteGrid) and isinstance(target_grid, DiscreteGrid):
         codes = np.asarray(source_grid.to_jax())
@@ -471,12 +520,19 @@ def _static_source_nodes(
             nodes = np.asarray(source_grid.to_jax())
         except GridInitializationError:
             return None
+        # Nodes computed from runtime parameters are placeholders at build time.
+        if not np.all(np.isfinite(nodes)):
+            return None
         return tuple(float(node) for node in nodes)
     return None
 
 
 def _current_node_index(*, lottery: ContractedLottery) -> TransitionFunction:
     """Return the law reading the contracted table at the current node."""
+    if not lottery.reads_state:
+        return _FirstNodeIndex(
+            state_name=lottery.state_name, is_discrete=lottery.is_discrete
+        )
     if lottery.is_discrete:
         return _CurrentNodeIndex(state_name=lottery.state_name, process_nodes=None)
     return _CurrentNodeIndex(
@@ -521,3 +577,24 @@ class _CurrentNodeIndex:
             return value
         nodes = jnp.asarray(self._process_nodes, dtype=jnp.asarray(value).dtype)
         return jnp.argmin(jnp.abs(nodes - value)).astype(jnp.int32)
+
+
+class _FirstNodeIndex:
+    """The first row of a table whose rows all coincide.
+
+    Reads no state, so the continuation does not depend on the drawn state's
+    current value and is not batched along its axis.
+    """
+
+    def __init__(self, *, state_name: StateName, is_discrete: bool) -> None:
+        returned = DiscreteState if is_discrete else IntND
+        self.__name__ = f"next_{state_name}"
+        self.__signature__ = inspect.Signature([], return_annotation=returned)
+        self.__annotations__ = {"return": returned}
+
+    @no_type_check
+    def __call__(
+        self, *args: EconFunctionArg, **kwargs: EconFunctionArg
+    ) -> FloatND | IntND:
+        del args, kwargs
+        return jnp.int32(0)

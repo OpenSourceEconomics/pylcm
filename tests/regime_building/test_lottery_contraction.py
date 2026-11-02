@@ -20,6 +20,7 @@ loop over every joint node, interpolating the terminal value linearly in wealth.
 It shares nothing with the engine but the model's primitives.
 """
 
+import inspect
 import itertools
 from types import MappingProxyType
 from typing import Literal
@@ -30,6 +31,7 @@ import pytest
 from beartype import beartype
 
 from _lcm.regime_building.lottery_contraction import (
+    LotteryContraction,
     LotteryContractionSource,
     plan_lottery_contraction,
 )
@@ -40,6 +42,7 @@ from lcm import (
     DiscreteGrid,
     LinSpacedGrid,
     Model,
+    NormalIIDProcess,
     RouwenhorstAR1Process,
     StochasticTransition,
     categorical,
@@ -52,10 +55,12 @@ from lcm.typing import (
     DiscreteAction,
     DiscreteState,
     FloatND,
+    RegimeName,
     ScalarInt,
     UserParamsNode,
 )
 from tests.conftest import DECIMAL_PRECISION
+from tests.test_models.processes import get_model as get_process_model
 
 
 @categorical(ordered=False)
@@ -90,7 +95,14 @@ _CONSUMPTION = (0.0, 1.5, 6)
 _DISCOUNT_FACTOR = 0.9
 
 
-def _income_process() -> RouwenhorstAR1Process:
+type _IncomeKind = Literal["markov", "iid"]
+
+
+def _income_process(
+    *, kind: _IncomeKind = "markov"
+) -> RouwenhorstAR1Process | NormalIIDProcess:
+    if kind == "iid":
+        return NormalIIDProcess(n_points=3, mu=0.0, sigma=0.2, gauss_hermite=True)
     return RouwenhorstAR1Process(n_points=3, rho=0.7, sigma=0.2, mu=0.0)
 
 
@@ -155,10 +167,12 @@ def _final_utility(
     )
 
 
-def _model(*, final_z: _FinalZ, solver: GridSearch) -> Model:
+def _model(
+    *, final_z: _FinalZ, solver: GridSearch, income_kind: _IncomeKind = "markov"
+) -> Model:
     shared = {
         "wealth": LinSpacedGrid(start=_WEALTH[0], stop=_WEALTH[1], n_points=_WEALTH[2]),
-        "income": _income_process(),
+        "income": _income_process(kind=income_kind),
         "q": DiscreteGrid(category_class=_Binary),
         "w": DiscreteGrid(category_class=_Binary),
         "y": DiscreteGrid(category_class=_Binary),
@@ -207,13 +221,14 @@ def _params(*, final_z: _FinalZ) -> dict[str, UserParamsNode]:
     }
 
 
-def _planned_lotteries(*, final_z: _FinalZ) -> dict[str, int]:
-    """Return each contracted state with the length of its table axis."""
-    model = _model(final_z=final_z, solver=GridSearch())
-    source = model._regimes["alive"].solution
-    info = create_v_interpolation_info(user_regime=model.user_regimes["final"])
-    bundle = source.transitions["final"]
-    plan = source.transition_plans["final"]
+def _planned_contraction(
+    *, model: Model, source_name: RegimeName, target_name: RegimeName
+) -> LotteryContraction | None:
+    """Plan the contraction from one regime toward another as the solve does."""
+    source = model._regimes[source_name].solution
+    info = create_v_interpolation_info(user_regime=model.user_regimes[target_name])
+    bundle = source.transitions[target_name]
+    plan = source.transition_plans[target_name]
     read_draws = frozenset(
         draw
         for draws in draw_dependencies_by_law(
@@ -223,8 +238,8 @@ def _planned_lotteries(*, final_z: _FinalZ) -> dict[str, int]:
         ).values()
         for draw in draws
     )
-    contraction = plan_lottery_contraction(
-        target_regime_name="final",
+    return plan_lottery_contraction(
+        target_regime_name=target_name,
         bundle=bundle,
         functions=source.functions,
         transition_plans=source.transition_plans,
@@ -237,6 +252,15 @@ def _planned_lotteries(*, final_z: _FinalZ) -> dict[str, int]:
             ),
             action_names=frozenset(source.action_names),
         ),
+    )
+
+
+def _planned_lotteries(*, final_z: _FinalZ) -> dict[str, int]:
+    """Return each contracted state with the length of its table axis."""
+    contraction = _planned_contraction(
+        model=_model(final_z=final_z, solver=GridSearch()),
+        source_name="alive",
+        target_name="final",
     )
     assert contraction is not None
     return {
@@ -258,8 +282,14 @@ def test_plan_lottery_contraction_indexes_the_table_by_the_source_grid() -> None
     assert _planned_lotteries(final_z="cross")["z"] == 3
 
 
-def _solved_alive_values(*, final_z: _FinalZ, contract: bool) -> np.ndarray:
-    model = _model(final_z=final_z, solver=GridSearch(lottery_contraction=contract))
+def _solved_alive_values(
+    *, final_z: _FinalZ, contract: bool, income_kind: _IncomeKind = "markov"
+) -> np.ndarray:
+    model = _model(
+        final_z=final_z,
+        solver=GridSearch(lottery_contraction=contract),
+        income_kind=income_kind,
+    )
     solution = model.solve(params=_params(final_z=final_z), log_level="off")
     names = model.state_names(regime_name="alive")
     return np.transpose(
@@ -277,9 +307,9 @@ def _interpolate_in_wealth(*, values: np.ndarray, wealth: np.ndarray) -> np.ndar
     return (1.0 - upper_weight) * values[lower] + upper_weight * values[lower + 1]
 
 
-def _oracle(*, final_z: _FinalZ) -> np.ndarray:
+def _oracle(*, final_z: _FinalZ, income_kind: _IncomeKind = "markov") -> np.ndarray:
     """Return `alive`'s period-0 value, indexed `(wealth, z, income, q, w, y)`."""
-    process = _income_process()
+    process = _income_process(kind=income_kind)
     income_nodes = np.asarray(process.to_jax())
     income_rows = np.asarray(process.get_transition_probs())
     z_rows = _Z_ROWS[final_z]
@@ -323,14 +353,48 @@ def _oracle(*, final_z: _FinalZ) -> np.ndarray:
     return result
 
 
+@pytest.mark.parametrize("income_kind", ["markov", "iid"])
 @pytest.mark.parametrize("final_z", ["same", "cross"])
 @pytest.mark.parametrize("contract", [True, False])
 def test_solve_matches_the_full_node_product_oracle(
-    *, final_z: _FinalZ, contract: bool
+    *, final_z: _FinalZ, contract: bool, income_kind: _IncomeKind
 ) -> None:
     """With and without contraction, the value is the literal joint expectation."""
     np.testing.assert_allclose(
-        _solved_alive_values(final_z=final_z, contract=contract),
-        _oracle(final_z=final_z),
+        _solved_alive_values(
+            final_z=final_z, contract=contract, income_kind=income_kind
+        ),
+        _oracle(final_z=final_z, income_kind=income_kind),
         rtol=10.0**-DECIMAL_PRECISION,
     )
+
+
+def test_contracted_iid_draw_does_not_read_the_current_state() -> None:
+    """An IID draw's table rows coincide, so its law reads no current state."""
+    model = _model(final_z="same", solver=GridSearch(), income_kind="iid")
+    contraction = _planned_contraction(
+        model=model, source_name="alive", target_name="final"
+    )
+    assert contraction is not None
+    bundle = contraction.rewrite_bundle(
+        bundle=model._regimes["alive"].solution.transitions["final"]
+    )
+    assert tuple(inspect.signature(bundle["next_income"]).parameters) == ()
+
+
+@pytest.mark.parametrize("distribution_type", ["tauchen", "rouwenhorst", "normal"])
+def test_plan_lottery_contraction_keeps_a_process_with_runtime_nodes(
+    *, distribution_type: Literal["tauchen", "rouwenhorst", "normal"]
+) -> None:
+    """A process whose nodes come from runtime parameters keeps its node axis."""
+    contraction = _planned_contraction(
+        model=get_process_model(n_periods=3, distribution_type=distribution_type),
+        source_name="alive",
+        target_name="alive",
+    )
+    contracted = (
+        set()
+        if contraction is None
+        else {lottery.state_name for lottery in contraction.lotteries}
+    )
+    assert "income" not in contracted
