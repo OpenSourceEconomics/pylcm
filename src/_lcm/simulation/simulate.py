@@ -4247,8 +4247,10 @@ def _row_selections(
 
     An ordinary discrete state selects its node's row. A process state's value
     may lie between nodes; it reads the two bracketing node rows blended linearly
-    in the node coordinate (extrapolating along the edge segment), the rule its
-    transition weights follow off node. A node value takes its own row with
+    in the node coordinate, the rule its transition weights follow off node:
+    beyond the outer nodes it extrapolates along the edge segment, or reads the
+    edge node's row under `off_grid="clip_lookup"` or `"clip_state"`. A node
+    value takes its own row with
     coefficient exactly one. Where every row axis is a process, every node's row
     is shared by all subjects and is read once for all of them, rather than
     gathered per subject.
@@ -4271,6 +4273,11 @@ def _row_selections(
             per_axis.append(((0, None),))
         else:
             lo, weight = _node_bracket(nodes=nodes, values=values)
+            process = cast(
+                "_ContinuousStochasticProcess", regime.simulation.grids[name]
+            )
+            if process.off_grid in ("clip_lookup", "clip_state"):
+                weight = jnp.clip(weight, 0.0, 1.0)
             per_axis.append(
                 tuple(
                     (
