@@ -2297,7 +2297,7 @@ def _evaluate(*, function: CanonicalActionKernel) -> Callable[..., EvaluatedQAnd
 
 def _closed_over_key(
     *, leaf: PytreeValue | None
-) -> tuple[type[PytreeValue | None], PytreeValue | str | None]:
+) -> tuple[type[object], PytreeValue | str | None]:  # noqa: PAN001 - heterogeneous leaf classes share only object
     """Key a concrete leaf by type and bits: `1 == 1.0` and `0.0 == -0.0`."""
     return (type(leaf), leaf.hex() if isinstance(leaf, float) else leaf)
 
