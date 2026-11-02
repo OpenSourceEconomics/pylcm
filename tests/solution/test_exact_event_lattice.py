@@ -15,7 +15,9 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from _lcm.egm.upper_envelope.certified_sign import certified_margin_sign
+from _lcm.egm.upper_envelope._exact_affine.ffi import (
+    certified_affine_compare,
+)
 from _lcm.egm.upper_envelope.segment_envelope import refine_envelope_exact
 from tests.conftest import EXACT_KERNEL_SKIP_REASON, X64_ENABLED
 
@@ -92,7 +94,7 @@ def test_switch_lands_on_the_first_state_the_incoming_branch_owns(
     lower, upper = _bracketing_floats(dtype=dtype, b0=b0, b1=b1)
     signs = [
         int(
-            certified_margin_sign(
+            certified_affine_compare(
                 a_x0=grid[0],
                 a_x1=grid[1],
                 a_v0=value[0],

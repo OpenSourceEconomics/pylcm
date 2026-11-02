@@ -38,7 +38,9 @@ def canonicalize_simulation_seed(
     accepts any implementation.
     """
     if seed is None or (
-        isinstance(seed, int) and (name == "seed" or type(seed) is int)
+        isinstance(seed, int)
+        and not isinstance(seed, bool)
+        and (name == "seed" or type(seed) is int)
     ):
         return seed
     if isinstance(seed, jax.Array) and jax.dtypes.issubdtype(
@@ -95,63 +97,6 @@ def _create_simulation_key(
     if seed_offset != jax.config.jax_random_seed_offset:
         raise ExecutionPlanningError("Simulation seed offset changed before tracing.")
     return jax.random.key(seed=seed, impl=impl)
-
-
-def site_simulation_key(
-    *,
-    key: PRNGKeyND,
-    period: int,
-    regime_id: int,
-    memory: SimulationMemory | None = None,
-) -> PRNGKeyND:
-    """Derive the key of one `(period, regime)` draw site from the call's root key.
-
-    The site key depends on the root key, the period and the registered regime
-    code only, so a subject's draws at a site do not move when the declared
-    starts make other pairs visitable or unvisitable.
-    """
-    return run_simulation_operation(
-        memory=memory,
-        function=_site_simulation_key,
-        arguments={
-            "key": key,
-            "period": np.uint32(period),
-            "regime_id": np.uint32(regime_id),
-        },
-    )
-
-
-def _site_simulation_key(
-    *,
-    key: PRNGKeyND,
-    period: np.unsignedinteger | UInt32[Scalar, ""],
-    regime_id: np.unsignedinteger | UInt32[Scalar, ""],
-) -> PRNGKeyND:
-    """Fold the period, then the regime code, into the root key."""
-    return jax.random.fold_in(
-        key=jax.random.fold_in(key=key, data=period), data=regime_id
-    )
-
-
-def split_simulation_key(
-    *, key: PRNGKeyND, memory: SimulationMemory | None = None
-) -> tuple[PRNGKeyND, PRNGKeyND, PRNGKeyND]:
-    """Admit the period's three random streams before constructing their arrays."""
-    return run_simulation_operation(
-        memory=memory,
-        function=_split_simulation_key,
-        arguments={"key": key},
-        static_arguments={"partitionable": jax.config.jax_threefry_partitionable},
-    )
-
-
-def _split_simulation_key(
-    *, key: PRNGKeyND, partitionable: bool
-) -> tuple[PRNGKeyND, PRNGKeyND, PRNGKeyND]:
-    """Include the three row extractions in the compiled operation's workspace."""
-    with jax.threefry_partitionable(partitionable):
-        next_states_key, next_regime_key, next_key = jax.random.split(key=key, num=3)
-    return next_states_key, next_regime_key, next_key
 
 
 def generate_simulation_keys(

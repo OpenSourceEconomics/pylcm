@@ -2,7 +2,8 @@
 
 import importlib
 from collections.abc import Mapping
-from typing import cast
+from functools import partial
+from typing import Literal, cast
 
 import jax
 import jax.numpy as jnp
@@ -11,6 +12,7 @@ import pandas as pd
 import pytest
 
 from _lcm.simulation.program_types import SimulationPrograms
+from _lcm.simulation.random import canonicalize_simulation_seed
 from _lcm.simulation.random_address import RandomAddress
 from _lcm.typing import PytreeValue, ShapeDtypePytree
 from lcm import (
@@ -195,16 +197,41 @@ def test_explicit_none_preserves_default_seeded_result() -> None:
     pd.testing.assert_frame_equal(ordinary, explicit, check_exact=True)
 
 
-def test_boolean_taste_seed_is_rejected_before_solving() -> None:
+@pytest.mark.parametrize("stream", ["seed", "taste_shock_seed"])
+@pytest.mark.parametrize("seed", [False, True])
+def test_boolean_seed_is_rejected_before_solving(
+    *, stream: Literal["seed", "taste_shock_seed"], seed: bool
+) -> None:
     """Boolean configuration is refused before incomplete parameters are processed."""
     model = taste_shocks_toy.get_model()
-    with pytest.raises(InvalidSimulationInputError, match="taste_shock_seed"):
-        model.simulate(
+    simulate = (
+        partial(model.simulate, seed=seed)
+        if stream == "seed"
+        else partial(model.simulate, taste_shock_seed=seed)
+    )
+    with pytest.raises(InvalidSimulationInputError, match=stream):
+        simulate(
             params={},
             initial_conditions=_initial_conditions(),
-            taste_shock_seed=True,
             log_level="debug",
         )
+
+
+class _IntegerSeed(int):
+    """An integer subtype accepted by the ordinary random stream."""
+
+
+@pytest.mark.parametrize("stream", ["seed", "taste_shock_seed"])
+def test_integer_seed_subclasses_follow_each_stream_contract(
+    *, stream: Literal["seed", "taste_shock_seed"]
+) -> None:
+    """Ordinary seeds accept integer subtypes; independent taste seeds refuse them."""
+    seed = _IntegerSeed(3)
+    if stream == "seed":
+        assert canonicalize_simulation_seed(seed=seed, name=stream) is seed
+    else:
+        with pytest.raises(InvalidSimulationInputError, match=stream):
+            canonicalize_simulation_seed(seed=seed, name=stream)
 
 
 @pytest.mark.parametrize("impl", ["threefry2x32", "rbg"])

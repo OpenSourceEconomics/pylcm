@@ -24,7 +24,8 @@ here.
 The transforms are exact only while their intermediates stay normal. Dekker's
 splitting multiplies by `2**((nmant + 2) // 2) + 1`, so a product that underflows
 or lands among the subnormals silently loses the tail. Callers that read a zero
-as evidence must check that domain themselves; `certified_sign` does.
+as evidence must check that domain themselves. Exact ownership comparisons use
+the native affine comparator instead.
 
 Everything is branch-free and elementwise, so it stays `jax.jit`- and
 `jax.vmap`-compatible with static shapes.
@@ -280,8 +281,8 @@ def dd_quotient(
     carries no certificate: one Newton correction on the remainder leaves a
     result good to roughly twice the working precision, which is enough to *find*
     a structure but never enough to *prove* one. Decisions that must hold exactly
-    go through `certified_sign`, or through `dd_quotient_bounded` where the
-    quotient itself is the quantity being decided on.
+    go through the native affine comparator, or through `dd_quotient_bounded`
+    where the quotient itself is the quantity being decided on.
     """
     denominator_high, _low, _dropped = denominator
     estimate = numerator[0] / denominator_high

@@ -2934,7 +2934,6 @@ _S03_IMPORTED_HELPERS = (
         "src/_lcm/regime_building/processing.py",
         "_fail_if_a_continuation_demand_is_unmet",
     ),
-    ("src/_lcm/regime_building/processing.py", "_build_solution_phase"),
     ("src/_lcm/regime_building/processing.py", "_process_regime_core"),
     ("src/_lcm/solution/backward_induction.py", "solve"),
     ("src/_lcm/solution/backward_induction.py", "_match_leaf_pair_sharding"),

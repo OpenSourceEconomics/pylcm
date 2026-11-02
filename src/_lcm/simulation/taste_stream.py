@@ -12,6 +12,7 @@ from _lcm.simulation.random import _create_simulation_key
 from _lcm.simulation.random_address import (
     RandomAddress,
     draw_window_keys,
+    encode_subject_row,
 )
 from _lcm.time import TimeAxis
 from _lcm.typing import ArrayTree, PRNGKeyND
@@ -24,7 +25,6 @@ type _RowWords = UInt32[jax.Array | np.ndarray, "2"]
 type _Word = UInt32[jax.Array, ""]
 type _ScalarKey = Key[jax.Array, ""]
 
-_WORD_BASE = 2**32
 _INITIAL_PERIOD = 0
 
 
@@ -99,27 +99,12 @@ def generate_taste_shock_keys(
         arguments={
             "key": key,
             "address_words": np.asarray(address_words, dtype=np.uint32),
-            "subject_start": _encode_subject_row(row=start),
-            "last_real_subject": _encode_subject_row(row=original_n_subjects - 1),
+            "subject_start": encode_subject_row(row=start),
+            "last_real_subject": encode_subject_row(row=original_n_subjects - 1),
             "period": np.uint32(period),
         },
         static_arguments={"subject_count": subject_slice.stop - start},
         subject_outputs=True,
-    )
-
-
-def advance_simulation_taste_key(
-    *, key: PRNGKeyND, original_n_subjects: int, memory: SimulationMemory | None
-) -> PRNGKeyND:
-    """Preserve the immutable ordinary root after an independent taste draw."""
-    return run_simulation_operation(
-        memory=memory,
-        function=_advance_simulation_taste_key,
-        arguments={"key": key},
-        static_arguments={
-            "original_n_subjects": original_n_subjects,
-            "partitionable": jax.config.jax_threefry_partitionable,
-        },
     )
 
 
@@ -136,25 +121,6 @@ def build_taste_stream_addresses(
             for regime in discrete_actions_by_regime
         }
     )
-
-
-def _encode_subject_row(*, row: int) -> _RowWords:
-    """Represent a valid global row without narrowing its high bits."""
-    if type(row) is not int or not 0 <= row < 2**64:
-        raise ValueError(
-            f"A taste-key row must fit an unsigned 64-bit integer: {row!r}."
-        )
-    return np.asarray((row // _WORD_BASE, row % _WORD_BASE), dtype=np.uint32)
-
-
-def _advance_simulation_taste_key(
-    *,
-    key: PRNGKeyND,
-    original_n_subjects: int,  # noqa: ARG001 - compatibility adapter signature
-    partitionable: bool,  # noqa: ARG001 - compatibility adapter signature
-) -> PRNGKeyND:
-    """Return the immutable ordinary root after an independent taste draw."""
-    return key
 
 
 def draw_taste_shock_keys(
