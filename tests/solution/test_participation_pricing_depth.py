@@ -11,11 +11,18 @@ where the decision switches is priced on the right side of it.
 """
 
 import hashlib
+import inspect
 import json
+import re
+from collections import Counter
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field
+from functools import partial, wraps
 from pathlib import Path
+from typing import cast
 
 import h5py
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pandas as pd
@@ -23,6 +30,7 @@ import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
 from _lcm import policy_queries
+from _lcm.solution import backward_induction as backward
 from lcm import (
     AgeGrid,
     ByAge,
@@ -88,6 +96,140 @@ def _query_flops(
         patch.setattr(policy_queries._PolicyQueryKernel, "__call__", measured)
         model.solve(params=household.get_params(), log_level="off")
     return flops
+
+
+@dataclass(frozen=True)
+class _LoweredActionProblem:
+    """Count one concrete lowered program, matched by its input/output contract."""
+
+    label: str
+    signature: tuple[str, str, str] = field(repr=False)
+    operations: int
+    shared_definitions: int
+    shared_calls: int
+    reused_definitions: int
+
+
+def _record_action_lowering[**P, R](
+    *, func: Callable[P, R], programs: list[_LoweredActionProblem]
+) -> Callable[P, R]:
+    """Observe real lowerings without retaining executable or array owners."""
+
+    @wraps(func)
+    def recorded(*args: P.args, **kwargs: P.kwargs) -> R:
+        lowered = cast("jax.stages.Lowered", func(*args, **kwargs))
+        text = str(lowered.compiler_ir(dialect="stablehlo"))
+        definitions = re.findall(r"func.func\s+[^@]*@([^ (]+)", text)
+        calls = re.findall(r"\bcall\s+@([^ (]+)", text)
+        shared = tuple(name for name in definitions if name.startswith("evaluate"))
+        fanout = Counter(calls)
+        programs.append(
+            _LoweredActionProblem(
+                label=cast("str", kwargs["label"]),
+                signature=(
+                    str(lowered.in_tree),
+                    str(lowered.in_avals),
+                    str(lowered.out_info),
+                ),
+                operations=len(re.findall(r"\bstablehlo\.[A-Za-z_]+", text)),
+                shared_definitions=len(shared),
+                shared_calls=sum(fanout[name] for name in shared),
+                reused_definitions=sum(fanout[name] > 1 for name in shared),
+            )
+        )
+        return cast("R", lowered)
+
+    return recorded
+
+
+def _inline_action_reference[**P, R](*, func: Callable[P, R]) -> Callable[P, R]:
+    """Expand the real canonical action problems as a lowering-cost reference."""
+
+    @wraps(func)
+    def inline(*args: P.args, **kwargs: P.kwargs) -> R:
+        candidate = kwargs.get("fun", args[0] if args else None)
+        candidate = (
+            inspect.unwrap(candidate) if inspect.isfunction(candidate) else candidate
+        )
+        if inspect.isfunction(candidate):
+            code = candidate.__code__
+            if (
+                Path(code.co_filename) == Path(policy_queries.__file__)
+                and code.co_qualname == "_shared_evaluation.<locals>.evaluate"
+            ):
+                return partial(func, **{**kwargs, "inline": True})(*args)
+        return func(*args, **kwargs)
+
+    return inline
+
+
+def _lower_participation_model(
+    *, monkeypatch: pytest.MonkeyPatch, inline_reference: bool
+) -> tuple[SolutionResult, tuple[_LoweredActionProblem, ...]]:
+    """Solve the same small real household with shared or expanded action bodies."""
+    programs: list[_LoweredActionProblem] = []
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            backward,
+            "_lower_resolved_candidate",
+            _record_action_lowering(
+                func=backward._lower_resolved_candidate, programs=programs
+            ),
+        )
+        if inline_reference:
+            patch.setattr(jax, "jit", _inline_action_reference(func=jax.jit))
+        model = household.get_model(
+            n_periods=3,
+            wealth_n_points=3,
+            consumption_n_points=2,
+            execution_config=ExecutionConfig(axis_widths={"query_cell": 1}),
+        )
+        assert all(
+            model._regimes[name].simulation.exit_queries
+            for name in ("couple", "single_f", "single_m")
+        )
+        result = model.solve(
+            params=household.get_params(), log_level="off", runtime_checks=False
+        )
+    assert programs
+    return result, tuple(programs)
+
+
+def test_repeated_participation_reads_share_lowered_action_problem(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Repeated canonical reads reuse callee bodies without changing solved values."""
+    result, programs = _lower_participation_model(
+        monkeypatch=monkeypatch, inline_reference=False
+    )
+    reference, expanded = _lower_participation_model(
+        monkeypatch=monkeypatch, inline_reference=True
+    )
+    assert set(result.values) == set(reference.values)
+    for period, regimes in result.values.items():
+        assert set(regimes) == set(reference.values[period])
+        for regime, values in regimes.items():
+            expected = reference.values[period][regime]
+            assert values.shape == expected.shape
+            assert values.dtype == expected.dtype
+            np.testing.assert_array_equal(values, expected)
+            assert np.asarray(values).tobytes() == np.asarray(expected).tobytes()
+    assert {(program.label, program.signature) for program in programs} == {
+        (program.label, program.signature) for program in expanded
+    }
+    largest = max(expanded, key=lambda program: program.operations)
+    matching = tuple(
+        program
+        for program in programs
+        if program.label == largest.label and program.signature == largest.signature
+    )
+    assert matching, (
+        "The control and ordinary program must have the same input/output contract."
+    )
+    ordinary = max(matching, key=lambda program: program.operations)
+    assert ordinary.shared_calls > ordinary.shared_definitions > 0, ordinary
+    assert ordinary.reused_definitions > 0, ordinary
+    assert ordinary.operations <= 0.8 * largest.operations, (ordinary, largest)
 
 
 def test_query_programs_do_not_grow_with_remaining_participation_dates(

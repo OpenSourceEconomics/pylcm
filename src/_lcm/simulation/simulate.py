@@ -468,6 +468,7 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
                 else prepared_chunks.plan.profile.axis_widths,
                 subject_devices=runtime.subject_devices,
                 operations=runtime.operations,
+                producers=runtime.operations,
                 devices=resolve_budget_devices(
                     execution_devices=placed_devices_for_ids(
                         submesh_device_ids=(), visible_device_ids=device_ids

@@ -1,5 +1,6 @@
 """Inventory the actual original-choice, route and revealed-action programs."""
 
+import logging
 from collections.abc import Callable, Mapping
 from types import MappingProxyType
 from typing import cast
@@ -27,6 +28,7 @@ from _lcm.simulation.exit_replay import (
 from _lcm.simulation.exits import participation_entry_routes, route_original_subjects
 from _lcm.simulation.forward_program_profiles import (
     PreparedDecisionProfile,
+    _concrete_widths,
     _profile_program,
 )
 from _lcm.simulation.operand_placement import subject_operand_sharding
@@ -43,6 +45,10 @@ from _lcm.simulation.participation_values import (
 from _lcm.simulation.random_address import draw_window_keys
 from _lcm.simulation.taste_stream import draw_taste_shock_keys
 from _lcm.simulation.value_placement import simulation_value_sharding
+from _lcm.solution.backward_induction import (
+    CompilationWave,
+    _resolve_compilation_workers,
+)
 from _lcm.time import TimeAxis
 from _lcm.typing import FlatParams, PytreeValue, RegimeNamesToIds, ShapeDtypePytree
 from lcm.exceptions import ExecutionPlanningError
@@ -60,7 +66,7 @@ type _RouteOutput = tuple[
 ]
 
 
-def profile_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner walk
+def profile_exit_period(  # noqa: C901, PLR0912, PLR0915 - retain replay's ordered owner walk
     *,
     inventory: ChunkProfileInventory,
     regimes: Mapping[RegimeName, Regime],
@@ -79,6 +85,8 @@ def profile_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
     taste_key: jax.ShapeDtypeStruct | None,
     n_subjects: int,
     widths: Mapping[str, int],
+    logger: logging.Logger,
+    max_compilation_workers: int | None = None,
     current_iid_override_schema: CurrentIIDOverrideSchema = (),
 ) -> tuple[
     _Carrier,
@@ -86,7 +94,13 @@ def profile_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
     jax.ShapeDtypeStruct,
     Mapping[str, PreparedDecisionProfile],
 ]:
-    """Compile the same bodies as replay and keep their returned owner metadata."""
+    """Compile independent exit frontiers before adopting their ordered profiles.
+
+    Full and incoming decisions read the original carrier. Revealed decisions
+    read their routed outputs, so their wave starts only after those compiled
+    output layouts and the resulting bases are known. The ordered inventory
+    adopts actual compiled outputs and complete reports from the shared cache.
+    """
     actors = {
         name: regime
         for name, regime in regimes.items()
@@ -163,6 +177,7 @@ def profile_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
         holders: jax.ShapeDtypeStruct,
         bases: ShapeDtypePytree = None,
         produced: ShapeDtypePytree = None,
+        wave: CompilationWave | None = None,
     ) -> tuple[ShapeDtypePytree, ...]:
         regime = actors[name]
         plan = regime.simulation.exit_queries[period]
@@ -211,13 +226,36 @@ def profile_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
             **({"held_bases": bases} if bases is not None else {}),
             **({"produced": produced} if produced is not None else {}),
         }
-        profile = _profile_program(
-            runtime=inventory.runtime,
-            program=regime.simulation.programs.participation_program(
+        program = (
+            regime.simulation.programs.participation_program(
                 family=family, period=period
             )
             if family.startswith("participation_entry:")
-            else getattr(regime.simulation.programs, family)[period],
+            else getattr(regime.simulation.programs, family)[period]
+        )
+        if wave is not None:
+            # The prepass discards these lowered-only descriptors. Ordered
+            # profiling below uses the compiled executable's actual layouts.
+            concrete_widths = _concrete_widths(
+                program=program, n_subjects=n_subjects, widths=widths
+            )
+            return cast(
+                "tuple[ShapeDtypePytree, ...]",
+                inventory.runtime.lower_abstract(
+                    program=program,
+                    arguments=inputs,
+                    period=period,
+                    n_subjects=n_subjects,
+                    widths=concrete_widths,
+                    wave=wave,
+                    label=(
+                        f"{name} {family} (period {period}, widths={concrete_widths!r})"
+                    ),
+                ),
+            )
+        profile = _profile_program(
+            runtime=inventory.runtime,
+            program=program,
             arguments=inputs,
             period=period,
             n_subjects=n_subjects,
@@ -270,6 +308,7 @@ def profile_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
         for name, regime in actors.items()
         for source in regime.simulation.exit_queries[period].participation
     }
+    full_holders = {}
     for name, regime in actors.items():
         queries = regime.simulation.exit_queries[period].full
         if queries is None:
@@ -298,6 +337,32 @@ def profile_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
                     subject_outputs=True,
                 ),
             )
+        full_holders[name] = holders
+    if full_holders or pending_entries:
+        with _compilation_wave(
+            max_compilation_workers=max_compilation_workers, logger=logger
+        ) as wave:
+            for name, holders in full_holders.items():
+                native(
+                    name=name,
+                    family="exit_full",
+                    columns=states,
+                    holders=holders,
+                    wave=wave,
+                )
+            for (name, source), holders in pending_entries.items():
+                native(
+                    name=name,
+                    family=f"participation_entry:{source}",
+                    columns=states,
+                    holders=cast("jax.ShapeDtypeStruct", holders),
+                    wave=wave,
+                )
+    for name, regime in actors.items():
+        queries = regime.simulation.exit_queries[period].full
+        if queries is None:
+            continue
+        holders = full_holders[name]
         output = native(name=name, family="exit_full", columns=states, holders=holders)
         answer, frame = cast("_Answer", output[0]), cast("_Frame", output[1])
         originals[name] = (answer, frame)
@@ -470,8 +535,8 @@ def profile_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
                 subject_outputs=True,
             ),
         )
-    prepared = {}
-    for name, regime in actors.items():
+    moving_holders = {}
+    for name in actors:
         holders = cast(
             "jax.ShapeDtypeStruct",
             inventory.operation(
@@ -485,6 +550,23 @@ def profile_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
                 subject_outputs=True,
             ),
         )
+        moving_holders[name] = holders
+    with _compilation_wave(
+        max_compilation_workers=max_compilation_workers, logger=logger
+    ) as wave:
+        for name, holders in moving_holders.items():
+            native(
+                name=name,
+                family="exit_participating",
+                columns=final_states,
+                holders=holders,
+                bases=bases,
+                produced=produced,
+                wave=wave,
+            )
+    prepared = {}
+    for name, regime in actors.items():
+        holders = moving_holders[name]
         output = native(
             name=name,
             family="exit_participating",
@@ -546,3 +628,18 @@ def profile_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
             ),
         )
     return final_states, final_ids, final_roles, prepared
+
+
+def _compilation_wave(
+    *, max_compilation_workers: int | None, logger: logging.Logger
+) -> CompilationWave:
+    """Use the forward compiler's worker and publication contract for one frontier."""
+    return CompilationWave(
+        n_workers=_resolve_compilation_workers(
+            max_compilation_workers=max_compilation_workers
+        ),
+        logger=logger,
+        log_kernel_memory=False,
+        compiled={},
+        compile_phase="simulation_compilation",
+    )

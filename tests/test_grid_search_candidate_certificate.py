@@ -771,11 +771,11 @@ def test_structural_blueprint_mutation_is_rejected(*, tmp_path: Path, mutation: 
 
 
 _BACKWARD_SOURCE = "src/_lcm/solution/backward_induction.py"
-# The continuation reservation repeats the size line, so the docstring tail
-# pins the feasibility reservation.
+# The docstring tail pins the feasibility reservation.
 _COUNTER_SIZE_PREFIX = 'a device no active regime runs on holds none.\n    """\n    '
 _COUNTER_SIZE = (
-    f"{_COUNTER_SIZE_PREFIX}size = 2 * np.dtype(np.int32).itemsize * (len(active) + 1)"
+    f"{_COUNTER_SIZE_PREFIX}size = 2 * get_feasibility_count_dtype().itemsize "
+    "* (len(active) + 1)"
 )
 _COUNTER_DEVICES = (
     "sorted(frozenset().union(*(device_ids_by_regime[name] for name in active)))"
@@ -784,7 +784,10 @@ _COUNTER_RESERVATION_MUTATIONS = {
     "zero_charge": (_COUNTER_SIZE, f"{_COUNTER_SIZE_PREFIX}size = 0"),
     "half_pair": (
         _COUNTER_SIZE,
-        f"{_COUNTER_SIZE_PREFIX}size = np.dtype(np.int32).itemsize * (len(active) + 1)",
+        (
+            f"{_COUNTER_SIZE_PREFIX}size = get_feasibility_count_dtype().itemsize "
+            "* (len(active) + 1)"
+        ),
     ),
     "omit_peer_devices": (_COUNTER_DEVICES, f"{_COUNTER_DEVICES}[:1]"),
 }
