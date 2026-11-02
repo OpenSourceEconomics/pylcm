@@ -498,7 +498,7 @@ def _policy_model(
         transition_rule=transition_rule,
         rho=case.rho,
         mu=case.mu,
-        simulate_draws="nodes",
+        simulated_draws="nodes",
     )
     return Model(
         regimes={
@@ -674,13 +674,13 @@ def test_supplied_node_law_comparison_ignores_only_draw_mode(
         nodes=np.asarray([-1.0, 0.0, 1.0]),
         rho=0.3,
         sigma=declaration,
-        simulate_draws="continuous",
+        simulated_draws="continuous",
     )
     right = TauchenAR1Process.on_nodes(
         nodes=np.asarray([-1.0, 0.0, 1.0]),
         rho=0.3,
         sigma=declaration,
-        simulate_draws=draw_mode,
+        simulated_draws=draw_mode,
     )
     assert left.has_same_law_as(right)
     assert right.has_same_law_as(left)
