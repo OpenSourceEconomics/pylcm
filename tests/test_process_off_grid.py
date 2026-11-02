@@ -15,7 +15,12 @@ from lcm import NormalIIDProcess, TauchenAR1Process
 from lcm.exceptions import GridInitializationError, OffGridStateError
 from lcm.typing import OffGrid
 from tests.test_models.processes import RegimeId
-from tests.test_process_simulation_laws import _model, _tauchen
+from tests.test_process_simulation_laws import (
+    _model,
+    _reference_row,
+    _rouwenhorst,
+    _tauchen,
+)
 
 _RULES: tuple[OffGrid, ...] = ("extrapolate", "clip_lookup", "clip_state", "raise")
 
@@ -94,34 +99,29 @@ def test_process_off_grid_rule_enters_the_fingerprint(*, rule: OffGrid) -> None:
     )
 
 
-def _expected_row(*, process: TauchenAR1Process, value: float, rule: OffGrid):
-    nodes = np.asarray(process.get_gridpoints(), dtype=np.float64)
-    rows = np.asarray(process.get_transition_probs(), dtype=np.float64)
-    if rule != "extrapolate":
-        return rows[0] if value < nodes[0] else rows[-1]
-    if value > nodes[-1]:
-        t = (value - nodes[-1]) / (nodes[-1] - nodes[-2])
-        return rows[-1] + t * (rows[-1] - rows[-2])
-    t = (nodes[0] - value) / (nodes[1] - nodes[0])
-    return rows[0] + t * (rows[0] - rows[1])
-
-
 @pytest.mark.parametrize("side", ["above", "below"])
-@pytest.mark.parametrize("rule", _RULES[:3])
-@pytest.mark.parametrize("build", [_tauchen, _on_nodes], ids=["tauchen", "on-nodes"])
-def test_transition_row_beyond_the_outer_nodes_follows_the_rule(
-    *, build: Callable[..., TauchenAR1Process], rule: OffGrid, side: str
+@pytest.mark.parametrize("rule", ["clip_lookup", "clip_state"])
+@pytest.mark.parametrize(
+    "build",
+    [_tauchen, _on_nodes, _rouwenhorst],
+    ids=["tauchen", "on-nodes", "rouwenhorst"],
+)
+def test_transition_row_beyond_the_outer_nodes_is_the_edge_node_row(
+    *,
+    build: Callable[..., _ContinuousStochasticProcess],
+    rule: OffGrid,
+    side: str,
 ) -> None:
-    """Extrapolate the edge segment's rows, or read the nearest edge node's row."""
+    """A clipped rule reads the nearest edge node's row beyond the nodes."""
     process = build(off_grid=rule)
     nodes = np.asarray(process.get_gridpoints())
     value = float(nodes[-1] + 0.7) if side == "above" else float(nodes[0] - 0.7)
     weights = _get_weights_func_for_process(name="income", grid=process)
+    rows = np.asarray(process.get_transition_probs())
     np.testing.assert_allclose(
         np.asarray(weights(income=jnp.asarray(value))),
-        _expected_row(process=process, value=value, rule=rule),
-        rtol=1e-5,
-        atol=1e-6,
+        rows[-1] if side == "above" else rows[0],
+        rtol=1e-6,
     )
 
 
@@ -147,25 +147,24 @@ def test_policy_read_beyond_the_top_node_blends_rows_by_the_rule(
     np.testing.assert_allclose(coefficients, expected, rtol=0, atol=1e-6)
 
 
-def _continuations(*, process: TauchenAR1Process, starts: np.ndarray) -> np.ndarray:
-    values, _ = _simulate(process=process, starts=starts)
-    return values - starts**2
-
-
 @pytest.mark.parametrize("rule", _RULES[:3])
 def test_value_beyond_the_top_node_reads_the_continuation_by_the_rule(
     *, rule: OffGrid
 ) -> None:
-    """Clipped rules read the top node's continuation; extrapolate extends the edge."""
+    """Clipped rules read the top node's row; extrapolate reads the law's row there.
+
+    The next period is the last alive one, so its value at a node is its utility.
+    """
     process = _tauchen(rho=0.9, off_grid=rule)
     nodes = np.asarray(process.get_gridpoints(), dtype=np.float64)
     beyond = nodes[-1] + 2.0
-    got, middle, top = _continuations(
-        process=process, starts=np.array([beyond, nodes[-2], nodes[-1]])
+    values, _ = _simulate(process=process, starts=np.array([beyond]))
+    row = (
+        _reference_row(process=process, value=beyond)
+        if rule == "extrapolate"
+        else np.asarray(process.get_transition_probs(), dtype=np.float64)[-1]
     )
-    t = (beyond - nodes[-1]) / (nodes[-1] - nodes[-2])
-    expected = top + t * (top - middle) if rule == "extrapolate" else top
-    np.testing.assert_allclose(got, expected, rtol=1e-5)
+    np.testing.assert_allclose(values[0] - beyond**2, 0.9 * row @ nodes**2, rtol=1e-5)
 
 
 @pytest.mark.parametrize("rule", ["clip_lookup", "clip_state"])

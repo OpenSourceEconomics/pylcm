@@ -11,12 +11,14 @@ continuation and action value that kernel returns `Q` and `F` from.
 """
 
 import dataclasses
+import functools
 import inspect
+import itertools
 import operator
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from types import FunctionType, MappingProxyType
-from typing import NamedTuple, cast, no_type_check
+from typing import Literal, NamedTuple, cast, no_type_check
 
 import jax
 import jax.numpy as jnp
@@ -675,6 +677,9 @@ def get_Q_and_F(
         co_map_state_names=co_map_state_names,
         gated_continuations=gated_continuations,
         count_raise_landings=count_raise_landings,
+        extend_process_edges=(
+            "simulation" if continuation_functions is not None else "solution"
+        ),
     )
     _build_W_kwargs = _get_build_W_kwargs(
         functions=functions, koopmans_aggregator=koopmans_aggregator
@@ -1026,6 +1031,7 @@ def get_compute_intermediates(
         certainty_equivalent=certainty_equivalent,
         co_map_state_names=co_map_state_names,
         gated_continuations=gated_continuations,
+        extend_process_edges="solution",
     )
     _build_W_kwargs = _get_build_W_kwargs(
         functions=functions, koopmans_aggregator=koopmans_aggregator
@@ -2017,6 +2023,9 @@ def get_Q_and_F_collective(
         n_stakeholders=n_stakeholders,
         gated_continuations=gated_continuations,
         count_raise_landings=count_raise_landings,
+        extend_process_edges=(
+            "simulation" if continuation_functions is not None else "solution"
+        ),
     )
 
     _build_W_kwargs = _get_build_W_kwargs(
@@ -2932,6 +2941,7 @@ def _get_compute_CE(
     ),
     flat_param_names: frozenset[QualifiedName] | None = None,
     count_raise_landings: bool = False,
+    extend_process_edges: Literal["solution", "simulation"] | None = None,
 ) -> tuple[
     Callable[..., ContinuationAggregate],
     tuple[Callable[..., ArrayTree], ...],
@@ -2993,6 +3003,12 @@ def _get_compute_CE(
             `off_grid="raise"` grid the continuation reads. A landing counts
             where its target regime and its lottery node are live and, through
             a gated edge, where the gate routes to the grid it is read on.
+        extend_process_edges: The phase whose process values beyond the outer
+            nodes extend the continuation linearly along the edge segment, as the
+            blend of the continuations under the edge node's row and its
+            neighbour's (`EdgeRows`), or `None` for no extension. A simulation
+            extends every process carrying `EdgeRows`; a solve only those whose
+            current values can leave the target's nodes.
 
     Returns:
         Tuple of the closure returning `(CE, active_regime_probs)` — followed by
@@ -3002,6 +3018,26 @@ def _get_compute_CE(
         weights formed inside the node axes.
 
     """
+    if extend_process_edges is not None:
+        return _get_compute_CE_with_process_edges(
+            functions=functions,
+            period_targets=period_targets,
+            phase=extend_process_edges,
+            build=functools.partial(
+                _get_compute_CE,
+                scalar_targets=scalar_targets,
+                transitions=transitions,
+                transition_plans=transition_plans,
+                compute_regime_transition_probs=compute_regime_transition_probs,
+                regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+                certainty_equivalent=certainty_equivalent,
+                co_map_state_names=co_map_state_names,
+                n_stakeholders=n_stakeholders,
+                gated_continuations=gated_continuations,
+                flat_param_names=flat_param_names,
+                count_raise_landings=count_raise_landings,
+            ),
+        )
     # The plain expectation reduces each target on its own; every other
     # certainty equivalent needs the whole joint lottery in one piece, because
     # its transform has to be applied before any expectation is taken.
@@ -3127,6 +3163,173 @@ def _get_compute_CE(
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)
+class EdgeRows:
+    """The reads that extend a process's continuation beyond its outer nodes.
+
+    The process's weights read the nearest edge node's row there, a genuine
+    lottery. The extension along the edge segment is the blend
+    `(1 + distance) * CE_edge - distance * CE_neighbour` of the continuations under
+    that row and under its inward neighbour's, each a genuine lottery too. It is
+    linear in the continuation: under a nonlinear certainty equivalent it
+    extrapolates the certainty equivalents of the two node rows.
+    """
+
+    neighbour: Callable[..., FloatND]
+    """The inward neighbour's row beyond the nodes; the weights' row elsewhere."""
+    distance: Callable[..., FloatND]
+    """Edge segments the value lies beyond the outer nodes; zero between them."""
+    in_solve: bool
+    """Whether a solve can read the process beyond the target's nodes."""
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _ProcessEdgeExtension:
+    """Extend a continuation linearly beyond its processes' outer nodes."""
+
+    distances: tuple[Callable[..., FloatND], ...]
+    """One `EdgeRows.distance` per extended process weight."""
+    corners: tuple[_ComputeCE, ...]
+    """The continuation with each nonempty subset of the weights at their
+    neighbour rows, in `itertools.product((False, True), ...)` order."""
+
+    @no_type_check
+    def extend(
+        self,
+        *,
+        edge: _ComputeCE,
+        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
+        zero: FloatND,
+        states_actions_params: QAndFKwargs,
+    ) -> ContinuationAggregate:
+        """Return `edge`'s aggregate with `CE` extended along the edge segments.
+
+        Each corner's expectation is weighted by the product over processes of
+        `1 + distance` (edge row) or `-distance` (neighbour row). Between the
+        nodes every distance is zero and `edge`'s `CE` is returned untouched.
+        """
+        aggregate, valid = _continuation_evaluation(
+            edge(
+                next_regime_to_V_arr=next_regime_to_V_arr,
+                zero=zero,
+                states_actions_params=states_actions_params,
+            )
+        )
+        distances = [
+            distance(
+                **{
+                    name: states_actions_params[name]
+                    for name in inspect.signature(distance).parameters
+                }
+            )
+            for distance in self.distances
+        ]
+        corner_values = [aggregate[0]] + [
+            _continuation_evaluation(
+                corner(
+                    next_regime_to_V_arr=next_regime_to_V_arr,
+                    zero=zero,
+                    states_actions_params=states_actions_params,
+                )
+            )[0][0]
+            for corner in self.corners
+        ]
+        extended = functools.reduce(
+            operator.add,
+            (
+                zero_safe_weighted_term(
+                    weight=functools.reduce(
+                        operator.mul,
+                        (
+                            -distance if neighbour else 1.0 + distance
+                            for neighbour, distance in zip(mask, distances, strict=True)
+                        ),
+                    ),
+                    value=value,
+                    subnormal_is_accounted_for=True,
+                )
+                for mask, value in zip(
+                    itertools.product((False, True), repeat=len(distances)),
+                    corner_values,
+                    strict=True,
+                )
+            ),
+        )
+        on_nodes = functools.reduce(
+            operator.and_, (distance == 0 for distance in distances)
+        )
+        aggregate = (jnp.where(on_nodes, aggregate[0], extended), *aggregate[1:])
+        if valid is None:
+            return aggregate
+        return CheckedContinuationEvaluation(aggregate=aggregate, valid=valid)
+
+
+def _get_compute_CE_with_process_edges(
+    *,
+    functions: EconFunctionsMapping,
+    period_targets: tuple[RegimeName, ...],
+    phase: Literal["solution", "simulation"],
+    build: Callable[
+        ...,
+        tuple[
+            Callable[..., ContinuationAggregate],
+            tuple[Callable[..., ArrayTree], ...],
+            frozenset[str],
+        ],
+    ],
+) -> tuple[
+    Callable[..., ContinuationAggregate],
+    tuple[Callable[..., ArrayTree], ...],
+    frozenset[str],
+]:
+    """Build `_get_compute_CE`'s closure, extended beyond its processes' nodes.
+
+    `build` is `_get_compute_CE` with every argument but these two bound. Every
+    process weight of a reachable target that carries `EdgeRows` is extended in
+    `phase`, a solve only where `EdgeRows.in_solve`; with none, the closure is the
+    plain one.
+    """
+    prefixes = tuple(f"weight_{target}__" for target in period_targets)
+    edges = {
+        name: rows
+        for name, func in functions.items()
+        if name.startswith(prefixes)
+        and isinstance(rows := getattr(func, "edge_rows", None), EdgeRows)
+        and (phase == "simulation" or rows.in_solve)
+    }
+    compute_CE, deps, arg_names = build(
+        functions=functions, period_targets=period_targets
+    )
+    if not edges:
+        return compute_CE, deps, arg_names
+    # ponytail: one corner per subset of extended weights, 2**k continuations for
+    # k of them; group weights sharing a grid if many processes ever need it.
+    corners = tuple(
+        build(
+            functions=MappingProxyType(
+                dict(functions)
+                | {
+                    name: rows.neighbour
+                    for (name, rows), neighbour in zip(edges.items(), mask, strict=True)
+                    if neighbour
+                }
+            ),
+            period_targets=period_targets,
+        )[0]
+        for mask in itertools.product((False, True), repeat=len(edges))
+        if any(mask)
+    )
+    extension = _ProcessEdgeExtension(
+        distances=tuple(rows.distance for rows in edges.values()),
+        corners=cast("tuple[_ComputeCE, ...]", corners),
+    )
+    return (
+        dataclasses.replace(cast("_ComputeCE", compute_CE), edge_extension=extension),
+        deps,
+        arg_names,
+    )
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
 class _ComputeCE:
     """Aggregate the continuation lottery into `CE` at one state-action point."""
 
@@ -3174,6 +3377,10 @@ class _ComputeCE:
         default_factory=lambda: MappingProxyType({}),
         metadata={"fingerprint_omit_if_default": True},
     )
+    edge_extension: _ProcessEdgeExtension | None = field(
+        default=None, metadata={"fingerprint_omit_if_default": True}
+    )
+    """Continuations under neighbour rows that extend this one beyond the nodes."""
 
     @property
     def has_participation_queries(self) -> bool:
@@ -3232,6 +3439,13 @@ class _ComputeCE:
             of `landing_checks` when there are any.
 
         """
+        if self.edge_extension is not None:
+            return self.edge_extension.extend(
+                edge=dataclasses.replace(self, edge_extension=None),
+                next_regime_to_V_arr=next_regime_to_V_arr,
+                zero=zero,
+                states_actions_params=states_actions_params,
+            )
         regime_transition_probs: MappingProxyType[RegimeName, FloatND] = (
             self.compute_regime_transition_probs(**states_actions_params)
         )

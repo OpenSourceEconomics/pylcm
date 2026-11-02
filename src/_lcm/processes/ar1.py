@@ -239,6 +239,23 @@ class TauchenAR1Process(_AR1Process):
             [first_col, jnp.diff(cdf_vals, axis=1), last_col], axis=1
         )
 
+    def transition_row_at(
+        self, *, from_value: ScalarFloat, **kwargs: ScalarFloat | ScalarInt
+    ) -> Float1D:
+        """Return the law's transition row from any current value, on the nodes.
+
+        The row bins the conditional law at the nodes' midpoints, exactly as
+        `compute_transition_probs` does at each node, so it is a probability
+        distribution wherever the current value lies.
+        """
+        return tauchen_row(
+            nodes=self.compute_gridpoints(**kwargs),
+            rho=kwargs["rho"],
+            sigma=kwargs["sigma"],
+            from_value=from_value,
+            mu=kwargs["mu"],
+        )
+
     def draw_shock(
         self,
         *,
@@ -322,6 +339,14 @@ class _TauchenOnNodesProcess(TauchenAR1Process):
     def compute_transition_probs(self, **kwargs: ScalarFloat | ScalarInt) -> FloatND:
         """Evaluate the selected transition row at each supplied source node."""
         return jax.vmap(partial(self.compute_transition_row, **kwargs))(self.to_jax())
+
+    def transition_row_at(
+        self, *, from_value: ScalarFloat, **kwargs: ScalarFloat | ScalarInt
+    ) -> Float1D:
+        """Return the selected rule's row from any current value."""
+        return self.compute_transition_row(
+            from_value, rho=kwargs["rho"], sigma=kwargs["sigma"], mu=kwargs["mu"]
+        )
 
     # keyword-only-exempt: library-callback=jax.vmap
     def compute_transition_row(
@@ -1053,6 +1078,23 @@ class TauchenNormalMixtureAR1Process(_AR1Process):
         P = upper - lower
         P = P.at[:, 0].set(upper[:, 0])
         return P.at[:, -1].set(1 - lower[:, -1])
+
+    def transition_row_at(
+        self, *, from_value: ScalarFloat, **kwargs: ScalarFloat | ScalarInt
+    ) -> Float1D:
+        """Return the law's transition row from any current value, on the nodes.
+
+        Each node's bin reaches half a step to either side, the first and last
+        bins open, as in `compute_transition_probs`.
+        """
+        x = self.compute_gridpoints(**kwargs)
+        mixture = {name: kwargs[name] for name in ("p1", "mu1", "sigma1", "mu2")}
+        half_step = 0.5 * (x[-1] - x[0]) / (self.n_points - 1)
+        z = x - kwargs["mu"] - kwargs["rho"] * from_value
+        upper = _mixture_cdf(x=z + half_step, sigma2=kwargs["sigma2"], **mixture)
+        lower = _mixture_cdf(x=z - half_step, sigma2=kwargs["sigma2"], **mixture)
+        row = (upper - lower).at[0].set(upper[0])
+        return row.at[-1].set(1 - lower[-1])
 
     def draw_shock(
         self,
