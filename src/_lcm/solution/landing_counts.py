@@ -39,6 +39,7 @@ from _lcm.solution.feasibility import (
     BoundedResult,
     CountedGridSearch,
     CountedGridSearchOutput,
+    FeasibilityCount,
 )
 from _lcm.typing import (
     ActionName,
@@ -212,7 +213,10 @@ class LandingCountedGridSearch:
 
     def __call__(
         self, **kwargs: QAndFArg
-    ) -> tuple[FloatND | BoolND | IntND, ...] | BoundedResult[ArrayTree]:
+    ) -> (
+        tuple[FloatND | BoolND | IntND | FeasibilityCount, ...]
+        | BoundedResult[ArrayTree]
+    ):
         """Return the feasibility summary's outputs, then the landing totals."""
         evaluated = self.counted.function(**kwargs)
         value, empty, landing_counts = cast(

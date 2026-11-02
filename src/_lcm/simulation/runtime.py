@@ -801,7 +801,16 @@ def _materialize_abstract(
         context=_build_context(arguments=arguments, period=period),
     )
     _require_abstract_arguments(arguments=materialized.arguments)
-    return materialized
+    # Match dispatch's container structure without placing any concrete leaf.
+    return dataclasses.replace(
+        materialized,
+        arguments=place_simulation_arguments(
+            arguments=materialized.arguments,
+            subject_arg_names=program.argument_builder.subject_arg_names,
+            value_reads=materialized.requirements.value_reads,
+            devices=runtime.subject_devices,
+        ),
+    )
 
 
 def _with_compiler_memory(
