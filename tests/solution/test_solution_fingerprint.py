@@ -2068,9 +2068,7 @@ def test_model_fingerprint_binds_each_periods_age_specialized_support() -> None:
         regimes={"alive": _fingerprint_regime(second_period_nodes=(2.0, 3.0))},
         user_regimes=user_regimes,
         laws=_ALIVE_LAWS,
-        regime_names_to_ids=cast(
-            "RegimeNamesToIds", MappingProxyType({"alive": jnp.int32(0)})
-        ),
+        regime_names_to_ids=MappingProxyType({"alive": jnp.int32(0)}),
         flat_params=flat_params,
     )
     moved = _fingerprint_model_for_test(
@@ -2078,9 +2076,7 @@ def test_model_fingerprint_binds_each_periods_age_specialized_support() -> None:
         regimes={"alive": _fingerprint_regime(second_period_nodes=(2.0, 4.0))},
         user_regimes=user_regimes,
         laws=_ALIVE_LAWS,
-        regime_names_to_ids=cast(
-            "RegimeNamesToIds", MappingProxyType({"alive": jnp.int32(0)})
-        ),
+        regime_names_to_ids=MappingProxyType({"alive": jnp.int32(0)}),
         flat_params=flat_params,
     )
 
@@ -2096,9 +2092,7 @@ def test_model_fingerprint_treats_artifact_authorities_as_keyed_mapping() -> Non
     solver = SimpleNamespace(identity=("test-solver", 1))
     user_regimes = {"alive": SimpleNamespace(solver=solver)}
     flat_params = cast("FlatParams", MappingProxyType({"alive": MappingProxyType({})}))
-    regime_names_to_ids = cast(
-        "RegimeNamesToIds", MappingProxyType({"alive": jnp.int32(0)})
-    )
+    regime_names_to_ids = MappingProxyType({"alive": jnp.int32(0)})
     ages = AgeGrid(start=0, inclusive_stop=1, step="Y")
 
     forward = _fingerprint_model_for_test(
@@ -2156,9 +2150,8 @@ def test_model_fingerprint_binds_exact_regime_name_to_id_mapping() -> None:
         regimes=regimes,
         user_regimes=user_regimes,
         laws=_ALIVE_AND_DEAD_LAWS,
-        regime_names_to_ids=cast(
-            "RegimeNamesToIds",
-            MappingProxyType({"alive": jnp.int32(0), "dead": jnp.int32(1)}),
+        regime_names_to_ids=MappingProxyType(
+            {"alive": jnp.int32(0), "dead": jnp.int32(1)}
         ),
         flat_params=flat_params,
     )
@@ -2167,9 +2160,8 @@ def test_model_fingerprint_binds_exact_regime_name_to_id_mapping() -> None:
         regimes=regimes,
         user_regimes=user_regimes,
         laws=_ALIVE_AND_DEAD_LAWS,
-        regime_names_to_ids=cast(
-            "RegimeNamesToIds",
-            MappingProxyType({"alive": jnp.int32(1), "dead": jnp.int32(0)}),
+        regime_names_to_ids=MappingProxyType(
+            {"alive": jnp.int32(1), "dead": jnp.int32(0)}
         ),
         flat_params=flat_params,
     )

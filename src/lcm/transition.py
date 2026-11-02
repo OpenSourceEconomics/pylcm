@@ -591,7 +591,7 @@ class JointTransition:
 
 
 @dataclass(frozen=True)
-class _AgeSpecialized:
+class _AgeSpecialized[Coordinate: int | float = float]:
     """Base for the age-specialized build-time markers.
 
     An age-specialized marker binds a per-age object (a function or a grid) at model
@@ -621,11 +621,11 @@ class _AgeSpecialized:
     it is used, so calling it directly is a loud error.
     """
 
-    build: Callable[[float], UserFunction | ContinuousGrid]
+    build: Callable[[Coordinate], UserFunction | ContinuousGrid]
     """Factory returning the concrete object (function or grid) for a given age. Must be
     deterministic and side-effect-free; it is called more than once per age."""
 
-    signature: Callable[[float], Hashable]
+    signature: Callable[[Coordinate], Hashable] | None
     """Hashable identity of the age's object. The dedup key for both markers — a
     correctness precondition, trusted on the author's word, for
     `AgeSpecializedFunction`; cross-checked against the resolved nodes at build
@@ -641,7 +641,9 @@ class _AgeSpecialized:
 
 @beartype(conf=REGIME_CONF)
 @dataclass(frozen=True)
-class AgeSpecializedFunction(_AgeSpecialized):
+class AgeSpecializedFunction[Coordinate: int | float = float](
+    _AgeSpecialized[Coordinate]
+):
     """Wrapper marking a function whose closure is bound per age at build time.
 
     Wrap a function *factory* to indicate that its closure depends on the agent's
@@ -677,16 +679,16 @@ class AgeSpecializedFunction(_AgeSpecialized):
     error.
     """
 
-    build: Callable[[float], UserFunction]
+    build: Callable[[Coordinate], UserFunction]
     """Factory returning the concrete function for a given age."""
 
-    signature: Callable[[float], Hashable]
+    signature: Callable[[Coordinate], Hashable]
     """Returns a hashable identity of the age's closure; used as the dedup key."""
 
 
 @beartype(conf=REGIME_CONF)
 @dataclass(frozen=True)
-class AgeSpecializedGrid(_AgeSpecialized):
+class AgeSpecializedGrid[Coordinate: int | float = float](_AgeSpecialized[Coordinate]):
     """Wrapper marking a continuous-state grid whose bounds vary per age.
 
     Wrap a grid *factory* to indicate that the grid's bounds/nodes depend on the
@@ -737,17 +739,17 @@ class AgeSpecializedGrid(_AgeSpecialized):
     `t+1`'s support.
     """
 
-    build: Callable[[float], ContinuousGrid]
+    build: Callable[[Coordinate], ContinuousGrid]
     """Factory returning the concrete continuous grid for a given age."""
 
-    signature: Callable[[float], Hashable] | None = None
+    signature: Callable[[Coordinate], Hashable] | None = None
     """Returns a hashable identity of the age's grid; the dedup key, cross-checked
     against the resolved nodes at build time. `None` keys on the built grid itself."""
 
 
 @beartype(conf=REGIME_CONF)
 @dataclass(frozen=True)
-class PeriodSpecializedFunction(AgeSpecializedFunction):
+class PeriodSpecializedFunction(AgeSpecializedFunction[int]):
     """Bind a function at an integer computational period.
 
     ``build(period)`` and ``signature(period)`` follow the same determinism,
@@ -765,7 +767,7 @@ class PeriodSpecializedFunction(AgeSpecializedFunction):
 
 @beartype(conf=REGIME_CONF)
 @dataclass(frozen=True)
-class PeriodSpecializedGrid(AgeSpecializedGrid):
+class PeriodSpecializedGrid(AgeSpecializedGrid[int]):
     """Bind a continuous-state grid at an integer computational period.
 
     Shape invariance, signature verification and interpolation support follow

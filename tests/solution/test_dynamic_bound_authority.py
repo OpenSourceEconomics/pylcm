@@ -2,6 +2,7 @@
 
 import inspect
 from dataclasses import replace
+from functools import partial
 from types import MappingProxyType
 from typing import cast
 
@@ -401,7 +402,7 @@ def test_terminal_action_evaluation_keeps_bound_status_separate_from_F(
 ) -> None:
     """Singleton and household terminal evaluators carry actual RHS validity."""
     builder = (
-        q_and_f_module.get_Q_and_F_terminal_collective
+        partial(q_and_f_module.get_Q_and_F_terminal_collective, stakeholders=("a",))
         if collective
         else q_and_f_module.get_Q_and_F_terminal
     )
@@ -435,7 +436,6 @@ def test_terminal_action_evaluation_keeps_bound_status_separate_from_F(
                 {"borrowing": cast("ConstraintFunction", borrowing)}
             ),
             bound_specs=(_bound(),),
-            **({"stakeholders": ("a",)} if collective else {}),
         ),
     )
     evaluated = jax.jit(kernel.evaluated)(

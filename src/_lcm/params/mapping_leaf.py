@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 import jax
 
 if TYPE_CHECKING:
-    from _lcm.typing import ParamsLeaf, PytreeChild
+    from _lcm.typing import PytreeChild
     from lcm.typing import UserParamsLeaf
 else:
     # `_lcm.typing` and `lcm.typing` import this module, so their aliases are not
@@ -75,9 +75,6 @@ class MappingLeaf(UserMappingLeaf):
     """
 
     __slots__ = ()
-
-    if TYPE_CHECKING:
-        data: Mapping[str, ParamsLeaf]
 
 
 def _user_flatten(

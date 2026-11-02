@@ -1895,7 +1895,20 @@ def _read_euler_and_node_bank(
     n_euler = euler[0].shape[0]
     retain = euler_savings is not None
     if not nodes_on_query:
-        return envelope_at_query(
+        return (
+            functools.partial(
+                envelope_at_query,
+                candidate_savings=jnp.concatenate(
+                    [
+                        euler_savings,
+                        _as_pairs(cast("FloatND", node_savings).ravel()),
+                    ]
+                ),
+                return_owner=return_owner,
+            )
+            if retain
+            else envelope_at_query
+        )(
             endog_grid=jnp.concatenate([euler[0], _as_pairs(node[0].ravel())]),
             policy=jnp.concatenate([euler[1], _as_pairs(node[1].ravel())]),
             value=jnp.concatenate([euler[2], _as_pairs(node[2].ravel())]),
@@ -1907,19 +1920,6 @@ def _read_euler_and_node_bank(
             arithmetic=arithmetic,
             feasibility_partition=feasibility_partition,
             feasible_interval_mask=feasible_interval_mask,
-            **(
-                {
-                    "candidate_savings": jnp.concatenate(
-                        [
-                            euler_savings,
-                            _as_pairs(cast("FloatND", node_savings).ravel()),
-                        ]
-                    ),
-                    "return_owner": return_owner,
-                }
-                if retain
-                else {}
-            ),
         )
     if 2 * n_bank < jnp.iinfo(jnp.int32).max:
         first_index = n_euler + 2 * node_cell

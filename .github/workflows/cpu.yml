@@ -115,9 +115,9 @@ jobs:
         # step that needs it, so the environment never finishes building.
         if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1.13.0
-      - uses: prefix-dev/setup-pixi@v0.11.0
+      - uses: prefix-dev/setup-pixi@v0.11.3
         with:
-          pixi-version: v0.81.0
+          pixi-version: v0.83.0
           cache: true
           cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
           environments: tests-cpu
@@ -250,9 +250,9 @@ jobs:
         # step that needs it, so the environment never finishes building.
         if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1.13.0
-      - uses: prefix-dev/setup-pixi@v0.11.0
+      - uses: prefix-dev/setup-pixi@v0.11.3
         with:
-          pixi-version: v0.81.0
+          pixi-version: v0.83.0
           cache: true
           cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
           environments: tests-cpu
@@ -361,9 +361,9 @@ jobs:
       PYLCM_CACHE_KEY: jax-gen32-s${{ matrix.shard }}
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: prefix-dev/setup-pixi@v0.11.0
+      - uses: prefix-dev/setup-pixi@v0.11.3
         with:
-          pixi-version: v0.81.0
+          pixi-version: v0.83.0
           cache: true
           cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
           environments: tests-cpu
@@ -481,9 +481,9 @@ jobs:
       PYLCM_CI_RECEIPT: reports/ci-receipts
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: prefix-dev/setup-pixi@v0.11.0
+      - uses: prefix-dev/setup-pixi@v0.11.3
         with:
-          pixi-version: v0.81.0
+          pixi-version: v0.83.0
           cache: true
           cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
           environments: tests-cpu
@@ -579,9 +579,9 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: prefix-dev/setup-pixi@v0.11.0
+      - uses: prefix-dev/setup-pixi@v0.11.3
         with:
-          pixi-version: v0.81.0
+          pixi-version: v0.83.0
           cache: true
           environments: tests-cpu
           activate-environment: true
@@ -642,9 +642,9 @@ jobs:
       PYLCM_CACHE_KEY: jax-cert-heavy-fp${{ matrix.precision }}
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: prefix-dev/setup-pixi@v0.11.0
+      - uses: prefix-dev/setup-pixi@v0.11.3
         with:
-          pixi-version: v0.81.0
+          pixi-version: v0.83.0
           cache: true
           cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
           environments: tests-cpu
@@ -760,9 +760,9 @@ jobs:
       PYLCM_CACHE_KEY: jax-rest-fp${{ matrix.precision }}
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: prefix-dev/setup-pixi@v0.11.0
+      - uses: prefix-dev/setup-pixi@v0.11.3
         with:
-          pixi-version: v0.81.0
+          pixi-version: v0.83.0
           cache: true
           cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
           environments: tests-cpu
@@ -878,9 +878,9 @@ jobs:
       PYLCM_CACHE_KEY: jax-certified
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: prefix-dev/setup-pixi@v0.11.0
+      - uses: prefix-dev/setup-pixi@v0.11.3
         with:
-          pixi-version: v0.81.0
+          pixi-version: v0.83.0
           cache: true
           cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
           environments: tests-cpu
@@ -1034,9 +1034,9 @@ jobs:
         # step that needs it, so the environment never finishes building.
         if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1.13.0
-      - uses: prefix-dev/setup-pixi@v0.11.0
+      - uses: prefix-dev/setup-pixi@v0.11.3
         with:
-          pixi-version: v0.81.0
+          pixi-version: v0.83.0
           cache: true
           cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
           environments: tests-cpu
@@ -1160,9 +1160,9 @@ jobs:
       PYLCM_CACHE_KEY: jax-four-device-fp${{ matrix.precision }}
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: prefix-dev/setup-pixi@v0.11.0
+      - uses: prefix-dev/setup-pixi@v0.11.3
         with:
-          pixi-version: v0.81.0
+          pixi-version: v0.83.0
           cache: true
           cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
           environments: tests-cpu
@@ -1856,9 +1856,9 @@ jobs:
       PYLCM_CACHE_KEY: jax-eight-device-fp${{ matrix.precision }}
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: prefix-dev/setup-pixi@v0.11.0
+      - uses: prefix-dev/setup-pixi@v0.11.3
         with:
-          pixi-version: v0.81.0
+          pixi-version: v0.83.0
           cache: true
           cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
           environments: tests-cpu
@@ -2405,9 +2405,9 @@ jobs:
         # step that needs it, so the environment never finishes building.
         if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1.13.0
-      - uses: prefix-dev/setup-pixi@v0.11.0
+      - uses: prefix-dev/setup-pixi@v0.11.3
         with:
-          pixi-version: v0.81.0
+          pixi-version: v0.83.0
           cache: true
           cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
           environments: tests-cpu
@@ -2556,9 +2556,9 @@ jobs:
       PYLCM_CACHE_KEY: jax-sol-fp${{ matrix.precision }}-s${{ matrix.shard }}
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: prefix-dev/setup-pixi@v0.11.0
+      - uses: prefix-dev/setup-pixi@v0.11.3
         with:
-          pixi-version: v0.81.0
+          pixi-version: v0.83.0
           cache: true
           cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
           environments: tests-cpu
@@ -2686,9 +2686,9 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: prefix-dev/setup-pixi@v0.11.0
+      - uses: prefix-dev/setup-pixi@v0.11.3
         with:
-          pixi-version: v0.81.0
+          pixi-version: v0.83.0
           cache: true
           environments: tests-cpu
           activate-environment: true
@@ -2726,9 +2726,9 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: prefix-dev/setup-pixi@v0.11.0
+      - uses: prefix-dev/setup-pixi@v0.11.3
         with:
-          pixi-version: v0.81.0
+          pixi-version: v0.83.0
           cache: true
           cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
           environments: tests-cpu
@@ -2810,9 +2810,9 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: prefix-dev/setup-pixi@v0.11.0
+      - uses: prefix-dev/setup-pixi@v0.11.3
         with:
-          pixi-version: v0.81.0
+          pixi-version: v0.83.0
           cache: true
           environments: tests-cpu
           activate-environment: true

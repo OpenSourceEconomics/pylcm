@@ -2266,6 +2266,7 @@ def _shared_evaluation(
         hash(key)
     except TypeError:
         return _evaluate(function=function)(**arguments)
+    key = cast("Hashable", key)
     variants = _SHARED_EVALUATIONS.setdefault(function, {})
     if key not in variants:
         # A strong reference here would keep the kernel, the weak key, alive.
@@ -2294,7 +2295,9 @@ def _evaluate(*, function: CanonicalActionKernel) -> Callable[..., EvaluatedQAnd
     return cast("Callable[..., EvaluatedQAndF]", function.evaluated)
 
 
-def _closed_over_key(*, leaf: PytreeValue | None) -> Hashable:
+def _closed_over_key(
+    *, leaf: PytreeValue | None
+) -> tuple[type[PytreeValue | None], PytreeValue | str | None]:
     """Key a concrete leaf by type and bits: `1 == 1.0` and `0.0 == -0.0`."""
     return (type(leaf), leaf.hex() if isinstance(leaf, float) else leaf)
 
