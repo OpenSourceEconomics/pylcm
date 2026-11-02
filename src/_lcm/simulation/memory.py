@@ -307,8 +307,13 @@ def run_simulation_producer[T: PytreeValue](
     memory: SimulationMemory | None,
     function: Callable[..., T],
     arguments: Mapping[ReferenceName, PytreeValue],
+    owner: ProfiledSimulationOperations | None = None,
 ) -> T:
-    """Admit a model-owned producer with explicit dynamic operands and owners."""
+    """Admit a model-owned producer with explicit dynamic operands and owners.
+
+    `owner` caches the executable, by default `memory.producers`; a producer that
+    chunk admission profiles passes the runtime's operations, which hold it.
+    """
     if memory is None:
         return function(**arguments)
     placed = place_simulation_arguments(
@@ -327,7 +332,7 @@ def run_simulation_producer[T: PytreeValue](
     external = resident_bytes_by_device(
         live=live, arguments=argument_buffers, devices=memory.subject_devices
     )
-    executable = memory.producers.admit_producer(
+    executable = (memory.producers if owner is None else owner).admit_producer(
         function=function,
         arguments=jax.tree.map(
             lambda value: jax.ShapeDtypeStruct(

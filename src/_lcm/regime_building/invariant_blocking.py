@@ -90,8 +90,8 @@ def fail_if_invariant_blocking_route_is_unsupported(
       solved as one component, and a regime without the state would be solved
       once per code.
 
-    Folded processes and edge-reference reads are refused once the regimes are
-    built, where they are resolved.
+    Edge-reference reads are refused once the regimes are built, where they are
+    resolved.
 
     Raises:
         ExecutionPlanningError: The request is not served.

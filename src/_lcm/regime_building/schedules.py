@@ -134,8 +134,8 @@ class RegimeSchedules:
         PhaseKey, MappingProxyType[RegimeName, MappingProxyType[int, tuple[str, ...]]]
     ] = MappingProxyType({})
     """Per phase, per source regime, the regimes whose next-age value a gated
-    edge reads at each period: gate references, plus the solve fallbacks in
-    the solution phase."""
+    edge or participation reads at each period: the solve fallbacks in the solution
+    phase, plus each participation check's integrated reads."""
 
     landings_by_regime: MappingProxyType[
         RegimeName, MappingProxyType[int, tuple[str, ...]]
@@ -167,7 +167,7 @@ class RegimeSchedules:
     exit_acting_nodes: frozenset[tuple[int, RegimeName]] = frozenset()
     """Potential final regimes acting once after an original subject exits."""
 
-    arrival_queries_by_phase: MappingProxyType[
+    participation_queries_by_phase: MappingProxyType[
         PhaseKey,
         MappingProxyType[
             RegimeName, MappingProxyType[int, tuple[tuple[str, str], ...]]
@@ -344,7 +344,7 @@ def resolve_regime_schedules(
         PhaseKey, dict[RegimeName, MappingProxyType[int, tuple[str, ...]]]
     ] = {phase: {} for phase in _PHASES}
     landings: dict[RegimeName, MappingProxyType[int, tuple[str, ...]]] = {}
-    arrival_queries: dict[
+    participation_queries: dict[
         PhaseKey, dict[RegimeName, MappingProxyType[int, tuple[tuple[str, str], ...]]]
     ] = {phase: {} for phase in _PHASES}
     law_by_period_by_regime: dict[RegimeName, MappingProxyType[int, CaseLaw]] = {}
@@ -402,13 +402,14 @@ def resolve_regime_schedules(
                     for period, law in side_by_period.items()
                 }
             )
-            arrival_queries[phase][name] = MappingProxyType(
+            participation_queries[phase][name] = MappingProxyType(
                 {
                     period: tuple(
                         dict.fromkeys(
                             query
                             for target in targets
-                            if (decision := regime_law.arrivals.get(target)) is not None
+                            if (decision := regime_law.participation.get(target))
+                            is not None
                             for query in (
                                 (target, "Participating"),
                                 *(
@@ -437,12 +438,12 @@ def resolve_regime_schedules(
         value_reads["solution"][name] = MappingProxyType(
             {
                 period: (
-                    *_gate_references(gated_edges=gated, targets=targets),
                     *_fallbacks(gated_edges=gated, targets=targets, side="solve"),
                     *(
                         read.regime
                         for target in targets
-                        if (decision := regime_law.arrivals.get(target)) is not None
+                        if (decision := regime_law.participation.get(target))
+                        is not None
                         for read in decision.reads.values()
                         if read.kind == "IntegratedFull"
                     ),
@@ -453,11 +454,11 @@ def resolve_regime_schedules(
         value_reads["simulation"][name] = MappingProxyType(
             {
                 period: (
-                    *_gate_references(gated_edges=gated, targets=targets),
                     *(
                         read.regime
                         for target in targets
-                        if (decision := regime_law.arrivals.get(target)) is not None
+                        if (decision := regime_law.participation.get(target))
+                        is not None
                         for read in decision.reads.values()
                         if read.kind == "IntegratedFull"
                     ),
@@ -472,7 +473,8 @@ def resolve_regime_schedules(
                     *(
                         route.simulate_fallback.regime
                         for target in targets
-                        if (decision := regime_law.arrivals.get(target)) is not None
+                        if (decision := regime_law.participation.get(target))
+                        is not None
                         for route in decision.routes.values()
                     ),
                 )
@@ -497,10 +499,10 @@ def resolve_regime_schedules(
         gated_edges_by_regime=MappingProxyType(
             {name: regime_law.gated_edges for name, regime_law in laws.items()}
         ),
-        arrival_queries_by_phase=MappingProxyType(
+        participation_queries_by_phase=MappingProxyType(
             {
                 phase: MappingProxyType(by_regime)
-                for phase, by_regime in arrival_queries.items()
+                for phase, by_regime in participation_queries.items()
             }
         ),
     )
@@ -651,7 +653,7 @@ def resolve_demand(  # noqa: C901 - shared fixed point for occupancy, values and
     - a visit (H) requires the pair's value, its realized successors and gated
       landings as visits, and the values the realized routing reads;
     - a value (S) requires the values its backward problem reads: perceived
-      continuation targets, gate references, solve fallbacks and same-period
+      continuation targets, solve fallbacks and same-period
       references. Realized routes out of a value-only pair are not followed.
 
     Every required pair must be an available problem: a terminal regime, or a
@@ -697,7 +699,7 @@ def resolve_demand(  # noqa: C901 - shared fixed point for occupancy, values and
                         requester=f"a {kind} {phase} policy query",
                         name=name,
                         period=period,
-                        side=phase,
+                        side="solve " if phase == "solution" else "simulate ",
                         ages=ages,
                     )
                 )
@@ -707,7 +709,7 @@ def resolve_demand(  # noqa: C901 - shared fixed point for occupancy, values and
                     *(
                         ("solution", period + 1, target, target_kind)
                         for target, target_kind in (
-                            schedules.arrival_queries_by_phase.get("solution", {})
+                            schedules.participation_queries_by_phase.get("solution", {})
                             .get(name, {})
                             .get(period, ())
                         )
@@ -761,11 +763,11 @@ def resolve_demand(  # noqa: C901 - shared fixed point for occupancy, values and
             (
                 *(
                     (required_phase, period + 1, target, target_kind)
-                    for target, target_kind in schedules.arrival_queries_by_phase.get(
-                        required_phase, {}
+                    for target, target_kind in (
+                        schedules.participation_queries_by_phase.get(required_phase, {})
+                        .get(name, {})
+                        .get(period, ())
                     )
-                    .get(name, {})
-                    .get(period, ())
                 ),
                 *(
                     (required_phase, period, target, kind)
@@ -831,18 +833,13 @@ def resolve_demand(  # noqa: C901 - shared fixed point for occupancy, values and
             .get(name, {})
             .get(period, ())
         )
-        pair = f"({ages.exact_values[period]}, '{name}')"
-        kinds = {
-            **dict.fromkeys(reads, f"a fallback of {pair}"),
-            **dict.fromkeys(
-                _gate_references(
-                    gated_edges=schedules.gated_edges_by_regime.get(name, {}),
-                    targets=targets,
-                ),
-                f"a gate reference of {pair}",
-            ),
-            **dict.fromkeys(targets, here),
-        }
+        kinds = _read_kinds(
+            reads=reads,
+            gated=schedules.gated_edges_by_regime.get(name, {}),
+            targets=targets,
+            pair=f"({ages.exact_values[period]}, '{name}')",
+            here=here,
+        )
         work.extend((False, period + 1, target, kinds[target]) for target in reads)
 
     return dataclasses.replace(
@@ -881,7 +878,7 @@ def gated_source_periods(
 
     A gate holds wherever its target is reached: solve gates count at valued
     nodes and simulation gates at visited nodes, provided the selected phase
-    graph contains the gated edge. A gated edge folds and reads its references
+    graph contains the gated edge. A gated edge folds and reads its fallbacks
     only after those periods.
     """
     periods: dict[tuple[RegimeName, RegimeName], set[int]] = {}
@@ -915,6 +912,29 @@ def _restricted(
     )
 
 
+def _read_kinds(
+    *,
+    reads: tuple[RegimeName, ...],
+    gated: Mapping[RegimeName, GatedEdge],
+    targets: tuple[RegimeName, ...],
+    pair: str,
+    here: str,
+) -> dict[RegimeName, str]:
+    """Name what each stored value read of one pair is, for a missing-law error.
+
+    A read that is neither a gated fallback nor a target is a participation check's
+    IntegratedFull read.
+    """
+    return {
+        **dict.fromkeys(reads, f"a participation read of {pair}"),
+        **dict.fromkeys(
+            _fallbacks(gated_edges=gated, targets=targets, side="solve"),
+            f"a fallback of {pair}",
+        ),
+        **dict.fromkeys(targets, here),
+    }
+
+
 def _unavailable_message(
     *, requester: str, name: RegimeName, period: int, side: str, ages: TimeAxis
 ) -> str:
@@ -931,18 +951,6 @@ def _unavailable_message(
         else f"where `edges` declares no {side}edge out of '{name}' at that age"
     )
     return f"{requester} requires '{name}' at age {age}, {reason}."
-
-
-def _gate_references(
-    *, gated_edges: Mapping[RegimeName, GatedEdge], targets: tuple[RegimeName, ...]
-) -> tuple[RegimeName, ...]:
-    """The regimes whose value the gates of the reached `targets` read."""
-    return tuple(
-        reference.regime
-        for target, edge in gated_edges.items()
-        if target in targets
-        for reference in edge.gate_refs.values()
-    )
 
 
 def _fallbacks(

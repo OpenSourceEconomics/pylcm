@@ -27,7 +27,6 @@ def create_state_action_space(
     variables: Variables,
     grids: MappingProxyType[StateOrActionName, Grid],
     states: dict[StateName, FloatND | IntND] | None = None,
-    materializer: DatedGenerationMaterializer | None = None,
 ) -> StateActionSpace:
     """Create a state-action-space.
 
@@ -48,10 +47,7 @@ def create_state_action_space(
     """
     if states is None:
         _states = {
-            sn: _grid_to_jax_or_placeholder(grids[sn])
-            if materializer is None
-            else materializer.materialize_grid(spec=grids[sn], placeholder=True)
-            for sn in variables.state_names
+            sn: _grid_to_jax_or_placeholder(grids[sn]) for sn in variables.state_names
         }
     else:
         _validate_all_states_present(
@@ -60,15 +56,10 @@ def create_state_action_space(
         )
         _states = states
     discrete_actions = {
-        name: grids[name].to_jax()
-        if materializer is None
-        else materializer.materialize_grid(spec=grids[name])
-        for name in variables.discrete_action_names
+        name: grids[name].to_jax() for name in variables.discrete_action_names
     }
     continuous_actions = {
         name: _grid_to_jax_or_placeholder(grids[name])
-        if materializer is None
-        else materializer.materialize_grid(spec=grids[name], placeholder=True)
         for name in variables.continuous_action_names
     }
 

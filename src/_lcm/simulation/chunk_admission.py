@@ -14,12 +14,10 @@ from types import MappingProxyType
 
 import jax
 
-from _lcm.egm.current_iid_replay_inputs import CurrentIIDReplayInputs
 from _lcm.engine import Regime, placed_devices_for_ids
 from _lcm.execution.core_program import ReducedAxis, TiledOutputAxis
 from _lcm.execution.workspace_planning import workspace_width_candidates
 from _lcm.processes.grid_resolution import ProcessGridResolver
-from _lcm.regime_building.projected_forward import ProjectedForwardInputs
 from _lcm.simulation.chunk_inputs import (
     SimulationCallInputs,
     prepare_simulation_call_inputs,
@@ -48,7 +46,13 @@ from _lcm.simulation.runtime import SimulationRuntime
 from _lcm.simulation.subject_groups import grouped_extent
 from _lcm.solution.backward_induction import _abstract_value_key, _hashable_metadata
 from _lcm.time import TimeAxis
-from _lcm.typing import FlatParams, RegimeName, RegimeNamesToIds, SimulationPolicy
+from _lcm.typing import (
+    FlatParams,
+    PeriodToRegimeToParticipationSurfaces,
+    RegimeName,
+    RegimeNamesToIds,
+    SimulationPolicy,
+)
 from _lcm.utils.logging import LogLevel
 from lcm.exceptions import ExecutionPlanningError
 
@@ -129,7 +133,6 @@ def prepare_simulation_chunks(
     regimes: MappingProxyType[RegimeName, Regime],
     flat_params: FlatParams,
     values: Mapping[int, Mapping[str, jax.Array]],
-    flags: Mapping[int, Mapping[str, jax.Array]],
     ages: TimeAxis,
     initial_conditions: Mapping[str, jax.Array],
     regime_names_to_ids: RegimeNamesToIds,
@@ -141,8 +144,9 @@ def prepare_simulation_chunks(
     log_level: LogLevel,
     runtime_checks: bool = True,
     policies: Mapping[int, Mapping[RegimeName, SimulationPolicy]] | None = None,
-    current_iid_replay_inputs: CurrentIIDReplayInputs = MappingProxyType({}),
-    projected_forward_inputs: ProjectedForwardInputs = MappingProxyType({}),
+    participation_surfaces: PeriodToRegimeToParticipationSurfaces = MappingProxyType(
+        {}
+    ),
     process_grid_resolver: ProcessGridResolver | None = None,
     max_compilation_workers: int | None = None,
     group_sizes: tuple[int, ...] | None = None,
@@ -180,9 +184,8 @@ def prepare_simulation_chunks(
                     flat_params,
                     initial_conditions,
                     values,
-                    flags,
                     ages.values,
-                    projected_forward_inputs,
+                    participation_surfaces,
                 )
             ),
         )
@@ -228,10 +231,8 @@ def prepare_simulation_chunks(
         regimes=regimes,
         call_inputs=call_inputs,
         values=values,
-        flags=flags,
         policies=policies,
-        current_iid_replay_inputs=current_iid_replay_inputs,
-        projected_forward_inputs=projected_forward_inputs,
+        participation_surfaces=participation_surfaces,
         ages=ages,
         initial_conditions=initial_conditions,
         regime_names_to_ids=regime_names_to_ids,
@@ -263,10 +264,10 @@ def _simulation_chunk_profile_key(
     regimes: Mapping[str, Regime],
     call_inputs: SimulationCallInputs,
     values: Mapping[int, Mapping[str, jax.Array]],
-    flags: Mapping[int, Mapping[str, jax.Array]],
     policies: Mapping[int, Mapping[RegimeName, SimulationPolicy]] | None,
-    current_iid_replay_inputs: CurrentIIDReplayInputs = MappingProxyType({}),
-    projected_forward_inputs: ProjectedForwardInputs = MappingProxyType({}),
+    participation_surfaces: PeriodToRegimeToParticipationSurfaces = MappingProxyType(
+        {}
+    ),
     ages: TimeAxis,
     initial_conditions: Mapping[str, jax.Array],
     regime_names_to_ids: RegimeNamesToIds,
@@ -328,10 +329,8 @@ def _simulation_chunk_profile_key(
                 for space in call_inputs.base_state_action_spaces.values()
             )
         ),
-        _abstract_value_key(value=current_iid_replay_inputs),
-        _abstract_value_key(value=projected_forward_inputs),
+        _abstract_value_key(value=participation_surfaces),
         _abstract_value_key(value=values),
-        _abstract_value_key(value=flags),
         _abstract_value_key(value=initial_conditions),
         _abstract_value_key(value=ages.values),
     )
@@ -376,7 +375,6 @@ class _ChunkProfiler:
     regimes: Mapping[str, Regime]
     call_inputs: SimulationCallInputs
     values: Mapping[int, Mapping[str, jax.Array]]
-    flags: Mapping[int, Mapping[str, jax.Array]]
     ages: TimeAxis
     initial_conditions: Mapping[str, jax.Array]
     regime_names_to_ids: RegimeNamesToIds
@@ -390,8 +388,7 @@ class _ChunkProfiler:
     resident: Mapping[jax.Device, int]
     devices: tuple[jax.Device, ...]
     policies: Mapping[int, Mapping[RegimeName, SimulationPolicy]] | None = None
-    current_iid_replay_inputs: CurrentIIDReplayInputs = MappingProxyType({})
-    projected_forward_inputs: ProjectedForwardInputs = MappingProxyType({})
+    participation_surfaces: PeriodToRegimeToParticipationSurfaces = MappingProxyType({})
     max_compilation_workers: int | None = None
     group_sizes: tuple[int, ...] | None = None
     current_iid_override_schema: CurrentIIDOverrideSchema = ()
@@ -455,10 +452,8 @@ class _ChunkProfiler:
             "runtime": self.runtime,
             "regimes": self.regimes,
             "values": self.values,
-            "flags": self.flags,
             "policies": self.policies,
-            "current_iid_replay_inputs": self.current_iid_replay_inputs,
-            "projected_forward_inputs": self.projected_forward_inputs,
+            "participation_surfaces": self.participation_surfaces,
             "ages": self.ages,
             "initial_conditions": self.initial_conditions,
             "regime_names_to_ids": self.regime_names_to_ids,

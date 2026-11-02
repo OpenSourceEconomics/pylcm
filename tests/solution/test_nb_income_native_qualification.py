@@ -179,7 +179,7 @@ def test_capture_restores_hooks_when_primary_and_owned_drain_fail(
 def _hook_ids() -> tuple[int, int, int, int]:
     """Identify the exact four public and row-observer hook owners."""
     return (
-        id(Model._process_params),
+        id(Model._canonicalize_params),
         id(nbegm._solve_ride_along_cell_step),
         id(Model.solve),
         id(Model.simulate),

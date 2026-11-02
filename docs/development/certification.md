@@ -28,9 +28,9 @@ plus the action-partitioned singleton solve, whose devices share one action prod
 own module docstring is the authoritative statement of the claim and of its boundary.
 
 The boundary matters as much as the claim. The certificate says nothing about the
-*economics*: user DAGs, constraints, transitions, continuation values, interpolation and
-fold weights are an explicit semantic boundary and are not re-proved. What it proves is
-that the arrays a route builds are the arrays that route reduces, with no intervening
+*economics*: user DAGs, constraints, transitions, continuation values and interpolation
+are an explicit semantic boundary and are not re-proved. What it proves is that the
+arrays a route builds are the arrays that route reduces, with no intervening
 candidate-changing expression, and that the program which was resolved is the program
 which was lowered, compiled and dispatched.
 

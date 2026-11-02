@@ -45,8 +45,7 @@ def expected_V_rank(*, regime: Regime) -> int:
     Single source of truth for the rank: the topology below builds V to it, and
     the boundary that accepts a caller-supplied solution checks against it.
 
-    - One axis per solve state that is kept as a grid axis. A folded state is
-      integrated out by quadrature at solve time and contributes none.
+    - One axis per solve state.
     - One trailing stakeholder axis when the regime is collective.
 
     Args:
@@ -56,9 +55,7 @@ def expected_V_rank(*, regime: Regime) -> int:
         The rank of this regime's value-function array.
 
     """
-    n_state_axes = sum(
-        1 for name in regime.solution.state_names if name not in regime.fold_state_names
-    )
+    n_state_axes = len(regime.solution.state_names)
     return n_state_axes + (1 if regime.stakeholders is not None else 0)
 
 
@@ -127,22 +124,8 @@ def _get_regime_V_shapes_and_shardings(
             regime_params=regime_kernel_params(flat_params, regime_name=regime_name),
             process_grid_resolver=process_grid_resolver,
         )
-        # Folded IID-process states are integrated out of the stored value by
-        # quadrature at solve time (`get_max_Q_over_a`'s fold reduction), so
-        # they are NOT an axis of this regime's V-array — exclude them from
-        # the shape/sharding topology the same way a co-mapped state's axis
-        # is still present (co-map only relocates an axis for sharding; fold
-        # removes it).
-        state_order: tuple[StateName, ...] = tuple(
-            name
-            for name in state_action_space.states
-            if name not in regime.fold_state_names
-        )
-        shape = tuple(
-            len(v)
-            for name, v in state_action_space.states.items()
-            if name not in regime.fold_state_names
-        )
+        state_order: tuple[StateName, ...] = tuple(state_action_space.states)
+        shape = tuple(len(v) for v in state_action_space.states.values())
         # A collective regime's V carries a trailing
         # stakeholder axis, so the zero template and the roll must too. The
         # sharding plan spans the state axes only; the trailing stakeholder

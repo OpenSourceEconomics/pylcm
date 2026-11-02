@@ -32,7 +32,7 @@ from tests.test_models.deterministic import retirement_only
 from tests.test_models.deterministic.dcegm_variants import (
     DCEGM_SOLVER,
     dcegm_retirement,
-    get_retirement_only_params,
+    get_graph_only_retirement_params,
 )
 
 pytestmark = pytest.mark.slow
@@ -74,11 +74,12 @@ def _bequest_utility(*, wealth: ContinuousState, age: float) -> FloatND:
 
 
 def _bonus_model(constraints: dict[FunctionName, UserFunction] | None = None) -> Model:
-    # MSS is the only backend whose rows certify every envelope crossing, so
-    # it is the only one that qualifies for the off-grid read.
-    solver = dataclasses.replace(DCEGM_SOLVER, envelope=envelope_config("mss"))
+    # Every backend reads the policy off-grid; the exact envelope is the stress
+    # case: it emits every ownership change.
+    solver = dataclasses.replace(DCEGM_SOLVER, envelope=envelope_config("exact"))
     alive = dcegm_retirement.replace(
         solver=solver,
+        liquid=dataclasses.replace(dcegm_retirement.liquid, resources="resources"),
         actions={
             "consumption": dcegm_retirement.actions["consumption"],
             "take_bonus": DiscreteGrid(category_class=BonusChoice),
@@ -105,7 +106,9 @@ def _bonus_model(constraints: dict[FunctionName, UserFunction] | None = None) ->
 
 
 def _simulate_period_0(*, model: Model, off_grid_wealth: np.ndarray):
-    params = get_retirement_only_params(n_periods=2, discount_factor=_DISCOUNT_FACTOR)
+    params = get_graph_only_retirement_params(
+        n_periods=2, discount_factor=_DISCOUNT_FACTOR
+    )
     initial_conditions = {
         "wealth": jnp.asarray(off_grid_wealth),
         "age": jnp.full(off_grid_wealth.shape, 40.0),
@@ -135,14 +138,6 @@ def _off_grid_wealth_straddling_the_switch() -> np.ndarray:
     return np.concatenate([below[:4], above[:4]])
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "the off-grid policy read is gated on a crossing-complete env"
-        "elope and no shipped backend qualifies; this is the acceptance criteri"
-        "on for reopening the gate, so it must start passing again the moment one does"
-    ),
-)
 def test_branch_redecision_matches_the_closed_form_switch_and_policy():
     """Simulated branch and consumption hit their closed forms off-grid.
 
@@ -173,14 +168,6 @@ def _bonus_forbidden(take_bonus: DiscreteAction) -> BoolND:
     return take_bonus == 0
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "the off-grid policy read is gated on a crossing-complete env"
-        "elope and no shipped backend qualifies; this is the acceptance criteri"
-        "on for reopening the gate, so it must start passing again the moment one does"
-    ),
-)
 def test_branch_redecision_respects_discrete_action_constraints():
     """An infeasible branch cannot win the off-grid value comparison.
 

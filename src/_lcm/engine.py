@@ -22,8 +22,7 @@ from jax import Array
 from _lcm.certainty_equivalent import CertaintyEquivalent
 from _lcm.continuation import ContinuationPayload, ContinuationSpec, EGMQuerySpec
 from _lcm.egm.nested_published_policy import NestedEGMSimPolicy
-from _lcm.egm.projected_continuation import ProjectedChildAuthority
-from _lcm.egm.published_policy import EGMSimPolicy, NNBEGMSimPolicy
+from _lcm.egm.published_policy import EGMSimPolicy, NBEGMGridPolicy, NNBEGMSimPolicy
 from _lcm.execution.execution_plan import visible_devices
 from _lcm.execution.placement import ACTION_PARTITION_AXIS
 from _lcm.grids import DiscreteGrid, Grid, IrregSpacedGrid
@@ -78,10 +77,7 @@ from lcm.typing import (
 )
 
 if TYPE_CHECKING:
-    import _lcm.regime_building.projected_forward
     from _lcm.current_iid import CurrentIIDDrawPlan, CurrentIIDPlan
-    from _lcm.egm.current_iid_case_u_replay import CaseUReplaySpec
-    from _lcm.egm.current_iid_replay import CaseRReplaySpec
     from _lcm.regime_building.gated_edges import ResolvedGatedEdge
     from _lcm.simulation.exits import ExitSimulationPlan
     from _lcm.solution.contract import PeriodKernel
@@ -92,9 +88,6 @@ if TYPE_CHECKING:
     # (see the runtime alias below).
     type PeriodKernelsMapping = Mapping[int, PeriodKernel]
 else:
-    # These replay declarations import engine while their numerical modules load.
-    type CaseRReplaySpec = object
-    type CaseUReplaySpec = object
     # Current-IID declarations reach the solver facade while it imports engine.
     type CurrentIIDPlan = object
     type CurrentIIDDrawPlan = object
@@ -441,13 +434,13 @@ class SolutionPhase:
         Mapping[
             int,
             tuple[
-                tuple[RegimeName, int, PostDecisionBoundSpec | ProjectedChildAuthority],
+                tuple[RegimeName, int, PostDecisionBoundSpec],
                 ...,
             ],
         ]
         | None
     ) = dataclasses.field(default=None, metadata={"fingerprint_omit_if_default": True})
-    """Canonical child/date and bound or projected authority for each query slot."""
+    """Canonical child/date and bound authority for each query slot."""
 
     has_compiled_constraint_boundaries: bool = False
     """Whether the solve route compiles any constraint boundary into its kernel."""
@@ -519,12 +512,6 @@ class SolutionPhase:
 
     continuation_spec: ContinuationSpec | None = None
     """Template and identity of the continuation this regime's kernels publish."""
-
-    case_r_replay_spec: CaseRReplaySpec | None = None
-    """Model-owned dated action-valued reader of the original resources row."""
-
-    case_u_replay_spec: CaseUReplaySpec | None = None
-    """Original dated U constructor and retained ordinary future authority."""
 
     external_replay_route: ExecutableReplayRoute | None = None
     """Plugin-owned replay implementation, or ``None`` for a built-in adapter."""
@@ -723,22 +710,6 @@ class PhaseSupport(Protocol):
     def placed_devices(self) -> tuple[jax.Device, ...]:
         """Return the declaration's actual admitted placement."""
         ...
-
-
-@dataclasses.dataclass(frozen=True, kw_only=True)
-class PreparedPhaseSupport:
-    """The same support declaration used before a solution phase has programs."""
-
-    grids: MappingProxyType[StateOrActionName, Grid]
-    _base_state_action_space: StateActionSpace
-    resolved_fixed_params: FlatRegimeParams
-    sharded_state_names: frozenset[StateName]
-    action_partitions: int
-    submesh_device_ids: tuple[int, ...]
-
-    def placed_devices(self) -> tuple[jax.Device, ...]:
-        """Use the original canonical placement resolver."""
-        return placed_devices_for_ids(submesh_device_ids=self.submesh_device_ids)
 
 
 def resolve_phase_process_grids(
@@ -1025,6 +996,73 @@ class EGMPolicyRead:
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
+class NBEGMPolicyRead:
+    """Names for the realized-state read of a published `NBEGMGridPolicy`.
+
+    The stored policy is the optimal inner action on the regime's state grid;
+    simulation reads it at each subject's realized state instead of argmaxing
+    over the action grid. A discrete action is chosen by the largest read of its
+    published conditional value.
+    """
+
+    action_name: ActionName
+    """The NB-EGM continuous action the read replaces."""
+
+    resources_target: FunctionName
+    """DAG function computing the resources the intrinsic budget bounds."""
+
+    savings_lower_bound: float
+    """Lower bound of the solver's savings grid, the borrowing limit of the
+    post-read budget check (`action <= resources - bound`)."""
+
+    liquid_state_name: StateName
+    """The Euler state, read linearly on its grid."""
+
+    state_names: tuple[StateName, ...]
+    """Exact state axes of the published arrays, in storage order."""
+
+    state_axis_lengths_by_period: MappingProxyType[int, tuple[int, ...]]
+    """Exact lengths of the ordered state axes in every active period."""
+
+    discrete_action_names: tuple[ActionName, ...]
+    """Exact columns of the published branch codes, in declared order."""
+
+    branch_discrete_action_codes: tuple[tuple[int, ...], ...]
+    """Exact code rows of the published branch axis, in product order."""
+
+    float_dtype: str
+    """Canonical dtype of every floating array leaf in the payload."""
+
+    integer_dtype: str
+    """Canonical dtype of the branch-code leaf in the payload."""
+
+    @property
+    def replay_mode(self) -> ReplayMode:
+        """The stored policy names the decision; simulation reads it off-grid."""
+        return ReplayMode.EXACT_REPLAY
+
+    @property
+    def payload_type(self) -> type[NBEGMGridPolicy]:
+        """The exact replay payload class this route reads."""
+        return NBEGMGridPolicy
+
+    @property
+    def policy_applicable(self) -> bool:
+        """A qualifying NB-EGM regime always publishes its state-grid policy."""
+        return True
+
+    @property
+    def policy_required(self) -> bool:
+        """A successful solve of a qualifying regime must retain the policy."""
+        return True
+
+    @property
+    def consumer_route(self) -> str:
+        """The reader that interpolates the policy at a subject's state."""
+        return "nbegm_grid"
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
 class NNBEGMPolicyRead:
     """Realized-state adapter for the NNBEGM joint replay payload."""
 
@@ -1239,20 +1277,12 @@ class SimulationPhase:
     choice rather than a regime-builder one.
     """
 
-    projected_forward_readers_by_period: Mapping[
-        int,
-        Mapping[
-            RegimeName, "_lcm.regime_building.projected_forward.ProjectedForwardRead"  # noqa: UP037 - precise lazy class avoids the engine import cycle
-        ],
-    ] = dataclasses.field(default_factory=lambda: MappingProxyType({}))
-    """Actual dated readers shared by forward programs and receiving ownership."""
-
     edge_reference_regimes_by_period: MappingProxyType[int, tuple[RegimeName, ...]] = (
         MappingProxyType({})
     )
     """Per period, the regimes whose landing values the decision program reads.
 
-    A gate reference and a leg fallback are read inside the source's own
+    A leg fallback is read inside the source's own
     decision function — but only where that function carries the gated
     continuation. A regime whose gate is applied by the simulate router
     instead never names them, a period whose edge targets are all inactive has
@@ -1294,22 +1324,17 @@ class SimulationPhase:
     regime-selection checker evaluates it on every visited period.
     """
 
-    egm_policy_read: EGMPolicyRead | NNBEGMPolicyRead | None = None
+    egm_policy_read: EGMPolicyRead | NBEGMPolicyRead | NNBEGMPolicyRead | None = None
     """Off-grid read of the published EGM simulation policy, or `None`.
 
     Present only where replaying the solve-phase policy is valid:
-    - the regime is solved by an EGM kernel that publishes `EGMSimPolicy`;
+    - the regime is solved by an EGM kernel that publishes `EGMSimPolicy`,
+      `NBEGMGridPolicy` or an NNBEGM payload;
     - the Koopmans aggregator `W` is phase-invariant (a phase-variant `W`
       changes the simulate-phase FOC, so the stored policy is wrong there);
     - the regime declares no taste shocks.
     `None` keeps the grid-argmax decision path for the continuous action.
     """
-
-    case_r_replay_spec: CaseRReplaySpec | None = None
-    """Internal original-row action family, separate from plugin readers."""
-
-    case_u_replay_spec: CaseUReplaySpec | None = None
-    """Internal original-node construction over retained dated future inputs."""
 
     external_replay_route: ExecutableReplayRoute | None = None
     """Plugin route used in place of the engine's built-in replay adapters."""
@@ -1319,14 +1344,6 @@ class SimulationPhase:
     declares the unsupported route and simulation refuses it."""
 
     @property
-    def uses_case_u_reconstruction(self) -> bool:
-        """Whether the declared U route consumes its original future replay bank."""
-        return (
-            self.case_u_replay_spec is not None
-            and self.case_u_replay_spec.reconstructs_candidates
-        )
-
-    @property
     def replay_route(self) -> ReplayRoute:
         """How this regime's simulated decision is obtained each period.
 
@@ -1334,10 +1351,6 @@ class SimulationPhase:
         replay payload declares the grid-recomputation route, so simulation
         and the pre-simulation payload check never test for a missing read.
         """
-        if self.case_r_replay_spec is not None:
-            return self.case_r_replay_spec
-        if self.case_u_replay_spec is not None:
-            return self.case_u_replay_spec
         if self.external_replay_route is not None:
             return self.external_replay_route
         if self.replay_unsupported:
@@ -1484,16 +1497,6 @@ class Regime:
     has_taste_shocks: bool = False
     """Whether the regime declares EV1 taste shocks on its discrete actions."""
 
-    fold_state_names: tuple[StateName, ...] = ()
-    """IID-process states declared `fold=True`, or empty (the default).
-
-    A folded state is integrated out of the stored value by quadrature at
-    solve time, so it is NOT an axis of the regime's stored `V`-array: the
-    backward-induction V topology (`_get_regime_V_shapes_and_shardings`)
-    excludes it from the shape/sharding it computes for this regime. Empty
-    keeps the default path byte-identical.
-    """
-
     certainty_equivalent: CertaintyEquivalent | None
     """Nonlinear certainty equivalent declared by the regime, if any."""
 
@@ -1533,9 +1536,9 @@ class Regime:
     edge_reference_regimes: tuple[RegimeName, ...] = ()
     """Regimes a gated edge reads a projected value from, or empty.
 
-    A gate reference and a leg fallback both name another regime's value at
-    coordinates a projection produces. Neither is tabulated on the target's
-    grid, so both are read where the source lands — inside the source's own
+    A leg fallback names another regime's value at coordinates a projection
+    produces. It is not tabulated on the target's grid, so it is read where the
+    source lands — inside the source's own
     kernel — at the value of the period the source lands in. The rolled V
     mapping already carries that array; these names are what pick it out and
     thread each reference regime's OWN grid params beside it.
@@ -1804,7 +1807,6 @@ def place_template_on_regime_devices[Template](
     grids: MappingProxyType[StateOrActionName, Grid],
     sharded_state_names: frozenset[StateName],
     states: Mapping[StateName, FloatND | IntND],
-    fold_state_names: tuple[StateName, ...],
     submesh_device_ids: tuple[int, ...],
     action_partitions: int = 1,
 ) -> Template:
@@ -1816,7 +1818,7 @@ def place_template_on_regime_devices[Template](
         devices=devices,
         action_partitions=action_partitions,
     )
-    state_order = tuple(name for name in states if name not in fold_state_names)
+    state_order = tuple(states)
     replicated = (
         jax.sharding.SingleDeviceSharding(devices[0])
         if plan is None

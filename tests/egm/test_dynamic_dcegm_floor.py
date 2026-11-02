@@ -538,7 +538,6 @@ def test_cell_floor_is_evaluated_once_before_discrete_action_mapping(
             if asset_rows
             else step_core._get_solve_one_combo
         ),
-        mask_gap_rows=False,
         has_taste_shocks=False,
         own_discrete_state_names=(),
         own_passive_state_names=("z",),

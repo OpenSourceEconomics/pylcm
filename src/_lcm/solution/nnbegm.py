@@ -64,7 +64,6 @@ from _lcm.egm.outer_replay_capability import (
     resolve_outer_replay_capability,
 )
 from _lcm.egm.outer_search import AdaptiveOuterMesh, FiniteOuterGrid, OuterSearch
-from _lcm.egm.projected_continuation import ProjectedChildAuthority
 from _lcm.egm.published_policy import (
     EGMSimPolicy,
     NBEGMGridPolicy,
@@ -80,6 +79,8 @@ from _lcm.execution.core_program import (
     core_program_graph,
 )
 from _lcm.grids import ContinuousGrid, DiscreteGrid, Grid
+from _lcm.grids.materialization import admitted_grid_extent
+from _lcm.materialization import DatedGenerationMaterializer
 from _lcm.params.edges import regime_kernel_params
 from _lcm.post_decision_bound import PostDecisionBoundSpec
 from _lcm.solution.continuation_reads import (
@@ -133,6 +134,7 @@ from _lcm.solution.periodization import (
 )
 from _lcm.solution.solver_diagnostics import SolverDiagnostics
 from _lcm.time import TimeAxis
+from _lcm.transition_plans import SupportOrigin
 from _lcm.typing import (
     EconFunction,
     EconFunctionArg,
@@ -167,6 +169,7 @@ from lcm.typing import (
     FloatND,
     FunctionName,
     IntND,
+    ScalarFloat,
     StateName,
 )
 
@@ -240,6 +243,11 @@ class NNBEGM(TwoMarginSolver):
                 _fail_if_outer_grid_is_stochastic(search.initial_grid)
             case _:
                 pass
+
+    @property
+    def transition_local_lottery_origins(self) -> frozenset[SupportOrigin]:
+        """Both nested roles are inner ride-along NB-EGM solves; they read its draws."""
+        return self.inner.transition_local_lottery_origins
 
     def _fail_if_aggregation_is_unsupported(
         self, aggregator: OuterBranchAggregator
@@ -333,11 +341,14 @@ class NNBEGM(TwoMarginSolver):
     def egm_continuation_layout(self) -> EGMContinuationLayout:
         """Describe the carry published by the configured outer search."""
         if isinstance(self.outer_search, FiniteOuterGrid):
+            from lcm.exceptions import ExecutionPlanningError  # noqa: PLC0415
+
+            try:
+                extent = admitted_grid_extent(spec=self.outer_search.grid)
+            except ExecutionPlanningError:
+                extent = int(self.outer_search.grid.to_jax().shape[0])
             return replace(
-                self.inner.egm_continuation_layout,
-                n_stacked_candidates=(
-                    int(self.outer_search.grid.to_jax().shape[0]) + 1
-                ),
+                self.inner.egm_continuation_layout, n_stacked_candidates=extent + 1
             )
         return self.inner.egm_continuation_layout
 
@@ -439,6 +450,7 @@ class NNBEGM(TwoMarginSolver):
         validate_nnbegm_regime(
             regime_name=context.regime_name,
             user_regime=user_regime,
+            shock_node_states=context.shock_node_states,
         )
         bound = cast("_BoundNNBEGM", self)
         outer_state = bound.outer_state
@@ -490,8 +502,11 @@ class NNBEGM(TwoMarginSolver):
         bound = cast("_BoundNNBEGM", self)
         bound.inner.validate_build(context=context)
 
-    def build_period_kernels(  # noqa: PLR0915
-        self, *, context: SolverBuildContext
+    def build_period_kernels(  # noqa: C901, PLR0915
+        self,
+        *,
+        context: SolverBuildContext,
+        materializer: DatedGenerationMaterializer | None = None,
     ) -> SolutionKernels:
         r"""Build one nested period adapter per period, wrapping inner kernels.
 
@@ -523,7 +538,7 @@ class NNBEGM(TwoMarginSolver):
         query_input_authorities: dict[
             int,
             tuple[
-                tuple[RegimeName, int, PostDecisionBoundSpec | ProjectedChildAuthority],
+                tuple[RegimeName, int, PostDecisionBoundSpec],
                 ...,
             ],
         ] = {}
@@ -568,7 +583,9 @@ class NNBEGM(TwoMarginSolver):
                     adjuster_context,
                     nbegm_source_query_model=inner_models["adjuster"],
                 )
-            adjuster_group = bound.inner.build_period_kernels(context=adjuster_context)
+            adjuster_group = bound.inner.build_period_kernels(
+                context=adjuster_context, materializer=materializer
+            )
             no_adjustment_func = (
                 group_context.functions[bound.outer_no_adjustment_candidate]
                 if bound.outer_no_adjustment_candidate is not None
@@ -597,7 +614,9 @@ class NNBEGM(TwoMarginSolver):
                     keeper_context,
                     nbegm_source_query_model=inner_models["keeper"],
                 )
-            keeper_group = bound.inner.build_period_kernels(context=keeper_context)
+            keeper_group = bound.inner.build_period_kernels(
+                context=keeper_context, materializer=materializer
+            )
             _merge_nnbegm_reader_contracts(
                 keeper=keeper_group,
                 adjuster=adjuster_group,
@@ -655,11 +674,26 @@ class NNBEGM(TwoMarginSolver):
                 build_kernel = functools.partial(
                     _FiniteNNBEGMPeriodKernel, outer_search=search
                 )
-                outer_grid_values = search.grid.to_jax()
-                template = _stack_carry_template(
-                    template=cast("EGMCarry", inner_template),
-                    n_candidates=int(outer_grid_values.shape[0]) + 1,
+                outer_grid_values = (
+                    search.grid.to_jax()
+                    if materializer is None
+                    else materializer.materialize_grid(spec=search.grid)
                 )
+                if materializer is None:
+                    template = _stack_carry_template(
+                        template=cast("EGMCarry", inner_template),
+                        n_candidates=int(outer_grid_values.shape[0]) + 1,
+                    )
+                else:
+                    from _lcm.solution.negm import (  # noqa: PLC0415
+                        _stack_owned_carry_template,
+                    )
+
+                    template = _stack_owned_carry_template(
+                        template=cast("EGMCarry", inner_template),
+                        n_candidates=int(outer_grid_values.shape[0]) + 1,
+                        materializer=materializer,
+                    )
             case AdaptiveOuterMesh():
                 build_kernel = functools.partial(
                     _AdaptiveNNBEGMPeriodKernel, outer_search=search
@@ -706,7 +740,31 @@ class NNBEGM(TwoMarginSolver):
         # The representative age's outer nodes. Each period's own endpoints are
         # read off that period's nodes wherever it declares them, so this is
         # only the fallback for an age-invariant outer grid.
-        representative_outer_values = context.grids[bound.outer_state].to_jax()
+        representative_outer_values = (
+            context.grids[bound.outer_state].to_jax()
+            if materializer is None
+            else materializer.materialize_grid(spec=context.grids[bound.outer_state])
+        )
+        owned_savings = (
+            None
+            if materializer is None
+            else materializer.materialize_grid(spec=spec.savings_grid)
+        )
+        owned_liquid = (
+            None
+            if materializer is None
+            else materializer.materialize_grid(
+                spec=context.grids[spec.continuous_state]
+            )
+        )
+        layout = (
+            self.egm_continuation_layout
+            if materializer is None
+            else replace(
+                spec.egm_continuation_layout,
+                n_stacked_candidates=int(outer_grid_values.shape[0]) + 1,
+            )
+        )
 
         branch_aggregation_by_period = {
             period: _resolve_branch_fixed_cost(
@@ -728,6 +786,7 @@ class NNBEGM(TwoMarginSolver):
                         period_to_state_nodes=context.period_to_state_nodes,
                         outer_state=bound.outer_state,
                         representative_outer_values=representative_outer_values,
+                        materializer=materializer,
                     ),
                     outer_post_decision=bound.outer_post_decision,
                     outer_target_function=outer_target_function_by_period[period],
@@ -735,15 +794,31 @@ class NNBEGM(TwoMarginSolver):
                     outer_action=bound.outer_action,
                     inner_action=inner_action,
                     resources_target=spec.budget_target,
-                    savings_lower_bound=float(spec.savings_grid.to_jax()[0]),
-                    liquid_grid_values=context.grids[spec.continuous_state].to_jax(),
+                    savings_lower_bound=float(spec.savings_grid.to_jax()[0])
+                    if materializer is None
+                    else float(
+                        materializer.evaluate_validation(
+                            function=_nnbegm_grid_first,
+                            arguments={"points": owned_savings},
+                        )
+                    ),
+                    liquid_grid_values=context.grids[spec.continuous_state].to_jax()
+                    if materializer is None
+                    else owned_liquid,
                     liquid_state_name=spec.continuous_state,
                     outer_no_adjustment_name=bound.outer_no_adjustment_candidate,
                     inverse_marginal=_nested_inverse_marginal(
                         context=resolved_by_period[period],
-                        rows_on_state_grid=self.egm_continuation_layout.rows_share_state_grid,
+                        rows_on_state_grid=layout.rows_share_state_grid,
                         inner_action=inner_action,
-                        savings_top=float(spec.savings_grid.to_jax()[-1]),
+                        savings_top=float(spec.savings_grid.to_jax()[-1])
+                        if materializer is None
+                        else float(
+                            materializer.evaluate_validation(
+                                function=_nnbegm_grid_last,
+                                arguments={"points": owned_savings},
+                            )
+                        ),
                     ),
                     row_discrete_state_names=row_discrete_state_names,
                     row_passive_state_names=row_passive_state_names,
@@ -790,9 +865,7 @@ class NNBEGM(TwoMarginSolver):
                     template=template,
                     layout=replace(
                         keeper_egm_spec.layout,
-                        n_stacked_candidates=(
-                            self.egm_continuation_layout.n_stacked_candidates
-                        ),
+                        n_stacked_candidates=(layout.n_stacked_candidates),
                         query_spec=None
                         if query_model is None
                         else query_model.authority,
@@ -2291,9 +2364,7 @@ def _merge_nnbegm_reader_contracts(
     capabilities: dict[int, Mapping[RegimeName, ContinuationCapabilities]],
     authorities: dict[
         int,
-        tuple[
-            tuple[RegimeName, int, PostDecisionBoundSpec | ProjectedChildAuthority], ...
-        ],
+        tuple[tuple[RegimeName, int, PostDecisionBoundSpec], ...],
     ],
 ) -> None:
     """Forward matching actual inner readers across disjoint source-period groups."""
@@ -2638,7 +2709,8 @@ def _fail_if_the_outer_search_leaves_the_outer_state_domain(
     low, high = domain[0], domain[-1]
     below = jnp.min(nodes) < low
     above = jnp.max(nodes) > high
-    if not bool(below | above):
+    outside = below | above
+    if not bool(outside):
         return
 
     side = "below" if bool(below) else "above"
@@ -2699,6 +2771,7 @@ def _outer_state_domain_at(
     ),
     outer_state: StateName,
     representative_outer_values: Float1D,
+    materializer: DatedGenerationMaterializer | None = None,
 ) -> tuple[float, float]:
     """Return the outer state's declared endpoints in one period.
 
@@ -2726,6 +2799,19 @@ def _outer_state_domain_at(
             outer_state, representative_outer_values
         )
     )
+    if materializer is not None:
+        return (
+            float(
+                materializer.evaluate_validation(
+                    function=_nnbegm_grid_first, arguments={"points": nodes}
+                )
+            ),
+            float(
+                materializer.evaluate_validation(
+                    function=_nnbegm_grid_last, arguments={"points": nodes}
+                )
+            ),
+        )
     return float(nodes[0]), float(nodes[-1])
 
 
@@ -3082,3 +3168,16 @@ def _fail_if_nnbegm_carry_publishes_topology_rows(
             "declared jump breakpoints."
         )
         raise RegimeInitializationError(msg)
+
+
+def _nnbegm_grid_first(*, points: Float1D) -> ScalarFloat:
+    """Read the original first grid node as an admitted stage."""
+    return points[0]
+
+
+def _nnbegm_grid_last(*, points: Float1D) -> ScalarFloat:
+    """Read the original last grid node as an admitted stage."""
+    return points[-1]
+
+
+_ORIGINAL_FINITE_NNBEGM_PERIOD_KERNEL = _FiniteNNBEGMPeriodKernel

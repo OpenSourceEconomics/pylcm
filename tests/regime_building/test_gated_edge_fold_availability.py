@@ -42,54 +42,41 @@ class _SelfLoopRegimeId:
     src_fallback: ScalarInt
 
 
-def _gate(V_target: FloatND) -> BoolND:
-    return V_target > 0.0
+def _gate(x: FloatND) -> BoolND:
+    return x > 0.0
 
 
 def _edge(
     *,
     target: RegimeName,
-    fallback: str,
-    gate_ref: str | None = None,
+    fallbacks: tuple[RegimeName, ...],
     fold_periods: tuple[int, ...] = (0, 1, 2),
 ) -> ResolvedGatedEdge:
-    """A minimal resolved edge whose fold reads `fallback` (and maybe `gate_ref`).
+    """A minimal resolved edge with one leg per regime in `fallbacks`.
 
     It carries a compiled fold at each of `fold_periods`; the availability
     question reads only which periods have one.
     """
-    gate_refs = (
-        {}
-        if gate_ref is None
-        else {
-            "V_ref": ResolvedProjectedRegimeValue(
-                regime=gate_ref, projection={}, stakeholder_index=None
-            )
-        }
-    )
-    references = tuple(
-        name
-        for name in dict.fromkeys((fallback, *((gate_ref,) if gate_ref else ())))
-        if name != target
-    )
     return ResolvedGatedEdge(
         target=target,
         # The availability question never calls the gate; a plain predicate
         # stands in for the user's, which the user-facing `GatedEdge` widens
         # to the protocol on the modeller's behalf.
         gate=cast("ConstraintFunction", _gate),
-        gate_refs=MappingProxyType(gate_refs),
-        legs=(
+        legs=tuple(
             ResolvedStakeholderRoute(
-                route="only",
+                route=f"leg_{index}",
                 source_stakeholder=None,
                 target_component_index=None,
                 fallback=ResolvedProjectedRegimeValue(
                     regime=fallback, projection={}, stakeholder_index=None
                 ),
-            ),
+            )
+            for index, fallback in enumerate(fallbacks)
         ),
-        reference_regimes=references,
+        reference_regimes=tuple(
+            name for name in dict.fromkeys(fallbacks) if name != target
+        ),
         folds_by_period=MappingProxyType(
             dict.fromkeys(fold_periods, cast("CompiledEdgeFold", None))
         ),
@@ -112,7 +99,7 @@ def test_edge_does_not_fold_when_its_target_is_unsolved():
     """An edge whose target was not solved this period keeps the value already held."""
     assert (
         edge_may_fold_at_period(
-            edge=_edge(target="src", fallback="src_fallback"),
+            edge=_edge(target="src", fallbacks=("src_fallback",)),
             source_name="src",
             fold_period=2,
             solved_regimes={"src_fallback"},
@@ -126,7 +113,7 @@ def test_edge_does_not_fold_at_a_period_without_a_compiled_fold():
     """A period where no gated case owes a fold keeps the value already held."""
     assert (
         edge_may_fold_at_period(
-            edge=_edge(target="src", fallback="src_fallback", fold_periods=(2,)),
+            edge=_edge(target="src", fallbacks=("src_fallback",), fold_periods=(2,)),
             source_name="src",
             fold_period=1,
             solved_regimes={"src"},
@@ -140,7 +127,7 @@ def test_edge_folds_when_its_target_and_every_reference_are_solved():
     """An edge folds once the target and every reference regime are solved."""
     assert (
         edge_may_fold_at_period(
-            edge=_edge(target="src", fallback="src_fallback"),
+            edge=_edge(target="src", fallbacks=("src_fallback",)),
             source_name="src",
             fold_period=1,
             solved_regimes={"src", "src_fallback"},
@@ -154,7 +141,7 @@ def test_edge_does_not_fold_when_an_unread_periods_reference_is_unsolved():
     """An unsolved reference is a boundary no-op where no source reads the ``Wbar``."""
     assert (
         edge_may_fold_at_period(
-            edge=_edge(target="src", fallback="src_fallback"),
+            edge=_edge(target="src", fallbacks=("src_fallback",)),
             source_name="src",
             fold_period=0,
             solved_regimes={"src"},
@@ -168,7 +155,7 @@ def test_edge_with_an_unsolved_reference_at_a_read_period_is_rejected():
     """An unsolved reference whose ``Wbar`` a source reads rejects the model."""
     with pytest.raises(ModelInitializationError, match="src_fallback"):
         edge_may_fold_at_period(
-            edge=_edge(target="src", fallback="src_fallback"),
+            edge=_edge(target="src", fallbacks=("src_fallback",)),
             source_name="src",
             fold_period=1,
             solved_regimes={"src"},
@@ -180,7 +167,7 @@ def test_rejection_names_every_unsolved_reference_regime():
     """The rejection names all unsolved references, not just the first."""
     with pytest.raises(ModelInitializationError, match=r"'fb'.*'ref'|'ref'.*'fb'"):
         edge_may_fold_at_period(
-            edge=_edge(target="tgt", fallback="fb", gate_ref="ref"),
+            edge=_edge(target="tgt", fallbacks=("fb", "ref")),
             source_name="src",
             fold_period=1,
             solved_regimes={"tgt"},

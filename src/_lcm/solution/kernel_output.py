@@ -2,9 +2,9 @@
 
 Every artifact a kernel publishes on a channel of its `KernelOutput` is read
 here by its declared key or refused: the continuation channel carries the
-`ContinuationArtifact` a parent reads, the replay channel the simulation policy, the
-solve-time channel the collective dissolution flag, and the auxiliary channel
-the solver diagnostics and the engine-private replay authority. An artifact
+`ContinuationArtifact` a parent reads, the replay channel the simulation policy, and
+the auxiliary channel the solver diagnostics and the engine-private replay
+authority. No built-in key rides the solve-time channel. An artifact
 under any other key, or a known key with a payload of the wrong type, is an
 immediate error naming the regime and period rather than a silent loss, so a
 producer-side artifact without its engine reader cannot ship.
@@ -36,7 +36,6 @@ from _lcm.solution.feasibility import (
 from _lcm.solution.solver_diagnostics import SolverDiagnostics
 from _lcm.typing import ArtifactPayload, RegimeName, SimulationPolicy
 from lcm.solver_api import (
-    DISSOLUTION_FLAG,
     SIMULATION_POLICY,
     SOLVER_DIAGNOSTICS,
     ArtifactAuthority,
@@ -46,7 +45,7 @@ from lcm.solver_api import (
     KernelOutput,
     _canonicalize_artifact_payload,
 )
-from lcm.typing import BoolND, FloatND
+from lcm.typing import FloatND
 
 _SIMULATION_POLICY_TYPES = (
     EGMSimPolicy,
@@ -76,15 +75,6 @@ class ConsumedKernelOutput:
 
     generated_replay_authority: GeneratedReplayAuthority | None
     """The engine-private replay facts emitted beside an adaptive policy."""
-
-    dissolution: BoolND | None
-    """A collective regime's empty-feasible-set flag on the state axes.
-
-    `True` exactly where no action satisfies the combined constraints, so the
-    household argmax was taken over an empty set. Distinct from a numeric
-    `-inf` value, which occurs on-path; gates consume this flag, never test
-    `V == -inf`.
-    """
 
     diagnostics: SolverDiagnostics | None
     """The solver's numerical self-report, when it measures anything."""
@@ -203,21 +193,6 @@ def consume_kernel_output(
         period=period,
     )
     solve_time_artifacts = dict(output.solve_time_artifacts)
-    dissolution = _pop_typed_artifact(
-        channel="solve_time_artifacts",
-        artifacts=solve_time_artifacts,
-        key=DISSOLUTION_FLAG,
-        expected_types=(jnp.ndarray,),
-        regime_name=regime_name,
-        period=period,
-    )
-    if dissolution is not None and jnp.dtype(dissolution.dtype) != jnp.bool_:
-        msg = (
-            f"Regime '{regime_name}' in period {period} published artifact "
-            f"'{DISSOLUTION_FLAG.type_id}' with dtype {dissolution.dtype}; expected "
-            "bool."
-        )
-        raise RuntimeError(msg)
     auxiliary = dict(output.auxiliary)
     diagnostics = _pop_typed_artifact(
         channel="auxiliary",
@@ -268,7 +243,6 @@ def consume_kernel_output(
         continuation=continuation,
         simulation_policy=simulation_policy,
         generated_replay_authority=generated_replay_authority,
-        dissolution=dissolution,
         diagnostics=diagnostics,
         continuation_artifacts=MappingProxyType(published_continuations),
         replay_artifacts=published_replay,

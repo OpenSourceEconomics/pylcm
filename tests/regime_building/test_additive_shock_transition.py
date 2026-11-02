@@ -2,7 +2,8 @@
 
 The shock is the negative of a medical bill paid after the period's choices; it
 reads next period's draws: the health draw, which the target carries as a state,
-and a transitory shock that only the transition reads. Declared through
+and a transitory shock drawn after the choice, declared as a post-decision shock group
+that only the transition reads. Declared through
 `lcm.AdditiveShockTransition`, the solve averages the target's value function over
 the transitory shock once per period, on the merged points `{w_j - shock_k}`, and
 reads that average at the base the source carries into the period. With the value
@@ -28,7 +29,6 @@ from _lcm.grids.coordinates import get_irreg_coordinate
 from _lcm.regime_building import Q_and_F
 from _lcm.regime_building.ndimage import map_coordinates
 from _lcm.regime_building.shock_average import average_over_shock
-from _lcm.utils.logging import LogLevel
 from lcm import (
     AdditiveShockTransition,
     AgeGrid,
@@ -45,7 +45,11 @@ from lcm import (
     Transition,
     categorical,
 )
-from lcm.exceptions import ModelInitializationError, RegimeInitializationError
+from lcm.exceptions import (
+    ModelInitializationError,
+    ShockDeclarationError,
+)
+from lcm.shocks import GaussHermite, Normal, Product, ShockGroup
 from lcm.transition import StochasticTransition
 from lcm.typing import (
     BoolND,
@@ -95,10 +99,17 @@ class _Health:
     good: ScalarInt
 
 
-def _xi() -> NormalIIDProcess:
-    return NormalIIDProcess(
-        n_points=N_XI, gauss_hermite=True, mu=0.0, sigma=1.0, fold=True
+def _xi(n_points: int = N_XI) -> ShockGroup:
+    return ShockGroup(
+        shocks={"xi": Normal(mu=0.0, sigma=1.0)},
+        nodes=Product(xi=GaussHermite(n_points)),
     )
+
+
+def _xi_nodes_and_weights() -> tuple[np.ndarray, np.ndarray]:
+    """Standard-normal Gauss-Hermite nodes and weights of the `xi` group."""
+    raw_nodes, raw_weights = np.polynomial.hermite.hermgauss(N_XI)
+    return np.sqrt(2.0) * raw_nodes, raw_weights / np.sqrt(np.pi)
 
 
 def _is_poor(wealth: ContinuousState) -> BoolND:
@@ -170,8 +181,8 @@ def _model(
         states={
             "wealth": _wealth_grid(off_grid=off_grid),
             "health": DiscreteGrid(_Health),
-            "xi": _xi(),
         },
+        shocks=("bill_shock",),
         state_transitions={
             "wealth": {"alive": law, "dead": law},
             "health": StochasticTransition(func=_next_health),
@@ -206,6 +217,7 @@ def _model(
         ages=_ages(),
         regime_id_class=_RegimeId,
         initial_nodes={0: "alive"},
+        shocks={"bill_shock": _xi()},
     )
 
 
@@ -231,9 +243,7 @@ def _interp_extrapolating(*, x: float, nodes: np.ndarray, values: np.ndarray) ->
 
 def _reference_alive_values() -> dict[int, np.ndarray]:
     """Literal backward induction of `alive`, keyed by period, as `[wealth, health]`."""
-    xi = _xi()
-    xi_nodes = np.asarray(xi.to_jax(), dtype=np.float64)
-    xi_weights = np.asarray(xi.get_transition_probs(), dtype=np.float64)[0]
+    xi_nodes, xi_weights = _xi_nodes_and_weights()
     wealth_nodes = np.asarray(_wealth_grid().to_jax(), dtype=np.float64)
     dead_V = np.log(wealth_nodes + 11.0)
 
@@ -414,7 +424,7 @@ def test_the_plain_law_value_matches_the_literal_backward_induction(
 def test_clipped_averaged_bill_matches_every_native_shock_read(
     off_grid: OffGrid,
 ) -> None:
-    """The folded average preserves values, policies and actual state histories."""
+    """The averaged bill preserves values, policies and actual state histories."""
     values = {}
     frames = {}
     for additive in (False, True):
@@ -497,7 +507,7 @@ def test_a_shock_reading_a_source_state_outside_its_conditioners_is_refused() ->
 
 
 @pytest.mark.parametrize("additive", [False, True])
-def test_validate_transitions_accepts_plain_and_folded_shock_laws(
+def test_validate_transitions_accepts_plain_and_additive_shock_laws(
     *, additive: bool
 ) -> None:
     """The no-solve preflight accepts both declarations of the same shock law."""
@@ -570,7 +580,6 @@ def _ce_model(
     ce_at_model: bool = True,
     live_terminal_shock: bool = False,
     shock_reads_wealth: bool = False,
-    alive_reads_xi: bool = False,
 ) -> Model:
     grid = LinSpacedGrid(start=0.0, stop=4.0, n_points=5)
     ce = {
@@ -581,34 +590,18 @@ def _ce_model(
         "default": None,
     }[ce_kind]
     alive = Regime(
-        states={
-            "wealth": grid,
-            "xi": NormalIIDProcess(
-                n_points=3, gauss_hermite=True, mu=0.0, sigma=1.0, fold=True
-            ),
-        },
+        states={"wealth": grid},
+        shocks=("bill_shock",),
         state_transitions={
-            "wealth": _wealth_base
-            if alive_reads_xi
-            else (
-                AdditiveShockTransition(base="base", shock="shock")
-                if additive
-                else _additive_law
-            )
+            "wealth": AdditiveShockTransition(base="base", shock="shock")
+            if additive
+            else _additive_law
         },
         functions={
-            "utility": _terminal_value_with_xi if alive_reads_xi else _constant_utility,
-        }
-        | (
-            {}
-            if alive_reads_xi
-            else {
-                "base": _wealth_base,
-                "shock": _cost_reading_wealth
-                if shock_reads_wealth
-                else _identity_shock,
-            }
-        ),
+            "utility": _constant_utility,
+            "base": _wealth_base,
+            "shock": _cost_reading_wealth if shock_reads_wealth else _identity_shock,
+        },
         certainty_equivalent=None if ce_at_model else ce,
     )
     dead = Regime(
@@ -630,6 +623,7 @@ def _ce_model(
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regime_id_class=_RegimeId,
         initial_nodes={0: ("alive", "dead")},
+        shocks={"bill_shock": _xi(3)},
         **({"certainty_equivalent": ce} if ce_at_model and ce is not None else {}),
     )
 
@@ -642,6 +636,9 @@ def _ce_model(
         ("subclass", True),
         ("linear", True),
         ("linear", False),
+        ("power", False),
+        ("quasi", False),
+        ("subclass", False),
         ("default", True),
     ],
 )
@@ -651,8 +648,10 @@ def test_additive_transition_preserves_each_certainty_equivalent(
 ) -> None:
     """Arithmetic averaging is reserved for exact linear expectations.
 
-    The independent oracle evaluates the arithmetic or harmonic mean directly
-    at every wealth node, including landings outside the wealth grid.
+    The certainty equivalent aggregates over the post-decision draw whether it is
+    declared on the model or on the regime. The independent oracle evaluates the
+    arithmetic or harmonic mean directly at every wealth node, including landings
+    outside the wealth grid.
     """
     # Three-node standard-normal Gauss-Hermite quadrature, independently stated.
     nodes = np.array([-np.sqrt(3.0), 0.0, np.sqrt(3.0)])
@@ -681,29 +680,10 @@ def test_additive_transition_preserves_each_certainty_equivalent(
         )
 
 
-@pytest.mark.parametrize("round_trip", [False, True], ids=["built", "restored"])
-@pytest.mark.parametrize("log_level", ["off", "debug"])
-def test_a_transition_only_name_preserves_another_regimes_live_initial_state(
-    *, round_trip: bool, log_level: LogLevel
-) -> None:
-    """A terminal entrant retains xi 0.7 and receives terminal value 12.7."""
-    model = _ce_model(additive=False, live_terminal_shock=True)
-    if round_trip:
-        model = cloudpickle.loads(cloudpickle.dumps(model))
-    frame = model.simulate(
-        params={"discount_factor": DISCOUNT_FACTOR},
-        initial_conditions={
-            "wealth": jnp.array([2.0]),
-            "xi": jnp.array([0.7]),
-            "age": jnp.array([0.0]),
-            "regime_id": jnp.array([_RegimeId.dead]),
-        },
-        log_level=log_level,
-    ).to_dataframe()
-    np.testing.assert_array_almost_equal(frame["xi"], [0.7], decimal=DECIMAL_PRECISION)
-    np.testing.assert_array_almost_equal(
-        frame["value"], [12.7], decimal=DECIMAL_PRECISION
-    )
+def test_a_post_decision_shock_named_like_another_regimes_state_is_refused() -> None:
+    """A physical shock name is one model-wide name; a state cannot reuse it."""
+    with pytest.raises(ShockDeclarationError, match="'xi' has conflicting"):
+        _ce_model(additive=False, live_terminal_shock=True)
 
 
 @pytest.mark.parametrize("ce_kind", ["power", "quasi", "subclass"])
@@ -713,44 +693,3 @@ def test_nonlinear_fallback_still_validates_the_additive_decomposition(
     """An undeclared source-state dependency is refused even without averaging."""
     with pytest.raises(ModelInitializationError, match="reads the source's"):
         _ce_model(additive=True, ce_kind=ce_kind, shock_reads_wealth=True)
-
-
-@pytest.mark.parametrize("ce_kind", ["power", "quasi", "subclass", "linear", "default"])
-@pytest.mark.parametrize("ce_at_model", [False, True], ids=["regime-ce", "model-ce"])
-def test_within_period_folding_requires_the_exact_linear_expectation(
-    *, ce_kind: str, ce_at_model: bool
-) -> None:
-    """Within-period averaging admits only an absent or exact linear mean."""
-    if ce_kind in {"power", "quasi", "subclass"}:
-        with pytest.raises(RegimeInitializationError, match="certainty_equivalent"):
-            _ce_model(
-                additive=False,
-                ce_kind=ce_kind,
-                ce_at_model=ce_at_model,
-                alive_reads_xi=True,
-            )
-    else:
-        model = _ce_model(
-            additive=False,
-            ce_kind=ce_kind,
-            ce_at_model=ce_at_model,
-            alive_reads_xi=True,
-        )
-        assert "xi" in model.state_names(regime_name="alive")
-        solution = model.solve(
-            params={"discount_factor": DISCOUNT_FACTOR}, log_level="off"
-        )
-        np.testing.assert_array_almost_equal(
-            solution.values[0]["alive"],
-            (1.0 + DISCOUNT_FACTOR) * (10.0 + np.arange(5)),
-            decimal=DECIMAL_PRECISION,
-        )
-
-
-@pytest.mark.parametrize("ce_kind", ["power", "quasi", "subclass"])
-def test_an_explicit_regime_nonlinear_ce_keeps_its_fold_admission_restriction(
-    ce_kind: str,
-) -> None:
-    """Regime construction refuses nonlinear means before draw-only pruning."""
-    with pytest.raises(RegimeInitializationError, match="certainty_equivalent"):
-        _ce_model(additive=True, ce_kind=ce_kind, ce_at_model=False)

@@ -19,7 +19,7 @@ import numpy as np
 from _lcm.policy_queries import QueryKind, _PolicyQueryKernel
 from tests.solution.test_dcegm_age_specialized_function import _twin
 from tests.solution.test_gated_edge_reference_age_specialized_axes import (
-    _build_model as _build_arrival_model,
+    _build_model as _build_participation_model,
 )
 from tests.test_models.deterministic.regression import get_model
 
@@ -92,13 +92,13 @@ def test_signatures_are_hashable() -> None:
     assert isinstance(hash(tuple(regime.solution.period_signatures.values())), int)
 
 
-def test_arrival_references_bind_their_dated_stored_support() -> None:
+def test_participation_references_bind_their_dated_stored_support() -> None:
     """The represented index read uses its actual landing date and grid."""
-    regime = _build_arrival_model()._regimes["saver"]
+    regime = _build_participation_model()._regimes["saver"]
     for source_period, expected in ((0, [0.0, 4.0, 8.0]), (1, [0.0, 2.0, 4.0])):
         kernel = regime.solution.period_kernels[source_period]
         assert isinstance(kernel, _PolicyQueryKernel)
-        plan = kernel.root_context.arrival_queries[source_period]["account"]
+        plan = kernel.root_context.participation_queries[source_period]["account"]
         assert plan.period == source_period + 1
         represented = [
             node
@@ -128,7 +128,7 @@ def test_a_regime_declaring_no_gated_edge_has_no_gated_component() -> None:
 
 def test_a_source_period_losing_a_target_gets_its_own_decision_component() -> None:
     """Losing the self target splits the underlying decision grouping."""
-    regime = _build_arrival_model()._regimes["saver"]
+    regime = _build_participation_model()._regimes["saver"]
     for period in (0, 1):
         kernel = regime.solution.period_kernels[period]
         assert isinstance(kernel, _PolicyQueryKernel)

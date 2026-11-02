@@ -31,6 +31,7 @@ from h5py import h5o  # ty: ignore[unresolved-import]
 
 from _lcm import version as _version
 from _lcm.dtypes import CanonicalArrayWriter
+from _lcm.participation_continuation import PARTICIPATION_SURFACE_PREFIX
 from _lcm.solution.result_snapshot import (
     snapshot_artifact_authorities,
     snapshot_artifact_store,
@@ -108,6 +109,12 @@ class _Unloaded(Enum):
 
 _MANIFEST_DATASET: Final = "manifest"
 _PAYLOAD_GROUP: Final = "payloads"
+# Optional manifest field, written only by a solve that stored participation surfaces.
+_PARTICIPATION_SURFACES: Final = "participation_surfaces"
+# What each stored participation surface's trailing axis holds: the branches and
+# decision operands of `_lcm.participation_queries.surface_channels`, or, where the
+# decision cannot be re-run between nodes, the value after it.
+_PARTICIPATION_SURFACE_LAYOUT: Final = "decision-branches"
 _UNLOADED: Final = _Unloaded.UNLOADED
 _PAYLOAD_ADDRESS_LENGTH: Final = 8
 _SHA256_HEX_LENGTH: Final = 64
@@ -271,6 +278,7 @@ class _SaveSnapshot:
     values: tuple[_PreparedPayload, ...]
     artifacts: tuple[_PreparedPayload, ...]
     omissions: tuple[tuple[ArtifactRef, OmissionReason], ...]
+    participation_surfaces: tuple[_PreparedPayload, ...] = ()
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -322,6 +330,8 @@ class _LazyHdf5Entry(_LazyEntry):
         self,
         *,
         template_snapshot: _CanonicalArtifactTemplate,
+        array_writer: CanonicalArrayWriter | None = None,
+        array_copier: _ArrayCopier | None = None,
     ) -> ArtifactPayload:
         """Load a PyTree directly from its model-authoritative cached declaration."""
         if type(template_snapshot) is not _CanonicalArtifactTemplate:
@@ -329,6 +339,8 @@ class _LazyHdf5Entry(_LazyEntry):
         return self._materialize(
             template=None,
             template_snapshot=template_snapshot,
+            array_writer=array_writer,
+            array_copier=array_copier,
         )
 
     def _materialize(  # noqa: C901
@@ -345,11 +357,15 @@ class _LazyHdf5Entry(_LazyEntry):
         lock across callbacks, never a cache peek/publication lock, so concurrent
         entries cannot invert observation locks. Dependencies remain call-local.
         """
-        if (
-            array_writer is not None or array_copier is not None
-        ) and self.payload_kind != "array":
+        if self.payload_kind != "array" and (
+            (
+                (array_writer is not None or array_copier is not None)
+                and template_snapshot is None
+            )
+            or ((array_writer is None) != (array_copier is None))
+        ):
             raise TypeError(
-                "Admitted native materialization only supports value arrays."
+                "Owned PyTree loading requires the original snapshot and paired owners."
             )
         if template is not None and template_snapshot is not None:
             raise TypeError("Supply a template or a template snapshot, not both.")
@@ -442,6 +458,7 @@ class _LazyHdf5Entry(_LazyEntry):
             _copy_artifact_array_leaf(
                 leaf=leaf,
                 label=f"{self.label} leaf {index}",
+                array_copier=array_copier,
             )
             for index, leaf in enumerate(cached.leaves)
         )
@@ -502,7 +519,10 @@ def save_solution_archive(*, solution: _SolutionResultBoundary, path: Path) -> P
     # Materialize, validate, and copy the entire result before creating even a
     # temporary archive.  The writer therefore cannot observe a different user
     # container or mutable array from the object that passed preflight.
-    snapshot = _prepare_solution_for_save(solution=solution)
+    snapshot = replace(
+        _prepare_solution_for_save(solution=solution),
+        participation_surfaces=_prepare_participation_surfaces(solution=solution),
+    )
 
     tmp_path: Path | None = None
     try:
@@ -617,7 +637,7 @@ def load_solution_archive(  # noqa: C901, PLR0912, PLR0915
         )
     typed_manifest = cast("dict[str, JSONValue]", manifest)
     _check_archive_versions(manifest=typed_manifest)
-    if set(typed_manifest) != {
+    if set(typed_manifest) - {_PARTICIPATION_SURFACES} != {
         "format_version",
         "pylcm_version",
         "solver_api_version",
@@ -846,14 +866,146 @@ def load_solution_archive(  # noqa: C901, PLR0912, PLR0915
         diagnostics=ArtifactStore(stores[ArtifactChannel.DIAGNOSTIC]),
         omissions=omissions,
     )
+    surface_entries = _lazy_participation_surfaces(
+        path=path,
+        manifest=typed_manifest,
+        metadata=metadata,
+        addresses=addresses,
+    )
+    nested: dict[int, dict[RegimeName, dict[str, _LazyHdf5Entry]]] = {}
+    for (period, regime, name), entry in sorted(surface_entries.items()):
+        nested.setdefault(period, {}).setdefault(regime, {})[name] = entry
+    object.__setattr__(
+        result,
+        "_participation_surfaces",
+        MappingProxyType(
+            {
+                period: MappingProxyType(
+                    {
+                        regime: MappingProxyType(surfaces)
+                        for regime, surfaces in regimes.items()
+                    }
+                )
+                for period, regimes in nested.items()
+            }
+        ),
+    )
     _validate_archive_structure(
         path=path,
         entries=tuple(value_entries.values())
-        + tuple(entry for store in stores.values() for entry in store.values()),
+        + tuple(entry for store in stores.values() for entry in store.values())
+        + tuple(surface_entries.values()),
     )
     if verify_checksums:
         _verify_result_entries(result=result)
     return result
+
+
+def _surface_identity(
+    *, period: int, regime: RegimeName, name: str
+) -> dict[str, JSONValue]:
+    return {
+        "kind": "participation_surface",
+        "layout": _PARTICIPATION_SURFACE_LAYOUT,
+        "period": period,
+        "regime": regime,
+        "name": name,
+    }
+
+
+def _prepare_participation_surfaces(
+    *, solution: _SolutionResultBoundary
+) -> tuple[_PreparedPayload, ...]:
+    """Copy each stored participation surface, addressed by date, publisher and leaf."""
+    surfaces = solution._participation_surfaces  # noqa: SLF001
+    prepared = []
+    for period in sorted(surfaces):
+        for regime in sorted(surfaces[period]):
+            for name, surface in sorted(surfaces[period][regime].items()):
+                payload = (
+                    surface.materialize()
+                    if isinstance(surface, _LazyHdf5Entry)
+                    else surface
+                )
+                entry = _prepare_payload(
+                    payload=cast("FloatND", payload),
+                    identity=_surface_identity(period=period, regime=regime, name=name),
+                )
+                if entry.payload_kind != "array":
+                    raise IncompatibleSolutionError(
+                        f"Participation surface {name!r} at period={period}, "
+                        f"regime={regime!r} is not one array."
+                    )
+                prepared.append(entry)
+    return tuple(prepared)
+
+
+def _lazy_participation_surfaces(
+    *,
+    path: Path,
+    manifest: dict[str, JSONValue],
+    metadata: SolutionMetadata,
+    addresses: set[str],
+) -> dict[tuple[int, RegimeName, str], _LazyHdf5Entry]:
+    """Read the archive's stored participation surfaces as lazy, checked entries."""
+    entries: dict[tuple[int, RegimeName, str], _LazyHdf5Entry] = {}
+    if _PARTICIPATION_SURFACES not in manifest:
+        return entries
+    for raw_entry in _require_exact_list(
+        value=manifest[_PARTICIPATION_SURFACES], label="participation surface manifest"
+    ):
+        if type(raw_entry) is not dict:
+            raise SolutionIntegrityError(
+                "Participation surface manifest entry is not an object."
+            )
+        entry = cast("dict[str, JSONValue]", raw_entry)
+        period = _require_nonnegative_exact_int(
+            value=entry.get("period"), label="participation surface period"
+        )
+        regime = _require_nonempty_exact_str(
+            value=entry.get("regime"), label="participation surface regime"
+        )
+        name = _require_nonempty_exact_str(
+            value=entry.get("name"), label="participation surface name"
+        )
+        coordinate = (period, regime, name)
+        if entry.get("layout") != _PARTICIPATION_SURFACE_LAYOUT:
+            raise SolutionIntegrityError(
+                f"Persisted participation surface {coordinate!r} stores the layout "
+                f"{entry.get('layout')!r}, not {_PARTICIPATION_SURFACE_LAYOUT!r}; "
+                "re-solve the model and save it again."
+            )
+        if (
+            period >= metadata.n_periods
+            or regime not in metadata.regime_names
+            or not name.startswith(PARTICIPATION_SURFACE_PREFIX)
+        ):
+            raise SolutionIntegrityError(
+                f"Persisted participation surface {coordinate!r} has an invalid "
+                "address."
+            )
+        if coordinate in entries:
+            raise SolutionIntegrityError(
+                f"Solution archive repeats participation surface {coordinate!r}."
+            )
+        lazy = _lazy_entry(
+            path=path,
+            entry=entry,
+            label=f"participation surface {name!r} at period={period}, "
+            f"regime={regime!r}",
+            identity=_surface_identity(period=period, regime=regime, name=name),
+        )
+        if lazy.payload_kind != "array":
+            raise SolutionIntegrityError(
+                f"Persisted participation surface {coordinate!r} is not one array."
+            )
+        if lazy.address in addresses:
+            raise SolutionIntegrityError(
+                f"Solution archive reuses payload address {lazy.address!r}."
+            )
+        addresses.add(lazy.address)
+        entries[coordinate] = lazy
+    return entries
 
 
 def _with_standard_template(
@@ -1575,6 +1727,18 @@ def _write_archive(*, snapshot: _SaveSnapshot, path: Path) -> None:
                 )
             )
 
+        if snapshot.participation_surfaces:
+            surface_entries: list[JSONValue] = []
+            for prepared in snapshot.participation_surfaces:
+                address = f"{counter:08d}"
+                counter += 1
+                surface_entries.append(
+                    _write_payload_entry(
+                        payloads=payloads, address=address, prepared=prepared
+                    )
+                )
+            manifest[_PARTICIPATION_SURFACES] = surface_entries
+
         manifest["omissions"] = [
             {
                 "period": ref.period,
@@ -2040,6 +2204,16 @@ def _verify_result_entries(*, result: _SolutionResultBoundary) -> None:
             raw = store._raw(ref)  # noqa: SLF001
             if isinstance(raw, _LazyHdf5Entry):
                 raw.verify()
+    _verify_participation_surfaces(result=result)
+
+
+def _verify_participation_surfaces(*, result: _SolutionResultBoundary) -> None:
+    """Verify every lazy stored participation surface without materializing it."""
+    for regimes in result._participation_surfaces.values():  # noqa: SLF001
+        for surfaces in regimes.values():
+            for surface in surfaces.values():
+                if isinstance(surface, _LazyHdf5Entry):
+                    surface.verify()
 
 
 def _metadata_to_manifest(metadata: SolutionMetadata) -> dict[str, JSONValue]:

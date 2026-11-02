@@ -49,7 +49,7 @@ from lcm import (
     Regime,
     categorical,
 )
-from lcm.solvers import DCEGM, GridSearch
+from lcm.solvers import DCEGM, GridSearch, RFCEnvelope
 from lcm.typing import (
     ContinuousState,
     FloatND,
@@ -142,7 +142,8 @@ def _model(*, slope: float, transfer: float, declared_as: str) -> Model:
         alive_functions={"utility": utility, "savings": savings, **specialized},
         liquid_law=identity_liquid,
         alive_solver=DCEGM(
-            savings_grid=LinSpacedGrid(start=0.0, stop=60.0, n_points=8)
+            savings_grid=LinSpacedGrid(start=0.0, stop=60.0, n_points=8),
+            envelope=RFCEnvelope(),
         ),
         constraints={},
         dead_functions={"utility": zero_bequest},
@@ -252,7 +253,10 @@ def _source_child_model(
     """
     liquid_grid = LinSpacedGrid(start=0.1, stop=60.0, n_points=9)
     consumption_grid = LinSpacedGrid(start=0.1, stop=60.0, n_points=9)
-    solver = DCEGM(savings_grid=LinSpacedGrid(start=0.0, stop=60.0, n_points=8))
+    solver = DCEGM(
+        savings_grid=LinSpacedGrid(start=0.0, stop=60.0, n_points=8),
+        envelope=RFCEnvelope(),
+    )
     source = ConsumptionSavingsRegime(
         actions={"consumption": consumption_grid},
         states={"liquid": liquid_grid},

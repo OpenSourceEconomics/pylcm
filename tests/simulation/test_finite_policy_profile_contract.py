@@ -1,7 +1,5 @@
 """Independent storage and allocation boundaries for the finite policy corridor."""
 
-import gc
-import weakref
 from collections.abc import Mapping
 from typing import Never, Unpack, cast
 
@@ -17,18 +15,12 @@ from _lcm.egm.published_policy import NNBEGMSimPolicy
 from _lcm.simulation.chunk_planning import SimulationChunkProfile
 from _lcm.simulation.chunk_profile_inventory import ChunkProfileInventory
 from _lcm.simulation.chunk_profiles import profile_simulation_chunk
-from _lcm.simulation.memory import SimulationMemory
-from _lcm.simulation.policy_diagnostics import dropped_candidate_counts
-from _lcm.simulation.residency import measure_buffer_footprint, resident_bytes_by_device
-from _lcm.simulation.runtime import SimulationRuntime
 from _lcm.solution.artifacts import OwnedSolutionView
-from _lcm.typing import PytreeByPeriod, PytreeValue, ShapeDtypePytree
+from _lcm.typing import ShapeDtypePytree
 from lcm.exceptions import ExecutionPlanningError
 from tests.simulation._callback_types import (
     ChunkProfileInputs,
     InventoryCompiled,
-    MemoryRun,
-    RuntimeDispatch,
 )
 from tests.simulation.test_finite_policy_budget import _inputs
 from tests.simulation.test_population_allocation_budget import (
@@ -66,7 +58,7 @@ def test_finite_bank_keeps_the_full_outer_extent_without_allocating(
             bank = cast("tuple[jax.ShapeDtypeStruct, ...]", result)
             observed.append(tuple(leaf.shape for leaf in bank))
             assert sum(leaf.size * np.dtype(leaf.dtype).itemsize for leaf in bank) == (
-                7 * candidate_count * (2 * itemsize + 2)
+                7 * candidate_count * (3 * itemsize + 1)
             )
         return result
 
@@ -130,7 +122,7 @@ def test_public_finite_bank_floor_refuses_before_any_chunk_allocation(
     bank_bytes = (
         width
         * policy.candidate_inner_action.shape[0]
-        * (2 * policy.candidate_inner_action.dtype.itemsize + 2)
+        * (3 * policy.candidate_inner_action.dtype.itemsize + 1)
     )
     model, params, _ = _inputs(discrete=False, budget=bank_bytes - 1, width=width)
     solution = model.solve(params=params, log_level="off")
@@ -158,98 +150,3 @@ def test_public_finite_bank_floor_refuses_before_any_chunk_allocation(
             seed=17,
         )
     assert inspected == ([] if runtime_checks else [width])
-
-
-@pytest.mark.parametrize("refuse", [False, True])
-def test_finite_diagnostic_counts_the_live_bank_and_admits_before_dispatch(
-    *, refuse: bool, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The host diagnostic sees actual preparation owners before allocating."""
-    model, params, initial = _inputs(discrete=False, budget=2**32)
-    solution = model.solve(params=params, log_level="off")
-    banks: list[tuple[jax.Array, ...]] = []
-    bank_refs: list[weakref.ReferenceType[jax.Array]] = []
-    observed: list[bool] = []
-    dispatch = SimulationRuntime.dispatch
-    run = SimulationMemory.run
-
-    def observe_prepare(
-        self: SimulationRuntime, **call: Unpack[RuntimeDispatch]
-    ) -> PytreeValue:
-        result = dispatch(self, **call)
-        if call["program"].name == "simulate_policy_prepare":
-            bank = cast("tuple[jax.Array, ...]", result)
-            banks.append(bank)
-            bank_refs.extend(weakref.ref(leaf) for leaf in bank)
-        return result
-
-    def inspect_count[T: PytreeValue](
-        self: SimulationMemory, **call: Unpack[MemoryRun[T]]
-    ) -> T:
-        if call["function"] is not dropped_candidate_counts:
-            return run(self, **call)
-        bank = banks.pop(0)
-        expected = measure_buffer_footprint(tree=bank)
-        missing = resident_bytes_by_device(
-            live=expected, arguments=self.snapshot(), devices=tuple(expected.spans)
-        )
-        assert not any(missing.values()), "The finite diagnostic omitted its live bank"
-        observed.append(True)
-        if refuse:
-            self.budget_bytes = 1
-            with monkeypatch.context() as guard:
-                guard.setattr(jax, "device_put", _forbid_concrete)
-                guard.setattr(
-                    jax._src.core.EvalTrace, "process_primitive", _forbid_concrete
-                )
-                return run(self, **call)
-        return run(self, **call)
-
-    monkeypatch.setattr(SimulationRuntime, "dispatch", observe_prepare)
-    monkeypatch.setattr(SimulationMemory, "run", inspect_count)
-    if refuse:
-        with pytest.raises(ExecutionPlanningError):
-            model.simulate(
-                params=params,
-                solution=solution,
-                initial_conditions=initial,
-                log_level="warning",
-                seed=17,
-            )
-        assert observed == [True]
-    else:
-        result = model.simulate(
-            params=params,
-            solution=solution,
-            initial_conditions=initial,
-            log_level="warning",
-            seed=17,
-        )
-        assert observed == [True]
-        assert result.n_subjects == 2
-        jax.block_until_ready(result.period_to_regime_to_V_arr)
-        gc.collect()
-        assert all(ref() is None for ref in bank_refs)
-
-
-def test_diagnostic_owner_oracle_rejects_an_omitted_preparation_bank(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A seeded missing host hold is detected by actual independently measured spans."""
-    hold = SimulationMemory.hold
-
-    # keyword-only-exempt: library-callback=SimulationMemory.hold
-    def omit_bank(self: SimulationMemory, tree: PytreeByPeriod) -> None:
-        if (
-            isinstance(tree, tuple)
-            and len(tree) == 4
-            and all(isinstance(leaf, jax.Array) and leaf.ndim == 2 for leaf in tree)
-        ):
-            return
-        hold(self, tree=tree)
-
-    monkeypatch.setattr(SimulationMemory, "hold", omit_bank)
-    with pytest.raises(AssertionError, match="diagnostic omitted its live bank"):
-        test_finite_diagnostic_counts_the_live_bank_and_admits_before_dispatch(
-            refuse=False, monkeypatch=monkeypatch
-        )

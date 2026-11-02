@@ -31,7 +31,7 @@ from lcm.exceptions import ExecutionPlanningError
 from lcm.period_capture import PeriodCapture
 from lcm.regime import Regime
 from lcm.solver_api import ResultRetention, SolutionResult
-from lcm.solvers import DCEGM, STOCHASTIC_NODE_AXIS
+from lcm.solvers import DCEGM, STOCHASTIC_NODE_AXIS, RFCEnvelope
 from lcm.transition import AgeCaseLaw, AgeSelector
 from lcm.typing import FloatND, RegimeName, ScalarInt, UserParams
 from tests.conftest import assert_agrees_to_ulp
@@ -175,6 +175,7 @@ def _model(
         solver=DCEGM(
             savings_grid=LinSpacedGrid(start=0.0, stop=20.0, n_points=5),
             n_constrained_points=4,
+            envelope=RFCEnvelope(),
         ),
         liquid=LiquidMargin(
             state="wealth",

@@ -36,7 +36,7 @@ from lcm import (
     post_decision_lower_bound,
 )
 from lcm.solver_api import EGM_CONTINUATION
-from lcm.solvers import DCEGM, STOCHASTIC_NODE_AXIS, MSSEnvelope
+from lcm.solvers import DCEGM, STOCHASTIC_NODE_AXIS, RFCEnvelope
 from lcm.transition import fixed_transition
 from lcm.typing import (
     Age,
@@ -155,7 +155,7 @@ def _model(
                 solver=DCEGM(
                     savings_grid=IrregSpacedGrid(points=np.array([0.25, 0.75, 1.25])),
                     n_constrained_points=4,
-                    envelope=MSSEnvelope(),
+                    envelope=RFCEnvelope(),
                 ),
             ),
             "child": ConsumptionSavingsRegime(

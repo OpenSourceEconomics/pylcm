@@ -266,6 +266,8 @@ def build_model(
     koopmans_aggregator: UserFunction | Phased | None = None,
     second_passive_state: bool = False,
     carried_state: bool = False,
+    extra_states: Mapping[str, Grid] | None = None,
+    wealth_law: UserFunction | Mapping[str, UserFunction] = next_wealth,
     fixed_params: UserParams | None = None,
     execution_config: ExecutionConfig = ExecutionConfig(),  # noqa: B008
 ) -> Model:
@@ -303,6 +305,10 @@ def build_model(
     rows span two passive axes instead of one.
     `carried_state=True` adds an otherwise unused solve-imputed/simulate-carried
     state for the NNBEGM replay-capability boundary witness.
+    `extra_states` adds states to the alive regime, such as an IID process,
+    which carries its own law; `wealth_law` overrides the liquid law of motion,
+    per target where it is a mapping, so a caller can make it read such a
+    process's draw.
     `constraints` overrides the constraint pool, which otherwise carries the
     budget predicate on the grid-search arm and is empty on the endogenous-grid
     arms, whose kernels enforce the budget identity intrinsically.
@@ -344,8 +350,9 @@ def build_model(
         "wealth": WEALTH_GRID,
         "illiquid": illiquid_grid,
     }
+    states.update(extra_states or {})
     state_transitions = {
-        "wealth": next_wealth,
+        "wealth": wealth_law,
         "illiquid": durable_law if durable_law is not None else durable_transition,
     }
     if second_passive_state:

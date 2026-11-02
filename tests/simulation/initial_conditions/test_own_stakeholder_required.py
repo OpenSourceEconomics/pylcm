@@ -1,4 +1,4 @@
-"""Routing a collective source's arrival needs the simulated row's own role.
+"""Routing a collective source's participation check needs the simulated row's own role.
 
 A collective regime declares one dissolution leg per stakeholder, and each leg
 sends the dissolving row into *that* stakeholder's own continuing regime under
@@ -24,12 +24,12 @@ import pytest
 from lcm import (
     AgeGrid,
     AgeRange,
-    ArrivalDecision,
-    ArrivalRead,
     ByAge,
     CollectiveUtility,
     DiscreteGrid,
     Model,
+    ParticipationCheck,
+    ParticipationRead,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
@@ -77,15 +77,15 @@ CONSENT_WAGES = (1.0, 2.0)
 # Which consent-model subject reaches the collective target.
 CONSENT_MARRIED_MEMBERSHIP = (True, False)
 
-# The married couple's scheduled law and arrival support decision keep it
+# The married couple's scheduled law and participation support decision keep it
 # together while participation is supported; a dissolving row continues in its own
 # stakeholder's single regime under the identity wage projection.
 MARRIED_DISSOLUTION_LAW = {"married_ir": StochasticTransition(func=_prob_one)}
-MARRIED_DISSOLUTION_ARRIVALS = {
-    "married_ir": ArrivalDecision(
+MARRIED_DISSOLUTION_PARTICIPATION = {
+    "married_ir": ParticipationCheck(
         predicate=_participation_support,
         reads={
-            "target_support": ArrivalRead(
+            "target_support": ParticipationRead(
                 regime="married_ir",
                 stakeholder="f",
                 kind="Participating",
@@ -110,7 +110,7 @@ MARRIED_DISSOLUTION_ARRIVALS = {
     )
 }
 
-# The single woman's scheduled law and arrival consent decision admit marriage
+# The single woman's scheduled law and participation consent decision admit marriage
 # when both partners prefer the couple to single life; otherwise she keeps her single
 # value.
 SINGLE_F_CONSENT_LAW = ByAge(
@@ -120,8 +120,8 @@ SINGLE_F_CONSENT_LAW = ByAge(
         }
     }
 )
-SINGLE_F_CONSENT_ARRIVALS = {
-    "married_terminal": ArrivalDecision(
+SINGLE_F_CONSENT_PARTICIPATION = {
+    "married_terminal": ParticipationCheck(
         predicate=_consent_gate,
         routes={
             "f": StakeholderRoute(
@@ -133,24 +133,24 @@ SINGLE_F_CONSENT_ARRIVALS = {
             )
         },
         reads={
-            "V_target_f": ArrivalRead(
+            "V_target_f": ParticipationRead(
                 regime="married_terminal",
                 stakeholder="f",
                 kind="Participating",
                 projection={"wage": _identity_wage},
             ),
-            "V_target_m": ArrivalRead(
+            "V_target_m": ParticipationRead(
                 regime="married_terminal",
                 stakeholder="m",
                 kind="Participating",
                 projection={"wage": _identity_wage},
             ),
-            "V_single_f_ref": ArrivalRead(
+            "V_single_f_ref": ParticipationRead(
                 kind="Raw",
                 regime="single_f_terminal",
                 projection={"wage": _identity_wage},
             ),
-            "V_single_m_ref": ArrivalRead(
+            "V_single_m_ref": ParticipationRead(
                 kind="Raw",
                 regime="single_m_terminal",
                 projection={"wage": _identity_wage},
@@ -186,7 +186,7 @@ def dissolution_model_and_solution():
             "married": Transition(
                 targets={"married_ir": 0, "single_f": 0, "single_m": 0},
                 law=ByAge(cases={AgeRange(exclusive_stop=1): MARRIED_DISSOLUTION_LAW}),
-                arrivals=MARRIED_DISSOLUTION_ARRIVALS,
+                participation=MARRIED_DISSOLUTION_PARTICIPATION,
             ),
             "married_ir": {"married_terminal": 1},
             "single_f": {"single_f_terminal": 1},
@@ -213,7 +213,7 @@ def consent_model_and_solution():
             "single_f": Transition(
                 targets={"married_terminal": 0, "single_f_terminal": 0},
                 law=SINGLE_F_CONSENT_LAW,
-                arrivals=SINGLE_F_CONSENT_ARRIVALS,
+                participation=SINGLE_F_CONSENT_PARTICIPATION,
             )
         },
     )
@@ -414,7 +414,7 @@ def test_a_start_that_cannot_reach_a_role_dependent_route_needs_no_own_role():
             "married": Transition(
                 targets={"married_ir": 0, "single_f": 0, "single_m": 0},
                 law=ByAge(cases={AgeRange(exclusive_stop=1): MARRIED_DISSOLUTION_LAW}),
-                arrivals=MARRIED_DISSOLUTION_ARRIVALS,
+                participation=MARRIED_DISSOLUTION_PARTICIPATION,
             ),
             "married_ir": {"married_terminal": 1},
             "single_f": {"single_f_terminal": 1},
@@ -489,7 +489,7 @@ def test_a_start_that_runs_into_a_role_dependent_route_still_needs_an_own_role()
                 law=ByAge(
                     cases={AgeRange(start=1, exclusive_stop=2): MARRIED_DISSOLUTION_LAW}
                 ),
-                arrivals=MARRIED_DISSOLUTION_ARRIVALS,
+                participation=MARRIED_DISSOLUTION_PARTICIPATION,
             ),
             "married_ir": {"married_terminal": 2},
             "single_f": {"single_f_terminal": 2},
@@ -517,7 +517,7 @@ def test_a_start_that_runs_into_a_role_dependent_route_still_needs_an_own_role()
 
 @pytest.fixture(scope="module")
 def current_exit_model_and_solution() -> tuple[Model, SolutionResult]:
-    """Start in the actual current-exit actor without an incoming arrival rule."""
+    """Start in the actual current-exit actor without an incoming participation rule."""
     model = Model(
         regimes=_make_dissolution_regimes(),
         ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),

@@ -69,36 +69,36 @@ documentation and tests.
 
 ## Transitions, phases, and structured declarations
 
-| Public name                                                                    | Canonical documentation             |
-| ------------------------------------------------------------------------------ | ----------------------------------- |
-| [`lcm.StochasticTransition`](transitions.md#api-state-transitions)             | Stochastic transition wrapper       |
-| [`lcm.AdditiveShockTransition`](transitions.md#api-additive-shock-transitions) | Additive continuous-state shock law |
-| [`lcm.Transition`](transitions.md#api-regime-transitions)                      | Graph edges with their regime law   |
-| [`lcm.ArrivalDecision`](model_and_regime.md#api-arrival-decisions)             | Incoming edge's arrival rule        |
-| [`lcm.ArrivalRead`](model_and_regime.md#api-arrival-reads)                     | Typed projected arrival comparison  |
-| [`lcm.JointTransition`](transitions.md#api-joint-transitions)                  | Shared-draw joint law               |
-| [`lcm.ByAge`](transitions.md#api-dated-regime-transitions)                     | Numerical laws by exact source age  |
-| [`lcm.AgeRange`](transitions.md#api-dated-regime-transitions)                  | Half-open age interval              |
-| [`lcm.ByPeriod`](transitions.md#api-dated-regime-transitions)                  | Numerical laws by source period     |
-| [`lcm.PeriodRange`](transitions.md#api-dated-regime-transitions)               | Half-open period interval           |
-| [`lcm.Periods`](transitions.md#api-dated-regime-transitions)                   | Explicit source periods             |
-| [`lcm.DeterministicTransition`](transitions.md#api-state-transitions)          | Deterministic transition wrapper    |
-| [`lcm.deterministic_transition`](transitions.md#api-state-transitions)         | Deterministic transition decorator  |
-| [`lcm.stochastic_transition`](transitions.md#api-state-transitions)            | Stochastic transition decorator     |
-| [`lcm.fixed_transition`](transitions.md#api-state-transitions)                 | Identity law                        |
-| [`lcm.AgeSpecializedFunction`](transitions.md#api-age-specialization)          | Age-varying function                |
-| [`lcm.AgeSpecializedGrid`](transitions.md#api-age-specialization)              | Age-varying grid                    |
-| [`lcm.PeriodSpecializedFunction`](../user_guide/period_time.md)                | Period-varying function             |
-| [`lcm.PeriodSpecializedGrid`](../user_guide/period_time.md)                    | Period-varying grid                 |
-| [`lcm.Phased`](transitions.md#api-solve-and-simulation-phases)                 | Solve/simulate variants             |
-| [`lcm.Condition`](conditions.md)                                               | Structured Boolean expression       |
-| [`lcm.ref`](conditions.md#api-condition-syntax)                                | Named reference                     |
-| [`lcm.implies`](conditions.md#api-condition-syntax)                            | Conditional requirement             |
-| [`lcm.case_boundary`](case_pieces.md#api-boundary-predicate)                   | Structured case boundary            |
-| [`lcm.piece`](case_pieces.md#api-piece-formulas)                               | Piece decorator                     |
-| [`lcm.smooth_helper`](case_pieces.md#api-piece-formulas)                       | Reviewed smooth-helper attestation  |
-| [`lcm.affine_breakpoint`](piecewise_affine.md#api-affine-breakpoint)           | Schedule breakpoint                 |
-| [`lcm.piecewise_affine`](piecewise_affine.md)                                  | Piecewise-affine schedule           |
+| Public name                                                                    | Canonical documentation                  |
+| ------------------------------------------------------------------------------ | ---------------------------------------- |
+| [`lcm.StochasticTransition`](transitions.md#api-state-transitions)             | Stochastic transition wrapper            |
+| [`lcm.AdditiveShockTransition`](transitions.md#api-additive-shock-transitions) | Additive continuous-state shock law      |
+| [`lcm.Transition`](transitions.md#api-regime-transitions)                      | Graph edges with their regime law        |
+| [`lcm.ParticipationCheck`](model_and_regime.md#api-participation-checks)       | Incoming edge's participation rule       |
+| [`lcm.ParticipationRead`](model_and_regime.md#api-participation-reads)         | Typed projected participation comparison |
+| [`lcm.JointTransition`](transitions.md#api-joint-transitions)                  | Shared-draw joint law                    |
+| [`lcm.ByAge`](transitions.md#api-dated-regime-transitions)                     | Numerical laws by exact source age       |
+| [`lcm.AgeRange`](transitions.md#api-dated-regime-transitions)                  | Half-open age interval                   |
+| [`lcm.ByPeriod`](transitions.md#api-dated-regime-transitions)                  | Numerical laws by source period          |
+| [`lcm.PeriodRange`](transitions.md#api-dated-regime-transitions)               | Half-open period interval                |
+| [`lcm.Periods`](transitions.md#api-dated-regime-transitions)                   | Explicit source periods                  |
+| [`lcm.DeterministicTransition`](transitions.md#api-state-transitions)          | Deterministic transition wrapper         |
+| [`lcm.deterministic_transition`](transitions.md#api-state-transitions)         | Deterministic transition decorator       |
+| [`lcm.stochastic_transition`](transitions.md#api-state-transitions)            | Stochastic transition decorator          |
+| [`lcm.fixed_transition`](transitions.md#api-state-transitions)                 | Identity law                             |
+| [`lcm.AgeSpecializedFunction`](transitions.md#api-age-specialization)          | Age-varying function                     |
+| [`lcm.AgeSpecializedGrid`](transitions.md#api-age-specialization)              | Age-varying grid                         |
+| [`lcm.PeriodSpecializedFunction`](../user_guide/period_time.md)                | Period-varying function                  |
+| [`lcm.PeriodSpecializedGrid`](../user_guide/period_time.md)                    | Period-varying grid                      |
+| [`lcm.Phased`](transitions.md#api-solve-and-simulation-phases)                 | Solve/simulate variants                  |
+| [`lcm.Condition`](conditions.md)                                               | Structured Boolean expression            |
+| [`lcm.ref`](conditions.md#api-condition-syntax)                                | Named reference                          |
+| [`lcm.implies`](conditions.md#api-condition-syntax)                            | Conditional requirement                  |
+| [`lcm.case_boundary`](case_pieces.md#api-boundary-predicate)                   | Structured case boundary                 |
+| [`lcm.piece`](case_pieces.md#api-piece-formulas)                               | Piece decorator                          |
+| [`lcm.smooth_helper`](case_pieces.md#api-piece-formulas)                       | Reviewed smooth-helper attestation       |
+| [`lcm.affine_breakpoint`](piecewise_affine.md#api-affine-breakpoint)           | Schedule breakpoint                      |
+| [`lcm.piecewise_affine`](piecewise_affine.md)                                  | Piecewise-affine schedule                |
 
 ## Temporal parameters
 
@@ -182,7 +182,6 @@ surfaces remain outside that top-level namespace:
 | [`lcm.solver_api.SolutionSource`](runtime_and_results.md#api-solution-result)                              | In-memory or persisted origin                     |
 | [`lcm.solver_api.ValueArraySchema`](runtime_and_results.md#api-solution-result)                            | Named value-array shape/dtype                     |
 | [`lcm.solver_api.SIMULATION_POLICY`](runtime_and_results.md#api-solution-result)                           | Replay-policy schema key                          |
-| [`lcm.solver_api.DISSOLUTION_FLAG`](runtime_and_results.md#api-solution-result)                            | Dissolution-flag schema key                       |
 | [`lcm.solver_api.EGM_CONTINUATION`](runtime_and_results.md#api-solution-result)                            | Continuation schema key                           |
 | [`lcm.solver_api.SOLVER_DIAGNOSTICS`](runtime_and_results.md#api-solution-result)                          | Diagnostics schema key                            |
 | [`lcm.solver_api.ContinuationArtifact`](custom_solvers.md)                                                 | Keyed rolling-continuation protocol               |
@@ -233,7 +232,6 @@ surfaces remain outside that top-level namespace:
 | [`lcm.solvers.FUESEnvelope`](envelopes.md#api-approximate-envelope-backends)               | FUES configuration              |
 | [`lcm.solvers.RFCEnvelope`](envelopes.md#api-approximate-envelope-backends)                | RFC configuration               |
 | [`lcm.solvers.LTMEnvelope`](envelopes.md#api-approximate-envelope-backends)                | LTM configuration               |
-| [`lcm.solvers.MSSEnvelope`](envelopes.md#api-approximate-envelope-backends)                | MSS configuration               |
 | [`lcm.solvers.OuterSearch`](outer_search.md#api-outer-search)                              | Outer-search marker             |
 | [`lcm.solvers.FiniteOuterGrid`](outer_search.md#api-finite-outer-grid)                     | Finite search                   |
 | [`lcm.solvers.AdaptiveOuterMesh`](outer_search.md#api-adaptive-outer-mesh)                 | Adaptive continuous search      |
@@ -309,7 +307,6 @@ documented in [Custom solvers](custom_solvers.md).
 | [`lcm.solvers.PersistencePolicy`](custom_solvers.md)                                       | Per-artifact persistence policy                   |
 | [`lcm.solvers.EGM_CONTINUATION`](custom_solvers.md)                                        | Continuation schema key                           |
 | [`lcm.solvers.SIMULATION_POLICY`](custom_solvers.md)                                       | Replay-policy schema key                          |
-| [`lcm.solvers.DISSOLUTION_FLAG`](custom_solvers.md)                                        | Dissolution-flag schema key                       |
 | [`lcm.solvers.SOLVER_DIAGNOSTICS`](custom_solvers.md)                                      | Diagnostics schema key                            |
 | [`lcm.solvers.ContinuationArtifact`](custom_solvers.md)                                    | Keyed rolling-continuation protocol               |
 | [`lcm.solvers.ContinuationReader`](custom_solvers.md#publishing-a-continuation)            | What a parent may ask a payload                   |

@@ -26,7 +26,7 @@ from lcm import (
     Regime,
     post_decision_lower_bound,
 )
-from lcm.solvers import DCEGM, MSSEnvelope
+from lcm.solvers import DCEGM, RFCEnvelope
 from lcm.typing import ContinuousState, FloatND, ReferenceName, UserParams
 from tests.conftest import DECIMAL_PRECISION, EXACT_KERNEL_SKIP_REASON
 from tests.egm.test_dynamic_dcegm_activation import (
@@ -90,7 +90,7 @@ def _model(*, asset: bool) -> tuple[Model, UserParams]:
                 solver=DCEGM(
                     savings_grid=IrregSpacedGrid(points=np.array([0.25, 0.5, 0.75])),
                     n_constrained_points=4,
-                    envelope=MSSEnvelope(),
+                    envelope=RFCEnvelope(),
                 ),
             ),
             "child": ConsumptionSavingsRegime(
@@ -169,7 +169,7 @@ def _observe_choices(
 
 
 def _assert_child_only_status(*, model: Model, output: FeasibilityKernelOutput) -> None:
-    """Accept every actual slot on a literal MSS source consuming one feature child."""
+    """Accept every actual slot on a literal RFC source consuming one feature child."""
     slots = model._regimes["parent"].solution.query_input_authorities
     assert slots is not None
     assert tuple((name, period) for name, period, _ in slots[0]) == (("child", 1),)

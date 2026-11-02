@@ -119,7 +119,7 @@ def _utility_source(work: DiscreteAction) -> FloatND:
 
 
 def _utility_target(health: DiscreteState) -> FloatND:
-    """Target payoff, strictly positive so the gate below is closed everywhere."""
+    """Target payoff; the gate below never opens, so it is never collected."""
     return health * 1.0 + 1.0
 
 
@@ -133,14 +133,13 @@ def _utility_fallback(settlement: ContinuousState) -> FloatND:
     return settlement
 
 
-def _gate_dissolves_everywhere(V_target: FloatND) -> BoolND:
+def _gate_dissolves_everywhere(health: DiscreteState) -> BoolND:
     """A gate that is closed on the whole target grid.
 
-    `V_target` is the target's own value, which `_utility_target` keeps at 1.0
-    and 2.0, so this predicate is false at every cell and every household takes
-    the leg's fallback.
+    No health code is negative, so this predicate is false at every cell and
+    every household takes the leg's fallback.
     """
-    return V_target < 0.0
+    return health < 0
 
 
 def _settlement_from_health(health: DiscreteState) -> FloatND:
@@ -272,7 +271,6 @@ def _fold_output(*, regimes, flat_params, solution):
         next_regime_to_V_arr=solution[1],
         base_state_action_spaces=base_state_action_spaces,
         period_to_regime_to_V_arr=solution,
-        period_to_regime_to_dissolution_flags=MappingProxyType({}),
         flat_params=flat_params,
     )
     edge = regimes["src"].gated_edges["target"]

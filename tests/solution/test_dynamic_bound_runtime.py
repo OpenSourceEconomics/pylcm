@@ -101,8 +101,6 @@ from tests.solution.test_dynamic_bound_authority import _bound
 class _StateOwnerKwargs(TypedDict, total=False):
     co_map_state_names: tuple[StateName, ...]
     co_map_v_arr_in_axes: tuple[MappingProxyType[RegimeName, int | None], ...]
-    fold_state_names: tuple[StateName, ...]
-    fold_weights: MappingProxyType[StateName, FloatND]
 
 
 class _TerminalKwargs(TypedDict):
@@ -1018,14 +1016,10 @@ def test_kernel_output_accepts_only_scalar_boolean_integrity(*, invalid: bool) -
 
 
 @pytest.mark.parametrize("streamed", [False, True])
-@pytest.mark.parametrize("owner", ["co-map", "fold"])
 def test_state_axis_owners_keep_integrity_independent_of_quadrature(
-    *, streamed: bool, owner: str
+    *, streamed: bool
 ) -> None:
-    """
-    Co-maps produce scalar summaries and zero economic weight cannot hide
-    invalidity.
-    """
+    """Co-maps produce scalar summaries that keep each cell's invalidity."""
 
     def floor(*, income: FloatND) -> FloatND:
         return income
@@ -1050,17 +1044,10 @@ def test_state_axis_owners_keep_integrity_independent_of_quadrature(
         bound_specs=(_bound(),),
     )
     builder = get_streaming_max_Q_over_a if streamed else get_max_Q_over_a
-    owner_kwargs: _StateOwnerKwargs = (
-        {
-            "co_map_state_names": ("income",),
-            "co_map_v_arr_in_axes": (MappingProxyType({"future": 0}),),
-        }
-        if owner == "co-map"
-        else {
-            "fold_state_names": ("income",),
-            "fold_weights": MappingProxyType({"income": jnp.asarray([1.0, 0.0])}),
-        }
-    )
+    owner_kwargs: _StateOwnerKwargs = {
+        "co_map_state_names": ("income",),
+        "co_map_v_arr_in_axes": (MappingProxyType({"future": 0}),),
+    }
     mapped = builder(
         Q_and_F=kernel,
         batch_sizes={"income": 1},
@@ -1071,9 +1058,7 @@ def test_state_axis_owners_keep_integrity_independent_of_quadrature(
     )
     result = jax.jit(
         lambda: mapped(
-            next_regime_to_V_arr=MappingProxyType({"future": jnp.asarray([0.0, 0.0])})
-            if owner == "co-map"
-            else MappingProxyType({}),
+            next_regime_to_V_arr=MappingProxyType({"future": jnp.asarray([0.0, 0.0])}),
             period=jnp.int32(0),
             age=jnp.asarray(0.0),
             income=jnp.asarray([0.0, jnp.nan]),
@@ -1085,12 +1070,8 @@ def test_state_axis_owners_keep_integrity_independent_of_quadrature(
     assert all(flag.shape == () for flag in result.bound_status[0]), (
         "State owners must reduce validity without retaining a coordinate bank."
     )
-    np.testing.assert_array_equal(
-        result.output[0], [0.0, -np.inf] if owner == "co-map" else 0.0
-    )
-    np.testing.assert_array_equal(
-        result.output[1], [False, True] if owner == "co-map" else False
-    )
+    np.testing.assert_array_equal(result.output[0], [0.0, -np.inf])
+    np.testing.assert_array_equal(result.output[1], [False, True])
     np.testing.assert_array_equal(jnp.stack(result.bound_status[0]), [True, False])
 
 

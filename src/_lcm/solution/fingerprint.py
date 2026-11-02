@@ -201,6 +201,7 @@ _TRUSTED_DIRECT_TYPE_OBJECTS = (
     frozenset(
         {
             functools.partial,
+            types.MethodType,
             inspect.Signature.empty,
             np.dtype,
             GoldenSectionResult,
@@ -269,11 +270,18 @@ _JAX_PUBLIC_NUMERIC_MODULES = (
         jsp,
     ),
 )
-_JAX_PUBLIC_NUMERIC_VALUES = tuple(
-    value
-    for module in _JAX_PUBLIC_NUMERIC_MODULES
-    for name, value in vars(module).items()
-    if not name.startswith("_")
+_JAX_PUBLIC_NUMERIC_VALUES = (
+    *(
+        value
+        for module in _JAX_PUBLIC_NUMERIC_MODULES
+        for name, value in vars(module).items()
+        if not name.startswith("_")
+    ),
+    jax.tree.map,
+    jax.tree.leaves,
+    jax.tree.flatten,
+    jax.tree.unflatten,
+    jax.tree.structure,
 )
 _JAX_NUMPY_UFUNCS = tuple(
     value for value in _JAX_PUBLIC_NUMERIC_VALUES if type(value) is _JAX_UFUNC_TYPE
@@ -515,24 +523,6 @@ def fingerprint_solution_support(
                 process_grid_resolver=process_grid_resolver,
             )
             for name, regime in regimes.items()
-        },
-        flat_params=flat_params,
-    )
-
-
-def fingerprint_prepared_solution_support(
-    *,
-    support: Mapping[RegimeName, Mapping[str, _Reachable]],
-    flat_params: FlatParams,
-) -> str:
-    """Use the installed support record before genuine dated programs exist."""
-    return _fingerprint_resolved_solution_support(
-        support={
-            name: {
-                key: record[key]
-                for key in ("states", "discrete_actions", "continuous_actions")
-            }
-            for name, record in support.items()
         },
         flat_params=flat_params,
     )
@@ -894,7 +884,6 @@ def fingerprint_model_structure(
                 ),
                 "state_names": regime.solution.state_names,
                 "action_names": regime.solution.action_names,
-                "fold_state_names": regime.fold_state_names,
                 "stakeholders": regime.stakeholders,
                 "solver_identity": user_regimes[name].solver.identity,
                 "replay_identity": (
@@ -1136,7 +1125,7 @@ def _project_user_regime_declaration(
                     and not (
                         name in {"output_only_functions", "shocks"} and value == ()
                     )
-                    and not (name == "arrivals" and not value)
+                    and not (name == "participation" and not value)
                 }
             ),
         }
@@ -1490,6 +1479,23 @@ def _is_ce_scaled_primitive_reference(value: _Reachable) -> bool:
         type(value) is type(primitive)
         and vars(value).get("name") == _CE_SCALED_SEAL.instance["name"]
     )
+
+
+def _function_annotations(
+    function: types.FunctionType,
+) -> Mapping[str, _Annotation]:
+    """Read annotations, resolving forward references beartype cached as errors.
+
+    The beartype claw evaluates annotations at definition time and re-raises the
+    `NameError` of a reference defined later in the module; the same references
+    resolve now.
+    """
+    try:
+        return function.__annotations__
+    except NameError:
+        return annotationlib.get_annotations(
+            function, format=annotationlib.Format.FORWARDREF
+        )
 
 
 class _SemanticHasher:
@@ -2187,6 +2193,12 @@ class _SemanticHasher:
             raise TypeError("Only original JAX cond has native operand metadata.")
         try:
             signature = inspect.signature(function)
+        except NameError:
+            # beartype caches a NameError for a forward reference it met at
+            # definition time; resolve the same references now instead.
+            signature = inspect.signature(
+                function, annotation_format=annotationlib.Format.FORWARDREF
+            )
         except TypeError, ValueError:
             self.frame(label="signature-unavailable")
             return
@@ -2212,6 +2224,8 @@ class _SemanticHasher:
         annotation: _Annotation,
     ) -> None:
         """Hash type metadata without treating an annotation as executable input."""
+        if isinstance(annotation, annotationlib.ForwardRef):
+            annotation = annotation.evaluate()
         if annotation is inspect.Signature.empty:
             self.frame(label="annotation-empty")
             return
@@ -2329,7 +2343,7 @@ class _SemanticHasher:
         self.visit(value=function.__code__)
         self.visit(value=function.__defaults__)
         self.visit(value=function.__kwdefaults__)
-        self._visit_function_annotations(function.__annotations__)
+        self._visit_function_annotations(_function_annotations(function))
         self.frame(label="function-type-params-start")
         for type_parameter in getattr(function, "__type_params__", ()):
             self._visit_annotation(type_parameter)
@@ -2498,6 +2512,10 @@ class _SemanticHasher:
             return
         if _is_closed_terminal_reference(value=value):
             self.visit(value=value)
+            return
+        if type(value) is typing.TypeVar:
+            # A PEP 695 type parameter closed over by deferred annotations.
+            self._visit_annotation(value)
             return
         value_type = value if isinstance(value, type) else type(value)
         kind = "class" if isinstance(value, type) else "object"

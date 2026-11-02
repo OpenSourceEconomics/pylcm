@@ -7,10 +7,8 @@ before lowering. Collective and EV1 kernels deliberately retain their canonical 
 reduction order. Each streamed period program also names its exact value-input artifacts
 and argument paths so the engine can resolve their transfers.
 Fixed distributed states co-map ordinary continuation leaves with the streamed state
-cell. Singleton folded-state routes stream actions before
-the unchanged quadrature reduction; the fold axis itself remains materialized. Co-map
-routes with separate same-period or edge-reference value channels retain the dense
-kernel. The adapter assembles the resulting `KernelOutput` outside JIT.
+cell. Co-map routes with separate same-period or edge-reference value channels retain
+the dense kernel. The adapter assembles the resulting `KernelOutput` outside JIT.
 
 The max-Q kernel-building imports are function-local so
 the public `lcm.solvers` façade stays a thin re-export that pulls in no
@@ -35,11 +33,11 @@ from dags import with_signature
 from _lcm.beartype_conf import REGIME_CONF
 
 if TYPE_CHECKING:
-    from _lcm.arrival_queries import ArrivalQueryPlan
     from _lcm.current_iid import CurrentIIDPlan
+    from _lcm.participation_queries import ParticipationQueryPlan
 else:
-    # Arrival query construction imports the engine before solver contexts finish.
-    type ArrivalQueryPlan = object
+    # Participation query construction imports the engine before solver contexts finish.
+    type ParticipationQueryPlan = object
     # The innovation registry reaches this solver through the public Regime facade.
     type CurrentIIDPlan = object
 from _lcm.constraints.routes import (
@@ -66,9 +64,7 @@ from _lcm.execution.core_program import (
 )
 from _lcm.execution.invariant_blocks import block_state_action_space
 from _lcm.execution.output_layout import (
-    DISSOLUTION_FLAG,
     VALUE,
-    OutputRoleLeaf,
     StateAxesLeading,
 )
 from _lcm.execution.value_transfer import (
@@ -78,7 +74,6 @@ from _lcm.execution.value_transfer import (
     ValueInputChannel,
 )
 from _lcm.params.edges import regime_kernel_params
-from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.solution.action_reduction import HARD_MAX_REDUCTION
 from _lcm.solution.continuation_reads import rekeyed_value_reads
 from _lcm.solution.contract import (
@@ -95,7 +90,10 @@ from _lcm.solution.feasibility import (
     BoundedResult,
     BoundInputStatus,
     CountedGridSearch,
+    FeasibilityCount,
     FeasibilityKernelOutput,
+    _fail_if_feasibility_count_exceeds_capacity,
+    get_feasibility_count_dtype,
 )
 from _lcm.time import TimeAxis
 from _lcm.transition_plans import SupportOrigin
@@ -114,7 +112,6 @@ from _lcm.typing import (
 )
 from lcm._solver_api.capabilities import SolverExecutionCapabilities
 from lcm.exceptions import ExecutionPlanningError
-from lcm.solver_api import DISSOLUTION_FLAG as DISSOLUTION_FLAG_ARTIFACT
 from lcm.solver_api import KernelOutput
 from lcm.typing import (
     BoolND,
@@ -154,8 +151,6 @@ class _ActionStreamingDisposition(StrEnum):
     DENSE_OFF_GRID_RAISE_COUNT = "deliberately_dense:off_grid_raise_count"
     DENSE_DECOUPLED = "deliberately_dense:decoupled"
     UNSUPPORTED_COLLECTIVE_EV1 = "unsupported:collective_ev1"
-    UNSUPPORTED_EV1_FOLD = "unsupported:ev1_fold"
-    UNSUPPORTED_COLLECTIVE_FOLD = "unsupported:collective_fold"
     UNSUPPORTED_EV1_WITHOUT_DISCRETE_ACTION = "unsupported:ev1_without_discrete_action"
 
     @property
@@ -285,9 +280,6 @@ class GridSearch(Solver):
             get_max_Q_over_a,
             get_streaming_max_Q_over_a,
         )
-        from _lcm.regime_building.processing import (  # noqa: PLC0415
-            get_conditioned_fold_weights_by_code,
-        )
         from _lcm.regime_building.Q_and_F import (  # noqa: PLC0415
             has_objective_profile,
             runtime_bound_specs,
@@ -301,20 +293,6 @@ class GridSearch(Solver):
         program_functions: dict[int, Callable[..., PytreeValue]] = {}
         broadcast_extents: dict[int, int] = {}
         result: dict[int, PeriodKernel] = {}
-        # Fold weights are the folded process's own marginal distribution, a
-        # plain constant computed once here at kernel-build time and never
-        # inside the traced core (`_validate_fold_declarations` rejects a
-        # runtime-parameterized process). Two shapes, by declaration:
-        # - an unconditioned process contributes one row. Its
-        #   `compute_transition_probs` returns an `(n_points, n_points)` matrix
-        #   whose every row is that marginal — the "IID" part — so row 0 is it.
-        # - a `StateConditioned` `sigma` contributes one row per category of
-        #   the conditioning state, ordered by that categorical's integer code,
-        #   which the fold reduction gathers along the conditioning axis.
-        fold_weights, fold_conditioning = _grid_search_fold_weights(
-            context=context,
-            get_conditioned_fold_weights_by_code=get_conditioned_fold_weights_by_code,
-        )
         action_streaming = _classify_action_streaming(context=context)
         stream_actions = action_streaming is _ActionStreamingDisposition.STREAMED
         action_partition_mesh = _action_partition_mesh(
@@ -323,15 +301,12 @@ class GridSearch(Solver):
         action_width_keyword = _select_action_width_keyword(context=context)
         action_names = context.state_action_space.action_names
         action_extents = context.state_action_space.actions_grid_shapes
-        if (
-            math.prod(
+        _fail_if_feasibility_count_exceeds_capacity(
+            n_states=math.prod(
                 grid.shape[0] for grid in context.state_action_space.states.values()
             )
-            > jnp.iinfo(jnp.int32).max
-        ):
-            raise ExecutionPlanningError(
-                "GridSearch state domains must fit an int32 feasibility count."
-            )
+        )
+        count_dtype = get_feasibility_count_dtype()
         untiled_state_names = tuple(
             name
             for name in context.state_action_space.state_names
@@ -400,9 +375,6 @@ class GridSearch(Solver):
                     ),
                     "stakeholders": context.stakeholders,
                     "pareto_weights": context.pareto_weights,
-                    "fold_state_names": context.fold_state_names,
-                    "fold_weights": MappingProxyType(fold_weights),
-                    "fold_conditioning": MappingProxyType(fold_conditioning),
                     "return_feasibility": True,
                 }
                 if has_objective_profile(Q_and_F=Q_and_F):
@@ -421,9 +393,6 @@ class GridSearch(Solver):
                             context.state_action_space.discrete_actions
                         ),
                         has_taste_shocks=context.has_taste_shocks,
-                        fold_state_names=context.fold_state_names,
-                        fold_weights=MappingProxyType(fold_weights),
-                        fold_conditioning=MappingProxyType(fold_conditioning),
                     )
                 elif landing_checks_of(Q_and_F):
                     program_functions[q_id] = get_landing_counting_max_Q_over_a(
@@ -527,20 +496,9 @@ class GridSearch(Solver):
                 argument_builder=argument_builder,
                 requirements=requirements,
                 output_roles=(
-                    *(
-                        (
-                            VALUE,
-                            DISSOLUTION_FLAG,
-                            StateAxesLeading(state_names=(), dtype=jnp.int32, shape=()),
-                            StateAxesLeading(state_names=(), dtype=jnp.int32, shape=()),
-                        )
-                        if context.stakeholders is not None
-                        else (
-                            VALUE,
-                            StateAxesLeading(state_names=(), dtype=jnp.int32, shape=()),
-                            StateAxesLeading(state_names=(), dtype=jnp.int32, shape=()),
-                        )
-                    ),
+                    VALUE,
+                    StateAxesLeading(state_names=(), dtype=count_dtype, shape=()),
+                    StateAxesLeading(state_names=(), dtype=count_dtype, shape=()),
                     *(
                         (StateAxesLeading(state_names=(), dtype=jnp.bool_, shape=()),)
                         if current_iid_plan is not None
@@ -639,7 +597,7 @@ def _action_partition_mesh(
     """Return the regime's mesh when its action product is shared, else `None`.
 
     Model construction admits a partition request only on the ordinary
-    streamed singleton route without folded processes or co-mapped states;
+    streamed singleton route without co-mapped states;
     reaching here with anything else is an internal planning error.
     """
     if context.action_partitions == 1:
@@ -651,7 +609,6 @@ def _action_partition_mesh(
                 action_streaming is not _ActionStreamingDisposition.STREAMED,
                 f"its actions are not streamed ({action_streaming.value})",
             ),
-            (bool(context.fold_state_names), "it folds a process"),
             (bool(context.co_map_state_names), "it co-maps a sharded state"),
         )
         if failed
@@ -718,27 +675,7 @@ def _fail_if_decoupled_route_is_unsupported(
         raise ExecutionPlanningError(msg)
 
 
-def _grid_search_fold_weights(
-    *,
-    context: SolverBuildContext,
-    get_conditioned_fold_weights_by_code: Callable[..., FloatND],
-) -> tuple[dict[StateName, FloatND], dict[StateName, StateName]]:
-    """Build each folded process's marginal rows and conditioning names."""
-    fold_weights: dict[StateName, FloatND] = {}
-    fold_conditioning: dict[StateName, StateName] = {}
-    for name in context.fold_state_names:
-        process = cast("_ContinuousStochasticProcess", context.grids[name])
-        if process.state_conditioned is None:
-            fold_weights[name] = process.get_transition_probs()[0]
-        else:
-            fold_weights[name] = get_conditioned_fold_weights_by_code(
-                name=name, grid=process, grids=context.grids
-            )
-            fold_conditioning[name] = process.state_conditioned.on
-    return fold_weights, fold_conditioning
-
-
-def _classify_action_streaming(  # noqa: C901
+def _classify_action_streaming(
     *, context: SolverBuildContext
 ) -> _ActionStreamingDisposition:
     """Classify one solve route without conflating dense and unsupported cases."""
@@ -748,10 +685,6 @@ def _classify_action_streaming(  # noqa: C901
     action_extents = context.state_action_space.actions_grid_shapes
     if context.has_taste_shocks and context.stakeholders is not None:
         disposition = _ActionStreamingDisposition.UNSUPPORTED_COLLECTIVE_EV1
-    elif context.has_taste_shocks and context.fold_state_names:
-        disposition = _ActionStreamingDisposition.UNSUPPORTED_EV1_FOLD
-    elif context.stakeholders is not None and context.fold_state_names:
-        disposition = _ActionStreamingDisposition.UNSUPPORTED_COLLECTIVE_FOLD
     elif context.has_taste_shocks and not context.state_action_space.discrete_actions:
         disposition = (
             _ActionStreamingDisposition.UNSUPPORTED_EV1_WITHOUT_DISCRETE_ACTION
@@ -811,7 +744,12 @@ def grid_search_query_inputs(
         same_period_ref_regimes=context.same_period_ref_regimes,
         edge_reference_regimes=references,
         edge_target_regimes=context.edge_target_regimes,
-        arrival_queries=context.arrival_queries.get(period, MappingProxyType({})),
+        participation_queries=context.participation_queries.get(
+            period, MappingProxyType({})
+        ),
+        participation_surfaces=context.participation_surfaces.get(
+            period, MappingProxyType({})
+        ),
     )
     reads = _value_reads(
         regime_name=context.regime_name,
@@ -821,13 +759,34 @@ def grid_search_query_inputs(
         edge_reference_regimes=references,
         edge_target_regimes=context.edge_target_regimes,
     )
-    if builder.arrival_queries:
-        from _lcm.arrival_queries import arrival_source_value_reads  # noqa: PLC0415
+    if builder.participation_surfaces:
+        from _lcm.participation_queries import plan_surface_address  # noqa: PLC0415
+
+        # A participation target's value enters as the source's stored surface, read
+        # through the same continuation leaf an ordinary value read fills.
+        reads = tuple(
+            replace(
+                read,
+                target=plan_surface_address(
+                    plan=builder.participation_surfaces[str(read.source.path[0])]
+                ),
+            )
+            if read.source.channel is ValueInputChannel.NEXT_REGIME_VALUE
+            and read.source.path[0] in builder.participation_surfaces
+            else read
+            for read in reads
+        )
+    if builder.participation_queries:
+        from _lcm.participation_queries import (  # noqa: PLC0415
+            participation_source_value_reads,
+        )
 
         reads = (
             *reads,
-            *arrival_source_value_reads(
-                plans=builder.arrival_queries, source=context.regime_name, period=period
+            *participation_source_value_reads(
+                plans=builder.participation_queries,
+                source=context.regime_name,
+                period=period,
             ),
         )
     return builder, reads
@@ -958,29 +917,43 @@ class _GridSearchArgumentBuilder:
     same_period_ref_regimes: tuple[RegimeName, ...] = ()
     edge_reference_regimes: tuple[RegimeName, ...] = ()
     edge_target_regimes: tuple[RegimeName, ...] = ()
-    arrival_queries: Mapping[RegimeName, ArrivalQueryPlan] = field(
+    participation_queries: Mapping[RegimeName, ParticipationQueryPlan] = field(
         default_factory=lambda: MappingProxyType({})
     )
+    participation_surfaces: Mapping[RegimeName, ParticipationQueryPlan] = field(
+        default_factory=lambda: MappingProxyType({}),
+        metadata={"fingerprint_omit_if_default": True},
+    )
+    """Participation targets read from the source's stored participation surface, by
+    the plan whose decision that surface stores."""
 
     def __call__(
         self, context: CoreBuildContext
     ) -> Mapping[ReferenceName, PytreeValue | ShapeDtypePytree]:
         """Return the exact kwargs shared by lowering and the runtime call."""
-        if self.arrival_queries:
-            from _lcm.arrival_queries import ArrivalSourceArguments  # noqa: PLC0415
+        if self.participation_queries:
+            from _lcm.participation_queries import (  # noqa: PLC0415
+                ParticipationSourceArguments,
+            )
 
-            return ArrivalSourceArguments(
-                base=replace(self, arrival_queries=MappingProxyType({})),
-                plans=self.arrival_queries,
+            return ParticipationSourceArguments(
+                base=replace(self, participation_queries=MappingProxyType({})),
+                plans=self.participation_queries,
             )(context)
         state_action_space = cast("StateActionSpace", context.state_action_space)
         next_regime_to_V_arr = context.next_regime_to_V_arr
         flat_params = cast("FlatParams", context.flat_params)
         ages = cast("TimeAxis", context.ages)
         raw_next_regime_to_V_arr = next_regime_to_V_arr
+        surfaces = self._participation_surface_values(context=context)
         next_regime_to_V_arr = self._with_edge_substitution(
             next_regime_to_V_arr=MappingProxyType(
-                {name: raw_next_regime_to_V_arr[name] for name in self.target_regimes}
+                {
+                    name: surfaces[name]
+                    if name in surfaces
+                    else raw_next_regime_to_V_arr[name]
+                    for name in self.target_regimes
+                }
             ),
             edge_regime_to_V_arr=context.edge_regime_to_V_arr,
         )
@@ -1006,15 +979,15 @@ class _GridSearchArgumentBuilder:
             arguments[CURRENT_IID_NODES_ARGUMENT] = self.current_iid_plan.node_operands
             arguments[CURRENT_IID_ROWS_ARGUMENT] = self.current_iid_plan.indices
         if self.same_period_ref_regimes:
-            reference_values = (
-                MappingProxyType(
-                    {
-                        name: raw_next_regime_to_V_arr[name]
-                        for name in self.same_period_ref_regimes
-                    }
-                )
+            # Only the declared references: a participation check's date carries every
+            # stored value its source reads, which is not this program's operand tree.
+            available = (
+                raw_next_regime_to_V_arr
                 if context.same_period_regime_to_V_arr is None
                 else context.same_period_regime_to_V_arr
+            )
+            reference_values = MappingProxyType(
+                {name: available[name] for name in self.same_period_ref_regimes}
             )
             arguments["same_period_regime_to_V_arr"] = _value_argument(reference_values)
             arguments["same_period_regime_to_params"] = self._same_period_params(
@@ -1026,7 +999,41 @@ class _GridSearchArgumentBuilder:
                 flat_params=flat_params,
             )
         )
+        if surfaces:
+            from _lcm.participation_queries import (  # noqa: PLC0415
+                PARTICIPATION_SURFACE_ARGUMENTS,
+                surface_reader_arguments,
+            )
+
+            arguments[PARTICIPATION_SURFACE_ARGUMENTS] = surface_reader_arguments(
+                plans={name: self.participation_surfaces[name] for name in surfaces},
+                context=context,
+            )
         return MappingProxyType(arguments)
+
+    def _participation_surface_values(
+        self, *, context: CoreBuildContext
+    ) -> dict[RegimeName, ValueTemplate]:
+        """Read each surfaced participation target from its check's operands."""
+        if not self.participation_surfaces:
+            return {}
+        from _lcm.participation_queries import (  # noqa: PLC0415
+            _ParticipationBuildContext,
+            plan_surface_address,
+        )
+
+        if not isinstance(context, _ParticipationBuildContext):
+            msg = (
+                f"Regime '{self.regime_name}' reads stored participation surfaces, "
+                "which "
+                "only a participation reader's operands carry."
+            )
+            raise ExecutionPlanningError(msg)
+        return {
+            name: context.participation_values[plan_surface_address(plan=plan)]
+            for name, plan in self.participation_surfaces.items()
+            if name in self.target_regimes
+        }
 
     def _with_edge_substitution(
         self,
@@ -1247,16 +1254,18 @@ class _GridSearchPeriodKernel:
         out = compiled_cores[core_key](**arguments)
         current_iid_invalid = None
         if self.current_iid:
-            if not isinstance(out, tuple) or len(out) != 4:  # noqa: PLR2004 - declared integrity tuple
+            # The integrity leaf follows the value and counts, before any bound
+            # records and landing totals.
+            n_outputs = 4 + 2 * self.n_runtime_bounds + bool(self.landing_checks)
+            if not isinstance(out, tuple) or len(out) != n_outputs:
                 raise TypeError("Mandatory current-IID integrity output is missing.")
-            *ordinary, current_iid_invalid = out
-            current_iid_invalid = cast("ScalarBool", current_iid_invalid)
+            current_iid_invalid = cast("ScalarBool", out[3])
             if (
                 current_iid_invalid.shape != ()
                 or current_iid_invalid.dtype != jnp.bool_
             ):
                 raise TypeError("Current-IID integrity must be a scalar Boolean.")
-            out = tuple(ordinary)
+            out = (*out[:3], *out[4:])
         landing_totals = None
         if self.landing_checks:
             from _lcm.solution.landing_counts import (  # noqa: PLC0415
@@ -1273,15 +1282,9 @@ class _GridSearchPeriodKernel:
                 )
         bound_status = ()
         if self.n_runtime_bounds:
-            ordinary_count = (
-                4
-                if cast("tuple[OutputRoleLeaf, ...]", program.output_roles)[1]
-                is DISSOLUTION_FLAG
-                else 3
-            )
-            # Scalar integrity flags follow the ordinary value/count channels.
+            # Scalar integrity flags follow the value and its two counts.
             numeric_outputs = cast("tuple[jax.Array, ...] | list[jax.Array]", out)
-            flag_values = numeric_outputs[ordinary_count:]
+            flag_values = numeric_outputs[3:]
             if len(flag_values) != 2 * self.n_runtime_bounds:
                 raise TypeError(
                     "Mandatory bound records do not match declared scalar outputs."
@@ -1293,28 +1296,13 @@ class _GridSearchPeriodKernel:
                 )
                 for index in range(0, len(flag_values), 2)
             )
-            out = numeric_outputs[:ordinary_count]
+            out = numeric_outputs[:3]
         # A program declaring the value alone publishes no feasibility counts.
         if program.output_roles is VALUE:
             return KernelOutput(value=cast("FloatND", out))
-        if (
-            cast("tuple[OutputRoleLeaf, ...]", program.output_roles)[1]
-            is DISSOLUTION_FLAG
-        ):
-            V_arr, dissolution, empty_count, other_inf_count = cast(
-                "tuple[FloatND, BoolND, IntND, IntND]", out
-            )
-            return FeasibilityKernelOutput(
-                value=V_arr,
-                solve_time_artifacts={DISSOLUTION_FLAG_ARTIFACT: dissolution},
-                feasibility_counts=(empty_count, other_inf_count),
-                bound_status=bound_status,
-                landing_totals=cast("IntND | None", landing_totals)
-                if self.n_runtime_bounds
-                else None,
-                landing_checks=self.landing_checks if self.n_runtime_bounds else (),
-            )
-        V_arr, empty_count, other_inf_count = cast("tuple[FloatND, IntND, IntND]", out)
+        V_arr, empty_count, other_inf_count = cast(
+            "tuple[FloatND, FeasibilityCount, FeasibilityCount]", out
+        )
         return FeasibilityKernelOutput(
             value=V_arr,
             current_iid_invalid=current_iid_invalid,

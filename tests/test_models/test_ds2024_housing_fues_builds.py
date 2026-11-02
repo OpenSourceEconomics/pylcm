@@ -50,7 +50,7 @@ def test_ds2024_housing_fues_builds_and_solves(variant: Literal["dcegm", "brute"
 def _solve(
     *,
     variant: Literal["dcegm", "brute"],
-    envelope: Literal["fues", "mss", "ltm", "rfc"],
+    envelope: Literal["fues", "ltm", "rfc"],
 ) -> Mapping[int, Mapping[str, FloatND]]:
     model = build_model(
         variant=variant,
@@ -67,7 +67,7 @@ def _solve(
 
 @pytest.mark.parametrize("envelope", ["rfc", "fues"])
 def test_ds2024_housing_dcegm_matches_brute_in_bulk(
-    envelope: Literal["fues", "mss", "ltm", "rfc"],
+    envelope: Literal["fues", "ltm", "rfc"],
 ):
     """Each discrete-housing DC-EGM backend bulk-agrees with its grid-search twin.
 

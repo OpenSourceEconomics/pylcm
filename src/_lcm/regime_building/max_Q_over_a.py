@@ -35,7 +35,6 @@ from _lcm.regime_building.Q_and_F import (
     BoundedQAndF,
     has_action_integrity,
 )
-from _lcm.regime_building.zero_safe import zero_safe_average
 from _lcm.solution.action_reduction import HardMaxResult
 from _lcm.solution.action_streaming import (
     build_partitioned_streaming_max_Q_over_a,
@@ -64,7 +63,9 @@ from lcm.typing import BoolND, FloatND, IntND, ReferenceName, ScalarFloat
 TASTE_SHOCK_SCALE_PARAM = "taste_shocks__scale"
 
 type MaxOutput = FloatND | tuple[FloatND, BoolND] | CurrentIIDMaxOutput
-type BoundedMaxOutput = MaxOutput | BoundedResult[MaxOutput]
+type BoundedMaxOutput = (
+    MaxOutput | BoundedResult[MaxOutput] | BoundedResult[CurrentIIDMaxOutput]
+)
 type ArgmaxOutput = tuple[IntND, FloatND]
 type BoundedArgmaxOutput = (
     ArgmaxOutput | BoundedResult[ArgmaxOutput] | CurrentIIDDrawOutput
@@ -122,9 +123,6 @@ def get_max_Q_over_a(
     co_map_v_arr_in_axes: tuple[MappingProxyType[RegimeName, int | None], ...] = (),
     stakeholders: tuple[str, ...] | None = None,
     pareto_weights: ParetoWeights | None = None,
-    fold_state_names: tuple[StateName, ...] = (),
-    fold_weights: Mapping[StateName, FloatND] = MappingProxyType({}),
-    fold_conditioning: Mapping[StateName, StateName] = MappingProxyType({}),
     cell_width_keyword: str | None = None,
     untiled_state_names: tuple[StateName, ...] = (),
     broadcast_state_names: tuple[StateName, ...] = (),
@@ -195,27 +193,6 @@ def get_max_Q_over_a(
         pareto_weights: The household's Pareto weight evaluator; required (and
             only used) when `stakeholders` is set. Called at each cell with the
             states and parameters its declaration reads.
-        fold_state_names: IID-process states declared `fold=True`, or empty (the
-            default). Each is still an ordinary inner (non-co-mapped) productmap
-            axis THROUGH the max-over-actions — every node is evaluated — but its
-            axis is then weighted-averaged away (with `fold_weights[name]`)
-            before the result is returned, so the caller never sees it. Only a
-            singleton regime may fold: a collective regime's `-inf` dissolution
-            sentinel is not a value quadrature can average, so the combination
-            is rejected at model build.
-        fold_weights: Quadrature weights per name in `fold_state_names`. A name
-            absent from `fold_conditioning` carries a 1-D array matching that
-            state's node count and summing to 1; a name present there carries a
-            `(n_categories, n_points)` array whose row `c` is the quadrature the
-            conditioning state's category `c` selects. Must be CONCRETE (not
-            traced) — `_select_fold_reducer` reads them at kernel-build time to
-            pick each axis's reduction kernel. Ignored when `fold_state_names`
-            is empty.
-        fold_conditioning: Mapping of a folded state to the discrete state its
-            quadrature is conditioned on, for the folded processes that declare
-            a `StateConditioned` parameter. Absent names fold against one shared
-            row. The conditioning state must itself be an inner (non-co-mapped)
-            productmap axis, since the reduction gathers its row along that axis.
 
     Returns:
         V, i.e., the function that calculates the maximum of the Q-function over all
@@ -314,25 +291,6 @@ def get_max_Q_over_a(
             bound_summary=bound_summary,
         )
     )
-
-    if fold_state_names:
-        _fail_if_collective(
-            fold_state_names=fold_state_names, stakeholders=stakeholders
-        )
-        mapped = _wrap_with_fold_reduction(
-            mapped=cast("Callable[..., BoundedMaxOutput]", mapped),
-            fold_state_names=fold_state_names,
-            fold_weights=fold_weights,
-            fold_conditioning=fold_conditioning,
-            inner_state_names=inner_state_names,
-            return_feasibility=return_feasibility,
-            action_names=action_names,
-            state_names=state_names,
-            extra_param_names=[
-                *extra_param_names,
-                *((cell_width_keyword,) if cell_width_keyword is not None else ()),
-            ],
-        )
 
     if not co_map_state_names:
         return mapped
@@ -509,9 +467,6 @@ def get_streaming_max_Q_over_a(
     co_map_v_arr_in_axes: tuple[MappingProxyType[RegimeName, int | None], ...] = (),
     stakeholders: tuple[str, ...] | None = None,
     pareto_weights: ParetoWeights | None = None,
-    fold_state_names: tuple[StateName, ...] = (),
-    fold_weights: Mapping[StateName, FloatND] = MappingProxyType({}),
-    fold_conditioning: Mapping[StateName, StateName] = MappingProxyType({}),
     action_width_keyword: str = "_lcm_action_block_width",
     cell_width_keyword: str | None = None,
     untiled_state_names: tuple[StateName, ...] = (),
@@ -530,9 +485,7 @@ def get_streaming_max_Q_over_a(
     value at one shared household winner plus the empty-feasible-set flag. Ordinary
     states use the existing state productmap. Fixed distributed states retain the
     dense route co-map access law: each state axis is mapped in lockstep with axis
-    zero of every continuation leaf that carries it. Folded singleton routes stream
-    their action product, then apply the existing quadrature reduction to the
-    still-materialized fold axes before any co-map wrapper.
+    zero of every continuation leaf that carries it.
     """
     _fail_if_streaming_co_map_layout_is_invalid(
         state_names=state_names,
@@ -543,7 +496,6 @@ def get_streaming_max_Q_over_a(
         has_taste_shocks=has_taste_shocks,
         stakeholders=stakeholders,
         pareto_weights=pareto_weights,
-        fold_state_names=fold_state_names,
     )
     if has_taste_shocks and return_feasibility:
         raise ValueError("Feasibility output for EV1 uses the canonical dense reducer.")
@@ -629,25 +581,6 @@ def get_streaming_max_Q_over_a(
             bound_summary=bound_summary,
         )
     )
-    if fold_state_names:
-        _fail_if_collective(
-            fold_state_names=fold_state_names, stakeholders=stakeholders
-        )
-        mapped = _wrap_with_fold_reduction(
-            mapped=cast("Callable[..., BoundedMaxOutput]", mapped),
-            fold_state_names=fold_state_names,
-            fold_weights=fold_weights,
-            fold_conditioning=fold_conditioning,
-            inner_state_names=inner_state_names,
-            return_feasibility=return_feasibility,
-            action_names=action_names,
-            state_names=state_names,
-            extra_param_names=[
-                *extra_param_names,
-                action_width_keyword,
-                *((cell_width_keyword,) if cell_width_keyword is not None else ()),
-            ],
-        )
     if not co_map_state_names:
         return cast("MaxQOverAFunction[BoundedMaxOutput]", mapped)
 
@@ -886,7 +819,7 @@ def get_action_partitioned_max_Q_over_a(
     hard-max accumulator per state cell from every device of the axis and
     merges them in partition order, so all devices publish the same value.
 
-    Taste shocks, collective regimes, folded processes and co-mapped states are
+    Taste shocks, collective regimes and co-mapped states are
     not served; model construction refuses them before this is called.
     """
     if n_partitions < 2:  # noqa: PLR2004
@@ -1119,17 +1052,11 @@ def _fail_if_full_V_streaming_route_is_unsupported(
     has_taste_shocks: bool,
     stakeholders: tuple[str, ...] | None,
     pareto_weights: ParetoWeights | None,
-    fold_state_names: tuple[StateName, ...],
 ) -> None:
     """Reject routes unsupported by full-value action streaming."""
     if has_taste_shocks and stakeholders is not None:
         raise NotImplementedError(
             "Full-V action streaming does not support collective EV1 regimes."
-        )
-    if has_taste_shocks and fold_state_names:
-        raise NotImplementedError(
-            "Full-V action streaming does not support EV1 taste shocks "
-            "with fold states."
         )
     if (stakeholders is None) != (pareto_weights is None):
         raise ValueError(
@@ -1196,306 +1123,6 @@ def _fail_if_streaming_co_map_layout_is_invalid(
             "Streaming co-map continuation in_axes must contain only 0 or None; "
             f"got {invalid}."
         )
-
-
-def _wrap_with_fold_reduction(
-    *,
-    mapped: Callable[..., BoundedMaxOutput],
-    fold_state_names: tuple[StateName, ...],
-    fold_weights: Mapping[StateName, FloatND],
-    fold_conditioning: Mapping[StateName, StateName],
-    inner_state_names: tuple[StateName, ...],
-    action_names: tuple[ActionName, ...],
-    state_names: tuple[StateName, ...],
-    extra_param_names: list[QualifiedName],
-    return_feasibility: bool = False,
-) -> Callable[..., BoundedMaxOutput]:
-    """Wrap the (still fold-axis-carrying) inner productmap with the fold average.
-
-    `mapped`'s output axes are exactly `inner_state_names`, in order (the
-    `productmap`'s `variables` order) — this runs BEFORE any co-map wrapping,
-    so no co-map axis is present yet. Fold axes are reduced from the highest
-    inner-position down, so removing one axis never shifts the position of a
-    not-yet-reduced one. The wrapper redeclares the post-`productmap` keyword-only call
-    interface with `with_signature`, so `allow_args` can adapt it safely for the
-    co-map `vmap_1d` wrapping that may follow. On a streamed route,
-    `extra_param_names` also carries the planner-bound action-width keyword;
-    the wrapper forwards it unchanged to the mapped action reducer.
-
-    A folded state named in `fold_conditioning` averages against a different row
-    per category of its conditioning state, so its weights are broadcast to the
-    value array with the category dimension on that state's own axis. Reducing
-    one fold axis shifts the position of every later axis, so each axis pair is
-    resolved against the axis order as it stands at that step, not the original.
-
-    `mapped` is a singleton regime's value kernel: a collective regime may not
-    declare a folded state at all, so there is no stakeholder axis here and no
-    dissolution flag to reduce (`_fail_if_collective`).
-
-    The per-axis reducer is bound HERE, at kernel-build time, from the axis's
-    own quadrature weights — see `_select_fold_reducer`.
-    """
-    _fail_if_conditioning_state_not_inner(
-        fold_conditioning=fold_conditioning, inner_state_names=inner_state_names
-    )
-    fold_steps = _plan_fold_steps(
-        fold_state_names=fold_state_names,
-        fold_conditioning=fold_conditioning,
-        inner_state_names=inner_state_names,
-    )
-    fold_reducers = {
-        name: _select_fold_reducer(weight=fold_weights[name], name=name)
-        for name in fold_state_names
-    }
-
-    return with_signature(
-        _FoldedMaxQOverA(
-            mapped=mapped,
-            fold_steps=fold_steps,
-            fold_weights=fold_weights,
-            fold_reducers=fold_reducers,
-            return_feasibility=return_feasibility,
-        ),
-        kwargs=[
-            "next_regime_to_V_arr",
-            *action_names,
-            *state_names,
-            *extra_param_names,
-        ],
-        return_annotation="tuple[FloatND, BoolND]" if return_feasibility else "FloatND",
-        enforce=False,
-    )
-
-
-@dataclass(frozen=True, kw_only=True, eq=False)
-class _FoldedMaxQOverA:
-    """Fold values and empty-action causes over the same quadrature support."""
-
-    mapped: Callable[..., BoundedMaxOutput]
-    fold_steps: tuple[tuple[StateName, int, int | None], ...]
-    fold_weights: Mapping[StateName, FloatND]
-    fold_reducers: Mapping[StateName, Callable[..., FloatND]]
-    return_feasibility: bool
-
-    def __call__(
-        self,
-        *,
-        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
-        **states_actions_params: QAndFArg,
-    ) -> BoundedMaxOutput:
-        """Return the folded value and optionally its supported empty-set cause."""
-        out = self.mapped(
-            next_regime_to_V_arr=next_regime_to_V_arr, **states_actions_params
-        )
-        ordinary = out.output if type(out) is BoundedResult else out
-        if self.return_feasibility:
-            V_arr, empty = cast("tuple[FloatND, BoolND]", ordinary)
-        else:
-            V_arr = cast("FloatND", ordinary)
-            empty = None
-        for name, axis, conditioning_axis in self.fold_steps:
-            weights = self.fold_weights[name]
-            if conditioning_axis is not None:
-                weights = _broadcast_conditioned_rows(
-                    rows=weights,
-                    conditioning_axis=conditioning_axis,
-                    fold_axis=axis,
-                    shape=V_arr.shape,
-                )
-            if empty is not None:
-                if weights.ndim == 1:
-                    weight_shape = [1] * V_arr.ndim
-                    weight_shape[axis] = weights.shape[0]
-                    support = weights.reshape(weight_shape) > 0
-                else:
-                    support = weights > 0
-                empty = jnp.any(empty & support, axis=axis)
-            V_arr = self.fold_reducers[name](a=V_arr, axis=axis, weights=weights)
-        return _with_bound_summary(
-            evaluated=out,
-            output=cast("MaxOutput", V_arr if empty is None else (V_arr, empty)),
-        )
-
-
-def _plan_fold_steps(
-    *,
-    fold_state_names: tuple[StateName, ...],
-    fold_conditioning: Mapping[StateName, StateName],
-    inner_state_names: tuple[StateName, ...],
-) -> tuple[tuple[StateName, int, int | None], ...]:
-    """Resolve `(folded state, its axis, its conditioning axis)` per reduction step.
-
-    Axes are resolved against the axis order as it stands when that step runs,
-    because each reduction removes one axis and shifts everything after it. The
-    order is highest fold axis first, so a fold axis's own position is stable,
-    but a conditioning axis sitting after an already-reduced fold axis is not.
-    """
-    remaining = list(inner_state_names)
-    ordered = sorted(fold_state_names, key=remaining.index, reverse=True)
-    steps: list[tuple[StateName, int, int | None]] = []
-    for name in ordered:
-        conditioning_state = fold_conditioning.get(name)
-        steps.append(
-            (
-                name,
-                remaining.index(name),
-                None
-                if conditioning_state is None
-                else remaining.index(conditioning_state),
-            )
-        )
-        remaining.remove(name)
-    return tuple(steps)
-
-
-def _broadcast_conditioned_rows(
-    *,
-    rows: FloatND,
-    conditioning_axis: int,
-    fold_axis: int,
-    shape: tuple[int, ...],
-) -> FloatND:
-    """Spread one quadrature row per category over the value array's full shape.
-
-    `rows` is `(n_categories, n_points)`. The reduction kernels take weights
-    either 1-D along the reduced axis or the same shape as the value array, and
-    a conditioned row set is neither, so it is placed on its two axes and
-    broadcast. Under `jit` the broadcast is a view XLA fuses into the reduction;
-    the eager path materializes it, which is the same size the unfolded model
-    would have carried as an axis anyway.
-    """
-    placed = rows if conditioning_axis < fold_axis else rows.T
-    target = [1] * len(shape)
-    target[conditioning_axis] = rows.shape[0]
-    target[fold_axis] = rows.shape[1]
-    return jnp.broadcast_to(placed.reshape(target), shape)
-
-
-def _fail_if_conditioning_state_not_inner(
-    *,
-    fold_conditioning: Mapping[StateName, StateName],
-    inner_state_names: tuple[StateName, ...],
-) -> None:
-    """Refuse a conditioned fold whose conditioning state has no inner axis.
-
-    The reduction gathers a category's row along the conditioning state's own
-    productmap axis, so a conditioning state that was co-mapped away (a fixed
-    distributed state) or pruned leaves the fold nothing to index by.
-    """
-    missing = sorted(
-        f"'{name}' conditioned on '{conditioning_state}'"
-        for name, conditioning_state in fold_conditioning.items()
-        if conditioning_state not in inner_state_names
-    )
-    if missing:
-        msg = (
-            f"Folded state(s) {missing} condition their quadrature on a state "
-            "that is not an inner productmap axis of the value kernel. The fold "
-            "selects a category's quadrature row along that state's own axis, "
-            "so the conditioning state must be an ordinary (non-distributed) "
-            f"state of the same regime. Inner axes are {list(inner_state_names)}."
-        )
-        raise ValueError(msg)
-
-
-def _fail_if_collective(
-    *, fold_state_names: tuple[StateName, ...], stakeholders: tuple[str, ...] | None
-) -> None:
-    """Refuse to build a fold reduction for a collective regime.
-
-    A collective regime's value carries a dissolution flag beside it: where no
-    action satisfies every stakeholder's participation constraint the cell is
-    flagged and written `-inf`, a not-sustainable sentinel a gated edge
-    resolves to the outside option. Quadrature cannot average a sentinel, so
-    the combination is refused at model build by
-    `_fail_if_collective_regime_folds`. Reaching here means that guarantee was
-    bypassed.
-    """
-    if stakeholders is not None:
-        msg = (
-            f"fold=True on state(s) {sorted(fold_state_names)} reached the "
-            f"value kernel of a collective regime (stakeholders "
-            f"{list(stakeholders)}). Folding a shock out of a collective "
-            "regime's stored value is not supported — the combination is "
-            "rejected at model build, so reaching here means that rejection "
-            "was bypassed."
-        )
-        raise ValueError(msg)
-
-
-def _select_fold_reducer(*, weight: FloatND, name: StateName) -> Callable[..., FloatND]:
-    """Pick the weighted-average kernel for ONE fold axis, at kernel-build time.
-
-    A fold axis's weights are the folded process's own quadrature marginal.
-    `_validate_fold_declarations` rejects a runtime-parameterized process, so
-    `solvers.py` computes them ONCE as a concrete constant before the core is
-    ever traced — which makes this a plain Python branch on a concrete value,
-    not a traced predicate. (A `jax.lax.cond` could not do this job: its
-    predicate would be a single GLOBAL runtime value, unable to select
-    per-axis at trace time.)
-
-    Why branch at all: `zero_safe_average` exists so a zero-weight node next
-    to an admissible on-path `-inf` cannot inject a `nan` via `0 * -inf`. It
-    buys that with a per-term `jnp.where`, which blocks XLA from contracting
-    the `multiply` into the reduction's FMA — so it rounds twice where
-    `jnp.average` rounds once, and the two can differ by ~1 ULP (see
-    `zero_safe.zero_safe_average`). On an axis whose weights are ALL strictly
-    positive the guard protects against nothing, yet still costs that extra
-    rounding, which is enough to make the fold non-exact against the
-    unfolded-then-averaged oracle on the non-jitted path.
-
-    The motivation is EXACTNESS, not speed. MEASURED (jax 0.10.1, CPU,
-    float64, 1e6x4): with the weights closed over as constants — which is
-    exactly how the fold calls it — the guard costs 1.04x, since XLA
-    constant-folds the `select` away; 1.20x for traced weights. Only the
-    EAGER path pays materially (5.3x), because nothing folds the `select`
-    there. So this branch buys real time only for `enable_jit=False`.
-
-    CAVEAT. Selecting `jnp.average` restores bit-exactness against the
-    unfolded-then-averaged oracle on the NON-JITTED path, but it does NOT make
-    the JITTED fold bit-identical to that oracle: under `jit` the fold's
-    average is fused into the mapped value kernel while the oracle averages a
-    materialized unfolded array, so XLA may reassociate the two reductions
-    differently. The jitted contract is therefore numerical equivalence within
-    a SCALE-AWARE tolerance, not bit-identity, and NOT a fixed ULP count: ULP
-    is a result-space spacing metric and is unstable near CANCELLATION. A
-    supported 18-node uniform-IID float32 fold has a fused value and a
-    materialized oracle differing by only ~2.62e-7 in absolute terms (a
-    summand-scale float32 reduction floor) yet 287,557 ULP in the small
-    (~1e-5) cancelled result, so a `<= 2 * spacing(oracle)` claim is false
-    there. The honest contract is `|fold - oracle| <= atol + rtol *
-    max|summand|` (see `test_fold_jitted_matches_unfolded_then_averaged_to_
-    summand_scale_tolerance`). Do not describe the jitted fold as bit-identical
-    or few-ULP. This branch is still correct and necessary: it removes the
-    LARGER `zero_safe_average` drift on all-positive axes and keeps the
-    zero-weight guard where a zero can occur.
-
-    This is a per-AXIS decision on that axis's own weights, so a model that
-    folds one zero-weight axis and one all-positive axis gets the right
-    kernel for each.
-    """
-    weight_arr = jnp.asarray(weight)
-    try:
-        has_zero = bool(jnp.any(weight_arr == 0))
-    except jax.errors.ConcretizationTypeError as exc:
-        msg = (
-            f"Fold weights for state '{name}' are not concrete at kernel-build "
-            "time. The fold reduction picks its weighted-average kernel from "
-            "the quadrature weights themselves, which requires them to be "
-            "known before the solve core is traced; "
-            "`_validate_fold_declarations` is supposed to guarantee this by "
-            "rejecting a fold on a process with runtime-supplied distribution "
-            "parameters. Reaching this means that guarantee was bypassed."
-        )
-        raise ValueError(msg) from exc
-    if not has_zero:
-        return jnp.average
-    # `shifts` is bound here rather than at the two call sites because only this
-    # function knows which kernel it handed back, and `jnp.average` has no such
-    # parameter. `None` is the answer for a fold axis: its weights are the folded
-    # process's own quadrature marginal, which never passed through
-    # `scaled_joint_weight` and so carries no base-two scale to reconcile.
-    return functools.partial(zero_safe_average, shifts=None)
 
 
 def get_argmax_and_max_Q_over_a(

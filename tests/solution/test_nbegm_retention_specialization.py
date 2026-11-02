@@ -2,10 +2,9 @@
 
 The ride-along NB-EGM graph publishes `main` (values only) and `replay` (values
 plus the simulation policy). A values-only solve compiles and runs `main` alone,
-everywhere. A replay-retaining solve runs `replay` only where a declared replay
-route consumes the policy: inside NNBEGM's keeper and adjuster. A standalone
-NB-EGM regime has no such route, so it runs `main` under every retention and its
-policy is omitted as not applicable rather than assembled and discarded.
+everywhere. A replay-retaining solve runs `replay` where a declared replay route
+consumes the policy: inside NNBEGM's keeper and adjuster, and in a standalone
+ride-along NB-EGM regime, whose simulation reads the retained state-grid policy.
 
 The two programs are one body, so the values and carries they publish agree to
 the working format's spacing. Under a values-only retention the nested finite
@@ -118,7 +117,7 @@ def test_a_values_only_solve_runs_main_alone(
     assert set(recorded) == {("main",)}
 
 
-def test_a_standalone_regime_runs_main_under_every_retention(
+def test_a_standalone_regime_runs_replay_and_retains_its_policy(
     monkeypatch: pytest.MonkeyPatch,
 ):
     recorded = _record_dispatched_programs(monkeypatch)
@@ -129,13 +128,15 @@ def test_a_standalone_regime_runs_main_under_every_retention(
     )
 
     assert recorded
-    assert set(recorded) == {("main",)}
-    policy_refs = {ref for ref in solution.omissions if ref.key == SIMULATION_POLICY}
-    assert policy_refs
-    assert not any(ref.key == SIMULATION_POLICY for ref in solution.replay_artifacts)
-    assert {solution.omissions[ref] for ref in policy_refs} == {
-        OmissionReason.NOT_APPLICABLE
+    assert set(recorded) == {("replay",)}
+    policy_refs = {
+        ref for ref in solution.replay_artifacts if ref.key == SIMULATION_POLICY
     }
+    assert policy_refs
+    assert not any(ref.key == SIMULATION_POLICY for ref in solution.omissions)
+    assert all(
+        type(solution.replay_artifacts[ref]) is NBEGMGridPolicy for ref in policy_refs
+    )
     expected_type_id = f"{NBEGMGridPolicy.__module__}.{NBEGMGridPolicy.__qualname__}"
     assert {
         solution.metadata.artifact_descriptors[ref].payload_type_id

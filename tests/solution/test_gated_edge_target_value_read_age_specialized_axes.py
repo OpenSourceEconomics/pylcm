@@ -1,9 +1,9 @@
-"""Arrival comparisons read the target's stored value on its actual age grid.
+"""Participation comparisons read the target's stored value on its actual age grid.
 
 The account's value is convex in balance and its grid changes with age. An
 explicit IntegratedFull reader preserves that represented value comparison;
 the final action uses the canonical Participating problem at the same landing.
-Source continuation pricing and simulation settlement use the same arrival rule.
+Source continuation pricing and simulation settlement use the same participation rule.
 """
 
 import jax.numpy as jnp
@@ -13,11 +13,11 @@ from numpy.testing import assert_array_almost_equal as aaae
 from lcm import (
     AgeGrid,
     AgeSpecializedGrid,
-    ArrivalDecision,
-    ArrivalRead,
     ByAge,
     LinSpacedGrid,
     Model,
+    ParticipationCheck,
+    ParticipationRead,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
@@ -80,7 +80,7 @@ def test_simulated_gate_reads_the_target_value_at_its_own_period_axes() -> None:
 
 
 def test_gated_continuation_is_unchanged_by_which_grid_the_routing_gate_reads() -> None:
-    """The source prices the same age-2 arrival that simulation settles.
+    """The source prices the same age-2 participation check that simulation settles.
 
     At the landing balance of four, the explicit represented value is sixteen
     and clears the strict floor. The canonical account payoff is discounted once.
@@ -142,10 +142,10 @@ def _build_model() -> Model:
             1: {"account": opening},
         }
     )
-    account_gate = ArrivalDecision(
+    account_gate = ParticipationCheck(
         predicate=_account_value_clears_the_floor,
         reads={
-            "V_target": ArrivalRead(
+            "V_target": ParticipationRead(
                 kind="IntegratedFull",
                 regime="account",
                 projection={"balance": _principal_from_balance},
@@ -185,7 +185,7 @@ def _build_model() -> Model:
             "saver": Transition(
                 targets={"saver": 0, "account": (0, 1), "annuity": (0, 1)},
                 law=saver_law,
-                arrivals={"account": account_gate},
+                participation={"account": account_gate},
             )
         },
     )

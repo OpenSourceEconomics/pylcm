@@ -9,7 +9,7 @@ the RFC column is the discrete-choice DC-EGM with the 1-D RFC upper-envelope
 backend, exactly as the DS-2024 App.2 EGM-FUES column
 (`ds_app2_housing_fues.py`): discretise the next-housing choice onto the housing
 grid, treat it as a discrete action, and the inner liquid DC-EGM plus the
-discrete-choice envelope (RFC/FUES/MSS/LTM) selects the optimal `H'`.
+discrete-choice envelope (RFC/FUES/LTM) selects the optimal `H'`.
 
 The economics are the DS-2024 housing model (`ds2024_housing.py`): CRRA-plus-log
 utility, two-state Markov income, the proportional house-trade cost. The
@@ -117,7 +117,7 @@ def build_model(
     housing_max: float = 50.0,
     housing_min: float = 0.01,
     n_periods: int = 4,
-    envelope: Literal["fues", "mss", "ltm", "rfc"] = "rfc",
+    envelope: Literal["fues", "ltm", "rfc"] = "rfc",
 ) -> Model:
     """Build the DS-2024 discrete-housing model.
 

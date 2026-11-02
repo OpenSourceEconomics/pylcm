@@ -4,6 +4,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.dtypes import canonical_float_dtype
 from lcm import (
     CollectiveUtility,
     Consent,
@@ -125,7 +126,9 @@ def test_phase_specific_shared_offer_frame_reaches_participating_final_actor(
             "regime_id": jnp.full(
                 (2,), model.regime_names_to_ids["source"], dtype=jnp.int32
             ),
-            "offer": PhysicalValues(values=np.asarray([0.0, 1.0])),
+            "offer": PhysicalValues(
+                values=np.asarray([0.0, 1.0], dtype=canonical_float_dtype())
+            ),
         },
         seed=seed,
         log_level="off",

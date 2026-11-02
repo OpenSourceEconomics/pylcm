@@ -24,6 +24,7 @@ from _lcm.dtypes import canonical_float_dtype
 from _lcm.grids import coordinates as grid_coordinates
 from _lcm.grids.base import UserVector, fail_if_not_a_numeric_vector
 from _lcm.processes.base import (
+    SIMULATE_DRAWS_RENAMED,
     StateConditioned,
     _ContinuousStochasticProcess,
     _gauss_hermite_normal,
@@ -114,7 +115,7 @@ class TauchenAR1Process(_AR1Process):
     def on_nodes(
         *,
         nodes: UserVector,
-        simulate_draws: Literal["continuous", "nodes"] = "continuous",
+        simulated_draws: Literal["continuous", "nodes"] = "continuous",
         rho: float | None = None,
         sigma: float | StateConditioned | None = None,
         mu: float | None = 0.0,
@@ -122,6 +123,7 @@ class TauchenAR1Process(_AR1Process):
         n_quadrature: int | None = None,
         innovation_nodes: UserVector | None = None,
         innovation_weights: UserVector | None = None,
+        **removed: object,  # noqa: PAN001 - refuses the renamed keyword
     ) -> TauchenAR1Process:
         """Bin an AR(1) law on finite increasing physical nodes.
 
@@ -141,6 +143,11 @@ class TauchenAR1Process(_AR1Process):
         `nodes` is a one-dimensional NumPy or JAX array of integer or floating
         dtype; lists and tuples are refused.
         """
+        if "simulate_draws" in removed:
+            raise TypeError(SIMULATE_DRAWS_RENAMED)
+        if removed:
+            msg = f"Unexpected keyword arguments: {sorted(removed)}."
+            raise TypeError(msg)
         fail_if_not_a_numeric_vector(
             value=nodes,
             argument="nodes",
@@ -157,7 +164,7 @@ class TauchenAR1Process(_AR1Process):
             innovation_nodes=quadrature_nodes,
             innovation_weights=quadrature_weights,
             nodes=tuple(float(node) for node in np.asarray(nodes).tolist()),
-            simulate_draws=simulate_draws,
+            simulated_draws=simulated_draws,
             n_points=len(nodes),
             gauss_hermite=False,
             rho=rho,

@@ -30,7 +30,7 @@ from lcm import (
 )
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.regime import Regime as UserRegime
-from lcm.solvers import DCEGM, GridSearch
+from lcm.solvers import DCEGM, GridSearch, RFCEnvelope
 from lcm.typing import (
     ContinuousAction,
     ContinuousState,
@@ -171,6 +171,7 @@ def _get_model(*, solver: str, scale_is_fixed: bool) -> Model:
             DCEGM(
                 savings_grid=SAVINGS_GRID,
                 n_constrained_points=64,
+                envelope=RFCEnvelope(),
             )
             if is_dcegm
             else GridSearch()

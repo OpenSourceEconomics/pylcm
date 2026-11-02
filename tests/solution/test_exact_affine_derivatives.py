@@ -439,3 +439,50 @@ def test_certified_read_refuses_reverse_mode(dtype) -> None:
     q = jnp.asarray(0.25, dtype=dtype)
     with pytest.raises((AssertionError, TypeError, ValueError)):
         jax.grad(lambda z: _public_value(dtype=dtype, q=z))(q)
+
+
+def _node_query_value(*, endog_grid, arithmetic):
+    """Envelope value at a query that sits exactly on the middle stored node."""
+    dtype = endog_grid.dtype
+    value, _, _ = envelope_at_query(
+        endog_grid=endog_grid,
+        policy=jnp.asarray([1.0, 2.0, 3.0], dtype=dtype),
+        value=jnp.asarray([0.0, 2.0, 3.0], dtype=dtype),
+        marginal=jnp.asarray([2.0, 1.0, 1.0], dtype=dtype),
+        segment_id=jnp.zeros(3, dtype=dtype),
+        x_query=jnp.asarray([1.0], dtype=dtype),
+        arithmetic=arithmetic,
+    )
+    return value[0]
+
+
+@pytest.mark.parametrize("arithmetic", ["ordinary", "certified"])
+@pytest.mark.parametrize("dtype", _DTYPES)
+def test_node_query_derivative_carries_the_owner_line_slope(
+    *, dtype, arithmetic
+) -> None:
+    """A query on a moving node is differentiated along the owner's line.
+
+    The query `1` is the left node of the right-continuous owner `[1, 2]`, whose
+    slope is `1`. Moving that node right by `dx` while the query stays put lowers
+    the read by `slope * dx`, so the directional derivative is `-1`. Reading the
+    stored endpoint is the primal; its derivative must not drop the node's motion.
+    """
+    endog_grid = jnp.asarray([0.0, 1.0, 2.0], dtype=dtype)
+    primal, tangent = jax.jvp(
+        lambda grid: _node_query_value(endog_grid=grid, arithmetic=arithmetic),
+        (endog_grid,),
+        (jnp.asarray([0.0, 1.0, 0.0], dtype=dtype),),
+    )
+    expected = _directional_fraction(
+        primals=(1.0, 2.0, 2.0, 3.0, 1.0), tangents=(1.0, 0.0, 0.0, 0.0, 0.0)
+    )
+    assert float(primal) == 2.0
+    np.testing.assert_allclose(np.asarray(tangent), np.asarray(expected, dtype=dtype))
+    if arithmetic == "ordinary":
+        gradient = jax.grad(
+            lambda grid: _node_query_value(endog_grid=grid, arithmetic=arithmetic)
+        )(endog_grid)
+        np.testing.assert_allclose(
+            np.asarray(gradient[1]), np.asarray(expected, dtype=dtype)
+        )
