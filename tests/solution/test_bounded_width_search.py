@@ -231,7 +231,7 @@ def test_bounded_search_logs_each_evaluation_with_its_decision(
 
     assert (
         "bounded width search regime 'dead', core 'main', period 3: evaluation 1 at "
-        "{'cell': 8} — 172 reservation plus 1048 resident bytes, admitted"
+        "{'cell': 8} — 184 reservation plus 1064 resident bytes, admitted"
         in caplog.text
     )
 

@@ -1,6 +1,7 @@
 """Random setup must reach compiler admission before creating device payloads."""
 
 from collections.abc import Callable
+from typing import Literal
 
 import jax
 import jax.core
@@ -12,12 +13,105 @@ from _lcm.simulation import random as simulation_random
 from _lcm.simulation.host_operations import ProfiledSimulationOperations
 from _lcm.simulation.memory import SimulationMemory
 from _lcm.simulation.random import create_simulation_key, split_simulation_key
+from _lcm.simulation.random_address import RandomAddress, Word, draw_row_keys
 from _lcm.simulation.residency import measure_buffer_footprint
+from _lcm.typing import PRNGKeyND
 from lcm.exceptions import ExecutionPlanningError
+from lcm.typing import PRNGKey
 from tests.simulation.test_budget_lifecycle import (
     _LifecycleRegimeId,
     _stateful_target_model,
 )
+
+
+@pytest.mark.coverage(backends=("cpu", "gpu-small", "gpu-large"), precisions="both")
+@pytest.mark.parametrize("implementation", ["threefry2x32", "rbg", "unsafe_rbg"])
+@pytest.mark.parametrize("compiled", [False, True])
+def test_named_row_keys_preserve_scalar_fold_order(
+    *,
+    implementation: Literal["threefry2x32", "rbg", "unsafe_rbg"],
+    compiled: bool,
+) -> None:
+    """Batched keys retain the scalar address and high/low/period word order."""
+    with jax.default_prng_impl(implementation):
+        key = jax.random.key(seed=29, impl=implementation)
+        address_words = np.asarray(
+            RandomAddress(kind="shock", name="eps").words(), dtype=np.uint32
+        )
+        row_high = np.asarray([0, 1, 0xFFFFFFFF], dtype=np.uint32)
+        row_low = np.asarray([0xFFFFFFFF, 0, 7], dtype=np.uint32)
+        period = np.uint32(0xFFFFFFFF)
+        expected = []
+        for high, low in zip(row_high, row_low, strict=True):
+            cell = key
+            for word in (*address_words, high, low, period):
+                cell = jax.random.fold_in(cell, word)
+            expected.append(np.asarray(jax.random.key_data(cell)))
+        function = jax.jit(draw_row_keys) if compiled else draw_row_keys
+        keys = function(
+            key=key,
+            address_words=address_words,
+            row_high=row_high,
+            row_low=row_low,
+            period=period,
+        )
+        actual = jax.random.key_data(keys)
+        scalar = np.stack(expected)
+        if implementation != "threefry2x32":
+            scalar = scalar[:, None]
+        np.testing.assert_array_equal(actual, scalar)
+
+
+@pytest.mark.coverage(backends=("cpu", "gpu-small", "gpu-large"), precisions="both")
+@pytest.mark.parametrize("persistent_compilation_cache", [False], indirect=True)
+@pytest.mark.parametrize("mapped_periods", [False, True])
+def test_repeated_eager_named_keys_reuse_compiled_code(
+    *, mapped_periods: bool, persistent_compilation_cache: bool
+) -> None:
+    """Changing the root reuses eager row-key code, including period batching."""
+    assert persistent_compilation_cache is False
+    address_words = np.asarray(
+        RandomAddress(kind="shock", name="eager_reuse").words(), dtype=np.uint32
+    )
+    high = np.asarray([0, 1, 0, 1], dtype=np.uint32)
+    low = np.asarray([0, 7, 0xFFFFFFFF, 0], dtype=np.uint32)
+    periods = jnp.asarray([0, 1], dtype=jnp.uint32)
+    roots = tuple(jax.random.key(seed, impl="threefry2x32") for seed in (41, 42))
+
+    def draw(*, key: PRNGKey) -> PRNGKeyND:
+        def at_period(period: Word) -> PRNGKeyND:
+            return draw_row_keys(
+                key=key,
+                address_words=address_words,
+                row_high=high,
+                row_low=low,
+                period=period,
+            )
+
+        return jax.vmap(at_period)(periods) if mapped_periods else at_period(periods[0])
+
+    events: list[str] = []
+
+    # keyword-only-exempt: library-callback=jax.monitoring
+    def record_compile(
+        event: str, start_time: float, end_time: float, **metadata: str | int
+    ) -> None:
+        del start_time, end_time
+        if event == "/jax/core/compile/backend_compile_duration":
+            events.append(str(metadata.get("fun_name", "")))
+
+    jax.monitoring.register_event_time_span_listener(record_compile)
+    try:
+        first = jax.block_until_ready(draw(key=roots[0]))
+        cold = events.copy()
+        events.clear()
+        second = jax.block_until_ready(draw(key=roots[1]))
+        repeated = events.copy()
+    finally:
+        jax.monitoring.unregister_event_time_span_listener(record_compile)
+    assert cold, "The first call must exercise the compile observer."
+    assert not repeated, f"A new root recompiled eager row-key code: {repeated}"
+    assert np.any(jax.random.key_data(first) != jax.random.key_data(second))
 
 
 def _guard_random_allocation[**P, Result](
