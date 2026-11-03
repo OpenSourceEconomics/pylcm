@@ -123,7 +123,7 @@ def _stored_as(*, witness: _Witness, row_order: str) -> _Witness:
     """
     if row_order == "stored":
         return witness
-    order = np.asarray([2, 3, 0, 1])
+    order = np.asarray([2, 3, 0, 1], dtype=np.intp)
     swapped = witness.copy()
     names: tuple[_RowName, ...] = ("endog_grid", "value", "policy", "marginal")
     for name in names:

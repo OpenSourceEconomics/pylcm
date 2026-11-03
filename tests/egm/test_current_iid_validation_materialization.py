@@ -122,7 +122,7 @@ def _separate_dispatches(*, left: FloatND, right: FloatND, offset: FloatND) -> F
 
 def test_original_nested_jit_remains_a_separate_rounding_boundary() -> None:
     dtype = np.dtype(canonical_float_dtype())
-    eps = np.finfo(dtype).eps
+    eps = jnp.finfo(dtype).eps
     arguments = {
         "left": jnp.asarray(dtype.type(1.0 + eps)),
         "right": jnp.asarray(dtype.type(1.0 - eps)),

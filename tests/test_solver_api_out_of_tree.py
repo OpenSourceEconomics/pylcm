@@ -283,12 +283,13 @@ def _two_regime_model(*, solver: Solver, self_looping: bool = False) -> Model:
                 functions={"utility": utility},
                 solver=solver,
             ),
-            "dead": Regime(
+            "dead": (
+                functools.partial(Regime, solver=TerminalPublisher(parent=solver))
+                if self_looping
+                else Regime
+            )(
                 states={"wealth": _WEALTH},
                 functions={"utility": lambda wealth: 0.0 * wealth},
-                **(
-                    {"solver": TerminalPublisher(parent=solver)} if self_looping else {}
-                ),
             ),
         },
         ages=AgeGrid(start=0, inclusive_stop=last_age, step="Y"),

@@ -26,6 +26,7 @@ from fractions import Fraction
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from jax.typing import DTypeLike
 
 from _lcm.egm.upper_envelope.certified_sign import (
     UNRESOLVED_SIGN,
@@ -38,7 +39,7 @@ pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_R
 type Geometry = tuple[np.floating, np.floating]
 
 
-def _working_dtypes() -> tuple[type[np.floating], jnp.dtype]:
+def _working_dtypes() -> tuple[type[np.floating], DTypeLike]:
     return (np.float64, jnp.float64) if X64_ENABLED else (np.float32, jnp.float32)
 
 
@@ -143,7 +144,7 @@ def _certified(
     narrow: Geometry,
     narrow_value: np.floating,
     query: np.floating,
-    jax_dtype: jnp.dtype,
+    jax_dtype: DTypeLike,
 ) -> int:
     x0, x1 = narrow
     return int(

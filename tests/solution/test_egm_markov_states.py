@@ -210,7 +210,19 @@ def _same_grid_markov_model(solver: str) -> Model:
     """A Markov health state carried every period into the same-grid target."""
     is_dcegm = solver == "dcegm"
     regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
-    regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
+    regime_type = (
+        functools.partial(
+            ConsumptionSavingsRegime,
+            liquid=LiquidMargin(
+                state="wealth",
+                action="consumption",
+                resources="wealth",
+                post_decision_state="savings",
+            ),
+        )
+        if is_dcegm
+        else UserRegime
+    )
     working = regime_type(
         actions={"consumption": CONSUMPTION_GRID},
         states={"wealth": WEALTH_GRID, "health": DiscreteGrid(category_class=Health)},
@@ -224,18 +236,6 @@ def _same_grid_markov_model(solver: str) -> Model:
             "utility": utility_with_health,
         },
         solver=DCEGM_SOLVER if is_dcegm else GridSearch(),
-        **(
-            {
-                "liquid": LiquidMargin(
-                    state="wealth",
-                    action="consumption",
-                    resources="wealth",
-                    post_decision_state="savings",
-                )
-            }
-            if is_dcegm
-            else {}
-        ),
     )
     return Model(
         regimes={"working_life": working, "dead": dead},
@@ -338,7 +338,19 @@ def _cross_grid_markov_model(solver: str) -> Model:
     source's discrete grid.
     """
     is_dcegm = solver == "dcegm"
-    regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
+    regime_type = (
+        functools.partial(
+            ConsumptionSavingsRegime,
+            liquid=LiquidMargin(
+                state="wealth",
+                action="consumption",
+                resources="wealth",
+                post_decision_state="savings",
+            ),
+        )
+        if is_dcegm
+        else UserRegime
+    )
     early = regime_type(
         actions={"consumption": CONSUMPTION_GRID},
         states={"wealth": WEALTH_GRID, "health": DiscreteGrid(category_class=Health3)},
@@ -359,18 +371,6 @@ def _cross_grid_markov_model(solver: str) -> Model:
             "utility": utility_early,
         },
         solver=DCEGM_SOLVER if is_dcegm else GridSearch(),
-        **(
-            {
-                "liquid": LiquidMargin(
-                    state="wealth",
-                    action="consumption",
-                    resources="wealth",
-                    post_decision_state="savings",
-                )
-            }
-            if is_dcegm
-            else {}
-        ),
     )
     late = regime_type(
         actions={"consumption": CONSUMPTION_GRID},
@@ -385,18 +385,6 @@ def _cross_grid_markov_model(solver: str) -> Model:
             "utility": utility_with_health,
         },
         solver=DCEGM_SOLVER if is_dcegm else GridSearch(),
-        **(
-            {
-                "liquid": LiquidMargin(
-                    state="wealth",
-                    action="consumption",
-                    resources="wealth",
-                    post_decision_state="savings",
-                )
-            }
-            if is_dcegm
-            else {}
-        ),
     )
     return Model(
         regimes={"early": early, "late": late, "dead": dead},
@@ -513,7 +501,19 @@ def _joint_process_markov_model(solver: str) -> Model:
     integrates over the joint income-by-health node mesh.
     """
     is_dcegm = solver == "dcegm"
-    regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
+    regime_type = (
+        functools.partial(
+            ConsumptionSavingsRegime,
+            liquid=LiquidMargin(
+                state="wealth",
+                action="consumption",
+                resources="wealth",
+                post_decision_state="savings",
+            ),
+        )
+        if is_dcegm
+        else UserRegime
+    )
     working = regime_type(
         actions={"consumption": CONSUMPTION_GRID},
         states={
@@ -538,18 +538,6 @@ def _joint_process_markov_model(solver: str) -> Model:
             "utility": utility_with_health_only,
         },
         solver=DCEGM_SOLVER if is_dcegm else GridSearch(),
-        **(
-            {
-                "liquid": LiquidMargin(
-                    state="wealth",
-                    action="consumption",
-                    resources="wealth",
-                    post_decision_state="savings",
-                )
-            }
-            if is_dcegm
-            else {}
-        ),
     )
     return Model(
         regimes={"working_life": working, "dead": dead},
@@ -650,7 +638,19 @@ def _point_mass_floor_model(solver: str) -> Model:
     reproduce the deterministic-index result.
     """
     is_dcegm = solver == "dcegm"
-    regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
+    regime_type = (
+        functools.partial(
+            ConsumptionSavingsRegime,
+            liquid=LiquidMargin(
+                state="wealth",
+                action="consumption",
+                resources="wealth",
+                post_decision_state="savings",
+            ),
+        )
+        if is_dcegm
+        else UserRegime
+    )
     working = regime_type(
         actions={"consumption": CONSUMPTION_GRID},
         states={"wealth": WEALTH_GRID, "health": DiscreteGrid(category_class=Health)},
@@ -665,18 +665,6 @@ def _point_mass_floor_model(solver: str) -> Model:
             "income_transfer": income_transfer if is_dcegm else income_transfer_brute,
         },
         solver=DCEGM_SOLVER if is_dcegm else GridSearch(),
-        **(
-            {
-                "liquid": LiquidMargin(
-                    state="wealth",
-                    action="consumption",
-                    resources="wealth",
-                    post_decision_state="savings",
-                )
-            }
-            if is_dcegm
-            else {}
-        ),
     )
     return Model(
         regimes={"working_life": working, "dead": dead},

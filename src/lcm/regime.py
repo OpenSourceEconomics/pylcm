@@ -49,12 +49,20 @@ from lcm.taste_shocks import ExtremeValueTasteShocks
 from lcm.transition import (
     AgeSpecializedGrid,
     JointTransition,
+    PeriodSpecializedGrid,
     StochasticTransition,
 )
 from lcm.typing import UserFunction
 
 # One `Regime.states` value; `None` masks a model-level state of the same name.
-type StateEntry = Grid | JointNormalIIDProcess | Phased | AgeSpecializedGrid | None
+type StateEntry = (
+    Grid
+    | JointNormalIIDProcess
+    | Phased
+    | AgeSpecializedGrid
+    | PeriodSpecializedGrid
+    | None
+)
 
 # One `Regime.state_transitions` value: a law, a stochastic law, a phase pair, or
 # a per-target mapping of laws; `None` masks a model-level law. `Phased` inside a
