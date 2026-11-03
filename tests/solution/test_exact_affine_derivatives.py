@@ -393,7 +393,10 @@ def test_permuting_unique_segments_preserves_physical_owner_and_float0() -> None
     v1 = np.asarray([1.0, 3.0])
     query = jnp.asarray([0.5])
     live = jnp.asarray([True, True])
-    for permutation in (np.asarray([0, 1]), np.asarray([1, 0])):
+    for permutation in (
+        np.asarray([0, 1], dtype=np.intp),
+        np.asarray([1, 0], dtype=np.intp),
+    ):
         primals = (
             *(jnp.asarray(x[permutation]) for x in (left, right, v0, v1)),
             query,

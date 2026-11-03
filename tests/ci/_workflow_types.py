@@ -8,6 +8,7 @@ WorkflowStepInputs = TypedDict(
         "name": str,
         "path": str,
         "persist-credentials": bool,
+        "restore-keys": str,
     },
     total=False,
 )

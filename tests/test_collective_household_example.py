@@ -2,8 +2,8 @@
 
 `lcm_examples.collective_household` is the worked model for the collective and
 value-dependent declarations, so it is exercised the way a user would: solved
-under debug validation, simulated from a cohort of singles, and read off the
-published frame.
+under debug validation, simulated from a cohort of singles and couples, and read
+off the published frame.
 """
 
 from collections import Counter
@@ -15,13 +15,14 @@ import numpy as np
 import pytest
 
 from _lcm.regime_building import Q_and_F
+from _lcm.regime_building.collective import NO_ROLE
 from _lcm.solution import backward_induction
 from lcm.exits import RuleResult
 from lcm.solver_api import KernelOutput, ResultRetention
 from lcm_examples import collective_household as household
 from tests.solution.test_solution_result import _KernelKwargs
 
-_N_PERIODS = 4
+_N_PERIODS = 3
 _N_SUBJECTS = 200
 
 
@@ -36,13 +37,42 @@ def solved():
 
 @pytest.fixture(scope="module")
 def simulated(solved):
-    """Simulate a cohort of half women and half men, all starting single."""
+    """Simulate half the cohort starting single and half starting married.
+
+    Starting both kinds at age 0 puts a marriage and a dissolution into the one
+    landing that three periods leave before the terminal regimes take over.
+    Within each half, women and men alternate.
+    """
     model, params, period_to_regime_to_V_arr = solved
+    n_single = _N_SUBJECTS // 2
+    is_single = jnp.arange(_N_SUBJECTS) < n_single
+    is_woman = jnp.arange(_N_SUBJECTS) % 2 == 0
+    regime_ids = model.regime_names_to_ids
+    role_ids = model.stakeholder_names_to_ids
+    initial_conditions = {
+        "wealth": jnp.concatenate(
+            [
+                jnp.linspace(household.WEALTH_MIN, household.WEALTH_MAX, n_single),
+                jnp.linspace(
+                    2 * household.WEALTH_MIN,
+                    2 * household.WEALTH_MAX,
+                    _N_SUBJECTS - n_single,
+                ),
+            ]
+        ),
+        "age": jnp.zeros(_N_SUBJECTS),
+        "regime_id": jnp.where(
+            is_single,
+            jnp.where(is_woman, regime_ids["single_f"], regime_ids["single_m"]),
+            regime_ids["couple"],
+        ).astype(jnp.int32),
+        "own_stakeholder": jnp.where(
+            is_single, NO_ROLE, jnp.where(is_woman, role_ids["f"], role_ids["m"])
+        ).astype(jnp.int32),
+    }
     result = model.simulate(
         params=params,
-        initial_conditions=household.get_initial_conditions(
-            n_subjects=_N_SUBJECTS, model=model
-        ),
+        initial_conditions=initial_conditions,
         solution=period_to_regime_to_V_arr,
         log_level="debug",
         seed=0,
@@ -103,16 +133,29 @@ def test_some_simulated_couples_dissolve(simulated):
     """A household that participation rules out sends both partners back single."""
     by_subject = simulated.sort_values(["subject_id", "period"])
     previous = by_subject.groupby("subject_id")["regime_name"].shift()
-    dissolved = (previous == "couple") & by_subject["regime_name"].isin(
-        ["single_f", "single_m"]
-    )
+    dissolved = by_subject.loc[
+        (previous == "couple")
+        & by_subject["regime_name"].isin(["single_f", "single_m"])
+    ]
 
-    assert dissolved.any()
+    assert set(zip(dissolved["period"], dissolved["regime_name"], strict=True)) == {
+        (1, "single_f"),
+        (1, "single_m"),
+    }
 
 
 def test_singles_of_both_sexes_reach_the_household(simulated):
     """Consent is mutual, so the couple is entered from either single regime."""
-    entered = simulated.loc[simulated["regime_name"] == "couple", "own_stakeholder"]
+    starts_single = simulated.loc[
+        (simulated["period"] == 0)
+        & simulated["regime_name"].isin(["single_f", "single_m"]),
+        "subject_id",
+    ]
+    entered = simulated.loc[
+        simulated["subject_id"].isin(starts_single)
+        & (simulated["regime_name"] == "couple"),
+        "own_stakeholder",
+    ]
 
     assert set(entered.dropna().unique()) == {"f", "m"}
 

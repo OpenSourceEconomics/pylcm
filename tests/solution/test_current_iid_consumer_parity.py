@@ -16,6 +16,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 from numpy.testing import assert_array_almost_equal
+from numpy.typing import NDArray
 
 from lcm import (
     ConsumptionSavingsRegime,
@@ -911,7 +912,12 @@ def _aca_shaped_model(
     )
 
 
-def _assert_parity(*, actual: FloatND, expected: FloatND, label: str) -> None:
+def _assert_parity(
+    *,
+    actual: FloatND | NDArray[np.floating],
+    expected: FloatND | NDArray[np.floating],
+    label: str,
+) -> None:
     """Equal at float64 bit for bit, and to the precision's decimals at float32."""
     if jnp.asarray(actual).dtype == jnp.float64:
         np.testing.assert_array_equal(

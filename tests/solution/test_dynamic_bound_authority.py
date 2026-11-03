@@ -2,6 +2,7 @@
 
 import inspect
 from dataclasses import replace
+from functools import partial
 from types import MappingProxyType
 from typing import cast
 
@@ -400,18 +401,23 @@ def test_terminal_action_evaluation_keeps_bound_status_separate_from_F(
     *, collective: bool, invalid: bool
 ) -> None:
     """Singleton and household terminal evaluators carry actual RHS validity."""
-    builder = (
+    raw_builder = (
         q_and_f_module.get_Q_and_F_terminal_collective
         if collective
         else q_and_f_module.get_Q_and_F_terminal
     )
-    builder_code = inspect.unwrap(builder).__code__
+    builder_code = inspect.unwrap(raw_builder).__code__
     assert (
         "bound_specs"
         in builder_code.co_varnames[
             : builder_code.co_argcount + builder_code.co_kwonlyargcount
         ]
     ), "Terminal action evaluation must expose mandatory bound validity."
+    builder = (
+        partial(q_and_f_module.get_Q_and_F_terminal_collective, stakeholders=("a",))
+        if collective
+        else q_and_f_module.get_Q_and_F_terminal
+    )
 
     def floor(*, income: FloatND) -> FloatND:
         return income
@@ -435,7 +441,6 @@ def test_terminal_action_evaluation_keeps_bound_status_separate_from_F(
                 {"borrowing": cast("ConstraintFunction", borrowing)}
             ),
             bound_specs=(_bound(),),
-            **({"stakeholders": ("a",)} if collective else {}),
         ),
     )
     evaluated = jax.jit(kernel.evaluated)(

@@ -19,6 +19,8 @@ deliberately different grids, so a solver reading the continuation on its own
 grid disagrees rather than coinciding by accident.
 """
 
+from functools import partial
+
 import numpy as np
 import pytest
 
@@ -107,7 +109,19 @@ def feasible(*, wealth: ContinuousState, consumption: ContinuousAction) -> BoolN
 
 def _model(*, solver, n_consumption=14):
     """A 1-D lifecycle whose terminal regime renames the state it inherits."""
-    alive = (ConsumptionSavingsRegime if isinstance(solver, EGM) else Regime)(
+    alive = (
+        partial(
+            ConsumptionSavingsRegime,
+            liquid=LiquidMargin(
+                state="wealth",
+                action="consumption",
+                resources="wealth",
+                post_decision_state="savings",
+            ),
+        )
+        if isinstance(solver, EGM)
+        else Regime
+    )(
         actions={
             "consumption": LinSpacedGrid(start=0.1, stop=20.0, n_points=n_consumption)
         },
@@ -121,18 +135,6 @@ def _model(*, solver, n_consumption=14):
         constraints={} if isinstance(solver, EGM) else {"feasible": feasible},
         functions={"utility": utility, "savings": savings},
         solver=solver,
-        **(
-            {
-                "liquid": LiquidMargin(
-                    state="wealth",
-                    action="consumption",
-                    resources="wealth",
-                    post_decision_state="savings",
-                )
-            }
-            if isinstance(solver, EGM)
-            else {}
-        ),
     )
     gone = Regime(
         states={"estate": _ESTATE_GRID},

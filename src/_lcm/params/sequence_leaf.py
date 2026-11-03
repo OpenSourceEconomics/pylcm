@@ -8,7 +8,7 @@ import jax
 from _lcm.params.mapping_leaf import LeafEntry
 
 if TYPE_CHECKING:
-    from _lcm.typing import ParamsLeaf, PytreeChild
+    from _lcm.typing import PytreeChild
     from lcm.typing import UserParamsLeaf
 else:
     # `_lcm.typing` and `lcm.typing` import this module, so their aliases are not
@@ -68,9 +68,6 @@ class SequenceLeaf(UserSequenceLeaf):
     """
 
     __slots__ = ()
-
-    if TYPE_CHECKING:
-        data: tuple[ParamsLeaf, ...]
 
 
 def _user_flatten(leaf: UserSequenceLeaf) -> tuple[tuple[LeafEntry, ...], None]:

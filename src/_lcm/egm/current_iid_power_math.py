@@ -20,8 +20,6 @@ from _lcm.probability import (
 )
 from lcm.typing import FloatND
 
-_SMALL_REGION = 0.125
-
 
 class _SignedLog(NamedTuple):
     """A signed statistic retained without materializing its magnitude."""

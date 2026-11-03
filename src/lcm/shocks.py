@@ -31,6 +31,7 @@ from _lcm.processes.joint_normal import (
     _exact_zero_pivots,
     admitted_correlation_factor,
 )
+from _lcm.simulation.random_address import inverse_cdf_index
 from lcm.exceptions import GridInitializationError, ShockDeclarationError
 from lcm.grids import DiscreteGrid
 from lcm.typing import (
@@ -480,12 +481,16 @@ class ShockGroup:
                         f"Rule for {name!r} is incompatible with its base measure."
                     )
         if isinstance(self.nodes, UserNodes):
+            if any(isinstance(law, Discrete) for law in self.shocks.values()):
+                raise ShockDeclarationError(
+                    "UserNodes cannot replace exact category enumeration."
+                )
             if self.nodes.nodes.shape[1] != len(self.shocks):
                 raise ShockDeclarationError(
                     "UserNodes dimension must match the shock group."
                 )
             for column, law in enumerate(self.shocks.values()):
-                if isinstance(law, Uniform | Discrete) and np.any(
+                if isinstance(law, Uniform) and np.any(
                     (self.nodes.nodes[:, column] < 0)
                     | (self.nodes.nodes[:, column] > 1)
                 ):
@@ -1049,8 +1054,7 @@ def _discrete_cdf(*, probs: FloatND) -> FloatND:
 
 def _sample_discrete(*, coordinate: FloatND, probs: FloatND) -> tuple[IntND, BoolND]:
     """Apply the existing inverse CDF to an explicitly supplied coordinate."""
-    cdf = _discrete_cdf(probs=probs)
-    code = jnp.sum(coordinate[..., None] >= cdf, axis=-1).astype(jnp.int32)
+    code = inverse_cdf_index(probabilities=probs, uniform=coordinate)
     valid = jnp.all((coordinate >= 0) & (coordinate < 1)) & jnp.all(
         code < probs.shape[-1]
     )

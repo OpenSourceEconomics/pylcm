@@ -1163,8 +1163,8 @@ def test_a_joint_lottery_reads_its_arms_against_their_own_scales() -> None:
 
     class _Linear(CertaintyEquivalent):
         @property
-        def param_names(self) -> tuple[str, ...]:
-            return ()
+        def param_names(self) -> frozenset[str]:
+            return frozenset()
 
         def aggregate(
             self, *, values: FloatND, weights: FloatND, params: Mapping[str, FloatND]

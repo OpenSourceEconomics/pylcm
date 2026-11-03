@@ -28,7 +28,7 @@ from lcm.exceptions import (
     RegimeInitializationError,
 )
 from lcm.phased import Phased
-from lcm.transition import AgeSpecializedGrid
+from lcm.transition import AgeSpecializedGrid, PeriodSpecializedGrid
 from lcm.typing import (
     FloatND,
     FunctionName,
@@ -43,7 +43,14 @@ type HostFloatArray = Float[np.ndarray, "..."]
 type HostBoolArray = Bool[np.ndarray, "..."]
 
 
-type JointStateEntry = Grid | JointNormalIIDProcess | Phased | AgeSpecializedGrid | None
+type JointStateEntry = (
+    Grid
+    | JointNormalIIDProcess
+    | Phased
+    | AgeSpecializedGrid
+    | PeriodSpecializedGrid
+    | None
+)
 type JointFunctionEntry = UserFunction | Phased | CollectiveUtility | None
 
 
@@ -53,7 +60,9 @@ def lower_joint_normal_processes(
     functions: Mapping[FunctionName, JointFunctionEntry],
     other_names: frozenset[str],
 ) -> tuple[
-    Mapping[StateName, Grid | Phased | AgeSpecializedGrid | None],
+    Mapping[
+        StateName, Grid | Phased | AgeSpecializedGrid | PeriodSpecializedGrid | None
+    ],
     Mapping[FunctionName, JointFunctionEntry],
 ]:
     """Expand joint declarations without changing scalar-process regimes."""

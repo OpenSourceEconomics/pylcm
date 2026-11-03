@@ -13,10 +13,8 @@ import pytest
 from _lcm.execution.workspace_planning import compiler_peak_bytes
 from _lcm.simulation.host_operations import ProfiledSimulationOperations
 from _lcm.simulation.memory import SimulationMemory
-from _lcm.simulation.random import generate_simulation_keys
 from _lcm.simulation.residency import measure_buffer_footprint
 from _lcm.simulation.taste_stream import (
-    advance_simulation_taste_key,
     create_taste_shock_key,
     generate_taste_shock_keys,
 )
@@ -46,10 +44,6 @@ def _invoke(
         created = create_taste_shock_key(seed=2**40 + 17, memory=memory)
         assert isinstance(created, jax.Array)
         return created
-    if operation == "carry":
-        return advance_simulation_taste_key(
-            key=key, original_n_subjects=11, memory=memory
-        )
     return generate_taste_shock_keys(
         key=key,
         address_words=tuple(range(8)),
@@ -71,7 +65,7 @@ def _record_dispatch[Result](
     return original(self, **arguments)
 
 
-@pytest.mark.parametrize("operation", ["root", "keys", "carry"])
+@pytest.mark.parametrize("operation", ["root", "keys"])
 def test_taste_allocations_use_the_profile_and_refuse_tiny_budgets_before_dispatch(
     *, operation: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -183,34 +177,3 @@ def test_taste_profile_cache_retains_no_root_output_or_memory_owner() -> None:
     gc.collect()
     assert len(operations.cache) == 2
     assert all(reference() is None for reference in references)
-
-
-@pytest.mark.parametrize("implementation", ["threefry2x32", "rbg"])
-@pytest.mark.parametrize("budgeted", [False, True])
-def test_independent_override_preserves_the_original_carry_in_each_partition_mode(
-    *, implementation: str, budgeted: bool
-) -> None:
-    """The remaining ordinary stream matches its original population-wide split."""
-    with jax.default_prng_impl(implementation):
-        key = jax.random.key(2**40 + 31)
-        memory = _memory(roots=key) if budgeted else None
-        for partitionable in (False, True, False):
-            with jax.threefry_partitionable(partitionable):
-                expected, _ = generate_simulation_keys(
-                    key=key,
-                    names=["taste_shock"],
-                    n_initial_states=12,
-                    original_n_subjects=11,
-                    subject_slice=slice(6, 12),
-                )
-                actual = advance_simulation_taste_key(
-                    key=key, original_n_subjects=11, memory=memory
-                )
-            assert actual.dtype == expected.dtype
-            np.testing.assert_array_equal(
-                jax.random.key_data(actual), jax.random.key_data(expected)
-            )
-            if memory is not None:
-                memory.close_unit()
-        if memory is not None:
-            assert len(memory.operations.cache) == 2
