@@ -1,11 +1,13 @@
 import functools
 from collections.abc import Mapping
+from types import SimpleNamespace
 
 import jax
 import numpy as np
 import pandas as pd
 import pytest
 from jax import numpy as jnp
+from jax.experimental import topologies
 from numpy.testing import assert_array_almost_equal as aaae
 from pandas.testing import assert_frame_equal
 
@@ -23,6 +25,7 @@ from lcm.typing import FloatND
 from lcm_examples import mortality as mortality_example
 from lcm_examples import precautionary_savings as ps_example
 from tests.conftest import X64_ENABLED
+from tests.data.regression_tests import generate_representative_model_values as archive
 from tests.data.regression_tests.generate_representative_model_values import (
     PROVENANCE,
     REPRESENTATIVE_MODELS,
@@ -253,6 +256,31 @@ _ON_ARCHIVE_HOST = (
     jax.default_backend() == "cpu"
     and host_file(_STORED_MODEL_VALUES).read_text().strip() == host_fingerprint()
 )
+
+
+@pytest.mark.parametrize("changed_input", ["jax", "jaxlib", "target", "math_flags"])
+def test_stored_byte_fingerprint_identifies_the_compiler_target(
+    *, monkeypatch: pytest.MonkeyPatch, changed_input: str
+) -> None:
+    """Different compiler versions, CPU targets or math flags cannot share bytes."""
+    before = host_fingerprint()
+    assert host_fingerprint() == before
+    if changed_input == "jax":
+        monkeypatch.setattr(jax, "__version__", "different-jax-version")
+    elif changed_input == "jaxlib":
+        monkeypatch.setattr(archive.jaxlib, "__version__", "different-jaxlib-version")
+    elif changed_input == "target":
+        monkeypatch.setattr(
+            topologies,
+            "get_attached_topology",
+            lambda _platform: SimpleNamespace(
+                serialize=lambda: b"different-cpu-target"
+            ),
+        )
+    else:
+        monkeypatch.setenv("XLA_FLAGS", "--xla_cpu_enable_fast_math=true")
+
+    assert host_fingerprint() != before
 
 
 @pytest.mark.parametrize("name", REPRESENTATIVE_MODELS)

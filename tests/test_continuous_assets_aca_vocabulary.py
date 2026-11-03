@@ -5,6 +5,7 @@ production solve. Run topology witnesses in a fresh eight-device process.
 """
 
 from collections.abc import Mapping
+from functools import partial
 
 import jax
 import jax.numpy as jnp
@@ -279,7 +280,11 @@ def test_middle_assets_axis_retains_named_coordinates(
             decision - 1
         ) ** 2, jnp.asarray(pref_type >= 0)
 
-    builder = get_streaming_max_Q_over_a if streamed else get_max_Q_over_a
+    builder = (
+        partial(get_streaming_max_Q_over_a, action_width_keyword="action_width")
+        if streamed
+        else get_max_Q_over_a
+    )
     function = builder(
         Q_and_F=q,
         batch_sizes=dict.fromkeys(("pref_type", "assets", "aime"), 0),
@@ -287,7 +292,6 @@ def test_middle_assets_axis_retains_named_coordinates(
         state_names=("pref_type", "assets", "aime"),
         cell_width_keyword="cell_width",
         untiled_state_names=("assets",),
-        **({"action_width_keyword": "action_width"} if streamed else {}),
     )
     got = jax.jit(
         function,

@@ -425,7 +425,23 @@ class SeededEntryFrames(SuppliedEntryFrames):
         plan = regime.simulation.current_iid_draw_plan
         names = frozenset() if plan is None else frozenset(plan.physical_names)
         paths = {} if self.overrides is None else self.overrides.paths
-        if not ((needed & names) - self.entries.keys()) and not (paths.keys() & names):
+        partial_base = plan is not None and any(
+            not binding.group.shocks.keys() <= self.entries.keys()
+            and any(
+                isinstance(self.entries.get(name), BaseInnovations)
+                for name in binding.group.shocks
+            )
+            and (
+                binding.group.correlation is None
+                or not binding.group._has_identity_correlation(params={})  # noqa: SLF001 - fixed metadata determines whether supplied columns need seeded completion
+            )
+            for binding in plan.bindings.values()
+        )
+        if (
+            not ((needed & names) - self.entries.keys())
+            and not (paths.keys() & names)
+            and not partial_base
+        ):
             return super()._local_physical_inputs(
                 regime=regime,
                 regime_name=regime_name,
@@ -451,7 +467,13 @@ class SeededEntryFrames(SuppliedEntryFrames):
         )[0]
         local_periods = np.asarray(periods, dtype=np.int32)[np.asarray(indices)]
         values, kinds = _entry_overrides(
-            bank=self.overrides,
+            bank=self.overrides
+            if self.overrides is not None
+            else CurrentIIDOverrides(
+                entries=self.entries,
+                paths=MappingProxyType({}),
+                starts=np.asarray(periods, dtype=np.int32),
+            ),
             names=plan.physical_names,
             indices=indices,
             periods=local_periods,

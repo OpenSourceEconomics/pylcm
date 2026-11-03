@@ -26,10 +26,11 @@ from fractions import Fraction
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from jax.typing import DTypeLike
 
-from _lcm.egm.upper_envelope.certified_sign import (
-    UNRESOLVED_SIGN,
-    certified_margin_sign,
+from _lcm.egm.upper_envelope._exact_affine.ffi import (
+    UNRESOLVED_STATUS,
+    certified_affine_compare,
 )
 from tests.conftest import EXACT_KERNEL_SKIP_REASON, X64_ENABLED
 
@@ -38,7 +39,7 @@ pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_R
 type Geometry = tuple[np.floating, np.floating]
 
 
-def _working_dtypes() -> tuple[type[np.floating], jnp.dtype]:
+def _working_dtypes() -> tuple[type[np.floating], DTypeLike]:
     return (np.float64, jnp.float64) if X64_ENABLED else (np.float32, jnp.float32)
 
 
@@ -143,11 +144,11 @@ def _certified(
     narrow: Geometry,
     narrow_value: np.floating,
     query: np.floating,
-    jax_dtype: jnp.dtype,
+    jax_dtype: DTypeLike,
 ) -> int:
     x0, x1 = narrow
     return int(
-        certified_margin_sign(
+        certified_affine_compare(
             a_x0=jnp.asarray(-wide_half, dtype=jax_dtype),
             a_x1=jnp.asarray(wide_half, dtype=jax_dtype),
             a_v0=jnp.asarray(wide_value, dtype=jax_dtype),
@@ -241,7 +242,7 @@ def test_a_wide_rival_never_certifies_a_tie_against_an_ordinary_narrow_link(
             query=query,
             jax_dtype=jax_dtype,
         )
-        if sign not in (expected, UNRESOLVED_SIGN):
+        if sign not in (expected, UNRESOLVED_STATUS):
             kind = "false exact tie" if sign == 0 else "wrong strict sign"
             violations.append(
                 f"{kind}: narrow=[{float(x0):.17g}, {float(x1):.17g}] "
@@ -296,7 +297,7 @@ def test_subnormal_separation_never_certifies_a_tie_between_ordered_lines(
                 query=query,
                 jax_dtype=jax_dtype,
             )
-            if sign not in (expected, UNRESOLVED_SIGN):
+            if sign not in (expected, UNRESOLVED_STATUS):
                 kind = "false exact tie" if sign == 0 else "wrong strict sign"
                 violations.append(
                     f"{kind}: narrow=[{float(x0):.17g}, {float(x1):.17g}] "

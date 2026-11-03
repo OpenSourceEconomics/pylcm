@@ -538,10 +538,13 @@ def _one_shot_route(
         for block, terms in zip(
             partition["stable_index"], trace.block_terms, strict=True
         ):
+            assert isinstance(block, np.ndarray)
+            assert block.ndim == 1
             right_available = (query[:, None] < terms["upper"]).astype(
                 terms["value"].dtype
             )
-            for column, identity in enumerate(block.tolist()):
+            for column, scalar_identity in enumerate(block):
+                identity = int(scalar_identity)
                 if identity == _PADDING_IDENTITY:
                     continue
                 _set_keys(

@@ -1355,8 +1355,3 @@ def _fail_if_unsupported_reader(
             + "; ".join(problems)
             + ". Declare these variables with a category class."
         )
-
-
-def _value_names(value_grids: Mapping[StateOrActionName, DiscreteGrid]) -> set[str]:
-    """Return every argument name that reads a value grid: `x` and `next_x`."""
-    return {*value_grids, *(f"next_{name}" for name in value_grids)}

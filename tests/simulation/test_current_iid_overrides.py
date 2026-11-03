@@ -177,6 +177,49 @@ def test_public_entry_is_dated_and_path_tag_takes_precedence() -> None:
     np.testing.assert_array_equal(overridden["eps"], 3.0)
 
 
+@pytest.mark.parametrize("budgeted", [False, True])
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+def test_seeded_partial_correlated_base_entry_matches_a_path_at_entry(
+    *, budgeted: bool
+) -> None:
+    """A seed completes a correlated base frame around the supplied entry column."""
+    model = _model(
+        budgeted=budgeted,
+        group=ShockGroup(
+            shocks={"eps": Normal(mu=0, sigma=1), "nu": Normal(mu=0, sigma=1)},
+            nodes=MonteCarlo(2, seed=7),
+            correlation=((1.0, 0.5), (0.5, 1.0)),
+        ),
+    )
+    initial = {
+        "period": np.zeros(2, dtype=np.int32),
+        "regime_id": np.zeros(2, dtype=np.int32),
+    }
+    values = np.asarray([0.25, -0.75], dtype=jnp.asarray(0.0).dtype)
+    params = {"discount_factor": 0.5}
+    entry = model.simulate(
+        params=params,
+        initial_conditions={**initial, "eps": BaseInnovations(values=values)},
+        seed=3,
+        log_level="off",
+    ).to_dataframe(use_categorical_codes=True)
+    path = model.simulate(
+        params=params,
+        initial_conditions=initial,
+        shock_paths={
+            "eps": BaseInnovations(values=np.repeat(values[:, None], 3, axis=1))
+        },
+        seed=3,
+        log_level="off",
+    ).to_dataframe(use_categorical_codes=True)
+    assert_frame_equal(
+        entry.loc[entry["period"] == 0].reset_index(drop=True),
+        path.loc[path["period"] == 0].reset_index(drop=True),
+        check_exact=True,
+    )
+    np.testing.assert_array_equal(entry.loc[entry["period"] == 0, "eps"], values)
+
+
 @pytest.mark.coverage(backends=("cpu",), precisions="both")
 def test_untagged_current_iid_path_has_a_migration_error() -> None:
     with pytest.raises(

@@ -14,7 +14,7 @@ from jax._src.dtypes import ExtendedDType
 from jaxtyping import Key, UInt32
 
 from _lcm.dtypes import canonical_float_dtype
-from lcm.typing import Float1D, LoopIndex, ScalarFloat, ScalarInt
+from lcm.typing import Float1D, FloatND, IntND, LoopIndex, ScalarInt
 
 RANDOM_ADDRESS_VERSION = "pylcm.random.v1"
 
@@ -124,12 +124,16 @@ def scalar_draw_axis(*, dtype: np.dtype | ExtendedDType) -> tuple[int, ...]:
     return () if dtype == _threefry_key_dtype() else (1,)
 
 
-def inverse_cdf_index(*, probabilities: Float1D, uniform: ScalarFloat) -> ScalarInt:
+def inverse_cdf_index(*, probabilities: FloatND, uniform: FloatND) -> IntND:
     """Select a half-open cell from validated probabilities, preserving zero masses."""
-    indices = jnp.arange(probabilities.shape[0])
-    last_positive = jnp.max(jnp.where(probabilities > 0.0, indices, 0))
-    cumulative = jnp.where(indices >= last_positive, 1.0, jnp.cumsum(probabilities))
-    return jnp.sum(uniform >= cumulative, dtype=jnp.int32)
+    indices = jnp.arange(probabilities.shape[-1])
+    last_positive = jnp.max(
+        jnp.where(probabilities > 0.0, indices, 0), axis=-1, keepdims=True
+    )
+    cumulative = jnp.where(
+        indices >= last_positive, 1.0, jnp.cumsum(probabilities, axis=-1)
+    )
+    return jnp.sum(uniform[..., None] >= cumulative, axis=-1, dtype=jnp.int32)
 
 
 def draw_categorical_index(*, key: ScalarKey, probabilities: Float1D) -> ScalarInt:

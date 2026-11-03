@@ -226,6 +226,10 @@ def _writes_a_decomposed_name(source: PythonSource) -> list[str]:
     for node in ast.walk(ast.parse(source)):
         if isinstance(node, ast.Call):
             called = getattr(node.func, "id", None) or getattr(node.func, "attr", None)
+            if called == "partial" and node.args:
+                called = getattr(node.args[0], "id", None) or getattr(
+                    node.args[0], "attr", None
+                )
             if called in _ENGINE_CONSTRUCTORS:
                 continue
             written += [kw.arg for kw in node.keywords if kw.arg in _DECOMPOSED_NAMES]
@@ -247,9 +251,32 @@ _ENGINE_CONSTRUCTORS = frozenset(
         "build_pareto_weights",
         "build_streaming_collective_max_Q_over_a",
         "get_max_Q_over_a",
+        "get_Q_and_F_terminal_collective",
         "get_streaming_max_Q_over_a",
     }
 )
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        (
+            (
+                "partial(q_and_f_module.get_Q_and_F_terminal_collective, "
+                'stakeholders=("a",))'
+            ),
+            [],
+        ),
+        ('Regime(stakeholders=("a",))', ["stakeholders"]),
+        ('partial(Regime, stakeholders=("a",))', ["stakeholders"]),
+    ],
+)
+def test_partial_binding_preserves_the_engine_vocabulary_boundary(
+    *, source: PythonSource, expected: list[str]
+) -> None:
+    """Binding an engine helper permits only that helper's internal vocabulary."""
+    assert _writes_a_decomposed_name(source) == expected
+
 
 #: Modules that build or directly exercise the ENGINE form rather than the
 #: author form, and so write the engine vocabulary on purpose. One replaces

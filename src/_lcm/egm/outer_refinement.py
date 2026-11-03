@@ -37,6 +37,7 @@ import os
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
+from functools import partial
 
 import jax
 import jax.numpy as jnp
@@ -210,17 +211,16 @@ def safeguarded_continuous_argmax(
 
         objective_with_status = status_objective
 
-    refined = maximize_golden_section(
+    refined = (
+        partial(maximize_golden_section, objective_with_status=objective_with_status)
+        if objective_with_status is not None
+        else maximize_golden_section
+    )(
         objective=objective,
         lower=lower,
         upper=upper,
         iterations=golden_iterations,
         valid=bracket_valid,
-        **(
-            {"objective_with_status": objective_with_status}
-            if objective_with_status is not None
-            else {}
-        ),
     )
 
     best_x, best_v, second_x, second_v, width, best_companions = (

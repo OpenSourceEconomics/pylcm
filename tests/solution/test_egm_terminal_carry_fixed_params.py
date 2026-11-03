@@ -148,7 +148,19 @@ def _get_model(*, solver: str, scale_is_fixed: bool) -> Model:
     """
     is_dcegm = solver == "dcegm"
     ages = _ages()
-    regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
+    regime_type = (
+        functools.partial(
+            ConsumptionSavingsRegime,
+            liquid=LiquidMargin(
+                state="wealth",
+                action="consumption",
+                resources="wealth",
+                post_decision_state="savings_post",
+            ),
+        )
+        if is_dcegm
+        else UserRegime
+    )
     retirement = regime_type(
         actions={"consumption": CONSUMPTION_GRID},
         states={"wealth": WEALTH_GRID},
@@ -175,18 +187,6 @@ def _get_model(*, solver: str, scale_is_fixed: bool) -> Model:
             )
             if is_dcegm
             else GridSearch()
-        ),
-        **(
-            {
-                "liquid": LiquidMargin(
-                    state="wealth",
-                    action="consumption",
-                    resources="wealth",
-                    post_decision_state="savings_post",
-                )
-            }
-            if is_dcegm
-            else {}
         ),
     )
     return Model(

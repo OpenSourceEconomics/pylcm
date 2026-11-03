@@ -13,7 +13,7 @@ from collections.abc import Hashable, Iterable, Mapping
 from dataclasses import dataclass, field, fields, is_dataclass, replace
 from enum import StrEnum
 from types import MappingProxyType
-from typing import Protocol, TypedDict, runtime_checkable
+from typing import Protocol, TypedDict, cast, runtime_checkable
 
 import jax
 import jax.numpy as jnp
@@ -254,7 +254,7 @@ class ValueViewDescriptor:
             "value-view",
             self.leaf,
             self.stored_shape,
-            self.dtype,
+            cast("np.dtype[np.generic]", self.dtype),
             self.weak_type,
             self.consumer_shape,
             tuple(

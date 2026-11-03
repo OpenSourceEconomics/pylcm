@@ -2,7 +2,7 @@
 
 A bound that is too small does not produce a failure — it produces a strict sign
 that is wrong. So the property that has to be checked is soundness against
-truth, not the absence of complaint: wherever `certified_margin_sign` commits to
+truth, not the absence of complaint: wherever `certified_affine_compare` commits to
 `+1`, `-1` or `0`, exact rational arithmetic must agree. Where it abstains,
 nothing is claimed and nothing is asserted.
 
@@ -19,16 +19,15 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from _lcm.egm.upper_envelope.certified_sign import (
-    BELOW_RESOLUTION_SIGN,
-    UNRESOLVED_SIGN,
-    certified_margin_sign,
+from _lcm.egm.upper_envelope._exact_affine.ffi import (
+    UNRESOLVED_STATUS,
+    certified_affine_compare,
 )
 from tests.conftest import EXACT_KERNEL_SKIP_REASON, X64_ENABLED
 
 pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 
-ABSTENTIONS = (UNRESOLVED_SIGN, BELOW_RESOLUTION_SIGN)
+ABSTENTIONS = (UNRESOLVED_STATUS,)
 
 
 def _dtype():
@@ -110,7 +109,7 @@ def _observed_signs(cases):
     ]
     query = jnp.asarray(np.asarray([case[2] for case in cases]))
     return np.asarray(
-        certified_margin_sign(
+        certified_affine_compare(
             a_x0=columns[0],
             a_x1=columns[1],
             a_v0=columns[2],
