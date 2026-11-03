@@ -39,15 +39,18 @@ def _the_benchmark_harness_argv() -> list[str]:
     return argv
 
 
-@pytest.mark.parametrize("workflow_name", ["benchmark-pr", "benchmark-main"])
-def test_benchmark_workflows_preserve_running_measurements(
-    *, workflow_name: str
+@pytest.mark.parametrize(
+    ("workflow_name", "cancel_in_progress"),
+    [("benchmark-pr", True), ("benchmark-main", False)],
+)
+def test_benchmark_workflows_use_their_revision_policy(
+    *, workflow_name: str, cancel_in_progress: bool
 ) -> None:
-    """Finish an active measurement when another revision enters its queue."""
+    """Replace superseded PR measurements and finish main-branch measurements."""
     workflow = yaml.safe_load(
         Path(f".github/workflows/{workflow_name}.yml").read_text(encoding="utf-8")
     )
-    assert workflow["concurrency"]["cancel-in-progress"] is False
+    assert workflow["concurrency"]["cancel-in-progress"] is cancel_in_progress
 
 
 def test_benchmark_workflow_materializes_main_without_network_credentials() -> None:
