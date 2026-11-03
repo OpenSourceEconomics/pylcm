@@ -3176,6 +3176,3 @@ def _nnbegm_grid_first(*, points: Float1D) -> ScalarFloat:
 def _nnbegm_grid_last(*, points: Float1D) -> ScalarFloat:
     """Read the original last grid node as an admitted stage."""
     return points[-1]
-
-
-_ORIGINAL_FINITE_NNBEGM_PERIOD_KERNEL = _FiniteNNBEGMPeriodKernel

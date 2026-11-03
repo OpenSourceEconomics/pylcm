@@ -355,27 +355,24 @@ class Regime:
     shared household argmax, and a non-terminal one aggregates the
     per-stakeholder continuation `Q^s = W(u^s, E[V'^s])`. A non-terminal
     collective regime's transition targets must all be collective regimes with
-    the identical `stakeholders` tuple — per-stakeholder routing to different
-    regimes goes through a `Gate` in the source's `Transition`. EV1 taste
+    the identical `stakeholders` tuple — per-stakeholder current outside options
+    are declared by an `Exit`. EV1 taste
     shocks, nonlinear certainty equivalents, and non-GridSearch solvers on a
     collective regime raise `NotImplementedError`.
 
     A collective regime writes `-inf` where no action satisfies every
-    stakeholder's participation constraint — a sentinel a gated edge resolves
-    to the outside option, not a value on the household's own scale.
+    stakeholder's participation constraint. A participation `Exit` prices the
+    current outside alternatives; a landing `ParticipationCheck` selects its
+    route's fallback when the destination has no participating policy.
 
-    Three things to know before simulating one:
+    Two things to know before simulating one:
 
     - The population is one fixed-size cohort of independent rows. A
       dissolution does not split a row into two independently tracked
       households; each row records where every stakeholder would land and then
       continues as one of them.
     - Every row carries its own role. `simulate` reads it from
-      `initial_conditions["own_stakeholder"]` and updates it wherever a gated
-      edge routes the row, so one cohort may hold both partners.
-    - The off-grid value gate is approximate: it interpolates the target's
-      already-maximized value rather than recomputing the household maximum at
-      the realized off-grid point (see `get_edge_simulate_gate_evaluator`).
+      `initial_conditions["own_stakeholder"]`, so one cohort may hold both partners.
     """
 
     pareto_objective: ParetoObjective | None = field(init=False, default=None)
@@ -428,12 +425,10 @@ class Regime:
     - `Q_<s>` is stakeholder `s`'s terminal payoff. There is no continuation,
       so the value each partner weighs against the reference is what the cell
       itself delivers.
-    - What a terminal regime publishes is a **flag**, not a resolved outcome.
-      An empty feasible set sets `D = True` and leaves the `-inf` sentinel as
-      the value; pylcm substitutes no outside option, because there is no
-      continuation to route into. A caller that reads the value without the
-      flag reads the sentinel. Deciding what a dissolved terminal household is
-      worth is the model's business.
+    - An empty feasible set has no participating policy. The participating value
+      remains `-inf`; an explicit participation `Exit` can price current outside
+      alternatives. A landing `ParticipationCheck` can read participating support
+      and choose the route's fallback. Solve publishes no dissolution flag.
 
     Only collective regimes may declare value constraints at all: the
     predicates read `Q_<s>`, which a singleton regime does not carry.

@@ -57,7 +57,6 @@ from _lcm.egm.ez_kernel import (
 from _lcm.egm.framed_arithmetic import binade_exponent, framed_difference
 from _lcm.egm.interp import (
     interp_on_located_grid,
-    interp_on_prepared_grid,
     prepare_padded_grid,
 )
 from _lcm.egm.nbegm_segments import (
@@ -4175,22 +4174,6 @@ def _invert_euler_over_rows(
     """Euler-invert one row of savings-node marginal continuations."""
     return _invert_euler_over_savings(
         cont_marginal=row, discount_factor=discount_factor, preferences=preferences
-    )
-
-
-# keyword-only-exempt: library-callback=jax.vmap
-def _hermite_savings_read(
-    query: Float1D, values: Float1D, slopes: Float1D, *, savings_grid: Float1D
-) -> Float1D:
-    """Read one continuation row by cubic Hermite on the savings grid."""
-    search_grid, valid_length = prepare_padded_grid(savings_grid)
-    return interp_on_prepared_grid(
-        x_query=query,
-        search_grid=search_grid,
-        valid_length=valid_length,
-        xp=savings_grid,
-        fp=values,
-        fp_slopes=slopes,
     )
 
 
