@@ -18,6 +18,7 @@ wealth and linear extrapolation past the grid ends.
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from functools import partial
 
 import cloudpickle
 import jax
@@ -617,14 +618,17 @@ def _ce_model(
             else _terminal_value
         },
     )
-    return Model(
+    return (
+        partial(Model, certainty_equivalent=ce)
+        if ce_at_model and ce is not None
+        else Model
+    )(
         regimes={"alive": alive, "dead": dead},
         edges={"alive": Transition(targets={"dead": (0,)}, law="dead")},
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regime_id_class=_RegimeId,
         initial_nodes={0: ("alive", "dead")},
         shocks={"bill_shock": _xi(3)},
-        **({"certainty_equivalent": ce} if ce_at_model and ce is not None else {}),
     )
 
 

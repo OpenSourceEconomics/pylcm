@@ -20,6 +20,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from jax.typing import DTypeLike
 
 from _lcm.certainty_equivalent import LinearExpectation
 from _lcm.probability import scaled_exact_product
@@ -55,7 +56,7 @@ def test_a_coefficient_cannot_be_supplied_without_its_scale(
     assert parameter.default is inspect.Parameter.empty
 
 
-def _dtype() -> jnp.dtype:
+def _dtype() -> DTypeLike:
     """Return the float type the suite is running at."""
     return jnp.float64 if jax.config.jax_enable_x64 else jnp.float32
 

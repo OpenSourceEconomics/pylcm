@@ -216,7 +216,19 @@ def budget_constraint_rate(
 def _resources_param_model(solver: str) -> Model:
     """Self-targeting regime whose resources reads `rate_of_return`."""
     is_dcegm = solver == "dcegm"
-    regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
+    regime_type = (
+        functools.partial(
+            ConsumptionSavingsRegime,
+            liquid=LiquidMargin(
+                state="wealth",
+                action="consumption",
+                resources="resources",
+                post_decision_state="savings",
+            ),
+        )
+        if is_dcegm
+        else UserRegime
+    )
     working = regime_type(
         actions={"consumption": CONSUMPTION_GRID},
         states={"wealth": WEALTH_GRID},
@@ -235,18 +247,6 @@ def _resources_param_model(solver: str) -> Model:
             else {"utility": utility, "resources": resources_with_rate}
         ),
         solver=DCEGM_SOLVER if is_dcegm else GridSearch(),
-        **(
-            {
-                "liquid": LiquidMargin(
-                    state="wealth",
-                    action="consumption",
-                    resources="resources",
-                    post_decision_state="savings",
-                )
-            }
-            if is_dcegm
-            else {}
-        ),
     )
     return Model(
         regimes={"working_life": working, "dead": dead},
@@ -359,7 +359,19 @@ def _smoothstep_intermediate_model(*, solver: str, rate_is_fixed: bool) -> Model
         "countable_income": countable_income,
         "share_of_income": share_of_income,
     }
-    regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
+    regime_type = (
+        functools.partial(
+            ConsumptionSavingsRegime,
+            liquid=LiquidMargin(
+                state="wealth",
+                action="consumption",
+                resources="wealth",
+                post_decision_state="savings",
+            ),
+        )
+        if is_dcegm
+        else UserRegime
+    )
     working = regime_type(
         actions={"consumption": CONSUMPTION_GRID},
         states={"wealth": WEALTH_GRID},
@@ -378,18 +390,6 @@ def _smoothstep_intermediate_model(*, solver: str, rate_is_fixed: bool) -> Model
             else {"utility": utility, **intermediates}
         ),
         solver=DCEGM_SOLVER if is_dcegm else GridSearch(),
-        **(
-            {
-                "liquid": LiquidMargin(
-                    state="wealth",
-                    action="consumption",
-                    resources="wealth",
-                    post_decision_state="savings",
-                )
-            }
-            if is_dcegm
-            else {}
-        ),
     )
     fixed_params = (
         {"working_life": {"capital_income": {"rate_of_return": RATE_OF_RETURN}}}
@@ -500,7 +500,19 @@ def budget_constraint_pension(
 def _imputed_pension_model(solver: str) -> Model:
     """Resources reads a solve-phase imputed pension wealth (from AIME)."""
     is_dcegm = solver == "dcegm"
-    regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
+    regime_type = (
+        functools.partial(
+            ConsumptionSavingsRegime,
+            liquid=LiquidMargin(
+                state="wealth",
+                action="consumption",
+                resources="resources",
+                post_decision_state="savings",
+            ),
+        )
+        if is_dcegm
+        else UserRegime
+    )
     working = regime_type(
         actions={"consumption": CONSUMPTION_GRID},
         states=(
@@ -537,18 +549,6 @@ def _imputed_pension_model(solver: str) -> Model:
             else {"utility": utility, "resources": resources_with_pension_brute}
         ),
         solver=DCEGM_SOLVER if is_dcegm else GridSearch(),
-        **(
-            {
-                "liquid": LiquidMargin(
-                    state="wealth",
-                    action="consumption",
-                    resources="resources",
-                    post_decision_state="savings",
-                )
-            }
-            if is_dcegm
-            else {}
-        ),
     )
     return Model(
         regimes={"working_life": working, "dead": dead},

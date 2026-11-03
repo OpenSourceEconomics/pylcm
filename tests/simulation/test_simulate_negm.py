@@ -86,8 +86,12 @@ def test_negm_simulate_enforces_inner_budget_constraint():
     investment = df["illiquid_investment"].to_numpy()
     next_illiquid = illiquid + investment
     resources = np.asarray(
-        negm_kinked_toy.resources_before_outer_cost(wealth=df["wealth"].to_numpy())
-        - negm_kinked_toy.credited(illiquid=illiquid, new_durable=next_illiquid)
+        negm_kinked_toy.resources_before_outer_cost(
+            wealth=jnp.asarray(df["wealth"].to_numpy())
+        )
+        - negm_kinked_toy.credited(
+            illiquid=jnp.asarray(illiquid), new_durable=jnp.asarray(next_illiquid)
+        )
     )
     borrowing_limit = negm_kinked_toy.SAVINGS_FLOOR
     budget = resources - borrowing_limit
@@ -128,8 +132,12 @@ def test_negm_simulated_consumption_is_positive_and_within_inner_budget():
     investment = df["illiquid_investment"].to_numpy()
     next_illiquid = illiquid + investment
     resources = np.asarray(
-        negm_kinked_toy.resources_before_outer_cost(wealth=df["wealth"].to_numpy())
-        - negm_kinked_toy.credited(illiquid=illiquid, new_durable=next_illiquid)
+        negm_kinked_toy.resources_before_outer_cost(
+            wealth=jnp.asarray(df["wealth"].to_numpy())
+        )
+        - negm_kinked_toy.credited(
+            illiquid=jnp.asarray(illiquid), new_durable=jnp.asarray(next_illiquid)
+        )
     )
     borrowing_limit = negm_kinked_toy.SAVINGS_FLOOR
     assert (consumption <= resources - borrowing_limit + 1e-9).all()

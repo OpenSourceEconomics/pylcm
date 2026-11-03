@@ -1173,7 +1173,13 @@ class NBEGM(OneMarginSolver):
                 bound=bound.post_decision_bound,
                 savings_grid=savings_grid,
             )
-            kernel = _build_egm_period_kernel(
+            kernel = (
+                functools.partial(
+                    _build_egm_period_kernel, checked_core=checked_cores[group_key]
+                )
+                if group_key in checked_cores
+                else _build_egm_period_kernel
+            )(
                 core=cores[group_key],
                 declared_law=laws[group_key],
                 compute_regime_transition_probs=context.compute_regime_transition_probs,
@@ -1197,11 +1203,6 @@ class NBEGM(OneMarginSolver):
                 ),
                 source_period=period if current_floor is not None or child_slots else 0,
                 query_input_authorities=child_slots or None,
-                **(
-                    {"checked_core": checked_cores[group_key]}
-                    if group_key in checked_cores
-                    else {}
-                ),
             )
             if current_floor is not None or child_slots:
                 kernel = _with_nbegm_source_arguments(
@@ -6624,7 +6625,7 @@ def _indexed_threshold_value(
                 f"{type(value).__name__}."
             )
             raise TypeError(msg)
-        value = value.data[subkey]
+        value = cast("EconFunctionArg", value.data[subkey])
     if index_state is None and static_index is None:
         return value
     if not isinstance(value, jax.Array):
@@ -8664,18 +8665,17 @@ class _NBEGMCellContinuation:
                 )
             return (*rows, cliff_targets)
 
-        continuation = bind_continuation(
+        continuation = (
+            functools.partial(bind_continuation, collect_continuation_read_counts=True)
+            if statics.collect_continuation_read_counts
+            else bind_continuation
+        )(
             plan=self.continuation_plan,
             combo_pool=combo_pool,
             next_regime_to_continuation=self.carry,
             dtype=self.dtype,
             stochastic_node_width=statics.stochastic_node_width,
             co_map_state_names=statics.co_map_state_names,
-            **(
-                {"collect_continuation_read_counts": True}
-                if statics.collect_continuation_read_counts
-                else {}
-            ),
         )
         cliff_targets = (
             self._cliff_targets_for(combo_pool=combo_pool, midpoints=None)
@@ -8805,18 +8805,17 @@ def _interval_rows(
 
     midpoint, *interval_targets = interval_inputs
     interval_pool = {**combo_pool, liquid_name: midpoint}
-    interval_continuation = bind_continuation(
+    interval_continuation = (
+        functools.partial(bind_continuation, collect_continuation_read_counts=True)
+        if collect_continuation_read_counts
+        else bind_continuation
+    )(
         plan=continuation_plan,
         combo_pool=interval_pool,
         next_regime_to_continuation=carry,
         dtype=dtype,
         stochastic_node_width=stochastic_node_width,
         co_map_state_names=co_map_names,
-        **(
-            {"collect_continuation_read_counts": True}
-            if collect_continuation_read_counts
-            else {}
-        ),
     )
     query = (
         savings_grid
@@ -11524,16 +11523,15 @@ def _prepare_nbegm_scalar_child_reads(
         bind_continuation,
     )
 
-    continuation = bind_continuation(
+    continuation = (
+        functools.partial(bind_continuation, collect_continuation_read_counts=True)
+        if collect_continuation_read_counts
+        else bind_continuation
+    )(
         plan=plan,
         combo_pool=params,
         next_regime_to_continuation=next_regime_to_continuation,
         dtype=dtype,
-        **(
-            {"collect_continuation_read_counts": True}
-            if collect_continuation_read_counts
-            else {}
-        ),
     )
     offnode_plan = replace(
         plan,
@@ -11870,7 +11868,11 @@ def _bounded_nbegm_kernel_output(
 ) -> FeasibilityKernelOutput:
     """Publish accepted values and carry beside the unchanged mandatory summaries."""
     if current_feasibility is not None:
-        return _NBEGMNestedKernelOutput(
+        return (
+            functools.partial(_NBEGMNestedKernelOutput, replay=replay)
+            if replay is not None
+            else _NBEGMNestedKernelOutput
+        )(
             value=value,
             continuations={EGM_CONTINUATION: carry},
             feasibility_counts=counts,
@@ -11879,16 +11881,18 @@ def _bounded_nbegm_kernel_output(
             continuation_read_counts=summary.continuation_read_counts,
             current_feasibility=current_feasibility,
             prepared_source_floor=prepared_source_floor,
-            **({"replay": replay} if replay is not None else {}),
         )
-    return FeasibilityKernelOutput(
+    return (
+        functools.partial(FeasibilityKernelOutput, replay=replay)
+        if replay is not None
+        else FeasibilityKernelOutput
+    )(
         value=value,
         continuations={EGM_CONTINUATION: carry},
         feasibility_counts=counts,
         bound_status=summary.bound_status,
         query_status=summary.query_status,
         continuation_read_counts=summary.continuation_read_counts,
-        **({"replay": replay} if replay is not None else {}),
     )
 
 

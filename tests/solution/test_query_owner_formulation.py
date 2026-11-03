@@ -26,26 +26,16 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from _lcm.egm.upper_envelope.certified_sign import (
-    BELOW_RESOLUTION_SIGN,
-    UNRESOLVED_SIGN,
-    backend_flushes_subnormals,
-    certified_margin_sign,
+from _lcm.egm.upper_envelope._exact_affine.ffi import (
+    UNRESOLVED_STATUS,
+    certified_affine_compare,
 )
 from _lcm.egm.upper_envelope.query import (
-    _slope_words,
-    _tie_break_key,
-    _TieBreakKey,
     envelope_at_query,
 )
 from tests.conftest import DECIMAL_PRECISION, EXACT_KERNEL_SKIP_REASON
 
 pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
-
-
-def _key_at(*, key: _TieBreakKey, column: int) -> tuple[float, ...]:
-    """Return one segment's ordered tie-break fields as plain floats."""
-    return tuple(float(field[0, column]) for field in key)
 
 
 def _exact(value: float | np.floating) -> Fraction:
@@ -165,48 +155,6 @@ def test_row_order_does_not_change_the_owner_of_a_query() -> None:
     assert (np.isnan(stored) and np.isnan(swapped)) or stored == swapped
 
 
-@pytest.mark.parametrize("magnitude", [1.0, 1.0e3, 1.0e6])
-def test_distinct_slopes_are_not_collapsed_onto_one_tie_break_key(
-    magnitude: float,
-) -> None:
-    """Two links whose slopes differ order strictly, at every slope magnitude.
-
-    The right-continuous tie-break prefers the larger value-slope among
-    candidates that are genuinely level. Slopes hundreds of representable steps
-    apart are not level, and a ranking that maps both onto one key has lost the
-    ordering it exists to express. A steep link is where that bites: any
-    bounded reparametrisation of the slope flattens as it saturates, so the
-    ordering survives near zero and is lost exactly where EGM candidates are
-    steepest.
-    """
-    dtype = jnp.zeros(()).dtype
-    lower = jnp.asarray(magnitude, dtype=dtype)
-    upper = lower
-    for _ in range(798):
-        upper = jnp.nextafter(upper, jnp.asarray(jnp.inf, dtype=dtype))
-    assert float(upper) > float(lower)
-
-    grid = jnp.zeros((1, 2), dtype=dtype)
-    slope_high, slope_low = _slope_words(
-        left_value=grid,
-        right_value=jnp.stack([lower, upper])[None, :],
-        left_grid=grid,
-        right_grid=jnp.ones((1, 2), dtype=dtype),
-    )
-    eligible = jnp.ones((1, 2), dtype=bool)
-
-    key = _tie_break_key(
-        level_with=eligible,
-        right_available=eligible,
-        slope_high=slope_high,
-        slope_low=slope_low,
-        # Distinct identities, so the slope fields alone decide this witness.
-        stable_index=jnp.asarray([[0, 1]], dtype=jnp.int32),
-    )
-
-    assert _key_at(key=key, column=0) != _key_at(key=key, column=1)
-
-
 def test_a_subnormal_affine_reading_is_never_published_as_zero() -> None:
     """A query whose exact affine reading is subnormal-sourced is not published as 0.
 
@@ -298,7 +246,7 @@ def test_strictly_ordered_lines_are_never_certified_level_at_a_subnormal_query(
     at_below = _exact_line_at(x0=x0, x1=x1, v0=dtype(0.0), v1=below, query=query)
     assert at_above > at_below
 
-    sign = certified_margin_sign(
+    sign = certified_affine_compare(
         a_x0=jnp.asarray(x0),
         a_x1=jnp.asarray(x1),
         a_v0=jnp.asarray(dtype(0.0)),
@@ -352,7 +300,7 @@ def test_a_link_narrower_than_the_format_never_certifies_a_tie(
         query=query,
     )
 
-    sign = certified_margin_sign(
+    sign = certified_affine_compare(
         a_x0=jnp.asarray(at_constraint),
         a_x1=jnp.asarray(narrow_far_node),
         a_v0=jnp.asarray(flat),
@@ -364,17 +312,7 @@ def test_a_link_narrower_than_the_format_never_certifies_a_tie(
         x_query=jnp.asarray(query),
     )
 
-    # Where the subnormal band is readable the far node is a genuine width
-    # rather than a repeat of the near one, so the determinant is formed and
-    # comes out below what the arithmetic can resolve. That is a different
-    # abstention from the one a flushed width produces, and it is equally not a
-    # tie — which is the property this witness exists to protect.
-    honest = (
-        {UNRESOLVED_SIGN, -1}
-        if backend_flushes_subnormals(jnp.zeros(()).dtype)
-        else {UNRESOLVED_SIGN, BELOW_RESOLUTION_SIGN, -1}
-    )
-    assert int(sign) in honest
+    assert int(sign) in {UNRESOLVED_STATUS, -1}
 
 
 def test_a_lone_candidate_at_zero_owns_its_own_query() -> None:

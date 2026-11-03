@@ -38,6 +38,26 @@ def _normal_group(*, nodes: sh.NodeRule | None = None) -> sh.ShockGroup:
     )
 
 
+@pytest.mark.parametrize("mixed", [False, True])
+def test_user_nodes_refuse_discrete_shocks_at_declaration(*, mixed: bool) -> None:
+    """User-supplied base nodes cannot replace exact categorical enumeration."""
+    laws: dict[sh.ShockName, sh.Law] = {
+        "offer": sh.Discrete(categories=Offer, probs=np.asarray([0.5, 0.5]))
+    }
+    if mixed:
+        laws["eps"] = sh.Normal(mu=0, sigma=1)
+    with pytest.raises(
+        ShockDeclarationError,
+        match="UserNodes cannot replace exact category enumeration",
+    ):
+        sh.ShockGroup(
+            shocks=laws,
+            nodes=sh.UserNodes(
+                nodes=np.zeros((2, len(laws))), weights=np.asarray([0.5, 0.5])
+            ),
+        )
+
+
 def test_import_owns_worktree() -> None:
     """Execution imports the source that owns this test."""
     assert (
@@ -176,6 +196,46 @@ def test_exact_discrete_and_zero_masses() -> None:
     )
     drawn.raise_if_invalid()
     np.testing.assert_array_equal(drawn.values["offer"], [0, 1, 1])
+
+
+@pytest.mark.parametrize(
+    ("probabilities", "expected"),
+    [((0.0, 0.25, 0.0, 0.75), (1, 3, 3, 3)), ((0.5, 0.0, 0.5, 0.0), (0, 0, 2, 2))],
+)
+@pytest.mark.parametrize("compiled", [False, True])
+@pytest.mark.parametrize("batched", [False, True])
+def test_discrete_draws_use_half_open_cells_and_skip_zero_masses(
+    *,
+    probabilities: tuple[float, ...],
+    expected: tuple[int, ...],
+    compiled: bool,
+    batched: bool,
+) -> None:
+    """Cutpoints belong to the cell on their right, including across zero mass."""
+
+    @lcm.categorical(ordered=False)
+    class Categories:
+        first: ScalarInt
+        second: ScalarInt
+        third: ScalarInt
+        fourth: ScalarInt
+
+    group = sh.ShockGroup(
+        shocks={"draw": sh.Discrete(categories=Categories, probs=None)}
+    )
+    dtype = jnp.asarray(0.0).dtype
+    uniform = jnp.asarray([0.0, 0.25, 0.5, 1.0], dtype=dtype)
+    uniform = uniform.at[-1].set(jnp.nextafter(uniform[-1], jnp.asarray(0.0)))
+    probs = jnp.asarray(probabilities, dtype=dtype)
+    if batched:
+        probs = jnp.broadcast_to(probs, (uniform.size, probs.size))
+    transform = jax.jit(group.transform) if compiled else group.transform
+    result = transform(
+        base_nodes=uniform[:, None],
+        params={"draw__probs": probs},
+    )
+    result.raise_if_invalid()
+    np.testing.assert_array_equal(result.values["draw"], expected)
 
 
 @pytest.mark.parametrize(

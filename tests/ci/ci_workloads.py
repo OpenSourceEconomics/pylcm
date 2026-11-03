@@ -78,6 +78,7 @@ class Invocation(TypedDict, total=False):
     note: str
     portability_controls: str
     predicted_payload_minutes: float
+    observed_payload_seconds: float
     reclassified_files: list[str]
     source_only: bool
     unchained: bool

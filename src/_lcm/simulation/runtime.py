@@ -713,7 +713,7 @@ def _operand_signature(
         hash(signature)
     except TypeError:
         return None
-    return signature
+    return cast("Hashable", signature)
 
 
 def _prepared_route_key(

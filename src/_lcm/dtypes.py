@@ -8,6 +8,8 @@ boundary it carries the canonical dtype unchanged through the simulate
 stack; downstream code does not re-cast.
 """
 
+from typing import cast
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -23,7 +25,7 @@ _FLOAT32_MAX = float(np.finfo(np.float32).max)
 type _NumericValue = int | float | np.integer | np.floating | np.ndarray | ValueND
 
 
-def canonical_float_dtype() -> type:  # noqa: PAN006 - JAX's scalar types are classes of a private metaclass, `Any` in JAX's stubs
+def canonical_float_dtype() -> type:  # noqa: PAN006 - JAX scalar classes use a private metaclass exposed as callable values in its stubs
     """Return pylcm's canonical float dtype, derived from `jax_enable_x64`.
 
     Returns `jnp.float64` if `jax.config.jax_enable_x64` is True,
@@ -32,7 +34,10 @@ def canonical_float_dtype() -> type:  # noqa: PAN006 - JAX's scalar types are cl
     at call time, not at import, so toggling the JAX config (e.g.
     between tests) is honoured.
     """
-    return jnp.float64 if jax.config.read("jax_enable_x64") else jnp.float32
+    return cast(
+        "type",  # noqa: PAN006 - JAX's private scalar metaclass has no public instance type
+        jnp.float64 if jax.config.read("jax_enable_x64") else jnp.float32,
+    )
 
 
 def safe_to_int_dtype(

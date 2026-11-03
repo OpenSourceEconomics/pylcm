@@ -1569,11 +1569,11 @@ def _check_leaf(*, value: ParamsLeaf, path: str) -> None:
     """Check a single leaf, recursing into `MappingLeaf` / `SequenceLeaf`."""
     if isinstance(value, MappingLeaf):
         for k, v in value.data.items():
-            _check_leaf(value=v, path=f"{path}.{k}")
+            _check_leaf(value=cast("ParamsLeaf", v), path=f"{path}.{k}")
         return
     if isinstance(value, SequenceLeaf):
         for i, v in enumerate(value.data):
-            _check_leaf(value=v, path=f"{path}[{i}]")
+            _check_leaf(value=cast("ParamsLeaf", v), path=f"{path}[{i}]")
         return
     if isinstance(value, Array):
         return
