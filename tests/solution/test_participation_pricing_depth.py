@@ -232,8 +232,9 @@ def test_repeated_participation_reads_share_lowered_action_problem(
     assert ordinary.operations <= 0.8 * largest.operations, (ordinary, largest)
 
 
+@pytest.mark.parametrize("n_periods", [4, 5])
 def test_query_programs_do_not_grow_with_remaining_participation_dates(
-    monkeypatch: pytest.MonkeyPatch,
+    *, monkeypatch: pytest.MonkeyPatch, n_periods: int
 ) -> None:
     """More later participation dates keep the query program flat; one costs a constant.
 
@@ -248,12 +249,11 @@ def test_query_programs_do_not_grow_with_remaining_participation_dates(
     and decision operands, eight channels) and takes the participation check again
     at the landing, which keeps it under 4x the one-date program.
     """
-    deep = _query_flops(monkeypatch=monkeypatch, n_periods=5)
-    shallow = _query_flops(monkeypatch=monkeypatch, n_periods=4)
+    flops = _query_flops(monkeypatch=monkeypatch, n_periods=n_periods)
+    factor = 4 if n_periods == 4 else 1.1
     for regime in ("couple", "single_f", "single_m"):
-        assert deep[regime, 0] <= 1.1 * deep[regime, 1], (regime, deep)
-        one_date, two_dates = shallow[regime, 1], shallow[regime, 0]
-        assert two_dates <= 4 * one_date, (regime, one_date, two_dates)
+        earlier, later = flops[regime, 0], flops[regime, 1]
+        assert earlier <= factor * later, (regime, earlier, later)
 
 
 def test_query_program_cost_is_the_same_for_every_earlier_period(
@@ -309,7 +309,11 @@ def test_a_saved_solution_replays_its_stored_participation_surfaces(
     tmp_path: Path,
 ) -> None:
     """A loaded archive simulates exactly like the solution that wrote it."""
-    model = household.get_model(n_periods=4, wealth_n_points=4, consumption_n_points=3)
+    model = household.get_model(
+        n_periods=4,
+        wealth_n_points=4,
+        consumption_n_points=3,
+    )
     params = household.get_params()
     solution = model.solve(params=params, log_level="off")
     loaded = load_solution(path=solution.save(path=tmp_path / "solution.h5"))
