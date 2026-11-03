@@ -5,7 +5,7 @@ inside a cell, whether a crossing sits exactly on a node — are settled by the
 sign of the difference of two affine value lines. That sign must be exact with
 respect to the represented float inputs: invariant to a common additive value
 level, never masking a strict winner behind a magnitude-scaled tolerance, and
-reporting `UNRESOLVED_SIGN` (fail loud) rather than guessing when the arithmetic
+reporting `UNRESOLVED_STATUS` (fail loud) rather than guessing when the arithmetic
 cannot certify it.
 """
 
@@ -15,10 +15,9 @@ import jax
 import jax.numpy as jnp
 import pytest
 
-from _lcm.egm.upper_envelope.certified_sign import (
-    BELOW_RESOLUTION_SIGN,
-    UNRESOLVED_SIGN,
-    certified_margin_sign,
+from _lcm.egm.upper_envelope._exact_affine.ffi import (
+    UNRESOLVED_STATUS,
+    certified_affine_compare,
 )
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
 
@@ -58,7 +57,7 @@ def _sign_at(
     a_x0, a_x1, a_v0, a_v1 = a
     b_x0, b_x1, b_v0, b_v1 = b
     return int(
-        certified_margin_sign(
+        certified_affine_compare(
             a_x0=jnp.asarray(a_x0),
             a_x1=jnp.asarray(a_x1),
             a_v0=jnp.asarray(a_v0),
@@ -146,7 +145,7 @@ def test_identical_links_are_a_certified_tie():
 def test_non_finite_input_is_unresolved_rather_than_a_silent_sign():
     """A dead (NaN) endpoint cannot certify a sign."""
     dead = (9.0, 10.0, float("nan"), 5.0)
-    assert _sign_at(a=dead, b=F3_B, x=9.75) == UNRESOLVED_SIGN
+    assert _sign_at(a=dead, b=F3_B, x=9.75) == UNRESOLVED_STATUS
 
 
 def _flushed_distance_witness() -> tuple[
@@ -224,7 +223,7 @@ def test_a_margin_carried_by_a_flushed_product_is_not_certified_as_a_tie():
     # `A` is strictly below `B` at the query, so a tie is not one of the honest
     # answers — the certificate either reproduces the sign or declines to.
     assert _exact_line_margin(a=a, b=b, x=query) == -1
-    assert _sign_at(a=a, b=b, x=query) in (-1, UNRESOLVED_SIGN, BELOW_RESOLUTION_SIGN)
+    assert _sign_at(a=a, b=b, x=query) in (-1, UNRESOLVED_STATUS)
 
 
 def _crossing_links_read_beside_their_crossing() -> tuple[
@@ -257,7 +256,7 @@ def test_links_whose_products_differ_below_resolution_are_not_certified_equal():
     """
     a, b, query = _crossing_links_read_beside_their_crossing()
     assert _exact_line_margin(a=a, b=b, x=query) == -1
-    assert _sign_at(a=a, b=b, x=query) in (-1, UNRESOLVED_SIGN, BELOW_RESOLUTION_SIGN)
+    assert _sign_at(a=a, b=b, x=query) in (-1, UNRESOLVED_STATUS)
 
 
 def test_certified_sign_matches_the_rational_oracle_on_randomized_links():
@@ -275,7 +274,7 @@ def test_certified_sign_matches_the_rational_oracle_on_randomized_links():
         b = (b_x0, b_x1, float(raw[0]), float(raw[2]) - 0.25)
         x_query = float(raw[3])
         got = _sign_at(a=a, b=b, x=x_query)
-        if got == UNRESOLVED_SIGN:
+        if got == UNRESOLVED_STATUS:
             unresolved += 1
             continue
         assert got == _exact_line_margin(a=a, b=b, x=x_query)
@@ -296,7 +295,7 @@ def test_certified_sign_is_jit_and_vmap_compatible():
 
     batched = jax.jit(
         jax.vmap(
-            lambda *args: certified_margin_sign(
+            lambda *args: certified_affine_compare(
                 a_x0=args[0],
                 a_x1=args[1],
                 a_v0=args[2],

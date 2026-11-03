@@ -17,25 +17,12 @@ from _interval_block_winner_oracle import (
     partition_by_sizes,
     winner_signature,
 )
+from _interval_block_winner_source import ordinary_identity
 
 type _CandidateFactory = Callable[..., tuple[Candidate, ...]]
 
 ROOT = Path(__file__).resolve().parents[2]
 QUERY_SOURCE = ROOT / "src/_lcm/egm/upper_envelope/query.py"
-
-
-def _production_has_stable_index_field() -> bool:
-    """Read the public repair seam without importing the Python-3.14 package."""
-    tree = ast.parse(QUERY_SOURCE.read_text(encoding="utf-8"))
-    for node in tree.body:
-        if isinstance(node, ast.ClassDef) and node.name == "_TieBreakKey":
-            return any(
-                isinstance(statement, ast.AnnAssign)
-                and isinstance(statement.target, ast.Name)
-                and statement.target.id == "stable_index"
-                for statement in node.body
-            )
-    return False
 
 
 def _ordinary_candidates(*, n: int, depth: str) -> tuple[Candidate, ...]:
@@ -147,8 +134,8 @@ def _first_partition_mismatch(*, identity: Identity) -> str | None:
 
 
 def test_production_identity_is_partition_invariant() -> None:
-    """RED at baseline: production's position identity changes under blocking."""
-    identity = "stable" if _production_has_stable_index_field() else "position"
+    """The live stable-index order preserves the winner and payload across blocks."""
+    identity = ordinary_identity(ast.parse(QUERY_SOURCE.read_text(encoding="utf-8")))
     mismatch = _first_partition_mismatch(identity=identity)
     assert mismatch is None, (
         "blocked winner differs from the one-shot stable-index oracle because "

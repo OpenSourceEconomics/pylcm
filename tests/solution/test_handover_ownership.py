@@ -9,7 +9,7 @@ one too high leaves the outgoing policy in place after ownership has passed.
 Ownership is a structural predicate, so it is asserted as a decision rather than
 to a tolerance, and the decision is taken from the links' *stored endpoints* —
 the lines themselves — not from anything the envelope computed on the way. Two
-arbiters serve that: `certified_margin_sign`, which reports which link is above
+arbiters serve that: `certified_affine_compare`, which reports which link is above
 at a state, and an exact `fractions.Fraction` solve of the two lines, which names
 the crossing outright and so also covers the states where the margin predicate
 is within its own resolution of zero.
@@ -22,8 +22,10 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.egm.upper_envelope._exact_affine.ffi import (
+    certified_affine_compare,
+)
 from _lcm.egm.upper_envelope.cell_hull import _place_handovers, hull_owners
-from _lcm.egm.upper_envelope.certified_sign import certified_margin_sign
 from _lcm.egm.upper_envelope.segment_envelope import refine_envelope_exact
 from tests.conftest import EXACT_KERNEL_SKIP_REASON, X64_ENABLED
 
@@ -68,7 +70,7 @@ def _working_dtypes():
 def _owner_sign(*, jax_dtype, x_query: float, offset: float, incoming_v0: float) -> int:
     """`+1` where the outgoing link is above at `x_query`, `-1` where below."""
     return int(
-        certified_margin_sign(
+        certified_affine_compare(
             a_x0=jnp.asarray(_OUTGOING_X0, jax_dtype),
             a_x1=jnp.asarray(_OUTGOING_X1, jax_dtype),
             a_v0=jnp.asarray(_OUTGOING_V0, jax_dtype),

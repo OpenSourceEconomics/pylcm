@@ -7,6 +7,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 from _interval_block_winner_oracle import Candidate, Ordering, one_shot_winner
+from jax.typing import DTypeLike
 
 
 def _dtype_or_skip(name: str) -> jnp.dtype:
@@ -109,7 +110,7 @@ def _blocked(
 
 def _case(
     *,
-    dtype: jnp.dtype,
+    dtype: DTypeLike,
     ordering: Ordering,
     depth: int,
     permutation: tuple[int, ...],

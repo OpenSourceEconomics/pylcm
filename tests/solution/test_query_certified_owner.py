@@ -4,7 +4,7 @@ Two branches can both bracket a query and sit a hair apart there while being far
 apart at their endpoints — the steeper one is above at one end and below at the
 other. Which of them owns the query is a structural decision, so it is settled by
 the exact sign of the difference, not by how close the two reads happen to be:
-whenever `certified_margin_sign` proves one branch strictly above, that branch
+whenever `certified_affine_compare` proves one branch strictly above, that branch
 supplies the value, the policy, and the marginal.
 
 The witness is the optimized value/policy correspondence of branch-specific
@@ -19,9 +19,8 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from _lcm.egm.upper_envelope.certified_sign import (
-    BELOW_RESOLUTION_SIGN,
-    certified_margin_sign,
+from _lcm.egm.upper_envelope._exact_affine.ffi import (
+    certified_affine_compare,
 )
 from _lcm.egm.upper_envelope.query import envelope_at_query
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
@@ -123,7 +122,7 @@ def _stored_as(*, witness: _Witness, row_order: str) -> _Witness:
     """
     if row_order == "stored":
         return witness
-    order = np.asarray([2, 3, 0, 1])
+    order = np.asarray([2, 3, 0, 1], dtype=np.intp)
     swapped = witness.copy()
     names: tuple[_RowName, ...] = ("endog_grid", "value", "policy", "marginal")
     for name in names:
@@ -145,7 +144,7 @@ def _certificate(witness: _Witness) -> int:
     """The engine's certified sign of that same margin."""
     grid, value = witness["endog_grid"], witness["value"]
     return int(
-        certified_margin_sign(
+        certified_affine_compare(
             a_x0=jnp.asarray(grid[0]),
             a_x1=jnp.asarray(grid[1]),
             a_v0=jnp.asarray(value[0]),
@@ -193,7 +192,7 @@ def test_the_certificate_never_contradicts_the_exact_margin(
         common_level=common_level,
     )
     assert _exact_margin(witness) > 0
-    assert _certificate(witness) in {1, BELOW_RESOLUTION_SIGN}
+    assert _certificate(witness) == 1
 
 
 @pytest.mark.parametrize("segment_block_size", [0, 1, 2, 3])

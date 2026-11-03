@@ -301,7 +301,9 @@ def _specialized_flow(period: int) -> Callable[..., FloatND]:
     return flow
 
 
-def _specialized_model(marker: lcm.AgeSpecializedFunction) -> lcm.Model:
+def _specialized_model(
+    marker: lcm.AgeSpecializedFunction | lcm.PeriodSpecializedFunction,
+) -> lcm.Model:
     return lcm.Model(
         n_periods=3,
         regime_id_class=RegimeId,
