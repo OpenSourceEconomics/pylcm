@@ -2475,7 +2475,7 @@ jobs:
   # The slow solution phase dominates both CPU precisions. Whole files are
   # assigned by decreasing observed per-precision weight into the lightest bin
   # (`shard_test_files.py --weights-leg`), preserving module-local compile reuse
-  # while balancing real cost rather than a hash. Eleven shards per precision
+  # while balancing real cost rather than a hash. Per-precision shard counts
   # leave room for the serial replay within the same 30-minute payload budget.
   # Whole-file costs still set a lower bound under `--dist loadfile`. Each job keeps
   # two xdist workers: increasing that inside a 16 GB runner has exhausted
@@ -2495,37 +2495,43 @@ jobs:
         include:
           - precision: 64
             shard: 1
-            shards: 11
+            shards: 13
           - precision: 64
             shard: 2
-            shards: 11
+            shards: 13
           - precision: 64
             shard: 3
-            shards: 11
+            shards: 13
           - precision: 64
             shard: 4
-            shards: 11
+            shards: 13
           - precision: 64
             shard: 5
-            shards: 11
+            shards: 13
           - precision: 64
             shard: 6
-            shards: 11
+            shards: 13
           - precision: 64
             shard: 7
-            shards: 11
+            shards: 13
           - precision: 64
             shard: 8
-            shards: 11
+            shards: 13
           - precision: 64
             shard: 9
-            shards: 11
+            shards: 13
           - precision: 64
             shard: 10
-            shards: 11
+            shards: 13
           - precision: 64
             shard: 11
-            shards: 11
+            shards: 13
+          - precision: 64
+            shard: 12
+            shards: 13
+          - precision: 64
+            shard: 13
+            shards: 13
           - precision: 32
             shard: 1
             shards: 11
@@ -2608,6 +2614,7 @@ jobs:
           restore-keys: |
             ${{env.PYLCM_CACHE_KEY}}-${{hashFiles('pixi.lock')}}-
             ${{env.PYLCM_CACHE_KEY}}-
+            jax-sol-fp${{ matrix.precision }}-
       - name: Run one slow solution shard
         id: solution_shard
         shell: bash {0}

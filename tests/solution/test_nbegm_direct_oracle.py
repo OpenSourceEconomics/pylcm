@@ -466,8 +466,7 @@ def _assert_route_agrees_with_oracle(route: _Route) -> None:
     )
 
 
-@pytest.mark.parametrize("route", _NNBEGM_ROUTES, ids=lambda route: route.name)
-def test_direct_oracle_covers_the_nnbegm_inner_contexts(route: _Route) -> None:
+def _assert_nnbegm_route_agrees_with_oracle(route: _Route) -> None:
     """The nested solver's keeper and adjuster kernels agree with the oracle.
 
     Both inner kernels are ride-along NB-EGM kernels; the adjuster is checked

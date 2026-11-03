@@ -122,6 +122,32 @@ def test_saved_solution_replay_keeps_the_shards_coverage_and_membership_guard() 
     ]
 
 
+@pytest.mark.parametrize("precision", [32, 64])
+def test_new_solution_shards_can_restore_the_same_precisions_cache(
+    *, precision: int
+) -> None:
+    """A new shard can reuse compiled programs from an existing precision lane."""
+    steps = _workflow()["jobs"]["tests-slow-solution"]["steps"]
+    cache = next(
+        step for step in steps if step.get("name") == "Cache JAX compiled programs"
+    )
+    restore_keys = cache["with"]["restore-keys"]
+    assert isinstance(restore_keys, str)
+    lane = f"jax-sol-fp{precision}-s13"
+    prefixes = tuple(
+        line.strip()
+        .replace("${{env.PYLCM_CACHE_KEY}}", lane)
+        .replace("${{ matrix.precision }}", str(precision))
+        for line in restore_keys.splitlines()
+    )
+    existing = f"jax-sol-fp{precision}-s3-previous-lock-previous-source"
+    other_precision = 64 if precision == 32 else 32
+    incompatible = f"jax-sol-fp{other_precision}-s3-previous-lock-previous-source"
+
+    assert any(existing.startswith(prefix) for prefix in prefixes)
+    assert not any(incompatible.startswith(prefix) for prefix in prefixes)
+
+
 # Each four-CPU-device file now has exactly one invocation in the whole
 # workflow: the topology job runs each file in its own step and reaches both
 # precisions through its matrix, instead of the two precision legs each
