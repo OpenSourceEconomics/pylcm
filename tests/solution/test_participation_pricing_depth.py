@@ -313,7 +313,6 @@ def test_a_saved_solution_replays_its_stored_participation_surfaces(
         n_periods=4,
         wealth_n_points=4,
         consumption_n_points=3,
-        execution_config=ExecutionConfig(axis_widths={"query_cell": 1}),
     )
     params = household.get_params()
     solution = model.solve(params=params, log_level="off")
