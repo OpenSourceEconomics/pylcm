@@ -15,6 +15,8 @@ of two changes no answer and leaves every downstream multiplication with
 operands the dtype can use.
 """
 
+import re
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -33,6 +35,75 @@ from _lcm.probability import (
     scaled_exact_product,
 )
 from lcm.typing import BoolND, FloatND
+
+
+@pytest.mark.parametrize(
+    "predicate", ["is_live", "is_represented_zero", "is_below_smallest_normal"]
+)
+@pytest.mark.parametrize("constant", ["half", "one", "tiny-normal"])
+def test_static_normal_probability_predicates_fold_to_literals(
+    *, predicate: str, constant: str
+) -> None:
+    """Resolve a static normal probability without retaining runtime bit checks."""
+    dtype = _dtype()
+    value = {"half": 0.5, "one": 1.0, "tiny-normal": np.finfo(dtype).tiny}[constant]
+
+    def evaluate() -> BoolND:
+        return getattr(probability, predicate)(jnp.asarray(value, dtype=dtype))
+
+    compiled = jax.jit(evaluate).lower().compile()
+    hlo = compiled.as_text()
+    assert hlo is not None
+    operations = re.findall(
+        r"^\s*(?:ROOT\s+)?%?[\w.-]+\s*=\s*[^\n]*?\s+([\w-]+)\(", hlo, re.MULTILINE
+    )
+    assert bool(compiled()) is (predicate == "is_live")
+    assert operations, hlo
+    assert set(operations) <= {"constant", "copy"}, hlo
+
+
+@pytest.mark.coverage(backends=("cpu", "gpu-small", "gpu-large"), precisions="both")
+@pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
+@pytest.mark.parametrize("scalar_map", [False, True], ids=["array", "scalar-vmap"])
+def test_magnitude_bits_match_stored_ieee_words(
+    *, compiled: bool, scalar_map: bool
+) -> None:
+    """Clear only the sign bit across normal, subnormal, nonfinite and random words."""
+    dtype = _dtype()
+    uint_dtype = np.uint32 if dtype.itemsize == 4 else np.uint64
+    int_dtype = np.int32 if dtype.itemsize == 4 else np.int64
+    mantissa = 23 if dtype.itemsize == 4 else 52
+    sign = 1 << (dtype.itemsize * 8 - 1)
+    infinity = ((1 << (dtype.itemsize * 8 - mantissa - 1)) - 1) << mantissa
+    magnitudes = (
+        0,
+        1,
+        (1 << mantissa) - 1,
+        1 << mantissa,
+        (1 << mantissa) + 1,
+        infinity - 1,
+        infinity,
+        infinity + 1,
+        sign - 1,
+    )
+    boundary_words = np.asarray(
+        [magnitude | signed for signed in (0, sign) for magnitude in magnitudes],
+        dtype=uint_dtype,
+    )
+    random_words = np.random.default_rng(seed=8641).integers(
+        0, np.iinfo(uint_dtype).max, size=256, dtype=uint_dtype
+    )
+    words = np.concatenate((boundary_words, random_words))
+    values = jnp.asarray(words.view(dtype))
+    np.testing.assert_array_equal(np.asarray(values).view(uint_dtype), words)
+    expected = (words & np.asarray(sign - 1, dtype=uint_dtype)).astype(int_dtype)
+    evaluate = (
+        jax.vmap(probability._magnitude_bits)
+        if scalar_map
+        else probability._magnitude_bits
+    )
+    evaluate = jax.jit(evaluate) if compiled else evaluate
+    np.testing.assert_array_equal(evaluate(values), expected)
 
 
 @pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])

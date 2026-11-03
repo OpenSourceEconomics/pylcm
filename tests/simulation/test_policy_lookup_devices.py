@@ -350,7 +350,7 @@ _TRIM_SCRIPT = textwrap.dedent(
     keep_intermediates = ("Q", "F") if sys.argv[2] == "1" else ()
     n_rows = int(sys.argv[3])
     assert jax.device_count() == n_devices, jax.devices()
-    budget = 4_718_592
+    budget = 6_291_456
     # The bytes of Q do not depend on the float precision.
     n_actions = 800_000 // jnp.zeros(()).dtype.itemsize
 

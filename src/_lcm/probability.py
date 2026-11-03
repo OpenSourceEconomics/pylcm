@@ -1088,13 +1088,14 @@ def _magnitude_bits(values: FloatND) -> _BitsND:
     """Return each entry's bit pattern with the sign bit cleared."""
     arr = jnp.asarray(values)
     int_dtype = _int_dtype(arr)
-    # The mask passes through a barrier so the compiler cannot see its value.
-    # A constant mask lets the CPU backend rewrite a fused bit test into a float
-    # comparison, which flushes subnormals and so reads a subnormal probability
-    # as zero. The barrier holds one scalar, so the bit test itself stays
-    # elementwise and fuses into its consumer.
-    sign_cleared = jax.lax.optimization_barrier(
-        jnp.asarray((1 << (8 * arr.dtype.itemsize - 1)) - 1, dtype=int_dtype)
+    # Keep subnormal bit tests opaque to prevent flushing float comparisons.
+    # Normal inputs retain a literal mask and can fold when static.
+    mask = jnp.asarray((1 << (8 * arr.dtype.itemsize - 1)) - 1, dtype=int_dtype)
+    tiny = jnp.finfo(arr.dtype).tiny
+    sign_cleared = jnp.where(
+        (arr >= tiny) | (arr <= -tiny),
+        mask,
+        jax.lax.optimization_barrier(mask),
     )
     return jax.lax.bitcast_convert_type(arr, int_dtype) & sign_cleared
 
