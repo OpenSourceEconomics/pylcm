@@ -15,6 +15,8 @@ of two changes no answer and leaves every downstream multiplication with
 operands the dtype can use.
 """
 
+import re
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -33,6 +35,31 @@ from _lcm.probability import (
     scaled_exact_product,
 )
 from lcm.typing import BoolND, FloatND
+
+
+@pytest.mark.parametrize(
+    "predicate", ["is_live", "is_represented_zero", "is_below_smallest_normal"]
+)
+@pytest.mark.parametrize("constant", ["half", "one", "tiny-normal"])
+def test_static_normal_probability_predicates_fold_to_literals(
+    *, predicate: str, constant: str
+) -> None:
+    """Resolve a static normal probability without retaining runtime bit checks."""
+    dtype = _dtype()
+    value = {"half": 0.5, "one": 1.0, "tiny-normal": np.finfo(dtype).tiny}[constant]
+
+    def evaluate() -> BoolND:
+        return getattr(probability, predicate)(jnp.asarray(value, dtype=dtype))
+
+    compiled = jax.jit(evaluate).lower().compile()
+    hlo = compiled.as_text()
+    assert hlo is not None
+    operations = re.findall(
+        r"^\s*(?:ROOT\s+)?%?[\w.-]+\s*=\s*[^\n]*?\s+([\w-]+)\(", hlo, re.MULTILINE
+    )
+    assert bool(compiled()) is (predicate == "is_live")
+    assert operations, hlo
+    assert set(operations) <= {"constant", "copy"}, hlo
 
 
 @pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
