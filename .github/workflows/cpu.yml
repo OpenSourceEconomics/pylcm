@@ -2475,10 +2475,9 @@ jobs:
   # The slow solution phase dominates both CPU precisions. Whole files are
   # assigned by decreasing observed per-precision weight into the lightest bin
   # (`shard_test_files.py --weights-leg`), preserving module-local compile reuse
-  # while balancing real cost rather than a hash. Both precisions take seven
-  # shards, which keeps each job's predicted payload inside the 30-minute
-  # guardrail and close to the floor set by the heaviest indivisible file:
-  # `--dist loadfile` cannot split it, so more shards buy nothing. Each job keeps
+  # while balancing real cost rather than a hash. Eleven shards per precision
+  # leave room for the serial replay within the same 30-minute payload budget.
+  # Whole-file costs still set a lower bound under `--dist loadfile`. Each job keeps
   # two xdist workers: increasing that inside a 16 GB runner has exhausted
   # memory, whereas separate runners provide real capacity.
   tests-slow-solution:
@@ -2496,58 +2495,70 @@ jobs:
         include:
           - precision: 64
             shard: 1
-            shards: 9
+            shards: 11
           - precision: 64
             shard: 2
-            shards: 9
+            shards: 11
           - precision: 64
             shard: 3
-            shards: 9
+            shards: 11
           - precision: 64
             shard: 4
-            shards: 9
+            shards: 11
           - precision: 64
             shard: 5
-            shards: 9
+            shards: 11
           - precision: 64
             shard: 6
-            shards: 9
+            shards: 11
           - precision: 64
             shard: 7
-            shards: 9
+            shards: 11
           - precision: 64
             shard: 8
-            shards: 9
+            shards: 11
           - precision: 64
             shard: 9
-            shards: 9
+            shards: 11
+          - precision: 64
+            shard: 10
+            shards: 11
+          - precision: 64
+            shard: 11
+            shards: 11
           - precision: 32
             shard: 1
-            shards: 9
+            shards: 11
           - precision: 32
             shard: 2
-            shards: 9
+            shards: 11
           - precision: 32
             shard: 3
-            shards: 9
+            shards: 11
           - precision: 32
             shard: 4
-            shards: 9
+            shards: 11
           - precision: 32
             shard: 5
-            shards: 9
+            shards: 11
           - precision: 32
             shard: 6
-            shards: 9
+            shards: 11
           - precision: 32
             shard: 7
-            shards: 9
+            shards: 11
           - precision: 32
             shard: 8
-            shards: 9
+            shards: 11
           - precision: 32
             shard: 9
-            shards: 9
+            shards: 11
+          - precision: 32
+            shard: 10
+            shards: 11
+          - precision: 32
+            shard: 11
+            shards: 11
     env:
       PYLCM_CI_PRECISION: ${{ matrix.precision }}
       PYLCM_CI_SHARD: ${{ matrix.shard }}

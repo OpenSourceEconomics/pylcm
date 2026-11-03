@@ -173,6 +173,45 @@ def test_every_invocation_records_a_predicted_payload():
     assert not missing, f"lanes with no predicted payload: {missing}"
 
 
+def test_solution_shards_reserve_the_serial_replay_inside_the_job_budget() -> None:
+    """Parallel work and the following replay share one job's payload budget."""
+    invocations = ci_workloads.invocations()
+    ceiling = ci_workloads.guardrails()["job_payload_ceiling_minutes"]
+    for precision in (32, 64):
+        replay = ci_workloads.invocation_by_id(
+            invocation_id=f"solution-replay-fp{precision}-linux"
+        )
+        owners = [
+            invocation
+            for invocation in invocations
+            if invocation["id"].startswith("solution-shard-")
+            and invocation["environment"]["precision"] == precision
+            and set(replay["files"]).issubset(invocation["files"])
+        ]
+        assert len(owners) == 1
+        owner = owners[0]
+        weights = {
+            file_: ci_workloads.leg_weights(leg=f"fp{precision}-solution")[file_]
+            for file_ in owner["files"]
+        }
+        assert len(replay["files"]) == 1
+        replay_file = replay["files"][0]
+        measured = replay["observed_payload_seconds"]
+        assert 0 < measured <= 60 * replay["predicted_payload_minutes"]
+        # The file's summed JUnit weight includes the separately executed replay.
+        weights[replay_file] -= measured
+        assert weights[replay_file] >= 0
+        parallel_minutes = (
+            max(
+                sum(weights.values()) / owner["environment"]["workers"],
+                *weights.values(),
+            )
+            / 60
+        )
+        combined = parallel_minutes + replay["predicted_payload_minutes"]
+        assert combined <= ceiling, (owner["id"], combined, ceiling)
+
+
 def test_no_whole_file_atom_exceeds_its_lane_payload_guardrail():
     """No single file costs more than a whole job is allowed to spend.
 

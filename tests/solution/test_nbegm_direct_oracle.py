@@ -437,9 +437,17 @@ def _assert_agrees(*, got: ArgumentTree, expected: np.ndarray, label: str) -> No
     )
 
 
-@pytest.mark.parametrize("route", _ROUTES, ids=lambda route: route.name)
+@pytest.mark.parametrize(
+    "route",
+    tuple(route for route in _ROUTES if not route.name.startswith("ride_discrete")),
+    ids=lambda route: route.name,
+)
 def test_direct_oracle_matches_the_tiled_core(route: _Route) -> None:
     """Value, carry rows, and consumption agree with the scalar oracle."""
+    _assert_route_agrees_with_oracle(route)
+
+
+def _assert_route_agrees_with_oracle(route: _Route) -> None:
     model = route.build_model()
     kernel, context = ride_along_kernel(
         model=model,
