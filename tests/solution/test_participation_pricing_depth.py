@@ -304,6 +304,7 @@ def test_periods_pricing_one_participation_date_keep_their_values() -> None:
             )
 
 
+@pytest.mark.isolation(process="fresh")
 def test_a_saved_solution_replays_its_stored_participation_surfaces(
     tmp_path: Path,
 ) -> None:

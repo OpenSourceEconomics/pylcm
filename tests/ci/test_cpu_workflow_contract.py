@@ -1,5 +1,6 @@
 """Contracts between the CPU workflow and supported platform capabilities."""
 
+import argparse
 import shlex
 from pathlib import Path
 
@@ -18,6 +19,10 @@ from tests.ci.cpu_suite_invocations import (
 )
 
 _REPO_ROOT = Path(__file__).parents[2]
+_SAVED_REPLAY_NODE = (
+    "tests/solution/test_participation_pricing_depth.py::"
+    "test_a_saved_solution_replays_its_stored_participation_surfaces"
+)
 
 
 def _workflow() -> Workflow:
@@ -40,6 +45,80 @@ def _all_cpu_suite_invocations() -> list[tuple[str, str, list[str]]]:
         for step in job.get("steps", ())
         if isinstance(step.get("run"), str)
         for argv in cpu_suite_invocation_argvs(step["run"])
+    ]
+
+
+def test_saved_solution_replay_is_excluded_from_parallel_solution_workers() -> None:
+    """Give the replay its own process instead of concurrent compiler work."""
+    invocations = _pytest_invocation_argvs(
+        job="tests-slow-solution", step_name="Run one slow solution shard"
+    )
+    assert [f"--deselect={_SAVED_REPLAY_NODE}" in argv for argv in invocations] == [
+        True
+    ]
+
+
+def test_saved_solution_replay_has_one_serial_full_policy_invocation() -> None:
+    """Execute the original replay alone under the full policy and 600-second bar."""
+    parser = argparse.ArgumentParser(add_help=False)
+    for option in (
+        "-n",
+        "--timeout",
+        "--timeout-method",
+        "--isolation-mode",
+        "--ci-policy",
+        "--hardware-profile",
+    ):
+        parser.add_argument(option)
+    parser.add_argument("--policy-child", action="store_true")
+    contracts = [
+        {
+            "job": job,
+            "targets": tuple(arg for arg in argv if arg.startswith("tests/")),
+            "options": vars(parser.parse_known_args(argv)[0]),
+        }
+        for job, _, argv in _all_cpu_suite_invocations()
+        if _SAVED_REPLAY_NODE in argv
+    ]
+    assert contracts == [
+        {
+            "job": "tests-slow-solution",
+            "targets": (_SAVED_REPLAY_NODE,),
+            "options": {
+                "n": "0",
+                "timeout": "600",
+                "timeout_method": "thread",
+                "isolation_mode": "fresh",
+                "ci_policy": "full",
+                "hardware_profile": "cpu",
+                "policy_child": True,
+            },
+        }
+    ]
+
+
+def test_saved_solution_replay_keeps_the_shards_coverage_and_membership_guard() -> None:
+    """Append covered replay only in the shard that owns its test file."""
+    steps = _workflow()["jobs"]["tests-slow-solution"]["steps"]
+    contracts = [
+        (
+            step.get("if"),
+            "--cov-append" in shlex.split(step["run"], comments=True),
+            tuple(
+                token
+                for token in shlex.split(step["run"], comments=True)
+                if token.startswith("--cov-report=")
+            ),
+        )
+        for step in steps
+        if step.get("name") == "Run saved solution replay serially"
+    ]
+    assert contracts == [
+        (
+            "always() && steps.solution_shard.outputs.serial_replay == 'true'",
+            True,
+            ("--cov-report=xml:reports/coverage-solution-$PYLCM_CI_SHARD.xml",),
+        )
     ]
 
 

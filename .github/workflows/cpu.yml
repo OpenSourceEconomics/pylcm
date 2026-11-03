@@ -2598,6 +2598,7 @@ jobs:
             ${{env.PYLCM_CACHE_KEY}}-${{hashFiles('pixi.lock')}}-
             ${{env.PYLCM_CACHE_KEY}}-
       - name: Run one slow solution shard
+        id: solution_shard
         shell: bash {0}
         run: |
           set -euo pipefail
@@ -2608,6 +2609,14 @@ jobs:
             > reports/solution-shard-files.txt
           mapfile -t files < reports/solution-shard-files.txt
           test "${#files[@]}" -gt 0
+          pylcm_serial_replay=false
+          for pylcm_test_file in "${files[@]}"; do
+            if test "$pylcm_test_file" = \
+              tests/solution/test_participation_pricing_depth.py; then
+              pylcm_serial_replay=true
+            fi
+          done
+          echo "serial_replay=$pylcm_serial_replay" >> "$GITHUB_OUTPUT"
           coverage_args=()
           if test "$PYLCM_CI_PRECISION" = "64"; then
             coverage_args=(
@@ -2622,7 +2631,30 @@ jobs:
             --timeout=600 --timeout-method=thread -v --max-worker-restart=0 \
             --durations=25 \
             --junitxml="$pylcm_junit_report" \
-            -n 2 ${coverage_args[@]+"${coverage_args[@]}"}
+            -n 2 ${coverage_args[@]+"${coverage_args[@]}"} \
+            --deselect=tests/solution/test_participation_pricing_depth.py::test_a_saved_solution_replays_its_stored_participation_surfaces
+      - name: Run saved solution replay serially
+        if: always() && steps.solution_shard.outputs.serial_replay == 'true'
+        shell: bash {0}
+        run: |
+          set -euo pipefail
+          coverage_args=()
+          if test "$PYLCM_CI_PRECISION" = "64"; then
+            coverage_args=(
+              --cov=./
+              --cov-append
+              --cov-report="xml:reports/coverage-solution-$PYLCM_CI_SHARD.xml"
+            )
+          fi
+          # Keep the compiler's full CPU allocation for this archive round trip.
+          pixi run -e tests-cpu pytest \
+            --precision="$PYLCM_CI_PRECISION" -m slow \
+            --policy-child --ci-policy=full --hardware-profile=cpu \
+            --isolation-mode=fresh \
+            --timeout=600 --timeout-method=thread -n 0 -v \
+            --junitxml="reports/junit-replay-$PYLCM_CI_PRECISION.xml" \
+            ${coverage_args[@]+"${coverage_args[@]}"} \
+            tests/solution/test_participation_pricing_depth.py::test_a_saved_solution_replays_its_stored_participation_surfaces
       - name: Upload JUnit report and shard manifest
         if: always()
         uses: actions/upload-artifact@v7.0.2

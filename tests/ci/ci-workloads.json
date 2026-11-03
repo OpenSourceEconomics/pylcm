@@ -5976,7 +5976,10 @@
     "tests/solution/test_workspace_budget_solve.py",
     "tests/solution/test_zero_probability_node.py"
    ],
-   "predicted_payload_minutes": 25.4
+   "predicted_payload_minutes": 25.4,
+   "deselect": [
+    "tests/solution/test_participation_pricing_depth.py::test_a_saved_solution_replays_its_stored_participation_surfaces"
+   ]
   },
   {
    "id": "solution-shard-2-fp64-linux",
@@ -6057,7 +6060,10 @@
     "tests/solution/test_subnormal_joint_node_bellman_action.py",
     "tests/solution/test_transition_reading_an_entered_draw.py"
    ],
-   "predicted_payload_minutes": 25.4
+   "predicted_payload_minutes": 25.4,
+   "deselect": [
+    "tests/solution/test_participation_pricing_depth.py::test_a_saved_solution_replays_its_stored_participation_surfaces"
+   ]
   },
   {
    "id": "solution-shard-3-fp64-linux",
@@ -6138,7 +6144,10 @@
     "tests/solution/test_signed_regime_probabilities.py",
     "tests/solution/test_upper_envelope_dispatch.py"
    ],
-   "predicted_payload_minutes": 25.4
+   "predicted_payload_minutes": 25.4,
+   "deselect": [
+    "tests/solution/test_participation_pricing_depth.py::test_a_saved_solution_replays_its_stored_participation_surfaces"
+   ]
   },
   {
    "id": "solution-shard-4-fp64-linux",
@@ -6219,7 +6228,10 @@
     "tests/solution/test_stateless_continuation_target.py",
     "tests/solution/test_zero_mass_node.py"
    ],
-   "predicted_payload_minutes": 25.4
+   "predicted_payload_minutes": 25.4,
+   "deselect": [
+    "tests/solution/test_participation_pricing_depth.py::test_a_saved_solution_replays_its_stored_participation_surfaces"
+   ]
   },
   {
    "id": "solution-shard-5-fp64-linux",
@@ -6300,7 +6312,10 @@
     "tests/solution/test_width_selection_across_periods.py",
     "tests/solution/test_zero_mass_target.py"
    ],
-   "predicted_payload_minutes": 25.4
+   "predicted_payload_minutes": 25.4,
+   "deselect": [
+    "tests/solution/test_participation_pricing_depth.py::test_a_saved_solution_replays_its_stored_participation_surfaces"
+   ]
   },
   {
    "id": "solution-shard-6-fp64-linux",
@@ -6382,7 +6397,10 @@
     "tests/solution/test_terminal_carry_kernel_edge_kwargs.py",
     "tests/solution/test_transition_local_markov_draw.py"
    ],
-   "predicted_payload_minutes": 25.4
+   "predicted_payload_minutes": 25.4,
+   "deselect": [
+    "tests/solution/test_participation_pricing_depth.py::test_a_saved_solution_replays_its_stored_participation_surfaces"
+   ]
   },
   {
    "id": "solution-shard-7-fp64-linux",
@@ -6464,7 +6482,10 @@
     "tests/solution/test_segment_envelope_exact_read.py",
     "tests/solution/test_solution_result_model_authority_mutations.py"
    ],
-   "predicted_payload_minutes": 25.4
+   "predicted_payload_minutes": 25.4,
+   "deselect": [
+    "tests/solution/test_participation_pricing_depth.py::test_a_saved_solution_replays_its_stored_participation_surfaces"
+   ]
   },
   {
    "id": "solution-shard-8-fp64-linux",
@@ -6546,7 +6567,10 @@
     "tests/solution/test_supplied_V_shape_validation.py",
     "tests/solution/test_wide_exponent_spread_lottery.py"
    ],
-   "predicted_payload_minutes": 25.4
+   "predicted_payload_minutes": 25.4,
+   "deselect": [
+    "tests/solution/test_participation_pricing_depth.py::test_a_saved_solution_replays_its_stored_participation_surfaces"
+   ]
   },
   {
    "id": "solution-shard-9-fp64-linux",
@@ -6628,7 +6652,10 @@
     "tests/solution/test_subnormal_mantissa_matrix.py",
     "tests/solution/test_target_only_iid_nonuniform_public.py"
    ],
-   "predicted_payload_minutes": 25.4
+   "predicted_payload_minutes": 25.4,
+   "deselect": [
+    "tests/solution/test_participation_pricing_depth.py::test_a_saved_solution_replays_its_stored_participation_surfaces"
+   ]
   },
   {
    "id": "solution-shard-1-fp32-linux",
@@ -6708,7 +6735,10 @@
     "tests/solution/test_stateless_continuation_target.py",
     "tests/solution/test_supplied_V_shape_validation.py"
    ],
-   "predicted_payload_minutes": 24.94
+   "predicted_payload_minutes": 24.94,
+   "deselect": [
+    "tests/solution/test_participation_pricing_depth.py::test_a_saved_solution_replays_its_stored_participation_surfaces"
+   ]
   },
   {
    "id": "solution-shard-2-fp32-linux",
@@ -6789,7 +6819,10 @@
     "tests/solution/test_terminal_carry_kernel_edge_kwargs.py",
     "tests/solution/test_zero_probability_node.py"
    ],
-   "predicted_payload_minutes": 24.94
+   "predicted_payload_minutes": 24.94,
+   "deselect": [
+    "tests/solution/test_participation_pricing_depth.py::test_a_saved_solution_replays_its_stored_participation_surfaces"
+   ]
   },
   {
    "id": "solution-shard-3-fp32-linux",
@@ -6870,7 +6903,10 @@
     "tests/solution/test_target_only_iid_nonuniform_public.py",
     "tests/solution/test_workspace_budget_solve.py"
    ],
-   "predicted_payload_minutes": 24.94
+   "predicted_payload_minutes": 24.94,
+   "deselect": [
+    "tests/solution/test_participation_pricing_depth.py::test_a_saved_solution_replays_its_stored_participation_surfaces"
+   ]
   },
   {
    "id": "solution-shard-4-fp32-linux",
@@ -6952,7 +6988,10 @@
     "tests/solution/test_subnormal_joint_node_bellman_action.py",
     "tests/solution/test_target_only_iid_entry.py"
    ],
-   "predicted_payload_minutes": 24.94
+   "predicted_payload_minutes": 24.94,
+   "deselect": [
+    "tests/solution/test_participation_pricing_depth.py::test_a_saved_solution_replays_its_stored_participation_surfaces"
+   ]
   },
   {
    "id": "solution-shard-5-fp32-linux",
@@ -7034,7 +7073,10 @@
     "tests/solution/test_solve_executable_readiness.py",
     "tests/solution/test_zero_mass_target.py"
    ],
-   "predicted_payload_minutes": 24.94
+   "predicted_payload_minutes": 24.94,
+   "deselect": [
+    "tests/solution/test_participation_pricing_depth.py::test_a_saved_solution_replays_its_stored_participation_surfaces"
+   ]
   },
   {
    "id": "solution-shard-6-fp32-linux",
@@ -7116,7 +7158,10 @@
     "tests/solution/test_value_residency.py",
     "tests/solution/test_wide_live_nonfinite_entry.py"
    ],
-   "predicted_payload_minutes": 24.94
+   "predicted_payload_minutes": 24.94,
+   "deselect": [
+    "tests/solution/test_participation_pricing_depth.py::test_a_saved_solution_replays_its_stored_participation_surfaces"
+   ]
   },
   {
    "id": "solution-shard-7-fp32-linux",
@@ -7198,7 +7243,10 @@
     "tests/solution/test_solve_result_public_interface.py",
     "tests/solution/test_subnormal_weight_magnitude.py"
    ],
-   "predicted_payload_minutes": 24.94
+   "predicted_payload_minutes": 24.94,
+   "deselect": [
+    "tests/solution/test_participation_pricing_depth.py::test_a_saved_solution_replays_its_stored_participation_surfaces"
+   ]
   },
   {
    "id": "solution-shard-8-fp32-linux",
@@ -7280,7 +7328,10 @@
     "tests/solution/test_wide_exponent_spread_lottery.py",
     "tests/solution/test_zero_mass_node.py"
    ],
-   "predicted_payload_minutes": 24.94
+   "predicted_payload_minutes": 24.94,
+   "deselect": [
+    "tests/solution/test_participation_pricing_depth.py::test_a_saved_solution_replays_its_stored_participation_surfaces"
+   ]
   },
   {
    "id": "solution-shard-9-fp32-linux",
@@ -7361,7 +7412,10 @@
     "tests/solution/test_transition_local_process_draw.py",
     "tests/solution/test_width_selection_across_periods.py"
    ],
-   "predicted_payload_minutes": 24.94
+   "predicted_payload_minutes": 24.94,
+   "deselect": [
+    "tests/solution/test_participation_pricing_depth.py::test_a_saved_solution_replays_its_stored_participation_surfaces"
+   ]
   },
   {
    "id": "os-persistence-fp64-macos",
@@ -7542,6 +7596,64 @@
    ],
    "junit": "junit-cpu-fp32-Linux-certificate-heavy.xml",
    "predicted_payload_minutes": 25.84
+  },
+  {
+   "id": "solution-replay-fp64-linux",
+   "job": "tests-slow-solution",
+   "step": "Run saved solution replay serially",
+   "environment": {
+    "runner_os": "Linux",
+    "precision": 64,
+    "backend": "cpu",
+    "devices": 1,
+    "workers": 0,
+    "isolation": "fresh-process",
+    "policy": {
+     "policy_child": true,
+     "ci_policy": "full",
+     "hardware_profile": "cpu"
+    }
+   },
+   "selection": "slow",
+   "nodeids": [
+    "tests/solution/test_participation_pricing_depth.py::test_a_saved_solution_replays_its_stored_participation_surfaces"
+   ],
+   "junit": "junit-replay-64.xml",
+   "files": [
+    "tests/solution/test_participation_pricing_depth.py"
+   ],
+   "unchained": true,
+   "note": "Runs only in the shard owning this file, in its own serial process after the parallel shard. Float64 coverage appends to that shard report. The payload reservation uses the unchanged 600-second test limit, not an observed CI timing or a replacement leg weight.",
+   "predicted_payload_minutes": 10.0
+  },
+  {
+   "id": "solution-replay-fp32-linux",
+   "job": "tests-slow-solution",
+   "step": "Run saved solution replay serially",
+   "environment": {
+    "runner_os": "Linux",
+    "precision": 32,
+    "backend": "cpu",
+    "devices": 1,
+    "workers": 0,
+    "isolation": "fresh-process",
+    "policy": {
+     "policy_child": true,
+     "ci_policy": "full",
+     "hardware_profile": "cpu"
+    }
+   },
+   "selection": "slow",
+   "nodeids": [
+    "tests/solution/test_participation_pricing_depth.py::test_a_saved_solution_replays_its_stored_participation_surfaces"
+   ],
+   "junit": "junit-replay-32.xml",
+   "files": [
+    "tests/solution/test_participation_pricing_depth.py"
+   ],
+   "unchained": true,
+   "note": "Runs only in the shard owning this file, in its own serial process after the parallel shard. Float64 coverage appends to that shard report. The payload reservation uses the unchanged 600-second test limit, not an observed CI timing or a replacement leg weight.",
+   "predicted_payload_minutes": 10.0
   }
  ],
  "file_weights": {
