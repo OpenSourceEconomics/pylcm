@@ -245,7 +245,7 @@ def test_envelope_broadcasts_over_a_discrete_leading_axis() -> None:
     keeper = EGMCarry(
         endog_grid=jnp.broadcast_to(coh, (n_discrete, 1, n_pad)),
         value=jnp.stack(
-            [_crra_value_row(coh=coh, level=lvl) for lvl in discrete_levels]
+            [_crra_value_row(coh=coh, level=float(lvl)) for lvl in discrete_levels]
         )[:, None, :],
         marginal_utility=jnp.broadcast_to(
             _identity_marginal(coh=coh), (n_discrete, 1, n_pad)
@@ -255,7 +255,10 @@ def test_envelope_broadcasts_over_a_discrete_leading_axis() -> None:
     adjuster = EGMCarry(
         endog_grid=jnp.broadcast_to(coh - shift, (n_discrete, 1, n_pad)),
         value=jnp.stack(
-            [_crra_value_row(coh=coh, level=lvl + delta) for lvl in discrete_levels]
+            [
+                _crra_value_row(coh=coh, level=float(lvl + delta))
+                for lvl in discrete_levels
+            ]
         )[:, None, :],
         marginal_utility=jnp.broadcast_to(
             _identity_marginal(coh=coh), (n_discrete, 1, n_pad)

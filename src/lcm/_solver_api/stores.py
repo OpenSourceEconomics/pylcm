@@ -206,7 +206,7 @@ class ValueStore(Mapping[int, Mapping[RegimeName, FloatND]]):
         """Use the public constructor's checks with an ephemeral copy dependency."""
         store = object.__new__(ValueStore)
         object.__setattr__(store, "_entries", entries)
-        store._initialize(array_copier=array_copier)  # noqa: SLF001
+        store._initialize(array_copier=array_copier)
         return store
 
     def _initialize(self, *, array_copier: _ArrayCopier | None = None) -> None:

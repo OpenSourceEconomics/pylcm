@@ -71,21 +71,6 @@ def _has_local_information(*, node: QueryNode, period: int) -> bool:
     )
 
 
-def support_shape(
-    *, node: QueryNode, definitions: Mapping[str, QueryNode], period: int
-) -> tuple[int, ...]:
-    """Name only ancestor information axes that have a numerical node operator."""
-    if period != node.read.period:
-        raise ValueError("Information shape needs the query's actual period.")
-    return tuple(
-        support_size(node=definitions[name], period=definitions[name].read.period)
-        for name in node.ancestors
-        if _has_local_information(
-            node=definitions[name], period=definitions[name].read.period
-        )
-    )
-
-
 def has_information(
     *, node: QueryNode, definitions: Mapping[str, QueryNode], period: int
 ) -> bool:

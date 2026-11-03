@@ -4,7 +4,7 @@ import hashlib
 from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, cast, runtime_checkable
 
 import jax
 import numpy as np
@@ -512,13 +512,17 @@ def _update_digest_value(
         _update_digest_token(digest=digest, chunk="mapping")
         for key in sorted(value.data):
             _update_digest_value(
-                digest=digest, value=value.data[key], path=(*path, key)
+                digest=digest,
+                value=cast("ParamsLeaf", value.data[key]),
+                path=(*path, key),
             )
         return
     if isinstance(value, SequenceLeaf):
         _update_digest_token(digest=digest, chunk="sequence")
         for index, child in enumerate(value.data):
-            _update_digest_value(digest=digest, value=child, path=(*path, str(index)))
+            _update_digest_value(
+                digest=digest, value=cast("ParamsLeaf", child), path=(*path, str(index))
+            )
         return
 
     # ``asarray`` keeps the declared rank; a 0-d parameter and a length-one

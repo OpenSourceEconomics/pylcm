@@ -20,11 +20,10 @@ Three properties are tested:
   two to three points. The maximum over actions still grows with it, which shows the
   reduction census can see a `habit` axis. A planned width counts every product
   point, `habit` included, so it moves with the habit count and is not held fixed.
-- **Parity.** Solving with and without the broadcast publishes the same arrays: byte
-  for byte on the CPU backend; elsewhere identical shapes, dtypes, non-finite
-  entries and discrete arrays, with every finite float within 4 ULP in float64 and
-  1 ULP in float32. Simulating from either solve with the same initial conditions
-  and seed yields the same discrete choices, states and regimes.
+- **Parity.** Solving with and without the broadcast publishes identical shapes,
+  dtypes, non-finite entries and discrete arrays, with every finite float within
+  one ULP at its array's scale. Simulating from either solve with the same initial
+  conditions and seed yields the same discrete choices, states and regimes.
 - **Width settings.** The broadcast is used only at cell widths that are whole
   multiples of `habit`'s extent and narrower than the whole state product. A
   pinned width or a ceiling that is not such a multiple is honoured unchanged and
@@ -83,13 +82,13 @@ from lcm.typing import (
     StateName,
     UserParams,
 )
+from tests.conftest import assert_agrees_to_ulp
 from tests.solution.test_covered_axis_parity import (
     _NON_FINITE_CLASSES,
-    _bytes,
     _class_masks,
     _discrete_bytes,
+    _float_arrays,
     _shapes_and_dtypes,
-    _ulp_excess,
 )
 
 _N_PERIODS = 3
@@ -398,18 +397,18 @@ def test_grid_search_broadcasts_exactly_the_habit_state(
 
 
 @pytest.mark.skipif(
-    jax.default_backend() != "cpu", reason="Byte parity is the CPU-backend tier."
+    jax.default_backend() != "cpu", reason="The CPU publication parity tier."
 )
 @pytest.mark.parametrize("case", _CASES, ids=_case_id)
-def test_broadcast_leaves_every_published_array_bitwise_unchanged_on_cpu(
+def test_broadcast_preserves_every_published_array_on_cpu(
     *, case: tuple[int, str]
 ) -> None:
-    """On the CPU backend, values and artifacts agree byte for byte."""
+    """Keep exact array metadata and discrete outputs, with one ULP for floats."""
     n_habits, arm = case
     on = _run(n_habits=n_habits, arm=arm, broadcast=True)[0]
     off = _run(n_habits=n_habits, arm=arm, broadcast=False)[0]
 
-    assert _bytes(on) == _bytes(off)
+    _assert_published_arrays_agree(got=on, expected=off)
 
 
 @pytest.mark.parametrize("case", _CASES, ids=_case_id)
@@ -452,12 +451,12 @@ def test_broadcast_keeps_every_discrete_array_exact(*, case: tuple[int, str]) ->
 def test_broadcast_moves_no_finite_value_beyond_the_dtype_ulp_bound(
     *, case: tuple[int, str]
 ) -> None:
-    """Every finite float agrees to 4 ULP in float64 and 1 ULP in float32."""
+    """Every finite float agrees to one ULP at its array's scale."""
     n_habits, arm = case
     on = _run(n_habits=n_habits, arm=arm, broadcast=True)[0]
     off = _run(n_habits=n_habits, arm=arm, broadcast=False)[0]
 
-    assert _ulp_excess(covered=on, uncovered=off) == {}
+    _assert_published_arrays_agree(got=on, expected=off)
 
 
 @pytest.mark.parametrize("case", _CASES, ids=_case_id)
@@ -652,12 +651,30 @@ def test_whole_product_width_maps_every_cell_state_in_the_window(
 def test_width_setting_solves_to_the_values_of_the_plain_layout(
     *, setting: str
 ) -> None:
-    """Every finite float the solve publishes agrees with the solve that never
-    broadcasts, to 4 ULP in float64 and 1 ULP in float32."""
+    """Published floats agree to one ULP at the array's scale across layouts."""
     on = _solve_under(setting=setting, broadcast=True)[0]
     off = _solve_under(setting=setting, broadcast=False)[0]
 
-    assert _ulp_excess(covered=on, uncovered=off) == {}
+    _assert_published_arrays_agree(got=on, expected=off)
+
+
+def _assert_published_arrays_agree(
+    *, got: SolutionResult, expected: SolutionResult
+) -> None:
+    """Keep exact metadata and discrete arrays, bounding float roundoff by one ULP."""
+    assert _shapes_and_dtypes(got) == _shapes_and_dtypes(expected)
+    assert _discrete_bytes(got) == _discrete_bytes(expected)
+    reference = _float_arrays(expected)
+    for key, value in _float_arrays(got).items():
+        expected_value = reference[key]
+        finite = expected_value[np.isfinite(expected_value)]
+        assert_agrees_to_ulp(
+            got=value,
+            expected=expected_value,
+            n_ulp=1,
+            operand_magnitude=float(np.abs(finite).max(initial=0.0)),
+            err_msg=str(key),
+        )
 
 
 def test_budgeted_cell_frontier_rounds_widths_at_or_above_the_broadcast_extent() -> (

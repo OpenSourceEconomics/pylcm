@@ -18,7 +18,7 @@ import psutil
 import pytest
 from jax import config as jax_config
 from jax.experimental.compilation_cache import compilation_cache
-from numpy.typing import ArrayLike
+from numpy.typing import ArrayLike, NDArray
 from typing_extensions import TypedDict
 from xdist.workermanage import WorkerController
 
@@ -284,8 +284,8 @@ def assert_agrees_to_ulp(
 
 def assert_general_values_agree(
     *,
-    got: Mapping[int, Mapping[RegimeName, FloatND]],
-    expected: Mapping[int, Mapping[RegimeName, FloatND]],
+    got: Mapping[int, Mapping[RegimeName, FloatND | NDArray[np.floating]]],
+    expected: Mapping[int, Mapping[RegimeName, FloatND | NDArray[np.floating]]],
 ) -> None:
     """Require exact value coordinates and metadata, with at most eight ULP per cell."""
     assert {period: tuple(regimes) for period, regimes in got.items()} == {

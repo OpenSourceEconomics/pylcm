@@ -367,9 +367,10 @@ State-only gate routing keeps its behavior.
   when runtime checks are on.
 
 See the executable declaration examples in `lcm_examples.collective_regimes` and
-`tests/simulation/test_current_exits.py`. The uncertainty reference page still describes
-parts of the former state-grid interface; its rewrite is pending. Use the declarations
-above for this migration.
+`tests/simulation/test_current_exits.py`, the
+[IID shock reference](../reference/shocks.md), and the
+[stochastic-process guide](continuous_stochastic_processes.md) for declarations and
+simulation draw settings.
 
 (migrating-edge-parameters)=
 

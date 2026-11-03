@@ -1436,27 +1436,25 @@ class _NNBEGMPeriodKernel:
             ),
         )
         policy = result.replay.get(SIMULATION_POLICY)
-        return OuterCandidateResult(
+        return (
+            functools.partial(
+                OuterCandidateResult,
+                bound_status=result.bound_status,
+                query_status=result.query_status,
+                continuation_read_counts=result.continuation_read_counts,
+            )
+            if isinstance(result, FeasibilityKernelOutput)
+            else OuterCandidateResult
+        )(
             outer_node=node,
             V_arr=jnp.asarray(result.value),
             carry=cast("EGMCarry", result.continuations[EGM_CONTINUATION]),
             # An inner 1-D kernel publishes a flat policy or nothing; the
             # isinstance narrows the widened payload union for the bank.
             sim_policy=policy if isinstance(policy, EGMSimPolicy) else None,
-            **(
-                {
-                    "bound_status": result.bound_status,
-                    "query_status": result.query_status,
-                    "continuation_read_counts": result.continuation_read_counts,
-                }
-                if isinstance(result, FeasibilityKernelOutput)
-                else {}
-            ),
-            **(
-                {"current_feasibility": result.current_feasibility}
-                if isinstance(result, _NBEGMNestedKernelOutput)
-                else {}
-            ),
+            current_feasibility=result.current_feasibility
+            if isinstance(result, _NBEGMNestedKernelOutput)
+            else None,
         )
 
     def _certify_outer_inverse(
@@ -3178,6 +3176,3 @@ def _nnbegm_grid_first(*, points: Float1D) -> ScalarFloat:
 def _nnbegm_grid_last(*, points: Float1D) -> ScalarFloat:
     """Read the original last grid node as an admitted stage."""
     return points[-1]
-
-
-_ORIGINAL_FINITE_NNBEGM_PERIOD_KERNEL = _FiniteNNBEGMPeriodKernel

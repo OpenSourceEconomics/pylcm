@@ -108,7 +108,9 @@ class TimeVarying:
         missing = required - positions.keys()
         if missing:
             raise ValueError(f"Profile is missing mapped labels {list(missing)[:8]}.")
-        indices = np.asarray([positions[label] for label in mapping.values()])
+        indices = np.asarray(
+            [positions[label] for label in mapping.values()], dtype=np.intp
+        )
         # A NumPy profile keeps its dtype, so model validation sees the exact values.
         gathered = (
             np.take(values, indices, axis=0)

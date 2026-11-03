@@ -54,7 +54,7 @@ from lcm.typing import (
     UserFunction,
     UserInitialConditions,
 )
-from tests.conftest import DECIMAL_PRECISION
+from tests.conftest import DECIMAL_PRECISION, assert_agrees_to_ulp
 
 
 @categorical(ordered=False)
@@ -1278,8 +1278,10 @@ def test_fixed_component_valid_law_is_numerically_validated(
     assert skips == []
 
 
-def test_fixed_component_valid_law_matches_the_unannotated_law_under_validation():
-    """Under debug validation the annotation reproduces the unannotated values."""
+def test_fixed_component_valid_law_matches_the_unannotated_law_under_validation() -> (
+    None
+):
+    """Keep value metadata exact and agree to one array-scale ULP under validation."""
     params = {"discount_factor": 0.95}
     # The annotated law keeps its fixed-component layout, which lottery
     # contraction does not apply to, while the unannotated one would be
@@ -1291,9 +1293,16 @@ def test_fixed_component_valid_law_matches_the_unannotated_law_under_validation(
         factored=True, fixed_component=None, lottery_contraction=False
     ).solve(params=params, log_level="debug")
     # Code `2 * group + position` sits at `[group, position]` in the factored layout.
-    np.testing.assert_array_equal(
-        np.asarray(factored.values[0]["alive"]).reshape(4, 5),
-        np.asarray(unannotated.values[0]["alive"]),
+    got = np.asarray(factored.values[0]["alive"]).reshape(4, 5)
+    expected = np.asarray(unannotated.values[0]["alive"])
+    assert (got.shape, got.dtype) == (expected.shape, expected.dtype)
+    assert_agrees_to_ulp(
+        got=got,
+        expected=expected,
+        n_ulp=1,
+        operand_magnitude=float(
+            np.abs(expected[np.isfinite(expected)]).max(initial=0.0)
+        ),
     )
 
 

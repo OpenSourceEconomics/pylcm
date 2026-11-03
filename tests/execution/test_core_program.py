@@ -65,9 +65,10 @@ from tests.test_models.nbegm_common import (
 _WIDTH_KEYWORD = "_lcm_action_block_width"
 
 # A GridSearch core also publishes its empty-action and other-Inf state counts.
+_FEASIBILITY_COUNT_DTYPE = jnp.int64 if jax.config.x64_enabled else jnp.int32
 _FEASIBILITY_COUNT_ROLES = (
-    StateAxesLeading(state_names=(), dtype=jnp.int32, shape=()),
-    StateAxesLeading(state_names=(), dtype=jnp.int32, shape=()),
+    StateAxesLeading(state_names=(), dtype=_FEASIBILITY_COUNT_DTYPE, shape=()),
+    StateAxesLeading(state_names=(), dtype=_FEASIBILITY_COUNT_DTYPE, shape=()),
 )
 
 _SCHEDULED_SOURCE = ("source", 0, "main")

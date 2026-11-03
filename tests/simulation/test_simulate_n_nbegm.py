@@ -63,9 +63,9 @@ def test_simulated_consumption_stays_inside_the_inner_budget() -> None:
     illiquid = df["illiquid"].to_numpy()
     resources = np.asarray(
         toy.resources(
-            wealth=df["wealth"].to_numpy(),
-            illiquid=illiquid,
-            new_illiquid=illiquid + df["illiquid_investment"].to_numpy(),
+            wealth=jnp.asarray(df["wealth"].to_numpy()),
+            illiquid=jnp.asarray(illiquid),
+            new_illiquid=jnp.asarray(illiquid + df["illiquid_investment"].to_numpy()),
         )
     )
     borrowing_limit = toy.SAVINGS_FLOOR

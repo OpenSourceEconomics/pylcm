@@ -4526,11 +4526,13 @@ class Model:
                 original initial-condition row, so reordering rows changes them.
             taste_shock_seed: Optional independent integer seed or scalar typed
                 key for common taste-shock
-                realizations across counterfactual simulations. Matching exact
-                ages, initial-condition row positions and ordered discrete-action
-                domains receive the same standardized shocks, regardless of
-                `seed`, policy parameters or realized regime. Reordering or
-                resizing that discrete domain changes the stream. Integer seeds use
+                realizations across counterfactual simulations. Matching
+                computational periods, destination regime names and original
+                initial-condition row positions receive the same standardized
+                shocks, regardless of `seed` or policy parameters. Action grids
+                do not enter the key address; comparing individual draws requires
+                matching ordered discrete-action domains and draw shapes. Integer
+                seeds use
                 Threefry; typed keys retain their implementation;
                 comparisons require matching precision/backend and JAX random
                 configuration. `None` preserves the ordinary seeded stream.

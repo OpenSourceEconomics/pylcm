@@ -27,6 +27,7 @@ reaching a liquid-first kernel is a layout question rather than a grid one, and
 it is asserted against an exact affine oracle rather than against brute force.
 """
 
+from functools import partial
 from pathlib import Path
 
 import numpy as np
@@ -173,7 +174,19 @@ def _renamed_one_asset_model(*, solver, n_consumption=14):
 
     wealth_grid = LinSpacedGrid(start=0.1, stop=20.0, n_points=12)
     ages = AgeGrid(start=0, inclusive_stop=3, step="Y")
-    alive = (ConsumptionSavingsRegime if isinstance(solver, EGM) else Regime)(
+    alive = (
+        partial(
+            ConsumptionSavingsRegime,
+            liquid=LiquidMargin(
+                state="wealth",
+                action="consumption",
+                resources="resources",
+                post_decision_state="savings",
+            ),
+        )
+        if isinstance(solver, EGM)
+        else Regime
+    )(
         actions={
             "consumption": LinSpacedGrid(start=0.1, stop=20.0, n_points=n_consumption)
         },
@@ -186,18 +199,6 @@ def _renamed_one_asset_model(*, solver, n_consumption=14):
             **({"resources": resources} if isinstance(solver, EGM) else {}),
         },
         solver=solver,
-        **(
-            {
-                "liquid": LiquidMargin(
-                    state="wealth",
-                    action="consumption",
-                    resources="resources",
-                    post_decision_state="savings",
-                )
-            }
-            if isinstance(solver, EGM)
-            else {}
-        ),
     )
     gone = Regime(
         states={"wealth": wealth_grid},

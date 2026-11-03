@@ -503,20 +503,23 @@ value cotangents can still underflow before a large upstream payoff derivative; 
 extreme sensitivity is not an accuracy-qualified marginal channel. Later economic
 marginals must weight their explicitly represented derivative values.
 
-Uncomposed current-IID intersections fail explicitly: non-GridSearch decisions,
-Decoupled objectives, action partitions, co-mapped or invariant state blocks,
-bound/query reconstruction, and gated or same-period value readers. Refusals follow
-actual owners and incoming readers, preserving unrelated legacy components. Policy
-lookup awaits explicit observation/conditional semantics. Signed rule ancestry is
-refused at the native decision boundary. These scoped holds do not retire legacy routes
-or complete the later exit, query and signed-reader stages.
+The native GridSearch route and node-state EGM route have distinct supported
+combinations. The [shock reference](../reference/shocks.md#current-iid-refusals) lists
+the native GridSearch restrictions, while the
+[solver reference](../reference/solvers.md#current-iid-egm) describes named shocks in
+endogenous-grid regimes. Unsupported combinations fail explicitly at the relevant public
+boundary.
 
 ## Legacy migration
 
-Migrate legacy IID-state and folded declarations directly to named shock groups with
-explicit base rules. Retaining constructor spellings, physical-bin nodes or the former
-finite quadrature operator is not an acceptance requirement. Do not introduce frozen
-pullback anchors or a compatibility bridge to preserve those numerical choices.
+IID process states remain supported. Remove `fold=`: timing is inferred from whether the
+model reads the current state or `next_<state>`. A current read retains its state axis;
+a process read only after the choice is integrated in the continuation. Its
+`simulated_draws` setting selects continuous draws or the node lottery. Named shock
+groups are an alternative declaration through `Model(shocks=...)`, with continuous
+simulation draws. See the
+[migration guide](../user_guide/migrating_dated_regimes.md#shock-timing-is-inferred) for
+the retained state interface and direct replacements for removed arguments.
 
 Migration preserves the economic law, information available at choice, draw date and
 joint dependence. A current observed shock and a post-action transition-local lottery

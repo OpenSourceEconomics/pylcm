@@ -19,6 +19,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from jax.typing import DTypeLike
 
 import _lcm.simulation.chunk_admission as admission
 import _lcm.simulation.chunk_profile_inventory as chunk_profile_inventory_module
@@ -89,7 +90,7 @@ def _budgeted_model(*, device_memory_bytes: int = 2**32) -> Model:
     )
 
 
-def _initial(*, n: int, dtype: jnp.dtype = jnp.float32) -> dict[str, jax.Array]:
+def _initial(*, n: int, dtype: DTypeLike = jnp.float32) -> dict[str, jax.Array]:
     return {
         "wealth": jnp.linspace(1.0, 2.0, n, dtype=dtype),
         "age": jnp.zeros(n),

@@ -2461,22 +2461,37 @@ def test_static_single_sharing_retains_guard_and_projection_fallback(
 
 
 @pytest.mark.coverage(backends=("cpu", "gpu-small", "gpu-large"), precisions="both")
-def test_static_single_sharing_reads_changed_params_and_preserves_jvp() -> None:
-    """Level shifts values by three, with unit tangent and fresh-model agreement."""
-    model = _sharing_control_model(parameterized=True)
-    kernel = model._regimes["single_f"].solution.period_kernels[0]
-    assert isinstance(kernel, _PolicyQueryKernel)
+@pytest.mark.parametrize(("state_count", "chunk_size"), [(2, 1), (3, 2)])
+def test_static_single_sharing_reads_changed_params_and_preserves_jvp(
+    *, state_count: int, chunk_size: int
+) -> None:
+    """Full and padded loops retain fresh parameters and forward/reverse directions."""
+    model = _sharing_control_model(state_count=state_count, parameterized=True)
+    source = model._regimes["single_f"].solution.period_kernels[0]
+    assert isinstance(source, _PolicyQueryKernel)
+    kernel = build_policy_query_kernel(
+        root_context=source.root_context,
+        period=0,
+        definitions=source.definitions,
+        root=source.root,
+        chunk_size=chunk_size,
+    ).with_fixed_params(fixed_flat_params=source.fixed_flat_params)
     function = jax.jit(kernel.programs["_chunks"].function)
+    padded = ((state_count + chunk_size - 1) // chunk_size) * chunk_size
 
     def values(level: FloatND) -> FloatND:
         return function(
-            bank=jnp.zeros((2,)), **_sharing_chunk_arguments(kernel=kernel, level=level)
-        )[0]
+            bank=jnp.zeros((padded,)),
+            **_sharing_chunk_arguments(kernel=kernel, level=level),
+        )[0][:state_count]
+
+    def total_value(level: FloatND) -> FloatND:
+        return jnp.sum(values(level))
 
     baseline = values(jnp.asarray(5.0))
     changed, tangent = jax.jvp(values, (jnp.asarray(8.0),), (jnp.asarray(1.0),))
     fresh = (
-        _sharing_control_model(parameterized=True)
+        _sharing_control_model(state_count=state_count, parameterized=True)
         .solve(
             params={"single_f": {"utility": {"level": 8.0}}},
             log_level="off",
@@ -2484,9 +2499,10 @@ def test_static_single_sharing_reads_changed_params_and_preserves_jvp() -> None:
         )
         .values[0]["single_f"]
     )
-    np.testing.assert_array_equal(
-        baseline, np.asarray([5.0, 7.0], dtype=baseline.dtype)
-    )
-    np.testing.assert_array_equal(changed, np.asarray([8.0, 10.0], dtype=changed.dtype))
+    increments = np.linspace(0.0, 2.0, state_count, dtype=baseline.dtype)
+    np.testing.assert_array_equal(baseline, 5.0 + increments)
+    np.testing.assert_array_equal(changed, 8.0 + increments)
     assert np.asarray(changed).tobytes() == np.asarray(fresh).tobytes()
-    np.testing.assert_array_equal(tangent, np.ones(2, dtype=changed.dtype))
+    np.testing.assert_array_equal(tangent, np.ones(state_count, dtype=changed.dtype))
+    reverse = jax.jit(jax.grad(total_value))(jnp.asarray(8.0))
+    np.testing.assert_array_equal(reverse, np.asarray(state_count, dtype=changed.dtype))

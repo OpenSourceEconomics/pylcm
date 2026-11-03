@@ -21,6 +21,7 @@ from typing import TypedDict, Unpack
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
 from _lcm.execution import footprint
@@ -146,10 +147,11 @@ def _value_bytes() -> int:
 def _counter_bytes() -> int:
     """Feasibility counters every device reserves at each period of the witness.
 
-    One regime is active per period: its int32 pair of empty-action and other-Inf
-    counts, plus the pair that merges invariant blocks.
+    One regime is active per period: its native pair of empty-action and other-Inf
+    counts, plus the pair that merges invariant blocks, at the configured precision.
     """
-    return 2 * 4 * (1 + 1)
+    count_bytes = np.dtype(np.int64 if jax.config.x64_enabled else np.int32).itemsize
+    return 2 * count_bytes * (1 + 1)
 
 
 def _fixed_fixture_bytes() -> int:

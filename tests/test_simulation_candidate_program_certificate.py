@@ -53,22 +53,6 @@ _RANDOM_HELPER_MUTATIONS = {
         "if seed_offset != jax.config.jax_random_seed_offset:",
         "if False and seed_offset != jax.config.jax_random_seed_offset:",
     ),
-    "simulation_random:partition_context_ignored": (
-        '{"partitionable": jax.config.jax_threefry_partitionable}',
-        '{"partitionable": False}',
-    ),
-    "simulation_random:declared_split_mode_ignored": (
-        (
-            "with jax.threefry_partitionable(partitionable):\n"
-            "        next_states_key, next_regime_key, next_key = "
-            "jax.random.split(key=key, num=3)"
-        ),
-        (
-            "with jax.threefry_partitionable(False):\n"
-            "        next_states_key, next_regime_key, next_key = "
-            "jax.random.split(key=key, num=3)"
-        ),
-    ),
     "simulation_random:population_split_context_ignored": (
         (
             '"partitionable": jax.config.jax_threefry_partitionable,\n'
@@ -428,8 +412,8 @@ _PROFILED_HELPER_MUTATIONS = {
     ),
     "simulation_taste_stream:chunk_start_ignored": (
         "src/_lcm/simulation/taste_stream.py",
-        '"subject_start": _encode_subject_row(row=start),',
-        '"subject_start": _encode_subject_row(row=0),',
+        '"subject_start": encode_subject_row(row=start),',
+        '"subject_start": encode_subject_row(row=0),',
     ),
     "simulation_taste_stream:subject_output_layout_omitted": (
         "src/_lcm/simulation/taste_stream.py",

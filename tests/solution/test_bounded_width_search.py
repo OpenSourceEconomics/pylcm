@@ -36,10 +36,11 @@ pytestmark = pytest.mark.usefixtures("x64_enabled")
 
 ALIVE_0 = ("alive", 0, "main")
 DEAD_3 = ("dead", 3, "main")
-# Between the `alive` period-1 pair at width 2 (34404 reservation plus 1576
-# resident bytes, admitted) and the period-0 pair at width 2 (34404 plus 1704,
-# refused); width 1 (26772 plus 1704) fits.
-_PAIR_REJECTS_ALIVE_0 = 36043
+# Between the `alive` period-1 pair at width 2 (32228 reservation plus 1592
+# resident bytes, admitted) and the period-0 pair at width 2 (32228 plus 1720,
+# refused); width 1 (25492 plus 1720) fits. The reservations are XLA's compiled
+# memory analysis, so they move with the installed jaxlib.
+_PAIR_REJECTS_ALIVE_0 = 33884
 
 
 class _Captured(TypedDict, total=False):
@@ -231,7 +232,7 @@ def test_bounded_search_logs_each_evaluation_with_its_decision(
 
     assert (
         "bounded width search regime 'dead', core 'main', period 3: evaluation 1 at "
-        "{'cell': 8} — 172 reservation plus 1048 resident bytes, admitted"
+        "{'cell': 8} — 184 reservation plus 1064 resident bytes, admitted"
         in caplog.text
     )
 

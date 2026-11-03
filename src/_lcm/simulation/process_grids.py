@@ -993,17 +993,6 @@ def _parameter_bytes(value: ProcessValue) -> _OperandBytes:
     return array.dtype.str, array.shape, array.tobytes()
 
 
-def _abstract_grid_parameter(
-    value: ProcessValue,
-) -> jax.ShapeDtypeStruct | ProcessValue:
-    """Retain exact placed shape and weak type without a concrete array owner."""
-    if isinstance(value, jax.Array):
-        return jax.ShapeDtypeStruct(
-            value.shape, value.dtype, sharding=value.sharding, weak_type=value.weak_type
-        )
-    return value
-
-
 def _compute_uniform_grid(
     *, parameters: Mapping[str, ScalarFloat | ScalarInt], n_points: int
 ) -> Float1D:
