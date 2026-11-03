@@ -327,6 +327,36 @@ def test_a_saved_solution_replays_its_stored_participation_surfaces(
     pd.testing.assert_frame_equal(simulate(loaded), simulate(solution))
 
 
+# The household stores one surface of the couple's participation check, at the
+# check's period, for each regime that can land in the couple.
+_HOUSEHOLD_SURFACES = tuple(
+    (1, regime, "_lcm_participation_surface:couple")
+    for regime in ("couple", "single_f", "single_m")
+)
+
+
+@pytest.mark.coverage(backends=("cpu", "gpu-small", "gpu-large"), precisions="both")
+def test_stored_participation_surfaces_are_strongly_typed() -> None:
+    """Store each participation surface with a strong dtype.
+
+    Simulation programs are compiled per operand signature, weak type included,
+    so a weakly typed surface would compile every program that reads it again
+    for the loaded copy of the same solution.
+    """
+    model = household.get_model(n_periods=4, wealth_n_points=4, consumption_n_points=3)
+    solution = model.solve(params=household.get_params(), log_level="off")
+    weak = {
+        (period, regime, name): (
+            surface.weak_type if isinstance(surface, jax.Array) else None
+        )
+        for period, by_regime in solution._participation_surfaces.items()
+        for regime, surfaces in by_regime.items()
+        for name, surface in surfaces.items()
+    }
+
+    assert weak == dict.fromkeys(_HOUSEHOLD_SURFACES, False)
+
+
 # A couple whose wealth drifts up by a fixed amount each period, whatever it
 # consumes, re-checks at every landing whether to stay together. At the last
 # check (age 2) she stays only where the household is worth at least her own
