@@ -30,7 +30,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from _lcm.egm.upper_envelope import fues
-from tests.conftest import X64_ENABLED, assert_agrees_to_ulp
+from tests.conftest import X64_ENABLED
 from tests.solution._envelope_rows import drop_nan as _drop_nan
 from tests.solution._envelope_rows import envelope_interp as _envelope_interp
 
@@ -454,8 +454,8 @@ def test_value_decreasing_point_is_dropped():
     assert not np.any(np.isclose(clean_grid, 2.0, atol=1e-8))
 
 
-def test_vmap_over_rows_matches_per_row_calls() -> None:
-    """Batching keeps envelope slots and counts exact, with two ULP of rounding."""
+def test_vmap_over_rows_matches_per_row_calls():
+    """The kernel is vmappable; batched output equals per-row output."""
     grid, policy, value = _crossing_segments_candidates()
     batched = jax.vmap(
         lambda g, p, v: fues.refine_envelope(
@@ -470,24 +470,10 @@ def test_vmap_over_rows_matches_per_row_calls() -> None:
         endog_grid=grid, policy=policy, value=value, n_refined=12
     )
 
-    np.testing.assert_array_equal(
-        batched[3], jnp.broadcast_to(single[3], batched[3].shape)
-    )
-    bits_dtype = np.uint64 if grid.dtype.itemsize == 8 else np.uint32
-    grid_bits = np.asarray(grid).view(bits_dtype)
-    single_grid_bits = np.asarray(single[0]).view(bits_dtype)
-    original_slots = np.any(single_grid_bits[:, None] == grid_bits, axis=1)
-    for row in range(2):
+    for batched_arr, single_arr in zip(batched, single, strict=True):
         np.testing.assert_array_equal(
-            np.asarray(batched[0][row]).view(bits_dtype)[:, None] == grid_bits,
-            single_grid_bits[:, None] == grid_bits,
+            np.asarray(batched_arr[0]), np.asarray(single_arr)
         )
-        for batched_arr, single_arr in zip(batched[:3], single[:3], strict=True):
-            np.testing.assert_array_equal(
-                np.asarray(batched_arr[row])[original_slots],
-                np.asarray(single_arr)[original_slots],
-            )
-            assert_agrees_to_ulp(got=batched_arr[row], expected=single_arr, n_ulp=2)
 
 
 def test_candidate_scan_uses_a_fixed_unroll_factor() -> None:
