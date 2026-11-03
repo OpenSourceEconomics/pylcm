@@ -150,7 +150,7 @@ def test_heterogeneous_nonreader_entry_ignores_all_unconsumed_cells(
     params = {"discount_factor": 1.0}
     solution = model.solve(params=params, log_level="off", max_compilation_workers=1)
     dtype = jnp.asarray(0.0).dtype
-    order = np.asarray([1, 0] if reverse else [0, 1])
+    order = np.asarray([1, 0] if reverse else [0, 1], dtype=np.intp)
     initial = {
         "wealth": np.ones(2, dtype=dtype),
         "age": np.asarray([2, 1], dtype=np.int32)[order],

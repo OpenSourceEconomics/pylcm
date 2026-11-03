@@ -309,7 +309,7 @@ def test_public_case_r_row_matches_the_literal_economics_off_the_child_grid() ->
         max_compilation_workers=1,
         retention=ResultRetention.ALL_PERSISTABLE_ARTIFACTS,
     )
-    eps = float(np.finfo(np.dtype(canonical_float_dtype())).eps)
+    eps = float(jnp.finfo(np.dtype(canonical_float_dtype())).eps)
     for wealth in (1.5, 2.5, 3.5):
         read_value, read_marginal, valid = _integrated_read(
             result=result, wealth=wealth, nodes=(0.0, 1.0)
@@ -470,7 +470,7 @@ def test_public_case_r_corner_row_matches_the_closed_form_off_the_child_grid() -
         max_compilation_workers=1,
         retention=ResultRetention.ALL_PERSISTABLE_ARTIFACTS,
     )
-    eps = float(np.finfo(np.dtype(canonical_float_dtype())).eps)
+    eps = float(jnp.finfo(np.dtype(canonical_float_dtype())).eps)
     for wealth, low_at_corner in ((2.25, True), (2.5, True), (3.5, False)):
         resources = np.array([wealth + _LOW, wealth + _HIGH])
         assert ((resources < _KINK) == [low_at_corner, False]).all()

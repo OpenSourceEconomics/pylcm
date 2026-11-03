@@ -1,6 +1,6 @@
 """Normal endpoints may not lose their ordering through subnormal distances.
 
-The per-link scaling in ``certified_margin_sign`` is algebraically sign-preserving,
+The per-link scaling in ``certified_affine_compare`` is algebraically sign-preserving,
 but it is useful only if the three link distances reach it.  On a flush-to-zero
 backend, adjacent *normal* floats have positive subnormal differences.  Forming
 those differences first and scaling them second turns a live link into three exact
@@ -11,9 +11,9 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from _lcm.egm.upper_envelope.certified_sign import (
-    UNRESOLVED_SIGN,
-    certified_margin_sign,
+from _lcm.egm.upper_envelope._exact_affine.ffi import (
+    UNRESOLVED_STATUS,
+    certified_affine_compare,
 )
 from _lcm.egm.upper_envelope.query import envelope_at_query
 from tests.conftest import EXACT_KERNEL_SKIP_REASON, X64_ENABLED
@@ -56,7 +56,7 @@ def test_normal_endpoints_with_subnormal_distances_never_certify_a_false_tie(
     expected = -1 if narrow_is_higher else 1
 
     sign = int(
-        certified_margin_sign(
+        certified_affine_compare(
             a_x0=jnp.asarray(dtype(-1), dtype=jax_dtype),
             a_x1=jnp.asarray(dtype(1), dtype=jax_dtype),
             a_v0=jnp.asarray(wide_value, dtype=jax_dtype),
@@ -69,7 +69,7 @@ def test_normal_endpoints_with_subnormal_distances_never_certify_a_false_tie(
         )
     )
 
-    assert sign in (expected, UNRESOLVED_SIGN)
+    assert sign in (expected, UNRESOLVED_STATUS)
 
 
 @pytest.mark.parametrize("segment_block_size", [0, 1])

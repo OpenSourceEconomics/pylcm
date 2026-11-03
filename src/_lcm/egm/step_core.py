@@ -77,7 +77,6 @@ from lcm.typing import (
 # Refined-row fields every envelope backend returns, ahead of the optional
 # read-support verdict.
 _REFINED_ROW_FIELDS: int = 4
-_MIN_RESOURCES_DOMAIN_POINTS: int = 2
 
 type _ComboRows = tuple[Float1D, Float1D, Float1D, Float1D, Float1D, ScalarBool]
 type _NodeOutput = tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat]

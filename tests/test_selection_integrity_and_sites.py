@@ -24,7 +24,6 @@ from jaxtyping import Float
 
 import _lcm.model_graph
 from _lcm.regime_building.schedules import RegimeSchedules
-from _lcm.simulation.random import site_simulation_key
 from _lcm.time import TimeAxis
 from _lcm.utils.logging import LogLevel
 from lcm import (
@@ -842,45 +841,6 @@ def test_a_start_changing_only_visits_changes_the_program_keys() -> None:
     assert _program_keys(_phased_model({0: "source", 1: "perceived"})) != (
         _program_keys(_phased_model({0: "source", 2: "realized_end"}))
     )
-
-
-@pytest.mark.parametrize(
-    ("first", "second"),
-    [((0, 0), (0, 1)), ((0, 0), (1, 0)), ((1, 0), (0, 1))],
-    ids=["other-regime", "other-period", "swapped"],
-)
-def test_site_keys_differ_between_sites(
-    *, first: tuple[int, int], second: tuple[int, int]
-) -> None:
-    """Each `(period, regime)` site derives its own key from the root key."""
-    root = jax.random.key(0)
-    keys = [
-        jax.random.key_data(site_simulation_key(key=root, period=p, regime_id=r))
-        for p, r in (first, second)
-    ]
-    assert not np.array_equal(np.asarray(keys[0]), np.asarray(keys[1]))
-
-
-def test_site_key_is_stable_for_a_seed() -> None:
-    """The same seed and site derive the same key on every call."""
-    keys = [
-        jax.random.key_data(
-            site_simulation_key(key=jax.random.key(3), period=2, regime_id=1)
-        )
-        for _ in range(2)
-    ]
-    np.testing.assert_array_equal(np.asarray(keys[0]), np.asarray(keys[1]))
-
-
-def test_site_key_changes_with_the_seed() -> None:
-    """Different root seeds derive different keys at the same site."""
-    keys = [
-        jax.random.key_data(
-            site_simulation_key(key=jax.random.key(seed), period=2, regime_id=1)
-        )
-        for seed in (3, 4)
-    ]
-    assert not np.array_equal(np.asarray(keys[0]), np.asarray(keys[1]))
 
 
 def _choose_retirement() -> ScalarInt:

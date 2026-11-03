@@ -308,7 +308,12 @@ class _ParticipationSurfaces:
             size = math.prod(extents)
             values = jax.lax.map(answer, points, batch_size=min(self.width, size))
             surfaces[name] = values.reshape(*extents, *values.shape[1:])
-        return surfaces
+        # A surface is stored like a value: strongly typed, as an archive restores
+        # it, so the programs reading it see one operand signature either way.
+        return {
+            name: jax.lax.convert_element_type(surface, surface.dtype)
+            for name, surface in surfaces.items()
+        }
 
 
 def _surface_program(

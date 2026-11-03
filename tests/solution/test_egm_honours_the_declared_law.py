@@ -13,6 +13,8 @@ declared law directly, so it has nothing to assume and serves as the oracle: the
 two solvers are handed the identical `Regime` and must agree.
 """
 
+from functools import partial
+
 import numpy as np
 import pytest
 
@@ -53,7 +55,19 @@ def next_wealth_net_of_a_fixed_cost(
 def _model(*, solver, n_consumption=200, law=next_wealth_net_of_a_fixed_cost):
     """The closed-form consumption--saving lifecycle, plus a fixed cost."""
     law = {"saving": law, "done": law}
-    regime_type = ConsumptionSavingsRegime if isinstance(solver, EGM) else Regime
+    regime_type = (
+        partial(
+            ConsumptionSavingsRegime,
+            liquid=LiquidMargin(
+                state="wealth",
+                action="consumption",
+                resources="wealth",
+                post_decision_state="savings",
+            ),
+        )
+        if isinstance(solver, EGM)
+        else Regime
+    )
     saving = regime_type(
         actions={
             "consumption": LinSpacedGrid(start=0.05, stop=60.0, n_points=n_consumption)
@@ -63,18 +77,6 @@ def _model(*, solver, n_consumption=200, law=next_wealth_net_of_a_fixed_cost):
         constraints={} if isinstance(solver, EGM) else {"feasible": feasible},
         functions={"utility": utility, "savings": savings},
         solver=solver,
-        **(
-            {
-                "liquid": LiquidMargin(
-                    state="wealth",
-                    action="consumption",
-                    resources="wealth",
-                    post_decision_state="savings",
-                )
-            }
-            if isinstance(solver, EGM)
-            else {}
-        ),
     )
     done = Regime(
         states={"wealth": _WEALTH_GRID},

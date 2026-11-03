@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+import pytest
 import yaml
 
 from tests.ci import ci_workloads
@@ -36,6 +37,20 @@ def _benchmark_harness_invocations() -> list[tuple[str, list[str]]]:
 def _the_benchmark_harness_argv() -> list[str]:
     ((_, argv),) = _benchmark_harness_invocations()
     return argv
+
+
+@pytest.mark.parametrize(
+    ("workflow_name", "cancel_in_progress"),
+    [("benchmark-pr", True), ("benchmark-main", False)],
+)
+def test_benchmark_workflows_use_their_revision_policy(
+    *, workflow_name: str, cancel_in_progress: bool
+) -> None:
+    """Replace superseded PR measurements and finish main-branch measurements."""
+    workflow = yaml.safe_load(
+        Path(f".github/workflows/{workflow_name}.yml").read_text(encoding="utf-8")
+    )
+    assert workflow["concurrency"]["cancel-in-progress"] is cancel_in_progress
 
 
 def test_benchmark_workflow_materializes_main_without_network_credentials() -> None:

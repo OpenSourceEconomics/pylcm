@@ -12,7 +12,7 @@ import pytest
 from _lcm.simulation import random as simulation_random
 from _lcm.simulation.host_operations import ProfiledSimulationOperations
 from _lcm.simulation.memory import SimulationMemory
-from _lcm.simulation.random import create_simulation_key, split_simulation_key
+from _lcm.simulation.random import create_simulation_key
 from _lcm.simulation.random_address import RandomAddress, Word, draw_row_keys
 from _lcm.simulation.residency import measure_buffer_footprint
 from _lcm.typing import PRNGKeyND
@@ -115,24 +115,20 @@ def test_repeated_eager_named_keys_reuse_compiled_code(
 
 
 def _guard_random_allocation[**P, Result](
-    *, original: Callable[P, Result], operation: str
+    *, original: Callable[P, Result]
 ) -> Callable[P, Result]:
     def call(*args: P.args, **kwargs: P.kwargs) -> Result:
         """Permit tracing, but reject the old eager device-array construction."""
-        argument = kwargs["seed"] if operation == "seed" else kwargs["key"]
-        is_period_split = operation == "seed" or kwargs.get("num") == 3
-        if is_period_split and not isinstance(argument, jax.core.Tracer):
-            raise AssertionError(
-                f"Unprofiled simulation random allocation: {operation}"
-            )
+        assert isinstance(kwargs["seed"], jax.core.Tracer), (
+            "Unprofiled simulation random allocation: seed"
+        )
         return original(*args, **kwargs)
 
     return call
 
 
-@pytest.mark.parametrize("operation", ["seed", "period_split"])
 def test_budgeted_random_setup_allocates_only_inside_profiled_code(
-    *, monkeypatch: pytest.MonkeyPatch, operation: str
+    *, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A budgeted public simulation cannot eagerly allocate its random key arrays."""
     model = _stateful_target_model()
@@ -143,12 +139,11 @@ def test_budgeted_random_setup_allocates_only_inside_profiled_code(
         "regime_id": jnp.asarray([_LifecycleRegimeId.alive], dtype=jnp.int32),
     }
     solution = model.solve(params=params, log_level="off")
-    name = "key" if operation == "seed" else "split"
-    original = getattr(jax.random, name)
+    original = jax.random.key
     monkeypatch.setattr(
         jax.random,
-        name,
-        _guard_random_allocation(original=original, operation=operation),
+        "key",
+        _guard_random_allocation(original=original),
     )
     result = model.simulate(
         params=params,
@@ -161,7 +156,7 @@ def test_budgeted_random_setup_allocates_only_inside_profiled_code(
 
 
 @pytest.mark.parametrize("seed", [0, -1, 2**31, 2**32 - 1, 2**40 + 17])
-def test_budgeted_keys_preserve_seed_bits_and_split_streams(seed: int) -> None:
+def test_budgeted_keys_preserve_seed_bits(seed: int) -> None:
     """Signed and high-bit seeds produce exactly the existing JAX streams."""
     devices = (jax.devices()[0],)
     memory = SimulationMemory(
@@ -176,12 +171,6 @@ def test_budgeted_keys_preserve_seed_bits_and_split_streams(seed: int) -> None:
     np.testing.assert_array_equal(
         jax.random.key_data(created), jax.random.key_data(original)
     )
-    split = split_simulation_key(key=created, memory=memory)
-    expected_split = jax.random.split(key=original, num=3)
-    for actual, expected in zip(split, expected_split, strict=True):
-        np.testing.assert_array_equal(
-            jax.random.key_data(actual), jax.random.key_data(expected)
-        )
 
 
 @pytest.mark.parametrize(
@@ -212,15 +201,6 @@ def test_cached_key_creation_is_threefry_under_every_default_prng(
             np.testing.assert_array_equal(
                 jax.random.key_data(actual), jax.random.key_data(expected)
             )
-            for got, want in zip(
-                split_simulation_key(key=actual, memory=memory),
-                jax.random.split(key=expected, num=3),
-                strict=True,
-            ):
-                assert got.dtype == want.dtype
-                np.testing.assert_array_equal(
-                    jax.random.key_data(got), jax.random.key_data(want)
-                )
 
 
 @pytest.mark.parametrize("implementation", ["threefry2x32", "rbg"])
@@ -250,31 +230,6 @@ def test_cached_key_creation_follows_the_current_seed_offset(
                 )
     finally:
         jax.config.update("jax_random_seed_offset", original_offset)
-
-
-@pytest.mark.parametrize("implementation", ["threefry2x32", "rbg"])
-def test_cached_key_splitting_follows_the_current_partition_mode(
-    implementation: str,
-) -> None:
-    """The same typed key/cache follows the selected Threefry splitting rule."""
-    devices = (jax.devices()[0],)
-    memory = SimulationMemory(
-        budget_bytes=2**24,
-        devices=devices,
-        subject_devices=devices,
-        operations=ProfiledSimulationOperations(),
-        inputs=measure_buffer_footprint(tree=()),
-    )
-    key = jax.random.key(seed=17, impl=implementation)
-    for partitionable in (False, True, False):
-        with jax.threefry_partitionable(partitionable):
-            expected = jax.random.split(key=key, num=3)
-            actual = split_simulation_key(key=key, memory=memory)
-            for got, want in zip(actual, expected, strict=True):
-                assert got.dtype == want.dtype
-                np.testing.assert_array_equal(
-                    jax.random.key_data(got), jax.random.key_data(want)
-                )
 
 
 def _change_seed_offset_before_tracing[**P, Result](

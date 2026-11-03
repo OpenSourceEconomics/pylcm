@@ -47,6 +47,7 @@ import hashlib
 import json
 import os
 import platform
+import shlex
 import subprocess
 from collections.abc import Iterator, Mapping
 from pathlib import Path
@@ -56,6 +57,7 @@ import jax.numpy as jnp
 import jaxlib
 import numpy as np
 import pandas as pd
+from jax.experimental import topologies
 
 import lcm
 from _lcm.simulation.random_address import RANDOM_ADDRESS_VERSION
@@ -77,9 +79,6 @@ REPRESENTATIVE_MODELS = (
 PROVENANCE = "__provenance__"
 SIMULATION_SEED = 12345
 _N_SUBJECTS = 4
-# CPU flags that change the vector width or the fused multiply-adds XLA emits for
-# float arithmetic.
-_ISA_FLAG_PREFIXES = ("avx", "fma", "sse4")
 
 
 def representative_outputs(name: str) -> dict[str, np.ndarray]:
@@ -116,27 +115,19 @@ def representative_outputs(name: str) -> dict[str, np.ndarray]:
 
 
 def host_fingerprint() -> str:
-    """Return the OS, machine, vector-ISA flags and XLA ISA cap of this host.
-
-    The flags come from `/proc/cpuinfo`; a host without it records none, so its
-    fingerprint never matches a Linux one.
-    """
-    # ponytail: a feature-flag subset, not XLA's full target description; record
-    # XLA's host CPU features if two hosts with one fingerprint ever disagree.
-    cpuinfo = Path("/proc/cpuinfo")
-    flags: set[str] = set()
-    if cpuinfo.exists():
-        for line in cpuinfo.read_text().splitlines():
-            if line.startswith("flags"):
-                flags = set(line.split(":", 1)[1].split())
-                break
-    isa = sorted(flag for flag in flags if flag.startswith(_ISA_FLAG_PREFIXES))
-    cap = [
-        flag
-        for flag in os.environ.get("XLA_FLAGS", "").split()
-        if flag.startswith("--xla_cpu_max_isa")
-    ]
-    return " ".join([platform.system(), platform.machine().lower(), *isa, *cap])
+    """Identify the CPU compiler, its full target and its explicit XLA flags."""
+    target = topologies.get_attached_topology("cpu").serialize()
+    return json.dumps(
+        {
+            "system": platform.system(),
+            "machine": platform.machine().lower(),
+            "jax": jax.__version__,
+            "jaxlib": jaxlib.__version__,
+            "cpu_target_sha256": hashlib.sha256(target).hexdigest(),
+            "xla_flags": shlex.split(os.environ.get("XLA_FLAGS", "")),
+        },
+        sort_keys=True,
+    )
 
 
 def host_file(archive: Path) -> Path:

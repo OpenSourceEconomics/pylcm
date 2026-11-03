@@ -2903,38 +2903,6 @@ def _evaluate_on_feasible_rows(
     )
 
 
-def _fail_if_codes_leave_the_grid(
-    *,
-    codes: ValueND,
-    feasible: Bool1D,
-    point: Mapping[StateOrActionName, FloatND | IntND],
-    target_grid: DiscreteGrid,
-    source_grids: Mapping[StateOrActionName, Grid],
-    description: str,
-    value_dependent: bool = False,
-) -> None:
-    """Raise at the first feasible row whose code lies outside `0..n-1`.
-
-    A cell counts as feasible when the ordinary constraints allow it. Value
-    constraints and gated edges decide a cell only once the values are known, and
-    an off-grid code has no value to decide with, so they cannot excuse it.
-    """
-    off_grid = _off_grid_rows(codes=codes, feasible=feasible, target_grid=target_grid)
-    if not off_grid.any():
-        return
-    row = int(np.argmax(off_grid))
-    cell = {
-        name: _cell_label(code=values[row], grid=source_grids.get(name))
-        for name, values in point.items()
-    }
-    _raise_off_grid_at_cell(
-        cell=cell,
-        target_grid=target_grid,
-        description=description,
-        value_dependent=value_dependent,
-    )
-
-
 def _raise_off_grid_at_cell(
     *,
     cell: Mapping[str, int | float | str],
@@ -2954,17 +2922,6 @@ def _raise_off_grid_at_cell(
             if value_dependent
             else ""
         )
-    )
-
-
-def _off_grid_rows(
-    *, codes: ValueND, feasible: BoolND, target_grid: DiscreteGrid
-) -> np.ndarray:
-    """Flag the feasible rows whose code lies outside `0..n-1`."""
-    # A constant feasibility, as for a regime without constraints, is unbatched.
-    codes_array, feasible_array = jnp.broadcast_arrays(jnp.asarray(codes), feasible)
-    return np.asarray(
-        feasible_array & ((codes_array < 0) | (codes_array >= len(target_grid.codes)))
     )
 
 
