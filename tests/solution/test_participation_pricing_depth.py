@@ -329,7 +329,9 @@ def test_a_saved_solution_replays_its_stored_participation_surfaces(
             seed=0,
         ).to_dataframe()
 
-    pd.testing.assert_frame_equal(simulate(loaded), simulate(solution))
+    pd.testing.assert_frame_equal(
+        simulate(loaded), simulate(solution), check_exact=True
+    )
 
 
 # The household stores one surface of the couple's participation check, at the
