@@ -35,7 +35,7 @@ from collections.abc import Sequence
 import jax.numpy as jnp
 from jax import custom_jvp, jit, jvp, lax
 
-from _lcm.probability import is_represented_zero
+from _lcm.probability import is_below_smallest_normal, is_represented_zero
 from _lcm.zero_safe import zero_safe_weighted_term
 from lcm.typing import BoolND, FloatND, IntND
 
@@ -200,7 +200,7 @@ def _finite_extrapolation_value(
 
     A rounded difference is shared by every consumer. Each constant direction
     then contributes exactly zero, instead of cancelling large corner products.
-    Unsupported finite-range and nonfinite cases retain the guarded corner sum.
+    Unsupported subtraction range and nonfinite cases retain the guarded corner sum.
     """
     data = [
         _compute_pinned_index_and_weight(coordinate=coordinate, input_size=size)
@@ -210,6 +210,7 @@ def _finite_extrapolation_value(
             zip(coordinates, values.shape, strict=True)
         )
     ]
+    integer_dtype = jnp.uint32 if values.dtype == jnp.float32 else jnp.uint64
 
     def read_box(*, axis: int, indices: tuple[IntND, ...]) -> tuple[FloatND, BoolND]:
         if axis == len(data):
@@ -224,7 +225,20 @@ def _finite_extrapolation_value(
         )
         weight = data[axis][1][1]
         difference = lax.optimization_barrier(right - left)
-        valid = valid & right_valid & jnp.isfinite(difference) & jnp.isfinite(weight)
+        same_value = (
+            lax.bitcast_convert_type(left, integer_dtype)
+            == lax.bitcast_convert_type(right, integer_dtype)
+        ) | (is_represented_zero(left) & is_represented_zero(right))
+        # A flushed or subnormal difference cannot retain an amplified slope.
+        # Equal endpoint bits still define a true constant direction.
+        supported_difference = ~is_below_smallest_normal(difference) | same_value
+        valid = (
+            valid
+            & right_valid
+            & jnp.isfinite(difference)
+            & jnp.isfinite(weight)
+            & supported_difference
+        )
         difference = jnp.where(valid, difference, 0)
         weight = jnp.where(valid, weight, 0)
         value = left + weight * difference

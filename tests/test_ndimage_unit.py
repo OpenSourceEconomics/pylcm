@@ -142,6 +142,40 @@ def test_extrapolation_preserves_bilinear_derivatives_and_linear_pullbacks() -> 
     assert_array_equal(zero_tangent, 0.0)
 
 
+@pytest.mark.coverage(backends=("cpu", "gpu-small", "gpu-large"), precisions="both")
+@pytest.mark.parametrize("direction", [-1, 1], ids=["left", "right"])
+def test_extrapolation_keeps_a_tiny_endpoint_difference(*, direction: int) -> None:
+    """A subnormal endpoint difference must survive a normal-sized extension."""
+    dtype = np.asarray(jnp.asarray(0.0)).dtype
+    limits = np.finfo(dtype)
+    unsigned_dtype = np.uint32 if dtype.itemsize == 4 else np.uint64
+    smallest_normal_bits = 1 << limits.nmant
+    coordinate = jnp.asarray(direction * 2 ** (limits.nmant + 8), dtype=dtype)
+    tiny = Fraction(float(limits.tiny))
+    for steps in (1, 2, 17):
+        for sign in (-1, 1):
+            endpoints = np.asarray(
+                [smallest_normal_bits, smallest_normal_bits + steps],
+                dtype=unsigned_dtype,
+            ).view(dtype)
+            endpoints = sign * endpoints
+            grid = jnp.asarray(endpoints)
+            assert_array_equal(
+                np.asarray(grid).view(unsigned_dtype), endpoints.view(unsigned_dtype)
+            )
+            left, right = (Fraction(float(value)) for value in endpoints)
+            assert 0 < abs(right - left) < tiny
+            assert np.isfinite(endpoints).all()
+            assert (np.abs(endpoints) >= limits.tiny).all()
+            point = Fraction(float(coordinate))
+            exact = left + point * (right - left)
+            got = map_coordinates(input=grid, coordinates=[coordinate])
+            error = abs(Fraction(float(got)) - exact)
+            # The guarded corner sum can lose the unit in 1-coordinate at
+            # this scale. Its resulting error is one smallest normal value.
+            assert error <= tiny, (direction, steps, sign, error, tiny)
+
+
 def test_nonempty_sum():
     a = jnp.arange(3, dtype=jnp.int32)
 
