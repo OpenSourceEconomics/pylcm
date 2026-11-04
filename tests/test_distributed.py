@@ -753,10 +753,14 @@ def test_mixed_outer_state_axes_preserve_values(*, cell_width):
     reference = _make_correct_distributed_model(
         distributed=False, move_type2=True, cell_width=cell_width
     ).solve(log_level="off", params={"discount_factor": 0.95})
-    assert_agrees_to_ulp(
-        got=np.asarray(candidate.values[0]["working_life"]),
-        expected=np.asarray(reference.values[0]["working_life"]),
+    actual = np.asarray(candidate.values[0]["working_life"])
+    expected = np.asarray(reference.values[0]["working_life"])
+    assert (actual.shape, actual.dtype) == (expected.shape, expected.dtype)
+    test_config.assert_agrees_to_ulp(
+        got=actual,
+        expected=expected,
         n_ulp=4,
+        operand_magnitude=float(max(np.abs(actual).max(), np.abs(expected).max())),
     )
 
 
