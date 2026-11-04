@@ -34,7 +34,7 @@ from _lcm.probability import (
     scaled_by_power_of_two,
     scaled_exact_product,
 )
-from lcm.typing import BoolND, FloatND
+from lcm.typing import BoolND, FloatND, IntND
 
 
 @pytest.mark.parametrize(
@@ -58,6 +58,40 @@ def test_static_normal_probability_predicates_fold_to_literals(
         r"^\s*(?:ROOT\s+)?%?[\w.-]+\s*=\s*[^\n]*?\s+([\w-]+)\(", hlo, re.MULTILINE
     )
     assert bool(compiled()) is (predicate == "is_live")
+    assert operations, hlo
+    assert set(operations) <= {"constant", "copy"}, hlo
+
+
+@pytest.mark.parametrize("negative", [False, True], ids=["positive", "negative"])
+@pytest.mark.parametrize("kind", ["zero", "subnormal", "normal", "infinite", "nan"])
+def test_static_magnitude_words_fold_to_literals(*, negative: bool, kind: str) -> None:
+    """A fixed IEEE magnitude needs no runtime protection against float comparisons."""
+    dtype = _dtype()
+    uint_dtype = np.uint32 if dtype.itemsize == 4 else np.uint64
+    mantissa = 23 if dtype.itemsize == 4 else 52
+    sign = 1 << (dtype.itemsize * 8 - 1)
+    infinity = ((1 << (dtype.itemsize * 8 - mantissa - 1)) - 1) << mantissa
+    magnitude = {
+        "zero": 0,
+        "subnormal": 1,
+        "normal": int(np.asarray(1.0, dtype=dtype).view(uint_dtype)),
+        "infinite": infinity,
+        "nan": infinity + 1,
+    }[kind]
+    word = np.asarray(magnitude | (sign if negative else 0), dtype=uint_dtype)
+    value = word.view(dtype)
+    np.testing.assert_array_equal(np.asarray(jnp.asarray(value)).view(uint_dtype), word)
+
+    def evaluate() -> IntND:
+        return probability._magnitude_bits(jnp.asarray(value))
+
+    compiled = jax.jit(evaluate).lower().compile()
+    assert int(compiled()) == magnitude
+    hlo = compiled.as_text()
+    assert hlo is not None
+    operations = re.findall(
+        r"^\s*(?:ROOT\s+)?%?[\w.-]+\s*=\s*[^\n]*?\s+([\w-]+)\(", hlo, re.MULTILINE
+    )
     assert operations, hlo
     assert set(operations) <= {"constant", "copy"}, hlo
 

@@ -52,6 +52,7 @@ from _lcm.solution.backward_induction import (
 from _lcm.time import TimeAxis
 from _lcm.typing import FlatParams, PytreeValue, RegimeNamesToIds, ShapeDtypePytree
 from lcm.exceptions import ExecutionPlanningError
+from lcm.shocks import Discrete
 from lcm.typing import RegimeName
 
 type _Carrier = Mapping[str, Mapping[str, jax.ShapeDtypeStruct]]
@@ -590,6 +591,14 @@ def profile_exit_period(  # noqa: C901, PLR0912, PLR0915 - retain replay's order
         names = regime.simulation.exit_queries[period].physical_names
         source_physical = cast("Mapping[str, jax.ShapeDtypeStruct]", source_frame[0])
         target_physical = cast("Mapping[str, jax.ShapeDtypeStruct]", frame[0])
+        reporting_sources = {name} | {
+            source for source, target, *_ in routes if target == name
+        }
+        entry_actors = tuple(
+            (f"{actor}:{source}", actor)
+            for actor, source in pending_entries
+            if actor in reporting_sources
+        )
         prepared[name] = cast(
             "PreparedDecisionProfile",
             inventory.operation(
@@ -604,14 +613,43 @@ def profile_exit_period(  # noqa: C901, PLR0912, PLR0915 - retain replay's order
                     "target_indices": answer[1],
                     "target_value": answer[0],
                     "target_physical": {key: target_physical[key] for key in names},
+                    "original_regime_ids": regime_ids,
+                    "regime_names_to_ids": codes,
+                    "original_physical": {
+                        source: original[0]
+                        for source, (_, original) in originals.items()
+                        if source in reporting_sources
+                    },
+                    "original_available": {
+                        source: original[7]
+                        for source, (_, original) in originals.items()
+                        if source in reporting_sources
+                    },
+                    "entry_physical": {
+                        edge: participation_frames[edge][0] for edge, _ in entry_actors
+                    },
+                    "entry_available": {
+                        edge: participation_frames[edge][7] for edge, _ in entry_actors
+                    },
+                    "entry_pending": {
+                        edge: participation_pending[edge] for edge, _ in entry_actors
+                    },
                 },
                 static_arguments={
+                    "actor_name": name,
+                    "entry_actors": entry_actors,
+                    "categorical_names": tuple(
+                        shock
+                        for binding in bindings.values()
+                        for shock, law in binding.group.shocks.items()
+                        if isinstance(law, Discrete)
+                    ),
                     "stakeholder_ids": tuple(
                         regime.stakeholder_names_to_ids[member]
                         for member in regime.stakeholders
                     )
                     if regime.stakeholders is not None
-                    else ()
+                    else (),
                 },
                 subject_arg_names=(
                     "moved",
@@ -623,6 +661,12 @@ def profile_exit_period(  # noqa: C901, PLR0912, PLR0915 - retain replay's order
                     "target_indices",
                     "target_value",
                     "target_physical",
+                    "original_regime_ids",
+                    "original_physical",
+                    "original_available",
+                    "entry_physical",
+                    "entry_available",
+                    "entry_pending",
                 ),
                 subject_outputs=True,
             ),
