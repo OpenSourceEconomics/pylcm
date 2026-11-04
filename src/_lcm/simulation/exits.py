@@ -430,6 +430,7 @@ class PreparedExitDecision(NamedTuple):
     indices: IntND
     value: FloatND
     physical: Mapping[str, FloatND | IntND]
+    reported_shocks: Mapping[str, FloatND | IntND]
 
 
 @dataclass(frozen=True, kw_only=True)

@@ -776,22 +776,47 @@ def test_terminal_cell_tiling_does_not_gather_coordinates_or_outputs(
 
 @_skip_pytest_parallel
 @pytest.mark.parametrize("cell_width", [1, 3])
-def test_mixed_outer_state_axes_preserve_values(*, cell_width: int) -> None:
+@pytest.mark.parametrize("exact_layout", [False, True], ids=["nonlinear", "exact"])
+def test_mixed_outer_state_axes_preserve_values(
+    *, cell_width: int, exact_layout: bool
+) -> None:
     """A moving sharded axis and a co-mapped fixed axis retain their state order."""
-    for distributed in (False, True):
-        model = _make_correct_distributed_model(
+    models = tuple(
+        _make_correct_distributed_model(
             distributed=distributed,
             move_type2=True,
             cell_width=cell_width,
-            exact_layout=True,
+            exact_layout=exact_layout,
         )
-        _assert_exact_layout_grids(model=model)
-        solution = model.solve(log_level="off", params={"discount_factor": 0.5})
-        _assert_exact_layout_values(
-            values=solution.values,
-            retirement_reads_type2=True,
-            n_types=2,
-            move_type2=True,
+        for distributed in (True, False)
+    )
+    if exact_layout:
+        for model in models:
+            _assert_exact_layout_grids(model=model)
+    candidate, reference = (
+        model.solve(
+            log_level="off",
+            params={"discount_factor": 0.5 if exact_layout else 0.95},
+        )
+        for model in models
+    )
+    if exact_layout:
+        for solution in (candidate, reference):
+            _assert_exact_layout_values(
+                values=solution.values,
+                retirement_reads_type2=True,
+                n_types=2,
+                move_type2=True,
+            )
+    else:
+        actual = np.asarray(candidate.values[0]["working_life"])
+        expected = np.asarray(reference.values[0]["working_life"])
+        assert (actual.shape, actual.dtype) == (expected.shape, expected.dtype)
+        test_config.assert_agrees_to_ulp(
+            got=actual,
+            expected=expected,
+            n_ulp=4,
+            operand_magnitude=float(max(np.abs(actual).max(), np.abs(expected).max())),
         )
 
 

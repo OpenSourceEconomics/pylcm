@@ -62,6 +62,10 @@ from lcm.typing import BoolND, FloatND, IntND, RegimeName, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
 from tests.simulation._callback_types import HostDispatch, RuntimeDispatch
 from tests.simulation.test_aot_collective_and_gated import _capture_compiled_dispatches
+from tests.simulation.test_current_iid_overrides import (
+    _participation_initial,
+    _participation_model,
+)
 from tests.solution.test_public_exit_queries import _household, _rule_model, _StrictRule
 
 
@@ -178,6 +182,211 @@ def _stay() -> float:
     return 0.5
 
 
+def _source_shock_flow(*, eps: FloatND) -> FloatND:
+    return 2.0 * eps
+
+
+def _target_shock_flow(*, eps: FloatND) -> FloatND:
+    return 5.0 + 0.0 * eps
+
+
+def _five() -> float:
+    return 5.0
+
+
+def _shock_location(*, wealth: FloatND) -> FloatND:
+    return wealth
+
+
+def _project_shock_wealth(*, wealth: FloatND) -> FloatND:
+    return wealth + 10.0
+
+
+@pytest.mark.coverage(backends=("cpu", "gpu-small", "gpu-large"), precisions="both")
+@pytest.mark.parametrize("target_reads_shock", [False, True])
+@pytest.mark.parametrize("enable_jit", [False, True])
+@pytest.mark.parametrize("n_periods", [1, 3])
+def test_mover_rows_publish_original_current_shocks(
+    *, target_reads_shock: bool, enable_jit: bool, n_periods: int
+) -> None:
+    """Mover rows retain the exit's draw and the final actor's distinct draw."""
+    wealth = LinSpacedGrid(start=0, stop=5, n_points=3)
+    model = Model(
+        regimes={
+            "source": Regime(
+                states={"wealth": wealth},
+                functions={"utility": _source_shock_flow},
+                shocks=("innovation",),
+                state_transitions={"wealth": _shock_location} if n_periods > 1 else {},
+                exits={
+                    "leave": Exit(
+                        targets={
+                            "self": ExitTarget(
+                                regime="target",
+                                projection={"wealth": _project_shock_wealth}
+                                if target_reads_shock
+                                else {},
+                            )
+                        },
+                        rule="unilateral",
+                        available=_first_period,
+                    )
+                },
+            ),
+            "target": Regime(
+                states={"wealth": LinSpacedGrid(start=0, stop=20, n_points=3)}
+                if target_reads_shock
+                else {},
+                functions={
+                    "utility": _target_shock_flow if target_reads_shock else _five
+                },
+                shocks=("innovation",) if target_reads_shock else (),
+                state_transitions={"wealth": _shock_location}
+                if target_reads_shock and n_periods > 1
+                else {},
+            ),
+            **(
+                {
+                    "source_done": Regime(functions={"utility": _five}),
+                    "target_done": Regime(functions={"utility": _five}),
+                }
+                if n_periods > 1
+                else {}
+            ),
+        },
+        shocks={
+            "innovation": ShockGroup(
+                shocks={"eps": Normal(mu=_shock_location, sigma=1)},
+                nodes=Product(eps=GaussHermite(3)),
+            )
+        },
+        n_periods=n_periods,
+        regime_id_class=_OpposingRegimes if n_periods > 1 else _RegimeId,
+        initial_nodes=InitialNodes(by_period={0: "source"}),
+        edges={
+            "source": {
+                "source": Periods(values=(0,)),
+                "source_done": Periods(values=(1,)),
+            },
+            "target": {
+                "target": Periods(values=(0,)),
+                "target_done": Periods(values=(1,)),
+            },
+        }
+        if n_periods > 1
+        else {},
+        enable_jit=enable_jit,
+        execution_config=ExecutionConfig(device_memory_bytes=None),
+    )
+    frame = (
+        model.simulate(
+            params={"discount_factor": 0.0} if n_periods > 1 else {},
+            initial_conditions={
+                "period": jnp.zeros(2, dtype=jnp.int32),
+                "regime_id": jnp.zeros(2, dtype=jnp.int32),
+                "wealth": jnp.asarray([1.0, 4.0]),
+            },
+            shock_paths={
+                "eps": BaseInnovations(
+                    values=jnp.broadcast_to(
+                        jnp.asarray([[-1.0], [1.0]]), (2, n_periods)
+                    )
+                )
+            },
+            seed=17,
+            log_level="off",
+            runtime_checks=False,
+        )
+        .to_dataframe(use_categorical_codes=True)
+        .sort_values("subject_id")
+    )
+    entry = frame.loc[frame["period"] == 0]
+    np.testing.assert_array_equal(entry["regime_name"], ["target", "source"])
+    assert_array_almost_equal(entry["value"], [5.0, 10.0], decimal=DECIMAL_PRECISION)
+    assert_array_almost_equal(
+        entry["eps"],
+        [10.0 if target_reads_shock else 0.0, 5.0],
+        decimal=DECIMAL_PRECISION,
+    )
+    if target_reads_shock:
+        assert_array_almost_equal(
+            entry.loc[entry["regime_name"] == "target", "source__eps"],
+            [0.0],
+            decimal=DECIMAL_PRECISION,
+        )
+    if n_periods > 1:
+        later = frame.loc[(frame["period"] > 0) & (frame["subject_id"] == 0)]
+        assert len(later) == n_periods - 1
+        assert later["source__eps" if target_reads_shock else "eps"].isna().all()
+
+
+@pytest.mark.coverage(backends=("cpu", "gpu-small", "gpu-large"), precisions="both")
+@pytest.mark.parametrize("use_categorical_codes", [False, True])
+def test_exit_source_observations_keep_discrete_codes_and_labels(
+    *, use_categorical_codes: bool
+) -> None:
+    """Observed source draws retain their category meaning on both final actors."""
+    model = _hidden_offer_model(observed=True, enable_jit=True, start_in_target=True)
+    result = model.simulate(
+        params={},
+        initial_conditions={
+            "period": jnp.zeros(3, dtype=jnp.int32),
+            "regime_id": jnp.asarray([0, 0, 1], dtype=jnp.int32),
+        },
+        shock_paths={
+            "offer": PhysicalValues(
+                values=jnp.asarray([[0], [1], [0]], dtype=jnp.int32)
+            )
+        },
+        seed=17,
+        log_level="off",
+        runtime_checks=False,
+    )
+    frame = result.to_dataframe(
+        use_categorical_codes=use_categorical_codes
+    ).sort_values("subject_id")
+    np.testing.assert_array_equal(
+        frame["offer"], [0, 1, 0] if use_categorical_codes else ["low", "high", "low"]
+    )
+    np.testing.assert_array_equal(
+        frame.loc[frame["subject_id"] == 1, "source__offer"],
+        [1] if use_categorical_codes else ["high"],
+    )
+    source_codes = result.raw_results["target"][0].shocks["source__offer"]
+    assert source_codes.dtype == jnp.int32
+    np.testing.assert_array_equal(source_codes, [0, 1, -1])
+    assert frame.loc[frame["subject_id"] == 2, "source__offer"].isna().all()
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+def test_participation_fallback_rows_keep_the_observed_current_shock() -> None:
+    """Rejected entry rows retain the low offer used by their participation check."""
+    frame = (
+        _participation_model(observed=True)
+        .simulate(
+            params={"discount_factor": 0.5},
+            initial_conditions=_participation_initial(),
+            shock_paths={
+                "offer": PhysicalValues(
+                    values=jnp.asarray([[1, 0], [0, 1], [1, 0]], dtype=jnp.int32)
+                )
+            },
+            seed=17,
+            log_level="off",
+            runtime_checks=False,
+        )
+        .to_dataframe(use_categorical_codes=True)
+    )
+    landed = frame.loc[frame["period"] == 1].sort_values("subject_id")
+    np.testing.assert_array_equal(
+        landed["regime_name"], ["fallback", "target", "fallback"]
+    )
+    assert_array_almost_equal(
+        landed["value"], [4.0, 4.0, 2.0], decimal=DECIMAL_PRECISION
+    )
+    np.testing.assert_array_equal(landed["offer"], [0, 1, 0])
+
+
 def _target(*, offer: ScalarInt, choice: ScalarInt) -> FloatND:
     return offer + choice * (2.0 * offer - 1.0)
 
@@ -196,6 +405,7 @@ def _hidden_offer_model(
     enable_jit: bool,
     permit_unused: bool = False,
     execution_config: ExecutionConfig | None = None,
+    start_in_target: bool = False,
 ) -> Model:
     return Model(
         regimes={
@@ -244,7 +454,9 @@ def _hidden_offer_model(
         },
         n_periods=1,
         regime_id_class=_RegimeId,
-        initial_nodes=InitialNodes(by_period={0: "source"}),
+        initial_nodes=InitialNodes(
+            by_period={0: ("source", "target") if start_in_target else "source"}
+        ),
         edges={},
         enable_jit=enable_jit,
         # Compiler-derived admission requires compiled execution.

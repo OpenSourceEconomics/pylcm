@@ -97,6 +97,7 @@ from lcm.typing import (
     ScalarFloat,
     ScalarInt,
     UserParams,
+    ValueND,
 )
 from tests.conftest import (
     AttachResolvedOutputLayoutKwargs,
@@ -825,7 +826,7 @@ def test_solve_planning_keeps_descriptors_instead_of_transferred_buffers(
         value: ArgumentTree,
         transfer: ResolvedValueTransfer,
         on_materialized: MaterializedTransferObserver | None = None,
-    ) -> jax.Array:
+    ) -> ValueND:
         copied = original_transfer(
             value=value, transfer=transfer, on_materialized=on_materialized
         )
@@ -1531,6 +1532,18 @@ def _get_exact_two_block_values() -> dict[int, np.ndarray]:
     return values
 
 
+def _assert_exact_two_block_grids(*, model: Model) -> None:
+    """Check the realized grids required by the rational two-block reference."""
+    for name, internal in model._regimes.items():
+        np.testing.assert_array_equal(
+            internal.solution.grids["wealth"].to_jax(), np.arange(8, 73, 8)
+        )
+        if name != "dead":
+            np.testing.assert_array_equal(
+                internal.solution.grids["consumption"].to_jax(), np.arange(1, 10)
+            )
+
+
 def _assert_exact_two_block_values(
     *, values: Mapping[int, Mapping[RegimeName, ArrayLike]], regime: RegimeName
 ) -> None:
@@ -1599,36 +1612,71 @@ def test_a_value_read_across_disjoint_blocks_is_a_cross_mesh_copy(
 
 @_skip_pytest_parallel
 @pytest.mark.parametrize("regime", ["first", "second"])
+@pytest.mark.parametrize("exact_layout", [False, True], ids=["nonlinear", "exact"])
 def test_a_two_block_solve_publishes_the_single_device_values(
-    *, regime: RegimeName
+    *, regime: RegimeName, exact_layout: bool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A cross-mesh copy delivers the stored values unchanged."""
-    models = [
-        _make_two_block_model(distributed=distributed, exact_layout=True)
+    """Independent solves agree at array scale; actual copies preserve every byte."""
+    copied_periods: set[int] = set()
+    original_transfer = transfers_module.apply_value_transfer
+
+    def observe_transfer(
+        *,
+        value: ArgumentTree,
+        transfer: ResolvedValueTransfer,
+        on_materialized: MaterializedTransferObserver | None = None,
+    ) -> jax.Array:
+        copied = original_transfer(
+            value=value, transfer=transfer, on_materialized=on_materialized
+        )
+        if (
+            transfer.kind is ValueTransferKind.CROSS_MESH_COPY
+            and transfer.target.regime == "second"
+            and transfer.source.source_regime == "first"
+        ):
+            assert isinstance(value, jax.Array)
+            assert not transfer.selects
+            assert not value.is_deleted()
+            assert value.devices() == set(jax.devices()[2:4])
+            assert copied.devices() == set(jax.devices()[:2])
+            assert not shares_a_buffer(first=value, second=copied)
+            assert_same_bytes(got=copied, expected=value)
+            copied_periods.add(transfer.target.period)
+        return copied
+
+    models = tuple(
+        _make_two_block_model(distributed=distributed, exact_layout=exact_layout)
         for distributed in (True, False)
-    ]
-    for model in models:
-        for name, internal in model._regimes.items():
-            np.testing.assert_array_equal(
-                internal.solution.grids["wealth"].to_jax(), np.arange(8, 73, 8)
-            )
-            if name != "dead":
-                np.testing.assert_array_equal(
-                    internal.solution.grids["consumption"].to_jax(), np.arange(1, 10)
-                )
-    placed, reference = (
-        model.solve(params={"discount_factor": 0.5}, log_level="off")
-        for model in models
     )
-    _assert_exact_two_block_values(values=placed.values, regime=regime)
-    _assert_exact_two_block_values(values=reference.values, regime=regime)
+    if exact_layout:
+        for model in models:
+            _assert_exact_two_block_grids(model=model)
+    params = {"discount_factor": 0.5} if exact_layout else _PARAMS
+    with monkeypatch.context() as probe:
+        probe.setattr(transfers_module, "apply_value_transfer", observe_transfer)
+        placed = models[0].solve(params=params, log_level="off")
+    assert copied_periods
+    reference = models[1].solve(params=params, log_level="off")
+    if exact_layout:
+        _assert_exact_two_block_values(values=placed.values, regime=regime)
+        _assert_exact_two_block_values(values=reference.values, regime=regime)
 
     for period in placed.values:
         if regime in placed.values[period]:
-            np.testing.assert_array_equal(
-                np.asarray(placed.values[period][regime]),
-                np.asarray(reference.values[period][regime]),
-            )
+            actual = np.asarray(placed.values[period][regime])
+            expected = np.asarray(reference.values[period][regime])
+            assert (actual.shape, actual.dtype) == (expected.shape, expected.dtype)
+            if exact_layout:
+                np.testing.assert_array_equal(actual, expected)
+            else:
+                assert_agrees_to_ulp(
+                    got=actual,
+                    expected=expected,
+                    n_ulp=4,
+                    operand_magnitude=float(
+                        max(np.abs(actual).max(), np.abs(expected).max())
+                    ),
+                )
 
 
 def _nbegm_toy(*, distributed_kind: bool) -> Model:
