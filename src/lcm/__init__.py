@@ -127,6 +127,7 @@ from lcm.consumption_savings_regime import (  # noqa: E402
     outer_unchanged,
     post_decision_lower_bound,
 )
+from lcm.declarations import FunctionDeclaration, ModelDeclarations  # noqa: E402
 from lcm.decoupled import Decoupled  # noqa: E402
 from lcm.execution import ExecutionConfig, InvariantBlockSchedule  # noqa: E402
 from lcm.exits import Consent, Counterparty, Exit, ExitTarget, RuleResult  # noqa: E402
@@ -260,6 +261,7 @@ __all__ = [
     "Exit",
     "ExitTarget",
     "ExtremeValueTasteShocks",
+    "FunctionDeclaration",
     "Gate",
     "GridBreakpoint",
     "InitialNodes",
@@ -275,6 +277,7 @@ __all__ = [
     "LogSpacedGrid",
     "LoweredPeriodCandidate",
     "Model",
+    "ModelDeclarations",
     "NestedConsumptionSavingsRegime",
     "NetOfAdjustmentCost",
     "NormalIIDProcess",

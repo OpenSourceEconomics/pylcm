@@ -4,6 +4,40 @@ title: Runtime, results, and persistence
 
 # Runtime, results, and persistence
 
+## Inspecting model declarations
+
+`model.get_declarations()` returns a read-only `ModelDeclarations` view of the
+constructed model, with `schema_version == 1`:
+
+- `graph` is `model.graph`: declared and effective phase edges, their bound laws,
+  starting nodes, valued nodes, visited nodes and pruning reasons.
+- `regimes_by_period[period][regime_name]` retains finalized user declarations, with the
+  age/period factories already resolved during construction. This includes
+  phase-invariant actions, ownership and preference declarations.
+- `phases[period, regime_name, phase]` contains the resolved phase slice, where `phase`
+  is `"solve"` or `"simulate"`. It retains the full grid states, function pool,
+  constraints, state and joint laws, regime-transition law, aggregators and same-period
+  exits. Undemanded simulation contexts are absent, including contexts whose
+  simulation-only factories construction did not need to build.
+- `functions` contains each callable identity and its advertised `signature`. Each
+  entry's `arg_names` gives its finite declared DAG inputs, or `None` when the interface
+  remains variadic or cannot be inspected. This uses the same Python signature
+  convention as construction, including wrappers and partials.
+- `original_periods_by_regime`, `value_periods_by_regime`, `query_periods_by_phase` and
+  `exit_function_demand` preserve the construction roles of physical entry, stored full
+  values and same-period decisions. The query mapping retains the construction namespace
+  keys `"solution"` and `"simulation"`; node keys use the public phase names `"solve"`
+  and `"simulate"`.
+
+Inspection reads cached declarations. It does not call economic functions or factories,
+prepare a runtime generation, compile programs, solve, simulate, or require runtime
+parameter values. Containers are immutable; their grids, functions and captured inputs
+are the original objects, not deep copies.
+
+The view states the model's declared dependencies and timing. It does not prove that
+arbitrary user code honours its advertised signature, establish economic equivalence of
+graph transformations, or predict their measured runtime.
+
 ## Solving
 
 `model.solve(params=..., log_level=...)` returns one immutable `SolutionResult` for
