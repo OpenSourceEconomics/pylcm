@@ -15,6 +15,8 @@ documentation and tests.
 | Public name                                                                                          | Canonical documentation                           |
 | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
 | [`lcm.Model`](model_and_regime.md#api-model)                                                         | Model assembly and execution                      |
+| [`lcm.ModelDeclarations`](runtime_and_results.md#api-model-declarations)                             | Resolved model declarations                       |
+| [`lcm.FunctionDeclaration`](runtime_and_results.md#api-model-declarations)                           | Declared function signature and inputs            |
 | [`lcm.InitialNodes`](model_and_regime.md#api-initial-nodes)                                          | Explicit coordinates of admissible starts         |
 | [`lcm.CompositeState`](model_and_regime.md#api-composite-state)                                      | Reachable tuples of discrete member states        |
 | [`lcm.PeriodCandidate`](model_and_regime.md#api-period-candidate-lowering)                           | Exact primary ranked-width request                |

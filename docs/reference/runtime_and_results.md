@@ -4,6 +4,8 @@ title: Runtime, results, and persistence
 
 # Runtime, results, and persistence
 
+(api-model-declarations)=
+
 ## Inspecting model declarations
 
 `model.get_declarations()` returns a read-only `ModelDeclarations` view of the
