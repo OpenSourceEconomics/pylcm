@@ -14,7 +14,7 @@
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "2",
-  "source_inventory_sha256": "87ed420d155c5045be274c7486b2a44738a4df523879a199781910ea29acedb5",
+  "source_inventory_sha256": "ca38f9bced26523a8f944966ec66feea119894b8c7eee969b04cc9fc330ef57d",
   "sources": [
     {
       "path": "src/_lcm/constraints/bounds.py",
@@ -318,7 +318,7 @@
     },
     {
       "path": "src/_lcm/regime_building/Q_and_F.py",
-      "sha256": "4fe58fbf17a7b61c77dcb73b01dcaeee38efb2ed764e6bdd04334ebd3b90dc84"
+      "sha256": "dff43d6a8e5e19db924932d6f6ff593479af743ef7726f4b786a2323e571ef03"
     },
     {
       "path": "src/_lcm/regime_building/age_normalization.py",
