@@ -13,7 +13,6 @@ continuation and action value that kernel returns `Q` and `F` from.
 import dataclasses
 import functools
 import inspect
-import itertools
 import operator
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -110,6 +109,7 @@ from lcm.typing import (
     FunctionName,
     Int1D,
     IntND,
+    LoopIndex,
     ReferenceName,
     UserFunction,
 )
@@ -124,6 +124,8 @@ type Intermediates = tuple[
 # What the utilities-and-feasibility DAG returns at a cell: each felicity, then
 # the feasibility mask (a Python `bool` for a regime without constraints).
 type UtilitiesAndF = tuple[FloatND | IntND | BoolND | int | float | bool, ...]
+
+_PROCESS_EDGE_CORNER = "_lcm_process_edge__corner"
 
 
 class EvaluatedUtilitiesAndF(NamedTuple):
@@ -3213,9 +3215,25 @@ class _ProcessEdgeExtension:
 
     distances: tuple[Callable[..., FloatND], ...]
     """One `EdgeRows.distance` per extended process weight."""
-    corners: tuple[_ComputeCE, ...]
-    """The continuation with each nonempty subset of the weights at their
-    neighbour rows, in `itertools.product((False, True), ...)` order."""
+    corner: _ComputeCE
+    """One continuation program selecting each process row by a corner index."""
+
+    def read_corner(
+        self,
+        *,
+        index: LoopIndex,
+        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
+        zero: FloatND,
+        states_actions_params: QAndFKwargs,
+    ) -> ContinuationAggregate:
+        """Read one joint corner without changing its lottery or CE aggregation."""
+        return self.corner(
+            next_regime_to_V_arr=next_regime_to_V_arr,
+            zero=zero,
+            states_actions_params=MappingProxyType(
+                {**states_actions_params, _PROCESS_EDGE_CORNER: index}
+            ),
+        )
 
     @no_type_check
     def extend(
@@ -3248,37 +3266,41 @@ class _ProcessEdgeExtension:
             )
             for distance in self.distances
         ]
-        corner_values = [aggregate[0]] + [
-            _continuation_evaluation(
-                corner(
+        initial = zero_safe_weighted_term(
+            weight=functools.reduce(
+                operator.mul, (1.0 + distance for distance in distances)
+            ),
+            value=aggregate[0],
+            subnormal_is_accounted_for=True,
+        )
+
+        # keyword-only-exempt: library-callback=jax.lax.fori_loop
+        def add_corner(index: LoopIndex, total: FloatND) -> FloatND:
+            corner, _ = _continuation_evaluation(
+                self.read_corner(
+                    index=index,
                     next_regime_to_V_arr=next_regime_to_V_arr,
                     zero=zero,
                     states_actions_params=states_actions_params,
                 )
-            )[0][0]
-            for corner in self.corners
-        ]
-        extended = functools.reduce(
-            operator.add,
-            (
-                zero_safe_weighted_term(
-                    weight=functools.reduce(
-                        operator.mul,
-                        (
-                            -distance if neighbour else 1.0 + distance
-                            for neighbour, distance in zip(mask, distances, strict=True)
-                        ),
-                    ),
-                    value=value,
-                    subnormal_is_accounted_for=True,
-                )
-                for mask, value in zip(
-                    itertools.product((False, True), repeat=len(distances)),
-                    corner_values,
-                    strict=True,
-                )
-            ),
-        )
+            )
+            weight = functools.reduce(
+                operator.mul,
+                (
+                    jnp.where(
+                        ((index >> (len(distances) - axis - 1)) & 1) != 0,
+                        -distance,
+                        1.0 + distance,
+                    )
+                    for axis, distance in enumerate(distances)
+                ),
+            )
+            return total + zero_safe_weighted_term(
+                weight=weight, value=corner[0], subnormal_is_accounted_for=True
+            )
+
+        # A loop retains Cartesian corner order without copying the CE graph.
+        extended = jax.lax.fori_loop(1, 1 << len(distances), add_corner, initial)
         on_nodes = functools.reduce(
             operator.and_, (distance == 0 for distance in distances)
         )
@@ -3286,6 +3308,42 @@ class _ProcessEdgeExtension:
         if valid is None:
             return aggregate
         return CheckedContinuationEvaluation(aggregate=aggregate, valid=valid)
+
+
+def _get_process_corner_row(
+    *,
+    edge: Callable[..., FloatND],
+    neighbour: Callable[..., FloatND],
+    shift: int,
+) -> Callable[..., FloatND]:
+    """Select an edge or neighbour row using one bit of the joint corner index."""
+    edge_annotations = {
+        name: annotation
+        for name, annotation in get_annotations(edge).items()
+        if name != "return"
+    }
+    neighbour_annotations = {
+        name: annotation
+        for name, annotation in get_annotations(neighbour).items()
+        if name != "return"
+    }
+
+    def selected(**kwargs: PytreeValue) -> FloatND:
+        index = cast("LoopIndex", kwargs[_PROCESS_EDGE_CORNER])
+        return jnp.where(
+            ((index >> shift) & 1) != 0,
+            neighbour(**{name: kwargs[name] for name in neighbour_annotations}),
+            edge(**{name: kwargs[name] for name in edge_annotations}),
+        )
+
+    return with_signature(
+        selected,
+        args=edge_annotations
+        | neighbour_annotations
+        | {_PROCESS_EDGE_CORNER: "LoopIndex"},
+        return_annotation=FloatND,
+        enforce=False,
+    )
 
 
 def _get_compute_CE_with_process_edges(
@@ -3326,26 +3384,23 @@ def _get_compute_CE_with_process_edges(
     )
     if not edges:
         return compute_CE, deps, arg_names
-    # ponytail: one corner per subset of extended weights, 2**k continuations for
-    # k of them; group weights sharing a grid if many processes ever need it.
-    corners = tuple(
-        build(
-            functions=MappingProxyType(
-                dict(functions)
-                | {
-                    name: rows.neighbour
-                    for (name, rows), neighbour in zip(edges.items(), mask, strict=True)
-                    if neighbour
-                }
-            ),
-            period_targets=period_targets,
-        )[0]
-        for mask in itertools.product((False, True), repeat=len(edges))
-        if any(mask)
-    )
+    corner = build(
+        functions=MappingProxyType(
+            dict(functions)
+            | {
+                name: _get_process_corner_row(
+                    edge=functions[name],
+                    neighbour=rows.neighbour,
+                    shift=len(edges) - axis - 1,
+                )
+                for axis, (name, rows) in enumerate(edges.items())
+            }
+        ),
+        period_targets=period_targets,
+    )[0]
     extension = _ProcessEdgeExtension(
         distances=tuple(rows.distance for rows in edges.values()),
-        corners=cast("tuple[_ComputeCE, ...]", corners),
+        corner=cast("_ComputeCE", corner),
     )
     return (
         dataclasses.replace(cast("_ComputeCE", compute_CE), edge_extension=extension),
@@ -3435,7 +3490,7 @@ class _ComputeCE:
         )
 
     @no_type_check
-    def __call__(  # noqa: C901 - preserve original dense arithmetic beside the projected read
+    def __call__(  # noqa: C901 - preserve corner arithmetic and count/integrity order
         self,
         *,
         next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
