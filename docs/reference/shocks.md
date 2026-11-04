@@ -188,6 +188,23 @@ Cross-regime routing and EGM replay must preserve that producing context and bin
 own information/reconstruction contracts; a supplied input does not authorize policy
 conditioning on a hidden value.
 
+Simulation rows name the final acting regime after current-period exits. They retain the
+period-entry regime's realized current shocks, including observed exit inputs, on that
+same row. A shock read by the final actor keeps its unqualified column name; when the
+period-entry regime also realized that name, `source__<name>` reports its original value
+on movers. Source-only names keep their unqualified names. In dataframes, missing
+observations and later periods without that realization contain NaN. Discrete reports
+use the declared labels, or category codes with `use_categorical_codes=True`. Raw
+categorical report arrays retain their integer dtype and use `-1` for missing codes.
+Scheduled participation checks retain their actual observed entry-frame draws on
+fallback rows too; `source__<name>` refers to the actor evaluated by that current check.
+
+`shock_paths` supplies draws rather than recovering a missing observation. Tagged
+`BaseInnovations` hold the underlying innovation across a move; a state-dependent law
+can turn it into different source and target physical values. Tagged `PhysicalValues`
+bind the producing frame and transport its recovered base to the target law. These
+reporting columns do not alter choices, transition inputs or draws.
+
 (current-iid-refusals)=
 
 ### Combinations not yet composed with current shocks

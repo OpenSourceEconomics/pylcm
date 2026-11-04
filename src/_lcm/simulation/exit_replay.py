@@ -71,7 +71,7 @@ from lcm.exceptions import (
     OffGridStateError,
     ShockDeclarationError,
 )
-from lcm.shocks import ShockName
+from lcm.shocks import Discrete, ShockName
 from lcm.typing import BoolND, FloatND, IntND, RegimeName, StateName
 
 if TYPE_CHECKING:
@@ -83,7 +83,9 @@ else:
 
 type _OriginalAnswers = Mapping[RegimeName, tuple[PolicyAnswer, CurrentIIDDrawFrame]]
 type _QueryArguments = dict[str, dict[str, PytreeValue]]
-type _FinalDecisionOutput = tuple[IntND, FloatND, Mapping[str, FloatND | IntND]]
+type _FinalDecisionOutput = tuple[
+    IntND, FloatND, Mapping[str, FloatND | IntND], Mapping[str, FloatND | IntND]
+]
 
 
 def prepare_exit_period(  # noqa: C901, PLR0912, PLR0915 - retain replay's ordered owner walk
@@ -590,10 +592,26 @@ def prepare_exit_period(  # noqa: C901, PLR0912, PLR0915 - retain replay's order
         )
         source_answer, source_frame = originals.get(name, (answer, frame))
         physical_names = plan.physical_names
+        reporting_sources = {name} | {
+            route.source for route in routes if route.target == name
+        }
+        entry_actors = tuple(
+            (f"{actor}:{source}", actor)
+            for actor, source in pending_entries
+            if actor in reporting_sources
+        )
         selected = run_simulation_operation(
             memory=memory,
             function=_final_decision,
             static_arguments={
+                "actor_name": name,
+                "entry_actors": entry_actors,
+                "categorical_names": tuple(
+                    shock
+                    for binding in bindings.values()
+                    for shock, law in binding.group.shocks.items()
+                    if isinstance(law, Discrete)
+                ),
                 "stakeholder_ids": tuple(
                     regime.stakeholder_names_to_ids[member]
                     for member in regime.stakeholders
@@ -615,6 +633,29 @@ def prepare_exit_period(  # noqa: C901, PLR0912, PLR0915 - retain replay's order
                 "target_physical": {
                     shock: frame.physical[shock] for shock in physical_names
                 },
+                "original_regime_ids": regime_ids,
+                "regime_names_to_ids": regime_names_to_ids,
+                "original_physical": {
+                    source: original.physical
+                    for source, (_, original) in originals.items()
+                    if source in reporting_sources
+                },
+                "original_available": {
+                    source: original.information_available
+                    for source, (_, original) in originals.items()
+                    if source in reporting_sources
+                },
+                "entry_physical": {
+                    edge: participation_frames[edge].physical
+                    for edge, _ in entry_actors
+                },
+                "entry_available": {
+                    edge: participation_frames[edge].information_available
+                    for edge, _ in entry_actors
+                },
+                "entry_pending": {
+                    edge: participation_pending[edge] for edge, _ in entry_actors
+                },
             },
             subject_arg_names=(
                 "moved",
@@ -626,6 +667,12 @@ def prepare_exit_period(  # noqa: C901, PLR0912, PLR0915 - retain replay's order
                 "target_indices",
                 "target_value",
                 "target_physical",
+                "original_regime_ids",
+                "original_physical",
+                "original_available",
+                "entry_physical",
+                "entry_available",
+                "entry_pending",
             ),
             subject_outputs=True,
         )
@@ -979,6 +1026,16 @@ def _final_decision(
     target_indices: IntND,
     target_value: FloatND,
     target_physical: Mapping[str, FloatND | IntND],
+    original_regime_ids: IntND,
+    regime_names_to_ids: RegimeNamesToIds,
+    original_physical: Mapping[RegimeName, Mapping[ShockName, FloatND | IntND]],
+    original_available: Mapping[RegimeName, Mapping[ShockName, BoolND]],
+    entry_physical: Mapping[str, Mapping[ShockName, FloatND | IntND]],
+    entry_available: Mapping[str, Mapping[ShockName, BoolND]],
+    entry_pending: Mapping[str, BoolND],
+    entry_actors: tuple[tuple[str, RegimeName], ...],
+    actor_name: RegimeName,
+    categorical_names: tuple[ShockName, ...],
     stakeholder_ids: tuple[int, ...],
 ) -> _FinalDecisionOutput:
     mask = moved[:, None] if source_value.ndim > 1 else moved
@@ -989,13 +1046,49 @@ def _final_decision(
         )
     else:
         adjustment = paid
+    physical = {
+        name: jnp.where(moved, target_physical[name], value)
+        for name, value in source_physical.items()
+    }
+    reported_shocks = dict(physical)
+    original_frames = tuple(
+        (
+            source,
+            observations,
+            ordinary_exit_rows(
+                holders=original_regime_ids == regime_names_to_ids[source],
+                pending=tuple(
+                    entry_pending[edge]
+                    for edge, actor in entry_actors
+                    if actor == source
+                ),
+            ),
+            original_available[source],
+        )
+        for source, observations in original_physical.items()
+    )
+    entry_frames = tuple(
+        (actor, entry_physical[edge], entry_pending[edge], entry_available[edge])
+        for edge, actor in entry_actors
+    )
+    for source, observations, original_rows, availability in (
+        *original_frames,
+        *entry_frames,
+    ):
+        for name, value in observations.items():
+            if source == actor_name and name in physical:
+                continue
+            column = f"source__{name}" if name in physical else name
+            available = original_rows & availability.get(name, True)
+            missing = -1 if name in categorical_names else jnp.nan
+            reported_shocks[column] = jnp.where(
+                available, value, reported_shocks.get(column, missing)
+            )
     # Compiler metadata reconstructs this output with sharding/abstract leaves.
     # The runtime creates its array-only record after dispatch returns arrays.
     return (
         jnp.where(moved, target_indices, source_indices),
         jnp.where(mask, target_value + adjustment, source_value),
-        {
-            name: jnp.where(moved, target_physical[name], physical)
-            for name, physical in source_physical.items()
-        },
+        physical,
+        reported_shocks,
     )

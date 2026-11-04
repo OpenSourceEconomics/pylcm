@@ -14,7 +14,7 @@
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "2",
-  "source_inventory_sha256": "655cfb8af1142255272a90410883ed46afa31fb17ed5179d9d22e03c0e548142",
+  "source_inventory_sha256": "da02106c31f09414445b7b86d9400ec725a49ac726727da187959e4bdc35e7a1",
   "sources": [
     {
       "path": "src/_lcm/constraints/bounds.py",
@@ -390,7 +390,7 @@
     },
     {
       "path": "src/_lcm/simulation/chunk_profiles.py",
-      "sha256": "d891a56c927e2109d5cf36719584e5b9c0d761583e185057d7b876275c624d03"
+      "sha256": "f906cb88aa7f6c85e8b83dd952b833b634f489eb7a84a0fe9a937732e949a418"
     },
     {
       "path": "src/_lcm/simulation/compile.py",
@@ -422,7 +422,7 @@
     },
     {
       "path": "src/_lcm/simulation/forward_program_profiles.py",
-      "sha256": "24294c84428bdce98a0c0c79b0c97fc6d83a9edcd6f2ccd19dbf024c07bcb0f5"
+      "sha256": "9ec80ada18df6970f6fb7e050a0eb4b15e414fc578817536ab14b4a27b246e18"
     },
     {
       "path": "src/_lcm/simulation/gated_routing.py",
@@ -494,7 +494,7 @@
     },
     {
       "path": "src/_lcm/simulation/result_dataframe.py",
-      "sha256": "790d66ac455ce52e37a901d55e95b3fec0e0aa8889778fb6d4dc699d00bf76fb"
+      "sha256": "4af8073d3412a65c90858dc13a0085a08e6f4765a647e6ec7594eea9960186b5"
     },
     {
       "path": "src/_lcm/simulation/result_metadata.py",
@@ -506,7 +506,7 @@
     },
     {
       "path": "src/_lcm/simulation/simulate.py",
-      "sha256": "feb12d1ed7dc2697132003bdb151cbbd5249eee957984f490e3f5932bb1906f3"
+      "sha256": "78e16c0b4f0da72a28293927a9e5eda749a96b3b10784e7645153d9261661f92"
     },
     {
       "path": "src/_lcm/simulation/solution_copies.py",
@@ -702,7 +702,7 @@
     },
     {
       "path": "src/lcm/_solver_api/stores.py",
-      "sha256": "798d370aaa8e527d7b34fa916b87611b064d7d21610769d543142b4191ad9386"
+      "sha256": "6c7be7157d70fab084f524f93fd182cff90b612a96dddacaf6e05ef7a1bf9bf7"
     },
     {
       "path": "src/lcm/consumption_savings_regime.py",
