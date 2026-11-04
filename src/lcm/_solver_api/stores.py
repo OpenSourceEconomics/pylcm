@@ -277,7 +277,10 @@ class ValueStore(Mapping[int, Mapping[RegimeName, FloatND]]):
     def __getitem__(self, period: int) -> _RegimeValuesBoundary:
         period = _require_exact_value_period(period)
         if period not in self._regimes_by_period:
-            raise KeyError(period)
+            raise KeyError(
+                f"No values stored for period {period}; stored periods: "
+                f"{tuple(self._regimes_by_period)!r}."
+            )
         return _ValuePeriodView(store=self, period=period)
 
     def __iter__(self) -> Iterator[int]:
@@ -302,7 +305,13 @@ class ValueStore(Mapping[int, Mapping[RegimeName, FloatND]]):
     ) -> _FloatValueBoundary:
         period = _require_exact_value_period(period)
         regime = _require_exact_regime_name(regime)
-        entry = self._entries[(period, regime)]
+        try:
+            entry = self._entries[(period, regime)]
+        except KeyError:
+            raise KeyError(
+                f"No stored value for regime {regime!r} in period {period}; "
+                f"stored regimes: {self._regimes_by_period.get(period, ())!r}."
+            ) from None
         if array_copier is not None and isinstance(entry, _LazyEntry):
             if type(entry) is _CanonicalValueEntry:
                 value = entry._fresh(array_copier=array_copier)  # noqa: SLF001
