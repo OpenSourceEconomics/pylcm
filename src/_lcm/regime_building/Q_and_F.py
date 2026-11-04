@@ -13,7 +13,6 @@ continuation and action value that kernel returns `Q` and `F` from.
 import dataclasses
 import functools
 import inspect
-import itertools
 import operator
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -28,9 +27,7 @@ from dags import (
     with_signature,
 )
 from dags.tree import qname_from_tree_path
-from jax.interpreters.partial_eval import DynamicJaxprTracer
 
-from _lcm.additive_shock_transition import AdditiveShockTransition
 from _lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
 from _lcm.dtypes import canonical_float_dtype
 from _lcm.grids import ContinuousGrid, IrregSpacedGrid
@@ -107,6 +104,7 @@ from lcm.typing import (
     FunctionName,
     Int1D,
     IntND,
+    LoopIndex,
     ReferenceName,
     UserFunction,
 )
@@ -121,6 +119,8 @@ type Intermediates = tuple[
 # What the utilities-and-feasibility DAG returns at a cell: each felicity, then
 # the feasibility mask (a Python `bool` for a regime without constraints).
 type UtilitiesAndF = tuple[FloatND | IntND | BoolND | int | float | bool, ...]
+
+_PROCESS_EDGE_CORNER = "_lcm_process_edge__corner"
 
 
 class EvaluatedUtilitiesAndF(NamedTuple):
@@ -2944,7 +2944,6 @@ def _get_compute_CE(
     flat_param_names: frozenset[QualifiedName] | None = None,
     count_raise_landings: bool = False,
     extend_process_edges: Literal["solution", "simulation"] | None = None,
-    _target_builder: Callable[..., _TargetContinuation] | None = None,
 ) -> tuple[
     Callable[..., ContinuationAggregate],
     tuple[Callable[..., ArrayTree], ...],
@@ -3039,14 +3038,6 @@ def _get_compute_CE(
                 gated_continuations=gated_continuations,
                 flat_param_names=flat_param_names,
                 count_raise_landings=count_raise_landings,
-                _target_builder=_reuse_target_continuation_builds(
-                    build=_build_target_continuation,
-                    functions=functions,
-                    period_targets=period_targets,
-                    transitions=transitions,
-                    transition_plans=transition_plans,
-                    phase=extend_process_edges,
-                ),
             ),
         )
     # The plain expectation reduces each target on its own; every other
@@ -3061,11 +3052,8 @@ def _get_compute_CE(
         certainty_equivalent is None or type(certainty_equivalent) is LinearExpectation
     )
 
-    build_target = (
-        _build_target_continuation if _target_builder is None else _target_builder
-    )
     continuations = {
-        target_regime_name: build_target(
+        target_regime_name: _build_target_continuation(
             target_regime_name=target_regime_name,
             functions=functions,
             bundle=transitions.get(target_regime_name, MappingProxyType({})),
@@ -3202,9 +3190,25 @@ class _ProcessEdgeExtension:
 
     distances: tuple[Callable[..., FloatND], ...]
     """One `EdgeRows.distance` per extended process weight."""
-    corners: tuple[_ComputeCE, ...]
-    """The continuation with each nonempty subset of the weights at their
-    neighbour rows, in `itertools.product((False, True), ...)` order."""
+    corner: _ComputeCE
+    """One continuation program selecting each process row by a corner index."""
+
+    def read_corner(
+        self,
+        *,
+        index: LoopIndex,
+        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
+        zero: FloatND,
+        states_actions_params: QAndFKwargs,
+    ) -> ContinuationAggregate:
+        """Read one joint corner without changing its lottery or CE aggregation."""
+        return self.corner(
+            next_regime_to_V_arr=next_regime_to_V_arr,
+            zero=zero,
+            states_actions_params=MappingProxyType(
+                {**states_actions_params, _PROCESS_EDGE_CORNER: index}
+            ),
+        )
 
     @no_type_check
     def extend(
@@ -3221,23 +3225,11 @@ class _ProcessEdgeExtension:
         `1 + distance` (edge row) or `-distance` (neighbour row). Between the
         nodes every distance is zero and `edge`'s `CE` is returned untouched.
         """
-        values = jax.tree.leaves(next_regime_to_V_arr)
-        # Eager transformations must not keep concrete interpolation buffers alive.
-        target_reads: dict[int, ArrayTree] | None = (
-            {}
-            if values
-            and all(
-                isinstance(value, DynamicJaxprTracer) and value.get_referent() is value
-                for value in values
-            )
-            else None
-        )
         aggregate, valid = _continuation_evaluation(
             edge(
                 next_regime_to_V_arr=next_regime_to_V_arr,
                 zero=zero,
                 states_actions_params=states_actions_params,
-                _target_reads=target_reads,
             )
         )
         distances = [
@@ -3249,38 +3241,41 @@ class _ProcessEdgeExtension:
             )
             for distance in self.distances
         ]
-        corner_values = [aggregate[0]] + [
-            _continuation_evaluation(
-                corner(
+        initial = zero_safe_weighted_term(
+            weight=functools.reduce(
+                operator.mul, (1.0 + distance for distance in distances)
+            ),
+            value=aggregate[0],
+            subnormal_is_accounted_for=True,
+        )
+
+        # keyword-only-exempt: library-callback=jax.lax.fori_loop
+        def add_corner(index: LoopIndex, total: FloatND) -> FloatND:
+            corner, _ = _continuation_evaluation(
+                self.read_corner(
+                    index=index,
                     next_regime_to_V_arr=next_regime_to_V_arr,
                     zero=zero,
                     states_actions_params=states_actions_params,
-                    _target_reads=target_reads,
                 )
-            )[0][0]
-            for corner in self.corners
-        ]
-        extended = functools.reduce(
-            operator.add,
-            (
-                zero_safe_weighted_term(
-                    weight=functools.reduce(
-                        operator.mul,
-                        (
-                            -distance if neighbour else 1.0 + distance
-                            for neighbour, distance in zip(mask, distances, strict=True)
-                        ),
-                    ),
-                    value=value,
-                    subnormal_is_accounted_for=True,
-                )
-                for mask, value in zip(
-                    itertools.product((False, True), repeat=len(distances)),
-                    corner_values,
-                    strict=True,
-                )
-            ),
-        )
+            )
+            weight = functools.reduce(
+                operator.mul,
+                (
+                    jnp.where(
+                        ((index >> (len(distances) - axis - 1)) & 1) != 0,
+                        -distance,
+                        1.0 + distance,
+                    )
+                    for axis, distance in enumerate(distances)
+                ),
+            )
+            return total + zero_safe_weighted_term(
+                weight=weight, value=corner[0], subnormal_is_accounted_for=True
+            )
+
+        # A loop retains Cartesian corner order without copying the CE graph.
+        extended = jax.lax.fori_loop(1, 1 << len(distances), add_corner, initial)
         on_nodes = functools.reduce(
             operator.and_, (distance == 0 for distance in distances)
         )
@@ -3290,86 +3285,40 @@ class _ProcessEdgeExtension:
         return CheckedContinuationEvaluation(aggregate=aggregate, valid=valid)
 
 
-def _reuse_target_continuation_builds[**P](
+def _get_process_corner_row(
     *,
-    build: Callable[P, _TargetContinuation],
-    functions: EconFunctionsMapping,
-    period_targets: tuple[RegimeName, ...],
-    transitions: TransitionFunctionsMapping,
-    transition_plans: TargetTransitionPlans,
-    phase: Literal["solution", "simulation"],
-) -> Callable[P, _TargetContinuation]:
-    """Reuse target construction while retaining every joint extrapolation corner."""
-    prefixes = tuple(f"weight_{target}__" for target in period_targets)
-    edges = {
-        name: rows
-        for name, func in functions.items()
-        if name.startswith(prefixes)
-        and isinstance(rows := getattr(func, "edge_rows", None), EdgeRows)
-        and (phase == "simulation" or rows.in_solve)
+    edge: Callable[..., FloatND],
+    neighbour: Callable[..., FloatND],
+    shift: int,
+) -> Callable[..., FloatND]:
+    """Select an edge or neighbour row using one bit of the joint corner index."""
+    edge_annotations = {
+        name: annotation
+        for name, annotation in get_annotations(edge).items()
+        if name != "return"
     }
-    if not edges:
-        return build
-    callbacks = (
-        *functions.values(),
-        *(rows.neighbour for rows in edges.values()),
-        *(func for bundle in transitions.values() for func in bundle.values()),
-        *(
-            func
-            for plan in transition_plans.values()
-            for lottery in plan.lotteries.values()
-            for func in (lottery.probabilities, lottery.support_provider)
-            if func is not None
-        ),
+    neighbour_annotations = {
+        name: annotation
+        for name, annotation in get_annotations(neighbour).items()
+        if name != "return"
+    }
+
+    def selected(**kwargs: PytreeValue) -> FloatND:
+        index = cast("LoopIndex", kwargs[_PROCESS_EDGE_CORNER])
+        return jnp.where(
+            ((index >> shift) & 1) != 0,
+            neighbour(**{name: kwargs[name] for name in neighbour_annotations}),
+            edge(**{name: kwargs[name] for name in edge_annotations}),
+        )
+
+    return with_signature(
+        selected,
+        args=edge_annotations
+        | neighbour_annotations
+        | {_PROCESS_EDGE_CORNER: "LoopIndex"},
+        return_annotation=FloatND,
+        enforce=False,
     )
-    # Any transitive cross-target read has a direct reference in this callback pool.
-    callback_roots = {name for func in callbacks for name in get_annotations(func)} | {
-        name
-        for func in callbacks
-        if isinstance(func, AdditiveShockTransition)
-        for name in (func.base, func.shock, *func.conditioners)
-    }
-    shared_names = set(edges).intersection(callback_roots)
-    relevant_names = {
-        target: tuple(
-            name
-            for name in edges
-            if name.startswith(f"weight_{target}__")
-            or name in shared_names
-            or any(
-                name in (lottery.weight_name, lottery.support_provider_name)
-                for lottery in transition_plans[target].lotteries.values()
-            )
-        )
-        for target in period_targets
-        if all(
-            lottery.original_layout is None
-            for lottery in transition_plans[target].lotteries.values()
-        )
-        and not any(
-            transition_plans[target].has_interpolation_basis(name)
-            for name in transitions.get(target, MappingProxyType({}))
-        )
-    }
-    cache: dict[tuple[RegimeName, tuple[bool, ...]], _TargetContinuation] = {}
-
-    @functools.wraps(build)
-    def cached(*args: P.args, **kwargs: P.kwargs) -> _TargetContinuation:
-        target = cast("RegimeName", kwargs["target_regime_name"])
-        current = cast("EconFunctionsMapping", kwargs["functions"])
-        names = relevant_names.get(target)
-        if names is None or any(
-            current[name] is not functions[name]
-            and current[name] is not edges[name].neighbour
-            for name in edges
-        ):
-            return build(*args, **kwargs)
-        key = (target, tuple(current[name] is edges[name].neighbour for name in names))
-        if key not in cache:
-            cache[key] = build(*args, **kwargs)
-        return cache[key]
-
-    return cached
 
 
 def _get_compute_CE_with_process_edges(
@@ -3410,26 +3359,23 @@ def _get_compute_CE_with_process_edges(
     )
     if not edges:
         return compute_CE, deps, arg_names
-    # ponytail: one corner per subset of extended weights, 2**k continuations for
-    # k of them; group weights sharing a grid if many processes ever need it.
-    corners = tuple(
-        build(
-            functions=MappingProxyType(
-                dict(functions)
-                | {
-                    name: rows.neighbour
-                    for (name, rows), neighbour in zip(edges.items(), mask, strict=True)
-                    if neighbour
-                }
-            ),
-            period_targets=period_targets,
-        )[0]
-        for mask in itertools.product((False, True), repeat=len(edges))
-        if any(mask)
-    )
+    corner = build(
+        functions=MappingProxyType(
+            dict(functions)
+            | {
+                name: _get_process_corner_row(
+                    edge=functions[name],
+                    neighbour=rows.neighbour,
+                    shift=len(edges) - axis - 1,
+                )
+                for axis, (name, rows) in enumerate(edges.items())
+            }
+        ),
+        period_targets=period_targets,
+    )[0]
     extension = _ProcessEdgeExtension(
         distances=tuple(rows.distance for rows in edges.values()),
-        corners=cast("tuple[_ComputeCE, ...]", corners),
+        corner=cast("_ComputeCE", corner),
     )
     return (
         dataclasses.replace(cast("_ComputeCE", compute_CE), edge_extension=extension),
@@ -3519,13 +3465,12 @@ class _ComputeCE:
         )
 
     @no_type_check
-    def __call__(  # noqa: C901, PLR0912, PLR0915 - preserve corner arithmetic and count/integrity order
+    def __call__(  # noqa: C901 - preserve corner arithmetic and count/integrity order
         self,
         *,
         next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
         zero: FloatND,
         states_actions_params: QAndFKwargs,
-        _target_reads: dict[int, ArrayTree] | None = None,
     ) -> ContinuationAggregate:
         """Aggregate the continuation lottery into `CE` at one state-action point.
 
@@ -3542,7 +3487,6 @@ class _ComputeCE:
                 probability functions, so it carries whatever the caller
                 supplies — including params that never passed through
                 `cast_params_to_canonical_dtypes`.
-            _target_reads: Interpolation traces shared only within one edge extension.
 
         Returns:
             Tuple of the aggregated continuation value and the regime transition
@@ -3698,20 +3642,15 @@ class _ComputeCE:
             }
             if continuation.next_V is None:
                 raise TypeError("Ordinary continuation lost its dense value reader.")
-            if _target_reads is not None and id(continuation) in _target_reads:
-                next_V_at_stochastic_states_arr = _target_reads[id(continuation)]
-            else:
-                next_V_at_stochastic_states_arr = continuation.next_V(
-                    **interpolator_coordinates,
-                    next_V_arr=next_values,
-                    **extra_kw,
-                    **{
-                        name: target_marginals[target_regime_name][name]
-                        for name in continuation.integrated_weight_names
-                    },
-                )
-                if _target_reads is not None:
-                    _target_reads[id(continuation)] = next_V_at_stochastic_states_arr
+            next_V_at_stochastic_states_arr = continuation.next_V(
+                **interpolator_coordinates,
+                next_V_arr=next_values,
+                **extra_kw,
+                **{
+                    name: target_marginals[target_regime_name][name]
+                    for name in continuation.integrated_weight_names
+                },
+            )
 
             if continuation.landing_checks:
                 next_V_at_stochastic_states_arr, node_counts = (

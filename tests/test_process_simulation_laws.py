@@ -1,6 +1,7 @@
 """Process simulation uses either solve nodes or its declared phase law."""
 
 import functools
+import itertools
 import math
 from collections.abc import Callable
 from dataclasses import replace
@@ -52,6 +53,7 @@ from lcm.exceptions import (
     ModelInitializationError,
     PyLCMError,
     RegimeInitializationError,
+    ScaledLotteryDifferentiationError,
 )
 from lcm.typing import ContinuousState, FloatND, ScalarInt, UserParams
 from tests.conftest import DECIMAL_PRECISION
@@ -1076,11 +1078,88 @@ type _EdgeBuildResult = tuple[
 ]
 
 
+def _build_literal_process_corners(
+    *,
+    functions: EconFunctionsMapping,
+    period_targets: tuple[RegimeName, ...],
+    build: Callable[..., _EdgeBuildResult],
+) -> tuple[q_and_f._ComputeCE, ...]:
+    """Enumerate original row substitutions independently of the index/loop program."""
+    prefixes = tuple(f"weight_{target}__" for target in period_targets)
+    edges = {
+        name: rows
+        for name, func in functions.items()
+        if name.startswith(prefixes)
+        and isinstance(rows := getattr(func, "edge_rows", None), q_and_f.EdgeRows)
+    }
+    corners = []
+    for choices in itertools.product((False, True), repeat=len(edges)):
+        corner = build(
+            functions=MappingProxyType(
+                dict(functions)
+                | {
+                    name: rows.neighbour
+                    for (name, rows), use_neighbour in zip(
+                        edges.items(), choices, strict=True
+                    )
+                    if use_neighbour
+                }
+            ),
+            period_targets=period_targets,
+        )[0]
+        assert isinstance(corner, q_and_f._ComputeCE)
+        assert corner.edge_extension is None
+        corners.append(corner)
+    return tuple(corners)
+
+
+@pytest.mark.parametrize("certainty_equivalent", [None, PowerMean()])
+def test_process_edges_build_one_reusable_corner_program(
+    *,
+    monkeypatch: pytest.MonkeyPatch,
+    certainty_equivalent: CertaintyEquivalent | None,
+) -> None:
+    """Build the base and one corner program for every joint process extension."""
+    original = q_and_f._get_compute_CE_with_process_edges
+    observations: list[int] = []
+
+    def observed(
+        *,
+        functions: EconFunctionsMapping,
+        period_targets: tuple[RegimeName, ...],
+        phase: Literal["solution", "simulation"],
+        build: Callable[..., _EdgeBuildResult],
+    ) -> _EdgeBuildResult:
+        count = 0
+
+        def counted(
+            *, functions: EconFunctionsMapping, period_targets: tuple[RegimeName, ...]
+        ) -> _EdgeBuildResult:
+            nonlocal count
+            count += 1
+            return build(functions=functions, period_targets=period_targets)
+
+        result = original(
+            functions=functions,
+            period_targets=period_targets,
+            phase=phase,
+            build=counted,
+        )
+        if phase == "simulation" and set(period_targets) == {"left", "right"}:
+            observations.append(count)
+        return result
+
+    monkeypatch.setattr(q_and_f, "_get_compute_CE_with_process_edges", observed)
+    _fork_model(certainty_equivalent=certainty_equivalent, two_coordinates=True)
+    assert observations
+    assert set(observations) == {2}
+
+
 @pytest.mark.parametrize("two_coordinates", [False, True])
-def test_process_edge_corners_reuse_unchanged_target_construction(
+def test_process_edge_program_builds_each_target_twice(
     *, monkeypatch: pytest.MonkeyPatch, two_coordinates: bool
 ) -> None:
-    """Build each target once per distinct combination of its process rows."""
+    """Build each target once for the base and once for the indexed corner."""
     target_builds = 0
     observations: list[int] = []
     original_target = q_and_f._build_target_continuation
@@ -1116,14 +1195,14 @@ def test_process_edge_corners_reuse_unchanged_target_construction(
     monkeypatch.setattr(q_and_f, "_get_compute_CE_with_process_edges", observed)
     _fork_model(certainty_equivalent=None, two_coordinates=two_coordinates)
     assert observations
-    assert set(observations) == {8 if two_coordinates else 4}
+    assert set(observations) == {4}
 
 
 @pytest.mark.parametrize("two_coordinates", [False, True])
-def test_process_edge_corners_trace_each_shared_target_read_once(
+def test_process_edge_program_traces_each_target_twice(
     *, monkeypatch: pytest.MonkeyPatch, two_coordinates: bool
 ) -> None:
-    """Share identical interpolation traces while retaining every joint CE corner."""
+    """Trace the base and one corner body without leaking state between transforms."""
     reader_calls = 0
     captured: list[q_and_f._ComputeCE] = []
     original_target = q_and_f._build_target_continuation
@@ -1172,7 +1251,7 @@ def test_process_edge_corners_trace_each_shared_target_read_once(
     assert captured
     compute = captured[0]
     assert compute.edge_extension is not None
-    assert len(compute.edge_extension.corners) == (15 if two_coordinates else 3)
+    assert len(compute.edge_extension.distances) == (4 if two_coordinates else 2)
     values = MappingProxyType(
         {
             "left": jnp.asarray(
@@ -1202,7 +1281,7 @@ def test_process_edge_corners_trace_each_shared_target_read_once(
     with jax.checking_leaks():
         compiled = jax.jit(evaluate)
         actual = compiled(values)
-    assert reader_calls == (8 if two_coordinates else 4)
+    assert reader_calls == 4
     # E[income] = E[wage] = rho * 3 = 1.8; the two target weights are one half.
     expected = 9.86 if two_coordinates else 3.8
     np.testing.assert_allclose(actual, expected, rtol=10.0**-DECIMAL_PRECISION)
@@ -1211,21 +1290,30 @@ def test_process_edge_corners_trace_each_shared_target_read_once(
         expected + 10.0,
         rtol=10.0**-DECIMAL_PRECISION,
     )
-    before_eager = reader_calls
-    evaluate(values)
-    assert reader_calls - before_eager == (32 if two_coordinates else 8)
-    before_vmap = reader_calls
-    batched = jax.vmap(evaluate)(
-        jax.tree.map(lambda value: jnp.stack((value, value + 10.0)), values)
-    )
-    assert reader_calls - before_vmap == (32 if two_coordinates else 8)
+    with jax.checking_leaks():
+        np.testing.assert_allclose(
+            evaluate(values), expected, rtol=10.0**-DECIMAL_PRECISION
+        )
+        with jax.disable_jit():
+            np.testing.assert_allclose(
+                evaluate(values), expected, rtol=10.0**-DECIMAL_PRECISION
+            )
+        batched = jax.vmap(evaluate)(
+            jax.tree.map(lambda value: jnp.stack((value, value + 10.0)), values)
+        )
     np.testing.assert_allclose(
         batched, [expected, expected + 10.0], rtol=10.0**-DECIMAL_PRECISION
     )
-    before_jvp = reader_calls
     _, tangent = jax.jvp(evaluate, (values,), (jax.tree.map(jnp.ones_like, values),))
-    assert reader_calls - before_jvp == (32 if two_coordinates else 8)
     np.testing.assert_allclose(tangent, 1.0, rtol=10.0**-DECIMAL_PRECISION)
+    gradients = jax.grad(evaluate)(values)
+    expected_gradient = (
+        [[0.08, -0.28], [-0.28, 0.98]] if two_coordinates else [-0.2, 0.7]
+    )
+    for gradient in gradients.values():
+        np.testing.assert_allclose(
+            gradient, expected_gradient, rtol=10.0**-DECIMAL_PRECISION
+        )
 
 
 @pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
@@ -1234,7 +1322,7 @@ def test_process_edge_corners_keep_nonfinite_and_zero_semantics(
     *, monkeypatch: pytest.MonkeyPatch, case: str, compiled: bool
 ) -> None:
     """Keep the tensor expansion's nonfinite outcomes and represented zero sign."""
-    captured: list[q_and_f._ComputeCE] = []
+    captured: list[tuple[q_and_f._ComputeCE, tuple[q_and_f._ComputeCE, ...]]] = []
     original = q_and_f._get_compute_CE_with_process_edges
 
     def observed(
@@ -1249,7 +1337,16 @@ def test_process_edge_corners_keep_nonfinite_and_zero_semantics(
         )
         if phase == "simulation" and set(period_targets) == {"left", "right"}:
             assert isinstance(result[0], q_and_f._ComputeCE)
-            captured.append(result[0])
+            captured.append(
+                (
+                    result[0],
+                    _build_literal_process_corners(
+                        functions=functions,
+                        period_targets=period_targets,
+                        build=build,
+                    ),
+                )
+            )
         return result
 
     dtype = np.asarray(jnp.asarray(1.0)).dtype
@@ -1265,10 +1362,10 @@ def test_process_edge_corners_keep_nonfinite_and_zero_semantics(
         context.setattr(q_and_f, "_get_compute_CE_with_process_edges", observed)
         _fork_model(certainty_equivalent=None, process=process)
     assert captured
-    compute = captured[0]
+    compute, corners = captured[0]
     extension = compute.edge_extension
     assert extension is not None
-    assert len(extension.corners) == 3
+    assert len(corners) == 4
     nodes = process.get_gridpoints()
     assert np.isfinite(np.asarray(nodes)).all()
     rows = np.asarray(process.get_transition_probs())
@@ -1299,10 +1396,7 @@ def test_process_edge_corners_keep_nonfinite_and_zero_semantics(
         return np.asarray(jax.jit(read)(values) if compiled else read(values))
 
     actual = evaluate(compute)
-    f00, f01, f10, f11 = (
-        evaluate(corner)
-        for corner in (replace(compute, edge_extension=None), *extension.corners)
-    )
+    f00, f01, f10, f11 = (evaluate(corner) for corner in corners)
     with np.errstate(invalid="ignore", over="ignore"):
         literal = 4.0 * f00 - 2.0 * f01 - 2.0 * f10 + f11
     np.testing.assert_array_equal(actual, literal)
@@ -1316,14 +1410,14 @@ def test_process_edge_corners_keep_nonfinite_and_zero_semantics(
 
 
 @pytest.mark.parametrize(
-    ("certainty_equivalent", "different_laws", "two_coordinates", "expected_builds"),
+    ("certainty_equivalent", "different_laws", "two_coordinates"),
     [
-        (None, False, False, 4),
-        (LinearExpectation(), False, False, 4),
-        (PowerMean(), False, False, 4),
-        (_LinearExpectationSubclass(), False, False, 4),
-        (None, True, False, 4),
-        (None, False, True, 16),
+        (None, False, False),
+        (LinearExpectation(), False, False),
+        (PowerMean(), False, False),
+        (_LinearExpectationSubclass(), False, False),
+        (None, True, False),
+        (None, False, True),
     ],
     ids=["default", "linear", "power-mean", "subclass", "distinct-laws", "two-states"],
 )
@@ -1333,11 +1427,11 @@ def test_process_edges_retain_the_original_cartesian_corners(
     certainty_equivalent: CertaintyEquivalent | None,
     different_laws: bool,
     two_coordinates: bool,
-    expected_builds: int,
 ) -> None:
     """Every process weight retains its corner in the original tensor expansion."""
     original = q_and_f._get_compute_CE_with_process_edges
     observations: list[int] = []
+    captured: list[tuple[q_and_f._ComputeCE, tuple[q_and_f._ComputeCE, ...]]] = []
 
     def observed(
         *,
@@ -1363,6 +1457,17 @@ def test_process_edges_retain_the_original_cartesian_corners(
         )
         if phase == "simulation" and set(period_targets) == {"left", "right"}:
             observations.append(count)
+            assert isinstance(result[0], q_and_f._ComputeCE)
+            captured.append(
+                (
+                    result[0],
+                    _build_literal_process_corners(
+                        functions=functions,
+                        period_targets=period_targets,
+                        build=build,
+                    ),
+                )
+            )
         return result
 
     monkeypatch.setattr(q_and_f, "_get_compute_CE_with_process_edges", observed)
@@ -1371,7 +1476,71 @@ def test_process_edges_retain_the_original_cartesian_corners(
         different_laws=different_laws,
         two_coordinates=two_coordinates,
     )
-    assert set(observations) == {expected_builds}
+    assert observations
+    assert set(observations) == {2}
+    compute, literal_corners = captured[0]
+    extension = compute.edge_extension
+    assert extension is not None
+    assert len(literal_corners) == (16 if two_coordinates else 4)
+    values = MappingProxyType(
+        {
+            "left": jnp.asarray(
+                [[5.0, 3.0], [3.0, 5.0]] if two_coordinates else [1.0, 2.0]
+            ),
+            "right": jnp.asarray(
+                [[8.0, 4.0], [4.0, 8.0]] if two_coordinates else [1.0, 4.0]
+            ),
+        }
+    )
+    states = MappingProxyType(
+        {
+            "income": jnp.asarray(3.0),
+            **({"wage": jnp.asarray(3.0)} if two_coordinates else {}),
+            **{
+                name: jnp.asarray(-1.0) for name in compute.ce_flat_param_names.values()
+            },
+        }
+    )
+    for index, literal in enumerate(literal_corners):
+        reference = literal(
+            next_regime_to_V_arr=values,
+            zero=jnp.asarray(0.0),
+            states_actions_params=states,
+        )
+        actual = extension.read_corner(
+            index=index,
+            next_regime_to_V_arr=values,
+            zero=jnp.asarray(0.0),
+            states_actions_params=states,
+        )
+        assert isinstance(actual, tuple)
+        assert isinstance(reference, tuple)
+        np.testing.assert_allclose(
+            actual[0], reference[0], rtol=10.0**-DECIMAL_PRECISION
+        )
+    if isinstance(certainty_equivalent, PowerMean):
+        for read in (
+            literal_corners[0],
+            functools.partial(extension.read_corner, index=0),
+        ):
+            # keyword-only-exempt: library-callback=jax.jvp
+            def evaluate(
+                next_values: MappingProxyType[RegimeName, FloatND],
+                *,
+                read: Callable[..., q_and_f.ContinuationAggregate] = read,
+            ) -> FloatND:
+                aggregate = read(
+                    next_regime_to_V_arr=next_values,
+                    zero=jnp.asarray(0.0),
+                    states_actions_params=states,
+                )
+                assert isinstance(aggregate, tuple)
+                return aggregate[0]
+
+            with pytest.raises(ScaledLotteryDifferentiationError):
+                jax.jvp(evaluate, (values,), (jax.tree.map(jnp.ones_like, values),))
+            with pytest.raises(ScaledLotteryDifferentiationError):
+                jax.vjp(evaluate, values)
 
 
 @pytest.mark.parametrize(
@@ -1425,10 +1594,10 @@ def test_process_edge_sharing_preserves_the_continuation(case: str) -> None:
     )
 
 
-def test_process_edge_reuse_observes_another_targets_row(
+def test_process_edge_program_observes_another_targets_row(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Rebuild a target when its probability callback reads another target's row."""
+    """Select another target's row before a dependent probability callback reads it."""
     captured: list[q_and_f._ComputeCE] = []
 
     def inject_cross_read[**P, R](func: Callable[P, R]) -> Callable[P, R]:
@@ -1483,13 +1652,15 @@ def test_process_edge_reuse_observes_another_targets_row(
     compute = captured[0]
     extension = compute.edge_extension
     assert extension is not None
-    corners = (replace(compute, edge_extension=None), *extension.corners)
-    assert len(corners) == 4
-    assert len({id(corner.continuations["left"]) for corner in corners}) == 4
-    assert len({id(corner.continuations["right"]) for corner in corners}) == 2
+    assert len(extension.distances) == 2
 
-    def evaluate(corner: q_and_f._ComputeCE) -> FloatND:
-        result = corner(
+    def evaluate(index: int | None) -> FloatND:
+        read = (
+            compute
+            if index is None
+            else functools.partial(extension.read_corner, index=index)
+        )
+        result = read(
             next_regime_to_V_arr=MappingProxyType(
                 {"left": jnp.asarray([1.0, 2.0]), "right": jnp.asarray([1.0, 4.0])}
             ),
@@ -1501,8 +1672,8 @@ def test_process_edge_reuse_observes_another_targets_row(
 
     # Literal two-node probabilities for the four joint edge/neighbour rows.
     np.testing.assert_allclose(
-        [evaluate(corner) for corner in corners],
+        [evaluate(index) for index in range(4)],
         [2.6, 1.55, 2.45, 1.4],
         rtol=10.0**-DECIMAL_PRECISION,
     )
-    np.testing.assert_allclose(evaluate(compute), 3.8, rtol=10.0**-DECIMAL_PRECISION)
+    np.testing.assert_allclose(evaluate(None), 3.8, rtol=10.0**-DECIMAL_PRECISION)
