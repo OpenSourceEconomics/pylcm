@@ -69,6 +69,7 @@ type PreparedDecisionProfile = tuple[
     jax.ShapeDtypeStruct,
     jax.ShapeDtypeStruct,
     Mapping[str, jax.ShapeDtypeStruct],
+    Mapping[str, jax.ShapeDtypeStruct],
 ]
 
 
@@ -342,7 +343,7 @@ def profile_forward_unit(  # noqa: C901, PLR0912, PLR0915
         )
     )
     if prepared_decision is not None:
-        indices, _, current_shocks = prepared_decision
+        indices, _, current_shocks, _ = prepared_decision
         decoder_arguments = {
             "flat_indices": indices,
             "grids": _shared_tree(tree=base.actions, devices=devices),

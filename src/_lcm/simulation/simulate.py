@@ -2411,7 +2411,9 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
     )
 
     simulation_result = PeriodRegimeSimulationData(
-        shocks=current_shocks
+        shocks=prepared_decision.reported_shocks
+        if prepared_decision is not None
+        else current_shocks
         if regime.simulation.current_iid_draw_plan is not None
         else MappingProxyType({}),
         V_arr=V_arr,
@@ -2430,7 +2432,7 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
 
         def draw_next_regimes() -> Int1D:
             return calculate_next_regime_membership(
-                current_shocks=simulation_result.shocks,
+                current_shocks=current_shocks,
                 regime=regime,
                 state_action_space=state_action_space,
                 optimal_actions=optimal_actions,
@@ -2472,7 +2474,7 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
             }
 
         next_states = calculate_next_states(
-            current_shocks=simulation_result.shocks,
+            current_shocks=current_shocks,
             regime=regime,
             regimes=regimes,
             process_nodes=process_node_arguments(
