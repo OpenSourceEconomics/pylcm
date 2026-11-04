@@ -14,7 +14,7 @@
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "2",
-  "source_inventory_sha256": "a2a35a9d8573f448dd008aaeba9ed81b6dbc7f6df9b68e2abd30b0b0c85da398",
+  "source_inventory_sha256": "e6c13253d00d059ea0ca3df3048e856048e28c793dc1c0e7ea0c7dd180302925",
   "sources": [
     {
       "path": "src/_lcm/constraints/bounds.py",
@@ -294,7 +294,7 @@
     },
     {
       "path": "src/_lcm/probability.py",
-      "sha256": "7c01aeb91b50ae7b2a391c6cd5a34e93a211aee1dc701318bd3865772b6f5d2b"
+      "sha256": "e5f5dc2fa9d123673ecd9e56680cba77285a21d3dfe74611daa64510c6090295"
     },
     {
       "path": "src/_lcm/processes/__init__.py",
@@ -390,7 +390,7 @@
     },
     {
       "path": "src/_lcm/simulation/chunk_profiles.py",
-      "sha256": "c5c4007843c5a78f3511c9335067e18e8b0ed012266c7ebdd7e7c6314d2dde3e"
+      "sha256": "b36d0a0da5b27eeb1f8c3131c97bf12d5d3ac630d89d217a267a893f1225f41a"
     },
     {
       "path": "src/_lcm/simulation/compile.py",
@@ -422,7 +422,7 @@
     },
     {
       "path": "src/_lcm/simulation/forward_program_profiles.py",
-      "sha256": "b2487a7def384dedc6f3e8d4ba57e56ecf49a45ecef19454eea16237ca716634"
+      "sha256": "d55a408f27578b893246a76522e5374d5fe995c0fbf05e802e609e9930f7ef44"
     },
     {
       "path": "src/_lcm/simulation/gated_routing.py",
@@ -494,7 +494,7 @@
     },
     {
       "path": "src/_lcm/simulation/result_dataframe.py",
-      "sha256": "790d66ac455ce52e37a901d55e95b3fec0e0aa8889778fb6d4dc699d00bf76fb"
+      "sha256": "4af8073d3412a65c90858dc13a0085a08e6f4765a647e6ec7594eea9960186b5"
     },
     {
       "path": "src/_lcm/simulation/result_metadata.py",
@@ -506,7 +506,7 @@
     },
     {
       "path": "src/_lcm/simulation/simulate.py",
-      "sha256": "f42c3f53fdaa77752ed58d54ecd59e55b32f7fd55431d328938730c5885e18cc"
+      "sha256": "12bb1c0c090ee36c7ebda5ee4c62052c5149e75d0598dba35a2cdc127d45c6a8"
     },
     {
       "path": "src/_lcm/simulation/solution_copies.py",
@@ -702,7 +702,7 @@
     },
     {
       "path": "src/lcm/_solver_api/stores.py",
-      "sha256": "798d370aaa8e527d7b34fa916b87611b064d7d21610769d543142b4191ad9386"
+      "sha256": "6c7be7157d70fab084f524f93fd182cff90b612a96dddacaf6e05ef7a1bf9bf7"
     },
     {
       "path": "src/lcm/consumption_savings_regime.py",
