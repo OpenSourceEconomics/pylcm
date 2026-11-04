@@ -38,6 +38,57 @@ The view states the model's declared dependencies and timing. It does not prove 
 arbitrary user code honours its advertised signature, establish economic equivalence of
 graph transformations, or predict their measured runtime.
 
+## Inspecting the temporal regime graph
+
+```python
+from lcm.graphs import digraph
+
+graph = digraph(model)
+solve_graph = digraph(model, phase="solve")
+simulation_graph = digraph(model, phase="simulate")
+```
+
+`digraph` returns an independent NetworkX `DiGraph` of the constructed model's effective
+next-period regime transitions. Node keys are `(age, regime_name)` tuples with the exact
+age labels from `AgeGrid.exact_values`. A period-based model uses
+`(period, regime_name)`. Admitted terminal and isolated nodes are retained.
+
+With `phase=None`, the solve and simulate graphs must have identical admitted nodes,
+effective edges, declared edges and pruning reasons. Otherwise the function raises
+`ValueError` and requests an explicit phase. Phase differences in utility or other
+economic functions alone do not make the temporal topology ambiguous. Phase-specific
+functions and laws remain available in the original declaration metadata; the view does
+not select or evaluate an economic function on the caller's behalf.
+
+Each node has its computational `period` and cached regime `declaration`. Each edge
+retains the source's original bound `law` and construction-time `status`. The graph's
+attributes retain:
+
+- `phase`: the requested phase, or `None` for common topology;
+- `coordinate_kind` and `clock`: the coordinate kind and complete exact clock tuple;
+- `declarations`: the original `ModelDeclarations` view, including both phases;
+- `declared_edges`: the original declared phase edges, including pruned edges;
+- `pruned_edges`: the selected phase's immutable mapping of removed edges to reasons.
+
+Same-period exits and value reads are metadata in `declarations`, not temporal arcs.
+Temporal edges always advance to the next computational period. A retained edge is
+conditional support, not a promise of positive probability at every state.
+
+Conversion does not evaluate economic functions, rerun factories, prepare execution,
+solve or simulate. Graph and attribute containers are independent and editable. Their
+grid, callable and declaration leaves are shared original objects and must obey the
+model's existing stability contract. This graph is an inspection view; modifying its
+topology does not modify the model or establish that a changed model is equivalent.
+
+For example, a graph-tool consumer can inspect the temporal layers without evaluating
+the model:
+
+```python
+import networkx as nx
+
+layers = tuple(tuple(nodes) for nodes in nx.topological_generations(solve_graph))
+```
+
 ## Solving
 
 `model.solve(params=..., log_level=...)` returns one immutable `SolutionResult` for
