@@ -449,7 +449,7 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
                     )
             physical = {}
             if name in prepared_exits:
-                indices, value, physical = prepared_exits[name]
+                indices, value, _, physical = prepared_exits[name]
                 inventory.operation(
                     function=_first_empty_action_row,
                     arguments={"indices": indices, "in_regime": mask},

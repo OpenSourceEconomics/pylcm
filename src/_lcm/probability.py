@@ -171,7 +171,17 @@ def is_represented_zero(values: FloatND) -> BoolND:
     catches every subnormal on a backend that flushes them, which is how a
     node that can occur gets treated as one that cannot.
     """
-    return _magnitude_bits(values) == 0
+    arr = jnp.asarray(values)
+    int_dtype = _int_dtype(arr)
+    # Keep the zero test opaque where floating comparisons flush subnormals.
+    mask = jnp.asarray((1 << (8 * arr.dtype.itemsize - 1)) - 1, dtype=int_dtype)
+    tiny = jnp.finfo(arr.dtype).tiny
+    sign_cleared = jnp.where(
+        (arr >= tiny) | (arr <= -tiny),
+        mask,
+        jax.lax.optimization_barrier(mask),
+    )
+    return (jax.lax.bitcast_convert_type(arr, int_dtype) & sign_cleared) == 0
 
 
 def is_below_smallest_normal(values: FloatND) -> BoolND:
@@ -211,7 +221,13 @@ def is_live(values: FloatND) -> BoolND:
     the arithmetic rather than about the event.
     """
     arr = jnp.asarray(values)
-    return (_magnitude_bits(arr) != 0) & ~is_negative(arr) & ~jnp.isnan(arr)
+    unsigned_dtype = jnp.uint32 if arr.dtype.itemsize == _FLOAT32_BYTES else jnp.uint64
+    bits = jax.lax.bitcast_convert_type(arr, unsigned_dtype)
+    infinity = jax.lax.bitcast_convert_type(
+        jnp.asarray(jnp.inf, dtype=arr.dtype), unsigned_dtype
+    )
+    # Positive IEEE words are ordered from the least subnormal through infinity.
+    return (bits > 0) & (bits <= infinity)
 
 
 def rescaled_lottery_weights(*, weights: FloatND, axis: int | None = -1) -> FloatND:
@@ -853,7 +869,7 @@ def _scaled_down_bits(values: FloatND, shift: _BitsND) -> FloatND:
 
     output_magnitude = jnp.where(stays_normal, normal_magnitude, subnormal_magnitude)
     exponent_all_ones = (1 << (8 * arr.dtype.itemsize - mantissa_bits - 1)) - 1
-    keep_unchanged = (magnitude == 0) | (exponent == exponent_all_ones)
+    keep_unchanged = is_represented_zero(arr) | (exponent == exponent_all_ones)
     output_bits = jnp.where(keep_unchanged, bits, sign | output_magnitude)
     return jax.lax.bitcast_convert_type(output_bits, arr.dtype)
 
@@ -1088,16 +1104,9 @@ def _magnitude_bits(values: FloatND) -> _BitsND:
     """Return each entry's bit pattern with the sign bit cleared."""
     arr = jnp.asarray(values)
     int_dtype = _int_dtype(arr)
-    # Keep subnormal bit tests opaque to prevent flushing float comparisons.
-    # Normal inputs retain a literal mask and can fold when static.
-    mask = jnp.asarray((1 << (8 * arr.dtype.itemsize - 1)) - 1, dtype=int_dtype)
-    tiny = jnp.finfo(arr.dtype).tiny
-    sign_cleared = jnp.where(
-        (arr >= tiny) | (arr <= -tiny),
-        mask,
-        jax.lax.optimization_barrier(mask),
+    return jax.lax.bitcast_convert_type(arr, int_dtype) & jnp.asarray(
+        (1 << (8 * arr.dtype.itemsize - 1)) - 1, dtype=int_dtype
     )
-    return jax.lax.bitcast_convert_type(arr, int_dtype) & sign_cleared
 
 
 def _smallest_normal_bits(values: FloatND) -> _BitsND:

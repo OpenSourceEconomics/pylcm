@@ -308,6 +308,21 @@ def test_solution_result_keeps_values_explicit_and_immutable() -> None:
         result.values[0]["alive"] = jnp.asarray([9.0])  # ty: ignore[invalid-assignment]
 
 
+@pytest.mark.parametrize("period", [0, 2])
+def test_value_store_missing_period_names_stored_periods(*, period: int) -> None:
+    """An absent period reports the available value coordinates."""
+    values = ValueStore({(1, "alive"): jnp.asarray([1.0])})
+    with pytest.raises(KeyError, match=rf"period {period}.*stored periods.*1"):
+        values[period]
+
+
+def test_value_store_missing_regime_names_stored_regimes() -> None:
+    """An incoming-only actor need not have a stored value in its entry period."""
+    values = ValueStore({(0, "working"): jnp.asarray([1.0])})
+    with pytest.raises(KeyError, match=r"retired.*period 0.*stored regimes.*working"):
+        values[0]["retired"]
+
+
 def test_store_lookups_reject_nonexact_coordinates_before_hashing() -> None:
     """Reject equality-compatible lookup coordinates before mapping access."""
 
