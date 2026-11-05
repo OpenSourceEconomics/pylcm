@@ -658,9 +658,11 @@ def _profile_finite_decision(
             "Finite profiles require their declared policy stages."
         )
     payload = ReplayPayload.from_policy(policy)
-    if not all(isinstance(leaf, jax.Array) for leaf in payload.arrays):
+    if not all(
+        isinstance(leaf, jax.Array | jax.ShapeDtypeStruct) for leaf in payload.arrays
+    ):
         raise ExecutionPlanningError(
-            "Finite profiles require retained canonical JAX policy leaves."
+            "Finite profiles require canonical policy arrays or their descriptors."
         )
     abstract_payload = jax.tree.map(
         partial(_abstract_policy_leaf, devices=runtime.subject_devices), payload
@@ -705,7 +707,7 @@ def _profile_finite_decision(
 
 # keyword-only-exempt: library-callback=jax.tree.map
 def _abstract_policy_leaf(
-    leaf: jax.Array, *, devices: tuple[jax.Device, ...]
+    leaf: jax.Array | jax.ShapeDtypeStruct, *, devices: tuple[jax.Device, ...]
 ) -> jax.ShapeDtypeStruct:
     """Bind only required device metadata while abstracting a retained policy leaf."""
     return _placed_abstract(

@@ -549,6 +549,7 @@ def _device_stand_in(*, stored: _Stored) -> _StandIn:
                 leaf.shape,
                 leaf.dtype,
                 sharding=leaf.sharding.with_memory_kind("device"),
+                weak_type=leaf.weak_type,
             )
             if isinstance(leaf, jax.Array)
             else leaf
