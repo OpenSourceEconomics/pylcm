@@ -3052,6 +3052,7 @@ def _get_compute_CE(
                 gated_continuations=gated_continuations,
                 flat_param_names=flat_param_names,
                 count_raise_landings=count_raise_landings,
+                lottery_contraction_source=lottery_contraction_source,
             ),
         )
     # The plain expectation reduces each target on its own; every other
