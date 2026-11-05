@@ -672,16 +672,21 @@ def _scaled_lottery_mean(
     `coefficient - shift + value`. The numerator is placed so its largest
     term sits in `[1, 4)`, and the mass so its likeliest node sits in
     `[1, 2)`. Each term is lowered from there by its own distance to the
-    largest one.
+    largest one. When no live finite nonzero value contributes, the numerator
+    uses the mass's anchor: a zero numerator then has zero relative exponent,
+    while live infinities and NaNs retain their original products.
 
     A term that leaves the format on the way down is therefore smaller than
     the largest term by the whole normal range. Without cancellation it
     cannot be material to the numerator, whatever the scale of the values,
     the weights, or the mean. Neither sum can overflow, since every term is
     below four. The two exponents meet once, in the final ratio. Their
-    difference is at most the largest finite value exponent, so the upward
-    part is a normal power of two and only an out-of-range mean leaves the
-    format.
+    difference is at most the largest finite value exponent when such a value
+    contributes, and zero otherwise, so the upward part is a normal power of
+    two. If rounding makes reconstruction overflow,
+    return the corresponding endpoint of the live support. A finite-support
+    mean lies between those endpoints; genuine live infinities remain infinite.
+    Finite estimates and NaNs pass through unchanged.
 
     A null event contributes nothing, even against an infinite value. A live
     node with a nonfinite value carries that value into the mean. A
@@ -721,8 +726,9 @@ def _scaled_lottery_mean(
     term_exponent = weight_exponent + jnp.where(
         finite_value, _unbiased_exponent(values), 0
     )
+    mass_exponent = _largest_selected(selected=live, exponents=weight_exponent)
     numerator_exponent = _largest_selected(
-        selected=contributes, exponents=term_exponent
+        selected=contributes, exponents=term_exponent, fallback=mass_exponent
     )
     products = zero_safe_weighted_term(
         weight=unit_coefficients, value=unit_values, subnormal_is_accounted_for=True
@@ -732,7 +738,6 @@ def _scaled_lottery_mean(
         shift=jnp.where(contributes, term_exponent - numerator_exponent, 0),
     )
 
-    mass_exponent = _largest_selected(selected=live, exponents=weight_exponent)
     weight_terms = scaled_down_by_power_of_two(
         values=unit_coefficients,
         shift=jnp.where(live, weight_exponent - mass_exponent, 0),
@@ -747,16 +752,23 @@ def _scaled_lottery_mean(
     mean = scaled_down_by_power_of_two(
         values=ratio * upward, shift=jnp.minimum(exponent, 0)
     )
+    # A normalized nonnegative mean cannot exceed its live support.
+    lower = jnp.min(jnp.where(live, values, jnp.inf), axis=-1)
+    upper = jnp.max(jnp.where(live, values, -jnp.inf), axis=-1)
+    mean = jnp.where(jnp.isinf(mean), jnp.where(jnp.signbit(mean), lower, upper), mean)
     nan = jnp.asarray(jnp.nan, dtype=coefficients.dtype)
     invalid_row = jnp.any(invalid, axis=-1)
     return jnp.where(invalid_row, nan, mean), jnp.where(invalid_row, nan, mass)
 
 
-def _largest_selected(*, selected: BoolND, exponents: IntND) -> IntND:
-    """Return the largest selected exponent along the last axis, or zero."""
-    absent = jnp.iinfo(jnp.int32).min // 2
+def _largest_selected(
+    *, selected: BoolND, exponents: IntND, fallback: IntND | None = None
+) -> IntND:
+    """Return each row's largest selected exponent, using the fallback only if empty."""
+    absent = jnp.iinfo(exponents.dtype).min
     largest = jnp.max(jnp.where(selected, exponents, absent), axis=-1, keepdims=True)
-    return jnp.where(largest == absent, 0, largest)
+    has_selected = jnp.any(selected, axis=-1, keepdims=True)
+    return jnp.where(has_selected, largest, 0 if fallback is None else fallback)
 
 
 def _scaled_lottery_terms_with_scale(

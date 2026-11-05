@@ -3232,6 +3232,35 @@ class _ProcessEdgeExtension:
                 states_actions_params=states_actions_params,
             )
         )
+
+        def read_corner(*, index: LoopIndex) -> FloatND:
+            corner, _ = _continuation_evaluation(
+                self.read_corner(
+                    index=index,
+                    next_regime_to_V_arr=next_regime_to_V_arr,
+                    zero=zero,
+                    states_actions_params=states_actions_params,
+                )
+            )
+            return corner[0]
+
+        return self._extend_aggregate(
+            aggregate=aggregate,
+            valid=valid,
+            read_corner=read_corner,
+            states_actions_params=states_actions_params,
+        )
+
+    @no_type_check
+    def _extend_aggregate(
+        self,
+        *,
+        aggregate: _PlainContinuationAggregate,
+        valid: BoolND | None,
+        read_corner: Callable[..., FloatND],
+        states_actions_params: QAndFKwargs,
+    ) -> ContinuationAggregate:
+        """Fold corner values in their original coefficient and addition order."""
         distances = [
             distance(
                 **{
@@ -3251,14 +3280,7 @@ class _ProcessEdgeExtension:
 
         # keyword-only-exempt: library-callback=jax.lax.fori_loop
         def add_corner(index: LoopIndex, total: FloatND) -> FloatND:
-            corner, _ = _continuation_evaluation(
-                self.read_corner(
-                    index=index,
-                    next_regime_to_V_arr=next_regime_to_V_arr,
-                    zero=zero,
-                    states_actions_params=states_actions_params,
-                )
-            )
+            corner = read_corner(index=index)
             weight = functools.reduce(
                 operator.mul,
                 (
@@ -3271,7 +3293,7 @@ class _ProcessEdgeExtension:
                 ),
             )
             return total + zero_safe_weighted_term(
-                weight=weight, value=corner[0], subnormal_is_accounted_for=True
+                weight=weight, value=corner, subnormal_is_accounted_for=True
             )
 
         # A loop retains Cartesian corner order without copying the CE graph.
@@ -3283,6 +3305,147 @@ class _ProcessEdgeExtension:
         if valid is None:
             return aggregate
         return CheckedContinuationEvaluation(aggregate=aggregate, valid=valid)
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _LinearProcessEdgeExtension(_ProcessEdgeExtension):
+    """Reuse each target's local expectations in the ordered corner mixture."""
+
+    target_shifts: tuple[tuple[RegimeName, tuple[int, ...]], ...]
+    """Global corner-bit positions belonging to each target."""
+
+    @no_type_check
+    def extend(
+        self,
+        *,
+        edge: _ComputeCE,
+        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
+        zero: FloatND,
+        states_actions_params: QAndFKwargs,
+    ) -> ContinuationAggregate:
+        """Cache local target reads, preserving the original global scalar fold."""
+        base = edge.evaluate(
+            next_regime_to_V_arr=next_regime_to_V_arr,
+            zero=zero,
+            states_actions_params=states_actions_params,
+        )
+        aggregate, valid = _continuation_evaluation(base.aggregate)
+        base_terms = {
+            name: (probability, value)
+            for name, probability, value in base.mixture_terms
+        }
+        cached: dict[RegimeName, FloatND] = {}
+        for target_name, shifts in self.target_shifts:
+            if not shifts:
+                continue
+            value = base_terms[target_name][1]
+            values = jnp.broadcast_to(value, (1 << len(shifts), *value.shape))
+
+            # keyword-only-exempt: library-callback=jax.lax.fori_loop
+            def cache_corner(
+                index: LoopIndex,
+                values: FloatND,
+                *,
+                shifts: tuple[int, ...] = shifts,
+                target_name: RegimeName = target_name,
+            ) -> FloatND:
+                global_index = jnp.asarray(0, dtype=jnp.int32)
+                for axis, shift in enumerate(shifts):
+                    global_index = global_index | (
+                        ((index >> (len(shifts) - axis - 1)) & 1) << shift
+                    )
+                params = MappingProxyType(
+                    {**states_actions_params, _PROCESS_EDGE_CORNER: global_index}
+                )
+                target = self.corner.continuations[target_name]
+                marginals = target.lottery_weights(**params)
+                weights, scales = target.joint_lottery_weights(
+                    **{
+                        name: weight
+                        for name, weight in marginals.items()
+                        if name not in target.integrated_weight_names
+                    }
+                )
+                read = target.read(
+                    next_values=next_regime_to_V_arr[target_name],
+                    states_actions_params=params,
+                    marginals=marginals,
+                    weights=weights,
+                    shifts=scales,
+                    probability=base_terms[target_name][0],
+                    co_map_next_names=edge.co_map_next_names,
+                    n_stakeholders=edge.n_stakeholders,
+                    reduces_per_target=True,
+                )
+                return jax.lax.dynamic_update_index_in_dim(
+                    values, read.values, index, axis=0
+                )
+
+            cached[target_name] = jax.lax.fori_loop(
+                1, 1 << len(shifts), cache_corner, values
+            )
+        shifts_by_target = dict(self.target_shifts)
+
+        def read_corner(*, index: LoopIndex) -> FloatND:
+            terms: list[tuple[RegimeName, FloatND, FloatND]] = []
+            for name, probability, value in base.mixture_terms:
+                selected_value = value
+                if name in cached:
+                    local_index = jnp.asarray(0, dtype=jnp.int32)
+                    for shift in shifts_by_target[name]:
+                        local_index = (local_index << 1) | ((index >> shift) & 1)
+                    selected_value = jax.lax.dynamic_index_in_dim(
+                        cached[name], local_index, axis=0, keepdims=False
+                    )
+                terms.append((name, probability, selected_value))
+            mixture = _sum_regime_mixture(
+                mixture_terms=terms,
+                like=_value_shaped_zero(zero=zero, n_stakeholders=edge.n_stakeholders),
+            )
+            return _normalized_regime_mixture(
+                mixture=mixture,
+                probability_mass=base.probability_mass,
+                has_negative_probability=base.has_negative_probability,
+            )
+
+        return self._extend_aggregate(
+            aggregate=aggregate,
+            valid=valid,
+            read_corner=read_corner,
+            states_actions_params=states_actions_params,
+        )
+
+
+def _can_reuse_linear_process_expectations(
+    *,
+    functions: EconFunctionsMapping,
+    edges: Mapping[FunctionName, EdgeRows],
+    compute: _ComputeCE,
+) -> bool:
+    """Admit only built-in linear readers with no selected-row dependencies."""
+    if (
+        not compute.reduces_per_target
+        or compute.has_participation_queries
+        or compute.gated_scalar_readers
+    ):
+        return False
+    if any(target.gated_read for target in compute.continuations.values()):
+        return False
+    local_reads = sum(
+        1 << sum(name.startswith(f"weight_{target}__") for name in edges)
+        for target in compute.period_targets
+    )
+    if local_reads >= (1 << len(edges)) * len(compute.period_targets):
+        return False
+    producers = [
+        *functions.values(),
+        *(row.neighbour for row in edges.values()),
+        *(row.distance for row in edges.values()),
+    ]
+    try:
+        return not bool(get_union_of_args(producers) & set(edges))
+    except TypeError, ValueError:
+        return False
 
 
 def _get_process_corner_row(
@@ -3377,11 +3540,46 @@ def _get_compute_CE_with_process_edges(
         distances=tuple(rows.distance for rows in edges.values()),
         corner=cast("_ComputeCE", corner),
     )
+    if isinstance(compute_CE, _ComputeCE) and _can_reuse_linear_process_expectations(
+        functions=functions, edges=edges, compute=compute_CE
+    ):
+        extension = _LinearProcessEdgeExtension(
+            distances=extension.distances,
+            corner=extension.corner,
+            target_shifts=tuple(
+                (
+                    target,
+                    tuple(
+                        len(edges) - axis - 1
+                        for axis, name in enumerate(edges)
+                        if name.startswith(f"weight_{target}__")
+                    ),
+                )
+                for target in period_targets
+            ),
+        )
     return (
         dataclasses.replace(cast("_ComputeCE", compute_CE), edge_extension=extension),
         deps,
         arg_names,
     )
+
+
+class _TargetValue(NamedTuple):
+    """One target's node value with its landing counts and integrity."""
+
+    values: FloatND
+    landing_counts: tuple[IntND, ...]
+    valid: BoolND
+
+
+class _ContinuationValues(NamedTuple):
+    """An aggregate and the original linear-mixture inputs that produced it."""
+
+    aggregate: ContinuationAggregate
+    mixture_terms: tuple[tuple[RegimeName, FloatND, FloatND], ...]
+    probability_mass: FloatND
+    has_negative_probability: BoolND
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)
@@ -3465,7 +3663,7 @@ class _ComputeCE:
         )
 
     @no_type_check
-    def __call__(  # noqa: C901 - preserve corner arithmetic and count/integrity order
+    def __call__(
         self,
         *,
         next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
@@ -3501,6 +3699,21 @@ class _ComputeCE:
                 zero=zero,
                 states_actions_params=states_actions_params,
             )
+        return self.evaluate(
+            next_regime_to_V_arr=next_regime_to_V_arr,
+            zero=zero,
+            states_actions_params=states_actions_params,
+        ).aggregate
+
+    @no_type_check
+    def evaluate(
+        self,
+        *,
+        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
+        zero: FloatND,
+        states_actions_params: QAndFKwargs,
+    ) -> _ContinuationValues:
+        """Evaluate the aggregate and retain its unmultiplied linear terms."""
         regime_transition_probs: MappingProxyType[RegimeName, FloatND] = (
             self.compute_regime_transition_probs(**states_actions_params)
         )
@@ -3587,98 +3800,23 @@ class _ComputeCE:
         )
         for target_regime_name in self.period_targets:
             continuation = self.continuations[target_regime_name]
-            next_states = continuation.next_states(**states_actions_params)
             joint_next_stochastic_states_weights = target_node_weights[
                 target_regime_name
             ]
-
-            # As we productmap'd the value function over the stochastic variables, the
-            # resulting next value function gets a new dimension for each stochastic
-            # variable.
-            extra_kw = {
-                k: states_actions_params[k] for k in continuation.extra_param_names
-            }
-            # A co-mapped state's axis is sliced off the value array, so the
-            # interpolation places no coordinate on it. A gated edge's projected
-            # references are read at the landing instead, and a projection may map
-            # such a state onto the referenced regime's grid — it needs the state's
-            # value, not an index — so a coordinate the continuation still names is
-            # passed rather than dropped with the axis.
-            # Restore the full original slot sequence before any interpolation
-            # arithmetic. Repeating restricted integer coordinates preserves
-            # each node's local state/law meaning without reading another fixed
-            # group. Copying floating-point results after interpolation can
-            # change its fusion/vectorization relative to the original model.
-            if continuation.original_node_axes:
-                next_states = dict(next_states)
-                for axis, indices in continuation.original_node_axes:
-                    name = continuation.lottery_axis_names[axis]
-                    nodes = next_states[name]
-                    next_states[name] = jax.lax.concatenate(
-                        tuple(
-                            jax.lax.slice_in_dim(nodes, index, index + 1, axis=0)
-                            for index in indices
-                        ),
-                        dimension=0,
-                    )
-            next_values = next_regime_to_V_arr[target_regime_name]
-            fixed_slice_names = frozenset(
-                name for _, name in continuation.fixed_value_axes
-            )
-            # Fixed components select one value surface, not one value per
-            # lottery node. Slice them before mapping the nodes so the reader
-            # sees the same rest-axis lookup as the original categorical grid.
-            # Axes already removed by the caller's device co-map are absent.
-            for axis, name in reversed(continuation.fixed_value_axes):
-                next_values = read_at_codes(
-                    array=next_values,
-                    positions=(*(slice(None),) * axis, next_states[name]),
-                )
-            interpolator_coordinates = {
-                name: val
-                for name, val in next_states.items()
-                if name not in self.co_map_next_names | fixed_slice_names
-                or name in continuation.co_mapped_landing_names
-            }
-            if continuation.next_V is None:
-                raise TypeError("Ordinary continuation lost its dense value reader.")
-            next_V_at_stochastic_states_arr = continuation.next_V(
-                **interpolator_coordinates,
-                next_V_arr=next_values,
-                **extra_kw,
-                **{
-                    name: target_marginals[target_regime_name][name]
-                    for name in continuation.integrated_weight_names
-                },
-            )
-
-            if continuation.landing_checks:
-                next_V_at_stochastic_states_arr, node_counts = (
-                    next_V_at_stochastic_states_arr
-                )
-
-                landing_counts.append(
-                    _live_landing_counts(
-                        node_counts=node_counts.reshape((-1, node_counts.shape[-1]))
-                        if continuation.participation_query
-                        else node_counts,
-                        target_probability=active_regime_probs[target_regime_name],
-                        node_weights=(joint_next_stochastic_states_weights.reshape(-1),)
-                        if continuation.participation_query
-                        else continuation.node_weights_at(
-                            marginals=target_marginals[target_regime_name],
-                            next_states=next_states,
-                        ),
-                    )
-                )
-
-            next_V_at_stochastic_states_arr, valid = _participation_value_and_integrity(
-                continuation=continuation,
-                result=next_V_at_stochastic_states_arr,
-                probability=active_regime_probs[target_regime_name],
+            read = continuation.read(
+                next_values=next_regime_to_V_arr[target_regime_name],
+                states_actions_params=states_actions_params,
+                marginals=target_marginals[target_regime_name],
                 weights=joint_next_stochastic_states_weights,
+                shifts=target_node_shifts[target_regime_name],
+                probability=active_regime_probs[target_regime_name],
+                co_map_next_names=self.co_map_next_names,
+                n_stakeholders=self.n_stakeholders,
+                reduces_per_target=self.reduces_per_target,
             )
-            participation_valid &= valid
+            landing_counts.extend(read.landing_counts)
+            participation_valid &= read.valid
+            next_V_at_stochastic_states_arr = read.values
             # A node the target's own lottery gives zero probability is never
             # realized, so whatever a law names there -- a value off the target's
             # support, and so a NaN out of the interpolator -- is not part of the
@@ -3701,29 +3839,7 @@ class _ComputeCE:
             )
 
             if self.reduces_per_target:
-                # A pure lookup has no floating-point interpolation arithmetic.
-                # Restore its original slots here with static slices rather than
-                # an indexed gather that can scalarize the ordinary reduction.
-                for axis, indices in continuation.original_value_axes:
-                    next_V_at_stochastic_states_arr = jax.lax.concatenate(
-                        tuple(
-                            jax.lax.slice_in_dim(
-                                next_V_at_stochastic_states_arr,
-                                index,
-                                index + 1,
-                                axis=axis,
-                            )
-                            for index in indices
-                        ),
-                        dimension=axis,
-                    )
-                next_V_expected_arr = _expected_continuation_over_nodes(
-                    values=next_V_at_stochastic_states_arr,
-                    weights=joint_next_stochastic_states_weights,
-                    shifts=target_node_shifts[target_regime_name],
-                    has_lottery_axes=continuation.has_lottery_axes,
-                    n_stakeholders=self.n_stakeholders,
-                )
+                next_V_expected_arr = read.values
                 # Collect the UNMULTIPLIED `(prob, expected V)`; the mixture is
                 # reduced ONCE by `_sum_regime_mixture`: form each target's
                 # zero-safe contribution on its native cell shape, put the
@@ -3815,9 +3931,14 @@ class _ComputeCE:
                 jnp.nan,
             )
 
-        return self._checked_result(
-            aggregate=(CE, active_regime_probs, *_concatenated(landing_counts)),
-            valid=participation_valid,
+        return _ContinuationValues(
+            aggregate=self._checked_result(
+                aggregate=(CE, active_regime_probs, *_concatenated(landing_counts)),
+                valid=participation_valid,
+            ),
+            mixture_terms=tuple(mixture_terms),
+            probability_mass=probability_mass,
+            has_negative_probability=has_negative_probability,
         )
 
     def _checked_result(
@@ -4000,6 +4121,137 @@ class _TargetContinuation:
         default=False, metadata={"fingerprint_omit_if_default": True}
     )
     """The mapped reader returns value plus mandatory participation integrity."""
+
+    gated_read: bool = field(
+        default=False, metadata={"fingerprint_omit_if_default": True}
+    )
+    """The value reader projects a gated continuation's channels."""
+
+    @no_type_check
+    def read(
+        self,
+        *,
+        next_values: FloatND,
+        states_actions_params: QAndFKwargs,
+        marginals: Mapping[str, FloatND | IntND],
+        weights: FloatND,
+        shifts: IntND,
+        probability: FloatND,
+        co_map_next_names: frozenset[str],
+        n_stakeholders: int | None,
+        reduces_per_target: bool,
+    ) -> _TargetValue:
+        """Read this target's nodes, counts and integrity, reducing a linear mean."""
+        landing_counts: list[IntND] = []
+        next_states = self.next_states(**states_actions_params)
+
+        # As we productmap'd the value function over the stochastic variables, the
+        # resulting next value function gets a new dimension for each stochastic
+        # variable.
+        extra_kw = {k: states_actions_params[k] for k in self.extra_param_names}
+        # A co-mapped state's axis is sliced off the value array, so the
+        # interpolation places no coordinate on it. A gated edge's projected
+        # references are read at the landing instead, and a projection may map
+        # such a state onto the referenced regime's grid — it needs the state's
+        # value, not an index — so a coordinate the continuation still names is
+        # passed rather than dropped with the axis.
+        # Restore the full original slot sequence before any interpolation
+        # arithmetic. Repeating restricted integer coordinates preserves
+        # each node's local state/law meaning without reading another fixed
+        # group. Copying floating-point results after interpolation can
+        # change its fusion/vectorization relative to the original model.
+        if self.original_node_axes:
+            next_states = dict(next_states)
+            for axis, indices in self.original_node_axes:
+                name = self.lottery_axis_names[axis]
+                nodes = next_states[name]
+                next_states[name] = jax.lax.concatenate(
+                    tuple(
+                        jax.lax.slice_in_dim(nodes, index, index + 1, axis=0)
+                        for index in indices
+                    ),
+                    dimension=0,
+                )
+        fixed_slice_names = frozenset(name for _, name in self.fixed_value_axes)
+        # Fixed components select one value surface, not one value per
+        # lottery node. Slice them before mapping the nodes so the reader
+        # sees the same rest-axis lookup as the original categorical grid.
+        # Axes already removed by the caller's device co-map are absent.
+        for axis, name in reversed(self.fixed_value_axes):
+            next_values = read_at_codes(
+                array=next_values,
+                positions=(*(slice(None),) * axis, next_states[name]),
+            )
+        interpolator_coordinates = {
+            name: val
+            for name, val in next_states.items()
+            if name not in co_map_next_names | fixed_slice_names
+            or name in self.co_mapped_landing_names
+        }
+        if self.next_V is None:
+            raise TypeError("Ordinary continuation lost its dense value reader.")
+        next_V_at_stochastic_states_arr = self.next_V(
+            **interpolator_coordinates,
+            next_V_arr=next_values,
+            **extra_kw,
+            **{name: marginals[name] for name in self.integrated_weight_names},
+        )
+
+        if self.landing_checks:
+            next_V_at_stochastic_states_arr, node_counts = (
+                next_V_at_stochastic_states_arr
+            )
+
+            landing_counts.append(
+                _live_landing_counts(
+                    node_counts=node_counts.reshape((-1, node_counts.shape[-1]))
+                    if self.participation_query
+                    else node_counts,
+                    target_probability=probability,
+                    node_weights=(weights.reshape(-1),)
+                    if self.participation_query
+                    else self.node_weights_at(
+                        marginals=marginals,
+                        next_states=next_states,
+                    ),
+                )
+            )
+
+        next_V_at_stochastic_states_arr, valid = _participation_value_and_integrity(
+            continuation=self,
+            result=next_V_at_stochastic_states_arr,
+            probability=probability,
+            weights=weights,
+        )
+        if reduces_per_target:
+            # A pure lookup has no floating-point interpolation arithmetic.
+            # Restore its original slots here with static slices rather than
+            # an indexed gather that can scalarize the ordinary reduction.
+            for axis, indices in self.original_value_axes:
+                next_V_at_stochastic_states_arr = jax.lax.concatenate(
+                    tuple(
+                        jax.lax.slice_in_dim(
+                            next_V_at_stochastic_states_arr,
+                            index,
+                            index + 1,
+                            axis=axis,
+                        )
+                        for index in indices
+                    ),
+                    dimension=axis,
+                )
+            next_V_at_stochastic_states_arr = _expected_continuation_over_nodes(
+                values=next_V_at_stochastic_states_arr,
+                weights=weights,
+                shifts=shifts,
+                has_lottery_axes=self.has_lottery_axes,
+                n_stakeholders=n_stakeholders,
+            )
+        return _TargetValue(
+            values=next_V_at_stochastic_states_arr,
+            landing_counts=tuple(landing_counts),
+            valid=valid,
+        )
 
     def node_weights_at(
         self,
@@ -4730,6 +4982,7 @@ def _build_target_continuation(
         landing_checks=landing_counting.checks,
         node_weight_names=landing_counting.node_weight_names,
         participation_query=participation_reader is not None,
+        gated_read=gated_continuation is not None,
     )
 
 
