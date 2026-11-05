@@ -61,7 +61,7 @@ def replay_payload_reads(
             path=path,
         )
         for path, leaf in jax.tree_util.tree_flatten_with_path(payload)[0]
-        if isinstance(leaf, jax.Array | np.ndarray)
+        if isinstance(leaf, jax.Array | np.ndarray | jax.ShapeDtypeStruct)
     )
 
 
