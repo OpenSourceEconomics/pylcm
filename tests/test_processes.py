@@ -4,11 +4,12 @@ import os
 import shutil
 import subprocess
 import textwrap
+from collections.abc import Callable
 from fractions import Fraction
 from functools import partial
 from itertools import pairwise
 from pathlib import Path
-from typing import Literal
+from typing import Literal, cast
 
 import jax
 import numpy as np
@@ -36,6 +37,7 @@ from lcm import (
     AgeGrid,
     DiscreteGrid,
     InitialNodes,
+    LinSpacedGrid,
     LogNormalIIDProcess,
     Model,
     NormalIIDProcess,
@@ -52,10 +54,12 @@ from lcm.exceptions import GridInitializationError
 from lcm.execution import ExecutionConfig
 from lcm.solver_api import SolutionResult
 from lcm.typing import (
+    BoolND,
     ContinuousState,
     Float1D,
     FloatND,
     Int1D,
+    RegimeName,
     ScalarFloat,
     ScalarInt,
     UserParams,
@@ -88,13 +92,107 @@ from tests.test_models.processes import (
 
 # Grid centering is float-eps-limited at the active precision.
 _CENTERING_DECIMAL = 10 if X64_ENABLED else 5
+# Bound value error against independent finite-grid backward induction.
+_LOGNORMAL_RELATIVE_VALUE_ERROR = 1e-4
+
+
+def test_lognormal_fixture_wealth_transition_uses_income_levels() -> None:
+    """Add a level-valued income draw once when carrying wealth forward."""
+    model = get_model(n_periods=4, distribution_type="lognormal")
+    transition = cast(
+        "Callable[..., FloatND]",
+        model.user_regimes["alive"].state_transitions["wealth"],
+    )
+    np.testing.assert_allclose(
+        transition(
+            wealth=jnp.asarray(1.0),
+            consumption=jnp.asarray(0.5),
+            income=jnp.asarray(2.0),
+        ),
+        2.5,
+        rtol=10.0**-DECIMAL_PRECISION,
+        atol=0,
+    )
+
+
+def test_lognormal_fixture_constraint_uses_income_levels() -> None:
+    """Refuse consumption that exceeds wealth plus level-valued income."""
+    model = get_model(n_periods=4, distribution_type="lognormal")
+    constraint = cast(
+        "Callable[..., BoolND]",
+        model.user_regimes["alive"].constraints["wealth_constraint"],
+    )
+    np.testing.assert_array_equal(
+        constraint(
+            wealth=jnp.asarray(1.0),
+            consumption=jnp.asarray(2.0),
+            income=jnp.asarray(0.5),
+        ),
+        desired=False,
+    )
+
+
+def _solve_process_representation(
+    distribution_type: Literal["normal", "lognormal"],
+) -> tuple[SolutionResult, pd.DataFrame]:
+    """Solve and simulate matched income economies with a common random seed."""
+    model = get_model(n_periods=4, distribution_type=distribution_type)
+    params = get_params(distribution_type)
+    solution = model.solve(params=params, log_level="off")
+    panel = model.simulate(
+        params=params,
+        initial_conditions={
+            "health": jnp.asarray([0, 0], dtype=jnp.int32),
+            "income": jnp.full(2, get_initial_income(distribution_type)),
+            "wealth": jnp.asarray([1.0, 1.0]),
+            "age": jnp.asarray([0.0, 0.0]),
+            "regime_id": jnp.array([RegimeId.alive] * 2),
+        },
+        solution=solution,
+        seed=42,
+        log_level="off",
+    ).to_dataframe()
+    return solution, panel
+
+
+@pytest.mark.skipif(
+    not X64_ENABLED, reason="Income representation parity uses float64."
+)
+@pytest.mark.parametrize("period", [0, 1, 2])
+def test_lognormal_fixture_values_match_normal_income_representation(
+    period: int,
+) -> None:
+    """Moving exponentiation into the income process preserves solved values."""
+    lognormal, _ = _solve_process_representation("lognormal")
+    normal, _ = _solve_process_representation("normal")
+    np.testing.assert_allclose(
+        np.asarray(lognormal.values[period]["alive"]),
+        np.asarray(normal.values[period]["alive"]),
+        rtol=10.0**-DECIMAL_PRECISION,
+        atol=0,
+    )
+
+
+@pytest.mark.skipif(
+    not X64_ENABLED, reason="Income representation parity uses float64."
+)
+def test_lognormal_fixture_panel_matches_normal_income_representation() -> None:
+    """A common seed gives the same panel with income expressed in levels."""
+    _, lognormal = _solve_process_representation("lognormal")
+    _, normal = _solve_process_representation("normal")
+    assert_frame_equal(
+        lognormal,
+        normal.assign(income=np.exp(normal["income"])),
+        rtol=10.0**-DECIMAL_PRECISION,
+        atol=0,
+    )
 
 
 @pytest.mark.skipif(not X64_ENABLED, reason="Not working with 32-Bit because of RNG")
 @pytest.mark.parametrize(
     "distribution_type", ["uniform", "normal", "lognormal", "tauchen", "rouwenhorst"]
 )
-def test_model_with_process(distribution_type):
+def test_model_with_process(distribution_type: DistributionType) -> None:
     model = get_model(n_periods=4, distribution_type=distribution_type)
     params = get_params(distribution_type)
 
@@ -120,20 +218,29 @@ def test_model_with_process(distribution_type):
     expected_simulate = pd.read_pickle(
         TEST_DATA / "processes" / "random-v1" / f"simulation_{distribution_type}.pkl"
     )
-    # The lognormal fixture is the normal one with income in levels, so the two
-    # share one value function.
-    solution_name = "normal" if distribution_type == "lognormal" else distribution_type
-    expected_solve = pd.read_pickle(
-        TEST_DATA / "processes" / f"solution_{solution_name}.pkl"
+    expected_solve = (
+        _lognormal_solution_reference()
+        if distribution_type == "lognormal"
+        else pd.read_pickle(
+            TEST_DATA / "processes" / f"solution_{distribution_type}.pkl"
+        )
     )
     # Compare solution (iterate over expected regimes — got may have additional ones)
     for period in expected_solve:
         for regime in expected_solve[period]:
-            aaae(
-                expected_solve[period][regime],
-                got_solve.values[period][regime],
-                decimal=5,
-            )
+            if distribution_type == "lognormal":
+                np.testing.assert_allclose(
+                    got_solve.values[period][regime],
+                    expected_solve[period][regime],
+                    rtol=_LOGNORMAL_RELATIVE_VALUE_ERROR,
+                    atol=0,
+                )
+            else:
+                aaae(
+                    expected_solve[period][regime],
+                    got_solve.values[period][regime],
+                    decimal=5,
+                )
 
     # Compare simulation (use tolerance to match solution comparison precision)
     assert_frame_equal(
@@ -146,13 +253,130 @@ def test_model_with_process(distribution_type):
     )
 
 
+def _lognormal_solution_reference() -> dict[int, dict[RegimeName, NDArray[np.float64]]]:
+    """Enumerate actions and shocks independently on income/health/wealth axes."""
+    roots, quadrature_weights = np.polynomial.hermite.hermgauss(5)
+    income_nodes = np.exp(np.sqrt(2.0) * roots)
+    probabilities = quadrature_weights / np.sqrt(np.pi)
+    wealth_nodes = np.linspace(1.0, 5.0, 5)
+    consumption_nodes = np.linspace(0.1, 2.0, 4)
+    health_weights = (0.7, 1.0)
+    continuation = np.zeros((5, 2, 5), dtype=np.float64)
+    expected: dict[int, dict[RegimeName, NDArray[np.float64]]] = {
+        3: {"dead": np.asarray(0.0, dtype=np.float64)}
+    }
+    for period in (2, 1, 0):
+        expected_at_wealth_nodes = np.asarray(
+            [
+                math.fsum(
+                    float(probabilities[income] * continuation[income, health, wealth])
+                    / 2
+                    for income in range(5)
+                    for health in range(2)
+                )
+                for wealth in range(5)
+            ]
+        )
+        values = np.empty_like(continuation)
+        for income, level in enumerate(income_nodes):
+            for health, preference in enumerate(health_weights):
+                for wealth, assets in enumerate(wealth_nodes):
+                    candidates = []
+                    for consumption in consumption_nodes:
+                        next_wealth = assets - consumption + level
+                        if next_wealth < 0:
+                            continue
+                        following = float(
+                            np.interp(
+                                next_wealth, wealth_nodes, expected_at_wealth_nodes
+                            )
+                        )
+                        if next_wealth < wealth_nodes[0]:
+                            following = float(
+                                expected_at_wealth_nodes[0]
+                                + (next_wealth - wealth_nodes[0])
+                                * (
+                                    expected_at_wealth_nodes[1]
+                                    - expected_at_wealth_nodes[0]
+                                )
+                            )
+                        elif next_wealth > wealth_nodes[-1]:
+                            following = float(
+                                expected_at_wealth_nodes[-1]
+                                + (next_wealth - wealth_nodes[-1])
+                                * (
+                                    expected_at_wealth_nodes[-1]
+                                    - expected_at_wealth_nodes[-2]
+                                )
+                            )
+                        candidates.append(
+                            preference * math.log(float(consumption)) + following
+                        )
+                    values[income, health, wealth] = max(candidates)
+        expected[period] = {"alive": values}
+        continuation = values
+    return expected
+
+
+@pytest.mark.skipif(not X64_ENABLED, reason="The Bellman value bound is float64.")
+@pytest.mark.coverage(backends=("cpu",), precisions="64")
+def test_lognormal_values_match_the_discretized_bellman_recurrence() -> None:
+    """Bound value errors against independent finite-grid backward induction."""
+    model = get_model(n_periods=4, distribution_type="lognormal")
+    params = get_params("lognormal")
+    np.testing.assert_array_equal(params["alive"]["discount_factor"], 1.0)
+    np.testing.assert_array_equal(
+        params["alive"]["next_health"]["probs_array"], np.full((2, 2), 0.5)
+    )
+    assert tuple(model._regimes["alive"].solution.state_names) == (
+        "income",
+        "health",
+        "wealth",
+    )
+    user_regime = model.user_regimes["alive"]
+    consumption = user_regime.actions["consumption"]
+    wealth = user_regime.states["wealth"]
+    income = user_regime.states["income"]
+    assert isinstance(consumption, LinSpacedGrid)
+    assert isinstance(wealth, LinSpacedGrid)
+    assert isinstance(income, LogNormalIIDProcess)
+    np.testing.assert_array_equal(
+        (params["alive"]["income"]["mu"], params["alive"]["income"]["sigma"]),
+        (0.0, 1.0),
+    )
+    income_nodes = np.asarray(
+        income.compute_gridpoints(mu=jnp.asarray(0.0), sigma=jnp.asarray(1.0))
+    )
+    consumption_nodes = np.asarray(consumption.to_jax())
+    wealth_nodes = np.asarray(wealth.to_jax())
+    assert income_nodes.shape == wealth_nodes.shape == (5,)
+    assert consumption_nodes.shape == (4,)
+    assert np.isfinite(income_nodes).all()
+    assert (income_nodes > 0).all()
+    np.testing.assert_allclose(
+        consumption_nodes,
+        np.linspace(0.1, 2.0, 4),
+        rtol=10.0**-DECIMAL_PRECISION,
+        atol=0,
+    )
+    np.testing.assert_array_equal(wealth_nodes, np.linspace(1.0, 5.0, 5))
+    assert np.min(wealth_nodes) + np.min(income_nodes) > np.min(consumption_nodes)
+    result = model.solve(params=params, log_level="off")
+    for period, regimes in _lognormal_solution_reference().items():
+        for regime, expected in regimes.items():
+            actual = np.asarray(result.values[period][regime])
+            assert actual.shape == expected.shape
+            assert actual.dtype == np.asarray(jnp.asarray(0.0)).dtype
+            np.testing.assert_allclose(
+                actual, expected, rtol=_LOGNORMAL_RELATIVE_VALUE_ERROR, atol=0
+            )
+
+
 @pytest.mark.skipif(not X64_ENABLED, reason="Not working with 32-Bit because of RNG")
 @pytest.mark.parametrize(
     "distribution_type", ["uniform", "normal", "lognormal", "tauchen", "rouwenhorst"]
 )
-def test_model_with_cross_regime_processes(
-    distribution_type: DistributionType,
-) -> None:
+def test_model_with_cross_regime_processes(distribution_type: DistributionType) -> None:
     """Verify cross-regime transitions work when both regimes have process grids.
 
     Reproducer for a crash where process-state `lambda: None` stubs leak from the
@@ -1115,7 +1339,7 @@ def test_process_lottery_axes_follow_declaration_order_across_hash_seeds(
     pixi = shutil.which("pixi")
     assert pixi is not None
     completed = subprocess.run(  # noqa: S603 - fixed, repository-owned test script
-        [pixi, "run", "-e", "tests-cpu", "python", "-c", script],
+        [pixi, "run", "--as-is", "-e", "tests-cpu", "python", "-c", script],
         cwd=root,
         env={
             **os.environ,
@@ -2907,15 +3131,15 @@ def test_density_normalized_derivatives_retain_scaled_weights_and_scores(
     )
 
 
-def test_rouwenhorst_simulation_extrapolates_beyond_the_edge_nodes():
+def test_rouwenhorst_simulation_extrapolates_beyond_the_edge_nodes() -> None:
     """A simulated AR(1) value beyond the node range keeps a finite value."""
     model = get_model(n_periods=4, distribution_type="rouwenhorst")
     params = get_params("rouwenhorst")
     solution = model.solve(params=params, log_level="off")
+    income_process = model.user_regimes["alive"].states["income"]
+    assert isinstance(income_process, RouwenhorstAR1Process)
     top = float(
-        model.user_regimes["alive"]
-        .states["income"]
-        .compute_gridpoints(
+        income_process.compute_gridpoints(
             **{k: jnp.asarray(v) for k, v in params["alive"]["income"].items()}
         )[-1]
     )

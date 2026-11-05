@@ -3,6 +3,7 @@ from collections.abc import Callable
 from typing import Literal
 
 from jax import numpy as jnp
+from typing_extensions import TypedDict
 
 from _lcm.grids import DiscreteGrid, LinSpacedGrid, categorical
 from lcm import (
@@ -20,10 +21,12 @@ from lcm.model import Model
 from lcm.regime import Regime as UserRegime
 from lcm.regime import StochasticTransition
 from lcm.typing import (
+    BoolND,
     ContinuousAction,
     ContinuousState,
     DiscreteState,
     FloatND,
+    RegimeName,
     ScalarInt,
     UserParams,
 )
@@ -31,6 +34,13 @@ from lcm.typing import (
 type DistributionType = Literal[
     "uniform", "normal", "lognormal", "tauchen", "rouwenhorst"
 ]
+
+
+class ProcessRegimeParams(TypedDict, total=False, closed=True):
+    discount_factor: float
+    next_health: dict[str, FloatND]
+    income: dict[str, float]
+
 
 _SHOCK_GRID_CLASSES = {
     "uniform": UniformIIDProcess,
@@ -73,19 +83,20 @@ def next_regime(*, age: float, final_age_alive: float) -> ScalarInt:
 
 def wealth_constraint(
     *, wealth: ContinuousState, income: ContinuousState, consumption: ContinuousAction
-):
+) -> BoolND:
     return wealth - consumption + jnp.exp(income) >= 0
 
 
 def wealth_constraint_from_level(
     *, wealth: ContinuousState, income: ContinuousState, consumption: ContinuousAction
-):
+) -> BoolND:
+    """Check resources with income held in levels."""
     return wealth - consumption + income >= 0
 
 
 def get_wealth_functions(
     distribution_type: DistributionType,
-) -> tuple[Callable[..., FloatND], Callable[..., FloatND]]:
+) -> tuple[Callable[..., FloatND], Callable[..., BoolND]]:
     """Return the wealth transition and constraint matching the income process.
 
     The lognormal process draws income in levels, every other one in logs, so the
@@ -130,7 +141,7 @@ def get_model(
     *,
     n_periods: int,
     distribution_type: DistributionType,
-):
+) -> Model:
     final_age_alive = n_periods - 2
     stays = tuple(range(final_age_alive))
     wealth_transition, wealth_feasible = get_wealth_functions(distribution_type)
@@ -293,7 +304,7 @@ _SHOCK_PARAMS: dict[str, dict[str, float]] = {
 
 def get_params(
     distribution_type: DistributionType = "tauchen",
-):
+) -> dict[RegimeName, ProcessRegimeParams]:
     return {
         "alive": {
             "discount_factor": 1.0,

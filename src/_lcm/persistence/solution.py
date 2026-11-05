@@ -36,6 +36,9 @@ import numpy as np
 from beartype.roar import BeartypeCallHintViolation
 from h5py import h5o  # ty: ignore[unresolved-import]
 
+# JAX exposes no public way to restore the weak type a solve published.
+from jax._src.lax.lax import _convert_element_type
+
 from _lcm import version as _version
 from _lcm.dtypes import CanonicalArrayWriter
 from _lcm.participation_continuation import PARTICIPATION_SURFACE_PREFIX
@@ -2981,11 +2984,11 @@ def _check_archive_versions(*, manifest: dict[str, JSONValue]) -> None:
 __all__ = ["load_solution_archive", "save_solution_archive"]
 
 
-# A streamed archive is written under this suffix until it is complete or abandoned.
+# An archive is written under this suffix until it is complete or left unfinished.
 _PARTIAL_SUFFIX: Final = ".h5.partial"
 _COMPLETE_SUFFIX: Final = ".h5"
 _INCOMPLETE_SUFFIX: Final = ".incomplete"
-# The dataset holding an abandoned archive's record, in place of the manifest.
+# The dataset holding an unfinished archive's record, in place of the manifest.
 _INCOMPLETE_DATASET: Final = "incomplete"
 
 
@@ -2993,9 +2996,9 @@ class _ArchiveFile:
     """Where one archive's file is, and its handle while it is written.
 
     A complete archive is deleted once nothing reads it any more: every value
-    entry holds this object, so the file goes with the last of them. An
-    abandoned archive is kept. One that was never finished, because the call
-    writing it failed without abandoning it, is closed and kept as incomplete.
+    entry holds this object, so the file goes with the last of them. One that
+    was never finished, because the call writing it failed, is closed and kept
+    as incomplete, with the record it already holds.
     """
 
     def __init__(self, *, path: Path, handle: h5py.File) -> None:
@@ -3062,6 +3065,9 @@ class DiskValueEntry(_LazyEntry):
     dtype: np.dtype
     """Dtype of the value."""
 
+    weak_type: bool = False
+    """Whether the solve published the value weakly typed."""
+
     budget_bytes: int | None = None
     """Per-device budget of the solve that wrote the value; `None` unbudgeted."""
 
@@ -3090,7 +3096,10 @@ class DiskValueEntry(_LazyEntry):
     def device_stand_in(self) -> jax.ShapeDtypeStruct:
         """Describe the value as the array a read places on its devices."""
         return jax.ShapeDtypeStruct(
-            self.shape, self.dtype, sharding=self.sharding.with_memory_kind("device")
+            self.shape,
+            self.dtype,
+            sharding=self.sharding.with_memory_kind("device"),
+            weak_type=self.weak_type,
         )
 
     def host_value(self) -> np.ndarray:
@@ -3109,10 +3118,19 @@ class DiskValueEntry(_LazyEntry):
         return array
 
     def materialize(self, *, template: ArtifactPayload | None = None) -> jax.Array:
-        """Read the value onto the devices it was solved on."""
+        """Read the value onto the devices it was solved on.
+
+        Raises:
+            SolutionIntegrityError: The bytes read differ from those written.
+            IncompatibleSolutionError: The active JAX configuration would narrow it.
+
+        """
         del template
-        return jax.device_put(
-            self.host_value(), self.sharding.with_memory_kind("device")
+        return place_stored_leaf(
+            array=self.host_value(),
+            sharding=self.sharding.with_memory_kind("device"),
+            weak_type=self.weak_type,
+            label=f"value {self.dataset!r}",
         )
 
     def fresh_value(self) -> jax.Array:
@@ -3141,6 +3159,9 @@ class DiskPolicyEntry(_LazyEntry):
     shardings: tuple[jax.sharding.Sharding, ...]
     """Sharding the solve published each leaf on."""
 
+    weak_types: tuple[bool, ...]
+    """Whether the solve published each leaf weakly typed."""
+
     @property
     def load_state(self) -> LoadState:
         """Nothing of a policy on disk is in memory until it is read."""
@@ -3153,15 +3174,26 @@ class DiskPolicyEntry(_LazyEntry):
 
         Raises:
             SolutionIntegrityError: The bytes read differ from those written.
+            IncompatibleSolutionError: The active JAX configuration would narrow a
+                leaf.
 
         """
         del template
         return jax.tree_util.tree_unflatten(
             self.tree,
             [
-                jax.device_put(array, sharding.with_memory_kind("device"))
-                for array, sharding in zip(
-                    self._read_leaves(), self.shardings, strict=True
+                place_stored_leaf(
+                    array=array,
+                    sharding=sharding.with_memory_kind("device"),
+                    weak_type=weak_type,
+                    label=f"policy leaf {leaf['dataset']!r}",
+                )
+                for array, sharding, weak_type, leaf in zip(
+                    self._read_leaves(),
+                    self.shardings,
+                    self.weak_types,
+                    self.leaves,
+                    strict=True,
                 )
             ],
         )
@@ -3171,13 +3203,26 @@ class DiskPolicyEntry(_LazyEntry):
 
         Raises:
             SolutionIntegrityError: The bytes read differ from those written.
+            IncompatibleSolutionError: The active JAX configuration would narrow a
+                leaf.
 
         """
         cpu = jax.sharding.SingleDeviceSharding(
             jax.devices("cpu")[0], memory_kind="device"
         )
         return jax.tree_util.tree_unflatten(
-            self.tree, [jax.device_put(array, cpu) for array in self._read_leaves()]
+            self.tree,
+            [
+                place_stored_leaf(
+                    array=array,
+                    sharding=cpu,
+                    weak_type=weak_type,
+                    label=f"policy leaf {leaf['dataset']!r}",
+                )
+                for array, weak_type, leaf in zip(
+                    self._read_leaves(), self.weak_types, self.leaves, strict=True
+                )
+            ],
         )
 
     def device_stand_in(self) -> SimulationPolicy:
@@ -3189,8 +3234,11 @@ class DiskPolicyEntry(_LazyEntry):
                     tuple(cast("list[int]", leaf["shape"])),
                     np.dtype(cast("str", leaf["dtype"])),
                     sharding=sharding.with_memory_kind("device"),
+                    weak_type=weak_type,
                 )
-                for leaf, sharding in zip(self.leaves, self.shardings, strict=True)
+                for leaf, sharding, weak_type in zip(
+                    self.leaves, self.shardings, self.weak_types, strict=True
+                )
             ],
         )
 
@@ -3217,26 +3265,52 @@ class DiskPolicyEntry(_LazyEntry):
 class _SolutionArchiveFile:
     """A solve's archive file while values are written to it, and how it ends.
 
-    The file is `<name>.h5.partial` in `directory` while it is written. Completing
-    it adds the result's artifacts and the manifest, in the format
-    `SolutionResult.save` writes, and renames it to `<name>.h5`. Abandoning it
-    writes a record in place of the manifest and renames it to
-    `<name>.incomplete`, which `load_solution` refuses.
+    The file is `<name>.h5.partial` in `directory` while it is written. From its
+    creation it holds a record of the solve and of how far the solve got, kept
+    current as each period or code lands, so a failure anywhere leaves the record
+    on disk with nothing to do on the way out; once nothing reads the file it is
+    renamed to `<name>.incomplete`, which `load_solution` refuses. Completing it
+    replaces the record with the result's artifacts and the manifest, in the
+    format `SolutionResult.save` writes, and renames it to `<name>.h5`.
+
+    Should flushing or renaming the completed file fail, that error is raised and
+    the file is kept as `<name>.incomplete`. It then holds the full manifest and
+    no record, and `load_solution` accepts it, since it verifies every payload
+    against its checksum.
     """
 
     def __init__(
-        self, *, directory: Path, name: str, budget_bytes: int | None = None
+        self,
+        *,
+        directory: Path,
+        name: str,
+        record: Mapping[str, JSONValue],
+        budget_bytes: int | None = None,
     ) -> None:
+        """Create the file with `record`, the facts known before the solve runs.
+
+        Raises:
+            ValueStorageError: The file could not be created in `directory`.
+
+        """
         self._directory = directory
         self._name = name
         self._budget_bytes = budget_bytes
-        self._description: dict[str, JSONValue] = {}
+        self._record = dict(record)
         path = directory / f"{name}{_PARTIAL_SUFFIX}"
-        handle = h5py.File(path, "x")
+        try:
+            handle = h5py.File(path, "x")
+        except OSError as error:
+            raise ValueStorageError(
+                f"Could not create the value archive {path} in the directory "
+                f"ExecutionConfig.value_storage names, {directory}."
+            ) from error
         self._file = _ArchiveFile(path=path, handle=handle)
         self._handle = handle
         self._payloads = handle.create_group(_PAYLOAD_GROUP)
         self._counter = 0
+        with self._file.lock:
+            self._write_record()
 
     @property
     def path(self) -> Path:
@@ -3244,24 +3318,30 @@ class _SolutionArchiveFile:
         return self._file.path
 
     def describe(self, **fields: JSONValue) -> None:
-        """Remember facts about the solve that an abandoned archive records."""
-        self._description.update(fields)
+        """Add facts about the solve to the record in the file."""
+        with self._file.lock:
+            self._record.update(fields)
+            self._write_record()
 
-    def abandon(self, *, record: Mapping[str, JSONValue]) -> Path:
-        """Record how far the solve got in place of a manifest, and close the file.
+    def _write_record(self) -> None:
+        """Replace the record in the file and flush it; the caller holds the lock.
 
-        Returns:
-            The path of the incomplete archive.
+        Raises:
+            ValueStorageError: The record could not be written.
 
         """
-        encoded = json.dumps(
-            self._description | dict(record), sort_keys=True, allow_nan=False
-        ).encode()
-        with self._file.lock:
+        encoded = json.dumps(self._record, sort_keys=True, allow_nan=False).encode()
+        try:
+            if _INCOMPLETE_DATASET in self._handle:
+                del self._handle[_INCOMPLETE_DATASET]
             self._handle.create_dataset(
                 _INCOMPLETE_DATASET, data=np.frombuffer(encoded, dtype=np.uint8)
             )
-            return self._close(suffix=_INCOMPLETE_SUFFIX, deletable=False)
+            self._handle.flush()
+        except (OSError, RuntimeError, ValueError) as error:
+            raise ValueStorageError(
+                f"Could not record how far the solve got in {self._file.path}."
+            ) from error
 
     def _complete(
         self,
@@ -3301,29 +3381,37 @@ class _SolutionArchiveFile:
                     artifact_entries[ref] for ref in snapshot.reused_artifacts
                 ],
             )
-            path = self._close(suffix=_COMPLETE_SUFFIX, deletable=True)
+            # The record goes only once the manifest is in, so the file always
+            # holds one of the two.
+            del self._handle[_INCOMPLETE_DATASET]
+            self._handle.flush()
+            self._handle.close()
+            with self._file.path.open("r+b") as file_handle:
+                os.fsync(file_handle.fileno())
+            path = self._directory / f"{self._name}{_COMPLETE_SUFFIX}"
+            self._file.path.replace(path)
+            self._file.publish(path=path, deletable=True)
             self._file.completed_for = weakref.ref(solution)
             return path
-
-    def _close(self, *, suffix: str, deletable: bool) -> Path:
-        """Flush and close the file, then rename it under `suffix`."""
-        self._handle.flush()
-        self._handle.close()
-        with self._file.path.open("r+b") as file_handle:
-            os.fsync(file_handle.fileno())
-        path = self._directory / f"{self._name}{suffix}"
-        self._file.path.replace(path)
-        self._file.publish(path=path, deletable=deletable)
-        return path
 
 
 class StreamedSolutionArchive(_SolutionArchiveFile):
     """One period-major solve's archive, written value by value while it runs."""
 
     def __init__(
-        self, *, directory: Path, name: str, budget_bytes: int | None = None
+        self,
+        *,
+        directory: Path,
+        name: str,
+        record: Mapping[str, JSONValue],
+        budget_bytes: int | None = None,
     ) -> None:
-        super().__init__(directory=directory, name=name, budget_bytes=budget_bytes)
+        super().__init__(
+            directory=directory,
+            name=name,
+            record={**record, "last_completed_period": None},
+            budget_bytes=budget_bytes,
+        )
         self._written_periods: set[int] = set()
         self._value_entries: list[JSONValue] = []
         self._written: dict[tuple[int, RegimeName], jax.ShapeDtypeStruct] = {}
@@ -3336,8 +3424,13 @@ class StreamedSolutionArchive(_SolutionArchiveFile):
         regime: RegimeName,
         value: np.ndarray,
         sharding: jax.sharding.Sharding,
+        weak_type: bool = False,
     ) -> DiskValueEntry:
-        """Write one value and return the entry that reads it back."""
+        """Write one value and return the entry that reads it back.
+
+        `weak_type` is whether the solve published the value weakly typed, which a
+        read restores.
+        """
         prepared = _prepare_payload(
             payload=value,
             identity={"kind": "value", "period": period, "regime": regime},
@@ -3361,6 +3454,7 @@ class StreamedSolutionArchive(_SolutionArchiveFile):
             sharding=sharding,
             shape=value.shape,
             dtype=value.dtype,
+            weak_type=weak_type,
             budget_bytes=self._budget_bytes,
         )
 
@@ -3396,18 +3490,20 @@ class StreamedSolutionArchive(_SolutionArchiveFile):
                 for leaf in cast("list[dict[str, JSONValue]]", entry["leaves"])
             ),
             shardings=tuple(leaf.sharding for leaf in leaves),
+            weak_types=tuple(leaf.weak_type for leaf in leaves),
         )
 
     def mark_period_written(self, *, period: int) -> None:
-        """Record that every value of `period` is in the file."""
+        """Record, in the file too, that every value of `period` is in it.
+
+        Raises:
+            ValueStorageError: The record could not be written.
+
+        """
         with self._file.lock:
             self._written_periods.add(period)
-
-    @property
-    def last_completed_period(self) -> int | None:
-        """Earliest period every value of which is in the file; `None` if none is."""
-        with self._file.lock:
-            return min(self._written_periods, default=None)
+            self._record["last_completed_period"] = min(self._written_periods)
+            self._write_record()
 
     def complete(self, *, solution: _SolutionResultBoundary) -> Path:
         """Add the result's artifacts and manifest, and publish the archive.
@@ -3433,9 +3529,19 @@ class BlockedSolutionArchive(_SolutionArchiveFile):
     """
 
     def __init__(
-        self, *, directory: Path, name: str, budget_bytes: int | None = None
+        self,
+        *,
+        directory: Path,
+        name: str,
+        record: Mapping[str, JSONValue],
+        budget_bytes: int | None = None,
     ) -> None:
-        super().__init__(directory=directory, name=name, budget_bytes=budget_bytes)
+        super().__init__(
+            directory=directory,
+            name=name,
+            record={**record, "last_completed_period": None, "completed_codes": []},
+            budget_bytes=budget_bytes,
+        )
         self._codes: tuple[int, ...] = ()
         self._datasets: dict[tuple[int, RegimeName], tuple[str, int]] = {}
         self._written_codes: list[int] = []
@@ -3485,20 +3591,16 @@ class BlockedSolutionArchive(_SolutionArchiveFile):
                 )
 
     def mark_code_written(self, *, code: int) -> None:
-        """Record that every block of `code` is in the file."""
+        """Record, in the file too, that every block of `code` is in it.
+
+        Raises:
+            ValueStorageError: The record could not be written.
+
+        """
         with self._file.lock:
             self._written_codes.append(code)
-
-    @property
-    def last_completed_period(self) -> int | None:
-        """Block-major completes codes, not periods; see `completed_codes`."""
-        return None
-
-    @property
-    def completed_codes(self) -> tuple[int, ...]:
-        """Codes every block of which is in the file, in the order they were written."""
-        with self._file.lock:
-            return tuple(self._written_codes)
+            self._record["completed_codes"] = list(self._written_codes)
+            self._write_record()
 
     @property
     def archive_file(self) -> _ArchiveFile:
@@ -3606,6 +3708,31 @@ def checkout_commit(*, checkout: Path) -> str | None:
     return head + ("-dirty" if changed else "")
 
 
+def place_stored_leaf(
+    *,
+    array: np.ndarray | jax.Array,
+    sharding: jax.sharding.Sharding,
+    weak_type: bool,
+    label: str,
+) -> jax.Array:
+    """Place one leaf a solve stored off the device as the solve published it.
+
+    Raises:
+        IncompatibleSolutionError: The active JAX configuration would narrow the
+            leaf, as when x64 was turned off after the solve.
+
+    """
+    target_dtype = np.dtype(jax.dtypes.canonicalize_dtype(array.dtype))
+    if target_dtype != np.dtype(array.dtype):
+        raise IncompatibleSolutionError(
+            f"Stored {label} has dtype {array.dtype!s}, but the active JAX "
+            f"configuration would materialize it as {target_dtype!s}. Enable the "
+            "dtype configuration the solve ran with instead of narrowing its values."
+        )
+    placed = jax.device_put(array, sharding)
+    return _convert_element_type(placed, weak_type=True) if weak_type else placed
+
+
 class WrittenPeriod(NamedTuple):
     """One period a writer has put in the archive, with the entries reading it."""
 
@@ -3619,8 +3746,15 @@ class PeriodValueWriter:
 
     Each period's values and simulation policies go in one job, in solve order. A
     submit returns the periods whose writes have finished, with the entries that
-    read them back, so the caller can drop their host copies; it waits while more
-    than `max_pending` periods are still unwritten, which bounds host memory.
+    read them back, so the caller can drop their host copies. A submit queues its
+    period first and then waits while more than `max_pending` periods are still
+    unwritten, so host memory holds at most `max_pending + 1` unwritten periods,
+    three by default.
+
+    The wait has no timeout, by design: a write that never returns, as on a
+    stalled network volume, holds the solve until it does. A solve cannot go on
+    without its values, and giving up on a write that may still land would leave
+    a file whose record no longer says what is in it.
     """
 
     def __init__(
@@ -3632,8 +3766,8 @@ class PeriodValueWriter:
             max_workers=1, thread_name_prefix="lcm-value-writer"
         )
         self._pending: collections.deque[Future[WrittenPeriod]] = collections.deque()
-        # Set by the writer thread once a write fails. Later periods are then not
-        # written, so the written periods stay those from the end of the solve.
+        # Set by the writer thread once a period's job fails. Later periods are then
+        # not written, so the written periods stay those from the end of the solve.
         self._failed = False
 
     def submit(
@@ -3683,6 +3817,25 @@ class PeriodValueWriter:
         if self._failed:
             msg = f"Did not write period {period}: an earlier period's write failed."
             raise ValueStorageError(msg)
+        try:
+            return self._write_period(period=period, values=values, policies=policies)
+        except BaseException:
+            self._failed = True
+            raise
+
+    def _write_period(
+        self,
+        *,
+        period: int,
+        values: dict[RegimeName, jax.Array],
+        policies: dict[RegimeName, SimulationPolicy],
+    ) -> WrittenPeriod:
+        """Write one period's values and policies, then record it in the file.
+
+        Raises:
+            ValueStorageError: A value, policy or the record could not be written.
+
+        """
         entries: dict[RegimeName, DiskValueEntry] = {}
         for regime, value in values.items():
             with self._naming_failure(period=period, regime=regime):
@@ -3691,6 +3844,7 @@ class PeriodValueWriter:
                     regime=regime,
                     value=np.asarray(value),
                     sharding=value.sharding,
+                    weak_type=value.weak_type,
                 )
         policy_entries: dict[RegimeName, DiskPolicyEntry] = {}
         for regime, policy in policies.items():
@@ -3716,7 +3870,6 @@ class PeriodValueWriter:
         try:
             yield
         except (OSError, RuntimeError, ValueError) as error:
-            self._failed = True
             raise value_storage_error(
                 action="write",
                 period=period,

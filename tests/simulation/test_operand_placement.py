@@ -369,8 +369,14 @@ def test_replay_payload_placement_preserves_abstract_and_protected_arrays(
     )
     abstract_replay = jax.tree.map(_describe_array, replay)
     assert isinstance(abstract_replay, ReplayPayload)
+    # Planning describes stored policies, so a payload may hold descriptors; any
+    # other leaf is still refused at the boundary.
+    ReplayPayload(arrays=abstract_replay.arrays, structure=replay.structure)
     with pytest.raises(BeartypeCallHintParamViolation):
-        ReplayPayload(arrays=abstract_replay.arrays, structure=replay.structure)
+        ReplayPayload(
+            arrays=(np.arange(6.0), np.arange(6.0)),  # ty: ignore[invalid-argument-type]
+            structure=replay.structure,
+        )
     replay_read = replace(
         value_read,
         source=replace(value_read.source, argument="payload", path=("arrays", 0)),

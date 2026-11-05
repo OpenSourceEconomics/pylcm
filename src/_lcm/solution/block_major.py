@@ -48,7 +48,11 @@ from _lcm.engine import Regime
 from _lcm.execution.core_program import InvariantBinding, core_program_graph
 from _lcm.execution.footprint import layout_footprint
 from _lcm.execution.invariant_blocks import block_state_action_space
-from _lcm.persistence.solution import BlockedSolutionArchive, _ArchiveFile
+from _lcm.persistence.solution import (
+    BlockedSolutionArchive,
+    _ArchiveFile,
+    place_stored_leaf,
+)
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.solution import backward_induction
 from _lcm.solution.backward_induction import ExecutableCache
@@ -642,13 +646,22 @@ class RetainedComponentValues:
         Raises:
             ExecutionPlanningError: If the value does not fit the budget on a
                 device it is placed on, or the upload leaves the published layout.
+            IncompatibleSolutionError: The active JAX configuration would narrow
+                the value.
 
         """
         coordinate = (period, regime)
         self.admit_full_materialization(coordinates=(coordinate,))
         layout = self._layouts[coordinate]
         host = self.assemble_host_value(period=period, regime=regime)
-        value = jax.device_put(host, layout.sharding)
+        # A block-major value follows the canonical value topology, which is
+        # strongly typed, as the period-major solve publishes it.
+        value = place_stored_leaf(
+            array=host,
+            sharding=layout.sharding,
+            weak_type=False,
+            label=f"value of period {period}, regime {regime!r}",
+        )
         if (
             tuple(value.shape) != layout.shape
             or np.dtype(value.dtype) != host.dtype
@@ -666,11 +679,20 @@ class RetainedComponentValues:
     def upload(
         self, *, code: int
     ) -> MappingProxyType[int, MappingProxyType[RegimeName, jax.Array]]:
-        """Place one retained component back on the devices it was solved on."""
+        """Place one retained component back on the devices it was solved on.
+
+        Raises:
+            IncompatibleSolutionError: The active JAX configuration would narrow
+                a block.
+
+        """
         blocks = self._blocks[code]
         placed = {
-            coordinate: jax.device_put(
-                _block_array(array), self._layouts[coordinate].sharding
+            coordinate: place_stored_leaf(
+                array=_block_array(array),
+                sharding=self._layouts[coordinate].sharding,
+                weak_type=False,
+                label=f"block of code {code} of value {coordinate!r}",
             )
             for coordinate, array in blocks.items()
         }
