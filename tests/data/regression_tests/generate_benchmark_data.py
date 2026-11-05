@@ -101,7 +101,7 @@ def _generate_process_panels(data_dir: Path) -> None:
             params=processes.get_params(distribution_type),
             initial_conditions={
                 "health": jnp.asarray([0, 0], dtype=jnp.int32),
-                "income": jnp.asarray([0.0, 0.0]),
+                "income": jnp.full(2, processes.get_initial_income(distribution_type)),
                 "wealth": jnp.asarray([1.0, 1.0]),
                 "age": jnp.asarray([0.0, 0.0]),
                 "regime_id": jnp.asarray([processes.RegimeId.alive] * 2),

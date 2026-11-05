@@ -36,7 +36,6 @@ from lcm import (
     AgeGrid,
     DiscreteGrid,
     InitialNodes,
-    LinSpacedGrid,
     LogNormalIIDProcess,
     Model,
     NormalIIDProcess,
@@ -57,7 +56,6 @@ from lcm.typing import (
     Float1D,
     FloatND,
     Int1D,
-    RegimeName,
     ScalarFloat,
     ScalarInt,
     UserParams,
@@ -78,8 +76,10 @@ from tests.test_models.pr626_density_sensitivity_oracle import (
     make_case as normalized_case,
 )
 from tests.test_models.processes import (
+    DistributionType,
     MultiRegimeId,
     RegimeId,
+    get_initial_income,
     get_model,
     get_multi_regime_model,
     get_multi_regime_params,
@@ -88,8 +88,6 @@ from tests.test_models.processes import (
 
 # Grid centering is float-eps-limited at the active precision.
 _CENTERING_DECIMAL = 10 if X64_ENABLED else 5
-# Bound value error in the fixture whose lognormal tail extends far beyond its grid.
-_LOGNORMAL_RELATIVE_VALUE_ERROR = 1e-4
 
 
 @pytest.mark.skipif(not X64_ENABLED, reason="Not working with 32-Bit because of RNG")
@@ -110,7 +108,7 @@ def test_model_with_process(distribution_type):
         params=params,
         initial_conditions={
             "health": jnp.asarray([0, 0], dtype=jnp.int32),
-            "income": jnp.asarray([0.0, 0.0]),
+            "income": jnp.full(2, get_initial_income(distribution_type)),
             "wealth": jnp.asarray([1.0, 1.0]),
             "age": jnp.asarray([0.0, 0.0]),
             "regime_id": jnp.array([RegimeId.alive] * 2),
@@ -122,29 +120,20 @@ def test_model_with_process(distribution_type):
     expected_simulate = pd.read_pickle(
         TEST_DATA / "processes" / "random-v1" / f"simulation_{distribution_type}.pkl"
     )
-    expected_solve = (
-        _lognormal_solution_reference()
-        if distribution_type == "lognormal"
-        else pd.read_pickle(
-            TEST_DATA / "processes" / f"solution_{distribution_type}.pkl"
-        )
+    # The lognormal fixture is the normal one with income in levels, so the two
+    # share one value function.
+    solution_name = "normal" if distribution_type == "lognormal" else distribution_type
+    expected_solve = pd.read_pickle(
+        TEST_DATA / "processes" / f"solution_{solution_name}.pkl"
     )
     # Compare solution (iterate over expected regimes — got may have additional ones)
     for period in expected_solve:
         for regime in expected_solve[period]:
-            if distribution_type == "lognormal":
-                np.testing.assert_allclose(
-                    got_solve.values[period][regime],
-                    expected_solve[period][regime],
-                    rtol=_LOGNORMAL_RELATIVE_VALUE_ERROR,
-                    atol=0,
-                )
-            else:
-                aaae(
-                    expected_solve[period][regime],
-                    got_solve.values[period][regime],
-                    decimal=5,
-                )
+            aaae(
+                expected_solve[period][regime],
+                got_solve.values[period][regime],
+                decimal=5,
+            )
 
     # Compare simulation (use tolerance to match solution comparison precision)
     assert_frame_equal(
@@ -157,79 +146,13 @@ def test_model_with_process(distribution_type):
     )
 
 
-def _lognormal_solution_reference() -> dict[int, dict[RegimeName, NDArray[np.float64]]]:
-    """Return the four-period fixture's exact discretized Bellman recurrence.
-
-    Each living grid node affords consumption 2. Uniform health transitions and
-    unit discounting add the mean flow utility at each earlier living period.
-    Linear extension of a constant continuation keeps that constant outside the grid.
-    """
-    flow = np.asarray([0.7, 1.0], dtype=np.float64) * np.log(2.0)
-    expected = {
-        period: {
-            "alive": np.broadcast_to(
-                (flow + (2 - period) * np.mean(flow))[None, :, None], (5, 2, 5)
-            )
-        }
-        for period in range(3)
-    }
-    expected[3] = {"dead": np.asarray(0.0, dtype=np.float64)}
-    return expected
-
-
-@pytest.mark.skipif(not X64_ENABLED, reason="The extreme-tail value bound is float64.")
-@pytest.mark.coverage(backends=("cpu",), precisions="64")
-def test_lognormal_values_match_the_discretized_bellman_recurrence() -> None:
-    """Bound extreme-tail value errors against the analytic Bellman recurrence."""
-    model = get_model(n_periods=4, distribution_type="lognormal")
-    params = get_params("lognormal")
-    np.testing.assert_array_equal(params["alive"]["discount_factor"], 1.0)
-    np.testing.assert_array_equal(
-        params["alive"]["next_health"]["probs_array"], np.full((2, 2), 0.5)
-    )
-    assert tuple(model._regimes["alive"].solution.state_names) == (
-        "income",
-        "health",
-        "wealth",
-    )
-    user_regime = model.user_regimes["alive"]
-    consumption = user_regime.actions["consumption"]
-    wealth = user_regime.states["wealth"]
-    income = user_regime.states["income"]
-    assert isinstance(consumption, LinSpacedGrid)
-    assert isinstance(wealth, LinSpacedGrid)
-    assert isinstance(income, LogNormalIIDProcess)
-    np.testing.assert_array_equal(
-        (params["alive"]["income"]["mu"], params["alive"]["income"]["sigma"]),
-        (0.0, 1.0),
-    )
-    income_nodes = np.asarray(
-        income.compute_gridpoints(mu=jnp.asarray(0.0), sigma=jnp.asarray(1.0))
-    )
-    consumption_nodes = np.asarray(consumption.to_jax())
-    wealth_nodes = np.asarray(wealth.to_jax())
-    assert income_nodes.shape == wealth_nodes.shape == (5,)
-    assert consumption_nodes.shape == (4,)
-    assert np.isfinite(income_nodes).all()
-    assert (income_nodes > 0).all()
-    np.testing.assert_array_equal(np.max(consumption_nodes), 2.0)
-    assert np.min(wealth_nodes) + np.exp(np.min(income_nodes)) >= 2.0
-    result = model.solve(params=params, log_level="off")
-    for period, regimes in _lognormal_solution_reference().items():
-        for regime, expected in regimes.items():
-            actual = np.asarray(result.values[period][regime])
-            assert actual.shape == expected.shape
-            assert actual.dtype == np.asarray(jnp.asarray(0.0)).dtype
-            np.testing.assert_allclose(
-                actual, expected, rtol=_LOGNORMAL_RELATIVE_VALUE_ERROR, atol=0
-            )
-
-
 @pytest.mark.skipif(not X64_ENABLED, reason="Not working with 32-Bit because of RNG")
 @pytest.mark.parametrize(
     "distribution_type", ["uniform", "normal", "lognormal", "tauchen", "rouwenhorst"]
 )
-def test_model_with_cross_regime_processes(distribution_type: str) -> None:
+def test_model_with_cross_regime_processes(
+    distribution_type: DistributionType,
+) -> None:
     """Verify cross-regime transitions work when both regimes have process grids.
 
     Reproducer for a crash where process-state `lambda: None` stubs leak from the
@@ -238,16 +161,16 @@ def test_model_with_cross_regime_processes(distribution_type: str) -> None:
     """
     model = get_multi_regime_model(
         n_periods=6,
-        distribution_type=distribution_type,  # ty: ignore[invalid-argument-type]
+        distribution_type=distribution_type,
     )
-    params = get_multi_regime_params(distribution_type)  # ty: ignore[invalid-argument-type]
+    params = get_multi_regime_params(distribution_type)
 
     result = model.simulate(
         log_level="debug",
         params=params,
         initial_conditions={
             "health": jnp.zeros(2, dtype=jnp.int32),
-            "income": jnp.zeros(2),
+            "income": jnp.full(2, get_initial_income(distribution_type)),
             "wealth": jnp.ones(2),
             "age": jnp.zeros(2),
             "regime_id": jnp.full(2, MultiRegimeId.work, dtype=jnp.int32),
