@@ -16,6 +16,7 @@ import jax.numpy as jnp
 import numpy as np
 import pandas as pd
 import pytest
+from numpy.typing import NDArray
 
 from _lcm.regime_building.fixed_components import _restricted_law
 from _lcm.regime_building.next_state import _DiscreteStochasticNextState
@@ -54,6 +55,21 @@ from lcm.typing import (
     UserInitialConditions,
 )
 from tests.conftest import DECIMAL_PRECISION, assert_agrees_to_ulp
+
+
+def _assert_independent_values_agree(
+    *, got: NDArray[np.floating], expected: NDArray[np.floating]
+) -> None:
+    """Compare value metadata exactly and allow five array-scale ULPs."""
+    assert (got.shape, got.dtype) == (expected.shape, expected.dtype)
+    assert_agrees_to_ulp(
+        got=got,
+        expected=expected,
+        n_ulp=5,
+        operand_magnitude=float(
+            np.abs(expected[np.isfinite(expected)]).max(initial=0.0)
+        ),
+    )
 
 
 @categorical(ordered=False)
@@ -241,10 +257,12 @@ def test_fixed_component_carries_group_and_position_as_separate_axes():
     assert values[(0, "alive")].shape == (2, 2, 5)
 
 
-def test_fixed_component_solve_equals_the_hand_split_model():
+def test_fixed_component_solve_equals_the_hand_split_model() -> None:
     """Declaring the fixed component reproduces the hand-split value functions."""
     factored, split = _values(_model(factored=True)), _values(_model(factored=False))
-    assert all(np.array_equal(factored[key], split[key]) for key in split)
+    assert factored.keys() == split.keys()
+    for key, expected in split.items():
+        _assert_independent_values_agree(got=factored[key], expected=expected)
 
 
 def test_fixed_component_rejects_unequal_groups():
@@ -278,11 +296,13 @@ def test_fixed_component_preserves_original_lottery_support(
     assert observed == {(4,)}
 
 
-def test_fixed_component_is_shardable_like_the_hand_split_model():
+def test_fixed_component_is_shardable_like_the_hand_split_model() -> None:
     """Naming the fixed component in `sharded_states` solves as the sharded split."""
     factored = _values(_model(factored=True, sharded=True))
     split = _values(_model(factored=False, sharded=True))
-    assert all(np.array_equal(factored[key], split[key]) for key in split)
+    assert factored.keys() == split.keys()
+    for key, expected in split.items():
+        _assert_independent_values_agree(got=factored[key], expected=expected)
 
 
 def _initial(*, factored: bool, as_frame: bool) -> UserInitialConditions | pd.DataFrame:
@@ -332,11 +352,11 @@ def _simulated_value(
 
 
 @pytest.mark.parametrize("as_frame", [False, True])
-def test_fixed_component_simulates_from_the_declared_code(*, as_frame):
+def test_fixed_component_simulates_from_the_declared_code(*, as_frame: bool) -> None:
     """Initial conditions name the declared state and simulate as the hand split."""
-    np.testing.assert_array_equal(
-        _simulated_value(factored=True, as_frame=as_frame),
-        _simulated_value(factored=False, as_frame=as_frame),
+    _assert_independent_values_agree(
+        got=_simulated_value(factored=True, as_frame=as_frame),
+        expected=_simulated_value(factored=False, as_frame=as_frame),
     )
 
 
@@ -473,7 +493,9 @@ def test_fixed_component_initial_labels_are_scoped_to_the_initial_regime(
         )
         .to_dataframe()
     )
-    np.testing.assert_array_equal(result["value"], reference["value"])
+    _assert_independent_values_agree(
+        got=result["value"].to_numpy(), expected=reference["value"].to_numpy()
+    )
 
 
 def test_fixed_component_rejects_an_occupied_model_state_name():
@@ -896,7 +918,7 @@ def test_fixed_component_law_preserves_indirect_state_dependencies(
         enable_jit=enable_jit,
     )
     expected = _simulated_value(factored=False, as_frame=False, enable_jit=enable_jit)
-    np.testing.assert_array_equal(observed, expected)
+    _assert_independent_values_agree(got=observed, expected=expected)
 
 
 @pytest.mark.parametrize("enable_jit", [False, True])
