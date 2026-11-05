@@ -692,7 +692,7 @@ _SOURCE_SEALS = {
     ARGMAX_SOURCE: "b508d4e10350de8b54707db238d01c7de6c73b4ca6b0176e0c6c12ec762952dc",
     COLLECTIVE_SOURCE: "4cc0683d493f597684f5801909d297145d8bade0aa752c3e35cf8af2cb55edd9",
     MAX_Q_SOURCE: "62e5010e5f535ed3731218a5549167d6f5ea332b145d2dcece88d492949fd78c",
-    PROCESSING_SOURCE: "7509c0b152eb2e2bf20e60a6ddc72537a6fe234433c89a46902cc00cdca1da8e",
+    PROCESSING_SOURCE: "022da97e4ed8f0fbefc61dac7d81dfb9b01a3ea6a3a26b7daf19731c53d316d9",
     GRID_SEARCH_SOURCE: "691879f5e6e90a5a764fe247f6d15c8e8f74dc3a8e05dc0913ee1742c54a952f",
     CORE_PROGRAM_SOURCE: "7d8197a3d2607a3380be63408ae4cf2b8d8ebbe68b043cc3aff76bf1f5c6b78a",
     OUTPUT_LAYOUT_SOURCE: "c7da1256b36b3b6d89200bbae5267936d84e27746ff2c776dced4ea612ec3eb9",
@@ -2453,7 +2453,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     PROCESSING_SOURCE: (
-        "0890a13b8426143f4f41cde7e7fb463e1c4e486d72ccf20a89e1bde6afb00354",
+        "5270e552dcc73e6f771cda68655b07c3a552a74df5d413792dcbe9e6fd8901b2",
         {
             "_build_per_subject_decisions_per_period": "b04fb50baadb61f7a5301b2ec1af99a6c53e10355574f1bddf3da94f606ac67a",
             "process_regimes": "288b4375dff6c1f924dc3e646f38e3c4471887ce440c6b99f9528bf26129c67f",

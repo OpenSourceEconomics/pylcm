@@ -1,9 +1,16 @@
 """Reproducer: discrete state with different categories across regimes."""
 
+from types import MappingProxyType
+from typing import Literal
+
 import jax.numpy as jnp
 import pytest
 
-from _lcm.regime_building.processing import _merge_ordered_categories
+from _lcm.reachability import ModelReachability, PhaseReachability
+from _lcm.regime_building.processing import (
+    _merge_ordered_categories,
+    _validate_categoricals,
+)
 from lcm import (
     AgeGrid,
     ByAge,
@@ -27,6 +34,7 @@ from lcm.typing import (
     ContinuousState,
     DiscreteState,
     FloatND,
+    RegimeName,
     ScalarInt,
 )
 
@@ -514,7 +522,7 @@ def test_discrete_state_same_count_different_names():
         Model(
             regimes={"work": work, "retire": retire, "dead": dead},
             edges={
-                "work": {"dead": (0, 1)},
+                "work": {"retire": (0, 1)},
                 "retire": Transition(
                     targets={"dead": (0, 1, 2), "retire": (0, 1)},
                     law=DeterministicTransition(
@@ -990,3 +998,93 @@ def test_incomplete_per_target_unreachable_target() -> None:
         initial_nodes={0: "regime_a"},
     )
     model.solve(log_level="debug", params={"discount_factor": 0.95})
+
+
+@pytest.mark.parametrize("phased_law", [False, True])
+def test_simple_law_ignores_regimes_without_outgoing_edge(*, phased_law: bool) -> None:
+    """A post-switch law is checked only against its own phase's targets."""
+    per_target = {
+        "working_life": hm_next_health_working,
+        "retirement": map_working_health_to_retired,
+        "dead": hm_next_health_working,
+    }
+    working = UserRegime(
+        states={"health": DiscreteGrid(category_class=HealthWorkingLife)},
+        state_transitions={"health": per_target},
+        functions={"utility": hm_utility_working},
+        actions={"consumption": LinSpacedGrid(start=1, stop=10, n_points=5)},
+    )
+    retired = UserRegime(
+        states={"health": DiscreteGrid(category_class=HealthRetirement)},
+        state_transitions={
+            "health": Phased(
+                solve=hm_next_health_working, simulate=hm_next_health_working
+            )
+            if phased_law
+            else hm_next_health_working,
+        },
+        functions={"utility": hm_utility_retirement},
+        actions={"consumption": LinSpacedGrid(start=1, stop=10, n_points=5)},
+    )
+    model = Model(
+        regimes={
+            "working_life": working,
+            "retirement": retired,
+            "dead": UserRegime(functions={"utility": lambda: 0.0}),
+        },
+        edges=_WORKING_RETIRED_EDGES,
+        ages=AgeGrid(start=0, inclusive_stop=4, step="Y"),
+        regime_id_class=RegimeId,
+        initial_nodes={0: "working_life"},
+    )
+    assert set(model.regime_names_to_ids) == {"working_life", "retirement", "dead"}
+
+
+@pytest.mark.parametrize("simple_phase", ["solve", "simulate"])
+@pytest.mark.parametrize("mismatched_target", [False, True])
+def test_simple_law_uses_targets_from_its_own_phase(
+    *, simple_phase: Literal["solve", "simulate"], mismatched_target: bool
+) -> None:
+    """Check each simple law against its phase targets, including mismatches."""
+    working = UserRegime(
+        states={"health": DiscreteGrid(category_class=HealthWorkingLife)},
+        functions={"utility": hm_utility_working},
+        actions={"consumption": LinSpacedGrid(start=1, stop=10, n_points=5)},
+    )
+    retired = UserRegime(
+        states={"health": DiscreteGrid(category_class=HealthRetirement)},
+        state_transitions={
+            "health": Phased(
+                solve=hm_next_health_working
+                if simple_phase == "solve"
+                else {"working_life": hm_next_health_working},
+                simulate=hm_next_health_working
+                if simple_phase == "simulate"
+                else {"working_life": hm_next_health_working},
+            ),
+        },
+        functions={"utility": hm_utility_retirement},
+        actions={"consumption": LinSpacedGrid(start=1, stop=10, n_points=5)},
+    )
+    simple_target = "working_life" if mismatched_target else "retirement"
+
+    def phase_graph(target: RegimeName) -> PhaseReachability:
+        return PhaseReachability(
+            n_periods=2,
+            active_regimes_by_period=(frozenset({"working_life", "retirement"}),) * 2,
+            candidate_targets_by_source=MappingProxyType({"retirement": (target,)}),
+            targets_by_period=(MappingProxyType({"retirement": (target,)}),),
+        )
+
+    simple_graph = phase_graph(simple_target)
+    explicit_graph = phase_graph("working_life")
+    reachability = ModelReachability(
+        solution=simple_graph if simple_phase == "solve" else explicit_graph,
+        simulation=simple_graph if simple_phase == "simulate" else explicit_graph,
+    )
+    regimes = {"working_life": working, "retirement": retired}
+    if mismatched_target:
+        with pytest.raises(ModelInitializationError, match="Discrete state 'health'"):
+            _validate_categoricals(regimes, reachability=reachability)
+    else:
+        _validate_categoricals(regimes, reachability=reachability)
