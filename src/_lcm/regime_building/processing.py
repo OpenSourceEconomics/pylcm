@@ -116,7 +116,7 @@ from _lcm.params.regime_template import (
 )
 from _lcm.post_decision_bound import PostDecisionBoundSpec
 from _lcm.processes import _ContinuousStochasticProcess, _IIDProcess
-from _lcm.processes.ar1 import TauchenAR1Process
+from _lcm.processes.ar1 import TauchenAR1Process, _TauchenOnNodesProcess
 from _lcm.processes.iid import NormalIIDProcess
 from _lcm.processes.state_conditioned import (
     Family,
@@ -8846,7 +8846,8 @@ def _get_conditioned_weights_func(
     The transition row is computed directly at the time-$t$ value on the fixed common
     nodes, which the process's own scalar `sigma` places, with the per-category `sigma`
     gathered by the conditioning state's integer code. No precomputed row is
-    interpolated.
+    interpolated. Under `off_grid="clip_lookup"` or `"clip_state"` a value beyond
+    the nodes reads the row of its nearest edge node.
     """
     conditioning_grid, family = _validate_conditioned_process(
         name=name, grid=grid, sc=sc, grids=grids
@@ -8858,14 +8859,23 @@ def _get_conditioned_weights_func(
 
     args = {name: "ContinuousState", sc.on: "DiscreteState"}
 
+    clip = grid.off_grid in ("clip_lookup", "clip_state")
+
     @with_signature(args=args, return_annotation="FloatND", enforce=False)
     def weights_func_conditioned(*a: FloatND, **kwargs: FloatND) -> Float1D:  # noqa: ARG001
         sigma = gather_sigma(sigma_by_code=sigma_by_code, code=kwargs[sc.on])
+        from_value = (
+            jnp.clip(kwargs[name], nodes[0], nodes[-1]) if clip else kwargs[name]
+        )
+        if isinstance(grid, _TauchenOnNodesProcess):
+            return grid.compute_transition_row(
+                from_value, rho=fixed["rho"], sigma=sigma, mu=mu_fixed
+            )
         return conditioned_row(
             family=family,
             nodes=nodes,
             sigma=sigma,
-            from_value=kwargs[name],
+            from_value=from_value,
             mu=mu_fixed,
             rho=rho_fixed,
         )
@@ -8888,9 +8898,11 @@ def _get_weights_func_for_process(
     (`_get_conditioned_weights_func`), and `grids` is that regime's grid mapping, from
     which the conditioning state is resolved.
 
-    With `clip_coordinate`, a value beyond the nodes takes its nearest edge node's row.
-    A node draw needs this: rows extrapolated along the edge segment can carry
-    negative weights, which are no probabilities to sample with.
+    A value beyond the nodes takes its nearest edge node's row when the process
+    declares `off_grid="clip_lookup"` or `"clip_state"`, or with `clip_coordinate`.
+    A node draw needs the latter whatever the process declares: rows extrapolated
+    along the edge segment can carry negative weights, which are no probabilities
+    to sample with.
 
     An unconditioned IID process has one row repeated, so its weights are that row
     and read no current value: the continuation is then constant along the process's
@@ -8905,6 +8917,7 @@ def _get_weights_func_for_process(
     if isinstance(grid, _IIDProcess):
         return _get_entry_weights_for_process(name=name, grid=grid)
 
+    clip_coordinate = clip_coordinate or grid.off_grid in ("clip_lookup", "clip_state")
     if grid.params_to_pass_at_runtime:
         n_points = grid.n_points
         fixed_params = dict(grid.params)

@@ -646,10 +646,11 @@ or a DataFrame with a `regime_name` column.
 `progress` adds timing, and `debug` adds value statistics. `runtime_checks=True`
 independently enables numerical probability, NaN and existing feasibility/replay checks
 and raises on failure at every verbosity. `runtime_checks=False` explicitly skips those
-checks, including during automatic solving. Construction, parameter schema,
-initial-condition structure and solution-identity validation always run. Infinity-only
-value diagnostics remain warnings; an application requiring all stored values finite
-must retain that stronger invariant.
+checks, including during automatic solving. Density derivative accuracy certification
+exists only as a test oracle; neither runtime-check setting runs it. Construction,
+parameter schema, initial-condition structure and solution-identity validation always
+run. Infinity-only value diagnostics remain warnings; an application requiring all
+stored values finite must retain that stronger invariant.
 
 `model.simulate(...)` also reports the resolved execution plan it dispatched: the
 forward route (`"legacy"` or `"subjects"`), the ordered subject devices and their
