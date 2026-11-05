@@ -680,8 +680,10 @@ def _scaled_lottery_mean(
     the weights, or the mean. Neither sum can overflow, since every term is
     below four. The two exponents meet once, in the final ratio. Their
     difference is at most the largest finite value exponent, so the upward
-    part is a normal power of two and only an out-of-range mean leaves the
-    format.
+    part is a normal power of two. If rounding makes reconstruction overflow,
+    return the corresponding endpoint of the live support. A finite-support
+    mean lies between those endpoints; genuine live infinities remain infinite.
+    Finite estimates and NaNs pass through unchanged.
 
     A null event contributes nothing, even against an infinite value. A live
     node with a nonfinite value carries that value into the mean. A
@@ -747,6 +749,10 @@ def _scaled_lottery_mean(
     mean = scaled_down_by_power_of_two(
         values=ratio * upward, shift=jnp.minimum(exponent, 0)
     )
+    # A normalized nonnegative mean cannot exceed its live support.
+    lower = jnp.min(jnp.where(live, values, jnp.inf), axis=-1)
+    upper = jnp.max(jnp.where(live, values, -jnp.inf), axis=-1)
+    mean = jnp.where(jnp.isinf(mean), jnp.where(jnp.signbit(mean), lower, upper), mean)
     nan = jnp.asarray(jnp.nan, dtype=coefficients.dtype)
     invalid_row = jnp.any(invalid, axis=-1)
     return jnp.where(invalid_row, nan, mean), jnp.where(invalid_row, nan, mass)

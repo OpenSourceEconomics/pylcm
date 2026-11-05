@@ -28,6 +28,38 @@ from lcm.typing import FloatND, IntND
 from tests.conftest import DECIMAL_PRECISION
 
 
+@pytest.mark.parametrize("mode", ["eager", "jit", "vmap"])
+@pytest.mark.parametrize("sign", [-1, 1])
+def test_scaled_mean_preserves_a_constant_at_the_finite_limit(
+    *, mode: str, sign: int
+) -> None:
+    """Unequal normal weights retain a constant at either finite endpoint."""
+    dtype = np.dtype(jnp.asarray(1.0).dtype)
+    maximum = float(np.finfo(dtype).max)
+    values = jnp.asarray([sign * maximum, sign * maximum], dtype=dtype)
+    coefficients = jnp.asarray([1.0, 1.0 + np.finfo(dtype).eps], dtype=dtype)
+
+    def average(*, values: FloatND, coefficients: FloatND) -> FloatND:
+        return zero_safe_average(
+            a=values, weights=coefficients, shifts=jnp.zeros(2, dtype=jnp.int32)
+        )
+
+    evaluate = average
+    if mode == "jit":
+        evaluate = jax.jit(evaluate)
+    elif mode == "vmap":
+        evaluate = jax.jit(jax.vmap(evaluate))
+        values = jnp.stack([values] * 2)
+        coefficients = jnp.stack([coefficients] * 2)
+    actual = np.asarray(evaluate(values=values, coefficients=coefficients))
+    expected, _, _ = _scaled_mean_reference(
+        values=(sign * maximum, sign * maximum),
+        weights=(1.0, float(coefficients.reshape(-1)[1])),
+        shifts=(0, 0),
+    )
+    np.testing.assert_array_equal(actual, np.full(actual.shape, expected, dtype=dtype))
+
+
 def _scaled_mean_reference(
     *, values: tuple[float, ...], weights: tuple[float, ...], shifts: tuple[int, ...]
 ) -> tuple[float, tuple[float, ...], tuple[float, ...]]:
