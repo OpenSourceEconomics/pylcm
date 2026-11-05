@@ -442,7 +442,12 @@ def _install_bounded_child(
         dtype: np.dtype,
         stochastic_node_width: int | None,
         resolved_process_grids: Mapping[StateName, FloatND] = MappingProxyType({}),
+        economic_continuation: Callable[
+            [ScalarFloat], BoundedResult[tuple[ScalarFloat, ScalarFloat]]
+        ]
+        | None = None,
     ) -> _ComputeNode:
+        assert economic_continuation is None
         return _ComputeNode(
             continuation=bind(
                 plan=pieces.continuation_plan,
@@ -633,7 +638,6 @@ def _conditional_step(*, monkeypatch: pytest.MonkeyPatch) -> _EGMStep:
     return _EGMStep(
         pieces=replace(producer.pieces, combo_names=()),
         get_solve_one_combo=step_core_module._get_solve_one_combo,
-        mask_gap_rows=False,
         has_taste_shocks=False,
         own_discrete_state_names=(),
         own_passive_state_names=(),

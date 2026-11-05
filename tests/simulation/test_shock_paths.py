@@ -31,6 +31,7 @@ from lcm import (
     time_varying_params,
 )
 from lcm.exceptions import InvalidInitialConditionsError, InvalidSimulationInputError
+from lcm.shocks import GaussHermite, Normal, Product, ShockGroup
 from lcm.typing import (
     ContinuousState,
     DiscreteState,
@@ -61,7 +62,7 @@ def _zero() -> ScalarFloat:
     return jnp.asarray(0.0)
 
 
-def _model(*, fold: bool = False, execution: ExecutionConfig | None = None) -> Model:
+def _model(*, execution: ExecutionConfig | None = None) -> Model:
     return Model(
         ages=AgeGrid(start=20, inclusive_stop=23, step="Y"),
         regime_id_class=RegimeId,
@@ -71,7 +72,7 @@ def _model(*, fold: bool = False, execution: ExecutionConfig | None = None) -> M
             "alive": Regime(
                 states={
                     "shock": NormalIIDProcess(
-                        n_points=3, gauss_hermite=True, mu=0.0, sigma=1.0, fold=fold
+                        n_points=3, gauss_hermite=True, mu=0.0, sigma=1.0
                     )
                 },
                 actions={"choice": LinSpacedGrid(start=-2.0, stop=2.0, n_points=5)},
@@ -124,11 +125,8 @@ def test_common_path_decisions_match_policy_lookup() -> None:
     )
 
 
-@pytest.mark.parametrize("fold", [False, True])
-def test_individual_paths_keep_original_subject_order_and_late_entry(
-    *, fold: bool
-) -> None:
-    model = _model(fold=fold)
+def test_individual_paths_keep_original_subject_order_and_late_entry() -> None:
+    model = _model()
     paths = jnp.array([[1.0, -1.0, 2.0], [-1.0, 1.0, -2.0]])
     result = model.simulate(
         params={"discount_factor": 0.9},
@@ -210,22 +208,25 @@ def _next_wealth(*, wealth: ScalarFloat, next_cost: ContinuousState) -> ScalarFl
     return wealth - next_cost
 
 
-def test_transition_only_fold_uses_given_destination_period_draw() -> None:
-    """A folded cost enters terminal wealth without becoming a stored state."""
+def _cost_shock() -> ShockGroup:
+    return ShockGroup(
+        shocks={"cost": Normal(mu=0.0, sigma=1.0)},
+        nodes=Product(cost=GaussHermite(3)),
+    )
+
+
+def test_post_decision_shock_uses_given_destination_period_draw() -> None:
+    """A post-decision cost enters terminal wealth without becoming a stored state."""
     model = Model(
         ages=AgeGrid(start=20, inclusive_stop=21, step="Y"),
         regime_id_class=RegimeId,
         initial_nodes={20: "alive"},
         regimes={
             "alive": Regime(
-                states={
-                    "wealth": LinSpacedGrid(start=0.0, stop=4.0, n_points=5),
-                    "cost": NormalIIDProcess(
-                        n_points=3, gauss_hermite=True, mu=0.0, sigma=1.0, fold=True
-                    ),
-                },
+                states={"wealth": LinSpacedGrid(start=0.0, stop=4.0, n_points=5)},
                 state_transitions={"wealth": _next_wealth},
                 functions={"utility": _wealth_utility},
+                shocks=("cost_shock",),
             ),
             "dead": Regime(
                 states={"wealth": LinSpacedGrid(start=0.0, stop=4.0, n_points=5)},
@@ -233,6 +234,7 @@ def test_transition_only_fold_uses_given_destination_period_draw() -> None:
             ),
         },
         edges={"alive": {"dead": (20,)}},
+        shocks={"cost_shock": _cost_shock()},
     )
     solution = model.solve(params={"discount_factor": 1.0}, log_level="off")
     initial = {
@@ -579,7 +581,7 @@ _LATE_AGE = float(Fraction(241, 12))
 
 
 def _fractional_entry_model(
-    *, fold: bool = False, enable_jit: bool = True, execution: ExecutionConfig
+    *, enable_jit: bool = True, execution: ExecutionConfig
 ) -> Model:
     ages = (Fraction(20), Fraction(241, 12), Fraction(121, 6), Fraction(81, 4))
     return Model(
@@ -592,7 +594,7 @@ def _fractional_entry_model(
             "alive": Regime(
                 states={
                     "shock": NormalIIDProcess(
-                        n_points=3, gauss_hermite=True, mu=0.0, sigma=1.0, fold=fold
+                        n_points=3, gauss_hermite=True, mu=0.0, sigma=1.0
                     )
                 },
                 actions={"choice": LinSpacedGrid(start=-2.0, stop=2.0, n_points=5)},
@@ -680,20 +682,19 @@ def test_fractional_late_entry_starts_from_its_entry_period_column(
 
 
 @pytest.mark.parametrize(
-    ("fold", "enable_jit", "budget", "container"),
+    ("enable_jit", "budget", "container"),
     [
-        pytest.param(True, True, None, "jax", id="folded-jax"),
-        pytest.param(True, True, 100_000_000, "numpy", id="budgeted"),
-        pytest.param(False, False, None, "numpy", id="eager"),
-        pytest.param(True, True, None, "dataframe", id="dataframe"),
+        pytest.param(True, None, "jax", id="jax"),
+        pytest.param(True, 100_000_000, "numpy", id="budgeted"),
+        pytest.param(False, None, "numpy", id="eager"),
+        pytest.param(True, None, "dataframe", id="dataframe"),
     ],
 )
 def test_fractional_late_entry_column_holds_across_execution_routes(
-    *, fold: bool, enable_jit: bool, budget: int | None, container: str
+    *, enable_jit: bool, budget: int | None, container: str
 ) -> None:
-    """Folding, eager execution, budgets and input containers keep entry dating."""
+    """Eager execution, budgets and input containers keep entry dating."""
     model = _fractional_entry_model(
-        fold=fold,
         enable_jit=enable_jit,
         execution=ExecutionConfig(
             axis_widths={"subject": 2}, device_memory_bytes=budget
@@ -767,10 +768,8 @@ def _belief_only_utility(*, belief_only: ContinuousState) -> ScalarFloat:
     return belief_only
 
 
-def _normal_shock(*, fold: bool = False) -> NormalIIDProcess:
-    return NormalIIDProcess(
-        n_points=3, gauss_hermite=True, mu=0.0, sigma=1.0, fold=fold
-    )
+def _normal_shock() -> NormalIIDProcess:
+    return NormalIIDProcess(n_points=3, gauss_hermite=True, mu=0.0, sigma=1.0)
 
 
 def _phased_model(
@@ -988,7 +987,7 @@ def test_phased_history_still_validates_simulated_periods(path: np.ndarray) -> N
 def test_phased_local_draw_is_dated_at_the_destination_period(
     *, budget: int | None
 ) -> None:
-    """A folded transition-only cost from period 0 reads history column 1."""
+    """A post-decision cost from period 0 reads history column 1."""
     wealth_grid = LinSpacedGrid(start=0.0, stop=8.0, n_points=9)
     model = Model(
         ages=AgeGrid(start=20, inclusive_stop=21, step="Y"),
@@ -996,9 +995,10 @@ def test_phased_local_draw_is_dated_at_the_destination_period(
         initial_nodes={20: "alive"},
         regimes={
             "alive": Regime(
-                states={"wealth": wealth_grid, "cost": _normal_shock(fold=True)},
+                states={"wealth": wealth_grid},
                 state_transitions={"wealth": _next_wealth},
                 functions={"utility": _wealth_utility},
+                shocks=("cost_shock",),
             ),
             "believed": Regime(
                 states={"wealth": wealth_grid}, functions={"utility": _wealth_utility}
@@ -1011,6 +1011,7 @@ def test_phased_local_draw_is_dated_at_the_destination_period(
             solve={"alive": {"believed": (20,)}},
             simulate={"alive": {"dead": (20,)}},
         ),
+        shocks={"cost_shock": _cost_shock()},
         enable_jit=True,
         execution_config=ExecutionConfig(
             axis_widths={"subject": 3}, device_memory_bytes=budget

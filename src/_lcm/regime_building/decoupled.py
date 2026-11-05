@@ -10,13 +10,12 @@ in `max_Q_over_a` for that pair:
 - `get_decoupled_Q_over_a` is the reduction over the action product, as
   simulation and policy lookup run it;
 - `get_decoupled_max_Q_over_a` maps it over the state product, with the
-  same tiling and fold `get_max_Q_over_a` takes, as the solve runs it.
+  same tiling `get_max_Q_over_a` takes, as the solve runs it.
 """
 
 import math
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from types import MappingProxyType
 from typing import ClassVar, NamedTuple, cast
 
 import jax.numpy as jnp
@@ -31,7 +30,6 @@ from _lcm.regime_building.max_Q_over_a import (
     BoundedMaxOutput,
     _get_extra_param_names,
     _with_bound_summary,
-    _wrap_with_fold_reduction,
     draw_taste_shock_noise,
 )
 from _lcm.regime_building.Q_and_F import (
@@ -162,14 +160,11 @@ def get_decoupled_max_Q_over_a(
     broadcast_state_names: tuple[StateName, ...] = (),
     n_discrete_action_axes: int = 0,
     has_taste_shocks: bool = False,
-    fold_state_names: tuple[StateName, ...] = (),
-    fold_weights: Mapping[StateName, FloatND] = MappingProxyType({}),
-    fold_conditioning: Mapping[StateName, StateName] = MappingProxyType({}),
 ) -> MaxQOverAFunction[BoundedMaxOutput]:
     """Get the solve's value function of a `Decoupled` regime.
 
-    Maps `get_decoupled_Q_over_a` over the state product, then folds
-    exactly as `get_max_Q_over_a` does, and returns `(V, empty)` with `empty`
+    Maps `get_decoupled_Q_over_a` over the state product exactly as
+    `get_max_Q_over_a` does, and returns `(V, empty)` with `empty`
     marking the cells without a feasible action.
     """
     cell = get_decoupled_Q_over_a(
@@ -197,23 +192,6 @@ def get_decoupled_max_Q_over_a(
             bound_summary=bool(runtime_bound_specs(function=Q_and_F)),
         )
     )
-    if fold_state_names:
-        mapped = _wrap_with_fold_reduction(
-            mapped=cast("Callable[..., BoundedMaxOutput]", mapped),
-            fold_state_names=fold_state_names,
-            fold_weights=fold_weights,
-            fold_conditioning=fold_conditioning,
-            inner_state_names=state_names,
-            return_feasibility=True,
-            action_names=action_names,
-            state_names=state_names,
-            extra_param_names=[
-                *_get_extra_param_names(
-                    Q_and_F=Q_and_F, action_names=action_names, state_names=state_names
-                ),
-                *((cell_width_keyword,) if cell_width_keyword is not None else ()),
-            ],
-        )
     return cast("MaxQOverAFunction[BoundedMaxOutput]", mapped)
 
 

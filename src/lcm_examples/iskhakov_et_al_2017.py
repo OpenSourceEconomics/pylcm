@@ -277,9 +277,10 @@ def get_dcegm_model(n_periods: int) -> Model:
     Mathematically equivalent to `get_model` (same utility, budget, and
     transitions; `get_params` works unchanged), but solved by Euler-equation
     inversion on the exogenous savings grid instead of grid search — no
-    consumption grid enters the solve. Forward simulation works; simulated
-    consumption is restricted to the consumption grid (the intrinsic budget
-    constraint is applied as a feasibility mask).
+    consumption grid enters the solve. Forward simulation reads the solved
+    policy at each subject's resources, so simulated consumption need not sit
+    on the consumption grid; a subject whose read is rejected (off the row's
+    support, outside the budget or infeasible) takes the grid argmax.
 
     Args:
         n_periods: Number of periods. The last period is spent in the terminal

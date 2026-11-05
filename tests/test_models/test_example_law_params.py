@@ -141,7 +141,10 @@ def test_precautionary_params_fit_every_horizon(
         initial_conditions={
             "age": jnp.array([20.0]),
             "wealth": jnp.array([10.0]),
-            "income": jnp.array([0.0]),
+            # This helper validates declared states and the wealth-only constraint.
+            # Tagged current income is covered by the public simulation replay in
+            # test_economic_validation; this helper does not yet split those tags.
+            **({} if shock_type == "normal_gh" else {"income": jnp.array([0.0])}),
             "regime_id": jnp.array([precautionary_savings.RegimeId.alive]),
         },
     )
@@ -161,7 +164,10 @@ def test_stochastic_volatility_params_fit_every_horizon(n_periods: int) -> None:
         initial_conditions={
             "age": jnp.array([20.0]),
             "wealth": jnp.array([10.0]),
-            "income": jnp.array([0.0]),
+            # State-only feasibility: this constraint reads wealth and consumption.
+            # Tagged known income is checked by the example's public replay test;
+            # this helper does not yet split named-current entry tags.
+            "lagged_uncertainty": jnp.array([stochastic_volatility.Uncertainty.low]),
             "uncertainty": jnp.array([stochastic_volatility.Uncertainty.low]),
             "regime_id": jnp.array([stochastic_volatility.RegimeId.alive]),
         },

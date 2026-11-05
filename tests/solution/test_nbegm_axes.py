@@ -4,9 +4,10 @@ from collections.abc import Callable, Mapping
 from dataclasses import replace
 from functools import partial
 from types import MappingProxyType
-from typing import TypedDict
+from typing import TypedDict, cast
 
 import jax
+import jax.numpy as jnp
 import numpy as np
 import pytest
 
@@ -23,10 +24,16 @@ from _lcm.execution.core_program import (
 )
 from _lcm.execution.value_transfer import ResolvedValueTransfer, ValueTransferKind
 from _lcm.execution.workspace_planning import bootstrap_width
-from _lcm.solution.nbegm import _RideAlongNBEGMPeriodKernel
+from _lcm.solution.nbegm import (
+    _RideAlongArgumentBuilder,
+    _RideAlongNBEGMPeriodKernel,
+)
 from _lcm.typing import PytreeValue
 from lcm import ExecutionConfig, LinSpacedGrid, Model, Regime
-from lcm.exceptions import ExecutionPlanningError, RegimeInitializationError
+from lcm.exceptions import (
+    ExecutionPlanningError,
+    RegimeInitializationError,
+)
 from lcm.solver_api import SolutionResult
 from lcm.solvers import (
     BRANCH_AXIS,
@@ -474,3 +481,29 @@ def test_default_interval_stream_preserves_the_dense_period(
     dense = jax.jit(partial(resolved.function, **dense_keywords))(**resolved.arguments)
     assert not np.isnan(np.asarray(dense[0])).any()
     _assert_arrays_agree(actual=streamed, expected=dense)
+
+
+def test_ride_carry_preserves_ordinary_identity() -> None:
+    """NB ride inputs retain the ordinary rows of the targets they read."""
+    grid = jnp.asarray([1.0, 2.0])
+    ordinary = EGMCarry(
+        endog_grid=grid,
+        value=grid,
+        marginal_utility=jnp.ones_like(grid),
+        taste_shock_scale=jnp.asarray(0.0),
+    )
+    unread = cast("EGMCarry", (grid,))
+    builder = _RideAlongArgumentBuilder(
+        regime_name="source",
+        transition_target_names=("first", "second"),
+        stateful_targets=frozenset({"first", "second"}),
+        co_map_state_names=(),
+        n_intervals=0,
+    )
+    source = MappingProxyType({"second": ordinary, "unread": unread, "first": ordinary})
+    retained = builder._co_map_carry(states={}, next_regime_to_continuation=source)
+    assert tuple(retained) == ("second", "first")
+    for name in retained:
+        assert retained[name] is source[name]
+        for path, leaf in ordinary.leaves().items():
+            assert retained[name].leaves()[path] is leaf

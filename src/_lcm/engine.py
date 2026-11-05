@@ -14,7 +14,7 @@ import dataclasses
 from collections.abc import Callable, Hashable, Iterator, Mapping
 from math import prod as math_prod
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Literal, cast
+from typing import TYPE_CHECKING, Literal, Protocol, cast, runtime_checkable
 
 import jax
 from jax import Array
@@ -22,7 +22,7 @@ from jax import Array
 from _lcm.certainty_equivalent import CertaintyEquivalent
 from _lcm.continuation import ContinuationPayload, ContinuationSpec, EGMQuerySpec
 from _lcm.egm.nested_published_policy import NestedEGMSimPolicy
-from _lcm.egm.published_policy import EGMSimPolicy, NNBEGMSimPolicy
+from _lcm.egm.published_policy import EGMSimPolicy, NBEGMGridPolicy, NNBEGMSimPolicy
 from _lcm.execution.execution_plan import visible_devices
 from _lcm.execution.placement import ACTION_PARTITION_AXIS
 from _lcm.grids import DiscreteGrid, Grid, IrregSpacedGrid
@@ -77,7 +77,9 @@ from lcm.typing import (
 )
 
 if TYPE_CHECKING:
+    from _lcm.current_iid import CurrentIIDDrawPlan, CurrentIIDPlan
     from _lcm.regime_building.gated_edges import ResolvedGatedEdge
+    from _lcm.simulation.exits import ExitSimulationPlan
     from _lcm.solution.contract import PeriodKernel
 
     # The contract module imports this one at runtime, so `PeriodKernel` is
@@ -86,6 +88,11 @@ if TYPE_CHECKING:
     # (see the runtime alias below).
     type PeriodKernelsMapping = Mapping[int, PeriodKernel]
 else:
+    # Current-IID declarations reach the solver facade while it imports engine.
+    type CurrentIIDPlan = object
+    type CurrentIIDDrawPlan = object
+    # The simulation query metadata imports the canonical engine declarations.
+    type ExitSimulationPlan = object
     PeriodKernelsMapping = Mapping
 
 # A precondition a solver can only check once parameter *values* exist. Kernels
@@ -351,6 +358,11 @@ class SolutionPhase:
     phase explicit at every call site.
     """
 
+    current_iid_plans: Mapping[int, CurrentIIDPlan | None] = dataclasses.field(
+        default=MappingProxyType({}), metadata={"fingerprint_omit_if_default": True}
+    )
+    """Exact current-law support; its banks are model-owned native operands."""
+
     _variables: Variables
     """Solve states and actions, with kind/topology/process tags.
 
@@ -419,9 +431,16 @@ class SolutionPhase:
     """Per-period capabilities of installed target-specific model-bound readers."""
 
     query_input_authorities: (
-        Mapping[int, tuple[tuple[RegimeName, int, PostDecisionBoundSpec], ...]] | None
+        Mapping[
+            int,
+            tuple[
+                tuple[RegimeName, int, PostDecisionBoundSpec],
+                ...,
+            ],
+        ]
+        | None
     ) = dataclasses.field(default=None, metadata={"fingerprint_omit_if_default": True})
-    """Canonical child regime, target period and bound for each private query slot."""
+    """Canonical child/date and bound authority for each query slot."""
 
     has_compiled_constraint_boundaries: bool = False
     """Whether the solve route compiles any constraint boundary into its kernel."""
@@ -638,48 +657,12 @@ class SolutionPhase:
         regime_params: FlatRegimeParams,
         process_grid_resolver: ProcessGridResolver,
     ) -> Mapping[StateName, FloatND]:
-        """Resolve only process producers covered by the explicit admission owner."""
-        required: jax.sharding.Sharding | None = None
-        all_params = {**self.resolved_fixed_params, **regime_params}
-        resolved: dict[StateName, FloatND] = {}
-        for name, spec in self.grids.items():
-            if (
-                name not in self._base_state_action_space.states
-                or not isinstance(spec, _ContinuousStochasticProcess)
-                or not spec.params_to_pass_at_runtime
-                or not process_grid_resolver.supports(spec)
-                or any(
-                    f"{name}__{param}" not in all_params
-                    for param in spec.params_to_pass_at_runtime
-                )
-            ):
-                continue
-            if required is None:
-                devices = self.placed_devices()
-                plan = _build_regime_sharding(
-                    grids=self.grids,
-                    sharded_state_names=self.sharded_state_names,
-                    devices=devices,
-                    action_partitions=self.action_partitions,
-                )
-                required = (
-                    jax.sharding.SingleDeviceSharding(devices[0])
-                    if plan is None
-                    else jax.sharding.NamedSharding(
-                        plan.mesh, jax.sharding.PartitionSpec()
-                    )
-                )
-            resolved[name] = process_grid_resolver(
-                spec=spec,
-                required=required,
-                parameters={
-                    param: cast(
-                        "ScalarFloat | ScalarInt", all_params[f"{name}__{param}"]
-                    )
-                    for param in spec.params_to_pass_at_runtime
-                },
-            )
-        return MappingProxyType(resolved)
+        """Use the shared genuine phase-support resolver."""
+        return resolve_phase_process_grids(
+            phase=self,
+            regime_params=regime_params,
+            process_grid_resolver=process_grid_resolver,
+        )
 
     def state_action_space(
         self,
@@ -687,97 +670,192 @@ class SolutionPhase:
         regime_params: FlatRegimeParams,
         process_grid_resolver: ProcessGridResolver | None = None,
     ) -> StateActionSpace:
-        """Return the state-action space with runtime grids filled in.
+        """Use the shared genuine phase-support resolver."""
+        return phase_state_action_space(
+            phase=self,
+            regime_params=regime_params,
+            process_grid_resolver=process_grid_resolver,
+        )
 
-        For IrregSpacedGrid (state or continuous action) with runtime-supplied
-        points, the grid points come from params as `{name}__points`. For
-        `_ContinuousStochasticProcess` with runtime-supplied params, the grid
-        points are computed from process params in the params dict or
-        `resolved_fixed_params`.
 
-        Args:
-            regime_params: Flat regime parameters supplied at runtime.
+@runtime_checkable
+class PhaseSupport(Protocol):
+    """Real declared support/placement operands, independent of solver programs."""
 
-        Returns:
-            Completed state-action space.
+    @property
+    def grids(self) -> MappingProxyType[StateOrActionName, Grid]:
+        """Read the original immutable grid declarations."""
+        ...
 
-        """
-        all_params = {**self.resolved_fixed_params, **regime_params}
-        state_replacements: dict[str, ContinuousState | DiscreteState] = (
-            {}
-            if process_grid_resolver is None
-            else dict(
-                self.resolve_process_grids(
-                    regime_params=regime_params,
-                    process_grid_resolver=process_grid_resolver,
-                )
+    @property
+    def _base_state_action_space(self) -> StateActionSpace:
+        """Read the original immutable state-action support."""
+        ...
+
+    @property
+    def resolved_fixed_params(self) -> FlatRegimeParams:
+        """Read the resolved fixed parameter namespace."""
+        ...
+
+    @property
+    def sharded_state_names(self) -> frozenset[StateName]:
+        """Read the original sharded state declaration."""
+        ...
+
+    @property
+    def action_partitions(self) -> int:
+        """Read the original action partition count."""
+        ...
+
+    def placed_devices(self) -> tuple[jax.Device, ...]:
+        """Return the declaration's actual admitted placement."""
+        ...
+
+
+def resolve_phase_process_grids(
+    *,
+    phase: PhaseSupport,
+    regime_params: FlatRegimeParams,
+    process_grid_resolver: ProcessGridResolver,
+) -> Mapping[StateName, FloatND]:
+    """Resolve only process producers covered by the explicit admission owner."""
+    required: jax.sharding.Sharding | None = None
+    all_params = {**phase.resolved_fixed_params, **regime_params}
+    resolved: dict[StateName, FloatND] = {}
+    for name, spec in phase.grids.items():
+        if (
+            name not in phase._base_state_action_space.states  # noqa: SLF001 - shared phase-support data contract
+            or not isinstance(spec, _ContinuousStochasticProcess)
+            or not spec.params_to_pass_at_runtime
+            or not process_grid_resolver.supports(spec)
+            or any(
+                f"{name}__{param}" not in all_params
+                for param in spec.params_to_pass_at_runtime
+            )
+        ):
+            continue
+        if required is None:
+            devices = phase.placed_devices()
+            plan = _build_regime_sharding(
+                grids=phase.grids,
+                sharded_state_names=phase.sharded_state_names,
+                devices=devices,
+                action_partitions=phase.action_partitions,
+            )
+            required = (
+                jax.sharding.SingleDeviceSharding(devices[0])
+                if plan is None
+                else jax.sharding.NamedSharding(plan.mesh, jax.sharding.PartitionSpec())
+            )
+        resolved[name] = process_grid_resolver(
+            spec=spec,
+            required=required,
+            parameters={
+                param: cast("ScalarFloat | ScalarInt", all_params[f"{name}__{param}"])
+                for param in spec.params_to_pass_at_runtime
+            },
+        )
+    return MappingProxyType(resolved)
+
+
+def phase_state_action_space(
+    *,
+    phase: PhaseSupport,
+    regime_params: FlatRegimeParams,
+    process_grid_resolver: ProcessGridResolver | None = None,
+) -> StateActionSpace:
+    """Return the state-action space with runtime grids filled in.
+
+    For IrregSpacedGrid (state or continuous action) with runtime-supplied
+    points, the grid points come from params as `{name}__points`. For
+    `_ContinuousStochasticProcess` with runtime-supplied params, the grid
+    points are computed from process params in the params dict or
+    `resolved_fixed_params`.
+
+    Args:
+        regime_params: Flat regime parameters supplied at runtime.
+
+    Returns:
+        Completed state-action space.
+
+    """
+    all_params = {**phase.resolved_fixed_params, **regime_params}
+    state_replacements: dict[str, ContinuousState | DiscreteState] = (
+        {}
+        if process_grid_resolver is None
+        else dict(
+            resolve_phase_process_grids(
+                phase=phase,
+                regime_params=regime_params,
+                process_grid_resolver=process_grid_resolver,
             )
         )
-        action_replacements: dict[str, ContinuousAction] = {}
-        for name, spec in self.grids.items():
-            in_states = name in self._base_state_action_space.states
-            in_continuous_actions = (
-                name in self._base_state_action_space.continuous_actions
-            )
-            if not (in_states or in_continuous_actions):
+    )
+    action_replacements: dict[str, ContinuousAction] = {}
+    for name, spec in phase.grids.items():
+        in_states = name in phase._base_state_action_space.states  # noqa: SLF001 - shared phase-support data contract
+        in_continuous_actions = (
+            name in phase._base_state_action_space.continuous_actions  # noqa: SLF001 - shared phase-support data contract
+        )
+        if not (in_states or in_continuous_actions):
+            continue
+        if isinstance(spec, IrregSpacedGrid) and spec.pass_points_at_runtime:
+            points_key = f"{name}__points"
+            if points_key not in all_params:
                 continue
-            if isinstance(spec, IrregSpacedGrid) and spec.pass_points_at_runtime:
-                points_key = f"{name}__points"
-                if points_key not in all_params:
-                    continue
-                # Runtime grid-point params are flat JAX arrays — never a
-                # `MappingLeaf` / `SequenceLeaf` — so narrow via `cast`.
-                points = cast("Array", all_params[points_key])
-                if in_states:
-                    state_replacements[name] = points
-                else:
-                    action_replacements[name] = points
-            # `_ContinuousStochasticProcess` is state-only by construction (intrinsic
-            # transitions, forbidden as actions per AGENTS.md). The
-            # `in_states` gate makes that invariant explicit — a
-            # `_ContinuousStochasticProcess` reaching the action branch would be a model
-            # bug, not something this method should silently substitute.
-            elif (
-                in_states
-                and isinstance(spec, _ContinuousStochasticProcess)
-                and spec.params_to_pass_at_runtime
-                and name not in state_replacements
-            ):
-                all_present = all(
-                    f"{name}__{p}" in all_params for p in spec.params_to_pass_at_runtime
+            # Runtime grid-point params are flat JAX arrays — never a
+            # `MappingLeaf` / `SequenceLeaf` — so narrow via `cast`.
+            points = cast("Array", all_params[points_key])
+            if in_states:
+                state_replacements[name] = points
+            else:
+                action_replacements[name] = points
+        # `_ContinuousStochasticProcess` is state-only by construction (intrinsic
+        # transitions, forbidden as actions per AGENTS.md). The
+        # `in_states` gate makes that invariant explicit — a
+        # `_ContinuousStochasticProcess` reaching the action branch would be a model
+        # bug, not something this method should silently substitute.
+        elif (
+            in_states
+            and isinstance(spec, _ContinuousStochasticProcess)
+            and spec.params_to_pass_at_runtime
+            and name not in state_replacements
+        ):
+            all_present = all(
+                f"{name}__{p}" in all_params for p in spec.params_to_pass_at_runtime
+            )
+            if not all_present:
+                continue
+            process_kw: dict[str, ScalarFloat | ScalarInt] = dict(spec.params)
+            for p in spec.params_to_pass_at_runtime:
+                # Runtime process-grid params are flat JAX scalars — never
+                # a `MappingLeaf` / `SequenceLeaf` — so narrow via `cast`.
+                process_kw[p] = cast(
+                    "ScalarFloat | ScalarInt", all_params[f"{name}__{p}"]
                 )
-                if not all_present:
-                    continue
-                process_kw: dict[str, ScalarFloat | ScalarInt] = dict(spec.params)
-                for p in spec.params_to_pass_at_runtime:
-                    # Runtime process-grid params are flat JAX scalars — never
-                    # a `MappingLeaf` / `SequenceLeaf` — so narrow via `cast`.
-                    process_kw[p] = cast(
-                        "ScalarFloat | ScalarInt", all_params[f"{name}__{p}"]
-                    )
-                state_replacements[name] = spec.compute_gridpoints(**process_kw)
+            state_replacements[name] = spec.compute_gridpoints(**process_kw)
 
-        new_states = (
-            dict(self._base_state_action_space.states) | state_replacements
-            if state_replacements
-            else dict(self._base_state_action_space.states)
-        )
-        new_continuous_actions = (
-            dict(self._base_state_action_space.continuous_actions) | action_replacements
-            if action_replacements
-            else dict(self._base_state_action_space.continuous_actions)
-        )
-        distributed_states = _distribute_states_to_devices(
-            states=MappingProxyType(new_states),
-            grids=self.grids,
-            sharded_state_names=self.sharded_state_names,
-            devices=self.placed_devices(),
-            action_partitions=self.action_partitions,
-        )
-        return self._base_state_action_space.replace(
-            states=distributed_states,
-            continuous_actions=MappingProxyType(new_continuous_actions),
-        )
+    new_states = (
+        dict(phase._base_state_action_space.states) | state_replacements  # noqa: SLF001 - shared phase-support data contract
+        if state_replacements
+        else dict(phase._base_state_action_space.states)  # noqa: SLF001 - shared phase-support data contract
+    )
+    new_continuous_actions = (
+        dict(phase._base_state_action_space.continuous_actions) | action_replacements  # noqa: SLF001 - shared phase-support data contract
+        if action_replacements
+        else dict(phase._base_state_action_space.continuous_actions)  # noqa: SLF001 - shared phase-support data contract
+    )
+    distributed_states = _distribute_states_to_devices(
+        states=MappingProxyType(new_states),
+        grids=phase.grids,
+        sharded_state_names=phase.sharded_state_names,
+        devices=phase.placed_devices(),
+        action_partitions=phase.action_partitions,
+    )
+    return phase._base_state_action_space.replace(  # noqa: SLF001 - shared phase-support data contract
+        states=distributed_states,
+        continuous_actions=MappingProxyType(new_continuous_actions),
+    )
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -915,6 +993,73 @@ class EGMPolicyRead:
     def consumer_route(self) -> str:
         """The reader that interpolates the rows at a subject's resources."""
         return "egm_off_grid"
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class NBEGMPolicyRead:
+    """Names for the realized-state read of a published `NBEGMGridPolicy`.
+
+    The stored policy is the optimal inner action on the regime's state grid;
+    simulation reads it at each subject's realized state instead of argmaxing
+    over the action grid. A discrete action is chosen by the largest read of its
+    published conditional value.
+    """
+
+    action_name: ActionName
+    """The NB-EGM continuous action the read replaces."""
+
+    resources_target: FunctionName
+    """DAG function computing the resources the intrinsic budget bounds."""
+
+    savings_lower_bound: float
+    """Lower bound of the solver's savings grid, the borrowing limit of the
+    post-read budget check (`action <= resources - bound`)."""
+
+    liquid_state_name: StateName
+    """The Euler state, read linearly on its grid."""
+
+    state_names: tuple[StateName, ...]
+    """Exact state axes of the published arrays, in storage order."""
+
+    state_axis_lengths_by_period: MappingProxyType[int, tuple[int, ...]]
+    """Exact lengths of the ordered state axes in every active period."""
+
+    discrete_action_names: tuple[ActionName, ...]
+    """Exact columns of the published branch codes, in declared order."""
+
+    branch_discrete_action_codes: tuple[tuple[int, ...], ...]
+    """Exact code rows of the published branch axis, in product order."""
+
+    float_dtype: str
+    """Canonical dtype of every floating array leaf in the payload."""
+
+    integer_dtype: str
+    """Canonical dtype of the branch-code leaf in the payload."""
+
+    @property
+    def replay_mode(self) -> ReplayMode:
+        """The stored policy names the decision; simulation reads it off-grid."""
+        return ReplayMode.EXACT_REPLAY
+
+    @property
+    def payload_type(self) -> type[NBEGMGridPolicy]:
+        """The exact replay payload class this route reads."""
+        return NBEGMGridPolicy
+
+    @property
+    def policy_applicable(self) -> bool:
+        """A qualifying NB-EGM regime always publishes its state-grid policy."""
+        return True
+
+    @property
+    def policy_required(self) -> bool:
+        """A successful solve of a qualifying regime must retain the policy."""
+        return True
+
+    @property
+    def consumer_route(self) -> str:
+        """The reader that interpolates the policy at a subject's state."""
+        return "nbegm_grid"
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -1064,6 +1209,16 @@ class SimulationPhase:
     namespace makes the phase explicit at every call site.
     """
 
+    exit_queries: Mapping[int, ExitSimulationPlan] = dataclasses.field(
+        default=MappingProxyType({}), metadata={"fingerprint_omit_if_default": True}
+    )
+    """Bound original Full and final Participating policies for current exits."""
+
+    current_iid_draw_plan: CurrentIIDDrawPlan | None = dataclasses.field(
+        default=None, metadata={"fingerprint_omit_if_default": True}
+    )
+    """Native physical realization shared by decision, flow and transitions."""
+
     _variables: Variables
     """Simulate states (solve states plus carried-only states, appended) and
     actions.
@@ -1127,7 +1282,7 @@ class SimulationPhase:
     )
     """Per period, the regimes whose landing values the decision program reads.
 
-    A gate reference and a leg fallback are read inside the source's own
+    A leg fallback is read inside the source's own
     decision function — but only where that function carries the gated
     continuation. A regime whose gate is applied by the simulate router
     instead never names them, a period whose edge targets are all inactive has
@@ -1169,11 +1324,12 @@ class SimulationPhase:
     regime-selection checker evaluates it on every visited period.
     """
 
-    egm_policy_read: EGMPolicyRead | NNBEGMPolicyRead | None = None
+    egm_policy_read: EGMPolicyRead | NBEGMPolicyRead | NNBEGMPolicyRead | None = None
     """Off-grid read of the published EGM simulation policy, or `None`.
 
     Present only where replaying the solve-phase policy is valid:
-    - the regime is solved by an EGM kernel that publishes `EGMSimPolicy`;
+    - the regime is solved by an EGM kernel that publishes `EGMSimPolicy`,
+      `NBEGMGridPolicy` or an NNBEGM payload;
     - the Koopmans aggregator `W` is phase-invariant (a phase-variant `W`
       changes the simulate-phase FOC, so the stored policy is wrong there);
     - the regime declares no taste shocks.
@@ -1341,16 +1497,6 @@ class Regime:
     has_taste_shocks: bool = False
     """Whether the regime declares EV1 taste shocks on its discrete actions."""
 
-    fold_state_names: tuple[StateName, ...] = ()
-    """IID-process states declared `fold=True`, or empty (the default).
-
-    A folded state is integrated out of the stored value by quadrature at
-    solve time, so it is NOT an axis of the regime's stored `V`-array: the
-    backward-induction V topology (`_get_regime_V_shapes_and_shardings`)
-    excludes it from the shape/sharding it computes for this regime. Empty
-    keeps the default path byte-identical.
-    """
-
     certainty_equivalent: CertaintyEquivalent | None
     """Nonlinear certainty equivalent declared by the regime, if any."""
 
@@ -1390,9 +1536,9 @@ class Regime:
     edge_reference_regimes: tuple[RegimeName, ...] = ()
     """Regimes a gated edge reads a projected value from, or empty.
 
-    A gate reference and a leg fallback both name another regime's value at
-    coordinates a projection produces. Neither is tabulated on the target's
-    grid, so both are read where the source lands — inside the source's own
+    A leg fallback names another regime's value at coordinates a projection
+    produces. It is not tabulated on the target's grid, so it is read where the
+    source lands — inside the source's own
     kernel — at the value of the period the source lands in. The rolled V
     mapping already carries that array; these names are what pick it out and
     thread each reference regime's OWN grid params beside it.
@@ -1661,7 +1807,6 @@ def place_template_on_regime_devices[Template](
     grids: MappingProxyType[StateOrActionName, Grid],
     sharded_state_names: frozenset[StateName],
     states: Mapping[StateName, FloatND | IntND],
-    fold_state_names: tuple[StateName, ...],
     submesh_device_ids: tuple[int, ...],
     action_partitions: int = 1,
 ) -> Template:
@@ -1673,7 +1818,7 @@ def place_template_on_regime_devices[Template](
         devices=devices,
         action_partitions=action_partitions,
     )
-    state_order = tuple(name for name in states if name not in fold_state_names)
+    state_order = tuple(states)
     replicated = (
         jax.sharding.SingleDeviceSharding(devices[0])
         if plan is None
@@ -1767,6 +1912,13 @@ _MAX_SIMULATED_V_RANK = 2
 @dataclasses.dataclass(frozen=True)
 class PeriodRegimeSimulationData:
     """Raw simulation data for one period in one regime."""
+
+    shocks: Mapping[str, FloatND | IntND] = dataclasses.field(
+        default=MappingProxyType({}),
+        kw_only=True,
+        metadata={"fingerprint_omit_if_default": True},
+    )
+    """Realized current innovations, separate from persistent state coordinates."""
 
     V_arr: FloatND
     """Value function array for all subjects at this period.
@@ -1868,6 +2020,7 @@ jax.tree_util.register_dataclass(
         "V_arr",
         "actions",
         "states",
+        "shocks",
         "in_regime",
         "own_stakeholder",
         "nested_policy_fallback",

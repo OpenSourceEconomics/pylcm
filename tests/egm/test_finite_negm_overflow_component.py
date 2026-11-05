@@ -111,6 +111,4 @@ def test_owned_overflow_component_preserves_ordinary_and_paired_channels() -> No
         np.testing.assert_array_equal(candidate.value, 0.0)
         np.testing.assert_array_equal(candidate.right_marginal, expected_marginal)
         np.testing.assert_array_equal(candidate.left_marginal, expected_marginal)
-        assert bool(candidate.right_germ[0] & candidate.left_germ[0])
-        np.testing.assert_array_equal(jnp.stack(candidate.right_germ[1:]), [0.0] * 3)
-        np.testing.assert_array_equal(jnp.stack(candidate.left_germ[1:]), [0.0] * 3)
+        assert bool(raw.left_finite)

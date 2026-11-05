@@ -21,7 +21,7 @@ import pandas as pd
 import pytest
 
 from _lcm.dtypes import canonical_float_dtype
-from _lcm.regime_building.Q_and_F import _QAndF
+from _lcm.regime_building.Q_and_F import CheckedContinuationEvaluation, _QAndF
 from _lcm.simulation.programs import _StreamedArgmaxQOverA, _SubjectTiled
 from _lcm.typing import (
     FlatParams,
@@ -142,11 +142,13 @@ def _evaluate_operands(
         values: MappingProxyType[RegimeName, FloatND],
     ) -> tuple[jax.Array | bool, jax.Array, jax.Array, jax.Array | bool]:
         utility, feasible = q.U_and_F(**cell)
-        continuation = q.compute_CE(
+        result = q.compute_CE(
             next_regime_to_V_arr=values,
             zero=jnp.zeros_like(utility),
             states_actions_params=cell,
-        )[0]
+        )
+        assert not isinstance(result, CheckedContinuationEvaluation)
+        continuation = result[0]
         aggregation = q.build_W_kwargs(cell)
         assert len(aggregation) == 1
         name, discount = next(iter(aggregation.items()))

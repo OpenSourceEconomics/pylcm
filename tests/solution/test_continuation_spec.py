@@ -1,6 +1,7 @@
 """Continuation demand and representation travel through one explicit contract."""
 
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import cast
 
 import jax.numpy as jnp
@@ -22,6 +23,13 @@ from lcm.regime import Regime as UserRegime
 from lcm.solver_api import EGM_CONTINUATION, ArtifactKey
 from lcm.solvers import EGM, GridSearch
 from tests.mock_regime import MockRegime
+
+
+@dataclass(frozen=True, kw_only=True)
+class _WrongKeyContinuation:
+    """A numeric-free payload identifying its own continuation schema."""
+
+    artifact_key: ArtifactKey
 
 
 def _template() -> EGMCarry:
@@ -111,3 +119,40 @@ def test_a_template_carrying_another_key_than_the_declared_one_is_refused():
     message = str(excinfo.value)
     assert "pylcm.egm.continuation" in message
     assert "example_solver.euler_residuals" in message
+
+
+def test_period_continuation_schema_uses_the_actual_producer_date():
+    """A terminal producer need not retain the nonterminal producer's operands."""
+    first, terminal = _template(), _template()
+    declarations = {1: first, 2: terminal}
+    spec = ContinuationSpec(
+        template=first,
+        artifact_key=EGM_CONTINUATION,
+        templates_by_period=declarations,
+    )
+    declarations[1] = terminal
+    assert spec.template_at(period=1) is first
+    assert spec.template_at(period=2) is terminal
+    with pytest.raises(ValueError, match="period 0"):
+        spec.template_at(period=0)
+
+
+def test_constant_continuation_schema_preserves_its_template():
+    """A producer with one schema shares that same object at every date."""
+    template = _template()
+    spec = ContinuationSpec(template=template, artifact_key=EGM_CONTINUATION)
+    assert spec.template_at(period=0) is template
+    assert spec.template_at(period=2) is template
+
+
+def test_period_continuation_schema_requires_its_declared_artifact_key():
+    """A dated payload cannot change the artifact's represented object."""
+    declared = ArtifactKey(type_id="example_solver.participation", schema_version=1)
+    with pytest.raises(ValueError, match="period 1"):
+        ContinuationSpec(
+            template=_template(),
+            artifact_key=EGM_CONTINUATION,
+            templates_by_period={
+                1: _WrongKeyContinuation(artifact_key=declared),
+            },
+        )

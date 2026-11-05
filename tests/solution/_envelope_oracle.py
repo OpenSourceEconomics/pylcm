@@ -1,6 +1,6 @@
 """Branch-aware exact upper-envelope oracle for the EGM envelope backends.
 
-An independent host-side reference for FUES/RFC/MSS/LTM. Given discrete-choice
+An independent host-side reference for FUES/RFC/LTM. Given discrete-choice
 candidate branches, it computes the *exact* pointwise upper envelope of their
 piecewise-linear interpolants and the winning branch's policy. It makes no
 concavity, monotonicity, or scan-window assumption.

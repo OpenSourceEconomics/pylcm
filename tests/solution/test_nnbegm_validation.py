@@ -24,7 +24,13 @@ from _lcm.solution.nnbegm import (
     _fail_if_the_solve_grid_cannot_reconstruct_a_candidate,
 )
 from _lcm.typing import ArtifactPayload
-from lcm import AgeGrid, LinSpacedGrid, Model
+from lcm import (
+    AgeGrid,
+    ConsumptionSavingsRegime,
+    LinSpacedGrid,
+    Model,
+    categorical,
+)
 from lcm.consumption_savings_regime import (
     LiquidMargin,
     NestedConsumptionSavingsRegime,
@@ -38,8 +44,12 @@ from lcm.exceptions import (
 )
 from lcm.regime import Regime
 from lcm.solver_api import SIMULATION_POLICY
-from lcm.solvers import AdaptiveOuterMesh, FiniteOuterGrid
-from lcm.typing import ContinuousAction, ContinuousState, FloatND
+from lcm.solvers import (
+    DCEGM,
+    AdaptiveOuterMesh,
+    FiniteOuterGrid,
+)
+from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
 from tests.test_models import n_nbegm_toy
 
@@ -678,3 +688,95 @@ def test_no_route_returns_a_replay_policy_for_an_uninvertible_map(
         _UNSUPPORTED_ROUTES[route](model)
 
     assert constructed == []
+
+
+def _young_resources(wealth: ContinuousState) -> FloatND:
+    return wealth + n_nbegm_toy.LABOUR_INCOME
+
+
+def _keep_illiquid(illiquid: ContinuousState) -> ContinuousState:
+    return illiquid
+
+
+@categorical(ordered=False)
+class _ParentRegimeId:
+    young: ScalarInt
+    alive: ScalarInt
+    dead: ScalarInt
+
+
+def _dcegm_parent_of_finite_nnbegm_child() -> Model:
+    """A scalar DCEGM `young` regime whose successor `alive` is finite NNBEGM."""
+    young = ConsumptionSavingsRegime(
+        states={
+            "wealth": n_nbegm_toy.WEALTH_GRID,
+            "illiquid": n_nbegm_toy.ILLIQUID_GRID,
+        },
+        actions={"consumption": n_nbegm_toy.CONSUMPTION_GRID},
+        state_transitions={
+            "wealth": n_nbegm_toy.next_wealth,
+            "illiquid": _keep_illiquid,
+        },
+        functions={
+            "utility": n_nbegm_toy.utility,
+            "inverse_marginal_utility": n_nbegm_toy.inverse_marginal_utility,
+            "resources": _young_resources,
+            "liquid_savings": n_nbegm_toy.liquid_savings,
+        },
+        liquid=LiquidMargin(
+            state="wealth",
+            action="consumption",
+            resources="resources",
+            post_decision_state="liquid_savings",
+        ),
+        solver=DCEGM(savings_grid=n_nbegm_toy.SAVINGS_GRID),
+    )
+    dead = Regime(
+        states={
+            "wealth": n_nbegm_toy.WEALTH_GRID,
+            "illiquid": n_nbegm_toy.ILLIQUID_GRID,
+        },
+        functions={"utility": n_nbegm_toy.terminal_utility},
+    )
+    return Model(
+        regimes={"young": young, "alive": _VALID, "dead": dead},
+        edges={"young": {"alive": 15}, "alive": {"dead": 20}},
+        regime_id_class=_ParentRegimeId,
+        ages=AgeGrid(exact_values=(15, 20, 25)),
+        initial_nodes={15: "young"},
+    )
+
+
+@pytest.mark.parametrize(
+    ("build", "parent", "child", "advice"),
+    [
+        pytest.param(
+            _dcegm_parent_of_finite_nnbegm_child,
+            "young",
+            "alive",
+            r"Solve 'young' with NBEGM or GridSearch instead, or declare it as a "
+            r"NestedConsumptionSavingsRegime solved with NNBEGM\.",
+            id="ordinary-child",
+        ),
+    ],
+)
+def test_a_dcegm_parent_of_a_finite_nnbegm_child_is_refused_at_model_build(
+    *, build: Callable[[], Model], parent: str, child: str, advice: str
+) -> None:
+    """A DCEGM regime may not precede a regime solved by finite NNBEGM.
+
+    Simulating the DCEGM parent would evaluate actions that land outside the
+    child's solved domain, so `Model(...)` refuses the pairing before any solve
+    and names what to use instead.
+    """
+    with pytest.raises(
+        ModelInitializationError,
+        match=(
+            rf"(?s)Regime '{parent}' is solved with DCEGM and its successor regime "
+            rf"'{child}' is solved with NNBEGM over a FiniteOuterGrid\. This "
+            rf"combination is not supported: simulating '{parent}' would evaluate "
+            rf"actions whose next-period states lie outside the domain '{child}' was "
+            rf"solved on\..*{advice}"
+        ),
+    ):
+        build()

@@ -38,7 +38,7 @@ from lcm import (
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.exceptions import ModelInitializationError
 from lcm.regime import Regime as UserRegime
-from lcm.solvers import DCEGM, GridSearch
+from lcm.solvers import DCEGM, GridSearch, RFCEnvelope
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -217,6 +217,7 @@ def _ages() -> AgeGrid:
 DCEGM_SOLVER = DCEGM(
     savings_grid=SAVINGS_GRID,
     n_constrained_points=64,
+    envelope=RFCEnvelope(),
 )
 
 
@@ -257,7 +258,19 @@ def _assert_working_life_V_matches(
 def _survival_prob_model(solver: str) -> Model:
     """Self-targeting regime whose stay probability reads wealth smoothly."""
     is_dcegm = solver == "dcegm"
-    regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
+    regime_type = (
+        functools.partial(
+            ConsumptionSavingsRegime,
+            liquid=LiquidMargin(
+                state="wealth",
+                action="consumption",
+                resources="wealth",
+                post_decision_state="savings",
+            ),
+        )
+        if is_dcegm
+        else UserRegime
+    )
     working = regime_type(
         actions={"consumption": CONSUMPTION_GRID},
         states={"wealth": WEALTH_GRID},
@@ -267,18 +280,6 @@ def _survival_prob_model(solver: str) -> Model:
         constraints={} if is_dcegm else {"budget_constraint": budget_constraint},
         functions={**(_dcegm_functions() if is_dcegm else {}), "utility": utility},
         solver=DCEGM_SOLVER if is_dcegm else GridSearch(),
-        **(
-            {
-                "liquid": LiquidMargin(
-                    state="wealth",
-                    action="consumption",
-                    resources="wealth",
-                    post_decision_state="savings",
-                )
-            }
-            if is_dcegm
-            else {}
-        ),
     )
     return Model(
         regimes={"working_life": working, "dead": dead},
@@ -331,7 +332,19 @@ def test_smoothstep_survival_probability_matches_brute_force():
 def _markov_health_model(solver: str) -> Model:
     """Markov health weights reading wealth through a smoothstep."""
     is_dcegm = solver == "dcegm"
-    regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
+    regime_type = (
+        functools.partial(
+            ConsumptionSavingsRegime,
+            liquid=LiquidMargin(
+                state="wealth",
+                action="consumption",
+                resources="wealth",
+                post_decision_state="savings",
+            ),
+        )
+        if is_dcegm
+        else UserRegime
+    )
     working = regime_type(
         actions={"consumption": CONSUMPTION_GRID},
         states={"wealth": WEALTH_GRID, "health": DiscreteGrid(category_class=Health)},
@@ -345,18 +358,6 @@ def _markov_health_model(solver: str) -> Model:
             "utility": utility_with_health,
         },
         solver=DCEGM_SOLVER if is_dcegm else GridSearch(),
-        **(
-            {
-                "liquid": LiquidMargin(
-                    state="wealth",
-                    action="consumption",
-                    resources="wealth",
-                    post_decision_state="savings",
-                )
-            }
-            if is_dcegm
-            else {}
-        ),
     )
     return Model(
         regimes={"working_life": working, "dead": dead},
@@ -410,7 +411,19 @@ def test_markov_weights_reading_wealth_match_brute_force():
 def _passive_skill_model(solver: str) -> Model:
     """Passive skill state whose law reads wealth through a smoothstep."""
     is_dcegm = solver == "dcegm"
-    regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
+    regime_type = (
+        functools.partial(
+            ConsumptionSavingsRegime,
+            liquid=LiquidMargin(
+                state="wealth",
+                action="consumption",
+                resources="wealth",
+                post_decision_state="savings",
+            ),
+        )
+        if is_dcegm
+        else UserRegime
+    )
     working = regime_type(
         actions={"consumption": CONSUMPTION_GRID},
         states={"wealth": WEALTH_GRID, "skill": SKILL_GRID},
@@ -424,18 +437,6 @@ def _passive_skill_model(solver: str) -> Model:
             "utility": utility_with_skill,
         },
         solver=DCEGM_SOLVER if is_dcegm else GridSearch(),
-        **(
-            {
-                "liquid": LiquidMargin(
-                    state="wealth",
-                    action="consumption",
-                    resources="wealth",
-                    post_decision_state="savings",
-                )
-            }
-            if is_dcegm
-            else {}
-        ),
     )
     return Model(
         regimes={"working_life": working, "dead": dead},

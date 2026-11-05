@@ -183,13 +183,17 @@ def test_flat_lower_corner_keeps_its_selected_nonzero_saving_node() -> None:
 
 @pytest.mark.parametrize("streamed", [False, True])
 def test_extra_target_keeps_its_own_interval_saving(*, streamed: bool) -> None:
-    """A winning extra target carries saving 7/8 from the query's interval."""
+    """A winning extra target carries saving 7/8 from the query's interval.
+
+    The extra target sits 0.1 above the smooth continuation (a cliff jump), so it
+    beats the interior Euler saving 5/6 that the smooth continuation alone yields.
+    """
     liquid = jnp.asarray([0.75, 1.5, 3.0])
     savings = jnp.asarray([0.5, 1.0, 1.5])
     extra = jnp.asarray([[0.75], [0.875]])
     value = jnp.broadcast_to(jnp.log(3.0 * savings + 4.0), (2, 3))
     marginal = jnp.broadcast_to(3.0 / (3.0 * savings + 4.0), (2, 3))
-    extra_value = jnp.log(3.0 * extra + 4.0)
+    extra_value = jnp.log(3.0 * extra + 4.0) + 0.1
 
     def read(indices: IntND) -> tuple[FloatND, FloatND, FloatND]:
         return (
@@ -220,7 +224,7 @@ def test_extra_target_keeps_its_own_interval_saving(*, streamed: bool) -> None:
     legacy = cast("Callable[..., _OldOwned]", function)(**arguments, return_owner=True)
     for actual, expected in zip(
         (legacy[0][-1], legacy[1][-1], legacy[2][-1]),
-        (math.log(901.0 / 64.0), 8.0 / 17.0, 17.0 / 8.0),
+        (math.log(901.0 / 64.0) + 0.1, 8.0 / 17.0, 17.0 / 8.0),
         strict=True,
     ):
         np.testing.assert_array_almost_equal(
@@ -233,6 +237,47 @@ def test_extra_target_keeps_its_own_interval_saving(*, streamed: bool) -> None:
     data = _same_owned_channels(result=result, legacy=legacy)
     np.testing.assert_array_equal(data.savings[-1], extra[1, 0])
     np.testing.assert_array_equal(data.owner_id[-1], 1)
+
+
+def test_smooth_continuation_finds_the_interior_saving_between_nodes() -> None:
+    """Off the savings nodes, cash 3 saves exactly 5/6 and consumes 13/6.
+
+    With `log(c) + log(3s + 4)` the first-order condition `3 - s = (3s + 4) / 3`
+    puts the optimum at `s = 5/6`, between the nodes 0.5 and 1. Consumption on
+    the Euler path is affine in the saving, so the bracket's interpolation lands
+    on it exactly. The value reads the continuation's cubic Hermite interpolant
+    there, so it agrees with `log(169/12)` to within that interpolant's error
+    bound `h^4 / 384 * max|V''''|` on the bracket.
+    """
+    liquid = jnp.asarray([0.75, 1.5, 3.0])
+    savings = jnp.asarray([0.5, 1.0, 1.5])
+    arguments = {
+        "liquid_grid": liquid,
+        "savings_grid": savings,
+        "cont_value": jnp.log(3.0 * savings + 4.0)[None, :],
+        "cont_marginal": (3.0 / (3.0 * savings + 4.0))[None, :],
+        "discount_factor": jnp.asarray(1.0),
+        "preferences": crra_preferences(crra=1.0),
+        "coh_slopes": jnp.asarray([1.0]),
+        "coh_intercepts": jnp.asarray([0.0]),
+        "breakpoints": jnp.asarray([], dtype=liquid.dtype),
+        "arithmetic": "certified",
+    }
+    function = nbegm_step.nbegm_per_interval_continuation_step_savings
+    result = cast("Callable[..., _OwnedQueryStep]", function)(
+        **arguments, retain_query=True, return_owner=True
+    )
+
+    for actual, expected in zip(
+        (result.query_data.savings[-1], result.policy[-1], result.marginal[-1]),
+        (5.0 / 6.0, 13.0 / 6.0, 6.0 / 13.0),
+        strict=True,
+    ):
+        np.testing.assert_array_almost_equal(
+            actual, expected, decimal=DECIMAL_PRECISION
+        )
+    hermite_bound = 0.5**4 / 384.0 * 486.0 / 5.5**4
+    assert abs(float(result.value[-1]) - math.log(169.0 / 12.0)) <= hermite_bound
 
 
 def test_partial_interval_block_keeps_every_original_corner_slot() -> None:

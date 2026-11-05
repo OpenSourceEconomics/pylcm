@@ -58,6 +58,7 @@ from _lcm.persistence.solution import (
 )
 from _lcm.simulation.chunk_offload import chunk_host_device
 from _lcm.simulation.programs import forward_regimes_by_period
+from _lcm.simulation.random_address import RANDOM_ADDRESS_VERSION
 from _lcm.simulation.subject_devices import simulation_subject_devices
 from _lcm.simulation.subject_groups import group_codes, group_sizes
 from _lcm.solution.artifacts import fingerprint_flat_params
@@ -241,9 +242,15 @@ def plan_component_jobs(
         job_rows_sha256 = None
         code_counts = None
     else:
-        canonical, flat_params = model._canonical_feasibility_inputs(  # noqa: SLF001
+        canonical, flat_params, supplied_frames = model._canonical_feasibility_inputs(  # noqa: SLF001
             initial_conditions=initial_conditions, params=params
         )
+        if supplied_frames.entries:
+            raise ExecutionPlanningError(
+                "Component job populations require ordinary state columns; "
+                "tagged current IID inputs are not represented by their population "
+                "digest and worker transport."
+            )
         job_rows_sha256, code_counts = _planned_rows(
             model=model,
             jobs=jobs,
@@ -1315,6 +1322,12 @@ def _collected_simulation(
             for regime_name, regime in regimes.items()
             if regime.simulation.replay_route.consumer_route == "nnbegm_nested"
         ),
+        randomness={
+            "address_version": RANDOM_ADDRESS_VERSION,
+            "prng_impl": "threefry2x32",
+            "taste_prng_impl": "threefry2x32",
+            "precision": cast("str", plan.identity["precision"]),
+        },
     )
     result._solution = solution  # noqa: SLF001
     return result

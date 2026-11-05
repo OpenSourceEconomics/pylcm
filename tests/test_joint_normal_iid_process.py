@@ -32,6 +32,15 @@ def _utility(
     return x * y + x * x
 
 
+def _utility_with_unrelated(
+    *,
+    x: lcm.typing.ContinuousState,
+    y: lcm.typing.ContinuousState,
+    unrelated: lcm.typing.ContinuousState,
+) -> lcm.typing.FloatND:
+    return _utility(x=x, y=y) + unrelated
+
+
 def _manual_utility(
     *, z_1: lcm.typing.ContinuousState, z_2: lcm.typing.ContinuousState
 ) -> lcm.typing.FloatND:
@@ -62,14 +71,51 @@ def test_joint_normal_process_is_public() -> None:
     assert hasattr(lcm, "JointNormalIIDProcess")
 
 
+def test_named_joint_draws_survive_group_rename_and_unrelated_shock_insertion() -> None:
+    """Public draws keep each declared scalar name across lowering edits."""
+    panels = []
+    for group_name, extra_shock in (("wages", False), ("renamed", True)):
+        states = {}
+        if extra_shock:
+            states["unrelated"] = lcm.NormalIIDProcess(
+                n_points=2, gauss_hermite=True, mu=0.0, sigma=1.0
+            )
+        states[group_name] = JointNormalIIDProcess(
+            states=("x", "y"),
+            n_points=2,
+            gauss_hermite=True,
+            mean=(0.0, 0.0),
+            cov=((1.0, 0.4), (0.4, 2.0)),
+        )
+        utility = _utility_with_unrelated if extra_shock else _utility
+        model = _model(lcm.Regime(states=states, functions={"utility": utility}))
+        initial = {
+            "regime_id": jnp.zeros(4, dtype=jnp.int32),
+            "period": jnp.zeros(4, dtype=jnp.int32),
+            "x": jnp.zeros(4),
+            "y": jnp.zeros(4),
+        }
+        if extra_shock:
+            initial["unrelated"] = jnp.zeros(4)
+        panels.append(
+            model.simulate(
+                params={}, initial_conditions=initial, seed=521, log_level="off"
+            ).to_dataframe()
+        )
+    pd.testing.assert_frame_equal(
+        panels[0][["period", "x", "y"]],
+        panels[1][["period", "x", "y"]],
+        check_exact=True,
+    )
+
+
 @pytest.mark.parametrize("runtime", [False, True])
-@pytest.mark.parametrize("fold", [False, True])
 @pytest.mark.parametrize(
     "cov",
     [_FULL_RANK_COV, ((0.0, 0.0), (0.0, 2.0)), ((1.0, 2.0), (2.0, 4.0))],
 )
 def test_physical_initial_state_names_and_bounds(
-    *, runtime: bool, fold: bool, cov: tuple[tuple[float, float], tuple[float, float]]
+    *, runtime: bool, cov: tuple[tuple[float, float], tuple[float, float]]
 ) -> None:
     """Recipe introspection names physical shocks and their marginal extents."""
     process = JointNormalIIDProcess(
@@ -78,7 +124,6 @@ def test_physical_initial_state_names_and_bounds(
         gauss_hermite=True,
         mean=None if runtime else (1.0, -2.0),
         cov=None if runtime else cov,
-        fold=fold,
     )
     model = _model(
         lcm.Regime(states={"joint": process}, functions={"utility": _utility})
@@ -220,12 +265,10 @@ def test_joint_normal_runtime_quadrature_and_draws(
     np.testing.assert_allclose(np.cov(np.asarray(draws).T), cov, atol=0.04, rtol=0.04)
 
 
-@pytest.mark.parametrize("fold", [False, True])
 @pytest.mark.parametrize("runtime", [False, True])
 def test_joint_normal_native_values_and_named_simulation(
     *,
     joint_process_class: type[JointNormalIIDProcess],
-    fold: bool,
     runtime: bool,
     tmp_path: Path,
 ) -> None:
@@ -237,7 +280,6 @@ def test_joint_normal_native_values_and_named_simulation(
         gauss_hermite=True,
         mean=None if runtime else (0.0, 0.0),
         cov=None if runtime else cov,
-        fold=fold,
     )
     model = _model(
         lcm.Regime(states={"wages": process}, functions={"utility": _utility})
@@ -246,10 +288,10 @@ def test_joint_normal_native_values_and_named_simulation(
         lcm.Regime(
             states={
                 "z_1": lcm.NormalIIDProcess(
-                    n_points=3, gauss_hermite=True, mu=0.0, sigma=1.0, fold=fold
+                    n_points=3, gauss_hermite=True, mu=0.0, sigma=1.0
                 ),
                 "z_2": lcm.NormalIIDProcess(
-                    n_points=5, gauss_hermite=True, mu=0.0, sigma=1.0, fold=fold
+                    n_points=5, gauss_hermite=True, mu=0.0, sigma=1.0
                 ),
             },
             functions={"utility": _manual_utility},
@@ -320,7 +362,7 @@ def test_joint_normal_native_values_and_named_simulation(
     )
     next_draws = frame.loc[frame["period"] == 1, ["x", "y"]].to_numpy()
     np.testing.assert_allclose(np.cov(next_draws.T), cov, atol=0.06, rtol=0.06)
-    if not fold and not runtime:
+    if not runtime:
         result.save(directory=tmp_path / "simulation")
         reloaded = lcm.SimulationResult.load(directory=tmp_path / "simulation")
         pd.testing.assert_frame_equal(frame, reloaded.to_dataframe())
@@ -497,13 +539,12 @@ def test_joint_normal_rejects_malformed_physical_inputs(malformed: str) -> None:
 
 
 @pytest.mark.parametrize("runtime", [False, True])
-@pytest.mark.parametrize("fold", [False, True])
 @pytest.mark.parametrize(
     "cov",
     [_FULL_RANK_COV, ((0.0, 0.0), (0.0, 2.0)), ((1.0, 2.0), (2.0, 4.0))],
 )
 def test_joint_normal_validate_transitions_preserves_named_runtime_law(
-    *, runtime: bool, fold: bool, cov: tuple[tuple[float, float], tuple[float, float]]
+    *, runtime: bool, cov: tuple[tuple[float, float], tuple[float, float]]
 ) -> None:
     """Public preflight shares fixed/runtime joint-law validation with native solve."""
     process = JointNormalIIDProcess(
@@ -512,7 +553,6 @@ def test_joint_normal_validate_transitions_preserves_named_runtime_law(
         gauss_hermite=True,
         mean=None if runtime else (1.0, -2.0),
         cov=None if runtime else cov,
-        fold=fold,
     )
     model = _model(
         lcm.Regime(states={"wages": process}, functions={"utility": _utility})
@@ -569,15 +609,13 @@ def _age_profile_joint_utility(
     return x * y + x * x + wage
 
 
-@pytest.mark.parametrize("fold", [False, True])
-def test_joint_normal_age_profile_alignment_matches_manual(*, fold: bool) -> None:
+def test_joint_normal_age_profile_alignment_matches_manual() -> None:
     process = JointNormalIIDProcess(
         states=("x", "y"),
         n_points=3,
         gauss_hermite=True,
         mean=(0.0, 0.0),
         cov=None,
-        fold=fold,
     )
     regime = lcm.Regime(
         states={"joint": process}, functions={"utility": _age_profile_joint_utility}
@@ -755,15 +793,13 @@ def _joint_carried_terminal_utility(
     return x * y + x * x + lag
 
 
-@pytest.mark.parametrize("fold", [False, True])
-def test_joint_normal_keeps_an_ordinary_state_carried_to_reader(*, fold: bool) -> None:
+def test_joint_normal_keeps_an_ordinary_state_carried_to_reader() -> None:
     process = JointNormalIIDProcess(
         states=("x", "y"),
         n_points=3,
         gauss_hermite=True,
         mean=(0.0, 0.0),
         cov=None,
-        fold=fold,
     )
     lag_grid = lcm.LinSpacedGrid(start=0.0, stop=2.0, n_points=3)
     model = lcm.Model(

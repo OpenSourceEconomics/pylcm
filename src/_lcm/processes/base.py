@@ -11,7 +11,7 @@ from abc import abstractmethod
 from collections.abc import Mapping
 from dataclasses import dataclass, field, fields, replace
 from types import MappingProxyType
-from typing import ClassVar, Literal
+from typing import ClassVar, Literal, Self
 
 import jax
 import jax.numpy as jnp
@@ -121,6 +121,12 @@ def _gauss_hermite_normal(
     return nodes, weights
 
 
+SIMULATE_DRAWS_RENAMED = (
+    "The `simulate_draws=` argument was renamed. Pass `simulated_draws=` instead, "
+    'with the same values "continuous" or "nodes".'
+)
+
+
 @dataclass(frozen=True, kw_only=True)
 class _ContinuousStochasticProcess(ContinuousGrid):
     """Base class for discretized continuous stochastic processes.
@@ -130,10 +136,19 @@ class _ContinuousStochasticProcess(ContinuousGrid):
 
     """
 
+    def __new__(
+        cls,
+        *args: object,  # noqa: ARG004, PAN001 - refuses removed keywords first
+        **kwargs: object,  # noqa: PAN001 - refuses removed keywords before any check
+    ) -> Self:
+        if "simulate_draws" in kwargs:
+            raise TypeError(SIMULATE_DRAWS_RENAMED)
+        return super().__new__(cls)
+
     n_points: int
     """The number of points for the discretization of the process."""
 
-    simulate_draws: Literal["continuous", "nodes"] = "continuous"
+    simulated_draws: Literal["continuous", "nodes"] = "continuous"
     """Draw from the continuous law, or sample the solve nodes with their weights."""
 
     state_conditioned: StateConditioned | None = field(init=False, default=None)
@@ -152,7 +167,7 @@ class _ContinuousStochasticProcess(ContinuousGrid):
     """
 
     _NON_PARAM_FIELDS: ClassVar[frozenset[str]] = frozenset(
-        {"n_points", "state_conditioned", "simulate_draws"}
+        {"n_points", "state_conditioned", "simulated_draws"}
     )
     """Dataclass field names that are not distribution parameters.
 
@@ -166,19 +181,19 @@ class _ContinuousStochasticProcess(ContinuousGrid):
         return type(self).__name__
 
     def __post_init__(self) -> None:
-        if self.simulate_draws not in {"continuous", "nodes"}:
-            msg = "simulate_draws must be 'continuous' or 'nodes'."
+        if self.simulated_draws not in {"continuous", "nodes"}:
+            msg = "simulated_draws must be 'continuous' or 'nodes'."
             raise GridInitializationError(msg)
         self._resolve_conditioned_sigma()
 
     def has_same_law_as(self, other: _ContinuousStochasticProcess) -> bool:
         """Return whether `other` declares this law, whatever its draw mode.
 
-        `simulate_draws` only chooses how a simulation realizes the law, so two
+        `simulated_draws` only chooses how a simulation realizes the law, so two
         declarations differing in it alone describe one process.
         """
-        return replace(self, simulate_draws="continuous") == replace(
-            other, simulate_draws="continuous"
+        return replace(self, simulated_draws="continuous") == replace(
+            other, simulated_draws="continuous"
         )
 
     def _resolve_conditioned_sigma(self) -> None:

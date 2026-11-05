@@ -49,7 +49,11 @@ def _check_probes(*, model: Model, params: UserParams) -> None:
 def test_all_jump_schedule_with_a_non_unit_liquid_slope_is_refused() -> None:
     """A jump-only schedule over a non-additive budget is refused."""
     model = toy.build_model(
-        variant="nbegm", non_additive=True, n_liquid=40, n_savings=40
+        variant="nbegm",
+        probe_schedule="every_solve",
+        non_additive=True,
+        n_liquid=40,
+        n_savings=40,
     )
 
     with pytest.raises(RegimeInitializationError, match=r"slope|additive"):
@@ -66,6 +70,7 @@ def test_all_jump_schedule_checks_unit_slope_inside_each_declared_interval(
     try:
         model = toy.build_model(
             variant="nbegm",
+            probe_schedule="every_solve",
             non_additive_above_cliff=True,
             n_liquid=5,
             liquid_max=20.0,
@@ -87,7 +92,13 @@ def test_schedule_over_a_nonlinear_budget_is_refused() -> None:
     The per-interval affine segment is recovered from the budget's slope and value
     at one interior point, exact only for an affine budget; a curved budget is
     mis-tangented everywhere else, so the solve refuses it."""
-    model = toy.build_model(variant="nbegm", nonlinear=True, n_liquid=40, n_savings=40)
+    model = toy.build_model(
+        variant="nbegm",
+        probe_schedule="every_solve",
+        nonlinear=True,
+        n_liquid=40,
+        n_savings=40,
+    )
 
     with pytest.raises(RegimeInitializationError, match=r"affine|second derivative"):
         _check_probes(model=model, params=toy.build_params(nonlinear=True))
@@ -97,6 +108,7 @@ def test_affinity_check_covers_the_budget_s_upper_grid_region() -> None:
     """Curvature confined above ten is still rejected on a grid reaching twenty."""
     model = toy.build_model(
         variant="nbegm",
+        probe_schedule="every_solve",
         nonlinear_above_ten=True,
         n_liquid=40,
         liquid_max=20.0,
@@ -113,7 +125,11 @@ def test_affinity_check_covers_the_budget_s_upper_grid_region() -> None:
 def test_all_jump_schedule_with_a_unit_liquid_slope_builds() -> None:
     """The additive jump-only schedule passes the deferred parameter check."""
     model = toy.build_model(
-        variant="nbegm", non_additive=False, n_liquid=40, n_savings=40
+        variant="nbegm",
+        probe_schedule="every_solve",
+        non_additive=False,
+        n_liquid=40,
+        n_savings=40,
     )
     _check_probes(model=model, params=toy.build_params())
 

@@ -571,21 +571,20 @@ class NamespaceBoundary:
 
 _BOUNDARY_CASES = tuple(
     pytest.param(
-        (group, physical_names, axis, fold),
-        id=f"{group}-axis{axis}-{'folded' if fold else 'unfolded'}",
+        (group, physical_names, axis),
+        id=f"{group}-axis{axis}",
     )
     for group, physical_names in (
         ("wages", ("x", "y")),
         ("labor_innovations", ("physical_left", "physical_right")),
     )
     for axis in (0, 1)
-    for fold in (False, True)
 )
 
 
 @pytest.fixture(scope="module", params=_BOUNDARY_CASES)
 def boundary(request: pytest.FixtureRequest) -> NamespaceBoundary:
-    group, physical_names, axis, fold = request.param
+    group, physical_names, axis = request.param
     ordinary_name = f"{group}_normal_{axis}"
     process = lcm.JointNormalIIDProcess(
         states=physical_names,
@@ -593,7 +592,6 @@ def boundary(request: pytest.FixtureRequest) -> NamespaceBoundary:
         gauss_hermite=True,
         mean=(1.0, -2.0),
         cov=((1.0, 0.5), (0.5, 2.0)),
-        fold=fold,
     )
     model = lcm.Model(
         regimes={

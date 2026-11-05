@@ -182,7 +182,15 @@ def _model(
             functions={"utility": _dead_utility},
         )
     )
-    return Model(
+    return (
+        partial(
+            Model,
+            states={"shock": DiscreteGrid(Shock)},
+            state_transitions={"shock": StochasticTransition(func=_next_shock_probs)},
+        )
+        if declared_at == "model"
+        else Model
+    )(
         regimes={"alive": living(), "other": living(), "dead": dead},
         regime_id_class=RegimeId,
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
@@ -206,16 +214,6 @@ def _model(
             for source in ("alive", "other")
         },
         initial_nodes=((0, "alive"),),
-        **(
-            {
-                "states": {"shock": DiscreteGrid(Shock)},
-                "state_transitions": {
-                    "shock": StochasticTransition(func=_next_shock_probs)
-                },
-            }
-            if declared_at == "model"
-            else {}
-        ),
     )
 
 

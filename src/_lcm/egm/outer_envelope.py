@@ -25,9 +25,10 @@ the carry retains all candidates and the maximum is taken at the read:
   germ, publishing the winner's economic marginal.
 
 The production read path (`continuation._collapse_stacked_candidates`) is the
-authoritative implementation and follows the same right-continuous tie
-convention; `outer_envelope_at_query` is a self-contained reference for the
-query-side max, not a byte-for-byte oracle of the production aggregation.
+authoritative implementation; it takes the value `argmax` with the lowest
+candidate index on exact ties. `outer_envelope_at_query` and `right_germ_winner`
+are an ex-post reference for the query-side max with the exact germ tie rule,
+not a byte-for-byte oracle of the production aggregation.
 """
 
 import functools

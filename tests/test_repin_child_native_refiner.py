@@ -10,9 +10,11 @@ from tests.candidate_certificate.child_native_selection import (
 
 _ROOT = Path(__file__).parents[1]
 _SOURCE = "src/_lcm/egm/upper_envelope/segment_envelope.py"
-_EXPECTED_RUNTIME_SHA256 = (
-    "f38c9eec39f60b607f5c98bfee1ac196d952b84baa85ef2b35ec6d31d6c4cbc3"
-)
+# The one pin `repin_corridors.py` maintains, so a reviewed re-anchor of the
+# certified callable reaches this test too.
+_EXPECTED_RUNTIME_SHA256 = direct_flow._CORRIDOR_PINS[_SOURCE][1][
+    "refine_envelope_exact"
+]
 
 
 def test_repin_native_composition_uses_the_strict_runtime_selector() -> None:

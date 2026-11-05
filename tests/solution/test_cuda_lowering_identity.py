@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from _lcm.solution import cuda_lowering_identity
+from lcm.exceptions import ExecutionPlanningError
 
 
 def _install_fake_distribution(*, site: Path, name: str, version: str) -> Path:
@@ -43,3 +44,18 @@ def test_capture_cuda_packages_hashes_an_unchanged_inventory_once(
     first = cuda_lowering_identity._capture_cuda_packages()
     second = cuda_lowering_identity._capture_cuda_packages()
     assert (len(hashed), first == second) == (2, True)
+
+
+def test_cuda_runtime_identity_rejects_a_present_but_unloaded_native_library(
+    *, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """File presence cannot substitute for the process's loaded native identity."""
+    (tmp_path / "libcertified_affine_ffi_cuda.so").touch()
+    monkeypatch.setattr(
+        cuda_lowering_identity, "_capture_cuda_packages", lambda: ({}, set())
+    )
+    monkeypatch.setattr(cuda_lowering_identity, "_loaded_libraries", frozenset)
+    with pytest.raises(
+        ExecutionPlanningError, match="native CUDA library is not loaded"
+    ):
+        cuda_lowering_identity._capture_cuda_runtime(native_directory=tmp_path)

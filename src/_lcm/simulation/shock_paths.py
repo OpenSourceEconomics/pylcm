@@ -46,7 +46,7 @@ def resolve_shock_paths(  # noqa: C901, PLR0912
     paths: Mapping[StateName, jax.Array | np.ndarray] | None,
     initial: UserInitialConditions,
     regimes: Mapping[RegimeName, Regime],
-    draw_only: Mapping[RegimeName, Mapping[StateName, _IIDProcess]],
+    post_decision_shocks: Mapping[RegimeName, Mapping[StateName, _IIDProcess]],
     params: FlatParams,
     ages: TimeAxis,
     regime_names_to_ids: RegimeNamesToIds,
@@ -95,7 +95,7 @@ def resolve_shock_paths(  # noqa: C901, PLR0912
     seeded = dict(initial)
     for name, path in paths.items():
         declarations = _shock_declarations(
-            name=name, regimes=regimes, draw_only=draw_only
+            name=name, regimes=regimes, post_decision_shocks=post_decision_shocks
         )
         if not declarations:
             raise InvalidSimulationInputError(
@@ -354,7 +354,7 @@ def _shock_declarations(
     *,
     name: StateName,
     regimes: Mapping[RegimeName, Regime],
-    draw_only: Mapping[RegimeName, Mapping[StateName, _IIDProcess]],
+    post_decision_shocks: Mapping[RegimeName, Mapping[StateName, _IIDProcess]],
 ) -> list[tuple[RegimeName, Grid, tuple[int, ...], int]]:
     """List `(regime, support, periods, lag)` for every regime reading `name`.
 
@@ -371,7 +371,7 @@ def _shock_declarations(
             and _draws_state(name=name, regime_name=regime_name, regimes=regimes)
         ):
             declarations.append((regime_name, grid, simulation_periods, 0))
-        local_grid = draw_only.get(regime_name, {}).get(name, grid)
+        local_grid = post_decision_shocks.get(regime_name, {}).get(name, grid)
         local_periods = tuple(
             period + 1
             for period in simulation_periods
@@ -472,9 +472,16 @@ def _subject_occupancy(
             for name in current:
                 occupancy[name][rows, period] = True
             if period + 1 < n_periods:
-                current = {
+                actors = current | {
                     target
                     for source in current
+                    if (plan := regimes[source].simulation.exit_queries.get(period))
+                    is not None
+                    for target in plan.final_actors
+                }
+                current = {
+                    target
+                    for source in actors
                     if period in regimes[source].simulation.feasibility_pools_by_period
                     for target in regimes[source].simulation.reachability.targets(
                         period=period, source=source

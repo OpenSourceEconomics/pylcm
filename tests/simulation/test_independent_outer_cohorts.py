@@ -530,15 +530,16 @@ def test_changed_padded_population_preserves_actual_stochastic_and_taste_keys(
             }
             carries = []
             for start in range(0, padded, extent):
-                carry, named = ordinary(
+                named = ordinary(
                     key=key,
-                    start=np.int32(start),
+                    start=np.asarray([0, start], dtype=np.uint32),
                     names=("state", "next_regime"),
                     n_initial_states=padded,
                     original_n_subjects=original_count,
                     partitionable=partitionable,
                     width=extent,
                 )
+                carry = key
                 carries.append(np.asarray(jax.random.key_data(carry)))
                 for name, value in named.items():
                     rows[name].append(np.asarray(jax.random.key_data(value)))

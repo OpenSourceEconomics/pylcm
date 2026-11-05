@@ -1,12 +1,11 @@
-"""A collective gated edge reads its period-`t` operands on period `t`'s axes.
+"""A collective participation reads its period-`t` operands on period `t`'s axes.
 
-A collective source declares one edge leg per stakeholder, and a collective
-target publishes a dissolution flag `D` that no singleton regime has. Both
-enlarge what one gated edge closes over: the fold interpolates every leg's own
-fallback grid and every gate reference's, and the simulate-side router
-interpolates the target's own value AND its `D` array at the realized candidate
-state. Each of those grids must be the one its regime was solved on in the
-period whose arrays are being read.
+A collective source declares one route per stakeholder, and a collective target
+has a Participating policy support that no singleton regime has. Both enlarge
+what one participation check closes over: pricing reads every route's own fallback
+grid and every participation read's, and simulation queries the target's support at
+the realized landing. Each of those grids must be the one its regime was solved
+on in the period whose arrays are being read.
 
 An `AgeSpecializedGrid` is what makes two periods distinguishable. It holds
 `n_points` fixed while the bounds move with age, so every array keeps its shape
@@ -15,12 +14,12 @@ value maps to, and through it the gate, which is a discrete branch.
 
 Two models, one per collective-only object:
 
-- `_build_gate_ref_model` puts the moving grid on a GATE REFERENCE and gives the
+- `_build_gate_ref_model` puts the moving grid on a participation read and gives the
   two stakeholders different outside options, so a wrongly-aged read moves both
   components of the source's value.
-- `_build_dissolution_model` puts it on the collective TARGET, whose `D` the gate
-  reads, so a wrongly-aged read maps the realized state onto a different node of
-  the same flag array and dissolves a household that consents.
+- `_build_dissolution_model` puts it on the collective TARGET, whose support the
+  participation reads, so a wrongly-aged read maps the realized state onto a different
+  node and dissolves a household that has a feasible action.
 """
 
 import jax.numpy as jnp
@@ -34,9 +33,10 @@ from lcm import (
     ByAge,
     CollectiveUtility,
     DiscreteGrid,
-    Gate,
     LinSpacedGrid,
     Model,
+    ParticipationCheck,
+    ParticipationRead,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
@@ -78,9 +78,9 @@ _M_BONUS = 10.0
 _INDEX_HURDLE = 3.0
 
 # The wife's participation floor in the dissolution model. Her felicity is `w`,
-# so the household's feasible set empties exactly where `w < 3`:
-# age 1's `[0, 4, 8]` gives `D = [True, False, False]`, age 2's `[0, 2, 4]`
-# gives `D = [True, True, False]`.
+# so the household's feasible set empties exactly where `w < 3`: the support is
+# `[False, True, True]` on age 1's `[0, 4, 8]` and `[False, False, True]` on age
+# 2's `[0, 2, 4]`.
 _FLOOR_F = 3.0
 
 # The couple's value at the age at which it leaves, per stakeholder. The gate is
@@ -175,14 +175,15 @@ def test_simulated_collective_gate_routes_the_couple_by_its_own_period_gate() ->
     )
 
 
-def test_collective_dissolution_gate_routes_by_its_own_period_flag() -> None:
-    """A consenting couple stays in `pair` rather than dissolving.
+def test_collective_dissolution_participation_routes_by_its_own_period_support() -> (
+    None
+):
+    """A couple with a feasible action stays in `pair` rather than dissolving.
 
-    `pair`'s flag at age 2 is `[True, True, False]` on its own `[0, 2, 4]` grid,
-    so a realized `w` of `4` is its top node and the household consents.
-    Measuring that `w` against `pair`'s age-1 grid `[0, 4, 8]` reads the SAME
-    flag array at its middle entry, `True`, and would dissolve the household
-    into the two single regimes.
+    `pair` is feasible at age 2 exactly where `w >= 3` on its own `[0, 2, 4]`
+    grid, so a realized `w` of `4` is its top node and has policy support.
+    Measuring that `w` against `pair`'s age-1 grid `[0, 4, 8]` would place it on
+    the middle node and dissolve the household into the two single regimes.
     """
     model = _build_dissolution_model()
     result = _simulate_dissolution(model)
@@ -190,13 +191,14 @@ def test_collective_dissolution_gate_routes_by_its_own_period_flag() -> None:
     np.testing.assert_array_equal(routed["regime_name"].to_numpy(), np.full(2, "pair"))
 
 
-def test_collective_dissolution_fold_reads_the_flag_at_its_own_period() -> None:
-    """Both stakeholders of an age-1 couple are worth `(2, 7)` under a `D` gate.
+def test_collective_dissolution_participation_prices_support_at_its_own_period() -> (
+    None
+):
+    """Both stakeholders of an age-1 couple are worth `(2, 7)` under a support read.
 
-    The fold reads the target's flag at its grid NODES, by exact indexing, and
-    pairs node `k` of the flag with node `k` of the target's value. Pinning the
-    folded value here is what makes the routing assertion above a statement about
-    routing alone rather than about a continuation that moved with it.
+    The source prices the same age-2 participation check that simulation settles.
+    Pinning the priced value here is what makes the routing assertion above a statement
+    about routing alone rather than about a continuation that moved with it.
     """
     model = _build_dissolution_model()
     solution = model.solve(
@@ -232,7 +234,7 @@ def test_empty_counts_use_households_and_the_periods_own_grid(
 
 
 def _build_gate_ref_model() -> Model:
-    r"""Build a couple whose gate reads an index on an age-varying grid.
+    r"""Build a couple whose participation reads an index on an age-varying grid.
 
     Topology over ages 0-3: `couple` is collective (`stakeholders=("f", "m")`),
     active at ages 0 and 1, and stays put at age 0, so it leaves for `account` at
@@ -250,10 +252,9 @@ def _build_gate_ref_model() -> Model:
     - `annuity_f` pays $100 + \text{principal}$ and `annuity_m` pays
       $200 + \text{principal}$ on `[0, 4, 8]`, so their values are
       `[100, 104, 108]` and `[200, 204, 208]`.
-    - The age-2 fold reads the index at a level equal to the balance: `0` at
-      balance `0` and `4` at balance `4`. Only the latter clears the hurdle of
-      `3`, so the gate is shut at balance `0` and open at balance `4`, giving
-      `Wbar = [[100, 200], [4, 14]]`.
+    - The age-2 participation reads the index at a level equal to the balance: `0` at
+      balance `0` and `4` at balance `4`. Only the latter clears the hurdle of `3`, so
+      the participation check is refused at balance `0` and accepted at balance `4`.
     - The couple enters at balance `4`, the top node of the account's grid, so
       its age-1 value is $(0, 0) + 0.5 \cdot (4, 14) = (2, 7)$.
 
@@ -320,9 +321,16 @@ def _build_gate_ref_model() -> Model:
                         1: {"account": leaving},
                     }
                 ),
-                gates={
-                    "account": Gate(
+                participation={
+                    "account": ParticipationCheck(
                         predicate=_index_clears_the_hurdle,
+                        reads={
+                            "index_value": ParticipationRead(
+                                kind="IntegratedFull",
+                                regime="index",
+                                projection={"level": _level_from_balance},
+                            )
+                        },
                         routes={
                             "f": StakeholderRoute(
                                 target_stakeholder="f",
@@ -339,12 +347,6 @@ def _build_gate_ref_model() -> Model:
                                 ),
                             ),
                         },
-                        references={
-                            "index_value": ProjectedRegimeValue(
-                                regime="index",
-                                projection={"level": _level_from_balance},
-                            )
-                        },
                     ),
                 },
             )
@@ -353,27 +355,23 @@ def _build_gate_ref_model() -> Model:
 
 
 def _build_dissolution_model() -> Model:
-    r"""Build a couple whose gate reads a collective target's dissolution flag.
+    r"""Build a couple whose participation reads a collective target's policy support.
 
     Topology over ages 0-3: `couple` is collective, active at ages 0 and 1, and
     leaves for the collective `pair` at age 1 only. `pair` is active at ages 1
-    and 2 and holds `w` on the age-varying grid, so its own nodes — and the nodes
-    of the flag `D` tabulated on them — move with age. `pair_terminal` closes the
-    lifecycle at zero felicity, and the two singles are the legs' fallbacks on the
-    age-invariant grid `[0, 4, 8]`.
+    and 2 and holds `w` on the age-varying grid, so its own nodes move with age.
+    `pair_terminal` closes the lifecycle at zero felicity, and the two singles are
+    the legs' fallbacks on the age-invariant grid `[0, 4, 8]`.
 
     Hand computation, $\beta = 0.5$:
 
     - `pair` pays `w` to the wife and `10 + w` to the husband, and its
       continuation is zero, so $Q_f = w$. Her participation constraint
       $Q_f \ge 3$ therefore empties the household's feasible set exactly where
-      `w < 3`: `D = [True, False, False]` on age 1's `[0, 4, 8]` and
-      `D = [True, True, False]` on age 2's `[0, 2, 4]`.
-    - `pair`'s own value is $-\infty$ in each dissolved cell and $(w, 10 + w)$
-      elsewhere, so at age 2 it is `[[-inf, -inf], [-inf, -inf], [4, 14]]`.
+      `w < 3`: the support is `[False, True, True]` on age 1's `[0, 4, 8]` and
+      `[False, False, True]` on age 2's `[0, 2, 4]`.
+    - `pair`'s own value is $(w, 10 + w)$ where it has support.
     - `single_f` pays $100 + s$ and `single_m` pays $200 + s$ on `[0, 4, 8]`.
-    - The age-2 fold's gate is `~D = [False, False, True]`, so
-      `Wbar = [[100, 200], [102, 202], [4, 14]]`.
     - The couple enters at `w = 4`, the top node of `pair`'s age-2 grid, so its
       age-1 value is $(0, 0) + 0.5 \cdot (4, 14) = (2, 7)$.
 
@@ -445,9 +443,18 @@ def _build_dissolution_model() -> Model:
                         1: {"pair": leaving},
                     }
                 ),
-                gates={
-                    "pair": Gate(
-                        predicate=_household_consents,
+                participation={
+                    "pair": ParticipationCheck(
+                        predicate=_household_has_support,
+                        reads={
+                            "pair_support": ParticipationRead(
+                                regime="pair",
+                                stakeholder="f",
+                                kind="Participating",
+                                field="support",
+                                projection={"w": _same_w},
+                            )
+                        },
                         routes={
                             "f": StakeholderRoute(
                                 target_stakeholder="f",
@@ -488,7 +495,7 @@ def _simulate_gate_ref(model: Model):
 
 
 def _simulate_dissolution(model: Model):
-    """Solve for values and flags, then simulate two couples from age 0."""
+    """Solve, then simulate two couples from age 0."""
     params = {"discount_factor": _DISCOUNT_FACTOR, "floor_f": _FLOOR_F}
     solution = model.solve(params=params, log_level="off")
     return model.simulate(
@@ -603,9 +610,14 @@ def _index_clears_the_hurdle(index_value: FloatND) -> BoolND:
     return index_value > _INDEX_HURDLE
 
 
-def _household_consents(D_target: BoolND) -> BoolND:
-    """The couple continues wherever the target household did not dissolve."""
-    return ~D_target
+def _household_has_support(pair_support: BoolND) -> BoolND:
+    """The couple continues wherever the target household has a feasible action."""
+    return pair_support
+
+
+def _same_w(w: ContinuousState) -> ContinuousState:
+    """The participation reads the target household at its landing `w`."""
+    return w
 
 
 def _wife_participates(*, Q_f: FloatND, floor_f: FloatND) -> BoolND:

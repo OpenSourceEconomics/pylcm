@@ -49,6 +49,7 @@ from lcm.typing import (
     FloatND,
     RegimeName,
     ScalarInt,
+    UserFacingRegimeParamsTemplate,
     UserFunction,
     UserParams,
 )
@@ -83,15 +84,21 @@ class _WorkRetireId:
 def test_coarse_law_slot_is_the_source_path():
     """A law choosing among all targets reads `params["edges"][source][arg]`."""
     model = _retirement_model()
-    assert _leaf_paths(model.get_params_template()["edges"]) == {
-        ("working", "retirement_age")
-    }
+    assert _leaf_paths(
+        cast("dict[str, UserFacingRegimeParamsTemplate]", model.get_params_template())[
+            "edges"
+        ]
+    ) == {("working", "retirement_age")}
 
 
 def test_per_target_law_slots_nest_under_their_target():
     """A per-target law reads `params["edges"][source][target][arg]`."""
     model = _mortal_model()
-    assert _leaf_paths(model.get_params_template()["edges"]) == {
+    assert _leaf_paths(
+        cast("dict[str, UserFacingRegimeParamsTemplate]", model.get_params_template())[
+            "edges"
+        ]
+    ) == {
         ("working", "working", "survival_probability"),
         ("working", "dead", "survival_probability"),
     }
@@ -101,14 +108,21 @@ def test_source_regime_template_holds_no_law_entry():
     """The source regime's branch names neither a target nor the law."""
     model = _mortal_model()
     assert not {"working", "dead", "next_regime"} & set(
-        model.get_params_template()["working"]
+        cast("dict[str, UserFacingRegimeParamsTemplate]", model.get_params_template())[
+            "working"
+        ]
     )
 
 
 def test_source_without_a_law_has_no_edges_entry():
     """A source declared by its edges alone owns no parameter slot."""
     model = _retirement_model()
-    assert "retired" not in model.get_params_template()["edges"]
+    assert (
+        "retired"
+        not in cast(
+            "dict[str, UserFacingRegimeParamsTemplate]", model.get_params_template()
+        )["edges"]
+    )
 
 
 @pytest.mark.parametrize("inclusive_stop", [62, 63, 64])
@@ -130,7 +144,11 @@ def test_edges_template_does_not_depend_on_the_horizon(inclusive_stop):
             default=_LATE_LAW,
         ),
     )
-    assert _leaf_paths(model.get_params_template()["edges"]) == {
+    assert _leaf_paths(
+        cast("dict[str, UserFacingRegimeParamsTemplate]", model.get_params_template())[
+            "edges"
+        ]
+    ) == {
         ("working", "working", "early_survival"),
         ("working", "dead", "early_survival"),
         ("working", "working", "late_survival"),
@@ -148,9 +166,11 @@ def test_edges_template_does_not_depend_on_how_many_edges_the_horizon_leaves(
     more, staying at work is a second one before the last source age.
     """
     model = _horizon_retirement_model(n_periods=n_periods)
-    assert _leaf_paths(model.get_params_template()["edges"]) == {
-        ("working", "retirement_age")
-    }
+    assert _leaf_paths(
+        cast("dict[str, UserFacingRegimeParamsTemplate]", model.get_params_template())[
+            "edges"
+        ]
+    ) == {("working", "retirement_age")}
 
 
 @pytest.mark.parametrize("death_probability", [0.0, 0.5])
@@ -165,7 +185,11 @@ def test_edges_template_does_not_depend_on_a_fixed_zero_cell(death_probability):
             "edges": {"working": {"dead": {"death_probability": death_probability}}}
         },
     )
-    assert _leaf_paths(model.get_params_template()["edges"]) == {
+    assert _leaf_paths(
+        cast("dict[str, UserFacingRegimeParamsTemplate]", model.get_params_template())[
+            "edges"
+        ]
+    ) == {
         ("working", "working", "stay_probability"),
     }
 
@@ -182,7 +206,11 @@ def test_variable_read_by_a_dormant_selector_is_no_edge_parameter(
     The selector's one free parameter is the only edge slot at every horizon.
     """
     model = _dormant_selector_model(variable=variable, n_periods=n_periods)
-    assert _leaf_paths(model.get_params_template()["edges"]) == {("alive", "cutoff")}
+    assert _leaf_paths(
+        cast("dict[str, UserFacingRegimeParamsTemplate]", model.get_params_template())[
+            "edges"
+        ]
+    ) == {("alive", "cutoff")}
 
 
 @pytest.mark.parametrize("variable", ["x", "a"])
@@ -221,7 +249,9 @@ def test_state_read_through_a_dormant_selector_function_is_no_parameter(
     model = _dormant_scored_selector_model(
         function_level=function_level, n_periods=n_periods
     )
-    template = model.get_params_template()
+    template = cast(
+        "dict[str, UserFacingRegimeParamsTemplate]", model.get_params_template()
+    )
     assert (
         {name: dict(branch.get("score", {})) for name, branch in template.items()},
         _leaf_paths(template["edges"]),
@@ -273,9 +303,11 @@ def test_selector_reading_a_function_solves_with_only_declared_parameters(
 def test_target_state_a_gate_reads_is_no_edge_parameter():
     """A gate reads the target's state off its grid; only its threshold is a slot."""
     model = _gated_on_target_state_model()
-    assert _leaf_paths(model.get_params_template()["edges"]) == {
-        ("src", "target", "predicate", "threshold")
-    }
+    assert _leaf_paths(
+        cast("dict[str, UserFacingRegimeParamsTemplate]", model.get_params_template())[
+            "edges"
+        ]
+    ) == {("src", "target", "predicate", "threshold")}
 
 
 def test_gate_on_a_target_state_routes_by_that_state():
@@ -402,7 +434,9 @@ def test_fixed_params_follow_the_declaration_path():
     model = _mortal_model(
         fixed_params={"edges": {"working": {"survival_probability": 0.9}}}
     )
-    assert "working" not in model.get_params_template().get("edges", {})
+    assert "working" not in cast(
+        "dict[str, UserFacingRegimeParamsTemplate]", model.get_params_template()
+    ).get("edges", {})
 
 
 @pytest.mark.parametrize(

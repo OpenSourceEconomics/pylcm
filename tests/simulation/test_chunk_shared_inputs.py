@@ -32,8 +32,9 @@ def test_complete_spaces_are_call_local_across_subject_chunks(
     """Each regime's space is completed a fixed number of times per simulate call.
 
     The count does not depend on the subject-chunk width: each regime is
-    completed once for the simulation inputs. Enabled numerical preflight
-    also completes the nonterminal regime's space once, independently of chunks.
+    completed once to key the call's generation by its concrete support and once
+    for the simulation inputs. Enabled numerical preflight also completes the
+    nonterminal regime's space once, independently of chunks.
     """
     model = get_model(
         n_periods=2,
@@ -79,7 +80,7 @@ def test_complete_spaces_are_call_local_across_subject_chunks(
         )
     assert (result.n_subjects, counts) == (
         _N_SUBJECTS,
-        {"working_life": 2 if runtime_checks else 1, "dead": 1},
+        {"working_life": 3 if runtime_checks else 2, "dead": 2},
     )
 
 
@@ -102,11 +103,13 @@ def test_draw_ids_are_constructed_inside_the_admitted_numerical_body(
     )
     expected = np.asarray(
         [
-            jax.random.choice(
-                key,
-                np.asarray([2, 9], dtype=np.int32),
-                p=rows if scalar else rows[position],
-            )
+            np.asarray([2, 9], dtype=np.int32)[
+                np.searchsorted(
+                    np.cumsum(rows if scalar else rows[position]),
+                    float(jax.random.uniform(key, dtype=jnp.zeros(()).dtype)),
+                    side="right",
+                )
+            ]
             for position, key in enumerate(keys)
         ]
     )

@@ -2,13 +2,13 @@
 
 On-path `-inf` is admissible throughout the collective-regimes extension (a
 feasible zero-consumption state, an all-infeasible dissolution cell whose
-value is masked to `-inf` before being folded/averaged away, ...), and an
+value is masked to `-inf` before being averaged away, ...), and an
 exact-zero weight is equally admissible (an inactive regime-transition target,
 a zero-probability `StochasticTransition` node, a zero-weight quadrature node, an
 on-grid interpolation corner, a zero Pareto weight). Whenever such a weight
 multiplies such a value, naive floating-point arithmetic computes
 `0.0 * -inf = nan` (or `+inf`), which then poisons whatever sum it feeds —
-a continuation expectation, a fold reduction, an interpolated reference value,
+a continuation expectation, an interpolated reference value,
 or a household scalarization — even though the zero-weight term should
 contribute exactly nothing.
 
@@ -110,11 +110,9 @@ raw one COLLAPSES onto the masked bits. `jax.lax.optimization_barrier` on the
 reduced numerators does not isolate them, and `jax.lax.cond` vmaps to the same
 select. Every safety-preserving structure lands on the masked bits under vmap.
 
-Statically-known weights are constant-folded and match bit-for-bit; the FOLD
-reduction is the one call site that binds `jnp.average` vs `zero_safe_average`
-at build time via `max_Q_over_a._select_fold_reducer` (its weights are the
-process quadrature marginal, concrete before tracing). Runtime call sites use
-`zero_safe_average` unconditionally and do NOT get guaranteed bit-exactness.
+Statically-known weights are constant-folded and match bit-for-bit. Runtime call
+sites use `zero_safe_average` unconditionally and do NOT get guaranteed
+bit-exactness.
 
 THE CONTRACT. `zero_safe_average` / `zero_safe_weighted_term` are:
 
@@ -179,8 +177,8 @@ def zero_safe_average(
     when `axis` is a single int) but forms the weighted sum via
     `zero_safe_weighted_term` so a zero-weight node next to an on-path
     `+-inf` value cannot inject a `nan`. Used for the stochastic-node /
-    regime-mixture / fold-state weighted averages in the collective solve
-    core (`Q_and_F.py`, `max_Q_over_a.py`).
+    regime-mixture weighted averages in the collective solve core
+    (`Q_and_F.py`).
 
     `shifts` carries the base-two scale each weight is held at — a node's
     probability is `weights * 2**-shift` — as `scaled_joint_weight` now
@@ -193,8 +191,8 @@ def zero_safe_average(
     be supplied without its scale: a caller states either the scales or `None`,
     and no call can leave the question unasked. `None` means every weight is
     already on one scale, which makes their ratios exact without any of this —
-    the fold-state and Pareto-weight reductions, whose weights never passed
-    through `scaled_joint_weight` at all.
+    the Pareto-weight reductions, whose weights never passed through
+    `scaled_joint_weight` at all.
 
     `None` is a distinct path rather than a shift array of zeros because the
     two are not numerically equivalent here: scaling by a zero shift still

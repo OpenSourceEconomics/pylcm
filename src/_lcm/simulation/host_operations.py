@@ -29,16 +29,20 @@ from typing import cast
 import jax
 import numpy as np
 
+from _lcm.current_iid import CurrentIIDDrawPlan, CurrentIIDPlan
+from _lcm.engine import Regime, SimulationPhase
 from _lcm.execution.workspace_planning import (
     CompilerMemoryReservation,
     compiler_memory_reservation,
     plan_axis_free_workspace,
 )
 from _lcm.post_decision_bound import PostDecisionBoundSpec
+from _lcm.shock_registry import ShockBinding
 from _lcm.simulation.operand_placement import (
     place_simulation_arguments,
     subject_operand_sharding,
 )
+from _lcm.simulation.program_types import SimulationPrograms
 from _lcm.simulation.residency import (
     DeviceBufferFootprint,
     measure_buffer_footprint,
@@ -70,17 +74,26 @@ type _OperandLeaf = (
 )
 
 # A model-owned input a `built` composer reads: a regime name, or one of the
-# regime's function, constraint, transition or transition-plan mappings and schema.
+# regime's function, constraint, transition or current-draw plan and schema.
 type _BuilderInput = (
-    RegimeName
+    CurrentIIDDrawPlan
+    | Callable[..., PytreeValue]
+    | bool
+    | RegimeName
     | RegimeTransitionFunction
     | tuple[ReferenceName, ...]
     | tuple[int, ...]
     | tuple[PostDecisionBoundSpec, ...]
+    | CurrentIIDPlan
     | Mapping[
         str,
-        EconFunction | ConstraintFunction | TransitionFunction | TargetTransitionPlan,
+        EconFunction
+        | ConstraintFunction
+        | TransitionFunction
+        | TargetTransitionPlan
+        | ShockBinding,
     ]
+    | None
 )
 
 
@@ -292,11 +305,9 @@ class ProfiledSimulationOperations:
         accounting are reused for the same program, operands and placement.
         """
         static = MappingProxyType({})
-        key = _operation_key(
+        key = _producer_key(
             function=function,
             arguments=arguments,
-            static_arguments=static,
-            subject_outputs=False,
             devices=devices,
             output_sharding=output_sharding,
         )
@@ -314,6 +325,32 @@ class ProfiledSimulationOperations:
             memory_for=_operation_memory,
         )
         return plan.compiled.executable
+
+    def prepare_producer(
+        self,
+        *,
+        function: Callable[..., PytreeValue],
+        arguments: Mapping[ReferenceName, ShapeDtypePytree],
+        devices: tuple[jax.Device, ...],
+        output_sharding: jax.sharding.Sharding | None = None,
+    ) -> _ProfiledOperation:
+        """Profile a producer over placed abstract operands without admitting it.
+
+        The executable is cached under the key `admit_producer` dispatches, so a
+        profiled producer is not compiled again when it runs.
+        """
+        return self.compile_candidate(
+            key=_producer_key(
+                function=function,
+                arguments=arguments,
+                devices=devices,
+                output_sharding=output_sharding,
+            ),
+            function=function,
+            arguments=arguments,
+            static_arguments=MappingProxyType({}),
+            output_sharding=output_sharding,
+        )
 
     def built[T: Callable[..., PytreeValue]](
         self, *, builder: Callable[..., T], **inputs: _BuilderInput
@@ -572,6 +609,24 @@ def _operation_key(
     )
 
 
+def _producer_key(
+    *,
+    function: Callable[..., PytreeValue],
+    arguments: Mapping[ReferenceName, ShapeDtypePytree],
+    devices: tuple[jax.Device, ...],
+    output_sharding: jax.sharding.Sharding | None,
+) -> Hashable:
+    """Identify a producer's executable at profiling and at admission."""
+    return _operation_key(
+        function=function,
+        arguments=arguments,
+        static_arguments=MappingProxyType({}),
+        subject_outputs=False,
+        devices=devices,
+        output_sharding=output_sharding,
+    )
+
+
 def _program_identity(function: Callable[..., PytreeValue]) -> Hashable:
     """Identify a callable, resolving a `functools.partial` to its bound values.
 
@@ -595,11 +650,45 @@ def _program_identity(function: Callable[..., PytreeValue]) -> Hashable:
 
 
 def _bound_identity(value: object) -> Hashable:  # noqa: PAN001 - any value a dispatched partial binds; one without a typed value is held by identity
-    """Identify a bound value by typed value, else by the object it is."""
+    """Identify a bound value by typed value, else by the object it is.
+
+    A regime is identified by its contents except the program executor, so the
+    executor-bound copy simulation dispatches keys the model regime's
+    executable.
+    """
     try:
         return _static_identity(value)
     except ExecutionPlanningError:
+        if isinstance(value, Regime):
+            return _regime_identity(value)
         return _HeldObject(value)
+
+
+def _regime_identity(regime: Regime) -> Hashable:
+    """Hold every field of a regime but its programs' executor, by identity.
+
+    Rebinding the executor shallow-copies the regime, its simulation phase and
+    its programs; every other field is the same object, so the copies compare
+    equal, while a copy that changes any other field does not.
+    """
+    simulation = regime.simulation
+    return (
+        Regime,
+        _held_fields(owner=regime, skip="simulation"),
+        _held_fields(owner=simulation, skip="programs"),
+        _held_fields(owner=simulation.programs, skip="executor"),
+    )
+
+
+def _held_fields(
+    *, owner: Regime | SimulationPhase | SimulationPrograms, skip: str
+) -> tuple[_HeldObject, ...]:
+    """Hold each dataclass field of `owner` but `skip`, by identity."""
+    return tuple(
+        _HeldObject(getattr(owner, field.name))
+        for field in dataclasses.fields(owner)
+        if field.name != skip
+    )
 
 
 @dataclasses.dataclass(frozen=True, eq=False)

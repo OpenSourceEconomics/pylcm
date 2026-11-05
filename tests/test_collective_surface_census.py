@@ -36,20 +36,12 @@ _TESTS_ROOT = Path(__file__).parent
 _ENGINE_LEVEL_MODULES = frozenset(
     {
         "tests/conftest.py",
-        "tests/regime_building/test_carried_state_through_gated_self_loop.py",
         "tests/regime_building/test_collective_extended_real.py",
         "tests/regime_building/test_decomposed_views.py",
-        "tests/regime_building/test_fold_gate_guard.py",
-        "tests/regime_building/test_fold_guard_complete.py",
-        "tests/regime_building/test_fold_iid_shocks.py",
-        "tests/regime_building/test_gated_edge_arg_provenance.py",
-        "tests/regime_building/test_gated_edge_gate_process_state_interpolation.py",
-        "tests/regime_building/test_gated_edge_simulate_operand_recompute.py",
-        "tests/regime_building/test_route_conditions_on_ordinary_draw.py",
+        "tests/regime_building/test_gate_reads_value_error.py",
         "tests/regime_building/test_same_period_ref_process_state_interpolation.py",
         "tests/regime_building/test_same_period_ref_projection_free_params.py",
         "tests/regime_building/test_simulate_gate_param_and_leg_selection.py",
-        "tests/regime_building/test_simulate_guards.py",
         "tests/regime_building/test_terminal_collective_solve.py",
         "tests/regime_building/test_with_engine_functions.py",
         "tests/simulation/test_leg_projector_vmap.py",
@@ -234,6 +226,10 @@ def _writes_a_decomposed_name(source: PythonSource) -> list[str]:
     for node in ast.walk(ast.parse(source)):
         if isinstance(node, ast.Call):
             called = getattr(node.func, "id", None) or getattr(node.func, "attr", None)
+            if called == "partial" and node.args:
+                called = getattr(node.args[0], "id", None) or getattr(
+                    node.args[0], "attr", None
+                )
             if called in _ENGINE_CONSTRUCTORS:
                 continue
             written += [kw.arg for kw in node.keywords if kw.arg in _DECOMPOSED_NAMES]
@@ -255,9 +251,32 @@ _ENGINE_CONSTRUCTORS = frozenset(
         "build_pareto_weights",
         "build_streaming_collective_max_Q_over_a",
         "get_max_Q_over_a",
+        "get_Q_and_F_terminal_collective",
         "get_streaming_max_Q_over_a",
     }
 )
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        (
+            (
+                "partial(q_and_f_module.get_Q_and_F_terminal_collective, "
+                'stakeholders=("a",))'
+            ),
+            [],
+        ),
+        ('Regime(stakeholders=("a",))', ["stakeholders"]),
+        ('partial(Regime, stakeholders=("a",))', ["stakeholders"]),
+    ],
+)
+def test_partial_binding_preserves_the_engine_vocabulary_boundary(
+    *, source: PythonSource, expected: list[str]
+) -> None:
+    """Binding an engine helper permits only that helper's internal vocabulary."""
+    assert _writes_a_decomposed_name(source) == expected
+
 
 #: Modules that build or directly exercise the ENGINE form rather than the
 #: author form, and so write the engine vocabulary on purpose. One replaces

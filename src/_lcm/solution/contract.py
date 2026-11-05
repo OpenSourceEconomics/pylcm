@@ -74,7 +74,7 @@ from _lcm.typing import (
     EconFunctionsMapping,
     FlatParams,
     FunctionName,
-    PeriodToRegimeToDissolutionFlags,
+    PeriodToRegimeToParticipationSurfaces,
     PeriodToRegimeToSimulationPolicy,
     PeriodToRegimeToVArr,
     PytreeValue,
@@ -88,7 +88,6 @@ from _lcm.typing import (
 )
 from lcm._solver_api.capabilities import SolverExecutionCapabilities
 from lcm.solver_api import (
-    DISSOLUTION_FLAG,
     EGM_CONTINUATION,
     SIMULATION_POLICY,
     SOLVER_API_VERSION,
@@ -126,15 +125,29 @@ from lcm.typing import Float1D, FloatND, UserFunction
 # enumerates the payload classes the shipped routes declare.
 
 if TYPE_CHECKING:
+    from _lcm.current_iid import CurrentIIDDrawPlan, CurrentIIDPlan
+    from _lcm.participation_queries import (
+        ParticipationPublication,
+        ParticipationQueryPlan,
+    )
     from _lcm.regime_building.finalize import FinalizedUserRegime
     from _lcm.regime_building.V import VInterpolationInfo
     from _lcm.regime_law import RegimeLaw
 
     type RegimeLawsMapping = Mapping[RegimeName, RegimeLaw]
+    type ParticipationQueriesMapping = Mapping[
+        int, Mapping[RegimeName, ParticipationQueryPlan]
+    ]
+    type ParticipationPublicationsMapping = Mapping[int, ParticipationPublication]
 
     type UserRegimesMapping = Mapping[RegimeName, FinalizedUserRegime]
     type RegimeToVInterpolationInfo = MappingProxyType[RegimeName, VInterpolationInfo]
 else:
+    ParticipationQueriesMapping = Mapping
+    ParticipationPublicationsMapping = Mapping
+    # The innovation plan imports the solver facade through its law registry.
+    type CurrentIIDPlan = object
+    type CurrentIIDDrawPlan = object
     # Resolving the element types closes a cycle via the `lcm.solvers` façade,
     # which re-exports `Solver` from this module. ty reads the precise types
     # above; the beartype claw checks only the outer container at runtime.
@@ -168,6 +181,9 @@ class SolverModelContext:
 
     solution_reachability: PhaseReachability | None = None
     """Static solution graph when available; `None` during early validation."""
+
+    shock_node_states: frozenset[StateName] = frozenset()
+    """Node states that solve the shocks of `shocks=` groups, named as the shocks."""
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -222,6 +238,16 @@ class SolverBuildContext:
     regime_name: RegimeName
     """Name of the regime the kernels are built for."""
 
+    current_iid_plans: Mapping[int, CurrentIIDPlan | None] = field(
+        default=MappingProxyType({}), metadata={"fingerprint_omit_if_default": True}
+    )
+    """Exact-age current innovation support, separate from real state axes."""
+
+    current_iid_draw_plan: CurrentIIDDrawPlan | None = field(
+        default=None, metadata={"fingerprint_omit_if_default": True}
+    )
+    """Current-phase physical replay, with no quadrature or persistent axes."""
+
     ages: TimeAxis
     """The model's lifecycle age grid.
 
@@ -251,6 +277,28 @@ class SolverBuildContext:
     template yet; filled for the `declare_continuation_reads` call that follows
     once every regime is built.
     """
+    participation_queries: ParticipationQueriesMapping = field(
+        default_factory=lambda: MappingProxyType({})
+    )
+    """Actual next-date policy/value read graphs inside this source's Q/F."""
+
+    participation_surfaces: ParticipationQueriesMapping = field(
+        default_factory=lambda: MappingProxyType({}),
+        metadata={"fingerprint_omit_if_default": True},
+    )
+    """Participation plan whose stored surface each participation target's value reads.
+
+    Set only on the contexts a participation plan rebuilds an action problem from.
+    There the action problem's next-date participation checks read the source's stored
+    surface -- the plan's branches and decision operands, interpolated and
+    decided again at the landing -- instead of nesting another plan.
+    """
+
+    participation_publications: ParticipationPublicationsMapping = field(
+        default_factory=lambda: MappingProxyType({}),
+        metadata={"fingerprint_omit_if_default": True},
+    )
+    """Dated participation payload this regime publishes: borrowed values, surfaces."""
 
     scalar_query_models: Mapping[RegimeName, ScalarEGMQueryModel] | None = None
     """Trusted scalar query pools prepared once before numerical kernel factories."""
@@ -485,21 +533,12 @@ class SolverBuildContext:
     mapping it reads and lowers against. Empty for every other regime.
     """
 
-    fold_state_names: tuple[StateName, ...] = ()
-    """IID-process states declared `fold=True`, or empty (the default).
-
-    Only `GridSearch` consumes this: the grid-search kernel weighted-averages
-    each named state's axis out of the stored value immediately after the
-    max-over-actions / collective readout, using the process's own
-    quadrature weights. Empty keeps the default path byte-identical.
-    """
-
     edge_reference_regimes: tuple[RegimeName, ...] = ()
     """Regimes a gated edge reads a projected value from, or empty.
 
-    A gate reference and a leg fallback both name another regime's value at
-    coordinates a projection produces. Neither is tabulated on the target's
-    grid, so both are read where the source lands — inside the source's own
+    A leg fallback names another regime's value at coordinates a projection
+    produces. It is not tabulated on the target's grid, so it is read where the
+    source lands — inside the source's own
     kernel — at the value of the period the source lands in. The rolled V
     mapping already carries that array; these names are what pick it out and
     thread each reference regime's OWN grid params beside it.
@@ -521,8 +560,8 @@ class SolverBuildContext:
         """Return a continuation template placed like this regime's stored values.
 
         Array leaves whose leading shape matches the stored-value state axes
-        are partitioned along the regime's sharded states. Folded states are
-        omitted from that shape; trailing axes stay unsharded. Other array
+        are partitioned along the regime's sharded states; trailing axes stay
+        unsharded. Other array
         leaves replicate across the same devices. An unsharded regime places
         every array on its assigned single device. Non-array leaves and the
         pytree structure are preserved.
@@ -532,7 +571,6 @@ class SolverBuildContext:
             grids=self.grids,
             sharded_state_names=self.sharded_state_names,
             states=self.state_action_space.states,
-            fold_state_names=self.fold_state_names,
             submesh_device_ids=self.submesh_device_ids,
             action_partitions=self.action_partitions,
         )
@@ -566,7 +604,6 @@ GENERATED_REPLAY_AUTHORITY = ArtifactKey(
 
 _ENGINE_ARTIFACT_TYPE_IDS = frozenset(
     {
-        DISSOLUTION_FLAG.type_id,
         EGM_CONTINUATION.type_id,
         GENERATED_REPLAY_AUTHORITY.type_id,
         SIMULATION_POLICY.type_id,
@@ -601,21 +638,6 @@ class BackwardInductionResult:
     ] = MappingProxyType({})
     """Trusted dynamic facts kept outside the public replay payload store."""
 
-    dissolution_flags: PeriodToRegimeToDissolutionFlags = MappingProxyType({})
-    """Immutable mapping of period to each COLLECTIVE regime's dissolution flag `D`.
-
-    `True` on the state cells whose action mask is empty
-    (distinct from a numeric `-inf` value); empty inner mappings for models
-    without collective regimes, so the default (singleton) path is unchanged.
-
-    Carries arrays only where something reads them: a gate declaring the
-    `D_target` operand, which forward simulation recomputes from the flag, or a
-    caller asking backward induction to retain them. A collective model whose
-    gates read only value operands gets the same period keys with empty inner
-    mappings, and its flags are freed period by period rather than held for the
-    whole induction.
-    """
-
     diagnostics: MappingProxyType[
         int, MappingProxyType[RegimeName, SolverDiagnostics]
     ] = MappingProxyType({})
@@ -635,6 +657,14 @@ class BackwardInductionResult:
 
     auxiliary_artifacts: ArtifactStore = field(default_factory=ArtifactStore)
     """Addressed solver-defined inspection/persistence artifacts."""
+
+    participation_surfaces: PeriodToRegimeToParticipationSurfaces = MappingProxyType({})
+    """Stored participation surfaces, by period, publishing regime and payload leaf.
+
+    Participation replay rebuilds the same plans the solve priced with, so it reads
+    the same surfaces. Retained on the host beside the values, whatever the
+    retention, because every simulated participation price needs them.
+    """
 
 
 @runtime_checkable
@@ -764,7 +794,14 @@ class SolutionKernels:
     """Installed readers' capabilities by consuming source period and target."""
 
     query_input_authorities: (
-        Mapping[int, tuple[tuple[RegimeName, int, PostDecisionBoundSpec], ...]] | None
+        Mapping[
+            int,
+            tuple[
+                tuple[RegimeName, int, PostDecisionBoundSpec],
+                ...,
+            ],
+        ]
+        | None
     ) = None
     """Actual installed diagnostic-owner regime, period and bound for each slot."""
 

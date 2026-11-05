@@ -16,9 +16,10 @@ from lcm import (
     AgeRange,
     ByAge,
     DiscreteGrid,
-    Gate,
     LinSpacedGrid,
     Model,
+    ParticipationCheck,
+    ParticipationRead,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
@@ -116,9 +117,16 @@ def _build_model(*, with_bystander: bool) -> Model:
                 law=ByAge(
                     cases={40: {"target": StochasticTransition(func=_certain_target)}}
                 ),
-                gates={
-                    "target": Gate(
+                participation={
+                    "target": ParticipationCheck(
                         predicate=_gate,
+                        reads={
+                            "V_target": ParticipationRead(
+                                kind="IntegratedFull",
+                                regime="target",
+                                projection={"x": _identity_x},
+                            )
+                        },
                         routes={
                             "only": StakeholderRoute(
                                 fallback=ProjectedRegimeValue(

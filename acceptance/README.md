@@ -10,6 +10,10 @@ not certify production capacity or performance.
   machine-specific absolute paths (Marvin job/scratch directories, HPC account name) are
   replaced with `<job-root>`/`<scratch-checkout>`/`<hpc-account>` placeholders before
   commit; every other field is byte-identical to the native output.
+- `aca-phase-inventory.json` is a frozen historical record: its `fold=False` reprs and
+  `folded_names` keys describe the API it ran under. `inventory_aca.py` asserts the
+  current layout, where `hcc_transitory` is integrated out, and is not used to rewrite
+  it.
 - `aca-inventory-provenance.json` identifies executed source bytes and later
   source/schema changes; the native receipt is not silently relabelled as current.
 - `aca-capacity.json` derives necessary lower bounds from that inventory. Compiler,

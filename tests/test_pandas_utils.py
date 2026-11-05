@@ -1698,7 +1698,7 @@ def test_convert_series_resolves_joint_support_probability_and_output_roles() ->
         ),
         declared_transitions=MappingProxyType({}),
         declared_vocabulary=create_edge_vocabulary(
-            {"source": source, "target": target}
+            user_regimes={"source": source, "target": target}
         ),
     )["source"]
 
@@ -1766,7 +1766,7 @@ def test_joint_output_series_uses_the_explicit_target_for_its_outcome_axis() -> 
         ),
         declared_transitions=MappingProxyType({}),
         declared_vocabulary=create_edge_vocabulary(
-            {"source": source, "target": target}
+            user_regimes={"source": source, "target": target}
         ),
     )["source"]["target__next_health__transition_matrix"]
 

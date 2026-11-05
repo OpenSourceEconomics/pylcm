@@ -1,4 +1,4 @@
-"""Routing a collective source's gated edge needs the simulated row's own role.
+"""Routing a collective source's participation check needs the simulated row's own role.
 
 A collective regime declares one dissolution leg per stakeholder, and each leg
 sends the dissolving row into *that* stakeholder's own continuing regime under
@@ -27,8 +27,9 @@ from lcm import (
     ByAge,
     CollectiveUtility,
     DiscreteGrid,
-    Gate,
     Model,
+    ParticipationCheck,
+    ParticipationRead,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
@@ -38,7 +39,8 @@ from lcm import (
     fixed_transition,
 )
 from lcm.exceptions import InvalidInitialConditionsError
-from lcm.typing import ScalarInt
+from lcm.solver_api import ResultRetention, SolutionResult
+from lcm.typing import RegimeName, ScalarInt
 from tests.collective_fixtures import (
     make_couple_initial_conditions,
     make_two_stakeholder_model,
@@ -53,7 +55,7 @@ from tests.regime_building.test_collective_regime_simulate import (
     _identity_wage,
     _make_consent_regimes,
     _make_dissolution_regimes,
-    _no_dissolution_gate,
+    _participation_support,
     _prob_one,
     _u_zero_collective,
 )
@@ -75,13 +77,22 @@ CONSENT_WAGES = (1.0, 2.0)
 # Which consent-model subject reaches the collective target.
 CONSENT_MARRIED_MEMBERSHIP = (True, False)
 
-# The married couple's dissolution law and its gate: the couple stays together
-# unless the gate closes, and a dissolving row continues in its own
+# The married couple's scheduled law and participation support decision keep it
+# together while participation is supported; a dissolving row continues in its own
 # stakeholder's single regime under the identity wage projection.
 MARRIED_DISSOLUTION_LAW = {"married_ir": StochasticTransition(func=_prob_one)}
-MARRIED_DISSOLUTION_GATES = {
-    "married_ir": Gate(
-        predicate=_no_dissolution_gate,
+MARRIED_DISSOLUTION_PARTICIPATION = {
+    "married_ir": ParticipationCheck(
+        predicate=_participation_support,
+        reads={
+            "target_support": ParticipationRead(
+                regime="married_ir",
+                stakeholder="f",
+                kind="Participating",
+                field="support",
+                projection={"wage": _identity_wage},
+            )
+        },
         routes={
             "f": StakeholderRoute(
                 target_stakeholder="f",
@@ -99,8 +110,8 @@ MARRIED_DISSOLUTION_GATES = {
     )
 }
 
-# The single woman's consent law and its gate: she marries when both partners
-# prefer the couple to their own single lives, and otherwise keeps her single
+# The single woman's scheduled law and participation consent decision admit marriage
+# when both partners prefer the couple to single life; otherwise she keeps her single
 # value.
 SINGLE_F_CONSENT_LAW = ByAge(
     cases={
@@ -109,8 +120,8 @@ SINGLE_F_CONSENT_LAW = ByAge(
         }
     }
 )
-SINGLE_F_CONSENT_GATES = {
-    "married_terminal": Gate(
+SINGLE_F_CONSENT_PARTICIPATION = {
+    "married_terminal": ParticipationCheck(
         predicate=_consent_gate,
         routes={
             "f": StakeholderRoute(
@@ -121,12 +132,26 @@ SINGLE_F_CONSENT_GATES = {
                 ),
             )
         },
-        references={
-            "V_single_f_ref": ProjectedRegimeValue(
+        reads={
+            "V_target_f": ParticipationRead(
+                regime="married_terminal",
+                stakeholder="f",
+                kind="Participating",
+                projection={"wage": _identity_wage},
+            ),
+            "V_target_m": ParticipationRead(
+                regime="married_terminal",
+                stakeholder="m",
+                kind="Participating",
+                projection={"wage": _identity_wage},
+            ),
+            "V_single_f_ref": ParticipationRead(
+                kind="Raw",
                 regime="single_f_terminal",
                 projection={"wage": _identity_wage},
             ),
-            "V_single_m_ref": ProjectedRegimeValue(
+            "V_single_m_ref": ParticipationRead(
+                kind="Raw",
                 regime="single_m_terminal",
                 projection={"wage": _identity_wage},
             ),
@@ -161,7 +186,7 @@ def dissolution_model_and_solution():
             "married": Transition(
                 targets={"married_ir": 0, "single_f": 0, "single_m": 0},
                 law=ByAge(cases={AgeRange(exclusive_stop=1): MARRIED_DISSOLUTION_LAW}),
-                gates=MARRIED_DISSOLUTION_GATES,
+                participation=MARRIED_DISSOLUTION_PARTICIPATION,
             ),
             "married_ir": {"married_terminal": 1},
             "single_f": {"single_f_terminal": 1},
@@ -188,7 +213,7 @@ def consent_model_and_solution():
             "single_f": Transition(
                 targets={"married_terminal": 0, "single_f_terminal": 0},
                 law=SINGLE_F_CONSENT_LAW,
-                gates=SINGLE_F_CONSENT_GATES,
+                participation=SINGLE_F_CONSENT_PARTICIPATION,
             )
         },
     )
@@ -389,7 +414,7 @@ def test_a_start_that_cannot_reach_a_role_dependent_route_needs_no_own_role():
             "married": Transition(
                 targets={"married_ir": 0, "single_f": 0, "single_m": 0},
                 law=ByAge(cases={AgeRange(exclusive_stop=1): MARRIED_DISSOLUTION_LAW}),
-                gates=MARRIED_DISSOLUTION_GATES,
+                participation=MARRIED_DISSOLUTION_PARTICIPATION,
             ),
             "married_ir": {"married_terminal": 1},
             "single_f": {"single_f_terminal": 1},
@@ -464,7 +489,7 @@ def test_a_start_that_runs_into_a_role_dependent_route_still_needs_an_own_role()
                 law=ByAge(
                     cases={AgeRange(start=1, exclusive_stop=2): MARRIED_DISSOLUTION_LAW}
                 ),
-                gates=MARRIED_DISSOLUTION_GATES,
+                participation=MARRIED_DISSOLUTION_PARTICIPATION,
             ),
             "married_ir": {"married_terminal": 2},
             "single_f": {"single_f_terminal": 2},
@@ -488,3 +513,82 @@ def test_a_start_that_runs_into_a_role_dependent_route_still_needs_an_own_role()
             log_level="off",
             seed=0,
         )
+
+
+@pytest.fixture(scope="module")
+def current_exit_model_and_solution() -> tuple[Model, SolutionResult]:
+    """Start in the actual current-exit actor without an incoming participation rule."""
+    model = Model(
+        regimes=_make_dissolution_regimes(),
+        ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
+        regime_id_class=DissolutionRegimeId,
+        initial_nodes={1: "married_ir"},
+        edges={
+            "married": {"married_ir": 0},
+            "married_ir": {"married_terminal": 1},
+            "single_f": {"single_f_terminal": 1},
+            "single_m": {"single_m_terminal": 1},
+        },
+    )
+    solution = model.solve(
+        params=_DISSOLUTION_PARAMS,
+        retention=ResultRetention.VALUES,
+        log_level="off",
+    )
+    return model, solution
+
+
+@pytest.mark.parametrize("role", [None, -1, 7], ids=["missing", "no-role", "unknown"])
+def test_current_exit_requires_an_actual_source_member_role(
+    *, current_exit_model_and_solution: tuple[Model, SolutionResult], role: int | None
+) -> None:
+    """A role-dependent current exit refuses missing, no-role and unknown codes."""
+    model, solution = current_exit_model_and_solution
+    initial_conditions = {
+        "wage": jnp.asarray([2.0]),
+        "age": jnp.asarray([1.0]),
+        "regime_id": jnp.asarray([model.regime_names_to_ids["married_ir"]]),
+    }
+    if role is not None:
+        initial_conditions["own_stakeholder"] = jnp.asarray([role], dtype=jnp.int32)
+    with pytest.raises(InvalidInitialConditionsError, match="own_stakeholder"):
+        model.simulate(
+            params=_DISSOLUTION_PARAMS,
+            initial_conditions=initial_conditions,
+            solution=solution,
+            log_level="off",
+            seed=0,
+        )
+
+
+@pytest.mark.parametrize(
+    ("role", "destination", "payoff"),
+    [("f", "single_f", 5.5), ("m", "single_m", 1.0)],
+    ids=["wife", "husband"],
+)
+def test_current_exit_settles_the_named_original_source_member(
+    *,
+    current_exit_model_and_solution: tuple[Model, SolutionResult],
+    role: str,
+    destination: RegimeName,
+    payoff: float,
+) -> None:
+    """Current-exit occupants receive their member's unpaid outside value."""
+    model, solution = current_exit_model_and_solution
+    frame = model.simulate(
+        params=_DISSOLUTION_PARAMS,
+        initial_conditions={
+            "wage": jnp.asarray([2.0]),
+            "age": jnp.asarray([1.0]),
+            "regime_id": jnp.asarray([model.regime_names_to_ids["married_ir"]]),
+            "own_stakeholder": jnp.asarray([model.stakeholder_names_to_ids[role]]),
+        },
+        solution=solution,
+        log_level="off",
+        seed=0,
+    ).to_dataframe()
+    acting = frame.loc[frame["period"] == 1]
+    np.testing.assert_array_equal(acting["subject_id"], [0])
+    np.testing.assert_array_equal(acting["regime_name"].to_numpy(), [destination])
+    np.testing.assert_array_equal(acting["wage"], [2.0])
+    np.testing.assert_array_equal(acting["value"], [payoff])

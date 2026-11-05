@@ -218,12 +218,14 @@ def test_state_transition_admission_contract_is_complete() -> None:
             (
                 "            summary=None,\n"
                 "            process_grid_resolver=process_grid_resolver,\n"
-                "            simulation_memory=memory,\n        )"
+                "            simulation_memory=memory,\n"
+                "            simulation_producers=producers,\n        )"
             ),
             (
                 "            summary=None,\n"
                 "            process_grid_resolver=process_grid_resolver,\n"
-                "            simulation_memory=None,\n        )"
+                "            simulation_memory=None,\n"
+                "            simulation_producers=producers,\n        )"
             ),
             "serial transition replay must retain simulation memory",
         ),

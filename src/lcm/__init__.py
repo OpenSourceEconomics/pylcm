@@ -129,6 +129,7 @@ from lcm.consumption_savings_regime import (  # noqa: E402
 )
 from lcm.decoupled import Decoupled  # noqa: E402
 from lcm.execution import ExecutionConfig, InvariantBlockSchedule  # noqa: E402
+from lcm.exits import Consent, Counterparty, Exit, ExitTarget, RuleResult  # noqa: E402
 from lcm.fixed_forms import (  # noqa: E402
     cash_on_hand_with_subsidy,
     liquid_law_from_resources,
@@ -152,6 +153,7 @@ from lcm.initial_nodes import UserInitialNodes as _UserInitialNodes  # noqa: E40
 from lcm.koopmans_aggregation import CESAggregator, LinearAggregator  # noqa: E402
 from lcm.lowering import LoweredPeriodCandidate, PeriodCandidate  # noqa: E402
 from lcm.model import Model  # noqa: E402
+from lcm.participation import ParticipationCheck, ParticipationRead  # noqa: E402
 from lcm.persistence import (  # noqa: E402
     SimulateSnapshot,
     SolveSnapshot,
@@ -231,6 +233,8 @@ jax.tree_util.register_pytree_node(
     lambda keys, values: MappingProxyType(dict(zip(keys, values, strict=True))),
 )
 
+from lcm import shocks  # noqa: E402
+
 __all__ = [
     "EULER_GAMMA",
     "AdditiveShockTransition",
@@ -246,11 +250,15 @@ __all__ = [
     "CompositeState",
     "Condition",
     "ConditionalAction",
+    "Consent",
     "ConsumptionSavingsRegime",
+    "Counterparty",
     "Decoupled",
     "DeterministicTransition",
     "DiscreteGrid",
     "ExecutionConfig",
+    "Exit",
+    "ExitTarget",
     "ExtremeValueTasteShocks",
     "Gate",
     "GridBreakpoint",
@@ -273,6 +281,8 @@ __all__ = [
     "NormalMixtureIIDProcess",
     "OuterContinuousMargin",
     "ParetoObjective",
+    "ParticipationCheck",
+    "ParticipationRead",
     "PeriodCandidate",
     "PeriodRange",
     "PeriodSpecializedFunction",
@@ -287,6 +297,7 @@ __all__ = [
     "QuasiArithmeticMean",
     "Regime",
     "RouwenhorstAR1Process",
+    "RuleResult",
     "SimulateSnapshot",
     "SimulationResult",
     "SolveSnapshot",
@@ -321,6 +332,7 @@ __all__ = [
     "post_decision_lower_bound",
     "ref",
     "save_solution",
+    "shocks",
     "smooth_helper",
     "stochastic_transition",
     "time_varying_params",

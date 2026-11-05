@@ -1,5 +1,7 @@
 """Canonical runtime-bound transport survives actual solver and subject evaluations."""
 
+from collections.abc import Mapping
+from functools import partial
 from types import MappingProxyType
 from typing import Never, TypedDict, Unpack, cast
 
@@ -24,7 +26,8 @@ from _lcm.regime_building.Q_and_F import (
 )
 from _lcm.simulation.program_types import SUBJECT_WIDTH_KEYWORD
 from _lcm.simulation.programs import _SubjectTiled
-from _lcm.simulation.simulate import _canonical_Q_at_actions
+from _lcm.simulation.simulate import _canonical_Q_at_actions, _read_external_replay
+from _lcm.simulation.transitions import create_regime_state_action_space
 from _lcm.solution.action_streaming import (
     build_partitioned_streaming_max_Q_over_a,
     build_streaming_collective_max_Q_over_a,
@@ -69,8 +72,10 @@ from lcm.exceptions import (
     InvalidValueFunctionError,
     OffGridStateError,
 )
+from lcm.solver_api import ActionOutput
 from lcm.transition import AgeSpecializedFunction, StochasticTransition
 from lcm.typing import (
+    ActionName,
     BoolND,
     FloatND,
     Intermediate,
@@ -79,6 +84,7 @@ from lcm.typing import (
     ScalarInt,
     StateName,
     UserFunction,
+    ValueND,
 )
 from tests.constraints.test_dynamic_lower_bound import (
     LIQUID,
@@ -95,8 +101,6 @@ from tests.solution.test_dynamic_bound_authority import _bound
 class _StateOwnerKwargs(TypedDict, total=False):
     co_map_state_names: tuple[StateName, ...]
     co_map_v_arr_in_axes: tuple[MappingProxyType[RegimeName, int | None], ...]
-    fold_state_names: tuple[StateName, ...]
-    fold_weights: MappingProxyType[StateName, FloatND]
 
 
 class _TerminalKwargs(TypedDict):
@@ -1012,14 +1016,10 @@ def test_kernel_output_accepts_only_scalar_boolean_integrity(*, invalid: bool) -
 
 
 @pytest.mark.parametrize("streamed", [False, True])
-@pytest.mark.parametrize("owner", ["co-map", "fold"])
 def test_state_axis_owners_keep_integrity_independent_of_quadrature(
-    *, streamed: bool, owner: str
+    *, streamed: bool
 ) -> None:
-    """
-    Co-maps produce scalar summaries and zero economic weight cannot hide
-    invalidity.
-    """
+    """Co-maps produce scalar summaries that keep each cell's invalidity."""
 
     def floor(*, income: FloatND) -> FloatND:
         return income
@@ -1044,17 +1044,10 @@ def test_state_axis_owners_keep_integrity_independent_of_quadrature(
         bound_specs=(_bound(),),
     )
     builder = get_streaming_max_Q_over_a if streamed else get_max_Q_over_a
-    owner_kwargs: _StateOwnerKwargs = (
-        {
-            "co_map_state_names": ("income",),
-            "co_map_v_arr_in_axes": (MappingProxyType({"future": 0}),),
-        }
-        if owner == "co-map"
-        else {
-            "fold_state_names": ("income",),
-            "fold_weights": MappingProxyType({"income": jnp.asarray([1.0, 0.0])}),
-        }
-    )
+    owner_kwargs: _StateOwnerKwargs = {
+        "co_map_state_names": ("income",),
+        "co_map_v_arr_in_axes": (MappingProxyType({"future": 0}),),
+    }
     mapped = builder(
         Q_and_F=kernel,
         batch_sizes={"income": 1},
@@ -1065,9 +1058,7 @@ def test_state_axis_owners_keep_integrity_independent_of_quadrature(
     )
     result = jax.jit(
         lambda: mapped(
-            next_regime_to_V_arr=MappingProxyType({"future": jnp.asarray([0.0, 0.0])})
-            if owner == "co-map"
-            else MappingProxyType({}),
+            next_regime_to_V_arr=MappingProxyType({"future": jnp.asarray([0.0, 0.0])}),
             period=jnp.int32(0),
             age=jnp.asarray(0.0),
             income=jnp.asarray([0.0, jnp.nan]),
@@ -1079,12 +1070,8 @@ def test_state_axis_owners_keep_integrity_independent_of_quadrature(
     assert all(flag.shape == () for flag in result.bound_status[0]), (
         "State owners must reduce validity without retaining a coordinate bank."
     )
-    np.testing.assert_array_equal(
-        result.output[0], [0.0, -np.inf] if owner == "co-map" else 0.0
-    )
-    np.testing.assert_array_equal(
-        result.output[1], [False, True] if owner == "co-map" else False
-    )
+    np.testing.assert_array_equal(result.output[0], [0.0, -np.inf])
+    np.testing.assert_array_equal(result.output[1], [False, True])
     np.testing.assert_array_equal(jnp.stack(result.bound_status[0]), [True, False])
 
 
@@ -1326,3 +1313,92 @@ def _marked_kernel(*, route: str, bounded: bool) -> QAndFFunction:
         constraints=constraints,
         bound_specs=bound_specs,
     )
+
+
+@pytest.mark.parametrize("handwritten", [False, True])
+@pytest.mark.parametrize("invalid_holder", [False, True])
+@pytest.mark.parametrize("fixed_parameter", [False, True])
+def test_external_replay_scores_integrity_only_for_actual_regime_holders(
+    *, handwritten: bool, invalid_holder: bool, fixed_parameter: bool
+) -> None:
+    """External actions retain valid holder scores and refuse an actual bad floor."""
+
+    def floor(*, income: FloatND) -> FloatND:
+        return jnp.where(income == 0.5, jnp.nan, 0.0)
+
+    model = _model(
+        declaration=ref("savings") >= ref("floor")
+        if handwritten
+        else post_decision_lower_bound(margin=LIQUID, lower=floor),
+        helper=None,
+        functions={"floor": floor} if handwritten else None,
+    )
+    if fixed_parameter:
+
+        def utility(*, consumption: FloatND, multiplier: float) -> FloatND:
+            return multiplier * consumption
+
+        declared = model.user_regimes["done"]
+        model = Model(
+            regimes={
+                "done": declared.replace(
+                    functions={**declared.functions, "utility": utility}
+                )
+            },
+            edges=model.edges,
+            ages=model.ages,
+            initial_nodes=model.initial_nodes,
+            regime_id_class=RegimeId,
+            fixed_params={"done": {"utility": {"multiplier": 1.0}}},
+        )
+        assert isinstance(model._regimes["done"].simulation.Q_and_F[0], partial)
+    regime = model._regimes["done"]
+    flat_params = regime_kernel_params(
+        model._process_params({}, runtime_checks=False), regime_name="done"
+    )
+    states = MappingProxyType(
+        {
+            "wealth": jnp.asarray([2.0, 2.0, 2.0]),
+            "income": jnp.asarray([0.0, 0.5, 1.0]),
+        }
+    )
+    holders = jnp.asarray([True, invalid_holder, True])
+    space = create_regime_state_action_space(
+        regime=regime,
+        regime_states=states,
+        base=regime.solution.state_action_space(regime_params=flat_params),
+    )
+
+    def reader(
+        *,
+        states: Mapping[StateName, FloatND | IntND],
+        fallback_actions: Mapping[ActionName, ValueND],
+    ) -> ActionOutput:
+        assert tuple(fallback_actions) == ("consumption",)
+        return ActionOutput(
+            actions={"consumption": jnp.full_like(states["wealth"], 1.0)}
+        )
+
+    def evaluate() -> tuple[MappingProxyType[ActionName, FloatND | IntND], FloatND]:
+        return _read_external_replay(
+            reader=reader,
+            regime_name="done",
+            regime=regime,
+            period=0,
+            age=jnp.asarray(0.0),
+            states=states,
+            state_action_space=space,
+            next_regime_to_V_arr=MappingProxyType({}),
+            flat_params=flat_params,
+            referenced_value_kwargs={},
+            subject_ids_in_regime=holders,
+        )
+
+    if invalid_holder:
+        with pytest.raises(InvalidValueFunctionError, match="floor"):
+            evaluate()
+        return
+
+    actions, values = evaluate()
+    np.testing.assert_array_equal(actions["consumption"], [1.0, 1.0, 1.0])
+    np.testing.assert_array_equal(values[holders], [1.0, 1.0])

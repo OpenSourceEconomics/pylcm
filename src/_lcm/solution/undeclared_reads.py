@@ -132,10 +132,16 @@ def _continuation_leaf_pins(
     publishes no addressable leaf and pins nothing.
     """
     spec = continuation_specs.get(target_name)
+    if spec is None or (
+        spec.templates_by_period and period not in spec.templates_by_period
+    ):
+        # This is conservative inventory, not a declared payload read. Ordinary
+        # value-only predecessors do not create publications at sparse dates.
+        return ()
     template = published_continuation_template(
-        continuation_specs=continuation_specs, target=target_name
+        continuation_specs=continuation_specs, target=target_name, period=period
     )
-    if spec is None or template is None:
+    if template is None:
         return ()
     if every_leaf:
         paths: tuple[tuple[str, ...], ...] = tuple(template.leaves())

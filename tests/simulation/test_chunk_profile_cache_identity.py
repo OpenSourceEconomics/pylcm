@@ -19,6 +19,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from jax.typing import DTypeLike
 
 import _lcm.simulation.chunk_admission as admission
 import _lcm.simulation.chunk_profile_inventory as chunk_profile_inventory_module
@@ -89,7 +90,7 @@ def _budgeted_model(*, device_memory_bytes: int = 2**32) -> Model:
     )
 
 
-def _initial(*, n: int, dtype: jnp.dtype = jnp.float32) -> dict[str, jax.Array]:
+def _initial(*, n: int, dtype: DTypeLike = jnp.float32) -> dict[str, jax.Array]:
     return {
         "wealth": jnp.linspace(1.0, 2.0, n, dtype=dtype),
         "age": jnp.zeros(n),
@@ -201,7 +202,6 @@ def _key_for_initial_conditions(
             base_state_action_spaces=MappingProxyType({}),
         ),
         values={},
-        flags={},
         policies=None,
         ages=model.ages,
         initial_conditions=initial,
@@ -334,7 +334,6 @@ def test_key_is_stable_and_versioned() -> None:
             base_state_action_spaces=MappingProxyType({}),
         ),
         "values": {},
-        "flags": {},
         "policies": None,
         "ages": model.ages,
         "initial_conditions": _initial(n=3),
@@ -352,7 +351,7 @@ def test_key_is_stable_and_versioned() -> None:
     second = _simulation_chunk_profile_key(**key_kwargs)
     assert first == second
     assert hash(first) == hash(second)
-    assert first[0] == ("chunk-profile-key", 2)
+    assert first[0] == ("chunk-profile-key", 4)
 
 
 @pytest.mark.parametrize("role", ["seed", "taste_shock_seed"])

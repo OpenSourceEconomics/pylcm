@@ -34,7 +34,7 @@ remaining prerequisites.
 | ------------ | ------------------------------------------------------------ | ---------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
 | `GridSearch` | Regime or a specialized regime                               | General discrete-continuous action product                                   | Ordinary callable constraints; EV1 taste shocks; transition-local joint lotteries                                                                                                                                                            | Broad representation; eligible singleton hard-max routes stream actions, while EV1 and collective reductions use dense actions |
 | `EGM`        | ConsumptionSavingsRegime with one LiquidMargin               | Smooth concave one-state/one-action cash-on-hand problem                     | One continuous state and action; no discrete/process axes; identity resources; additive continuation; provable post-decision lower bound                                                                                                     | Narrow structural contract with no upper envelope                                                                              |
-| `DCEGM`      | ConsumptionSavingsRegime with one LiquidMargin               | One liquid Euler margin and optional discrete choice                         | Valid resources and post-decision roles; lower bound; supported passive states and continuation layout; EV1 taste shocks                                                                                                                     | Constrained candidates and upper envelope; simulation may re-optimize on the action grid                                       |
+| `DCEGM`      | ConsumptionSavingsRegime with one LiquidMargin               | One liquid Euler margin and optional discrete choice                         | Valid resources and post-decision roles; lower bound; supported passive states and continuation layout; EV1 taste shocks; no finite NNBEGM successor regime                                                                                  | Constrained candidates and upper envelope; simulation may re-optimize on the action grid                                       |
 | `NBEGM`      | ConsumptionSavingsRegime with one LiquidMargin               | Supported declared kinks, jumps, hard boundaries or smooth discrete branches | Supported case-piece or piecewise-affine declaration; proven constraint routes; nonlinear CE only on eligible ride-along routes; no EV1 taste shocks; marginal donation only on an unsharded self-carry main program with eligible ownership | Preserves declared topology; structural probes and candidate geometry add cost                                                 |
 | `NEGM`       | NestedConsumptionSavingsRegime with liquid and outer margins | DCEGM inner solve conditional on a finite outer grid                         | Inner DCEGM contract plus outer state/action, post-decision, no-adjustment and cost roles; no EV1 taste shocks                                                                                                                               | Exact relative to the outer candidate set; retained candidates can dominate memory                                             |
 | `NNBEGM`     | NestedConsumptionSavingsRegime with liquid and outer margins | NBEGM inner solve inside a finite or adaptive outer search                   | Inner NBEGM contract plus compatible outer search and branch aggregation; no EV1 taste shocks                                                                                                                                                | Declared budget topology inside each outer candidate adds structural and computational cost                                    |
@@ -56,6 +56,60 @@ Potential axes depend on the selected solver configuration. Model construction a
 only axes declared by its actual programs; these tables do not waive structural
 validation. Host-repeated programs may contain planned compiled cores. Regime submesh
 placement and simulation subject tiling are separate execution policies.
+
+(unsupported-solver-combinations)=
+## Unsupported combinations
+
+A `DCEGM` regime cannot be followed by a non-terminal regime solved by `NNBEGM` with a
+`FiniteOuterGrid`. Simulating the DCEGM regime would evaluate actions whose next-period
+states lie outside the domain the NNBEGM regime was solved on. `Model(...)` therefore
+refuses the pairing with a `ModelInitializationError`. Solve the preceding regime with
+one of:
+
+- `NBEGM` or `GridSearch`
+- `NNBEGM`, declaring the regime as a `NestedConsumptionSavingsRegime`
+
+(current-iid-egm)=
+## Named current-IID shocks in endogenous-grid regimes
+
+A `ShockGroup` named in `Regime(shocks=...)` by a regime solved with `DCEGM`, `NBEGM`,
+`NEGM` or `NNBEGM` is solved on the node-state axis: each shock of the group is an
+internal IID node state of every regime that reads the group, `GridSearch` readers
+included, and the continuation integrates that axis with the rule's weights. Every
+shape the node-state route supports is therefore supported with `shocks=` too: several
+states, deterministic discrete states carried into the terminal, discrete actions,
+chains of endogenous-grid regimes over several dates, shocks in resources, and a
+literal savings-grid floor. A shock that enters utility other than through resources is
+refused; see [process states in utility](#egm-process-utility). Groups read only by
+`GridSearch` regimes keep the integrated current-IID route. A plain `EGM` regime
+publishes a one-dimensional continuation and refuses named shocks; solve it with `DCEGM`
+instead.
+
+What users see does not change:
+
+- `solve` publishes values integrated over the shocks; no value array, `value_array`
+  coordinate or saved archive has a shock axis.
+- `simulate` draws each shock from the same addressed stream as the current-IID route
+  (shock name, original subject row and period), and applies `BaseInnovations` and
+  `PhysicalValues` inputs with the same rules: an entry record at the row's entry
+  period, a path at every period it covers, superseding the entry. Every current
+  function reads the realized physical draw.
+- A saved solution simulates like the solve it came from.
+
+The decision at a realized draw is made as for node-state models of the same solver.
+An `NBEGM` regime takes the argmax over its declared action grid, so its simulated
+continuous action lies on that grid. An `NNBEGM` regime over a `FiniteOuterGrid` reads
+its candidate bank at the draw, linearly in the node coordinate between the two
+bracketing nodes and along the edge segment beyond the outer ones.
+
+The node-state axis represents fixed scalar laws (`Normal`, `LogNormal`, `Uniform`,
+`NormalMixture`) under an independent `Product` rule, and one-shock groups under any
+age-independent rule (`UserNodes`). `Model(...)` raises a
+`ShockDeclarationError` for a group an endogenous-grid regime reads that has
+correlated shocks, a joint non-product rule over several shocks, a
+`MonteCarlo` or `QuasiMonteCarlo` rule, a `Discrete` law, or law parameters that are
+runtime slots, callables or `StateConditioned`. Such a group remains available to
+`GridSearch` regimes.
 
 ## Nonlinear certainty equivalents
 
@@ -104,8 +158,8 @@ deliberately dense, unsupported, or trivial declares no `action_product` axis.
 
 The separate `cell` axis tiles the flattened Cartesian product of inner states.
 `ExecutionConfig(axis_widths={"cell": n})` bounds the number of state cells evaluated
-together, including any folded quadrature nodes. Each output leaf recovers its state
-axes before folding; collective values also retain their trailing stakeholder axis.
+together. Each output leaf recovers its state axes; collective values also retain their
+trailing stakeholder axis.
 Sharded states stay outside this loop; fixed states also retain their co-mapping with
 continuation values, preserving device-local reads. Empty and singleton state products
 declare no `cell` axis. A core
@@ -123,13 +177,10 @@ This matrix uses exactly three disposition labels:
 | Singleton EV1 with at least one discrete action | deliberately dense | Dense action reduction preserves canonical floating-point reduction order and winner identity; the blocked reference does not yet preserve that contract. |
 | Same-period references, edge references, or gated targets without a co-mapped state | streamed | Each target artifact and its exact source argument path is declared; the resolved transfer supplies it as a dynamic input to the streamed solve core. |
 | Ordinary co-mapped state route without a separate reference channel | streamed | Continuation leaves co-map with the state cell while actions stream. |
-| Singleton hard max with folded states, including an ordinary co-map | streamed | Actions stream at each fold node; the unchanged quadrature still evaluates and reduces the full fold-node axis. |
 | Co-mapped state plus a separate same-period or edge-reference channel | deliberately dense | The two data transports are not yet represented together by the streamed program. |
 | No action, or an action product containing at most one candidate | deliberately dense | Blocking a trivial product adds no useful execution choice. |
 | JIT disabled, including the raw execution path | deliberately dense | The action-streamed program is a JIT lowering route. |
 | Collective EV1 | unsupported | The action-streamed solve program has no collective EV1 reduction. |
-| EV1 plus a folded state | unsupported | The action-streamed solve program does not compose EV1 and fold reductions. |
-| Collective hard max plus a folded state | unsupported | The action-streamed solve program does not compose collective and fold reductions. |
 | EV1 without a discrete action | unsupported | The GridSearch EV1 reduction requires a discrete-choice axis. |
 | Any simulation-policy construction | deliberately dense | Simulation lies outside this solve-route classifier and continues to recompute policies on the dense action product. |
 
@@ -141,9 +192,8 @@ remaining eligible route is streamed.
 Here, **unsupported** is a disposition of the action-streamed solve program, not a new
 public solver capability verdict. Model validation may reject the corresponding
 declaration; where the declaration is otherwise valid, the existing dense GridSearch
-core remains the compatibility path. Streamed programs publish only solve-time `VALUE`,
-or `VALUE` plus `DISSOLUTION_FLAG` for a collective route; replay and policy artifacts
-are not integrated. Runtime and peak-memory effects require measurement; bounded action
+core remains the compatibility path. Streamed programs publish only solve-time `VALUE`;
+replay and policy artifacts are not integrated. Runtime and peak-memory effects require measurement; bounded action
 evaluation alone is not a performance claim.
 
 For planned GridSearch solve cores, a continuation or reference declaration identifies
@@ -197,18 +247,29 @@ It does not require a nontrivial discrete choice: it is also the supported route
 for a smooth liquid problem whose genuine resources node, passive states, or stochastic
 processes make plain `EGM` ineligible.
 
+Named current-IID shocks in a DC-EGM regime are solved on the node-state axis; see
+[Named current-IID shocks in endogenous-grid regimes](#current-iid-egm).
+
 The supported typed envelope configurations are `ExactEnvelope`, `FUESEnvelope`,
-`RFCEnvelope`, `LTMEnvelope`, and `MSSEnvelope`. String selectors are not part of the
-public API. Exact-envelope node cells are tiled through the model's
-`ExecutionConfig(axis_widths={"envelope_cell": width})`; the axis is exported as
-`ENVELOPE_CELL_AXIS`. FUES uses a fixed scan unroll factor of one, recorded in the
-compiled program identity. See [Upper envelopes](envelopes.md) for their distinct
+`RFCEnvelope`, and `LTMEnvelope`; MSS was removed, and envelopes maintained outside
+pylcm are planned in [issue #632](https://github.com/OpenSourceEconomics/pylcm/issues/632).
+String selectors are not part of the public API. Exact-envelope node cells are tiled
+through the model's `ExecutionConfig(axis_widths={"envelope_cell": width})`; the axis is
+exported as `ENVELOPE_CELL_AXIS`. FUES uses a fixed scan unroll factor of one, recorded
+in the compiled program identity. See [Upper envelopes](envelopes.md) for their distinct
 contracts.
 
 `refined_grid_factor` provides NaN-padded storage headroom for ownership changes in each
 envelope row. A row that needs more slots is reported as overflow and NaN-poisoned; this
 field does not change the density of the policy read-out grid. `n_constrained_points`
 controls the borrowing-corner segment.
+
+The value DC-EGM publishes at a binding floor is exact: below the lowest Euler candidate
+the constrained branch is the only candidate, and its value is evaluated in closed form.
+A parent regime reads that child through its carry rows, which hold the constrained
+branch as `n_constrained_points` points joined by cubic Hermite interpolation. The
+parent's value near the floor therefore carries an interpolation error. It shrinks as
+the savings grid is refined, and raising `n_constrained_points` reduces it further.
 
 DC-EGM owns no block-size field. Each loop it could stream is an execution axis its
 value and replay programs declare, and the width is fixed with
@@ -232,16 +293,81 @@ declaration, so its name is refused for such a model. Grids declare economic sup
 execution widths belong in `ExecutionConfig.axis_widths`.
 
 :::{important} Solved and simulated continuous actions
-A solve can expose an off-grid
-DCEGM policy as an addressed replay artifact in `SolutionResult`. No envelope shipped
-with pylcm currently passes the conservative off-grid policy-read gate, so ordinary
-simulation recomputes the action argmax on the regime's declared action grid. Simulation
-uses that gridded argmax whenever the model declares no off-grid policy-read route.
+With the default `replay="candidate"`, `simulate` reads a plain DC-EGM regime's solved
+policy at each subject's realized state (policy-first). For every discrete-action branch
+it reads the conditional value at that branch's resources; the branch with the largest
+value wins, and its policy row supplies the continuous action. Value, action and
+transitions therefore belong to the same branch.
 
-The simulated continuous action can therefore differ from the off-grid solve policy.
+A subject keeps that read when it passes cheap acceptance checks:
+
+- every live branch's read lies inside its row support
+- the winning value and action are finite and the action is positive
+- the action is within the intrinsic budget, `resources - savings lower bound`
+- the action is feasible under the regime's constraints
+
+Only rejected subjects take the argmax on the regime's declared action grid. The
+reported value is the read value: the canonical evaluation at the emitted action
+supplies only feasibility, and the default path runs no ownership audit.
+
+A process state (an IID or AR(1) shock declared as a state, for example
+`NormalIIDProcess`) is a node axis of the published rows, and its simulated value can
+fall between nodes. Each branch then reads the two bracketing node rows at the subject's
+resources and blends them linearly in the node coordinate, extrapolating along the edge
+segment beyond the outer nodes. The process's transition weights follow the same rule
+off node, so the blended continuation is the one the grid argmax scores. A value on a
+node reads that node's row alone. When the process enters only resources, every node
+row is the same function of resources and the read is the continuous optimum.
+
+(egm-process-utility)=
+
+A process state drawn off its nodes may enter an endogenous-grid regime (`DCEGM`,
+`NBEGM`, `NEGM`, `NNBEGM`) only through its resources function. `Model(...)` raises a
+`ModelInitializationError` when `utility` reads such a process (IID or AR(1), for example
+`TauchenAR1Process`, `RouwenhorstAR1Process` or `TauchenAR1Process.on_nodes`) or a
+`shocks=` draw any other way, directly or through a helper function, even if it also
+enters resources and whatever the law's parameters. Every process simulates continuous
+draws by default. A process declared with `simulated_draws="nodes"` is drawn only at its
+nodes, so each read takes one node row and is exact; it may enter utility freely. The
+remedies are:
+
+- for a process state: move it into resources, declare it with
+  `simulated_draws="nodes"`, or solve the regime with `GridSearch`;
+- for a shock of a `shocks=` group, which has no draw mode of its own: move it into
+  resources, declare it as an IID process state with `simulated_draws="nodes"`, or solve
+  the regime with `GridSearch`.
+
+Policy-first needs a regime whose actions are the EGM action plus discrete actions, with
+a scalar savings floor and process states with fixed, unconditioned nodes. It does not
+apply with taste shocks, phase-specific declarations, carried-only states, passive
+continuous states, a process whose law arrives as runtime params or is state-conditioned,
+or a savings stage that reads the Euler state. Such DC-EGM regimes simulate by the
+action-grid argmax, so their continuous action can differ from the off-grid solve policy.
 With taste shocks, simulated choice frequencies follow the grid-restricted
-choice-specific values rather than necessarily matching the solve's off-grid choice
-probabilities. The intrinsic budget is still applied as a simulation feasibility mask.
+choice-specific values.
+
+An `NBEGM` regime that carries a state besides its liquid state (a discrete state or a
+process state riding along) reads its solved policy the same way, under the same
+eligibility. Its policy is published on the regime's state grid: the liquid state reads
+linearly between its two bracketing grid nodes, and a process state between its nodes
+blends the bracketing node rows as above. With discrete actions, the branch whose
+published conditional value reads largest wins and its conditional policy supplies the
+continuous action. Acceptance requires the liquid state inside its grid, a live branch,
+and a finite, positive action within the intrinsic budget that the regime's constraints
+admit; rejected subjects take the action-grid argmax. The reported value is the
+canonical evaluation at the emitted actions, since the policy carries no value at an
+off-grid state. A read between grid nodes is a linear interpolation of the solved
+policy: across a jump or kink of that policy it is not the optimum at the realized
+state, and no rescoring against the grid argmax corrects it. An `NBEGM` regime whose
+only state is its liquid state publishes no state-grid policy and simulates by the
+action-grid argmax.
+
+Regimes reading named current-IID shocks are node-state regimes and simulate by the
+action-grid argmax at the realized draw; see
+[Named current-IID shocks in endogenous-grid regimes](#current-iid-egm).
+
+`DCEGM(replay="grid")` restores the action-grid argmax for plain DC-EGM regimes.
+`accuracy="certified"` refuses it.
 :::
 
 (api-negm)=
@@ -273,6 +399,9 @@ inner DCEGM solve, but a taste-shocked discrete choice must be the outermost agg
 `max_outer logsumexp_discrete` is not `logsumexp_discrete max_outer`. Use `GridSearch`,
 or remove the taste shocks when the NEGM structure is required.
 
+Named current-IID shocks in an NEGM regime are solved on the node-state axis; see
+[Named current-IID shocks in endogenous-grid regimes](#current-iid-egm).
+
 (api-nbegm)=
 ### `NBEGM`
 
@@ -280,30 +409,38 @@ or remove the taste shocks when the NEGM structure is required.
 NBEGM(
     savings_grid=...,
     jump_read="one_sided",
-    envelope_arithmetic="certified",
+    envelope_arithmetic="ordinary",
     probe_failure="reject",
+    probe_schedule="never",
 )
 ```
 
 `jump_read` selects topology-preserving one-sided continuation reads or a faster bridged
 finite-grid read. `probe_failure="assume_declared"` turns an unexecutable structural
 probe into an author assertion and warning; it does not relax the mathematical
-prerequisite.
+prerequisite. The structural probes run only when `probe_schedule` selects them:
+`"never"` (the default) skips them, `"first_solve"` runs them once per model and
+`"every_solve"` on every parameter draw.
 
-With `envelope_arithmetic="certified"`, candidate ownership is ordered from the stored
-floating-point operands using fixed-width integer arithmetic. Exact affine value comes
-first, followed by deterministic geometric and stable-index tie-breaks. NaNs and other
-non-finite or invalid geometry are not ordinary ordered values: the query is rejected
-and remains uncovered/NaN so runtime validation can surface it. `"ordinary"` compares in
-the working floating format and requires model-specific validation near crossings.
+Named current-IID shocks in an NB-EGM regime are solved on the node-state axis; see
+[Named current-IID shocks in endogenous-grid regimes](#current-iid-egm).
+
+The default `envelope_arithmetic="ordinary"` compares candidates in the working
+floating format. Near a crossing it can choose a different owner or shift the crossing
+slightly; each published value still comes from one candidate together with its policy
+and marginal. With `envelope_arithmetic="certified"`, candidate ownership is ordered
+from the stored floating-point operands using fixed-width integer arithmetic. Exact
+affine value comes first, followed by deterministic geometric and stable-index
+tie-breaks. NaNs and other non-finite or invalid geometry are not ordinary ordered
+values: the query is rejected and remains uncovered/NaN so runtime validation can
+surface it.
 
 **Native capability.** `"certified"` uses pylcm's installed exact-affine CPU/CUDA
 payload; it is not a pure-JAX numerical option. A compatible payload must exist for the
 active JAX backend. NBEGM never silently falls back: if the payload is absent or
 unloadable, certified mode raises `ExactAffineKernelUnavailableError` before returning a
-certified result. Select `envelope_arithmetic="ordinary"` only when working-format
-ownership is acceptable under model-specific crossing checks. The same requirement
-applies when this NBEGM is the inner solver of `NNBEGM`.
+certified result. The same requirement applies when this NBEGM is the inner solver of
+`NNBEGM`. The default `envelope_arithmetic="ordinary"` needs no payload.
 
 Compiled widths belong to the model's `ExecutionConfig`, with constants imported from
 `lcm.solvers`. Only axes a program actually uses are declared:
@@ -394,7 +531,11 @@ How the keeper and adjuster branches combine is an economic declaration, not a s
 setting: it lives on [`OuterContinuousMargin.adjustment_cost`](consumption_savings.md).
 
 With `FiniteOuterGrid`, NNBEGM replays the keeper-plus-outer-grid candidates ranked
-during the solve; with `AdaptiveOuterMesh` it republishes the mesh policies and the
+during the solve. That bank lives on the regime's own state grids and is not
+extrapolated: `simulate` raises an `OffGridStateError` for a subject whose continuous
+state (other than a stochastic process) lies outside its grid, whether it started there
+or a predecessor regime's choice landed it there. Widen that grid to cover every start
+and every landing. With `AdaptiveOuterMesh` it republishes the mesh policies and the
 search settings, and re-refines per subject at that subject's own resources. The
 adaptive replay reads the exact generated mesh, whose nodes the result carries as the
 candidate axis of the policy's descriptor, so both the adaptive policy and the finite

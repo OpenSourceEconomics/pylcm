@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     import numpy as np
     from numpy.typing import NDArray
 
-    from _lcm.typing import ActionName, JSONValue, RegimeName, StateName
+    from _lcm.typing import ActionName, JSONValue, RegimeName
 
 
 type SourcePath = str
@@ -54,13 +54,11 @@ class _KernelRow(_KernelExecution):
     action_extents: list[int]
     collective: bool
     has_taste_shocks: bool
-    fold_state_names: list[StateName]
 
 
 class _RouteMetadata(TypedDict, total=False):
     kernels: list[_KernelRow]
     streamed_kernel_count: int
-    folded_regimes: list[str]
     collective_regimes: list[str]
     distributed_regimes: list[str]
     taste_shock_regimes: list[str]
@@ -264,7 +262,6 @@ _FULL_REVISION = re.compile(r"[0-9a-f]{40}")
 _AUTOTUNE_OFF = "--xla_gpu_autotune_level=0"
 _AUTOTUNE_PREFIX = "--xla_gpu_autotune_level"
 _ROUTE_TOPOLOGY_FIELDS = (
-    "folded_regimes",
     "collective_regimes",
     "distributed_regimes",
     "taste_shock_regimes",
@@ -280,7 +277,6 @@ _KERNEL_ROUTE_FIELDS = (
     "disposition_reason",
     "collective",
     "has_taste_shocks",
-    "fold_state_names",
 )
 _BEHAVIORAL_ENV_FIELDS = (
     "XLA_PYTHON_CLIENT_PREALLOCATE",
@@ -752,8 +748,6 @@ def _is_scenario_target(
 ) -> bool:
     if scenario == "singleton-ev1":
         return bool(row["has_taste_shocks"])
-    if scenario == "folded-hard-max":
-        return bool(row["fold_state_names"])
     if scenario == "collective-gs-vd":
         return bool(row["collective"]) and row["regime"] in routes["gs_vd_regimes"]
     if scenario == "distributed-co-map":
@@ -762,14 +756,12 @@ def _is_scenario_target(
         return (
             not row["collective"]
             and not row["has_taste_shocks"]
-            and not row["fold_state_names"]
             and row["regime"] not in routes["distributed_regimes"]
         )
     if scenario == "singleton-hard-max":
         return (
             not row["collective"]
             and not row["has_taste_shocks"]
-            and not row["fold_state_names"]
             and row["regime"] not in routes["gs_vd_regimes"]
             and row["regime"] not in routes["distributed_regimes"]
         )

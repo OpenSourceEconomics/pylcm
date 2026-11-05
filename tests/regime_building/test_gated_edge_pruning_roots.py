@@ -18,9 +18,10 @@ from lcm import (
     AgeRange,
     ByAge,
     DiscreteGrid,
-    Gate,
     LinSpacedGrid,
     Model,
+    ParticipationCheck,
+    ParticipationRead,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
@@ -126,8 +127,8 @@ def _make_model_with_a_gate_reading_a_broadcast_state() -> Model:
                         }
                     }
                 ),
-                gates={
-                    "retired": Gate(
+                participation={
+                    "retired": ParticipationCheck(
                         predicate=_gate_reading_bonus,
                         routes={
                             "self": StakeholderRoute(
@@ -138,11 +139,20 @@ def _make_model_with_a_gate_reading_a_broadcast_state() -> Model:
                                 ),
                             )
                         },
-                        references={
-                            "V_outside_ref": ProjectedRegimeValue(
+                        reads={
+                            "V_target": ParticipationRead(
+                                kind="IntegratedFull",
+                                regime="retired",
+                                projection={
+                                    "wage": _project_wage_identically,
+                                    "bonus": _project_bonus_identically,
+                                },
+                            ),
+                            "V_outside_ref": ParticipationRead(
+                                kind="IntegratedFull",
                                 regime="outside",
                                 projection={"wage": _project_wage_identically},
-                            )
+                            ),
                         },
                     )
                 },
@@ -185,8 +195,8 @@ def _make_model_with_a_projection_reading_a_target_state() -> Model:
                         }
                     }
                 ),
-                gates={
-                    "retired": Gate(
+                participation={
+                    "retired": ParticipationCheck(
                         predicate=_gate_comparing_values,
                         routes={
                             "self": StakeholderRoute(
@@ -197,11 +207,20 @@ def _make_model_with_a_projection_reading_a_target_state() -> Model:
                                 ),
                             )
                         },
-                        references={
-                            "V_outside_ref": ProjectedRegimeValue(
+                        reads={
+                            "V_target": ParticipationRead(
+                                kind="IntegratedFull",
+                                regime="retired",
+                                projection={
+                                    "wage": _project_wage_identically,
+                                    "bonus": _project_bonus_identically,
+                                },
+                            ),
+                            "V_outside_ref": ParticipationRead(
+                                kind="IntegratedFull",
                                 regime="outside",
                                 projection={"wage": _project_wage_from_bonus},
-                            )
+                            ),
                         },
                     )
                 },
@@ -266,6 +285,10 @@ def _next_wage(wage: ContinuousState) -> ContinuousState:
 def _project_wage_identically(wage: ContinuousState) -> ContinuousState:
     """Read the reference regime at the same wage the target cell sits on."""
     return wage
+
+
+def _project_bonus_identically(bonus: ContinuousState) -> ContinuousState:
+    return bonus
 
 
 def _project_wage_from_bonus(bonus: ContinuousState) -> ContinuousState:

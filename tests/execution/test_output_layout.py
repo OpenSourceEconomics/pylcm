@@ -18,7 +18,6 @@ from _lcm.execution.core_program import (
     CoreProgram,
 )
 from _lcm.execution.output_layout import (
-    DISSOLUTION_FLAG,
     VALUE,
     PlannedCore,
     ResolvedOutputLayout,
@@ -69,6 +68,15 @@ def _template(*, collective: bool = False):
     )
 
 
+def _state_mask() -> StateAxesLeading:
+    """A Boolean leaf on the collective template's state axes, stakeholders dropped."""
+    return StateAxesLeading(
+        state_names=("kind", "wealth"),
+        dtype=jnp.bool_,
+        shape=(len(jax.devices()), 3),
+    )
+
+
 def test_resolver_maps_singleton_value_to_exact_template_sharding():
     template = _template()
 
@@ -87,23 +95,23 @@ def test_resolver_maps_singleton_value_to_exact_template_sharding():
     assert resolved.expected_leaves[0].shape == template.shape
 
 
-def test_resolver_drops_collective_stakeholder_axis_from_dissolution_spec():
+def test_resolver_drops_collective_stakeholder_axis_from_state_leaf_spec():
     template = _template(collective=True)
 
     resolved = resolve_output_layout(
         core_key="main",
         value_template=template,
         state_order=("kind", "wealth"),
-        output_roles=(VALUE, DISSOLUTION_FLAG),
+        output_roles=(VALUE, _state_mask()),
     )
 
     assert isinstance(resolved, ResolvedOutputLayout)
-    value_sharding, dissolution_sharding = cast(
+    value_sharding, mask_sharding = cast(
         "tuple[jax.NamedSharding, jax.NamedSharding]", resolved.out_shardings
     )
     assert value_sharding == template.sharding
-    assert dissolution_sharding.mesh == template.sharding.mesh
-    assert dissolution_sharding.spec == jax.P("kind", None)
+    assert mask_sharding.mesh == template.sharding.mesh
+    assert mask_sharding.spec == jax.P("kind", None)
     assert resolved.expected_value_shape == template.shape
     assert resolved.expected_value_dtype == template.dtype
     assert resolved.expected_leaves[1].shape == template.shape[:-1]
@@ -120,15 +128,15 @@ def test_collective_template_may_omit_replicated_stakeholder_spec_entry():
         core_key="main",
         value_template=template,
         state_order=("kind", "wealth"),
-        output_roles=(VALUE, DISSOLUTION_FLAG),
+        output_roles=(VALUE, _state_mask()),
     )
 
     assert isinstance(resolved, ResolvedOutputLayout)
-    value_sharding, dissolution_sharding = cast(
+    value_sharding, mask_sharding = cast(
         "tuple[jax.NamedSharding, jax.NamedSharding]", resolved.out_shardings
     )
     assert value_sharding == template.sharding
-    assert dissolution_sharding.spec == jax.P("kind", None)
+    assert mask_sharding.spec == jax.P("kind", None)
 
 
 def test_explicit_roles_resolve_a_single_device_layout():
@@ -170,25 +178,20 @@ def test_terminal_carry_decorator_rejects_unaware_base():
 
 @pytest.mark.parametrize(
     "roles",
-    [DISSOLUTION_FLAG, (VALUE, VALUE), (DISSOLUTION_FLAG, VALUE)],
+    [
+        StateAxesLeading(state_names=("kind",)),
+        (VALUE, VALUE),
+        (StateAxesLeading(state_names=("kind",)), VALUE),
+    ],
 )
 def test_resolver_rejects_malformed_role_trees(roles):
-    with pytest.raises(ValueError, match="exactly one VALUE"):
+    match = "explicit" if isinstance(roles, StateAxesLeading) else "exactly one VALUE"
+    with pytest.raises(ValueError, match=match):
         resolve_output_layout(
             core_key="main",
             value_template=_template(collective=True),
             state_order=("kind", "wealth"),
             output_roles=roles,
-        )
-
-
-def test_resolver_rejects_dissolution_without_one_stakeholder_axis():
-    with pytest.raises(ValueError, match="trailing stakeholder axis"):
-        resolve_output_layout(
-            core_key="main",
-            value_template=_template(),
-            state_order=("kind", "wealth"),
-            output_roles=(VALUE, DISSOLUTION_FLAG),
         )
 
 
@@ -209,7 +212,7 @@ def test_compilation_key_tracks_layout_tree_and_shardings():
         core_key="main",
         value_template=_template(collective=True),
         state_order=("kind", "wealth"),
-        output_roles=(VALUE, DISSOLUTION_FLAG),
+        output_roles=(VALUE, _state_mask()),
     )
 
     assert isinstance(first, ResolvedOutputLayout)
@@ -266,7 +269,7 @@ def test_role_tree_output_mismatch_fails_during_lowering():
         core_key="main",
         value_template=_template(collective=True),
         state_order=("kind", "wealth"),
-        output_roles=(VALUE, DISSOLUTION_FLAG),
+        output_roles=(VALUE, _state_mask()),
     )
     assert isinstance(resolved, ResolvedOutputLayout)
 
@@ -338,47 +341,47 @@ def test_assert_output_layout_rejects_coherent_wrong_collective_shape():
         core_key="main",
         value_template=template,
         state_order=("kind", "wealth"),
-        output_roles=(VALUE, DISSOLUTION_FLAG),
+        output_roles=(VALUE, _state_mask()),
     )
     assert isinstance(resolved, ResolvedOutputLayout)
-    value_sharding, dissolution_sharding = cast(
+    value_sharding, mask_sharding = cast(
         "tuple[jax.NamedSharding, jax.NamedSharding]", resolved.out_shardings
     )
     wrong_value = jax.device_put(
         jnp.zeros((len(jax.devices()), 2, 2), dtype=template.dtype),
         value_sharding,
     )
-    wrong_dissolution = jax.device_put(
+    wrong_mask = jax.device_put(
         jnp.zeros((len(jax.devices()), 2), dtype=bool),
-        dissolution_sharding,
+        mask_sharding,
     )
 
     with pytest.raises(AssertionError, match="planned value shape"):
         assert_output_layout(
-            output=(wrong_value, wrong_dissolution),
+            output=(wrong_value, wrong_mask),
             layout=resolved,
         )
 
 
 @pytest.mark.parametrize(
-    "dissolution",
+    "mask",
     [
         jnp.zeros((len(jax.devices()), 3)),
         jnp.zeros((len(jax.devices()), 2), dtype=bool),
     ],
 )
-def test_assert_output_layout_rejects_malformed_dissolution(dissolution):
+def test_assert_output_layout_rejects_malformed_state_leaf(mask):
     template = _template(collective=True)
     resolved = resolve_output_layout(
         core_key="main",
         value_template=template,
         state_order=("kind", "wealth"),
-        output_roles=(VALUE, DISSOLUTION_FLAG),
+        output_roles=(VALUE, _state_mask()),
     )
     assert isinstance(resolved, ResolvedOutputLayout)
 
-    with pytest.raises(AssertionError, match="dissolution"):
-        assert_output_layout(output=(template, dissolution), layout=resolved)
+    with pytest.raises(AssertionError, match=r"leaf \[1\]"):
+        assert_output_layout(output=(template, mask), layout=resolved)
 
 
 def test_published_value_placement_is_asserted_not_repaired():
@@ -548,7 +551,8 @@ def test_lowered_leaf_metadata_mismatch_names_the_offending_leaf():
     ],
 )
 def test_resolver_requires_exactly_one_value_leaf_in_the_first_position(roles):
-    with pytest.raises(ValueError, match="exactly one VALUE"):
+    match = "explicit" if isinstance(roles, StateAxesLeading) else "exactly one VALUE"
+    with pytest.raises(ValueError, match=match):
         resolve_output_layout(
             core_key="main",
             value_template=_template(),

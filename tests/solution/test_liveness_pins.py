@@ -101,7 +101,6 @@ def test_every_regime_value_is_retained() -> None:
     ledger = _build_planned_input_liveness(
         regimes=model._regimes,
         program_metadata=_metadata(model=model),
-        retain_all_artifacts=False,
         persistable_artifact_refs=frozenset(),
     )
 
@@ -121,7 +120,6 @@ def test_a_persisted_continuation_payload_is_retained_leaf_by_leaf() -> None:
     ledger = _build_planned_input_liveness(
         regimes=model._regimes,
         program_metadata=_metadata(model=model),
-        retain_all_artifacts=True,
         persistable_artifact_refs=frozenset({reference}),
     )
     continuation_specs: dict[RegimeName, ContinuationSpec] = {
@@ -150,7 +148,6 @@ def test_a_payload_no_retention_selected_is_not_retained() -> None:
     ledger = _build_planned_input_liveness(
         regimes=model._regimes,
         program_metadata=_metadata(model=model),
-        retain_all_artifacts=False,
         persistable_artifact_refs=frozenset(),
     )
 
@@ -170,7 +167,6 @@ def _declared_read_consumer_counts(
     ledger = _build_planned_input_liveness(
         regimes=model._regimes,
         program_metadata=metadata,
-        retain_all_artifacts=False,
         persistable_artifact_refs=frozenset(),
     )
     return {
@@ -246,7 +242,6 @@ def test_the_breakpoints_host_read_is_pinned_wherever_a_target_publishes_one() -
     ledger = _build_planned_input_liveness(
         regimes=model._regimes,
         program_metadata=_metadata(model=model),
-        retain_all_artifacts=False,
         persistable_artifact_refs=frozenset(),
     )
     pinned = [
@@ -407,7 +402,6 @@ def test_a_rolled_gated_continuation_aliases_the_same_edge_one_period_later() ->
     ledger = _build_planned_input_liveness(
         regimes=model._regimes,
         program_metadata=_program_metadata(model=model),
-        retain_all_artifacts=False,
         persistable_artifact_refs=frozenset(),
     )
 

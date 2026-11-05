@@ -34,7 +34,6 @@ from _lcm.constraints.routes import (
 )
 from _lcm.continuation import EGMContinuationSpec
 from _lcm.egm.carry import EGMCarry, egm_carry_role_tree, egm_query_role_tree
-from _lcm.egm.comparison_arithmetic import ComparisonArithmetic
 from _lcm.egm.published_policy import EGMSimPolicy, egm_sim_policy_role_tree
 from _lcm.engine import StateActionSpace
 from _lcm.execution.core_program import (
@@ -55,7 +54,7 @@ from _lcm.post_decision_bound import PostDecisionBoundSpec, grid_origin_bound_sp
 from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.solution.continuation_reads import (
     continuation_leaf_reads,
-    published_continuation_templates,
+    published_continuation_template,
     rekeyed_value_reads,
     with_continuation_leaf_reads,
 )
@@ -95,6 +94,7 @@ from lcm.exceptions import (
     ExactAffineKernelUnavailableError,
     ModelInitializationError,
     RegimeInitializationError,
+    UnsupportedOperationError,
 )
 from lcm.solver_api import (
     EGM_CONTINUATION,
@@ -107,6 +107,8 @@ from lcm.solver_api import (
 from lcm.typing import (
     ActionName,
     BoolND,
+    EGMAccuracy,
+    EGMReplay,
     FloatND,
     FunctionName,
     ReferenceName,
@@ -201,37 +203,7 @@ class LTMEnvelope:
     """Local-upper-bound brute-force envelope configuration."""
 
 
-@beartype(conf=REGIME_CONF)
-@dataclass(frozen=True, kw_only=True)
-class MSSEnvelope:
-    """HARK-style left-to-right segment envelope configuration."""
-
-    arithmetic: ComparisonArithmetic = "certified"
-    """Which arithmetic settles a comparison between two candidate chords.
-
-    The geometry is the same either way: which stored piece covers an interval,
-    which node owns a query, and where two branches hand over. Only the
-    comparison changes.
-
-    - `"certified"` decides on the stored operands, so an ordering the working
-      format cannot separate is still settled, and a comparison the arithmetic
-      cannot decide publishes `NaN` rather than a guess. Requires the installed
-      exact-affine payload for the active backend.
-    - `"ordinary"` compares two readings formed in the working format. A
-      reading is a slope and then an affine step, so it carries no bound in
-      representable steps: cancellation or a large common level can reverse an
-      ordering the correctly rounded values would separate, and candidates
-      whose readings coincide are separated by the declared tie order. It
-      reaches no native kernel, so it is the route available when that payload
-      is absent; its values, owners and crossings are the caller's to validate
-      for the intended model at every precision, backend and transformation in
-      use.
-    """
-
-
-type EnvelopeConfig = (
-    ExactEnvelope | FUESEnvelope | RFCEnvelope | LTMEnvelope | MSSEnvelope
-)
+type EnvelopeConfig = ExactEnvelope | FUESEnvelope | RFCEnvelope | LTMEnvelope
 
 
 # A non-concave candidate chain folds into at least two resource-increasing runs,
@@ -280,7 +252,8 @@ class DCEGM(OneMarginSolver):
             problem_shape="One liquid Euler margin and optional discrete choice",
             prerequisites=(
                 "Valid resources and post-decision roles; lower bound; supported "
-                "passive states and continuation layout; EV1 taste shocks"
+                "passive states and continuation layout; EV1 taste shocks; no "
+                "finite NNBEGM successor regime"
             ),
             main_tradeoff=(
                 "Constrained candidates and upper envelope; simulation may "
@@ -334,7 +307,6 @@ class DCEGM(OneMarginSolver):
     - `FUESEnvelope`: Fast Upper-Envelope Scan.
     - `RFCEnvelope`: Rooftop-Cut algorithm.
     - `LTMEnvelope`: quadratic local-upper-bound baseline.
-    - `MSSEnvelope`: HARK-style left-to-right segment sweep.
 
     `ExactEnvelope` certifies the envelope of the candidates actually supplied;
     it does not turn the sampled credit-constrained branch into a continuous
@@ -365,7 +337,27 @@ class DCEGM(OneMarginSolver):
     supplied finite candidate set, not for the unsampled continuous branch.
     """
 
+    replay: EGMReplay = field(
+        default="candidate", metadata={"fingerprint_omit_if_default": True}
+    )
+    """Policy-first replay, or explicit approximate Cartesian replay.
+
+    For a plain DC-EGM regime, `"candidate"` simulates policy-first (the solved
+    policy rows are read at each subject's resources) and `"grid"` re-maximizes
+    over the Cartesian action grid. Other solver-family replay routes keep their
+    existing semantics.
+    """
+
+    accuracy: EGMAccuracy = field(
+        default="balanced", metadata={"fingerprint_omit_if_default": True}
+    )
+    """Projection/replay acceptance profile, separate from envelope arithmetic."""
+
     def __post_init__(self) -> None:
+        if self.accuracy == "certified" and self.replay == "grid":
+            raise UnsupportedOperationError(
+                "The certified EGM profile refuses grid replay."
+            )
         _fail_if_savings_grid_is_stochastic(self.savings_grid)
         _fail_if_refined_grid_factor_too_small(self.refined_grid_factor)
         _fail_if_n_constrained_points_too_few(self.n_constrained_points)
@@ -413,6 +405,7 @@ class DCEGM(OneMarginSolver):
             user_regimes=context.user_regimes,
             laws=context.laws,
             solution_reachability=context.solution_reachability,
+            shock_node_states=context.shock_node_states,
         )
 
     def validate_build(self, *, context: SolverBuildContext) -> None:
@@ -435,14 +428,6 @@ class DCEGM(OneMarginSolver):
             _fail_if_exact_affine_kernel_unavailable(
                 regime_name=context.regime_name,
                 selection="ExactEnvelope",
-            )
-        if (
-            isinstance(self.envelope, MSSEnvelope)
-            and self.envelope.arithmetic == "certified"
-        ):
-            _fail_if_exact_affine_kernel_unavailable(
-                regime_name=context.regime_name,
-                selection="the certified MSSEnvelope arithmetic",
             )
 
     def build_constraint_routes(
@@ -501,21 +486,18 @@ class DCEGM(OneMarginSolver):
         return declare_dcegm_carry_reads(kernels=kernels, context=context)
 
     def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
-        """Build one DC-EGM period adapter per period and the carry template.
+        """Preserve ordinary numerical preparation followed by program assembly."""
+        return self.finish_period_kernels(
+            context=context, build=self.prepare_period_steps(context=context)
+        )
 
-        The solver's model-stage and build-stage validation hooks guarantee the
-        regime is non-terminal, so the regime-transition probability function
-        exists. Periods sharing one EGM-step core reuse a single jitted core, and
-        therefore a single compiled program. Numerical-builder imports are
-        function-local so the public `lcm.solvers` façade stays a thin re-export
-        that pulls in no engine modules.
-
-        An enclosing outer solver may request per-action current eligibility
-        when the actual continuation plan installs child query readers. This
-        transport request grants no own floor or query authority.
-        """
-
-        from _lcm.egm.step import _EGMStep, build_egm_step_functions  # noqa: PLC0415
+    def prepare_period_steps(
+        self,
+        *,
+        context: SolverBuildContext,
+    ) -> EGMStepBuild:
+        """Prepare real numerical pieces without constructing any CoreProgram."""
+        from _lcm.egm.step import build_egm_step_functions  # noqa: PLC0415
 
         assert context.compute_regime_transition_probs is not None  # noqa: S101
         assert context.koopmans_aggregator is not None  # noqa: S101
@@ -524,13 +506,14 @@ class DCEGM(OneMarginSolver):
             if context.dcegm_query_models is not None
             else None
         )
-        build = build_egm_step_functions(
+        return build_egm_step_functions(
             solver=cast("_BoundDCEGM", self),
             regime_name=context.regime_name,
             user_regimes=context.user_regimes,
             laws=context.laws,
             functions=context.functions,
             koopmans_aggregator=context.koopmans_aggregator,
+            certainty_equivalent=context.certainty_equivalent,
             constraints=context.constraints,
             processed_constraints=context.processed_constraints,
             transitions=context.transitions,
@@ -549,6 +532,30 @@ class DCEGM(OneMarginSolver):
             query_model=query_model,
             dcegm_query_models=context.dcegm_query_models,
             nbegm_query_models=context.nbegm_query_models,
+        )
+
+    def finish_period_kernels(
+        self,
+        *,
+        context: SolverBuildContext,
+        build: EGMStepBuild,
+    ) -> SolutionKernels:
+        """Assemble programs from the original prepared numerical steps."""
+        return self._assemble_period_kernels(context=context, build=build)
+
+    def _assemble_period_kernels(
+        self,
+        *,
+        context: SolverBuildContext,
+        build: EGMStepBuild,
+    ) -> SolutionKernels:
+        """Construct the unchanged original graph after its owning entry check."""
+        from _lcm.egm.step import _EGMStep  # noqa: PLC0415
+
+        query_model = context.dcegm_source_query_model or (
+            context.dcegm_query_models.get(context.regime_name)
+            if context.dcegm_query_models is not None
+            else None
         )
         steps: Mapping[int, EGMStepFunction[_DCEGMStepOutput]] = build.steps
         argument_builder = _DCEGMArgumentBuilder(
@@ -710,6 +717,7 @@ class DCEGM(OneMarginSolver):
                 )
             period_group_keys[period] = build.step_group_keys[period]
             period_kernels[period] = _DCEGMPeriodKernel(
+                demand_step=numerical,
                 _core_programs=programs_by_core[id(core)],
                 regime_name=context.regime_name,
                 stateful_targets=build.stateful_targets,
@@ -822,11 +830,7 @@ def _dcegm_query_slots_and_capabilities(
     if len(child_queries) != len(plan.query_targets):
         raise TypeError("DC child slots require actual installed query readers.")
     child_slots = tuple(
-        (
-            target,
-            period + 1,
-            child_queries[target].model.authority.bound,
-        )
+        (target, period + 1, child_queries[target].model.authority.bound)
         for target in plan.query_targets
     )
     own_slot = tuple((regime_name, period, bound) for bound in own_bound_specs)
@@ -1220,13 +1224,18 @@ def dcegm_kernel_with_declared_reads(
     period_targets = kernel.stateful_targets & frozenset(reachable_targets)
     reads = tuple(
         read
-        for target, template in published_continuation_templates(
-            continuation_specs=context.continuation_specs,
-            targets=period_targets,
-        ).items()
+        for target in sorted(period_targets)
+        if (
+            template := published_continuation_template(
+                continuation_specs=context.continuation_specs,
+                target=target,
+                period=period + 1,
+            )
+        )
+        is not None
         for read in continuation_leaf_reads(
             template=template,
-            artifact_key=EGM_CONTINUATION,
+            artifact_key=context.continuation_specs[target].artifact_key,
             target=target,
             source_regime=kernel.regime_name,
             source_period=period,
@@ -1288,9 +1297,25 @@ class _DCEGMArgumentBuilder:
         self, context: CoreBuildContext
     ) -> Mapping[ReferenceName, PytreeValue | ShapeDtypePytree]:
         """Return the exact kwargs shared by lowering and the runtime call."""
+        ages = cast("TimeAxis", context.ages)
+
+        def clock() -> Mapping[ReferenceName, PytreeValue | ShapeDtypePytree]:
+            return {
+                "period": jnp.int32(context.period),
+                "age": ages.values[context.period],
+            }
+
+        return self.with_clock(context=context, clock=clock)
+
+    def with_clock(
+        self,
+        *,
+        context: CoreBuildContext,
+        clock: Callable[[], Mapping[ReferenceName, PytreeValue | ShapeDtypePytree]],
+    ) -> Mapping[ReferenceName, PytreeValue | ShapeDtypePytree]:
+        """Read original nonclock inputs before the supplied original clock stage."""
         state_action_space = cast("StateActionSpace", context.state_action_space)
         flat_params = cast("FlatParams", context.flat_params)
-        ages = cast("TimeAxis", context.ages)
         return MappingProxyType(
             {
                 **dict(state_action_space.states),
@@ -1303,8 +1328,7 @@ class _DCEGMArgumentBuilder:
                     regime_name=self.regime_name,
                     transition_target_names=self.transition_target_names,
                 ),
-                "period": jnp.int32(context.period),
-                "age": ages.values[context.period],
+                **clock(),
             }
         )
 
@@ -1333,6 +1357,9 @@ class _DCEGMPeriodKernel:
 
     transition_target_names: tuple[RegimeName, ...]
     """Names of the regime's transition targets, whose params are unioned in."""
+
+    demand_step: EGMStepFunction[_DCEGMStepOutput] | None = None
+    """Original numerical consumer, retained for closed parent-demand declaration."""
 
     own_bound_specs: tuple[PostDecisionBoundSpec, ...] = ()
     """Canonical source-floor arithmetic slots installed by this kernel's builder."""
@@ -1540,6 +1567,13 @@ def _consume_bounded_dcegm_output[Output: PytreeValue](
     )
 
 
+def _typed_child_carry(*, payload: ContinuationPayload) -> EGMCarry:
+    """Retain original child arrays under their actual native payload schema."""
+    if not isinstance(payload, EGMCarry):
+        raise TypeError("DC child input has no installed continuation reader.")
+    return payload
+
+
 def _carry_subset(
     *,
     next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
@@ -1559,7 +1593,7 @@ def _carry_subset(
     """
     return MappingProxyType(
         {
-            name: cast("EGMCarry", next_regime_to_continuation[name])
+            name: _typed_child_carry(payload=next_regime_to_continuation[name])
             for name in next_regime_to_continuation
             if name in stateful_targets
         }

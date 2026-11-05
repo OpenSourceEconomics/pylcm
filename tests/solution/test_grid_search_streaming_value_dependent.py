@@ -45,8 +45,10 @@ from _lcm.solution.grid_search import (
 from _lcm.typing import ArgumentTree, PytreeValue, ValueTemplate
 from lcm import Model
 from lcm.typing import BoolND, FloatND, RegimeName, UserParams
-from tests.simulation.test_aot_collective_and_gated import _make_consent_model
 from tests.simulation.test_aot_same_period_refs import _make_participation_model
+from tests.solution.test_gated_edge_fold_reads import (
+    _model as _gated_full_topology_model,
+)
 
 
 def _materialize_program(
@@ -130,8 +132,8 @@ def _participation_case() -> Model:
 
 
 def _consent_case() -> Model:
-    """Build the gated-transition consent fixture."""
-    return _make_consent_model()
+    """Build the state-gated consent topology, whose leg falls back to a single."""
+    return _gated_full_topology_model()
 
 
 @pytest.mark.parametrize(
@@ -164,9 +166,9 @@ def _consent_case() -> Model:
         ),
         pytest.param(
             _consent_case,
-            "single",
-            {"discount_factor": 0.95},
-            ((), ("single_terminal",), ("married_terminal",)),
+            "single_f",
+            {"discount_factor": 0.95, "delta_f": 0.5, "delta_m": 0.2},
+            ((), ("single_f_p1",), ("married",)),
             CoreExecutionDisposition.PLANNED,
             None,
             id="edge-reference-and-gated-target",
@@ -339,17 +341,21 @@ def test_value_dependent_reference_matches_dense_eager_jit_and_aot(width: int) -
 
 def _consent_edge_kwargs() -> Mapping[str, Mapping[str, ValueTemplate]]:
     """Build the gated-edge kernel argument of the consent fixture's source regime."""
-    model = _make_consent_model()
-    flat_params = model._process_params({"discount_factor": 0.95})
+    model = _gated_full_topology_model()
+    flat_params = model._process_params(
+        {"discount_factor": 0.95, "delta_f": 0.5, "delta_m": 0.2}
+    )
     _next_V, _next_continuation, next_edges = _build_continuation_templates(
         regimes=model._regimes,
         flat_params=flat_params,
     )
-    return _edge_kwargs(
-        regime=model._regimes["single"],
-        regime_name="single",
+    edge_kwargs = _edge_kwargs(
+        regime=model._regimes["single_f"],
+        regime_name="single_f",
         next_edge_to_V_arr=next_edges,
     )
+    assert edge_kwargs
+    return edge_kwargs
 
 
 def test_edge_kwargs_are_a_read_only_mapping() -> None:

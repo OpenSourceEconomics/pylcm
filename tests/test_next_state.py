@@ -1,5 +1,6 @@
 from types import MappingProxyType
 
+import jax
 import jax.numpy as jnp
 
 from _lcm.grids import DiscreteGrid, categorical
@@ -137,7 +138,7 @@ def test_create_stochastic_next_func():
         target_regime_name="t", next_state_name="next_a", labels=labels
     )
 
-    key = jnp.arange(2, dtype="uint32")  # PRNG dtype
+    key = jax.random.key(0)
     weights = jnp.array([0.0, 1])
 
     got = got_func(key_t__next_a=key, weight_t__next_a=weights)

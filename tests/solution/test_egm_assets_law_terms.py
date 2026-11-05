@@ -36,7 +36,7 @@ from lcm import (
 )
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.regime import Regime as UserRegime
-from lcm.solvers import DCEGM, GridSearch
+from lcm.solvers import DCEGM, GridSearch, RFCEnvelope
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -229,6 +229,7 @@ def _ages() -> AgeGrid:
 DCEGM_SOLVER = DCEGM(
     savings_grid=SAVINGS_GRID,
     n_constrained_points=64,
+    envelope=RFCEnvelope(),
 )
 
 
@@ -283,7 +284,19 @@ def _health_insurance_model(solver: str) -> Model:
         return wealth - consumption + health_net_transfer
 
     is_dcegm = solver == "dcegm"
-    regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
+    regime_type = (
+        functools.partial(
+            ConsumptionSavingsRegime,
+            liquid=LiquidMargin(
+                state="wealth",
+                action="consumption",
+                resources="wealth",
+                post_decision_state="savings",
+            ),
+        )
+        if is_dcegm
+        else UserRegime
+    )
     working = regime_type(
         actions={
             "buy_private": DiscreteGrid(category_class=Insurance),
@@ -301,18 +314,6 @@ def _health_insurance_model(solver: str) -> Model:
             "health_net_transfer": health_net_transfer,
         },
         solver=DCEGM_SOLVER if is_dcegm else GridSearch(),
-        **(
-            {
-                "liquid": LiquidMargin(
-                    state="wealth",
-                    action="consumption",
-                    resources="wealth",
-                    post_decision_state="savings",
-                )
-            }
-            if is_dcegm
-            else {}
-        ),
     )
     return Model(
         regimes={"working_life": working, "dead": dead},
@@ -368,7 +369,19 @@ def _means_test_model(solver: str) -> Model:
         return wealth - consumption + capital_supplement
 
     is_dcegm = solver == "dcegm"
-    regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
+    regime_type = (
+        functools.partial(
+            ConsumptionSavingsRegime,
+            liquid=LiquidMargin(
+                state="wealth",
+                action="consumption",
+                resources="wealth",
+                post_decision_state="savings",
+            ),
+        )
+        if is_dcegm
+        else UserRegime
+    )
     working = regime_type(
         actions={"consumption": CONSUMPTION_GRID},
         states={"wealth": WEALTH_GRID},
@@ -382,18 +395,6 @@ def _means_test_model(solver: str) -> Model:
             "capital_supplement": capital_supplement,
         },
         solver=DCEGM_SOLVER if is_dcegm else GridSearch(),
-        **(
-            {
-                "liquid": LiquidMargin(
-                    state="wealth",
-                    action="consumption",
-                    resources="wealth",
-                    post_decision_state="savings",
-                )
-            }
-            if is_dcegm
-            else {}
-        ),
     )
     return Model(
         regimes={"working_life": working, "dead": dead},
@@ -466,7 +467,19 @@ def _per_target_model(solver: str) -> Model:
         return wealth - consumption
 
     is_dcegm = solver == "dcegm"
-    regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
+    regime_type = (
+        functools.partial(
+            ConsumptionSavingsRegime,
+            liquid=LiquidMargin(
+                state="wealth",
+                action="consumption",
+                resources="wealth",
+                post_decision_state="savings",
+            ),
+        )
+        if is_dcegm
+        else UserRegime
+    )
     working = regime_type(
         actions={
             "buy_private": DiscreteGrid(category_class=Insurance),
@@ -491,18 +504,6 @@ def _per_target_model(solver: str) -> Model:
             "health_net_transfer": health_net_transfer,
         },
         solver=DCEGM_SOLVER if is_dcegm else GridSearch(),
-        **(
-            {
-                "liquid": LiquidMargin(
-                    state="wealth",
-                    action="consumption",
-                    resources="wealth",
-                    post_decision_state="savings",
-                )
-            }
-            if is_dcegm
-            else {}
-        ),
     )
     return Model(
         regimes={"working_life": working, "dead": bequest},
@@ -567,7 +568,19 @@ def _phased_law_model(solver: str) -> Model:
         return wealth - consumption
 
     is_dcegm = solver == "dcegm"
-    regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
+    regime_type = (
+        functools.partial(
+            ConsumptionSavingsRegime,
+            liquid=LiquidMargin(
+                state="wealth",
+                action="consumption",
+                resources="wealth",
+                post_decision_state="savings",
+            ),
+        )
+        if is_dcegm
+        else UserRegime
+    )
     working = regime_type(
         actions={"consumption": CONSUMPTION_GRID},
         states={"wealth": WEALTH_GRID},
@@ -587,18 +600,6 @@ def _phased_law_model(solver: str) -> Model:
         constraints={} if is_dcegm else {"budget_constraint": budget_constraint},
         functions={**(_dcegm_functions() if is_dcegm else {}), "utility": utility},
         solver=DCEGM_SOLVER if is_dcegm else GridSearch(),
-        **(
-            {
-                "liquid": LiquidMargin(
-                    state="wealth",
-                    action="consumption",
-                    resources="wealth",
-                    post_decision_state="savings",
-                )
-            }
-            if is_dcegm
-            else {}
-        ),
     )
     return Model(
         regimes={"working_life": working, "dead": dead},
@@ -653,7 +654,19 @@ def _chained_law_model(solver: str) -> Model:
         return wealth - consumption + PENSION_ACCRUAL * next_aime
 
     is_dcegm = solver == "dcegm"
-    regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
+    regime_type = (
+        functools.partial(
+            ConsumptionSavingsRegime,
+            liquid=LiquidMargin(
+                state="wealth",
+                action="consumption",
+                resources="wealth",
+                post_decision_state="savings",
+            ),
+        )
+        if is_dcegm
+        else UserRegime
+    )
     working = regime_type(
         actions={
             "labor_supply": DiscreteGrid(category_class=LaborChoice),
@@ -671,18 +684,6 @@ def _chained_law_model(solver: str) -> Model:
             "is_working": is_working,
         },
         solver=DCEGM_SOLVER if is_dcegm else GridSearch(),
-        **(
-            {
-                "liquid": LiquidMargin(
-                    state="wealth",
-                    action="consumption",
-                    resources="wealth",
-                    post_decision_state="savings",
-                )
-            }
-            if is_dcegm
-            else {}
-        ),
     )
     return Model(
         regimes={"working_life": working, "dead": dead},

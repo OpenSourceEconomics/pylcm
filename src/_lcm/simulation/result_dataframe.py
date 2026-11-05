@@ -77,7 +77,7 @@ def _create_flat_dataframe(
         if raw_results[name]
     ]
 
-    return _assemble_dataframe(
+    frame = _assemble_dataframe(
         regime_dfs=regime_dfs,
         state_names=metadata.state_names,
         action_names=metadata.action_names,
@@ -86,6 +86,22 @@ def _create_flat_dataframe(
             regime_to_stakeholders=metadata.regime_to_stakeholders,
         ),
     )
+    shock_names = {
+        name
+        for periods in raw_results.values()
+        for result in periods.values()
+        for name in result.shocks
+    }
+    for name in shock_names:
+        if (
+            name in frame.columns
+            and name.removeprefix("source__") in metadata.discrete_categories
+        ):
+            missing = frame[name] == -1
+            if missing.any():
+                # Categorical draws keep exact integer bits until host assembly.
+                frame[name] = frame[name].mask(missing)
+    return frame
 
 
 def _stakeholder_value_column_names(
@@ -195,7 +211,7 @@ def _process_regime(
         raise PyLCMError(msg)
 
     if coordinate_kind(ages) == "age":
-        data["age"] = ages.values[data["period"]]  # noqa: PD011
+        data["age"] = np.asarray(ages.values)[np.asarray(data["period"])]
     data["regime_name"] = [regime_name] * len(data["period"])
 
     _project_joint_shocks(
@@ -334,6 +350,7 @@ def _extract_period_data(
     for name in regime_actions:
         if name in result.actions:
             data[name] = result.actions[name]
+    data.update(result.shocks)
 
     return data
 
@@ -356,7 +373,11 @@ def _concatenate_and_filter(
     The function mutates `period_dicts` (every dict is emptied on
     completion). The caller treats the list as consumed.
     """
-    keys = [k for k in period_dicts[0] if k != "_in_regime"]
+    keys = tuple(
+        dict.fromkeys(
+            key for data in period_dicts for key in data if key != "_in_regime"
+        )
+    )
 
     mask_chunks: list[np.ndarray] = []
     host_chunks: dict[str, list[np.ndarray]] = {key: [] for key in keys}
@@ -364,7 +385,9 @@ def _concatenate_and_filter(
     for d in period_dicts:
         mask_chunks.append(_to_host(d["_in_regime"]).astype(bool))
         for key in keys:
-            host_chunks[key].append(_to_host(d[key]))
+            host_chunks[key].append(
+                _to_host(d[key]) if key in d else np.full(len(d["_in_regime"]), np.nan)
+            )
         d.clear()
 
     mask = np.concatenate(mask_chunks)
@@ -513,6 +536,13 @@ def _convert_to_categorical(
         )
 
     for var_name, merged_categories in metadata.discrete_categories.items():
+        source_column = f"source__{var_name}"
+        if source_column in df.columns:
+            df[source_column] = _codes_to_categorical(
+                codes=df[source_column],
+                categories=merged_categories,
+                ordered=metadata.discrete_ordered[var_name],
+            )
         if var_name not in df.columns:
             continue
 

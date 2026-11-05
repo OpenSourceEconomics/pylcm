@@ -101,7 +101,7 @@ def test_get_Q_and_F_function():
 
     raw_params = get_params(n_periods=4)
 
-    params_template = create_params_template(regimes)
+    params_template = create_params_template(regimes=regimes)
     flat_params = process_params(params=raw_params, params_template=params_template)
 
     # Compute flat param names for the working regime's regime_params_template
@@ -1163,8 +1163,8 @@ def test_a_joint_lottery_reads_its_arms_against_their_own_scales() -> None:
 
     class _Linear(CertaintyEquivalent):
         @property
-        def param_names(self) -> tuple[str, ...]:
-            return ()
+        def param_names(self) -> frozenset[str]:
+            return frozenset()
 
         def aggregate(
             self, *, values: FloatND, weights: FloatND, params: Mapping[str, FloatND]

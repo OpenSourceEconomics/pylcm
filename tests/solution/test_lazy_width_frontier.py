@@ -14,7 +14,7 @@ and the refusal a core that fits at no width reports.
 import dataclasses
 import math
 from collections.abc import Hashable, Mapping
-from typing import Unpack
+from typing import Unpack, cast
 
 import jax
 import jax.numpy as jnp
@@ -26,7 +26,7 @@ from _lcm.solution import backward_induction
 from lcm import ExecutionConfig
 from lcm.exceptions import ExecutionPlanningError
 from lcm.solver_api import ValueStore
-from lcm.typing import FloatND, RegimeName
+from lcm.typing import FloatND, RegimeName, UserFacingRegimeParamsTemplate
 from tests.solution._callback_types import (
     AbstractArgumentsKwargs,
     CompileFunctionsKwargs,
@@ -141,7 +141,9 @@ def _observe_solve(
     model = _build_model(
         execution_config=ExecutionConfig(device_memory_bytes=budget_bytes)
     )
-    template = model.get_params_template()
+    template = cast(
+        "dict[str, UserFacingRegimeParamsTemplate]", model.get_params_template()
+    )
     params = {
         **template,
         "acting": {

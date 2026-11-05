@@ -153,7 +153,6 @@ def test_owned_and_every_previously_consumed_view_remain_in_inventory() -> None:
     """Earlier consumers' private values and policies stay charged with the source."""
     solution = _make_values_only_solution(value=[1.0], dtype="float32")
     arrays = tuple(jnp.arange(size, dtype=jnp.float32) for size in range(1, 8))
-    flags = jnp.array([True, False])
     empty = MappingProxyType({})
     view = OwnedSolutionView(
         model_instance_id="owner",
@@ -173,20 +172,19 @@ def test_owned_and_every_previously_consumed_view_remain_in_inventory() -> None:
                 )
             }
         ),
-        dissolution_flags=MappingProxyType({0: MappingProxyType({"working": flags})}),
         replay_artifacts=empty,
         authority=SolutionAuthority(values=empty, replay=empty),
     )
     object.__setattr__(solution, "_engine_view", view)
     solution._consumed_views[("first", "params")] = cast(
         "_ResolvedSolution",
-        ({0: {"working": arrays[3]}}, {0: {"working": arrays[4]}}, {}, {}),
+        ({0: {"working": arrays[3]}}, {0: {"working": arrays[4]}}, {}, {}, {}),
     )
     solution._consumed_views[("second", "params")] = cast(
         "_ResolvedSolution",
-        ({0: {"working": arrays[5]}}, {}, {0: {"working": arrays[6]}}, {}),
+        ({0: {"working": arrays[5]}}, {0: {"working": arrays[6]}}, {}, {}, {}),
     )
-    expected = (*_backing_values(solution), *arrays, flags)
+    expected = (*_backing_values(solution), *arrays)
     assert {id(array) for array in _buffers(solution)} == {
         id(array) for array in expected
     }
@@ -217,7 +215,7 @@ def test_consumed_reader_retains_snapshot_authorities_and_grid_context() -> None
     )
     solution = replace(base, replay_artifacts=ArtifactStore())
     solution._consumed_views[("consumer", "params")] = cast(
-        "_ResolvedSolution", ({}, {}, {}, {0: {"working": reader}})
+        "_ResolvedSolution", ({}, {}, {0: {"working": reader}}, {}, {})
     )
     authority = base._artifact_authority[ref]
     binding = authority_module._ARTIFACT_AUTHORITY_TEMPLATE_BINDINGS[id(authority)]

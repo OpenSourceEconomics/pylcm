@@ -5,6 +5,7 @@
 from collections.abc import Callable
 
 import pytest
+from asv_runner.benchmarks._base import Benchmark
 
 from benchmarks.asv import _gpu_mem, bench_collective_household
 
@@ -112,3 +113,51 @@ def test_parameterized_classes_track_the_median_warm_call(
     ]
     assert benchmark_class.track_execution_time.unit == "seconds"
     assert not hasattr(benchmark_class, "time_execution")
+
+
+@pytest.mark.parametrize(
+    ("method", "n_subjects", "skipped"),
+    [
+        (method, n_subjects, n_subjects == 100_000)
+        for method in (
+            "peakmem_execution",
+            "track_compilation_time",
+            "track_execution_time",
+        )
+        for n_subjects in (1_000, 100_000)
+    ]
+    + [("track_gpu_peak_mem", None, True)],
+)
+def test_large_cohort_is_skipped_before_benchmark_setup(
+    *,
+    monkeypatch: pytest.MonkeyPatch,
+    method: str,
+    n_subjects: int | None,
+    skipped: bool,
+) -> None:
+    """ASV skips large-cohort measurements and still sets up the small cohort."""
+    benchmark_class = (
+        bench_collective_household.CollectiveHouseholdSimulateGpuPeakMem
+        if n_subjects is None
+        else bench_collective_household.CollectiveHouseholdSimulate
+    )
+    instance = benchmark_class()
+    calls: list[tuple[int, ...]] = []
+
+    def setup(*params: int) -> None:
+        calls.append(params)
+
+    monkeypatch.setattr(instance, "setup", setup)
+    func = getattr(instance, method)
+    benchmark = Benchmark(method, func, [func, instance])
+    if n_subjects is not None:
+        benchmark.set_param_idx(
+            bench_collective_household.CollectiveHouseholdSimulate.params.index(
+                n_subjects
+            )
+        )
+
+    assert (benchmark.do_setup(), calls) == (
+        skipped,
+        [] if skipped else [(n_subjects,)],
+    )

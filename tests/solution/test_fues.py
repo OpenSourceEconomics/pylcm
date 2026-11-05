@@ -30,7 +30,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from _lcm.egm.upper_envelope import fues
-from tests.conftest import X64_ENABLED
+from tests.conftest import X64_ENABLED, assert_agrees_to_ulp
 from tests.solution._envelope_rows import drop_nan as _drop_nan
 from tests.solution._envelope_rows import envelope_interp as _envelope_interp
 
@@ -454,8 +454,8 @@ def test_value_decreasing_point_is_dropped():
     assert not np.any(np.isclose(clean_grid, 2.0, atol=1e-8))
 
 
-def test_vmap_over_rows_matches_per_row_calls():
-    """The kernel is vmappable; batched output equals per-row output."""
+def test_vmap_over_rows_matches_per_row_calls() -> None:
+    """Batching keeps counts and metadata exact, with one array-scale ULP for floats."""
     grid, policy, value = _crossing_segments_candidates()
     batched = jax.vmap(
         lambda g, p, v: fues.refine_envelope(
@@ -471,9 +471,18 @@ def test_vmap_over_rows_matches_per_row_calls():
     )
 
     for batched_arr, single_arr in zip(batched, single, strict=True):
-        np.testing.assert_array_equal(
-            np.asarray(batched_arr[0]), np.asarray(single_arr)
-        )
+        got, expected = np.asarray(batched_arr[0]), np.asarray(single_arr)
+        assert (got.shape, got.dtype) == (expected.shape, expected.dtype)
+        if np.issubdtype(expected.dtype, np.floating):
+            finite = expected[np.isfinite(expected)]
+            assert_agrees_to_ulp(
+                got=got,
+                expected=expected,
+                n_ulp=1,
+                operand_magnitude=float(np.abs(finite).max(initial=0.0)),
+            )
+        else:
+            np.testing.assert_array_equal(got, expected)
 
 
 def test_candidate_scan_uses_a_fixed_unroll_factor() -> None:

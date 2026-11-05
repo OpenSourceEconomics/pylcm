@@ -28,7 +28,6 @@ _BODY_OWNERS = {
         "_read_finite_native_row",
         "_read_finite_owned_side",
         "_validate_finite_outer_rows",
-        "_filter_finite_survivors",
         "_select_finite_outer_profiles",
         "_collapse_finite_selection",
     ),
@@ -59,6 +58,8 @@ _BODY_OWNERS = {
     "src/_lcm/egm/carry.py": ("_get_owned_local_piece",),
     "src/_lcm/egm/nbegm_step.py": ("_single_row_nbegm_query_step",),
     "src/_lcm/solution/negm.py": (
+        "_stack_owned_carry_template",
+        "_broadcast_over_candidates",
         "NEGM.build_period_kernels",
         "_derive_negm_inner_query_model",
         "_build_negm_floor_preparation",
@@ -147,7 +148,7 @@ def test_final_nested_selection_names_each_body_and_surface() -> None:
         for source, (_surface, callables) in direct_flow._FINAL_NESTED_CONTRACTS.items()
     }
     assert actual == _BODY_OWNERS
-    assert sum(map(len, actual.values())) == 80
+    assert sum(map(len, actual.values())) == 81
     assert all("_three_jets" not in names for names in actual.values())
     assert direct_flow._unselected_pins() == ()
     assert all(source in direct_flow._CERTIFIED_CORRIDOR_SOURCES for source in actual)
@@ -309,3 +310,152 @@ def test_nbegm_query_method_refuses_changed_overload_declarations(
         ValueError, match=r"NBEGMQuery.read_choices overload declarations changed"
     ):
         select_nbegm_query_read_choices(tree=tree, checker=direct_flow)
+
+
+_COOWNED_SURFACE_ERRORS = {
+    "src/_lcm/regime_building/processing.py": (
+        "S03 scalar dependency",
+        "S02 query/status dependency",
+        "current IID adapter",
+        "final nested dependency",
+    ),
+    "src/_lcm/solution/feasibility.py": (
+        "S03 scalar dependency",
+        "reviewed S04/S05 dependency",
+        "S02 query/status dependency",
+        "current IID adapter",
+        "final nested dependency",
+    ),
+    "src/_lcm/egm/query_data.py": (
+        "reviewed S04/S05 dependency",
+        "S02 query/status dependency",
+        "final nested dependency",
+    ),
+}
+
+
+def _coowned_surface_errors(*, source: direct_flow.SourcePath) -> list[str]:
+    """Name the independently expected complete declaration refusals."""
+    errors = [
+        f"{owner}: {source} declaration surface changed"
+        for owner in _COOWNED_SURFACE_ERRORS[source]
+    ]
+    if source == "src/_lcm/solution/feasibility.py":
+        errors.append("native feasibility summary: module surface changed")
+    return sorted(errors)
+
+
+@pytest.mark.parametrize("source", tuple(_COOWNED_SURFACE_ERRORS))
+def test_final_nested_surface_requires_exact_coowners_after_reseal(
+    *,
+    source: direct_flow.SourcePath,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A co-owned declaration defect names its source and restores cleanly."""
+    clean = direct_flow.verify_direct_candidate_flow(repo_root=_ROOT)
+    assert clean["ok"]
+    assert clean["result"] == "pass"
+    assert clean["errors"] == []
+    assert clean["offending_paths"] == []
+    originals = {}
+    for relative in clean["certified_corridor_sources"]:
+        destination = tmp_path / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        copyfile(_ROOT / relative, destination)
+        originals[relative] = destination.read_bytes()
+    assert direct_flow.verify_direct_candidate_flow(repo_root=tmp_path) == clean
+    name = f"final_nested:surface:{source}"
+    spec = direct_flow.final_nested_mutation_specs(repo_root=_ROOT)[name]
+    assert spec["path"] == source
+    target = tmp_path / source
+    target.write_text(spec["source"], encoding="utf-8")
+    monkeypatch.setitem(
+        direct_flow._SOURCE_SEALS,
+        source,
+        hashlib.sha256(target.read_bytes()).hexdigest(),
+    )
+    result = direct_flow.verify_direct_candidate_flow(repo_root=tmp_path)
+    assert not result["ok"]
+    assert result["result"] == "fail"
+    assert sorted(result["errors"]) == _coowned_surface_errors(source=source)
+    assert result["offending_paths"] == [source]
+    diagnostic = direct_flow._final_nested_primary_diagnostic(name=name)
+    assert direct_flow._final_nested_case_rejected(
+        clean=clean, result=result, source=source, diagnostic=diagnostic
+    )
+    assert all(
+        (tmp_path / relative).read_bytes() == original
+        for relative, original in originals.items()
+        if relative != source
+    )
+    target.write_bytes(originals[source])
+    monkeypatch.setitem(
+        direct_flow._SOURCE_SEALS, source, hashlib.sha256(originals[source]).hexdigest()
+    )
+    assert direct_flow.verify_direct_candidate_flow(repo_root=tmp_path) == clean
+
+
+@pytest.mark.parametrize("source", tuple(_COOWNED_SURFACE_ERRORS))
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "exact",
+        "unknown_error",
+        "unrelated_error",
+        "missing_owner",
+        "missing_coowner",
+        "wrong_path",
+        "extra_path",
+        "dirty_clean",
+        "failed_clean",
+        "accepted_mutant",
+    ],
+)
+def test_final_nested_classifier_requires_exact_coowners(
+    *, source: direct_flow.SourcePath, fault: str
+) -> None:
+    """Only the complete owned refusal after a clean positive qualifies."""
+    clean = direct_flow.verify_direct_candidate_flow(repo_root=_ROOT)
+    assert clean["ok"]
+    assert clean["result"] == "pass"
+    assert clean["errors"] == []
+    assert clean["offending_paths"] == []
+    result = copy.deepcopy(clean)
+    result["ok"] = False
+    result["result"] = "fail"
+    result["errors"] = _coowned_surface_errors(source=source)
+    result["offending_paths"] = [source]
+    diagnostic = f"final nested dependency: {source} declaration surface changed"
+    if fault == "unknown_error":
+        result["errors"].append("unknown diagnostic")
+    elif fault == "unrelated_error":
+        result["errors"].append(
+            "current IID adapter: src/_lcm/current_iid.py declaration surface changed"
+        )
+    elif fault == "missing_owner":
+        result["errors"].remove(diagnostic)
+    elif fault == "missing_coowner":
+        owner = (
+            "current IID adapter"
+            if source != "src/_lcm/egm/query_data.py"
+            else "reviewed S04/S05 dependency"
+        )
+        result["errors"].remove(f"{owner}: {source} declaration surface changed")
+    elif fault == "wrong_path":
+        result["offending_paths"] = ["src/_lcm/current_iid.py"]
+    elif fault == "extra_path":
+        result["offending_paths"].append("src/_lcm/current_iid.py")
+    elif fault == "dirty_clean":
+        clean["errors"].append("unknown baseline diagnostic")
+    elif fault == "failed_clean":
+        clean["ok"] = False
+        clean["result"] = "fail"
+    elif fault == "accepted_mutant":
+        result["ok"] = True
+        result["result"] = "pass"
+    else:
+        assert fault == "exact"
+    assert direct_flow._final_nested_case_rejected(
+        clean=clean, result=result, source=source, diagnostic=diagnostic
+    ) == (fault == "exact")

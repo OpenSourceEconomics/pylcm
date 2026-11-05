@@ -12,9 +12,9 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from _lcm.egm.upper_envelope.certified_sign import (
-    UNRESOLVED_SIGN,
-    certified_margin_sign,
+from _lcm.egm.upper_envelope._exact_affine.ffi import (
+    UNRESOLVED_STATUS,
+    certified_affine_compare,
 )
 from tests import conftest
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
@@ -106,7 +106,7 @@ def _as_dtype(*, link, dtype):
 
 
 @pytest.mark.parametrize("case_index", range(5))
-def test_certified_margin_sign_orders_links_that_underflow(*, case_index, dtype):
+def test_certified_affine_compare_orders_links_that_underflow(*, case_index, dtype):
     """Links whose differences underflow are still ordered by their exact values."""
     pairs = _UNDERFLOWING_PAIRS_F32 if dtype == jnp.float32 else _UNDERFLOWING_PAIRS_F64
     link_a, link_b, x_query = pairs[case_index]
@@ -118,7 +118,7 @@ def test_certified_margin_sign_orders_links_that_underflow(*, case_index, dtype)
     a_x0, a_x1, a_v0, a_v1 = _as_dtype(link=link_a, dtype=dtype)
     b_x0, b_x1, b_v0, b_v1 = _as_dtype(link=link_b, dtype=dtype)
 
-    got = certified_margin_sign(
+    got = certified_affine_compare(
         a_x0=a_x0,
         a_x1=a_x1,
         a_v0=a_v0,
@@ -133,10 +133,10 @@ def test_certified_margin_sign_orders_links_that_underflow(*, case_index, dtype)
     assert int(got) == expected
 
 
-def test_certified_margin_sign_reports_a_tie_only_for_one_line(dtype):
+def test_certified_affine_compare_reports_a_tie_only_for_one_line(dtype):
     """A tie is published only where the two rational lines are exactly equal."""
     shared = _as_dtype(link=(0.0, 2.0, 1.0, 3.0), dtype=dtype)
-    got = certified_margin_sign(
+    got = certified_affine_compare(
         a_x0=shared[0],
         a_x1=shared[1],
         a_v0=shared[2],
@@ -150,10 +150,10 @@ def test_certified_margin_sign_reports_a_tie_only_for_one_line(dtype):
     assert int(got) == 0
 
 
-def test_certified_margin_sign_is_unresolved_on_a_nonfinite_operand(dtype):
+def test_certified_affine_compare_is_unresolved_on_a_nonfinite_operand(dtype):
     """A non-finite operand yields the unresolved code, never a sign."""
     link = _as_dtype(link=(0.0, 2.0, 1.0, 3.0), dtype=dtype)
-    got = certified_margin_sign(
+    got = certified_affine_compare(
         a_x0=link[0],
         a_x1=link[1],
         a_v0=link[2],
@@ -164,4 +164,4 @@ def test_certified_margin_sign_is_unresolved_on_a_nonfinite_operand(dtype):
         b_v1=link[3],
         x_query=jnp.asarray(0.75, dtype=dtype),
     )
-    assert int(got) == UNRESOLVED_SIGN
+    assert int(got) == UNRESOLVED_STATUS

@@ -11,6 +11,7 @@ import subprocess
 import sys
 
 import numpy as np
+import pytest
 
 import lcm
 import lcm.consumption_savings_regime
@@ -32,6 +33,47 @@ def test_engine_submodule_imports_without_lcm_first():
     """
     result = subprocess.run(
         [sys.executable, "-c", "import _lcm.utils.dispatchers"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize(
+    "first",
+    [
+        "_lcm.simulation.initial_conditions",
+        "_lcm.simulation.current_iid_entry",
+        "_lcm.simulation.current_iid_overrides",
+    ],
+)
+def test_current_entry_modules_import_before_the_public_model(*, first: str) -> None:
+    """Each entry module can be the first pylcm import in a fresh interpreter."""
+    modules = (
+        first,
+        "_lcm.simulation.initial_conditions",
+        "_lcm.simulation.current_iid_entry",
+        "_lcm.simulation.current_iid_overrides",
+        "lcm.model",
+    )
+    result = subprocess.run(  # noqa: S603
+        [  # noqa: S607
+            "pixi",
+            "run",
+            "--frozen",
+            "--no-install",
+            "--manifest-path",
+            os.environ["PIXI_PROJECT_MANIFEST"],
+            "--environment",
+            os.environ["PIXI_ENVIRONMENT_NAME"],
+            "python",
+            "-c",
+            (
+                "import importlib; "
+                f"[importlib.import_module(name) for name in {modules!r}]"
+            ),
+        ],
         capture_output=True,
         text=True,
         check=False,

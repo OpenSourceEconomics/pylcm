@@ -261,25 +261,25 @@ def _model(
         states={"wealth": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
         functions={"utility": _wealth_utility},
     )
-    model_slots = (
-        {
-            "states": states | {"unread": DiscreteGrid(category_class=_Binary)},
-            "state_transitions": {
+    model_builder = (
+        partial(
+            Model,
+            states=states | {"unread": DiscreteGrid(category_class=_Binary)},
+            state_transitions={
                 name: law for name, law in laws.items() if name != "wealth"
             }
             | {"unread": _identity_unread},
-        }
+        )
         if declared_at == "model"
-        else {}
+        else Model
     )
-    return Model(
+    return model_builder(
         regimes={"source": source, "dead": dead},
         regime_id_class=_RegimeId,
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         edges={"source": {"dead": 0}},
         initial_nodes=((0, "source"),),
         enable_jit=enable_jit,
-        **model_slots,
     )
 
 

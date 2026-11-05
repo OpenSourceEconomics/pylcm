@@ -27,7 +27,6 @@ from _lcm.constraints.processed import ConstraintLike
 from _lcm.grids import DiscreteGrid, Grid
 from _lcm.identity_transition import _IdentityTransition
 from _lcm.processes.base import _ContinuousStochasticProcess
-from _lcm.processes.iid import _IIDProcess
 from _lcm.regime_building.phases import (
     normalize_regime_phases,
     validate_law_free_phase_grammar,
@@ -44,7 +43,8 @@ from _lcm.utils.error_messages import format_messages, path_segment_name_errors
 from _lcm.utils.functools import is_user_function
 from lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
 from lcm.decoupled import Decoupled
-from lcm.exceptions import ModelInitializationError, RegimeInitializationError
+from lcm.exceptions import RegimeInitializationError
+from lcm.exits import Consent, Exit
 from lcm.koopmans_aggregation import CESAggregator, LinearAggregator
 from lcm.phased import Phased
 from lcm.solvers import NBEGM, NNBEGM, GridSearch
@@ -55,7 +55,7 @@ from lcm.transition import (
     JointTransition,
     StochasticTransition,
 )
-from lcm.typing import UserFunction
+from lcm.typing import Phase, UserFunction
 
 if TYPE_CHECKING:
     from lcm.regime import Regime, StateEntry, StateTransitionEntry
@@ -147,6 +147,100 @@ def validate_regimes(*, regimes: Mapping[RegimeName, Regime], laws: RegimeLaws) 
         validate_regime_law(regime, law=laws[name])
 
 
+def validate_exit_targets(
+    *, regimes: Mapping[RegimeName, Regime], laws: RegimeLaws
+) -> None:
+    """Bind declared destinations to real policy roles and complete phase states."""
+    from _lcm.exits import exits_for_phase  # noqa: PLC0415 - phase validator cycle
+
+    for source, regime in regimes.items():
+        for phase in ("solve", "simulate"):
+            for name, declaration in exits_for_phase(
+                exits=regime.exits, phase=phase
+            ).items():
+                for target in declaration.targets.values():
+                    context = f"Exit {source}.{name}"
+                    if target.regime not in regimes:
+                        raise RegimeInitializationError(
+                            f"{context} names unknown destination {target.regime!r}."
+                        )
+                    destination = regimes[target.regime]
+                    if target.role not in (destination.stakeholders or (None,)):
+                        raise RegimeInitializationError(
+                            f"{context} has invalid destination role {target.role!r}."
+                        )
+                    _validate_exit_projection(
+                        context=context,
+                        projection=target.projection,
+                        destination=destination,
+                        law=laws[target.regime],
+                        phase=phase,
+                    )
+                _validate_counterparty(
+                    declaration=declaration,
+                    context=f"Exit {source}.{name} counterparty",
+                    regimes=regimes,
+                    laws=laws,
+                    phase=phase,
+                )
+
+
+def _validate_counterparty(
+    *,
+    declaration: Exit,
+    context: str,
+    regimes: Mapping[RegimeName, Regime],
+    laws: RegimeLaws,
+    phase: Phase,
+) -> None:
+    """Bind the other formation member to its own complete Raw stay context."""
+    if not isinstance(declaration.rule, Consent):
+        return
+    counterparty = declaration.rule.counterparty
+    if counterparty.regime not in regimes:
+        raise RegimeInitializationError(
+            f"{context} names unknown regime {counterparty.regime!r}."
+        )
+    # The role belongs to the formation destination, rather than its singleton Raw.
+    for target in declaration.targets.values():
+        destination = regimes[target.regime]
+        if (
+            destination.stakeholders is None
+            or counterparty.role not in destination.stakeholders
+            or counterparty.role == target.role
+        ):
+            raise RegimeInitializationError(
+                f"{context} has invalid destination role {counterparty.role!r}."
+            )
+    _validate_exit_projection(
+        context=context,
+        projection=counterparty.projection,
+        destination=regimes[counterparty.regime],
+        law=laws[counterparty.regime],
+        phase=phase,
+    )
+
+
+def _validate_exit_projection(
+    *,
+    context: str,
+    projection: Mapping[StateName, UserFunction] | Phased,
+    destination: Regime,
+    law: RegimeLaw,
+    phase: Phase,
+) -> None:
+    """Require a complete mapping into the actual phase's destination state."""
+    spec = normalize_regime_phases(destination, law=law)
+    expected = set(
+        getattr(spec, "solution" if phase == "solve" else "simulation").grid_states
+    )
+    if not isinstance(projection, Mapping) or set(projection) != expected:
+        raise RegimeInitializationError(
+            f"{context} {phase} projection must name destination states "
+            f"{sorted(expected)!r}."
+        )
+
+
 def validate_regime(regime: Regime) -> None:
     """Validate what a regime declares on its own, without its law.
 
@@ -184,9 +278,39 @@ def validate_regime(regime: Regime) -> None:
         )
 
     _validate_mapping_contents(regime)
+    _validate_exits(regime)
     _validate_logical_consistency(regime)
-    _validate_fold_declarations(regime)
     validate_law_free_phase_grammar(regime)
+
+
+def _validate_exits(regime: Regime) -> None:
+    """Require a complete benchmark for the source's actual stakeholder layout."""
+    if not regime.exits:
+        return
+    from lcm.exits import Consent, Exit  # noqa: PLC0415 - Regime imports this validator
+
+    expected = set(regime.stakeholders or ("self",))
+    if errors := path_segment_name_errors(kind="Exit", names=regime.exits):
+        raise RegimeInitializationError(errors[0])
+    for name, declaration in regime.exits.items():
+        if not isinstance(declaration, Exit):
+            raise RegimeInitializationError(
+                f"Exit {name!r} must be an Exit declaration."
+            )
+        if set(declaration.targets) != expected:
+            raise RegimeInitializationError(
+                f"Exit {name!r} targets must name {sorted(expected)!r}."
+            )
+    if (
+        sum(
+            isinstance(declaration.rule, str | Consent)
+            for declaration in regime.exits.values()
+        )
+        > 1
+    ):
+        raise RegimeInitializationError(
+            "More than one built-in exit requires an explicit custom multi-exit rule."
+        )
 
 
 # keyword-only-exempt: primary-argument=regime
@@ -194,8 +318,8 @@ def validate_regime_law(regime: Regime, *, law: RegimeLaw) -> None:
     """Validate a regime against the law its model binds for it.
 
     The regime itself has passed `validate_regime` when it was constructed;
-    this checks only what depends on the law. The grammar, age-specialization
-    and fold-read checks share one period-independent view of the law
+    this checks only what depends on the law. The grammar and age-specialization
+    checks share one period-independent view of the law
     (`RegimeLaw.decomposed_transition`).
 
     Args:
@@ -207,9 +331,19 @@ def validate_regime_law(regime: Regime, *, law: RegimeLaw) -> None:
     """
     if law.gated_edges:
         _validate_gated_edges(regime=regime, law=law)
+    # A participation check's route and read keys become parameter-path segments, as a
+    # gated edge's route keys do.
+    if errors := [
+        error
+        for target_name, decision in law.participation.items()
+        for kind, names in (("route", decision.routes), ("read", decision.reads))
+        for error in path_segment_name_errors(
+            kind=f"the participation check into {target_name!r}: {kind}", names=names
+        )
+    ]:
+        raise RegimeInitializationError(format_messages(errors))
     transition = law.decomposed_transition
     _validate_law_consistency(regime, transition=transition, terminal=law.terminal)
-    _validate_fold_law_reads(regime, transition=transition)
     # The law's phase grammar (its variants, terminality against carried
     # states and the aggregator) is validated by the normalizer.
     normalize_regime_phases(regime, law=law)
@@ -514,8 +648,8 @@ def _validate_gated_edges(*, regime: Regime, law: RegimeLaw) -> None:
     regimes: the gate is a plain boolean callable (a stochastic, probabilistic
     gate — a `StochasticTransition` — is not implemented); the legs cover the
     SOURCE's stakeholder structure (exactly one leg for a singleton source, one
-    per stakeholder for a collective source); route and gate-reference keys are
-    valid parameter-path segments. Cross-regime properties — the
+    per stakeholder for a collective source); route keys are valid
+    parameter-path segments. Cross-regime properties — the
     target and fallback regimes exist, the stakeholder names resolve, the
     projections cover the reference states — are validated at model processing.
 
@@ -544,11 +678,6 @@ def _validate_gated_edges(*, regime: Regime, law: RegimeLaw) -> None:
             error_messages.append(f"{prefix}the gate must be a callable.")
         error_messages.extend(
             path_segment_name_errors(kind=f"{prefix}route", names=edge.legs)
-        )
-        error_messages.extend(
-            path_segment_name_errors(
-                kind=f"{prefix}gate-reference", names=edge.gate_refs
-            )
         )
         if not edge.legs:
             error_messages.append(f"{prefix}must declare at least one leg.")
@@ -1688,507 +1817,6 @@ def _state_transition_variants(
     if isinstance(value, Phased):
         return ((value.solve, " solve variant"), (value.simulate, " simulate variant"))
     return ((value, ""),)
-
-
-def _fold_state_names(regime: Regime) -> tuple[StateName, ...]:
-    """Return the regime's IID-process states declared `fold=True`."""
-    return tuple(name for name, grid in regime.states.items() if _is_folded(grid))
-
-
-def _is_folded(grid: StateEntry) -> bool:
-    """Whether a state's grid is an IID process declaring `fold=True`."""
-    return isinstance(grid, _IIDProcess) and grid.fold
-
-
-def _flatten_transition_callables(value: _TransitionValue) -> tuple[UserFunction, ...]:
-    """Return every callable reachable from a state or regime transition entry.
-
-    Unwraps `Phased` (both variants) and per-target `Mapping`s; `StochasticTransition`
-    and `_IdentityTransition` are themselves callables with an introspectable
-    signature (`StochasticTransition` sets `__wrapped__`; `_IdentityTransition` sets
-    `__signature__`), so `inspect.signature` resolves them correctly downstream.
-    """
-    if value is None:
-        return ()
-    if isinstance(value, Phased):
-        return _flatten_transition_callables(
-            value.solve
-        ) + _flatten_transition_callables(value.simulate)
-    if isinstance(value, Mapping):
-        out: list[UserFunction] = []
-        for entry in value.values():
-            out.extend(_flatten_transition_callables(entry))
-        return tuple(out)
-    if callable(value):
-        return (cast("UserFunction", value),)
-    return ()
-
-
-def _fold_dependency_closure(
-    *,
-    roots: tuple[ConstraintLike, ...],
-    resolution_table: Mapping[FunctionName, ConstraintLike | Phased],
-) -> frozenset[str]:
-    """Return every argument name in the transitive DAG ancestry of `roots`.
-
-    Walks argument names of each root; whenever a name matches an entry of
-    `resolution_table` (an ordinary regime function or constraint), its
-    variants' argument names are pulled in too, recursively. Leaf names
-    (states, actions, params, `period`/`age`) terminate the walk. This is the
-    same "does X depend on Y" question `_find_function_output_grid_indexing`
-    answers by AST-walking; here a signature walk suffices because the
-    question is about *argument names*, not source text.
-    """
-    seen_names: set[str] = set()
-    stack: list[ConstraintLike] = list(roots)
-    visited_ids: set[int] = set()
-    while stack:
-        func = stack.pop()
-        if id(func) in visited_ids:
-            continue
-        visited_ids.add(id(func))
-        try:
-            params = inspect.signature(func).parameters
-        except ValueError, TypeError:
-            continue
-        for name in params:
-            if name in seen_names:
-                continue
-            seen_names.add(name)
-            entry = resolution_table.get(name)
-            if entry is not None:
-                stack.extend(_function_variants(entry))
-    return frozenset(seen_names)
-
-
-def _validate_fold_declarations(regime: Regime) -> None:
-    """Reject `fold=True` IID-process declarations the fold machinery can't support.
-
-    A fold integrates a shock's node axis into the stored value by quadrature
-    immediately after the period's max-over-actions / collective readout, so
-    nothing may condition on which node was realized beyond that point:
-
-    - a same-period gate / value-constraint predicate that reads the
-      shock's realized value — these read live per-node values to decide a
-      within-period household choice or a dissolution/consent gate, which the
-      fold has already averaged away by the time any *other* regime's
-      same-period logic runs;
-    - a next-period transition (state or regime) that reads the shock's
-      realized value — a folded shock is integrated out, so no downstream
-      state may depend on which node was realized;
-    - EV1 `taste_shocks` on the same regime — the taste-shock reduction is a
-      separate closed-form max over discrete actions; the two reductions are
-      not composed;
-    - a nonlinear `certainty_equivalent` on the same regime — the fold
-      reduction is always the ARITHMETIC `zero_safe_average`, exact only for
-      the linear expectation `E[V']`; a nonlinear certainty equivalent needs
-      the shock's node axis intact to apply its own aggregator;
-    - any solver other than `GridSearch` — the fold reduction is implemented
-      only in the grid-search max-Q-over-a kernel;
-    - a process with runtime-supplied distribution params — the fold weights
-      are computed once at kernel-build time from the process's own
-      (fully-specified) `compute_transition_probs`.
-
-    A persistent (non-IID) process has no `fold` field at all, so `fold=True`
-    on one is rejected by the type system before this validator ever runs.
-
-    A folded state redeclared in a regime reachable from this one — including
-    itself, so a shock redrawn every period — is supported: no solve-phase
-    continuation edge is built for a folded process, so nothing tries to
-    interpolate an axis the stored value no longer has.
-
-    A regime transition reading the shock is rejected by
-    `_validate_fold_law_reads` once the law is bound.
-    """
-    fold_names = _fold_state_names(regime)
-    if not fold_names:
-        return
-
-    transition_roots = tuple(
-        func
-        for value in regime.state_transitions.values()
-        for func in _flatten_transition_callables(value)
-    )
-    error_messages = [
-        *_fold_scope_errors(regime=regime, fold_names=fold_names),
-        *_fold_same_period_read_errors(regime=regime, fold_names=fold_names),
-        *_fold_transition_read_errors(
-            regime=regime, transition_roots=transition_roots, fold_names=fold_names
-        ),
-    ]
-    if error_messages:
-        raise RegimeInitializationError(format_messages(error_messages))
-
-
-# keyword-only-exempt: primary-argument=regime
-def _validate_fold_law_reads(
-    regime: Regime, *, transition: DecomposedTransition
-) -> None:
-    """Reject a regime transition that reads a folded shock's realized value.
-
-    Args:
-        regime: The regime the law moves.
-        transition: The law's period-independent, decomposed view.
-    """
-    fold_names = _fold_state_names(regime)
-    if not fold_names:
-        return
-    error_messages = _fold_transition_read_errors(
-        regime=regime,
-        transition_roots=_flatten_transition_callables(transition),
-        fold_names=fold_names,
-    )
-    if error_messages:
-        raise RegimeInitializationError(format_messages(error_messages))
-
-
-def _fail_if_collective_regime_folds(
-    *, user_regimes: Mapping[RegimeName, Regime]
-) -> None:
-    """Reject a collective regime that declares a folded state.
-
-    A collective regime publishes a dissolution flag beside its value: where no
-    action satisfies every stakeholder's participation constraint it flags the
-    cell and writes `-inf`, a sentinel meaning "not sustainable, take the
-    outside option" that a gated edge resolves against the outside option. That
-    sentinel is not a number on the household's own scale, and quadrature over
-    it is not an expectation — `w * -inf` is `-inf` for any positive weight, so
-    one dissolving node sets the whole sum to `-inf`, while the flag is set by
-    any dissolving node at all. A state that dissolves with small probability
-    would be stored as dissolving with certainty.
-
-    `Regime.stakeholders` states the same refusal, so an author meets it both
-    where the combination is declared and where it is caught. The regime name
-    lives in the model's `regimes` dict rather than on the regime, so the check
-    runs at model build rather than in the regime-local
-    `_validate_fold_declarations` — which lets the message name the regime the
-    author has to edit.
-
-    Args:
-        user_regimes: Mapping of regime names to user-provided `Regime`
-            instances.
-
-    Raises:
-        ModelInitializationError: Naming every collective regime that folds,
-            together with the folded state(s) it declares.
-
-    """
-    error_messages = [
-        f"Regime '{regime_name}' declares stakeholders "
-        f"{list(regime.stakeholders)} and fold=True on "
-        f"state(s) {sorted(fold_names)}. Folding a shock out of a collective "
-        "regime's stored value is not supported: a cell where no action "
-        "satisfies every stakeholder's participation constraint carries -inf "
-        "as a not-sustainable sentinel, which a gated edge resolves to the "
-        "outside option rather than reading as a value. Averaging that "
-        "sentinel over the shock's nodes would price a household that "
-        "dissolves at one node as dissolving at all of them. Drop `fold=True` "
-        "on the shock, or drop `stakeholders` on the regime."
-        for regime_name, regime in user_regimes.items()
-        if regime.stakeholders is not None and (fold_names := _fold_state_names(regime))
-    ]
-    if error_messages:
-        raise ModelInitializationError(format_messages(error_messages))
-
-
-def fail_if_a_folded_conditioner_can_move(
-    *,
-    user_regimes: Mapping[RegimeName, Regime],
-    targets_by_regime: Mapping[RegimeName, frozenset[RegimeName]],
-) -> None:
-    """Reject a folded conditioned shock whose conditioner moves on the way in.
-
-    A folded shock that is a state at period `t` was realized between `t - 1`
-    and `t`, so `StateConditioned` dates its quadrature row at the conditioning
-    state's `t - 1` value. The fold gathers that row along the conditioning
-    state's axis of the array it reduces, which is the `t` value. The two are
-    the same number only while the conditioner cannot change across that step.
-
-    The regime declaring the fold cannot settle this alone: a regime that
-    transitions into it may hand over a different category, leaving the folding
-    regime's own law an identity while the value still changed. Every regime
-    that can reach the folding one is therefore checked here.
-
-    Args:
-        user_regimes: The model's regimes, by name.
-        targets_by_regime: Per source regime, every target its resolved graph
-            support leads to in either phase.
-
-    Raises:
-        ModelInitializationError: If any regime reaching a folding regime can
-            move that fold's conditioning state.
-    """
-    error_messages: list[str] = []
-    for regime_name, regime in user_regimes.items():
-        for name in _fold_state_names(regime):
-            conditioned = cast("_IIDProcess", regime.states[name]).state_conditioned
-            if conditioned is None:
-                continue
-            movers = []
-            for source_name, source in user_regimes.items():
-                if regime_name in targets_by_regime.get(
-                    source_name, frozenset()
-                ) and _state_law_can_move(
-                    regime=source, state_name=conditioned.on, toward=regime_name
-                ):
-                    movers.append(source_name)
-            movers.sort()
-            if not movers:
-                continue
-            error_messages.append(
-                f"fold=True on state {name!r} of regime {regime_name!r} is not "
-                f"supported together with a conditioning state that can move: "
-                f"{name!r} draws its scale from {conditioned.on!r} as of the "
-                f"period BEFORE the shock is realized, while regime(s) "
-                f"{movers} reach {regime_name!r} and give {conditioned.on!r} a "
-                f"law of motion. The fold gathers that state's row along the "
-                f"axis it is reducing, which is one period later, so a subject "
-                f"arriving with a changed category would be priced against a "
-                f"distribution the declared transition never draws from. "
-                f"Declare {conditioned.on!r} with "
-                f"`fixed_transition({conditioned.on!r})` in those regimes, or "
-                f"drop `fold=True`."
-            )
-    if error_messages:
-        raise ModelInitializationError(format_messages(error_messages))
-
-
-def _state_law_can_move(
-    *, regime: Regime, state_name: StateName, toward: RegimeName
-) -> bool:
-    """Whether this regime moves `state_name` on the edge into `toward`.
-
-    A per-target law is read at its `toward` entry alone: a regime that moves the
-    state toward one target and holds it fixed toward another says nothing about
-    the edge in question, and refusing it would be an over-refusal.
-    """
-    declared = regime.state_transitions.get(state_name)
-    variants = (
-        (declared.solve, declared.simulate)
-        if isinstance(declared, Phased)
-        else (declared,)
-    )
-    laws = [
-        law
-        for variant in variants
-        for law in _flatten_transition_callables(
-            variant.get(toward) if isinstance(variant, Mapping) else variant
-        )
-    ]
-    return bool(laws) and not all(
-        getattr(law, "_is_auto_identity", False) for law in laws
-    )
-
-
-def _fold_scope_errors(
-    *, regime: Regime, fold_names: tuple[StateName, ...]
-) -> tuple[str, ...]:
-    """Collect the regime-wide (not DAG-dependency) fold restrictions."""
-    error_messages: list[str] = []
-    runtime_params = [
-        name
-        for name in fold_names
-        if cast("_IIDProcess", regime.states[name]).params_to_pass_at_runtime
-    ]
-    if runtime_params:
-        error_messages.append(
-            f"fold=True on state(s) {sorted(runtime_params)} is not yet "
-            "supported together with runtime-supplied distribution params: "
-            "the fold weights are computed once, at kernel-build time, from "
-            "the process's own (fully-specified) `compute_transition_probs`. "
-            "Supply the distribution params directly on the process, or drop "
-            "`fold=True`."
-        )
-    if regime.taste_shocks is not None:
-        error_messages.append(
-            f"fold=True on state(s) {sorted(fold_names)} is not supported "
-            "together with EV1 `taste_shocks` on the same regime: the "
-            "taste-shock reduction is a closed-form max over discrete "
-            "actions, and folding an IID state is a separate quadrature "
-            "reduction over a state axis — the two reductions are not "
-            "composed."
-        )
-    if (
-        regime.certainty_equivalent is not None
-        and type(regime.certainty_equivalent) is not LinearExpectation
-    ):
-        error_messages.append(
-            f"fold=True on state(s) {sorted(fold_names)} is not supported "
-            "together with an explicit `certainty_equivalent`: the fold "
-            "reduction (`_wrap_with_fold_reduction`) averages the shock's "
-            "node axis ARITHMETICALLY, which is exact only for the LINEAR "
-            "expectation E[V']. A certainty equivalent needs the shock's node "
-            "axis intact to apply its own aggregator instead. Drop "
-            "`fold=True`, or use the exact `LinearExpectation`. Custom "
-            "subclasses and other certainty equivalents keep their realized "
-            "outcomes; their semantics cannot be inferred from inheritance."
-        )
-    if not isinstance(regime.solver, GridSearch):
-        error_messages.append(
-            f"fold=True on state(s) {sorted(fold_names)} is only implemented "
-            "for the `GridSearch` solver: the fold reduction runs inside the "
-            "grid-search max-Q-over-a kernel. Use `solver=GridSearch()`, or "
-            "drop `fold=True`."
-        )
-    error_messages.extend(
-        _moving_conditioner_errors(regime=regime, fold_names=fold_names)
-    )
-    return tuple(error_messages)
-
-
-def _moving_conditioner_errors(
-    *, regime: Regime, fold_names: tuple[StateName, ...]
-) -> tuple[str, ...]:
-    """Reject a folded conditioned shock whose conditioning state has a law.
-
-    `StateConditioned` dates the conditioning value at `t`: the scale of the
-    innovation realized between `t` and `t + 1` is set by where the subject is
-    at `t`. The fold gathers one row per category along the conditioning
-    state's own axis of the value array it reduces, which is that state read
-    one period later. While the conditioner cannot change the two coincide; as
-    soon as it has a law of motion they do not, and the folded value prices a
-    distribution the declared transition never draws from.
-
-    This is the regime-local half of the rule. A conditioner moved by a regime
-    that transitions into this one is caught at model build, where the reaching
-    regimes are known.
-    """
-    error_messages: list[str] = []
-    for name in fold_names:
-        conditioned = cast("_IIDProcess", regime.states[name]).state_conditioned
-        if conditioned is None:
-            continue
-        laws = _flatten_transition_callables(
-            regime.state_transitions.get(conditioned.on)
-        )
-        if not laws:
-            # The conditioner's law may be a model-level broadcast that has not
-            # been merged yet, so silence here is not evidence that it cannot
-            # move. The model-level guard settles it once the merged laws are
-            # known.
-            continue
-        if all(getattr(law, "_is_auto_identity", False) for law in laws):
-            continue
-        error_messages.append(
-            f"fold=True on state {name!r} is not supported together with a "
-            f"conditioning state that can move: {name!r} draws its scale from "
-            f"{conditioned.on!r} as of the period BEFORE the shock is "
-            f"realized, while the fold gathers that state's row along the "
-            f"axis of the period it is reducing. Those are the same value "
-            f"only while {conditioned.on!r} cannot change, so a law of motion "
-            f"on it would price a distribution the transition never draws "
-            f"from. Declare {conditioned.on!r} with "
-            f"`fixed_transition({conditioned.on!r})`, or drop `fold=True`."
-        )
-    return tuple(error_messages)
-
-
-def _fold_resolution_table(
-    regime: Regime,
-) -> MappingProxyType[FunctionName, ConstraintLike | Phased]:
-    """Regime functions/constraints usable as DAG-ancestor resolution targets."""
-    return MappingProxyType(
-        {
-            **{k: v for k, v in regime.decomposed_constraints.items() if v is not None},
-            **{k: v for k, v in regime.decomposed_functions.items() if v is not None},
-        }
-    )
-
-
-def _fold_same_period_roots(regime: Regime) -> tuple[tuple[str, UserFunction], ...]:
-    """Named same-period gate / value-constraint / reference-projection roots.
-
-    Deliberately EXCLUDES this regime's own OUTBOUND `gated_edges[...].gate`
-    and `gated_edges[...].gate_refs[...]` projections: a
-    `GatedEdge`'s `gate` and its `gate_refs` projections are compiled and
-    evaluated on the TARGET regime's grid/DAG
-    (`_attach_gated_edge_folds`/`_resolve_gated_edge`), never on this
-    (source) regime's own — so an argument name they declare has no
-    relationship to a state THIS regime folds, even when the names happen to
-    collide (e.g. both regimes declare a `wage_shock`). Walking them here as
-    if they were source-local reads produced false positives: a source
-    folding a state whose name a target-grid gate merely reuses was
-    incorrectly rejected. The genuine cross-regime hazard — this regime
-    itself being read nodewise as a gated-edge target, leg fallback, or
-    same-period reference — is the now-COMPLETE
-    `_fail_if_folded_regime_is_same_period_endpoint` guard in
-    `regime_building/processing.py`, which correctly checks the TARGET side
-    of the very same declarations. `value_constraints` and
-    `same_period_refs` stay as roots here: both are evaluated on THIS
-    (source) regime's own grid/DAG, so a source-local name collision there
-    is a real same-period read of this regime's own fold name.
-    """
-    roots: list[tuple[str, UserFunction]] = []
-    for name, predicate in regime.value_constraints.items():
-        roots.extend(
-            (f"constraint {name!r}", variant)
-            for variant in _function_variants(predicate)
-        )
-    for ref_name, ref in regime.same_period_refs.items():
-        roots.extend(
-            (f"reference {ref_name!r}", func) for func in ref.projection.values()
-        )
-    return tuple(roots)
-
-
-def _fold_same_period_read_errors(
-    *, regime: Regime, fold_names: tuple[StateName, ...]
-) -> tuple[str, ...]:
-    """Reject a fold name read by a same-period gate / value-constraint."""
-    resolution_table = _fold_resolution_table(regime)
-    error_messages: list[str] = []
-    for label, func in _fold_same_period_roots(regime):
-        hit = _fold_names_ordered_intersection(
-            fold_names=fold_names,
-            other=_fold_dependency_closure(
-                roots=(func,), resolution_table=resolution_table
-            ),
-        )
-        if hit:
-            error_messages.append(
-                f"fold=True on state(s) {hit} conflicts with {label}, which "
-                "reads the shock's realized value: a same-period gate / "
-                "value-constraint / reference projection needs the unfolded "
-                "per-node value, but a folded state's node axis is "
-                "averaged away before the period's value is published. Drop "
-                "`fold=True` on the shock, or stop reading it there."
-            )
-    return tuple(error_messages)
-
-
-def _fold_transition_read_errors(
-    *,
-    regime: Regime,
-    transition_roots: tuple[UserFunction, ...],
-    fold_names: tuple[StateName, ...],
-) -> tuple[str, ...]:
-    """Reject a fold name read by a next-period state / regime transition."""
-    resolution_table = _fold_resolution_table(regime)
-    transition_hit: set[str] = set()
-    for func in transition_roots:
-        transition_hit |= _fold_dependency_closure(
-            roots=(func,), resolution_table=resolution_table
-        )
-    transition_hit &= set(fold_names)
-    if not transition_hit:
-        return ()
-    return (
-        (
-            f"fold=True on state(s) {sorted(transition_hit)} conflicts with a "
-            "next-period transition that reads the shock's realized value: a "
-            "folded shock is integrated out at solve time, so no downstream "
-            "state or regime transition may condition on which node was "
-            "realized. Drop `fold=True`, or stop conditioning the transition "
-            "on it."
-        ),
-    )
-
-
-def _fold_names_ordered_intersection(
-    *, fold_names: tuple[StateName, ...], other: frozenset[str]
-) -> tuple[StateName, ...]:
-    """Return `fold_names` filtered to `other`, preserving `fold_names`' order."""
-    return tuple(name for name in fold_names if name in other)
 
 
 @beartype(conf=REGIME_CONF)

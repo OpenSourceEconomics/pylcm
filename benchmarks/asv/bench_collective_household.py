@@ -6,12 +6,12 @@ pays for, and each cost is measured on its own axis here:
 - **model construction** — the phase scan, the lowering of the collective
   declarations, and the per-edge parameter discovery, with nothing compiled;
 - **cold compilation** — the first solve, which traces and compiles every
-  regime's kernels plus one fold per gated edge;
+  regime's kernels and its declared participation programs;
 - **warm solve** — the same solve with the compilation cache hot, which is what
   an estimation loop pays per parameter vector;
-- **simulation over cohort size** — the router evaluates each gate once per
-  edge per period over the whole population, so this is where a cohort-size
-  term would show;
+- **simulation over cohort size** — participation checks route original subjects
+  before their final action each period, so this is where a cohort-size term
+  would show;
 - **transitive reference depth** — a value constraint may read a regime that
   itself reads another, and the solver orders each period's regimes by that
   chain. Depth is the axis on which an accidental quadratic would appear.
@@ -187,10 +187,9 @@ class CollectiveHouseholdSolve:
 class CollectiveHouseholdSimulate:
     """Forward simulation, over cohort sizes.
 
-    Routing is the part of simulation that is specific to a gated model: one
-    gate evaluation per edge per period over the whole population. A
-    cohort-size term that grew faster than linearly would show up between
-    these three points.
+    Participation checks route each original subject before its final action.
+    A cohort-size term that grew faster than linearly would show up between
+    these points.
     """
 
     version = "1"
@@ -201,26 +200,45 @@ class CollectiveHouseholdSimulate:
     # dropped rather than kept as a third routine point.
     params = [1_000, 100_000]
     param_names = ["n_subjects"]
+    # shortcut: Restore large cohorts when execution meets the benchmark time limit.
+    skip_params = [(100_000,)]
 
     def _build(self, n_subjects):
         from lcm_examples import collective_household
 
+        print(
+            f"CollectiveHouseholdSimulate: build model ({n_subjects} subjects)",
+            flush=True,
+        )
         self.model, self.model_params = _make_model()
+        print("CollectiveHouseholdSimulate: solve model", flush=True)
         self.period_to_regime_to_V_arr = self.model.solve(
             params=self.model_params, log_level="off", runtime_checks=False
         )
+        print("CollectiveHouseholdSimulate: create initial conditions", flush=True)
         self.initial_conditions = collective_household.get_initial_conditions(
             n_subjects=n_subjects, model=self.model
+        )
+        print(
+            "CollectiveHouseholdSimulate: model and initial conditions ready",
+            flush=True,
         )
 
     def setup(self, n_subjects):
         self._build(n_subjects)
+        print("CollectiveHouseholdSimulate: first simulation", flush=True)
         start = time.perf_counter()
         self.execute_for_measurement()
         self._compile_time = time.perf_counter() - start
+        print(
+            "CollectiveHouseholdSimulate: setup complete; "
+            f"first simulation {self._compile_time:.6f}s",
+            flush=True,
+        )
 
     def setup_for_gpu_measurement(self, n_subjects=_GPU_N_SUBJECTS):
         self._build(n_subjects)
+        print("CollectiveHouseholdSimulate: cold simulation for GPU memory", flush=True)
 
     def execute_for_measurement(self):
         self.model.simulate(
@@ -259,6 +277,8 @@ class CollectiveHouseholdSimulate:
 class CollectiveHouseholdSimulateGpuPeakMem(_gpu_mem.GpuPeakMem):
     bench_module = "benchmarks.asv.bench_collective_household"
     bench_class = "CollectiveHouseholdSimulate"
+    # shortcut: Restore this large-cohort probe when it meets its time limit.
+    skip_params = [()]
 
 
 class ReferenceChainSolve:

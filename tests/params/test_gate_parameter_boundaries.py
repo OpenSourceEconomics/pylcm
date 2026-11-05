@@ -20,6 +20,8 @@ from lcm import (
     Gate,
     LinSpacedGrid,
     Model,
+    ParticipationCheck,
+    ParticipationRead,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
@@ -244,7 +246,17 @@ def source_name_gate_model(*, declare_pruned_source_x: bool) -> Model:
         edges={
             "src": Transition(
                 law=ByAge(cases={0: {"target": StochasticTransition(func=certain)}}),
-                gates={"target": Gate(predicate=gate_with_free_x, routes=routes())},
+                participation={
+                    "target": ParticipationCheck(
+                        predicate=gate_with_free_x,
+                        reads={
+                            "V_target": ParticipationRead(
+                                kind="IntegratedFull", regime="target", projection={}
+                            )
+                        },
+                        routes=routes(),
+                    )
+                },
             )
         },
     )

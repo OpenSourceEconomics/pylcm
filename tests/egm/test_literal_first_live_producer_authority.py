@@ -17,7 +17,7 @@ from _lcm.solution.dcegm import _DCEGMPeriodKernel
 from _lcm.solution.feasibility import BoundedResult, ContinuationReadCounts
 from _lcm.typing import EconFunctionKwargs
 from lcm import AgeGrid, IrregSpacedGrid, Model, Regime, categorical
-from lcm.solvers import DCEGM
+from lcm.solvers import DCEGM, RFCEnvelope
 from lcm.typing import BoolND, ContinuousState, FloatND, ScalarInt
 from tests.egm.test_below_first_live_counts import _model, _params
 from tests.egm.test_dynamic_dcegm_activation import RegimeId
@@ -42,7 +42,10 @@ def _literal_model(*, terminal_capacity: int | None) -> Model:
     """Keep one actual DC source beside independently declared target producers."""
     seed = _model(literal=True, parent_nodes=(-0.125, 0.5, 1.0))
     parent = seed.user_regimes["parent"].replace(
-        solver=DCEGM(savings_grid=IrregSpacedGrid(points=np.array([-0.125, 0.5, 1.0])))
+        solver=DCEGM(
+            savings_grid=IrregSpacedGrid(points=np.array([-0.125, 0.5, 1.0])),
+            envelope=RFCEnvelope(),
+        )
     )
     if terminal_capacity is None:
         child = seed.user_regimes["child"]

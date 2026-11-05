@@ -1,4 +1,4 @@
-"""A gated edge into a stateless target is gated in solve, not just in simulation."""
+"""A participation check into a stateless target is decided in solve, too."""
 
 import jax.numpy as jnp
 import numpy as np
@@ -12,6 +12,8 @@ from lcm import (
     Gate,
     LinSpacedGrid,
     Model,
+    ParticipationCheck,
+    ParticipationRead,
     ProjectedRegimeValue,
     StakeholderRoute,
     StochasticTransition,
@@ -68,17 +70,31 @@ def _closed_gate(V_target: FloatND) -> BoolND:
     return V_target > 2 * _TARGET_VALUE
 
 
-def _build_model(*, gate, enable_jit: bool) -> Model:
-    src_gate = Gate(
-        predicate=gate,
-        routes={
-            "only": StakeholderRoute(
-                fallback=ProjectedRegimeValue(
-                    regime="stateless_fallback", projection={}
+def _closed_by_age(age: FloatND) -> BoolND:
+    return age < 0
+
+
+def _build_model(*, gate, enable_jit: bool, reads_value: bool = True) -> Model:
+    """Decide the landing on the target's value on landing, or by a state-only gate."""
+    routes = {
+        "only": StakeholderRoute(
+            fallback=ProjectedRegimeValue(regime="stateless_fallback", projection={})
+        )
+    }
+    gates: dict[str, Gate] = {}
+    participation: dict[str, ParticipationCheck] = {}
+    if reads_value:
+        participation["stateless_target"] = ParticipationCheck(
+            predicate=gate,
+            reads={
+                "V_target": ParticipationRead(
+                    kind="IntegratedFull", regime="stateless_target", projection={}
                 )
-            )
-        },
-    )
+            },
+            routes=routes,
+        )
+    else:
+        gates["stateless_target"] = Gate(predicate=gate, routes=routes)
     src = Regime(
         states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
         state_transitions={"x": _identity_x},
@@ -110,7 +126,8 @@ def _build_model(*, gate, enable_jit: bool) -> Model:
                         0: {"stateless_target": StochasticTransition(func=_prob_one)}
                     }
                 ),
-                gates={"stateless_target": src_gate},
+                participation=participation,
+                gates=gates,
             )
         },
     )
@@ -118,20 +135,24 @@ def _build_model(*, gate, enable_jit: bool) -> Model:
 
 @pytest.mark.parametrize("enable_jit", [True, False])
 @pytest.mark.parametrize(
-    ("gate", "landing_value"),
-    [(_open_gate, _TARGET_VALUE), (_closed_gate, _FALLBACK_VALUE)],
-    ids=["open", "closed"],
+    ("gate", "reads_value", "landing_value"),
+    [
+        (_open_gate, True, _TARGET_VALUE),
+        (_closed_gate, True, _FALLBACK_VALUE),
+        (_closed_by_age, False, _FALLBACK_VALUE),
+    ],
+    ids=["open", "closed", "state-closed"],
 )
 def test_stateless_gated_target_pays_the_branch_its_gate_selects(
-    *, gate, landing_value: float, enable_jit: bool
+    *, gate, reads_value: bool, landing_value: float, enable_jit: bool
 ) -> None:
-    """The source's value discounts the target when the gate opens, else the fallback.
+    """The source's value discounts the target when accepted, else the fallback.
 
-    With zero flow utility, the source's value at every state is the discounted
-    value of the branch the gate selects at the stateless landing: the target's
-    own value when the gate is open and the projected fallback when it is closed.
+    With zero flow utility, the source's value at every state is the discounted value of
+    the branch selected at the stateless landing: the target's own value when the
+    participation check or gate accepts and the projected fallback otherwise.
     """
-    model = _build_model(gate=gate, enable_jit=enable_jit)
+    model = _build_model(gate=gate, enable_jit=enable_jit, reads_value=reads_value)
     params = {
         "src": {"koopmans_aggregator": {"discount_factor": _BETA}},
         "stateless_target": {},

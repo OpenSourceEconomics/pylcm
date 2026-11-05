@@ -215,7 +215,19 @@ def _cross_regime_model(*, solver: str, factor_is_fixed: bool) -> Model:
     they are free solve params.
     """
     is_dcegm = solver == "dcegm"
-    regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
+    regime_type = (
+        functools.partial(
+            ConsumptionSavingsRegime,
+            liquid=LiquidMargin(
+                state="wealth",
+                action="consumption",
+                resources="resources",
+                post_decision_state="savings",
+            ),
+        )
+        if is_dcegm
+        else UserRegime
+    )
     young = regime_type(
         # Young in the first decision period only, so its only DC-EGM carry
         # target is the *old* regime (a different regime) and the terminal
@@ -246,18 +258,6 @@ def _cross_regime_model(*, solver: str, factor_is_fixed: bool) -> Model:
             }
         ),
         solver=DCEGM_SOLVER if is_dcegm else GridSearch(),
-        **(
-            {
-                "liquid": LiquidMargin(
-                    state="wealth",
-                    action="consumption",
-                    resources="resources",
-                    post_decision_state="savings",
-                )
-            }
-            if is_dcegm
-            else {}
-        ),
     )
     pension_funcs = {"accrued_pension": accrued_pension, "pension_value": pension_value}
     old = regime_type(
@@ -279,18 +279,6 @@ def _cross_regime_model(*, solver: str, factor_is_fixed: bool) -> Model:
             else {"utility": utility, "resources": resources_old, **pension_funcs}
         ),
         solver=DCEGM_SOLVER if is_dcegm else GridSearch(),
-        **(
-            {
-                "liquid": LiquidMargin(
-                    state="wealth",
-                    action="consumption",
-                    resources="resources",
-                    post_decision_state="savings",
-                )
-            }
-            if is_dcegm
-            else {}
-        ),
     )
     dead = UserRegime(
         functions={"utility": lambda: 0.0},

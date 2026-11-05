@@ -1,108 +1,14 @@
-"""Dropped outer candidates are announced once per regime-period.
+"""Why N-NB-EGM replay takes adjuster targets from the declared outer nodes.
 
 N-NB-EGM replay recovers the outer action from the target the solve retained. At
 a realized state that action can reach a stock outside the outer state's declared
 domain, where no value function exists; the candidate is then dropped from the
 affected subjects' choice sets rather than published.
-
-Dropping silently would hide a shrunken choice set, so the drop is reported --
-aggregated to one message carrying the counts, never one per candidate. The
-Runtime checks reject a dropped candidate independently of console verbosity.
 """
 
-import logging
-
 import jax.numpy as jnp
-import pytest
 
-from _lcm.simulation.simulate import (
-    _announce_dropped_outer_candidates,
-    map_coordinates,
-)
-from _lcm.utils.logging import LogLevel, get_logger
-from lcm.exceptions import UnrepresentableOuterCandidateError
-
-
-def _masks():
-    """Three live candidates for two subjects, two of the six dropped."""
-    live = jnp.ones((3, 2), dtype=bool)
-    dropped = jnp.asarray([[True, False], [False, True], [False, False]])
-    return live, dropped
-
-
-@pytest.mark.parametrize("log_level", ["off", "warning", "progress", "debug"])
-def test_runtime_checks_raise_and_name_the_counts(log_level: LogLevel) -> None:
-    """Enabled checks stop a drop and report its counts at every verbosity."""
-    live, dropped = _masks()
-
-    with pytest.raises(UnrepresentableOuterCandidateError) as report:
-        _announce_dropped_outer_candidates(
-            logger=get_logger(log_level=log_level),
-            dropped=dropped,
-            n_live=live,
-            regime_name="working",
-            period=3,
-        )
-
-    message = str(report.value)
-    assert "2 of 6" in message
-    assert "working" in message
-    assert "period 3" in message
-
-
-@pytest.mark.parametrize("log_level", ["off", "warning", "progress", "debug"])
-def test_runtime_checks_disabled_allow_the_drop(
-    *, log_level: LogLevel, caplog: pytest.LogCaptureFixture
-) -> None:
-    """Disabled checks permit dropped candidates at every verbosity."""
-    live, dropped = _masks()
-
-    with caplog.at_level(logging.WARNING):
-        _announce_dropped_outer_candidates(
-            logger=get_logger(log_level=log_level, runtime_checks=False),
-            dropped=dropped,
-            n_live=live,
-            regime_name="working",
-            period=3,
-        )
-
-    assert caplog.text == ""
-
-
-def test_off_is_silent_while_the_candidates_are_still_dropped(caplog) -> None:
-    """At `log_level="off"` nothing is reported; dropping is not a log setting.
-
-    The drop itself happens in the replay, independently of this call. What the
-    level governs is only whether it is announced.
-    """
-    live, dropped = _masks()
-
-    with caplog.at_level(logging.DEBUG):
-        _announce_dropped_outer_candidates(
-            logger=get_logger(log_level="off", runtime_checks=False),
-            dropped=dropped,
-            n_live=live,
-            regime_name="working",
-            period=3,
-        )
-
-    assert caplog.text == ""
-
-
-def test_a_run_dropping_nothing_reports_nothing(caplog) -> None:
-    """No message and no raise when every live candidate was reconstructed."""
-    live = jnp.ones((3, 2), dtype=bool)
-
-    with caplog.at_level(logging.DEBUG):
-        _announce_dropped_outer_candidates(
-            logger=get_logger(log_level="debug"),
-            dropped=jnp.zeros((3, 2), dtype=bool),
-            n_live=live,
-            regime_name="working",
-            period=3,
-        )
-
-    assert caplog.text == ""
+from _lcm.simulation.simulate import map_coordinates
 
 
 def test_interpolating_a_constant_target_surface_does_not_reproduce_its_node() -> None:
