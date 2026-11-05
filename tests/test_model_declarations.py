@@ -1,5 +1,7 @@
 """Inspect the declarations used by construction without evaluating the model."""
 
+import subprocess
+import sys
 from unittest.mock import patch
 
 import pytest
@@ -16,6 +18,46 @@ from lcm import (
     fixed_transition,
 )
 from lcm.typing import Phase, ReferenceName, ScalarInt
+
+
+def test_inspection_exports_preserve_model_construction_import_order() -> None:
+    """Inspection exports leave construction's recursive type-check setup intact."""
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            """
+import importlib.abc
+import sys
+from collections.abc import Sequence
+from types import ModuleType
+
+observed = []
+
+class InspectionImportBoundary(importlib.abc.MetaPathFinder):
+    def find_spec(
+        self,
+        fullname: str,
+        path: Sequence[str] | None = None,
+        target: ModuleType | None = None,
+    ) -> None:
+        if fullname == "lcm.declarations":
+            observed.append("_lcm.regime_building.processing" in sys.modules)
+        return None
+
+sys.meta_path.insert(0, InspectionImportBoundary())
+import lcm
+assert observed == [True], observed
+assert lcm.ModelDeclarations.__module__ == "lcm.declarations"
+assert lcm.FunctionDeclaration.__module__ == "lcm.declarations"
+""",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 @categorical(ordered=False)

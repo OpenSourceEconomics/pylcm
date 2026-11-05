@@ -127,7 +127,6 @@ from lcm.consumption_savings_regime import (  # noqa: E402
     outer_unchanged,
     post_decision_lower_bound,
 )
-from lcm.declarations import FunctionDeclaration, ModelDeclarations  # noqa: E402
 from lcm.decoupled import Decoupled  # noqa: E402
 from lcm.execution import ExecutionConfig, InvariantBlockSchedule  # noqa: E402
 from lcm.exits import Consent, Counterparty, Exit, ExitTarget, RuleResult  # noqa: E402
@@ -235,6 +234,9 @@ jax.tree_util.register_pytree_node(
 )
 
 from lcm import shocks  # noqa: E402
+
+# Preserve the construction import order used by beartype's recursive hints.
+from lcm.declarations import FunctionDeclaration, ModelDeclarations  # noqa: E402
 
 __all__ = [
     "EULER_GAMMA",
