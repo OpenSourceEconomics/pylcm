@@ -243,10 +243,14 @@ Its fields:
     for when host memory is short too. Each solve writes its own `solution-<id>.h5` in
     the directory, in the `SolutionResult.save` format. The file is deleted with its
     result unless `result.save(path=...)` keeps a copy, which another process can load
-    with `load_solution` and simulate on the same devices or on others. A failed solve
-    leaves `solution-<id>.incomplete`, recording the model and parameter fingerprints,
-    the pylcm version and commit, the dtype and the last completed period;
-    `load_solution` refuses it.
+    with `load_solution` and simulate on the same devices or on others. While it is
+    written, `solution-<id>.h5.partial` records the model and parameter fingerprints,
+    the pylcm version and commit, the dtype and the last completed period (block-major:
+    the completed codes), updated as each lands. A failed solve leaves it as
+    `solution-<id>.incomplete` once nothing holds the failed solve any more, and
+    `load_solution` refuses it. Only if flushing or renaming the finished file fails
+    does `solution-<id>.incomplete` hold the complete solution, which `load_solution`
+    reads, verifying every payload's checksum.
 
   Off the device, reading a value or a policy returns a device copy. A NaN is diagnosed
   at the end of its period, while that period's values are still on the device, so the

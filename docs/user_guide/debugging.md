@@ -476,9 +476,10 @@ from lcm.exceptions import ExecutionPlanningError, PyLCMError
   version. pylcm rejects a mismatch rather than migrating it silently.
 
 - **`ValueStorageError`**: A solve could not copy a value to pinned host memory or write
-  it to its archive under `ExecutionConfig(value_storage=...)`. The message names the
-  period, the regime and the target; under a directory, the archive is kept as
-  `solution-<id>.incomplete`.
+  it to its archive under `ExecutionConfig(value_storage=...)`, or could not create the
+  archive in the storage directory. The message names the period, the regime and the
+  target; under a directory, the archive is kept as `solution-<id>.incomplete`, with the
+  record of how far the solve got.
 
 ## Inspect the resolved execution plan
 

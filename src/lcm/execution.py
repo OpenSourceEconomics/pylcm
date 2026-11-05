@@ -352,15 +352,22 @@ class ExecutionConfig:
     - A directory buffers the values on disk, for when host memory is short too.
       Values and policies travel as under `"host"` and are then written, from a
       background thread, to a file of their own per solve, `solution-<id>.h5` in
-      that directory; a written period leaves host memory, and the solve waits
-      while two periods still wait to be written. Reads load a value from the
-      file. The file is in the `SolutionResult.save` format and is deleted with
-      its result unless `SolutionResult.save` keeps a copy. A failed solve leaves
-      `solution-<id>.incomplete` behind, recording how far it got.
+      that directory; a written period leaves host memory. Host memory holds at
+      most three periods waiting to be written: the solve queues each period and
+      then waits, with no timeout, while more than two still wait. Reads load a
+      value from the file. The file is in the `SolutionResult.save` format and is
+      deleted with its result unless `SolutionResult.save` keeps a copy. While it
+      is written, `solution-<id>.h5.partial` records the solve and how far it
+      got, updated as each period lands. A failed solve leaves it behind as
+      `solution-<id>.incomplete`, once nothing holds the failed solve any more.
+      Should only flushing or renaming the finished file fail, the
+      `.incomplete` file holds the complete solution and `load_solution` reads
+      it.
 
     A copy or write that fails raises `ValueStorageError`, naming the period, the
-    regime and the target. A NaN is diagnosed while its period's values are still
-    on the device, so no storage mode reads values back to report it.
+    regime and the target, as does a directory the archive cannot be created in.
+    A NaN is diagnosed while its period's values are still on the device, so no
+    storage mode reads values back to report it.
 
     Under `InvariantBlockSchedule.BLOCK_MAJOR`, `"device"` keeps each code's
     values on the device through its solve and then copies them to host memory,

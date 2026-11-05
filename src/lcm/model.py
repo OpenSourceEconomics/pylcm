@@ -2758,67 +2758,54 @@ class Model:
         """Build the canonical public result from processed parameters.
 
         Under disk value storage the solve writes its values to an archive of
-        its own in the storage directory. The archive is completed once the
-        result is built, and abandoned, with a record of how far the solve got,
-        if anything fails.
+        its own in the storage directory, which records how far the solve got
+        as it goes. The archive is completed once the result is built.
         """
-        value_archive = (
-            (
-                BlockedSolutionArchive
-                if self._solves_block_major
-                else StreamedSolutionArchive
-            )(
-                directory=cast("Path", self._execution.value_storage),
-                name=f"solution-{uuid.uuid4().hex}",
-                budget_bytes=self._execution.device_memory_bytes,
-            )
-            if self._execution.value_storage_kind == "disk"
-            else None
+        value_archive = self._open_value_archive(
+            flat_params=flat_params, blocked=self._solves_block_major
         )
-        try:
-            result = self._solve_into(
-                flat_params=flat_params,
-                generation=generation,
-                solve_parameter_views=solve_parameter_views,
-                params=params,
-                log=log,
-                retention=retention,
-                max_compilation_workers=max_compilation_workers,
-                log_path=log_path,
-                log_keep_n_latest=log_keep_n_latest,
-                retained_input_arrays=retained_input_arrays,
-                validation_materializer=validation_materializer,
-                process_grid_resolver=process_grid_resolver,
-                call_id=call_id,
-                period_capture=period_capture,
-                value_archive=value_archive,
-            )
-            if value_archive is not None:
-                value_archive.complete(solution=result)
-        except BaseException:
-            if value_archive is not None:
-                value_archive.abandon(
-                    record={
-                        **(
-                            {"completed_codes": list(value_archive.completed_codes)}
-                            if isinstance(value_archive, BlockedSolutionArchive)
-                            else {}
-                        ),
-                        "last_completed_period": value_archive.last_completed_period,
-                        "dtype": (
-                            "float64"
-                            if jax.config.read("jax_enable_x64")
-                            else "float32"
-                        ),
-                        "params_fingerprint": self._params_fingerprint(
-                            flat_params=flat_params
-                        ),
-                        "pylcm_version": PYLCM_VERSION,
-                        "pylcm_commit": pylcm_commit(),
-                    }
-                )
-            raise
+        result = self._solve_into(
+            flat_params=flat_params,
+            generation=generation,
+            solve_parameter_views=solve_parameter_views,
+            params=params,
+            log=log,
+            retention=retention,
+            max_compilation_workers=max_compilation_workers,
+            log_path=log_path,
+            log_keep_n_latest=log_keep_n_latest,
+            retained_input_arrays=retained_input_arrays,
+            validation_materializer=validation_materializer,
+            process_grid_resolver=process_grid_resolver,
+            call_id=call_id,
+            period_capture=period_capture,
+            value_archive=value_archive,
+        )
+        if value_archive is not None:
+            value_archive.complete(solution=result)
         return result
+
+    def _open_value_archive(
+        self, *, flat_params: FlatParams, blocked: bool
+    ) -> StreamedSolutionArchive | BlockedSolutionArchive | None:
+        """Open the archive a solve writes its values to under disk value storage.
+
+        The archive holds, from its creation, the facts about the solve that an
+        incomplete archive records. `None` under any other value storage.
+        """
+        if self._execution.value_storage_kind != "disk":
+            return None
+        return (BlockedSolutionArchive if blocked else StreamedSolutionArchive)(
+            directory=cast("Path", self._execution.value_storage),
+            name=f"solution-{uuid.uuid4().hex}",
+            record={
+                "dtype": "float64" if jax.config.read("jax_enable_x64") else "float32",
+                "params_fingerprint": self._params_fingerprint(flat_params=flat_params),
+                "pylcm_version": PYLCM_VERSION,
+                "pylcm_commit": pylcm_commit(),
+            },
+            budget_bytes=self._execution.device_memory_bytes,
+        )
 
     def _solve_into(
         self,
@@ -4913,15 +4900,14 @@ class Model:
                     call_id=call_id,
                     validation_materializer=entry_allocations,
                 )
-                combined_archive = (
-                    BlockedSolutionArchive(
-                        directory=cast("Path", self._execution.value_storage),
-                        name=f"solution-{uuid.uuid4().hex}",
-                        budget_bytes=self._execution.device_memory_bytes,
-                    )
-                    if self._execution.value_storage_kind == "disk"
-                    else None
+                combined_archive = cast(
+                    "BlockedSolutionArchive | None",
+                    self._open_value_archive(flat_params=flat_params, blocked=True),
                 )
+                if combined_archive is not None:
+                    combined_archive.describe(
+                        model_fingerprint=preparation.model_fingerprint
+                    )
                 component_values = SolvingComponentValues(
                     schedule=self._component_schedule(
                         preparation=preparation,

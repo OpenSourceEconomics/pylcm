@@ -3,10 +3,12 @@
 Values reach the file as the solve produces them, with their checksums computed
 as they are written; the artifacts and the manifest complete it once the result
 is known. The finished file is the archive `SolutionResult.save` writes: it loads
-to the same values and metadata. A solve that fails leaves an incomplete file
-recording how far it got, which `load_solution` refuses.
+to the same values and metadata. From its creation the file records the solve
+and how far it got, so a solve that fails leaves an incomplete file holding that
+record, which `load_solution` refuses.
 """
 
+import gc
 import json
 from pathlib import Path
 
@@ -16,13 +18,15 @@ import numpy as np
 import pytest
 
 from _lcm.persistence.solution import DiskValueEntry, StreamedSolutionArchive
+from _lcm.typing import JSONValue
 from lcm import ExecutionConfig
-from lcm.exceptions import SolutionIntegrityError
+from lcm.exceptions import IncompatibleSolutionError, SolutionIntegrityError
 from lcm.persistence import load_solution
 from lcm.solver_api import SolutionResult
 from tests.solution.test_period_target_value_reads import _three_regime_model
 
 _PARAMS = {"discount_factor": 0.95}
+_RECORD = {"dtype": "float64", "pylcm_version": "test"}
 
 
 def _host_solution() -> SolutionResult:
@@ -53,7 +57,9 @@ def test_a_completed_streamed_archive_loads_like_a_saved_solution(
     """Values, value schemas and artifacts equal those of `SolutionResult.save`."""
     solution = _host_solution()
     saved = load_solution(path=solution.save(path=tmp_path / "saved.h5"))
-    archive = StreamedSolutionArchive(directory=tmp_path, name="solution-1")
+    archive = StreamedSolutionArchive(
+        directory=tmp_path, name="solution-1", record=_RECORD
+    )
     _stream_values(archive=archive, solution=solution)
 
     streamed = load_solution(path=archive.complete(solution=solution))
@@ -74,7 +80,9 @@ def test_a_completed_streamed_archive_loads_like_a_saved_solution(
 
 def test_a_completed_archive_is_named_after_the_solve(tmp_path: Path) -> None:
     solution = _host_solution()
-    archive = StreamedSolutionArchive(directory=tmp_path, name="solution-7")
+    archive = StreamedSolutionArchive(
+        directory=tmp_path, name="solution-7", record=_RECORD
+    )
     _stream_values(archive=archive, solution=solution)
 
     path = archive.complete(solution=solution)
@@ -86,7 +94,9 @@ def test_a_completed_archive_is_named_after_the_solve(tmp_path: Path) -> None:
 def test_a_disk_value_entry_reads_its_value_onto_its_sharding(tmp_path: Path) -> None:
     """Before and after completion, a read is the written value on the device."""
     solution = _host_solution()
-    archive = StreamedSolutionArchive(directory=tmp_path, name="solution-2")
+    archive = StreamedSolutionArchive(
+        directory=tmp_path, name="solution-2", record=_RECORD
+    )
     entries = _stream_values(archive=archive, solution=solution)
 
     def _check() -> None:
@@ -107,32 +117,48 @@ def test_a_disk_value_entry_reads_its_value_onto_its_sharding(tmp_path: Path) ->
     _check()
 
 
-def test_an_abandoned_archive_records_how_far_the_solve_got(tmp_path: Path) -> None:
-    """The incomplete file holds its record and no manifest, and does not load."""
+def test_an_unfinished_archive_records_how_far_the_solve_got(tmp_path: Path) -> None:
+    """The record is in the file as each period lands; unfinished, it never loads."""
     solution = _host_solution()
-    archive = StreamedSolutionArchive(directory=tmp_path, name="solution-3")
+    archive = StreamedSolutionArchive(
+        directory=tmp_path, name="solution-3", record=_RECORD
+    )
+    assert _record_of(archive) == _RECORD | {"last_completed_period": None}
     archive.write_value(
         period=4,
         regime="c",
         value=np.asarray(solution.value(period=4, regime="c")),
         sharding=solution.value(period=4, regime="c").sharding,
     )
-    record = {"last_completed_period": 4, "dtype": "float64"}
+    archive.mark_period_written(period=4)
+    assert _record_of(archive) == _RECORD | {"last_completed_period": 4}
 
-    path = archive.abandon(record=record)
+    del archive
+    gc.collect()
 
-    assert path == tmp_path / "solution-3.incomplete"
+    path = tmp_path / "solution-3.incomplete"
+    assert sorted(child.name for child in tmp_path.iterdir()) == [path.name]
     with h5py.File(path, "r") as file:
         assert "manifest" not in file
-        assert json.loads(bytes(file["incomplete"][()]).decode()) == record
+        assert json.loads(bytes(file["incomplete"][()]).decode()) == _RECORD | {
+            "last_completed_period": 4
+        }
     with pytest.raises(SolutionIntegrityError):
         load_solution(path=path)
+
+
+def _record_of(archive: StreamedSolutionArchive) -> dict[str, JSONValue]:
+    """Read the record from the archive's file, through its writing handle."""
+    dataset = archive._file.read(dataset="incomplete")
+    return json.loads(bytes(dataset).decode())
 
 
 def test_a_written_value_whose_bytes_changed_is_refused(tmp_path: Path) -> None:
     """A read verifies the checksum computed when the value was written."""
     solution = _host_solution()
-    archive = StreamedSolutionArchive(directory=tmp_path, name="solution-4")
+    archive = StreamedSolutionArchive(
+        directory=tmp_path, name="solution-4", record=_RECORD
+    )
     entries = _stream_values(archive=archive, solution=solution)
     path = archive.complete(solution=solution)
     entry = entries[(4, "c")]
@@ -142,3 +168,43 @@ def test_a_written_value_whose_bytes_changed_is_refused(tmp_path: Path) -> None:
 
     with pytest.raises(SolutionIntegrityError):
         jax.block_until_ready(entry.materialize())
+
+
+def _cpu_sharding() -> jax.sharding.Sharding:
+    return jax.sharding.SingleDeviceSharding(jax.devices("cpu")[0])
+
+
+def test_a_weakly_typed_value_is_planned_and_read_weakly_typed(tmp_path: Path) -> None:
+    """The planning descriptor and the read keep the weak type the solve gave."""
+    archive = StreamedSolutionArchive(
+        directory=tmp_path, name="solution-5", record=_RECORD
+    )
+    entry = archive.write_value(
+        period=0,
+        regime="a",
+        value=np.ones(3, dtype=np.float32),
+        sharding=_cpu_sharding(),
+        weak_type=True,
+    )
+
+    assert entry.device_stand_in().weak_type
+    assert entry.materialize().weak_type
+
+
+@pytest.mark.usefixtures("x64_disabled")
+def test_a_read_refuses_to_narrow_a_value_the_solve_wrote_in_x64(
+    tmp_path: Path,
+) -> None:
+    """Without x64, a float64 value read back is refused, not narrowed to float32."""
+    archive = StreamedSolutionArchive(
+        directory=tmp_path, name="solution-6", record=_RECORD
+    )
+    entry = archive.write_value(
+        period=0,
+        regime="a",
+        value=np.ones(3, dtype=np.float64),
+        sharding=_cpu_sharding(),
+    )
+
+    with pytest.raises(IncompatibleSolutionError, match="float64"):
+        entry.materialize()

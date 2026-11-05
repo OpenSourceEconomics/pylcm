@@ -13,10 +13,12 @@ an accelerator.
 """
 
 import dataclasses
+import errno
 import filecmp
 import gc
 import importlib
 import json
+import os
 import subprocess
 import threading
 import weakref
@@ -53,6 +55,7 @@ from _lcm.solution.host_values import HostValueEntry, copy_values_to_host
 from _lcm.solution.result_snapshot import own_value_store
 from _lcm.typing import (
     ArtifactPayload,
+    JSONValue,
     PeriodToRegimeToSimulationPolicy,
     SimulationPolicy,
 )
@@ -1084,7 +1087,14 @@ def _disk(
 
 
 def _archives(directory: Path) -> list[str]:
+    """List the directory once every archive nothing holds any more is settled."""
+    gc.collect()
     return sorted(child.name for child in directory.iterdir())
+
+
+def _record_in(path: Path) -> dict[str, JSONValue]:
+    with h5py.File(path, "r") as file:
+        return json.loads(bytes(file["incomplete"][()]).decode())
 
 
 @_MODELS
@@ -1465,12 +1475,17 @@ def test_a_failed_disk_write_names_its_period_regime_and_archive(
         regime: RegimeName,
         value: np.ndarray,
         sharding: jax.sharding.Sharding,
+        weak_type: bool = False,
     ) -> DiskValueEntry:
         if period == 1:
-            msg = "injected write failure"
-            raise OSError(msg)
+            raise OSError(errno.ENOSPC, "No space left on device")
         return write_value(
-            self, period=period, regime=regime, value=value, sharding=sharding
+            self,
+            period=period,
+            regime=regime,
+            value=value,
+            sharding=sharding,
+            weak_type=weak_type,
         )
 
     monkeypatch.setattr(StreamedSolutionArchive, "write_value", _fail_at_period_1)
@@ -1480,12 +1495,66 @@ def test_a_failed_disk_write_names_its_period_regime_and_archive(
     ) as raised:
         _three_regime_model(_disk(tmp_path)).solve(params=_PARAMS, log_level="off")
     assert isinstance(raised.value.__cause__, OSError)
+    assert raised.value.__cause__.errno == errno.ENOSPC
+
+    # The record is in the file while the failed solve is still held.
+    (partial,) = tmp_path.iterdir()
+    assert partial.name.endswith(".h5.partial")
+    assert _record_in(partial)["last_completed_period"] == 2
+
+    del raised
+    (name,) = _archives(tmp_path)
+    assert name.endswith(".incomplete")
+    assert _record_in(tmp_path / name)["last_completed_period"] == 2
+
+
+def test_a_failed_flush_of_the_finished_archive_raises_and_keeps_it_loadable(
+    *, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The fsync error is the one raised; the kept file holds the full solution."""
+
+    def _fail(fd: int) -> None:
+        del fd
+        msg = "injected fsync failure"
+        raise OSError(msg)
+
+    monkeypatch.setattr(os, "fsync", _fail)
+    with pytest.raises(OSError, match="injected fsync failure"):
+        _three_regime_model(_disk(tmp_path)).solve(params=_PARAMS, log_level="off")
+    monkeypatch.undo()
 
     (name,) = _archives(tmp_path)
     assert name.endswith(".incomplete")
-    with h5py.File(tmp_path / name, "r") as file:
-        record = json.loads(bytes(file["incomplete"][()]).decode())
-    assert record["last_completed_period"] == 2
+    loaded = load_solution(path=tmp_path / name)
+    device = _three_regime_model(ExecutionConfig()).solve(
+        params=_PARAMS, log_level="off"
+    )
+    for period, regime_to_value in device.values.items():
+        for regime, value in regime_to_value.items():
+            np.testing.assert_array_equal(
+                np.asarray(loaded.value(period=period, regime=regime)),
+                np.asarray(value),
+                strict=True,
+            )
+
+
+@pytest.mark.skipif(
+    hasattr(os, "geteuid") and os.geteuid() == 0,
+    reason="A root user writes into a read-only directory.",
+)
+def test_a_read_only_storage_directory_raises_a_value_storage_error(
+    tmp_path: Path,
+) -> None:
+    """The error names the setting, and the directory stays empty."""
+    model = _three_regime_model(_disk(tmp_path))
+    tmp_path.chmod(0o500)
+    try:
+        with pytest.raises(ValueStorageError, match=r"ExecutionConfig\.value_storage"):
+            model.solve(params=_PARAMS, log_level="off")
+    finally:
+        tmp_path.chmod(0o700)
+
+    assert _archives(tmp_path) == []
 
 
 def test_a_disk_value_entry_carries_the_solve_budget(tmp_path: Path) -> None:
@@ -2495,3 +2564,44 @@ def test_a_failed_block_major_disk_solve_records_its_completed_codes(
     with h5py.File(tmp_path / name, "r") as file:
         record = json.loads(bytes(file["incomplete"][()]).decode())
     assert record["completed_codes"] == solved
+
+
+@pytest.mark.parametrize("nan_code", [0, 2], ids=["first-code", "later-code"])
+def test_a_block_major_simulation_whose_solve_fails_records_its_completed_codes(
+    *, tmp_path: Path, nan_code: int
+) -> None:
+    """Simulating without a solution keeps the record a failed solve keeps."""
+    weights = np.asarray([1.0, 1.4, 0.7])
+    weights[nan_code] = np.nan
+    params = dict(_LIFE_CYCLE_PARAMS)
+    params["work"] = {"utility": {"weight": jnp.asarray(weights)}}
+    with pytest.raises(InvalidValueFunctionError) as raised:
+        _block_major_disk(tmp_path).simulate(
+            params=params,
+            initial_conditions=life_cycle._initial(),
+            solution=None,
+            seed=0,
+            log_level="off",
+        )
+
+    # The record is in the file while the failed simulation is still held.
+    (partial,) = tmp_path.iterdir()
+    assert partial.name.endswith(".h5.partial")
+    record = _record_in(partial)
+    completed_codes = cast("list[int]", record["completed_codes"])
+    assert nan_code not in completed_codes
+    assert (completed_codes == []) is (nan_code == 0)
+    assert set(record) == {
+        "completed_codes",
+        "last_completed_period",
+        "dtype",
+        "model_fingerprint",
+        "params_fingerprint",
+        "pylcm_version",
+        "pylcm_commit",
+    }
+
+    del raised
+    (name,) = _archives(tmp_path)
+    assert name.endswith(".incomplete")
+    assert _record_in(tmp_path / name) == record
