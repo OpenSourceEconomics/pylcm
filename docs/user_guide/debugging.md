@@ -473,7 +473,9 @@ from lcm.exceptions import ExecutionPlanningError, PyLCMError
 - **`SolutionIntegrityError`**: A persisted solution archive failed an integrity check.
 
 - **`IncompatibleSolutionError`**: A solution uses an unsupported schema or plugin
-  version. pylcm rejects a mismatch rather than migrating it silently.
+  version, or reading a value kept off the device would narrow its dtype, as after
+  turning x64 off between the solve and the read. pylcm rejects a mismatch rather than
+  migrating it silently.
 
 - **`ValueStorageError`**: A solve could not copy a value to pinned host memory or write
   it to its archive under `ExecutionConfig(value_storage=...)`, or could not create the

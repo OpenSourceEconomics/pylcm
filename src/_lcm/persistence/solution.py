@@ -2984,11 +2984,11 @@ def _check_archive_versions(*, manifest: dict[str, JSONValue]) -> None:
 __all__ = ["load_solution_archive", "save_solution_archive"]
 
 
-# A streamed archive is written under this suffix until it is complete or abandoned.
+# An archive is written under this suffix until it is complete or left unfinished.
 _PARTIAL_SUFFIX: Final = ".h5.partial"
 _COMPLETE_SUFFIX: Final = ".h5"
 _INCOMPLETE_SUFFIX: Final = ".incomplete"
-# The dataset holding an abandoned archive's record, in place of the manifest.
+# The dataset holding an unfinished archive's record, in place of the manifest.
 _INCOMPLETE_DATASET: Final = "incomplete"
 
 
@@ -2996,9 +2996,9 @@ class _ArchiveFile:
     """Where one archive's file is, and its handle while it is written.
 
     A complete archive is deleted once nothing reads it any more: every value
-    entry holds this object, so the file goes with the last of them. An
-    abandoned archive is kept. One that was never finished, because the call
-    writing it failed without abandoning it, is closed and kept as incomplete.
+    entry holds this object, so the file goes with the last of them. One that
+    was never finished, because the call writing it failed, is closed and kept
+    as incomplete, with the record it already holds.
     """
 
     def __init__(self, *, path: Path, handle: h5py.File) -> None:
@@ -3126,7 +3126,7 @@ class DiskValueEntry(_LazyEntry):
 
         """
         del template
-        return _place_archived_leaf(
+        return place_stored_leaf(
             array=self.host_value(),
             sharding=self.sharding.with_memory_kind("device"),
             weak_type=self.weak_type,
@@ -3182,7 +3182,7 @@ class DiskPolicyEntry(_LazyEntry):
         return jax.tree_util.tree_unflatten(
             self.tree,
             [
-                _place_archived_leaf(
+                place_stored_leaf(
                     array=array,
                     sharding=sharding.with_memory_kind("device"),
                     weak_type=weak_type,
@@ -3213,7 +3213,7 @@ class DiskPolicyEntry(_LazyEntry):
         return jax.tree_util.tree_unflatten(
             self.tree,
             [
-                _place_archived_leaf(
+                place_stored_leaf(
                     array=array,
                     sharding=cpu,
                     weak_type=weak_type,
@@ -3708,10 +3708,14 @@ def checkout_commit(*, checkout: Path) -> str | None:
     return head + ("-dirty" if changed else "")
 
 
-def _place_archived_leaf(
-    *, array: np.ndarray, sharding: jax.sharding.Sharding, weak_type: bool, label: str
+def place_stored_leaf(
+    *,
+    array: np.ndarray | jax.Array,
+    sharding: jax.sharding.Sharding,
+    weak_type: bool,
+    label: str,
 ) -> jax.Array:
-    """Place one leaf read from a solve's archive as the solve published it.
+    """Place one leaf a solve stored off the device as the solve published it.
 
     Raises:
         IncompatibleSolutionError: The active JAX configuration would narrow the
@@ -3719,7 +3723,7 @@ def _place_archived_leaf(
 
     """
     target_dtype = np.dtype(jax.dtypes.canonicalize_dtype(array.dtype))
-    if target_dtype != array.dtype:
+    if target_dtype != np.dtype(array.dtype):
         raise IncompatibleSolutionError(
             f"Stored {label} has dtype {array.dtype!s}, but the active JAX "
             f"configuration would materialize it as {target_dtype!s}. Enable the "

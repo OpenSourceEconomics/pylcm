@@ -62,6 +62,7 @@ from _lcm.typing import (
 from lcm import ExecutionConfig, InvariantBlockSchedule, Model
 from lcm.exceptions import (
     ExecutionPlanningError,
+    IncompatibleSolutionError,
     InvalidValueFunctionError,
     ValueStorageError,
 )
@@ -2506,6 +2507,34 @@ def test_block_major_disk_storage_simulates_the_block_major_panel(
         )
 
     assert panels[1].equals(panels[0])
+
+
+@pytest.mark.skipif(
+    not jax.config.read("jax_enable_x64"), reason="The solve must store float64."
+)
+@pytest.mark.parametrize("storage", ["device", "host", "disk"])
+def test_a_block_major_read_refuses_to_narrow_a_value_solved_in_x64(
+    *, tmp_path: Path, storage: Literal["device", "host", "disk"]
+) -> None:
+    """Without x64, a read or an upload of float64 blocks is refused, not narrowed."""
+    solution = _life_cycle(
+        schedule=InvariantBlockSchedule.BLOCK_MAJOR,
+        value_storage=tmp_path if storage == "disk" else storage,
+    ).solve(params=_LIFE_CYCLE_PARAMS, log_level="off")
+    entry = cast(
+        "block_major._ComponentValueEntry",
+        next(iter(cast("ValueStore", solution.values)._entries.values())),
+    )
+    owner = entry.owner
+
+    jax.config.update("jax_enable_x64", False)  # noqa: FBT003
+    try:
+        with pytest.raises(IncompatibleSolutionError, match="float64"):
+            entry.materialize()
+        with pytest.raises(IncompatibleSolutionError, match="float64"):
+            owner.upload(code=owner._coverage.codes[0])
+    finally:
+        jax.config.update("jax_enable_x64", True)  # noqa: FBT003
 
 
 def test_a_failed_block_major_disk_write_names_its_code_period_regime_and_archive(
