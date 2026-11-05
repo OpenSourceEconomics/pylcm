@@ -14,6 +14,7 @@ import operator
 import os
 import re
 from collections.abc import Collection, Iterable, Mapping
+from pathlib import Path
 from types import MappingProxyType
 from typing import Literal, Protocol, runtime_checkable
 
@@ -126,6 +127,9 @@ class ResolvedExecution:
     )
     """Whether a blocked solve runs period by period or code by code."""
 
+    value_storage: Literal["device", "host"] | Path = "device"
+    """Where a solve keeps a period's values once no later period reads them."""
+
     action_partitions: MappingProxyType[RegimeName, int] = MappingProxyType({})
     """Regimes whose action product is shared by several devices, with the count."""
 
@@ -214,6 +218,11 @@ class ResolvedExecution:
             f"effective {self.device_memory_bytes} bytes{verdict}."
         )
 
+    @property
+    def value_storage_kind(self) -> Literal["device", "host", "disk"]:
+        """Where solved values are kept, naming a directory only as `"disk"`."""
+        return "disk" if isinstance(self.value_storage, Path) else self.value_storage
+
     def device_memory_cap_note(self) -> str:
         """Return the clause a budget refusal appends: the ceiling and the remedies.
 
@@ -282,6 +291,65 @@ def _split_axis_widths(
     )
 
 
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class ExecutionHardware:
+    """Actual device selection and budget facts before model-name validation."""
+
+    config: ExecutionConfig
+    device_ids: tuple[int, ...]
+    device_memory_bytes: int | None
+    requested_device_memory_bytes: int | None
+    budget_source: Literal["explicit", "device", "none"]
+    device_pool_limit_bytes: MappingProxyType[int, int | None]
+
+
+def resolve_execution_hardware(
+    *,
+    config: ExecutionConfig,
+    visible_device_ids: tuple[int, ...],
+    device_pool_limit_bytes: Mapping[int, int | None],
+) -> ExecutionHardware:
+    """Apply the original selection/pool/headroom rule without model-name inputs."""
+    device_ids = visible_device_ids if config.devices is None else config.devices
+    for device_id in device_ids:
+        if device_id not in visible_device_ids:
+            msg = (
+                f"ExecutionConfig.devices: device id {device_id} is not visible; "
+                f"visible ids are {visible_device_ids!r}."
+            )
+            raise ExecutionPlanningError(msg)
+    selected_ids = tuple(sorted(device_ids))
+    selected_limits = (
+        MappingProxyType({})
+        if config.device_memory_bytes is None
+        else MappingProxyType(
+            {
+                device_id: device_pool_limit_bytes.get(device_id)
+                for device_id in selected_ids
+            }
+        )
+    )
+    requested_bytes, budget_source = _requested_budget(
+        requested=config.device_memory_bytes, pool_limits=selected_limits
+    )
+    if budget_source == "device":
+        _fail_if_the_pool_grows_in_regions()
+    if requested_bytes is None:
+        selected_limits = MappingProxyType({})
+    return ExecutionHardware(
+        config=config,
+        device_ids=selected_ids,
+        device_memory_bytes=_effective_device_memory_bytes(
+            requested_bytes=requested_bytes,
+            headroom_fraction=config.device_memory_headroom_fraction,
+            pool_limits=selected_limits,
+        ),
+        requested_device_memory_bytes=requested_bytes,
+        budget_source=budget_source,
+        device_pool_limit_bytes=selected_limits,
+    )
+
+
 def resolve_execution_config(
     *,
     config: ExecutionConfig,
@@ -330,32 +398,15 @@ def resolve_execution_config(
     _fail_if_a_width_names_an_unknown_regime(
         widths_by_regime=widths_by_regime, regime_names=regime_names
     )
-    device_ids = visible_device_ids if config.devices is None else config.devices
-    for device_id in device_ids:
-        if device_id not in visible_device_ids:
-            msg = (
-                f"ExecutionConfig.devices: device id {device_id} is not visible; "
-                f"visible ids are {visible_device_ids!r}."
-            )
-            raise ExecutionPlanningError(msg)
-    selected_ids = tuple(sorted(device_ids))
-    selected_limits = (
-        MappingProxyType({})
-        if config.device_memory_bytes is None
-        else MappingProxyType(
-            {
-                device_id: device_pool_limit_bytes.get(device_id)
-                for device_id in selected_ids
-            }
-        )
+    hardware = resolve_execution_hardware(
+        config=config,
+        visible_device_ids=visible_device_ids,
+        device_pool_limit_bytes=device_pool_limit_bytes,
     )
-    requested_bytes, budget_source = _requested_budget(
-        requested=config.device_memory_bytes, pool_limits=selected_limits
-    )
-    if budget_source == "device":
-        _fail_if_the_pool_grows_in_regions()
-    if requested_bytes is None:
-        selected_limits = MappingProxyType({})
+    selected_ids = hardware.device_ids
+    selected_limits = hardware.device_pool_limit_bytes
+    requested_bytes = hardware.requested_device_memory_bytes
+    budget_source = hardware.budget_source
     resolved = ResolvedExecution(
         device_ids=selected_ids,
         sharded_states=frozenset(config.sharded_states),
@@ -363,11 +414,7 @@ def resolve_execution_config(
         axis_widths_by_regime=widths_by_regime,
         axis_width_ceilings=MappingProxyType(dict(config.axis_width_ceilings)),
         covered_axes=frozenset(config.covered_axes),
-        device_memory_bytes=_effective_device_memory_bytes(
-            requested_bytes=requested_bytes,
-            headroom_fraction=config.device_memory_headroom_fraction,
-            pool_limits=selected_limits,
-        ),
+        device_memory_bytes=hardware.device_memory_bytes,
         requested_device_memory_bytes=requested_bytes,
         budget_source=budget_source,
         device_memory_headroom_fraction=config.device_memory_headroom_fraction,
@@ -378,6 +425,7 @@ def resolve_execution_config(
         simulation_sharding=config.simulation_sharding,
         invariant_block_widths=MappingProxyType(dict(config.invariant_block_widths)),
         invariant_block_schedule=config.invariant_block_schedule,
+        value_storage=config.value_storage,
         action_partitions=MappingProxyType(dict(config.action_partitions)),
     )
     if requested_bytes is not None:

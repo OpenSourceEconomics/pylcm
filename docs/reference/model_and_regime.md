@@ -231,8 +231,10 @@ A general regime declares:
 | `derived_categoricals`  | Discrete grids for categorical DAG outputs                                    |
 | `solver`                | `lcm.solvers.GridSearch()` by default                                         |
 | `taste_shocks`          | Optional EV1 taste-shock configuration                                        |
+| `shocks`                | Model-level IID shock groups; read as `x` or, from transitions, as `next_x`   |
 | `koopmans_aggregator`   | Optional regime-level continuation aggregator, `Phased` or `Decoupled`        |
 | `certainty_equivalent`  | Optional regime-level lottery reduction                                       |
+| `exits`                 | Named current-period moves with mapped policy queries                         |
 | `description`           | Human-readable description                                                    |
 
 Use `Regime.replace(...)` to derive a modified immutable declaration.
@@ -246,6 +248,133 @@ equivalent because they have no continuation.
 required by EGM-family solvers. See
 [Consumption-saving regimes and margins](consumption_savings.md). Collective fields on
 `Regime` are documented separately in [Collective regimes](collective_regimes.md).
+
+(api-current-exits)=
+
+## Current-period exits
+
+`Regime(exits={name: Exit(...)})` declares a move before the period's action. Scheduled
+next-period transitions remain in `Model(edges=...)`.
+
+- `Exit(targets=..., rule=..., available=None, observes=())` names each source
+  stakeholder's destination. A singleton uses the key `"self"`.
+- `ExitTarget(regime=..., projection=..., role=None, utility_adjustment=None)` names a
+  real destination and maps its complete current state. A collective destination
+  requires its stakeholder `role`. The adjustment reads source states and parameters and
+  enters the exit payoff once. A projection may use `Phased(solve=..., simulate=...)`
+  settlements; it does not change information.
+- `Consent(counterparty=Counterparty(regime=..., role=..., projection=...))` compares
+  each party's payoff at the destination's common Participating policy strictly against
+  that party's Raw stay value. Equality keeps the original state.
+- Built-in `rule="unilateral"` or `"mutual"` declares dissolution participation. A
+  callable rule explicitly declares Boolean `reads_outside_values` metadata and returns
+  `RuleResult(action=...)`, a scalar integer global alternative ID.
+
+A custom rule can request `Q_<stakeholder>` (`Q_self` for a singleton), `exit_payoffs`
+(exit name to member to value), `availability`, `alternative_ids`, `pareto_weights`, and
+ordinary named source states, helpers and parameters. Stay IDs follow the flattened
+C-order action product; exit IDs follow in declaration order. Invalid IDs are errors.
+Custom multi-exit choices use one shared authored rule; competing rules do not define an
+arbitration order.
+
+`available` reads states, parameters and observed shocks, and precedes unsafe benchmark
+evaluation. `observes` adds target information available at the exit choice. Hidden
+target shocks are priced before the source choice and revealed when a mover executes the
+destination's Participating action. Partial observation of a correlated group is
+refused; see the adopted [IID and exit contract](../development/iid-exits-redesign.md).
+
+When an exit observes every shock of a target group, all of that group's quadrature rows
+are the same physical point, so the target's policy is evaluated once and that answer is
+weighted by every row's original weight. Values equal the row-by-row reduction. A group
+the exit observes only partly keeps its row-by-row evaluation. Model build refuses a
+fully observed group of the caller's own shocks whose continuous law (`Normal`,
+`LogNormal`, `Uniform`) can be degenerate at the caller but not at the target, for
+example a spread read from a state that the exit changes, naming what would have to be
+implemented to support it.
+
+The cells of a query chunk and the rows of an information support run as batched lanes.
+A lane whose exit is unavailable is still computed and then discarded; its target reads
+its first grid point instead of the projected state, so a projection that is meaningless
+when the exit is unavailable cannot reach user functions there.
+
+Native current-period exits use each queried regime's declared `GridSearch` solver.
+Endogenous-grid query reconstruction is not implemented. Query admission also refuses
+invariant or co-mapped state layouts, action partitioning, stored Full-value references
+and runtime-bound query status adapters.
+
+Collective current-IID decisions select one common action and route exits at each node,
+then integrate each member's selected value. Stored values retain the stakeholder axis
+and carry no current-shock axis. This also applies to collective regimes without exits.
+Collective EV1 tastes and custom source selectors combined with source EV1 tastes are
+explicitly refused.
+
+(api-participation-checks)=
+
+## Scheduled participation checks
+
+Attach `ParticipationCheck(predicate=..., routes=..., reads=..., observes=())` to an
+incoming `Transition(participation={target_name: ...})` in `Model(edges=...)`. It
+belongs to that incoming source, scheduled target, original source role and actual
+participation period. The scheduled transition produces the landing state before the
+comparison, and the final regime acts after it. Initial occupants and subjects arriving
+through another edge cannot borrow this decision or its fallback. A scheduled target
+cannot declare both a `Gate` and a `ParticipationCheck`.
+
+The check is the per-period limited-commitment participation constraint. It also
+re-checks a continuing household on its scheduled self-transition: on a couple → couple
+edge, a failed check is a divorce.
+
+`predicate` returns a scalar Boolean from the landed target's states and helpers,
+parameters, and the explicitly named `reads`. Declare every value operand, including
+`V_target`, with a `ParticipationRead`. `D_target` is refused; request typed policy
+support instead. The predicate's threshold, window or other comparison determines
+acceptance; it is not replaced by a maximization over the compared values. Acceptance
+also requires the target's Participating policy to have support. `observes` names the
+target physical shocks visible at this comparison.
+
+`routes` maps every original source stakeholder to a
+[`StakeholderRoute`](collective_regimes.md#api-stakeholder-route); a singleton has its
+single route. On acceptance, `target_stakeholder` selects the role in the scheduled
+target. On rejection, `fallback` names the destination, role and complete state
+projection from the landed target state. A collective destination requires its exact
+stakeholder name; a singleton has no stakeholder role. A
+`Phased(solve=..., simulate=...)` fallback prices the source decision using the solve
+settlement and routes simulation using the simulate settlement. The incoming source and
+role remain attached to this settlement, so another edge's fallback cannot replace it.
+
+Participation callbacks use the target's actual participation `period` and `age`. Their
+runtime parameters belong under `params["edges"][source][target]`: the predicate uses
+`["predicate"]`, read projections use `["reads"][read_name][state]`, and fallback
+projections use `["routes"][source_role]["fallback"]`, with a phase key for a phased
+fallback. Use `model.get_params_template()` for the complete paths. Queried regime
+functions and target helpers retain their own regime parameter namespaces; temporal
+values are selected for the participation date, rather than the incoming source's
+decision date.
+
+A source prices its next participation check exactly at every landing. A participation
+check at a later date is taken again at each landing from a stored per-period surface of
+its branches and operands, each interpolated between grid nodes: exact where landings
+fall on nodes, approximate between them; see
+[Participation checks over several periods](../user_guide/collective_regimes.md#participation-check-depth).
+
+(api-participation-reads)=
+
+### `ParticipationRead`
+
+`ParticipationRead(regime=..., projection=..., kind=..., stakeholder=None, field="value", observes=())`
+names the represented object supplied to the predicate. `projection` provides every
+state of the referenced regime from the landed target state, and `stakeholder` selects a
+collective reference's exact role. The `reads` mapping key is the argument name the
+predicate receives.
+
+- `kind="Raw"` and `kind="Participating"` reconstruct their canonical `GridSearch`
+  action problems at the projected state, including the common action for a collective
+  regime. `field="value"` reads the selected value; `field="support"` reads Boolean
+  policy support. A read's `observes` adds the referenced physical shocks visible for
+  this comparison to the decision's declared information.
+- `kind="IntegratedFull"` reads the stored, shock-integrated Full value representation
+  at the projected state. It exposes only `field="value"`, with empty `observes`; policy
+  reconstruction, realized information and support are unavailable from this read.
 
 (api-extreme-value-taste-shocks)=
 
@@ -281,10 +410,9 @@ probabilities; see [Solvers and capabilities](solvers.md#api-dcegm).
 
 This feature requires at least one discrete action and is implemented by `GridSearch`
 and `DCEGM`. It is rejected for `NEGM`, `NBEGM`, and `NNBEGM`; on a collective regime;
-on the source regime of a gated transition; together with a folded IID state
-(`fold=True`); and together with a nonlinear certainty equivalent. These are semantic
-boundaries, not ignored options: the declaration is rejected during `Regime` declaration
-or `Model` construction, before solve.
+on the source regime of a gated transition; and together with a nonlinear certainty
+equivalent. These are semantic boundaries, not ignored options: the declaration is
+rejected during `Regime` declaration or `Model` construction, before solve.
 
 (api-euler-gamma)=
 

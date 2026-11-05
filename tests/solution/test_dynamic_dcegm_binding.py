@@ -38,7 +38,7 @@ from lcm import (
     post_decision_lower_bound,
 )
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
-from lcm.solvers import DCEGM, ExactEnvelope, MSSEnvelope
+from lcm.solvers import DCEGM, ExactEnvelope, RFCEnvelope
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -201,7 +201,7 @@ def _make_model(
             savings_grid=IrregSpacedGrid(points=np.array([0.0, 0.25, 4.0])),
             n_constrained_points=4,
             refined_grid_factor=2.0,
-            envelope=ExactEnvelope(max_runs=7) if exact else MSSEnvelope(),
+            envelope=ExactEnvelope(max_runs=7) if exact else RFCEnvelope(),
         ),
     )
     return Model(

@@ -19,9 +19,14 @@ import pytest
 
 import _lcm
 import lcm
-from _lcm.egm.comparison_arithmetic import ComparisonArithmetic
 from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model
-from lcm.solvers import AdaptiveOuterMesh, GridSearch, MSSEnvelope
+from lcm.solvers import (
+    AdaptiveOuterMesh,
+    EnvelopeConfig,
+    ExactEnvelope,
+    GridSearch,
+    RFCEnvelope,
+)
 from lcm.typing import UserParams
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
 from tests.test_models import dcegm_paper_twin, n_nbegm_toy
@@ -105,27 +110,27 @@ def _toy_model(*, variant: str, outer_search: AdaptiveOuterMesh | None = None) -
     )
 
 
-_MSS_SAVINGS_GRID_POINTS_DEFAULT = 8
-_MSS_SAVINGS_GRID_POINTS_FULL = 40
+_DCEGM_SAVINGS_GRID_POINTS_DEFAULT = 8
+_DCEGM_SAVINGS_GRID_POINTS_FULL = 40
 
 
-def _mss_model(
+def _dcegm_model(
     *,
-    arithmetic: ComparisonArithmetic,
-    n_points: int = _MSS_SAVINGS_GRID_POINTS_DEFAULT,
+    envelope: EnvelopeConfig,
+    n_points: int = _DCEGM_SAVINGS_GRID_POINTS_DEFAULT,
 ) -> Model:
-    """Build the DC-EGM twin on a savings grid under one MSS arithmetic.
+    """Build the DC-EGM twin on a savings grid under one upper envelope.
 
     The default 8-point grid retains both endpoints and interior points; it
     creates the same engine-function families as the original 40-point grid
     (see the test-suite cleanup ledger, W8, for the adequacy trace) and is
-    used on the GitHub lane. The `slow`-marked `_MSS_SAVINGS_GRID_POINTS_FULL`
+    used on the GitHub lane. The `slow`-marked `_DCEGM_SAVINGS_GRID_POINTS_FULL`
     variant keeps the original dense-grid stress coverage for the full
     (Marvin/default) battery.
     """
     return dcegm_paper_twin.build_dcegm_model(
         savings_grid=LinSpacedGrid(start=0.0, stop=50.0, n_points=n_points),
-        envelope=MSSEnvelope(arithmetic=arithmetic),
+        envelope=envelope,
     )
 
 
@@ -149,33 +154,33 @@ _FAMILIES: dict[str, tuple[Callable[[], Model], Callable[[], UserParams]]] = {
         lambda: _toy_model(variant="n_nbegm", outer_search=_adaptive_outer_search()),
         lambda: _TOY_PARAMS,
     ),
-    "mss_certified": (
-        lambda: _mss_model(arithmetic="certified"),
+    "dcegm_exact": (
+        lambda: _dcegm_model(envelope=ExactEnvelope()),
         dcegm_paper_twin.get_params,
     ),
-    "mss_ordinary": (
-        lambda: _mss_model(arithmetic="ordinary"),
+    "dcegm_rfc": (
+        lambda: _dcegm_model(envelope=RFCEnvelope()),
         dcegm_paper_twin.get_params,
     ),
-    "mss_certified_full_grid": (
-        lambda: _mss_model(
-            arithmetic="certified", n_points=_MSS_SAVINGS_GRID_POINTS_FULL
+    "dcegm_exact_full_grid": (
+        lambda: _dcegm_model(
+            envelope=ExactEnvelope(), n_points=_DCEGM_SAVINGS_GRID_POINTS_FULL
         ),
         dcegm_paper_twin.get_params,
     ),
-    "mss_ordinary_full_grid": (
-        lambda: _mss_model(
-            arithmetic="ordinary", n_points=_MSS_SAVINGS_GRID_POINTS_FULL
+    "dcegm_rfc_full_grid": (
+        lambda: _dcegm_model(
+            envelope=RFCEnvelope(), n_points=_DCEGM_SAVINGS_GRID_POINTS_FULL
         ),
         dcegm_paper_twin.get_params,
     ),
 }
-# `mss_certified*` families require the exact affine kernel; the `_full_grid`
+# `dcegm_exact*` families require the exact affine kernel; the `_full_grid`
 # variants additionally keep the original dense 40-point grid and are `slow`
 # (dropped on the Windows/macOS lanes, retained in the full Linux/Marvin
 # battery). Everything else runs unmarked on every lane.
-_SLOW_FAMILIES = frozenset({"mss_certified_full_grid", "mss_ordinary_full_grid"})
-_EXACT_KERNEL_FAMILIES = frozenset({"mss_certified", "mss_certified_full_grid"})
+_SLOW_FAMILIES = frozenset({"dcegm_exact_full_grid", "dcegm_rfc_full_grid"})
+_EXACT_KERNEL_FAMILIES = frozenset({"dcegm_exact", "dcegm_exact_full_grid"})
 
 
 def _family_marks(family: str) -> tuple[pytest.MarkDecorator, ...]:

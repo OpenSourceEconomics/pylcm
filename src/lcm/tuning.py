@@ -45,7 +45,7 @@ import time
 from collections.abc import Callable, Mapping
 from enum import Enum
 from types import MappingProxyType
-from typing import NotRequired, TypedDict
+from typing import Literal, NotRequired, TypedDict
 
 import jax
 import jaxlib
@@ -138,6 +138,8 @@ class SettingsKey:
     """Budget the model planned against before the headroom; `None` unbudgeted."""
     device_memory_headroom_fraction: float
     """Share of each device's pool kept out of the budget."""
+    value_storage: Literal["device", "host", "disk"] = "device"
+    """Where solved values were kept, which decides what the planner charges."""
     precision: str
     """`"float64"` under x64, else `"float32"`."""
     pylcm_version: str
@@ -732,6 +734,7 @@ def _settings_key(
         device_pool_limit_bytes=tuple(execution.device_pool_limit_bytes.values()),
         device_memory_bytes=execution.requested_device_memory_bytes,
         device_memory_headroom_fraction=config.device_memory_headroom_fraction,
+        value_storage=config.value_storage_kind,
         precision="float64" if jax.config.read("jax_enable_x64") else "float32",
         pylcm_version=pylcm_version,
         jax_version=jax.__version__,
@@ -775,6 +778,7 @@ class _SettingsKeyJSON(TypedDict):
     device_pool_limit_bytes: list[int | None]
     device_memory_bytes: int | None
     device_memory_headroom_fraction: float
+    value_storage: NotRequired[Literal["device", "host", "disk"]]
     precision: str
     pylcm_version: str
     jax_version: str
@@ -821,6 +825,8 @@ def _decode_settings_key(raw: _SettingsKeyJSON) -> SettingsKey:
         device_pool_limit_bytes=tuple(raw["device_pool_limit_bytes"]),
         device_memory_bytes=raw["device_memory_bytes"],
         device_memory_headroom_fraction=raw["device_memory_headroom_fraction"],
+        # A record written before the field existed was taken on the device.
+        value_storage=raw.get("value_storage", "device"),
         precision=raw["precision"],
         pylcm_version=raw["pylcm_version"],
         jax_version=raw["jax_version"],

@@ -1,23 +1,17 @@
 """Send a household with no feasible action to its gate's dissolution route.
 
 A gated edge decides at the end of period `t` whether a household enters its
-target regime at `t + 1`. When the gate reads the target's dissolution flag
-`D_target`, the question it asks is whether the target has a feasible action at
-the state the household lands on. The solve answers that only at the target's
-grid nodes, and an off-grid landing can differ from both neighbouring nodes in
-either direction. Simulation therefore leaves `D_target` open at the gate
-(`_lcm.regime_building.gated_edges._SimulateGateEvaluator`) and answers it where
-the household actually is: the target's own decision at `t + 1` evaluates every
-action at the realised state, exactly as it does when choosing one.
+target regime at `t + 1`. Whether the target has a feasible action at the state
+the household lands on is answered where the household actually is: the
+target's own decision at `t + 1` evaluates every action at the realised state,
+exactly as it does when choosing one. An off-grid landing can differ from both
+neighbouring grid nodes in either direction, so no node-level answer is right
+in general.
 
 A household that finds no feasible action there takes, in that same period, the
 dissolution route of the gate it came through: the fallback regime of its own
 leg, at that leg's projection of its realised state, carrying the fallback's
-role. That is the closed branch the gate would have taken with the realised
-flag, so routing on `D_target = False` followed by this step reproduces the gate
-evaluated at the realised `D` for every predicate. It is also how a household
-that passed a gate not reading `D_target` (a consent gate) leaves a regime that
-has no admissible action for it.
+role. That is the closed branch of its gate.
 
 Only the gate a household actually passed through its open branch hands it a
 route, and only once. A household that landed in the regime through a closed
@@ -256,9 +250,9 @@ def log_dissolution_fallbacks(
 ) -> None:
     """Report how many households took the route in one regime-period.
 
-    Under a `~D_target` gate this is every dissolution the realised state
-    forces, an ordinary event of the model rather than an anomaly, so it is
-    reported once per regime-period at info level. The per-household record is
+    This is every dissolution the realised state forces, an ordinary event of
+    the model rather than an anomaly, so it is reported once per regime-period
+    at info level. The per-household record is
     on `SimulationResult.dissolution_fallbacks` when runtime checks are on;
     without them the count is raised to a warning, since nothing else records
     the households.

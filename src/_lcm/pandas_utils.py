@@ -391,6 +391,9 @@ def convert_series_in_params(
     required_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
     reachability: ModelReachability | None = None,
     phase_transitions: Mapping[Phase, Mapping[RegimeName, Transition]] | None = None,
+    query_periods_by_phase: Mapping[
+        str, Mapping[RegimeName, tuple[int, ...]]
+    ] = MappingProxyType({}),
     use_categorical_codes: bool = False,
 ) -> FlatParams:
     """Convert pd.Series leaves in already-broadcast internal params to JAX arrays.
@@ -425,6 +428,8 @@ def convert_series_in_params(
             completed leaves while the parameter mapping is assembled.
         phase_transitions: Declarations retaining their owning phase, including
             inferred targets, for phase-specific temporal coverage.
+        query_periods_by_phase: Exact query dates keyed by solution/simulation,
+            including contexts without stored Full values or physical actors.
         use_categorical_codes: Whether a Series level named by a discrete
             variable holds integer codes. By default it holds the labels of a
             category class or the numbers of a grid declared with `values`.
@@ -452,6 +457,7 @@ def convert_series_in_params(
                             array_writer=array_writer,
                             required_periods_by_regime=required_periods_by_regime,
                             reachability=reachability,
+                            query_periods_by_phase=query_periods_by_phase,
                             use_categorical_codes=use_categorical_codes,
                             declarations_by_phase=(
                                 None
@@ -480,15 +486,12 @@ def convert_series_in_params(
                     phase=phase, law=laws[regime_name]
                 ),
                 ages=ages,
-                periods=regime_periods
-                if reachability is None
-                else tuple(
-                    period
-                    for period in regime_periods
-                    if regime_name
-                    in reachability.for_phase(
-                        "solution" if phase == "solve" else "simulation"
-                    ).active_regimes_by_period[period]
+                periods=_phase_param_periods(
+                    phase=phase,
+                    regime_name=regime_name,
+                    periods=regime_periods,
+                    reachability=reachability,
+                    query_periods_by_phase=query_periods_by_phase,
                 ),
             )
             for phase in ("solve", "simulate")
@@ -562,6 +565,7 @@ def convert_series_in_params(
                     reachability=reachability,
                     user_regime=user_regime,
                     phase_functions={"solve": solve_funcs, "simulate": simulate_funcs},
+                    query_periods_by_phase=query_periods_by_phase,
                 ),
             )
         result[regime_name] = converted_regime
@@ -585,6 +589,9 @@ def _convert_edge_params(
     required_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
     reachability: ModelReachability | None = None,
     declarations_by_phase: Mapping[Phase, Transition] | None = None,
+    query_periods_by_phase: Mapping[
+        str, Mapping[RegimeName, tuple[int, ...]]
+    ] = MappingProxyType({}),
     use_categorical_codes: bool = False,
 ) -> MappingProxyType[str, _ConvertedParamsNode]:
     """Convert the Series leaves of one source's `edges` slots.
@@ -652,6 +659,7 @@ def _convert_edge_params(
                 declarations=declared_transitions,
                 declarations_by_phase=declarations_by_phase,
                 reachability=reachability,
+                query_periods_by_phase=query_periods_by_phase,
                 source=source,
                 slot=slot,
                 param_name=param_name,
@@ -666,6 +674,33 @@ def _convert_edge_params(
     return MappingProxyType(converted)
 
 
+def _phase_param_periods(
+    *,
+    phase: Phase,
+    regime_name: RegimeName,
+    periods: tuple[int, ...],
+    reachability: ModelReachability | None,
+    query_periods_by_phase: Mapping[str, Mapping[RegimeName, tuple[int, ...]]],
+) -> tuple[int, ...]:
+    """Combine this phase's physical/Full dates with its actual policy queries."""
+    side = "solution" if phase == "solve" else "simulation"
+    physical = (
+        set(periods)
+        if reachability is None
+        else {
+            period
+            for period in periods
+            if regime_name
+            in reachability.for_phase(side).active_regimes_by_period[period]
+        }
+    )
+    return tuple(
+        sorted(
+            physical | set(query_periods_by_phase.get(side, {}).get(regime_name, ()))
+        )
+    )
+
+
 def _regime_param_periods(
     *,
     parts: tuple[str, ...],
@@ -676,6 +711,7 @@ def _regime_param_periods(
     reachability: ModelReachability | None,
     user_regime: UserRegime,
     phase_functions: Mapping[Phase, Mapping[str, _ParamConsumer]],
+    query_periods_by_phase: Mapping[str, Mapping[RegimeName, tuple[int, ...]]],
 ) -> tuple[int, ...]:
     """Require only slots where a declaring phase can read this parameter."""
     periods = (
@@ -690,7 +726,17 @@ def _regime_param_periods(
     if is_transition:
         periods = tuple(period for period in periods if period < ages.n_periods - 1)
     if reachability is None:
-        return periods
+        return tuple(
+            sorted(
+                set(periods)
+                | {
+                    period
+                    for queries in query_periods_by_phase.values()
+                    for period in queries.get(regime_name, ())
+                    if not is_transition or period < ages.n_periods - 1
+                }
+            )
+        )
     required: set[int] = set()
     for phase, functions in phase_functions.items():
         consumer, _ = _resolve_param_consumer(
@@ -708,8 +754,14 @@ def _regime_param_periods(
         graph = reachability.solution if phase == "solve" else reachability.simulation
         required.update(
             period
-            for period in periods
-            if regime_name in graph.active_regimes_by_period[period]
+            for period in _phase_param_periods(
+                phase=phase,
+                regime_name=regime_name,
+                periods=periods,
+                reachability=reachability,
+                query_periods_by_phase=query_periods_by_phase,
+            )
+            if (not is_transition or period < ages.n_periods - 1)
             and (
                 not is_transition
                 or len(parts) < ParamsQnameDepth.TARGETREGIME__FUNC__PARAM
@@ -729,6 +781,7 @@ def _edge_param_periods(
     declarations_by_phase: Mapping[Phase, Transition] | None,
     reachability: ModelReachability | None,
     source: RegimeName,
+    query_periods_by_phase: Mapping[str, Mapping[RegimeName, tuple[int, ...]]],
 ) -> tuple[int, ...]:
     """Read scheduled laws at their source, and gate functions at their target."""
     required: set[int] = set()
@@ -740,14 +793,13 @@ def _edge_param_periods(
     )
     for phase, declaration in variants:
         periods = source_periods
-        if phase is not None and reachability is not None:
-            graph = (
-                reachability.solution if phase == "solve" else reachability.simulation
-            )
-            periods = tuple(
-                period
-                for period in periods
-                if source in graph.active_regimes_by_period[period]
+        if phase is not None:
+            periods = _phase_param_periods(
+                phase=phase,
+                regime_name=source,
+                periods=periods,
+                reachability=reachability,
+                query_periods_by_phase=query_periods_by_phase,
             )
         selected = (
             declaration.law.resolve(ages=ages).law_by_period
@@ -764,7 +816,9 @@ def _edge_param_periods(
                 for target, selector in declaration.targets.items()
             }
         )
-        is_gate = len(slot) > 1 and slot[0] in declaration.gates
+        is_gate = len(slot) > 1 and (
+            slot[0] in declaration.gates or slot[0] in declaration.participation
+        )
         for period in periods:
             if period >= ages.n_periods - 1:
                 continue

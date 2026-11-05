@@ -35,7 +35,7 @@ from lcm import (
 )
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.regime import Regime as UserRegime
-from lcm.solvers import CELL_AXIS, DCEGM
+from lcm.solvers import CELL_AXIS, DCEGM, RFCEnvelope
 from lcm.typing import (
     ContinuousAction,
     ContinuousState,
@@ -198,6 +198,7 @@ def _model(width: int | None = None) -> Model:
         solver=DCEGM(
             savings_grid=SAVINGS_GRID,
             n_constrained_points=32,
+            envelope=RFCEnvelope(),
         ),
         liquid=LiquidMargin(
             state="wealth",
@@ -247,7 +248,9 @@ def _model_with_batched_health() -> Model:
             "savings": savings,
             "inverse_marginal_utility": inverse_marginal_utility,
         },
-        solver=DCEGM(savings_grid=SAVINGS_GRID, n_constrained_points=32),
+        solver=DCEGM(
+            savings_grid=SAVINGS_GRID, n_constrained_points=32, envelope=RFCEnvelope()
+        ),
         liquid=LiquidMargin(
             state="wealth",
             action="consumption",
@@ -307,7 +310,9 @@ def _action_model(width: int | None = None) -> Model:
             "savings": savings,
             "inverse_marginal_utility": inverse_marginal_utility,
         },
-        solver=DCEGM(savings_grid=SAVINGS_GRID, n_constrained_points=32),
+        solver=DCEGM(
+            savings_grid=SAVINGS_GRID, n_constrained_points=32, envelope=RFCEnvelope()
+        ),
         liquid=LiquidMargin(
             state="wealth",
             action="consumption",
@@ -483,6 +488,7 @@ def _two_combo_model(width: int | None = None) -> Model:
         solver=DCEGM(
             savings_grid=SAVINGS_GRID,
             n_constrained_points=32,
+            envelope=RFCEnvelope(),
         ),
         liquid=LiquidMargin(
             state="wealth",

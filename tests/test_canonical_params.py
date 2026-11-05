@@ -6,7 +6,7 @@ name, not a mangled `to_<target>_…` prefix — mirroring the canonical
 transition bundles, so param qnames parallel engine function qnames.
 """
 
-from typing import Unpack
+from typing import Unpack, cast
 
 import jax.numpy as jnp
 import pytest
@@ -26,7 +26,7 @@ from lcm.exceptions import InvalidParamsError
 from lcm.regime import Regime as UserRegime
 from lcm.regime import RegimeReplacement
 from lcm.transition import TransitionLaw
-from lcm.typing import FloatND, RegimeName, ScalarInt
+from lcm.typing import FloatND, RegimeName, ScalarInt, UserFacingRegimeParamsTemplate
 
 
 @categorical(ordered=False)
@@ -116,14 +116,18 @@ def _build_model(*, work: UserRegime, work_law: TransitionLaw = _WORK_LAW) -> Mo
 def test_per_target_state_law_params_nest_under_the_target() -> None:
     """A per-target law's params live at `template[regime][target][func]`."""
     model = _build_model(work=_work_regime())
-    template = model.get_params_template()
+    template = cast(
+        "dict[str, UserFacingRegimeParamsTemplate]", model.get_params_template()
+    )
     assert "exit_tax" in template["work"]["retired"]["next_wealth"]
 
 
 def test_per_target_regime_transition_params_nest_under_the_target() -> None:
     """A granular cell's params live at `template["edges"][regime][target]`."""
     model = _build_model(work=_work_regime())
-    template = model.get_params_template()
+    template = cast(
+        "dict[str, UserFacingRegimeParamsTemplate]", model.get_params_template()
+    )
     assert "hazard" in template["edges"]["work"]["retired"]
     assert "hazard" in template["edges"]["work"]["dead"]
 
@@ -132,7 +136,9 @@ def test_broadcast_law_params_stay_coarse_in_the_template() -> None:
     """The template mirrors the user's coarseness: a bare law keeps one
     unnested `next_<state>` key."""
     model = _build_model(work=_work_regime())
-    template = model.get_params_template()
+    template = cast(
+        "dict[str, UserFacingRegimeParamsTemplate]", model.get_params_template()
+    )
     assert "next_wealth" in template["retired"]
 
 
@@ -157,7 +163,9 @@ def test_per_target_params_solve_and_bind_per_target() -> None:
 def test_old_mangled_spelling_is_gone() -> None:
     """The `to_<target>_…` template spelling does not exist."""
     model = _build_model(work=_work_regime())
-    template = model.get_params_template()
+    template = cast(
+        "dict[str, UserFacingRegimeParamsTemplate]", model.get_params_template()
+    )
     assert not any(key.startswith("to_") for key in template["work"])
 
 

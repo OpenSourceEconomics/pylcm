@@ -354,8 +354,8 @@ def _bdy_identity_wealth(wealth: ContinuousState) -> FloatND:
     return wealth
 
 
-def _bdy_gate_always_open(V_target_f: FloatND) -> jnp.ndarray:
-    return jnp.ones_like(V_target_f, dtype=bool)
+def _bdy_gate_always_open(wealth: ContinuousState) -> jnp.ndarray:
+    return jnp.ones_like(wealth, dtype=bool)
 
 
 def _bdy_model(*, enable_jit: bool, support_size: int = 2) -> Model:

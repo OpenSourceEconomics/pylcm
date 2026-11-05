@@ -19,7 +19,6 @@ from _lcm.solution.dcegm import (
     ExactEnvelope,
     FUESEnvelope,
     LTMEnvelope,
-    MSSEnvelope,
     RFCEnvelope,
 )
 from _lcm.typing import PytreeValue
@@ -193,9 +192,7 @@ def test_connected_edges_share_run_and_keep_legacy_numerics() -> None:
     np.testing.assert_array_equal(owned.link_valid[:2], [True, True])
 
 
-@pytest.mark.parametrize(
-    "envelope", [FUESEnvelope(), RFCEnvelope(), LTMEnvelope(), MSSEnvelope()]
-)
+@pytest.mark.parametrize("envelope", [FUESEnvelope(), RFCEnvelope(), LTMEnvelope()])
 @pytest.mark.parametrize("factory", [get_upper_envelope, get_bracket_finder])
 def test_other_backends_refuse_unavailable_owned_provenance(
     *, envelope: EnvelopeConfig, factory: Callable[..., Callable[..., PytreeValue]]

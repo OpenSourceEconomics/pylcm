@@ -13,7 +13,7 @@ import pathlib
 import sys
 import types
 import typing
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sized
 from enum import Enum, auto
 from fractions import Fraction
 from types import MappingProxyType
@@ -28,10 +28,15 @@ import numpy as np
 from beartype import BeartypeConf
 from beartype import beartype as _beartype_decorator
 from jax import Array
+from jax._src import core as jax_core
+from jax._src.interpreters import ad as jax_ad
+from jax._src.interpreters import batching as jax_batching
+from jax._src.interpreters import mlir as jax_mlir
 
 import _lcm.additive_shock_transition as additive_shock_declarations
 import _lcm.certainty_equivalent as certainty_equivalent_declarations
 import _lcm.constraints.ir as constraint_ir
+import _lcm.egm.ce_scaled_linear as ce_scaled_declarations
 import _lcm.egm.interp as interp_declarations
 import _lcm.grids as grid_declarations
 import _lcm.optimization.golden_section as golden_section_declarations
@@ -43,8 +48,10 @@ import _lcm.zero_safe as zero_safe_declarations
 import lcm.exceptions as lcm_exceptions
 import lcm.koopmans_aggregation as koopmans_declarations
 from _lcm.certainty_equivalent import CertaintyEquivalent
-from _lcm.continuation import EGMQuerySpec
+from _lcm.continuation import ContinuationSpec, EGMQuerySpec
+from _lcm.egm.query_data import QueryNodeKind
 from _lcm.engine import NNBEGMPolicyRead, Regime
+from _lcm.execution.value_transfer import ValueArtifactAddress
 from _lcm.grids import DiscreteGrid, Grid
 from _lcm.optimization.golden_section import GoldenSectionResult
 from _lcm.params.edges import EDGES, flat_namespaces, regime_kernel_params
@@ -69,7 +76,10 @@ from lcm.case_piece import (
     PiecewiseAffineMeta,
 )
 from lcm.decoupled import Decoupled
+from lcm.execution import InvariantBlockSchedule, WidthSearch
 from lcm.phased import Phased
+from lcm.shocks import Discrete as DiscreteShock
+from lcm.shocks import ShockGroup, ShockGroupName, _correlation_record, _Independence
 from lcm.solver_api import (
     ArtifactChannel,
     AxisRole,
@@ -83,6 +93,7 @@ from lcm.typing import (
     ContinuousState,
     DiscreteAction,
     DiscreteState,
+    UserParams,
 )
 
 # beartype compiles every guard it writes under this synthetic filename.
@@ -127,6 +138,10 @@ _TRUSTED_DECLARATIVE_ENUM_TYPES = frozenset(
         ArtifactChannel,
         AxisRole,
         PersistencePolicy,
+        InvariantBlockSchedule,
+        WidthSearch,
+        _Independence,
+        QueryNodeKind,
         type(annotationlib.Format.VALUE),
         type(inspect.Parameter.POSITIONAL_ONLY),
     }
@@ -184,7 +199,14 @@ _TRUSTED_PYLCM_EXCEPTION_TYPES = frozenset(
 )
 _TRUSTED_DIRECT_TYPE_OBJECTS = (
     frozenset(
-        {functools.partial, inspect.Signature.empty, np.dtype, GoldenSectionResult}
+        {
+            functools.partial,
+            types.MethodType,
+            inspect.Signature.empty,
+            np.dtype,
+            GoldenSectionResult,
+            MappingProxyType,
+        }
     )
     | _TRUSTED_GRID_TYPE_OBJECTS
     | _TRUSTED_CONSTRAINT_TYPE_OBJECTS
@@ -248,11 +270,18 @@ _JAX_PUBLIC_NUMERIC_MODULES = (
         jsp,
     ),
 )
-_JAX_PUBLIC_NUMERIC_VALUES = tuple(
-    value
-    for module in _JAX_PUBLIC_NUMERIC_MODULES
-    for name, value in vars(module).items()
-    if not name.startswith("_")
+_JAX_PUBLIC_NUMERIC_VALUES = (
+    *(
+        value
+        for module in _JAX_PUBLIC_NUMERIC_MODULES
+        for name, value in vars(module).items()
+        if not name.startswith("_")
+    ),
+    jax.tree.map,
+    jax.tree.leaves,
+    jax.tree.flatten,
+    jax.tree.unflatten,
+    jax.tree.structure,
 )
 _JAX_NUMPY_UFUNCS = tuple(
     value for value in _JAX_PUBLIC_NUMERIC_VALUES if type(value) is _JAX_UFUNC_TYPE
@@ -268,6 +297,18 @@ _JAX_NUMERIC_PYTHON_FUNCTIONS = tuple(
         "Mapping[str, _UfuncStaticProperty]", vars(ufunc)["_ufunc__static_props"]
     ).values()
     if isinstance(value, types.FunctionType)
+)
+# ``cond`` has a private omission marker, not an economic default operand.
+# Its meaning is the identity comparison in the original function's globals.
+_JAX_COND = jax.lax.cond
+_JAX_COND_CODE = _JAX_COND.__code__
+_JAX_COND_ORIGINAL = vars(_JAX_COND).get("__wrapped__")
+_JAX_COND_ORIGINAL_CODE = getattr(_JAX_COND_ORIGINAL, "__code__", None)
+_JAX_COND_MODULE = sys.modules.get("jax._src.lax.control_flow.conditionals")
+_JAX_COND_OPERAND_DEFAULT = (
+    vars(_JAX_COND_MODULE).get("_no_operand_sentinel")
+    if _JAX_COND_MODULE is not None
+    else None
 )
 _JAX_NUMERIC_PJIT_FUNCTIONS = tuple(
     (value, vars(value).get("_fun"), getattr(vars(value).get("_fun"), "__code__", None))
@@ -307,6 +348,18 @@ _NUMPY_SCALAR_TYPES = tuple(
     value
     for value in vars(np).values()
     if isinstance(value, type) and issubclass(value, np.generic)
+)
+_NUMPY_SCALAR_CATEGORIES = (
+    np.generic,
+    np.number,
+    np.integer,
+    np.signedinteger,
+    np.unsignedinteger,
+    np.inexact,
+    np.floating,
+    np.complexfloating,
+    np.flexible,
+    np.character,
 )
 _NUMPY_PUBLIC_TYPE_OBJECTS = tuple(
     value
@@ -433,7 +486,7 @@ def project_solution_params(
     # A source's law slots are read by its own transitions, so the source's
     # realized-only names apply to its edge slots as well.
     for path, leaves in flat_namespaces(flat_params):
-        realized_only = realized_only_by_regime[path[-1]]
+        realized_only = realized_only_by_regime.get(path[-1], frozenset())
         kept = MappingProxyType(
             {name: value for name, value in leaves.items() if name not in realized_only}
         )
@@ -462,15 +515,28 @@ def fingerprint_solution_support(
     yield the same declared authority, so a model caches one authority per digest
     rather than deriving it again per solve.
     """
+    return _fingerprint_resolved_solution_support(
+        support={
+            name: _grid_support(
+                regime=regime,
+                regime_params=regime_kernel_params(flat_params, regime_name=name),
+                process_grid_resolver=process_grid_resolver,
+            )
+            for name, regime in regimes.items()
+        },
+        flat_params=flat_params,
+    )
+
+
+def _fingerprint_resolved_solution_support(
+    *, support: Mapping[RegimeName, _Reachable], flat_params: FlatParams
+) -> str:
+    """Hash original base coordinates and parameter schemas in one shared format."""
     record = (
         ("pylcm-solution-support", 1),
         {
             name: (
-                _grid_support(
-                    regime=regime,
-                    regime_params=regime_kernel_params(flat_params, regime_name=name),
-                    process_grid_resolver=process_grid_resolver,
-                ),
+                coordinates,
                 {
                     param_name: _param_shape_signature(value)
                     for param_name, value in regime_kernel_params(
@@ -478,7 +544,7 @@ def fingerprint_solution_support(
                     ).items()
                 },
             )
-            for name, regime in regimes.items()
+            for name, coordinates in support.items()
         },
     )
     return _semantic_fingerprint(record)
@@ -739,6 +805,35 @@ _MISSING: Final = _Missing.MISSING
 type BindingRecorder = Callable[[SealedBinding], None]
 
 
+def fingerprint_model_declarations(
+    *,
+    ages: TimeAxis,
+    user_regimes: _FingerprintUserRegimes,
+    laws: _FingerprintLaws,
+    regime_names_to_ids: RegimeNamesToIds,
+    fixed_params: FlatParams,
+) -> str:
+    """Separate genuine declaration identity from call-shaped canonical programs.
+
+    Reuse the original user-declaration projection and semantic encoder. Actual
+    runtime values and schemas do not reach this declaration-only record.
+    """
+    return _semantic_fingerprint(
+        (
+            ("pylcm-model-declarations", 1),
+            tuple(ages.exact_values)
+            if coordinate_kind(ages) == "age"
+            else ("period", ages.n_periods),
+            {name: int(code) for name, code in regime_names_to_ids.items()},
+            {
+                name: _project_user_regime_declaration(regime, law=laws[name])
+                for name, regime in user_regimes.items()
+            },
+            fixed_params,
+        )
+    )
+
+
 def fingerprint_model_structure(
     *,
     ages: TimeAxis,
@@ -747,6 +842,9 @@ def fingerprint_model_structure(
     laws: _FingerprintLaws,
     regime_names_to_ids: RegimeNamesToIds,
     binding_recorder: BindingRecorder | None = None,
+    array_recorder: Callable[[Array], None] | None = None,
+    shock_groups: Mapping[ShockGroupName, ShockGroup] = MappingProxyType({}),
+    shock_fixed_params: UserParams = MappingProxyType({}),
 ) -> str:
     """Hash the mathematical facts a model fixes at build.
 
@@ -786,7 +884,6 @@ def fingerprint_model_structure(
                 ),
                 "state_names": regime.solution.state_names,
                 "action_names": regime.solution.action_names,
-                "fold_state_names": regime.fold_state_names,
                 "stakeholders": regime.stakeholders,
                 "solver_identity": user_regimes[name].solver.identity,
                 "replay_identity": (
@@ -800,6 +897,16 @@ def fingerprint_model_structure(
                 },
                 **(
                     {
+                        "dated_continuation_custody": _dated_continuation_identity(
+                            spec=spec
+                        )
+                    }
+                    if (spec := regime.solution.continuation_spec) is not None
+                    and spec.templates_by_period
+                    else {}
+                ),
+                **(
+                    {
                         "query_authority": _query_semantic_descriptor(
                             regime.solution.query_authority
                         ),
@@ -808,6 +915,32 @@ def fingerprint_model_structure(
                     else {}
                 ),
                 "period_state_axes": regime.solution.period_state_axes,
+                **(
+                    {
+                        "current_iid_support": {
+                            period: (
+                                tuple(
+                                    (
+                                        group_name,
+                                        nodes,
+                                        tuple(binding.group.shocks.items()),
+                                        binding.state_inputs,
+                                        binding.state_domains,
+                                        binding.functions,
+                                    )
+                                    for group_name, binding, nodes in plan.bindings
+                                ),
+                                plan.indices,
+                            )
+                            for period, plan in (
+                                regime.solution.current_iid_plans.items()
+                            )
+                            if plan is not None
+                        }
+                    }
+                    if regime.solution.current_iid_plans
+                    else {}
+                ),
                 **(
                     {
                         "finite_policy_query_authority": _query_semantic_descriptor(
@@ -831,9 +964,73 @@ def fingerprint_model_structure(
             for name, regime in regimes.items()
         },
     )
-    hasher = _SemanticHasher(binding_recorder=binding_recorder)
+    hasher = _SemanticHasher(
+        binding_recorder=binding_recorder, array_recorder=array_recorder
+    )
     hasher.visit(value=record)
+    if shock_groups:
+        hasher.visit(
+            value=(
+                "current-iid-registry",
+                1,
+                {
+                    name: (
+                        tuple(group.shocks.items()),
+                        group.nodes,
+                        _correlation_record(group.correlation),
+                        group._correlation_support,  # noqa: SLF001 - identity retains the prepared rank support
+                    )
+                    for name, group in shock_groups.items()
+                },
+            )
+        )
+    if shock_fixed_params:
+        hasher.visit(value=("current-iid-fixed-params", 1, shock_fixed_params))
     return hasher.hexdigest()
+
+
+def _dated_continuation_identity(*, spec: ContinuationSpec) -> _Reachable:
+    """Seal dated schemas and origin owners without hashing numeric placeholders."""
+    return (
+        (spec.artifact_key.type_id, spec.artifact_key.schema_version),
+        tuple(
+            (
+                period,
+                str(jax.tree.structure(template)),
+                tuple(
+                    (tuple(leaf.shape), str(leaf.dtype))
+                    for leaf in jax.tree.leaves(template)
+                ),
+            )
+            for period, template in sorted(spec.templates_by_period.items())
+        ),
+        tuple(
+            (
+                _continuation_origin_identity(alias),
+                _continuation_origin_identity(origin),
+            )
+            for alias, origin in spec.stored_value_aliases().items()
+        ),
+    )
+
+
+def _continuation_origin_identity(
+    artifact: ValueArtifactAddress,
+) -> tuple[_Reachable, ...]:
+    """Serialize canonical artifact enums by their declared stable values."""
+    return (
+        artifact.kind.value,
+        artifact.period,
+        artifact.regime,
+        artifact.target_regime,
+        None
+        if artifact.artifact_key is None
+        else (
+            artifact.artifact_key.type_id,
+            artifact.artifact_key.schema_version,
+        ),
+        artifact.leaf_path,
+    )
 
 
 def _query_semantic_descriptor(spec: EGMQuerySpec) -> EGMQuerySpec:
@@ -925,7 +1122,10 @@ def _project_user_regime_declaration(
                     if name != "description"
                     # An empty reporting declaration adds no semantic facts to
                     # the pre-existing feature-free model identity.
-                    and not (name == "output_only_functions" and value == ())
+                    and not (
+                        name in {"output_only_functions", "shocks"} and value == ()
+                    )
+                    and not (name == "participation" and not value)
                 }
             ),
         }
@@ -961,14 +1161,357 @@ def _semantic_fingerprint(value: _Reachable) -> str:
     return hasher.hexdigest()
 
 
+@dataclasses.dataclass(frozen=True)
+class _CEScaledFunction:
+    """Original callable metadata outside its ordinary attribute dictionary."""
+
+    code: types.CodeType
+    state: MappingProxyType[str, _Reachable]
+    defaults: tuple[_Reachable, ...] | None
+    kwdefaults: MappingProxyType[str, _Reachable]
+    annotations: MappingProxyType[str, _Annotation]
+    annotate: _Reachable
+
+
+@dataclasses.dataclass(frozen=True)
+class _CEScaledReference:
+    """One consumed native binding path, including its actual module owner."""
+
+    function: types.FunctionType
+    name: str
+    path: tuple[str, ...]
+    chain: tuple[_Reachable, ...]
+    descriptors: tuple[_Reachable, ...]
+
+
+@dataclasses.dataclass(frozen=True)
+class _CEScaledPrimitiveSeal:
+    """The actual registrations of the sole private CE linear primitive."""
+
+    primitive: jax_core.Primitive
+    instance: MappingProxyType[str, _Reachable]
+    classes: tuple[tuple[type[_Reachable], MappingProxyType[str, _Reachable]], ...]
+    mros: tuple[tuple[type[_Reachable], ...], ...]
+    functions: MappingProxyType[types.FunctionType, _CEScaledFunction]
+    rules: tuple[types.FunctionType, ...]
+    wrappers: tuple[types.FunctionType, ...]
+    cells: tuple[
+        tuple[types.FunctionType, tuple[tuple[types.CellType, _Reachable], ...]], ...
+    ]
+    exports: MappingProxyType[str, types.FunctionType]
+    lowering: jax_mlir.LoweringRuleEntry
+    tables: tuple[_Reachable, ...]
+    references: tuple[_CEScaledReference, ...]
+    native_functions: tuple[types.FunctionType, ...]
+
+
+def _ce_python_functions(
+    values: Iterable[_Reachable],
+) -> tuple[types.FunctionType, ...]:
+    functions = []
+    for value in values:
+        if not isinstance(value, types.FunctionType):
+            raise TypeError("The original CE registration is not Python-defined.")
+        functions.append(value)
+    return tuple(functions)
+
+
+def _capture_ce_scaled_primitive() -> _CEScaledPrimitiveSeal:
+    primitive = ce_scaled_declarations._scaled_ce_p  # noqa: SLF001 - authenticate the sole module-owned primitive
+    exports = {
+        name: getattr(ce_scaled_declarations, name)
+        for name in ("_linear_join", "_abstract", "_jvp", "_transpose", "_batch")
+    }
+    rules = _ce_python_functions(exports.values())
+    raw_rules = tuple(_unwrap_exact_beartype_wrapper(rule) or rule for rule in rules)
+    lowering = jax_mlir._lowerings[primitive]  # noqa: SLF001 - inspect the actual lowering registration
+    wrappers = _ce_python_functions(
+        (
+            primitive.abstract_eval,
+            jax_batching.fancy_primitive_batchers[primitive],
+            lowering.rule,
+        )
+    )
+    classes = tuple(
+        dict.fromkeys(
+            parent
+            for cls in (
+                jax_core.Primitive,
+                jax_core.ShapedArray,
+                jax_ad.Zero,
+                jax_ad.UndefinedPrimal,
+                type(lowering),
+            )
+            for parent in cls.__mro__
+        )
+    )
+    native_functions = _ce_python_functions((jax_batching.bdim_at_front, jax.typeof))
+    methods = tuple(
+        member
+        for cls in classes
+        for value in vars(cls).values()
+        for member in (
+            (value.__func__,)
+            if isinstance(value, classmethod | staticmethod)
+            else (value.fget, value.fset, value.fdel)
+            if isinstance(value, property)
+            else (value,)
+        )
+        if isinstance(member, types.FunctionType)
+    )
+    references = []
+    resolver = _SemanticHasher()
+    for function in (*raw_rules, *wrappers, *native_functions):
+        for name, paths in _referenced_global_attribute_paths(
+            code=function.__code__, ignore_beartype_guards=function in raw_rules
+        ).items():
+            if name not in function.__globals__:
+                continue
+            for path in sorted(paths):
+                chain = [function.__globals__[name]]
+                descriptors = []
+                for attribute in path:
+                    descriptors.append(inspect.getattr_static(chain[-1], attribute))
+                    chain.append(
+                        resolver._resolve_referenced_attribute(  # noqa: SLF001 - reuse this module's static binding resolver
+                            value=chain[-1], attribute=attribute, path=path
+                        )
+                    )
+                # Engine arithmetic still takes the ordinary complete walk.
+                # Only native metadata paths and generated dispatch bindings
+                # receive this exact import-time origin seal.
+                if function in raw_rules and not any(
+                    chain[-1] is value for value in (*classes, *native_functions)
+                ):
+                    continue
+                references.append(
+                    _CEScaledReference(
+                        function=function,
+                        name=name,
+                        path=path,
+                        chain=tuple(chain),
+                        descriptors=tuple(descriptors),
+                    )
+                )
+    functions = _ce_python_functions(
+        (
+            *rules,
+            *raw_rules,
+            *wrappers,
+            *native_functions,
+            *methods,
+            *(
+                reference.chain[-1]
+                for reference in references
+                if isinstance(reference.chain[-1], types.FunctionType)
+            ),
+        )
+    )
+    return _CEScaledPrimitiveSeal(
+        primitive=primitive,
+        instance=MappingProxyType(dict(vars(primitive))),
+        classes=tuple((cls, MappingProxyType(dict(vars(cls)))) for cls in classes),
+        mros=tuple(cls.__mro__ for cls in classes),
+        functions=MappingProxyType(
+            {
+                function: _CEScaledFunction(
+                    code=function.__code__,
+                    state=MappingProxyType(dict(vars(function))),
+                    defaults=function.__defaults__,
+                    kwdefaults=MappingProxyType(dict(function.__kwdefaults__ or {})),
+                    annotations=MappingProxyType(dict(function.__annotations__)),
+                    annotate=function.__annotate__,
+                )
+                for function in functions
+            }
+        ),
+        rules=(*rules, *raw_rules),
+        wrappers=wrappers,
+        cells=tuple(
+            (
+                function,
+                tuple(
+                    (cell, cell.cell_contents) for cell in (function.__closure__ or ())
+                ),
+            )
+            for function in wrappers
+        ),
+        exports=MappingProxyType(exports),
+        lowering=lowering,
+        tables=(
+            jax_ad.primitive_jvps,
+            jax_ad.primitive_transposes,
+            jax_ad.primitive_linearizations,
+            jax_batching.fancy_primitive_batchers,
+            jax_mlir._lowerings,  # noqa: SLF001 - inspect the actual lowering registration
+            jax_mlir._platform_specific_lowerings,  # noqa: SLF001 - reject platform registration overrides
+            jax_mlir._uncacheable_primitives,  # noqa: SLF001 - seal original lowering policy
+            jax_ad.linearize_on_zero_tangents,
+        ),
+        references=tuple(references),
+        native_functions=native_functions,
+    )
+
+
+def _require_ce_scaled_primitive() -> None:  # noqa: C901, PLR0912 - validate the complete fixed registration
+    seal = _CE_SCALED_SEAL
+    primitive = seal.primitive
+    if (
+        ce_scaled_declarations._scaled_ce_p is not primitive  # noqa: SLF001 - authenticate the sole module-owned primitive
+        or type(primitive) is not jax_core.Primitive
+        or set(vars(primitive)) != set(seal.instance)
+        or any(
+            vars(primitive)[name] is not value for name, value in seal.instance.items()
+        )
+        or any(
+            getattr(ce_scaled_declarations, name) is not rule
+            for name, rule in seal.exports.items()
+        )
+    ):
+        raise TypeError("Original CE primitive identity or instance state changed.")
+    for (cls, state), mro in zip(seal.classes, seal.mros, strict=True):
+        if (
+            cls.__mro__ is not mro
+            or set(vars(cls)) != set(state)
+            or any(vars(cls)[name] is not value for name, value in state.items())
+        ):
+            raise TypeError("Original CE primitive native class state changed.")
+    for function, original in seal.functions.items():
+        state = original.state
+        if (
+            function.__code__ is not original.code
+            or set(vars(function)) != set(state)
+            or any(vars(function)[name] is not value for name, value in state.items())
+            or function.__defaults__ is not original.defaults
+            or set(function.__kwdefaults__ or {}) != set(original.kwdefaults)
+            or any(
+                (function.__kwdefaults__ or {})[name] is not value
+                for name, value in original.kwdefaults.items()
+            )
+            or set(function.__annotations__) != set(original.annotations)
+            or any(
+                function.__annotations__[name] is not value
+                for name, value in original.annotations.items()
+            )
+            or function.__annotate__ is not original.annotate
+        ):
+            raise TypeError("Original CE primitive callable code or metadata changed.")
+    for function, cells in seal.cells:
+        actual = function.__closure__ or ()
+        try:
+            changed = len(actual) != len(cells) or any(
+                cell is not original or cell.cell_contents is not value
+                for cell, (original, value) in zip(actual, cells, strict=True)
+            )
+        except ValueError:
+            changed = True
+        if changed:
+            raise TypeError("Original CE primitive generated wrapper closure changed.")
+    resolver = _SemanticHasher()
+    for reference in seal.references:
+        current = reference.function.__globals__.get(reference.name, _MISSING)
+        if current is not reference.chain[0]:
+            raise TypeError("Original CE primitive native binding changed.")
+        for attribute, receiver, original, descriptor in zip(
+            reference.path,
+            reference.chain[:-1],
+            reference.chain[1:],
+            reference.descriptors,
+            strict=True,
+        ):
+            if (
+                current is not receiver
+                or inspect.getattr_static(current, attribute) is not descriptor
+            ):
+                raise TypeError(
+                    "Original CE primitive native binding changed: descriptor origin."
+                )
+            current = resolver._resolve_referenced_attribute(  # noqa: SLF001 - reuse this module's static binding resolver
+                value=current, attribute=attribute, path=reference.path
+            )
+            # An original builtin descriptor binds a fresh wrapper on lookup.
+            # Its fixed receiver/descriptor, not that wrapper, owns the method.
+            fresh_builtin = (
+                type(descriptor) is types.MethodDescriptorType
+                and _has_exact_type(value=receiver, candidates=_BUILTIN_TYPE_OBJECTS)
+                and isinstance(original, types.BuiltinMethodType)
+                and isinstance(current, types.BuiltinMethodType)
+                and original.__self__ is receiver
+                and current.__self__ is receiver
+            )
+            if current is not original and not fresh_builtin:
+                raise TypeError("Original CE primitive native binding changed.")
+    current_tables = (
+        jax_ad.primitive_jvps,
+        jax_ad.primitive_transposes,
+        jax_ad.primitive_linearizations,
+        jax_batching.fancy_primitive_batchers,
+        jax_mlir._lowerings,  # noqa: SLF001 - inspect the actual lowering registration
+        jax_mlir._platform_specific_lowerings,  # noqa: SLF001 - reject platform registration overrides
+        jax_mlir._uncacheable_primitives,  # noqa: SLF001 - seal original lowering policy
+        jax_ad.linearize_on_zero_tangents,
+    )
+    if (
+        any(
+            actual is not original
+            for actual, original in zip(current_tables, seal.tables, strict=True)
+        )
+        or jax_ad.primitive_jvps.get(primitive) is not seal.exports["_jvp"]
+        or jax_ad.primitive_transposes.get(primitive) is not seal.exports["_transpose"]
+        or jax_batching.fancy_primitive_batchers.get(primitive) is not seal.wrappers[1]
+        or jax_mlir._lowerings.get(primitive) is not seal.lowering  # noqa: SLF001 - inspect the actual lowering registration
+        or seal.lowering.rule is not seal.wrappers[2]
+        or seal.lowering.inline is not True
+        or primitive in jax_ad.primitive_linearizations
+        or primitive in jax_ad.linearize_on_zero_tangents
+        or primitive in jax_mlir._uncacheable_primitives  # noqa: SLF001 - seal original lowering policy
+        or any(
+            primitive in rules
+            for rules in jax_mlir._platform_specific_lowerings.values()  # noqa: SLF001 - reject platform registration overrides
+        )
+    ):
+        raise TypeError("Original CE primitive execution registration changed.")
+
+
+def _is_ce_scaled_primitive_reference(value: _Reachable) -> bool:
+    primitive = _CE_SCALED_SEAL.primitive
+    return value is primitive or (
+        type(value) is type(primitive)
+        and vars(value).get("name") == _CE_SCALED_SEAL.instance["name"]
+    )
+
+
+def _function_annotations(
+    function: types.FunctionType,
+) -> Mapping[str, _Annotation]:
+    """Read annotations, resolving forward references beartype cached as errors.
+
+    The beartype claw evaluates annotations at definition time and re-raises the
+    `NameError` of a reference defined later in the module; the same references
+    resolve now.
+    """
+    try:
+        return function.__annotations__
+    except NameError:
+        return annotationlib.get_annotations(
+            function, format=annotationlib.Format.FORWARDREF
+        )
+
+
 class _SemanticHasher:
     """Length-framed serializer feeding a SHA-256 digest."""
 
-    def __init__(self, *, binding_recorder: BindingRecorder | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        binding_recorder: BindingRecorder | None = None,
+        array_recorder: Callable[[Array], None] | None = None,
+    ) -> None:
         self._digest = hashlib.sha256()
         self._active: dict[int, int] = {}
         self._active_bound_methods: dict[tuple[int, int], int] = {}
         self._binding_recorder = binding_recorder
+        self._array_recorder = array_recorder
 
     def hexdigest(self) -> str:
         return self._digest.hexdigest()
@@ -1068,6 +1611,8 @@ class _SemanticHasher:
             value=value, candidates=_NUMPY_SCALAR_TYPES
         )
         if isinstance(value, Array) or is_exact_numpy_value:
+            if isinstance(value, Array) and self._array_recorder is not None:
+                self._array_recorder(value)
             # The shape frame records the rank and shape the declaration actually
             # holds: a 0-d array is a different mathematical object from a
             # length-one vector even though their bytes agree. Memory order is
@@ -1121,6 +1666,8 @@ class _SemanticHasher:
         # class attribute through which it was reached.
         self._active[identity] = len(self._active)
         try:
+            if self._visit_ce_scaled_primitive(value):
+                return
             if isinstance(value, types.ModuleType):
                 msg = (
                     "Cannot durably fingerprint direct module dependency "
@@ -1148,6 +1695,14 @@ class _SemanticHasher:
                     self.visit(value=value.values_to_jax())
                     self.visit(value=value.tolerance)
                 self.frame(label="DiscreteGrid-end")
+                return
+            if type(value) is DiscreteShock:
+                # A categorical law consumes the validated category code/label
+                # declaration, rather than arbitrary behavior of its class.
+                self.frame(label="DiscreteShock-start")
+                self.visit(value=DiscreteGrid(category_class=value.categories))
+                self.visit(value=value.probs)
+                self.frame(label="DiscreteShock-end")
                 return
             if isinstance(value, Phased):
                 if type(value) is not Phased:
@@ -1308,6 +1863,131 @@ class _SemanticHasher:
         self.visit(value=constants)
         self.visit(value=code.co_names)
         self.frame(label="code-end")
+
+    def _visit_ce_scaled_primitive(self, value: _Reachable) -> bool:
+        seal = _CE_SCALED_SEAL
+        if not _is_ce_scaled_primitive_reference(value):
+            return False
+        if value is not seal.primitive:
+            raise TypeError("A same-named CE primitive is not the original producer.")
+        _require_ce_scaled_primitive()
+        self.frame(label="owned-ce-scaled-primitive-start")
+        self.visit(value=(_native_numeric_versions(), _PYTHON_IMPLEMENTATION_SEAL))
+        self.visit(value=(seal.primitive.name, seal.lowering.inline))
+        for cls, state in seal.classes:
+            self.frame(
+                label="ce-native-class",
+                payload=f"{cls.__module__}.{cls.__qualname__}".encode(),
+            )
+            self.visit(value=tuple(sorted(state)))
+        # Class methods are native metadata implementations, not user callbacks.
+        # Their exact origin/code/state is checked above and their package is
+        # version-sealed, as for the existing canonical numeric callable route.
+        for function in seal.functions:
+            if function not in seal.rules and function not in seal.wrappers:
+                self.frame(
+                    label="ce-native-code",
+                    payload=f"{function.__module__}.{function.__qualname__}".encode(),
+                )
+                self.visit(value=function.__code__)
+        for rule in seal.rules:
+            self.visit(value=rule)
+        for wrapper, cells in seal.cells:
+            self.frame(label="ce-generated-wrapper-start")
+            self._visit_signature(function=wrapper)
+            self.visit(value=wrapper.__defaults__)
+            self.visit(value=wrapper.__kwdefaults__)
+            self.visit(value=wrapper.__code__)
+            for name, (cell, member) in zip(
+                wrapper.__code__.co_freevars, cells, strict=True
+            ):
+                self.frame(label="ce-generated-cell", payload=name.encode())
+                self._record_binding(owner=wrapper, name=name, value=member, cell=cell)
+                self.visit(value=member)
+            self.frame(label="ce-generated-wrapper-end")
+        for reference in seal.references:
+            self.frame(
+                label="ce-native-binding-path",
+                payload=(
+                    f"{reference.function.__module__}."
+                    f"{reference.function.__qualname__}:"
+                    + ".".join((reference.name, *reference.path))
+                ).encode(),
+            )
+            self._record_binding(
+                owner=reference.function,
+                name=reference.name,
+                value=reference.chain[0],
+                namespace=reference.function.__globals__,
+            )
+        self.frame(label="owned-ce-scaled-primitive-end")
+        return True
+
+    def _visit_ce_scaled_rule(  # noqa: C901 - original rule and precise native metadata paths
+        self, *, function: types.FunctionType, ignore_beartype_guards: bool
+    ) -> None:
+        """Walk the exact registered engine rule without broad metadata trust."""
+        _require_ce_scaled_primitive()
+        wrapped = _unwrap_exact_beartype_wrapper(function)
+        if wrapped is not None:
+            self.frame(label="ce-rule-beartype-start")
+            self._visit_signature(function=function)
+            self.visit(value=wrapped, _ignore_beartype_guards=True)
+            self.frame(label="ce-rule-beartype-end")
+            return
+        if function.__closure__:
+            raise TypeError("An original CE rule unexpectedly captures closure state.")
+        self.frame(
+            label="ce-rule-start",
+            payload=f"{function.__module__}.{function.__qualname__}".encode(),
+        )
+        self._visit_native_python_function_seal(function)
+        self._visit_function_annotations(function.__annotations__)
+        references = _referenced_global_attribute_paths(
+            code=function.__code__, ignore_beartype_guards=ignore_beartype_guards
+        )
+        for name in sorted(references):
+            if name not in function.__globals__:
+                continue
+            member = function.__globals__[name]
+            if member is _BEARTYPE_CLAW_STATE:
+                self.frame(label="transparent-beartype-claw-state")
+                continue
+            self._record_binding(
+                owner=function, name=name, value=member, namespace=function.__globals__
+            )
+            for path in sorted(references[name]):
+                current = member
+                for attribute in path:
+                    current = self._resolve_referenced_attribute(
+                        value=current, attribute=attribute, path=path
+                    )
+                self.frame(
+                    label="ce-rule-binding", payload=".".join((name, *path)).encode()
+                )
+                native_reference = next(
+                    (
+                        reference
+                        for reference in _CE_SCALED_SEAL.references
+                        if reference.function is function
+                        and reference.name == name
+                        and reference.path == path
+                    ),
+                    None,
+                )
+                if native_reference is not None and isinstance(current, type):
+                    self.frame(
+                        label="ce-native-metadata-class",
+                        payload=f"{current.__module__}.{current.__qualname__}".encode(),
+                    )
+                    self.visit(value=_native_numeric_versions())
+                elif native_reference is not None:
+                    if not isinstance(current, types.FunctionType):
+                        raise TypeError("Original CE native metadata callable changed.")
+                    self._visit_native_python_function_seal(current)
+                else:
+                    self._visit_terminal_reference(current)
+        self.frame(label="ce-rule-end")
 
     def _visit_type(self, value: type[_Reachable]) -> None:
         self.frame(
@@ -1479,14 +2159,22 @@ class _SemanticHasher:
             label="native-python-function-start",
             payload=f"{function.__module__}.{function.__qualname__}".encode(),
         )
-        self._visit_signature(function)
+        cond_operand = function is _JAX_COND
+        if cond_operand:
+            _require_original_cond_operand_default(function=function)
+            self.frame(label="jax-cond-original-code")
+            self.visit(value=_JAX_COND_ORIGINAL_CODE)
+        self._visit_signature(function=function, cond_operand=cond_operand)
         self.visit(value=function.__code__)
         self.visit(value=function.__defaults__)
         self.visit(value=function.__kwdefaults__)
         self.frame(label="native-python-function-end")
 
     def _visit_native_numeric_type(self, value: type[_Reachable]) -> None:
-        """Hash a genuine NumPy/JAX scalar constructor by dtype and runtime seal."""
+        """Seal concrete scalar dtypes and abstract NumPy category identities."""
+        if _contains_identity(value=value, candidates=_NUMPY_SCALAR_CATEGORIES):
+            self._visit_type(value)
+            return
         self.frame(
             label="native-numeric-type-start",
             payload=f"{value.__module__}.{value.__qualname__}".encode(),
@@ -1497,10 +2185,20 @@ class _SemanticHasher:
 
     def _visit_signature(
         self,
+        *,
         function: Callable[..., _CallResult],
+        cond_operand: bool = False,
     ) -> None:
+        if cond_operand and function is not _JAX_COND:
+            raise TypeError("Only original JAX cond has native operand metadata.")
         try:
             signature = inspect.signature(function)
+        except NameError:
+            # beartype caches a NameError for a forward reference it met at
+            # definition time; resolve the same references now instead.
+            signature = inspect.signature(
+                function, annotation_format=annotationlib.Format.FORWARDREF
+            )
         except TypeError, ValueError:
             self.frame(label="signature-unavailable")
             return
@@ -1510,6 +2208,10 @@ class _SemanticHasher:
             self.visit(value=parameter.kind.value)
             if parameter.default is inspect.Signature.empty:
                 self.frame(label="default-empty")
+            elif cond_operand and parameter.name == "operand":
+                if parameter.default is not _JAX_COND_OPERAND_DEFAULT:
+                    raise TypeError("Original JAX cond operand signature changed.")
+                self.frame(label="jax-cond-omitted-operand")
             else:
                 self.visit(value=parameter.default)
             self._visit_annotation(parameter.annotation)
@@ -1522,6 +2224,8 @@ class _SemanticHasher:
         annotation: _Annotation,
     ) -> None:
         """Hash type metadata without treating an annotation as executable input."""
+        if isinstance(annotation, annotationlib.ForwardRef):
+            annotation = annotation.evaluate()
         if annotation is inspect.Signature.empty:
             self.frame(label="annotation-empty")
             return
@@ -1544,6 +2248,17 @@ class _SemanticHasher:
             for argument in annotation:
                 self._visit_annotation(argument)
             self.frame(label="annotation-arguments-end")
+            return
+        if type(annotation) is dict:
+            self.frame(label="annotation-outputs-start")
+            for name, output_annotation in annotation.items():
+                if type(name) is not str:
+                    raise TypeError(
+                        "Named output annotations require exact string keys."
+                    )
+                self.frame(label="annotation-output-name", payload=name.encode())
+                self._visit_annotation(output_annotation)
+            self.frame(label="annotation-outputs-end")
             return
         if isinstance(annotation, type):
             self.frame(
@@ -1604,13 +2319,18 @@ class _SemanticHasher:
     def _visit_function(  # noqa: C901, PLR0912, PLR0915
         self, *, function: types.FunctionType, ignore_beartype_guards: bool = False
     ) -> None:
+        if function in _CE_SCALED_SEAL.rules:
+            self._visit_ce_scaled_rule(
+                function=function, ignore_beartype_guards=ignore_beartype_guards
+            )
+            return
         wrapped = _unwrap_exact_beartype_wrapper(function)
         if wrapped is not None:
             self.frame(
                 label="transparent-beartype-start",
                 payload=f"{function.__module__}.{function.__qualname__}".encode(),
             )
-            self._visit_signature(function)
+            self._visit_signature(function=function)
             self.visit(value=wrapped, _ignore_beartype_guards=True)
             self.frame(label="transparent-beartype-end")
             return
@@ -1619,11 +2339,11 @@ class _SemanticHasher:
             label="function-start",
             payload=f"{function.__module__}.{function.__qualname__}".encode(),
         )
-        self._visit_signature(function)
+        self._visit_signature(function=function)
         self.visit(value=function.__code__)
         self.visit(value=function.__defaults__)
         self.visit(value=function.__kwdefaults__)
-        self._visit_function_annotations(function.__annotations__)
+        self._visit_function_annotations(_function_annotations(function))
         self.frame(label="function-type-params-start")
         for type_parameter in getattr(function, "__type_params__", ()):
             self._visit_annotation(type_parameter)
@@ -1784,11 +2504,18 @@ class _SemanticHasher:
         value: _Reachable,
     ) -> None:
         """Hash one consumed reference or reject mutable protocol dispatch."""
+        if _is_ce_scaled_primitive_reference(value):
+            self.visit(value=value)
+            return
         if inspect.ismethod(value):
             self._visit_referenced_bound_method(value)
             return
         if _is_closed_terminal_reference(value=value):
             self.visit(value=value)
+            return
+        if type(value) is typing.TypeVar:
+            # A PEP 695 type parameter closed over by deferred annotations.
+            self._visit_annotation(value)
             return
         value_type = value if isinstance(value, type) else type(value)
         kind = "class" if isinstance(value, type) else "object"
@@ -1801,6 +2528,11 @@ class _SemanticHasher:
 
     def _visit_referenced_bound_method(self, method: types.MethodType) -> None:
         """Hash a method and exactly the receiver attributes its code reads."""
+        if _is_ce_scaled_primitive_reference(method.__self__):
+            if method.__func__ is not _CE_SCALED_SEAL.classes[0][1]["bind"]:
+                raise TypeError("Only the original CE primitive bind is represented.")
+            self.visit(value=method.__self__)
+            return
         raw_function = method.__func__
         if not isinstance(raw_function, types.FunctionType):
             callable_type = (
@@ -1935,7 +2667,10 @@ class _SemanticHasher:
             # An optional field left at its default hashes like its absence, so
             # declarations that never use it keep their durable fingerprint.
             if declaration.metadata.get("fingerprint_omit_if_default") and (
-                getattr(value, declaration.name) is declaration.default
+                _matches_semantic_default(
+                    value=getattr(value, declaration.name),
+                    default=declaration.default,
+                )
             ):
                 continue
             self.frame(label="field", payload=declaration.name.encode())
@@ -1961,7 +2696,7 @@ class _SemanticHasher:
             label="callable-object-start",
             payload=f"{type(value).__module__}.{type(value).__qualname__}".encode(),
         )
-        self._visit_signature(value)
+        self._visit_signature(function=value)
         self.frame(
             label="callable-name",
             payload=str(
@@ -2019,7 +2754,10 @@ class _SemanticHasher:
         if dataclasses.is_dataclass(value) and not isinstance(value, type):
             for declaration in dataclasses.fields(cast("DataclassInstance", value)):
                 if declaration.metadata.get("fingerprint_omit_if_default") and (
-                    getattr(value, declaration.name) is declaration.default
+                    _matches_semantic_default(
+                        value=getattr(value, declaration.name),
+                        default=declaration.default,
+                    )
                 ):
                     continue
                 self.frame(label="solver-field", payload=declaration.name.encode())
@@ -2226,13 +2964,7 @@ def _unwrap_exact_beartype_wrapper(
     if capture is None:
         if not _has_beartype_written_body(function):
             return None
-        if not _is_shipped_pylcm_module_name(function.__module__):
-            return _unwrap_downstream_beartype_wrapper(function)
-        msg = (
-            "Cannot durably fingerprint an uncaptured transparent beartype wrapper "
-            f"{function.__module__}.{function.__qualname__}."
-        )
-        raise TypeError(msg)
+        return _unwrap_downstream_beartype_wrapper(function)
 
     _, captured_code, captured_wrapped = capture
     wrapped = state.get("__wrapped__")
@@ -2256,11 +2988,11 @@ def _unwrap_exact_beartype_wrapper(
 def _unwrap_downstream_beartype_wrapper(
     function: types.FunctionType,
 ) -> types.FunctionType:
-    """Return the bound callee of a beartype wrapper built outside pylcm or fail closed.
+    """Authenticate a beartype wrapper created after the import-time capture.
 
-    A package that models on pylcm may run its own beartype claw, so its model
-    functions arrive wrapped by guards pylcm never captured at import. Such a guard
-    is transparent only if beartype itself reproduces it: decorating the bound
+    Shipped modules and downstream model functions can load after the durable
+    wrapper snapshot. Such a guard is transparent only if beartype itself
+    reproduces it: decorating the bound
     callee with the wrapper's own configuration must yield the same code. A wrapper
     whose marks disagree, or whose code beartype does not regenerate, is refused
     because its body may do more than check the callee's annotations.
@@ -2303,6 +3035,21 @@ def _unwrap_downstream_beartype_wrapper(
     return wrapped
 
 
+def _matches_semantic_default(*, value: _Reachable, default: _Reachable) -> bool:
+    """Keep restored built-in defaults stable without invoking user equality."""
+    if value is default:
+        return True
+    if type(value) is not type(default):
+        return False
+    if _has_exact_type(value=default, candidates=(str, int)):
+        return cast("str | int", value) == default
+    if _has_exact_type(value=default, candidates=(tuple, frozenset, MappingProxyType)):
+        original = cast("Sized", default)
+        restored = cast("Sized", value)
+        return len(original) == 0 and len(restored) == 0
+    return False
+
+
 def _is_solver_instance(value: _Reachable) -> TypeIs[_SolverInstance]:
     """Recognize the one stateless extension object sealed by public identity."""
     from _lcm.solution.contract import Solver  # noqa: PLC0415
@@ -2343,6 +3090,47 @@ def _has_exact_type[Candidate](
 ) -> bool:
     """Classify a value by type identity without invoking metaclass equality."""
     return _contains_identity(value=type(value), candidates=candidates)
+
+
+def _require_original_cond_operand_default(*, function: types.FunctionType) -> None:
+    """Authenticate only cond's original omission marker before native sealing."""
+    original = _JAX_COND_ORIGINAL
+    module = _JAX_COND_MODULE
+    if (
+        function is not _JAX_COND
+        or function.__code__ is not _JAX_COND_CODE
+        or module is None
+        or vars(module).get("cond") is not function
+        or vars(jax.lax).get("cond") is not function
+        or not isinstance(original, types.FunctionType)
+        or original.__code__ is not _JAX_COND_ORIGINAL_CODE
+        or original.__globals__ is not vars(module)
+        or vars(function).get("__wrapped__") is not original
+        or "__signature__" in vars(function)
+        or "__signature__" in vars(original)
+        or "__wrapped__" in vars(original)
+        or type(_JAX_COND_OPERAND_DEFAULT) is not object
+        or vars(module).get("_no_operand_sentinel") is not _JAX_COND_OPERAND_DEFAULT
+        or original.__defaults__ is not None
+        or original.__kwdefaults__ is None
+        or tuple(original.__kwdefaults__) != ("operand",)
+        or original.__kwdefaults__["operand"] is not _JAX_COND_OPERAND_DEFAULT
+        # The API-boundary wrapper has no defaults; these are still walked below.
+        or function.__defaults__ is not None
+        or function.__kwdefaults__ is not None
+    ):
+        raise TypeError("Original JAX cond operand default origin changed.")
+    cells = function.__closure__ or ()
+    if len(cells) != len(function.__code__.co_freevars):
+        raise TypeError("Original JAX cond boundary closure changed.")
+    for name, cell in zip(function.__code__.co_freevars, cells, strict=True):
+        if name == "fun":
+            try:
+                if cell.cell_contents is original:
+                    return
+            except ValueError:
+                pass
+    raise TypeError("Original JAX cond boundary callable changed.")
 
 
 def _is_captured_jax_python_function(value: _Reachable) -> bool:
@@ -2998,6 +3786,9 @@ def _semantic_sort_key(value: _Reachable) -> tuple[str, str]:
         # unsupported user key without feeding its repr into the fingerprint.
         digest = type_name
     return type_name, digest
+
+
+_CE_SCALED_SEAL = _capture_ce_scaled_primitive()
 
 
 __all__ = [

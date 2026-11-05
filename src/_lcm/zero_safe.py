@@ -64,18 +64,74 @@ not interchangeable and one of them carries a claim about what the caller has
 already established, so the call site says which is which.
 """
 
+import jax
 import jax.numpy as jnp
 
 from _lcm.probability import (
     balanced_product,
     binades_above_smallest_normal,
+    exact_product,
     is_below_smallest_normal,
+    is_negative,
     is_represented_zero,
     nonzero_exact_product,
     scaled_down_by_power_of_two,
     scaled_exact_product,
 )
 from lcm.typing import FloatND, IntND
+
+
+def factored_weighted_term(*, factors: FloatND, values: FloatND) -> FloatND:
+    """Form each literal weighted term before rounding its probability product.
+
+    Leading-axis factors retain their represented support. Including the finite
+    value in the exponent arithmetic lets a large value rescue a contribution
+    whose probability alone is below the format. No mass normalization occurs.
+    The product rule keeps finite ``dweight * value`` at zero primal factors.
+
+    The value-channel derivative is carried in the active dtype. A probability
+    product below its cotangent range can underflow before an upstream large
+    payoff multiplier, even when the primal term is rescued. This does not
+    qualify extreme-scale automatic sensitivities for certified accuracy; an
+    economic marginal must instead be weighted as its explicit value channel.
+    """
+    return _factored_with_tangent(factors, values)
+
+
+# keyword-only-exempt: library-callback=jax.custom_jvp
+def _factored_primal(factors: FloatND, values: FloatND) -> FloatND:
+    support = jnp.all(~is_represented_zero(factors), axis=0)
+    safe_values = jnp.where(support | jnp.isfinite(values), values, 0.0)
+    product = exact_product(jnp.concatenate((factors, safe_values[None]), axis=0))
+    negative = jnp.sum(is_negative(factors), axis=0) % 2 == 1
+    nonfinite = jnp.where(negative, -values, values)
+    nonfinite = jnp.where(jnp.any(jnp.isnan(factors), axis=0), jnp.nan, nonfinite)
+    return jnp.where(support & ~jnp.isfinite(values), nonfinite, product)
+
+
+# keyword-only-exempt: library-callback=jax.custom_jvp.defjvp
+def _factored_jvp(
+    primals: tuple[FloatND, FloatND], tangents: tuple[FloatND, FloatND]
+) -> tuple[FloatND, FloatND]:
+    factors, values = primals
+    factors_dot, values_dot = tangents
+    # Slopes depend only on primals. Ordinary tangent multiplication is linear
+    # and transposable; applying bit operations to tangents would break reverse AD.
+    # shortcut: active-dtype value cotangents; extending their exponent range
+    # would require a different AD representation, beyond this weighted kernel.
+    tangent = _factored_with_tangent(factors, jnp.ones_like(values)) * values_dot
+    for column in range(factors.shape[0]):
+        others = jnp.concatenate((factors[:column], factors[column + 1 :]), axis=0)
+        slope = _factored_with_tangent(others, values)
+        slope = jnp.where(
+            is_represented_zero(factors[column]) & ~jnp.isfinite(values), 0.0, slope
+        )
+        tangent = tangent + slope * factors_dot[column]
+    return _factored_with_tangent(factors, values), tangent
+
+
+_factored_with_tangent = jax.custom_jvp(_factored_primal)
+_factored_with_tangent.defjvp(_factored_jvp)
 
 
 def joint_weight(factors: FloatND) -> FloatND:

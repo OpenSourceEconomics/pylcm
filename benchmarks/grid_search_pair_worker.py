@@ -444,11 +444,46 @@ def _kernel_execution_metadata(kernel: PeriodKernel) -> _KernelExecution:
     graph_provider = getattr(kernel, "core_programs", None)
     if callable(graph_provider):
         programs = graph_provider()
-        if tuple(programs) != ("main",):
-            raise RuntimeError(
-                "GridSearch benchmark expected exactly one native 'main' program."
-            )
-        program = programs["main"]
+        if tuple(programs) == ("main",):
+            program = programs["main"]
+        else:
+            authority = kernel
+            custody_module = sys.modules.get("_lcm.participation_publication")
+            if type(kernel) is getattr(
+                custody_module, "_BorrowedParticipationKernel", None
+            ):
+                base = getattr(kernel, "base", None)
+                query_module = sys.modules.get("_lcm.policy_queries")
+                if type(base) is not getattr(query_module, "_PolicyQueryKernel", None):
+                    raise RuntimeError(
+                        "GridSearch benchmark needs a native Full query custody base."
+                    )
+                authority = base
+            root = getattr(authority, "root", None)
+            definitions = getattr(authority, "definitions", {})
+            read = getattr(definitions.get(root), "read", None)
+            context = getattr(authority, "root_context", None)
+            program = programs.get("_chunks")
+            schedule = getattr(getattr(program, "function", None), "schedule", ())
+            if (
+                getattr(read, "kind", None) != "Full"
+                or getattr(read, "target", None)
+                != getattr(context, "regime_name", None)
+                or not schedule
+                or getattr(schedule[-1], "name", None) != root
+                or not {"_initialize", "_chunks", "_finish"}
+                <= set(programs)
+                <= {
+                    "_initialize",
+                    "_chunks",
+                    "_finish",
+                    *(() if authority is kernel else ("_participation_surfaces",)),
+                }
+            ):
+                raise RuntimeError(
+                    "GridSearch benchmark expected native 'main' or the declared "
+                    "occupant Full publication graph."
+                )
         raw_disposition = program.disposition
         disposition = getattr(raw_disposition, "value", raw_disposition)
         reduced_axes = getattr(program.requirements, "reduced_axes", None)
@@ -475,26 +510,31 @@ def _kernel_execution_metadata(kernel: PeriodKernel) -> _KernelExecution:
 
 def _route_metadata(model: Model) -> _RouteMetadata:
     rows: list[_KernelRow] = []
-    folded_regimes: list[str] = []
     distributed_regimes: list[str] = []
     collective_regimes: list[str] = []
     taste_shock_regimes: list[str] = []
     gs_vd_regimes: list[str] = []
+    declarations = getattr(model, "user_regimes", {})
+    transitions = getattr(model, "declared_transitions", {}).get("solve", {})
     for regime_name, regime in sorted(model._regimes.items()):  # noqa: SLF001
-        fold_names = tuple(regime.fold_state_names)
         action_names = tuple(regime.solution.action_names)
         action_extents = tuple(
             _grid_extent(regime.solution.grids[name]) for name in action_names
         )
         collective = regime.stakeholders is not None
         has_taste_shocks = bool(regime.has_taste_shocks)
-        if fold_names:
-            folded_regimes.append(regime_name)
         if has_taste_shocks:
             taste_shock_regimes.append(regime_name)
         if collective:
             collective_regimes.append(regime_name)
-        if regime.same_period_ref_regimes or regime.gated_edges:
+        declaration = declarations.get(regime_name)
+        transition = transitions.get(regime_name)
+        if (
+            regime.same_period_ref_regimes
+            or regime.gated_edges
+            or getattr(declaration, "exits", {})
+            or getattr(transition, "participation", {})
+        ):
             gs_vd_regimes.append(regime_name)
         sharded_state_names = getattr(regime.solution, "sharded_state_names", None)
         if sharded_state_names is None:
@@ -507,7 +547,25 @@ def _route_metadata(model: Model) -> _RouteMetadata:
         if sharded_state_names:
             distributed_regimes.append(regime_name)
         for period, kernel in sorted(regime.solution.period_kernels.items()):
-            execution = _kernel_execution_metadata(kernel)
+            try:
+                execution = _kernel_execution_metadata(kernel)
+            except RuntimeError as error:
+                graph = kernel.core_programs()
+                root = getattr(kernel, "root", None)
+                read = getattr(
+                    getattr(kernel, "definitions", {}).get(root), "read", None
+                )
+                context = getattr(kernel, "root_context", None)
+                base = getattr(kernel, "base", None)
+                raise RuntimeError(
+                    f"{error} regime={regime_name!r}, period={period!r}, "
+                    f"kernel={type(kernel).__module__}.{type(kernel).__qualname__}, "
+                    f"base={type(base).__module__}.{type(base).__qualname__}, "
+                    f"programs={tuple(sorted(graph))!r}, root={root!r}, "
+                    f"read_kind={getattr(read, 'kind', None)!r}, "
+                    f"read_target={getattr(read, 'target', None)!r}, "
+                    f"context_regime={getattr(context, 'regime_name', None)!r}."
+                ) from error
             rows.append(
                 {
                     "regime": regime_name,
@@ -517,13 +575,11 @@ def _route_metadata(model: Model) -> _RouteMetadata:
                     **execution,
                     "collective": collective,
                     "has_taste_shocks": has_taste_shocks,
-                    "fold_state_names": list(fold_names),
                 }
             )
     return {
         "kernels": rows,
         "streamed_kernel_count": sum(row["streamed"] for row in rows),
-        "folded_regimes": sorted(set(folded_regimes)),
         "distributed_regimes": sorted(set(distributed_regimes)),
         "collective_regimes": sorted(set(collective_regimes)),
         "taste_shock_regimes": sorted(set(taste_shock_regimes)),
@@ -549,14 +605,12 @@ def _scenario_dimensions(model: Model) -> _Dimensions:
 
 def _assert_scenario_identity(*, spec: ScenarioSpec, routes: _RouteMetadata) -> None:
     observed = {
-        "folded": bool(routes["folded_regimes"]),
         "collective": bool(routes["collective_regimes"]),
         "distributed": bool(routes["distributed_regimes"]),
         "taste_shocks": bool(routes["taste_shock_regimes"]),
         "gs_vd": bool(routes["gs_vd_regimes"]),
     }
     expected = {
-        "folded": spec.expected_folded,
         "collective": spec.expected_collective,
         "distributed": spec.expected_distributed,
         "taste_shocks": spec.expected_taste_shocks,

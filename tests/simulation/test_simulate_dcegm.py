@@ -52,7 +52,7 @@ from tests.solution.test_egm_markov_states import (
     _params as _markov_params,
 )
 from tests.test_models import dcegm_paper_twin
-from tests.test_models.deterministic import dcegm_variants
+from tests.test_models.deterministic import dcegm_variants, retirement_only
 from tests.test_models.deterministic.base import RegimeId as FullRegimeId
 from tests.test_models.deterministic.retirement_only import (
     RETIREMENT_LAW,
@@ -284,8 +284,20 @@ def test_dcegm_simulate_consumes_the_provided_solution():
     """
     n_periods = 4
     initial_wealth = 20.0
-    model = dcegm_variants.get_retirement_only_model(
-        solver="dcegm", n_periods=n_periods
+    # The V arrays drive the decision only on the grid route; the default
+    # policy-first route reads the solved policy rows, so pin `replay="grid"`.
+    ages = AgeGrid(start=40, inclusive_stop=40 + (n_periods - 1) * 10, step="10Y")
+    model = Model(
+        regimes={
+            "retirement": dcegm_variants.dcegm_retirement.replace(
+                solver=replace(dcegm_variants.DCEGM_SOLVER, replay="grid")
+            ),
+            "dead": dcegm_variants.dead,
+        },
+        ages=ages,
+        regime_id_class=RetirementOnlyRegimeId,
+        initial_nodes={ages.exact_values[0]: "retirement"},
+        edges=retirement_only.retirement_edges(ages),
     )
     params = _pensioned_params(n_periods=n_periods)
     solution = model.solve(params=params, log_level="debug")

@@ -97,7 +97,7 @@ def _model(
                 n_std=2.0,
                 n_points=5,
                 gauss_hermite=False,
-                simulate_draws="nodes",
+                simulated_draws="nodes",
             )
         },
         functions={"utility": reader},

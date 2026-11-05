@@ -65,8 +65,8 @@ from lcm.exceptions import ExecutionPlanningError, PyLCMError
 from lcm.model import Model
 from lcm.regime import Regime as UserRegime
 from lcm.result import SimulationResult
-from lcm.solver_api import DISSOLUTION_FLAG
 from lcm.typing import RegimeName, ScalarFloat, ScalarInt
+from tests import conftest as test_config
 from tests.simulation._profile_comparison import (
     assert_values_agree as assert_agrees_to_ulp,
 )
@@ -267,14 +267,15 @@ def _calculate_exact_layout_utility(
 
 
 def _get_exact_layout_values(
-    *, retirement_reads_type2: bool
+    *, retirement_reads_type2: bool, n_types: int = 4, move_type2: bool = False
 ) -> dict[int, dict[str, np.ndarray]]:
     """Enumerate the affine Bellman solution with rational arithmetic.
 
-    For each fixed type pair, V(w) = slope * w + intercept. Consumption affects
-    the intercept only, so enumerating the nine actions solves each period at
-    every wealth. The grid spacing eight, integer actions, and discount one-half
-    keep both this reference and the interpolated implementation representable.
+    For each dated type pair, V(w) = slope * w + intercept. The moving type's
+    continuation uses its destination type, not its current type. Consumption
+    affects the intercept only, so enumerating the nine actions solves each
+    period at every wealth. Grid spacing eight, integer actions, and discount
+    one-half keep both the reference and the implementation representable.
 
     Stored values have denominator dividing 64 and magnitude below 1296. The
     extrapolation weights have denominator dividing 8 and absolute sum at most
@@ -288,41 +289,59 @@ def _get_exact_layout_values(
     and have magnitude at most 729 + (149/8)*1296 = 24867. Their numerators
     stay below 2**24, within float32's significand under reassociation as well.
     """
+    if move_type2 and n_types != 2:
+        raise ValueError("The moving type is the binary permutation 1 - type2.")
     values: dict[int, dict[str, np.ndarray]] = {
-        period: {"working_life": np.empty((4, 4, 9))} for period in range(5)
+        period: {"working_life": np.empty((n_types, n_types, 9))} for period in range(5)
     }
     # `working_life`'s declared support names `retirement` at every source age, so
     # the terminal value is solved at every period after the first; it does not
     # depend on the period.
-    terminal_shape = (4, 4, 9) if retirement_reads_type2 else (4, 9)
+    terminal_shape = (n_types, n_types, 9) if retirement_reads_type2 else (n_types, 9)
     terminal_value = np.empty(terminal_shape)
     values[5] = {}
-    for type1 in range(4):
-        for type2 in range(4):
+    continuation: dict[tuple[int, int], tuple[Fraction, Fraction]] = {}
+    for type1 in range(n_types):
+        for type2 in range(n_types):
             slope = Fraction(type1 * (type2 if retirement_reads_type2 else 1), 2)
-            intercept = Fraction(0)
+            continuation[type1, type2] = (slope, Fraction(0))
             terminal = [float(slope * wealth) for wealth in range(8, 73, 8)]
             index = (type1, type2) if retirement_reads_type2 else type1
             terminal_value[index] = terminal
-            for period in reversed(range(5)):
+    for period in reversed(range(5)):
+        current: dict[tuple[int, int], tuple[Fraction, Fraction]] = {}
+        for type1 in range(n_types):
+            for type2 in range(n_types):
+                next_type2 = 1 - type2 if move_type2 else type2
+                slope, intercept = continuation[type1, next_type2]
                 intercept = intercept / 2 + max(
                     (type1 * type2 - slope / 2) * consumption
                     for consumption in range(1, 10)
                 )
                 slope = type1 * type2 + slope / 2
+                current[type1, type2] = (slope, intercept)
                 values[period]["working_life"][type1, type2] = [
                     float(slope * wealth + intercept) for wealth in range(8, 73, 8)
                 ]
+        continuation = current
     for period in range(1, 6):
         values[period]["retirement"] = terminal_value
     return values
 
 
 def _assert_exact_layout_values(
-    *, values: Mapping[int, Mapping[str, ArrayLike]], retirement_reads_type2: bool
+    *,
+    values: Mapping[int, Mapping[str, ArrayLike]],
+    retirement_reads_type2: bool,
+    n_types: int = 4,
+    move_type2: bool = False,
 ) -> None:
     """Check every state and period against the independent rational solution."""
-    expected = _get_exact_layout_values(retirement_reads_type2=retirement_reads_type2)
+    expected = _get_exact_layout_values(
+        retirement_reads_type2=retirement_reads_type2,
+        n_types=n_types,
+        move_type2=move_type2,
+    )
     assert values.keys() == expected.keys()
     for period, by_regime in values.items():
         assert by_regime.keys() == expected[period].keys()
@@ -330,10 +349,12 @@ def _assert_exact_layout_values(
             np.testing.assert_array_equal(value, expected[period][regime])
 
 
-# A GridSearch core sums its int32 empty-action and other-Inf counts over every
+# A GridSearch core sums its empty-action and other-Inf counts over every
 # state cell, so a state-sharded core reduces that one scalar pair across devices.
+_COUNTER_HLO_DTYPE = "s64" if jax.config.x64_enabled else "s32"
 _COUNTER_ALL_REDUCE = re.compile(
-    r"(%all-reduce[.\d]*) = \(s32\[\], s32\[\]\) all-reduce\("
+    rf"(%all-reduce[.\d]*) = \({_COUNTER_HLO_DTYPE}\[\], "
+    rf"{_COUNTER_HLO_DTYPE}\[\]\) all-reduce\("
 )
 _COLLECTIVES = (
     "all-gather",
@@ -360,14 +381,31 @@ def _collectives_beyond_feasibility_counts(*, hlo: str) -> list[str]:
     "line",
     [
         "%all-reduce.3 = f64[] all-reduce(%x), to_apply=%add",
-        "%all-reduce.4 = (s32[], s32[], s32[]) all-reduce(%a, %b, %c)",
+        (
+            f"%all-reduce.4 = ({_COUNTER_HLO_DTYPE}[], {_COUNTER_HLO_DTYPE}[], "
+            f"{_COUNTER_HLO_DTYPE}[]) all-reduce(%a, %b, %c)"
+        ),
         "%all-gather.1 = f64[8] all-gather(%v), dimensions={0}",
+        (
+            f"%all-reduce.5 = ({_COUNTER_HLO_DTYPE}[1], "
+            f"{_COUNTER_HLO_DTYPE}[1]) all-reduce(%a, %b)"
+        ),
+        "%all-reduce.6 = (s32[], s64[]) all-reduce(%a, %b)",
+        "%all-reduce.7 = (s32[], s32[]) all-reduce(%a, %b)"
+        if jax.config.x64_enabled
+        else "%all-reduce.7 = (s64[], s64[]) all-reduce(%a, %b)",
     ],
 )
 def test_the_collective_check_reports_anything_but_the_count_pair(line: str) -> None:
-    """Only the scalar int32 count pair and its unpacking are exempt."""
-    counter = "%all-reduce.2 = (s32[], s32[]) all-reduce(%e, %o), to_apply=%sum"
-    unpack = "%get-tuple-element.7 = s32[] get-tuple-element(%all-reduce.2), index=0"
+    """Only the configured scalar count pair and its unpacking are exempt."""
+    counter = (
+        f"%all-reduce.2 = ({_COUNTER_HLO_DTYPE}[], {_COUNTER_HLO_DTYPE}[]) "
+        "all-reduce(%e, %o), to_apply=%sum"
+    )
+    unpack = (
+        f"%get-tuple-element.7 = {_COUNTER_HLO_DTYPE}[] "
+        "get-tuple-element(%all-reduce.2), index=0"
+    )
 
     assert _collectives_beyond_feasibility_counts(
         hlo=f"{counter}\n{unpack}\n{line}"
@@ -387,14 +425,23 @@ def _assert_exact_layout_grids(*, model: Model) -> None:
 
 
 @pytest.mark.parametrize("retirement_reads_type2", [True, False])
+@pytest.mark.parametrize("move_type2", [False, True])
 @pytest.mark.parametrize("mutation", ["type1", "type2", "value"])
 def test_exact_layout_reference_rejects_misaligned_or_changed_values(
-    *, retirement_reads_type2: bool, mutation: str
+    *, retirement_reads_type2: bool, move_type2: bool, mutation: str
 ) -> None:
     """Every type axis and an adjacent represented value remain observable."""
-    values = _get_exact_layout_values(retirement_reads_type2=retirement_reads_type2)
+    n_types = 2 if move_type2 else 4
+    values = _get_exact_layout_values(
+        retirement_reads_type2=retirement_reads_type2,
+        n_types=n_types,
+        move_type2=move_type2,
+    )
     _assert_exact_layout_values(
-        values=values, retirement_reads_type2=retirement_reads_type2
+        values=values,
+        retirement_reads_type2=retirement_reads_type2,
+        n_types=n_types,
+        move_type2=move_type2,
     )
     working = values[0]["working_life"]
     if mutation == "value":
@@ -405,7 +452,10 @@ def test_exact_layout_reference_rejects_misaligned_or_changed_values(
         )
     with pytest.raises(AssertionError):
         _assert_exact_layout_values(
-            values=values, retirement_reads_type2=retirement_reads_type2
+            values=values,
+            retirement_reads_type2=retirement_reads_type2,
+            n_types=n_types,
+            move_type2=move_type2,
         )
 
 
@@ -559,13 +609,11 @@ def test_solution_running_on_multiple_cpus(correct_distributed_model):
 
 @_skip_pytest_parallel
 def test_distributed_solve_matches_single_device_per_type():
-    """A sharded solve yields the same value function as the single-device solve.
+    """Keep each type's values within one ULP at the array's scale.
 
-    Distributing the permanent type axes across devices changes only where the
-    continuation-value interpolation runs, never its result: every (type1, type2)
-    slice of the sharded V-array is identical to the same slice solved on one
-    device. This pins the per-type-local read of the continuation V — a wrong
-    local index would corrupt some types' values.
+    Sharding the permanent type axes changes the compiled program's shape.
+    The per-type continuation read preserves coordinates and dtype exactly;
+    published values can carry one ULP of rounding at the array's scale.
     """
     params = {"discount_factor": 0.95}
     sharded = (
@@ -579,10 +627,19 @@ def test_distributed_solve_matches_single_device_per_type():
         .values
     )
 
+    assert sharded.keys() == single.keys()
     for period, regime_to_V_arr in sharded.items():
+        assert regime_to_V_arr.keys() == single[period].keys()
         for regime_name, V_arr in regime_to_V_arr.items():
-            np.testing.assert_array_equal(
-                np.asarray(V_arr), np.asarray(single[period][regime_name])
+            got = np.asarray(V_arr)
+            expected = np.asarray(single[period][regime_name])
+            assert (got.shape, got.dtype) == (expected.shape, expected.dtype)
+            test_config.assert_agrees_to_ulp(
+                got=got,
+                expected=expected,
+                n_ulp=1,
+                operand_magnitude=float(np.abs(expected).max(initial=0.0)),
+                err_msg=f"regime {regime_name!r}, period {period}",
             )
 
 
@@ -719,19 +776,48 @@ def test_terminal_cell_tiling_does_not_gather_coordinates_or_outputs(
 
 @_skip_pytest_parallel
 @pytest.mark.parametrize("cell_width", [1, 3])
-def test_mixed_outer_state_axes_preserve_values(*, cell_width):
+@pytest.mark.parametrize("exact_layout", [False, True], ids=["nonlinear", "exact"])
+def test_mixed_outer_state_axes_preserve_values(
+    *, cell_width: int, exact_layout: bool
+) -> None:
     """A moving sharded axis and a co-mapped fixed axis retain their state order."""
-    candidate = _make_correct_distributed_model(
-        move_type2=True, cell_width=cell_width
-    ).solve(log_level="off", params={"discount_factor": 0.95})
-    reference = _make_correct_distributed_model(
-        distributed=False, move_type2=True, cell_width=cell_width
-    ).solve(log_level="off", params={"discount_factor": 0.95})
-    assert_agrees_to_ulp(
-        got=np.asarray(candidate.values[0]["working_life"]),
-        expected=np.asarray(reference.values[0]["working_life"]),
-        n_ulp=4,
+    models = tuple(
+        _make_correct_distributed_model(
+            distributed=distributed,
+            move_type2=True,
+            cell_width=cell_width,
+            exact_layout=exact_layout,
+        )
+        for distributed in (True, False)
     )
+    if exact_layout:
+        for model in models:
+            _assert_exact_layout_grids(model=model)
+    candidate, reference = (
+        model.solve(
+            log_level="off",
+            params={"discount_factor": 0.5 if exact_layout else 0.95},
+        )
+        for model in models
+    )
+    if exact_layout:
+        for solution in (candidate, reference):
+            _assert_exact_layout_values(
+                values=solution.values,
+                retirement_reads_type2=True,
+                n_types=2,
+                move_type2=True,
+            )
+    else:
+        actual = np.asarray(candidate.values[0]["working_life"])
+        expected = np.asarray(reference.values[0]["working_life"])
+        assert (actual.shape, actual.dtype) == (expected.shape, expected.dtype)
+        test_config.assert_agrees_to_ulp(
+            got=actual,
+            expected=expected,
+            n_ulp=4,
+            operand_magnitude=float(max(np.abs(actual).max(), np.abs(expected).max())),
+        )
 
 
 @_skip_pytest_parallel
@@ -763,7 +849,9 @@ def test_planned_solve_rejects_a_replicated_output_injected_after_kernel_call(
 
     monkeypatch.setattr(backward_induction, "_run_period_kernel", emit_replicated_V)
 
-    with pytest.raises(AssertionError, match="post-run repair is not permitted"):
+    with pytest.raises(
+        AssertionError, match=r"An assembled period value.*is not its template"
+    ):
         model.solve(
             log_level="off",
             params={"discount_factor": 0.95},
@@ -1057,11 +1145,11 @@ def test_value_transfer_copies_a_named_target_onto_a_single_device_source():
 
 
 @_skip_pytest_parallel
-def test_collective_grid_search_value_and_dissolution_have_planned_state_layout():
-    """Collective V keeps its stakeholder axis replicated; D has state rank.
+def test_collective_grid_search_value_has_planned_state_layout():
+    """Collective V keeps its stakeholder axis replicated.
 
     Values agree across differently fused device topologies to dtype-scale rounding;
-    dissolution and layout remain exact.
+    layout remains exact.
     """
     distributed_model = _make_one_axis_collective_model(distributed=True)
     working_kernels = distributed_model._regimes["working"].solution.period_kernels
@@ -1081,12 +1169,10 @@ def test_collective_grid_search_value_and_dissolution_have_planned_state_layout(
         log_level="off",
         params={"discount_factor": 0.95},
     )
-    distributed_flags = distributed_values.replay_artifacts.project(DISSOLUTION_FLAG)
     single_values = single_model.solve(
         log_level="off",
         params={"discount_factor": 0.95},
     )
-    single_flags = single_values.replay_artifacts.project(DISSOLUTION_FLAG)
 
     for period, regime_to_value in distributed_values.values.items():
         for regime_name, value in regime_to_value.items():
@@ -1098,14 +1184,6 @@ def test_collective_grid_search_value_and_dissolution_have_planned_state_layout(
             reference = single_values.values[period][regime_name]
             eps = np.finfo(np.asarray(value).dtype).eps
             np.testing.assert_allclose(value, reference, rtol=2 * eps, atol=2 * eps)
-            dissolution = distributed_flags[period][regime_name]
-            assert isinstance(dissolution, jax.Array)
-            assert dissolution.shape == (4, 4)
-            assert isinstance(dissolution.sharding, NamedSharding)
-            assert dissolution.sharding.spec == PartitionSpec("type1", None)
-            np.testing.assert_array_equal(
-                dissolution, single_flags[period][regime_name]
-            )
 
 
 @_skip_pytest_parallel

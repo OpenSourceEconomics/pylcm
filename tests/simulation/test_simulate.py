@@ -5,6 +5,7 @@ from types import MappingProxyType
 from typing import Literal
 
 import cloudpickle
+import jax
 import jax.numpy as jnp
 import pandas as pd
 import pytest
@@ -91,6 +92,7 @@ def simulate_inputs():
         "regime_names_to_ids": regime_names_to_ids,
         "ages": ages,
         "simulation_output_dtypes": _get_output_dtypes(
+            shocks={},
             user_regimes=finalize_regimes(
                 user_regimes=user_regimes,
                 laws=laws,
@@ -936,3 +938,22 @@ def test_collect_array_tree_leaf_sizes_records_path_dtype_and_size():
     assert leaf.shape == (3, 4)
     assert leaf.dtype == jnp.int32
     assert leaf.n_bytes == 3 * 4 * 4
+
+
+def test_random_experiment_metadata_survives_save_load(
+    *, tmp_path: Path, regression_simulation_result: SimulationResult
+) -> None:
+    """A saved panel identifies its random addresses, PRNG and floating precision."""
+    result = regression_simulation_result
+    assert dict(result.randomness) == {
+        "address_version": "pylcm.random.v1",
+        "prng_impl": "threefry2x32",
+        "taste_prng_impl": "threefry2x32",
+        "precision": "float64" if jax.config.jax_enable_x64 else "float32",
+    }
+    with pytest.raises(TypeError):
+        result.randomness["precision"] = "altered"  # ty: ignore[invalid-assignment]
+    directory = tmp_path / "random-panel"
+    result.save(directory=directory)
+    restored = SimulationResult.load(directory=directory)
+    assert restored.randomness == result.randomness

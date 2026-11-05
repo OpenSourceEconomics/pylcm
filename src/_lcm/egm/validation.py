@@ -65,6 +65,7 @@ from dags import concatenate_functions, get_ancestors
 
 from _lcm.constraints.bounds import lower_bound_declaration
 from _lcm.constraints.processed import ConstraintLike, normalize_constraints
+from _lcm.egm.outer_search import FiniteOuterGrid
 from _lcm.egm.preferences import BoundUtilityOfAction
 from _lcm.grids import ContinuousGrid, Grid, IrregSpacedGrid
 from _lcm.post_decision_bound import _PostDecisionLowerBound
@@ -83,7 +84,11 @@ from _lcm.typing import (
     StateOrActionName,
 )
 from _lcm.utils.functools import array_result
-from lcm.exceptions import GridInitializationError, ModelInitializationError
+from lcm.consumption_savings_regime import _DIRECT_RESOURCES_FUNCTION
+from lcm.exceptions import (
+    GridInitializationError,
+    ModelInitializationError,
+)
 from lcm.koopmans_aggregation import LinearAggregator
 from lcm.phased import Phased
 from lcm.regime import ActionEntry, StateEntry, StateTransitionEntry
@@ -96,6 +101,7 @@ from lcm.transition import (
     StochasticTransition,
 )
 from lcm.typing import (
+    BoolND,
     Float1D,
     FloatND,
     Int1D,
@@ -109,6 +115,7 @@ from lcm.typing import (
 # A transition declaration as the EGM checks unpack it: a `state_transitions`
 # entry, a regime's engine-view law, or one case of an age schedule.
 type _TransitionDeclaration = StateTransitionEntry | DecomposedTransition | AgeCaseLaw
+
 
 # Shrink threshold of the node-resolution continuity spot check. Within one
 # Euler grid cell, a function that is smooth at node resolution has
@@ -231,6 +238,7 @@ def validate_dcegm_regime(
     user_regimes: Mapping[RegimeName, UserRegime],
     laws: RegimeLaws,
     solution_reachability: PhaseReachability | None,
+    shock_node_states: frozenset[StateName] = frozenset(),
 ) -> None:
     """Run all DC-EGM contract checks for a single regime, in order."""
     solver = cast("_BoundDCEGM", user_regime.solver)
@@ -263,6 +271,13 @@ def validate_dcegm_regime(
     _fail_if_resources_depend_on_continuous_action(
         regime_name=regime_name, functions=functions, solver=solver
     )
+    fail_if_off_node_process_enters_utility(
+        regime_name=regime_name,
+        user_regime=user_regime,
+        resources=solver.resources,
+        solver_name="DCEGM",
+        shock_node_states=shock_node_states,
+    )
     _fail_if_passive_state_invalid(
         regime_name=regime_name,
         user_regime=user_regime,
@@ -286,7 +301,9 @@ def validate_dcegm_regime(
         solver=solver,
     )
     _fail_if_grid_hygiene_violated(
-        regime_name=regime_name, user_regime=user_regime, solver=solver
+        regime_name=regime_name,
+        user_regime=user_regime,
+        solver=solver,
     )
     if solution_reachability is not None:
         _fail_if_target_regime_incompatible(
@@ -516,7 +533,8 @@ def fail_if_declared_lower_bound_disagrees_with_the_grid(
         # Python float compares two representations of one decimal and refuses
         # a faithful declaration for every decimal the dtype cannot hold —
         # which at reduced precision is most of them.
-        if bool(jnp.asarray(declared_bound, dtype=grid_low.dtype) != grid_low):
+        disagrees = jnp.asarray(declared_bound, dtype=grid_low.dtype) != grid_low
+        if bool(disagrees):
             msg = (
                 f"The declaration '{constraint_name}' of regime "
                 f"'{regime_name}' states a lower bound of {declared_bound} "
@@ -610,6 +628,91 @@ def _fail_if_utility_depends_on_continuous_state(
             f"continuous action '{solver.continuous_action}'."
         )
         raise ModelInitializationError(msg)
+
+
+def fail_if_off_node_process_enters_utility(
+    *,
+    regime_name: RegimeName,
+    user_regime: UserRegime,
+    resources: FunctionName,
+    solver_name: str,
+    shock_node_states: frozenset[StateName],
+) -> None:
+    """Refuse a process drawn off its nodes that `utility` reads but via resources.
+
+    Simulation reads an EGM policy at an off-node process value by blending the
+    policy rows of the two bracketing nodes. That is exact for a process that
+    only shifts resources, since every node row is then one policy of
+    resources, but only an approximation for a process that changes
+    preferences. A process declared with `simulated_draws="nodes"` is only ever
+    drawn at its nodes, so its read takes a single node row and is admitted.
+    The check removes the resources function from the DAG, so a read of the
+    process inside it is admitted while every other path into `utility`,
+    through any helper, is refused. It covers IID and AR(1) processes, with
+    fixed or runtime laws, and the node states of `shocks=` alike.
+
+    Args:
+        regime_name: Name of the regime being validated.
+        user_regime: The user-facing regime, with `shocks=` lowered to node
+            states.
+        resources: Name of the resources function the process may enter.
+        solver_name: Name of the solver the message names.
+        shock_node_states: Node states that solve the shocks of `shocks=`
+            groups. A group has no draw mode of its own, so the message points
+            its shocks to an IID process state that simulates on its nodes.
+
+    Raises:
+        ModelInitializationError: If `utility` reads a process state drawn off
+            its nodes other than through `resources`.
+
+    """
+    off_node_states = {
+        name
+        for name, grid in _solve_grids(slot=user_regime.states).items()
+        if isinstance(grid, _ContinuousStochasticProcess)
+        and grid.simulated_draws != "nodes"
+    }
+    if not off_node_states:
+        return
+    functions = _without(
+        functions=_resolve_solve_functions(user_regime=user_regime),
+        names={resources},
+    )
+    readers = sorted(
+        off_node_states
+        & set(get_ancestors(functions, targets=["utility"], include_targets=False))
+    )
+    if not readers:
+        return
+    # A liquid state declared as its own resources has no user-named function.
+    named = "" if resources == _DIRECT_RESOURCES_FUNCTION else f" ('{resources}')"
+    processes = [name for name in readers if name not in shock_node_states]
+    shocks = [name for name in readers if name in shock_node_states]
+    read = " and ".join(
+        [f"the process state(s) {processes}"] * bool(processes)
+        + [f"the shock(s) {shocks} of a `shocks=` group"] * bool(shocks)
+    )
+    on_nodes = '`simulated_draws="nodes"`'
+    if not shocks:
+        remedy = f"Move the process into resources{named}, declare it with {on_nodes}"
+    elif not processes:
+        remedy = (
+            f"Move the shock into resources{named}, declare it as an IID process "
+            f"state with {on_nodes}"
+        )
+    else:
+        remedy = (
+            f"Move them into resources{named}, declare the process states with "
+            f"{on_nodes} and the shocks as IID process states with it"
+        )
+    msg = (
+        f"The utility function of {solver_name} regime '{regime_name}' reads "
+        f"{read} other than through resources{named}. An EGM regime solves a "
+        "process on its nodes and simulates a draw between them from the "
+        "bracketing node policies, which is exact only for a process that enters "
+        f"through resources. {remedy}, or use GridSearch for this regime."
+    )
+    raise ModelInitializationError(msg)
 
 
 def _fail_if_resources_depend_on_continuous_action(
@@ -842,7 +945,7 @@ def _savings_stage_candidates(
     *,
     user_regime: UserRegime,
     law: RegimeLaw,
-    solver: _BoundDCEGM,
+    solver: _BoundDCEGM | _BoundNBEGM,
     exclude_states: frozenset[StateName] = frozenset(),
 ) -> tuple[tuple[str, str, UserFunction], ...]:
     """Enumerate every savings-stage function variant of a regime.
@@ -971,6 +1074,23 @@ def _fail_if_grid_hygiene_violated(
         raise ModelInitializationError(msg)
 
 
+def _finite_nnbegm_target_message(
+    *, regime_name: RegimeName, target_name: RegimeName
+) -> str:
+    """Explain why a DCEGM regime cannot precede a finite NNBEGM regime."""
+    msg = (
+        f"Regime '{regime_name}' is solved with DCEGM and its successor regime "
+        f"'{target_name}' is solved with NNBEGM over a FiniteOuterGrid. This "
+        f"combination is not supported: simulating '{regime_name}' would evaluate "
+        f"actions whose next-period states lie outside the domain '{target_name}' "
+        "was solved on."
+    )
+    return (
+        f"{msg} Solve '{regime_name}' with NBEGM or GridSearch instead, or declare "
+        "it as a NestedConsumptionSavingsRegime solved with NNBEGM."
+    )
+
+
 def _fail_if_target_regime_incompatible(
     *,
     regime_name: RegimeName,
@@ -984,10 +1104,23 @@ def _fail_if_target_regime_incompatible(
     Terminal targets are always allowed, and brute-force regimes may target
     DC-EGM regimes (they only consume the target's value-function array).
     """
+    from _lcm.solution.nnbegm import (  # noqa: PLC0415 - finalized family is read after solver modules initialize
+        NNBEGM,
+    )
+
     for target_name in solution_reachability.union_targets(source=regime_name):
         target = user_regimes[target_name]
         if laws[target_name].terminal:
             continue
+        if isinstance(target.solver, NNBEGM) and isinstance(
+            target.solver.outer_search, FiniteOuterGrid
+        ):
+            raise ModelInitializationError(
+                _finite_nnbegm_target_message(
+                    regime_name=regime_name,
+                    target_name=target_name,
+                )
+            )
         if not isinstance(target.solver, DCEGM):
             msg = (
                 f"Regime '{regime_name}' uses the DCEGM solver and can reach "
@@ -1040,6 +1173,8 @@ def _fail_if_numeric_spot_checks_fail(
     euler_sample = _grid_sample(grid=grids[solver.continuous_state])
     action_sample = _grid_sample(grid=grids[solver.continuous_action])
     n_sample = min(euler_sample.shape[0], action_sample.shape[0])
+    euler_items = euler_sample
+    action_items = action_sample
 
     resources_func = concatenate_functions(functions, targets=solver.resources)
     resources_kwargs = _fixed_kwargs(
@@ -1054,7 +1189,7 @@ def _fail_if_numeric_spot_checks_fail(
                 fixed=resources_kwargs,
                 varied={solver.continuous_state: w},
             )
-            for w in euler_sample
+            for w in euler_items
         ]
         # Asset-row mode (a savings-stage function reads the Euler state)
         # publishes the carry marginal by dividing by the resources slope
@@ -1067,8 +1202,8 @@ def _fail_if_numeric_spot_checks_fail(
         bad = [
             (float(w_lo), float(w_hi))
             for w_lo, w_hi, r_lo, r_hi in zip(
-                euler_sample[:-1],
-                euler_sample[1:],
+                euler_items[:-1],
+                euler_items[1:],
                 resources_at[:-1],
                 resources_at[1:],
                 strict=True,
@@ -1104,7 +1239,7 @@ def _fail_if_numeric_spot_checks_fail(
         )
         if post_kwargs is not None:
             for w, c in zip(
-                euler_sample[:n_sample], action_sample[:n_sample], strict=True
+                euler_items[:n_sample], action_items[:n_sample], strict=True
             ):
                 resources_value = _call_with_varied(
                     func=resources_func,
@@ -1121,7 +1256,10 @@ def _fail_if_numeric_spot_checks_fail(
                 )
                 expected = resources_value - c
                 if not _isclose(
-                    actual=post_value, expected=expected, rtol=rtol, atol=atol
+                    actual=post_value,
+                    expected=expected,
+                    rtol=rtol,
+                    atol=atol,
                 ):
                     msg = (
                         f"Consumption recovery fails in regime '{regime_name}': "
@@ -1184,14 +1322,19 @@ def _fail_if_inverse_marginal_utility_inconsistent(
     # wrong at another. The contexts are index-aligned, so the j-th utility and
     # inverse contexts bind shared arguments to the same grid points.
     utility_contexts = _combo_contexts(
-        func=utility_func, grids=grids, varied={solver.continuous_action}
+        func=utility_func,
+        grids=grids,
+        varied={solver.continuous_action},
     )
     inverse_contexts = _combo_contexts(
-        func=inverse_func, grids=grids, varied={"marginal_continuation"}
+        func=inverse_func,
+        grids=grids,
+        varied={"marginal_continuation"},
     )
     if not utility_contexts or not inverse_contexts:
         return
 
+    action_items = action_sample
     for utility_kwargs, inverse_kwargs in zip(
         utility_contexts, inverse_contexts, strict=True
     ):
@@ -1210,8 +1353,8 @@ def _fail_if_inverse_marginal_utility_inconsistent(
         non_decreasing = [
             (float(c_lo), float(c_hi))
             for c_lo, c_hi, mu_lo, mu_hi in zip(
-                action_sample[:-1],
-                action_sample[1:],
+                action_items[:-1],
+                action_items[1:],
                 marginal_utility[:-1],
                 marginal_utility[1:],
                 strict=True,
@@ -1228,9 +1371,14 @@ def _fail_if_inverse_marginal_utility_inconsistent(
             )
             raise ModelInitializationError(msg)
 
-        for c, mu in zip(action_sample, marginal_utility, strict=True):
+        for c, mu in zip(action_items, marginal_utility, strict=True):
             recovered = inverse_func(**inverse_kwargs, marginal_continuation=mu)
-            if not _isclose(actual=recovered, expected=c, rtol=rtol, atol=atol):
+            if not _isclose(
+                actual=recovered,
+                expected=c,
+                rtol=rtol,
+                atol=atol,
+            ):
                 msg = (
                     f"'inverse_marginal_utility' of regime '{regime_name}' is "
                     "inconsistent with `jax.grad` of the utility DAG: the "
@@ -1306,7 +1454,9 @@ def _fail_if_savings_stage_function_jumps_in_euler_state(
                 euler_sample=euler_sample,
             )
             jump_location = _find_jump_at_node_resolution(
-                grid_points=euler_points, values=law_values, atol=base_atol
+                grid_points=euler_points,
+                values=law_values,
+                atol=base_atol,
             )
             if jump_location is not None:
                 consequence = (
@@ -1352,11 +1502,35 @@ def _node_resolution_sample(*, grid_points: Float1D) -> Float1D:
         quarter points of every cell.
 
     """
+
     left = grid_points[:-1]
     right = grid_points[1:]
     offsets = jnp.asarray([0.0, 0.25, 0.5, 0.75])
     refined = (left[:, None] + (right - left)[:, None] * offsets[None, :]).reshape(-1)
     return jnp.concatenate([refined, grid_points[-1:]])
+
+
+def _node_jump_mask(
+    *, grid_points: Float1D, values: FloatND | IntND, atol: float
+) -> BoolND:
+    """Original quarter-cell continuity predicate, before its host decision."""
+    flat = jnp.asarray(values).reshape(values.shape[0], -1)
+    quarter_increments = jnp.max(jnp.abs(jnp.diff(flat, axis=0)), axis=1)
+    node_values = flat[::4]
+    node_increments = jnp.max(jnp.abs(jnp.diff(node_values, axis=0)), axis=1)
+    n_cells = int(grid_points.shape[0]) - 1
+    max_quarter_per_cell = quarter_increments.reshape(n_cells, 4).max(axis=1)
+    # Edge-pad so the first and last cells compare against their available
+    # neighbors only.
+    padded = jnp.concatenate(
+        [node_increments[:1], node_increments, node_increments[-1:]]
+    )
+    neighborhood = jnp.maximum(jnp.maximum(padded[:-2], padded[1:-1]), padded[2:])
+    scale = jnp.max(jnp.abs(jnp.where(jnp.isfinite(flat), flat, 0.0)))
+    noise_floor = atol * (1.0 + scale)
+    return max_quarter_per_cell > (
+        _CONTINUITY_SHRINK_FACTOR * neighborhood + noise_floor
+    )
 
 
 def _find_jump_at_node_resolution(
@@ -1383,24 +1557,9 @@ def _find_jump_at_node_resolution(
         refined increments shrink as a smooth function's would.
 
     """
-    flat = jnp.asarray(values).reshape(values.shape[0], -1)
-    quarter_increments = jnp.max(jnp.abs(jnp.diff(flat, axis=0)), axis=1)
-    node_values = flat[::4]
-    node_increments = jnp.max(jnp.abs(jnp.diff(node_values, axis=0)), axis=1)
-    n_cells = int(grid_points.shape[0]) - 1
-    max_quarter_per_cell = quarter_increments.reshape(n_cells, 4).max(axis=1)
-    # Edge-pad so the first and last cells compare against their available
-    # neighbors only.
-    padded = jnp.concatenate(
-        [node_increments[:1], node_increments, node_increments[-1:]]
-    )
-    neighborhood = jnp.maximum(jnp.maximum(padded[:-2], padded[1:-1]), padded[2:])
-    scale = jnp.max(jnp.abs(jnp.where(jnp.isfinite(flat), flat, 0.0)))
-    noise_floor = atol * (1.0 + scale)
-    jumps = max_quarter_per_cell > (
-        _CONTINUITY_SHRINK_FACTOR * neighborhood + noise_floor
-    )
-    if not bool(jnp.any(jumps)):
+    jumps = _node_jump_mask(grid_points=grid_points, values=values, atol=atol)
+    any_jump = jnp.any(jumps)
+    if not bool(any_jump):
         return None
     index = int(jnp.argmax(jumps))
     return float(0.5 * (grid_points[index] + grid_points[index + 1]))
@@ -1424,6 +1583,7 @@ def _law_values_on_sample(
     weight vectors) stack along the sample axis; deterministic regime
     transitions yield integer regime ids.
     """
+
     law_of_euler_state = functools.partial(
         _law_at_euler_state,
         law_func=law_func,
@@ -1493,7 +1653,7 @@ def _combo_contexts(
     return tuple(
         MappingProxyType(
             {
-                name: sample[min(j, sample.shape[0] - 1)]
+                name: (sample[min(j, sample.shape[0] - 1)])
                 for name, sample in samples.items()
             }
         )
@@ -1616,12 +1776,17 @@ def _dag_ancestors(
     )
 
 
-def _grid_sample(*, grid: Grid, n_points: int = 5) -> Float1D | Int1D:
+def _grid_sample(
+    *,
+    grid: Grid,
+    n_points: int = 5,
+) -> Float1D | Int1D:
     """A small, sorted, evenly indexed sample of grid points.
 
     Continuous grids yield float points; discrete grids yield their integer
     codes, so the sample dtype follows the grid kind.
     """
+
     points = grid.to_jax()
     n_grid = points.shape[0]
     indices = jnp.unique(
@@ -1665,6 +1830,7 @@ def _call_with_varied(
     filtered against the signature because a DAG target need not consume
     every sample variable (e.g. resources independent of the Euler state).
     """
+
     arg_names = set(inspect.signature(func).parameters)
     return array_result(
         func(**fixed, **{k: v for k, v in varied.items() if k in arg_names})
@@ -1679,6 +1845,7 @@ def _isclose(
     atol: float,
 ) -> bool:
     """Eager scalar closeness check, robust to 0-d JAX arrays."""
+
     return bool(
         jnp.isclose(jnp.asarray(actual), jnp.asarray(expected), rtol=rtol, atol=atol)
     )

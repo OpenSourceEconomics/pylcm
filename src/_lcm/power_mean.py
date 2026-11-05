@@ -17,8 +17,15 @@ materializing that axis at all. The two agree to a few ulps everywhere,
 which `test_CESAggregator_equals_the_general_power_mean` pins.
 """
 
+from typing import NamedTuple
+
+import jax
 import jax.numpy as jnp
 
+from _lcm.egm.ce_scaled_linear import (
+    join_represented_ce_direction,
+    scale_ce_direction,
+)
 from _lcm.probability import (
     is_live,
     is_negative,
@@ -36,6 +43,18 @@ from lcm.typing import BoolND, FloatND, IntND
 _DEVIATION_RATIO_CROSSOVER = -0.5
 
 
+class _PowerMeanContext(NamedTuple):
+    """Transient original anchored-core operands; never a durable CE artifact."""
+
+    value: FloatND
+    anchor: FloatND
+    anchor_payoff: FloatND
+    log_mass: FloatND
+    log_moment: FloatND
+    deviation_ratio: FloatND
+    near_geometric: BoolND
+
+
 def weighted_power_mean(
     *,
     values: FloatND,
@@ -43,6 +62,79 @@ def weighted_power_mean(
     exponent: FloatND,
     shifts: IntND,
 ) -> FloatND:
+    """Return `(Σ w̃ · v^p)^(1/p)` over the last axis, stably.
+
+    `p` is `exponent` and `w̃` the mass-normalized weights. The naive form
+    overflows when `p` is negative and `v` is small: the intermediate `v^p`
+    exceeds the dtype's range and the mean collapses to zero or infinity.
+    The evaluation is anchored in the log domain instead,
+    `log mean = a + log M / p`, with `a` the extremal log value and `M` the
+    moment of the anchored, mass-normalized lottery.
+
+    `M` has two representations — an `expm1`-deviation sum that survives
+    `p -> 0` and an `exp` sum that survives a lottery carrying near-zero mass
+    on the anchor — and the evaluation takes whichever one the lottery does
+    not cancel. The result therefore stays finite wherever the mathematical
+    value is, and the geometric-mean limit stays exact arbitrarily close to
+    `p = 0`.
+
+    Three exact points carry a derivative the primal does not justify, all
+    from a branch selected by an exact test. Gradient-based work that would
+    start at one of them should offset the starting value:
+
+    - at `exponent == 0` the result carries no dependence on `exponent`, so
+      that derivative reads as zero rather than its true finite value;
+    - a weight of exactly zero is replaced by a constant, so the derivative
+      with respect to it reads as zero — which makes `dW/d(discount_factor)`
+      zero at `discount_factor` of exactly `0` or `1`;
+    - a value of exactly zero has `log v = -inf`, and while the primal is the
+      documented limit, the reverse-mode gradient is NaN for *every* input of
+      the mean, not only for that value.
+
+    Args:
+        values: Strictly positive values along the last axis. A value of
+            exactly zero is admitted as the limiting case: it sends the mean
+            to zero at negative exponents and contributes nothing at positive
+            ones.
+        weights: Nonnegative weights over `values`, broadcast against them.
+            They are normalized by their sum, so scaling them all by a
+            constant leaves the result unchanged and a lottery carrying no
+            mass averages to NaN. Zero-weight entries drop out exactly, while
+            a NaN weight propagates. So does a negative one, which is not a
+            lottery rather than a dead node.
+
+            That invariance is a property of the mean, not a licence for the
+            caller. Where the weights are probabilities that are supposed to
+            sum to one, normalization divides any lost mass straight back out
+            and leaves no trace in the result, so the total has to be checked
+            before the call — `_lcm.regime_building.Q_and_F` does so for the
+            continuation lottery.
+        exponent: The power, broadcast against the reduced shape. `0` is the
+            weighted geometric mean `exp(E[log v])`, `1` the arithmetic mean.
+        shifts: Each weight's own base-two scale, broadcast against them, so
+            that node `i` carries probability `weights[i] * 2**-shifts[i]`. A
+            scalar `0` says the weights are already on one scale, which is what
+            a caller holding them as plain numbers passes. The moment and the
+            mass are both formed in the log domain, where a scale is a
+            subtraction, so a lottery spanning more binades than the exponent
+            field can express is still priced exactly.
+
+    Returns:
+        The weighted power mean, reduced over the last axis.
+
+    """
+    return _anchored_power_mean(
+        values=values, weights=weights, exponent=exponent, shifts=shifts
+    ).value
+
+
+def _anchored_power_mean(
+    *,
+    values: FloatND,
+    weights: FloatND,
+    exponent: FloatND,
+    shifts: IntND,
+) -> _PowerMeanContext:
     """Return `(Σ w̃ · v^p)^(1/p)` over the last axis, stably.
 
     `p` is `exponent` and `w̃` the mass-normalized weights. The naive form
@@ -147,12 +239,6 @@ def weighted_power_mean(
     # a lottery whose answer is ordinary. The rescaling above is what makes it
     # hold: no live weight is subnormal by the time any node anchors.
     anchorable = live & jnp.isfinite(log_v)
-    anchor_high = jnp.max(jnp.where(anchorable, log_v, -jnp.inf), axis=-1)
-    anchor_low = jnp.min(jnp.where(anchorable, log_v, jnp.inf), axis=-1)
-    anchor = jnp.where(exponent >= 0.0, anchor_high, anchor_low)
-    # With no anchorable node the reductions sit at their sentinels; any
-    # finite anchor will do, and zero keeps `centered` well defined.
-    anchor = jnp.where(jnp.isfinite(anchor), anchor, 0.0)
     # The anchor's own payoff, kept as the number it already is rather than
     # recovered from its logarithm. The mean is `payoff * exp(deviation)`, and a
     # lottery paying one amount at every node has a deviation of exactly zero,
@@ -172,6 +258,9 @@ def weighted_power_mean(
         jnp.argmax(jnp.where(anchorable, log_v, -jnp.inf), axis=-1),
         jnp.argmin(jnp.where(anchorable, log_v, jnp.inf), axis=-1),
     )
+    # Log and payoff must have the same selected derivative at tied extrema.
+    anchor = jnp.take_along_axis(log_v, anchor_index[..., None], axis=-1)[..., 0]
+    anchor = jnp.where(jnp.any(anchorable, axis=-1), anchor, 0.0)
     anchor_payoff = jnp.take_along_axis(
         jnp.broadcast_to(values, log_v.shape), anchor_index[..., None], axis=-1
     )[..., 0]
@@ -266,10 +355,24 @@ def weighted_power_mean(
         axis=-1,
     )
     deviation = jnp.where(exponent == 0.0, deviation_geometric, deviation_power)
-    return _applied_to_anchor(payoff=anchor_payoff, deviation=deviation)
+    return _PowerMeanContext(
+        value=_applied_to_anchor(payoff=anchor_payoff, deviation=deviation),
+        anchor=anchor,
+        anchor_payoff=anchor_payoff,
+        log_mass=log_mass,
+        log_moment=log_moment,
+        deviation_ratio=deviation_ratio,
+        near_geometric=near_geometric,
+    )
 
 
 def _applied_to_anchor(*, payoff: FloatND, deviation: FloatND) -> FloatND:
+    """Apply the deviation with exact primal identity and its product derivative."""
+    return _anchor_with_tangent(payoff, deviation)
+
+
+# keyword-only-exempt: library-callback=jax.custom_jvp
+def _anchor_primal(payoff: FloatND, deviation: FloatND) -> FloatND:
     """Return `payoff * exp(deviation)`, without touching an untouched payoff.
 
     A deviation of exactly zero is the riskless lottery: the answer *is* the
@@ -281,6 +384,30 @@ def _applied_to_anchor(*, payoff: FloatND, deviation: FloatND) -> FloatND:
     representation, which is exact at every magnitude the format holds.
     """
     return jnp.where(deviation == 0.0, payoff, payoff * jnp.exp(deviation))
+
+
+# keyword-only-exempt: library-callback=jax.custom_jvp.defjvp
+def _anchor_jvp(
+    primals: tuple[FloatND, FloatND], tangents: tuple[FloatND, FloatND]
+) -> tuple[FloatND, FloatND]:
+    """Transport both product slopes without flushing a tiny incoming direction."""
+    payoff, deviation = primals
+    payoff_dot, deviation_dot = tangents
+    value = _anchor_with_tangent(payoff, deviation)
+    sign = jnp.ones_like(value)
+    base = scale_ce_direction(logabs=deviation, sign=sign, direction=payoff_dot)
+    direction = join_represented_ce_direction(
+        coefficient=value,
+        sign=sign,
+        base=base,
+        direction=deviation_dot,
+    )
+    return value, direction
+
+
+# Construct by call so the method-only import hook retains the JVP registration.
+_anchor_with_tangent = jax.custom_jvp(_anchor_primal)
+_anchor_with_tangent.defjvp(_anchor_jvp)
 
 
 def _log_sum(log_terms: FloatND) -> FloatND:
@@ -406,16 +533,6 @@ def weighted_power_mean_of_pair(
 
     first_anchorable = first_live & jnp.isfinite(log_first)
     second_anchorable = second_live & jnp.isfinite(log_second)
-    anchor_high = jnp.maximum(
-        jnp.where(first_anchorable, log_first, -jnp.inf),
-        jnp.where(second_anchorable, log_second, -jnp.inf),
-    )
-    anchor_low = jnp.minimum(
-        jnp.where(first_anchorable, log_first, jnp.inf),
-        jnp.where(second_anchorable, log_second, jnp.inf),
-    )
-    anchor = jnp.where(exponent >= 0.0, anchor_high, anchor_low)
-    anchor = jnp.where(jnp.isfinite(anchor), anchor, 0.0)
     # The anchor's own payoff, kept rather than recovered from its logarithm —
     # see `weighted_power_mean`. A pair paying one amount on both sides has a
     # deviation of exactly zero and so returns that amount bit for bit.
@@ -427,6 +544,11 @@ def weighted_power_mean_of_pair(
         exponent >= 0.0,
         first_anchorable & (~second_anchorable | (log_first >= log_second)),
         first_anchorable & (~second_anchorable | (log_first <= log_second)),
+    )
+    anchor = jnp.where(
+        first_anchorable | second_anchorable,
+        jnp.where(anchor_is_first, log_first, log_second),
+        0.0,
     )
     anchor_payoff = jnp.where(
         first_anchorable | second_anchorable,

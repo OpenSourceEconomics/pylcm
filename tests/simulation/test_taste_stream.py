@@ -57,11 +57,15 @@ def _oracle_keys(
     keys = []
     for row in range(start, start + count):
         high, low = _words(min(row, real - 1))
-        keys.append(jax.random.fold_in(jax.random.fold_in(base, high), low))
+        keys.append(
+            jax.random.fold_in(
+                jax.random.fold_in(jax.random.fold_in(base, high), low), 0
+            )
+        )
     return jnp.stack(keys)
 
 
-def test_addresses_share_exact_ages_and_domains_across_regimes_and_horizons() -> None:
+def test_addresses_name_destination_taste_streams() -> None:
     short = taste_stream.build_taste_stream_addresses(
         ages=AgeGrid(exact_values=(1, Fraction(3, 2), 2)),
         discrete_actions_by_regime={"student": _domain()},
@@ -70,9 +74,9 @@ def test_addresses_share_exact_ages_and_domains_across_regimes_and_horizons() ->
         ages=AgeGrid(exact_values=(0, 1, Fraction(3, 2), 2, 3)),
         discrete_actions_by_regime={"other": _domain(), "counterfactual": _domain()},
     )
-    assert short[(1, "student")] == long[(2, "counterfactual")]
-    assert long[(2, "counterfactual")] == long[(2, "other")]
-    assert short[(0, "student")] != short[(1, "student")]
+    assert short[(1, "student")] != long[(2, "counterfactual")]
+    assert long[(2, "counterfactual")] != long[(2, "other")]
+    assert short[(0, "student")] == short[(1, "student")]
     assert isinstance(short, MappingProxyType)
     assert len(short[(0, "student")]) == 8
 
@@ -83,15 +87,15 @@ def test_numeric_age_equality_ignores_integer_fraction_representation() -> None:
     assert type(integer.exact_values[0]) is int
     assert type(rational.exact_values[0]) is Fraction
     first = taste_stream.build_taste_stream_addresses(
-        ages=integer, discrete_actions_by_regime={"first": _domain()}
+        ages=integer, discrete_actions_by_regime={"same": _domain()}
     )
     second = taste_stream.build_taste_stream_addresses(
-        ages=rational, discrete_actions_by_regime={"second": _domain()}
+        ages=rational, discrete_actions_by_regime={"same": _domain()}
     )
-    assert first[(0, "first")] == second[(0, "second")]
+    assert first[(0, "same")] == second[(0, "same")]
 
 
-def test_distinct_exact_ages_do_not_merge_when_float_storage_rounds_them() -> None:
+def test_age_labels_do_not_change_a_computational_period_address() -> None:
     first_age = Fraction(1, 3)
     second_age = first_age + Fraction(1, 2**80)
     first = AgeGrid(exact_values=(first_age,))
@@ -104,11 +108,11 @@ def test_distinct_exact_ages_do_not_merge_when_float_storage_rounds_them() -> No
     second_addresses = taste_stream.build_taste_stream_addresses(
         ages=second, discrete_actions_by_regime={"same": _domain()}
     )
-    assert first_addresses[(0, "same")] != second_addresses[(0, "same")]
+    assert first_addresses[(0, "same")] == second_addresses[(0, "same")]
 
 
 @pytest.mark.parametrize("change", ["name", "order", "size", "axis_order"])
-def test_incompatible_discrete_domains_get_distinct_addresses(change: str) -> None:
+def test_discrete_domain_edits_preserve_named_taste_addresses(change: str) -> None:
     original = {
         "a": DiscreteGrid(category_class=_Choice),
         "b": DiscreteGrid(category_class=_Choice),
@@ -122,11 +126,15 @@ def test_incompatible_discrete_domains_get_distinct_addresses(change: str) -> No
         altered["a"] = DiscreteGrid(category_class=_LargerChoice)
     else:
         altered = {"b": original["b"], "a": original["a"]}
-    addresses = taste_stream.build_taste_stream_addresses(
+    first = taste_stream.build_taste_stream_addresses(
         ages=AgeGrid(exact_values=(1,)),
-        discrete_actions_by_regime={"first": original, "second": altered},
+        discrete_actions_by_regime={"same": original},
     )
-    assert addresses[(0, "first")] != addresses[(0, "second")]
+    second = taste_stream.build_taste_stream_addresses(
+        ages=AgeGrid(exact_values=(1,)),
+        discrete_actions_by_regime={"same": altered},
+    )
+    assert first[(0, "same")] == second[(0, "same")]
 
 
 @pytest.mark.parametrize("start", [0, 5, 2**32 - 2, 2**32 + 7])
@@ -226,7 +234,7 @@ def test_cached_ordinary_keys_follow_current_threefry_partition_mode() -> None:
                 jax.random.key_data(expected["key_taste_shock"]),
             )
         memory.close_unit()
-    assert np.any(references[0] != references[1])
+    np.testing.assert_array_equal(references[0], references[1])
     np.testing.assert_array_equal(references[0], references[2])
     np.testing.assert_array_equal(jax.random.key_data(key), original_bits)
 

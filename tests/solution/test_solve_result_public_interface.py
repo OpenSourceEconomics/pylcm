@@ -1,8 +1,8 @@
 """The public solve interface returns one labelled result for every model."""
 
-from types import MappingProxyType
-
-from lcm.solver_api import DISSOLUTION_FLAG, SolutionResult, ValueStore
+import lcm.solver_api
+import lcm.solvers
+from lcm.solver_api import SolutionResult, ValueStore
 from tests.regime_building.test_collective_regime_simulate import (
     _DISSOLUTION_PARAMS,
     _make_dissolution_model,
@@ -13,6 +13,9 @@ from tests.test_models.deterministic.dcegm_variants import (
 )
 
 _N_PERIODS = 2
+
+# The type id of the removed solve-time dissolution flag.
+_REMOVED_DISSOLUTION_TYPE_ID = "pylcm.collective.dissolution_flag"
 
 
 def _singleton_model():
@@ -28,15 +31,26 @@ def test_singleton_solve_returns_one_labelled_result() -> None:
 
     assert isinstance(result, SolutionResult)
     assert isinstance(result.values, ValueStore)
-    assert not result.replay_artifacts.project(DISSOLUTION_FLAG)
 
 
-def test_collective_solve_addresses_dissolution_flags_in_the_result() -> None:
+def test_collective_solve_publishes_no_dissolution_flag() -> None:
+    """Infeasibility routing is realized in simulation, so solve emits no flag."""
     model = _make_dissolution_model()
 
     result = model.solve(params=_DISSOLUTION_PARAMS, log_level="off")
-    dissolution_flags = result.replay_artifacts.project(DISSOLUTION_FLAG)
 
     assert isinstance(result, SolutionResult)
-    assert isinstance(dissolution_flags, MappingProxyType)
-    assert any(dissolution_flags.values())
+    assert all(
+        ref.key.type_id != _REMOVED_DISSOLUTION_TYPE_ID
+        for store in (
+            result.replay_artifacts,
+            result.retained_continuations,
+            result.auxiliary_artifacts,
+        )
+        for ref in store
+    )
+
+
+def test_no_dissolution_flag_key_is_exported() -> None:
+    assert not hasattr(lcm.solver_api, "DISSOLUTION_FLAG")
+    assert not hasattr(lcm.solvers, "DISSOLUTION_FLAG")

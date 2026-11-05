@@ -11,7 +11,7 @@ import dataclasses
 import logging
 from collections.abc import Callable, Hashable, Iterable, Mapping, Sequence
 from fractions import Fraction
-from functools import cache
+from functools import cache, partial
 from types import MappingProxyType
 from typing import Literal, Never, NotRequired, Unpack
 
@@ -42,6 +42,7 @@ from _lcm.simulation import chunk_admission
 from _lcm.simulation.chunk_planning import SimulationChunkProfile
 from _lcm.simulation.operand_placement import _OperandValue
 from _lcm.simulation.residency import DeviceBufferFootprint
+from _lcm.simulation.simulate import SubjectChunkKwargs, SubjectChunkResults
 from _lcm.typing import ArgumentTree, PytreeValue, ShapeDtypePytree
 from _lcm.variables import from_regime
 from lcm import (
@@ -81,8 +82,6 @@ from lcm.typing import (
 from tests.conftest import (
     ApplyValueTransferKwargs,
     ExecuteWithPendingWorkKwargs,
-    SubjectChunkKwargs,
-    SubjectChunkResults,
     assert_agrees_to_ulp,
     assert_general_values_agree,
 )
@@ -463,9 +462,13 @@ def test_trailing_untiled_axis_is_restored_inside_max_q(*, streamed: bool) -> No
         "cell_width_keyword": "cell_width",
         "untiled_state_names": ("assets",),
     }
-    builder = get_streaming_max_Q_over_a if streamed else get_max_Q_over_a
+    builder = (
+        partial(get_streaming_max_Q_over_a, action_width_keyword="action_width")
+        if streamed
+        else get_max_Q_over_a
+    )
     function = builder(
-        **kwargs, **({"action_width_keyword": "action_width"} if streamed else {})
+        **kwargs,
     )
     result = jax.jit(
         function,

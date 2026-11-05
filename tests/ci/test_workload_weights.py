@@ -173,7 +173,7 @@ def test_refresh_manifest_leaves_a_file_the_run_did_not_contain_unmeasured(
 
 def test_refresh_manifest_downloads_nothing_when_no_file_is_missing() -> None:
     """With every shard file weighted, no run is looked up and nothing changes."""
-    text = (_ROOT / "tests/ci/ci-workloads.json").read_text(encoding="utf-8")
+    text = json.dumps(_run_manifest(files={_MEASURED_FILE}))
 
     def unreachable(*_args: CompletedRun) -> NoReturn:
         raise AssertionError("no run may be looked up or downloaded")

@@ -88,7 +88,6 @@ def lower_period_candidate(
         enable_jit=True,
         execution=execution,
         retain_replay=retention is ResultRetention.VALUES_AND_REPLAY,
-        retain_all_artifacts=retention is ResultRetention.ALL_PERSISTABLE_ARTIFACTS,
         persistable_artifact_refs=persistable_artifact_refs,
         logger=logger,
     )

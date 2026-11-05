@@ -5,9 +5,8 @@ implied-savings slope (`FUESEnvelope.jump_thresh`); crossings are inserted only
 *between* detected segments. When the cross-segment slope stays below the
 threshold and no explicit `segment_id` labels are supplied — the DC-EGM kernel
 supplies none — two distinct value branches merge into one row: no crossing is
-inserted and the row linearly bridges the switch. This is why the off-grid
-simulation policy read requires MSS and keeps every FUES regime on the
-grid-argmax path.
+inserted and the row linearly bridges the switch. This is one reason the off-grid
+simulation policy read keeps every FUES regime on the grid-argmax path.
 
 The correspondence below is consistent with log utility: within each branch
 `dV/dR = 1/c` (envelope theorem), policies are `0.3` and `0.1`, and the two

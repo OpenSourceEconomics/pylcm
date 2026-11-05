@@ -96,6 +96,7 @@ project:
       children:
         - file: reference/model_and_regime.md
         - file: reference/grids_and_processes.md
+        - file: reference/shocks.md
         - file: reference/transitions.md
         - file: reference/consumption_savings.md
         - file: reference/conditions.md

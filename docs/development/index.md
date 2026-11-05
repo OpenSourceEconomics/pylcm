@@ -19,6 +19,7 @@ here.
 - [Compiler allocation and admission](compiler_allocation_admission.md)
 - [Feasibility admission evidence](feasibility_admission_evidence.md)
 - [Architecture transition ledger](architecture_transition_ledger.md)
+- [IID integration, exits and addressed simulation](iid-exits-redesign.md)
 
 A solver can be written against the public names alone, and
 [Custom solvers](../reference/custom_solvers.md) is the guide to what one owes the

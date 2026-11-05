@@ -38,11 +38,7 @@ FULL_TOPOLOGY_EDGES = _with_full_topology_laws(
         "single_m": {"married": 0, "single_m_p1": 0},
         "single_f_p1": {"single_f_terminal": 1},
         "single_m_p1": {"single_m_terminal": (0, 1, 2)},
-        "married": {
-            "married_terminal": 1,
-            "single_f_terminal": 1,
-            "single_m_terminal": 1,
-        },
+        "married": {"married_terminal": 1},
     }
 )
 
@@ -128,7 +124,6 @@ def test_a_folded_value_has_the_fold_among_its_planned_consumers() -> None:
     ledger = _build_planned_input_liveness(
         regimes=model._regimes,
         program_metadata=_program_metadata(model=model),
-        retain_all_artifacts=False,
         persistable_artifact_refs=frozenset(),
     )
     folded = gated_edge_fold_value_reads(regimes=model._regimes, period=_PERIOD)[
@@ -146,7 +141,6 @@ def test_a_fold_dispatch_is_a_planned_dispatch_of_its_own() -> None:
     ledger = _build_planned_input_liveness(
         regimes=model._regimes,
         program_metadata=_program_metadata(model=model),
-        retain_all_artifacts=False,
         persistable_artifact_refs=frozenset(),
     )
 
@@ -167,7 +161,6 @@ def test_a_folded_value_is_retained_rather_than_pinned_by_the_fold() -> None:
     ledger = _build_planned_input_liveness(
         regimes=model._regimes,
         program_metadata=_program_metadata(model=model),
-        retain_all_artifacts=False,
         persistable_artifact_refs=frozenset(),
     )
     folded = gated_edge_fold_value_reads(regimes=model._regimes, period=_PERIOD)[

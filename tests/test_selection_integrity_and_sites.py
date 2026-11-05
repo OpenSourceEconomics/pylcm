@@ -6,10 +6,13 @@ deterministic codes and non-Boolean gates fail at every log level, even when
 another start makes the stray destination a solved pair. A simulated start
 outside `model.initial_nodes` fails before any user law runs, and simulating
 never re-derives demand. A result solved for different visits is refused.
-Random draws are keyed by `(period, regime)` site, so a deterministic exit
-leaves later shock draws where a stochastic one would put them.
+Random innovations keep their named original-row/period address across exit forms.
+The legacy site-helper checks cover its compatibility wrapper until retirement.
 """
 
+import hashlib
+import json
+import struct
 from collections.abc import Callable, Hashable, Mapping
 
 import jax
@@ -17,10 +20,10 @@ import jax.numpy as jnp
 import numpy as np
 import pandas as pd
 import pytest
+from jaxtyping import Float
 
 import _lcm.model_graph
 from _lcm.regime_building.schedules import RegimeSchedules
-from _lcm.simulation.random import site_simulation_key
 from _lcm.time import TimeAxis
 from _lcm.utils.logging import LogLevel
 from lcm import (
@@ -28,10 +31,11 @@ from lcm import (
     AgeRange,
     ByAge,
     DeterministicTransition,
-    Gate,
     LinSpacedGrid,
     Model,
     NormalIIDProcess,
+    ParticipationCheck,
+    ParticipationRead,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
@@ -44,7 +48,6 @@ from lcm.exceptions import (
     InvalidInitialConditionsError,
     InvalidRegimeTransitionProbabilitiesError,
     InvalidSimulationInputError,
-    RegimeInitializationError,
 )
 from lcm.initial_nodes import UserInitialNodes
 from lcm.phased import Phased
@@ -64,6 +67,27 @@ _WEALTH = LinSpacedGrid(start=0.0, stop=1.0, n_points=2)
 _PARAMS = {"discount_factor": 0.9}
 _AGES = AgeGrid(start=25, inclusive_stop=75, step="10Y")
 _LOG_LEVELS = pytest.mark.parametrize("log_level", ["off", "warning"])
+
+
+def _regime_uniforms(*, period: int) -> Float[np.ndarray, " subjects"]:
+    """Independently encode the reserved lottery and original rows at this date."""
+    encoded = json.dumps(
+        ("pylcm.random.v1", "regime", "regime", 0), separators=(",", ":")
+    ).encode("utf-8")
+    key = jax.random.key(0, impl="threefry2x32")
+    for word in struct.unpack(">8I", hashlib.sha256(encoded).digest()):
+        key = jax.random.fold_in(key, np.uint32(word))
+
+    def draw(row: jax.Array) -> jax.Array:
+        addressed = jax.random.fold_in(jax.random.fold_in(key, np.uint32(0)), row)
+        addressed = jax.random.fold_in(addressed, np.uint32(period))
+        return jax.random.uniform(
+            addressed, dtype=jnp.float64 if jax.config.jax_enable_x64 else jnp.float32
+        )
+
+    return np.asarray(
+        jax.jit(jax.vmap(draw))(jnp.arange(_N_SUBJECTS, dtype=jnp.uint32))
+    )
 
 
 @categorical(ordered=False)
@@ -261,22 +285,28 @@ def _numeric_gate_model() -> Model:
             "source": Transition(
                 targets={"target": 40, "fallback": 40},
                 law=ByAge(cases={40: {"target": StochasticTransition(func=_prob_one)}}),
-                gates={
-                    "target": Gate(
+                participation={
+                    "target": ParticipationCheck(
                         predicate=_numeric_gate,
                         routes={
-                            "only": StakeholderRoute(
+                            "self": StakeholderRoute(
                                 fallback=ProjectedRegimeValue(
                                     regime="fallback",
                                     projection={"wealth": _identity},
                                 )
                             )
                         },
-                        references={
-                            "V_reference": ProjectedRegimeValue(
+                        reads={
+                            "V_target": ParticipationRead(
+                                kind="Raw",
+                                regime="target",
+                                projection={"wealth": _identity},
+                            ),
+                            "V_reference": ParticipationRead(
+                                kind="Raw",
                                 regime="reference",
                                 projection={"wealth": _identity},
-                            )
+                            ),
                         },
                     )
                 },
@@ -297,7 +327,8 @@ def _numeric_gate_model() -> Model:
 def test_a_numeric_gate_output_fails_with_logging_off() -> None:
     """A gate returning floats instead of booleans is refused."""
     with pytest.raises(
-        RegimeInitializationError, match=r"returned dtype 'float(32|64)'"
+        ValueError,
+        match=r"^A participation predicate must return a scalar Boolean\.(?:\n|$)",
     ):
         _numeric_gate_model().solve(params=_PARAMS, log_level="off")
 
@@ -322,11 +353,7 @@ def _panel(
 
 
 def test_two_half_probabilities_split_the_panel() -> None:
-    """Seed 0 splits 1000 subjects at 55 about evenly into retirees and deaths.
-
-    The uniform draws depend on the float precision, so the exact split is
-    pinned per precision: 495 / 505 under x64, 513 / 487 under float32.
-    """
+    """Every retirement draw matches an independent half-open addressed oracle."""
     model = _life_model(
         law_at_55={
             "retirement": StochasticTransition(func=_half),
@@ -335,7 +362,12 @@ def test_two_half_probabilities_split_the_panel() -> None:
         initial_nodes={55: "working"},
     )
     panel = _panel(model=model, age=55.0, regime="working")
-    retirees = 495 if jax.config.jax_enable_x64 else 513
+    retirement = _regime_uniforms(period=4) < 0.5
+    np.testing.assert_array_equal(
+        panel.query("age == 65").sort_values("subject_id")["regime_name"].to_numpy(),
+        np.where(retirement, "retirement", "dead"),
+    )
+    retirees = np.count_nonzero(retirement)
     assert panel.query("age == 65")["regime_name"].value_counts().to_dict() == {
         "working": 0,
         "retirement": retirees,
@@ -461,11 +493,7 @@ def test_remain_mass_counted_for_two_distinct_targets_fails_in_simulate(
 
 
 def test_two_targets_sharing_a_half_probability_callable_simulate() -> None:
-    """Seed 0 splits 1000 subjects at 25 into the two targets of `_half`.
-
-    The uniform draws depend on the float precision, so the split is pinned per
-    precision: 501 / 499 under x64, 487 / 513 under float32.
-    """
+    """Shared probability callables keep the same half-open addressed lottery."""
     panel = _job_simulate(
         model=_job_model(
             _SHARED_HALF, targets_at_25=("unemployed_after_switch", "employed")
@@ -473,7 +501,12 @@ def test_two_targets_sharing_a_half_probability_callable_simulate() -> None:
         log_level="warning",
         n_subjects=_N_SUBJECTS,
     ).to_dataframe()
-    after_switch = 501 if jax.config.jax_enable_x64 else 487
+    switched = _regime_uniforms(period=1) < 0.5
+    np.testing.assert_array_equal(
+        panel.query("age == 35").sort_values("subject_id")["regime_name"].to_numpy(),
+        np.where(switched, "unemployed_after_switch", "employed"),
+    )
+    after_switch = np.count_nonzero(switched)
     assert panel.query("age == 35")["regime_name"].value_counts().to_dict() == {
         "unemployed_before_switch": 0,
         "unemployed_after_switch": after_switch,
@@ -808,45 +841,6 @@ def test_a_start_changing_only_visits_changes_the_program_keys() -> None:
     assert _program_keys(_phased_model({0: "source", 1: "perceived"})) != (
         _program_keys(_phased_model({0: "source", 2: "realized_end"}))
     )
-
-
-@pytest.mark.parametrize(
-    ("first", "second"),
-    [((0, 0), (0, 1)), ((0, 0), (1, 0)), ((1, 0), (0, 1))],
-    ids=["other-regime", "other-period", "swapped"],
-)
-def test_site_keys_differ_between_sites(
-    *, first: tuple[int, int], second: tuple[int, int]
-) -> None:
-    """Each `(period, regime)` site derives its own key from the root key."""
-    root = jax.random.key(0)
-    keys = [
-        jax.random.key_data(site_simulation_key(key=root, period=p, regime_id=r))
-        for p, r in (first, second)
-    ]
-    assert not np.array_equal(np.asarray(keys[0]), np.asarray(keys[1]))
-
-
-def test_site_key_is_stable_for_a_seed() -> None:
-    """The same seed and site derive the same key on every call."""
-    keys = [
-        jax.random.key_data(
-            site_simulation_key(key=jax.random.key(3), period=2, regime_id=1)
-        )
-        for _ in range(2)
-    ]
-    np.testing.assert_array_equal(np.asarray(keys[0]), np.asarray(keys[1]))
-
-
-def test_site_key_changes_with_the_seed() -> None:
-    """Different root seeds derive different keys at the same site."""
-    keys = [
-        jax.random.key_data(
-            site_simulation_key(key=jax.random.key(seed), period=2, regime_id=1)
-        )
-        for seed in (3, 4)
-    ]
-    assert not np.array_equal(np.asarray(keys[0]), np.asarray(keys[1]))
 
 
 def _choose_retirement() -> ScalarInt:

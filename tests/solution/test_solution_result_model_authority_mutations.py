@@ -13,7 +13,6 @@ from jax.typing import DTypeLike
 import lcm.model as model_module
 from _lcm.egm.nested_published_policy import NestedEGMSimPolicy, OuterPolicyBank
 from _lcm.egm.published_policy import EGMSimPolicy, NNBEGMSimPolicy
-from _lcm.regime_building import processing as regime_processing
 from _lcm.typing import ArtifactPayload
 from lcm.exceptions import InvalidSimulationInputError
 from lcm.solver_api import (
@@ -24,7 +23,6 @@ from lcm.solver_api import (
     ArtifactStore,
     AxisRole,
 )
-from lcm.solvers import MSSEnvelope
 from tests.simulation.test_nnbegm_split_workflow_parity import (
     _INITIAL as _ADAPTIVE_INITIAL,
 )
@@ -183,20 +181,9 @@ def _as_egm_subclass(policy: EGMSimPolicy) -> EGMSimPolicy:
 
 @pytest.fixture(scope="module")
 def ordinary_egm_fixture():
-    """A genuine ordinary-EGM result with its conservative read gate enabled."""
+    """A genuine ordinary-EGM result on the policy-first read route."""
     get_full_model.cache_clear()
-    with pytest.MonkeyPatch.context() as patch:
-        patch.setattr(
-            regime_processing,
-            "_CROSSING_COMPLETE_ENVELOPES",
-            (MSSEnvelope,),
-        )
-        # The replay gate is construction-time state, so this must be a fresh model.
-        model = get_full_model(
-            solver="dcegm",
-            n_periods=2,
-            envelope="mss",
-        )
+    model = get_full_model(solver="dcegm", n_periods=2, envelope="rfc")
     get_full_model.cache_clear()
     params = get_full_params(n_periods=2)
     solution = model.solve(params=params, log_level="off")

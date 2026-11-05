@@ -1050,3 +1050,51 @@ def test_stochastic_prefold_declares_the_hermite_limiter_tradeoff() -> None:
         np.asarray([0.5625, 0.38125]),
         rtol=1e-5,
     )
+
+
+@pytest.mark.parametrize("with_slopes", [False, True])
+def test_indexed_rows_read_equals_the_copied_row_read(with_slopes: bool) -> None:  # noqa: FBT001
+    """Reading a table row in place matches reading the copied row, bit for bit.
+
+    Rows cover a regular row, a duplicated kink abscissa, a `-inf` value, a
+    one-node and an empty prefix; queries fall below, on, between and above the
+    nodes, and one is NaN.
+    """
+    nan, inf = np.nan, np.inf
+    xp = jnp.asarray(
+        [
+            [0.5, 1.0, 2.0, 4.0, 7.0, nan],
+            [0.5, 1.5, 1.5, 3.0, nan, nan],
+            [1.0, 2.0, 3.0, 5.0, 6.0, 9.0],
+            [2.0, nan, nan, nan, nan, nan],
+            [nan, nan, nan, nan, nan, nan],
+        ]
+    )
+    fp = jnp.asarray(
+        [
+            [-1.0, 0.0, 0.7, 1.4, 1.9, nan],
+            [-2.0, -0.5, 0.1, 0.9, nan, nan],
+            [-inf, 0.0, 0.4, 1.0, 1.1, 1.5],
+            [0.3, nan, nan, nan, nan, nan],
+            [nan, nan, nan, nan, nan, nan],
+        ]
+    )
+    slopes = jnp.where(jnp.isnan(xp), nan, 1.0 / jnp.where(jnp.isnan(xp), 1.0, xp))
+    queries = jnp.asarray([0.1, 0.5, 0.75, 1.5, 3.3, 7.0, 12.0, nan, 1.0, 2.5])
+    rows = jnp.asarray([0, 0, 1, 1, 2, 0, 2, 2, 3, 4], dtype=jnp.int32)
+    fp_slopes = slopes if with_slopes else None
+
+    indexed, valid_length = interp.interp_on_indexed_rows(
+        x_query=queries, rows=rows, xp=xp, fp=fp, fp_slopes=fp_slopes
+    )
+    copied = jax.vmap(
+        lambda q, x, f, s: interp.interp_on_padded_grid(
+            x_query=q, xp=x, fp=f, fp_slopes=s
+        ),
+        in_axes=(0, 0, 0, 0 if with_slopes else None),
+    )(queries, xp[rows], fp[rows], slopes[rows] if with_slopes else None)
+
+    np.testing.assert_array_equal(np.asarray(indexed), np.asarray(copied))
+    np.testing.assert_array_equal(
+        np.asarray(valid_length), np.sum(~np.isnan(np.asarray(xp)), axis=-1)[rows]
+    )

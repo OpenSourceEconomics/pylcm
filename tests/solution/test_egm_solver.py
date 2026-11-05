@@ -22,6 +22,8 @@ The solver is checked against those expressions directly, not against another
 implementation that could share its assumptions.
 """
 
+from functools import partial
+
 import numpy as np
 import pytest
 
@@ -103,7 +105,21 @@ def _model(
     resources role.
     """
     wealth_grid = _WEALTH_GRID
-    regime_type = ConsumptionSavingsRegime if isinstance(solver, EGM) else Regime
+    regime_type = (
+        partial(
+            ConsumptionSavingsRegime,
+            liquid=liquid
+            if liquid is not None
+            else LiquidMargin(
+                state="wealth",
+                action="consumption",
+                resources=("resources" if resources_func else "wealth"),
+                post_decision_state="savings",
+            ),
+        )
+        if isinstance(solver, EGM)
+        else Regime
+    )
     functions = {
         "utility": utility_function,
         "savings": savings,
@@ -122,20 +138,6 @@ def _model(
         constraints={} if isinstance(solver, EGM) else {"feasible": feasible},
         functions=functions,
         solver=solver,
-        **(
-            {
-                "liquid": liquid
-                if liquid is not None
-                else LiquidMargin(
-                    state="wealth",
-                    action="consumption",
-                    resources=("resources" if resources_func else "wealth"),
-                    post_decision_state="savings",
-                )
-            }
-            if isinstance(solver, EGM)
-            else {}
-        ),
     )
     done = Regime(
         states={"wealth": wealth_grid},

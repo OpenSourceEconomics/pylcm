@@ -20,9 +20,9 @@ value_functions = solution.values
 ```
 
 Backward induction returns one immutable `SolutionResult`. Its `values` mapping is
-indexed by `period -> regime_name -> value_function_array`; replay policies, collective
-dissolution flags, diagnostics, metadata, and omission reasons remain in their labelled
-fields and addressed artifact stores.
+indexed by `period -> regime_name -> value_function_array`; replay policies,
+diagnostics, metadata, and omission reasons remain in their labelled fields and
+addressed artifact stores.
 
 To inspect values with their state coordinates, use
 `solution.value_array(period=0, regime="working")`. It returns an xarray `DataArray`
@@ -57,12 +57,12 @@ result = model.simulate(
 ```
 
 `VALUES` drops replay artifacts and works only when every simulated decision can be
-recovered from values and no applicable collective gate needs a dissolution flag.
-`ALL_PERSISTABLE_ARTIFACTS` keeps only what the result carries on its own: continuation
-or solver-defined artifacts are kept only where their model-built authority marks them
-as independently verifiable, and the `NNBEGM` replay policy of an `AdaptiveOuterMesh`
-search, which is replayed against a solve-generated mesh the model instance holds
-privately, is omitted as `NOT_PERSISTED`. Diagnostics follow `log_level`, not retention.
+recovered from values. `ALL_PERSISTABLE_ARTIFACTS` keeps only what the result carries on
+its own: continuation or solver-defined artifacts are kept only where their model-built
+authority marks them as independently verifiable, and the `NNBEGM` replay policy of an
+`AdaptiveOuterMesh` search, which is replayed against a solve-generated mesh the model
+instance holds privately, is omitted as `NOT_PERSISTED`. Diagnostics follow `log_level`,
+not retention.
 
 Simulation validates the durable model fingerprint, exact solution-relevant canonical
 parameters, solver/plugin and replay-route versions, value coverage and schemas, and
@@ -348,9 +348,9 @@ function while subjects start at different ages cannot be evaluated and raises
 - `seed=None`: Integer random seed or scalar typed Threefry key
   (`jax.random.key(..., impl="threefry2x32")`, the JAX default). An integer becomes a
   Threefry key whatever `jax_default_prng_impl` says; other key implementations are
-  refused, because their draws would change with the subject chunk width. Collective
-  dissolution gates consume their addressed replay artifacts from `solution`; the
-  automatic-solve path retains and threads them itself.
+  refused, because their draws would change with the subject chunk width. Each draw is
+  addressed by the subject's original row position in `initial_conditions`, so
+  reordering those rows changes which draws a subject receives.
 - `taste_shock_seed=None`: Optional independent integer seed or scalar typed key for
   common taste shocks across counterfactual models. Omit it to keep the ordinary `seed`
   behavior.
@@ -399,25 +399,28 @@ counterfactual = counterfactual_model.simulate(
 )
 ```
 
-A draw corresponds to an exact age, a subject's row position in the initial conditions,
-and an ordered discrete-action domain. Regime names, policy parameters, horizon
-endpoints, subject chunks and padding do not identify the draw. Keep people in
-corresponding input rows; DataFrame index labels do not provide subject identity.
-Changing the policy can change choices and state paths even with common shocks.
+A taste key identifies a computational period, the destination regime's name and a
+subject's original row position in the initial conditions. Age labels, policy
+parameters, horizon endpoints, subject chunks and padding do not identify the key. Keep
+people in corresponding input rows; DataFrame index labels do not provide subject
+identity. Renaming the destination changes its taste stream. Changing the policy can
+change choices and state paths even with common shocks.
 
-The discrete domain includes the ordered action names and each action's ordered category
-labels and codes. Renaming, reordering or resizing it changes the stream; individual
-categories are not matched across incompatible domains. Continuous-action grids do not
-enter the address. Changing a taste-shock scale multiplies the same standardized draw,
-so equal scaled shocks additionally require equal scales.
+Action grids do not enter the key address. Comparing individual standardized taste
+shocks still requires the same ordered discrete-action domain and draw shape: category
+labels are not matched across incompatible domains. Changing a taste-shock scale
+multiplies the same standardized draw, so equal scaled shocks additionally require equal
+scales.
 
 The independent stream uses Threefry for integer seeds. A supplied typed root retains
 its PRNG implementation; with an RBG or unsafe-RBG root, each subject's draw comes from
 its own addressed key under every subject width and padding. Exact comparisons require
-matching numerical precision, backend and JAX random configuration. It does not alter
-the ordinary key-chain advancement directly. `taste_shock_seed=None` uses the existing
-ordinary stream, and the optional seed changes neither solutions nor their compatibility
-fingerprints.
+matching numerical precision, backend and JAX random configuration. Ordinary and taste
+innovations use distinct versioned address domains, and their roots remain unchanged.
+`taste_shock_seed=None` uses the ordinary root with the taste address domain. Simulation
+results expose the address version, PRNG implementations and precision through
+`result.randomness`; saved results retain that metadata. The optional seed changes
+neither solutions nor their compatibility fingerprints.
 
 ### Heterogeneous initial ages
 
@@ -466,7 +469,10 @@ refused, so the row carries the best admissible baseline instead. That baseline 
 chosen by the canonical Q, not by the action grid alone — the grid-argmax pair and every
 published replay branch are scored, the higher score is emitted, and the grid pair takes
 an exact tie. Inference must refuse whenever any entry is `True`. Discrete variables are
-pandas Categorical with string labels.
+pandas Categorical with string labels. In an EGM-family regime, `value` is the solved
+value representation read at the subject's realized resources, not the utility plus
+continuation along the replayed path; on a coarse savings grid the two can differ
+slightly in either direction.
 
 A model with a collective regime publishes two further things. An `own_stakeholder`
 column names the role each row occupies — in every regime, not only the collective ones,
@@ -671,8 +677,15 @@ subject's starting regime in its entry period, and afterwards every regime the
 simulation can reach from there, since later regime membership is itself drawn. A
 subject's entry value is replaced only when its starting regime draws the shock. Cells
 no regime can read, such as those before a subject enters, are ignored and may hold
-`NaN`. Folded shocks are supported, including transition-local draws: a draw affecting
-the transition into period `p` comes from column `p`. A deterministic law reading
-`next_<shock>` sees the supplied draw before computing its own next state. Shocks
-omitted from the mapping retain the ordinary seeded stream, and solve expectations
-remain stochastic.
+`NaN`. Draws taken inside a transition are supported, including shocks a regime reads
+only as `next_<shock>`: a draw affecting the transition into period `p` comes from
+column `p`. A deterministic law reading `next_<shock>` sees the supplied draw before
+computing its own next state. Shocks omitted from the mapping retain the ordinary seeded
+stream, and solve expectations remain stochastic.
+
+A named current shock declared in a `ShockGroup` takes a tagged record instead of a bare
+array: `BaseInnovations(values=...)` for independent base coordinates, mapped through
+the current law, or `PhysicalValues(values=...)` for realised values. A correlated group
+takes physical values only as a complete frame; a partial frame, or physical values
+mixed with base coordinates, is refused. Tagged entry values and their precedence are
+described in the [shocks reference](../reference/shocks.md#typed-draw-inputs).

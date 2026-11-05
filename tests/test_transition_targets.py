@@ -9,6 +9,7 @@ names it, and a gate fallback's are those of its gated target. Supplying
 from collections.abc import Mapping
 
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
 from lcm import (
@@ -16,18 +17,21 @@ from lcm import (
     AgeRange,
     ByAge,
     CollectiveUtility,
-    Gate,
     LinSpacedGrid,
     Model,
+    ParticipationCheck,
+    ParticipationRead,
     Phased,
     ProjectedRegimeValue,
     StakeholderRoute,
     StochasticTransition,
     Transition,
     categorical,
+    fixed_transition,
 )
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.regime import Regime
+from lcm.solver_api import ResultRetention
 from lcm.transition import ModelEdges, PhaseEdges
 from lcm.typing import BoolND, ContinuousState, FloatND, ScalarInt
 
@@ -189,7 +193,7 @@ def test_gate_fallbacks_join_the_derived_targets_at_the_gated_ages():
                     (1, 2): {"dead": StochasticTransition(func=_certain)},
                 }
             ),
-            gates={"couple": _consent_gate()},
+            participation={"couple": _consent_gate()},
         )
     )
     assert dict(model.graph.edges.solve["alive"]) == {
@@ -201,11 +205,14 @@ def test_gate_fallbacks_join_the_derived_targets_at_the_gated_ages():
 
 def test_gate_on_a_target_the_law_never_reaches_is_refused():
     """A gate belongs to a destination of its own `Transition`."""
-    with pytest.raises(ModelInitializationError, match="'couple'"):
+    with pytest.raises(
+        ModelInitializationError,
+        match=r"^ParticipationCheck of 'alive' names an unscheduled solve target\.$",
+    ):
         _model(
             Transition(
                 law={"dead": StochasticTransition(func=_certain)},
-                gates={"couple": _consent_gate()},
+                participation={"couple": _consent_gate()},
             )
         )
 
@@ -219,7 +226,11 @@ def test_gate_declared_in_one_phase_only_is_refused():
     with pytest.raises(ModelInitializationError, match="'couple'"):
         _model(
             Phased(
-                solve={"alive": Transition(law=law, gates={"couple": _consent_gate()})},
+                solve={
+                    "alive": Transition(
+                        law=law, participation={"couple": _consent_gate()}
+                    )
+                },
                 simulate={"alive": Transition(law=law)},
             )
         )
@@ -284,7 +295,7 @@ def _narrowed_edges(case: str) -> dict[str, Transition | dict[str, tuple[int]]]:
                     "couple": StochasticTransition(func=_survive),
                     "dead": StochasticTransition(func=_die),
                 },
-                gates={"couple": _consent_gate(fallback="retired")},
+                participation={"couple": _consent_gate(fallback="retired")},
             )
         }
     retired_ages = (1,) if case == "target-active-from-a-later-age" else (0, 1)
@@ -323,12 +334,21 @@ def _retirement_law(form: str) -> dict[str, StochasticTransition] | ByAge:
     )
 
 
-def _consent_gate(fallback: str = "alive") -> Gate:
+def _consent_gate(fallback: str = "alive") -> ParticipationCheck:
     """A gate into the couple that sends a refused single to `fallback`."""
-    return Gate(
+    return ParticipationCheck(
         predicate=_couple_is_better,
+        reads={
+            f"V_target_{member}": ParticipationRead(
+                kind="Raw",
+                regime="couple",
+                stakeholder=member,
+                projection={"wealth": _keep_wealth},
+            )
+            for member in ("f", "m")
+        },
         routes={
-            "her": StakeholderRoute(
+            "self": StakeholderRoute(
                 target_stakeholder="f",
                 fallback=ProjectedRegimeValue(
                     regime=fallback, projection={"wealth": _keep_wealth}
@@ -372,3 +392,100 @@ def _certain(age: FloatND) -> FloatND:
 
 def _always_dead() -> ScalarInt:
     return _RegimeId.dead
+
+
+@categorical(ordered=False)
+class _ComponentParticipationId:
+    alive: ScalarInt
+    couple: ScalarInt
+    retired: ScalarInt
+
+
+def _component_source(wealth: ContinuousState) -> FloatND:
+    return 0.0 * wealth
+
+
+def _component_male(wealth: ContinuousState) -> FloatND:
+    return 2.0 - wealth
+
+
+def _component_fallback(wealth: ContinuousState) -> FloatND:
+    return 10.0 + wealth
+
+
+def test_component_comparison_prices_and_replays_less_equal_and_greater() -> None:
+    """The actual f>=m component comparison admits a tie and rejects only f<m."""
+    wealth = LinSpacedGrid(start=0.0, stop=2.0, n_points=3)
+    model = Model(
+        regimes={
+            "alive": Regime(
+                states={"wealth": wealth},
+                state_transitions={"wealth": fixed_transition("wealth")},
+                functions={"utility": _component_source},
+            ),
+            "couple": Regime(
+                states={"wealth": wealth},
+                functions={
+                    "utility": CollectiveUtility(
+                        utilities={"f": _utility, "m": _component_male}
+                    )
+                },
+            ),
+            "retired": Regime(
+                states={"wealth": wealth},
+                functions={"utility": _component_fallback},
+            ),
+        },
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
+        initial_nodes={0: "alive"},
+        regime_id_class=_ComponentParticipationId,
+        edges={
+            "alive": Transition(
+                law="couple",
+                participation={"couple": _consent_gate(fallback="retired")},
+            )
+        },
+    )
+    params = {"discount_factor": 0.5}
+    solution = model.solve(
+        params=params, retention=ResultRetention.VALUES, log_level="off"
+    )
+    # The read pairs are (0,2), (1,1), (2,0); outside pays more at every state.
+    np.testing.assert_array_equal(
+        solution.values[1]["couple"], [[0, 2], [1, 1], [2, 0]]
+    )
+    np.testing.assert_array_equal(solution.values[1]["retired"], [10, 11, 12])
+    np.testing.assert_array_equal(solution.values[0]["alive"], [5.0, 0.5, 1.0])
+    frame = (
+        model.simulate(
+            params=params,
+            solution=solution,
+            initial_conditions={
+                "wealth": jnp.asarray([0.0, 1.0, 2.0]),
+                "age": jnp.zeros(3),
+                "regime_id": jnp.full(
+                    3, _ComponentParticipationId.alive, dtype=jnp.int32
+                ),
+            },
+            seed=0,
+            log_level="off",
+        )
+        .to_dataframe()
+        .sort_values(["period", "subject_id"])
+    )
+    source = frame.loc[frame["period"] == 0]
+    landed = frame.loc[frame["period"] == 1]
+    np.testing.assert_array_equal(source["subject_id"], [0, 1, 2])
+    np.testing.assert_array_equal(source["value"], [5.0, 0.5, 1.0])
+    np.testing.assert_array_equal(landed["subject_id"], [0, 1, 2])
+    np.testing.assert_array_equal(landed["wealth"], [0.0, 1.0, 2.0])
+    np.testing.assert_array_equal(
+        landed["regime_name"], ["retired", "couple", "couple"]
+    )
+    np.testing.assert_array_equal(
+        landed.loc[landed["subject_id"] == 0, "value"], [10.0]
+    )
+    kept = landed.loc[landed["subject_id"] != 0]
+    np.testing.assert_array_equal(kept["own_stakeholder"], ["f", "f"])
+    np.testing.assert_array_equal(kept["value_f"], [1.0, 2.0])
+    np.testing.assert_array_equal(kept["value_m"], [1.0, 0.0])

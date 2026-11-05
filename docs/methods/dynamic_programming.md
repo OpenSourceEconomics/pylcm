@@ -63,12 +63,10 @@ reason is developed in
 `GridSearch` covers the full represented state-action product. On eligible JIT
 solve-value routes—ordinary singleton hard max, collective hard max, and singleton EV1
 expected max—it evaluates bounded C-order action blocks and reduces them without
-changing that candidate support. These programs publish only solve-time `VALUE`, or
-`VALUE` plus `DISSOLUTION_FLAG` for a collective route; replay and policy artifacts are
-not integrated. Value references and gated targets stream unless they intersect a
-co-mapped state through a separate reference channel. Ordinary co-mapped routes and
-eligible singleton hard-max folds also stream; the latter still evaluate the complete
-fold-node axis before quadrature. Trivial action products, JIT-disabled execution, the
+changing that candidate support. These programs publish only solve-time `VALUE`; replay
+and policy artifacts are not integrated. Value references and gated targets stream
+unless they intersect a co-mapped state through a separate reference channel. Ordinary
+co-mapped routes also stream. Trivial action products, JIT-disabled execution, the
 co-map/reference intersection, and all simulation-policy construction remain dense. See
 the canonical
 [GridSearch route matrix](../reference/solvers.md#gridsearch-jit-route-matrix) for the

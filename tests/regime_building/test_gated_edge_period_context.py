@@ -13,6 +13,8 @@ from lcm import (
     Gate,
     LinSpacedGrid,
     Model,
+    ParticipationCheck,
+    ParticipationRead,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
@@ -28,6 +30,7 @@ from lcm.typing import (
     FloatND,
     ScalarFloat,
     ScalarInt,
+    UserFunction,
     UserInitialConditions,
 )
 from tests.conftest import DECIMAL_PRECISION
@@ -134,6 +137,48 @@ def _context_gate_open_without_reference(
     return (period == 1) & (age == 45)
 
 
+def _edge_decision(
+    *, gate: UserFunction, action_sensitive: bool, split_context: bool
+) -> tuple[dict[str, Gate], dict[str, ParticipationCheck]]:
+    """Return the edge's state-only gate or its value-reading participation check."""
+    if action_sensitive:
+        return (
+            {
+                "target": Gate(
+                    predicate=gate,
+                    routes={
+                        "only": StakeholderRoute(
+                            fallback=ProjectedRegimeValue(
+                                regime="fallback", projection={"x": _identity_x}
+                            )
+                        )
+                    },
+                )
+            },
+            {},
+        )
+    projection = _age_projection if split_context else _context_projection
+    return {}, {
+        "target": ParticipationCheck(
+            predicate=gate,
+            routes={
+                "only": StakeholderRoute(
+                    fallback=ProjectedRegimeValue(
+                        regime="fallback", projection={"x": projection}
+                    )
+                )
+            },
+            reads={
+                "V_reference": ParticipationRead(
+                    kind="IntegratedFull",
+                    regime="reference",
+                    projection={"x": projection},
+                )
+            },
+        )
+    }
+
+
 def _make_model(
     *,
     gate_open: bool,
@@ -149,46 +194,16 @@ def _make_model(
         if gate_open
         else _context_gate_closed
     )
+    gates, participation = _edge_decision(
+        gate=gate, action_sensitive=action_sensitive, split_context=split_context
+    )
     return Model(
         edges={
             "source": Transition(
                 targets={"target": 40, "fallback": 40},
                 law=ByAge(cases={40: {"target": StochasticTransition(func=_prob_one)}}),
-                gates={
-                    "target": Gate(
-                        predicate=gate,
-                        routes={
-                            "only": StakeholderRoute(
-                                fallback=ProjectedRegimeValue(
-                                    regime="fallback",
-                                    projection={
-                                        "x": (
-                                            _identity_x
-                                            if action_sensitive
-                                            else _age_projection
-                                            if split_context
-                                            else _context_projection
-                                        )
-                                    },
-                                )
-                            )
-                        },
-                        references={}
-                        if action_sensitive
-                        else {
-                            "V_reference": ProjectedRegimeValue(
-                                regime="reference",
-                                projection={
-                                    "x": (
-                                        _age_projection
-                                        if split_context
-                                        else _context_projection
-                                    )
-                                },
-                            )
-                        },
-                    )
-                },
+                gates=gates,
+                participation=participation,
             )
         },
         regimes={

@@ -3,12 +3,12 @@
 A model author declares a gate in the `gates` of the source's `Transition` in
 `Model(edges=...)`; the model graph keeps the result on that source's
 `RegimeLaw.gated_edges`. This is that result: the engine's form of one edge,
-carrying the predicate, the routes, the references the predicate reads and the
-off-grid contract. It lives here rather than in the public package because
-nothing constructs it — it is derived.
+carrying the predicate, the routes and the off-grid contract. It lives here
+rather than in the public package because nothing constructs it — it is
+derived.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Literal
 
@@ -16,7 +16,7 @@ from beartype import beartype
 
 from _lcm.beartype_conf import REGIME_CONF
 from _lcm.utils.containers import ensure_containers_are_immutable
-from lcm.collective import Gate, ProjectedRegimeValue, StakeholderRoute
+from lcm.collective import Gate, StakeholderRoute
 from lcm.typing import RegimeName, UserFunction
 
 
@@ -33,7 +33,6 @@ def gated_edge_from_gate(gate: Gate) -> GatedEdge:
     return GatedEdge(
         gate=gate.predicate,
         legs=ensure_containers_are_immutable(gate.routes),
-        gate_refs=ensure_containers_are_immutable(gate.references),
         off_grid=gate.off_grid,
     )
 
@@ -52,11 +51,7 @@ class GatedEdge:
     A source regime's law carries `gated_edges` as a mapping of TARGET regime name
     to `GatedEdge`. **The key is always the GATE-OPEN target** — the regime a
     row enters when the gate is true — and each leg's `fallback` is where the
-    gate-false branch sends it. A dissolution edge is therefore keyed by the
-    CONTINUING collective regime under `gate = ~D_target`, with each partner's
-    single regime as that partner's leg fallback; keying it by one partner's
-    single regime would send both partners there whenever the couple stays
-    together.
+    gate-false branch sends it.
 
     A leg thus owns four facts about where its rows go, and simulation carries
     all four: the open branch's regime (the key) and role
@@ -76,22 +71,13 @@ class GatedEdge:
     threaded through the ordinary transition machinery.
 
     - `gate` — a BOOLEAN user function evaluated pointwise on the target
-      regime's grid. It may read the target regime's per-stakeholder value
-      components under the names `V_target_<s>` (one per target stakeholder),
-      the target's dissolution flag `D_target` (a collective target only), each
-      key of `gate_refs` (a same-period reference value at its projection), and
-      ordinary target states / params, plus the target fold's engine context
-      (`period` / `age`). Mutual consent to marriage is the strict, unanimous gate
-      `gate = (V_target_f > V_single_f_ref) & (V_target_m > V_single_m_ref)`;
-      "no dissolution this period" is `gate = ~D_target`. Stochastic gates —
-      a gate returning a probability in `(0, 1)` rather than a boolean — are
-      not supported.
+      regime's grid. It reads ordinary target states and params, plus the
+      target fold's engine context (`period` / `age`); it never reads a value
+      (`lcm.Gate`). Stochastic gates — a gate returning a probability in
+      `(0, 1)` rather than a boolean — are not supported.
     - `legs` — one `StakeholderRoute` per SOURCE stakeholder (keyed by source
       stakeholder name; a singleton source declares exactly one leg under any
       key).
-    - `gate_refs` — extra same-period reference values the `gate` reads,
-      exactly like a regime's `same_period_refs` but projected from the TARGET
-      regime's grid.
     - `off_grid` — what the edge promises about a landing point between the
       target's grid nodes. Both phases read the operands there and gate them
       there, so the value the source maximizes is one a branch really pays;
@@ -107,12 +93,6 @@ class GatedEdge:
 
     A singleton source declares exactly one, under any key.
     """
-
-    gate_refs: MappingProxyType[str, ProjectedRegimeValue] = field(
-        default_factory=lambda: MappingProxyType({})
-    )
-    """Same-period reference values the `gate` reads (projected from the target
-    grid)."""
 
     off_grid: Literal["pointwise", "reject"] = "pointwise"
     """How a landing point between the target's grid nodes is treated.
@@ -133,10 +113,9 @@ class GatedEdge:
     ) -> tuple[RegimeName, ...]:
         """Return the regimes this edge reads a projected current value from.
 
-        Every gate reference, then each leg's fallback in each of `phases`,
-        deduplicated in that order.
+        Each leg's fallback in each of `phases`, deduplicated in that order.
         """
-        names = [ref.regime for ref in self.gate_refs.values()]
+        names: list[RegimeName] = []
         for leg in self.legs.values():
             names.extend(
                 (

@@ -118,15 +118,18 @@ def test_nnbegm_without_outer_search_raises_at_construction() -> None:
 # at both. `_FINITE_GRID_N_ULP` doubles that, and a genuine change in candidate
 # generation moves these values by orders of magnitude more.
 _FINITE_GRID_N_ULP = 4
+# Re-pinned when the NB-EGM savings-node refinement replaced snapped node savings
+# by the interior Euler saving; a dense-savings brute force of each inner kernel
+# (keeper, adjuster at the first and last node) lies closer to the new values.
 _FINITE_GRID_BASELINE_HEAD = (
-    -25.336494502711897,
-    -19.638656410864485,
+    -25.3364945027119,
+    -19.63865641086448,
     -15.20980502450777,
-    -12.968285372927772,
-    -11.12194670592802,
-    -9.684120807993004,
+    -12.941915105384702,
+    -11.11563242312385,
+    -9.679228617945437,
 )
-_FINITE_GRID_BASELINE_SUM = -2538.617102280524
+_FINITE_GRID_BASELINE_SUM = -2538.4604986950126
 _FINITE_GRID_BASELINE_SIZE = 240
 
 

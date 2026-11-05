@@ -36,6 +36,11 @@ pytestmark = pytest.mark.usefixtures("x64_enabled")
 
 ALIVE_0 = ("alive", 0, "main")
 DEAD_3 = ("dead", 3, "main")
+# Between the `alive` period-1 pair at width 2 (32228 reservation plus 1592
+# resident bytes, admitted) and the period-0 pair at width 2 (32228 plus 1720,
+# refused); width 1 (25492 plus 1720) fits. The reservations are XLA's compiled
+# memory analysis, so they move with the installed jaxlib.
+_PAIR_REJECTS_ALIVE_0 = 33884
 
 
 class _Captured(TypedDict, total=False):
@@ -120,6 +125,8 @@ def _solve_with(
         n_liquid=8,
         n_savings=10,
         n_consumption=12,
+        # The census budgets were measured on the certified reader's footprint.
+        nbegm_overrides={"envelope_arithmetic": "certified"},
         execution_config=execution_config,
     )
     # Runtime checks off: their untiled off-grid count producers are admitted
@@ -156,7 +163,9 @@ def test_bounded_search_shrinks_the_width_the_paired_admission_re_rejects(
     """A width its donating variant fits but its pair does not is shrunk, not kept."""
     widths = _selected_widths(
         monkeypatch=monkeypatch,
-        execution_config=_bounded(seed="widest", device_memory_bytes=63979),
+        execution_config=_bounded(
+            seed="widest", device_memory_bytes=_PAIR_REJECTS_ALIVE_0
+        ),
     )
     assert widths[ALIVE_0] == (("cell", 1),)
 
@@ -167,7 +176,9 @@ def test_bounded_search_leaves_the_other_cores_at_the_width_their_pair_admits(
     """Only the core whose pair exceeds the budget is shrunk."""
     widths = _selected_widths(
         monkeypatch=monkeypatch,
-        execution_config=_bounded(seed="widest", device_memory_bytes=63979),
+        execution_config=_bounded(
+            seed="widest", device_memory_bytes=_PAIR_REJECTS_ALIVE_0
+        ),
     )
     assert widths[("alive", 1, "main")] == (("cell", 2),)
 
@@ -221,7 +232,7 @@ def test_bounded_search_logs_each_evaluation_with_its_decision(
 
     assert (
         "bounded width search regime 'dead', core 'main', period 3: evaluation 1 at "
-        "{'cell': 8} — 172 reservation plus 1048 resident bytes, admitted"
+        "{'cell': 8} — 184 reservation plus 1064 resident bytes, admitted"
         in caplog.text
     )
 
@@ -254,7 +265,7 @@ def test_bounded_search_refuses_by_naming_the_evaluation_budget_it_spent() -> No
                 seed="widest",
                 max_evaluations=1,
                 refinement_share=0,
-                device_memory_bytes=63979,
+                device_memory_bytes=_PAIR_REJECTS_ALIVE_0,
             )
         )
 

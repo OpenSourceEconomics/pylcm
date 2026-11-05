@@ -157,7 +157,6 @@ def test_the_root_set_names_every_slot_of_the_regime_that_carries_it() -> None:
         "__same_period_ref__V_single_f_ref__wage",
         "__same_period_ref__V_single_m_ref__wage",
         "__incoming_gate__couple",
-        "__incoming_gate_ref__couple__V_single_ref__wage",
         "__incoming_fallback__couple__f__solve__wage",
         "__incoming_fallback__couple__f__simulate__wage",
         "__incoming_fallback__couple__m__solve__wage",
@@ -228,8 +227,7 @@ def _make_regimes() -> dict[str, Regime]:
 
     A collective `couple` reaches a collective `couple_ir` through both a raw
     per-target regime transition and a gated edge whose gate reads the target's
-    dissolution flag and a same-period reference to `single`. `couple_ir`
-    carries the value constraints and same-period references that flag drives.
+    wage. `couple_ir` carries the value constraints and same-period references.
     """
     couple = Regime(
         states={"wage": _WAGE_GRID},
@@ -308,8 +306,8 @@ def _make_regimes() -> dict[str, Regime]:
 def _couple_transition() -> Transition:
     """The couple's age-0 transition: a gated edge into `couple_ir`.
 
-    The gate reads the target's dissolution flag and a same-period reference
-    to `single_f`; each stakeholder's route falls back to her own single regime.
+    The gate reads the target's wage; each stakeholder's route falls back to
+    her own single regime.
     """
     return Transition(
         targets={"couple_ir": 0, "single_f": 0, "single_m": 0},
@@ -322,7 +320,7 @@ def _couple_transition() -> Transition:
         ),
         gates={
             "couple_ir": Gate(
-                predicate=_no_dissolution_gate,
+                predicate=_above_the_lowest_wage,
                 routes={
                     "f": StakeholderRoute(
                         target_stakeholder="f",
@@ -338,11 +336,6 @@ def _couple_transition() -> Transition:
                             projection={"wage": _identity_wage},
                         ),
                     ),
-                },
-                references={
-                    "V_single_ref": ProjectedRegimeValue(
-                        regime="single_f", projection={"wage": _identity_wage}
-                    )
                 },
             )
         },
@@ -410,9 +403,9 @@ def _identity_wage(wage: ContinuousState) -> ContinuousState:
     return wage
 
 
-def _no_dissolution_gate(D_target: BoolND) -> BoolND:
-    """The edge is open wherever the target does not dissolve."""
-    return ~D_target
+def _above_the_lowest_wage(wage: ContinuousState) -> BoolND:
+    """The edge is open above the lowest wage node."""
+    return wage > 1.0
 
 
 def _ir_f(*, Q_f: FloatND, V_single_f_ref: FloatND, delta_f: FloatND) -> BoolND:

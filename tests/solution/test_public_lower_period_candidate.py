@@ -50,6 +50,7 @@ class _ContextResolver(Protocol):
         regimes: MappingProxyType[engine.RegimeName, engine.Regime],
         program_fingerprint: str,
         flat_params: engine.FlatParams,
+        solve_parameter_views: Mapping[engine.RegimeName, engine.FlatParams] = ...,
         ages: engine.TimeAxis,
         next_regime_to_V_arr: MappingProxyType[engine.RegimeName, engine.FloatND],
         next_regime_to_continuation: MappingProxyType[
@@ -61,7 +62,6 @@ class _ContextResolver(Protocol):
         enable_jit: bool,
         continuous_sharded_state: engine.StateName | None = ...,
         donate_buffers: bool = ...,
-        retain_all_artifacts: bool,
         persistable_artifact_refs: frozenset[engine.ArtifactRef],
         process_grid_resolver: engine.ProcessGridResolver | None = ...,
         structural_blueprints: engine.StructuralBlueprintCache[
@@ -352,7 +352,7 @@ def _forbid_candidate_execution[Argument](
 
 @pytest.mark.parametrize(
     "retention",
-    [ResultRetention.VALUES_AND_REPLAY, ResultRetention.ALL_PERSISTABLE_ARTIFACTS],
+    [ResultRetention.VALUES, ResultRetention.ALL_PERSISTABLE_ARTIFACTS],
     ids=["donated-continuation", "persisted-continuation"],
 )
 def test_public_lower_period_candidate_matches_solve(
@@ -446,8 +446,7 @@ def test_public_lower_period_candidate_matches_solve(
         for manifest, ir in observed
         if _candidate_address(manifest=manifest) in dispatched
         and _candidate_address(manifest=manifest)[1] < model.n_periods - 1
-        and bool(manifest["primary_donated"])
-        == (retention is ResultRetention.VALUES_AND_REPLAY)
+        and bool(manifest["primary_donated"]) == (retention is ResultRetention.VALUES)
     ]
     assert matches, "No genuine primary continuation candidate reached dispatch"
     expected, expected_ir = matches[0]
@@ -762,7 +761,7 @@ def test_public_lower_period_candidate_rejects_absent_members_before_lowering(
         model.solve(
             params=params,
             log_level="off",
-            retention=ResultRetention.VALUES_AND_REPLAY,
+            retention=ResultRetention.VALUES,
         )
     candidates = sorted(
         entry for entry in dispatched if entry[1] < model.n_periods - 1 and entry[4]
@@ -814,7 +813,7 @@ def test_public_lower_period_candidate_rejects_absent_members_before_lowering(
                     params=params,
                     log_level="off",
                     candidate=candidate,
-                    retention=ResultRetention.VALUES_AND_REPLAY,
+                    retention=ResultRetention.VALUES,
                 )
             assert str(exc_info.value) == message
 

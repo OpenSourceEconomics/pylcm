@@ -27,32 +27,40 @@ environment is held fixed and only the source moves. The precision is set with
 JAX's own `JAX_ENABLE_X64` switch, which takes effect when JAX is imported:
 
     git worktree add --detach <old> <sha>
-    cp src/_lcm/version.py <old>/src/_lcm/version.py
+    pixi run -e tests-cpu python -c 'from vcs_versioning._get_version_impl import \
+        get_version; print(get_version(root="<old>", write_to="src/_lcm/version.py"))'
     JAX_ENABLE_X64=1 JAX_PLATFORMS=cpu PYTHONPATH=<old>/src zsh -ic "cd <repo> && \
         cap pixi run -e type-checking python \
         tests/data/regression_tests/generate_representative_model_values.py \
         --source-root <old> --precision 64 \
-        --output tests/data/regression_tests/f64/representative_model_values.npz"
+        --output \
+        tests/data/regression_tests/f64/random-v1/representative_model_values.npz"
 
 and the same with `JAX_ENABLE_X64=0`, `--precision 32` and the `f32` directory.
-The script refuses to write when `lcm` was not imported from `--source-root`, when
-the precision JAX runs at differs from `--precision`, or when the backend is not
-the CPU.
+The script refuses to overwrite an existing archive or host record. It also refuses
+to write when `lcm` was not imported from `--source-root`, when the precision JAX runs
+at differs from `--precision`, or when the backend is not the CPU.
 """
 
 import argparse
+import hashlib
+import json
 import os
 import platform
+import shlex
 import subprocess
 from collections.abc import Iterator, Mapping
 from pathlib import Path
 
 import jax
 import jax.numpy as jnp
+import jaxlib
 import numpy as np
 import pandas as pd
+from jax.experimental import topologies
 
 import lcm
+from _lcm.simulation.random_address import RANDOM_ADDRESS_VERSION
 from lcm import Model
 from lcm.typing import FloatND, RegimeName, UserInitialConditions, UserParams
 from lcm_examples import (
@@ -71,9 +79,6 @@ REPRESENTATIVE_MODELS = (
 PROVENANCE = "__provenance__"
 SIMULATION_SEED = 12345
 _N_SUBJECTS = 4
-# CPU flags that change the vector width or the fused multiply-adds XLA emits for
-# float arithmetic.
-_ISA_FLAG_PREFIXES = ("avx", "fma", "sse4")
 
 
 def representative_outputs(name: str) -> dict[str, np.ndarray]:
@@ -110,27 +115,19 @@ def representative_outputs(name: str) -> dict[str, np.ndarray]:
 
 
 def host_fingerprint() -> str:
-    """Return the OS, machine, vector-ISA flags and XLA ISA cap of this host.
-
-    The flags come from `/proc/cpuinfo`; a host without it records none, so its
-    fingerprint never matches a Linux one.
-    """
-    # ponytail: a feature-flag subset, not XLA's full target description; record
-    # XLA's host CPU features if two hosts with one fingerprint ever disagree.
-    cpuinfo = Path("/proc/cpuinfo")
-    flags: set[str] = set()
-    if cpuinfo.exists():
-        for line in cpuinfo.read_text().splitlines():
-            if line.startswith("flags"):
-                flags = set(line.split(":", 1)[1].split())
-                break
-    isa = sorted(flag for flag in flags if flag.startswith(_ISA_FLAG_PREFIXES))
-    cap = [
-        flag
-        for flag in os.environ.get("XLA_FLAGS", "").split()
-        if flag.startswith("--xla_cpu_max_isa")
-    ]
-    return " ".join([platform.system(), platform.machine().lower(), *isa, *cap])
+    """Identify the CPU compiler, its full target and its explicit XLA flags."""
+    target = topologies.get_attached_topology("cpu").serialize()
+    return json.dumps(
+        {
+            "system": platform.system(),
+            "machine": platform.machine().lower(),
+            "jax": jax.__version__,
+            "jaxlib": jaxlib.__version__,
+            "cpu_target_sha256": hashlib.sha256(target).hexdigest(),
+            "xla_flags": shlex.split(os.environ.get("XLA_FLAGS", "")),
+        },
+        sort_keys=True,
+    )
 
 
 def host_file(archive: Path) -> Path:
@@ -146,6 +143,8 @@ def main() -> None:
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     source_root = args.source_root.resolve()
+    if args.output.exists() or host_file(args.output).exists():
+        raise FileExistsError(f"A frozen output already exists beside {args.output}.")
     lcm_file = Path(lcm.__file__).resolve()
     _fail_if_not_probing(
         lcm_file=lcm_file, source_root=source_root, precision=args.precision
@@ -160,6 +159,22 @@ def main() -> None:
         "precision": str(args.precision),
         "backend": jax.default_backend(),
         "jax_version": jax.__version__,
+        "jaxlib_version": jaxlib.__version__,
+        "address_version": RANDOM_ADDRESS_VERSION,
+        "prng_impl": "threefry2x32",
+        "source_diff_sha256": hashlib.sha256(
+            _git(source_root, "diff", "--binary").encode("utf-8")
+        ).hexdigest(),
+        "source_files": json.dumps(
+            {
+                str(path.relative_to(source_root)): hashlib.sha256(
+                    path.read_bytes()
+                ).hexdigest()
+                for path in sorted((source_root / "src").rglob("*.py"))
+            },
+            sort_keys=True,
+        ),
+        "recipe_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
     }
     arrays.update(
         {

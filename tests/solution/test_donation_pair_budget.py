@@ -23,6 +23,10 @@ from tests.solution._callback_types import (
 )
 from tests.test_models import nbegm_ride_along_toy
 
+# This grid separates the real ordinary and donating compiler footprints at both
+# precisions; smaller grids can tie after XLA packs their temporaries.
+_N_SAVINGS = 14
+
 
 def test_budget_admits_both_real_variants_before_any_donating_dispatch(
     *,
@@ -64,7 +68,7 @@ def test_budget_admits_both_real_variants_before_any_donating_dispatch(
     model = nbegm_ride_along_toy.build_model(
         variant="nbegm",
         n_liquid=8,
-        n_savings=10,
+        n_savings=_N_SAVINGS,
         n_consumption=12,
         execution_config=ExecutionConfig(
             device_memory_bytes=10**8, axis_widths={"cell": 2}
@@ -143,7 +147,7 @@ def test_budget_admits_both_real_variants_before_any_donating_dispatch(
     tight = nbegm_ride_along_toy.build_model(
         variant="nbegm",
         n_liquid=8,
-        n_savings=10,
+        n_savings=_N_SAVINGS,
         n_consumption=12,
         execution_config=ExecutionConfig(
             device_memory_bytes=donor_ceiling, axis_widths={"cell": 2}

@@ -269,7 +269,7 @@ def _get_V_interpolator_process_aware(
       instead of between two. The dropped corner carries weight zero, so the
       answer is the one an unpinned read gives; what changes is that the
       interpolation box no longer doubles per categorical axis.
-    - A non-folded process axis (`discrete_states`, `_ContinuousStochasticProcess`):
+    - A process axis (`discrete_states`, `_ContinuousStochasticProcess`):
       the incoming value is treated as a genuine VALUE in the process's own
       units (not a node index) and mapped to a fractional coordinate via
       `grid.get_coordinate`, clamped to the node range (see
@@ -329,11 +329,19 @@ def _get_V_interpolator_process_aware(
         axis_coord_names.append(coord_name)
 
     read_name = "__read__" if categorical_axes else "__fval__"
-    funcs[read_name] = _get_interpolator(
-        name_of_values_on_grid=V_arr_name,
-        axis_names=axis_coord_names,
-        pinned_axis_names=frozenset(axis.coord_name for axis in categorical_axes),
-    )
+    if axis_coord_names:
+        funcs[read_name] = _get_interpolator(
+            name_of_values_on_grid=V_arr_name,
+            axis_names=axis_coord_names,
+            pinned_axis_names=frozenset(axis.coord_name for axis in categorical_axes),
+        )
+    else:
+        # A stateless value (or a fully co-mapped value) is already a scalar.
+        # Use the ordinary reader's lookup rather than a zero-dimensional stencil.
+        funcs[read_name] = _get_lookup_function(
+            array_name=V_arr_name,
+            axis_names=[],
+        )
     if categorical_axes:
         funcs["__fval__"] = _get_named_category_guard(
             read_name=read_name,
@@ -444,7 +452,7 @@ def _get_process_coordinate_finder(
     Args:
         in_name: Name via which the value to be translated into a coordinate will be
             passed into the resulting function.
-        grid: The non-folded continuous stochastic process whose node axis the
+        grid: The continuous stochastic process whose node axis the
             value is translated onto.
 
     Returns:

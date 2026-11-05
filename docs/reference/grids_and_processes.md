@@ -81,6 +81,20 @@ and `DiscreteGrid(values=...)`; lists and tuples are refused. Nodes must be fini
 strictly increasing at the working precision. Ordinary Tauchen construction still places
 its own stationary grid.
 
+The factory accepts `transition_rule="midpoint"` (default), `"density"` (row-normalized
+normal densities at state nodes, computed in log space), or `"innovation_quadrature"`
+(standardized innovation weights mapped linearly to adjacent state nodes, with targets
+clipped to endpoints). For innovation quadrature, supply `n_quadrature` (default 9), or
+both `innovation_nodes` and `innovation_weights` arrays. Explicit weights are normalized
+finite nonnegative masses with positive total. Quadrature configuration is static, not a
+process parameter. All rules accept `StateConditioned` scales. Continuous simulation
+retains the normal law; node simulation uses the selected matrix.
+
+Density-rule differentiation uses normalized scaled arithmetic without a host
+certificate. A componentwise accuracy certificate exists only as a test oracle and adds
+no check to solve, simulation or routine AD. See
+[density derivatives](../user_guide/continuous_stochastic_processes.md).
+
 A process owns its transition mechanism. Adding a second law under `state_transitions`
 is an ambiguous declaration and is rejected.
 
@@ -89,16 +103,10 @@ one named process changes distribution across observable states without changing
 model's state vocabulary. The conditioning categories and parameter leaves must align
 with the declared categorical grid.
 
-Every IID process supports `fold=True` when used as a state. The solve still evaluates
-utility and the action choice at every shock node, then averages the process axis with
-its own weights before storing the period value. Simulation still draws and publishes
-the realized shock. Folding is a storage-topology optimization with a deliberately
-narrow contract: GridSearch, a singleton regime, fixed distribution parameters, linear
-expectation, and no taste shocks or node-dependent downstream transition/value gate. A
-state-conditioned folded shock additionally requires its conditioning state to remain
-fixed on the regime's own and every incoming edge. See
-[Folding an IID shock out of stored values](../user_guide/continuous_stochastic_processes.md#folding-an-iid-shock-out-of-stored-values)
-for the complete boundary.
+An IID process used as a state carries an axis in a regime only when the regime reads
+its current value. A regime whose state transitions read it only as `next_<state>`
+stores no axis for it and integrates the draw in the continuation. See
+[Shock timing](../user_guide/continuous_stochastic_processes.md#shock-timing-is-read-off-the-model).
 
 See [Grids](../user_guide/grids.md) and
 [Continuous stochastic processes](../user_guide/continuous_stochastic_processes.md) for

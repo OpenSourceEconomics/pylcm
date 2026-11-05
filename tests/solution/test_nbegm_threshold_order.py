@@ -54,7 +54,7 @@ def test_a_single_variable_mixed_schedule_recovers_its_jump_positions():
     the jump index has to follow.
     """
     jump_flags, n_jumps, _has_jump, static_positions, dynamic_jumps = (
-        _ride_along_jump_config(("jump", "continuous_kink"))
+        _ride_along_jump_config(kinds=("jump", "continuous_kink"))
     )
     assert static_positions == (0,)
     # The jump's preimage sits above the kink's on the asset axis.

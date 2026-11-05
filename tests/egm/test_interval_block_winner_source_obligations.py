@@ -8,6 +8,9 @@ and rebuilt native payload are unavailable.
 import ast
 from pathlib import Path
 
+import pytest
+from _interval_block_winner_source import ordinary_identity
+
 ROOT = Path(__file__).resolve().parents[2]
 QUERY = ROOT / "src/_lcm/egm/upper_envelope/query.py"
 STEP = ROOT / "src/_lcm/egm/nbegm_step.py"
@@ -65,26 +68,55 @@ def _class_source(*, path: Path, name: str) -> str:
 
 
 def test_ordinary_order_uses_the_global_index_as_its_last_field() -> None:
-    tree = _tree(QUERY)
-    tie_class = next(
-        node
-        for node in tree.body
-        if isinstance(node, ast.ClassDef) and node.name == "_TieBreakKey"
-    )
-    fields = [
-        node.target.id
-        for node in tie_class.body
-        if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name)
-    ]
-    assert fields == ["right_available", "slope_high", "slope_low", "stable_index"]
-
-    dense = _function_source(path=QUERY, name="_lexicographic_argmax")
-    blocked = _function_source(path=QUERY, name="_outranks")
-    assert "jnp.min" in dense
-    assert "key.stable_index" in dense
-    assert "challenger.stable_index < held.stable_index" in blocked
+    assert ordinary_identity(_tree(QUERY)) == "stable"
     assert "merge_envelope_winner" in _text(QUERY)
     assert "stable_index=identities" in _text(QUERY)
+
+
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        ("class _OrdinaryRank(NamedTuple):", "class _LocalRank(NamedTuple):"),
+        ("for field in rank[:-1]:", "for field in rank:"),
+        (
+            "earliest = jnp.min(\n        jnp.where(tied, rank.stable_index,",
+            "earliest = jnp.max(\n        jnp.where(tied, rank.stable_index,",
+        ),
+        (
+            "earliest = jnp.min(\n        jnp.where(\n            still_tied,",
+            "earliest = jnp.max(\n        jnp.where(\n            still_tied,",
+        ),
+        (
+            "block_stable_index=block_live_and_stable[2]",
+            "block_stable_index=block_live_and_stable[1]",
+        ),
+        (
+            "offered.stable_index < held.stable_index",
+            "offered.stable_index > held.stable_index",
+        ),
+        (
+            "jnp.where(take, offered_channel, standing_channel)",
+            "jnp.where(take, standing_channel, offered_channel)",
+        ),
+    ],
+    ids=[
+        "missing-rank",
+        "identity-in-primary-fields",
+        "dense-largest-identity",
+        "block-largest-identity",
+        "block-local-identity",
+        "reversed-standing-identity",
+        "mismatched-payload",
+    ],
+)
+def test_ordinary_source_control_rejects_identity_or_payload_defects(
+    *, old: str, new: str
+) -> None:
+    """Missing source seams and mutated live comparisons fail before the oracle."""
+    source = _text(QUERY)
+    assert source.count(old) == 1
+    with pytest.raises(AssertionError, match="ordinary"):
+        ordinary_identity(ast.parse(source.replace(old, new, 1)))
 
 
 def test_python_exact_winner_abi_requires_an_explicit_stable_index_operand() -> None:

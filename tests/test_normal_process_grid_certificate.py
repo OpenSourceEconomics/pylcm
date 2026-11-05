@@ -68,6 +68,23 @@ _NESTED_CORRIDOR_SOURCES = (
 )
 
 
+# Exact additions from accepted S1, current-IID S4 and typed-override S11 corridors.
+_S1_CORRIDOR_SOURCES = ("src/_lcm/simulation/random_address.py",)
+_CURRENT_IID_CORRIDOR_SOURCES = (
+    "src/_lcm/current_iid.py",
+    "src/_lcm/simulation/current_iid.py",
+)
+_OVERRIDE_CORRIDOR_SOURCES = (
+    "src/lcm/shocks.py",
+    "src/_lcm/shock_overrides.py",
+    "src/_lcm/simulation/current_iid_overrides.py",
+)
+_ENGINE_REDESIGN_CORRIDOR_SOURCES = (
+    "src/_lcm/simulation/eager_stages.py",
+    "src/lcm/typing.py",
+)
+
+
 def test_normal_controls_preserve_all_historical_populations() -> None:
     root = Path(__file__).parents[1]
     population = direct_flow.normal_process_mutation_specs(repo_root=root)
@@ -91,6 +108,13 @@ def test_normal_controls_preserve_all_historical_populations() -> None:
         assert historical.isdisjoint(names)
         assert set(population).isdisjoint(names)
         historical.update(names)
+    exact_count_controls = {
+        "feasibility:exact_count_dtype_narrowed",
+        "feasibility:count_capacity_refusal_omitted",
+    }
+    assert exact_count_controls <= historical
+    assert len(historical) == 602
+    historical = historical - exact_count_controls
     added_feasibility_controls = {
         "feasibility_summary:published_value_changed",
         "feasibility_summary:empty_count_reversed",
@@ -111,11 +135,35 @@ def test_normal_controls_preserve_all_historical_populations() -> None:
         "simulation_adapter:initial_physical_transform_changed",
     }
     assert added_initial_controls <= historical
-    assert len(historical) == 613
-    assert len(historical - added_initial_controls) == 601
-    assert len(historical - added_initial_controls - added_feasibility_controls) == 599
+    # Accepted S1 adds this one destination-address control to the old roster.
+    added_rng_controls = {"simulation_taste_stream:destination_name_ignored"}
+    assert added_rng_controls <= historical
+    # The engine redesign adds this one canonical-writer dtype control.
+    added_engine_controls = {"candidate_materialization:array_writer_dtype_widened"}
+    assert added_engine_controls <= historical
+    # The dissolution-flag removal deleted streaming_collective:published_dissolution_
+    # inverted and native_graph:collective_output_role_dropped with their targets;
+    # the fold-machinery removal deleted ten streaming fold controls and two
+    # supplemental s02_status:fold_weight_* controls with theirs.
+    assert len(historical) == 600
+    historical_before_s1 = historical - added_rng_controls - added_engine_controls
+    assert len(historical_before_s1) == 598
+    assert len(historical_before_s1 - added_initial_controls) == 586
+    assert (
+        len(historical_before_s1 - added_initial_controls - added_feasibility_controls)
+        == 584
+    )
     assert "src/_lcm/solution/feasibility.py" in direct_flow._CERTIFIED_CORRIDOR_SOURCES
-    assert len(direct_flow._CERTIFIED_CORRIDOR_SOURCES) == 171
+    assert len(direct_flow._CERTIFIED_CORRIDOR_SOURCES) == 178
+    added_corridor_sources = (
+        set(_S1_CORRIDOR_SOURCES)
+        | set(_CURRENT_IID_CORRIDOR_SOURCES)
+        | set(_OVERRIDE_CORRIDOR_SOURCES)
+        | set(_ENGINE_REDESIGN_CORRIDOR_SOURCES)
+    )
+    assert len(added_corridor_sources) == 8
+    assert added_corridor_sources <= set(direct_flow._CERTIFIED_CORRIDOR_SOURCES)
+    assert added_corridor_sources.isdisjoint(_NESTED_CORRIDOR_SOURCES)
     assert len(set(_NESTED_CORRIDOR_SOURCES)) == 53
     assert set(_NESTED_CORRIDOR_SOURCES) <= set(direct_flow._CERTIFIED_CORRIDOR_SOURCES)
     original_corridor_sources = tuple(
@@ -123,14 +171,16 @@ def test_normal_controls_preserve_all_historical_populations() -> None:
         for relative in direct_flow._CERTIFIED_CORRIDOR_SOURCES
         if relative != "src/_lcm/solution/feasibility.py"
         and relative not in _NESTED_CORRIDOR_SOURCES
+        and relative not in added_corridor_sources
     )
-    assert len(original_corridor_sources) == 117
-    # Exact ordered source roster from 0a39539fd628bb60dcae2d3cca601816fe4832f4.
+    assert len(original_corridor_sources) == 116
+    # Exact ordered source roster from 0a39539fd628bb60dcae2d3cca601816fe4832f4,
+    # less src/_lcm/simulation/policy_diagnostics.py, deleted with its control.
     assert (
         hashlib.sha256(
             ("\n".join(original_corridor_sources) + "\n").encode()
         ).hexdigest()
-        == "176867afe4246804efd4231a7a7a8439c6852d2bd099f6f537d3597473d70c85"
+        == "88e96568e7985d187373f1bd1accb4d9dd9b5b0c8176e2695b9d6dbe3f7fb87f"
     )
 
 

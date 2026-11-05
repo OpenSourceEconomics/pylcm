@@ -182,7 +182,7 @@ def _resolve_process_law_params(
         cast(
             "FlatParams",
             MappingProxyType({k: MappingProxyType(v) for k, v in raw.items()}),
-        )
+        ),
     )
 
     resolved: dict[RegimeName, dict[StateName, dict[str, _ProcessField]]] = {}

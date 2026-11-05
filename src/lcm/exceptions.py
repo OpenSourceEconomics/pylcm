@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 # type checking only.
 if TYPE_CHECKING:
     from _lcm.typing import JSONValue, PeriodToRegimeToVArr
+    from lcm.typing import RegimeName
 
 
 class PyLCMError(Exception):
@@ -30,11 +31,14 @@ class InvalidValueFunctionError(PyLCMError):
             debug snapshots.
         diagnostics: Per-intermediate NaN fraction summary, attached by
             `validate_V` when diagnostic functions are available.
+        regime_name: Regime whose value function holds the NaN, attached by
+            `validate_V`.
 
     """
 
     partial_solution: PeriodToRegimeToVArr | None = None
     diagnostics: Mapping[str, JSONValue] | None = None
+    regime_name: RegimeName | None = None
 
 
 class InvalidRegimeTransitionProbabilitiesError(PyLCMError):
@@ -99,6 +103,10 @@ class IncompatibleSolutionError(PyLCMError):
     """Raised when a solution uses an unsupported schema or plugin version."""
 
 
+class ValueStorageError(PyLCMError):
+    """Raised when solved values cannot be copied or written to their value storage."""
+
+
 class ExecutionPlanningError(PyLCMError):
     """Raised when the requested execution policy cannot produce a valid plan."""
 
@@ -127,6 +135,10 @@ class ModelInitializationError(PyLCMError):
     """Raised when there is an error in the model initialization."""
 
 
+class ShockDeclarationError(ModelInitializationError):
+    """Raised when shock laws, node rules or their readers are invalid."""
+
+
 class RegimeInitializationError(ModelInitializationError):
     """Raised when there is an error in the regime initialization.
 
@@ -134,6 +146,15 @@ class RegimeInitializationError(ModelInitializationError):
     construction and again when a model finalizes it, so the same defect
     surfaces from either call. Catching `ModelInitializationError` catches
     both.
+    """
+
+
+class GateReadsValueError(RegimeInitializationError):
+    """Raised when a `Gate` predicate reads a value of its target regime.
+
+    A gate routes on the target's states and parameters. A move decided by
+    comparing values is an `Exit` of the source regime, or a `ParticipationCheck`
+    when the comparison is made on landing.
     """
 
 

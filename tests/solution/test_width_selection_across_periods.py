@@ -2,7 +2,7 @@
 
 import math
 from collections.abc import Mapping
-from typing import TypedDict, Unpack
+from typing import TypedDict, Unpack, cast
 
 import jax
 import jax.numpy as jnp
@@ -27,7 +27,7 @@ from lcm import (
     Transition,
     fixed_transition,
 )
-from lcm.typing import ScalarInt
+from lcm.typing import ScalarInt, UserFacingRegimeParamsTemplate
 from tests.execution.test_compiler_allocation_reservation import synthetic_memory
 from tests.solution._callback_types import (
     CompileFunctionsKwargs,
@@ -134,7 +134,9 @@ def _solve(
     monkeypatch.setattr(backward_induction, "_lower_and_compile_wave", count_wave)
     monkeypatch.setattr(backward_induction, "_compile_all_functions", capture)
     model = _model(budget_bytes=budget_bytes)
-    template = model.get_params_template()
+    template = cast(
+        "dict[str, UserFacingRegimeParamsTemplate]", model.get_params_template()
+    )
     params = {
         **template,
         "acting": {

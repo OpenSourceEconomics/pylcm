@@ -1,4 +1,4 @@
-"""Legal recovered side profiles determine a right-indistinguishable tie."""
+"""An exact ordinary value tie goes to the lowest O, whatever the recovered sides."""
 
 from dataclasses import replace
 
@@ -21,8 +21,8 @@ from tests.egm.test_finite_negm_query_integrity_and_ties import _read
 pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 
 
-def test_recovered_left_value_decides_a_right_identical_ordinary_tie() -> None:
-    """An illegal left owner cannot defeat a genuinely legal ordinary left side."""
+def test_right_identical_ordinary_tie_goes_to_the_lowest_outer_index() -> None:
+    """Recovered left sides do not reorder an exact ordinary value tie."""
     query, pool = make_canonical_query()
     topology = query.model.authority.row_topology
     assert topology is not None
@@ -98,17 +98,12 @@ def test_recovered_left_value_decides_a_right_identical_ordinary_tie() -> None:
         for outer in (0, 1)
     )
     assert all(bool(row.ordinary.supported & row.left.supported) for row in raw)
-    assert all(not bool(row.germ_invalid) for row in raw)
     np.testing.assert_array_equal([row.ordinary.value for row in raw], [0.0, 0.0])
     np.testing.assert_array_equal([row.ordinary.marginal for row in raw], [4.0, 5.0])
-    np.testing.assert_array_equal(
-        jnp.stack(raw[0].right_germ), jnp.stack(raw[1].right_germ)
-    )
     np.testing.assert_array_equal([row.left.value for row in raw], [2.0, 0.0])
     np.testing.assert_array_equal([row.left.savings for row in raw], [0.25, 0.625])
-    assert bool(raw[0].left_germ[1] < raw[1].left_germ[1])
-    # The right cubic pieces coincide after slope limiting, but raw left owner0
-    # is ineligible at actual b3/8. Its legal left recovery is far below owner1.
+    # Raw left owner0 is ineligible at actual b3/8, but the value argmax only
+    # compares the tied ordinary values, so O0 keeps the read.
     pool = {**pool, "stock": jnp.asarray(1.5)}
     floor, _, status = query.evaluate_floor(pool=pool)
     np.testing.assert_array_equal(floor, 0.375)
@@ -128,4 +123,4 @@ def test_recovered_left_value_decides_a_right_identical_ordinary_tie() -> None:
     )
     np.testing.assert_array_equal(result.coverage_missing, [False])
     np.testing.assert_array_equal(result.value, [0.0])
-    np.testing.assert_array_equal(result.marginal, [5.0])
+    np.testing.assert_array_equal(result.marginal, [4.0])

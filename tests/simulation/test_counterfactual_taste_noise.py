@@ -75,16 +75,17 @@ def _counterfactual_model(*, renamed: bool) -> Model:
 
 
 @pytest.mark.parametrize("ambient_prng", ["threefry2x32", "rbg"])
-def test_actual_noise_survives_renamed_regimes_and_a_longer_horizon(
+def test_actual_noise_matches_named_periods_and_distinguishes_other_destinations(
     *, monkeypatch: pytest.MonkeyPatch, ambient_prng: str
 ) -> None:
-    """Shared age-40 choices get identical EV1 draws; a new taste seed changes them."""
+    """Equal named periods share EV1 draws; another destination or seed differs."""
     count = 6
     observations = _NoiseRecords(original=max_q.draw_taste_shock_noise)
     monkeypatch.setattr(max_q, "draw_taste_shock_noise", observations.draw)
     observed_runs = []
     for renamed, ordinary_seed, taste_seed in (
         (False, 11, 721),
+        (False, 92, 721),
         (True, 92, 721),
         (True, 92, 722),
     ):
@@ -115,13 +116,15 @@ def test_actual_noise_survives_renamed_regimes_and_a_longer_horizon(
                 np.ones(count, dtype=bool),
             )
             np.testing.assert_array_equal(initial["wealth"], original_wealth)
-    baseline, counterfactual, changed_seed = observed_runs
+    baseline, counterfactual, changed_destination, changed_seed = observed_runs
     assert len(baseline) == count
     assert baseline.keys() <= counterfactual.keys()
     for key, noise in baseline.items():
         assert noise.shape == (2,)
         np.testing.assert_array_equal(noise, counterfactual[key])
     assert changed_seed
+    assert changed_destination
+    assert not baseline.keys() & changed_destination.keys()
     assert not baseline.keys() & changed_seed.keys()
     assert {noise.tobytes() for noise in counterfactual.values()} != {
         noise.tobytes() for noise in changed_seed.values()

@@ -7,11 +7,10 @@ from lcm.solvers import (
     ExactEnvelope,
     FUESEnvelope,
     LTMEnvelope,
-    MSSEnvelope,
     RFCEnvelope,
 )
 
-type EnvelopeName = Literal["exact", "fues", "rfc", "ltm", "mss"]
+type EnvelopeName = Literal["exact", "fues", "rfc", "ltm"]
 
 
 def envelope_config(value: EnvelopeName | EnvelopeConfig) -> EnvelopeConfig:
@@ -23,6 +22,5 @@ def envelope_config(value: EnvelopeName | EnvelopeConfig) -> EnvelopeConfig:
         "fues": FUESEnvelope,
         "rfc": RFCEnvelope,
         "ltm": LTMEnvelope,
-        "mss": MSSEnvelope,
     }
     return constructors[value]()

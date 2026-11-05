@@ -26,7 +26,7 @@ from tests.test_models.nbegm_common import RegimeId
 type _CarryInput = jax.Array | Mapping[str, _CarryInput] | None
 
 
-@pytest.mark.parametrize("mode", ["default", "retained", "eager"])
+@pytest.mark.parametrize("mode", ["values", "retained", "eager"])
 def test_retention_and_eager_execution_protect_all_output_owners(
     *, mode: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -44,11 +44,13 @@ def test_retention_and_eager_execution_protect_all_output_owners(
             execution_config=ExecutionConfig(device_memory_bytes=None),
             initial_nodes=initial_nodes_of(model=model),
         )
-    retention = (
-        ResultRetention.ALL_PERSISTABLE_ARTIFACTS
-        if mode == "retained"
-        else ResultRetention.VALUES_AND_REPLAY
-    )
+    # A values-only solve runs the NB-EGM `main` program, which donates its
+    # marginal leaf; a replay-retaining one runs `replay`, which keeps it.
+    retention = {
+        "values": ResultRetention.VALUES,
+        "retained": ResultRetention.ALL_PERSISTABLE_ARTIFACTS,
+        "eager": ResultRetention.VALUES_AND_REPLAY,
+    }[mode]
     run = backward_induction._run_period_kernel
     nominations: list[tuple[str, ...]] = []
     outputs: list[tuple[jax.Array, NDArray[np.float32 | np.float64]]] = []
@@ -61,7 +63,7 @@ def test_retention_and_eager_execution_protect_all_output_owners(
             )
             declarations.extend(_assert_complete_live_reads(kwargs=kwargs))
         result = run(**kwargs)
-        if mode != "default":
+        if mode != "values":
             outputs.extend(
                 (leaf, np.asarray(leaf).copy())
                 for leaf in jax.tree.leaves(result.continuations)
@@ -74,9 +76,9 @@ def test_retention_and_eager_execution_protect_all_output_owners(
     )
     assert declarations
     assert min(declarations) >= 4
-    assert bool(any(nominations)) is (mode == "default")
+    assert bool(any(nominations)) is (mode == "values")
     assert np.isfinite(np.asarray(result.values[0]["alive"])).all()
-    if mode != "default":
+    if mode != "values":
         assert outputs
         for original, expected in outputs:
             assert not original.is_deleted()

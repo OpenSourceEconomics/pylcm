@@ -8,6 +8,7 @@ from typing import (
     runtime_checkable,
 )
 
+import jax
 import numpy as np
 import numpy.typing as npt
 from jaxtyping import Float
@@ -35,6 +36,8 @@ from lcm.typing import (
     StateName,
     ValueND,
 )
+
+type ContinuationLeaf = FloatND | IntND | BoolND | jax.ShapeDtypeStruct
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -172,9 +175,6 @@ class ReplayReader(Protocol):
 # installed solver and pylcm always address the same schema.
 EGM_CONTINUATION = ArtifactKey(type_id="pylcm.egm.continuation", schema_version=2)
 SIMULATION_POLICY = ArtifactKey(type_id="pylcm.simulation.policy", schema_version=1)
-DISSOLUTION_FLAG = ArtifactKey(
-    type_id="pylcm.collective.dissolution_flag", schema_version=1
-)
 SOLVER_DIAGNOSTICS = ArtifactKey(type_id="pylcm.solver.diagnostics", schema_version=1)
 
 # The coordinate an EGM carry's rows are tabulated on. It is also the state such
@@ -226,6 +226,7 @@ _BUILT_IN_ROUTE_IDS: MappingProxyType[tuple[ReplayMode, str | None], str] = (
             (ReplayMode.VALID_RECOMPUTATION, None): "pylcm.grid_recomputation",
             (ReplayMode.UNSUPPORTED, None): "pylcm.replay_unsupported",
             (ReplayMode.EXACT_REPLAY, "egm_off_grid"): "pylcm.egm_off_grid",
+            (ReplayMode.EXACT_REPLAY, "nbegm_grid"): "pylcm.nbegm_grid",
             (ReplayMode.EXACT_REPLAY, "nnbegm_finite"): "pylcm.nnbegm_finite",
             (ReplayMode.EXACT_REPLAY, "nnbegm_nested"): "pylcm.nnbegm_nested",
             (ReplayMode.VALID_RECOMPUTATION, "nnbegm_finite"): "pylcm.nnbegm_finite",
@@ -347,8 +348,12 @@ class ContinuationReader(Protocol):
         """Return the marginal of the continuation in `state` at `query`."""
         ...
 
-    def leaves(self) -> Mapping[tuple[str, ...], FloatND | IntND | BoolND]:
-        """Return every published array by its pytree path, by identity.
+    def leaves(self) -> Mapping[tuple[str, ...], ContinuationLeaf]:
+        """Return original arrays, or ShapeDtypeStruct leaves for abstract templates.
+
+        Concrete payload/storage and receiving buffer registries require actual
+        arrays. Abstract leaves describe build-time schemas without allocating
+        or granting authority to register a runtime buffer.
 
         The engine addresses a payload's buffers through the objects this
         returns: it registers them with the buffer registry, locates a released

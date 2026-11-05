@@ -13,7 +13,7 @@ from _lcm.grids import LinSpacedGrid
 from _lcm.solution.validate_V import _Reductions, validate_V
 from _lcm.typing import JSONValue
 from _lcm.utils.logging import LogLevel
-from lcm import Model, categorical
+from lcm import ExecutionConfig, Model, categorical
 from lcm.ages import AgeGrid
 from lcm.exceptions import InvalidValueFunctionError
 from lcm.regime import Regime as UserRegime
@@ -98,7 +98,9 @@ def test_diagnostic_arrays_have_state_action_grid_shape():
     )
 
 
-def _build_nan_model() -> tuple[Model, UserParams]:
+def _build_nan_model(
+    execution_config: ExecutionConfig | None = None,
+) -> tuple[Model, UserParams]:
     """Build a minimal model that produces NaN in V during backward induction."""
 
     @categorical(ordered=False)
@@ -140,6 +142,7 @@ def _build_nan_model() -> tuple[Model, UserParams]:
         regime_id_class=_Rid,
         initial_nodes={0: "non_terminal"},
         edges={"non_terminal": {"terminal": 0}},
+        execution_config=execution_config or ExecutionConfig(),
     )
     params = {
         "discount_factor": 0.95,

@@ -7,6 +7,7 @@ candidate, and returns the first feasible candidate — the already-compiled win
 for dispatch.
 """
 
+import functools
 import itertools
 import logging
 import math
@@ -20,6 +21,11 @@ from _lcm.execution.compiler_memory import CompilerMemoryReport, MemoryAnalyzabl
 from _lcm.execution.core_program import ReducedAxis, TiledOutputAxis
 from lcm.exceptions import ExecutionPlanningError
 from lcm.execution import WidthSearch, WidthSearchPolicy
+
+
+class WorkspaceBudgetError(ExecutionPlanningError):
+    """A valid native candidate cannot fit the resolved memory budget."""
+
 
 _logger = logging.getLogger("lcm")
 
@@ -239,7 +245,7 @@ def plan_workspace[Compiled](
         return WorkspacePlan(widths=widths, peak_bytes=None, compiled=compiled)
 
     if resident >= budget:
-        raise ExecutionPlanningError(
+        raise WorkspaceBudgetError(
             _resident_exhausts_budget_message(resident=resident, budget=budget)
         )
 
@@ -287,7 +293,7 @@ def plan_workspace[Compiled](
             resident=least_resident,
             peak=least_peak,
         )
-    raise ExecutionPlanningError(msg)
+    raise WorkspaceBudgetError(msg)
 
 
 def plan_workspace_bounded[Compiled](
@@ -407,7 +413,7 @@ def plan_workspace_bounded[Compiled](
             widths=widths, peak_bytes=None, compiled=compile_candidate(widths)
         )
     if resident >= budget:
-        raise ExecutionPlanningError(
+        raise WorkspaceBudgetError(
             _resident_exhausts_budget_message(resident=resident, budget=budget)
         )
 
@@ -955,7 +961,7 @@ def plan_axis_free_workspace[Compiled](
         raise TypeError("An axis-free workspace plan requires an explicit budget.")
     resident = _validate_resident_bytes(resident_bytes=resident_bytes)
     if resident >= budget:
-        raise ExecutionPlanningError(
+        raise WorkspaceBudgetError(
             _resident_exhausts_budget_message(resident=resident, budget=budget)
         )
     compiled = compile_candidate()
@@ -964,7 +970,7 @@ def plan_axis_free_workspace[Compiled](
     )
     total = memory.reservation_bytes + resident
     if total > budget:
-        raise ExecutionPlanningError(
+        raise WorkspaceBudgetError(
             _no_candidate_fits_message(
                 budget=budget,
                 total=total,
@@ -1230,9 +1236,29 @@ def _workspace_width_candidates(
             ),
         )
 
+    # The frontier depends on the axes and width policy only, never on the
+    # budget's value, so a warm solve reuses it instead of enumerating the
+    # product again.
+    return _budgeted_frontier(
+        axes=axes,
+        fixed_widths=tuple(fixed_widths.items()),
+        width_ceilings=tuple(width_ceilings.items()),
+    )
+
+
+@functools.cache
+def _budgeted_frontier(
+    *,
+    axes: tuple[ReducedAxis | TiledOutputAxis, ...],
+    fixed_widths: tuple[tuple[str, int], ...],
+    width_ceilings: tuple[tuple[str, int], ...],
+) -> tuple[MappingProxyType[str, int], ...]:
+    """Enumerate the budgeted frontier of one axis declaration, widest first."""
     frontiers = tuple(
         _axis_frontier(
-            axis=axis, fixed_widths=fixed_widths, width_ceilings=width_ceilings
+            axis=axis,
+            fixed_widths=dict(fixed_widths),
+            width_ceilings=dict(width_ceilings),
         )
         for axis in axes
     )

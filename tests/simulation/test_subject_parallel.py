@@ -23,7 +23,7 @@ from _lcm.simulation.subject_parallel import shard_subject_function
 from _lcm.solution.action_reduction import HardMaxAccumulator
 from _lcm.solution.action_streaming import build_partitioned_streaming_max_Q_over_a
 from _lcm.solution.feasibility import BoundedResult, summarize_bound_inputs
-from _lcm.typing import ConstraintFunction, EconFunction
+from _lcm.typing import ArgumentTree, ConstraintFunction, EconFunction, PytreeValue
 from lcm import ExecutionConfig
 from lcm.exceptions import InvalidValueFunctionError
 from lcm.typing import BoolND, FloatND, RegimeName, ScalarInt
@@ -473,3 +473,99 @@ def test_foreign_replica_mesh_and_eliminated_inputs(*, constant: bool) -> None:
     expected = np.full(56, 4) if constant else np.arange(56) * 8 + 28
     np.testing.assert_array_equal(output, expected)
     assert [shard.data.shape for shard in output.addressable_shards] == [(7,)] * 8
+
+
+def _increment_with_optional(*, state: jax.Array, optional: PytreeValue) -> jax.Array:
+    del optional
+    return state + 1
+
+
+@pytest.mark.parametrize(
+    "empty",
+    [{}, MappingProxyType({}), (), {"nested": ({}, [], None)}, None],
+    ids=["dict", "mappingproxy", "tuple", "nested", "none"],
+)
+def test_empty_subject_subtrees_keep_real_array_extent(*, empty: PytreeValue) -> None:
+    """Leafless optional inputs survive device mapping and local remainder tiles."""
+    devices = _devices(count=2)
+    mesh = _mesh(devices=devices)
+    state = jax.device_put(
+        np.arange(16, dtype=np.float32), jax.NamedSharding(mesh, jax.P("X"))
+    )
+    tiled = _SubjectTiled(
+        func=_increment_with_optional, subject_arg_names=("state", "optional")
+    )
+    adapted = shard_subject_function(
+        function=tiled,
+        subject_arg_names=tiled.subject_shard_arg_names,
+        arguments={"state": state, "optional": empty},
+        static_kwargs={SUBJECT_WIDTH_KEYWORD: 3},
+        devices=devices,
+        subject_width_keyword=SUBJECT_WIDTH_KEYWORD,
+    )
+    result = jax.jit(adapted)(state=state, optional=empty)
+    np.testing.assert_array_equal(result, np.arange(16, dtype=np.float32) + 1)
+    assert result.sharding.spec == jax.P("X")
+    assert tuple(result.sharding.mesh.devices.flat) == devices
+    assert [shard.data.shape for shard in result.addressable_shards] == [(8,), (8,)]
+
+
+def test_empty_subject_subtrees_cannot_borrow_shared_array_extent() -> None:
+    """A shared array cannot supply the missing subject dimension."""
+    devices = _devices(count=2)
+    with pytest.raises(ValueError, match="same leading extent"):
+        shard_subject_function(
+            function=_increment_with_optional,
+            subject_arg_names=("optional",),
+            arguments={
+                "optional": {"nested": ({}, [], None)},
+                "state": jax.ShapeDtypeStruct((16,), jnp.float32),
+            },
+            static_kwargs={SUBJECT_WIDTH_KEYWORD: 3},
+            devices=devices,
+            subject_width_keyword=SUBJECT_WIDTH_KEYWORD,
+        )
+
+
+def test_empty_subject_subtrees_do_not_supply_missing_argument() -> None:
+    devices = _devices(count=2)
+    with pytest.raises(ValueError, match="'missing' is missing"):
+        shard_subject_function(
+            function=_increment_with_optional,
+            subject_arg_names=("state", "optional", "missing"),
+            arguments={
+                "state": jax.ShapeDtypeStruct((16,), jnp.float32),
+                "optional": {},
+            },
+            static_kwargs={SUBJECT_WIDTH_KEYWORD: 3},
+            devices=devices,
+            subject_width_keyword=SUBJECT_WIDTH_KEYWORD,
+        )
+
+
+@pytest.mark.parametrize(
+    "bad_leaf",
+    [
+        jax.ShapeDtypeStruct((), jnp.float32),
+        jax.ShapeDtypeStruct((0,), jnp.float32),
+        jax.ShapeDtypeStruct((15,), jnp.float32),
+        0.0,
+    ],
+    ids=["scalar-array", "zero-axis", "different-extent", "nonarray-scalar"],
+)
+def test_empty_subject_subtrees_do_not_hide_invalid_leaf(
+    *, bad_leaf: ArgumentTree
+) -> None:
+    devices = _devices(count=2)
+    with pytest.raises(ValueError, match=r"(?i)subject"):
+        shard_subject_function(
+            function=_increment_with_optional,
+            subject_arg_names=("state", "optional"),
+            arguments={
+                "state": jax.ShapeDtypeStruct((16,), jnp.float32),
+                "optional": {"empty": {}, "invalid": bad_leaf},
+            },
+            static_kwargs={SUBJECT_WIDTH_KEYWORD: 3},
+            devices=devices,
+            subject_width_keyword=SUBJECT_WIDTH_KEYWORD,
+        )

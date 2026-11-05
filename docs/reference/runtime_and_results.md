@@ -4,6 +4,93 @@ title: Runtime, results, and persistence
 
 # Runtime, results, and persistence
 
+(api-model-declarations)=
+
+## Inspecting model declarations
+
+`model.get_declarations()` returns a read-only `ModelDeclarations` view of the
+constructed model, with `schema_version == 1`:
+
+- `graph` is `model.graph`: declared and effective phase edges, their bound laws,
+  starting nodes, valued nodes, visited nodes and pruning reasons.
+- `regimes_by_period[period][regime_name]` retains finalized user declarations, with the
+  age/period factories already resolved during construction. This includes
+  phase-invariant actions, ownership and preference declarations.
+- `phases[period, regime_name, phase]` contains the resolved phase slice, where `phase`
+  is `"solve"` or `"simulate"`. It retains the full grid states, function pool,
+  constraints, state and joint laws, regime-transition law, aggregators and same-period
+  exits. Undemanded simulation contexts are absent, including contexts whose
+  simulation-only factories construction did not need to build.
+- `functions` contains each callable identity and its advertised `signature`. Each
+  entry's `arg_names` gives its finite declared DAG inputs, or `None` when the interface
+  remains variadic or cannot be inspected. This uses the same Python signature
+  convention as construction, including wrappers and partials.
+- `original_periods_by_regime`, `value_periods_by_regime`, `query_periods_by_phase` and
+  `exit_function_demand` preserve the construction roles of physical entry, stored full
+  values and same-period decisions. The query mapping retains the construction namespace
+  keys `"solution"` and `"simulation"`; node keys use the public phase names `"solve"`
+  and `"simulate"`.
+
+Inspection reads cached declarations. It does not call economic functions or factories,
+prepare a runtime generation, compile programs, solve, simulate, or require runtime
+parameter values. Containers are immutable; their grids, functions and captured inputs
+are the original objects, not deep copies.
+
+The view states the model's declared dependencies and timing. It does not prove that
+arbitrary user code honours its advertised signature, establish economic equivalence of
+graph transformations, or predict their measured runtime.
+
+## Inspecting the temporal regime graph
+
+```python
+from lcm.graphs import digraph
+
+graph = digraph(model)
+solve_graph = digraph(model, phase="solve")
+simulation_graph = digraph(model, phase="simulate")
+```
+
+`digraph` returns an independent NetworkX `DiGraph` of the constructed model's effective
+next-period regime transitions. Node keys are `(age, regime_name)` tuples with the exact
+age labels from `AgeGrid.exact_values`. A period-based model uses
+`(period, regime_name)`. Admitted terminal and isolated nodes are retained.
+
+With `phase=None`, the solve and simulate graphs must have identical admitted nodes,
+effective edges, declared edges and pruning reasons. Otherwise the function raises
+`ValueError` and requests an explicit phase. Phase differences in utility or other
+economic functions alone do not make the temporal topology ambiguous. Phase-specific
+functions and laws remain available in the original declaration metadata; the view does
+not select or evaluate an economic function on the caller's behalf.
+
+Each node has its computational `period` and cached regime `declaration`. Each edge
+retains the source's original bound `law` and construction-time `status`. The graph's
+attributes retain:
+
+- `phase`: the requested phase, or `None` for common topology;
+- `coordinate_kind` and `clock`: the coordinate kind and complete exact clock tuple;
+- `declarations`: the original `ModelDeclarations` view, including both phases;
+- `declared_edges`: the original declared phase edges, including pruned edges;
+- `pruned_edges`: the selected phase's immutable mapping of removed edges to reasons.
+
+Same-period exits and value reads are metadata in `declarations`, not temporal arcs.
+Temporal edges always advance to the next computational period. A retained edge is
+conditional support, not a promise of positive probability at every state.
+
+Conversion does not evaluate economic functions, rerun factories, prepare execution,
+solve or simulate. Graph and attribute containers are independent and editable. Their
+grid, callable and declaration leaves are shared original objects and must obey the
+model's existing stability contract. This graph is an inspection view; modifying its
+topology does not modify the model or establish that a changed model is equivalent.
+
+For example, a graph-tool consumer can inspect the temporal layers without evaluating
+the model:
+
+```python
+import networkx as nx
+
+layers = tuple(tuple(nodes) for nodes in nx.topological_generations(solve_graph))
+```
+
 ## Solving
 
 `model.solve(params=..., log_level=...)` returns one immutable `SolutionResult` for
@@ -162,6 +249,7 @@ Its fields:
 
 - `device_memory_bytes` declares a per-device ceiling for compiler peak plus accounted
   live residency.
+
   - `"device"` (the default) derives the ceiling from the selected devices: the smallest
     reported allocator pool limit less `device_memory_headroom_fraction`. Where no
     selected device reports a limit, as on CPU, the model is unbudgeted. Routes that
@@ -177,6 +265,7 @@ Its fields:
     budgeted refuses it. It may be the device's whole allocator pool limit: the model
     admits against that limit less `device_memory_headroom_fraction` of it, whichever is
     smaller.
+
 - `device_memory_headroom_fraction` (default `0.15`) is the share of each selected
   device's allocator pool kept out of the ceiling, an operational margin for storage
   outside the represented accounting — collective buffers, library workspaces, the
@@ -193,6 +282,7 @@ Its fields:
   `axis_width_ceilings` or `axis_widths`, shard over more devices with `sharded_states`
   or `devices`, or pass `device_memory_bytes=None` to disable admission at bootstrap
   widths.
+
 - `sharded_states` names supported model-level states whose grid axes are spread over
   the devices their regimes are placed on. Sharding is resolved per regime: a regime
   whose DAG reads the state carries its axis and runs on the mesh that axis defines,
@@ -203,22 +293,61 @@ Its fields:
   leaves no axis to spread and is refused. A continuous grid cannot be sharded merely
   because its extent divides the number of devices, and the continuous route
   additionally requires the state in every regime.
+
 - `axis_widths` fixes the compiled width of one named planner axis, leaving the rest to
   the planner; see [Fix a planner axis width](../user_guide/tuning.md). Every key must
   be an axis some core program declares.
+
 - `devices` names the device ids the model may use, ascending; `None` (the default)
   means every device JAX reports. Every id must be one JAX reports.
+
 - A device-memory budget, derived or explicit, selects the top-first outer-cohort
   planner for simulation regardless of whether `axis_widths["subject"]` is pinned;
   without a pin the planner resolves its own starting anchor. It changes simulation
   planning only and does not enter the economic fingerprint.
+
 - `donate_buffers` is an exact Boolean, defaulting to `True`. `False` disables compiled
   solve input donation without changing the model fingerprint or economic inputs.
+
 - `invariant_block_widths` names an invariant state to solve one code at a time, and
   `invariant_block_schedule` (an `InvariantBlockSchedule`) the order: `PERIOD_MAJOR`
   (the default) solves every code of a period before the next period; `BLOCK_MAJOR`
   solves, simulates and releases one code's whole lifetime at a time, retaining its
   values on the host. See [Solve one invariant code at a time](../user_guide/tuning.md).
+
+- `value_storage` says where a solve keeps each period's values once no period still to
+  be solved reads them. It never changes the values, reads or simulated panels.
+
+  - `"device"` (the default) keeps every solved period's values on the device until the
+    solve returns.
+  - `"host"` copies each period's values, and the simulation policies of the EGM family,
+    to pinned host memory while the next period computes. The device then holds at most
+    three periods' values: the period being solved, the one it reads, and one whose copy
+    is still finishing. The budget planner counts those three only. When stored values
+    fill the device under `"device"`, the planner's refusal names
+    `value_storage="host"`.
+  - A directory (`value_storage=Path(...)`) also writes the values and policies to disk,
+    for when host memory is short too. Each solve writes its own `solution-<id>.h5` in
+    the directory, in the `SolutionResult.save` format. The file is deleted with its
+    result unless `result.save(path=...)` keeps a copy, which another process can load
+    with `load_solution` and simulate on the same devices or on others. A failed solve
+    leaves `solution-<id>.incomplete`, recording the model and parameter fingerprints,
+    the pylcm version and commit, the dtype and the last completed period;
+    `load_solution` refuses it.
+
+  Off the device, reading a value or a policy returns a device copy. A NaN is diagnosed
+  at the end of its period, while that period's values are still on the device, so the
+  error and its breakdown read nothing back from value storage.
+  `ValueStore.materialize()` refuses to place every value on the device at once above
+  the budget. A simulation of several subject chunks runs period by period, with every
+  chunk going through one period before the next, so each period's values and policies
+  are copied to the device once rather than once per chunk. Before a period's chunks
+  run, the values and policies the next period's programs declare reading start copying,
+  so the copies overlap this period's work; under a budget the planner reserves the
+  largest such set beside every subject's state. Under `BLOCK_MAJOR`, `"host"` and a
+  directory apply to each code's solve; component jobs take `"device"` only. A copy or
+  write that fails raises `ValueStorageError`, naming the period, the regime and the
+  target.
 
 NB-EGM can nominate one marginal leaf on an unsharded, self-carry `main` program.
 Donation requires exclusive solve ownership and a final, unretained read. A physical
@@ -453,9 +582,9 @@ consulted, so a mapping whose keys disagree with its items cannot smuggle a payl
 the checks. Nested `period -> regime -> value` and flat `(period, regime) -> value`
 forms are recognized from the same traversal.
 
-Built-in key identities include `SIMULATION_POLICY`, `DISSOLUTION_FLAG`,
-`EGM_CONTINUATION`, and `SOLVER_DIAGNOSTICS`. The `omissions` mapping distinguishes an
-artifact that is not applicable, not requested, unsupported, or not persisted.
+Built-in key identities include `SIMULATION_POLICY`, `EGM_CONTINUATION`, and
+`SOLVER_DIAGNOSTICS`. The `omissions` mapping distinguishes an artifact that is not
+applicable, not requested, unsupported, or not persisted.
 
 Metadata carries a durable SHA-256 model fingerprint, the exact digest of canonical
 parameters that can affect the solution, solver and replay-route identities, artifact
@@ -570,12 +699,12 @@ dissolution-flag inputs are not accepted.
 How a `SolutionResult` is consumed follows its provenance. A result the same model
 instance solved in this process, for the same canonical parameters, is consumed by
 reference: the engine reads the arrays the solve allocated without copying or
-re-validating them, and only checks the replay payloads and dissolution flags it is
-about to read. Every other result — restored from an archive, unpickled, or produced by
-another model instance — is validated in full and materialized into private buffers once
-per consuming model and parameter vector; a second simulation from the same result
-reuses that validated view. The consumed result stays reachable as
-`SimulationResult.solution` until the simulation result is saved.
+re-validating them, and only checks the replay payloads it is about to read. Every other
+result — restored from an archive, unpickled, or produced by another model instance — is
+validated in full and materialized into private buffers once per consuming model and
+parameter vector; a second simulation from the same result reuses that validated view.
+The consumed result stays reachable as `SimulationResult.solution` until the simulation
+result is saved.
 
 Before consuming such a result, simulation checks its durable model and
 solution-parameter fingerprints, exact solver/plugin and replay-route identities, schema
@@ -646,10 +775,11 @@ or a DataFrame with a `regime_name` column.
 `progress` adds timing, and `debug` adds value statistics. `runtime_checks=True`
 independently enables numerical probability, NaN and existing feasibility/replay checks
 and raises on failure at every verbosity. `runtime_checks=False` explicitly skips those
-checks, including during automatic solving. Construction, parameter schema,
-initial-condition structure and solution-identity validation always run. Infinity-only
-value diagnostics remain warnings; an application requiring all stored values finite
-must retain that stronger invariant.
+checks, including during automatic solving. Density derivative accuracy certification
+exists only as a test oracle; neither runtime-check setting runs it. Construction,
+parameter schema, initial-condition structure and solution-identity validation always
+run. Infinity-only value diagnostics remain warnings; an application requiring all
+stored values finite must retain that stronger invariant.
 
 `model.simulate(...)` also reports the resolved execution plan it dispatched: the
 forward route (`"legacy"` or `"subjects"`), the ordered subject devices and their
@@ -680,6 +810,11 @@ Continuous states off the grid extrapolate as in simulate; discrete states and
 restricted `action_grids` values must lie on their grids. `Model.state_names` gives the
 axis order of `solution.values[period][regime]`, and `Model.state_grid` gives a state's
 grid nodes after runtime parameters.
+
+A regime that reads a `shocks=` group on the integrated current-IID route, that is a
+group no endogenous-grid regime reads, raises `UnsupportedOperationError`: its decision
+depends on a current shock, which needs an explicit observation or conditional query.
+See [Combinations not yet composed with current shocks](shocks.md#current-iid-refusals).
 
 `keep_intermediates` names the intermediates of the decision to keep, in any order: the
 action values `"Q"`, their feasibility `"F"`, the flow utility `"U"` and the

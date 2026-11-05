@@ -294,6 +294,12 @@ What moves where:
   them singly; when one value alone does not fit, save the result with
   `SolutionResult.save`, which writes every value from the host, or raise the budget.
 
+`ExecutionConfig(value_storage=...)` applies to each code's solve. Under `"host"`, the
+device holds at most three periods of one code's values, and the result keeps the pinned
+host copies. Under a directory, every code's blocks are written into one archive per
+solve, and no block stays in memory. See `value_storage` in
+[Execution configuration](../reference/runtime_and_results.md).
+
 The schedule is refused at model construction unless a state is named in
 `invariant_block_widths` and every regime carries it on a discrete grid. Simulating a
 block-major solution is refused when the simulate phase does not group subjects by the
@@ -386,17 +392,17 @@ states may include:
 
 - Concrete discrete grids.
 - At most one static `PiecewiseLinSpacedGrid` interpolation coordinate per regime.
-- Fully specified, unconditioned `RouwenhorstAR1Process` nodes and unfolded
-  `NormalIIDProcess` nodes with Gauss-Hermite quadrature.
+- Fully specified, unconditioned `RouwenhorstAR1Process` nodes and `NormalIIDProcess`
+  nodes with Gauss-Hermite quadrature.
 - Carried states declared with a `LinSpacedGrid` simulation domain. Their solve
   imputation does not add a value-array dimension.
 
-Runtime state grids, folded processes, other process families, mixed solvers, collective
-or gated routes, same-period references and taste shocks remain outside this route.
-Runtime action grids keep their ordinary GridSearch semantics. Process nodes retain the
-ordinary index-based continuation read; sharding does not enable process-aware off-grid
-interpolation. Additional continuous coordinates keep their named positions, so the
-sharded axis need not be trailing.
+Runtime state grids, other process families, mixed solvers, collective or gated routes,
+same-period references and taste shocks remain outside this route. Runtime action grids
+keep their ordinary GridSearch semantics. Process nodes retain the ordinary index-based
+continuation read; sharding does not enable process-aware off-grid interpolation.
+Additional continuous coordinates keep their named positions, so the sharded axis need
+not be trailing.
 
 For example, a 24-point assets axis can use eight selected devices, with three assets
 coordinates on each device. Logical value-axis order stays unchanged. Interpolation

@@ -32,7 +32,7 @@ from lcm._solver_api.identity import (
     LoadState,
 )
 from lcm.exceptions import ExecutionPlanningError
-from lcm.typing import FloatND, RegimeName
+from lcm.typing import CanonicalArrayWriter, FloatND, RegimeName
 
 # The exact address of one value-store entry.
 type _ValueCoordinate = tuple[int, RegimeName]
@@ -206,7 +206,7 @@ class ValueStore(Mapping[int, Mapping[RegimeName, FloatND]]):
         """Use the public constructor's checks with an ephemeral copy dependency."""
         store = object.__new__(ValueStore)
         object.__setattr__(store, "_entries", entries)
-        store._initialize(array_copier=array_copier)  # noqa: SLF001
+        store._initialize(array_copier=array_copier)
         return store
 
     def _initialize(self, *, array_copier: _ArrayCopier | None = None) -> None:
@@ -277,7 +277,10 @@ class ValueStore(Mapping[int, Mapping[RegimeName, FloatND]]):
     def __getitem__(self, period: int) -> _RegimeValuesBoundary:
         period = _require_exact_value_period(period)
         if period not in self._regimes_by_period:
-            raise KeyError(period)
+            raise KeyError(
+                f"No values stored for period {period}; stored periods: "
+                f"{tuple(self._regimes_by_period)!r}."
+            )
         return _ValuePeriodView(store=self, period=period)
 
     def __iter__(self) -> Iterator[int]:
@@ -302,7 +305,13 @@ class ValueStore(Mapping[int, Mapping[RegimeName, FloatND]]):
     ) -> _FloatValueBoundary:
         period = _require_exact_value_period(period)
         regime = _require_exact_regime_name(regime)
-        entry = self._entries[(period, regime)]
+        try:
+            entry = self._entries[(period, regime)]
+        except KeyError:
+            raise KeyError(
+                f"No stored value for regime {regime!r} in period {period}; "
+                f"stored regimes: {self._regimes_by_period.get(period, ())!r}."
+            ) from None
         if array_copier is not None and isinstance(entry, _LazyEntry):
             if type(entry) is _CanonicalValueEntry:
                 value = entry._fresh(array_copier=array_copier)  # noqa: SLF001
@@ -490,10 +499,14 @@ class ArtifactStore(Mapping[ArtifactRef, ArtifactPayload]):
         ref: ArtifactRef,
         *,
         template_snapshot: _CanonicalArtifactTemplate | None,
+        array_writer: CanonicalArrayWriter | None = None,
+        array_copier: _ArrayCopier | None = None,
     ) -> ArtifactPayload:
         """Load one entry through an engine-owned cached PyTree declaration."""
         ref = _require_exact_artifact_ref(ref)
         return _materialize_entry(
             entry=self._entries[ref],
             template_snapshot=template_snapshot,
+            array_writer=array_writer,
+            array_copier=array_copier,
         )

@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
+from _lcm.current_iid import CurrentIIDPlan
 from _lcm.engine import Regime, StateActionSpace, placed_devices_for_ids
 from _lcm.execution.core_program import (
     CoreExecutionDisposition,
@@ -68,6 +69,9 @@ class MockSolutionPhase:
     `StateActionSpace` this mock hands out — a mock that claims axes the space
     does not carry makes the V topology and the rank rule disagree.
     """
+    current_iid_plans: MappingProxyType[int, CurrentIIDPlan | None] = dataclasses.field(
+        default_factory=lambda: MappingProxyType({})
+    )
     sharded_state_names: frozenset[StateOrActionName] = frozenset()
     """These dense fixture state axes have no declared device sharding."""
     action_partitions: int = 1
@@ -190,7 +194,10 @@ class MockRegime(Regime):
         object.__setattr__(
             self,
             "simulation",
-            SimpleNamespace(egm_policy_read=None, external_replay_route=None),
+            SimpleNamespace(
+                egm_policy_read=None,
+                external_replay_route=None,
+            ),
         )
 
 
@@ -217,7 +224,6 @@ def test_drain_V_arr_shards_flattens_immutable_return_mappings(monkeypatch):
     """The solve barrier presents every immutable mapping leaf to JAX."""
     V_0 = jnp.asarray([1.0, 2.0])
     V_1 = jnp.asarray([3.0])
-    dissolution = jnp.asarray([True, False])
     drained = []
 
     def _record_drained_arrays(arrays):
@@ -233,16 +239,11 @@ def test_drain_V_arr_shards_flattens_immutable_return_mappings(monkeypatch):
             0: MappingProxyType({"working": V_0}),
             1: MappingProxyType({"retired": V_1}),
         },
-        dissolution_flags={
-            0: MappingProxyType({"working": dissolution}),
-            1: MappingProxyType({}),
-        },
     )
 
     assert [id(array) for array in drained] == [
         id(V_0),
         id(V_1),
-        id(dissolution),
     ]
 
 

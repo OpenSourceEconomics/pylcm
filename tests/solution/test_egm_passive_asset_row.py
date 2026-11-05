@@ -215,7 +215,19 @@ def _model(*, solver: str, cell_width: int | None = None) -> Model:
         else ExecutionConfig(axis_widths={CELL_AXIS: cell_width})
     )
     is_dcegm = solver == "dcegm"
-    regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
+    regime_type = (
+        functools.partial(
+            ConsumptionSavingsRegime,
+            liquid=LiquidMargin(
+                state="wealth",
+                action="consumption",
+                resources="wealth",
+                post_decision_state="savings",
+            ),
+        )
+        if is_dcegm
+        else UserRegime
+    )
     states = {
         "wealth": WEALTH_GRID,
         "aime": AIME_GRID,
@@ -242,18 +254,6 @@ def _model(*, solver: str, cell_width: int | None = None) -> Model:
             else {**_shared_functions()}
         ),
         solver=DCEGM_SOLVER if is_dcegm else GridSearch(),
-        **(
-            {
-                "liquid": LiquidMargin(
-                    state="wealth",
-                    action="consumption",
-                    resources="wealth",
-                    post_decision_state="savings",
-                )
-            }
-            if is_dcegm
-            else {}
-        ),
     )
     return Model(
         regimes={"working_life": working, "dead": dead},
@@ -426,7 +426,19 @@ def _means_tested_prob_model(*, solver: str, rate_is_fixed: bool) -> Model:
     rather than as a free solve param.
     """
     is_dcegm = solver == "dcegm"
-    regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
+    regime_type = (
+        functools.partial(
+            ConsumptionSavingsRegime,
+            liquid=LiquidMargin(
+                state="wealth",
+                action="consumption",
+                resources="wealth",
+                post_decision_state="savings",
+            ),
+        )
+        if is_dcegm
+        else UserRegime
+    )
     states = {
         "wealth": WEALTH_GRID,
         "aime": AIME_GRID,
@@ -457,18 +469,6 @@ def _means_tested_prob_model(*, solver: str, rate_is_fixed: bool) -> Model:
             }
         ),
         solver=DCEGM_SOLVER if is_dcegm else GridSearch(),
-        **(
-            {
-                "liquid": LiquidMargin(
-                    state="wealth",
-                    action="consumption",
-                    resources="wealth",
-                    post_decision_state="savings",
-                )
-            }
-            if is_dcegm
-            else {}
-        ),
     )
     fixed_params = (
         {"working_life": {"capital_income": {"rate_of_return": RATE_OF_RETURN}}}

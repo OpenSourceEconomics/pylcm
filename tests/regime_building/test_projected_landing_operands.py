@@ -9,25 +9,17 @@ affine, so a curved projection would have solve price a branch at a number no
 branch pays — and forward simulation, which evaluates the projection at the
 realized point, would route on the other number.
 
-The target's own value and its dissolution flag are genuine arrays on the
-target's grid and are interpolated there, but they have to answer together: the
-value is `-inf` exactly where the flag is set, so a landing carrying any weight
-on a dissolved node is worth `-inf` however small that weight is.
-
 Every number below is an exact small rational, so the assertions are on the
 value itself rather than on a tolerance around a fitted one.
 """
 
 import jax.numpy as jnp
 import numpy as np
-import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
 from lcm import (
     AgeGrid,
     ByAge,
-    CollectiveUtility,
-    DiscreteGrid,
     Gate,
     IrregSpacedGrid,
     LinSpacedGrid,
@@ -36,16 +28,13 @@ from lcm import (
     Regime,
     StakeholderRoute,
     Transition,
-    ValueDependentConstraint,
     categorical,
 )
-from lcm.solver_api import DISSOLUTION_FLAG
 from lcm.transition import StochasticTransition
 from lcm.typing import (
     BoolND,
     ContinuousAction,
     ContinuousState,
-    DiscreteAction,
     FloatND,
     ScalarInt,
 )
@@ -212,170 +201,4 @@ def test_an_affine_projection_is_left_exactly_where_it_was():
 
     aaae(
         np.asarray(solution.values[0]["source"]), [-0.75] * 3, decimal=DECIMAL_PRECISION
-    )
-
-
-@categorical(ordered=False)
-class Work:
-    off: ScalarInt
-    on: ScalarInt
-
-
-@categorical(ordered=False)
-class CoupledRegimeId:
-    source: ScalarInt
-    pair: ScalarInt
-    alone_f: ScalarInt
-    alone_m: ScalarInt
-
-
-_WAGE = IrregSpacedGrid(points=np.array([1.0, 2.0, 3.0]))
-
-# The fallback pays this everywhere, so any finite source value identifies the
-# closed branch and any `-inf` identifies the open one.
-_FALLBACK_PAYOFF = -100.0
-
-
-def _to_pair(age: FloatND) -> FloatND:
-    return jnp.ones_like(age, dtype=float)
-
-
-def _u_source(*, wage: ContinuousState, saving: ContinuousAction) -> FloatND:
-    return 0.0 * wage + 0.0 * saving
-
-
-def _next_wage(saving: ContinuousAction) -> ContinuousState:
-    return saving
-
-
-def _pair_payoff(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
-    return wage + 0.0 * work
-
-
-def _identity_wage(wage: ContinuousState) -> ContinuousState:
-    return wage
-
-
-def _outside_option_f(wage: ContinuousState) -> FloatND:
-    """Beats anything the pair can pay at wage 2 alone, emptying that cell."""
-    return jnp.where(jnp.isclose(wage, 2.0), 100.0, _FALLBACK_PAYOFF) + 0.0 * wage
-
-
-def _outside_option_m(wage: ContinuousState) -> FloatND:
-    return _FALLBACK_PAYOFF + 0.0 * wage
-
-
-def _participation_f(*, Q_f: FloatND, V_alone_f: FloatND) -> BoolND:
-    return Q_f >= V_alone_f
-
-
-def _no_dissolution(D_target: BoolND) -> BoolND:
-    return ~D_target
-
-
-def _coupled_model(saving_points) -> Model:
-    """A collective target whose feasible set is empty at the middle node."""
-    return Model(
-        edges={
-            "source": Transition(
-                targets={"pair": 0, "alone_m": 0},
-                law=ByAge(cases={0: {"pair": StochasticTransition(func=_to_pair)}}),
-                gates={
-                    "pair": Gate(
-                        predicate=_no_dissolution,
-                        routes={
-                            "only": StakeholderRoute(
-                                target_stakeholder="f",
-                                fallback=ProjectedRegimeValue(
-                                    regime="alone_m",
-                                    projection={"wage": _identity_wage},
-                                ),
-                            )
-                        },
-                        off_grid="pointwise",
-                    )
-                },
-            )
-        },
-        regimes={
-            "source": Regime(
-                states={"wage": _WAGE},
-                state_transitions={"wage": _next_wage},
-                actions={"saving": IrregSpacedGrid(points=np.array(saving_points))},
-                functions={"utility": _u_source},
-            ),
-            "pair": Regime(
-                states={"wage": _WAGE},
-                actions={"work": DiscreteGrid(category_class=Work)},
-                functions={
-                    "utility": CollectiveUtility(
-                        utilities={"f": _pair_payoff, "m": _pair_payoff}
-                    )
-                },
-                constraints={
-                    "participation_f": ValueDependentConstraint(
-                        predicate=_participation_f,
-                        references={
-                            "V_alone_f": ProjectedRegimeValue(
-                                regime="alone_f", projection={"wage": _identity_wage}
-                            )
-                        },
-                    )
-                },
-            ),
-            "alone_f": Regime(
-                states={"wage": _WAGE},
-                functions={"utility": _outside_option_f},
-            ),
-            "alone_m": Regime(
-                states={"wage": _WAGE},
-                functions={"utility": _outside_option_m},
-            ),
-        },
-        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
-        regime_id_class=CoupledRegimeId,
-        initial_nodes={0: "source"},
-    )
-
-
-_COUPLED_PARAMS = {
-    "source": {"koopmans_aggregator": {"discount_factor": 1.0}},
-    "pair": {},
-    "alone_f": {},
-    "alone_m": {},
-}
-
-
-@pytest.mark.parametrize(
-    ("saving_points", "expected"),
-    [
-        # Landings just above the feasible node 1 keep positive weight on the
-        # empty node 2, so the edge is closed and the fallback pays.
-        ((1.1, 1.25), _FALLBACK_PAYOFF),
-        # Node 3 carries no weight on the empty node, so the edge opens there
-        # and the pair pays 3 — beating the 2.5 landing beside it, which
-        # straddles the empty node and so falls back to -100.
-        ((2.5, 3.0), 3.0),
-    ],
-)
-def test_a_landing_touching_an_empty_cell_takes_the_branch_that_pays(
-    *, saving_points, expected
-):
-    """A branch is opened only where the value behind it is one a branch pays.
-
-    The target's feasible set is empty at wage 2, where its value is `-inf` and
-    its dissolution flag is set. A landing that carries any weight on that node
-    is worth `-inf`, so opening the edge there would price a source action at a
-    value no branch delivers — while the fallback beside it is finite.
-    """
-    model = _coupled_model(saving_points)
-
-    solution = model.solve(params=_COUPLED_PARAMS, log_level="off")
-    flags = solution.replay_artifacts.project(DISSOLUTION_FLAG)
-
-    np.testing.assert_array_equal(np.asarray(flags[1]["pair"]), [False, True, False])
-    aaae(
-        np.asarray(solution.values[0]["source"]),
-        [expected] * 3,
-        decimal=DECIMAL_PRECISION,
     )

@@ -44,13 +44,16 @@ from _lcm.regime_building.Q_and_F import _BoundFeasibility, _get_feasibility
 from _lcm.simulation import population_operations
 from _lcm.simulation.action_grids import PreflightActionGrids
 from _lcm.simulation.assembly import slice_array
+from _lcm.simulation.current_iid_entry import SuppliedEntryFrames
 from _lcm.simulation.host_operations import ProfiledSimulationOperations, _BuilderInput
-from _lcm.simulation.memory import SimulationMemory, run_simulation_operation
-from _lcm.simulation.operand_placement import place_simulation_arguments
+from _lcm.simulation.memory import (
+    SimulationMemory,
+    run_simulation_operation,
+    run_simulation_producer,
+)
 from _lcm.simulation.residency import (
     DeviceBufferFootprint,
     measure_buffer_footprint,
-    resident_bytes_by_device,
     union_buffer_footprints,
 )
 from _lcm.simulation.subject_devices import simulation_subject_devices
@@ -161,6 +164,8 @@ def validate_simulation_inputs(  # noqa: C901
     retained_footprint: DeviceBufferFootprint | None = None,
     process_grid_resolver: ProcessGridResolver | None = None,
     producers: ProfiledSimulationOperations | None = None,
+    supplied_frames: SuppliedEntryFrames | None = None,
+    original_n_subjects: int | None = None,
 ) -> None:
     """Validate a complete call with two host summaries and ordered diagnostics.
 
@@ -184,6 +189,7 @@ def validate_simulation_inputs(  # noqa: C901
         regimes=regimes,
         regime_names_to_ids=regime_names_to_ids,
         ages=ages,
+        supplied_frames=supplied_frames,
     )
     if not validation_enabled(logger):
         try:
@@ -248,6 +254,7 @@ def validate_simulation_inputs(  # noqa: C901
                 if memory is not None:
                     memory.close_unit()
                 _collect_feasibility_errors(
+                    original_n_subjects=original_n_subjects,
                     initial_states={
                         name: value
                         for name, value in initial_conditions.items()
@@ -263,6 +270,7 @@ def validate_simulation_inputs(  # noqa: C901
                     process_grid_resolver=process_grid_resolver,
                     action_grid_resolver=action_grid_resolver,
                     memory=memory,
+                    supplied_frames=supplied_frames,
                 )
                 validate_transitions(
                     regimes=regimes,
@@ -297,6 +305,7 @@ def validate_simulation_inputs(  # noqa: C901
             return
         try:
             validate_initial_conditions(
+                original_n_subjects=original_n_subjects,
                 initial_conditions=initial_conditions,
                 regimes=regimes,
                 regime_names_to_ids=regime_names_to_ids,
@@ -305,6 +314,7 @@ def validate_simulation_inputs(  # noqa: C901
                 process_grid_resolver=process_grid_resolver,
                 action_grid_resolver=action_grid_resolver,
                 memory=memory,
+                supplied_frames=supplied_frames,
             )
         except InvalidInitialConditionsError as error:
             raise_or_warn(logger=logger, error=error)
@@ -316,6 +326,7 @@ def validate_simulation_inputs(  # noqa: C901
             summary=None,
             process_grid_resolver=process_grid_resolver,
             simulation_memory=memory,
+            simulation_producers=producers,
         )
         with contextlib.closing(
             _ValidationSummary(
@@ -372,6 +383,7 @@ def _preflight_memory(
     regimes: MappingProxyType[RegimeName, Regime],
     regime_names_to_ids: RegimeNamesToIds,
     ages: TimeAxis,
+    supplied_frames: SuppliedEntryFrames | None = None,
 ) -> SimulationMemory | None:
     """Admit new summary buffers against explicit entry and model-owned roots."""
     if execution is None or execution.device_memory_bytes is None:
@@ -408,6 +420,9 @@ def _preflight_memory(
                         regime_names_to_ids,
                         ages.values,  # noqa: PD011
                         fixed,
+                        ()
+                        if supplied_frames is None
+                        else supplied_frames.operand_roots,
                     )
                 ),
             )
@@ -606,7 +621,7 @@ def canonicalize_initial_conditions(
             user-supplied arrays of any integer or floating dtype.
         regimes: Immutable mapping of regime names to internal regime
             instances, used to classify each state as discrete or continuous.
-        unread_names: Names removed as transition-only shocks in at least one
+        unread_names: Names removed as post-decision shocks in at least one
             regime. Drop their supplied columns only when no simulation regime
             retains the name as a state.
 
@@ -980,6 +995,8 @@ def validate_initial_conditions(
     process_grid_resolver: ProcessGridResolver | None = None,
     action_grid_resolver: PreflightActionGrids | None = None,
     memory: SimulationMemory | None = None,
+    supplied_frames: SuppliedEntryFrames | None = None,
+    original_n_subjects: int | None = None,
 ) -> None:
     """Validate initial conditions (regimes, states, and feasibility).
 
@@ -1012,6 +1029,8 @@ def validate_initial_conditions(
         ages=ages,
     )
     feasibility_errors = _collect_feasibility_errors(
+        original_n_subjects=original_n_subjects,
+        supplied_frames=supplied_frames,
         initial_states=initial_states,
         regime_id_arr=regime_arr,
         regime_names_to_ids=regime_names_to_ids,
@@ -1042,6 +1061,7 @@ def initial_conditions_feasibility_mask(
     flat_params: FlatParams,
     ages: TimeAxis,
     process_grid_resolver: ProcessGridResolver | None = None,
+    supplied_frames: SuppliedEntryFrames | None = None,
 ) -> Bool1D:
     """Return the per-subject feasibility mask of canonical initial conditions.
 
@@ -1099,6 +1119,7 @@ def initial_conditions_feasibility_mask(
             ages=ages,
         ):
             verdict = _regime_feasibility_mask(
+                supplied_frames=supplied_frames,
                 regime=regime_view,
                 regime_name=regime_name,
                 initial_states=initial_states,
@@ -1236,11 +1257,10 @@ def _initial_own_stakeholder(
     The seed is demanded exactly where the answer turns on it, which is a
     property of the starting regime rather than of the model:
 
-    - A role selects among a gated edge's legs, so it is read only where some
-      regime the cohort can still arrive at declares an edge with more than one
-      leg. A row keeps its role across an ordinary regime transition, so the
-      question is asked over the start's forward closure, not over its own
-      edges alone.
+    - A role selects among a current exit's member destinations or an incoming
+      decision's source routes, as well as a gated edge's legs. A row keeps its
+      role across an ordinary regime transition, so the question is asked over
+      the start's forward closure, not over its own decisions alone.
     - A collective start whose closure contains no such edge has no route,
       regime or state projection that can differ by role, and needs no seed —
       a role-routing regime elsewhere in the model decides nothing for it.
@@ -1270,9 +1290,28 @@ def _initial_own_stakeholder(
         name for name, regime in regimes.items() if regime.stakeholders is not None
     ]
     role_routing = frozenset(
-        name
-        for name, regime in regimes.items()
-        if any(len(edge.legs) > 1 for edge in regime.gated_edges.values())
+        {
+            name
+            for name, regime in regimes.items()
+            if any(len(edge.legs) > 1 for edge in regime.gated_edges.values())
+            or any(
+                plan.full is not None
+                and any(
+                    len(targets) > 1
+                    for targets in plan.full.definitions[
+                        plan.full.root
+                    ].exit_targets.values()
+                )
+                for plan in regime.simulation.exit_queries.values()
+            )
+        }
+        | {
+            source
+            for regime in regimes.values()
+            for plan in regime.simulation.exit_queries.values()
+            for source, entry in plan.participation.items()
+            if len(entry.target_roles) > 1
+        }
     )
     reachability = next(iter(regimes.values())).simulation.reachability
     starts_needing_a_role = {
@@ -1312,7 +1351,7 @@ def _initial_own_stakeholder(
                 "an `own_stakeholder` entry in `initial_conditions`, naming the "
                 f"role each one occupies (one of {dict(role_ids)}). They can "
                 f"reach the collective regime(s) {reachable_routes}, which "
-                "declare a gated edge whose legs differ by stakeholder, and "
+                "declare routes that differ by stakeholder, and "
                 "which partner a row is decides which of them it takes — so it "
                 "is a modelling decision rather than something the engine may "
                 "pick."
@@ -1592,6 +1631,8 @@ def _collect_feasibility_errors(
     process_grid_resolver: ProcessGridResolver | None = None,
     action_grid_resolver: PreflightActionGrids | None = None,
     memory: SimulationMemory | None = None,
+    supplied_frames: SuppliedEntryFrames | None = None,
+    original_n_subjects: int | None = None,
 ) -> list[str]:
     """Collect errors about action feasibility for each subject.
 
@@ -1608,6 +1649,13 @@ def _collect_feasibility_errors(
         List of error message strings (empty if everything is feasible).
 
     """
+    if original_n_subjects is not None and (
+        type(original_n_subjects) is not int
+        or not 0 < original_n_subjects <= len(regime_id_arr)
+    ):
+        raise ExecutionPlanningError(
+            "Preflight requires a valid original population size."
+        )
     errors: list[str] = []
     for regime_name, regime in regimes.items():
         if cohorts is None:
@@ -1617,6 +1665,10 @@ def _collect_feasibility_errors(
             ).tolist()
         else:
             subject_indices = list(cohorts.indices[regime_name])
+        if original_n_subjects is not None:
+            subject_indices = [
+                index for index in subject_indices if index < original_n_subjects
+            ]
         if not subject_indices:
             continue
 
@@ -1631,6 +1683,7 @@ def _collect_feasibility_errors(
             cohorts=cohorts,
         ):
             msg = _check_regime_feasibility(
+                supplied_frames=supplied_frames,
                 regime=regime_view,
                 regime_name=regime_name,
                 initial_states=initial_states,
@@ -1800,50 +1853,10 @@ def _run_profiled_feasibility[Output: BoolND | bool | BoundedResult[BoolND]](
     function: Callable[..., Output],
     arguments: Mapping[ReferenceName, PytreeValue],
 ) -> Output:
-    """Admit one user DAG with explicit dynamic input owners.
-
-    The executable is determined by the DAG (its code and captured values), the
-    trace settings and the abstract operands; every value that differs between
-    calls is an operand. So `memory.producers` reuses it across calls exactly,
-    closures included. All runtime parameters, action arrays and subject arrays
-    are dynamic operands. Admission runs on every call.
-    """
-    placed = place_simulation_arguments(
-        arguments=arguments,
-        # Validation cohorts may have any size, including fewer rows than devices.
-        # Replicate them like the preflight gather, whose output is unpadded.
-        subject_arg_names=(),
-        value_reads=(),
-        devices=memory.subject_devices,
-        budget_bytes=memory.budget_bytes,
-        live_footprint=memory.snapshot(),
-        budget_devices=memory.devices,
+    """Admit a feasibility DAG through the model-owned producer path."""
+    return run_simulation_producer(
+        memory=memory, function=function, arguments=arguments
     )
-    argument_buffers = measure_buffer_footprint(tree=placed)
-    live = memory.snapshot(additional=(arguments, placed))
-    external = resident_bytes_by_device(
-        live=live, arguments=argument_buffers, devices=memory.subject_devices
-    )
-    executable = memory.producers.admit_producer(
-        function=function,
-        arguments=jax.tree.map(
-            lambda value: jax.ShapeDtypeStruct(
-                value.shape,
-                value.dtype,
-                sharding=value.sharding,
-                weak_type=getattr(value, "weak_type", False),
-            ),
-            dict(placed),
-        ),
-        devices=memory.subject_devices,
-        output_sharding=None,
-        budget_bytes=memory.budget_bytes,
-        resident_bytes=max(external.values()),
-    )
-    result = executable(**placed)
-    jax.block_until_ready(result)
-    memory.hold(tree=result)
-    return cast("Output", result)
 
 
 def _regime_feasibility_function(
@@ -1972,6 +1985,7 @@ def _check_regime_feasibility(
     process_grid_resolver: ProcessGridResolver | None = None,
     action_grid_resolver: PreflightActionGrids | None = None,
     memory: SimulationMemory | None = None,
+    supplied_frames: SuppliedEntryFrames | None = None,
 ) -> str | None:
     """Explain which subjects of a regime lack every feasible action.
 
@@ -1998,6 +2012,7 @@ def _check_regime_feasibility(
 
     """
     verdict = _regime_feasibility_mask(
+        supplied_frames=supplied_frames,
         regime=regime,
         regime_name=regime_name,
         initial_states=initial_states,
@@ -2101,6 +2116,7 @@ def _regime_feasibility_mask(  # noqa: C901, PLR0912
     process_grid_resolver: ProcessGridResolver | None = None,
     action_grid_resolver: PreflightActionGrids | None = None,
     memory: SimulationMemory | None = None,
+    supplied_frames: SuppliedEntryFrames | None = None,
 ) -> _RegimeFeasibility | None:
     """Decide for each subject of a regime whether some action combination is feasible.
 
@@ -2214,6 +2230,25 @@ def _regime_feasibility_mask(  # noqa: C901, PLR0912
                 )[0],
                 dtype=jnp.int32,
             )
+
+    if supplied_frames is not None:
+        physical = supplied_frames.physical_inputs(
+            ages=ages,
+            regime=regime,
+            regime_name=regime_name,
+            initial_states=initial_states,
+            indices=subject_indices,
+            periods=(
+                np.asarray(cohorts.periods, dtype=np.int32)
+                if cohorts is not None
+                else resolve_initial_periods(
+                    ages=ages, initial_ages=initial_states["age"]
+                )[0]
+            ),
+            needed=frozenset(accepted),
+            memory=memory,
+        )
+        subject_states = {**subject_states, **physical}
 
     # Split actions and params — actions are vmapped over, params are not
     action_kwargs: dict[str, FloatND | IntND] = {

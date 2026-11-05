@@ -36,6 +36,7 @@ from lcm import (
     Model,
     Transition,
 )
+from lcm.solver_api import ResultRetention
 from lcm.solvers import GridSearch
 from lcm.typing import FloatND, RegimeName, UserParams
 from tests.solution._callback_types import (
@@ -172,10 +173,11 @@ def _keys_of(
     params: UserParams,
     regime: RegimeName,
     monkeypatch: pytest.MonkeyPatch,
+    retention: ResultRetention = ResultRetention.VALUES_AND_REPLAY,
 ) -> set[Hashable]:
     """The keys the solve publishes for the cores of one regime."""
     captured = _capture_lowering_keys(monkeypatch=monkeypatch)
-    model.solve(params=params, log_level="off")
+    model.solve(params=params, log_level="off", retention=retention)
     return {
         key
         for candidate, key in captured[0].items()
@@ -248,6 +250,8 @@ def test_disabling_donation_relowers_every_donating_core(
 
     Cores that donate nothing either way are lowered under one key in both
     arms; only the donating cores' keys must vanish from the non-donating solve.
+    A values-only solve runs the NB-EGM `main` program, which donates its
+    marginal leaf.
     """
     params = nbegm_ride_along_toy.build_params()
     donating = _keys_of(
@@ -255,12 +259,14 @@ def test_disabling_donation_relowers_every_donating_core(
         params=params,
         regime="alive",
         monkeypatch=monkeypatch,
+        retention=ResultRetention.VALUES,
     )
     keeping = _keys_of(
         model=_nbegm_model(donate_buffers=False),
         params=params,
         regime="alive",
         monkeypatch=monkeypatch,
+        retention=ResultRetention.VALUES,
     )
     donors = {key for key in donating if cast("_Key", key)[_DONATED_POSITION]}
 

@@ -1,5 +1,6 @@
 from collections.abc import Mapping
 from dataclasses import dataclass
+from functools import partial
 from typing import Literal
 
 import jax.numpy as jnp
@@ -725,19 +726,23 @@ def _output_model(
     model_output: tuple[FunctionName, ...] = (),
     regime_output: tuple[FunctionName, ...] = (),
 ) -> Model:
-    return Model(
+    return (
+        partial(Model, output_only_functions=model_output) if model_output else Model
+    )(
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regime_id_class=_OutputRegimeId,
         regimes={
-            "alive": UserRegime(
+            "alive": (
+                partial(UserRegime, output_only_functions=regime_output)
+                if regime_output
+                else UserRegime
+            )(
                 states={"wealth": LinSpacedGrid(start=1.0, stop=3.0, n_points=3)},
                 functions=functions,
-                **({"output_only_functions": regime_output} if regime_output else {}),
             )
         },
         initial_nodes={0: "alive"},
         edges={},
-        **({"output_only_functions": model_output} if model_output else {}),
     )
 
 

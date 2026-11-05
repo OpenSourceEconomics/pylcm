@@ -12,8 +12,8 @@ from _lcm.egm.outer_inversion import (
     coefficient_is_exactly_invertible,
 )
 from _lcm.egm.outer_replay_capability import OuterReplayCapability
-from _lcm.egm.published_policy import EGMSimPolicy, NNBEGMSimPolicy
-from _lcm.engine import EGMPolicyRead, NNBEGMPolicyRead
+from _lcm.egm.published_policy import EGMSimPolicy, NBEGMGridPolicy, NNBEGMSimPolicy
+from _lcm.engine import EGMPolicyRead, NBEGMPolicyRead, NNBEGMPolicyRead
 from lcm.typing import ActionName, StateName
 
 # Replay metadata compared exactly: names, numbers and `None`, nested in tuples.
@@ -56,6 +56,65 @@ def validate_egm_sim_policy(
         expected_float_dtype=policy_read.float_dtype,
         extra_leading_axes=0,
         label="EGMSimPolicy",
+    )
+
+
+def validate_nbegm_grid_policy(
+    *,
+    policy: NBEGMGridPolicy,
+    policy_read: NBEGMPolicyRead,
+    period: int,
+) -> str | None:
+    """Return a defect against the model-owned NB-EGM state-grid route, if any."""
+    label = "NBEGMGridPolicy"
+    expected_lengths = _axis_lengths_for_period(
+        lengths_by_period=policy_read.state_axis_lengths_by_period,
+        period=period,
+        label=label,
+    )
+    names = (policy.state_names, policy.discrete_action_names)
+    if not _same_exactly_typed(
+        actual=names,
+        expected=(policy_read.state_names, policy_read.discrete_action_names),
+    ):
+        return f"{label} axis roles {names!r} do not match model authority"
+    branch_leaves = (
+        policy.branch_inner_action,
+        policy.branch_value,
+        policy.branch_discrete_actions,
+    )
+    expected_codes = policy_read.branch_discrete_action_codes
+    if not policy_read.discrete_action_names:
+        layout_defect = (
+            None
+            if all(leaf is None for leaf in branch_leaves)
+            and policy.action.shape == expected_lengths
+            else "layout"
+        )
+    else:
+        inner, value, codes = branch_leaves
+        bank_shape = (len(expected_codes), *expected_lengths)
+        layout_defect = (
+            None
+            if inner is not None
+            and value is not None
+            and codes is not None
+            and policy.action.shape == expected_lengths
+            and inner.shape == bank_shape
+            and value.shape == bank_shape
+            and str(np.dtype(codes.dtype)) == policy_read.integer_dtype
+            and tuple(tuple(int(code) for code in row) for row in np.asarray(codes))
+            == expected_codes
+            else "layout"
+        )
+    if layout_defect is not None:
+        return f"{label} arrays or branch codes do not match model authority"
+    return _validate_float_array_dtypes(
+        arrays=tuple(
+            leaf for leaf in (policy.action, *branch_leaves[:2]) if leaf is not None
+        ),
+        expected=policy_read.float_dtype,
+        label=label,
     )
 
 

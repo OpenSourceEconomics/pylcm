@@ -4,8 +4,9 @@ import hashlib
 from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, cast, runtime_checkable
 
+import jax
 import numpy as np
 
 from _lcm.engine import Regime
@@ -17,19 +18,27 @@ from _lcm.params.sequence_leaf import SequenceLeaf
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.regime_building.finalize import FinalizedUserRegime
 from _lcm.solution.contract import BackwardInductionResult
+from _lcm.solution.generation import CanonicalModelGeneration
+from _lcm.solution.host_values import (
+    device_read_view,
+    is_host_value,
+    lazy_read_view,
+    policy_read_view,
+)
 from _lcm.solution.result_snapshot import own_artifact_store, own_value_store
 from _lcm.typing import (
     ArtifactPayload,
     FlatParams,
     HostArray,
     ParamsLeaf,
-    PeriodToRegimeToDissolutionFlags,
+    PeriodToRegimeToParticipationSurfaces,
     PeriodToRegimeToSimulationPolicy,
     PeriodToRegimeToVArr,
     RegimeName,
 )
+from lcm._solver_api.authority import _ArrayCopier
+from lcm._solver_api.entries import _LazyEntry
 from lcm.solver_api import (
-    DISSOLUTION_FLAG,
     EGM_CONTINUATION,
     SIMULATION_POLICY,
     SOLVER_DIAGNOSTICS,
@@ -67,7 +76,7 @@ class OwnedSolutionView:
     """The engine's by-reference view of a result it built in this process.
 
     The producing model consumes its own result through this view: the value
-    arrays, published replay policies, and dissolution flags are the objects the
+    arrays and published replay policies are the objects the
     solve returned, and the authority is the one bound to that solve, generated
     adaptive facts included. Nothing is copied and nothing is re-validated; the
     consumer only checks that it is the producing instance and that the
@@ -82,18 +91,52 @@ class OwnedSolutionView:
     """The solve's value arrays, by reference."""
     simulation_policies: PeriodToRegimeToSimulationPolicy
     """The published replay policies consumed by a declared route."""
-    dissolution_flags: PeriodToRegimeToDissolutionFlags
-    """The retained per-period, per-collective-regime dissolution flags."""
     replay_artifacts: MappingProxyType[ArtifactRef, ArtifactPayload]
     """Every retained replay-channel payload, by reference, for plugin routes."""
     authority: SolutionAuthority
     """The solution authority bound to this solve."""
+    generation: CanonicalModelGeneration | None = None
+    """Strong ownership of the actual producing programs, including after eviction."""
+    participation_surfaces: PeriodToRegimeToParticipationSurfaces = MappingProxyType({})
+    """The solve's stored participation surfaces, which participation replay reads."""
     component_values: RetainedComponentValues | None = None
     """The host retention behind a block-major result's values, else `None`.
 
     A block-major result keeps no complete value on a device: `values` is
     empty, and a consumer reads one code's values at a time from here.
     """
+
+
+def selected_persistable_artifact_refs(
+    *,
+    regimes: Mapping[RegimeName, Regime],
+    authority: SolutionAuthority,
+    retention: ResultRetention,
+) -> frozenset[ArtifactRef]:
+    """Select durable outputs from retention and actual forward child demands."""
+    if retention is ResultRetention.ALL_PERSISTABLE_ARTIFACTS:
+        return frozenset(
+            ref
+            for ref, artifact in authority.artifacts.items()
+            if artifact.applicable
+            and artifact.descriptor.persistence is PersistencePolicy.MODEL_VERIFIABLE
+        )
+    if retention is not ResultRetention.VALUES_AND_REPLAY:
+        return frozenset()
+    routes = frozenset(
+        _replay_route_identity(regime.simulation.replay_route)
+        for regime in regimes.values()
+    )
+    required = {
+        ref
+        for ref, artifact in authority.artifacts.items()
+        if artifact.applicable
+        and artifact.required
+        and artifact.descriptor.channel is ArtifactChannel.CONTINUATION
+        and artifact.descriptor.persistence is PersistencePolicy.MODEL_VERIFIABLE
+        and artifact.descriptor.required_for & routes
+    }
+    return frozenset(required)
 
 
 def build_solution_result(  # noqa: C901, PLR0912, PLR0915
@@ -109,14 +152,19 @@ def build_solution_result(  # noqa: C901, PLR0912, PLR0915
     durable_identity: bool = True,
     authority: SolutionAuthority,
     flat_params: FlatParams,
+    generation: CanonicalModelGeneration | None = None,
     process_grid_resolver: ProcessGridResolver | None = None,
     component_values: RetainedComponentValues | None = None,
+    device_memory_bytes: int | None = None,
+    array_copier: _ArrayCopier | None = None,
 ) -> SolutionResult:
     """Label existing engine outputs without changing their numerical meaning.
 
     A block-major solve passes its host retention as `component_values`; its
     values then come from there, one lazy entry per solved coordinate, and the
-    engine outputs carry no value array.
+    engine outputs carry no value array. A host-storage solve's values carry
+    `device_memory_bytes`, its per-device budget, so that placing all of them on
+    the devices at once is admitted against it.
     """
     value_coordinates = (
         tuple(
@@ -156,11 +204,6 @@ def build_solution_result(  # noqa: C901, PLR0912, PLR0915
             target=replay,
             nested=declared_replay_policies,
             key=SIMULATION_POLICY,
-        )
-        _add_nested_artifacts(
-            target=replay,
-            nested=internal_result.dissolution_flags,
-            key=DISSOLUTION_FLAG,
         )
 
     if retention is ResultRetention.ALL_PERSISTABLE_ARTIFACTS:
@@ -223,27 +266,9 @@ def build_solution_result(  # noqa: C901, PLR0912, PLR0915
             else:
                 omissions[policy_ref] = OmissionReason.UNSUPPORTED
 
-        if regime.stakeholders is not None:
-            dissolution_ref = ArtifactRef(
-                period=period,
-                regime=regime_name,
-                key=DISSOLUTION_FLAG,
-            )
-            if dissolution_ref not in replay:
-                dissolution_descriptor = authority.replay[dissolution_ref]
-                if not retention.retains_replay:
-                    omissions[dissolution_ref] = OmissionReason.NOT_REQUESTED
-                elif dissolution_descriptor.required:
-                    msg = (
-                        "A model-authoritative replay route published no "
-                        "required artifact at "
-                        f"({period}, {regime_name!r}, "
-                        f"{DISSOLUTION_FLAG.type_id!r})."
-                    )
-                    raise RuntimeError(msg)
-                else:
-                    omissions[dissolution_ref] = OmissionReason.UNSUPPORTED
-
+    persistable_artifact_refs = selected_persistable_artifact_refs(
+        regimes=regimes, authority=authority, retention=retention
+    )
     present_refs = (
         set(retained_continuations) | set(replay) | set(auxiliary) | set(diagnostics)
     )
@@ -253,7 +278,10 @@ def build_solution_result(  # noqa: C901, PLR0912, PLR0915
         descriptor = artifact_authority.descriptor
         selected = retention is ResultRetention.ALL_PERSISTABLE_ARTIFACTS or (
             retention is ResultRetention.VALUES_AND_REPLAY
-            and descriptor.channel is ArtifactChannel.REPLAY
+            and (
+                descriptor.channel is ArtifactChannel.REPLAY
+                or ref in persistable_artifact_refs
+            )
         )
         if not artifact_authority.applicable:
             omissions[ref] = OmissionReason.NOT_APPLICABLE
@@ -271,21 +299,27 @@ def build_solution_result(  # noqa: C901, PLR0912, PLR0915
 
     result = SolutionResult(
         values=(
-            own_value_store(internal_result.value_functions)
+            own_value_store(
+                internal_result.value_functions,
+                host_budget_bytes=device_memory_bytes,
+            )
             if component_values is None
             else component_values.value_store()
         ),
         retained_continuations=own_artifact_store(
             entries=retained_continuations,
             authorities=authority.artifacts,
+            array_copier=array_copier,
         ),
         replay_artifacts=own_artifact_store(
             entries=replay,
             authorities=authority.artifacts,
+            array_copier=array_copier,
         ),
         auxiliary_artifacts=own_artifact_store(
             entries=auxiliary,
             authorities=authority.artifacts,
+            array_copier=array_copier,
         ),
         metadata=SolutionMetadata(
             retention=retention,
@@ -357,6 +391,7 @@ def build_solution_result(  # noqa: C901, PLR0912, PLR0915
         diagnostics=own_artifact_store(
             entries=diagnostics,
             authorities=authority.artifacts,
+            array_copier=array_copier,
         ),
     )
     object.__setattr__(
@@ -365,28 +400,69 @@ def build_solution_result(  # noqa: C901, PLR0912, PLR0915
         MappingProxyType(dict(authority.artifacts)),
     )
     object.__setattr__(
+        result, "_participation_surfaces", internal_result.participation_surfaces
+    )
+    object.__setattr__(
         result,
         "_engine_view",
         OwnedSolutionView(
             model_instance_id=model_instance_id,
             params_fingerprint=params_fingerprint,
-            values=internal_result.value_functions,
+            values=(
+                device_read_view(values=internal_result.value_functions)
+                if _holds_host_arrays(nested=internal_result.value_functions)
+                else internal_result.value_functions
+            ),
             simulation_policies=(
-                declared_replay_policies
+                (
+                    policy_read_view(policies=declared_replay_policies)
+                    if _stored_off_device(nested=declared_replay_policies)
+                    else declared_replay_policies
+                )
                 if retention.retains_replay
                 else MappingProxyType({})
             ),
-            dissolution_flags=(
-                internal_result.dissolution_flags
-                if retention.retains_replay
-                else MappingProxyType({})
+            replay_artifacts=(
+                lazy_read_view(entries=replay)
+                if any(isinstance(entry, _LazyEntry) for entry in replay.values())
+                else MappingProxyType(replay)
             ),
-            replay_artifacts=MappingProxyType(replay),
             authority=authority,
+            participation_surfaces=internal_result.participation_surfaces,
             component_values=component_values,
+            generation=generation,
         ),
     )
     return result
+
+
+def _stored_off_device(*, nested: PeriodToRegimeToSimulationPolicy) -> bool:
+    """Whether a solve stored these policies in host memory or on disk."""
+    return any(
+        isinstance(policy, _LazyEntry)
+        or any(
+            is_host_value(leaf)
+            for leaf in jax.tree.leaves(policy)
+            if isinstance(leaf, jax.Array)
+        )
+        for regime_to_policy in nested.values()
+        for policy in regime_to_policy.values()
+    )
+
+
+def _holds_host_arrays(
+    *, nested: Mapping[int, Mapping[RegimeName, jax.Array | _LazyEntry]]
+) -> bool:
+    """Whether a solve stored these per-period arrays off the device.
+
+    A value in pinned host memory or written to disk is read back through a
+    device view.
+    """
+    return any(
+        isinstance(array, _LazyEntry) or is_host_value(array)
+        for regime_to_array in nested.values()
+        for array in regime_to_array.values()
+    )
 
 
 def fingerprint_flat_params(flat_params: FlatParams) -> str:
@@ -436,13 +512,17 @@ def _update_digest_value(
         _update_digest_token(digest=digest, chunk="mapping")
         for key in sorted(value.data):
             _update_digest_value(
-                digest=digest, value=value.data[key], path=(*path, key)
+                digest=digest,
+                value=cast("ParamsLeaf", value.data[key]),
+                path=(*path, key),
             )
         return
     if isinstance(value, SequenceLeaf):
         _update_digest_token(digest=digest, chunk="sequence")
         for index, child in enumerate(value.data):
-            _update_digest_value(digest=digest, value=child, path=(*path, str(index)))
+            _update_digest_value(
+                digest=digest, value=cast("ParamsLeaf", child), path=(*path, str(index))
+            )
         return
 
     # ``asarray`` keeps the declared rank; a 0-d parameter and a length-one
@@ -458,11 +538,7 @@ def _update_digest_value(
 
 def _canonical_value_axis_names(*, regime: Regime) -> tuple[str, ...]:
     """Return the public names of the axes in one canonical stored value."""
-    state_axes = tuple(
-        name
-        for name in regime.solution.state_names
-        if name not in regime.fold_state_names
-    )
+    state_axes = tuple(regime.solution.state_names)
     return (
         (*state_axes, "stakeholder") if regime.stakeholders is not None else state_axes
     )
@@ -523,7 +599,6 @@ def _add_nested_artifacts[Payload](
 
 
 __all__ = [
-    "DISSOLUTION_FLAG",
     "EGM_CONTINUATION",
     "SIMULATION_POLICY",
     "SOLVER_DIAGNOSTICS",

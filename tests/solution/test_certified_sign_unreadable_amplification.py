@@ -12,9 +12,9 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from _lcm.egm.upper_envelope.certified_sign import (
-    UNRESOLVED_SIGN,
-    certified_margin_sign,
+from _lcm.egm.upper_envelope._exact_affine.ffi import (
+    UNRESOLVED_STATUS,
+    certified_affine_compare,
 )
 from _lcm.egm.upper_envelope.query import envelope_at_query
 from tests.conftest import EXACT_KERNEL_SKIP_REASON, X64_ENABLED
@@ -61,7 +61,7 @@ def test_an_unreadable_distance_never_supports_the_wrong_strict_sign(swap):
         expected = 1
 
     def compare(*args):
-        return certified_margin_sign(
+        return certified_affine_compare(
             a_x0=args[0],
             a_x1=args[1],
             a_v0=args[2],
@@ -75,7 +75,7 @@ def test_an_unreadable_distance_never_supports_the_wrong_strict_sign(swap):
 
     args = tuple(jnp.asarray(x, dtype=jax_dtype) for x in (*a, *b, query))
     observed = int(jax.jit(compare)(*args))
-    assert observed in (expected, UNRESOLVED_SIGN)
+    assert observed in (expected, UNRESOLVED_STATUS)
 
 
 @pytest.mark.parametrize("segment_block_size", [0, 1])

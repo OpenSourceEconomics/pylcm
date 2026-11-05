@@ -6,6 +6,7 @@ parameters fix, and fails closed when a declared state has no entry.
 """
 
 from types import MappingProxyType
+from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
 
@@ -13,6 +14,12 @@ from _lcm.engine import StateActionSpace, Variables
 from _lcm.grids import Grid, IrregSpacedGrid
 from _lcm.typing import StateName, StateOrActionName
 from lcm.typing import FloatND, IntND
+
+if TYPE_CHECKING:
+    from _lcm.materialization import DatedGenerationMaterializer
+else:
+    # The owner protocol imports engine state/action declarations while initializing.
+    type DatedGenerationMaterializer = object
 
 
 def create_state_action_space(

@@ -17,8 +17,8 @@ The NB-EGM and nested models have one living regime that stays alive or dies,
 except at its last active period, where it only dies.
 
 The gated model's `src` stays in `src` at periods 0 and 1 and at period 2 enters
-`tgt` through a gate whose closed branch pays the fallback regime `fb`; both are
-terminal at period 3.
+`tgt` through a participation check whose refused branch pays the fallback regime `fb`;
+both are terminal at period 3.
 """
 
 from types import MappingProxyType
@@ -35,9 +35,11 @@ from lcm import (
     AgeRange,
     DeterministicTransition,
     DiscreteGrid,
-    Gate,
+    ExecutionConfig,
     LinSpacedGrid,
     Model,
+    ParticipationCheck,
+    ParticipationRead,
     ProjectedRegimeValue,
     StakeholderRoute,
     Transition,
@@ -119,7 +121,9 @@ def _working_regime() -> UserRegime:
     )
 
 
-def _three_regime_model() -> Model:
+def _three_regime_model(
+    execution_config: ExecutionConfig = ExecutionConfig(),  # noqa: B008
+) -> Model:
     return Model(
         regimes={
             "a": _working_regime(),
@@ -136,6 +140,7 @@ def _three_regime_model() -> Model:
             "a": {"a": AgeRange(exclusive_stop=3), "c": 3},
             "b": {"b": AgeRange(start=1, exclusive_stop=3), "c": 3},
         },
+        execution_config=execution_config,
     )
 
 
@@ -162,7 +167,9 @@ def _same_health(health: DiscreteState) -> DiscreteState:
     return health
 
 
-def _gated_model() -> Model:
+def _gated_model(
+    execution_config: ExecutionConfig = ExecutionConfig(),  # noqa: B008
+) -> Model:
     terminal = UserRegime(functions={"utility": _terminal_utility}, states=_states())
     return Model(
         regimes={"src": _working_regime(), "tgt": terminal, "fb": terminal},
@@ -173,9 +180,19 @@ def _gated_model() -> Model:
             "src": Transition(
                 targets={"src": AgeRange(exclusive_stop=2), "tgt": 2, "fb": 2},
                 law=DeterministicTransition(func=_next_gated_regime),
-                gates={
-                    "tgt": Gate(
+                participation={
+                    "tgt": ParticipationCheck(
                         predicate=_open_when_rich,
+                        reads={
+                            "V_target": ParticipationRead(
+                                kind="IntegratedFull",
+                                regime="tgt",
+                                projection={
+                                    "wealth": _same_wealth,
+                                    "health": _same_health,
+                                },
+                            )
+                        },
                         routes={
                             "only": StakeholderRoute(
                                 fallback=ProjectedRegimeValue(
@@ -191,6 +208,7 @@ def _gated_model() -> Model:
                 },
             )
         },
+        execution_config=execution_config,
     )
 
 

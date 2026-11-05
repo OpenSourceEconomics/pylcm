@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, cast
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 
 from _lcm.dtypes import canonical_float_dtype
 from _lcm.grids.discrete import read_at_codes
@@ -202,6 +203,35 @@ def build_template_egm_query_data(
     liquid_corner: bool = False,
 ) -> EGMQueryData:
     """Build finite inert query records with PAD or missing support throughout."""
+    rows, row_shape, corner_shape, liquid_shape = _template_query_shapes(
+        state_shape=state_shape,
+        action_shape=action_shape,
+        row_capacity=row_capacity,
+        interval_capacity=interval_capacity,
+        outer_capacity=outer_capacity,
+    )
+    return _build_template_egm_query_data_at_dtype(
+        state_shape=state_shape,
+        rows=rows,
+        row_shape=row_shape,
+        corner_shape=corner_shape,
+        liquid_shape=liquid_shape,
+        row_capacity=row_capacity,
+        interval_capacity=interval_capacity,
+        liquid_corner=liquid_corner,
+        dtype=np.dtype(canonical_float_dtype()),
+    )
+
+
+def _template_query_shapes(
+    *,
+    state_shape: tuple[int, ...],
+    action_shape: tuple[int, ...],
+    row_capacity: int,
+    interval_capacity: int,
+    outer_capacity: int,
+) -> tuple[tuple[int, ...], tuple[int, ...], tuple[int, ...], tuple[int, ...]]:
+    """Check the original extents and construct only host shape tuples."""
     if row_capacity < 1 or interval_capacity < 1 or outer_capacity < 0:
         raise ValueError("Query row and interval capacities must be positive.")
     if any(extent < 1 for extent in (*state_shape, *action_shape)):
@@ -211,7 +241,22 @@ def build_template_egm_query_data(
     row_shape = (*rows, row_capacity)
     corner_shape = (*rows, interval_capacity)
     liquid_shape = (*rows, row_capacity, interval_capacity)
-    dtype = canonical_float_dtype()
+    return rows, row_shape, corner_shape, liquid_shape
+
+
+def _build_template_egm_query_data_at_dtype(
+    *,
+    state_shape: tuple[int, ...],
+    rows: tuple[int, ...],
+    row_shape: tuple[int, ...],
+    corner_shape: tuple[int, ...],
+    liquid_shape: tuple[int, ...],
+    row_capacity: int,
+    interval_capacity: int,
+    liquid_corner: bool,
+    dtype: np.dtype[np.generic],
+) -> EGMQueryData:
+    """Original allocation stages with their already resolved canonical dtype."""
     liquid = (
         EGMLiquidCornerData(
             continuation=jnp.zeros(liquid_shape, dtype),

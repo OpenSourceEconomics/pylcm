@@ -1,14 +1,14 @@
 import ctypes
 import ctypes.util
 import functools
+import gc
 import json
-import logging
 import os
 import pathlib
 import platform
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import make_dataclass
-from types import MappingProxyType
+from types import MappingProxyType, ModuleType
 from typing import TYPE_CHECKING, NotRequired, cast
 
 import jax
@@ -18,14 +18,14 @@ import psutil
 import pytest
 from jax import config as jax_config
 from jax.experimental.compilation_cache import compilation_cache
-from numpy.typing import ArrayLike
+from numpy.typing import ArrayLike, NDArray
 from typing_extensions import TypedDict
 from xdist.workermanage import WorkerController
 
 from _lcm.egm.upper_envelope._exact_affine.ffi import (
     kernel_built_for_current_backend,
 )
-from _lcm.engine import PeriodRegimeSimulationData, Regime
+from _lcm.engine import Regime
 from _lcm.execution.core_program import MaterializedCoreProgram
 from _lcm.execution.output_layout import ResolvedOutputLayout
 from _lcm.execution.pending_work import PendingSolveWork
@@ -36,7 +36,6 @@ from _lcm.execution.value_transfer import (
 )
 from _lcm.gated_edge import gated_edge_from_gate
 from _lcm.params.regime_template import create_edge_vocabulary
-from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.regime_building.finalize import FinalizedUserRegime
 from _lcm.regime_building.processing import (
     PreparedModelStructure,
@@ -48,20 +47,11 @@ from _lcm.regime_building.schedules import (
     resolve_regime_schedules,
 )
 from _lcm.regime_law import RegimeLawDeclaration, RegimeLaws, bind_regime_law
-from _lcm.simulation.chunk_inputs import SimulationCallInputs
-from _lcm.simulation.memory import SimulationMemory
 from _lcm.simulation.runtime import SimulationDispatchContext
-from _lcm.simulation.simulate import _PeriodToRegimeToReplayReader
-from _lcm.simulation.subject_groups import SubjectRows
-from _lcm.time import TimeAxis
 from _lcm.typing import (
     ArgumentTree,
-    FlatParams,
-    PeriodToRegimeToSimulationPolicy,
     PytreeValue,
-    RegimeIdsToNames,
     RegimeName,
-    RegimeNamesToIds,
     ShapeDtypePytree,
 )
 from lcm.ages import AgeGrid
@@ -69,14 +59,9 @@ from lcm.collective import Gate
 from lcm.transition import Transition, TransitionLaw
 from lcm.tuning import _array_ulp_gap
 from lcm.typing import (
-    BoolND,
-    Float1D,
     FloatND,
-    Int1D,
-    IntND,
     ReferenceName,
     ScalarInt,
-    StateOrActionName,
 )
 from tests.ci import ci_workloads, pytest_policy
 from tests.ci.cpu_suite_invocations import ignore_implicit_eight_device_collection
@@ -299,8 +284,8 @@ def assert_agrees_to_ulp(
 
 def assert_general_values_agree(
     *,
-    got: Mapping[int, Mapping[RegimeName, FloatND]],
-    expected: Mapping[int, Mapping[RegimeName, FloatND]],
+    got: Mapping[int, Mapping[RegimeName, FloatND | NDArray[np.floating]]],
+    expected: Mapping[int, Mapping[RegimeName, FloatND | NDArray[np.floating]]],
 ) -> None:
     """Require exact value coordinates and metadata, with at most eight ULP per cell."""
     assert {period: tuple(regimes) for period, regimes in got.items()} == {
@@ -383,11 +368,15 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     """
     slow = pytest.mark.slow
     os_persistence = frozenset(ci_workloads.os_persistence_tests())
+    egm_acceptance = frozenset(ci_workloads.egm_acceptance_tests())
     for item in items:
         if "solution" in item.path.parts:
             item.add_marker(slow)
-        if _test_function_key(item=item, root=config.rootpath) in os_persistence:
+        key = _test_function_key(item=item, root=config.rootpath)
+        if key in os_persistence:
             item.add_marker(pytest.mark.os_persistence)
+        if key in egm_acceptance:
+            item.add_marker(pytest.mark.egm_acceptance)
 
     _validate_exact_kernel_markers(items=items)
     _apply_backend_skips(items=items)
@@ -402,6 +391,22 @@ def _test_function_key(*, item: pytest.Item, root: pathlib.Path) -> str:
         return ""
     name = getattr(item, "originalname", None) or item.name
     return f"{relative}::{name}"
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_collection(session: pytest.Session) -> Iterator[None]:
+    """Hand a worker's collection usage error to the xdist controller.
+
+    Only the workers collect. A `UsageError` there ends each worker with status 4,
+    and the controller would report only an unrelated `assert not crashitem`.
+    xdist forwards `shouldfail` to the controller, which stops with that message.
+    """
+    try:
+        return (yield)
+    except pytest.UsageError as error:
+        if getattr(session.config, "workeroutput", None) is not None:
+            session.shouldfail = f"worker collection failed: {error}"
+        raise
 
 
 def pytest_collection_finish(session: pytest.Session) -> None:
@@ -701,12 +706,35 @@ def pytest_runtest_teardown(item, nextitem):
     upcoming = getattr(nextitem, "module", None) if nextitem is not None else None
     if upcoming is not None and upcoming is current and not grown:
         return
+    if upcoming is not current and current is not None:
+        _clear_module_caches(module=current)
     jax.clear_caches()
     return_free_heap_to_os()
     # Measured after the release, so a module whose memory is held by something a
     # release cannot reach -- a session fixture, say -- settles at its own level
     # instead of releasing on every test from then on.
     session._lcm_mib_at_last_release = resident_mebibytes() or 0
+
+
+def _clear_module_caches(*, module: ModuleType) -> None:
+    """Drop what a finished test module memoised in its own top-level caches.
+
+    A module that memoises its solutions with `functools.cache` keeps every
+    compiled program those solutions hold alive for the rest of the worker,
+    because the cache outlives the module and JAX's cache release cannot reach
+    it. XLA:CPU maps each program's code into its own memory regions, so such a
+    worker's map count only grows; one past the kernel's `vm.max_map_count`
+    (65530 on the Marvin nodes) aborts the next compile with "LLVM ERROR: Unable
+    to allocate section memory". Clearing the module's caches at its boundary
+    and collecting the cycles they held bounds the count to one module's
+    programs. A module scheduled again later only recomputes what it memoised.
+    """
+    name = module.__name__
+    for value in vars(module).values():
+        clear = getattr(value, "cache_clear", None)
+        if callable(clear) and getattr(value, "__module__", None) == name:
+            clear()
+    gc.collect()
 
 
 class ExecuteWithPendingWorkKwargs(TypedDict, closed=True):
@@ -733,8 +761,8 @@ def bind_laws(
 ) -> RegimeLaws:
     """Bind each regime's declared law the way `Model(edges=...)` binds it.
 
-    `declared` maps every regime to its law between regimes, `None` for a
-    terminal regime, or to a `Transition` whose gates the law carries along.
+    `declared` maps every regime to its law between regimes, `None` for a terminal
+    regime, or to a `Transition` whose gates and participation checks travel with it.
     """
     return MappingProxyType(
         {
@@ -745,6 +773,7 @@ def bind_laws(
                         target: gated_edge_from_gate(gate)
                         for target, gate in law.gates.items()
                     },
+                    participation=law.participation,
                 )
                 if isinstance(law, Transition)
                 else bind_regime_law(law)
@@ -776,10 +805,14 @@ def build_prepared_structure(
         declared_transitions={name: law.transition for name, law in laws.items()},
         code_by_name={name: code for code, name in enumerate(laws)},
     )
-    # Lowering keeps each regime's law only; its gates stay those it declares.
+    # Lowering keeps the law; source-owned gates and participation checks stay attached.
     bound = MappingProxyType(
         {
-            name: bind_regime_law(transition, gated_edges=laws[name].gated_edges)
+            name: bind_regime_law(
+                transition,
+                gated_edges=laws[name].gated_edges,
+                participation=laws[name].participation,
+            )
             for name, transition in lowered.items()
         }
     )
@@ -788,6 +821,11 @@ def build_prepared_structure(
         laws=bound,
         ages=ages,
         active_periods_by_regime=schedules.coverage_by_regime,
+        # This kernel harness permits starts at every pre-existing covered date.
+        # Query demand never widens its original occupants or stored Full bank.
+        original_periods_by_regime=schedules.coverage_by_regime,
+        value_periods_by_regime=schedules.coverage_by_regime,
+        query_periods_by_phase=schedules.query_periods_by_phase,
         support_by_phase=schedules.support_by_phase,
         gated_source_periods=gated_source_periods(schedules=schedules),
         # The bound laws stand in for the declarations a `Model` would hold.
@@ -800,17 +838,17 @@ def build_prepared_structure(
                         target: Gate(
                             predicate=edge.gate,
                             routes=edge.legs,
-                            references=edge.gate_refs,
                             off_grid=edge.off_grid,
                         )
                         for target, edge in law.gated_edges.items()
                     },
+                    participation=law.participation,
                 ),
             )
             for name, law in bound.items()
             if not law.terminal
         },
-        declared_edge_vocabulary=create_edge_vocabulary(user_regimes),
+        declared_edge_vocabulary=create_edge_vocabulary(user_regimes=user_regimes),
     )
 
 
@@ -941,44 +979,6 @@ class PrepareMaterializedKwargs(TypedDict, closed=True):
     program: MaterializedCoreProgram
     n_subjects: int
     residency: NotRequired[SimulationDispatchContext | None]
-
-
-class SubjectChunkKwargs(TypedDict, closed=True):
-    """Keywords received by `_simulate_subject_chunk`."""
-
-    initial_states: dict[StateOrActionName, Float1D | IntND]
-    initial_regime_ids: Int1D
-    starting_periods: Int1D
-    n_subjects: int
-    subject_slice: slice | SubjectRows
-    code: NotRequired[int | None]
-    stored_codes: NotRequired[tuple[int, ...] | None]
-    original_n_subjects: NotRequired[int | None]
-    regimes: MappingProxyType[RegimeName, Regime]
-    regime_names_to_ids: RegimeNamesToIds
-    regime_ids_to_names: RegimeIdsToNames
-    period_to_regime_to_V_arr: MappingProxyType[
-        int, MappingProxyType[RegimeName, FloatND]
-    ]
-    period_to_regime_to_dissolution_flags: MappingProxyType[
-        int, MappingProxyType[RegimeName, BoolND]
-    ]
-    flat_params: FlatParams
-    ages: TimeAxis
-    seed: int
-    logger: logging.Logger
-    initial_own_stakeholder: Int1D
-    period_to_regime_to_sim_policy: NotRequired[PeriodToRegimeToSimulationPolicy | None]
-    period_to_regime_to_replay_reader: NotRequired[_PeriodToRegimeToReplayReader]
-    device_ids: NotRequired[tuple[int, ...]]
-    memory: NotRequired[SimulationMemory | None]
-    call_inputs: NotRequired[SimulationCallInputs | None]
-    taste_shock_seed: NotRequired[int | None]
-    taste_addresses: NotRequired[Mapping[tuple[int, RegimeName], tuple[int, ...]]]
-    process_grid_resolver: NotRequired[ProcessGridResolver | None]
-
-
-type SubjectChunkResults = dict[RegimeName, dict[int, PeriodRegimeSimulationData]]
 
 
 class AttachResolvedOutputLayoutKwargs(TypedDict, closed=True):

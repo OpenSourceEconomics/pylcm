@@ -22,20 +22,24 @@ def test_action_grid_controls_preserve_historical_mutation_populations() -> None
         for name, spec in registered.items()
         if not name.startswith("simulation_adapter:initial_physical_")
     }
-    assert len(historical) == 409
+    # The dissolution-flag removal deleted streaming_collective:published_dissolution_
+    # inverted and native_graph:collective_output_role_dropped with their targets;
+    # the fold-machinery removal deleted ten streaming fold controls and two
+    # supplemental s02_status:fold_weight_* controls with theirs.
+    assert len(historical) == 398
     assert (
         _name_digest(historical)
-        == "3c5fdaf1c4a0eb22ad92ac592d4ca84cef0c97a4b94bc525a7f8592d886880a7"
+        == "a00c2dd641b34fdfa7f618fb19d3e79648c1082583727f15fafbb004d62faf6d"
     )
-    assert len(registered) == 421
+    assert len(registered) == 410
     assert (
         _name_digest(registered)
-        == "f58754206b785f05a7dff36c690946024effc931c888c72383fc0bd98be060cd"
+        == "c94857b93f5a6254cbda1aa14b3658232da1df482f907578db49540ac23aeb6c"
     )
-    assert len(supplemental) == 96
+    assert len(supplemental) == 94
     assert (
         _name_digest(supplemental)
-        == "bfb20467575ab892db7be74b859bac0288c8840f7a1aeb36eb13dee129ed3490"
+        == "f8f427f6dbbee3f52840b8e77e9fa36344a5131be9e1ed24e874523b09cf1673"
     )
     assert len(uniform) == 37
     assert (
@@ -71,6 +75,7 @@ def _nested_corridor_controls() -> dict[str, dict[str, str]]:
             direct_flow.final_nested_mutation_specs,
             direct_flow.child_native_mutation_specs,
             direct_flow.additional_helper_mutation_specs,
+            direct_flow.current_iid_mutation_specs,
         )
         for name, spec in generator(repo_root=root).items()
     }

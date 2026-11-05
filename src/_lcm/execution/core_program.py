@@ -47,7 +47,7 @@ from lcm.exceptions import ExecutionPlanningError
 from lcm.solver_api import ArtifactKey
 from lcm.typing import ReferenceName, RegimeName
 
-_CORE_PROGRAM_VERSION = 7
+_CORE_PROGRAM_VERSION = 8
 _INT32_MAX = 2_147_483_647
 
 if TYPE_CHECKING:
@@ -315,6 +315,33 @@ class InternalInputRef:
 
 
 @dataclass(frozen=True, kw_only=True)
+class InternalDispatch:
+    """One native producer invocation and the exact generations its reader takes."""
+
+    name: str
+    generation: int
+    inputs: Mapping[str, tuple[str, int]] = MappingProxyType({})
+
+    def __post_init__(self) -> None:
+        if not self.name or type(self.generation) is not int or self.generation < 0:
+            raise ValueError(
+                "An internal dispatch needs a name and nonnegative generation."
+            )
+        inputs = {key: tuple(value) for key, value in self.inputs.items()}
+        for key, (producer, generation) in inputs.items():
+            if not key or not producer or type(generation) is not int or generation < 0:
+                raise ValueError(
+                    "An internal reader needs an exact producer generation."
+                )
+        object.__setattr__(self, "inputs", MappingProxyType(inputs))
+
+    @property
+    def identity(self) -> tuple[str, int]:
+        """Separate a recomputed allocation from its logical producer."""
+        return self.name, self.generation
+
+
+@dataclass(frozen=True, kw_only=True)
 class CoreExecutionRequirements:
     """Static requirements that the execution planner must resolve for a core."""
 
@@ -338,11 +365,31 @@ class CoreExecutionRequirements:
     names declare no static extent or compiled width keyword.
     """
 
+    internal_schedule: tuple[InternalDispatch, ...] = ()
+    """Closed host-owned dispatch order; validated against actual graph inputs.
+
+    A schedule permits a generation-specific peak census instead of retaining
+    every logical internal output for the whole cell. Every core of that cell
+    must declare the identical schedule. Runtime must consume this same order.
+    """
+
+    host_buffers: Mapping[str, ShapeDtypePytree] = MappingProxyType({})
+    """Abstract owners kept by a host loop beside its current executable.
+
+    Names are local to one regime-period cell. Repeated names describe the same
+    owner; every leaf is an array-free shape/dtype template. These reservations
+    remain resident even when the current compiler prunes their argument reads.
+    """
+
     def __post_init__(self) -> None:
         """Snapshot the declared axes, value reads, and internal inputs."""
         object.__setattr__(self, "reduced_axes", tuple(self.reduced_axes))
         object.__setattr__(self, "tiled_axes", tuple(self.tiled_axes))
         object.__setattr__(self, "value_reads", tuple(self.value_reads))
+        object.__setattr__(self, "internal_schedule", tuple(self.internal_schedule))
+        object.__setattr__(
+            self, "host_buffers", _snapshot_host_buffers(self.host_buffers)
+        )
         host_names = tuple(self.host_axis_names)
         for name in host_names:
             if type(name) is not str or not name.strip():
@@ -373,6 +420,38 @@ class CoreExecutionRequirements:
     def axis_names(self) -> tuple[str, ...]:
         """Return compiled axis names, followed by surrounding host-loop names."""
         return (*tuple(axis.name for axis in self.axes), *self.host_axis_names)
+
+
+def _snapshot_host_buffers(
+    buffers: Mapping[str, ShapeDtypePytree],
+) -> MappingProxyType[str, ShapeDtypePytree]:
+    """Copy abstract owners without borrowing mutable caller containers."""
+    result = {}
+    for name, tree in buffers.items():
+        if not isinstance(name, str) or not name or not jax.tree.leaves(tree):
+            raise ValueError("A host buffer needs a name and nonempty template.")
+        result[name] = _snapshot_host_template(tree)
+    return MappingProxyType(result)
+
+
+def _snapshot_host_template(tree: ShapeDtypePytree) -> ShapeDtypePytree:
+    """Freeze an array-free host owner and validate its absolute geometry."""
+    if isinstance(tree, jax.ShapeDtypeStruct):
+        if any(size < 0 for size in tree.shape):
+            raise ValueError("A host-buffer dimension must be nonnegative.")
+        return jax.ShapeDtypeStruct(
+            tree.shape,
+            tree.dtype,
+            sharding=tree.sharding,
+            weak_type=tree.weak_type,
+        )
+    if isinstance(tree, Mapping):
+        return MappingProxyType(
+            {key: _snapshot_host_template(value) for key, value in tree.items()}
+        )
+    if isinstance(tree, tuple | list):
+        return tuple(_snapshot_host_template(value) for value in tree)
+    raise TypeError("Host-buffer owners must use array-free templates.")
 
 
 class CoreExecutionDisposition(StrEnum):

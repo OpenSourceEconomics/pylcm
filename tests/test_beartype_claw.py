@@ -53,11 +53,18 @@ from lcm.regime import Regime as UserRegime
 from lcm.typing import RegimeName
 
 _LIST_UNDECORATED_FUNCTIONS = """
+import importlib
+import pkgutil
 import warnings
 
 warnings.simplefilter("always")
 with warnings.catch_warnings(record=True) as caught:
+    import _lcm
     import lcm
+
+    for package in (lcm, _lcm):
+        for module in pkgutil.walk_packages(package.__path__, f"{package.__name__}."):
+            importlib.import_module(module.name)
 for warning in caught:
     if type(warning.message).__name__ == "BeartypeClawDecorWarning":
         print(str(warning.message).split(" in file ")[0])
@@ -65,11 +72,12 @@ for warning in caught:
 
 
 def test_claw_decorates_every_function_lcm_imports() -> None:
-    """A fresh `import lcm` leaves no function undecorated by the claw.
+    """Importing every `lcm` and `_lcm` module leaves no function undecorated.
 
     beartype warns instead of failing when it cannot build a check for a
-    function, and the function then runs unchecked; the import must emit no
-    such warning.
+    function, and the function then runs unchecked; no import may emit such a
+    warning. Every module is imported, not just `import lcm`, because modules
+    imported only on first use would otherwise escape the check.
     """
     result = subprocess.run(  # noqa: S603
         [sys.executable, "-c", _LIST_UNDECORATED_FUNCTIONS],

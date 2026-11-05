@@ -14,6 +14,8 @@ from typing import TYPE_CHECKING
 
 import jax
 
+from _lcm.dtypes import CanonicalArrayWriter
+from _lcm.solution.host_values import HostValueEntry, is_host_value
 from _lcm.solution.native_values import NativeValueMaterializer
 from _lcm.typing import ArtifactPayload
 from lcm._solver_api.authority import _ArrayCopier
@@ -146,6 +148,8 @@ def snapshot_artifact_store(
     *,
     store: _ArtifactStoreBoundary,
     authorities: _AuthoritiesInput | None = None,
+    array_writer: CanonicalArrayWriter | None = None,
+    array_copier: _ArrayCopier | None = None,
 ) -> _ArtifactStoreBoundary:
     """Copy addresses and detach every authority-backed eager payload."""
     if type(store) is not ArtifactStore:
@@ -163,7 +167,11 @@ def snapshot_artifact_store(
             if authority is None:
                 continue
             if type(payload) is _CanonicalArtifactEntry:
-                owned_payload = payload.materialize()
+                owned_payload = payload.materialize_from_template_snapshot(
+                    template_snapshot=payload.plan_snapshot,
+                    array_writer=array_writer,
+                    array_copier=array_copier,
+                )
             elif isinstance(payload, _LazyEntry):
                 continue
             else:
@@ -171,6 +179,8 @@ def snapshot_artifact_store(
             detached[ref] = _canonical_artifact_entry_from_authority(
                 payload=owned_payload,
                 authority=authority,
+                array_writer=array_writer,
+                array_copier=array_copier,
             )
         entries = MappingProxyType(detached)
     return ArtifactStore(entries)
@@ -180,37 +190,47 @@ def own_artifact_store(
     *,
     entries: Mapping[ArtifactRef, ArtifactPayload],
     authorities: _AuthoritiesInput,
+    array_copier: _ArrayCopier | None = None,
 ) -> _ArtifactStoreBoundary:
     """Build a store around buffers the engine's own solve allocated.
 
     Each authority-backed payload is validated against its authority and kept by
     reference rather than copied: nothing outside the engine holds these arrays.
-    A payload without an authority is stored as supplied.
+    A payload without an authority, or one that is a lazy entry, is stored as
+    supplied.
     """
     owned: dict[ArtifactRef, ArtifactPayload | _LazyEntry] = {}
     for ref, payload in entries.items():
         authority = authorities.get(ref)
         owned[ref] = (
             payload
-            if authority is None
+            # A lazy entry, such as a policy a solve wrote to disk, reads its own
+            # payload back when it is looked up.
+            if authority is None or isinstance(payload, _LazyEntry)
             else _canonical_artifact_entry_from_authority(
                 payload=payload,
                 authority=authority,
                 borrow=True,
+                array_copier=array_copier,
             )
         )
     return ArtifactStore(owned)
 
 
+# keyword-only-exempt: primary-argument=values
 def own_value_store(
     values: Mapping[int, Mapping[RegimeName, FloatND | _LazyEntry]],
+    *,
+    host_budget_bytes: int | None = None,
 ) -> _ValueStoreBoundary:
     """Build a value store around the engine's own value arrays, uncopied.
 
     The public constructor copies every value it admits because it cannot know
     who else holds them; the engine knows nobody does. An entry that is already
     a lazy handle, such as a block-major value assembled when read, is kept as
-    it is.
+    it is. A value a solve stored in pinned host memory becomes a lazy entry
+    that copies it to the device when read; `host_budget_bytes` is the solve's
+    per-device budget, against which such entries admit a full materialization.
     """
     entries: dict[tuple[int, RegimeName], _LazyEntry] = {}
     regimes_by_period: dict[int, tuple[RegimeName, ...]] = {}
@@ -219,11 +239,14 @@ def own_value_store(
         if regime_to_value:
             regimes_by_period[period] = tuple(regime_to_value)
         for regime_name, value in regime_to_value.items():
-            entries[(period, regime_name)] = (
-                value
-                if isinstance(value, _LazyEntry)
-                else _CanonicalValueEntry(value=value)
-            )
+            if isinstance(value, _LazyEntry):
+                entries[(period, regime_name)] = value
+            elif is_host_value(value):
+                entries[(period, regime_name)] = HostValueEntry(
+                    value=value, budget_bytes=host_budget_bytes
+                )
+            else:
+                entries[(period, regime_name)] = _CanonicalValueEntry(value=value)
     store = object.__new__(ValueStore)
     object.__setattr__(store, "_entries", MappingProxyType(entries))
     object.__setattr__(store, "_regimes_by_period", MappingProxyType(regimes_by_period))
@@ -404,36 +427,49 @@ def snapshot_artifact_descriptor(
     )
 
 
+# keyword-only-exempt: primary-argument=authorities
 def snapshot_artifact_authorities(
     authorities: _AuthoritiesInput,
+    *,
+    array_copier: _ArrayCopier | None = None,
 ) -> _AuthoritiesSnapshot:
     """Copy private authority wrappers while preserving trusted templates/types."""
     return capture_exact_mapping(
         authorities,
         label="Artifact authority",
         snapshot_key=snapshot_artifact_ref,
-        snapshot_value=_snapshot_artifact_authority,
+        snapshot_value=partial(_snapshot_artifact_authority, array_copier=array_copier),
     )
 
 
+# keyword-only-exempt: primary-argument=authority
 def snapshot_artifact_template_declaration(
     authority: ArtifactAuthority,
+    *,
+    array_copier: _ArrayCopier | None = None,
 ) -> _CanonicalArtifactTemplate | None:
     """Return an owned cached declaration without rerunning its flatten callback."""
     try:
-        return _artifact_authority_template_snapshot(authority)
+        return _artifact_authority_template_snapshot(
+            authority, array_copier=array_copier
+        )
     except TypeError, ValueError:
         raise
     except Exception as error:
         raise TypeError("Artifact template cannot be snapshotted exactly.") from error
 
 
-def _snapshot_artifact_authority(authority: ArtifactAuthority) -> ArtifactAuthority:
+# keyword-only-exempt: primary-argument=authority
+def _snapshot_artifact_authority(
+    authority: ArtifactAuthority, *, array_copier: _ArrayCopier | None = None
+) -> ArtifactAuthority:
     """Rebuild one authority wrapper from its cached PyTree declaration."""
     if type(authority) is not ArtifactAuthority:
         raise TypeError("Artifact authorities must be exact ArtifactAuthority objects.")
     try:
-        template_snapshot = _artifact_authority_template_snapshot(authority)
+        template_snapshot = _artifact_authority_template_snapshot(
+            authority, array_copier=array_copier
+        )
     except TypeError, ValueError:
         raise
     except Exception as error:
@@ -504,6 +540,7 @@ def _snapshot_artifact_authority(authority: ArtifactAuthority) -> ArtifactAuthor
         consumer_route=consumer_route,
         applicable=applicable,
         required=required,
+        array_copier=array_copier,
     )
 
 
