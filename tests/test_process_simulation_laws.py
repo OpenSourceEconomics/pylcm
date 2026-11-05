@@ -1199,6 +1199,87 @@ def test_process_edge_program_builds_each_target_twice(
 
 
 @pytest.mark.parametrize("two_coordinates", [False, True])
+@pytest.mark.parametrize("certainty_equivalent", [None, LinearExpectation()])
+def test_linear_process_edges_read_only_each_targets_local_corners(
+    *,
+    monkeypatch: pytest.MonkeyPatch,
+    two_coordinates: bool,
+    certainty_equivalent: CertaintyEquivalent | None,
+) -> None:
+    """Reuse a target's expectation when only another target's row changes."""
+    reader_calls = 0
+    captured: list[q_and_f._ComputeCE] = []
+    original_target = q_and_f._build_target_continuation
+    original_edges = q_and_f._get_compute_CE_with_process_edges
+
+    def count_reader[**P, R](func: Callable[P, R]) -> Callable[P, R]:
+        @functools.wraps(func)
+        def counted(*args: P.args, **kwargs: P.kwargs) -> R:
+            nonlocal reader_calls
+            reader_calls += 1
+            return func(*args, **kwargs)
+
+        return counted
+
+    def wrap_target[**P](
+        func: Callable[P, q_and_f._TargetContinuation],
+    ) -> Callable[P, q_and_f._TargetContinuation]:
+        @functools.wraps(func)
+        def wrapped(*args: P.args, **kwargs: P.kwargs) -> q_and_f._TargetContinuation:
+            target = func(*args, **kwargs)
+            assert target.next_V is not None
+            return replace(target, next_V=count_reader(target.next_V))
+
+        return wrapped
+
+    def observed(
+        *,
+        functions: EconFunctionsMapping,
+        period_targets: tuple[RegimeName, ...],
+        phase: Literal["solution", "simulation"],
+        build: Callable[..., _EdgeBuildResult],
+    ) -> _EdgeBuildResult:
+        result = original_edges(
+            functions=functions, period_targets=period_targets, phase=phase, build=build
+        )
+        if phase == "simulation" and set(period_targets) == {"left", "right"}:
+            assert isinstance(result[0], q_and_f._ComputeCE)
+            captured.append(result[0])
+        return result
+
+    monkeypatch.setattr(
+        q_and_f, "_build_target_continuation", wrap_target(original_target)
+    )
+    monkeypatch.setattr(q_and_f, "_get_compute_CE_with_process_edges", observed)
+    _fork_model(
+        certainty_equivalent=certainty_equivalent, two_coordinates=two_coordinates
+    )
+    values = MappingProxyType(
+        {
+            "left": jnp.asarray(
+                [[5.0, 3.0], [3.0, 5.0]] if two_coordinates else [1.0, 2.0]
+            ),
+            "right": jnp.asarray(
+                [[8.0, 4.0], [4.0, 8.0]] if two_coordinates else [1.0, 4.0]
+            ),
+        }
+    )
+    reader_calls = 0
+    with jax.disable_jit():
+        captured[0](
+            next_regime_to_V_arr=values,
+            zero=jnp.asarray(0.0),
+            states_actions_params=MappingProxyType(
+                {
+                    "income": jnp.asarray(3.0),
+                    **({"wage": jnp.asarray(3.0)} if two_coordinates else {}),
+                }
+            ),
+        )
+    assert reader_calls == (8 if two_coordinates else 4)
+
+
+@pytest.mark.parametrize("two_coordinates", [False, True])
 def test_process_edge_program_traces_each_target_twice(
     *, monkeypatch: pytest.MonkeyPatch, two_coordinates: bool
 ) -> None:
