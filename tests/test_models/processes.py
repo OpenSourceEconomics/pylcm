@@ -1,7 +1,9 @@
 import functools
+from collections.abc import Callable
 from typing import Literal
 
 from jax import numpy as jnp
+from typing_extensions import TypedDict
 
 from _lcm.grids import DiscreteGrid, LinSpacedGrid, categorical
 from lcm import (
@@ -19,13 +21,26 @@ from lcm.model import Model
 from lcm.regime import Regime as UserRegime
 from lcm.regime import StochasticTransition
 from lcm.typing import (
+    BoolND,
     ContinuousAction,
     ContinuousState,
     DiscreteState,
     FloatND,
+    RegimeName,
     ScalarInt,
     UserParams,
 )
+
+type DistributionType = Literal[
+    "uniform", "normal", "lognormal", "tauchen", "rouwenhorst"
+]
+
+
+class ProcessRegimeParams(TypedDict, total=False, closed=True):
+    discount_factor: float
+    next_health: dict[str, FloatND]
+    income: dict[str, float]
+
 
 _SHOCK_GRID_CLASSES = {
     "uniform": UniformIIDProcess,
@@ -43,8 +58,19 @@ def next_health(*, health: DiscreteState, probs_array: FloatND) -> FloatND:
 def next_wealth(
     *, consumption: ContinuousAction, wealth: ContinuousState, income: ContinuousState
 ) -> FloatND:
-    """Carry forward unspent wealth plus income, as `wealth_constraint` counts it."""
+    """Carry forward unspent wealth plus income, as `wealth_constraint` counts it.
+
+    `income` is log income here; the lognormal variant holds income in levels and
+    uses `next_wealth_from_level` instead.
+    """
     return wealth - consumption + jnp.exp(income)
+
+
+def next_wealth_from_level(
+    *, consumption: ContinuousAction, wealth: ContinuousState, income: ContinuousState
+) -> FloatND:
+    """Carry forward unspent wealth plus income held in levels."""
+    return wealth - consumption + income
 
 
 def next_regime(*, age: float, final_age_alive: float) -> ScalarInt:
@@ -57,8 +83,35 @@ def next_regime(*, age: float, final_age_alive: float) -> ScalarInt:
 
 def wealth_constraint(
     *, wealth: ContinuousState, income: ContinuousState, consumption: ContinuousAction
-):
+) -> BoolND:
     return wealth - consumption + jnp.exp(income) >= 0
+
+
+def wealth_constraint_from_level(
+    *, wealth: ContinuousState, income: ContinuousState, consumption: ContinuousAction
+) -> BoolND:
+    """Check resources with income held in levels."""
+    return wealth - consumption + income >= 0
+
+
+def get_wealth_functions(
+    distribution_type: DistributionType,
+) -> tuple[Callable[..., FloatND], Callable[..., BoolND]]:
+    """Return the wealth transition and constraint matching the income process.
+
+    The lognormal process draws income in levels, every other one in logs, so the
+    lognormal variant is the normal one with the exponential moved into the process.
+    """
+    if distribution_type == "lognormal":
+        return next_wealth_from_level, wealth_constraint_from_level
+    return next_wealth, wealth_constraint
+
+
+def get_initial_income(
+    distribution_type: DistributionType,
+) -> float:
+    """Return the period-0 income that corresponds to a zero log-income draw."""
+    return 1.0 if distribution_type == "lognormal" else 0.0
 
 
 def utility(
@@ -87,12 +140,11 @@ class RegimeId:
 def get_model(
     *,
     n_periods: int,
-    distribution_type: Literal[
-        "uniform", "normal", "lognormal", "tauchen", "rouwenhorst"
-    ],
-):
+    distribution_type: DistributionType,
+) -> Model:
     final_age_alive = n_periods - 2
     stays = tuple(range(final_age_alive))
+    wealth_transition, wealth_feasible = get_wealth_functions(distribution_type)
 
     alive = UserRegime(
         states={
@@ -101,13 +153,13 @@ def get_model(
             "health": DiscreteGrid(category_class=Health),
         },
         state_transitions={
-            "wealth": next_wealth,
+            "wealth": wealth_transition,
             "health": StochasticTransition(func=next_health),
         },
         actions={
             "consumption": LinSpacedGrid(start=0.1, stop=2, n_points=4),
         },
-        constraints={"wealth_constraint": wealth_constraint},
+        constraints={"wealth_constraint": wealth_feasible},
         functions={"utility": utility},
     )
     dead = UserRegime(
@@ -141,9 +193,7 @@ class MultiRegimeId:
 def get_multi_regime_model(
     *,
     n_periods: int,
-    distribution_type: Literal[
-        "uniform", "normal", "lognormal", "tauchen", "rouwenhorst"
-    ],
+    distribution_type: DistributionType,
     execution_config: ExecutionConfig | None = None,
 ) -> Model:
     """Create a model with two non-terminal regimes that each have shock grids.
@@ -160,6 +210,7 @@ def get_multi_regime_model(
     retire_final_age = n_periods - 2
 
     shock_grid_cls = _SHOCK_GRID_CLASSES[distribution_type]
+    wealth_transition, wealth_feasible = get_wealth_functions(distribution_type)
 
     # `work` and `retire` share one declaration but are built separately, so the
     # two regimes hold distinct regime and grid objects across the shock handoff.
@@ -171,13 +222,13 @@ def get_multi_regime_model(
                 "health": DiscreteGrid(category_class=Health),
             },
             state_transitions={
-                "wealth": next_wealth,
+                "wealth": wealth_transition,
                 "health": StochasticTransition(func=next_health),
             },
             actions={
                 "consumption": LinSpacedGrid(start=0.1, stop=2, n_points=4),
             },
-            constraints={"wealth_constraint": wealth_constraint},
+            constraints={"wealth_constraint": wealth_feasible},
             functions={"utility": utility},
         )
         for name in ("work", "retire")
@@ -214,9 +265,7 @@ def get_multi_regime_model(
 def _get_default_multi_regime_model(
     *,
     n_periods: int,
-    distribution_type: Literal[
-        "uniform", "normal", "lognormal", "tauchen", "rouwenhorst"
-    ],
+    distribution_type: DistributionType,
 ) -> Model:
     """Return the multi-regime model under the default execution config, cached."""
     return get_multi_regime_model(
@@ -227,9 +276,7 @@ def _get_default_multi_regime_model(
 
 
 def get_multi_regime_params(
-    distribution_type: Literal[
-        "uniform", "normal", "lognormal", "tauchen", "rouwenhorst"
-    ] = "tauchen",
+    distribution_type: DistributionType = "tauchen",
 ) -> UserParams:
     """Return parameter dict for the multi-regime shock model."""
     shock_params = _SHOCK_PARAMS[distribution_type]
@@ -256,10 +303,8 @@ _SHOCK_PARAMS: dict[str, dict[str, float]] = {
 
 
 def get_params(
-    distribution_type: Literal[
-        "uniform", "normal", "lognormal", "tauchen", "rouwenhorst"
-    ] = "tauchen",
-):
+    distribution_type: DistributionType = "tauchen",
+) -> dict[RegimeName, ProcessRegimeParams]:
     return {
         "alive": {
             "discount_factor": 1.0,
