@@ -4189,6 +4189,27 @@ def _candidate_resident_bytes(
     internal_arguments: Mapping[ReferenceName, ShapeDtypePytree],
     inventory: ResidentInventory,
 ) -> int:
+    """Measure one admission candidate's residency at its position.
+
+    Admission measures every candidate through this name. A refusal comparing
+    storages reads the same bytes through `_resident_bytes_excluding_reads`,
+    which is not an admission measurement.
+    """
+    return _resident_bytes_excluding_reads(
+        compiled=compiled,
+        program=program,
+        internal_arguments=internal_arguments,
+        inventory=inventory,
+    )
+
+
+def _resident_bytes_excluding_reads(
+    *,
+    compiled: jax.stages.Compiled,
+    program: ResolvedCoreProgram,
+    internal_arguments: Mapping[ReferenceName, ShapeDtypePytree],
+    inventory: ResidentInventory,
+) -> int:
     """Exclude only this specialization's aligned, compiler-live read buffers.
 
     Logical read occurrences identify scheduled storage. Template pointer aliases
@@ -4522,22 +4543,21 @@ def _fail_if_a_floor_fills_the_budget(
 
     No workspace width fits such a cell, and narrowing never lowers its floor,
     so compiling the solve's programs and narrowing would only end in the same
-    refusal, after every compilation wave.
+    refusal, after every compilation wave. The refusal is raised at once,
+    never narrowed.
 
     Raises:
         WorkspaceBudgetError: A cell's floor reaches the budget.
 
     """
     for triple in triples:
-        floor = _narrowing_floor_bytes(inventory=resident_inventory[triple])
+        inventory = resident_inventory[triple]
+        floor = _narrowing_floor_bytes(inventory=inventory)
         if floor < budget_bytes:
             continue
         _log_resident_split(
-            logger=logger,
-            triple=triple,
-            breakdown=resident_inventory[triple].resident_breakdown(),
+            logger=logger, triple=triple, breakdown=inventory.resident_breakdown()
         )
-        regime_name, period, core_key = triple
         host = None
         if host_storage_inventory is not None:
             host_floor = _narrowing_floor_bytes(
@@ -4548,14 +4568,19 @@ def _fail_if_a_floor_fills_the_budget(
                 needed_bytes=host_floor,
                 fits=host_floor < budget_bytes,
             )
-        raise WorkspaceBudgetError(
-            f"Regime {regime_name!r} at period {period} cannot select a workspace "
-            f"width for core {core_key!r}: before any workspace, the plan keeps "
-            f"{floor} bytes resident on its busiest device against a "
-            f"{budget_bytes}-byte budget, and no narrower workspace lowers them, "
-            "so nothing was compiled."
-            f"{_stored_values_note(execution=execution, host=host)}"
-            f"{execution.device_memory_cap_note()}"
+        raise _width_selection_failure(
+            triple=triple,
+            resident_bytes=inventory.resident_bytes(),
+            transfer_scratch_bytes=inventory.transfer_scratch_bytes,
+            budget_bytes=budget_bytes,
+            execution=execution,
+            error=WorkspaceBudgetError(
+                f"Of the bytes resident at the node's position, {floor} are ones no "
+                "narrower workspace lowers; they reach the budget, so nothing was "
+                "compiled."
+            ),
+            floor_bytes=floor,
+            host=host,
         )
 
 
@@ -4603,7 +4628,7 @@ def _host_storage_fit(
                 totals.append(
                     max(
                         memory_by_lowering_key[key].reservation_bytes
-                        + _candidate_resident_bytes(
+                        + _resident_bytes_excluding_reads(
                             compiled=compiled[key],
                             program=resolved_programs[candidate],
                             internal_arguments=internal_templates[candidate],
