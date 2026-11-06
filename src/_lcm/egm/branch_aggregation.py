@@ -30,9 +30,16 @@ exact ties (the finite fold's tie rule).
 
 from abc import ABC
 from dataclasses import dataclass
+from typing import Annotated
 
 import jax.numpy as jnp
+from pydantic.dataclasses import dataclass as pydantic_dataclass
 
+from _lcm.input_validation import (
+    CONFIG_FLOAT,
+    STRICT_CONFIG,
+    translate_validation_errors,
+)
 from lcm.exceptions import RegimeInitializationError
 from lcm.typing import FloatND, FunctionName, StateName
 
@@ -55,7 +62,8 @@ class DeterministicOuterMaximum(OuterBranchAggregator):
     winning exact ties."""
 
 
-@dataclass(frozen=True, kw_only=True)
+@translate_validation_errors(RegimeInitializationError)
+@pydantic_dataclass(frozen=True, kw_only=True, config=STRICT_CONFIG)
 class UniformObservedFixedCost(OuterBranchAggregator):
     """Analytically integrated uniform fixed adjustment cost.
 
@@ -72,10 +80,10 @@ class UniformObservedFixedCost(OuterBranchAggregator):
     scale_function: FunctionName
     """Model function returning the cost scale `B >= 0` per state cell."""
 
-    lower: float = 0.0
+    lower: Annotated[float, CONFIG_FLOAT] = 0.0
     """Lower support edge `a` of the uniform shock."""
 
-    upper: float = 1.0
+    upper: Annotated[float, CONFIG_FLOAT] = 1.0
     """Upper support edge `b` of the uniform shock; must exceed `lower`."""
 
     def __post_init__(self) -> None:
@@ -84,7 +92,7 @@ class UniformObservedFixedCost(OuterBranchAggregator):
                 "UniformObservedFixedCost needs positive support width, got "
                 f"[{self.lower}, {self.upper}]."
             )
-            raise RegimeInitializationError(msg)
+            raise ValueError(msg)
 
 
 @dataclass(frozen=True, kw_only=True)

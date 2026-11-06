@@ -18,14 +18,15 @@ def test_axis_widths_default_is_an_empty_read_only_mapping() -> None:
 def test_axis_widths_rejects_a_non_positive_width() -> None:
     """A width of zero is refused at construction, naming the axis."""
     with pytest.raises(
-        ValueError, match=r"axis_widths\['action_product'\] must be positive"
+        ValueError,
+        match=r"axis_widths\['action_product'\]\['width'\]: .* greater than 0",
     ):
         ExecutionConfig(axis_widths={"action_product": 0})
 
 
 def test_axis_widths_rejects_a_bool_width() -> None:
     """Widths are exact ints, so a bool is refused."""
-    with pytest.raises(TypeError, match="exact int"):
+    with pytest.raises(ValueError, match="exact Python int"):
         ExecutionConfig(axis_widths={"action_product": True})
 
 

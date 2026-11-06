@@ -5,6 +5,24 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
+### Validated configuration records
+
+- The envelope configurations, `DCEGM`'s `refined_grid_factor` and
+  `n_constrained_points`, `AdaptiveOuterMesh`, `UniformObservedFixedCost`,
+  `WidthSearchPolicy` and `ExecutionConfig` validate every field, and every entry of
+  every mapping or tuple field, when they are constructed. PyLCM now depends on
+  Pydantic 2.
+- A floating option accepts a Python `int` and stores it as a `float`:
+  `FUESEnvelope(jump_thresh=2).jump_thresh` is `2.0`, and
+  `ExecutionConfig(device_memory_headroom_fraction=0)` is accepted as `0.0`. Booleans,
+  strings, NumPy scalars, `Decimal` and `Fraction` are refused; counts accept an exact
+  `int` only.
+- Invalid field data of `WidthSearchPolicy` and `ExecutionConfig` raises `ValueError`,
+  naming each failing field path, in place of a mix of `TypeError`, `ValueError` and
+  beartype violations. Invalid data of the envelope, outer-mesh and fixed-cost records
+  raises `RegimeInitializationError`. Positional, missing and unexpected arguments
+  still raise `TypeError`.
+
 ### Value storage
 
 - `ExecutionConfig(value_storage=...)` says where a solve keeps solved values once no

@@ -6,7 +6,6 @@ from inspect import signature
 import cloudpickle
 import jax
 import pytest
-from beartype.roar import BeartypeCallHintViolation
 
 import lcm
 from _lcm.execution.execution_plan import resolve_execution_config
@@ -40,7 +39,7 @@ def test_execution_config_accepts_an_explicit_opt_out_of_the_budget() -> None:
 def test_execution_config_rejects_nonpositive_or_boolean_budgets(
     *, device_memory_bytes: int
 ) -> None:
-    with pytest.raises((TypeError, ValueError), match="device_memory_bytes"):
+    with pytest.raises(ValueError, match="device_memory_bytes"):
         ExecutionConfig(device_memory_bytes=device_memory_bytes)
 
 
@@ -48,7 +47,7 @@ def test_execution_config_rejects_nonpositive_or_boolean_budgets(
 def test_execution_config_rejects_noninteger_budgets(
     *, device_memory_bytes: float | str
 ) -> None:
-    with pytest.raises(BeartypeCallHintViolation):
+    with pytest.raises(ValueError, match="device_memory_bytes"):
         ExecutionConfig(device_memory_bytes=device_memory_bytes)  # ty: ignore[invalid-argument-type]
 
 
@@ -198,7 +197,7 @@ def test_simulation_sharding_is_an_explicit_legacy_preserving_opt_in() -> None:
 
 @pytest.mark.parametrize("mode", ["automatic", "", None, True, 1])
 def test_simulation_sharding_rejects_unknown_modes(mode: str | int | None) -> None:
-    with pytest.raises((BeartypeCallHintViolation, TypeError, ValueError)):
+    with pytest.raises(ValueError, match="simulation_sharding"):
         ExecutionConfig(simulation_sharding=mode)  # ty: ignore[invalid-argument-type]
 
 
@@ -258,7 +257,7 @@ def test_width_search_policy_rejects_a_nonpositive_evaluation_budget(
 
 def test_width_search_policy_rejects_an_unknown_seed() -> None:
     """Only the two declared seed rules are accepted."""
-    with pytest.raises((ValueError, BeartypeCallHintViolation), match="seed"):
+    with pytest.raises(ValueError, match="seed"):
         WidthSearchPolicy(seed="widest-ish")  # ty: ignore[invalid-argument-type]
 
 
@@ -276,3 +275,60 @@ def test_execution_config_accepts_the_bounded_width_search() -> None:
     config = ExecutionConfig(width_search=WidthSearchPolicy(kind=WidthSearch.BOUNDED))
 
     assert config.width_search.kind is WidthSearch.BOUNDED
+
+
+def test_width_search_policy_checks_every_hinted_width() -> None:
+    """A bad width after several good ones is still refused, naming its path."""
+    hints = {"working": {f"axis_{index}": 2 for index in range(8)} | {"last": 0}}
+    with pytest.raises(ValueError, match=r"hints\['working'\]\['last'\]"):
+        WidthSearchPolicy(hints=hints)
+
+
+def test_execution_config_checks_every_per_regime_width() -> None:
+    """A bad width after several good axes and regimes is still refused."""
+    widths = {f"axis_{index}": {"working": 2, "retired": 4} for index in range(8)}
+    widths["last"] = {"working": 2, "retired": -1}
+    with pytest.raises(ValueError, match=r"axis_widths\['last'\].*\['retired'\]"):
+        ExecutionConfig(axis_widths=widths)
+
+
+def test_width_search_policy_owns_its_hints() -> None:
+    """Mutating the caller's outer or inner mapping does not reach the policy."""
+    inner = {"cell": 4}
+    hints = {"working": inner}
+    policy = WidthSearchPolicy(hints=hints)
+    inner["cell"] = 8
+    hints["retired"] = {"cell": 2}
+
+    assert policy.hints == {"working": {"cell": 4}}
+
+
+def test_execution_config_owns_its_per_regime_widths() -> None:
+    """Mutating the caller's outer or inner mapping does not reach the config."""
+    inner = {"working": 4}
+    widths: dict[str, int | dict[str, int]] = {"cell": inner}
+    config = ExecutionConfig(axis_widths=widths)
+    inner["working"] = 8
+    widths["point"] = 2
+
+    assert config.axis_widths == {"cell": {"working": 4}}
+
+
+def test_execution_config_keeps_the_supplied_width_search_policy() -> None:
+    policy = WidthSearchPolicy(kind=WidthSearch.BOUNDED)
+
+    assert ExecutionConfig(width_search=policy).width_search is policy
+
+
+def test_execution_config_refuses_a_width_search_mapping() -> None:
+    """The policy is a `WidthSearchPolicy` instance, never a mapping of its fields."""
+    with pytest.raises(ValueError, match="width_search"):
+        ExecutionConfig(width_search={"kind": WidthSearch.BOUNDED})  # ty: ignore[invalid-argument-type]
+
+
+@pytest.mark.parametrize("devices", [(), (0, -1), (0, True), [0]])
+def test_execution_config_refuses_unusable_device_ids(
+    *, devices: tuple[int, ...] | list[int]
+) -> None:
+    with pytest.raises(ValueError, match="devices"):
+        ExecutionConfig(devices=devices)  # ty: ignore[invalid-argument-type]

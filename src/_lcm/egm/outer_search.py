@@ -28,8 +28,19 @@ solver kernels.
 
 from abc import ABC
 from dataclasses import dataclass
+from typing import Annotated
+
+from annotated_types import Ge, Gt
+from pydantic import InstanceOf
+from pydantic.dataclasses import dataclass as pydantic_dataclass
 
 from _lcm.grids import ContinuousGrid
+from _lcm.input_validation import (
+    CONFIG_FLOAT,
+    EXACT_INT,
+    STRICT_CONFIG,
+    translate_validation_errors,
+)
 from lcm.exceptions import RegimeInitializationError
 
 
@@ -55,7 +66,12 @@ class FiniteOuterGrid(OuterSearch):
     """Exogenous candidate grid for the outer post-decision margin."""
 
 
-@dataclass(frozen=True, kw_only=True)
+# A positive tolerance or bound; positive infinity is admitted.
+type _PositiveFloat = Annotated[float, CONFIG_FLOAT, Gt(0.0)]
+
+
+@translate_validation_errors(RegimeInitializationError)
+@pydantic_dataclass(frozen=True, kw_only=True, config=STRICT_CONFIG)
 class AdaptiveOuterMesh(OuterSearch):
     """Canonical continuous-outer approximation.
 
@@ -73,27 +89,27 @@ class AdaptiveOuterMesh(OuterSearch):
     that constant.
     """
 
-    initial_grid: ContinuousGrid
+    initial_grid: InstanceOf[ContinuousGrid]
     """Starting shared mesh (sorted, unique); adaptively refined."""
 
     # Hard static resource limits.
-    max_nodes: int = 129
+    max_nodes: Annotated[int, EXACT_INT, Ge(2)] = 129
     """Hard cap on shared mesh nodes; exceeding it while intervals remain
     marked is a convergence failure, not a silent truncation."""
 
-    max_refinement_rounds: int = 6
+    max_refinement_rounds: Annotated[int, EXACT_INT, Ge(0)] = 6
     """Hard cap on midpoint-insertion rounds."""
 
     # Actual-vs-interpolated candidate refinement.
-    value_atol: float = 1e-10
+    value_atol: _PositiveFloat = 1e-10
     """Absolute tolerance for the exact-vs-interpolated value at proposed
     midpoints."""
 
-    value_rtol: float = 1e-8
+    value_rtol: _PositiveFloat = 1e-8
     """Relative tolerance for the exact-vs-interpolated value at proposed
     midpoints."""
 
-    outer_lipschitz_bound: float | None = None
+    outer_lipschitz_bound: _PositiveFloat | None = None
     """Optional Lipschitz constant `L` of the outer value surface in the
     outer-action metric. When set, refinement gains a certified global
     branch-and-bound guarantee: an interval `[a, b]` can hide a point above
@@ -108,7 +124,7 @@ class AdaptiveOuterMesh(OuterSearch):
 
     # Local continuous refinement. Brackets always come from the exact
     # candidate mesh, and refinement inside one is golden section.
-    golden_iterations: int = 32
+    golden_iterations: Annotated[int, EXACT_INT, Ge(1)] = 32
     """Static golden-section iteration count per retained bracket."""
 
     fail_closed: bool = True
@@ -135,33 +151,3 @@ class AdaptiveOuterMesh(OuterSearch):
       (`n_outer_all_invalid_cells`).
 
     An inference release gate over those is the caller's to build."""
-
-    def __post_init__(self) -> None:
-        if self.max_nodes < 2:  # noqa: PLR2004
-            msg = f"max_nodes must be >= 2, got {self.max_nodes}."
-            raise RegimeInitializationError(msg)
-        if self.max_refinement_rounds < 0:
-            msg = (
-                f"max_refinement_rounds must be >= 0, got {self.max_refinement_rounds}."
-            )
-            raise RegimeInitializationError(msg)
-        if self.golden_iterations < 1:
-            msg = f"golden_iterations must be >= 1, got {self.golden_iterations}."
-            raise RegimeInitializationError(msg)
-        for name in (
-            "value_atol",
-            "value_rtol",
-        ):
-            value = getattr(self, name)
-            if not value > 0.0:
-                msg = f"{name} must be > 0, got {value}."
-                raise RegimeInitializationError(msg)
-        if (
-            self.outer_lipschitz_bound is not None
-            and not self.outer_lipschitz_bound > 0.0
-        ):
-            msg = (
-                "outer_lipschitz_bound must be > 0 when set, got "
-                f"{self.outer_lipschitz_bound}."
-            )
-            raise RegimeInitializationError(msg)
