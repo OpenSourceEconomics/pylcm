@@ -2931,9 +2931,14 @@ def _build_planned_input_liveness(
     value then stays there through its own period, while its peers run, and
     through the next one, while the period reading it runs and its copy to the
     host finishes. Every dispatch of those two periods counts as a reader of
-    it, so a residency walk drops it exactly when the solve does. Only the
+    it, so a residency walk drops it exactly when the solve does. A read no
+    declaration covers happens while its own dispatch runs, so here it counts
+    as a read by that dispatch instead of a pin: pinned, a value or a
+    continuation leaf aliasing one would count as resident for the rest of the
+    solve, though the solve frees it once the reading period is done. Only the
     residency walk reads such a ledger: release and donation keep the device
-    ledger, which never hands a value whose copy is in flight to another owner.
+    ledger, whose pins never let a release run ahead of an undeclared read, and
+    which never hands a value whose copy is in flight to another owner.
     """
     dispatch_accesses: dict[_InputDispatch, tuple[ValueArtifactAddress, ...]] = dict(
         _gated_edge_fold_dispatches(regimes=regimes)
@@ -2950,15 +2955,19 @@ def _build_planned_input_liveness(
         declared, declares_no_reads = _classify_dispatch_value_artifacts(
             programs=programs,
         )
-        dispatch_accesses[(period, regime_name)] = declared
-        pinned_artifacts.update(
-            undeclared_read_pins(
-                regimes=regimes,
-                regime_name=regime_name,
-                period=period,
-                declares_no_reads=declares_no_reads,
-            )
+        undeclared = undeclared_read_pins(
+            regimes=regimes,
+            regime_name=regime_name,
+            period=period,
+            declares_no_reads=declares_no_reads,
         )
+        if value_storage == "host":
+            dispatch_accesses[(period, regime_name)] = tuple(
+                dict.fromkeys((*declared, *undeclared))
+            )
+        else:
+            dispatch_accesses[(period, regime_name)] = declared
+            pinned_artifacts.update(undeclared)
 
     retained = _retained_solution_artifacts(
         regimes=regimes,

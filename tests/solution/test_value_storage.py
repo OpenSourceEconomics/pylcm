@@ -73,7 +73,8 @@ from lcm.solver_api import (
     SolutionResult,
     ValueStore,
 )
-from lcm.typing import Int1D, RegimeName
+from lcm.typing import Int1D, RegimeName, UserParams
+from lcm_examples import collective_household as household
 from tests import test_nan_diagnostics as nan_diagnostics
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
 from tests.regime_building.test_collective_regime_simulate import (
@@ -405,7 +406,7 @@ def test_host_storage_simulates_the_device_storage_panel(
 
 
 def _value_periods_on_the_device_at_each_kernel(
-    *, monkeypatch: pytest.MonkeyPatch, model: Model
+    *, monkeypatch: pytest.MonkeyPatch, model: Model, params: UserParams = _PARAMS
 ) -> list[tuple[int, frozenset[int]]]:
     """Return, per kernel start, its period and the periods of live device values.
 
@@ -435,7 +436,7 @@ def _value_periods_on_the_device_at_each_kernel(
 
     with monkeypatch.context() as patch:
         patch.setattr(backward_induction, "_run_period_kernel", _run)
-        model.solve(params=_PARAMS, log_level="off")
+        model.solve(params=params, log_level="off")
     return samples
 
 
@@ -784,7 +785,7 @@ _AMPLE_BUDGET = 2**32
 
 
 def _value_periods_charged_at_each_cell(
-    *, monkeypatch: pytest.MonkeyPatch, model: Model
+    *, monkeypatch: pytest.MonkeyPatch, model: Model, params: UserParams = _PARAMS
 ) -> list[tuple[int, frozenset[int]]]:
     """Return, per planned cell, its period and the periods of the values it charges."""
     inventories: list[ResidentInventoryResult] = []
@@ -799,7 +800,7 @@ def _value_periods_charged_at_each_cell(
 
     with monkeypatch.context() as patch:
         patch.setattr(backward_induction, "_resident_inventory_by_triple", _capture)
-        model.solve(params=_PARAMS, log_level="off")
+        model.solve(params=params, log_level="off")
     return [
         (
             period,
@@ -840,6 +841,45 @@ def test_host_storage_charges_the_planner_only_the_values_on_the_device(
     assert not all(charged <= {period, period + 1} for period, charged in device), (
         device
     )
+
+
+def _household_on_the_host() -> Model:
+    return household.get_model(
+        n_periods=5,
+        wealth_n_points=4,
+        consumption_n_points=3,
+        execution_config=ExecutionConfig(
+            value_storage="host", device_memory_bytes=_AMPLE_BUDGET
+        ),
+    )
+
+
+def test_host_storage_charges_a_no_read_core_only_the_values_on_the_device(
+    *, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The planner charges what the solve keeps, though a core declares no reads.
+
+    The collective household's single regimes run a core that declares no reads,
+    so it may read any next-period value or continuation leaf it can reach. The
+    solve frees those with the window all the same, and the planner charges a
+    cell no value beyond it: pinned for the whole solve, every later period's
+    values would count as resident.
+    """
+    charged = _value_periods_charged_at_each_cell(
+        monkeypatch=monkeypatch,
+        model=_household_on_the_host(),
+        params=household.get_params(),
+    )
+    resident = _value_periods_on_the_device_at_each_kernel(
+        monkeypatch=monkeypatch,
+        model=_household_on_the_host(),
+        params=household.get_params(),
+    )
+
+    assert charged
+    assert resident
+    for period, periods in (*charged, *resident):
+        assert periods <= {period, period + 1, period + 2}, (charged, resident)
 
 
 def _cell_refusal(*, value_storage: Literal["device", "host"]) -> str:
