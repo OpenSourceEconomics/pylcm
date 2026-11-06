@@ -439,9 +439,12 @@ def test_the_export_manifest_names_every_registered_ffi_target():
     assert set(hatch_build.EXACT_AFFINE_HANDLER_SYMBOLS) == set(ffi._TARGETS)
 
 
-@pytest.mark.parametrize("executable", [None, "/owned/example/compiler"])
+@pytest.mark.parametrize(
+    ("executable", "flags"),
+    [(None, []), ("/owned/example/compiler", ["--version"]), ("cl.exe", [])],
+)
 def test_tool_version_preserves_report_and_absent_tool(
-    *, monkeypatch: pytest.MonkeyPatch, executable: str | None
+    *, monkeypatch: pytest.MonkeyPatch, executable: str | None, flags: list[str]
 ) -> None:
     """Preserve the exact version report and avoid probing an absent tool."""
     calls: list[tuple[tuple[list[str]], _ToolProbeKwargs]] = []
@@ -468,7 +471,7 @@ def test_tool_version_preserves_report_and_absent_tool(
             "exit=7\ncompiler v1\ndiagnostic",
             [
                 (
-                    ([executable, "--version"],),
+                    ([executable, *flags],),
                     {
                         "capture_output": True,
                         "text": True,
@@ -478,6 +481,21 @@ def test_tool_version_preserves_report_and_absent_tool(
                 )
             ],
         )
+
+
+def test_native_build_inputs_fingerprint_msvc_on_windows(
+    *, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Fingerprint the Windows compiler that builds the native payload."""
+    monkeypatch.setattr(hatch_build.sys, "platform", "win32")
+    monkeypatch.delenv("CXX", raising=False)
+    tools = {"cl": "cl.exe", "c++": "c++.exe"}
+    monkeypatch.setattr(hatch_build.shutil, "which", tools.get)
+    monkeypatch.setattr(hatch_build, "_tool_version", lambda executable: executable)
+
+    inputs = hatch_build.native_build_inputs(root=_fake_checkout(tmp_path))
+
+    assert (inputs["compiler"], inputs["compiler_version"]) == ("cl.exe", "cl.exe")
 
 
 def test_tool_version_propagates_timeout(monkeypatch: pytest.MonkeyPatch) -> None:

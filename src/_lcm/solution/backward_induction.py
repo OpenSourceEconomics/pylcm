@@ -164,6 +164,7 @@ from _lcm.params.edges import (
     regime_kernel_params,
 )
 from _lcm.participation_continuation import participation_surface_leaves
+from _lcm.processes.ar1 import RouwenhorstAR1Process
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.regime_building.gated_edges import (
     EDGE_PERIOD_CONTEXT_ARGS,
@@ -287,6 +288,7 @@ from _lcm.utils.logging import (
 )
 from lcm.exceptions import (
     ExecutionPlanningError,
+    InvalidParamsError,
     InvalidValueFunctionError,
     ModelInitializationError,
     ShockDeclarationError,
@@ -2658,13 +2660,54 @@ def _build_base_state_action_spaces(
     runtime-grid completion (e.g. process gridpoint computation) runs once
     per regime instead of once per period-regime iteration.
     """
-    return {
+    spaces = {
         regime_name: regime.solution.state_action_space(
             regime_params=regime_kernel_params(flat_params, regime_name=regime_name),
             process_grid_resolver=process_grid_resolver,
         )
         for regime_name, regime in regimes.items()
     }
+    _fail_if_carried_rouwenhorst_nodes_differ(regimes=regimes, spaces=spaces)
+    return spaces
+
+
+def _fail_if_carried_rouwenhorst_nodes_differ(
+    *,
+    regimes: Mapping[RegimeName, Regime],
+    spaces: Mapping[RegimeName, StateActionSpace],
+) -> None:
+    """Check resolved nodes where both regimes carry one declared solve law."""
+    for source_name, source in regimes.items():
+        runtime_states = tuple(
+            state_name
+            for state_name, grid in source.solution.grids.items()
+            if isinstance(grid, RouwenhorstAR1Process) and not grid.is_fully_specified
+        )
+        if not runtime_states:
+            continue
+        for target_name in source.solution.reachability.union_targets(
+            source=source_name
+        ):
+            if target_name == source_name:
+                continue
+            for state_name in runtime_states:
+                target_grid = regimes[target_name].solution.grids.get(state_name)
+                if not isinstance(target_grid, RouwenhorstAR1Process) or (
+                    target_grid.is_fully_specified
+                ):
+                    continue
+                source_nodes = spaces[source_name].states.get(state_name)
+                target_nodes = spaces[target_name].states.get(state_name)
+                if source_nodes is None or target_nodes is None:
+                    continue
+                left, right = jax.device_get((source_nodes, target_nodes))
+                if not np.array_equal(left, right):
+                    msg = (
+                        f"Rouwenhorst process '{state_name}' carried from "
+                        f"'{source_name}' to '{target_name}' requires identical "
+                        f"solve nodes. Got {left.tolist()} and {right.tolist()}."
+                    )
+                    raise InvalidParamsError(msg)
 
 
 def _drain_V_arr_shards(

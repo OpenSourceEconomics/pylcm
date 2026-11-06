@@ -41,6 +41,7 @@ from _lcm.probability import (
     regime_mass_is_a_distribution,
 )
 from _lcm.processes import _ContinuousStochasticProcess
+from _lcm.reachability import PhaseName
 from _lcm.regime_building.next_state import (
     get_next_state_function_for_solution,
     get_next_stochastic_weights_function,
@@ -557,6 +558,7 @@ def _normalized_regime_mixture(
 
 def get_Q_and_F(
     *,
+    phase_name: PhaseName = "solution",
     flat_param_names: frozenset[QualifiedName],
     functions: EconFunctionsMapping,
     constraints: ConstraintFunctionsMapping,
@@ -679,9 +681,7 @@ def get_Q_and_F(
         co_map_state_names=co_map_state_names,
         gated_continuations=gated_continuations,
         count_raise_landings=count_raise_landings,
-        extend_process_edges=(
-            "simulation" if continuation_functions is not None else "solution"
-        ),
+        extend_process_edges=phase_name,
     )
     _build_W_kwargs = _get_build_W_kwargs(
         functions=functions, koopmans_aggregator=koopmans_aggregator
@@ -1862,6 +1862,7 @@ def _lookup_reference_params(
 
 def get_Q_and_F_collective(
     *,
+    phase_name: PhaseName,
     flat_param_names: frozenset[QualifiedName],
     functions: EconFunctionsMapping,
     constraints: ConstraintFunctionsMapping,
@@ -2025,9 +2026,7 @@ def get_Q_and_F_collective(
         n_stakeholders=n_stakeholders,
         gated_continuations=gated_continuations,
         count_raise_landings=count_raise_landings,
-        extend_process_edges=(
-            "simulation" if continuation_functions is not None else "solution"
-        ),
+        extend_process_edges=phase_name,
     )
 
     _build_W_kwargs = _get_build_W_kwargs(
