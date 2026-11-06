@@ -64,6 +64,9 @@ repos:
           - pyi
           - python
       - id: ruff-format
+        # Keep the imported checker source stable for comparison with its reviewed
+        # implementation. Its directory has a separate Ruff lint configuration.
+        exclude: ^tools/regime-finder/
         types_or:
           - jupyter
           - pyi
@@ -72,6 +75,7 @@ repos:
     rev: v0.0.95
     hooks:
       - id: ty
+        exclude: ^tools/regime-finder/
         # Run ty directly so import resolution uses `[tool.ty] environment.python`.
         # Keep this dependency pin aligned with the hook revision above.
         entry: ty check
@@ -189,6 +193,7 @@ repos:
         name: functions with two named arguments are keyword-only
         entry: pixi run -e type-checking python -m tests.ci.keyword_only_convention
         language: system
+        exclude: ^tools/regime-finder/
         types_or:
           - python
           - jupyter

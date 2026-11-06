@@ -3,6 +3,7 @@
 from fractions import Fraction
 from importlib import import_module
 from importlib.util import find_spec
+from pathlib import Path
 from unittest.mock import patch
 
 import jax.numpy as jnp
@@ -87,6 +88,35 @@ def test_digraph_preserves_period_nodes_terminal_and_isolated_starts(
     assert graph.edges[(0, "alive"), (1, "final")]["status"] is EdgeStatus.CONDITIONAL
     assert graph.graph["declared_edges"] is period_model.graph.edges
     assert graph.graph["declarations"].graph is period_model.graph
+
+
+def test_regime_checker_verifies_the_captured_model(
+    *, period_model: Model, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The checkout tool accepts a native Model without evaluating its utility."""
+    checker_path = Path(__file__).resolve().parents[1] / "tools" / "regime-finder"
+    monkeypatch.syspath_prepend(str(checker_path))
+    checker = import_module("regime_finder")
+    snapshot = import_module("regime_finder.model_snapshot").read_model(period_model)
+    report = checker.find_regimes(snapshot)
+    result = checker.verify_production_result(snapshot, report)
+    assert result["status"] == "PASS", result
+
+
+@pytest.mark.parametrize("tampered", [False, True])
+def test_regime_checker_binds_transition_authority(
+    *, tampered: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The checkout tool recognizes the native class and rejects altered sources."""
+    checker_path = Path(__file__).resolve().parents[1] / "tools" / "regime-finder"
+    monkeypatch.syspath_prepend(str(checker_path))
+    contract = import_module("regime_finder.current_api_contract")
+    authority = contract.inspect_authority(Transition)
+    if tampered:
+        authority["file_sha256"] = "0" * 64
+    assert contract.matches_authority(
+        name="lcm.transition.Transition", observed=authority
+    ) is (not tampered)
 
 
 def test_digraph_retains_exact_fraction_ages() -> None:
