@@ -59,6 +59,9 @@ from _lcm.egm.regime_introspection import (
     _get_passive_state_names,
 )
 from _lcm.egm.scalar_query import ScalarEGMQueryModel
+
+# Load the solver before model construction so import frames cannot retain a model.
+from _lcm.egm.step import compute_egm_carry_length
 from _lcm.egm.terminal import (
     N_STATELESS_CARRY_ROWS,
     get_brute_child_carry_producer,
@@ -1895,7 +1898,6 @@ def _prepare_dcegm_query_models(
         FiniteOuterQuerySpec,
         build_query_model_authority,
     )
-    from _lcm.egm.step import compute_egm_carry_length  # noqa: PLC0415
     from _lcm.solution.dcegm import (  # noqa: PLC0415
         ExactEnvelope,
         _BoundDCEGM,
