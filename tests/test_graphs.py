@@ -22,6 +22,7 @@ from lcm import (
     Transition,
     categorical,
 )
+from lcm.graphs import find_regimes
 from lcm.typing import FloatND, Phase, ScalarInt
 
 
@@ -90,27 +91,33 @@ def test_digraph_preserves_period_nodes_terminal_and_isolated_starts(
     assert graph.graph["declarations"].graph is period_model.graph
 
 
-def test_regime_checker_verifies_the_captured_model(
-    *, period_model: Model, monkeypatch: pytest.MonkeyPatch
+def test_find_regimes_checks_a_native_model(period_model: Model) -> None:
+    """The public checker accepts a Model without evaluating its utility."""
+    report = find_regimes(period_model)
+    layers = report["layers"]
+    assert isinstance(layers, dict)
+    assert layers["frontier"] == "RETAINED_CANDIDATES_CHECKED"
+
+
+def test_find_regimes_writes_html(*, period_model: Model, tmp_path: Path) -> None:
+    """Users can read the result without running another command."""
+    output = tmp_path / "report"
+    find_regimes(period_model, output=output)
+    assert (output / "report.html").is_file()
+
+
+def test_find_regimes_refuses_existing_output(
+    *, period_model: Model, tmp_path: Path
 ) -> None:
-    """The checkout tool accepts a native Model without evaluating its utility."""
-    checker_path = Path(__file__).resolve().parents[1] / "tools" / "regime-finder"
-    monkeypatch.syspath_prepend(str(checker_path))
-    checker = import_module("regime_finder")
-    snapshot = import_module("regime_finder.model_snapshot").read_model(period_model)
-    report = checker.find_regimes(snapshot)
-    result = checker.verify_production_result(snapshot, report)
-    assert result["status"] == "PASS", result
+    """An existing report directory is protected from replacement."""
+    with pytest.raises(FileExistsError):
+        find_regimes(period_model, output=tmp_path)
 
 
 @pytest.mark.parametrize("tampered", [False, True])
-def test_regime_checker_binds_transition_authority(
-    *, tampered: bool, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The checkout tool recognizes the native class and rejects altered sources."""
-    checker_path = Path(__file__).resolve().parents[1] / "tools" / "regime-finder"
-    monkeypatch.syspath_prepend(str(checker_path))
-    contract = import_module("regime_finder.current_api_contract")
+def test_regime_checker_binds_transition_authority(*, tampered: bool) -> None:
+    """The checker recognizes the native class and rejects altered sources."""
+    contract = import_module("_lcm_regime_finder.current_api_contract")
     authority = contract.inspect_authority(Transition)
     if tampered:
         authority["file_sha256"] = "0" * 64

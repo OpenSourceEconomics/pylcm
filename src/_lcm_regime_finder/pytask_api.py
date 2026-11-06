@@ -157,7 +157,6 @@ def _analyse_snapshot(snapshot, output, *, seconds, host_gib, command_prefix,
     snapshot, output = Path(snapshot).resolve(), Path(output).resolve()
     if snapshot.is_relative_to(output):
         raise ValueError('Analysis output must not contain the original input; use a separate analysis subdirectory')
-    project = Path(__file__).resolve().parents[1]
     # A task launched by Pixi already runs in its pinned interpreter. The
     # standalone dependency-free API must also work in a supported interpreter
     # without requiring a second environment manager or installing packages.
@@ -220,7 +219,7 @@ def _analyse_snapshot(snapshot, output, *, seconds, host_gib, command_prefix,
         from .delivery import invalidate_delivery
         invalidate_delivery(output, status='INCOMPLETE', reason=reason, details=record)
         raise RuntimeError(f'Metadata capture INCOMPLETE; inspect {capture_path}')
-    command = [*prefix, '-m', 'regime_finder.pipeline', str(snapshot), '--output', str(output),
+    command = [*prefix, '-m', f'{__package__}.pipeline', str(snapshot), '--output', str(output),
                '--seconds', str(remaining), '--host-gib', str(host_gib), '--worker',
                '--search-mode', search_mode, '--heuristic-rounds', str(heuristic_rounds),
                '--heuristic-neighbors', str(heuristic_neighbors)]
@@ -229,7 +228,7 @@ def _analyse_snapshot(snapshot, output, *, seconds, host_gib, command_prefix,
     from .owned_mutations import resource_plan
     worker_plan = resource_plan(output/'outer-resource', inputs=[snapshot])
     try:
-        code = run_bounded(command, output=output/'outer-resource', cwd=project,
+        code = run_bounded(command, output=output/'outer-resource',
                            seconds=remaining, host_gib=host_gib,
                            checkpoint_path=output/'partial-frontier.json', mutation_plan=worker_plan)
     except Exception as error:

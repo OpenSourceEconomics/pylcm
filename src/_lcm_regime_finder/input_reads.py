@@ -144,7 +144,7 @@ def discover_inputs(paths):
             from .symbolic_frontier import load_packet
             load_packet(path=path, reads=reads)
         if data.get('format') == 'lossless-json-fragments-1':
-            from read_fragments import read
+            from .read_fragments import read
             data = read(Path(path), reads=reads)
         if data.get('adapter') in {'pylcm_model_graph', 'pylcm_declarations'}:
             for label in ('declaration_spec', 'snapshot'):

@@ -32,7 +32,7 @@ def run_corpus(manifest_path, output, *, seconds=900, host_gib=8, reuse_verified
                 record['missing_original_inputs'].append('Missing declared capture: ' + str(source))
             else:
                 raw_hash = hashlib.sha256(source.read_bytes()).hexdigest()
-                command = [sys.executable, '-m', 'regime_finder', 'analyze-model', str(source),
+                command = [sys.executable, '-m', __package__, 'analyze-model', str(source),
                            '--output', str(folder), '--seconds', str(seconds), '--host-gib', str(host_gib)]
                 # Reuse is only for assembling a final index after this exact
                 # CLI already ran. Input and producer/checker identity must match.

@@ -66,7 +66,7 @@ repos:
       - id: ruff-format
         # Keep the imported checker source stable for comparison with its reviewed
         # implementation. Its directory has a separate Ruff lint configuration.
-        exclude: ^tools/regime-finder/
+        exclude: ^src/_lcm_regime_finder/
         types_or:
           - jupyter
           - pyi
@@ -75,7 +75,7 @@ repos:
     rev: v0.0.95
     hooks:
       - id: ty
-        exclude: ^tools/regime-finder/
+        exclude: ^src/_lcm_regime_finder/
         # Run ty directly so import resolution uses `[tool.ty] environment.python`.
         # Keep this dependency pin aligned with the hook revision above.
         entry: ty check
@@ -193,7 +193,7 @@ repos:
         name: functions with two named arguments are keyword-only
         entry: pixi run -e type-checking python -m tests.ci.keyword_only_convention
         language: system
-        exclude: ^tools/regime-finder/
+        exclude: ^src/_lcm_regime_finder/
         types_or:
           - python
           - jupyter
@@ -204,6 +204,7 @@ repos:
         entry: pixi run -e type-checking python -m tests.ci.precise_annotations
         language: system
         files: ^((src|tests|benchmarks)/.*\.py|docs/.*\.ipynb)$
+        exclude: ^src/_lcm_regime_finder/
         require_serial: true
       - id: no-hardcoded-user-paths
         name: no hardcoded user-specific absolute paths

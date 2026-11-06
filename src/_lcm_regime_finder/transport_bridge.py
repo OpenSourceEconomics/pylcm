@@ -3,7 +3,7 @@
 This is an execution bridge for the scalar finite-grid IR, not an adapter for
 opaque native callbacks.  The *reported* per-atom interfaces determine the
 projection.  Reduced primitives are evaluated at one fixed original state in
-each fiber; every original state/action is then compared by checker/checker.py.
+each fiber; the finite transport checker then compares every original state/action.
 No desired cuts, hand-authored quotient, solved values or oracle answers enter
 the construction.  Dense allocation padding is deliberately not decision state.
 """
@@ -12,7 +12,6 @@ from __future__ import annotations
 from collections import defaultdict
 from fractions import Fraction
 import hashlib
-import importlib.util
 import itertools
 import json
 from pathlib import Path
@@ -155,13 +154,10 @@ def _stages(problem, model):
 
 
 def _load_checker():
-    path = Path(__file__).resolve().parents[1] / 'checker' / 'checker.py'
-    if not path.is_file():
-        _stop('NOT_RUN', 'checker_missing', 'The inherited checker/checker.py is absent.')
-    spec = importlib.util.spec_from_file_location('_regime_finder_generated_transport_checker', path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module.check, hashlib.sha256(path.read_bytes()).hexdigest()
+    from . import transport_checker
+
+    path = Path(transport_checker.__file__)
+    return transport_checker.check, hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def validate_generated_transport(problem, report, max_cells=20000):

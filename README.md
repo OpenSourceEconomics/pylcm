@@ -43,8 +43,8 @@ installation of `jaxlib`, please consult the `jax`
 
 ## Regime checker
 
-The [regime checker guide](docs/user_guide/regime_checker.md) shows how to run the
-checker from a checkout and analyze your own model.
+The [regime checker guide](docs/user_guide/regime_checker.md) shows how to analyze your
+own model with `lcm.graphs.find_regimes`.
 
 ## Developing
 

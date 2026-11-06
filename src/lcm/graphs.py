@@ -1,7 +1,10 @@
-"""Inspect the constructed model's temporal regime graph with NetworkX."""
+"""Inspect a constructed model's temporal regime graph and check its structure."""
+
+from pathlib import Path
 
 from networkx import DiGraph
 
+from _lcm.typing import JSONValue
 from lcm.model import Model
 from lcm.typing import Phase
 
@@ -88,3 +91,36 @@ def digraph(model: Model, *, phase: Phase | None = None) -> DiGraph:
                     ),
                 )
     return result
+
+
+# keyword-only-exempt: primary-argument=model
+def find_regimes(model: Model, *, output: Path | None = None) -> dict[str, JSONValue]:
+    """Find and check candidate simplifications of a constructed model.
+
+    The search uses the original solve and simulate declarations and grid sizes.
+    It checks candidate changes against the captured model. It does not solve or
+    simulate the model or establish a global optimum.
+
+    Args:
+        model: The constructed model to analyze.
+        output: Optional new directory for the HTML and JSON reports.
+
+    Returns:
+        The analysis report, including recommendations and any unresolved checks.
+
+    Raises:
+        FileExistsError: If the requested report directory already exists.
+
+    """
+    # Import the analysis engine only when explicitly requested.
+    from _lcm_regime_finder import find_regimes as analyze  # noqa: PLC0415
+
+    report = analyze(model)
+    if output is not None:
+        from _lcm_regime_finder.production_render import (  # noqa: PLC0415
+            write_production_report,
+        )
+
+        output.mkdir(parents=True)
+        write_production_report(report, output)
+    return report

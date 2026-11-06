@@ -76,7 +76,7 @@ def load_problem(path, *, reads=None):
         from .symbolic_frontier import load_packet
         return load_packet(path=path, reads=reads)
     if data.get('format') == 'lossless-json-fragments-1':
-        from read_fragments import read
+        from .read_fragments import read
         return read(path, reads=reads)
     if data.get('adapter') == 'pylcm_ast':
         from .source_adapter import adapt_manifest
@@ -129,7 +129,7 @@ def _run_parent(args, argv, delivery):
     output, destination = delivery.run_output, delivery.destination
     command_args = delivery.worker_arguments(argv)
     delivery.prepare()
-    command = [sys.executable, '-m', 'regime_finder', *command_args]
+    command = [sys.executable, '-m', __package__, *command_args]
     code = run_bounded(command, output=output, seconds=args.seconds, host_gib=args.host_gib,
                        mutation_plan=delivery.plan)
     if destination.exists():

@@ -21,12 +21,16 @@ import json
 import marshal
 import os
 from pathlib import Path
-import resource
 import sys
 import sysconfig
 import textwrap
 import time
 import types
+
+try:
+    import resource
+except ImportError:
+    resource = None
 
 
 def _digest(value):
@@ -324,7 +328,11 @@ class CaptureSession:
                 self.tree_rss_unavailable_samples += 1
             # A restricted executor may expose /proc but hide every PID. Zero
             # is then missing telemetry, not evidence of zero resident memory.
-            own_peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024
+            own_peak = 0
+            if resource is not None:
+                own_peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+                if sys.platform != 'darwin':
+                    own_peak *= 1024
             self.peak_self_rss = max(self.peak_self_rss, own_peak)
             observed = rss if rss > 0 else own_peak
             self.peak_rss = max(self.peak_rss, observed)
@@ -514,8 +522,8 @@ class CaptureSession:
         return {'status': 'INCOMPLETE' if self.obligations or self.queue else 'COMPLETE',
                 'elapsed_seconds': time.perf_counter() - self.started,
                 'peak_process_tree_gib': self.peak_rss / 1024**3 if tree_available else None,
-                'peak_observed_host_gib': self.peak_rss / 1024**3,
-                'peak_self_process_lifetime_gib': self.peak_self_rss / 1024**3,
+                'peak_observed_host_gib': self.peak_rss / 1024**3 if self.peak_rss else None,
+                'peak_self_process_lifetime_gib': self.peak_self_rss / 1024**3 if self.peak_self_rss else None,
                 'process_tree_rss_available': tree_available,
                 'process_tree_rss_samples': self.tree_rss_samples,
                 'process_tree_rss_unavailable_samples': self.tree_rss_unavailable_samples,
