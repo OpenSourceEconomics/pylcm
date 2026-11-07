@@ -21,23 +21,18 @@ from _lcm.power_mean import (
     weighted_power_mean,
 )
 from _lcm.probability import (
-    _significand_in_unit_range,
-    _unbiased_exponent,
-    binades_above_smallest_normal,
     is_live,
     is_negative,
     is_represented_zero,
     rescaled_lottery_weights,
-    scaled_by_power_of_two,
-    scaled_down_by_power_of_two,
 )
 from _lcm.utils.functools import get_union_of_args
-from _lcm.zero_safe import zero_safe_weighted_term
+from _lcm.zero_safe import scaled_lottery_mean, zero_safe_weighted_term
 from lcm.exceptions import (
     RegimeInitializationError,
     ScaledLotteryDifferentiationError,
 )
-from lcm.typing import BoolND, FloatND, IntND
+from lcm.typing import FloatND, IntND
 
 # Reserved argument name through which transform callables receive values.
 CE_VALUE_ARG = "value"
@@ -235,7 +230,7 @@ class LinearExpectation(CertaintyEquivalent):
             The expectation, reduced over the last axis.
 
         """
-        mean, _ = _scaled_lottery_mean(
+        mean, _ = scaled_lottery_mean(
             values=values, coefficients=coefficients, shifts=shifts
         )
         return _states_no_derivative(mean)
@@ -413,7 +408,7 @@ class QuasiArithmeticMean(CertaintyEquivalent):
         transformed = self.transform(
             value=safe_values, **_args_for(func=self.transform, params=params)
         )
-        mean, _ = _scaled_lottery_mean(
+        mean, _ = scaled_lottery_mean(
             values=transformed, coefficients=coefficients, shifts=shifts
         )
         return _states_no_derivative(
@@ -643,258 +638,4 @@ def aggregates_nonlinearly(certainty_equivalent: CertaintyEquivalent | None) -> 
     """
     return certainty_equivalent is not None and not isinstance(
         certainty_equivalent, LinearExpectation
-    )
-
-
-def _center_lottery_shifts(*, coefficients: FloatND, shifts: IntND) -> IntND:
-    """Remove a common weight gauge before coefficient exponent arithmetic.
-
-    Only live finite coefficients select the gauge. Relative shift spans and
-    subsequent exponent arithmetic must fit int32; private arbitrary endpoint
-    spans are not an admitted scaled-measure representation.
-    """
-    coefficients = jnp.asarray(coefficients)
-    shifts = jnp.broadcast_to(jnp.asarray(shifts), coefficients.shape)
-    live = is_live(coefficients) & jnp.isfinite(coefficients)
-    fallback = jnp.max(shifts, axis=-1, keepdims=True)
-    reference = jnp.min(jnp.where(live, shifts, fallback), axis=-1, keepdims=True)
-    return shifts - reference
-
-
-def _scaled_lottery_mean(
-    *, values: FloatND, coefficients: FloatND, shifts: IntND
-) -> tuple[FloatND, FloatND]:
-    """Return a scaled lottery's mean over the last axis, and its scaled mass.
-
-    Every finite operand is held as a significand in `[1, 2)` and an integer
-    exponent. A node's weighted value is the product of two significands,
-    which is always a normal number, and its exponent is the sum
-    `coefficient - shift + value`. The numerator is placed so its largest
-    term sits in `[1, 4)`, and the mass so its likeliest node sits in
-    `[1, 2)`. Each term is lowered from there by its own distance to the
-    largest one. When no live finite nonzero value contributes, the numerator
-    uses the mass's anchor: a zero numerator then has zero relative exponent,
-    while live infinities and NaNs retain their original products.
-
-    A term that leaves the format on the way down is therefore smaller than
-    the largest term by the whole normal range. Without cancellation it
-    cannot be material to the numerator, whatever the scale of the values,
-    the weights, or the mean. Neither sum can overflow, since every term is
-    below four. The two exponents meet once, in the final ratio. Their
-    difference is at most the largest finite value exponent when such a value
-    contributes, and zero otherwise, so the upward part is a normal power of
-    two. If rounding makes reconstruction overflow,
-    return the corresponding endpoint of the live support. A finite-support
-    mean lies between those endpoints; genuine live infinities remain infinite.
-    Finite estimates and NaNs pass through unchanged.
-
-    A null event contributes nothing, even against an infinite value. A live
-    node with a nonfinite value carries that value into the mean. A
-    coefficient that is negative, infinite, or NaN poisons its whole row.
-    Relative shift spans and the derived exponent sums must fit int32.
-
-    Args:
-        values: Continuation values of the lottery along the last axis.
-        coefficients: The weights' significands, over the same axis.
-        shifts: Each weight's own base-two scale, broadcast against them.
-
-    Returns:
-        Tuple of the mean and the mass on its own normalized scale. The mass
-        is zero only when the row has no live node.
-
-    """
-    coefficients = jnp.asarray(coefficients)
-    values = jnp.asarray(values)
-    shifts = _center_lottery_shifts(coefficients=coefficients, shifts=shifts)
-
-    live = is_live(coefficients) & jnp.isfinite(coefficients)
-    invalid = is_negative(coefficients) | (
-        ~jnp.isfinite(coefficients) & ~is_represented_zero(coefficients)
-    )
-    weight_exponent = jnp.where(live, _unbiased_exponent(coefficients) - shifts, 0)
-    unit_coefficients = jnp.where(
-        live, _significand_in_unit_range(coefficients), jnp.zeros_like(coefficients)
-    )
-
-    finite_value = jnp.isfinite(values) & ~is_represented_zero(values)
-    unit_values = jnp.where(
-        finite_value,
-        jnp.copysign(_significand_in_unit_range(values), values),
-        values,
-    )
-    contributes = live & finite_value
-    term_exponent = weight_exponent + jnp.where(
-        finite_value, _unbiased_exponent(values), 0
-    )
-    mass_exponent = _largest_selected(selected=live, exponents=weight_exponent)
-    numerator_exponent = _largest_selected(
-        selected=contributes, exponents=term_exponent, fallback=mass_exponent
-    )
-    products = zero_safe_weighted_term(
-        weight=unit_coefficients, value=unit_values, subnormal_is_accounted_for=True
-    )
-    value_terms = scaled_down_by_power_of_two(
-        values=products,
-        shift=jnp.where(contributes, term_exponent - numerator_exponent, 0),
-    )
-
-    weight_terms = scaled_down_by_power_of_two(
-        values=unit_coefficients,
-        shift=jnp.where(live, weight_exponent - mass_exponent, 0),
-    )
-
-    mass = jnp.sum(weight_terms, axis=-1)
-    ratio = jnp.sum(value_terms, axis=-1) / mass
-    exponent = (numerator_exponent - mass_exponent)[..., 0]
-    upward = scaled_by_power_of_two(
-        values=jnp.ones_like(ratio), shift=jnp.maximum(exponent, 0)
-    )
-    mean = scaled_down_by_power_of_two(
-        values=ratio * upward, shift=jnp.minimum(exponent, 0)
-    )
-    # A normalized nonnegative mean cannot exceed its live support.
-    lower = jnp.min(jnp.where(live, values, jnp.inf), axis=-1)
-    upper = jnp.max(jnp.where(live, values, -jnp.inf), axis=-1)
-    mean = jnp.where(jnp.isinf(mean), jnp.where(jnp.signbit(mean), lower, upper), mean)
-    nan = jnp.asarray(jnp.nan, dtype=coefficients.dtype)
-    invalid_row = jnp.any(invalid, axis=-1)
-    return jnp.where(invalid_row, nan, mean), jnp.where(invalid_row, nan, mass)
-
-
-def _largest_selected(
-    *, selected: BoolND, exponents: IntND, fallback: IntND | None = None
-) -> IntND:
-    """Return each row's largest selected exponent, using the fallback only if empty."""
-    absent = jnp.iinfo(exponents.dtype).min
-    largest = jnp.max(jnp.where(selected, exponents, absent), axis=-1, keepdims=True)
-    has_selected = jnp.any(selected, axis=-1, keepdims=True)
-    return jnp.where(has_selected, largest, 0 if fallback is None else fallback)
-
-
-def _scaled_lottery_terms_with_scale(
-    *, values: FloatND, coefficients: FloatND, shifts: IntND
-) -> tuple[FloatND, FloatND, IntND]:
-    """Return a lottery's value terms and weight terms on one shared scale.
-
-    A node's contribution to a mean is `c * 2**-s * v`, and the order those
-    three are combined in decides whether the node survives. Two orders each
-    lose it at one end of the range:
-
-    - forming the weight `c * 2**-s` first loses a rare node, because the
-      weight of a node many binades below the likeliest one is not
-      representable and becomes zero, taking its value with it — although the
-      *product* it was heading for may be an ordinary number, which is
-      precisely the case where the node changes the answer;
-    - forming `c * v` first loses a node whose coefficient has been normalized
-      above one and whose value sits near the top of the range, because that
-      intermediate overflows to infinity before any scale is applied to bring
-      it back.
-
-    Splitting the scale covers both. The coefficient absorbs as much of the
-    downward shift as it can while staying normal, the product absorbs the
-    remainder. Neither an unrepresentable weight nor an overflowing product is
-    ever materialized, and a rare node earns its place in the mean exactly when
-    its value is large enough to offset its probability.
-
-    Normalize each positive finite coefficient into a normal significand
-    before any product; its exact binary exponent moves into its shift.
-    Both returned terms carry the same shift, so their scale cancels in the
-    ratio. The common shift is selected from those normalized encodings, per
-    lottery rather than per batch. No unrelated lottery or dead node selects it.
-
-    The values are not normalized, so a value near the bottom of the normal
-    range can lose its product. The caller is the scaled mean's centered
-    residual, whose values are normal significands; a mean reduces through
-    `_scaled_lottery_mean` instead.
-
-    This physical-scale helper requires all relative shift and derived exponent
-    arithmetic, including the returned exponent, to fit int32. Its caller uses
-    bounded IEEE-exponent-derived shifts. This is not an arbitrary private-int32
-    endpoint-span interface, and no live exponent is silently saturated.
-
-    Headroom bounds each actual scaled contribution, as well as the weight
-    total. An extremely rare large value must not force an unrelated normal
-    small contribution below the arithmetic range. A cardinality bound keeps
-    both sums below the top binade without materializing an overflowing product.
-
-    A coefficient that is not a probability at all — negative, infinite, or
-    NaN — is not a dead node and is not silently dropped. It poisons its whole
-    row, so a malformed lottery is visible in the result rather than reduced to
-    a plausible number.
-
-    Args:
-        values: Continuation values of the lottery along the last axis.
-        coefficients: The weights' significands, over the same axis.
-        shifts: Each weight's own base-two scale, broadcast against them.
-
-    Returns:
-        Tuple of the value terms and the weight terms, both over the last axis
-        and both carrying the row's shared scale, followed by that binary exponent. This
-        exponent multiplies the unscaled terms; subtract it to recover their scale.
-
-    """
-    coefficients = jnp.asarray(coefficients)
-    values = jnp.asarray(values)
-    shifts = jnp.broadcast_to(jnp.asarray(shifts), jnp.shape(coefficients))
-
-    live = is_live(coefficients) & jnp.isfinite(coefficients)
-    invalid = is_negative(coefficients) | (
-        ~jnp.isfinite(coefficients) & ~is_represented_zero(coefficients)
-    )
-    # Normalize each coefficient before multiplying by a small value. Its
-    # exact power of two moves into the accompanying shift, not into a float
-    # product that may underflow even when the normalized mean is normal.
-    coefficient_exponent = jnp.where(live, _unbiased_exponent(coefficients), 0)
-    normalization = -coefficient_exponent
-    coefficients = scaled_down_by_power_of_two(
-        values=coefficients, shift=jnp.minimum(normalization, 0)
-    )
-    coefficients = scaled_by_power_of_two(
-        values=coefficients, shift=jnp.maximum(normalization, 0)
-    )
-    shifts = shifts - coefficient_exponent
-    unusable = jnp.max(shifts, axis=-1, keepdims=True)
-    common = jnp.min(jnp.where(live, shifts, unusable), axis=-1, keepdims=True)
-    scale = (common - shifts).astype(jnp.int32)
-
-    contribution_exponent = (
-        _unbiased_exponent(coefficients)
-        + scale
-        + jnp.maximum(_unbiased_exponent(jnp.abs(values)), 0)
-    )
-    largest_exponent = jnp.max(
-        jnp.where(live, contribution_exponent, jnp.iinfo(jnp.int32).min // 2),
-        axis=-1,
-        keepdims=True,
-    )
-    # Each product's two significands are below two; n terms add ceil(log2(n))
-    # binades. Keeping the bound below 2**(maxexp-1) leaves rounding headroom.
-    sum_binades = (values.shape[-1] - 1).bit_length()
-    headroom = jnp.maximum(
-        largest_exponent + 2 + sum_binades - (jnp.finfo(values.dtype).maxexp - 1),
-        0,
-    )
-    full = scale - headroom
-
-    room = binades_above_smallest_normal(coefficients)
-    on_weight = jnp.maximum(full, -room)
-    scaled_coefficients = scaled_down_by_power_of_two(
-        values=coefficients, shift=on_weight
-    )
-    products = zero_safe_weighted_term(
-        weight=scaled_coefficients,
-        value=values,
-        subnormal_is_accounted_for=False,
-    )
-    value_terms = scaled_down_by_power_of_two(values=products, shift=full - on_weight)
-    weight_terms = scaled_down_by_power_of_two(values=coefficients, shift=full)
-
-    # Zero coefficients already annihilate their values; masking the terms
-    # again would erase a finite node's derivative with respect to its weight.
-    invalid_row = jnp.any(invalid, axis=-1, keepdims=True)
-    nan = jnp.asarray(jnp.nan, dtype=coefficients.dtype)
-    return (
-        jnp.where(invalid_row, nan, value_terms),
-        jnp.where(invalid_row, nan, weight_terms),
-        common - headroom,
     )

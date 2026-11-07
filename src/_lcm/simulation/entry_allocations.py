@@ -28,6 +28,9 @@ from _lcm.execution.core_program import core_program_graph
 from _lcm.grids import Grid
 from _lcm.grids.materialization import admitted_grid_extent, materialize_original_grid
 from _lcm.params.edges import EDGES, flat_namespaces
+
+# Load the query module before a simulation owns a model and its buffers.
+from _lcm.policy_queries import query_parameter_namespaces
 from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.simulation.entry_inputs import SimulationEntryInputs, SolutionResultBoundary
 from _lcm.simulation.host_operations import ProfiledSimulationOperations
@@ -267,8 +270,6 @@ class SimulationEntryAllocations:
         self, *, flat_params: FlatParams, regimes: Mapping[RegimeName, Regime]
     ) -> None:
         """Admit only actual query consumers' copies, retaining every source."""
-        from _lcm.policy_queries import query_parameter_namespaces  # noqa: PLC0415
-
         views: dict[RegimeName, FlatParams] = {}
         self.solve_parameter_views = MappingProxyType(views)
         self._stages["query_solve_params"] = views
