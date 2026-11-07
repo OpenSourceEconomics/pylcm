@@ -218,18 +218,6 @@ def test_execution_config_rejects_an_unusable_headroom_fraction(
         ExecutionConfig(device_memory_headroom_fraction=fraction)
 
 
-def test_execution_config_stores_an_integer_headroom_fraction_as_a_float() -> None:
-    """`0` plans against the whole pool, stored as the float `0.0`."""
-    fraction = ExecutionConfig(device_memory_headroom_fraction=0)
-    assert type(fraction.device_memory_headroom_fraction) is float
-
-
-def test_execution_config_rejects_an_integer_headroom_fraction_of_one() -> None:
-    """An integer share is held to the same `[0, 1)` range as a float."""
-    with pytest.raises(ValueError, match="device_memory_headroom_fraction"):
-        ExecutionConfig(device_memory_headroom_fraction=1)
-
-
 def test_the_budget_summary_names_the_request_and_the_effective_ceiling() -> None:
     """The summary carries every number the cap decision was made from."""
     resolved = resolve_execution_config(

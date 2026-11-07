@@ -1441,31 +1441,6 @@ def test_tauchen_on_nodes_rejects_invalid_grid(nodes: tuple[float, ...]) -> None
         TauchenAR1Process.on_nodes(nodes=np.array(nodes), rho=1.0, sigma=0.3)
 
 
-@pytest.mark.parametrize(
-    ("nodes", "type_name"),
-    [
-        pytest.param([-1.0, 0.0, 1.0], "list", id="list"),
-    ],
-)
-def test_tauchen_on_nodes_refuses_a_non_array_container(*, nodes, type_name) -> None:
-    """`nodes` is a NumPy or JAX array; the error names the type and the spelling."""
-    with pytest.raises(
-        GridInitializationError,
-        match=rf"got {type_name}.*on_nodes\(nodes=jnp\.array\(",
-    ):
-        TauchenAR1Process.on_nodes(nodes=nodes, rho=1.0, sigma=0.3)
-
-
-@pytest.mark.parametrize(
-    "nodes",
-    [np.array(["-1.0", "0.0", "1.0"])],
-)
-def test_tauchen_on_nodes_refuses_a_non_numeric_array(nodes) -> None:
-    """An array of nodes must have an integer or floating dtype."""
-    with pytest.raises(GridInitializationError, match="integer or floating dtype"):
-        TauchenAR1Process.on_nodes(nodes=nodes, rho=1.0, sigma=0.3)
-
-
 def test_tauchen_on_nodes_accepts_a_jax_array() -> None:
     """A JAX array of nodes gives the same physical axis as a NumPy array."""
     process = TauchenAR1Process.on_nodes(

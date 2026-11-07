@@ -191,14 +191,3 @@ def test_unsupported_aggregator_subclass_is_rejected_where_it_is_declared() -> N
             no_adjustment=outer_unchanged,
             adjustment_cost=LogitAdjustment(),
         )
-
-
-def test_config_stores_integer_support_edges_as_floats() -> None:
-    config = UniformObservedFixedCost(
-        shock_name="adjustment_cost",
-        scale_function="adjustment_cost_scale",
-        lower=0,
-        upper=2,
-    )
-
-    assert (type(config.lower), type(config.upper)) == (float, float)

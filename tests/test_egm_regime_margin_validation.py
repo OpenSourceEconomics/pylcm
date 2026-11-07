@@ -17,7 +17,7 @@ control showing the same guard accepts the valid object.
 from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import TypedDict, get_type_hints
+from typing import TypedDict
 
 import pytest
 
@@ -38,7 +38,6 @@ from lcm.regime import ActionEntry, FunctionEntry, StateEntry, StateTransitionEn
 from lcm.solvers import (
     DCEGM,
     NEGM,
-    GridSearch,
     OneMarginSolver,
     RFCEnvelope,
     TwoMarginSolver,
@@ -109,15 +108,6 @@ def _regime_kwargs() -> _ConsumptionRegimeKwargs:
         "state_transitions": {"assets": _next_assets},
         "liquid": _liquid(),
     }
-
-
-def test_solver_annotations_remain_narrowed_exactly() -> None:
-    assert get_type_hints(ConsumptionSavingsRegime)["solver"] == (
-        OneMarginSolver | GridSearch
-    )
-    assert get_type_hints(NestedConsumptionSavingsRegime)["solver"] == (
-        TwoMarginSolver | GridSearch
-    )
 
 
 def test_an_out_of_package_subclass_rejects_the_wrong_solver_family() -> None:

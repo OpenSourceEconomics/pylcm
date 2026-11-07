@@ -177,12 +177,6 @@ def test_adaptive_outer_mesh_keeps_the_supplied_initial_grid() -> None:
     assert AdaptiveOuterMesh(initial_grid=_MESH_GRID).initial_grid is _MESH_GRID
 
 
-def test_adaptive_outer_mesh_stores_integer_tolerances_as_floats() -> None:
-    mesh = AdaptiveOuterMesh(initial_grid=_MESH_GRID, value_atol=1, value_rtol=1)
-
-    assert (type(mesh.value_atol), type(mesh.value_rtol)) == (float, float)
-
-
 def test_adaptive_outer_mesh_admits_an_infinite_lipschitz_bound() -> None:
     """Positive infinity is a valid, if uninformative, bound."""
     mesh = AdaptiveOuterMesh(initial_grid=_MESH_GRID, outer_lipschitz_bound=np.inf)

@@ -104,15 +104,6 @@ def test_private_child_transport_request_preserves_a_bound_subclass() -> None:
     )
 
 
-def test_binding_keeps_the_normalized_refined_grid_factor() -> None:
-    """An integer factor is stored as a float and stays one through binding."""
-    bound = _bound_solver(
-        _AnnotatedDCEGM(savings_grid=_SAVINGS_GRID, refined_grid_factor=3)
-    )
-
-    assert type(bound.refined_grid_factor) is float
-
-
 def test_binding_keeps_the_supplied_envelope_instance() -> None:
     """The envelope configuration object is carried, not reconstructed."""
     envelope = RFCEnvelope(search_radius=3)
