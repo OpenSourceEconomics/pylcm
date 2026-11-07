@@ -17,7 +17,6 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
-from beartype.roar import BeartypeCallHintParamViolation
 
 from _lcm.engine import SolutionPhase
 from _lcm.execution.core_program import ReducedAxis, TiledOutputAxis, core_program_graph
@@ -278,9 +277,9 @@ def test_execution_config_invariant_block_widths_are_frozen() -> None:
     [
         ({"pref_type": 0}, ValueError),
         ({"pref_type": -1}, ValueError),
-        ({"pref_type": True}, TypeError),
-        ({"pref_type": 1.0}, BeartypeCallHintParamViolation),
-        ({"": 1}, TypeError),
+        ({"pref_type": True}, ValueError),
+        ({"pref_type": 1.0}, ValueError),
+        ({"": 1}, ValueError),
     ],
 )
 def test_execution_config_refuses_an_unusable_block_width(

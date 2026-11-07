@@ -27,7 +27,6 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
-from beartype.roar import BeartypeCallHintParamViolation
 
 import tests.conftest as test_config
 from _lcm.execution.core_program import core_program_graph
@@ -207,7 +206,7 @@ def test_execution_config_schedules_period_major_by_default() -> None:
 
 def test_execution_config_refuses_a_schedule_that_is_not_a_member() -> None:
     """The schedule is an `InvariantBlockSchedule` member, never its spelling."""
-    with pytest.raises(BeartypeCallHintParamViolation, match="InvariantBlockSchedule"):
+    with pytest.raises(ValueError, match="InvariantBlockSchedule"):
         ExecutionConfig(invariant_block_schedule="block_major")  # ty: ignore[invalid-argument-type]
 
 

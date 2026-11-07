@@ -23,6 +23,53 @@
 - Use `# ty: ignore[error-code]` for type suppression, never `# type: ignore`
 - JAX typing integration via jaxtyping
 
+#### Validated configuration records
+
+Two runtime checkers have separate jobs:
+
+- **beartype** checks the annotations of every function and method in `lcm` and
+  `_lcm` through the package claw, and maps violations on selected user-facing
+  constructors (`Model`, `Regime`, grids, `DCEGM`) to project exceptions. Its default
+  strategy checks one sampled entry of each container per call, so it is not an
+  exhaustive container check.
+- **Pydantic** owns the constructors of plain-data configuration records: the envelope
+  configurations (`ExactEnvelope`, `FUESEnvelope`, `RFCEnvelope`), `AdaptiveOuterMesh`,
+  `UniformObservedFixedCost`, `WidthSearchPolicy` and `ExecutionConfig`. They are
+  Pydantic dataclasses in strict mode, defined in place, so their names, modules,
+  fields and fingerprints are those of ordinary frozen dataclasses. `DCEGM` keeps its
+  own constructor and validates its two scalar settings through module-level
+  `TypeAdapter`s, because role binding subclasses it dynamically.
+
+The shared pieces live in `_lcm/input_validation.py`:
+
+- `CONFIG_FLOAT` admits a builtin `int` or `float` and stores a Python `float`;
+  booleans, strings, NumPy scalars, `Decimal`, `Fraction` and other `__float__`
+  objects are refused. `EXACT_INT` admits a builtin `int` only. `FINITE` refuses NaN
+  and infinities; leave it off where infinity is a meaningful bound.
+- `STRICT_CONFIG` validates defaults like supplied values and refuses unknown fields.
+- `translate_validation_errors(error_type)` sits outermost on the record. A call with
+  positional, missing or unexpected arguments raises `TypeError`; invalid field data
+  raises `error_type` naming the class, each failing path and the requirement, chained
+  to the `ValidationError`. Regime-level records use `RegimeInitializationError`,
+  execution records `ValueError`.
+
+Every entry of a mapping or tuple field is validated. A record then copies its mappings
+into read-only `MappingProxyType`s in `__post_init__`, so the caller's later mutation
+cannot reach it, and checks relations between fields there by raising `ValueError`.
+A grid, policy or other configured object is held with `InstanceOf[...]`: it keeps its
+identity and is never rebuilt from a dictionary.
+
+Keep these out of Pydantic:
+
+- Process-law values. Their numeric kind (`3` versus `3.0`, signed zero, weak versus
+  strong scalars) is part of their identity, so they never pass through `CONFIG_FLOAT`.
+- Grid constructors, `Model`, `Regime` and runtime parameter processing, which
+  normalize into canonical JAX storage or depend on the whole model.
+- Anything traced, vmapped or differentiated.
+
+Relations that need the model — whether a named axis, state or regime exists, device
+visibility, feasible budgets — stay in model construction and execution planning.
+
 #### Domain string aliases
 
 The following PEP 695 aliases (`type X = str`) live in `src/lcm/typing.py` (re-exported
