@@ -70,7 +70,7 @@ from lcm import (
 from lcm.execution import WidthSearch, WidthSearchPolicy
 from lcm.regime import Regime
 from lcm.solver_api import SolutionResult
-from lcm.solvers import CELL_AXIS
+from lcm.solvers import CELL_AXIS, GridSearch
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -224,6 +224,11 @@ def _model(*, n_habits: int, execution_config: ExecutionConfig) -> Model:
         },
         constraints={"borrowing_constraint": _borrowing_constraint},
         functions={"utility": _utility},
+        # The broadcast is checked against the continuation's own reductions and
+        # bits. Lottery contraction would add a once-per-call table over the whole
+        # next-period value, `habit` axis included, built under a different
+        # batching in each layout.
+        solver=GridSearch(lottery_contraction=False),
     )
     dead = Regime(functions={"utility": lambda: 0.0})
     return Model(

@@ -42,6 +42,11 @@ from _lcm.probability import (
 )
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.reachability import PhaseName
+from _lcm.regime_building.lottery_contraction import (
+    LotteryContraction,
+    LotteryContractionSource,
+    plan_lottery_contraction,
+)
 from _lcm.regime_building.next_state import (
     get_next_state_function_for_solution,
     get_next_stochastic_weights_function,
@@ -578,6 +583,7 @@ def get_Q_and_F(
     ),
     count_raise_landings: bool = False,
     bound_specs: tuple[PostDecisionBoundSpec, ...] = (),
+    lottery_contraction_source: LotteryContractionSource | None = None,
 ) -> QAndFFunction:
     """Get the state-action (Q) and feasibility (F) function for a non-terminal period.
 
@@ -646,6 +652,9 @@ def get_Q_and_F(
             every `off_grid="raise"` grid its continuation reads, on the branch
             each landing is read through. A kernel finding no such grid counts
             nothing and is the kernel built without the flag.
+        lottery_contraction_source: The source regime's state grids and action
+            names, under which every eligible draw is summed into its target's
+            value array once per call; `None` enumerates every draw.
 
     Returns:
         A function that computes the state-action values (Q) and the feasibilities (F)
@@ -681,6 +690,7 @@ def get_Q_and_F(
         co_map_state_names=co_map_state_names,
         gated_continuations=gated_continuations,
         count_raise_landings=count_raise_landings,
+        lottery_contraction_source=lottery_contraction_source,
         extend_process_edges=phase_name,
     )
     _build_W_kwargs = _get_build_W_kwargs(
@@ -2942,6 +2952,7 @@ def _get_compute_CE(
     ),
     flat_param_names: frozenset[QualifiedName] | None = None,
     count_raise_landings: bool = False,
+    lottery_contraction_source: LotteryContractionSource | None = None,
     extend_process_edges: Literal["solution", "simulation"] | None = None,
 ) -> tuple[
     Callable[..., ContinuationAggregate],
@@ -3004,6 +3015,9 @@ def _get_compute_CE(
             `off_grid="raise"` grid the continuation reads. A landing counts
             where its target regime and its lottery node are live and, through
             a gated edge, where the gate routes to the grid it is read on.
+        lottery_contraction_source: The source regime's state grids and action
+            names, or `None`. Given, each target's eligible draws are summed into
+            its value array once per call on the linear-expectation route.
         extend_process_edges: The phase whose process values beyond the outer
             nodes extend the continuation linearly along the edge segment, as the
             blend of the continuations under the edge node's row and its
@@ -3037,6 +3051,7 @@ def _get_compute_CE(
                 gated_continuations=gated_continuations,
                 flat_param_names=flat_param_names,
                 count_raise_landings=count_raise_landings,
+                lottery_contraction_source=lottery_contraction_source,
             ),
         )
     # The plain expectation reduces each target on its own; every other
@@ -3065,6 +3080,11 @@ def _get_compute_CE(
             allow_shock_average=reduces_per_target,
             allowed_shock_inputs=flat_param_names,
             count_raise_landings=count_raise_landings,
+            # A per-draw sum commutes with the plain expectation only; every
+            # other certainty equivalent transforms each joint node first.
+            lottery_contraction_source=(
+                lottery_contraction_source if reduces_per_target else None
+            ),
         )
         for target_regime_name in period_targets
     }
@@ -3152,6 +3172,12 @@ def _get_compute_CE(
         compute_regime_transition_probs,
         *(c.next_states for c in continuations.values()),
         *(c.lottery_weights for c in continuations.values()),
+        *(
+            weights
+            for c in continuations.values()
+            if c.lottery_contraction is not None
+            for weights in c.lottery_contraction.weight_functions
+        ),
     )
     continuation_arg_names = frozenset(
         name
@@ -4121,10 +4147,38 @@ class _TargetContinuation:
     )
     """The mapped reader returns value plus mandatory participation integrity."""
 
+    lottery_contraction: LotteryContraction | None = field(
+        default=None, metadata={"fingerprint_omit_if_default": True}
+    )
+    """The draws summed into the received value array before it is read.
+
+    A contracted draw has no node axis: `next_states` reads its table at the
+    current node, so the value array is contracted first, once per call.
+    """
+
     gated_read: bool = field(
         default=False, metadata={"fingerprint_omit_if_default": True}
     )
     """The value reader projects a gated continuation's channels."""
+
+    def with_contracted_draws(
+        self, *, values: FloatND, states_actions_params: QAndFKwargs
+    ) -> FloatND:
+        """Return the received value array with the contracted draws summed in.
+
+        Args:
+            values: The target's value array as the continuation receives it.
+            states_actions_params: The kernel's arguments.
+
+        Returns:
+            The array `next_V` reads: `values` itself without a contraction.
+
+        """
+        if self.lottery_contraction is None:
+            return values
+        return self.lottery_contraction(
+            values=values, states_actions_params=states_actions_params
+        )
 
     @no_type_check
     def read(
@@ -4171,6 +4225,10 @@ class _TargetContinuation:
                     ),
                     dimension=0,
                 )
+        # Contract before slicing fixed axes, while the received value layout remains.
+        next_values = self.with_contracted_draws(
+            values=next_values, states_actions_params=states_actions_params
+        )
         fixed_slice_names = frozenset(name for _, name in self.fixed_value_axes)
         # Fixed components select one value surface, not one value per
         # lottery node. Slice them before mapping the nodes so the reader
@@ -4597,6 +4655,7 @@ def _build_target_continuation(
     allowed_shock_inputs: frozenset[str] | None = None,
     count_raise_landings: bool = False,
     participation_reader: Callable[..., FloatND] | None = None,
+    lottery_contraction_source: LotteryContractionSource | None = None,
 ) -> _TargetContinuation:
     """Build one target's continuation machinery.
 
@@ -4632,6 +4691,10 @@ def _build_target_continuation(
             parameters. `None` skips that check.
         count_raise_landings: Whether `next_V` also counts, per node, the raw
             landings outside each `off_grid="raise"` grid it reads.
+        lottery_contraction_source: The source regime's state grids and action
+            names, or `None`. Given, every draw that only indexes the target's
+            value and whose weights read no cell input is summed into the value
+            array instead of mapped over; see `lottery_contraction`.
 
     Returns:
         The target's continuation machinery.
@@ -4642,6 +4705,25 @@ def _build_target_continuation(
             nodes are not the landings.
 
     """
+    # From here on a contracted draw is a deterministic law reading the current
+    # node, and the value array it indexes has the source's nodes.
+    lottery_contraction, bundle, transition_plans, v_interpolation_info = (
+        _contract_target_lotteries(
+            target_regime_name=target_regime_name,
+            functions=functions,
+            bundle=bundle,
+            transition_plans=transition_plans,
+            v_interpolation_info=v_interpolation_info,
+            co_map_state_names=co_map_state_names,
+            source=lottery_contraction_source,
+            ordinary_reader=(
+                gated_continuation is None
+                and n_stakeholders is None
+                and not count_raise_landings
+                and participation_reader is None
+            ),
+        )
+    )
     lottery_variables = tuple(
         key for key in bundle if transition_plans[target_regime_name].is_lottery(key)
     )
@@ -4981,7 +5063,79 @@ def _build_target_continuation(
         landing_checks=landing_counting.checks,
         node_weight_names=landing_counting.node_weight_names,
         participation_query=participation_reader is not None,
+        lottery_contraction=lottery_contraction,
         gated_read=gated_continuation is not None,
+    )
+
+
+def _contract_target_lotteries(
+    *,
+    target_regime_name: RegimeName,
+    functions: EconFunctionsMapping,
+    bundle: MappingProxyType[TransitionFunctionName, TransitionFunction],
+    transition_plans: TargetTransitionPlans,
+    v_interpolation_info: VInterpolationInfo,
+    co_map_state_names: tuple[StateName, ...],
+    source: LotteryContractionSource | None,
+    ordinary_reader: bool,
+) -> tuple[
+    LotteryContraction | None,
+    MappingProxyType[TransitionFunctionName, TransitionFunction],
+    TargetTransitionPlans,
+    VInterpolationInfo,
+]:
+    """Return one target's contraction and the inputs the continuation is built on.
+
+    Only an ordinary reader qualifies: a gated, collective, landing-counting or
+    participation-querying continuation reads its nodes as nodes, so its draws
+    keep their axes. Without a
+    contraction the inputs come back unchanged.
+    """
+    unchanged = (None, bundle, transition_plans, v_interpolation_info)
+    if (
+        source is None
+        or not ordinary_reader
+        or target_regime_name in source.rebound_targets
+    ):
+        return unchanged
+    lottery_names = tuple(
+        key for key in bundle if transition_plans[target_regime_name].is_lottery(key)
+    )
+    read_draws = frozenset(
+        draw
+        for draws in draw_dependencies_by_law(
+            bundle=bundle, functions=functions, stochastic_names=lottery_names
+        ).values()
+        for draw in draws
+    )
+    contraction = plan_lottery_contraction(
+        target_regime_name=target_regime_name,
+        bundle=bundle,
+        functions=functions,
+        transition_plans=transition_plans,
+        v_interpolation_info=v_interpolation_info,
+        received_state_names=tuple(
+            name
+            for name in v_interpolation_info.state_names
+            if name not in co_map_state_names
+        ),
+        read_draws=read_draws,
+        source=source,
+    )
+    if contraction is None:
+        return unchanged
+    contracted_bundle = contraction.rewrite_bundle(bundle=bundle)
+    return (
+        contraction,
+        contracted_bundle,
+        contraction.rewrite_plans(
+            target_regime_name=target_regime_name,
+            transition_plans=transition_plans,
+            bundle=contracted_bundle,
+        ),
+        contraction.rewrite_v_interpolation_info(
+            v_interpolation_info=v_interpolation_info, source=source
+        ),
     )
 
 

@@ -41,6 +41,7 @@ from lcm.exceptions import (
     RegimeInitializationError,
 )
 from lcm.params import UserMappingLeaf
+from lcm.solvers import GridSearch
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -175,6 +176,7 @@ def _model(
     law_dependency: Literal["direct", "helper", "chain"] = "direct",
     enable_jit: bool = True,
     law: Callable[..., FloatND] | None = None,
+    lottery_contraction: bool = True,
 ) -> Model:
     model_states: dict[str, DiscreteGrid] = {}
     model_laws = {}
@@ -217,6 +219,7 @@ def _model(
                     "wealth": _next_wealth,
                     **laws,
                 },
+                solver=GridSearch(lottery_contraction=lottery_contraction),
             ),
             "dead": Regime(functions={"utility": lambda: 0.0}),
         },
@@ -1302,10 +1305,15 @@ def test_fixed_component_valid_law_matches_the_unannotated_law_under_validation(
 ):
     """Keep value metadata exact and agree to one array-scale ULP under validation."""
     params = {"discount_factor": 0.95}
-    factored = _model(factored=True).solve(params=params, log_level="debug")
-    unannotated = _model(factored=True, fixed_component=None).solve(
+    # The annotated law keeps its fixed-component layout, which lottery
+    # contraction does not apply to, while the unannotated one would be
+    # contracted: switched off for both, the two compute the same expectation.
+    factored = _model(factored=True, lottery_contraction=False).solve(
         params=params, log_level="debug"
     )
+    unannotated = _model(
+        factored=True, fixed_component=None, lottery_contraction=False
+    ).solve(params=params, log_level="debug")
     # Code `2 * group + position` sits at `[group, position]` in the factored layout.
     got = np.asarray(factored.values[0]["alive"]).reshape(4, 5)
     expected = np.asarray(unannotated.values[0]["alive"])
