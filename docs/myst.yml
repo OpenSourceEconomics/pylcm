@@ -46,6 +46,7 @@ project:
         - file: user_guide/defining_models.md
         - file: user_guide/period_time.md
         - file: user_guide/dated_regime_graph.md
+        - file: user_guide/regime_checker.md
         - file: user_guide/migrating_dated_regimes.md
         - file: user_guide/regimes.ipynb
         - file: user_guide/grids.md

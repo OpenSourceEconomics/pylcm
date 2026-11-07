@@ -371,6 +371,7 @@ from lcm._solver_api.entries import _LazyEntry
 from lcm.ages import AgeGrid
 from lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
 from lcm.composite_state import CompositeState
+from lcm.declarations import ModelDeclarations, _get_model_declarations
 from lcm.decoupled import Decoupled
 from lcm.exceptions import (
     ExecutionPlanningError,
@@ -1991,6 +1992,29 @@ class Model:
     def edges(self) -> ModelEdges:
         """The edges exactly as declared in `Model(edges=...)`, laws included."""
         return self._edges
+
+    def get_declarations(self) -> ModelDeclarations:
+        """Return resolved graph declarations and their declared function inputs.
+
+        Read the model's construction metadata without evaluating callbacks,
+        rebuilding factories, compiling programs, solving or simulating. This
+        view needs no runtime parameters. Each phase retains its own full domains.
+
+        Returns:
+            A read-only declaration view with schema version 1.
+
+        Raises:
+            ValueError: If a legacy restored model lacks construction metadata.
+        """
+        if self._declaration_preparation is None:
+            msg = "This restored model has no construction declaration metadata."
+            raise ValueError(msg)
+        return _get_model_declarations(
+            structure=self._declaration_preparation.prepared_structure,
+            graph=self.graph,
+            n_periods=self.n_periods,
+            declared_regimes=self.user_regimes,
+        )
 
     @property
     def declared_transitions(

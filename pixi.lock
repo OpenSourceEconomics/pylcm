@@ -26273,6 +26273,7 @@ packages:
   - h5py>=3.12
   - jax>=0.12
   - jaxtyping>=0.3.11
+  - networkx>=3.6.1
   - orbax-checkpoint>=0.11
   - pandas
   - pyarrow
