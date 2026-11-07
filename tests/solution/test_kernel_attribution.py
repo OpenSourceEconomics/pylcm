@@ -153,7 +153,7 @@ def test_a_deduplicated_module_reports_how_many_triples_it_serves(
     and the log has to say which it is.
     """
     monkeypatch.setenv("LCM_LOG_KERNEL_ATTRIBUTION", "1")
-    model = get_model(n_periods=_N_PERIODS)
+    model = get_model.__wrapped__(n_periods=_N_PERIODS)
     params = get_params(n_periods=_N_PERIODS)
     with caplog.at_level(logging.NOTSET, logger="lcm"):
         model.solve(params=params, log_level="off")

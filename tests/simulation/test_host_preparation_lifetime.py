@@ -18,10 +18,7 @@ This module asserts, on a small CPU model, for both an unbudgeted
 2. Value-dependent per-call checks still run: a same-shaped rejected input
    still raises, at every log level.
 3. Backend compile requests are zero on the warm hit.
-4. The per-call jaxpr trace-request count on a warm call is unaffected by
-   migrating `_trace_process_jaxpr`'s nested callback: `_produce_staged`
-   calls it, uncached, on every solve, so the trace itself is a separate,
-   already-known cost (P2), not something this wrapper migration removes.
+4. Warm calls reuse the process-grid trace from the first call.
 """
 
 import builtins
@@ -289,24 +286,18 @@ def test_migrated_process_grid_call_is_module_level_and_reused() -> None:
     assert "<locals>" not in first.__qualname__
 
 
-def test_warm_call_trace_request_count_is_unaffected_by_the_migration() -> None:
-    """Migrating `_trace_process_jaxpr`'s nested callback does not remove the
-    per-warm-call jaxpr retrace: `_produce_staged` calls `jax.make_jaxpr` fresh
-    on every solve, uncached, so this is the separate, already-known P2
-    one-retrace-per-warm-call cost, not a side effect of the beartype-wrapper
-    migration. This test documents the current (post-migration) count so a
-    future change to that caching boundary shows up here.
-    """
+def test_warm_call_reuses_the_process_grid_trace() -> None:
+    """The first call traces the process grid and an identical call reuses it."""
     model, params = _model(execution_config=None)
     initial_conditions = _initial_conditions()
 
-    # Warm the executable cache.
-    _run_simulate(
-        model=model,
-        params=params,
-        initial_conditions=initial_conditions,
-        log_level="off",
-    )
+    with count_compile_requests() as cold:
+        _run_simulate(
+            model=model,
+            params=params,
+            initial_conditions=initial_conditions,
+            log_level="off",
+        )
 
     with count_compile_requests() as counts:
         _run_simulate(
@@ -316,10 +307,8 @@ def test_warm_call_trace_request_count_is_unaffected_by_the_migration() -> None:
             log_level="off",
         )
 
-    # A warm call still retraces the continuous-process jaxpr at least once
-    # (the known P2 site); this migration only removes the beartype wrapper
-    # compile, not the trace itself.
-    assert counts.trace_requests >= 1
+    assert cold.trace_requests > 0
+    assert counts.trace_requests == 0
 
 
 def _module_level_pure_operation(*, value: PytreeValue) -> PytreeValue:

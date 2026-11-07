@@ -23,12 +23,9 @@ import numpy as np
 import pytest
 from numpy.testing import assert_allclose
 
-from _lcm.certainty_equivalent import (
-    _largest_selected,
-    _scaled_lottery_terms_with_scale,
-)
 from _lcm.probability import is_live
 from _lcm.regime_building.zero_safe import zero_safe_average
+from _lcm.zero_safe import _largest_selected, scaled_lottery_terms_with_scale
 from lcm.certainty_equivalent import LinearExpectation
 from lcm.typing import FloatND, IntND
 from tests.conftest import DECIMAL_PRECISION
@@ -539,7 +536,7 @@ def test_normalized_lottery_terms_keep_the_physical_returned_scale(
     values, coefficients, _, _, _ = _get_tiny_level_derivative_specimen(case="unequal")
     coefficients = tuple(c * coefficient_factor for c in coefficients)
     shifts = (0, 3)
-    evaluate = _scaled_lottery_terms_with_scale
+    evaluate = scaled_lottery_terms_with_scale
     if enable_jit:
         evaluate = jax.jit(evaluate)
     terms, masses, common_scale = evaluate(
