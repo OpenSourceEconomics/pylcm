@@ -1,5 +1,6 @@
 """Editable temporal graph views preserve canonical declaration metadata."""
 
+import inspect
 from fractions import Fraction
 from importlib import import_module
 from importlib.util import find_spec
@@ -121,6 +122,45 @@ def test_regime_checker_binds_transition_authority(*, tampered: bool) -> None:
     authority = contract.inspect_authority(Transition)
     if tampered:
         authority["file_sha256"] = "0" * 64
+    assert contract.matches_authority(
+        name="lcm.transition.Transition", observed=authority
+    ) is (not tampered)
+
+
+@pytest.mark.parametrize("newline", ["\n", "\r\n"])
+@pytest.mark.parametrize("tampered", [False, True])
+def test_regime_checker_authority_preserves_file_tamper_checks_across_newlines(
+    *,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    newline: str,
+    tampered: bool,
+) -> None:
+    """Line endings preserve authority, while changes outside the class do not."""
+    contract = import_module("_lcm_regime_finder.current_api_contract")
+    baseline = contract.inspect_authority(Transition)
+    assert baseline is not None
+    original_sourcefile = inspect.getsourcefile
+    filename = original_sourcefile(Transition)
+    assert filename is not None
+    source = Path(filename).read_bytes().replace(b"\r\n", b"\n")
+    if tampered:
+        source += b"\n# changed source authority\n"
+    contents = source.replace(b"\n", newline.encode())
+    snapshot = tmp_path / "transition.py"
+    snapshot.write_bytes(contents)
+    assert snapshot.read_bytes() == contents
+    assert (b"\r\n" in contents) is (newline == "\r\n")
+    monkeypatch.setattr(
+        inspect,
+        "getsourcefile",
+        lambda cls: str(snapshot) if cls is Transition else original_sourcefile(cls),
+    )
+
+    authority = contract.inspect_authority(Transition)
+
+    assert authority is not None
+    assert authority["source_sha256"] == baseline["source_sha256"]
     assert contract.matches_authority(
         name="lcm.transition.Transition", observed=authority
     ) is (not tampered)
