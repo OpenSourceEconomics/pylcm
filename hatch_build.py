@@ -94,9 +94,12 @@ def _tool_version(executable: str | None) -> str | None:
     """Return one compiler's version report for the installed-build manifest."""
     if executable is None:
         return None
+    command = [executable]
+    if Path(executable).stem.lower() != "cl":
+        command.append("--version")
     try:
         result = subprocess.run(  # noqa: S603
-            [executable, "--version"],
+            command,
             capture_output=True,
             text=True,
             check=False,
@@ -110,9 +113,17 @@ def _tool_version(executable: str | None) -> str | None:
     return f"exit={result.returncode}\n{report}"
 
 
+def _find_cpu_compiler() -> str | None:
+    """Find the compiler used to build the CPU payload on this platform."""
+    override = os.environ.get("CXX")
+    if sys.platform == "win32":
+        return override or shutil.which("cl")
+    return override or shutil.which("c++") or shutil.which("g++")
+
+
 def native_build_inputs(*, root: Path) -> dict[str, object]:
     """Return all inputs that decide whether an installed payload is reusable."""
-    compiler = os.environ.get("CXX") or shutil.which("c++") or shutil.which("g++")
+    compiler = _find_cpu_compiler()
     nvcc = shutil.which("nvcc")
     try:
         from importlib.metadata import version  # noqa: PLC0415
@@ -486,9 +497,9 @@ def build_exact_affine(
     source_dir = root / PACKAGE_DIR
     output_dir = output_dir or root / ".pylcm-native-build"
     include_dir = jax_include_dir or _find_jax_include_dir()
+    compiler = _find_cpu_compiler()
 
     if sys.platform == "win32":
-        compiler = os.environ.get("CXX") or shutil.which("cl")
         if compiler is not None and not _accepts_msvc_flags(compiler):
             msg = (
                 f"CXX is set to {compiler!r}, which does not take MSVC flags. The "
@@ -532,7 +543,6 @@ def build_exact_affine(
             )
         ]
 
-    compiler = os.environ.get("CXX") or shutil.which("c++") or shutil.which("g++")
     if compiler is None:
         msg = (
             "No C++ compiler found. pylcm's certified upper envelope needs one to "
