@@ -202,7 +202,9 @@ class GridSearch(Solver):
     same at every action, and the solve takes it once per kernel call instead of
     once per state-action candidate. Values agree with the per-candidate
     expectation to rounding; `False` keeps every draw a node axis of the
-    continuation.
+    continuation. Only the solve contracts: the simulation evaluates its Q with
+    every draw enumerated, so its choices can differ from the solve's only where
+    two actions tie to rounding.
     """
 
     @property

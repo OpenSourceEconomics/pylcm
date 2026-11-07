@@ -19,6 +19,7 @@ import gc
 import importlib
 import json
 import os
+import re
 import subprocess
 import threading
 import weakref
@@ -72,7 +73,8 @@ from lcm.solver_api import (
     SolutionResult,
     ValueStore,
 )
-from lcm.typing import Int1D, RegimeName
+from lcm.typing import Int1D, RegimeName, UserParams
+from lcm_examples import collective_household as household
 from tests import test_nan_diagnostics as nan_diagnostics
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
 from tests.regime_building.test_collective_regime_simulate import (
@@ -82,6 +84,9 @@ from tests.regime_building.test_collective_regime_simulate import (
 from tests.simulation import test_type_grouped_simulation as life_cycle
 from tests.solution import test_block_major_lifetime as lifetime
 from tests.solution._callback_types import (
+    CompileFunctionsKwargs,
+    FloorRefusalKwargs,
+    LowerWaveKwargs,
     ResidentInventoryKwargs,
     ResidentInventoryResult,
     RunPeriodKernelKwargs,
@@ -404,7 +409,7 @@ def test_host_storage_simulates_the_device_storage_panel(
 
 
 def _value_periods_on_the_device_at_each_kernel(
-    *, monkeypatch: pytest.MonkeyPatch, model: Model
+    *, monkeypatch: pytest.MonkeyPatch, model: Model, params: UserParams = _PARAMS
 ) -> list[tuple[int, frozenset[int]]]:
     """Return, per kernel start, its period and the periods of live device values.
 
@@ -434,7 +439,7 @@ def _value_periods_on_the_device_at_each_kernel(
 
     with monkeypatch.context() as patch:
         patch.setattr(backward_induction, "_run_period_kernel", _run)
-        model.solve(params=_PARAMS, log_level="off")
+        model.solve(params=params, log_level="off")
     return samples
 
 
@@ -783,7 +788,7 @@ _AMPLE_BUDGET = 2**32
 
 
 def _value_periods_charged_at_each_cell(
-    *, monkeypatch: pytest.MonkeyPatch, model: Model
+    *, monkeypatch: pytest.MonkeyPatch, model: Model, params: UserParams = _PARAMS
 ) -> list[tuple[int, frozenset[int]]]:
     """Return, per planned cell, its period and the periods of the values it charges."""
     inventories: list[ResidentInventoryResult] = []
@@ -798,7 +803,7 @@ def _value_periods_charged_at_each_cell(
 
     with monkeypatch.context() as patch:
         patch.setattr(backward_induction, "_resident_inventory_by_triple", _capture)
-        model.solve(params=_PARAMS, log_level="off")
+        model.solve(params=params, log_level="off")
     return [
         (
             period,
@@ -841,6 +846,45 @@ def test_host_storage_charges_the_planner_only_the_values_on_the_device(
     )
 
 
+def _household_on_the_host() -> Model:
+    return household.get_model(
+        n_periods=5,
+        wealth_n_points=4,
+        consumption_n_points=3,
+        execution_config=ExecutionConfig(
+            value_storage="host", device_memory_bytes=_AMPLE_BUDGET
+        ),
+    )
+
+
+def test_host_storage_charges_a_no_read_core_only_the_values_on_the_device(
+    *, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The planner charges what the solve keeps, though a core declares no reads.
+
+    The collective household's single regimes run a core that declares no reads,
+    so it may read any next-period value or continuation leaf it can reach. The
+    solve frees those with the window all the same, and the planner charges a
+    cell no value beyond it: pinned for the whole solve, every later period's
+    values would count as resident.
+    """
+    charged = _value_periods_charged_at_each_cell(
+        monkeypatch=monkeypatch,
+        model=_household_on_the_host(),
+        params=household.get_params(),
+    )
+    resident = _value_periods_on_the_device_at_each_kernel(
+        monkeypatch=monkeypatch,
+        model=_household_on_the_host(),
+        params=household.get_params(),
+    )
+
+    assert charged
+    assert resident
+    for period, periods in (*charged, *resident):
+        assert periods <= {period, period + 1, period + 2}, (charged, resident)
+
+
 def _cell_refusal(*, value_storage: Literal["device", "host"]) -> str:
     """Return the message a cell's workspace refusal carries under one storage."""
     error = backward_induction._width_selection_failure(
@@ -868,6 +912,238 @@ def test_a_residency_refusal_under_device_storage_names_host_storage() -> None:
 def test_a_residency_refusal_under_host_storage_does_not_name_it_again() -> None:
     """Host storage already keeps solved values off the device."""
     assert "value_storage" not in _cell_refusal(value_storage="host")
+
+
+def _compilation_waves(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    """Record the number of new lowerings of every compilation wave."""
+    waves: list[int] = []
+    lower_and_compile_wave = backward_induction._lower_and_compile_wave
+
+    def _count(**kwargs: Unpack[LowerWaveKwargs]) -> None:
+        waves.append(len(kwargs["new_lowerings"]))
+        lower_and_compile_wave(**kwargs)
+
+    monkeypatch.setattr(backward_induction, "_lower_and_compile_wave", _count)
+    return waves
+
+
+def _largest_floor(*, monkeypatch: pytest.MonkeyPatch) -> int:
+    """Return the largest floor of the three-regime model's cells, device storage."""
+    floors: list[int] = []
+    fail_if_a_floor_fills_the_budget = (
+        backward_induction._fail_if_a_floor_fills_the_budget
+    )
+
+    def _record(**kwargs: Unpack[FloorRefusalKwargs]) -> None:
+        floors.extend(
+            backward_induction._narrowing_floor_bytes(inventory=position)
+            for position in kwargs["resident_inventory"].values()
+        )
+        fail_if_a_floor_fills_the_budget(**kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(backward_induction, "_fail_if_a_floor_fills_the_budget", _record)
+        _three_regime_model(ExecutionConfig(device_memory_bytes=_AMPLE_BUDGET)).solve(
+            params=_PARAMS, log_level="off"
+        )
+    return max(floors)
+
+
+def test_a_cell_whose_floor_fills_the_budget_is_refused_before_compiling(
+    *, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No workspace fits beside the stored values, so nothing is compiled first.
+
+    At the first period's floor the later periods' cells would still compile,
+    but the values the first period keeps resident under device storage already
+    fill the budget.
+    """
+    budget = _largest_floor(monkeypatch=monkeypatch)
+    waves = _compilation_waves(monkeypatch)
+    with pytest.raises(WorkspaceBudgetError, match="nothing was compiled"):
+        _three_regime_model(ExecutionConfig(device_memory_bytes=budget)).solve(
+            params=_PARAMS, log_level="off", runtime_checks=False
+        )
+
+    assert not any(waves), waves
+
+
+def test_a_device_refusal_names_the_host_storage_total_of_its_cell(
+    *, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The refusal's host-storage total is the one a host-storage solve finds.
+
+    Just above the largest floor a cell is refused under host storage too. With
+    that cell's host-storage total as the budget, the device-storage solve
+    refuses the same cell after one planning pass, saying host storage makes it
+    fit.
+    """
+    budget = _largest_floor(monkeypatch=monkeypatch) + 64
+    with pytest.raises(backward_induction._CellBudgetError) as refused_on_the_host:
+        _three_regime_model(
+            ExecutionConfig(value_storage="host", device_memory_bytes=budget)
+        ).solve(params=_PARAMS, log_level="off", runtime_checks=False)
+    match = re.search(
+        r"the smallest total is (\d+) bytes", str(refused_on_the_host.value)
+    )
+    assert match is not None
+    host_total = int(match.group(1))
+
+    passes: list[int] = []
+    compile_all_functions = backward_induction._compile_all_functions
+
+    def _count(
+        **kwargs: Unpack[CompileFunctionsKwargs],
+    ) -> backward_induction._CompiledPrograms:
+        passes.append(len(passes))
+        return compile_all_functions(**kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(backward_induction, "_compile_all_functions", _count)
+        with pytest.raises(backward_induction._CellBudgetError) as refused:
+            _three_regime_model(ExecutionConfig(device_memory_bytes=host_total)).solve(
+                params=_PARAMS, log_level="off", runtime_checks=False
+            )
+
+    assert refused.value.triple == refused_on_the_host.value.triple
+    assert refused.value.host_fits
+    assert f"would be {host_total} bytes, which fits the budget" in str(refused.value)
+    assert len(passes) == 1
+
+
+def _cell_refusal_with_host_storage(*, fits: bool) -> str:
+    """Return a device-storage refusal that compares host storage."""
+    error = backward_induction._width_selection_failure(
+        triple=("a", 0, "core"),
+        resident_bytes=200,
+        transfer_scratch_bytes={},
+        budget_bytes=100,
+        execution=ResolvedExecution(
+            device_ids=(0,),
+            sharded_states=frozenset(),
+            axis_widths=MappingProxyType({}),
+            device_memory_bytes=100,
+            value_storage="device",
+        ),
+        error=WorkspaceBudgetError("No width fits."),
+        host=backward_induction._HostStorageFit(
+            what="the smallest total", needed_bytes=90 if fits else 150, fits=fits
+        ),
+    )
+    assert isinstance(error, backward_induction._CellBudgetError)
+    assert error.host_fits is fits
+    return str(error)
+
+
+def test_a_refusal_says_when_host_storage_makes_the_cell_fit() -> None:
+    message = _cell_refusal_with_host_storage(fits=True)
+
+    assert "value_storage='host'" in message
+    assert "90 bytes, which fits the budget: switch to host storage" in message
+
+
+def test_a_refusal_says_when_host_storage_does_not_make_the_cell_fit() -> None:
+    message = _cell_refusal_with_host_storage(fits=False)
+
+    assert "150 bytes, which still exceeds the budget" in message
+    assert "switch to host storage" not in message
+
+
+def _refused_cell(
+    *, reservation_bytes: int, host_fits: bool = False
+) -> backward_induction._CellBudgetError:
+    """A refusal of the household's first single cell, with room for one chunk."""
+    return backward_induction._CellBudgetError(
+        message="Refused.",
+        triple=("single_f", 0, "core"),
+        reservation_bytes=reservation_bytes,
+        resident_bytes=50,
+        budget_bytes=100,
+        floor_bytes=50,
+        host_fits=host_fits,
+    )
+
+
+def _planning_passes(
+    *,
+    monkeypatch: pytest.MonkeyPatch,
+    refusal: Callable[[int], backward_induction._CellBudgetError | None],
+) -> list[int]:
+    """Solve the household, refusing each planning pass as `refusal` says.
+
+    `refusal` receives the chunk of the refused cell's kernel in that pass and
+    returns the refusal, or `None` to plan for real. Returns those chunks.
+    """
+    chunks: list[int] = []
+    compile_all_functions = backward_induction._compile_all_functions
+
+    def _refuse(
+        **kwargs: Unpack[CompileFunctionsKwargs],
+    ) -> backward_induction._CompiledPrograms:
+        chunk = backward_induction._workspace_chunk(
+            regime=kwargs["regimes"]["single_f"], period=0
+        )
+        assert chunk is not None
+        chunks.append(chunk)
+        error = refusal(chunk)
+        if error is None:
+            return compile_all_functions(**kwargs)
+        raise backward_induction._CellBudgetRefusalsError([error])
+
+    monkeypatch.setattr(backward_induction, "_compile_all_functions", _refuse)
+    household.get_model(
+        n_periods=3,
+        wealth_n_points=4,
+        consumption_n_points=3,
+        execution_config=ExecutionConfig(device_memory_bytes=_AMPLE_BUDGET),
+    ).solve(params=household.get_params(), log_level="off")
+    return chunks
+
+
+def test_narrowing_stops_once_the_reservation_stops_shrinking(
+    *, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A reservation that stays put after a narrowing ends it after two passes."""
+    chunks: list[int] = []
+
+    def _stalled(chunk: int) -> backward_induction._CellBudgetError:
+        chunks.append(chunk)
+        return _refused_cell(reservation_bytes=80)
+
+    with pytest.raises(WorkspaceBudgetError, match="no narrower workspace fits"):
+        _planning_passes(monkeypatch=monkeypatch, refusal=_stalled)
+
+    assert chunks == [4, 2]
+
+
+def test_narrowing_goes_on_while_the_reservation_shrinks_with_the_chunk(
+    *, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A reservation proportional to the chunk keeps narrowing until it fits."""
+    chunks = _planning_passes(
+        monkeypatch=monkeypatch,
+        refusal=lambda chunk: (
+            None if chunk == 1 else _refused_cell(reservation_bytes=20 * chunk)
+        ),
+    )
+
+    assert chunks == [4, 2, 1]
+
+
+def test_a_cell_that_fits_under_host_storage_is_refused_without_narrowing(
+    *, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The refusal says to switch storage after the first pass."""
+    chunks: list[int] = []
+
+    def _fits_on_the_host(chunk: int) -> backward_induction._CellBudgetError:
+        chunks.append(chunk)
+        return _refused_cell(reservation_bytes=80, host_fits=True)
+
+    with pytest.raises(backward_induction._CellBudgetError):
+        _planning_passes(monkeypatch=monkeypatch, refusal=_fits_on_the_host)
+
+    assert chunks == [4]
 
 
 _STORED_VALUE = jnp.ones((4, 2))
