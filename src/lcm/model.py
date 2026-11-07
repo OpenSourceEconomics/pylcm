@@ -249,6 +249,7 @@ from _lcm.solution.artifacts import (
     selected_persistable_artifact_refs,
 )
 from _lcm.solution.backward_induction import (
+    ExecutableCache,
     GatherChecks,
     _build_base_state_action_spaces,
     _reject_edge_fold_state_param_collisions,
@@ -1447,6 +1448,8 @@ class Model:
         # Fusion verdicts read off compiled solve programs; warm solves reuse the
         # executables, so they reuse the verdicts instead of re-reading the HLO.
         self._gather_checks: GatherChecks = {}
+        # Lowering keys contain specialization and layouts, never call operands.
+        self._solve_executable_cache = ExecutableCache()
         # Immutable structural blueprints of earlier solves, keyed by abstract
         # schema; a warm solve binds one instead of resolving every program.
         self._structural_blueprints: StructuralBlueprintCache = (
@@ -2286,6 +2289,7 @@ class Model:
         self._active_generation = None
         self._initial_generation_key = state.get("_initial_generation_key")
         self._gather_checks = {}
+        self._solve_executable_cache = ExecutableCache()
         self._structural_blueprints = StructuralBlueprintCache()
         self._validated_selection_params = set()
         self._solution_param_projection = solution_param_projection(self._regimes)
@@ -3181,6 +3185,7 @@ class Model:
                 period_capture=period_capture,
                 structural_blueprints=self._structural_blueprints,
                 value_archive=value_archive,
+                executable_cache=self._solve_executable_cache,
             )
         except InvalidValueFunctionError as exc:
             regime = self._user_regimes.get(exc.regime_name or "")

@@ -36,6 +36,14 @@ rather than multiplying a non-finite value. The mean is held between its
 smallest and largest live value, so a draw summed on its own at near-maximal
 values stays as finite as the joint expectation it replaces.
 
+The identity holds over the finite values and `-inf`. Interpolation reads `-inf`
+whenever a corner under nonzero weight holds `-inf`, and the contracted table is
+`-inf` wherever a live draw is, so both routes give `-inf` exactly when some live
+draw at some live corner is infeasible. They part only where a `+inf` meets a
+`-inf` across draws: the per-node expectation then averages a `-inf` read with a
+`+inf` read into NaN, while the contracted read is `-inf`. A next-period value of
+`+inf` is outside the supported domain.
+
 Only the linear expectation reduces per target, and only there does a
 per-draw sum commute with the certainty equivalent; the caller enables the
 contraction on that route alone.

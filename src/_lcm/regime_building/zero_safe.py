@@ -159,11 +159,6 @@ import jax
 import jax.numpy as jnp
 from jax.custom_derivatives import SymbolicZero
 
-from _lcm.certainty_equivalent import (
-    _center_lottery_shifts,
-    _scaled_lottery_mean,
-    _scaled_lottery_terms_with_scale,
-)
 from _lcm.probability import (
     _IntegerTangent,
     _unbiased_exponent,
@@ -172,7 +167,12 @@ from _lcm.probability import (
     scaled_by_power_of_two,
     scaled_down_by_power_of_two,
 )
-from _lcm.zero_safe import zero_safe_weighted_term
+from _lcm.zero_safe import (
+    center_lottery_shifts,
+    scaled_lottery_mean,
+    scaled_lottery_terms_with_scale,
+    zero_safe_weighted_term,
+)
 from lcm.typing import FloatND, IntND
 
 
@@ -213,7 +213,7 @@ def zero_safe_average(
     the latter replaced it; the two agree, as their bit-for-bit equality on
     non-positive shifts implies.
 
-    Scaled lotteries use the certainty equivalent's `_scaled_lottery_mean`.
+    Scaled lotteries use `scaled_lottery_mean`.
     It forms every weighted value from normal significands and places the
     numerator and the mass on their own binary scales. A finite mean then
     remains finite when its unnormalized numerator exceeds the format's range,
@@ -306,7 +306,7 @@ def _scaled_mean_primal(
     values: FloatND, coefficients: FloatND, shifts: IntND
 ) -> FloatND:
     """Reduce one normalized lottery without exposing independent AD cotangents."""
-    mean, total_weight = _scaled_lottery_mean(
+    mean, total_weight = scaled_lottery_mean(
         values=values, coefficients=coefficients, shifts=shifts
     )
     _raise_if_concretely_zero(total_weight=total_weight, context="zero_safe_average")
@@ -332,7 +332,7 @@ def _scaled_mean_jvp(
     values_dot, coefficients_dot, _ = tangents
     # A common exponent offset cancels in a normalized mean and its partials.
     # Remove it before subtracting floating coefficient exponents.
-    shifts = _center_lottery_shifts(coefficients=coefficients, shifts=shifts)
+    shifts = center_lottery_shifts(coefficients=coefficients, shifts=shifts)
     mean = _scaled_mean_with_tangent(values, coefficients, shifts)
 
     coefficient_exponent = _unbiased_exponent(coefficients)
@@ -384,6 +384,8 @@ def _scaled_mean_jvp(
         ) - _rescale_mean_operand(values=anchor, shift=-value_exponent)
         # Retain the mean's rounding residual on the centered value scale. A
         # rounded level alone discards the sub-ULP difference needed by a slope.
+        # shortcut: opposing large gaps can round away the anchor. A wider
+        # accumulator is needed when these gaps cancel.
         gap_exponent = _unbiased_exponent(unit_gap)
         centered_values = _rescale_mean_operand(values=unit_gap, shift=-gap_exponent)
         centered_exponent = value_exponent + gap_exponent
@@ -396,7 +398,7 @@ def _scaled_mean_jvp(
         centered_shifts = jnp.where(
             is_represented_zero(centered_values), unused_shift, centered_shifts
         )
-        residual_terms, _, residual_scale = _scaled_lottery_terms_with_scale(
+        residual_terms, _, residual_scale = scaled_lottery_terms_with_scale(
             values=centered_values,
             coefficients=unit_coefficients,
             shifts=centered_shifts,

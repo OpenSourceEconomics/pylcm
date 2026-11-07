@@ -49,6 +49,7 @@ from lcm import (
     fixed_transition,
 )
 from lcm.exceptions import (
+    InvalidParamsError,
     ModelInitializationError,
     PyLCMError,
     RegimeInitializationError,
@@ -857,7 +858,7 @@ def test_tauchen_family_row_at_a_node_is_the_tabulated_row(*, family: str) -> No
     )
 
 
-def _rouwenhorst(**kwargs: float | str) -> RouwenhorstAR1Process:
+def _rouwenhorst(**kwargs: float | str | None) -> RouwenhorstAR1Process:
     law = {"n_points": 3, "rho": 0.9, "sigma": 0.3, "mu": 0.0}
     return RouwenhorstAR1Process(**(law | kwargs))  # ty: ignore[invalid-argument-type]
 
@@ -904,6 +905,30 @@ def test_carried_rouwenhorst_with_different_nodes_is_refused() -> None:
         _work_retired_model(
             work=_rouwenhorst(sigma=0.3), retired=_rouwenhorst(sigma=0.2)
         )
+
+
+def test_carried_rouwenhorst_with_different_runtime_nodes_is_refused() -> None:
+    """The solve must compare nodes even when both declarations leave sigma free."""
+    model = _work_retired_model(
+        work=_rouwenhorst(sigma=None), retired=_rouwenhorst(sigma=None)
+    )
+    params = {
+        "work": {"income": {"sigma": 0.3}},
+        "retired": {"income": {"sigma": 0.2}},
+    }
+    with pytest.raises(InvalidParamsError, match=r"Rouwenhorst.*income.*work.*retired"):
+        model.solve(params=params, log_level="off")
+
+
+def test_carried_rouwenhorst_matching_runtime_nodes_match_fixed_solve() -> None:
+    """Supplying a common sigma at solve time preserves the solved values."""
+    runtime = _work_retired_model(
+        work=_rouwenhorst(sigma=None), retired=_rouwenhorst(sigma=None)
+    ).solve(params={"sigma": 0.3}, log_level="off")
+    fixed = _work_retired_model(work=_rouwenhorst(), retired=_rouwenhorst()).solve(
+        params={}, log_level="off"
+    )
+    np.testing.assert_allclose(runtime.values[1]["work"], fixed.values[1]["work"])
 
 
 def _period_zero_continuations(
