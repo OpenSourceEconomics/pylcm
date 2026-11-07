@@ -476,7 +476,7 @@ def test_tool_version_preserves_report_and_absent_tool(
                         "capture_output": True,
                         "text": True,
                         "check": False,
-                        "timeout": 10,
+                        "timeout": 60,
                     },
                 )
             ],
@@ -501,7 +501,7 @@ def test_native_build_inputs_fingerprint_msvc_on_windows(
 def test_tool_version_propagates_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
     """Propagate a timed-out probe instead of reporting unavailable metadata."""
     command = ["/owned/example/compiler", "--version"]
-    timeout = subprocess.TimeoutExpired(cmd=command, timeout=10)
+    timeout = subprocess.TimeoutExpired(cmd=command, timeout=60)
     calls: list[tuple[tuple[list[str]], _ToolProbeKwargs]] = []
 
     def record_run(
@@ -519,7 +519,7 @@ def test_tool_version_propagates_timeout(monkeypatch: pytest.MonkeyPatch) -> Non
     assert calls == [
         (
             (command,),
-            {"capture_output": True, "text": True, "check": False, "timeout": 10},
+            {"capture_output": True, "text": True, "check": False, "timeout": 60},
         )
     ]
 
