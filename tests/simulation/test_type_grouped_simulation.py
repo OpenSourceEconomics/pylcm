@@ -1,13 +1,13 @@
-"""Simulating subjects grouped by an invariant type leaves every panel byte unchanged.
+"""Grouping subjects by an invariant type preserves their rows and choices.
 
 `ExecutionConfig(invariant_block_widths={"pref_type": 1})` also groups the
 simulated population by `pref_type` whenever the forward phase provably never
 changes it. Each group is simulated in its own chunks, reading every
 continuation that carries `pref_type` through that type's block. Subjects keep
 the random keys of their original rows, and the result restores the original
-subject order, so the panel equals the ungrouped panel of the same solution bit
-for bit. A model whose simulate phase does not preserve the type keeps the
-ungrouped route.
+subject order. Values computed with different program shapes can differ by one
+ULP at the array's scale; states, actions and random draws stay byte-identical.
+A model whose simulate phase does not preserve the type keeps the ungrouped route.
 """
 
 import dataclasses
@@ -20,6 +20,7 @@ import jax.numpy as jnp
 import numpy as np
 import pandas as pd
 import pytest
+from numpy.typing import ArrayLike
 
 import tests.conftest as test_config
 from _lcm.simulation import value_reads
@@ -280,18 +281,36 @@ def _leaf_bytes(leaf: jax.Array | np.ndarray) -> tuple[str, tuple[int, ...], byt
 
 
 def _assert_panels_identical(
-    *, got: SimulationResult, want: SimulationResult, raw_rows: str = "all"
+    *,
+    got: SimulationResult,
+    want: SimulationResult,
+    raw_rows: str = "all",
+    allow_value_rounding: bool = False,
 ) -> None:
-    """Require the same frame and the same raw bytes, signed zeros and NaNs included.
+    """Require exact structural bytes and an explicit allowance for value rounding.
 
     `raw_rows="in_regime"` compares each regime-period only at the rows that
-    occupy the regime, the rows the panel publishes.
+    occupy the regime, the rows the panel publishes. Values stay byte-identical
+    unless `allow_value_rounding` names an independently compiled comparison.
     """
     got_frame = got.to_dataframe()
     want_frame = want.to_dataframe()
-    pd.testing.assert_frame_equal(got_frame, want_frame, check_exact=True)
+    if allow_value_rounding:
+        pd.testing.assert_index_equal(got_frame.columns, want_frame.columns, exact=True)
+        pd.testing.assert_frame_equal(
+            got_frame.drop(columns="value"),
+            want_frame.drop(columns="value"),
+            check_exact=True,
+        )
+        _assert_grouped_values(
+            got=got_frame["value"].to_numpy(), expected=want_frame["value"].to_numpy()
+        )
+    else:
+        pd.testing.assert_frame_equal(got_frame, want_frame, check_exact=True)
     for column in want_frame.columns:
-        if pd.api.types.is_float_dtype(want_frame[column]):
+        if pd.api.types.is_float_dtype(want_frame[column]) and not (
+            allow_value_rounding and column == "value"
+        ):
             assert (
                 got_frame[column].to_numpy().tobytes()
                 == want_frame[column].to_numpy().tobytes()
@@ -310,11 +329,60 @@ def _assert_panels_identical(
                     if raw_rows == "in_regime":
                         got_leaf = np.asarray(got_leaf)[mask]  # noqa: PLW2901
                         want_leaf = np.asarray(want_leaf)[mask]  # noqa: PLW2901
-                    assert _leaf_bytes(got_leaf) == _leaf_bytes(want_leaf), (
-                        regime,
-                        period,
-                        field.name,
-                    )
+                    if allow_value_rounding and field.name == "V_arr":
+                        _assert_grouped_values(got=got_leaf, expected=want_leaf)
+                    else:
+                        assert _leaf_bytes(got_leaf) == _leaf_bytes(want_leaf), (
+                            regime,
+                            period,
+                            field.name,
+                        )
+
+
+def _assert_grouped_values(*, got: ArrayLike, expected: ArrayLike) -> None:
+    """Bound a value leaf by one ULP at its finite array scale, with exact metadata."""
+    actual, reference = np.asarray(got), np.asarray(expected)
+    assert (actual.shape, actual.dtype) == (reference.shape, reference.dtype)
+    test_config.assert_agrees_to_ulp(
+        got=actual,
+        expected=reference,
+        n_ulp=1,
+        operand_magnitude=float(
+            np.max(np.abs(reference), where=np.isfinite(reference), initial=0.0)
+        ),
+    )
+
+
+@pytest.mark.parametrize("steps", [0, 1, 2])
+def test_grouped_value_comparison_uses_one_array_scale_ulp(*, steps: int) -> None:
+    """Allow one step at the array scale near zero, and reject two steps."""
+    dtype = np.float64 if test_config.X64_ENABLED else np.float32
+    expected = np.asarray([1.5, 0.0, np.inf, -np.inf, np.nan], dtype=dtype)
+    got = expected.copy()
+    got[1] = steps * np.spacing(expected[0])
+    if steps <= 1:
+        _assert_grouped_values(got=got, expected=expected)
+    else:
+        with pytest.raises(AssertionError):
+            _assert_grouped_values(got=got, expected=expected)
+
+
+@pytest.mark.parametrize("mutation", ["shape", "dtype", "infinity", "nan"])
+def test_grouped_value_comparison_preserves_metadata(*, mutation: str) -> None:
+    """Preserve shape, dtype, and nonfinite positions and signs exactly."""
+    dtype = np.float64 if test_config.X64_ENABLED else np.float32
+    expected = np.asarray([1.5, 0.0, np.inf, np.nan], dtype=dtype)
+    got = expected.copy()
+    if mutation == "shape":
+        got = got[None, :]
+    elif mutation == "dtype":
+        got = got.astype(np.float32 if test_config.X64_ENABLED else np.float64)
+    elif mutation == "infinity":
+        got[2] = -np.inf
+    else:
+        got[3] = 0.0
+    with pytest.raises(AssertionError):
+        _assert_grouped_values(got=got, expected=expected)
 
 
 def _assert_general_panels_agree(
@@ -447,14 +515,14 @@ def test_rowed_keys_are_the_full_population_keys_of_those_rows() -> None:
     [_UNBALANCED, (1,) * 7, (2, 1, 0, 2, 1, 0, 2, 1)],
     ids=["unbalanced_empty", "one_type", "balanced"],
 )
-def test_grouped_panel_equals_the_ungrouped_panel_bitwise(
+def test_grouped_panel_preserves_rows_choices_and_values(
     *,
     budget: int | None,
     typed_dead: bool,
     codes: tuple[int, ...],
     tmp_path: Path,
 ) -> None:
-    """The same solution simulates to the same bytes grouped or ungrouped.
+    """Grouping preserves structural bytes and bounds value rounding by one ULP.
 
     Deaths, type-dependent health draws and short tails of each group's chunks
     all occur, and the empty middle type runs nothing.
@@ -470,7 +538,7 @@ def test_grouped_panel_equals_the_ungrouped_panel_bitwise(
 
     assert _subject_grouping(result=got) == "pref_type"
     assert _subject_grouping(result=want) is None
-    _assert_panels_identical(got=got, want=want)
+    _assert_panels_identical(got=got, want=want, allow_value_rounding=True)
 
 
 @pytest.mark.parametrize("budget", [None, _BUDGET], ids=["unbudgeted", "budgeted"])
@@ -543,18 +611,20 @@ def test_the_comparator_sees_a_changed_seed_and_changed_params(
                 seed=8,
             ),
             want=want,
+            allow_value_rounding=True,
         )
     got_changed = _simulate(
         model=grouped, params=changed, initial=initial, solution=changed_solution
     )
     assert _subject_grouping(result=got_changed) == "pref_type"
     with pytest.raises(AssertionError):
-        _assert_panels_identical(got=got_changed, want=want)
+        _assert_panels_identical(got=got_changed, want=want, allow_value_rounding=True)
     _assert_panels_identical(
         got=got_changed,
         want=_simulate(
             model=reference, params=changed, initial=initial, solution=changed_solution
         ),
+        allow_value_rounding=True,
     )
 
 

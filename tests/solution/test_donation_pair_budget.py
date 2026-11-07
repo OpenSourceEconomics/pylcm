@@ -23,11 +23,9 @@ from tests.solution._callback_types import (
 )
 from tests.test_models import nbegm_ride_along_toy
 
-# At this size the ordinary variant needs exactly the donated bytes more than the
-# donating one at both precisions. At 10 savings points XLA:CPU packs the
-# ordinary variant's float32 temporaries tighter by that same amount, so the two
-# tie and no budget lies between them.
-_N_SAVINGS = 12
+# This grid separates the real ordinary and donating compiler footprints at both
+# precisions; smaller grids can tie after XLA packs their temporaries.
+_N_SAVINGS = 14
 
 
 def test_budget_admits_both_real_variants_before_any_donating_dispatch(

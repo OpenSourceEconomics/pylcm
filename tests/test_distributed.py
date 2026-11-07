@@ -267,14 +267,15 @@ def _calculate_exact_layout_utility(
 
 
 def _get_exact_layout_values(
-    *, retirement_reads_type2: bool
+    *, retirement_reads_type2: bool, n_types: int = 4, move_type2: bool = False
 ) -> dict[int, dict[str, np.ndarray]]:
     """Enumerate the affine Bellman solution with rational arithmetic.
 
-    For each fixed type pair, V(w) = slope * w + intercept. Consumption affects
-    the intercept only, so enumerating the nine actions solves each period at
-    every wealth. The grid spacing eight, integer actions, and discount one-half
-    keep both this reference and the interpolated implementation representable.
+    For each dated type pair, V(w) = slope * w + intercept. The moving type's
+    continuation uses its destination type, not its current type. Consumption
+    affects the intercept only, so enumerating the nine actions solves each
+    period at every wealth. Grid spacing eight, integer actions, and discount
+    one-half keep both the reference and the implementation representable.
 
     Stored values have denominator dividing 64 and magnitude below 1296. The
     extrapolation weights have denominator dividing 8 and absolute sum at most
@@ -288,41 +289,59 @@ def _get_exact_layout_values(
     and have magnitude at most 729 + (149/8)*1296 = 24867. Their numerators
     stay below 2**24, within float32's significand under reassociation as well.
     """
+    if move_type2 and n_types != 2:
+        raise ValueError("The moving type is the binary permutation 1 - type2.")
     values: dict[int, dict[str, np.ndarray]] = {
-        period: {"working_life": np.empty((4, 4, 9))} for period in range(5)
+        period: {"working_life": np.empty((n_types, n_types, 9))} for period in range(5)
     }
     # `working_life`'s declared support names `retirement` at every source age, so
     # the terminal value is solved at every period after the first; it does not
     # depend on the period.
-    terminal_shape = (4, 4, 9) if retirement_reads_type2 else (4, 9)
+    terminal_shape = (n_types, n_types, 9) if retirement_reads_type2 else (n_types, 9)
     terminal_value = np.empty(terminal_shape)
     values[5] = {}
-    for type1 in range(4):
-        for type2 in range(4):
+    continuation: dict[tuple[int, int], tuple[Fraction, Fraction]] = {}
+    for type1 in range(n_types):
+        for type2 in range(n_types):
             slope = Fraction(type1 * (type2 if retirement_reads_type2 else 1), 2)
-            intercept = Fraction(0)
+            continuation[type1, type2] = (slope, Fraction(0))
             terminal = [float(slope * wealth) for wealth in range(8, 73, 8)]
             index = (type1, type2) if retirement_reads_type2 else type1
             terminal_value[index] = terminal
-            for period in reversed(range(5)):
+    for period in reversed(range(5)):
+        current: dict[tuple[int, int], tuple[Fraction, Fraction]] = {}
+        for type1 in range(n_types):
+            for type2 in range(n_types):
+                next_type2 = 1 - type2 if move_type2 else type2
+                slope, intercept = continuation[type1, next_type2]
                 intercept = intercept / 2 + max(
                     (type1 * type2 - slope / 2) * consumption
                     for consumption in range(1, 10)
                 )
                 slope = type1 * type2 + slope / 2
+                current[type1, type2] = (slope, intercept)
                 values[period]["working_life"][type1, type2] = [
                     float(slope * wealth + intercept) for wealth in range(8, 73, 8)
                 ]
+        continuation = current
     for period in range(1, 6):
         values[period]["retirement"] = terminal_value
     return values
 
 
 def _assert_exact_layout_values(
-    *, values: Mapping[int, Mapping[str, ArrayLike]], retirement_reads_type2: bool
+    *,
+    values: Mapping[int, Mapping[str, ArrayLike]],
+    retirement_reads_type2: bool,
+    n_types: int = 4,
+    move_type2: bool = False,
 ) -> None:
     """Check every state and period against the independent rational solution."""
-    expected = _get_exact_layout_values(retirement_reads_type2=retirement_reads_type2)
+    expected = _get_exact_layout_values(
+        retirement_reads_type2=retirement_reads_type2,
+        n_types=n_types,
+        move_type2=move_type2,
+    )
     assert values.keys() == expected.keys()
     for period, by_regime in values.items():
         assert by_regime.keys() == expected[period].keys()
@@ -406,14 +425,23 @@ def _assert_exact_layout_grids(*, model: Model) -> None:
 
 
 @pytest.mark.parametrize("retirement_reads_type2", [True, False])
+@pytest.mark.parametrize("move_type2", [False, True])
 @pytest.mark.parametrize("mutation", ["type1", "type2", "value"])
 def test_exact_layout_reference_rejects_misaligned_or_changed_values(
-    *, retirement_reads_type2: bool, mutation: str
+    *, retirement_reads_type2: bool, move_type2: bool, mutation: str
 ) -> None:
     """Every type axis and an adjacent represented value remain observable."""
-    values = _get_exact_layout_values(retirement_reads_type2=retirement_reads_type2)
+    n_types = 2 if move_type2 else 4
+    values = _get_exact_layout_values(
+        retirement_reads_type2=retirement_reads_type2,
+        n_types=n_types,
+        move_type2=move_type2,
+    )
     _assert_exact_layout_values(
-        values=values, retirement_reads_type2=retirement_reads_type2
+        values=values,
+        retirement_reads_type2=retirement_reads_type2,
+        n_types=n_types,
+        move_type2=move_type2,
     )
     working = values[0]["working_life"]
     if mutation == "value":
@@ -424,7 +452,10 @@ def test_exact_layout_reference_rejects_misaligned_or_changed_values(
         )
     with pytest.raises(AssertionError):
         _assert_exact_layout_values(
-            values=values, retirement_reads_type2=retirement_reads_type2
+            values=values,
+            retirement_reads_type2=retirement_reads_type2,
+            n_types=n_types,
+            move_type2=move_type2,
         )
 
 
@@ -745,23 +776,48 @@ def test_terminal_cell_tiling_does_not_gather_coordinates_or_outputs(
 
 @_skip_pytest_parallel
 @pytest.mark.parametrize("cell_width", [1, 3])
-def test_mixed_outer_state_axes_preserve_values(*, cell_width):
+@pytest.mark.parametrize("exact_layout", [False, True], ids=["nonlinear", "exact"])
+def test_mixed_outer_state_axes_preserve_values(
+    *, cell_width: int, exact_layout: bool
+) -> None:
     """A moving sharded axis and a co-mapped fixed axis retain their state order."""
-    candidate = _make_correct_distributed_model(
-        move_type2=True, cell_width=cell_width
-    ).solve(log_level="off", params={"discount_factor": 0.95})
-    reference = _make_correct_distributed_model(
-        distributed=False, move_type2=True, cell_width=cell_width
-    ).solve(log_level="off", params={"discount_factor": 0.95})
-    actual = np.asarray(candidate.values[0]["working_life"])
-    expected = np.asarray(reference.values[0]["working_life"])
-    assert (actual.shape, actual.dtype) == (expected.shape, expected.dtype)
-    test_config.assert_agrees_to_ulp(
-        got=actual,
-        expected=expected,
-        n_ulp=4,
-        operand_magnitude=float(max(np.abs(actual).max(), np.abs(expected).max())),
+    models = tuple(
+        _make_correct_distributed_model(
+            distributed=distributed,
+            move_type2=True,
+            cell_width=cell_width,
+            exact_layout=exact_layout,
+        )
+        for distributed in (True, False)
     )
+    if exact_layout:
+        for model in models:
+            _assert_exact_layout_grids(model=model)
+    candidate, reference = (
+        model.solve(
+            log_level="off",
+            params={"discount_factor": 0.5 if exact_layout else 0.95},
+        )
+        for model in models
+    )
+    if exact_layout:
+        for solution in (candidate, reference):
+            _assert_exact_layout_values(
+                values=solution.values,
+                retirement_reads_type2=True,
+                n_types=2,
+                move_type2=True,
+            )
+    else:
+        actual = np.asarray(candidate.values[0]["working_life"])
+        expected = np.asarray(reference.values[0]["working_life"])
+        assert (actual.shape, actual.dtype) == (expected.shape, expected.dtype)
+        test_config.assert_agrees_to_ulp(
+            got=actual,
+            expected=expected,
+            n_ulp=4,
+            operand_magnitude=float(max(np.abs(actual).max(), np.abs(expected).max())),
+        )
 
 
 @_skip_pytest_parallel
