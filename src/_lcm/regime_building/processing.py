@@ -96,12 +96,7 @@ from _lcm.execution.placement import (
     plan_submesh_placement,
 )
 from _lcm.exits import ExitFunctionDemand
-from _lcm.grids import (
-    ContinuousGrid,
-    DiscreteGrid,
-    Grid,
-    IrregSpacedGrid,
-)
+from _lcm.grids import ContinuousGrid, Grid
 from _lcm.grids.coordinates import get_irreg_coordinate
 from _lcm.identity_transition import _IdentityTransition
 from _lcm.params.edges import (
@@ -119,15 +114,9 @@ from _lcm.params.regime_template import (
 )
 from _lcm.post_decision_bound import PostDecisionBoundSpec
 from _lcm.processes import _ContinuousStochasticProcess, _IIDProcess
-from _lcm.processes.ar1 import (
-    RouwenhorstAR1Process,
-    TauchenAR1Process,
-    _TauchenOnNodesProcess,
-)
-from _lcm.processes.iid import NormalIIDProcess
+from _lcm.processes.ar1_on_nodes import _TauchenOnNodesProcess
 from _lcm.processes.state_conditioned import (
     Family,
-    StateConditioned,
     conditioned_row,
     gather_sigma,
     sigma_array_by_code,
@@ -200,7 +189,10 @@ from _lcm.simulation.programs import (
     attach_gated_simulation_programs,
     build_simulation_programs,
 )
+from lcm.grids import DiscreteGrid, IrregSpacedGrid
+from lcm.processes import NormalIIDProcess, RouwenhorstAR1Process, TauchenAR1Process
 from lcm.shocks import ShockGroupName
+from lcm.state_conditioned import StateConditioned
 from lcm.typing import Phase
 
 if TYPE_CHECKING:
@@ -2384,8 +2376,8 @@ def _nbegm_query_evaluator_targets(
     jump_read: str,
 ) -> tuple[tuple[FunctionName, ...], tuple[FunctionName, ...], list[FunctionName], int]:
     """Resolve source, case and threshold targets from the original declarations."""
-    from _lcm.constraints.ir import Ref  # noqa: PLC0415
     from _lcm.solution.nbegm import _normalize_case_boundary  # noqa: PLC0415
+    from lcm.condition import Ref  # noqa: PLC0415
 
     source_variables = tuple(
         dict.fromkeys(

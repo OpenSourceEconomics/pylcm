@@ -27,7 +27,7 @@ _EFFECT_CODES: dict[PartitionEffect, int] = {
 class AxisBoundary:
     """One liquid-axis boundary before runtime values are sorted."""
 
-    value: FloatND | float | int | bool
+    value: FloatND | float | bool
     """Boundary location in the liquid coordinate."""
 
     owner: BoundaryOwner

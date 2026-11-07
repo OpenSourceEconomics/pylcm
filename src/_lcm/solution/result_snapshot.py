@@ -17,7 +17,7 @@ import jax
 from _lcm.dtypes import CanonicalArrayWriter
 from _lcm.solution.host_values import HostValueEntry, is_host_value
 from _lcm.solution.native_values import NativeValueMaterializer
-from _lcm.typing import ArtifactPayload
+from _lcm.typing import ArtifactPayload, JSONScalar
 from lcm._solver_api.authority import _ArrayCopier
 from lcm.exceptions import ExecutionPlanningError
 from lcm.solver_api import (
@@ -925,7 +925,7 @@ def _validate_axis_fields(
     name: str,
     length: int,
     role: AxisRole,
-    coordinates: tuple[bool | int | float | str, ...],
+    coordinates: tuple[JSONScalar, ...],
     label: str,
 ) -> None:
     _require_nonempty_exact_str(name, label=f"{label} name")
@@ -1011,9 +1011,7 @@ def _require_exact_names(value: tuple[str, ...], *, label: str) -> None:
 
 
 # keyword-only-exempt: primary-argument=value
-def _require_exact_json_scalars(
-    value: tuple[bool | int | float | str, ...], *, label: str
-) -> None:
+def _require_exact_json_scalars(value: tuple[JSONScalar, ...], *, label: str) -> None:
     _require_exact_tuple(value, label=label)
     allowed = (bool, int, float, str)
     if any(not any(type(item) is cls for cls in allowed) for item in value):

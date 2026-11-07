@@ -26,7 +26,7 @@ from _lcm.beartype_conf import SHOCK_CONF
 from _lcm.dtypes import CanonicalArrayWriter
 from _lcm.grids.categorical import DataclassInstance
 from _lcm.probability import is_represented_zero
-from _lcm.processes.base import StateConditioned, sealed
+from _lcm.processes.base import sealed
 from _lcm.processes.joint_normal import (
     _exact_zero_pivots,
     admitted_correlation_factor,
@@ -34,6 +34,7 @@ from _lcm.processes.joint_normal import (
 from _lcm.simulation.random_address import inverse_cdf_index
 from lcm.exceptions import GridInitializationError, ShockDeclarationError
 from lcm.grids import DiscreteGrid
+from lcm.state_conditioned import StateConditioned
 from lcm.typing import (
     ActionName,
     BoolND,

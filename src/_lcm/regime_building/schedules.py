@@ -1157,8 +1157,9 @@ def _with_signature[F: UserFunction](
 class _Constant:
     """Return `value` as an array; read nothing."""
 
-    value: float | tuple[float, ...]
-    """The fixed value or probability vector."""
+    value: int | float | tuple[float, ...]
+    """The regime code a deterministic law returns, or a stochastic law's
+    probability or probability vector."""
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "__signature__", inspect.Signature())

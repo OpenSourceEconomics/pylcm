@@ -31,6 +31,16 @@ type PRNGKey = Key[Array, ""]
 #   the labels are validated;
 # - a numeric age label; finiteness is checked when the labels are validated;
 # - either of the two.
+# A value a discrete grid declares: an integer node or category code, or a float
+# node. The kind decides whether a read matches exactly or within a tolerance.
+# Defined here rather than in `_lcm.typing` because the grid modules load before
+# it; `_lcm.typing` re-exports it.
+type DiscreteGridValue = int | float
+
+# A scalar persisted exactly as written. Its JSON type is part of the record, so a
+# stored `1` and `1.0` stay distinct when a saved solution is read back.
+type JSONScalar = bool | int | float | str
+
 type PeriodLabel = int | np.integer
 type AgeLabel = int | float | Fraction | np.integer | np.floating
 type TimeLabel = PeriodLabel | AgeLabel

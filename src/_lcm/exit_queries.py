@@ -19,7 +19,6 @@ from jax.core import Tracer
 from _lcm.current_iid import CurrentIIDPlan
 from _lcm.engine import Regime
 from _lcm.exits import exit_functions, exits_for_phase
-from _lcm.grids import DiscreteGrid
 from _lcm.policy_queries import (
     _PHYSICAL_CONTEXTS,
     _TASTE,
@@ -42,6 +41,7 @@ from _lcm.utils.functools import (
 )
 from lcm.exceptions import RegimeInitializationError, UnsupportedOperationError
 from lcm.exits import Consent, Exit, ExitRole, RuleResult
+from lcm.grids import DiscreteGrid
 from lcm.shocks import Discrete, ShockGroupName, ShockName, _fingerprint
 from lcm.typing import (
     BoolND,

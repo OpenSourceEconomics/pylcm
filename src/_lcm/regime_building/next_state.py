@@ -12,15 +12,11 @@ import jax.numpy as jnp
 from dags import concatenate_functions
 from dags.tree import qname_from_tree_path
 
-from _lcm.grids import DiscreteGrid, Grid
+from _lcm.grids import Grid
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.processes.ar1 import _AR1Process
 from _lcm.processes.iid import _IIDProcess
-from _lcm.processes.state_conditioned import (
-    StateConditioned,
-    gather_sigma,
-    sigma_array_by_code,
-)
+from _lcm.processes.state_conditioned import gather_sigma, sigma_array_by_code
 from _lcm.simulation.random_address import draw_categorical_index
 from _lcm.transition_plans import (
     LotteryLifetime,
@@ -43,6 +39,8 @@ from _lcm.typing import (
     TransitionFunctionsMapping,
 )
 from lcm.exceptions import ModelInitializationError
+from lcm.grids import DiscreteGrid
+from lcm.state_conditioned import StateConditioned
 from lcm.typing import (
     ContinuousState,
     DiscreteState,

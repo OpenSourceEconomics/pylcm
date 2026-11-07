@@ -1,4 +1,4 @@
-"""`DiscreteGrid`: the outcome space of one discrete variable.
+"""The machinery behind `lcm.grids.DiscreteGrid`, one discrete variable's outcomes.
 
 A grid holds either a category class, whose codes index the variable's axis, or
 a strictly ascending sequence of numbers, whose positions are the codes. Stochastic
@@ -13,12 +13,10 @@ from typing import NamedTuple
 import jax
 import jax.numpy as jnp
 import numpy as np
-from beartype import beartype
 from jax import Array
 from jax.typing import ArrayLike
 from jaxtyping import Int
 
-from _lcm.beartype_conf import GRID_CONF
 from _lcm.dtypes import canonical_float_dtype
 from _lcm.grids.base import Grid, UserVector, fail_if_not_a_numeric_vector
 from _lcm.grids.categorical import (
@@ -27,7 +25,15 @@ from _lcm.grids.categorical import (
     get_category_codes,
 )
 from lcm.exceptions import GridInitializationError
-from lcm.typing import BoolND, Float1D, FloatND, Int1D, IntND, ValueND
+from lcm.typing import (
+    BoolND,
+    DiscreteGridValue,
+    Float1D,
+    FloatND,
+    Int1D,
+    IntND,
+    ValueND,
+)
 
 # The code of a value off a value grid, equal to the simulation's sentinel for
 # a categorical state missing from initial conditions. int32 min stays
@@ -40,72 +46,17 @@ _INT32_MAX = jnp.iinfo(jnp.int32).max
 type _CodeIndex = Int[Array, "..."]
 
 
-class DiscreteGrid(Grid):
-    """A discrete grid defining the outcome space of a discrete variable.
+class _DiscreteGrid(Grid):
+    """Storage and reads of a discrete grid; `lcm.grids.DiscreteGrid` constructs it.
 
-    A grid is declared in one of two ways:
-
-    - `category_class`: named categories. User functions receive the code of a
-      category.
-    - `values`: a one-dimensional NumPy or JAX array of numbers, e.g.
-      `values=jnp.array([0, 20, 40])` or `values=jnp.arange(31)`. The codes are
-      the positions `0..n-1` of the values.
-
-    A value returned for a value grid names a node when it equals that node. For
-    float values, `tolerance` widens the match to any value within that absolute
-    distance of a node; `nearest` snaps a float to its closest node instead.
-
-    Args:
-        category_class: The category class representing the grid categories. Must
-            be a dataclass with fields that have unique int values. The legacy
-            single-positional-argument form remains supported for compatibility.
-        values: The numbers the variable takes, as a one-dimensional NumPy or JAX
-            array of integer or floating dtype: strictly ascending and finite.
-            Integers are stored as int32, floats at the canonical float dtype.
-            Lists, tuples and ranges are refused.
-        tolerance: The absolute distance within which a float matches a node. Zero
-            (exact match) by default. Must be below half the smallest gap between
-            values, and at least the float spacing at every value when positive.
-            Integer values always match exactly.
-
-    Raises:
-        GridInitializationError: If the `category_class` is not a dataclass with int
-            fields, or if `values` or `tolerance` are invalid.
-
+    The public class parses its arguments and calls one of the two initializers
+    below, so a grid is either a category-class grid or a value grid.
     """
 
-    @beartype(conf=GRID_CONF)
-    def __init__(
-        self,
-        *legacy_category_class: type[DataclassInstance],
-        category_class: type[DataclassInstance] | None = None,
-        values: UserVector | None = None,
-        tolerance: float = 0.0,
+    def _init_from_category_class(
+        self, category_class: type[DataclassInstance]
     ) -> None:
-        if len(legacy_category_class) > 1:
-            msg = "DiscreteGrid accepts at most one positional argument."
-            raise TypeError(msg)
-        if legacy_category_class:
-            if category_class is not None:
-                msg = "DiscreteGrid got multiple values for 'category_class'."
-                raise TypeError(msg)
-            category_class = legacy_category_class[0]
-
-        if values is not None:
-            if category_class is not None:
-                raise GridInitializationError(
-                    "DiscreteGrid takes either `category_class` or `values`, not both."
-                )
-            self.__init_values(values=values, tolerance=tolerance)
-            return
-        if category_class is None:
-            msg = "DiscreteGrid requires either `category_class` or `values`."
-            raise TypeError(msg)
-        if tolerance != 0.0:
-            raise GridInitializationError(
-                "`tolerance` applies only to a grid declared with float `values`."
-            )
-
+        """Validate and store a category class's names, codes and ordering."""
         _validate_discrete_grid(category_class)
         category_codes = get_category_codes(category_class)
         self.__categories = tuple(category_codes)
@@ -115,12 +66,12 @@ class DiscreteGrid(Grid):
         # comes from `to_jax()`.
         self.__codes = tuple(int(code) for code in category_codes.values())
         self.__ordered: bool = getattr(category_class, "_ordered", False)
-        self.__values: tuple[int | float, ...] | None = None
+        self.__values: tuple[DiscreteGridValue, ...] | None = None
         self.__nodes_by_dtype: dict[np.dtype, _Nodes] = {}
         self.__tolerance = 0.0
         self.__holds_integers = False
 
-    def __init_values(
+    def _init_from_values(
         self,
         *,
         values: UserVector,
@@ -135,7 +86,7 @@ class DiscreteGrid(Grid):
         declared = _validate_values(np.asarray(values).tolist())
         is_integer = isinstance(declared[0], int)
         self.__values = declared
-        self.__tolerance = float(tolerance)
+        self.__tolerance = tolerance
         self.__holds_integers = is_integer
         self.__nodes_by_dtype = {}
         # Validated at the precision in force now; `values_to_jax` and every
@@ -166,7 +117,7 @@ class DiscreteGrid(Grid):
         return self.__ordered
 
     @property
-    def values(self) -> tuple[int | float, ...] | None:
+    def values(self) -> tuple[DiscreteGridValue, ...] | None:
         """Return the declared values, or `None` for a category-class grid."""
         return self.__values
 
@@ -301,7 +252,7 @@ class _Nodes(NamedTuple):
 
 
 def _build_nodes(
-    *, declared: tuple[int | float, ...], tolerance: float, dtype: np.dtype
+    *, declared: tuple[DiscreteGridValue, ...], tolerance: float, dtype: np.dtype
 ) -> _Nodes:
     """Store the declared values at `dtype`, or raise if they do not survive it."""
     is_integer = dtype.kind == "i"
@@ -332,7 +283,7 @@ def _build_nodes(
     return _Nodes(values=value_array, midpoints=midpoints)
 
 
-def _validate_values(values: list[int | float]) -> tuple[int | float, ...]:
+def _validate_values(values: list[DiscreteGridValue]) -> tuple[DiscreteGridValue, ...]:
     """Return the values as Python scalars, or raise if they are no value grid."""
     if len(values) == 0:
         raise GridInitializationError("`values` must hold at least one value.")
@@ -343,7 +294,7 @@ def _validate_values(values: list[int | float]) -> tuple[int | float, ...]:
     return scalars
 
 
-def _value_kind_error(scalars: tuple[int | float, ...]) -> str | None:
+def _value_kind_error(scalars: tuple[DiscreteGridValue, ...]) -> str | None:
     """Report integer values outside int32 or float values that are not finite.
 
     The scalars come from one array's `tolist()`, so they are all `int` or all
@@ -365,7 +316,7 @@ def _value_kind_error(scalars: tuple[int | float, ...]) -> str | None:
     return None
 
 
-def _value_order_error(scalars: tuple[int | float, ...]) -> str | None:
+def _value_order_error(scalars: tuple[DiscreteGridValue, ...]) -> str | None:
     """Report the first pair of values that is not strictly ascending."""
     for position, (left, right) in enumerate(itertools.pairwise(scalars)):
         if not left < right:

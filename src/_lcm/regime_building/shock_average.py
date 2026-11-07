@@ -38,7 +38,6 @@ from dags import concatenate_functions
 from dags.tree import qname_from_tree_path
 
 from _lcm.additive_shock_transition import AdditiveShockTransition
-from _lcm.grids.continuous import IrregSpacedGrid, LinSpacedGrid
 from _lcm.probability import is_represented_zero
 from _lcm.regime_building.V import (
     VInterpolationInfo,
@@ -67,6 +66,7 @@ from _lcm.typing import (
 from _lcm.utils.functools import get_union_of_args
 from _lcm.zero_safe import scaled_joint_weight
 from lcm.exceptions import ModelInitializationError
+from lcm.grids import IrregSpacedGrid, LinSpacedGrid
 from lcm.typing import Float1D, FloatND, Int1D, IntND, ScalarInt, UserFunction
 
 _TIME_NAMES = frozenset({"period", "age"})

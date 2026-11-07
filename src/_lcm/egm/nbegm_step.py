@@ -3016,10 +3016,10 @@ class _StreamedIntervalLayout(NamedTuple):
     node_family_size: int
     """How many positions that dense node family occupies."""
 
-    node_segment_base: float
+    node_segment_base: int
     """First branch label above every per-interval block."""
 
-    cliff_segment_base: float
+    cliff_segment_base: int
     """First branch label above the dense savings-node family."""
 
     def total_candidates(self, *, n_extra: int) -> int:

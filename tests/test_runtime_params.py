@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
-from _lcm.grids import Grid, IrregSpacedGrid
+from _lcm.grids import Grid
 from lcm import (
     AgeGrid,
     DeterministicTransition,
@@ -21,6 +21,7 @@ from lcm import (
     categorical,
 )
 from lcm.exceptions import InvalidParamsError
+from lcm.grids import IrregSpacedGrid
 from lcm.regime import Regime as UserRegime
 from lcm.typing import (
     ContinuousAction,

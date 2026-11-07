@@ -164,29 +164,33 @@ points, and `_lcm/` reaches the user-facing classes through aliased imports
 
 ## Grid and process infrastructure: `_lcm/grids/` and `_lcm/processes/`
 
+The public grid and process classes are defined in `lcm/grids.py`, `lcm/processes.py`
+and `lcm/state_conditioned.py`. Each constructor normalizes its input and calls the
+machinery below; these packages never import the public modules at load time, so the
+public modules can build on them.
+
 ```
 _lcm/grids/
-├── base.py            ← Grid, ContinuousGrid, UniformContinuousGrid (ABCs)
-├── continuous.py      ← LinSpacedGrid, LogSpacedGrid, IrregSpacedGrid
-├── discrete.py        ← DiscreteGrid
-├── piecewise.py       ← PiecewiseLinSpacedGrid, PiecewiseLogSpacedGrid,
-│                         GridBreakpoint
-├── categorical.py     ← @categorical decorator + validators
-└── coordinates.py     ← coordinate lookup helpers used by interpolation
+├── base.py              ← Grid (ABC) and the numeric-vector check
+├── continuous.py        ← ContinuousGrid, UniformContinuousGrid (ABCs) + validators
+├── discrete.py          ← _DiscreteGrid: the storage and reads DiscreteGrid inherits
+├── piecewise.py         ← segment layout, nodes and coordinates of piecewise grids
+├── conditional_action.py← condition normalization and inactive-node lookup
+├── categorical.py       ← @categorical decorator + validators
+└── coordinates.py       ← coordinate lookup helpers used by interpolation
 
 _lcm/processes/
-├── base.py            ← _ContinuousStochasticProcess + Gauss-Hermite / mixture helpers
-├── iid.py             ← UniformIIDProcess, NormalIIDProcess, LogNormalIIDProcess,
-│                        NormalMixtureIIDProcess
-├── ar1.py             ← TauchenAR1Process, RouwenhorstAR1Process,
-│                        TauchenNormalMixtureAR1Process
-├── grid_resolution.py ← admission of a support only runtime params fix
+├── base.py              ← _ContinuousStochasticProcess + Gauss-Hermite / mixture helpers
+├── iid.py               ← _IIDProcess
+├── ar1.py               ← _AR1Process + supplied-node density and quadrature helpers
+├── ar1_on_nodes.py      ← _TauchenOnNodesProcess, built by TauchenAR1Process.on_nodes
+├── joint_normal.py      ← covariance factorization for JointNormalIIDProcess
+├── grid_resolution.py   ← admission of a support only runtime params fix
 └── state_conditioned.py ← direct-CDF rows when a shock parameter varies with a state
 ```
 
-The leaf classes are surfaced through `lcm/grids.py` and `lcm/processes.py`; the ABCs
-(`Grid`, `_ContinuousStochasticProcess`, etc.) are used by internal code but are not
-part of the documented public API.
+The ABCs (`Grid`, `_ContinuousStochasticProcess`, etc.) are used by internal code but
+are not part of the documented public API.
 
 Two design points worth knowing:
 

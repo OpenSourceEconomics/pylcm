@@ -15,7 +15,7 @@ from dags.tree import qname_from_tree_path, tree_path_from_qname
 from jax import Array
 
 from _lcm.dtypes import CanonicalArrayWriter, canonical_float_dtype
-from _lcm.grids import DiscreteGrid, Grid, IrregSpacedGrid
+from _lcm.grids import Grid
 from _lcm.params.edges import EDGES
 from _lcm.params.mapping_leaf import LeafEntry
 from _lcm.params.regime_template import (
@@ -50,6 +50,7 @@ from _lcm.utils.namespace import ParamsQnameDepth
 from _lcm.value_grid_inputs import encode_grid_codes, encode_grid_values
 from lcm.decoupled import koopmans_aggregator_variants
 from lcm.exceptions import InvalidInitialConditionsError, InvalidParamsError
+from lcm.grids import DiscreteGrid, IrregSpacedGrid
 from lcm.params import (
     TimeVarying,
     UnlabelledTimeParameterWarning,

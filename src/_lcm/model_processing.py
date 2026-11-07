@@ -18,7 +18,6 @@ from jax import Array
 
 from _lcm.constraints.processed import ConstraintLike, normalize_constraints
 from _lcm.execution.execution_plan import ResolvedExecution
-from _lcm.grids import DiscreteGrid
 from _lcm.grids.categorical import get_category_codes
 from _lcm.pandas_utils import convert_series_in_params
 from _lcm.params.edges import (
@@ -88,6 +87,7 @@ from lcm.exceptions import (
     ModelInitializationError,
     RegimeInitializationError,
 )
+from lcm.grids import DiscreteGrid
 from lcm.params import MappingLeaf
 from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime

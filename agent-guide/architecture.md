@@ -162,7 +162,11 @@ short form an agent needs before editing.
   device-memory budget (request capped by each device's pool limit less its headroom
   fraction), and the workspace widths that fit inside it.
 
-**Grid System (`src/_lcm/grids/`, `src/_lcm/processes/`)**
+**Grid System (`src/lcm/grids.py`, `src/lcm/processes.py`)**
+
+The public classes below are defined in `lcm.grids` and `lcm.processes`; their abstract
+bases, validators, coordinate helpers and quadrature machinery live in `src/_lcm/grids/`
+and `src/_lcm/processes/`, which never import the public modules at load time.
 
 - `DiscreteGrid`: Categorical variables with string labels (pure outcome space).
 - `LinSpacedGrid`: Linearly spaced grid (start, stop, n_points).
@@ -175,7 +179,7 @@ short form an agent needs before editing.
   auto-assigned `ScalarInt` (0-d `jnp.int32`) codes. Requires explicit `ordered=True` or
   `ordered=False`. Every field must be annotated as `ScalarInt` (from `lcm.typing`) —
   other annotations raise `CategoricalDefinitionError` at decoration time.
-- **Stochastic processes** (in `src/_lcm/processes/`): `UniformIIDProcess`,
+- **Stochastic processes** (in `src/lcm/processes.py`): `UniformIIDProcess`,
   `NormalIIDProcess`, `LogNormalIIDProcess`, `NormalMixtureIIDProcess`,
   `TauchenAR1Process`, `RouwenhorstAR1Process`, `TauchenNormalMixtureAR1Process`. These
   bundle a discretized grid and its transition mechanism — they go in `states` and must

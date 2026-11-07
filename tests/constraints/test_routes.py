@@ -30,7 +30,7 @@ from _lcm.constraints.dispositions import (
     ProvedByConstruction,
     Reject,
 )
-from _lcm.constraints.ir import Compare, Condition, Const
+from _lcm.constraints.ir import Compare, Const
 from _lcm.constraints.materialize import transitive_arg_names
 from _lcm.constraints.processed import ProcessedConstraint, normalize_constraints
 from _lcm.constraints.routes import (
@@ -45,6 +45,7 @@ from _lcm.constraints.routes import (
 )
 from _lcm.egm.nbegm_constraint_boundaries import NBEGMFeasibilityBoundaryProgram
 from lcm import ref
+from lcm.condition import Condition
 from lcm.typing import FloatND, FunctionName
 
 _PAYLOAD = NBEGMFeasibilityBoundaryProgram(

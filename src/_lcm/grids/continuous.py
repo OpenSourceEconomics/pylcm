@@ -1,8 +1,9 @@
-"""The continuous outcome-space grids and their coordinate maps.
+"""The abstract continuous grids and the validators behind the public ones.
 
 `ContinuousGrid` is the abstract base; `UniformContinuousGrid` covers the
-start/stop/n_points forms `LinSpacedGrid` and `LogSpacedGrid` take, while
-`IrregSpacedGrid` carries explicit points.
+start/stop/n_points forms `lcm.grids.LinSpacedGrid` and `lcm.grids.LogSpacedGrid`
+take. The public classes normalize their input and call the initializers and
+validators here.
 """
 
 import dataclasses
@@ -11,13 +12,9 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
 import jax.numpy as jnp
-import numpy as np
-from beartype import beartype
 
-from _lcm.beartype_conf import GRID_CONF
 from _lcm.dtypes import canonical_float_dtype
-from _lcm.grids import coordinates as grid_coordinates
-from _lcm.grids.base import Grid, UserVector, fail_if_not_a_numeric_vector
+from _lcm.grids.base import Grid
 from _lcm.utils.error_messages import format_messages
 from lcm.exceptions import GridInitializationError
 from lcm.typing import (
@@ -71,24 +68,6 @@ class UniformContinuousGrid(ContinuousGrid, ABC):
     )
     """Extrapolate, clip only lookup, clip the next state, or refuse exterior states."""
 
-    @beartype(conf=GRID_CONF)
-    def __init__(
-        self,
-        *,
-        start: float | ScalarFloat,
-        stop: float | ScalarFloat,
-        n_points: int | ScalarInt,
-        off_grid: OffGrid = "extrapolate",
-    ) -> None:
-        _init_uniform_grid(
-            grid=self,
-            start=start,
-            stop=stop,
-            n_points=n_points,
-            requires_positive_start=False,
-            off_grid=off_grid,
-        )
-
     @abstractmethod
     def to_jax(self) -> Float1D:
         """Convert the grid to a Jax array."""
@@ -98,12 +77,14 @@ class UniformContinuousGrid(ContinuousGrid, ABC):
         """Return the generalized coordinate of a value in the grid."""
 
     def replace(
-        self, **kwargs: float | ScalarFloat | ScalarInt | OffGrid
+        self, **kwargs: float | int | ScalarFloat | ScalarInt | OffGrid
     ) -> UniformContinuousGrid:
         """Replace the attributes of the grid.
 
         Args:
-            **kwargs: Keyword arguments to replace the attributes of the grid.
+            **kwargs: Keyword arguments to replace the attributes of the grid: a
+                float or scalar for `start` and `stop`, an int or scalar for
+                `n_points`, and an `OffGrid` policy.
 
         Returns:
             A new grid with the replaced attributes.
@@ -117,93 +98,23 @@ class UniformContinuousGrid(ContinuousGrid, ABC):
             ) from e
 
 
-class LinSpacedGrid(UniformContinuousGrid):
-    """A linearly spaced grid of continuous values.
-
-    Example:
-    --------
-    Let `start = 1`, `stop = 100`, and `n_points = 3`. The grid is `[1, 50.5, 100]`.
-
-    """
-
-    def to_jax(self) -> Float1D:
-        """Convert the grid to a Jax array."""
-        return grid_coordinates.linspace(
-            start=self.start, stop=self.stop, n_points=self.n_points
-        )
-
-    def get_coordinate(self, value: FloatND) -> FloatND:
-        """Return the generalized coordinate of a value in the grid."""
-        return grid_coordinates.get_linspace_coordinate(
-            value=value,
-            start=self.start,
-            stop=self.stop,
-            n_points=self.n_points,
-        )
-
-
-class LogSpacedGrid(UniformContinuousGrid):
-    """A logarithmically spaced grid of continuous values.
-
-    Requires `start > 0`.
-
-    Example:
-    --------
-    Let `start = 1`, `stop = 100`, and `n_points = 3`. The grid is `[1, 10, 100]`.
-
-    """
-
-    @beartype(conf=GRID_CONF)
-    def __init__(
-        self,
-        *,
-        start: float | ScalarFloat,
-        stop: float | ScalarFloat,
-        n_points: int | ScalarInt,
-        off_grid: OffGrid = "extrapolate",
-    ) -> None:
-        _init_uniform_grid(
-            grid=self,
-            start=start,
-            stop=stop,
-            n_points=n_points,
-            requires_positive_start=True,
-            off_grid=off_grid,
-        )
-
-    def to_jax(self) -> Float1D:
-        """Convert the grid to a Jax array."""
-        return grid_coordinates.logspace(
-            start=self.start, stop=self.stop, n_points=self.n_points
-        )
-
-    def get_coordinate(self, value: FloatND) -> FloatND:
-        """Return the generalized coordinate of a value in the grid."""
-        return grid_coordinates.get_logspace_coordinate(
-            value=value,
-            start=self.start,
-            stop=self.stop,
-            n_points=self.n_points,
-        )
-
-
 def _init_uniform_grid(
     *,
     grid: UniformContinuousGrid,
-    start: float | ScalarFloat,
-    stop: float | ScalarFloat,
+    start: float,
+    stop: float,
     n_points: int | ScalarInt,
     requires_positive_start: bool,
     off_grid: OffGrid,
 ) -> None:
     """Cast `start` / `stop` / `n_points` to canonical JAX scalars, validate, store.
 
-    `jnp.asarray(..., dtype=canonical_float_dtype())` and `jnp.int32(...)` lift
-    every numeric input at the boundary: Python literals from user
-    construction, JAX scalars from `dataclasses.replace` round-trips, anything
-    else raises here. The validator can then assume strict `ScalarFloat` /
-    `ScalarInt` types and only check value invariants (finiteness, ordering,
-    positivity).
+    The public constructor hands `start` and `stop` in as Python floats, whether
+    the user wrote literals or `dataclasses.replace` round-trips stored JAX
+    scalars. `jnp.asarray(..., dtype=canonical_float_dtype())` and
+    `jnp.int32(...)` lift them to the stored form, so the validator can assume
+    strict `ScalarFloat` / `ScalarInt` types and only check value invariants
+    (finiteness, ordering, positivity).
     """
     dtype = canonical_float_dtype()
     _validate_off_grid(off_grid)
@@ -220,114 +131,6 @@ def _init_uniform_grid(
     object.__setattr__(grid, "stop", stop_jax)
     object.__setattr__(grid, "n_points", n_points_jax)
     object.__setattr__(grid, "off_grid", off_grid)
-
-
-@dataclass(frozen=True, kw_only=True, init=False)
-class IrregSpacedGrid(ContinuousGrid):
-    """A grid of continuous values at irregular (user-specified) points.
-
-    This grid type is useful for representing non-uniformly spaced points such as
-    Gauss-Hermite quadrature nodes.
-
-    `points` is a one-dimensional NumPy or JAX array of integer or floating dtype,
-    stored as a JAX array at `canonical_float_dtype()`; lists and tuples are
-    refused. When `points` is omitted and only `n_points` is given, the points
-    must be supplied at runtime via the params.
-
-    Example:
-    --------
-    Fixed grid: `IrregSpacedGrid(points=jnp.array([-1.73, -0.58, 0.58, 1.73]))`.
-    Grid that is only completed at runtime via params: `IrregSpacedGrid(n_points=4)`.
-
-    """
-
-    points: Float1D | None
-    """The grid points in ascending order, or `None` for runtime-supplied points."""
-
-    n_points: int
-    """Number of points. Derived from `len(points)` when points are given."""
-
-    off_grid: OffGrid = dataclasses.field(
-        default="extrapolate", metadata={"fingerprint_omit_if_default": True}
-    )
-    """Policy applied to values outside the supplied closed grid."""
-
-    @beartype(conf=GRID_CONF)
-    def __init__(
-        self,
-        *,
-        points: UserVector | None = None,
-        n_points: int | None = None,
-        off_grid: OffGrid = "extrapolate",
-    ) -> None:
-        _validate_off_grid(off_grid)
-        if points is not None:
-            fail_if_not_a_numeric_vector(
-                value=points,
-                argument="points",
-                example="IrregSpacedGrid(points=jnp.array([-1.73, -0.58, 0.58, 1.73]))",
-            )
-            _validate_irreg_spaced_grid(np.asarray(points).tolist())
-            derived_n = len(points)
-            if n_points is None:
-                n_points = derived_n
-            elif n_points != derived_n:
-                raise GridInitializationError(
-                    f"n_points ({n_points}) does not match len(points) ({derived_n})"
-                )
-            stored_points: Float1D | None = jnp.asarray(
-                points, dtype=canonical_float_dtype()
-            )
-            # Distinct inputs can round to equal nodes at the canonical precision.
-            _validate_irreg_spaced_grid(stored_points.tolist())
-        elif n_points is None:
-            raise GridInitializationError(
-                "Either points or n_points must be specified for IrregSpacedGrid."
-            )
-        elif n_points < 2:  # noqa: PLR2004
-            raise GridInitializationError(
-                f"n_points must be at least 2, got {n_points}"
-            )
-        else:
-            stored_points = None
-        object.__setattr__(self, "points", stored_points)
-        object.__setattr__(self, "n_points", n_points)
-        object.__setattr__(self, "off_grid", off_grid)
-
-    @property
-    def pass_points_at_runtime(self) -> bool:
-        """Whether this grid's points are supplied at runtime via params."""
-        return self.points is None
-
-    def to_jax(self) -> Float1D:
-        """Convert the grid to a Jax array.
-
-        Raises `GridInitializationError` for runtime-supplied grids
-        (`pass_points_at_runtime=True`). To get the substituted points,
-        call `regime.solution.state_action_space(regime_params=...)` and
-        read from `.states[name]` or `.continuous_actions[name]`.
-        """
-        if self.points is None:
-            raise GridInitializationError(
-                f"IrregSpacedGrid declared with n_points={self.n_points} and "
-                f"no points; values are supplied at runtime via "
-                f"params['<regime>']['<grid_name>']['points']. To get the "
-                f"substituted points, call "
-                f"`regime.solution.state_action_space(regime_params=...)` and "
-                f"read from `.states[name]` or `.continuous_actions[name]`. "
-                f"Use `.n_points` if only the shape is needed."
-            )
-        return self.points
-
-    def get_coordinate(self, value: FloatND) -> FloatND:
-        """Return the generalized coordinate of a value in the grid."""
-        if self.points is None:
-            raise GridInitializationError(
-                "Cannot compute coordinate without points. Pass points at "
-                "initialization or use IrregSpacedGrid(n_points=...) and "
-                "supply points at runtime via params."
-            )
-        return grid_coordinates.get_irreg_coordinate(value=value, points=self.points)
 
 
 def _clip_grid_value(*, value: FloatND, points: Float1D) -> FloatND:

@@ -20,7 +20,7 @@ from jax import vmap
 from jaxtyping import Array, Int
 
 from _lcm.engine import Regime, StateActionSpace
-from _lcm.grids import ContinuousGrid, DiscreteGrid
+from _lcm.grids import ContinuousGrid
 from _lcm.grids.continuous import _clip_grid_value
 from _lcm.off_grid import count_off_grid, off_grid_message, report_off_grid
 from _lcm.processes import _ContinuousStochasticProcess
@@ -52,6 +52,7 @@ from lcm.exceptions import (
     InvalidStateTransitionError,
     OffGridStateError,
 )
+from lcm.grids import DiscreteGrid
 from lcm.typing import (
     Bool1D,
     Float1D,

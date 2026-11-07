@@ -10,7 +10,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from _lcm.processes.ar1 import _TauchenOnNodesProcess
+from _lcm.processes.ar1_on_nodes import _TauchenOnNodesProcess
 from _lcm.regime_building.processing import _get_weights_func_for_process
 from lcm import (
     AgeGrid,

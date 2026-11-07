@@ -14,16 +14,7 @@ import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
 from _lcm.dtypes import canonical_float_dtype
-from _lcm.grids import (
-    DiscreteGrid,
-    IrregSpacedGrid,
-    LinSpacedGrid,
-    LogSpacedGrid,
-    PiecewiseLinSpacedGrid,
-    PiecewiseLogSpacedGrid,
-    categorical,
-    validate_category_class,
-)
+from _lcm.grids import categorical, validate_category_class
 from _lcm.grids import discrete as discrete_module
 from _lcm.grids.categorical import _validate_discrete_grid, get_category_codes
 from _lcm.grids.continuous import _validate_continuous_grid
@@ -31,6 +22,14 @@ from _lcm.grids.discrete import MISSING_CAT_CODE
 from _lcm.simulation import initial_conditions
 from _lcm.typing import DataclassInstance
 from lcm.exceptions import CategoricalDefinitionError, GridInitializationError
+from lcm.grids import (
+    DiscreteGrid,
+    IrregSpacedGrid,
+    LinSpacedGrid,
+    LogSpacedGrid,
+    PiecewiseLinSpacedGrid,
+    PiecewiseLogSpacedGrid,
+)
 from lcm.typing import ScalarInt
 from tests.conftest import DECIMAL_PRECISION, X64_ENABLED
 

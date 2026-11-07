@@ -24,13 +24,13 @@ from typing import Literal
 import jax.numpy as jnp
 from jax.scipy.stats.norm import cdf
 
-from _lcm.grids import DiscreteGrid
-from _lcm.processes.base import StateConditioned, sealed
+from _lcm.processes.base import sealed
+from _lcm.typing import ProcessLawScalar
+from lcm.grids import DiscreteGrid
 from lcm.typing import Float1D, FloatND, ScalarFloat, ScalarInt
 
 __all__ = [
     "Family",
-    "StateConditioned",
     "conditioned_row",
     "gather_sigma",
     "iid_normal_row",
@@ -38,12 +38,14 @@ __all__ = [
     "tauchen_row",
 ]
 
-type _Scalar = float | int | ScalarFloat | ScalarInt
 
 # Process families whose transition CDF carries `sigma`. Rouwenhorst is absent: its
 # transition is `rho`-only, so a fixed node grid leaves no channel for a
 # state-conditioned `sigma`.
 type Family = Literal["iid_normal", "tauchen"]
+
+# A law parameter as declared, or as the canonical 0-d array a runtime binding holds.
+type _Scalar = ProcessLawScalar | ScalarFloat | ScalarInt
 
 
 def sigma_array_by_code(*, cond_grid: DiscreteGrid, by: Mapping[str, float]) -> Float1D:

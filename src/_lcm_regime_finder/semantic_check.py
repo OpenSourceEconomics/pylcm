@@ -785,9 +785,9 @@ def _check_semantics(original: dict, normalized: dict, analysis: dict, *, check_
                     fail('declared '+kind+' inputs changed',callback=key)
             if isinstance(raw_callback, dict) and '/states/' in callback.get('source_path',''):
                 typ=raw_callback.get('type')
-                iid={'_lcm.processes.iid.'+n for n in ('NormalIIDProcess','UniformIIDProcess','LogNormalIIDProcess','NormalMixtureIIDProcess')}
+                iid={'lcm.processes.'+n for n in ('NormalIIDProcess','UniformIIDProcess','LogNormalIIDProcess','NormalMixtureIIDProcess')}
                 iid.add('_lcm.processes.joint_normal_lowering._JointNormalCoordinate')
-                ar1={'_lcm.processes.ar1.'+n for n in ('TauchenAR1Process','RouwenhorstAR1Process','TauchenNormalMixtureAR1Process','_TauchenOnNodesProcess')}
+                ar1={'lcm.processes.'+n for n in ('TauchenAR1Process','RouwenhorstAR1Process','TauchenNormalMixtureAR1Process')}|{'_lcm.processes.ar1_on_nodes._TauchenOnNodesProcess'}
                 if typ in iid|ar1 and raw_callback.get('fields',{}).get('state_conditioned') is None:
                     axis=callback['source_path'].split('/states/',1)[1].split('/',1)[0].replace('~1','/').replace('~0','~')
                     expected=[] if typ in iid else [axis]
@@ -1772,7 +1772,7 @@ def _check_capture(original: dict, normalized: dict, fail, unknown) -> None:
                 if short(candidate).endswith("Process") or (isinstance(candidate,dict) and candidate.get('type')==latent): raw = candidate
                 elif candidate is None:
                     arriving=selected(original_regimes[target['regime']].get('states',{}).get(axis),phase,target['period'])
-                    iid={'_lcm.processes.iid.'+n for n in ('NormalIIDProcess','UniformIIDProcess','LogNormalIIDProcess','NormalMixtureIIDProcess')}
+                    iid={'lcm.processes.'+n for n in ('NormalIIDProcess','UniformIIDProcess','LogNormalIIDProcess','NormalMixtureIIDProcess')}
                     iid.add(latent)
                     if (isinstance(arriving,dict) and arriving.get('type') in iid
                             and fields(arriving).get('state_conditioned') is None):raw=arriving
@@ -1780,7 +1780,7 @@ def _check_capture(original: dict, normalized: dict, fail, unknown) -> None:
                 unknown("original state producer is not exposed", source=source_id, target=target_id, state=axis, phase=phase)
             elif callbacks.get(transition.get("state_updates", {}).get(axis), {}).get("original") != raw:
                 fail("original state update consumer changed", relation=transition.get("id"), state=axis)
-            elif isinstance(raw,dict) and raw.get('type') in {'_lcm.processes.ar1.'+n for n in ('TauchenAR1Process','RouwenhorstAR1Process','TauchenNormalMixtureAR1Process','_TauchenOnNodesProcess')}:
+            elif isinstance(raw,dict) and raw.get('type') in {'lcm.processes.'+n for n in ('TauchenAR1Process','RouwenhorstAR1Process','TauchenNormalMixtureAR1Process')}|{'_lcm.processes.ar1_on_nodes._TauchenOnNodesProcess'}:
                 callback=callbacks[transition['state_updates'][axis]]
                 if callback.get('arguments')!=[axis]:
                     fail('original process dependency owner changed',relation=transition.get('id'),state=axis)

@@ -67,7 +67,7 @@ from _lcm.constraints.bounds import lower_bound_declaration
 from _lcm.constraints.processed import ConstraintLike, normalize_constraints
 from _lcm.egm.outer_search import FiniteOuterGrid
 from _lcm.egm.preferences import BoundUtilityOfAction
-from _lcm.grids import ContinuousGrid, Grid, IrregSpacedGrid
+from _lcm.grids import ContinuousGrid, Grid
 from _lcm.post_decision_bound import _PostDecisionLowerBound
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.reachability import PhaseReachability
@@ -89,6 +89,7 @@ from lcm.exceptions import (
     GridInitializationError,
     ModelInitializationError,
 )
+from lcm.grids import IrregSpacedGrid
 from lcm.koopmans_aggregation import LinearAggregator
 from lcm.phased import Phased
 from lcm.regime import ActionEntry, StateEntry, StateTransitionEntry

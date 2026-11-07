@@ -13,10 +13,7 @@ from typing import cast
 
 import jax.numpy as jnp
 
-from _lcm.grids import DiscreteGrid
-from _lcm.processes.base import StateConditioned
 from _lcm.processes.iid import _IIDProcess
-from _lcm.processes.joint_normal import JointNormalIIDProcess
 from _lcm.regime_building.value_adapter import adapt_user_function, encoding_grid
 from _lcm.regime_law import RegimeLaw, RegimeLaws
 from _lcm.utils.error_messages import path_segment_name_errors
@@ -27,7 +24,9 @@ from lcm.exceptions import (
     ShockDeclarationError,
     UnsupportedOperationError,
 )
+from lcm.grids import DiscreteGrid
 from lcm.phased import Phased
+from lcm.processes import JointNormalIIDProcess
 from lcm.regime import Regime, StateEntry
 from lcm.shocks import (
     Discrete,
@@ -41,6 +40,7 @@ from lcm.shocks import (
     _ConditionedLookup,
     _fingerprint,
 )
+from lcm.state_conditioned import StateConditioned
 from lcm.typing import (
     FunctionName,
     ParameterName,

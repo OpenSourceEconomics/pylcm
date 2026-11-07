@@ -13,7 +13,7 @@ from _lcm.constraints.dispositions import (
     ConstraintContext,
     Reject,
 )
-from _lcm.constraints.ir import Const, Ref
+from _lcm.constraints.ir import Const
 from _lcm.constraints.processed import ConstraintLike, normalize_constraints
 from _lcm.constraints.routes import BoundConstraint, ConstraintSite
 from _lcm.egm.nbegm_constraint_boundaries import (
@@ -22,6 +22,7 @@ from _lcm.egm.nbegm_constraint_boundaries import (
     feasibility_axis_boundaries,
 )
 from lcm import Condition, implies, ref
+from lcm.condition import Ref
 from lcm.typing import BoolND, FloatND, ParameterName
 
 

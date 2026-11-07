@@ -20,7 +20,11 @@ def test_action_grid_controls_preserve_historical_mutation_populations() -> None
     historical = {
         name: spec
         for name, spec in registered.items()
-        if not name.startswith("simulation_adapter:initial_physical_")
+        # `public_shell:` controls arrived when the public grid and process
+        # classes moved to `lcm`; the earlier population stays pinned without them.
+        if not name.startswith(
+            ("simulation_adapter:initial_physical_", "public_shell:")
+        )
     }
     # The dissolution-flag removal deleted streaming_collective:published_dissolution_
     # inverted and native_graph:collective_output_role_dropped with their targets;
@@ -31,10 +35,10 @@ def test_action_grid_controls_preserve_historical_mutation_populations() -> None
         _name_digest(historical)
         == "a00c2dd641b34fdfa7f618fb19d3e79648c1082583727f15fafbb004d62faf6d"
     )
-    assert len(registered) == 410
+    assert len(registered) == 415
     assert (
         _name_digest(registered)
-        == "c94857b93f5a6254cbda1aa14b3658232da1df482f907578db49540ac23aeb6c"
+        == "ed33be2d7ab323c90d394c00afadfdff869ac206499ef9221113ff2f9b1dcda5"
     )
     assert len(supplemental) == 94
     assert (

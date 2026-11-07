@@ -28,19 +28,8 @@ from jax.extend.core import (
 from jax.typing import DTypeLike
 
 from _lcm.dtypes import canonical_float_dtype
-from _lcm.processes.ar1 import (
-    RouwenhorstAR1Process,
-    TauchenAR1Process,
-    TauchenNormalMixtureAR1Process,
-    _TauchenOnNodesProcess,
-)
+from _lcm.processes.ar1_on_nodes import _TauchenOnNodesProcess
 from _lcm.processes.base import _ContinuousStochasticProcess
-from _lcm.processes.iid import (
-    LogNormalIIDProcess,
-    NormalIIDProcess,
-    NormalMixtureIIDProcess,
-    UniformIIDProcess,
-)
 from _lcm.simulation.eager_stages import run_eager_stage
 from _lcm.simulation.host_operations import (
     ProfiledSimulationOperations,
@@ -54,6 +43,15 @@ from _lcm.simulation.residency import (
 )
 from _lcm.typing import HostArray
 from lcm.exceptions import ExecutionPlanningError
+from lcm.processes import (
+    LogNormalIIDProcess,
+    NormalIIDProcess,
+    NormalMixtureIIDProcess,
+    RouwenhorstAR1Process,
+    TauchenAR1Process,
+    TauchenNormalMixtureAR1Process,
+    UniformIIDProcess,
+)
 from lcm.typing import (
     Float1D,
     ParameterName,

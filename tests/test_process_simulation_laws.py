@@ -15,7 +15,7 @@ import pytest
 from numpy.typing import NDArray
 
 from _lcm.grids import Grid
-from _lcm.processes.ar1 import _TauchenOnNodesProcess
+from _lcm.processes.ar1_on_nodes import _TauchenOnNodesProcess
 from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.regime_building import Q_and_F as q_and_f
 from _lcm.regime_building.next_state import _create_continuous_stochastic_next_func

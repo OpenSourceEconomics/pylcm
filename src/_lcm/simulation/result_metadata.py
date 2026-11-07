@@ -8,8 +8,6 @@ import numpy as np
 import pandas as pd
 
 from _lcm.engine import PeriodRegimeSimulationData, Regime
-from _lcm.grids import DiscreteGrid
-from _lcm.processes.joint_normal import JointNormalIIDProcess
 from _lcm.processes.joint_normal_lowering import (
     coordinate_names,
     joint_normal_declarations,
@@ -17,7 +15,9 @@ from _lcm.processes.joint_normal_lowering import (
 from _lcm.regime_building.processing import compute_merged_discrete_categories
 from _lcm.time import TimeAxis
 from _lcm.typing import ActionName, ProcessName, RegimeName, RegimeNamesToIds, StateName
+from lcm.grids import DiscreteGrid
 from lcm.phased import Phased
+from lcm.processes import JointNormalIIDProcess
 from lcm.regime import Regime as UserRegime
 from lcm.shocks import Discrete, ShockGroup, ShockGroupName
 

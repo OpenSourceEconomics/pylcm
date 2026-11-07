@@ -11,8 +11,9 @@ reads a declared schedule threshold by its comparison shape rather than a
 second boundary representation.
 """
 
-from _lcm.constraints.ir import Compare, ComparisonOperator, Condition, Ref
+from _lcm.constraints.ir import Compare, ComparisonOperator
 from lcm.case_piece import AffineBreakpoint, EqualityOwner
+from lcm.condition import Condition, Ref
 from lcm.exceptions import ModelInitializationError
 
 # Which comparison leaves the exact threshold point on the `when` side.

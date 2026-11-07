@@ -16,7 +16,6 @@ from _lcm.egm.published_policy import NNBEGMSimPolicy
 from _lcm.engine import Regime, StateActionSpace
 from _lcm.execution.core_program import CoreProgram
 from _lcm.execution.workspace_planning import CompilerMemoryReservation
-from _lcm.grids import DiscreteGrid
 from _lcm.params.edges import regime_kernel_params
 from _lcm.regime_building.Q_and_F import (
     EDGE_REF_PARAMS_ARG,
@@ -56,6 +55,7 @@ from _lcm.typing import (
     SimulationPolicy,
 )
 from lcm.exceptions import ExecutionPlanningError
+from lcm.grids import DiscreteGrid
 from lcm.typing import ActionName, ReferenceName, RegimeName
 
 # Output descriptors of the finite ranking stage: the chosen actions, the value

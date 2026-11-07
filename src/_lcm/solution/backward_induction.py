@@ -171,7 +171,6 @@ from _lcm.persistence.solution import (
     StreamedSolutionArchive,
     WrittenPeriod,
 )
-from _lcm.processes.ar1 import RouwenhorstAR1Process
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.regime_building.gated_edges import (
     EDGE_PERIOD_CONTEXT_ARGS,
@@ -265,6 +264,7 @@ from _lcm.solution.v_topology import (
 )
 from _lcm.time import TimeAxis, coordinate_at, coordinate_kind
 from _lcm.typing import (
+    AgeValue,
     ArgumentTree,
     ArtifactPayload,
     FlatParams,
@@ -305,6 +305,7 @@ from lcm.exceptions import (
     ShockDeclarationError,
 )
 from lcm.execution import WidthSearch
+from lcm.processes import RouwenhorstAR1Process
 from lcm.solver_api import (
     SIMULATION_POLICY,
     ArtifactKey,
@@ -340,9 +341,9 @@ type GatherChecks = dict[
     int, tuple[xla_client.LoadedExecutable | jax.stages.Compiled, _GatherCheck]
 ]
 
-# The age of a gated edge's fold period: a Python number, a concrete or traced
-# scalar array of any integer or float width, or `None` where no age is known.
-type FoldAge = float | Int[Scalar, ""] | Float[Scalar, ""] | None
+# The age of a gated edge's fold period: a Python time coordinate, a concrete or
+# traced scalar array of any integer or float width, or `None` where no age is known.
+type FoldAge = AgeValue | Int[Scalar, ""] | Float[Scalar, ""] | None
 
 # A regime's base state, discrete-action and continuous-action arrays.
 type _SpaceArrays = tuple[

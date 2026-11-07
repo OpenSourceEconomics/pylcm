@@ -12,7 +12,7 @@ from numpy.testing import assert_array_equal
 from _lcm.continuation import EGMContinuationSpec
 from _lcm.egm.carry import build_template_egm_carry
 from _lcm.engine import Regime, VariableInfo, Variables
-from _lcm.grids import DiscreteGrid, Grid, LinSpacedGrid
+from _lcm.grids import Grid
 from _lcm.regime_building.canonicalize import _canonicalize_phase_transitions
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.phases import normalize_regime_phases
@@ -35,6 +35,7 @@ from lcm import (
 )
 from lcm.ages import AgeGrid
 from lcm.exceptions import RegimeInitializationError
+from lcm.grids import DiscreteGrid, LinSpacedGrid
 from lcm.model import Model
 from lcm.regime import ActionEntry, StateEntry, StateTransitionEntry
 from lcm.regime import Regime as UserRegime

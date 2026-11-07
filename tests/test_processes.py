@@ -28,7 +28,8 @@ from scipy.stats import norm
 from typing_extensions import TypedDict
 
 from _lcm.config import TEST_DATA
-from _lcm.processes.ar1 import _AR1Process, _TauchenOnNodesProcess
+from _lcm.processes.ar1 import _AR1Process
+from _lcm.processes.ar1_on_nodes import _TauchenOnNodesProcess
 from _lcm.processes.state_conditioned import conditioned_row
 from _lcm.regime_building.processing import _get_weights_func_for_process
 from _lcm.typing import DataclassInstance

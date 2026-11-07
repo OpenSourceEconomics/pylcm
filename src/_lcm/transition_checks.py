@@ -63,7 +63,7 @@ from _lcm.engine import (
     StateActionSpace,
     _StochasticStateTransition,
 )
-from _lcm.grids import ContinuousGrid, DiscreteGrid, Grid
+from _lcm.grids import ContinuousGrid, Grid
 from _lcm.off_grid import count_off_grid, off_grid_message, report_off_grid
 from _lcm.params.edges import regime_kernel_params
 from _lcm.params.mapping_leaf import MappingLeaf
@@ -143,6 +143,7 @@ from lcm.exceptions import (
     RegimeInitializationError,
     ShockDeclarationError,
 )
+from lcm.grids import DiscreteGrid
 from lcm.shocks import ShockGroupName
 from lcm.typing import (
     Bool1D,
@@ -2095,7 +2096,8 @@ def _format_sum_violation(
     failing_sums = sum_all[failing_mask]
     n_failing = int(failing_indices.shape[0])
     n_show = min(n_failing, 5)
-    data: dict[str, list[float]] = {
+    # The subject column holds integer row indices; every other column floats.
+    data: dict[str, list[int] | list[float]] = {
         "subject": failing_indices[:n_show].tolist(),
     }
     if state_action_values is not None:

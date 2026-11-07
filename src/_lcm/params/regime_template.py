@@ -22,7 +22,6 @@ import dags.tree as dt
 from dags.tree import qname_from_tree_path, tree_path_from_qname
 
 from _lcm.exits import ExitFunctionPath, exit_functions, rule_operands
-from _lcm.grids import DiscreteGrid, IrregSpacedGrid
 from _lcm.params.edges import (
     EDGES,
     FALLBACK,
@@ -54,6 +53,7 @@ from lcm.decoupled import (
     resolve_koopmans_aggregator,
 )
 from lcm.exceptions import InvalidNameError, ModelInitializationError
+from lcm.grids import DiscreteGrid, IrregSpacedGrid
 from lcm.participation import ParticipationCheck
 from lcm.phased import Phased
 from lcm.regime import ProjectedRegimeValue, StateTransitionEntry
