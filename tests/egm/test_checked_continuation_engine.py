@@ -578,8 +578,15 @@ def _observe_engine(*, monkeypatch: pytest.MonkeyPatch) -> Generator[_Observatio
         *, diagnostic_rows: list[_DiagnosticRow], period: int, enabled: bool
     ) -> None:
         def device_get(value: PytreeValue) -> PytreeValue:
-            if isinstance(value, ContinuationReadCounts):
-                observed.materializations.append((observed.run, period))
+            # The barrier moves a period's rows in one transfer; each set of
+            # counts inside it is one materialization.
+            observed.materializations.extend(
+                (observed.run, period)
+                for node in jax.tree.leaves(
+                    value, is_leaf=lambda node: isinstance(node, ContinuationReadCounts)
+                )
+                if isinstance(node, ContinuationReadCounts)
+            )
             return original_get(value)
 
         with monkeypatch.context() as transfer_patch:

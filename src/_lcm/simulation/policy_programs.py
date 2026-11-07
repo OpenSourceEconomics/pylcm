@@ -59,7 +59,7 @@ class ReplayPayload:
     registered pytree while exposing concrete array locators to transfer planning.
     """
 
-    arrays: tuple[jax.Array, ...]
+    arrays: tuple[jax.Array | jax.ShapeDtypeStruct, ...]
     structure: jax.tree_util.PyTreeDef
 
     @classmethod

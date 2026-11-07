@@ -17,6 +17,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from _lcm.typing import PeriodToRegimeToVArr
+from lcm._solver_api.entries import _LazyEntry
 from lcm.typing import FloatND
 
 # What a snapshot or a period capture pickles: a model, its parameters and initial
@@ -53,7 +54,9 @@ def _save_h5(*, path: Path, period_to_regime_to_V_arr: PeriodToRegimeToVArr) -> 
         for period, regime_dict in period_to_regime_to_V_arr.items():
             for regime_name, arr in regime_dict.items():
                 dataset_name = f"{period}/{regime_name}/V_arr"
-                fh.create_dataset(dataset_name, data=np.asarray(arr))
+                # A value disk storage wrote is read back from its archive.
+                data = arr.host_value() if isinstance(arr, _LazyEntry) else arr
+                fh.create_dataset(dataset_name, data=np.asarray(data))
 
 
 def _load_h5(path: Path) -> PeriodToRegimeToVArr:

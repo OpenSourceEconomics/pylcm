@@ -5,6 +5,23 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
+### Value storage
+
+- `ExecutionConfig(value_storage=...)` says where a solve keeps solved values once no
+  period still to be solved reads them: `"device"` (the default, unchanged), `"host"`
+  (pinned host memory, at most three periods' values on the device) or a directory (one
+  archive per solve on disk, in the `SolutionResult.save` format). EGM-family simulation
+  policies take the same path. Values, policies, reads and simulated panels are bitwise
+  those of `"device"`. The budget planner counts only the
+  periods on the device, and a refusal caused by stored values names `value_storage`.
+- A NaN in the value function is diagnosed at the end of its period, while the values are
+  still on the device; the solve no longer reads values back after the loop to report it.
+- Off the device, a simulation of several subject chunks runs period by period: each
+  period's values and policies are copied once for every chunk, and the next period's
+  declared reads are copied while the current period runs. Block-major solves accept
+  `"host"` and a directory. A failed copy or write raises the
+  new `ValueStorageError`, naming the period, the regime and the target.
+
 ### Discrete state transition targets
 
 - A simple discrete-state law is checked against the target regimes retained by its
