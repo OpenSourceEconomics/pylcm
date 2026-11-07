@@ -299,11 +299,13 @@ from _lcm.utils.logging import (
 )
 from lcm.exceptions import (
     ExecutionPlanningError,
+    InvalidParamsError,
     InvalidValueFunctionError,
     ModelInitializationError,
     ShockDeclarationError,
 )
 from lcm.execution import WidthSearch
+from lcm.processes import RouwenhorstAR1Process
 from lcm.solver_api import (
     SIMULATION_POLICY,
     ArtifactKey,
@@ -546,6 +548,9 @@ def solve(  # noqa: C901, PLR0912, PLR0915
     # Resolve every solve program, then compile unique lowerings when enabled.
     diagnostics_enabled = validation_enabled(logger)
     narrowings = 0
+    # Each narrowed cell's smallest refused reservation and the chunk it was
+    # compiled with, so the next refusal shows whether narrowing pays off.
+    narrowed: dict[tuple[RegimeName, int], tuple[int, int]] = {}
     # A narrowing retry reuses every executable an earlier attempt compiled.
     if executable_cache is None:
         executable_cache = ExecutableCache()
@@ -590,10 +595,23 @@ def solve(  # noqa: C901, PLR0912, PLR0915
             # per planning pass however many of its cores were refused. Narrowing
             # one cell can move another's resident position, so the loop re-plans
             # until a pass is free of refusals.
+            # A cell that fits under host storage is refused at once: its
+            # message says to switch storage, which no narrowing replaces.
+            for error in refusals.errors:
+                if error.host_fits:
+                    raise error from refusals
             first_by_cell: dict[tuple[RegimeName, int], _CellBudgetError] = {}
             for error in refusals.errors:
                 first_by_cell.setdefault(error.triple[:2], error)
             for error in first_by_cell.values():
+                cell = error.triple[:2]
+                chunk = _workspace_chunk(regime=regimes[cell[0]], period=cell[1])
+                if error.reservation_bytes is not None and chunk is not None:
+                    if cell in narrowed:
+                        _fail_if_narrowing_cannot_fit(
+                            error=error, previous=narrowed[cell], chunk=chunk
+                        )
+                    narrowed[cell] = (error.reservation_bytes, chunk)
                 narrowings += 1
                 regime_name, period, core_key = error.triple
                 logger.info(
@@ -2767,13 +2785,54 @@ def _build_base_state_action_spaces(
     runtime-grid completion (e.g. process gridpoint computation) runs once
     per regime instead of once per period-regime iteration.
     """
-    return {
+    spaces = {
         regime_name: regime.solution.state_action_space(
             regime_params=regime_kernel_params(flat_params, regime_name=regime_name),
             process_grid_resolver=process_grid_resolver,
         )
         for regime_name, regime in regimes.items()
     }
+    _fail_if_carried_rouwenhorst_nodes_differ(regimes=regimes, spaces=spaces)
+    return spaces
+
+
+def _fail_if_carried_rouwenhorst_nodes_differ(
+    *,
+    regimes: Mapping[RegimeName, Regime],
+    spaces: Mapping[RegimeName, StateActionSpace],
+) -> None:
+    """Check resolved nodes where both regimes carry one declared solve law."""
+    for source_name, source in regimes.items():
+        runtime_states = tuple(
+            state_name
+            for state_name, grid in source.solution.grids.items()
+            if isinstance(grid, RouwenhorstAR1Process) and not grid.is_fully_specified
+        )
+        if not runtime_states:
+            continue
+        for target_name in source.solution.reachability.union_targets(
+            source=source_name
+        ):
+            if target_name == source_name:
+                continue
+            for state_name in runtime_states:
+                target_grid = regimes[target_name].solution.grids.get(state_name)
+                if not isinstance(target_grid, RouwenhorstAR1Process) or (
+                    target_grid.is_fully_specified
+                ):
+                    continue
+                source_nodes = spaces[source_name].states.get(state_name)
+                target_nodes = spaces[target_name].states.get(state_name)
+                if source_nodes is None or target_nodes is None:
+                    continue
+                left, right = jax.device_get((source_nodes, target_nodes))
+                if not np.array_equal(left, right):
+                    msg = (
+                        f"Rouwenhorst process '{state_name}' carried from "
+                        f"'{source_name}' to '{target_name}' requires identical "
+                        f"solve nodes. Got {left.tolist()} and {right.tolist()}."
+                    )
+                    raise InvalidParamsError(msg)
 
 
 def _drain_V_arr_shards(
@@ -2932,9 +2991,14 @@ def _build_planned_input_liveness(
     value then stays there through its own period, while its peers run, and
     through the next one, while the period reading it runs and its copy to the
     host finishes. Every dispatch of those two periods counts as a reader of
-    it, so a residency walk drops it exactly when the solve does. Only the
+    it, so a residency walk drops it exactly when the solve does. A read no
+    declaration covers happens while its own dispatch runs, so here it counts
+    as a read by that dispatch instead of a pin: pinned, a value or a
+    continuation leaf aliasing one would count as resident for the rest of the
+    solve, though the solve frees it once the reading period is done. Only the
     residency walk reads such a ledger: release and donation keep the device
-    ledger, which never hands a value whose copy is in flight to another owner.
+    ledger, whose pins never let a release run ahead of an undeclared read, and
+    which never hands a value whose copy is in flight to another owner.
     """
     dispatch_accesses: dict[_InputDispatch, tuple[ValueArtifactAddress, ...]] = dict(
         _gated_edge_fold_dispatches(regimes=regimes)
@@ -2951,15 +3015,19 @@ def _build_planned_input_liveness(
         declared, declares_no_reads = _classify_dispatch_value_artifacts(
             programs=programs,
         )
-        dispatch_accesses[(period, regime_name)] = declared
-        pinned_artifacts.update(
-            undeclared_read_pins(
-                regimes=regimes,
-                regime_name=regime_name,
-                period=period,
-                declares_no_reads=declares_no_reads,
-            )
+        undeclared = undeclared_read_pins(
+            regimes=regimes,
+            regime_name=regime_name,
+            period=period,
+            declares_no_reads=declares_no_reads,
         )
+        if value_storage == "host":
+            dispatch_accesses[(period, regime_name)] = tuple(
+                dict.fromkeys((*declared, *undeclared))
+            )
+        else:
+            dispatch_accesses[(period, regime_name)] = declared
+            pinned_artifacts.update(undeclared)
 
     retained = _retained_solution_artifacts(
         regimes=regimes,
@@ -4165,6 +4233,27 @@ def _candidate_resident_bytes(
     internal_arguments: Mapping[ReferenceName, ShapeDtypePytree],
     inventory: ResidentInventory,
 ) -> int:
+    """Measure one admission candidate's residency at its position.
+
+    Admission measures every candidate through this name. A refusal comparing
+    storages reads the same bytes through `_resident_bytes_excluding_reads`,
+    which is not an admission measurement.
+    """
+    return _resident_bytes_excluding_reads(
+        compiled=compiled,
+        program=program,
+        internal_arguments=internal_arguments,
+        inventory=inventory,
+    )
+
+
+def _resident_bytes_excluding_reads(
+    *,
+    compiled: jax.stages.Compiled,
+    program: ResolvedCoreProgram,
+    internal_arguments: Mapping[ReferenceName, ShapeDtypePytree],
+    inventory: ResidentInventory,
+) -> int:
     """Exclude only this specialization's aligned, compiler-live read buffers.
 
     Logical read occurrences identify scheduled storage. Template pointer aliases
@@ -4263,6 +4352,8 @@ class _CellBudgetError(WorkspaceBudgetError):
     With the smallest refused reservation, the resident bytes and the budget,
     `halvings` is how often a reservation proportional to the workspace width
     must halve before it fits beside the resident bytes; one otherwise.
+    `floor_bytes` are the resident bytes no narrower workspace changes, and
+    `host_fits` is whether a compiled candidate fits under host value storage.
     """
 
     def __init__(
@@ -4273,9 +4364,15 @@ class _CellBudgetError(WorkspaceBudgetError):
         reservation_bytes: int | None = None,
         resident_bytes: int = 0,
         budget_bytes: int = 0,
+        floor_bytes: int = 0,
+        host_fits: bool = False,
     ) -> None:
         super().__init__(message)
         self.triple = triple
+        self.reservation_bytes = reservation_bytes
+        self.budget_bytes = budget_bytes
+        self.floor_bytes = floor_bytes
+        self.host_fits = host_fits
         room = budget_bytes - resident_bytes
         halvings = 1
         if reservation_bytes is not None and room > 0:
@@ -4290,6 +4387,53 @@ class _CellBudgetRefusalsError(WorkspaceBudgetError):
     def __init__(self, errors: Sequence[_CellBudgetError]) -> None:
         super().__init__(" ".join(str(error) for error in errors))
         self.errors = tuple(errors)
+
+
+def _workspace_chunk(*, regime: Regime, period: int) -> int | None:
+    """Return the cells per chunk of a period's kernel, through any wrapper.
+
+    `None` for a kernel that has no chunk to narrow.
+    """
+    kernel = regime.solution.period_kernels[period]
+    # A participation kernel keeps the chunked kernel it borrows as its base.
+    while not hasattr(kernel, "chunk_size") and hasattr(kernel, "base"):
+        kernel = getattr(kernel, "base")  # noqa: B009
+    chunk = getattr(kernel, "chunk_size", None)
+    return chunk if isinstance(chunk, int) else None
+
+
+def _fail_if_narrowing_cannot_fit(
+    *, error: _CellBudgetError, previous: tuple[int, int], chunk: int
+) -> None:
+    """Refuse a cell once narrowing shows no narrower workspace would fit it.
+
+    A reservation is taken as a part fixed by the cell plus a part proportional
+    to its chunk. The refusals before and after one narrowing give both parts.
+    When the fixed part beside the bytes no narrowing changes exceeds the
+    budget, every narrower chunk is refused too, so the cell is refused now
+    rather than after further compilation waves.
+
+    Raises:
+        WorkspaceBudgetError: The fixed part does not fit beside the floor.
+
+    """
+    reservation = cast("int", error.reservation_bytes)
+    previous_reservation, previous_chunk = previous
+    if chunk >= previous_chunk:
+        return
+    per_cell = max(0, previous_reservation - reservation) / (previous_chunk - chunk)
+    fixed = max(0, round(reservation - per_cell * chunk))
+    if fixed + error.floor_bytes <= error.budget_bytes:
+        return
+    msg = (
+        f"{error} Narrowing the workspace from {previous_chunk} to {chunk} cells "
+        f"per chunk lowered the smallest compiler reservation only from "
+        f"{previous_reservation} to {reservation} bytes. About {fixed} bytes of "
+        "it do not shrink with the chunk, and beside the "
+        f"{error.floor_bytes} resident bytes no narrowing lowers they exceed "
+        f"the {error.budget_bytes}-byte budget, so no narrower workspace fits."
+    )
+    raise WorkspaceBudgetError(msg) from error
 
 
 def _narrow_native_closure(
@@ -4333,18 +4477,221 @@ def _swap_in_written_periods(
             simulation_policies[period.period] = MappingProxyType(dict(period.policies))
 
 
-def _stored_values_note(*, execution: ResolvedExecution) -> str:
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class _HostStorageFit:
+    """What a cell refused under device storage would need under host storage."""
+
+    what: str
+    """What the bytes are, as the refusal names them."""
+
+    needed_bytes: int
+    """Those bytes in the plan host storage makes."""
+
+    fits: bool
+    """Whether they fit the budget."""
+
+
+def _stored_values_note(
+    *, execution: ResolvedExecution, host: _HostStorageFit | None = None
+) -> str:
     """Return the clause naming host storage when solved values count as resident.
 
-    Empty under host storage, which already keeps them off the device. Leading
-    space included, so a caller appends it to a sentence.
+    Empty under host storage, which already keeps them off the device. With
+    `host`, the clause says what the cell would need under host storage and
+    whether that fits. Leading space included, so a caller appends it to a
+    sentence.
     """
     if execution.value_storage_kind != "device":
         return ""
+    if host is None:
+        return (
+            " The resident bytes include the values of every period solved so far; "
+            "ExecutionConfig(value_storage='host') keeps those in host memory and "
+            "leaves only the periods still being read on the device."
+        )
+    outcome = (
+        "which fits the budget: switch to host storage instead of narrowing the "
+        "workspace."
+        if host.fits
+        else "which still exceeds the budget, so host storage alone does not "
+        "make this cell fit."
+    )
     return (
-        " The resident bytes include the values of every period solved so far; "
-        "ExecutionConfig(value_storage='host') keeps those in host memory and "
-        "leaves only the periods still being read on the device."
+        " The resident bytes include the values of every period solved so far. "
+        "Under ExecutionConfig(value_storage='host'), which keeps only the periods "
+        f"still being read on the device, {host.what} would be "
+        f"{host.needed_bytes} bytes, {outcome}"
+    )
+
+
+def _host_storage_inventory(
+    *,
+    regimes: MappingProxyType[RegimeName, Regime],
+    program_metadata: Mapping[_CoreTriple, _ProgramExecutionMetadata],
+    persistable_artifact_refs: frozenset[ArtifactRef],
+    templates: SolveInputMappings[ValueTemplate],
+    device_ids: tuple[int, ...],
+    fixed_bytes: MappingProxyType[int, int],
+    internal_bytes: Mapping[tuple[RegimeName, int], int],
+) -> MappingProxyType[_CoreTriple, ResidentInventory]:
+    """Place every cell in the plan host value storage makes.
+
+    A device-storage solve builds this only to say whether a cell it refuses
+    would fit under host storage; its own plan keeps every solved value.
+    """
+    inventory = _resident_inventory_by_triple(
+        regimes=regimes,
+        ledger=_build_planned_input_liveness(
+            regimes=regimes,
+            program_metadata=program_metadata,
+            persistable_artifact_refs=persistable_artifact_refs,
+            value_storage="host",
+        ),
+        templates=templates,
+        program_metadata=program_metadata,
+        device_ids=device_ids,
+        fixed_bytes=fixed_bytes,
+    )
+    return MappingProxyType(
+        {
+            triple: dataclasses.replace(
+                position, internal_bytes=internal_bytes[triple[:2]]
+            )
+            for triple, position in inventory.items()
+        }
+    )
+
+
+def _narrowing_floor_bytes(*, inventory: ResidentInventory) -> int:
+    """Return the resident bytes no narrower workspace of the cell changes.
+
+    That is everything the cell competes with on its busiest device except its
+    own internal-output reservation, the one part a narrower kernel shrinks:
+    stored values, its peers' outputs, solve-lifetime owners and transfer
+    scratch.
+    """
+    return dataclasses.replace(inventory, internal_bytes=0).resident_bytes()
+
+
+def _fail_if_a_floor_fills_the_budget(
+    *,
+    triples: tuple[_CoreTriple, ...],
+    resident_inventory: Mapping[_CoreTriple, ResidentInventory],
+    host_storage_inventory: Callable[[], Mapping[_CoreTriple, ResidentInventory]]
+    | None,
+    budget_bytes: int,
+    execution: ResolvedExecution,
+    logger: logging.Logger,
+) -> None:
+    """Refuse before compiling a cell whose floor alone reaches the budget.
+
+    No workspace width fits such a cell, and narrowing never lowers its floor,
+    so compiling the solve's programs and narrowing would only end in the same
+    refusal, after every compilation wave. The refusal is raised at once,
+    never narrowed.
+
+    Raises:
+        WorkspaceBudgetError: A cell's floor reaches the budget.
+
+    """
+    for triple in triples:
+        inventory = resident_inventory[triple]
+        floor = _narrowing_floor_bytes(inventory=inventory)
+        if floor < budget_bytes:
+            continue
+        _log_resident_split(
+            logger=logger, triple=triple, breakdown=inventory.resident_breakdown()
+        )
+        host = None
+        if host_storage_inventory is not None:
+            host_floor = _narrowing_floor_bytes(
+                inventory=host_storage_inventory()[triple]
+            )
+            host = _HostStorageFit(
+                what="those bytes",
+                needed_bytes=host_floor,
+                fits=host_floor < budget_bytes,
+            )
+        raise _width_selection_failure(
+            triple=triple,
+            resident_bytes=inventory.resident_bytes(),
+            transfer_scratch_bytes=inventory.transfer_scratch_bytes,
+            budget_bytes=budget_bytes,
+            execution=execution,
+            error=WorkspaceBudgetError(
+                f"Of the bytes resident at the node's position, {floor} are ones no "
+                "narrower workspace lowers; they reach the budget, so nothing was "
+                "compiled."
+            ),
+            floor_bytes=floor,
+            host=host,
+        )
+
+
+def _host_storage_fit(
+    *,
+    candidates: Sequence[_CoreCandidate],
+    lowering_keys: Mapping[_CoreCandidate, Hashable],
+    fallback_keys: Mapping[_CoreCandidate, Hashable],
+    compiled: Mapping[Hashable, jax.stages.Compiled],
+    memory_by_lowering_key: Mapping[Hashable, CompilerMemoryReservation],
+    resolved_programs: Mapping[_CoreCandidate, ResolvedCoreProgram],
+    internal_templates: Mapping[
+        _CoreCandidate, Mapping[ReferenceName, ShapeDtypePytree]
+    ],
+    device_inventory: ResidentInventory,
+    host_inventory: ResidentInventory,
+    budget_bytes: int,
+) -> _HostStorageFit | None:
+    """Return what a refused cell's compiled candidates need under host storage.
+
+    A candidate needs what admission charges it: the larger, over its compiled
+    variants, of a variant's compiler reservation plus the bytes it leaves
+    resident in the plan. The cell needs its cheapest candidate's total. A
+    fallback not compiled yet is not counted.
+
+    `None` when no candidate was compiled, or when the cell's total fits the
+    budget under device storage too: the refusal then has another cause, which
+    switching storage does not touch.
+    """
+
+    def _needed(inventory: ResidentInventory) -> int | None:
+        totals: list[int] = []
+        for candidate in candidates:
+            primary = lowering_keys.get(candidate)
+            if primary is None:
+                continue
+            keys = tuple(
+                key
+                for key in dict.fromkeys(
+                    (primary, fallback_keys.get(candidate, primary))
+                )
+                if key in compiled and key in memory_by_lowering_key
+            )
+            if keys:
+                totals.append(
+                    max(
+                        memory_by_lowering_key[key].reservation_bytes
+                        + _resident_bytes_excluding_reads(
+                            compiled=compiled[key],
+                            program=resolved_programs[candidate],
+                            internal_arguments=internal_templates[candidate],
+                            inventory=inventory,
+                        )
+                        for key in keys
+                    )
+                )
+        return min(totals, default=None)
+
+    on_device = _needed(device_inventory)
+    if on_device is None or on_device <= budget_bytes:
+        return None
+    needed = cast("int", _needed(host_inventory))
+    return _HostStorageFit(
+        what="the smallest total of its compiled candidates, compiler reservation "
+        "plus resident bytes,",
+        needed_bytes=needed,
+        fits=needed <= budget_bytes,
     )
 
 
@@ -4402,6 +4749,8 @@ def _width_selection_failure(
     error: ExecutionPlanningError,
     skipped_fallback_evaluations: int = 0,
     reservation_bytes: int | None = None,
+    floor_bytes: int = 0,
+    host: _HostStorageFit | None = None,
 ) -> ExecutionPlanningError:
     """Name the cell a workspace refusal belongs to and what it competed with.
 
@@ -4419,7 +4768,7 @@ def _width_selection_failure(
         f"resident on its busiest device against a {budget_bytes}-byte budget, "
         f"of which the period's transfer operators reserve up to {scratch} bytes "
         f"on a single device."
-        f"{_stored_values_note(execution=execution)}"
+        f"{_stored_values_note(execution=execution, host=host)}"
         f"{execution.device_memory_cap_note()} {error}"
     )
     if skipped_fallback_evaluations:
@@ -4435,6 +4784,8 @@ def _width_selection_failure(
             reservation_bytes=reservation_bytes,
             resident_bytes=resident_bytes,
             budget_bytes=budget_bytes,
+            floor_bytes=floor_bytes,
+            host_fits=host is not None and host.fits,
         )
         if isinstance(error, WorkspaceBudgetError)
         else ExecutionPlanningError(msg)
@@ -4868,6 +5219,12 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
                 fixed_bytes=fixed_bytes,
             )
         )
+        # Under device storage a refused cell is also placed in the plan host
+        # storage would make, to say whether switching storage makes it fit; that
+        # plan is walked only once a refusal asks for it.
+        host_storage_inventory: (
+            Callable[[], Mapping[_CoreTriple, ResidentInventory]] | None
+        ) = None
         if budget_bytes is not None:
             internal_bytes = _internal_reservations_by_cell(
                 programs=resolved_programs,
@@ -4884,6 +5241,26 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
                     for triple, inventory in resident_inventory.items()
                 }
             )
+            if execution.value_storage_kind == "device":
+                host_storage_inventory = functools.cache(
+                    functools.partial(
+                        _host_storage_inventory,
+                        regimes=regimes,
+                        program_metadata=representative_metadata,
+                        persistable_artifact_refs=persistable_artifact_refs,
+                        templates=SolveInputMappings(
+                            next_regime_to_V_arr=next_regime_to_V_arr,
+                            next_regime_to_continuation=next_regime_to_continuation,
+                            continuation_templates_by_period=(
+                                _dated_continuation_templates(regimes=regimes)
+                            ),
+                            next_edge_to_V_arr=next_edge_to_V_arr,
+                        ),
+                        device_ids=execution.device_ids,
+                        fixed_bytes=fixed_bytes,
+                        internal_bytes=internal_bytes,
+                    )
+                )
         resident_bytes_by_triple = MappingProxyType(
             {
                 triple: 0
@@ -4892,6 +5269,15 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
                 for triple in candidates_by_triple
             }
         )
+        if budget_bytes is not None:
+            _fail_if_a_floor_fills_the_budget(
+                triples=tuple(candidates_by_triple),
+                resident_inventory=resident_inventory,
+                host_storage_inventory=host_storage_inventory,
+                budget_bytes=budget_bytes,
+                execution=execution,
+                logger=logger,
+            )
     n_workers = _resolve_compilation_workers(
         max_compilation_workers=max_compilation_workers
     )
@@ -5245,6 +5631,24 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
                             if id(executable) in memory_by_compiled_id
                         ),
                         default=None,
+                    ),
+                    floor_bytes=_narrowing_floor_bytes(
+                        inventory=resident_inventory[triple]
+                    ),
+                    host=None
+                    if host_storage_inventory is None
+                    or not isinstance(error, WorkspaceBudgetError)
+                    else _host_storage_fit(
+                        candidates=candidates,
+                        lowering_keys=lowering_keys,
+                        fallback_keys=fallback_keys,
+                        compiled=compiled,
+                        memory_by_lowering_key=memory_by_lowering_key,
+                        resolved_programs=resolved_programs,
+                        internal_templates=internal_templates,
+                        device_inventory=resident_inventory[triple],
+                        host_inventory=host_storage_inventory()[triple],
+                        budget_bytes=budget_bytes,
                     ),
                 )
                 if not isinstance(failure, _CellBudgetError):

@@ -102,16 +102,18 @@ class _ContinuousStochasticProcess(ContinuousGrid):
     )
     """How a value beyond the outer nodes is read, as on a continuous grid.
 
-    - `"extrapolate"`: transition rows, continuations and policies extend
-      linearly along the edge segment.
+    - `"extrapolate"`: Tauchen evaluates its transition law at the off-grid
+      value. Rouwenhorst uses the edge node's transition row and extends the
+      continuation along the edge segment. Interpolated policies also extend
+      along the edge segment.
     - `"clip_lookup"`: those reads use the nearest edge node; the state keeps
       its value.
     - `"clip_state"`: a simulated value is additionally clipped to the outer
       nodes.
     - `"raise"`: a simulated value beyond the outer nodes is refused.
 
-    A `simulated_draws="nodes"` draw samples the nearest edge node's row under
-    every rule, since an extrapolated row can carry negative weights.
+    A `simulated_draws="nodes"` draw beyond the nodes samples the nearest edge
+    node's transition row when the off-grid rule permits the state.
     """
 
     state_conditioned: StateConditioned | None = field(init=False, default=None)

@@ -161,6 +161,25 @@ class LowerWaveKwargs(TypedDict):
     labels: dict[backward_induction.Hashable, str]
 
 
+class FloorRefusalKwargs(TypedDict):
+    triples: tuple[backward_induction._CoreTriple, ...]
+    resident_inventory: Mapping[
+        backward_induction._CoreTriple, backward_induction.ResidentInventory
+    ]
+    host_storage_inventory: (
+        backward_induction.Callable[
+            [],
+            Mapping[
+                backward_induction._CoreTriple, backward_induction.ResidentInventory
+            ],
+        ]
+        | None
+    )
+    budget_bytes: int
+    execution: backward_induction.ResolvedExecution
+    logger: backward_induction.logging.Logger
+
+
 class MeasureVariantKwargs(TypedDict):
     variant_key: backward_induction.Hashable
     candidate: backward_induction._CoreCandidate

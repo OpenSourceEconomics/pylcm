@@ -59,6 +59,9 @@ from _lcm.egm.regime_introspection import (
     _get_passive_state_names,
 )
 from _lcm.egm.scalar_query import ScalarEGMQueryModel
+
+# Load the solver before model construction so import frames cannot retain a model.
+from _lcm.egm.step import compute_egm_carry_length
 from _lcm.egm.terminal import (
     N_STATELESS_CARRY_ROWS,
     get_brute_child_carry_producer,
@@ -1888,7 +1891,6 @@ def _prepare_dcegm_query_models(
         FiniteOuterQuerySpec,
         build_query_model_authority,
     )
-    from _lcm.egm.step import compute_egm_carry_length  # noqa: PLC0415
     from _lcm.solution.dcegm import (  # noqa: PLC0415
         ExactEnvelope,
         _BoundDCEGM,
@@ -4199,10 +4201,8 @@ def _rouwenhorst_node_mismatch_error(
 ) -> str | None:
     """Return an error if a carried Rouwenhorst state changes its nodes.
 
-    A Rouwenhorst transition row exists only at its own nodes, so the target's
-    rows cannot be read at a source node that is not one of them. Checked on the
-    solve laws; nodes that depend on parameters supplied at runtime are not known
-    here and pass.
+    This check uses the fixed solve supports. The solve checks the completed
+    supports when both regimes carry the same runtime-parameterized law.
     """
     if not (
         phase_name == "solution"
@@ -4222,7 +4222,7 @@ def _rouwenhorst_node_mismatch_error(
         f"{phase_name} phase: the Rouwenhorst process '{state_name}' is carried "
         f"from '{source}' to '{target}', but the two regimes place its nodes "
         f"differently ({source_nodes.tolist()} vs {target_nodes.tolist()}). A "
-        "Rouwenhorst transition row exists only at its own nodes. Declare the same "
+        "carried Rouwenhorst process requires identical solve nodes. Declare the same "
         "process in both regimes, or use a Tauchen-family process if the law changes."
     )
 
@@ -5100,6 +5100,7 @@ def _prepare_numerical_solution_phase(  # noqa: PLR0915 - native route admission
         )
         decision_Q_and_F = functools.partial(
             _build_Q_and_F_per_period,
+            phase_name="solution",
             bound_specs=tuple(
                 bound for bound in post_decision_bounds if bound.kind == "dag"
             ),
@@ -6485,6 +6486,7 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
         )
         decision_Q_and_F = functools.partial(
             _build_Q_and_F_per_period,
+            phase_name="simulation",
             bound_specs=tuple(
                 bound for bound in post_decision_bounds if bound.kind == "dag"
             ),
@@ -10137,6 +10139,7 @@ class _GroupedQAndF:
 
 def _build_Q_and_F_per_period(
     *,
+    phase_name: PhaseName,
     active_periods: tuple[int, ...],
     bound_specs: tuple[PostDecisionBoundSpec, ...] = (),
     phase_reachability: PhaseReachability,
@@ -10309,6 +10312,7 @@ def _build_Q_and_F_per_period(
             # singleton branch; with no age-specialized node the resolution is a
             # passthrough.
             built[key] = get_Q_and_F_collective(
+                phase_name=phase_name,
                 bound_specs=bound_specs,
                 flat_param_names=flat_param_names,
                 koopmans_aggregator=koopmans_aggregator,
@@ -10367,6 +10371,7 @@ def _build_Q_and_F_per_period(
             )
             continue
         built[key] = get_Q_and_F(
+            phase_name=phase_name,
             bound_specs=bound_specs,
             flat_param_names=flat_param_names,
             functions=cast(

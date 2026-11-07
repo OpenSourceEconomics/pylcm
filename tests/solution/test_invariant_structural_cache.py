@@ -172,6 +172,59 @@ def _warm(*, model: Model, params: UserParams, n: int = 2) -> None:
         del warmed
 
 
+def test_same_schema_warm_calls_reuse_the_compiled_executables(
+    *, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A repeat solve plans with the already compiled programs, not new wrappers."""
+    model, params = _workload(
+        name="independent_types", execution_config=_config(blocked=False)
+    )
+    with _captured_plans(monkeypatch) as plans:
+        first = _solve(model=model, params=params)
+        second = _solve(model=model, params=params)
+    first_programs, second_programs = (
+        {
+            (regime, period, name): core.compiled
+            for (regime, period), cores in plan.executables.items()
+            for name, core in cores.items()
+        }
+        for plan in plans
+    )
+    assert first_programs
+    assert first_programs.keys() == second_programs.keys()
+    assert all(
+        executable is second_programs[identity]
+        for identity, executable in first_programs.items()
+    )
+    _assert_values_identical(first=first, second=second)
+
+
+def test_cached_executables_release_a_calls_runtime_parameter() -> None:
+    """Keeping executables must not keep the last solve's dynamic operand."""
+    model, params = _workload(
+        name="independent_types", execution_config=_config(blocked=False)
+    )
+
+    def solve_with_unique_operand() -> weakref.ReferenceType[jax.Array]:
+        changed = copy.deepcopy(params)
+        working = changed["working"]
+        assert isinstance(working, dict)
+        utility = working["utility"]
+        assert isinstance(utility, dict)
+        weight = utility["weight"]
+        assert isinstance(weight, jax.Array)
+        unique = weight * 1.125
+        utility["weight"] = unique
+        reference = weakref.ref(unique)
+        _solve(model=model, params=changed)
+        return reference
+
+    parameter = solve_with_unique_operand()
+    assert model._solve_executable_cache.compiled
+    gc.collect()
+    assert parameter() is None
+
+
 @pytest.mark.parametrize("blocked", [False, True])
 @pytest.mark.parametrize("workload", _WORKLOADS)
 def test_same_schema_warm_calls_rebind_values_without_rebuilding_structure(
@@ -479,11 +532,15 @@ def test_pickling_a_model_drops_its_blueprints() -> None:
     )
     first = _solve(model=model, params=params)
     assert len(model._structural_blueprints) > 0
+    assert model._solve_executable_cache.compiled
     assert "_structural_blueprints" not in model.__getstate__()
+    assert "_solve_executable_cache" not in model.__getstate__()
     restored = cloudpickle.loads(cloudpickle.dumps(model))
     assert len(restored._structural_blueprints) == 0
+    assert not restored._solve_executable_cache.compiled
     _assert_values_identical(first=first, second=_solve(model=restored, params=params))
     assert len(restored._structural_blueprints) == 1
+    assert restored._solve_executable_cache.compiled
 
 
 def test_a_blueprint_holding_other_program_objects_is_rebuilt(
