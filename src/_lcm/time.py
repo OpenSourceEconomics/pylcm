@@ -6,6 +6,7 @@ from typing import Literal
 
 import jax.numpy as jnp
 
+from _lcm.typing import AgeValue
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError
 from lcm.typing import Float1D, Int1D, UserAge
@@ -67,7 +68,7 @@ def coordinate_kind(ages: TimeAxis) -> Literal["age", "period"]:
     return ages.kind if isinstance(ages, ModelTime) else "age"
 
 
-def coordinate_at(*, ages: TimeAxis, period: int) -> int | float:
+def coordinate_at(*, ages: TimeAxis, period: int) -> AgeValue:
     """Read a scalar time label for an internal execution context."""
     if period < 0 or period >= ages.n_periods:
         raise IndexError(f"Period {period} is outside the model horizon.")
@@ -76,7 +77,7 @@ def coordinate_at(*, ages: TimeAxis, period: int) -> int | float:
     return ages.period_to_age(period)
 
 
-def specialization_coordinate_at(*, ages: TimeAxis, period: int) -> int | float:
+def specialization_coordinate_at(*, ages: TimeAxis, period: int) -> AgeValue:
     """Preserve float age factories and integer period factories."""
     coordinate = coordinate_at(ages=ages, period=period)
     return coordinate if coordinate_kind(ages) == "period" else float(coordinate)

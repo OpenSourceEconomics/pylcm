@@ -36,7 +36,6 @@ from jax.extend.core import (
 from jax.extend.core import primitives as primitive_objects
 from jax.lax import GatherDimensionNumbers, GatherScatterMode, ScatterDimensionNumbers
 
-from _lcm.grids import DiscreteGrid
 from _lcm.simulation.process_grids import (
     ProcessValue,
     _aval_schema,
@@ -53,6 +52,7 @@ from _lcm.solution.fingerprint import (
 )
 from _lcm.typing import PytreeValue
 from lcm.exceptions import ExecutionPlanningError
+from lcm.grids import DiscreteGrid
 from lcm.typing import ReferenceName
 
 type _Static = (

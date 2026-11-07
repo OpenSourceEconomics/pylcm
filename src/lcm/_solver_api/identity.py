@@ -11,6 +11,7 @@ from typing import (
 import jax
 import numpy as np
 
+from lcm.typing import JSONScalar
 from lcm.version import __version__
 
 if TYPE_CHECKING:
@@ -265,7 +266,7 @@ class AxisDescriptor:
     """Number of entries along the axis."""
     role: AxisRole
     """Mathematical role of the axis."""
-    coordinates: tuple[bool | int | float | str, ...] = ()
+    coordinates: tuple[JSONScalar, ...] = ()
     """Coordinate of each entry, or empty when the axis is positional only."""
 
     def __post_init__(self) -> None:
@@ -317,7 +318,7 @@ class AxisAuthority:
     """Number of entries along the axis."""
     role: AxisRole
     """Mathematical role of the axis."""
-    coordinates: tuple[bool | int | float | str, ...] = ()
+    coordinates: tuple[JSONScalar, ...] = ()
     """Exact canonical coordinate of each entry, or empty when positional only."""
 
     def __post_init__(self) -> None:

@@ -31,7 +31,12 @@ Two runtime checkers have separate jobs:
   `_lcm` through the package claw, and maps violations on selected user-facing
   constructors (`Model`, `Regime`, grids, `DCEGM`) to project exceptions. Its default
   strategy checks one sampled entry of each container per call, so it is not an
-  exhaustive container check.
+  exhaustive container check. The two claws differ in one respect: `lcm` keeps the
+  PEP 484 numeric tower, so a public `float` parameter admits an `int`, while `_lcm`
+  turns it off, so an internal `float` parameter refuses an `int`. Normalize at the
+  public boundary (a Pydantic `CONFIG_FLOAT` field, or an explicit `float(...)` where
+  a public function hands a value inward) and annotate internal code with the one
+  type it actually receives.
 - **Pydantic** owns the constructors of plain-data configuration records: the envelope
   configurations (`ExactEnvelope`, `FUESEnvelope`, `RFCEnvelope`), `AdaptiveOuterMesh`,
   `UniformObservedFixedCost`, `WidthSearchPolicy` and `ExecutionConfig`. They are

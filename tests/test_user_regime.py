@@ -12,7 +12,6 @@ import pytest
 from dags import rename_arguments
 from dags.tree import QNAME_DELIMITER
 
-from _lcm.grids import IrregSpacedGrid
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.transitions import (
     _IdentityTransition,
@@ -47,6 +46,7 @@ from lcm.exceptions import (
     ModelInitializationError,
     RegimeInitializationError,
 )
+from lcm.grids import IrregSpacedGrid
 from lcm.regime import (
     ActionEntry,
     FunctionEntry,

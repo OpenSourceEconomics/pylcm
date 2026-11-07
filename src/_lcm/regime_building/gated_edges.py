@@ -69,6 +69,7 @@ from _lcm.regime_building.Q_and_F import (
 )
 from _lcm.regime_building.V import VInterpolationInfo
 from _lcm.typing import (
+    AgeValue,
     ArrayTree,
     EconFunctionsMapping,
     FlatParams,
@@ -203,7 +204,7 @@ def bind_edge_period_context(
     *,
     func: Callable[..., ArrayTree],
     fold_period: int,
-    fold_age: float | ScalarFloat | Int[Scalar, ""] | None,
+    fold_age: AgeValue | ScalarFloat | Int[Scalar, ""] | None,
 ) -> MappingProxyType[ReferenceName, Int[Scalar, ""] | ScalarFloat]:
     """Bind the target-fold context an edge callable explicitly declares.
 

@@ -54,7 +54,7 @@ from _lcm.axis_boundaries import (
 from _lcm.beartype_conf import REGIME_CONF
 from _lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
 from _lcm.constraints.dispositions import CompileBoundary
-from _lcm.constraints.ir import Compare, Const, Ref
+from _lcm.constraints.ir import Compare, Const
 from _lcm.constraints.routes import ConstraintPlan, ConstraintRoute
 from _lcm.continuation import EGMContinuationLayout, EGMContinuationSpec
 from _lcm.dtypes import canonical_float_dtype
@@ -143,7 +143,7 @@ from _lcm.execution.reductions import (
     INTERVAL_ENVELOPE_REDUCTION,
     WEIGHTED_EXPECTATION_REDUCTION,
 )
-from _lcm.grids import ContinuousGrid, DiscreteGrid
+from _lcm.grids import ContinuousGrid
 from _lcm.grids.base import Grid
 from _lcm.materialization import DatedGenerationMaterializer
 from _lcm.params.edges import EDGES, flat_namespaces, regime_kernel_params
@@ -237,12 +237,14 @@ from _lcm.utils.functools import array_result, is_user_function
 from lcm._solver_api.capabilities import SolverExecutionCapabilities
 from lcm.case_piece import CaseBoundary, EqualityOwner, PiecewiseAffineMeta
 from lcm.collective import CollectiveUtility
+from lcm.condition import Ref
 from lcm.exceptions import (
     ExecutionPlanningError,
     RegimeInitializationError,
     UnsupportedOperationError,
 )
 from lcm.fixed_forms import cash_on_hand_with_subsidy
+from lcm.grids import DiscreteGrid
 from lcm.phased import Phased
 from lcm.solver_api import (
     EGM_CONTINUATION,
@@ -2656,8 +2658,8 @@ class _RideAlongNBEGMPeriodKernel:
 class _LiteralCaseThreshold:
     """A case threshold declared as a literal number."""
 
-    literal: float | int | bool
-    """The declared boundary value."""
+    literal: float
+    """The declared boundary value; `_normalize_case_boundary` refuses a flag."""
 
     def __call__(self, _params: EconFunctionKwargs) -> FloatND:
         """Return the literal as an array; the params play no part."""

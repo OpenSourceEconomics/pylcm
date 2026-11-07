@@ -11,10 +11,10 @@ import numpy as np
 
 from _lcm.dtypes import canonical_float_dtype
 from _lcm.engine import Regime
-from _lcm.grids import DiscreteGrid, Grid
+from _lcm.grids import Grid
 from _lcm.params.edges import regime_kernel_params
 from _lcm.processes.base import _ContinuousStochasticProcess
-from _lcm.processes.iid import LogNormalIIDProcess, UniformIIDProcess, _IIDProcess
+from _lcm.processes.iid import _IIDProcess
 from _lcm.regime_building.age_normalization import group_periods_by_key
 from _lcm.regime_building.processing import _build_next_state_vmapped
 from _lcm.simulation.initial_conditions import resolve_initial_periods
@@ -38,6 +38,8 @@ from lcm.exceptions import (
     InvalidSimulationInputError,
     InvalidStateTransitionError,
 )
+from lcm.grids import DiscreteGrid
+from lcm.processes import LogNormalIIDProcess, UniformIIDProcess
 from lcm.typing import Bool1D, Float1D, FloatND, Int1D, StateName, UserInitialConditions
 
 

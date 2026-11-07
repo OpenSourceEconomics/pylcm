@@ -14,7 +14,6 @@ from types import MappingProxyType
 import jax.numpy as jnp
 import pytest
 
-from _lcm.grids import DiscreteGrid
 from _lcm.regime_building.age_normalization import periodized_tree_signature
 from _lcm.regime_building.age_specialization import (
     INVARIANT,
@@ -29,6 +28,7 @@ from _lcm.user_regime_validation import (
     _validate_logical_consistency,
 )
 from lcm.exceptions import RegimeInitializationError
+from lcm.grids import DiscreteGrid
 from lcm.transition import AgeSpecializedFunction, StochasticTransition
 from lcm.typing import Float1D
 from tests.mock_regime import MockRegime

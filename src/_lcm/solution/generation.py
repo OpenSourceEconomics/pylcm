@@ -12,7 +12,6 @@ from typing import TYPE_CHECKING
 
 import jax
 
-from _lcm.grids import DiscreteGrid
 from _lcm.materialization import DatedGenerationMaterializer
 from _lcm.params.edges import flat_namespaces
 from _lcm.processes.grid_resolution import ProcessGridResolver
@@ -23,6 +22,7 @@ from _lcm.solution.fingerprint import (
 )
 from _lcm.typing import FlatParams, PytreeValue
 from lcm._solver_api.authority import ArtifactAuthority, _ArrayCopier
+from lcm.grids import DiscreteGrid
 
 if TYPE_CHECKING:
     from _lcm.solution.model_authority import SolutionAuthority

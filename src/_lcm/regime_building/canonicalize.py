@@ -36,7 +36,7 @@ from types import MappingProxyType
 from typing import cast
 
 from _lcm.coarse_transition import _CoarseTransitionCell
-from _lcm.grids import DiscreteGrid, Grid
+from _lcm.grids import Grid
 from _lcm.identity_transition import _IdentityTransition
 from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.reachability import PhaseReachability, candidate_targets_from_transition
@@ -51,6 +51,7 @@ from _lcm.regime_law import RegimeLaws
 from _lcm.typing import RegimeName, StateName
 from _lcm.utils.error_messages import format_messages
 from lcm.exceptions import ModelInitializationError
+from lcm.grids import DiscreteGrid
 from lcm.transition import AgeSpecializedGrid, JointTransition, StochasticTransition
 from lcm.typing import ContinuousState, DiscreteState, UserFunction
 

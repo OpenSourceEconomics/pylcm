@@ -71,10 +71,11 @@ with contextlib.suppress(ImportError):
 
 # Register beartype's package claw on both the private implementation package
 # `_lcm` and the public `lcm` package before any of their submodules are
-# imported, so every module loads with runtime type checks installed via
-# `INTERNAL_CONF`. User-facing constructors stack an explicit
-# `@beartype(conf=...)` decorator that maps violations to the relevant project
-# exception (see `_lcm.beartype_conf`).
+# imported, so every module loads with runtime type checks installed: `_lcm`
+# under `INTERNAL_CONF` (no numeric tower) and `lcm` under `PUBLIC_CONF`.
+# User-facing constructors stack an explicit `@beartype(conf=...)` decorator
+# that maps violations to the relevant project exception (see
+# `_lcm.beartype_conf`).
 # beartype 0.22.9 ships a stray `print(f'Detecting C-based callable {func!r}
 # isomorphism...')` at `beartype._util.func.utilfunctest:1083`. It fires once
 # per imported pseudo-callable (jaxlib PjitFunction at every pylcm import),
@@ -82,12 +83,12 @@ with contextlib.suppress(ImportError):
 import beartype._util.func.utilfunctest as _beartype_utilfunctest
 from beartype.claw import beartype_package
 
-from _lcm.beartype_conf import INTERNAL_CONF
+from _lcm.beartype_conf import INTERNAL_CONF, PUBLIC_CONF
 
 _beartype_utilfunctest.print = lambda *_args, **_kwargs: None  # ty: ignore[unresolved-attribute]
 
 beartype_package("_lcm", conf=INTERNAL_CONF)
-beartype_package("lcm", conf=INTERNAL_CONF)
+beartype_package("lcm", conf=PUBLIC_CONF)
 
 from _lcm.additive_shock_transition import AdditiveShockTransition  # noqa: E402
 from _lcm.logsum import EULER_GAMMA  # noqa: E402

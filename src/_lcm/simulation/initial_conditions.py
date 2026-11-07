@@ -28,11 +28,9 @@ from _lcm.dtypes import (
 )
 from _lcm.engine import PeriodRegimeSimulationData, Regime, placed_devices_for_ids
 from _lcm.execution.execution_plan import ResolvedExecution
-from _lcm.grids import DiscreteGrid
 from _lcm.params.edges import regime_kernel_params
 from _lcm.post_decision_bound import PostDecisionBoundSpec
 from _lcm.processes.grid_resolution import ProcessGridResolver
-from _lcm.processes.joint_normal import JointNormalIIDProcess
 from _lcm.processes.joint_normal_lowering import (
     coordinate_names,
     joint_normal_declarations,
@@ -101,6 +99,8 @@ from lcm.exceptions import (
     PyLCMError,
     UnsupportedOperationError,
 )
+from lcm.grids import DiscreteGrid
+from lcm.processes import JointNormalIIDProcess
 from lcm.typing import (
     Bool1D,
     BoolND,
@@ -815,8 +815,14 @@ def _cast_carrier(*, value: jax.Array, dtype: str) -> jax.Array:
     return value.astype(np.dtype(dtype))
 
 
-def _fill_carrier(*, template: jax.Array, dtype: str, fill_value: float) -> jax.Array:
-    """Allocate one missing column at the exact subject extent and canonical dtype."""
+def _fill_carrier(
+    *, template: jax.Array, dtype: str, fill_value: float | int
+) -> jax.Array:
+    """Allocate one missing column at the exact subject extent and canonical dtype.
+
+    `fill_value` is the missing marker in the column's own kind: NaN for a
+    continuous state, `MISSING_CAT_CODE` for a discrete one.
+    """
     return jnp.full(template.shape[0], fill_value, dtype=np.dtype(dtype))
 
 

@@ -16,11 +16,11 @@ import jax.numpy as jnp
 from dags import get_annotations
 from dags.annotations import ensure_annotations_are_strings
 
-from _lcm.grids.conditional_action import ConditionalAction
-from _lcm.grids.discrete import DiscreteGrid
 from _lcm.regime_building.age_specialization import resolve_node
 from _lcm.time import TimeAxis, specialization_coordinate_at
+from _lcm.typing import AgeValue, DiscreteGridValue
 from lcm.collective import CollectiveUtility, ValueDependentConstraint
+from lcm.grids import ConditionalAction, DiscreteGrid
 from lcm.phased import Phased
 from lcm.regime import (
     ActionEntry,
@@ -123,7 +123,7 @@ class _ConditionalActionPin:
     action_name: ActionName
     """Name of the conditional action."""
 
-    active_when: tuple[tuple[ActionName, tuple[int | float, ...]], ...]
+    active_when: tuple[tuple[ActionName, tuple[DiscreteGridValue, ...]], ...]
     """Pairs of a discrete action name and the values that activate the action."""
 
     inactive_node: float
@@ -304,8 +304,8 @@ def _sign(*, pin: _ConditionalActionPin, readers: tuple[_Reader, ...]) -> _Signe
 def _resolved(
     *,
     readers: tuple[_Reader, ...],
-    coordinate: float,
-    simulated_coordinate: float,
+    coordinate: AgeValue,
+    simulated_coordinate: AgeValue,
 ) -> Iterator[_Reader]:
     """Yield `readers` with every callable built per age or period built, through
     phased and per-target entries.
@@ -402,7 +402,7 @@ def _condition_errors(
     return errors
 
 
-def _values_taken(*, grid: DiscreteGrid) -> frozenset[int | float]:
+def _values_taken(*, grid: DiscreteGrid) -> frozenset[DiscreteGridValue]:
     """Return the values user functions see for a discrete action."""
     return frozenset(grid.values if grid.values is not None else grid.codes)
 

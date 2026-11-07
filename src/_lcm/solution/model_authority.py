@@ -49,7 +49,6 @@ from _lcm.execution.core_program import (
     retained_artifact_payload_type,
 )
 from _lcm.execution.output_layout import StateAxesLeading
-from _lcm.grids.discrete import DiscreteGrid
 from _lcm.materialization import DatedGenerationMaterializer
 from _lcm.params.edges import regime_kernel_params
 from _lcm.processes.grid_resolution import ProcessGridResolver
@@ -73,12 +72,14 @@ from _lcm.typing import (
     EconFunctionsMapping,
     FlatParams,
     FunctionName,
+    JSONScalar,
     RegimeName,
     StateName,
 )
 from lcm._solver_api.authority import _ArrayCopier
 from lcm._solver_api.identity import ArtifactRuntimeType
 from lcm.exceptions import ExecutionPlanningError
+from lcm.grids import DiscreteGrid
 from lcm.solver_api import (
     SIMULATION_POLICY,
     SOLVER_DIAGNOSTICS,
@@ -2456,14 +2457,14 @@ def _bind_model_owned_artifact_facts(  # noqa: C901
     )
 
 
-def _json_coordinates(nodes: FloatND | IntND) -> tuple[bool | int | float | str, ...]:
+def _json_coordinates(nodes: FloatND | IntND) -> tuple[JSONScalar, ...]:
     """Convert model grid nodes to immutable, exact transport scalars."""
     array = np.asarray(nodes)
     if array.ndim != 1:
         raise TypeError(
             "Artifact state/action authority requires one-dimensional nodes."
         )
-    coordinates: list[bool | int | float | str] = []
+    coordinates: list[JSONScalar] = []
     for raw in array.tolist():
         value = raw.item() if isinstance(raw, np.generic) else raw
         if not any(type(value) is allowed for allowed in (bool, int, float, str)):
@@ -2720,7 +2721,7 @@ def _is_applicable_nested_policy(descriptor: ReplayCellDescriptor | None) -> boo
 
 def _admit_adaptive_outer_nodes(
     *,
-    coordinates: tuple[bool | int | float | str, ...],
+    coordinates: tuple[JSONScalar, ...],
     regime: Regime,
     policy_read: NNBEGMPolicyRead,
     ref: ArtifactRef,

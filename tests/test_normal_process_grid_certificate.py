@@ -83,6 +83,14 @@ _ENGINE_REDESIGN_CORRIDOR_SOURCES = (
     "src/_lcm/simulation/eager_stages.py",
     "src/lcm/typing.py",
 )
+# Moving the public grid and process classes to `lcm` adds their shells and the
+# supplied-node AR1 machinery split out of `ar1.py`.
+_PUBLIC_SHELL_CORRIDOR_SOURCES = (
+    "src/_lcm/processes/ar1_on_nodes.py",
+    "src/lcm/grids.py",
+    "src/lcm/processes.py",
+    "src/lcm/state_conditioned.py",
+)
 
 
 def test_normal_controls_preserve_all_historical_populations() -> None:
@@ -104,7 +112,13 @@ def test_normal_controls_preserve_all_historical_populations() -> None:
         direct_flow.grouped_guard_mutation_specs,
         direct_flow.allocation_reservation_mutation_specs,
     ):
-        names = set(generator(repo_root=root))
+        # `public_shell:` controls arrived when the public grid and process classes
+        # moved to `lcm`; the earlier population stays pinned without them.
+        names = {
+            name
+            for name in generator(repo_root=root)
+            if not name.startswith("public_shell:")
+        }
         assert historical.isdisjoint(names)
         assert set(population).isdisjoint(names)
         historical.update(names)
@@ -154,14 +168,15 @@ def test_normal_controls_preserve_all_historical_populations() -> None:
         == 584
     )
     assert "src/_lcm/solution/feasibility.py" in direct_flow._CERTIFIED_CORRIDOR_SOURCES
-    assert len(direct_flow._CERTIFIED_CORRIDOR_SOURCES) == 178
+    assert len(direct_flow._CERTIFIED_CORRIDOR_SOURCES) == 182
     added_corridor_sources = (
         set(_S1_CORRIDOR_SOURCES)
         | set(_CURRENT_IID_CORRIDOR_SOURCES)
         | set(_OVERRIDE_CORRIDOR_SOURCES)
         | set(_ENGINE_REDESIGN_CORRIDOR_SOURCES)
+        | set(_PUBLIC_SHELL_CORRIDOR_SOURCES)
     )
-    assert len(added_corridor_sources) == 8
+    assert len(added_corridor_sources) == 12
     assert added_corridor_sources <= set(direct_flow._CERTIFIED_CORRIDOR_SOURCES)
     assert added_corridor_sources.isdisjoint(_NESTED_CORRIDOR_SOURCES)
     assert len(set(_NESTED_CORRIDOR_SOURCES)) == 53

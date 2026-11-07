@@ -171,7 +171,7 @@ def post_decision_lower_bound(
     """
     return _PostDecisionLowerBound(
         post_decision=margin.post_decision_state,
-        lower_bound=lower,
+        lower_bound=lower if callable(lower) else float(lower),
         liquid_state=margin.state,
         action=margin.action,
         resources_target=margin.resources_name,

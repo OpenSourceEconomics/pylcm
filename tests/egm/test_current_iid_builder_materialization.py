@@ -14,17 +14,7 @@ from _lcm.egm.validation import (
     fail_if_declared_lower_bound_disagrees_with_the_grid,
 )
 from _lcm.execution.workspace_planning import WorkspaceBudgetError
-from _lcm.grids import (
-    DiscreteGrid,
-    Grid,
-    GridBreakpoint,
-    IrregSpacedGrid,
-    LinSpacedGrid,
-    LogSpacedGrid,
-    PiecewiseLinSpacedGrid,
-    PiecewiseLogSpacedGrid,
-)
-from _lcm.processes.iid import NormalIIDProcess, UniformIIDProcess
+from _lcm.grids import Grid
 from _lcm.solution.dcegm import _BoundDCEGM
 from _lcm.solution.generation import canonical_generation_roots
 from lcm.exceptions import (
@@ -32,6 +22,16 @@ from lcm.exceptions import (
     GridInitializationError,
     ModelInitializationError,
 )
+from lcm.grids import (
+    DiscreteGrid,
+    GridBreakpoint,
+    IrregSpacedGrid,
+    LinSpacedGrid,
+    LogSpacedGrid,
+    PiecewiseLinSpacedGrid,
+    PiecewiseLogSpacedGrid,
+)
+from lcm.processes import NormalIIDProcess, UniformIIDProcess
 from lcm.typing import Float1D
 from tests.egm.test_current_iid_generation_materialization import _owner
 from tests.solution.test_post_decision_lower_bound import _model as _bounded_model

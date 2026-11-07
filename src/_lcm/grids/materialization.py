@@ -12,17 +12,17 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from _lcm.grids import (
+from _lcm.grids import Grid
+from _lcm.processes.base import _ContinuousStochasticProcess
+from lcm.exceptions import ExecutionPlanningError
+from lcm.grids import (
     DiscreteGrid,
-    Grid,
     IrregSpacedGrid,
     LinSpacedGrid,
     LogSpacedGrid,
     PiecewiseLinSpacedGrid,
     PiecewiseLogSpacedGrid,
 )
-from _lcm.processes.base import _ContinuousStochasticProcess
-from lcm.exceptions import ExecutionPlanningError
 from lcm.typing import Float1D, Int1D
 
 if TYPE_CHECKING:

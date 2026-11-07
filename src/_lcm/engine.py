@@ -25,7 +25,7 @@ from _lcm.egm.nested_published_policy import NestedEGMSimPolicy
 from _lcm.egm.published_policy import EGMSimPolicy, NBEGMGridPolicy, NNBEGMSimPolicy
 from _lcm.execution.execution_plan import visible_devices
 from _lcm.execution.placement import ACTION_PARTITION_AXIS
-from _lcm.grids import DiscreteGrid, Grid, IrregSpacedGrid
+from _lcm.grids import Grid
 from _lcm.post_decision_bound import PostDecisionBoundSpec
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.processes.grid_resolution import ProcessGridResolver
@@ -54,6 +54,7 @@ from _lcm.typing import (
 )
 from _lcm.utils.containers import first_non_none
 from lcm.exceptions import ExecutionPlanningError, PyLCMError
+from lcm.grids import DiscreteGrid, IrregSpacedGrid
 from lcm.solver_api import (
     ArtifactAuthority,
     ArtifactKey,

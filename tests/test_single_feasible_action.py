@@ -24,7 +24,6 @@ points to also exercise the runtime-action-grids substitution path.
 import jax.numpy as jnp
 import pytest
 
-from _lcm.grids import IrregSpacedGrid
 from _lcm.grids.coordinates import get_irreg_coordinate
 from _lcm.regime_building.ndimage import map_coordinates
 from lcm import (
@@ -40,6 +39,7 @@ from lcm import (
     fixed_transition,
 )
 from lcm.exceptions import InvalidInitialConditionsError
+from lcm.grids import IrregSpacedGrid
 from lcm.regime import Regime as UserRegime
 from lcm.typing import (
     ContinuousAction,

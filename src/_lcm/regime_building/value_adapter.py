@@ -28,28 +28,29 @@ import jax.numpy as jnp
 from dags import get_annotations, get_free_arguments
 from dags.signature import rename_arguments
 
-from _lcm.constraints.ir import Condition
 from _lcm.gated_edge import GatedEdge
-from _lcm.grids import DiscreteGrid, Grid
+from _lcm.grids import Grid
 from _lcm.identity_transition import _IdentityTransition
 from _lcm.processes import _ContinuousStochasticProcess
-from _lcm.processes.joint_normal import JointNormalIIDProcess
 from _lcm.regime_building.schedules import RegimeTransitionLaw
 from _lcm.regime_law import RegimeLaw, RegimeLaws
-from _lcm.typing import EconFunctionArg, FunctionName, RegimeName
+from _lcm.typing import AgeValue, EconFunctionArg, FunctionName, RegimeName
 from _lcm.utils.ast_inspection import value_indexed_arrays
 from lcm.collective import (
     CollectiveUtility,
     ProjectedRegimeValue,
     ValueDependentConstraint,
 )
+from lcm.condition import Condition
 from lcm.decoupled import Decoupled
 from lcm.exceptions import (
     ModelInitializationError,
     RegimeInitializationError,
 )
+from lcm.grids import DiscreteGrid
 from lcm.participation import ParticipationCheck, ParticipationRead
 from lcm.phased import Phased
+from lcm.processes import JointNormalIIDProcess
 from lcm.regime import (
     ConstraintEntry,
     FunctionEntry,
@@ -1042,7 +1043,7 @@ class AdaptedBuild:
     encode: DiscreteGrid | None
     """The grid whose code a built function's returned value names, if any."""
 
-    def __call__(self, age: float) -> UserFunction:
+    def __call__(self, age: AgeValue) -> UserFunction:
         func = adapt_user_function(
             func=self.build(age), value_grids=self.value_grids, encode=self.encode
         )

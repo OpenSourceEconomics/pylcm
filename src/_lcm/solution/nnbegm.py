@@ -78,7 +78,7 @@ from _lcm.execution.core_program import (
     ValueRead,
     core_program_graph,
 )
-from _lcm.grids import ContinuousGrid, DiscreteGrid, Grid
+from _lcm.grids import ContinuousGrid, Grid
 from _lcm.grids.materialization import admitted_grid_extent
 from _lcm.materialization import DatedGenerationMaterializer
 from _lcm.params.edges import regime_kernel_params
@@ -153,6 +153,7 @@ from lcm.exceptions import (
     RegimeInitializationError,
     UnrepresentableOuterCandidateError,
 )
+from lcm.grids import DiscreteGrid
 from lcm.solver_api import (
     EGM_CONTINUATION,
     EGM_ENDOGENOUS_COORDINATE,

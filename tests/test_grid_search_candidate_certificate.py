@@ -656,6 +656,14 @@ def test_q_and_f_arrays_reach_full_reducers_without_candidate_transformation():
     assert tuple(sorted(result["certified_corridor_sources"])) == CERTIFIED_SOURCES
 
 
+def test_public_grid_and_process_shells_have_literal_inventory_obligations() -> None:
+    """Include the public constructors that call the certified grid machinery."""
+    assert isinstance(_parse("src/_lcm/processes/ar1_on_nodes.py"), ast.Module)
+    assert isinstance(_parse("src/lcm/grids.py"), ast.Module)
+    assert isinstance(_parse("src/lcm/processes.py"), ast.Module)
+    assert isinstance(_parse("src/lcm/state_conditioned.py"), ast.Module)
+
+
 def test_borrowing_floor_sources_have_literal_inventory_obligations() -> None:
     """Include floor declaration, normalization, scalar validation and proof owners."""
     assert isinstance(
@@ -1190,7 +1198,9 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate():
     # Independent literals make both cardinality and family identity part of this
     # certificate, rather than trusting constants supplied by the mutation generator.
     original_names = {
-        name for name in names if not name.startswith("simulation_adapter:")
+        name
+        for name in names
+        if not name.startswith(("simulation_adapter:", "public_shell:"))
     }
     assert len(original_names) == 380
     assert (
@@ -1200,7 +1210,11 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate():
     historical_names = {
         name
         for name in names
-        if not name.startswith("simulation_adapter:initial_physical_")
+        # `public_shell:` controls arrived when the public grid and process
+        # classes moved to `lcm`; the earlier population stays pinned without them.
+        if not name.startswith(
+            ("simulation_adapter:initial_physical_", "public_shell:")
+        )
     }
     assert len(historical_names) == 398
     assert (
@@ -1209,10 +1223,10 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate():
         ).hexdigest()
         == "a00c2dd641b34fdfa7f618fb19d3e79648c1082583727f15fafbb004d62faf6d"
     )
-    assert len(names) == 410
+    assert len(names) == 415
     assert (
         hashlib.sha256(("\n".join(sorted(names)) + "\n").encode()).hexdigest()
-        == "c94857b93f5a6254cbda1aa14b3658232da1df482f907578db49540ac23aeb6c"
+        == "ed33be2d7ab323c90d394c00afadfdff869ac206499ef9221113ff2f9b1dcda5"
     )
 
 

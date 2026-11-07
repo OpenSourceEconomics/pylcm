@@ -24,7 +24,7 @@ _SCRIPT = textwrap.dedent(
 
     assert jax.device_count() == 2, jax.devices()
 
-    from _lcm.grids import DiscreteGrid
+    from lcm.grids import DiscreteGrid
     from _lcm.solution.nbegm import (
         _build_ride_along_carry_template,
         _shard_ride_carry_template,
@@ -90,7 +90,7 @@ _SCRIPT = textwrap.dedent(
     # The engine-side templates (living-brute and terminal-wealth children)
     # shard the same way: leading discrete + passive axes, unsharded rows.
     from _lcm.egm.carry import build_template_egm_carry, shard_carry_template
-    from _lcm.grids import LinSpacedGrid
+    from lcm.grids import LinSpacedGrid
 
     child = shard_carry_template(
         template=build_template_egm_carry(n_rows=24, leading_shape=(2, 7)),

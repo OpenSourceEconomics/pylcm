@@ -19,6 +19,7 @@ from typing import Final, cast
 import numpy as np
 
 from _lcm.grids.continuous import ContinuousGrid
+from _lcm.typing import AgeValue
 from lcm.transition import AgeSpecializedFunction
 from lcm.typing import Float1D, UserFunction
 
@@ -40,7 +41,7 @@ INVARIANT: Final[Hashable] = _Invariant()
 
 
 def resolve_node(
-    *, node: UserFunction | AgeSpecializedFunction, age: float
+    *, node: UserFunction | AgeSpecializedFunction, age: AgeValue
 ) -> UserFunction:
     """Return the concrete function for `age`, or the node if age-invariant."""
     if isinstance(node, AgeSpecializedFunction):
@@ -49,7 +50,7 @@ def resolve_node(
 
 
 def node_signature(
-    *, node: UserFunction | AgeSpecializedFunction, age: float
+    *, node: UserFunction | AgeSpecializedFunction, age: AgeValue
 ) -> Hashable:
     """Fingerprint `node`'s closure at `age`.
 
@@ -82,7 +83,7 @@ def _tree_signature[L](
     return tuple(pairs)
 
 
-def tree_signature(*, tree: NodeTree[UserFunction], age: float) -> Hashable:
+def tree_signature(*, tree: NodeTree[UserFunction], age: AgeValue) -> Hashable:
     """Fingerprint a (possibly nested) mapping of nodes at `age`.
 
     Recurse into `Mapping` values and emit sorted `(path, signature)` pairs, so a
@@ -95,7 +96,7 @@ def tree_signature(*, tree: NodeTree[UserFunction], age: float) -> Hashable:
 class _NodeSignatureAtAge:
     """Leaf-signature callback fingerprinting a node at one fixed age."""
 
-    age: int | float
+    age: AgeValue
     """The age every node is fingerprinted at."""
 
     def __call__(self, node: UserFunction | AgeSpecializedFunction) -> Hashable:

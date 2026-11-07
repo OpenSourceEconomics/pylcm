@@ -262,6 +262,10 @@ PROCESSES_INIT_SOURCE = "src/_lcm/processes/__init__.py"
 PROCESS_BASE_SOURCE = "src/_lcm/processes/base.py"
 PROCESS_IID_SOURCE = "src/_lcm/processes/iid.py"
 PROCESS_AR1_SOURCE = "src/_lcm/processes/ar1.py"
+PROCESS_AR1_ON_NODES_SOURCE = "src/_lcm/processes/ar1_on_nodes.py"
+LCM_GRIDS_SOURCE = "src/lcm/grids.py"
+LCM_PROCESSES_SOURCE = "src/lcm/processes.py"
+LCM_STATE_CONDITIONED_SOURCE = "src/lcm/state_conditioned.py"
 PROCESS_GRID_RESOLUTION_SOURCE = "src/_lcm/processes/grid_resolution.py"
 UNIFORM_PROCESS_GRID_SOURCE = "src/_lcm/simulation/process_grids.py"
 EAGER_STAGE_SOURCE = "src/_lcm/simulation/eager_stages.py"
@@ -560,6 +564,10 @@ _CERTIFIED_CORRIDOR_SOURCES = (
     PROCESS_BASE_SOURCE,
     PROCESS_IID_SOURCE,
     PROCESS_AR1_SOURCE,
+    PROCESS_AR1_ON_NODES_SOURCE,
+    LCM_GRIDS_SOURCE,
+    LCM_PROCESSES_SOURCE,
+    LCM_STATE_CONDITIONED_SOURCE,
     VARIABLES_SOURCE,
     PARAMS_REGIME_TEMPLATE_SOURCE,
     PARAMS_PROCESSING_SOURCE,
@@ -613,29 +621,29 @@ _SOURCE_SEALS = {
     S02__LCM_EGM_BUDGET_SOURCE: "1c8fb0cbc8f9156950bea34c71c9ccce2c58ac17ec6b9f1221f8c8966f1031d2",
     S02__LCM_EGM_CARRY_SOURCE: "17c85a9146e68a8b57487754bcb89b879e62bcd391699d82ac4116ec7e4c4691",
     S02__LCM_EGM_QUERY_DATA_SOURCE: "5ca53117248f9009d4d9b696fdb46a361fa47c5b082757ccc9beb6ccd967bde3",
-    S02__LCM_REGIME_BUILDING_Q_AND_F_SOURCE: "87d463caa0c08f61d730e77fb7688d5b1e3d7db76f7363035f26699c7c39d448",
+    S02__LCM_REGIME_BUILDING_Q_AND_F_SOURCE: "e40c571f5202458019a5c7edb81d0ed91542bb39d9d52bf39f3e2615bc317eb1",
     S02__LCM_SIMULATION_SUBJECT_PARALLEL_SOURCE: "66d70a81a7ec535d92933bc8841c6bbe7472e227509f88fc6d3bdd00b6c95e76",
     S02__LCM_SOLUTION_EGM_SOURCE: "c554d6e993da4b3b253ae8235a7fcac56c74a7bdc9c2537e84515d6c39af52bf",
     S02__LCM_SOLUTION_KERNEL_OUTPUT_SOURCE: "4b814b0aecacb22cc1f5b47d6bb9006f3f0f5eb08dc0eb18f1345fcd4becb770",
     AGE_BOUND_NORMALIZATION_SOURCE: "e1be1cea72f9aa5228a76523477405e8bbee9dde28de08248f14c7e4b8cfc5e8",
-    DYNAMIC_BOUND_SOURCE: "8f44c31d42f69d8316e78cadba7b19230a69893d7f6cb0bc2daa72f0a0d684f5",
+    DYNAMIC_BOUND_SOURCE: "c0d89a09bba81ee8a620b5066cc0ec3bfa6ea95bbbbedca7c383be2e0611bd66",
     POST_DECISION_BOUND_SOURCE: "4ff8b8c7b64be2395c821acb5f328765c7a9ac2c5198fd0b2be3960227837f6c",
-    BOUND_PROOF_SOURCE: "e2d2d2ae850a3c4c91f7b094a6f603dbd77aa9f6e202d17ec4ab0af512fd1c35",
-    BOUND_NORMALIZATION_SOURCE: "55f0e24bed63303ed9338798a876b6ad4a4b287b174d9513c2065fede183d495",
-    USER_REGIME_BOUND_SOURCE: "d22b78d7c65b6df9af71073a303285aeca85ca9b1b2efa903f805280d0bf3464",
-    LIQUID_BOUND_DECLARATION_SOURCE: "16118c29929f206f05925d88688edbc447f31c3a7aae1e73f022570e981ab886",
+    BOUND_PROOF_SOURCE: "b001df34cfbeff170c40f7d052de76408508e03b50395531d77122ae4279d72a",
+    BOUND_NORMALIZATION_SOURCE: "7850582e96a52661443c1d5b08a5d3dde0845af2c8598094affaab2ee1fc0c88",
+    USER_REGIME_BOUND_SOURCE: "7801e593d673960c339661379ae4aa305c4d41d551ce63b603c12a22960d3aec",
+    LIQUID_BOUND_DECLARATION_SOURCE: "5be32fa6b2ae7d1ed1312c2430f49cb6ce8c666e91e96f1c1cffeb8d61a553db",
     FEASIBILITY_SOURCE: "8cb8cb1ec3da487dac2b5eec451aa4ac61d5222f565c91986c6c2ca7baed1402",
     ACTION_GRID_SOURCE: "76a059f7cc7d7e7d2a99e0ffd626ddbd76b89724d5e24f3bb10ad86501268309",
-    SUPPORT_TRANSITION_CHECKS_SOURCE: "ffcef4097c227add9201e89f492b3bb87bd4cf4b939571a65a24fccd283efa6e",
+    SUPPORT_TRANSITION_CHECKS_SOURCE: "2d2b49c860b71cf9b83c5e58f3c468ee4f0dde2123fe1b48f3f1cc4de28f73b7",
     SUPPORT_DIAGNOSTICS_SOURCE: "15aab27db77f3f9f9699697bc32f201a018f43b1a4653f9c3b2caee0e7ae16db",
     SUPPORT_PRECONDITIONS_SOURCE: "5df8b182b8cb3c37f6ab76719386cc809052bcc00cda63772d698c75071f4092",
-    SUPPORT_AUTHORITY_SOURCE: "09e76e5a1349c3393090af6207156df6deaa6b467fe1c10ae2d0ca1b4020b2c3",
-    SUPPORT_FINGERPRINT_SOURCE: "9ef247e6e2b80129705d7899f0bc5790072aa13ec0a2d5ce882f0aa4d860c133",
-    UNIFORM_PROCESS_GRID_SOURCE: "34b15e42a13aa3ab30d352f7b8dc2fef34f656dc5301417795d4ede09539fee7",
+    SUPPORT_AUTHORITY_SOURCE: "864e21d57f3bf5b8b6a361bfcd7915799d16b67c484cabd1ee77e72951228ab7",
+    SUPPORT_FINGERPRINT_SOURCE: "d0396acf97c6b1e8ce0ba97240497e931512d47d5ed1d3d95a3fd14ef270e94d",
+    UNIFORM_PROCESS_GRID_SOURCE: "d5ac231009101d53242c8c7eed8ffd9483cc488f1d3b547f7ebfb68970e6c320",
     EAGER_STAGE_SOURCE: "d0a52778e4966ecf9bbac4ecaee87f85f49df0aeb4bf7c390f8599bf7d97efa8",
     PROCESS_GRID_RESOLUTION_SOURCE: "c9eb81f9442d7628793d6ad905b2e96e4655e9eb48bf3de32f636541b985269f",
     NATIVE_VALUES_SOURCE: "4e7302d6cacb53a20f6a0a08e7f57d6e074dedddd8f6a95944a9ed1ed4df7bda",
-    NATIVE_ARCHIVE_SOURCE: "73c5cc3669c96e8309eedf1e61addb34b9a35032ec2f53ff7bd441f795105a2b",
+    NATIVE_ARCHIVE_SOURCE: "75b373dec221f5b0dd0ce859e5cc4998c31b2f2030fd083a3008b1d7d2ca1768",
     STRUCTURAL_BLUEPRINTS_SOURCE: "28bbe1b8f6301458e86ad7ee8bcf3bfb02184b163c3f3b038d88b0a261cf8af9",
     SOLVE_PENDING_WORK_SOURCE: "5629a30a65f402a6c4a542dc3287b045e6b823c7f005f4b92cf0ffaac0930ad6",
     EAGER_CORE_SOURCE: "d0049c2a38d3b77abc1c4cff1300f20ca034dff37b77edf7183537471d1cdb90",
@@ -647,13 +655,13 @@ _SOURCE_SEALS = {
     COMBINED_CHUNK_OPERATIONS_SOURCE: "481b768fc97b134c671c386336a25e9e3e78b631a0a3bc4643d9e74d0ba47e54",
     COMBINED_CHUNK_PLANNING_SOURCE: "807378c7ac745eb7fc3d42c27020f6b40d10d40da3041dcdb647e7e2d3e0d90a",
     COMBINED_CHUNK_PROFILE_INVENTORY_SOURCE: "85070e5f57210e201be248c1f2deae8068dce674112f13efdb0eb94c1dd7f7b4",
-    COMBINED_CHUNK_PROFILES_SOURCE: "b36d0a0da5b27eeb1f8c3131c97bf12d5d3ac630d89d217a267a893f1225f41a",
+    COMBINED_CHUNK_PROFILES_SOURCE: "a3857a3eb1efeac0b51bcbaa10548cd50690f1aa1e186754f448599f2554b27a",
     COMBINED_DIAGNOSTIC_OPERATIONS_SOURCE: "477f39609fff5371d88d941cc5c4a0c9ab9fe3692ad2845a3fc3a6befb633f42",
-    COMBINED_FORWARD_PROGRAM_PROFILES_SOURCE: "6f46be67bf0d05df76908ce0b73d6d468e8a6e3d8f5dc750ad1b20648baf3a08",
+    COMBINED_FORWARD_PROGRAM_PROFILES_SOURCE: "711918d4403c6a446d8970988fce852a1731ef2b83fcc597749d3e14c2f66bea",
     COMBINED_POPULATION_OPERATIONS_SOURCE: "a9fdd59887462abc4e2f4321730bcfb397f69ba5f44f3db08001288773082ab8",
     COMBINED_PROGRAM_ARGUMENTS_SOURCE: "c37d2650f9a8cf6ce4b7f6cfeeef9c4b79017d5f491b088b69f57e72f89d9e6f",
     COMBINED_SOLUTION_COPIES_SOURCE: "fbe188d3954a523522624823c769fda4c5831e138d2cb8421fc0f1453946886d",
-    COMBINED_RESULT_SNAPSHOT_SOURCE: "0d095decbc6cf19a34480032be5324695a04196de84d6df90789e397d0352c7b",
+    COMBINED_RESULT_SNAPSHOT_SOURCE: "5c37cfd9f8fc527d915387f85f0c0963e5c6a23787cc0a851a2fb7bb8f5402a9",
     COMBINED_VALIDATE_V_SOURCE: "b3df0d987fbce502fd1dd5f88868cd96b54fe6911bbcce19ea9fffffe4856358",
     COMBINED_LOGGING_SOURCE: "95f189e5713c7e97516b69e8298a79eea24f2baca9f7b55b62b56b81a1163023",
     COMBINED_AUTHORITY_SOURCE: "2f838ac88c9429a8ae8ac03244ccd6ffd0998e66edc900412294a138664ee5d3",
@@ -662,12 +670,12 @@ _SOURCE_SEALS = {
     SIMULATION_POLICY_PROGRAMS_SOURCE: "bf8f7602e45b6b6b5cec3b84aaf81878bd7e98b9a16aa5552893f9e0acb28be9",
     PUBLISHED_POLICY_SOURCE: "6e0e77a3e47cec4690b9e3d917159c5a2503efd1a6e7239fcc72f74ae0146316",
     SIMULATION_ENTRY_ALLOCATIONS_SOURCE: "28ae3aad596122c83038cc4057e4ba71abfab13bb6abf959ea90d160f4240e38",
-    NBEGM_SOURCE: "99dd2e916cb6d265c4bf7d12de55992a9ba925cddec40ca53a5777c234e6fe20",
+    NBEGM_SOURCE: "d69ddca9d2c606c595d0fd17050336c6c3280b7d444a558722009144efcbb382",
     CONTINUATION_ARGUMENTS_SOURCE: "2bfffbd49e5a2e267fcfdefadd21cf4249dcc6979a6ff4889098c37a06dcc0e1",
     SIMULATION_TASTE_STREAM_SOURCE: "f6b629ed946bb3e211f890dc20f32741db6497c119ebb3b66adc578f7732352c",
     SIMULATION_MEMBERSHIP_SOURCE: "c0c92de4e55be3e7b814a67761caa75e8affe835e1887359d432341f1d85a18d",
     COMPILER_INPUTS_SOURCE: "c2df405f63a61f7d5201d754c95bcca9fdc213c97c1533025080da80814cda70",
-    SIMULATION_OPERANDS_SOURCE: "69c4d3a3574405911eadf22ce698f2d8476038bf2b1ab6450d4bec99cbe79d41",
+    SIMULATION_OPERANDS_SOURCE: "ff1c0a7d04e912673e1490dc5dd198b6f408a20e93d368374f0e4778cd0b490a",
     SIMULATION_UNIT_SOURCE: "74859e03e21e9861cc7847f49a8cde2301700b656b2556ad0fb47334d6e809c6",
     SIMULATION_HOST_SOURCE: "9165cfb70789209277b8cd6f423b3074b36815a58928c2c18401d7521b58ab5b",
     SIMULATION_MEMORY_SOURCE: "95928177916d988acf65aaeebab9118a4f3c3184b956999189014171a804273a",
@@ -689,10 +697,10 @@ _SOURCE_SEALS = {
     SIMULATION_PROGRAM_TYPES_SOURCE: "bcb973f9696dc13e15320d8dd6c3bd410e69f8402dccc0def5bc54904e481048",
     SIMULATION_RUNTIME_SOURCE: "c03a33aca9531b78670fba22ecac27ed4c534ce0702cc1907c32d87256a79f41",
     LOGSUM_SOURCE: "e12061dd4f0f0176324182a2eb875cb6ebe4b97174091c597d46a622df93ff1b",
-    ARGMAX_SOURCE: "9717f9c2ef6a6999e278455e62cf0bfda87fe8b4fdd68b8c113851223437ce18",
+    ARGMAX_SOURCE: "cfdfde1c1377f18774afb3a9b2bd4cb388fbf375f00fa01720cfed9ce22587a9",
     COLLECTIVE_SOURCE: "4cc0683d493f597684f5801909d297145d8bade0aa752c3e35cf8af2cb55edd9",
     MAX_Q_SOURCE: "62e5010e5f535ed3731218a5549167d6f5ea332b145d2dcece88d492949fd78c",
-    PROCESSING_SOURCE: "9fbfd279585732c44169dfd4966d962df85c8c70d79991e47c3888838f39a7a6",
+    PROCESSING_SOURCE: "93f117facd23607a805b59528fc30f346bc14b1cbd67b9ae107907d5d3a01d0f",
     GRID_SEARCH_SOURCE: "df4971fa87372ea97a51aeb4ff8d91a11445c9d93c4cc5458411887de8ef9569",
     CORE_PROGRAM_SOURCE: "7d8197a3d2607a3380be63408ae4cf2b8d8ebbe68b043cc3aff76bf1f5c6b78a",
     OUTPUT_LAYOUT_SOURCE: "c7da1256b36b3b6d89200bbae5267936d84e27746ff2c776dced4ea612ec3eb9",
@@ -708,70 +716,74 @@ _SOURCE_SEALS = {
     ZERO_SAFE_SOURCE: "8d54492b73e33461f750420eef45ba8c8281c467acd0c77ba2eb90281793c8d3",
     LOGSUMEXP_ACTION_REDUCTION_SOURCE: "4799ad9bfbc02ae1e5d5270a18ed81fe682f1004d63ae6cf796ff48ac5699445",
     PROBABILITY_SOURCE: "e5f5dc2fa9d123673ecd9e56680cba77285a21d3dfe74611daa64510c6090295",
-    ENGINE_SOURCE: "9723b0411730e6bea66d1812f9bdab63d720aadb2c3a2adf8b8ad7da19680640",
-    STATE_ACTION_SPACE_SOURCE: "761150639f8756f1157abbcc425e39e5d0b8a949afc0ccaf6f29bdad964d7476",
-    SIMULATION_SOURCE: "12bb1c0c090ee36c7ebda5ee4c62052c5149e75d0598dba35a2cdc127d45c6a8",
-    SIMULATION_TRANSITIONS_SOURCE: "74d8ecfd0726c58d7a33457677079a18f5065b338d29ab14e506bc301456c365",
+    ENGINE_SOURCE: "60d68b56ee2a6debb9aa8313fab9822459aa9a017a01424a8bf87601b4a09716",
+    STATE_ACTION_SPACE_SOURCE: "fbde26f323f91ace90251be29911bbccdd4560e0768fa3422d23cfa5bea4418d",
+    SIMULATION_SOURCE: "462a0fedfb36f3c88a355f1d1d46f607508c09407cd7bfda5520415598fd52e6",
+    SIMULATION_TRANSITIONS_SOURCE: "e3f72d4fffe5c861a4b3a9214bf470ddcbadcf56b35b588234a2011b2cfeff5d",
     SIMULATION_COMPILE_SOURCE: "2c54bd385d0205897bebd42c6b63d55eb0896a04e208786f4e0028b20e81074d",
-    MODEL_SOURCE: "f9505aae4a9a1095c734823a9604035e18500889e5e2fde2a83b66cfb9c0064d",
+    MODEL_SOURCE: "2dcfe60922324472bebf078919111f378f0c9db78701a693c47596479d3094aa",
     SOLVER_API_SOURCE: "65c8235466fdeda91e14b94863e8e8fa84eaa4fefc7b0e0fd30e5efcd514ffc5",
-    BACKWARD_INDUCTION_SOURCE: "d4da7b2c1cfb6d00490972696490a09e6379384222d374b527e80fe10a85133a",
+    BACKWARD_INDUCTION_SOURCE: "973006e25d58ac9e398636fba1c1651209739b38169415e70b530fcf8c636b3d",
     PERIOD_REPLAY_SOURCE: "d504ad8064dd8d7fc127ebd05510dc7ef1abc939627ab3f004b1ee75427e19ae",
-    INITIAL_CONDITIONS_SOURCE: "6d1c779d539ec84a0edb13b1926782492fdb5d999da110fde354b9c6fceeb6b4",
+    INITIAL_CONDITIONS_SOURCE: "f389b1a2e08f623f846242844f0ec364404da3d722a1e87773cede87b476b229",
     RESULT_SOURCE: "d2b09b95537cb65dff52e87a4b9b91a6fe99570e8b98c7ce33a95f5e9d7f5ef1",
-    RESULT_DATAFRAME_SOURCE: "4af8073d3412a65c90858dc13a0085a08e6f4765a647e6ec7594eea9960186b5",
-    RESULT_METADATA_SOURCE: "ba9ec4f48e7df67b4a57a35cd3e781906d7ef64a35f3bc37238033c1c168df3e",
+    RESULT_DATAFRAME_SOURCE: "b883fc51c37d63d60fe02b6676742c18e4a29f6e3392851901486076ab628291",
+    RESULT_METADATA_SOURCE: "c610f969fe4569f0637054f446ae8529ab192bb054463aec080509af385e8a49",
     ADDITIONAL_TARGETS_SOURCE: "3769b0eb0dad646767068fd4cf6e73a707115d2ede3ae5e3d9859b82b75d63fd",
     SIMULATION_RANDOM_SOURCE: "314164a170cf4eb3d4680dd575022c83943998f2c1ec78ba09d1085984d34a5e",
     FOLD_ZERO_SAFE_SOURCE: "cec0ac91ee07ef0b6893114cf61ce779c13c44c0c89bb440a643829f1870902e",
     SOLUTION_CONTRACT_SOURCE: "ae7dbe52dc596478614d83880f5fdcfd512cc783f34e2c77a40876db1c3f85d8",
-    GRIDS_INIT_SOURCE: "3c720bc2240dd1cfd45855ce501f03f8a05abda5de1142b9d00208e517b9ddce",
+    GRIDS_INIT_SOURCE: "a3b489f06a70dc3604b6d46f7e085a3b2fd7747b5788855c4c9859a0c6341f50",
     GRID_BASE_SOURCE: "2d9c7f1a0827f3ca172417a2ee2bf60b15c9ccb3dcedf3a94fb502e2d57538de",
     GRID_COORDINATES_SOURCE: "9dd0cf9e3c702023cd3cfa40a3164bf399ea295c57349223b8ab617c7f3533d5",
-    DISCRETE_GRID_SOURCE: "0d729b4544bc578cb0a95dca01b01e8c202fa3dea2e84984b5c7b497c500f144",
-    CONTINUOUS_GRID_SOURCE: "37eeadb95ca49855248da90a99fd5b5424f2acc28c9bf1535d228bfcf0b112f5",
-    PIECEWISE_GRID_SOURCE: "88dea9f6573e8b88db1a4f7a28f77b80eeb7a06bc29e70d4314be76237a1bc9f",
+    DISCRETE_GRID_SOURCE: "52a33a14523fd38e1ad705903495031aed79754e7011baefdb11d65fcd4e81d3",
+    CONTINUOUS_GRID_SOURCE: "1afb5790ccd11a491fb377a967ed9f91aa51a6c2f0716b30ad3d4fe8d1001d4f",
+    PIECEWISE_GRID_SOURCE: "8b44d9b0bbc4e470538f37992fb8b7c6d94e6c15d3a6baeb34fa06268abcccc3",
     PROCESSES_INIT_SOURCE: "fbce6ed4c889cf4c30f5242c142b4dcf2fa9e186b75cd17be1557f827abff00a",
-    PROCESS_BASE_SOURCE: "3e9c95ca2a4de89a90d954ec227ddbb20c8a12f57e7140c8056817ebf93dfcd8",
-    PROCESS_IID_SOURCE: "0ac786980fdd6346363fbf6cd569d9766727c250c2695b06fae732d079ffe1d2",
-    PROCESS_AR1_SOURCE: "a7f766eacf08a2f907942a0a7383950ec2e166e19007504a78e2133d6a0dbdb2",
+    PROCESS_BASE_SOURCE: "32fdde53c5c8953f86fda7619737801db85a99e0aa5a92698ee52e214540589e",
+    PROCESS_IID_SOURCE: "34742c758dde2229b8cb1e8f4caedd5999af4359df799a39e9b0fc0684568382",
+    PROCESS_AR1_SOURCE: "85811d8e95dfbdfe3826ffd3fa4a0304198558a001bf39411af92cde4472f94a",
+    PROCESS_AR1_ON_NODES_SOURCE: "7de4571bd940e681e9540fb294b17415bd17bb69ac2248fa78c4b44e759ff911",
+    LCM_GRIDS_SOURCE: "4c227d16687c39c191c09e2b33926e146270a97eca4e9c17a38f5f9742b2ff62",
+    LCM_PROCESSES_SOURCE: "d886f0a815ed7c43bc99938f8aa06be286f50002b4ef414a7fa4a601937fe282",
+    LCM_STATE_CONDITIONED_SOURCE: "067e49307f591b0b719d315818e838bbb528394cf42f93cb3f8e2c9de1ea3096",
     VARIABLES_SOURCE: "8445fd5d92144d013955027460ee204debfdcedf8bb5ef5d10092538cd18de8c",
-    PARAMS_REGIME_TEMPLATE_SOURCE: "d1f9eca748b625c00c33351118682171b65ccd813ffdaf1abd52469be7f16a35",
+    PARAMS_REGIME_TEMPLATE_SOURCE: "5112b59f798a8e83ad945737479eb4c80133da18a532211f77f7dc63b8b76507",
     PARAMS_PROCESSING_SOURCE: "cd703789b7defbf24801e2450efc536600351b905d5b2a211c3a634bbc3cb4c9",
     DTYPES_SOURCE: "1be61ef17ecb00309aed5a9dec4d4e8d11b9a03cfef8d7e6a812691835e87ec6",
-    LCM_TYPING_SOURCE: "5335c3c4cdfdcc48c231bd7ba3e44285d93be331242d77404d7778f977fe6c99",
+    LCM_TYPING_SOURCE: "92bd61b989e1259c67723f8d98e55f8e6b2a5fd4e4f42c9e017a63f80cd1c248",
     NAMESPACE_SOURCE: "9a33080663f01a6d65501663e8436b132176be51c8223c28b2e749d8dbf8b570",
-    PANDAS_UTILS_SOURCE: "f6159fa52ce590f1cccc9cf140da40ca144e5b6bfb72a995d80dd26bb5054055",
-    MODEL_PROCESSING_SOURCE: "9c1c2dd039a3740e2a295eb34207ec933bdf901e9f6248a913d564420b3f0119",
+    PANDAS_UTILS_SOURCE: "55f6f50c121f516e5bc1ced2e9d42a3f7c454ff5d85c701d27369f6fa627cee9",
+    MODEL_PROCESSING_SOURCE: "e305ba302cb6642043eae99142d16f7947dd33913f7c89f0a4efc11ad417422d",
     "src/_lcm/egm/upper_envelope/__init__.py": "2615b9a364b7ca1c927ca68b752cff17b318268adddbb2c234c145ed59c196d8",
-    "src/_lcm/egm/upper_envelope/segment_envelope.py": "54be1eb40f33f9176a1732fe9a06c08df957034da98aa01cf7984f8ff3525131",
+    "src/_lcm/egm/upper_envelope/segment_envelope.py": "775cf8168e83d4d4da9188d344abab33434e0e341c001de259bcf4dc49a11262",
     "src/_lcm/egm/nested_floor.py": "8983b037774946af7a90aa106268659a69963e2d8f5dd4b55c6f5532dd2dbb72",
     "src/_lcm/egm/finite_negm_query.py": "7ce90cf75e272da35fbe28608c88b2cbd1a93201e5c1b785b480b75f1e311289",
     "src/_lcm/egm/adaptive_nbegm_producer.py": "6e981492ef9f803816a1b6e579818e02c9754395b0dac2a19355c0361b115574",
     "src/_lcm/egm/nbegm_query_model.py": "d57f368e399523c823c3caa2082ae06cdec74a5c5b0da20d8a6a88abdf555ddd",
     "src/_lcm/egm/nbegm_query.py": "594f8e44f7a3ba541dfa35fab59a6e9629e2dee31dd63dff57b2ee07afc32702",
     "src/_lcm/solution/negm.py": "468409fccaef9285d98e57a50485de6d5d4c2a94e730ce9103b84183e92b6782",
-    "src/_lcm/solution/nnbegm.py": "24b95297357f96334dd499fdc2edd903e5b8e3487ba52293245c77dffb84b24e",
+    "src/_lcm/solution/nnbegm.py": "7b9b39f52220bee9e9bdee493fee0cbe9897268b8cff6a380bbed6e346943b58",
     "src/_lcm/egm/outer_candidates.py": "7a30d25c51c0254d2fb20a86d30b1865854f8134954bce5bb7a8c72eac218f2f",
     "src/_lcm/egm/outer_interpolation.py": "fd68eb3baa62055bf4a92a572fbec5e055a08809be044a647a31ff7982fc92a8",
     "src/_lcm/egm/outer_refinement.py": "03f1fc3529d3ec003948d515940407118533799f966dc5ca7f4a1ec4329de109",
     "src/_lcm/optimization/golden_section.py": "9e76572097e0281e76e59c0b7b430929cc9147754354780a6321f500bcd53f85",
     "src/_lcm/egm/upper_envelope/query.py": "c555477ccb82c30b5ef4b037b3bffb7867664963da0304479e16e3726bce4487",
     "src/_lcm/utils/counts.py": "a9087a3c42d32ff0ca82cf24fda2b59ed57cb77efef94714a37a6ca7cf7a3f82",
-    "src/_lcm/egm/nbegm_step.py": "2282aa8fb0a07abcc7aac5c7a19ffc22df6bf72105eee99390d37c4996fc24cc",
+    "src/_lcm/egm/nbegm_step.py": "a03bc489d548b4677253cfea8c2be95c649ed408b11cf54b0806c2c45b9dc763",
     "src/_lcm/egm/nbegm_segments.py": "658a74ca40e3da1c025c3d03e0f8bf695feb45953113521a4700f2c1d1890505",
     "src/_lcm/egm/framed_arithmetic.py": "f4b1fa68cc765fc1450222f7370256306d22b92a6488b40c3575e98f44e43877",
     "src/_lcm/egm/ez_kernel.py": "aef102b6dbc73efae7e103e34597948e8e354f3195a33383973bfbd0da112a72",
     "src/_lcm/power_mean.py": "cc82199d42488b7619917fcfb3d8112c7c76d99253ca8812cb41b2a79b5e3e59",
     "src/_lcm/simulation/random_address.py": "ffe7406eb2819c4621db6ac9e9a53c58d408c25c4f62e8b8a21f2c5d9866d76e",
-    "src/lcm/shocks.py": "0e598f34741ae302425675fc2887cdc426471cd2cff220709054da4af75af7d2",
+    "src/lcm/shocks.py": "4a9046a1e16f002dff1c190cce1c524efceb229f3ce99291526111710b39300a",
     "src/_lcm/shock_overrides.py": "89d13b523a6d0270e144ea60077c5e5f7e306a1b9da7878a9a9b565f920f6808",
     "src/_lcm/simulation/current_iid_overrides.py": "c5b8d450cdad4980a694df285502b70cf1238762440f1302d664b2e84d964ced",
 }
 
-EXPECTED_DIRECT_FLOW_MUTATION_COUNT = 410
+EXPECTED_DIRECT_FLOW_MUTATION_COUNT = 415
 EXPECTED_DIRECT_FLOW_MUTATION_NAMES_SHA256 = (
-    "c94857b93f5a6254cbda1aa14b3658232da1df482f907578db49540ac23aeb6c"
+    "ed33be2d7ab323c90d394c00afadfdff869ac206499ef9221113ff2f9b1dcda5"
 )
 EXPECTED_SUPPLEMENTAL_MUTATION_COUNT = 94
 EXPECTED_SUPPLEMENTAL_MUTATION_NAMES_SHA256 = (
@@ -791,7 +803,7 @@ EXPECTED_UNIFORM_PROCESS_MUTATION_NAMES_SHA256 = (
 # that no family selects is a verifier error rather than a silent no-op.
 _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
     "src/lcm/shocks.py": (
-        "74ced520ddec121149aeb97bf8c8f922d3bb0ca3f3002815c2807a22732c9c7d",
+        "14672639ae6c9bfa33718adf6f8fbb60632b9280d0654c68abbcfcb333c74b1f",
         {
             "BaseInnovations.__post_init__": "f881b9a60ffff3c463ce4634482537616c91472d0d6c0738852bd1abe0887525",
             "PhysicalValues.__post_init__": "a7ae8f2100a70874e481e2bab3ed06ba2099ba794e6467a542b0dce42c2e7d22",
@@ -967,11 +979,11 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     DYNAMIC_BOUND_SOURCE: (
-        "ef8d469ee82d29d58e6b35e76b8ee6504f7d404cc229e33bf1b53009f72dfff5",
+        "d6eeb353b929f308724692275132ae5e93bb3ceb673037b06768a16175000f03",
         {
             "ScalarFloor.__post_init__": "0c6e83daf4c061cf5cd846e49bfe3ea06bf12e1e3636962b3742d36e408b9a7e",
             "ScalarFloor.__call__": "335229fda495386a981dfb9cbad601a2734945842ffb084aa7d0dcbd6967f351",
-            "_ScalarFloorFactory.__call__": "021a814f63a55e5a75a06548bebbc242db92d74415cd64868ea9b45148aacda0",
+            "_ScalarFloorFactory.__call__": "9d2a0557167230a4dd2835cda4acbdc8efeb52b8c4e0ea37ec441a051f257bcb",
             "get_floor_node": "7de2956f7e461605802f1fa1ec0ba6a1e6e797e64e55021e5236d2c4d1171741",
             "get_floor_source": "d7ab7aceedff9f318bebe82eee38fccdd496bb636d9054e26c499a1dfcb6e403",
             "_bound_surface": "8e47db2328d338759919fc77e2f4a99ac9c81b8e5baabdb3750033d9e29c9ea2",
@@ -990,7 +1002,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     BOUND_PROOF_SOURCE: (
-        "4be3d14ca613b21ea8cd3bb0ac6195e784c4991db9e8f8b57050d419dd16f161",
+        "b1d4d9e09fe035643b6074754bfda1fe691449fb9a2a7cb6b08f44e842b8aafd",
         {
             "lower_bound_declaration": "544d2c467a8976cc790d529c1371d1b3e10ee32e4ef2644b70ef486a3cd1c79b",
             "proves_the_savings_grids_lower_bound": "28a158196cf7594964967030d3ba824bf1ea57725ae29f3ecea5f89ad5b8ea23",
@@ -999,15 +1011,15 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     BOUND_NORMALIZATION_SOURCE: (
-        "6aca1fbac79d79c91750075c02eab1dcf72a17ec3d80209c87d580f2855a53af",
+        "9fc7c2a1aadab5d9b58955349d0aaea3e83f0a49a0de397272d5bd1a2bf8e40d",
         {
             "_as_condition": "dc68d4edb55c754abfba0a38fe3100b635e670dc00eb3c1ee515ebba412c6881",
         },
     ),
     USER_REGIME_BOUND_SOURCE: (
-        "54d86f1d3a634bd604afb989b9cdee693ecf119e24ef2c36ca6eda6b24edd471",
+        "27c2dcb6b5a105db4f1cd007beedb07e0da208060372b5ff91947864b8579f89",
         {
-            "Regime.decomposed_functions": "14e9da26e8f480f3d41b5b1307a899bbf328aaa3bfc7241fe29177add000e4d5",
+            "Regime.decomposed_functions": "f8ae75e4974cad5c272f597d36935e08c1adc0ebdfc4ccc3f4704094b7a0898c",
             "Regime.decomposed_constraints": "8f3528801f6043bb4c70eebc6f88e42a64b6e7c514721abc04350e0e45a79c97",
             "Regime.get_all_functions": "4721a0482130332d4d96277c97020e1925b8dc59c1ee0ca815f77016f194fe61",
             "Regime._restore_floor_sources": "1cda33ceebab85e6c63d15e62e5b2a1a69c9c60b8e37e23fb0d3bbb65646c9e6",
@@ -1018,7 +1030,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
     LIQUID_BOUND_DECLARATION_SOURCE: (
         "d7fa3ac8ed4747703df866eb5e6810396333b9a8329c92ce10efba461136d99d",
         {
-            "post_decision_lower_bound": "3bed1940e3a65135f139facb93dbeaed4de5be3b95b5cb77156baffa2dd7adc2",
+            "post_decision_lower_bound": "35b56ff3d6c5131addd56323661de73db469ac34ea2b6c76eded0f590981c4b1",
         },
     ),
     FEASIBILITY_SOURCE: (
@@ -1059,7 +1071,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     PANDAS_UTILS_SOURCE: (
-        "284a4b1f9d476d08bf0dcccd3d48bd49115d4fbbcac737c8fd65536c602d7062",
+        "8be0cc449eeaa6fdb4913ff0be63f025ec138f9ddbb235a94c2b5b7ef421ecbe",
         {
             "initial_conditions_from_dataframe": "d40f121eb30a57420a0e8b9cde4830871d5745e2832a1378a1245ead322787e5",
             "_role_codes_from_labels": "7427bf2fa16abc7494e981ec61e9b4c5fdd71328cd880f707736cb7c443ea3bd",
@@ -1071,7 +1083,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     LCM_TYPING_SOURCE: (
-        "40fbc826679d8f83a911d8101edb51927d4eff3f2d8ddbb07682d5b42802c8e0",
+        "9a8629fcf8799245a9c2a77b633931bc643d5b426996e97f202e6377691acbc1",
         {
             "CanonicalArrayWriter.__call__": "640b0dac3e722ee0e7b2a9c62216bf746d2f5b3ad3d83ea95e4a7982313241d5",
         },
@@ -1111,7 +1123,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     INITIAL_CONDITIONS_SOURCE: (
-        "438ded9ef5d826c9736cffba905f8198e04825b2e3a3b5508b1e601a3945e660",
+        "97b0eea1918d4d741afee08c7f38ff7ddf3a87b2fba2a82a207ab0e080a7748d",
         {
             "validate_simulation_inputs": "9ec7f8f50c4629f2de4eaef2865470018a8ce2e1dea616b1c453ce2b4af1779a",
             "_preflight_memory": "ca5810a8d31174676bdf127ae9811cb04adcf10762d8efd568b404334de01807",
@@ -1139,7 +1151,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_CarrierWriter.__call__": "697bae0eaa97d3806c3079466e8c3de66ce08eec331d66402da3fa02958a573e",
             "_build_admitted_initial_states": "ca3e5c754d9c86385c7302441e2199c338239d89edde06c5620874793afc68ec",
             "_cast_carrier": "5a08758007268730f195c44800937e9274ee44167d6ca2ae6ea00dd75ea4800b",
-            "_fill_carrier": "0045c72197d9e16fd510a8530d9c0866327182129a2383e902a9619030be4844",
+            "_fill_carrier": "f0e38fe53fa932c27e15e7c586c6b242ea5c1753624309e2ac1511b1b7c30b78",
             "_initial_own_stakeholder": "e42c074bfc44acbcb93bb5cc597345d71c183a8b09fb7d535486b653865e82b1",
             "build_initial_states": "6bc9d8948f600be8b4099ad779be639d6a30c8a66e4612562cc700d9050144c2",
             "trim_pad_from_raw_results": "16dc20f6d29f59b624dfcc9e7575238dca7d2fe7ba5dbdde75046189856a1778",
@@ -1203,12 +1215,12 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     SIMULATION_OPERANDS_SOURCE: (
-        "425117ab438e296c52d03da05d0f429d030e230976c6dcf31cb3d7986ebd5d28",
+        "049cbb452fcc80d25414862f1ad7cd153cea56793dedd5239983e23e198025a4",
         {
             "SubjectArgumentNames.subject_arg_names": "46cc9cd2b5af3c1a622819cf136f77ca33152cb4dbe6a00b2a111d50848d1f4e",
             "place_simulation_arguments": "e0bf104ab444c69c12cfcf3783bdca7df6b89e82ebc4da68e5168a1ef8ff6f7c",
             "_require_operand_headroom": "a54b9b75270e80050fbb89998fc9325d19475fcc858d1b3796e7796027dc7853",
-            "_required_operand_bytes": "267a7c776406555350af13b2df2baaa1a0aa9c0394ffd893edc35f610e822bfe",
+            "_required_operand_bytes": "56f92760d6d26e1cbc584aec58256eb7490a27b623a77695b08a4695fc386d9c",
             "_operand_leaves": "062b54c5cd607048d20bf14e589f655a75330b10f5403d98eedeee27b28ea489",
             "_paths_below": "b12d8a06f78558f8c618e6c5e3209bb42e0011190230e7a68e660589ad961d52",
             "_place_operand_tree": "1dd5cb738c11de79617d2ab5e41c1c3341ac1c7d4ffa3a6530d82cde2fac4d68",
@@ -1509,7 +1521,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     COMBINED_CHUNK_PROFILES_SOURCE: (
-        "e766862a9fd744742eaf3cf888b9d0d1111bd621543d7ea87bb4990d271ee899",
+        "a6c3e1d5c285fa1a788eac4c4b178d374377e7aad8c259af425456c8de0be187",
         {
             "profile_simulation_chunk": "224ba2c175ee5c42cd197b72a2515d522c32db425d29b5dc1d446f640a4084d6",
             "_period_copy_reservation": "5f4236f59f2f611d92151895407f7c6cd80d9d7182028c68613425f759ec9dee",
@@ -1526,7 +1538,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     COMBINED_FORWARD_PROGRAM_PROFILES_SOURCE: (
-        "1fdb48524204a853653778130d9c6a52ffac74a50db24cbe0a853b1e2683bf15",
+        "e91a417bc90d83b237b0b535a0fadcea37d0c7d49f0e12d758f95c1a544a936d",
         {
             "profile_forward_programs": "a5d6fc0bf33fb622a8494fd513cc635bf43a0d7e6b4762ac4949a28b94b76018",
             "profile_forward_unit": "7a0f865df3a06b350e3fa40af31dd13b86cce08b039a1e0cb9dc61c3fee743d8",
@@ -1554,10 +1566,10 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     SIMULATION_SOURCE: (
-        "3546d4eb29fab9ea589a968adb8789503bb5e5ea48c08bf40e254cd67adb3123",
+        "c0771a778ab60fdfc826c0ab30222fedc113b91a4d221967c9c0a438cc7f5e91",
         {
             "simulate": "8646640ef90b88aa8467d5942b25f3854bbdfe03a1b4ff6ae547db825158a95f",
-            "_simulate_regime_in_period": "fbe61c405630b3891d3c1c19792e574759a7ee9b961791306b5aebb71c73dbaa",
+            "_simulate_regime_in_period": "43231c3c82ee4678838f5542327977445739fdf679d761a0c480e9007813f195",
             "_execute_finite_replay": "6ded3ff0186eeba07f2880caf5c21a9d08c6396d9806d49afd7985d8e10cab21",
             "_compute_starting_periods": "f50f6f3c87b21bdf082f3f3d71793c03574dfb93f1aad875d8689b8f773b65a4",
             "_concatenate_chunk_results": "e1217d0e707ef6a8b3d00dcef6abce948d065e125fc2886336bf537d276c1a41",
@@ -1579,7 +1591,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     MODEL_SOURCE: (
-        "1d0390260457dbaa1701391ad63e7b212d87fb14df804ff2b9bac9cc70e95a90",
+        "2af3612c58699181c1c75596530326d066eba56ce35257462f23380885d93fb5",
         {
             "_validate_sharded_state_capability": "e60cbf29e61c167df80d03b822e100799d7f9be529a8013c6f014be6df0c7233",
             "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",
@@ -1673,7 +1685,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     BACKWARD_INDUCTION_SOURCE: (
-        "8bc49717f18076d705bf963edddadf7dbce344bb5238bb5408471077c3f1a978",
+        "6817f53fb49bfcfe349ffa9411661de560f24759622580d72b1a41dcff9e112c",
         {
             "_period_transfer_scratch_reservations": "e614b686048f4131f4b612386ca89ed8cec5f786fc64ac82f7ba87866e54fc76",
             "_continuous_value_replica_required": "4f22692255b3746899ee7b2849776ea8967090af80d68d46272cd0b9a5bc771b",
@@ -1777,7 +1789,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     NATIVE_ARCHIVE_SOURCE: (
-        "df12cf81ee6e2fb15ced803e5eb32ed5e605f2303768efdb4d6e15077b2b3b92",
+        "6f22f64c70a6c1775a26267e49003a5fc498983a3a18acaf3528e9c0a40e07a7",
         {
             "_LazyHdf5Entry._materialize": "d2c6729aaa7a495a7bb5e658a7909f5c07dc2e18beface9639ed9a2de6a20459",
             "_read_and_verify_leaves": "526b4f4645a43ad6dae6169ecf719c0992b314a0c2852d46b5764d52828d0243",
@@ -1886,7 +1898,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     COMBINED_RESULT_SNAPSHOT_SOURCE: (
-        "b090c56b7f859e4bb324c4e9b112fd13cea6c8b6c7d7716689d3e2beaec009bf",
+        "5aabd43faee06a331189d0927bdb78a535f38db7f713a1662e5338f23c1bcf87",
         {
             "snapshot_value_store": "fd84054f9efd1fc5d1b1de1fd636d2eee0bcb3b73b12a9317c23dcbfd9c977f8",
             "_snapshot_value_coordinate": "bc16aa89beafddf4d4c5adeb3deef22c5241f0cac473bf3d3a0c5549fefd15fc",
@@ -1982,7 +1994,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     SIMULATION_TRANSITIONS_SOURCE: (
-        "44a07ca57f3d9d5b2c491443c531be20758a887482bf8d69d6d295171aef477a",
+        "3ba2209b7304966ca64d49ed1f83d0df5f8e640ea79e4c6a22e3700acec49033",
         {
             "_draw_random_regime_ids_from_scalars": "548fcaf12654d05a584fabee3fbd81fe42ad256307d5ea4df826cb3ae3355a5a",
             "draw_key_from_dict": "9dfed8dafa357fa87cde342dc7f174028e4adf8454b5906a4e0d24bee164cdae",
@@ -2097,7 +2109,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     MODEL_PROCESSING_SOURCE: (
-        "223e9e1d5e6faaac5a43debf13cdf997e0c8fcafe7e5f261d8f1a392ea1dca03",
+        "30e1ffe2cfb86a332d204dcd4def606751715b8eb0e3379e4f63ecbcb0f630e1",
         {
             "validate_model_inputs": "1ebe297a9b94912b51911fe59ca787927ae746e601a7523adeb2a7fce31b2c09",
             "_validate_borrowing_bound_routes": "357b17ad43290dfac7c7cdb9b8dcd4817de1a1783c75b3877d9bfd39877d3c99",
@@ -2108,7 +2120,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     ENGINE_SOURCE: (
-        "25afe20945db3aa431ea25d64f6e9c6f6188bdef2524aab561a25cb78bf2c50f",
+        "be5952e323ad812a1ffe97cf6e11725564957214728460730e3f66ab334f595c",
         {
             "SolutionPhase.resolve_process_grids": "433e871004a339428068e27d0e414e035eb8d1789fd73dc8b9cd85328362a045",
             "SolutionPhase.state_action_space": "c54e576769c9c3addaf2dc961cf604747d2fb3d6b29b5b3ec9a80c3b4f3a692e",
@@ -2140,7 +2152,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     SUPPORT_FINGERPRINT_SOURCE: (
-        "906f182cc2eaf2dcdee395c896a5913a39f32dfa9653cf4dbc8eb5903e5bf48d",
+        "8547724c9567defe01cbeca78473670247efc604106feb21f89f28da30b208a9",
         {
             "fingerprint_solution_support": "7b96d4f0c60f892df96d252b6dd5c8e3454db6da5509990e9f8d7d7e25e21174",
             "fingerprint_model": "04c8f2960e52d4144353b1e3b962edbc17b00eb05fc68a3207cf4826acbbda51",
@@ -2153,7 +2165,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     SUPPORT_AUTHORITY_SOURCE: (
-        "2dcf143e5a9f44daaf884a0ba3bd4ef1b5efe5a9b6c0418e603271669237304f",
+        "665c1bf6ef3acfa4357a25859b8137dd4d6f35b041e74961ab7d20da893ce338",
         {
             "build_solution_authority": "660a87e4db1e19d8f63cb1ad2708502390e01accea6af489fa1e1ef496d4ede5",
             "_validate_model_query_spec": "63f481b0a92b03ba555d42819e74bd0392cfb53cb9edbb2fc1e89211bc6e32bf",
@@ -2173,7 +2185,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     SUPPORT_TRANSITION_CHECKS_SOURCE: (
-        "1761dab719087f211f53bfe9635822bcbfafee41f46f43bdaac0039b5e4d1358",
+        "fc13ced2d3f5df04115f545e39f089f6b6bab441af00471d41f13bfa82f94b15",
         {
             "_ValidationSummary.state_action_space": "130e9abc335a298a37205deb98e1a3583e7632fd371ad0feae8413d91732cc4f",
             "validate_transitions": "e3cf9c7f61aa3bd979d51f625d31ea0bf1a554c2a18e06db0535bbf77100256b",
@@ -2225,7 +2237,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     UNIFORM_PROCESS_GRID_SOURCE: (
-        "3df9b642f1d20c37d20c621721c736c88fa7790bd7c0b64bb69a3ffcd8952d1f",
+        "fb366b5cfb8b67ec1790c900eadbdb3d2821c30a61b281a23b4cf51b7ccd6a6c",
         {
             "_shared_uniform_operations": "77e4fa81b76a13e05edecb8cbc14571226bb6e34a9a80842289ac345cef3ad6e",
             "SimulationProcessGrids.supports": "47c6617af89cdcd6ba3a99aae345a8c32f8aec740f838bd0b37817236306ab79",
@@ -2457,7 +2469,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     PROCESSING_SOURCE: (
-        "fcc214bb308b1784922cc18e6c5edc9951e73f306daf49f96aee927b43d668a1",
+        "992296974124882e0462947f92b6d1266b827bbe6e2b6ce53480fc576ff0613c",
         {
             "_build_per_subject_decisions_per_period": "b04fb50baadb61f7a5301b2ec1af99a6c53e10355574f1bddf3da94f606ac67a",
             "process_regimes": "288b4375dff6c1f924dc3e646f38e3c4471887ce440c6b99f9528bf26129c67f",
@@ -2473,7 +2485,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_canonical_constraint_routing_inputs": "b014cb91c503eb021cd7aee8b6ead91fa54a86b0ffc1b8fde29e80978b53327e",
             "_prepare_nbegm_query_models": "1b73177b06799eed293c42985ef536c39282074a07075aa4dd8508f25c743ac4",
             "_nbegm_evaluated_query_predicates": "4a734bc9d0020b846a7ed8e56c318331ec1e414191354ee55194c39d0f5e6b98",
-            "_nbegm_query_evaluator_targets": "4eca3820123c39974c20fbb85dffb68fd28286773f67a225af5a1e84aec36c33",
+            "_nbegm_query_evaluator_targets": "6a4de75858ea7bdf089363077500997d34624cd35f376396a4f7c7653a60c0c0",
             "_nbegm_query_function_pools": "3d5549c36db6f139068d67a76c0234a3055f84989391576fe5615658ba39ce1b",
             "_nbegm_query_row_state_names": "f398c3a4c47b01a2fe7811f0c76f4ed01618129e38e7e86d703743fa24dea2ca",
             "_solver_with_query_authority": "0eb2703b05650da0b98779c17f9401b9d948debeed46d27068215ba1fe1a6385",
@@ -2522,7 +2534,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     NBEGM_SOURCE: (
-        "44bbb39fc24b2048eec8d6e1a4610f6cb80cde621aa0314e73e6094c67abb406",
+        "1569bec2fbea2839690a81f613c7b398b298530677c75d8ad7d0cdcbe929fe39",
         {
             "NBEGM.declare_continuation_reads": "b3aea84195a77cc3f4de92e284acd79cbb0e452f0f204dcd91b2aa930b4e632c",
             "_with_ride_marginal_reads": "8fe7ef4e91312fedb70de6d7bc72cb38fd80b50798b6d6e4a4ce712a7507cf56",
@@ -2662,7 +2674,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     "src/_lcm/regime_building/Q_and_F.py": (
-        "db82b296d81a83a838c94fbb4cbbf93b2b87f47dff1b130d8a54fb22bba69592",
+        "408ca1760f1c664a11ca67af744b30eff53e8781d3210f8b2d9746b485cbcfc8",
         {
             "runtime_bound_specs": "84f9e94e2f2fa9cf0f27f8900a244cf80b64681bf23b2973e5c08875c76155a0",
             "BoundedQAndF.__post_init__": "ba409022a0b51498849a82498a8c53e3cd74adbab150de8880eaebdb81b58d75",
@@ -2685,7 +2697,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     "src/_lcm/state_action_space.py": (
-        "204f3cb09476c3b9ff29cb0f89dfaee95f5208a90d7f43f26fe0f812ed433b7e",
+        "05dd96802f65cab4b4510175ded1ee30979f776b3ef42f2a955cc1b08cca162b",
         {},
     ),
     "src/_lcm/egm/budget.py": (
@@ -2980,7 +2992,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     "src/_lcm/egm/nbegm_step.py": (
-        "621b70a44813ec93a981d24869610f44e9ab99d9d0dd00616c882a29433ca5da",
+        "bbf15909f44be95eccf4da91ccac3fc54e6955b5c0e85952ba3c9c43e55b2f03",
         {
             "_IntervalCaseSolver.__call__": "9e8e6e6d6fcffbc0cec5c9ad8989131c66e0efd7e7e5ae8cba8e3954723fbf36",
             "_IntervalWinnerStep.__call__": "ddf80f381682b42c09566ed3bccde34580596b828d215a3c68ea4aae429332e3",
@@ -3216,7 +3228,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     "src/_lcm/solution/nnbegm.py": (
-        "716f1af64a6a07986ffb60520115718ed827e3ecd9db3c480561998fe6e0ea45",
+        "b5226040df056ebff8930f061de742f6cf88a9d3d126f6149c37044a4662fc8c",
         {
             "NNBEGM.build_period_kernels": "a85897795278eb8cf6fe20657e186548c1c43b20eece232b462c19fa7962f0c0",
             "_AdaptiveNNBEGMPeriodKernel._solve_outer": "3201a6468622200d903998c56c7d83c638331a924338b609346f0d44f994bdbe",
@@ -3241,7 +3253,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     "src/_lcm/egm/upper_envelope/segment_envelope.py": (
-        "714d3e4eec08142ae2403a1815a1cf5cac1d238b32b63eea4578f0d0192379d7",
+        "ac340fe2712c80387b314eb0f54c513a7df9906497b367726aed4ccf31c248c4",
         {
             "refine_envelope_exact": "07f2b11939b72dc85a9d670773ac540dd09daa67839b4654537c138a7310f6fb",
         },
@@ -14552,6 +14564,14 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
     process_base_source = (root / PROCESS_BASE_SOURCE).read_text(encoding="utf-8")
     process_iid_source = (root / PROCESS_IID_SOURCE).read_text(encoding="utf-8")
     process_ar1_source = (root / PROCESS_AR1_SOURCE).read_text(encoding="utf-8")
+    process_ar1_on_nodes_source = (root / PROCESS_AR1_ON_NODES_SOURCE).read_text(
+        encoding="utf-8"
+    )
+    lcm_grids_source = (root / LCM_GRIDS_SOURCE).read_text(encoding="utf-8")
+    lcm_state_conditioned_source = (root / LCM_STATE_CONDITIONED_SOURCE).read_text(
+        encoding="utf-8"
+    )
+    lcm_processes_source = (root / LCM_PROCESSES_SOURCE).read_text(encoding="utf-8")
     variables_source = (root / VARIABLES_SOURCE).read_text(encoding="utf-8")
     params_regime_template_source = (root / PARAMS_REGIME_TEMPLATE_SOURCE).read_text(
         encoding="utf-8"
@@ -16997,9 +17017,9 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             "path": GRIDS_INIT_SOURCE,
             "source": replace_once(
                 source=grids_init_source,
-                old="from _lcm.grids.discrete import DiscreteGrid",
+                old="from _lcm.grids.continuous import ContinuousGrid, UniformContinuousGrid",
                 new=(
-                    "from _lcm.grids.discrete import DiscreteGrid\n\nContinuousGrid = DiscreteGrid"
+                    "from _lcm.grids.continuous import ContinuousGrid, UniformContinuousGrid\n\nContinuousGrid = Grid"
                 ),
                 label="continuous-grid classification rebinding",
             ),
@@ -17025,9 +17045,9 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             ),
         },
         "candidate_materialization:drop_last_linear_point": {
-            "path": CONTINUOUS_GRID_SOURCE,
+            "path": LCM_GRIDS_SOURCE,
             "source": replace_once(
-                source=continuous_grid_source,
+                source=lcm_grids_source,
                 old=(
                     "        return grid_coordinates.linspace(\n            start=self.start, stop=self.stop, n_points=self.n_points\n        )"
                 ),
@@ -17054,8 +17074,8 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             "path": PIECEWISE_GRID_SOURCE,
             "source": replace_once(
                 source=piecewise_grid_source,
-                old="        return jnp.concatenate(segments)",
-                new="        return jnp.concatenate(segments)[:-1]",
+                old="    return jnp.concatenate(segments)",
+                new="    return jnp.concatenate(segments)[:-1]",
                 label="piecewise action point omission",
             ),
         },
@@ -17069,9 +17089,9 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             ),
         },
         "candidate_materialization:drop_last_iid_node": {
-            "path": PROCESS_IID_SOURCE,
+            "path": LCM_PROCESSES_SOURCE,
             "source": replace_once(
-                source=process_iid_source,
+                source=lcm_processes_source,
                 old=(
                     '        return jnp.linspace(\n            start=kwargs["start"], stop=kwargs["stop"], num=self.n_points\n        )'
                 ),
@@ -17082,9 +17102,9 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             ),
         },
         "candidate_materialization:drop_last_ar1_node": {
-            "path": PROCESS_AR1_SOURCE,
+            "path": LCM_PROCESSES_SOURCE,
             "source": replace_once(
-                source=process_ar1_source,
+                source=lcm_processes_source,
                 old=(
                     "        return jnp.linspace(long_run_mean - nu, long_run_mean + nu, n_points)"
                 ),
@@ -17092,6 +17112,61 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
                     "        return jnp.linspace(long_run_mean - nu, long_run_mean + nu, n_points)[:-1]"
                 ),
                 label="AR1 action node omission",
+            ),
+        },
+        "public_shell:drop_last_uniform_point": {
+            "path": CONTINUOUS_GRID_SOURCE,
+            "source": replace_once(
+                source=continuous_grid_source,
+                old="    n_points_jax = jnp.int32(n_points)",
+                new="    n_points_jax = jnp.int32(n_points) - 1",
+                label="uniform grid point-count omission",
+            ),
+        },
+        "public_shell:drop_iid_removed_keyword_guard": {
+            "path": PROCESS_IID_SOURCE,
+            "source": replace_once(
+                source=process_iid_source,
+                old=(
+                    '        if "fold" in kwargs:\n            raise TypeError(FOLD_REMOVED)\n'
+                ),
+                new="",
+                label="IID removed-keyword guard deletion",
+            ),
+        },
+        "public_shell:drop_last_innovation_node": {
+            "path": PROCESS_AR1_SOURCE,
+            "source": replace_once(
+                source=process_ar1_source,
+                old=(
+                    "    return tuple(float(x) for x in points), tuple(float(x) for x in weights)"
+                ),
+                new=(
+                    "    return tuple(float(x) for x in points)[:-1], tuple(float(x) for x in weights)[:-1]"
+                ),
+                label="AR1 innovation quadrature node omission",
+            ),
+        },
+        "public_shell:drop_last_supplied_ar1_node": {
+            "path": PROCESS_AR1_ON_NODES_SOURCE,
+            "source": replace_once(
+                source=process_ar1_on_nodes_source,
+                old=(
+                    "        return jnp.asarray(self.nodes, dtype=canonical_float_dtype())"
+                ),
+                new=(
+                    "        return jnp.asarray(self.nodes, dtype=canonical_float_dtype())[:-1]"
+                ),
+                label="supplied AR1 node omission",
+            ),
+        },
+        "public_shell:narrow_conditioned_scale_kind": {
+            "path": LCM_STATE_CONDITIONED_SOURCE,
+            "source": replace_once(
+                source=lcm_state_conditioned_source,
+                old="    by: Mapping[str, float]",
+                new="    by: Mapping[str, int]",
+                label="conditioned scale kind narrowing",
             ),
         },
         "candidate_materialization:drop_last_action_name": {
@@ -17293,6 +17368,10 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
         PROCESS_BASE_SOURCE: process_base_source,
         PROCESS_IID_SOURCE: process_iid_source,
         PROCESS_AR1_SOURCE: process_ar1_source,
+        PROCESS_AR1_ON_NODES_SOURCE: process_ar1_on_nodes_source,
+        LCM_GRIDS_SOURCE: lcm_grids_source,
+        LCM_PROCESSES_SOURCE: lcm_processes_source,
+        LCM_STATE_CONDITIONED_SOURCE: lcm_state_conditioned_source,
         VARIABLES_SOURCE: variables_source,
         PARAMS_REGIME_TEMPLATE_SOURCE: params_regime_template_source,
         PARAMS_PROCESSING_SOURCE: params_processing_source,

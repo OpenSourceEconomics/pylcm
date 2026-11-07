@@ -30,7 +30,6 @@ from _lcm.execution.core_program import (
 )
 from _lcm.execution.output_layout import VALUE, StateAxesLeading
 from _lcm.execution.pending_work import PendingSolveWork
-from _lcm.grids import DiscreteGrid
 from _lcm.params.edges import EDGES, flat_namespaces, regime_kernel_params
 from _lcm.regime_building.argmax import argmax_and_max
 from _lcm.regime_building.collective import ParetoWeights, collective_argmax_and_readout
@@ -65,6 +64,7 @@ from _lcm.typing import (
 from _lcm.utils.counts import sum_counts
 from _lcm.utils.dispatchers import productmap, vary_carry_like_body
 from lcm.exceptions import ExecutionPlanningError, UnsupportedOperationError
+from lcm.grids import DiscreteGrid
 from lcm.shocks import ShockGroupName
 from lcm.solver_api import KernelOutput
 from lcm.typing import (

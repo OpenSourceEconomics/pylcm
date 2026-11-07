@@ -34,11 +34,11 @@ from _lcm.params.processing import (
     find_param_candidates,
 )
 from _lcm.processes.base import _ContinuousStochasticProcess
-from _lcm.processes.joint_normal import JointNormalIIDProcess
 from _lcm.typing import (
     FlatParams,
     FlatRegimeParams,
     ParamsLeaf,
+    ProcessLawScalar,
     QualifiedName,
     RegimeName,
     StateName,
@@ -46,6 +46,7 @@ from _lcm.typing import (
 from _lcm.utils.namespace import ParamsQnameDepth, flatten_regime_namespace
 from lcm.exceptions import InvalidNameError, InvalidParamsError
 from lcm.phased import Phased
+from lcm.processes import JointNormalIIDProcess
 from lcm.regime import Regime as UserRegime
 from lcm.regime import StateEntry
 from lcm.transition import AgeSpecializedGrid
@@ -59,7 +60,6 @@ type StateDeclaration = (
     Grid | JointNormalIIDProcess | Phased | AgeSpecializedGrid | UserFunction | None
 )
 # A process distribution field as baked into the process: a Python scalar.
-type _ProcessField = float | int | bool
 
 
 def bind_fixed_process_laws(
@@ -124,7 +124,9 @@ def _resolve_process_law_params(
     *,
     user_regimes: Mapping[RegimeName, UserRegime],
     params_flat: Mapping[QualifiedName, UserParamsLeaf],
-) -> tuple[dict[RegimeName, dict[StateName, dict[str, _ProcessField]]], set[str]]:
+) -> tuple[
+    dict[RegimeName, dict[StateName, dict[str, ProcessLawScalar | bool]]], set[str]
+]:
     """Resolve every runtime process parameter against the user's `fixed_params`.
 
     The slots come from the regimes as declared, before any binding: binding only
@@ -185,7 +187,7 @@ def _resolve_process_law_params(
         ),
     )
 
-    resolved: dict[RegimeName, dict[StateName, dict[str, _ProcessField]]] = {}
+    resolved: dict[RegimeName, dict[StateName, dict[str, ProcessLawScalar | bool]]] = {}
     for regime_name, regime_slots in canonical.items():
         # The cast input holds regime levels only, so no edge level comes back.
         for slot, value in cast("FlatRegimeParams", regime_slots).items():
@@ -275,7 +277,9 @@ def _fail_if_a_process_law_field_varies(
     raise InvalidParamsError(msg)
 
 
-def _as_process_field(*, value: ParamsLeaf, qname: QualifiedName) -> _ProcessField:
+def _as_process_field(
+    *, value: ParamsLeaf, qname: QualifiedName
+) -> ProcessLawScalar | bool:
     """Return a canonically cast leaf as the Python scalar a process field takes.
 
     A process's distribution fields are Python scalars, and it computes its nodes
@@ -306,7 +310,7 @@ def _as_process_field(*, value: ParamsLeaf, qname: QualifiedName) -> _ProcessFie
 def _bind_regime(
     *,
     user_regime: UserRegime,
-    regime_values: Mapping[StateName, Mapping[str, _ProcessField]],
+    regime_values: Mapping[StateName, Mapping[str, ProcessLawScalar | bool]],
 ) -> UserRegime:
     """Return one regime with every resolved process law baked into its grids.
 
@@ -331,14 +335,14 @@ def _bind_regime(
 
 @overload
 def _bind_declaration(
-    *, declaration: StateEntry, values: Mapping[str, _ProcessField]
+    *, declaration: StateEntry, values: Mapping[str, ProcessLawScalar | bool]
 ) -> StateEntry: ...
 @overload
 def _bind_declaration(
-    *, declaration: StateDeclaration, values: Mapping[str, _ProcessField]
+    *, declaration: StateDeclaration, values: Mapping[str, ProcessLawScalar | bool]
 ) -> StateDeclaration: ...
 def _bind_declaration(
-    *, declaration: StateDeclaration, values: Mapping[str, _ProcessField]
+    *, declaration: StateDeclaration, values: Mapping[str, ProcessLawScalar | bool]
 ) -> StateDeclaration:
     """Bind a state declaration, which may be `Phased` over two grids.
 

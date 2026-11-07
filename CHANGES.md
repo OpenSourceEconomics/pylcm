@@ -23,6 +23,27 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   raises `RegimeInitializationError`. Positional, missing and unexpected arguments
   still raise `TypeError`.
 
+### Public grid, process and condition classes live in `lcm`
+
+- The grids (`LinSpacedGrid`, `LogSpacedGrid`, `IrregSpacedGrid`,
+  `PiecewiseLinSpacedGrid`, `PiecewiseLogSpacedGrid`, `GridBreakpoint`, `DiscreteGrid`,
+  `ConditionalAction`) are defined in `lcm.grids`, the stochastic processes in
+  `lcm.processes`, and `Ref` and `Condition` in `lcm.condition`. `StateConditioned` is
+  defined in `lcm.state_conditioned` and re-exported from `lcm.processes`. The engine
+  modules under `_lcm` no longer export these classes; import them from `lcm`.
+- A class's module path enters the fingerprint of every solution whose model uses it,
+  so a solution saved with an earlier version cannot be loaded against a model built
+  with this one. Solve again.
+- A grid's `start`, `stop` and breakpoint values are converted to `float` at
+  construction. Process-law parameters keep the numeric kind they were declared with.
+- A number compared with a `ref(...)` is stored as a `float` and a flag as a `bool`, so
+  `ref("x") <= 1` and `ref("x") <= 1.0` declare the same condition and both render as
+  `x <= 1.0`. An integer literal now works as a case threshold.
+- The engine's internal functions check their annotations without the numeric tower: an
+  `int` reaching a parameter the engine declares as `float` is an internal error. The
+  public `lcm` package keeps the tower, so a public `float` parameter still admits an
+  `int`.
+
 ### Value storage
 
 - `ExecutionConfig(value_storage=...)` says where a solve keeps solved values once no

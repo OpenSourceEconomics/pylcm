@@ -18,12 +18,16 @@ type _FloatBitsND = Int[jax.Array, "..."]
 # Identity of no element; it loses every tie against a real identity.
 NO_ID = jnp.iinfo(jnp.int32).max
 
+# The floor of a max reduction, in the kind of the reduced array: a float for a
+# float array, an int (an integer dtype's minimum, say) for an integer one.
+type ReductionFloor = float | int
+
 
 def argmax_and_max(
     *,
     a: FloatND | IntND,
     axis: int | tuple[int, ...] | None = None,
-    initial: float | None = None,
+    initial: ReductionFloor | None = None,
     where: BoolND | None = None,
 ) -> tuple[IntND, FloatND | IntND]:
     """Compute the argmax of an n-dim array along axis.
@@ -87,7 +91,7 @@ def argmax_and_max(
 
 
 def _argmax_and_max_of_one_candidate(
-    *, a: FloatND | IntND, where: BoolND | None, initial: float | None
+    *, a: FloatND | IntND, where: BoolND | None, initial: ReductionFloor | None
 ) -> tuple[IntND, FloatND | IntND]:
     """Return the index and value of each cell of `a` when nothing is reduced.
 
@@ -113,7 +117,7 @@ def _argmax_and_max_of_one_candidate(
 
 
 def max_and_smallest_id(
-    *, values: FloatND | IntND, ids: IntND, initial: float
+    *, values: FloatND | IntND, ids: IntND, initial: ReductionFloor
 ) -> tuple[FloatND | IntND, IntND]:
     """Return the max over the last axis and the smallest `int32` id attaining it.
 

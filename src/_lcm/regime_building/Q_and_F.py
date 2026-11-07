@@ -30,7 +30,7 @@ from dags.tree import qname_from_tree_path
 
 from _lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
 from _lcm.dtypes import canonical_float_dtype
-from _lcm.grids import ContinuousGrid, IrregSpacedGrid
+from _lcm.grids import ContinuousGrid
 from _lcm.grids.discrete import read_at_codes
 from _lcm.post_decision_bound import PostDecisionBoundSpec
 from _lcm.probability import (
@@ -99,6 +99,7 @@ from _lcm.zero_safe import (
     zero_safe_weighted_term,
 )
 from lcm.exceptions import ModelInitializationError
+from lcm.grids import IrregSpacedGrid
 from lcm.typing import (
     ActionName,
     BoolND,

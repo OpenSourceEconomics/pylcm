@@ -13,7 +13,6 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from _lcm.processes.base import StateConditioned
 from _lcm.regime_building.processing import (
     _validate_conditioning_codes_agree_across_regimes,
 )
@@ -33,6 +32,7 @@ from lcm import (
     categorical,
 )
 from lcm.exceptions import ModelInitializationError
+from lcm.processes import StateConditioned
 from lcm.typing import (
     ContinuousAction,
     ContinuousState,

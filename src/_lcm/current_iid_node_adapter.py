@@ -32,13 +32,7 @@ from jaxtyping import Bool, Float, Int32, UInt32
 
 from _lcm.current_iid import CurrentIIDDrawPlan, _draw_base_value
 from _lcm.engine import PeriodRegimeSimulationData
-from _lcm.processes.base import StateConditioned
-from _lcm.processes.iid import (
-    LogNormalIIDProcess,
-    NormalIIDProcess,
-    UniformIIDProcess,
-    _IIDProcess,
-)
+from _lcm.processes.iid import _IIDProcess
 from _lcm.shock_registry import ShockBinding
 from _lcm.simulation.current_iid_overrides import (
     ShockPathsInput,
@@ -58,6 +52,7 @@ from lcm._solver_api.contract import ValueArraySchema
 from lcm._solver_api.identity import AxisDescriptor, AxisRole
 from lcm._solver_api.result import SolutionResult
 from lcm.exceptions import InvalidSimulationInputError, ShockDeclarationError
+from lcm.processes import LogNormalIIDProcess, NormalIIDProcess, UniformIIDProcess
 from lcm.regime import Regime
 from lcm.result import SimulationResult
 from lcm.shocks import (
@@ -82,6 +77,7 @@ from lcm.shocks import (
     _Independence,
 )
 from lcm.solvers import GridSearch
+from lcm.state_conditioned import StateConditioned
 from lcm.typing import (
     BoolND,
     Float1D,

@@ -43,12 +43,14 @@ from lcm.typing import (
     Age,
     BoolND,
     ContinuousState,
+    DiscreteGridValue,  # noqa: F401
     DiscreteState,
     Float1D,
     FloatND,
     FunctionName,
     Int1D,
     IntND,
+    JSONScalar,
     Period,
     ProcessName,  # noqa: F401
     ReferenceName,
@@ -59,6 +61,14 @@ from lcm.typing import (
     TransitionFunctionName,
     ValueND,
 )
+
+# A time coordinate as a Python number: an integer period on a period axis, a float
+# age on an age axis. The kind says which axis a specialization was built for.
+type AgeValue = int | float
+
+# A process-law parameter as declared. Its numeric kind (`3` versus `3.0`) is part
+# of the law's identity and its binding fingerprint, so it is never normalized.
+type ProcessLawScalar = int | float
 
 type QueryLandingCheck = tuple[RegimeName, int, RegimeName, StateName]
 # Actual source/date/target/state of a nested reached landing.
@@ -145,13 +155,20 @@ class ParticipationQueryArguments:
         )
 
 
+# A static workspace width the execution plan tiles a kernel's loop with, passed
+# as a keyword such as `_lcm_cell_width`. It sizes the compiled program, so it is
+# a Python `int` and never traced.
+type StaticWidth = int
+
 # One argument of a generated `QAndFFunction` or `MaxQOverAFunction`: an argument
-# of a user function, or a per-regime mapping of value arrays or of flat params.
+# of a user function, a per-regime mapping of value arrays or of flat params, or
+# the static width of a tiled program.
 type QAndFArg = (
     EconFunctionArg
     | Mapping[RegimeName, FloatND]
     | Mapping[RegimeName, Mapping[QualifiedName, ParamsLeaf]]
     | ParticipationQueryArguments
+    | StaticWidth
 )
 type QAndFKwargs = Mapping[ReferenceName, QAndFArg]
 
@@ -450,9 +467,7 @@ type LoweringDescriptor = (
 )
 
 # A value that `json.dumps` writes and `json.loads` reads back.
-type JSONValue = (
-    bool | int | float | str | Sequence[JSONValue] | Mapping[str, JSONValue] | None
-)
+type JSONValue = JSONScalar | Sequence[JSONValue] | Mapping[str, JSONValue] | None
 
 # A host NumPy operand, as opposed to a device `jax.Array`.
 type HostArray = npt.NDArray[np.generic]

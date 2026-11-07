@@ -54,7 +54,7 @@ from _lcm.engine import (
     StateActionSpace,
     placed_devices_for_ids,
 )
-from _lcm.grids import ContinuousGrid, DiscreteGrid
+from _lcm.grids import ContinuousGrid
 from _lcm.off_grid import count_off_grid
 from _lcm.params.edges import regime_kernel_params
 from _lcm.processes import _ContinuousStochasticProcess
@@ -209,6 +209,7 @@ from _lcm.solution.validate_V import validate_V, value_function_nan_error
 from _lcm.time import TimeAxis, coordinate_at, coordinate_kind
 from _lcm.typing import (
     ActionName,
+    AgeValue,
     ArrayTree,
     EconFunctionArg,
     FlatParams,
@@ -246,6 +247,7 @@ from lcm.exceptions import (
     OffGridStateError,
     ShockDeclarationError,
 )
+from lcm.grids import DiscreteGrid
 from lcm.result import SimulationResult
 from lcm.solver_api import SIMULATION_POLICY, ActionOutput, ReplayReader
 from lcm.typing import (
@@ -2051,7 +2053,7 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
     original_n_subjects: int | None = None,
     own_stakeholder: Int1D,
     new_own_stakeholder: Int1D,
-    gated_edge_fold_age: float | None = None,
+    gated_edge_fold_age: AgeValue | None = None,
     sim_policy: (
         EGMSimPolicy | NBEGMGridPolicy | NNBEGMSimPolicy | NestedEGMSimPolicy | None
     ) = None,

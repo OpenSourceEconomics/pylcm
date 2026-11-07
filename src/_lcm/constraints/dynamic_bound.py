@@ -10,7 +10,7 @@ import jax.numpy as jnp
 from dags import concatenate_functions, get_annotations
 from numpy.typing import DTypeLike
 
-from _lcm.constraints.ir import Const, Ref
+from _lcm.constraints.ir import Const
 from _lcm.constraints.processed import (
     ConstraintLike,
     ProcessedConstraint,
@@ -25,7 +25,9 @@ from _lcm.post_decision_bound import (
 from _lcm.regime_building.age_specialization import resolve_node
 from _lcm.regime_law import RegimeLaw
 from _lcm.time import TimeAxis, coordinate_kind, specialization_coordinate_at
+from _lcm.typing import AgeValue
 from _lcm.variables import from_regime
+from lcm.condition import Ref
 from lcm.exceptions import ModelInitializationError
 from lcm.transition import AgeSpecializedFunction
 from lcm.typing import (
@@ -79,7 +81,7 @@ class _ScalarFloorFactory:
     function: AgeSpecializedFunction
     constraint_name: str
 
-    def __call__(self, age: float) -> UserFunction:
+    def __call__(self, age: AgeValue) -> UserFunction:
         return ScalarFloor(
             function=self.function.build(age), constraint_name=self.constraint_name
         )

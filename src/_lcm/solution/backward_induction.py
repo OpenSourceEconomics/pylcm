@@ -264,6 +264,7 @@ from _lcm.solution.v_topology import (
 )
 from _lcm.time import TimeAxis, coordinate_at, coordinate_kind
 from _lcm.typing import (
+    AgeValue,
     ArgumentTree,
     ArtifactPayload,
     FlatParams,
@@ -338,9 +339,9 @@ type GatherChecks = dict[
     int, tuple[xla_client.LoadedExecutable | jax.stages.Compiled, _GatherCheck]
 ]
 
-# The age of a gated edge's fold period: a Python number, a concrete or traced
-# scalar array of any integer or float width, or `None` where no age is known.
-type FoldAge = float | Int[Scalar, ""] | Float[Scalar, ""] | None
+# The age of a gated edge's fold period: a Python time coordinate, a concrete or
+# traced scalar array of any integer or float width, or `None` where no age is known.
+type FoldAge = AgeValue | Int[Scalar, ""] | Float[Scalar, ""] | None
 
 # A regime's base state, discrete-action and continuous-action arrays.
 type _SpaceArrays = tuple[

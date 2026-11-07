@@ -52,7 +52,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from _lcm.grids import DiscreteGrid, Grid
+from _lcm.grids import Grid
 from _lcm.probability import is_live
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.regime_building.next_state import get_next_stochastic_weights_function
@@ -77,6 +77,7 @@ from _lcm.typing import (
 )
 from _lcm.zero_safe import scaled_joint_weight
 from lcm.exceptions import GridInitializationError
+from lcm.grids import DiscreteGrid
 from lcm.typing import (
     ActionName,
     ContinuousState,

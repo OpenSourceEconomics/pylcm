@@ -50,15 +50,7 @@ from _lcm.execution.execution_plan import (
 )
 from _lcm.execution.footprint import layout_footprint
 from _lcm.execution.output_layout import OutputRoleLeaf
-from _lcm.grids import (
-    DiscreteGrid,
-    Grid,
-    IrregSpacedGrid,
-    LinSpacedGrid,
-    LogSpacedGrid,
-    PiecewiseLinSpacedGrid,
-    PiecewiseLogSpacedGrid,
-)
+from _lcm.grids import Grid
 from _lcm.grids.categorical import get_category_codes, validate_category_class
 from _lcm.model_graph import (
     DroppedCells,
@@ -99,15 +91,11 @@ from _lcm.persistence.solution import (
     pylcm_commit,
 )
 from _lcm.post_decision_shocks import lower_post_decision_shocks
-from _lcm.processes.ar1 import (
-    RouwenhorstAR1Process,
-    TauchenAR1Process,
-    _AR1Process,
-    _TauchenOnNodesProcess,
-)
+from _lcm.processes.ar1 import _AR1Process
+from _lcm.processes.ar1_on_nodes import _TauchenOnNodesProcess
 from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.processes.grid_resolution import ProcessGridResolver
-from _lcm.processes.iid import LogNormalIIDProcess, NormalIIDProcess, _IIDProcess
+from _lcm.processes.iid import _IIDProcess
 from _lcm.processes.joint_normal_lowering import (
     coordinate_names,
     joint_normal_declarations,
@@ -382,11 +370,25 @@ from lcm.exceptions import (
     UnsupportedOperationError,
 )
 from lcm.execution import ExecutionConfig, InvariantBlockSchedule
+from lcm.grids import (
+    DiscreteGrid,
+    IrregSpacedGrid,
+    LinSpacedGrid,
+    LogSpacedGrid,
+    PiecewiseLinSpacedGrid,
+    PiecewiseLogSpacedGrid,
+)
 from lcm.initial_nodes import InitialNodes, UserInitialNodes
 from lcm.koopmans_aggregation import LinearAggregator
 from lcm.lowering import LoweredPeriodCandidate, PeriodCandidate
 from lcm.period_capture import CapturedPeriodReplay, PeriodCapture
 from lcm.phased import Phased
+from lcm.processes import (
+    LogNormalIIDProcess,
+    NormalIIDProcess,
+    RouwenhorstAR1Process,
+    TauchenAR1Process,
+)
 from lcm.regime import (
     ActionEntry,
     ConstraintEntry,

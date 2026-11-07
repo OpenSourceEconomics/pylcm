@@ -12,7 +12,7 @@ from numpy.testing import assert_allclose, assert_array_equal
 from typing_extensions import TypedDict
 
 from _lcm.certainty_equivalent import CertaintyEquivalent
-from _lcm.grids import DiscreteGrid, LinSpacedGrid, categorical
+from _lcm.grids import categorical
 from _lcm.params.processing import (
     create_params_template,
     get_flat_param_names,
@@ -44,6 +44,7 @@ from lcm import (
     Transition,
 )
 from lcm.exceptions import InvalidRegimeTransitionProbabilitiesError
+from lcm.grids import DiscreteGrid, LinSpacedGrid
 from lcm.model import Model
 from lcm.regime import Regime as UserRegime
 from lcm.regime import StochasticTransition

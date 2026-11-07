@@ -5,7 +5,7 @@ from typing import Literal
 from jax import numpy as jnp
 from typing_extensions import TypedDict
 
-from _lcm.grids import DiscreteGrid, LinSpacedGrid, categorical
+from _lcm.grids import categorical
 from lcm import (
     DeterministicTransition,
     LogNormalIIDProcess,
@@ -17,6 +17,7 @@ from lcm import (
 )
 from lcm.ages import AgeGrid
 from lcm.execution import ExecutionConfig
+from lcm.grids import DiscreteGrid, LinSpacedGrid
 from lcm.model import Model
 from lcm.regime import Regime as UserRegime
 from lcm.regime import StochasticTransition

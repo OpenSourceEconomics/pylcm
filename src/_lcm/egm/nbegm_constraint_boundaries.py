@@ -16,9 +16,10 @@ from _lcm.constraints.dispositions import (
     ConstraintContext,
     Reject,
 )
-from _lcm.constraints.ir import Compare, Const, Ref
+from _lcm.constraints.ir import Compare, Const
 from _lcm.constraints.routes import BoundaryCompiler, BoundConstraint
 from _lcm.typing import FunctionName, QualifiedName
+from lcm.condition import Ref
 from lcm.typing import BoolND, FloatND, IntND, ReferenceName, StateName
 
 

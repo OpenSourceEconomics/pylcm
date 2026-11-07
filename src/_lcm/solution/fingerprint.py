@@ -38,7 +38,7 @@ import _lcm.certainty_equivalent as certainty_equivalent_declarations
 import _lcm.constraints.ir as constraint_ir
 import _lcm.egm.ce_scaled_linear as ce_scaled_declarations
 import _lcm.egm.interp as interp_declarations
-import _lcm.grids as grid_declarations
+import _lcm.grids as grid_machinery
 import _lcm.optimization.golden_section as golden_section_declarations
 import _lcm.optimization.implicit_outer_derivative as implicit_outer_declarations
 import _lcm.power_mean as power_mean_declarations
@@ -46,13 +46,14 @@ import _lcm.probability as probability_declarations
 import _lcm.utils.functools as functools_declarations
 import _lcm.zero_safe as zero_safe_declarations
 import lcm.exceptions as lcm_exceptions
+import lcm.grids as grid_declarations
 import lcm.koopmans_aggregation as koopmans_declarations
 from _lcm.certainty_equivalent import CertaintyEquivalent
 from _lcm.continuation import ContinuationSpec, EGMQuerySpec
 from _lcm.egm.query_data import QueryNodeKind
 from _lcm.engine import NNBEGMPolicyRead, Regime
 from _lcm.execution.value_transfer import ValueArtifactAddress
-from _lcm.grids import DiscreteGrid, Grid
+from _lcm.grids import Grid
 from _lcm.optimization.golden_section import GoldenSectionResult
 from _lcm.params.edges import EDGES, flat_namespaces, regime_kernel_params
 from _lcm.processes.grid_resolution import ProcessGridResolver
@@ -77,6 +78,7 @@ from lcm.case_piece import (
 )
 from lcm.decoupled import Decoupled
 from lcm.execution import InvariantBlockSchedule, WidthSearch
+from lcm.grids import ConditionalAction, DiscreteGrid
 from lcm.phased import Phased
 from lcm.shocks import Discrete as DiscreteShock
 from lcm.shocks import ShockGroup, ShockGroupName, _correlation_record, _Independence
@@ -163,11 +165,15 @@ class _NotArrayMetadata(Enum):
 
 
 _NOT_ARRAY_METADATA: Final = _NotArrayMetadata.NOT_ARRAY_METADATA
+# The exported grid classes of both the public shells and their machinery.
+# `ConditionalAction` was never in this set; moving it to `lcm.grids` keeps it out.
 _TRUSTED_GRID_TYPE_OBJECTS = frozenset(
     value
-    for name in grid_declarations.__all__
-    if isinstance(value := getattr(grid_declarations, name), type)
+    for module in (grid_machinery, grid_declarations)
+    for name in module.__all__
+    if isinstance(value := getattr(module, name), type)
     and issubclass(value, Grid)
+    and value is not ConditionalAction
 )
 _TRUSTED_CONSTRAINT_TYPE_OBJECTS = frozenset(
     value
@@ -2870,6 +2876,7 @@ def _capture_shipped_beartype_wrappers() -> tuple[  # noqa: C901, PLR0912
         functools_declarations,
         golden_section_declarations,
         grid_declarations,
+        grid_machinery,
         implicit_outer_declarations,
         interp_declarations,
         koopmans_declarations,
