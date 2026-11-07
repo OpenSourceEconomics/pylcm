@@ -103,7 +103,7 @@ def _tool_version(executable: str | None) -> str | None:
             capture_output=True,
             text=True,
             check=False,
-            timeout=10,
+            timeout=60,
         )
     except OSError:
         return "unavailable"
