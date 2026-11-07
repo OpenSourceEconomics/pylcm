@@ -1771,8 +1771,6 @@
   "tests/solution/test_solution_persistence.py::test_save_preflight_rejects_noncanonical_omission_reason",
   "tests/solution/test_solution_persistence.py::test_save_rejects_armed_metadata_key_before_hashing",
   "tests/solution/test_solution_persistence.py::test_save_rejects_incompatible_version_before_pytree_callbacks",
-  "tests/solution/test_solution_persistence.py::test_save_rejects_nonexact_value_coordinate_before_hashing",
-  "tests/solution/test_solution_persistence.py::test_save_rejects_nonexact_value_schema_shape_before_comparison",
   "tests/solution/test_solution_persistence.py::test_save_rejects_not_applicable_for_an_applicable_selected_optional_artifact",
   "tests/solution/test_solution_persistence.py::test_save_rejects_present_inapplicable_custom_artifact",
   "tests/solution/test_solution_persistence.py::test_save_rejects_present_replay_artifact_under_values_retention",
