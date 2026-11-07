@@ -693,7 +693,7 @@ _SOURCE_SEALS = {
     COLLECTIVE_SOURCE: "4cc0683d493f597684f5801909d297145d8bade0aa752c3e35cf8af2cb55edd9",
     MAX_Q_SOURCE: "62e5010e5f535ed3731218a5549167d6f5ea332b145d2dcece88d492949fd78c",
     PROCESSING_SOURCE: "c45ceb6604bf4cbf967a47520d596025b39d24b11fea5a13517c993da8d29d2a",
-    GRID_SEARCH_SOURCE: "bd89c0ee02ea44ce8dbd898406e7cf282b8dec4624e2b3db97dddaa0792ce9f8",
+    GRID_SEARCH_SOURCE: "d5775794da2fd82d5ed194da36ea528359aa4adaf01c32f74d98571967b084fc",
     CORE_PROGRAM_SOURCE: "7d8197a3d2607a3380be63408ae4cf2b8d8ebbe68b043cc3aff76bf1f5c6b78a",
     OUTPUT_LAYOUT_SOURCE: "c7da1256b36b3b6d89200bbae5267936d84e27746ff2c776dced4ea612ec3eb9",
     VALUE_TRANSFER_SOURCE: "70da0e8d7f9ad1f29a1fec7deb4d0fe014bfd2b00b1e332b0e6b66c912a21d2a",
@@ -2299,7 +2299,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     GRID_SEARCH_SOURCE: (
-        "dfaad3b1763d066cd28cbfb4f1b24e5e8fcaf2d126b7d58fcfa2b5549d06ce63",
+        "b75f22e3f27f9b638ee1a02f0e6affb5afc6d19431420d45b07601ed68f42a70",
         {
             "GridSearch.build_period_kernels": "9b5a545e6552e30ca89abbdafee73d6a4cceb8cc2337eabf5c08e1ebf5802dc8",
             "grid_search_query_inputs": "2e8c3830bdd29adb76d9ad3d8933b6f3167e8c413930e0116166c0e4605cc14d",
