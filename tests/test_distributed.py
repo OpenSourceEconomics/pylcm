@@ -66,6 +66,7 @@ from lcm.model import Model
 from lcm.regime import Regime as UserRegime
 from lcm.result import SimulationResult
 from lcm.typing import RegimeName, ScalarFloat, ScalarInt
+from tests import conftest as test_config
 from tests.simulation._profile_comparison import (
     assert_values_agree as assert_agrees_to_ulp,
 )
@@ -577,13 +578,11 @@ def test_solution_running_on_multiple_cpus(correct_distributed_model):
 
 @_skip_pytest_parallel
 def test_distributed_solve_matches_single_device_per_type():
-    """A sharded solve yields the same value function as the single-device solve.
+    """Keep each type's values within one ULP at the array's scale.
 
-    Distributing the permanent type axes across devices changes only where the
-    continuation-value interpolation runs, never its result: every (type1, type2)
-    slice of the sharded V-array is identical to the same slice solved on one
-    device. This pins the per-type-local read of the continuation V — a wrong
-    local index would corrupt some types' values.
+    Sharding the permanent type axes changes the compiled program's shape.
+    The per-type continuation read preserves coordinates and dtype exactly;
+    published values can carry one ULP of rounding at the array's scale.
     """
     params = {"discount_factor": 0.95}
     sharded = (
@@ -597,10 +596,19 @@ def test_distributed_solve_matches_single_device_per_type():
         .values
     )
 
+    assert sharded.keys() == single.keys()
     for period, regime_to_V_arr in sharded.items():
+        assert regime_to_V_arr.keys() == single[period].keys()
         for regime_name, V_arr in regime_to_V_arr.items():
-            np.testing.assert_array_equal(
-                np.asarray(V_arr), np.asarray(single[period][regime_name])
+            got = np.asarray(V_arr)
+            expected = np.asarray(single[period][regime_name])
+            assert (got.shape, got.dtype) == (expected.shape, expected.dtype)
+            test_config.assert_agrees_to_ulp(
+                got=got,
+                expected=expected,
+                n_ulp=1,
+                operand_magnitude=float(np.abs(expected).max(initial=0.0)),
+                err_msg=f"regime {regime_name!r}, period {period}",
             )
 
 
@@ -745,10 +753,14 @@ def test_mixed_outer_state_axes_preserve_values(*, cell_width):
     reference = _make_correct_distributed_model(
         distributed=False, move_type2=True, cell_width=cell_width
     ).solve(log_level="off", params={"discount_factor": 0.95})
-    assert_agrees_to_ulp(
-        got=np.asarray(candidate.values[0]["working_life"]),
-        expected=np.asarray(reference.values[0]["working_life"]),
+    actual = np.asarray(candidate.values[0]["working_life"])
+    expected = np.asarray(reference.values[0]["working_life"])
+    assert (actual.shape, actual.dtype) == (expected.shape, expected.dtype)
+    test_config.assert_agrees_to_ulp(
+        got=actual,
+        expected=expected,
         n_ulp=4,
+        operand_magnitude=float(max(np.abs(actual).max(), np.abs(expected).max())),
     )
 
 

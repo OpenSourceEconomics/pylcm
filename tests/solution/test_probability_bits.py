@@ -15,6 +15,8 @@ of two changes no answer and leaves every downstream multiplication with
 operands the dtype can use.
 """
 
+import re
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -32,7 +34,110 @@ from _lcm.probability import (
     scaled_by_power_of_two,
     scaled_exact_product,
 )
-from lcm.typing import BoolND, FloatND
+from lcm.typing import BoolND, FloatND, IntND
+
+
+@pytest.mark.parametrize(
+    "predicate", ["is_live", "is_represented_zero", "is_below_smallest_normal"]
+)
+@pytest.mark.parametrize("constant", ["half", "one", "tiny-normal"])
+def test_static_normal_probability_predicates_fold_to_literals(
+    *, predicate: str, constant: str
+) -> None:
+    """Resolve a static normal probability without retaining runtime bit checks."""
+    dtype = _dtype()
+    value = {"half": 0.5, "one": 1.0, "tiny-normal": np.finfo(dtype).tiny}[constant]
+
+    def evaluate() -> BoolND:
+        return getattr(probability, predicate)(jnp.asarray(value, dtype=dtype))
+
+    compiled = jax.jit(evaluate).lower().compile()
+    hlo = compiled.as_text()
+    assert hlo is not None
+    operations = re.findall(
+        r"^\s*(?:ROOT\s+)?%?[\w.-]+\s*=\s*[^\n]*?\s+([\w-]+)\(", hlo, re.MULTILINE
+    )
+    assert bool(compiled()) is (predicate == "is_live")
+    assert operations, hlo
+    assert set(operations) <= {"constant", "copy"}, hlo
+
+
+@pytest.mark.parametrize("negative", [False, True], ids=["positive", "negative"])
+@pytest.mark.parametrize("kind", ["zero", "subnormal", "normal", "infinite", "nan"])
+def test_static_magnitude_words_fold_to_literals(*, negative: bool, kind: str) -> None:
+    """A fixed IEEE magnitude needs no runtime protection against float comparisons."""
+    dtype = _dtype()
+    uint_dtype = np.uint32 if dtype.itemsize == 4 else np.uint64
+    mantissa = 23 if dtype.itemsize == 4 else 52
+    sign = 1 << (dtype.itemsize * 8 - 1)
+    infinity = ((1 << (dtype.itemsize * 8 - mantissa - 1)) - 1) << mantissa
+    magnitude = {
+        "zero": 0,
+        "subnormal": 1,
+        "normal": int(np.asarray(1.0, dtype=dtype).view(uint_dtype)),
+        "infinite": infinity,
+        "nan": infinity + 1,
+    }[kind]
+    word = np.asarray(magnitude | (sign if negative else 0), dtype=uint_dtype)
+    value = word.view(dtype)
+    np.testing.assert_array_equal(np.asarray(jnp.asarray(value)).view(uint_dtype), word)
+
+    def evaluate() -> IntND:
+        return probability._magnitude_bits(jnp.asarray(value))
+
+    compiled = jax.jit(evaluate).lower().compile()
+    assert int(compiled()) == magnitude
+    hlo = compiled.as_text()
+    assert hlo is not None
+    operations = re.findall(
+        r"^\s*(?:ROOT\s+)?%?[\w.-]+\s*=\s*[^\n]*?\s+([\w-]+)\(", hlo, re.MULTILINE
+    )
+    assert operations, hlo
+    assert set(operations) <= {"constant", "copy"}, hlo
+
+
+@pytest.mark.coverage(backends=("cpu", "gpu-small", "gpu-large"), precisions="both")
+@pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
+@pytest.mark.parametrize("scalar_map", [False, True], ids=["array", "scalar-vmap"])
+def test_magnitude_bits_match_stored_ieee_words(
+    *, compiled: bool, scalar_map: bool
+) -> None:
+    """Clear only the sign bit across normal, subnormal, nonfinite and random words."""
+    dtype = _dtype()
+    uint_dtype = np.uint32 if dtype.itemsize == 4 else np.uint64
+    int_dtype = np.int32 if dtype.itemsize == 4 else np.int64
+    mantissa = 23 if dtype.itemsize == 4 else 52
+    sign = 1 << (dtype.itemsize * 8 - 1)
+    infinity = ((1 << (dtype.itemsize * 8 - mantissa - 1)) - 1) << mantissa
+    magnitudes = (
+        0,
+        1,
+        (1 << mantissa) - 1,
+        1 << mantissa,
+        (1 << mantissa) + 1,
+        infinity - 1,
+        infinity,
+        infinity + 1,
+        sign - 1,
+    )
+    boundary_words = np.asarray(
+        [magnitude | signed for signed in (0, sign) for magnitude in magnitudes],
+        dtype=uint_dtype,
+    )
+    random_words = np.random.default_rng(seed=8641).integers(
+        0, np.iinfo(uint_dtype).max, size=256, dtype=uint_dtype
+    )
+    words = np.concatenate((boundary_words, random_words))
+    values = jnp.asarray(words.view(dtype))
+    np.testing.assert_array_equal(np.asarray(values).view(uint_dtype), words)
+    expected = (words & np.asarray(sign - 1, dtype=uint_dtype)).astype(int_dtype)
+    evaluate = (
+        jax.vmap(probability._magnitude_bits)
+        if scalar_map
+        else probability._magnitude_bits
+    )
+    evaluate = jax.jit(evaluate) if compiled else evaluate
+    np.testing.assert_array_equal(evaluate(values), expected)
 
 
 @pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
@@ -304,3 +409,66 @@ def test_scaling_carries_the_slope_it_stands_for(*, shift: int, mode: str) -> No
     differentiate = jax.jacfwd if mode == "forward" else jax.grad
 
     np.testing.assert_allclose(float(differentiate(scale)(at)), float(2**shift))
+
+
+@pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
+@pytest.mark.parametrize("scalar_map", [False, True], ids=["array", "vmap"])
+def test_probability_predicates_preserve_ieee_classification(
+    *, compiled: bool, scalar_map: bool
+) -> None:
+    """Reachability and signs depend on represented bits, including fused consumers."""
+    dtype = _dtype()
+    uint_dtype = np.uint32 if dtype.itemsize == 4 else np.uint64
+    width = dtype.itemsize * 8
+    sign = 1 << (width - 1)
+    mantissa = 23 if dtype.itemsize == 4 else 52
+    infinity = ((1 << (width - mantissa - 1)) - 1) << mantissa
+    magnitudes = (
+        0,
+        1,
+        2,
+        1 << (mantissa // 2),
+        (1 << mantissa) - 1,
+        1 << mantissa,
+        (1 << mantissa) + 1,
+        infinity - 1,
+        infinity,
+        infinity + 1,
+        infinity + (1 << (mantissa - 1)),
+    )
+    bits = np.asarray([m | s for s in (0, sign) for m in magnitudes], dtype=uint_dtype)
+    host = bits.view(dtype)
+    values = jnp.asarray(host)
+    np.testing.assert_array_equal(np.asarray(values).view(uint_dtype), bits)
+
+    def classify(weights: FloatND) -> BoolND:
+        live = is_live(weights)
+        zero = is_represented_zero(weights)
+        negative = is_negative(weights)
+        below = is_below_smallest_normal(weights)
+        return jnp.stack(
+            (
+                live,
+                zero,
+                negative,
+                below,
+                live & jnp.isfinite(weights),
+                ~zero & ~negative & ~jnp.isnan(weights),
+            ),
+            axis=-1,
+        )
+
+    evaluate = jax.vmap(classify) if scalar_map else classify
+    evaluate = jax.jit(evaluate) if compiled else evaluate
+    expected = np.stack(
+        (
+            host > 0,
+            host == 0,
+            np.signbit(host) & (host != 0),
+            np.abs(host) < np.finfo(dtype).tiny,
+            (host > 0) & np.isfinite(host),
+            (host != 0) & ~np.signbit(host) & ~np.isnan(host),
+        ),
+        axis=-1,
+    )
+    np.testing.assert_array_equal(evaluate(values), expected)
