@@ -59,6 +59,9 @@ from _lcm.egm.regime_introspection import (
     _get_passive_state_names,
 )
 from _lcm.egm.scalar_query import ScalarEGMQueryModel
+
+# Load the solver before model construction so import frames cannot retain a model.
+from _lcm.egm.step import compute_egm_carry_length
 from _lcm.egm.terminal import (
     N_STATELESS_CARRY_ROWS,
     get_brute_child_carry_producer,
@@ -116,7 +119,11 @@ from _lcm.params.regime_template import (
 )
 from _lcm.post_decision_bound import PostDecisionBoundSpec
 from _lcm.processes import _ContinuousStochasticProcess, _IIDProcess
-from _lcm.processes.ar1 import TauchenAR1Process, _TauchenOnNodesProcess
+from _lcm.processes.ar1 import (
+    RouwenhorstAR1Process,
+    TauchenAR1Process,
+    _TauchenOnNodesProcess,
+)
 from _lcm.processes.iid import NormalIIDProcess
 from _lcm.processes.state_conditioned import (
     Family,
@@ -225,6 +232,7 @@ from _lcm.constraints.routes import (
 from _lcm.gated_edge import GatedEdge
 from _lcm.regime_building.Q_and_F import (
     EDGE_REF_V_ARG,
+    EdgeRows,
     GatedContinuationSchedule,
     GatedContinuationSpec,
     ResolvedProjectedRegimeValue,
@@ -339,7 +347,12 @@ from lcm.solvers import (
     Solver,
     UniformObservedFixedCost,
 )
-from lcm.transition import JointTransition, StochasticTransition, Transition
+from lcm.transition import (
+    AgeSpecializedGrid,
+    JointTransition,
+    StochasticTransition,
+    Transition,
+)
 from lcm.typing import (
     ActionName,
     BoolND,
@@ -1885,7 +1898,6 @@ def _prepare_dcegm_query_models(
         FiniteOuterQuerySpec,
         build_query_model_authority,
     )
-    from _lcm.egm.step import compute_egm_carry_length  # noqa: PLC0415
     from _lcm.solution.dcegm import (  # noqa: PLC0415
         ExactEnvelope,
         _BoundDCEGM,
@@ -4066,6 +4078,15 @@ def _state_handoff_errors(
                             target=target,
                             state_name=state_name,
                             target_grid=target_grid,
+                        ) or _rouwenhorst_node_mismatch_error(
+                            phase_name=phase_name,
+                            source=source,
+                            target=target,
+                            state_name=state_name,
+                            source_grid=specs[source].solution.grid_states.get(
+                                state_name
+                            ),
+                            target_grid=target_grid,
                         )
                         if entry_error is not None:
                             error_messages.append(entry_error)
@@ -4174,6 +4195,43 @@ def _fail_if_a_law_reads_a_draw_the_edge_lacks(
         ]
     if errors:
         raise ModelInitializationError(format_messages(errors))
+
+
+def _rouwenhorst_node_mismatch_error(
+    *,
+    phase_name: PhaseName,
+    source: RegimeName,
+    target: RegimeName,
+    state_name: StateName,
+    source_grid: Grid | AgeSpecializedGrid | None,
+    target_grid: _ContinuousStochasticProcess,
+) -> str | None:
+    """Return an error if a carried Rouwenhorst state changes its nodes.
+
+    This check uses the fixed solve supports. The solve checks the completed
+    supports when both regimes carry the same runtime-parameterized law.
+    """
+    if not (
+        phase_name == "solution"
+        and isinstance(target_grid, RouwenhorstAR1Process)
+        and isinstance(source_grid, _ContinuousStochasticProcess)
+        and target_grid.is_fully_specified
+        and source_grid.is_fully_specified
+    ):
+        return None
+    source_nodes = np.asarray(source_grid.get_gridpoints())
+    target_nodes = np.asarray(target_grid.get_gridpoints())
+    if source_nodes.shape == target_nodes.shape and np.array_equal(
+        source_nodes, target_nodes
+    ):
+        return None
+    return (
+        f"{phase_name} phase: the Rouwenhorst process '{state_name}' is carried "
+        f"from '{source}' to '{target}', but the two regimes place its nodes "
+        f"differently ({source_nodes.tolist()} vs {target_nodes.tolist()}). A "
+        "carried Rouwenhorst process requires identical solve nodes. Declare the same "
+        "process in both regimes, or use a Tauchen-family process if the law changes."
+    )
 
 
 def _solve_laws_agree(
@@ -5049,6 +5107,7 @@ def _prepare_numerical_solution_phase(  # noqa: PLR0915 - native route admission
         )
         decision_Q_and_F = functools.partial(
             _build_Q_and_F_per_period,
+            phase_name="solution",
             bound_specs=tuple(
                 bound for bound in post_decision_bounds if bound.kind == "dag"
             ),
@@ -6425,6 +6484,7 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
         )
         decision_Q_and_F = functools.partial(
             _build_Q_and_F_per_period,
+            phase_name="simulation",
             bound_specs=tuple(
                 bound for bound in post_decision_bounds if bound.kind == "dag"
             ),
@@ -7377,6 +7437,7 @@ def _process_regime_core(
                 grids=all_grids[user_regime],
                 clip_coordinate=phase_name == "simulation"
                 and grid.simulated_draws == "nodes",
+                source_grid=all_grids[source_regime_name].get(process),
             )
             for (user_regime, process), grid in carried_process_grids.items()
         }
@@ -8889,8 +8950,9 @@ def _get_weights_func_for_process(
     grid: _ContinuousStochasticProcess,
     grids: Mapping[StateOrActionName, Grid] = MappingProxyType({}),
     clip_coordinate: bool = False,
+    source_grid: Grid | None = None,
 ) -> Callable[..., FloatND]:
-    """Get function that uses linear interpolation to calculate the process weights.
+    """Get the function returning a process's transition row at its current value.
 
     For processes whose params are supplied at runtime, the grid points and
     transition probabilities are computed inside JIT from those runtime params. For a
@@ -8898,15 +8960,32 @@ def _get_weights_func_for_process(
     (`_get_conditioned_weights_func`), and `grids` is that regime's grid mapping, from
     which the conditioning state is resolved.
 
-    A value beyond the nodes takes its nearest edge node's row when the process
-    declares `off_grid="clip_lookup"` or `"clip_state"`, or with `clip_coordinate`.
-    A node draw needs the latter whatever the process declares: rows extrapolated
-    along the edge segment can carry negative weights, which are no probabilities
-    to sample with.
+    The row is a probability distribution at every current value:
+
+    - **Tauchen family.** The law's own row at the current value, on the target's
+      nodes; at a node, exactly that node's tabulated row.
+    - **Rouwenhorst.** Its rows exist at its nodes only. Between nodes the row is
+      the convex blend of the two neighbouring rows; beyond the outer nodes, the
+      edge node's row. Under `off_grid="extrapolate"` the function carries
+      `EdgeRows`, from which the continuation extends linearly beyond the nodes.
+      A solve needs that only where the source declares a different law, whose
+      nodes can lie beyond the target's.
+
+    A value beyond the nodes is first clipped to them when the process declares
+    `off_grid="clip_lookup"` or `"clip_state"`, or with `clip_coordinate`, which a
+    node draw needs whatever the process declares.
 
     An unconditioned IID process has one row repeated, so its weights are that row
     and read no current value: the continuation is then constant along the process's
     axis rather than recomputed at each of its nodes.
+
+    Args:
+        name: The process state's name.
+        grid: The target's process declaration, whose nodes the row is on.
+        grids: The target regime's grids, resolving a conditioning state.
+        clip_coordinate: Whether to clip the current value to the outer nodes.
+        source_grid: The source regime's declaration of the state, whose nodes the
+            current value takes in a solve.
 
     """
     sc = grid.state_conditioned
@@ -8917,62 +8996,106 @@ def _get_weights_func_for_process(
     if isinstance(grid, _IIDProcess):
         return _get_entry_weights_for_process(name=name, grid=grid)
 
-    clip_coordinate = clip_coordinate or grid.off_grid in ("clip_lookup", "clip_state")
-    if grid.params_to_pass_at_runtime:
-        n_points = grid.n_points
-        fixed_params = dict(grid.params)
-        runtime_param_names = {
-            qname_from_tree_path((name, p)): p for p in grid.params_to_pass_at_runtime
-        }
-        args = {
-            name: "ContinuousState",
-            **dict.fromkeys(runtime_param_names, "FloatND"),
-        }
+    clip = clip_coordinate or grid.off_grid in ("clip_lookup", "clip_state")
+    if not isinstance(grid, RouwenhorstAR1Process):
+        return _get_process_row_func(name=name, grid=grid, read="law", clip=clip)
+    weights_func = _get_process_row_func(name=name, grid=grid, read="edge", clip=clip)
+    if not clip and grid.off_grid == "extrapolate" and grid.n_points > 1:
+        weights_func.edge_rows = EdgeRows(  # ty: ignore[unresolved-attribute]
+            neighbour=_get_process_row_func(
+                name=name, grid=grid, read="neighbour", clip=clip
+            ),
+            distance=_get_process_row_func(
+                name=name, grid=grid, read="distance", clip=clip
+            ),
+            in_solve=not (
+                isinstance(source_grid, _ContinuousStochasticProcess)
+                and grid.has_same_law_as(source_grid)
+            ),
+        )
+    return weights_func
 
-        @with_signature(args=args, return_annotation="FloatND", enforce=False)
-        def weights_func_runtime(*a: FloatND, **kwargs: FloatND) -> Float1D:  # noqa: ARG001
-            # `grid.params` is canonical (0-d JAX scalars) from its own
-            # boundary cast; `kwargs` arrive as JAX tracers from JIT.
-            process_kw: dict[str, FloatND | IntND] = {
-                **fixed_params,
-                **{raw: kwargs[qn] for qn, raw in runtime_param_names.items()},
-            }
+
+def _get_process_row_func(
+    *,
+    name: str,
+    grid: _ContinuousStochasticProcess,
+    read: Literal["law", "edge", "neighbour", "distance"],
+    clip: bool,
+) -> Callable[..., FloatND]:
+    """Get one read of a process's transition rows at a current value.
+
+    - `"law"`: the law's row at the value (`transition_row_at`), or the node's
+      tabulated row where the value is a node.
+    - `"edge"`: the tabulated rows blended linearly in the value's coordinate,
+      clipped to the nodes, so beyond them the nearest edge node's row.
+    - `"neighbour"`: beyond the outer nodes, the row of the node next to the
+      nearest edge node; elsewhere the `"edge"` row.
+    - `"distance"`: how many edge segments the value lies beyond the outer nodes,
+      zero between them.
+
+    With `clip`, the value is clipped to the outer nodes before it is read.
+    """
+    n_points = grid.n_points
+    fixed_params = dict(grid.params)
+    runtime_param_names = {
+        qname_from_tree_path((name, p)): p for p in grid.params_to_pass_at_runtime
+    }
+    fixed_law = (
+        None
+        if runtime_param_names
+        else (grid.get_gridpoints(), grid.get_transition_probs())
+    )
+    args = {name: "ContinuousState", **dict.fromkeys(runtime_param_names, "FloatND")}
+
+    @with_signature(args=args, return_annotation="FloatND", enforce=False)
+    def row_func(*a: FloatND, **kwargs: FloatND) -> Float1D:  # noqa: ARG001
+        # `grid.params` is canonical (0-d JAX scalars) from its own
+        # boundary cast; `kwargs` arrive as JAX tracers from JIT.
+        process_kw: dict[str, FloatND | IntND] = {
+            **fixed_params,
+            **{raw: kwargs[qn] for qn, raw in runtime_param_names.items()},
+        }
+        if fixed_law is None:
             gridpoints = grid.compute_gridpoints(**process_kw)
             transition_probs = grid.compute_transition_probs(**process_kw)
-            coord = get_irreg_coordinate(value=kwargs[name], points=gridpoints)
-            if clip_coordinate:
-                coord = jnp.clip(coord, 0, n_points - 1)
-            return map_coordinates(
-                input=transition_probs,
-                coordinates=[
-                    jnp.full(n_points, fill_value=coord),
-                    jnp.arange(n_points, dtype=jnp.int32),
-                ],
+        else:
+            gridpoints, transition_probs = fixed_law
+        value = kwargs[name]
+        if clip:
+            value = jnp.clip(value, gridpoints[0], gridpoints[-1])
+        if read == "law":
+            node = jnp.clip(
+                jnp.searchsorted(gridpoints, value, side="left"), 0, n_points - 1
             )
-
-        return weights_func_runtime
-
-    gridpoints = grid.get_gridpoints()
-    transition_probs = grid.get_transition_probs()
-
-    @with_signature(
-        args={f"{name}": "ContinuousState"},
-        return_annotation="FloatND",
-        enforce=False,
-    )
-    def weights_func(*args: FloatND, **kwargs: FloatND) -> Float1D:  # noqa: ARG001
-        coordinate = get_irreg_coordinate(value=kwargs[f"{name}"], points=gridpoints)
-        if clip_coordinate:
-            coordinate = jnp.clip(coordinate, 0, grid.n_points - 1)
+            return jnp.where(
+                gridpoints[node] == value,
+                transition_probs[node],
+                cast("TauchenAR1Process", grid).transition_row_at(
+                    from_value=value, **process_kw
+                ),
+            )
+        coordinate = get_irreg_coordinate(value=value, points=gridpoints)
+        if read == "distance":
+            return jnp.maximum(
+                jnp.maximum(coordinate - (n_points - 1), -coordinate), 0.0
+            )
+        clipped = jnp.clip(coordinate, 0, n_points - 1)
+        if read == "neighbour":
+            clipped = jnp.where(
+                coordinate > n_points - 1,
+                n_points - 2,
+                jnp.where(coordinate < 0, 1, clipped),
+            )
         return map_coordinates(
             input=transition_probs,
             coordinates=[
-                jnp.full(grid.n_points, fill_value=coordinate),
-                jnp.arange(grid.n_points, dtype=jnp.int32),
+                jnp.full(n_points, fill_value=clipped),
+                jnp.arange(n_points, dtype=jnp.int32),
             ],
         )
 
-    return weights_func
+    return row_func
 
 
 def _get_next_for_process(*, grid: Float1D) -> Callable[..., IntND]:
@@ -10014,6 +10137,7 @@ class _GroupedQAndF:
 
 def _build_Q_and_F_per_period(
     *,
+    phase_name: PhaseName,
     active_periods: tuple[int, ...],
     bound_specs: tuple[PostDecisionBoundSpec, ...] = (),
     phase_reachability: PhaseReachability,
@@ -10181,6 +10305,7 @@ def _build_Q_and_F_per_period(
             # singleton branch; with no age-specialized node the resolution is a
             # passthrough.
             built[key] = get_Q_and_F_collective(
+                phase_name=phase_name,
                 bound_specs=bound_specs,
                 flat_param_names=flat_param_names,
                 koopmans_aggregator=koopmans_aggregator,
@@ -10239,6 +10364,7 @@ def _build_Q_and_F_per_period(
             )
             continue
         built[key] = get_Q_and_F(
+            phase_name=phase_name,
             bound_specs=bound_specs,
             flat_param_names=flat_param_names,
             functions=cast(

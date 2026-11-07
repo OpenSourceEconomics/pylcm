@@ -309,7 +309,13 @@ def test_a_saved_solution_replays_its_stored_participation_surfaces(
     tmp_path: Path,
 ) -> None:
     """A loaded archive simulates exactly like the solution that wrote it."""
-    model = household.get_model(n_periods=4, wealth_n_points=4, consumption_n_points=3)
+    # Use narrow programs to keep the archive comparison cheap to compile.
+    model = household.get_model(
+        n_periods=4,
+        wealth_n_points=4,
+        consumption_n_points=3,
+        execution_config=ExecutionConfig(axis_widths={"subject": 1}),
+    )
     params = household.get_params()
     solution = model.solve(params=params, log_level="off")
     loaded = load_solution(path=solution.save(path=tmp_path / "solution.h5"))
@@ -325,7 +331,9 @@ def test_a_saved_solution_replays_its_stored_participation_surfaces(
             seed=0,
         ).to_dataframe()
 
-    pd.testing.assert_frame_equal(simulate(loaded), simulate(solution))
+    pd.testing.assert_frame_equal(
+        simulate(loaded), simulate(solution), check_exact=True
+    )
 
 
 # The household stores one surface of the couple's participation check, at the
