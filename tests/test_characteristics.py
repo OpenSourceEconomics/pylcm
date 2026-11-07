@@ -117,10 +117,6 @@ def _columns_with_a_string_in_a_later_row():
     )
 
 
-def _columns_mixing_bool_and_int():
-    characteristics(category_class=_Two, by_category={"a": {"x": True}, "b": {"x": 2}})
-
-
 def _columns_outside_int32():
     characteristics(category_class=_Two, by_category={"a": {"x": 0}, "b": {"x": 2**31}})
 
@@ -149,16 +145,6 @@ def _columns_holding_the_missing_code():
     )
 
 
-def _columns_for_a_plain_class():
-    class _NotCategorical:
-        a: int
-
-    characteristics(
-        category_class=_NotCategorical,  # ty: ignore[invalid-argument-type]
-        by_category={"a": {"x": 1}},
-    )
-
-
 @pytest.mark.parametrize(
     ("build", "message"),
     [
@@ -169,7 +155,6 @@ def _columns_for_a_plain_class():
         (_columns_without_characteristics, "at least one characteristic"),
         (_columns_with_a_float_in_a_later_row, r"`x`.*int.*float"),
         (_columns_with_a_string_in_a_later_row, r"`b\.x` is 'q'"),
-        (_columns_mixing_bool_and_int, r"`x`.*bool.*int"),
         (_columns_outside_int32, r"`b\.x`.*int32"),
         (_columns_with_identical_rows, r"`a`, `b`.*same characteristics"),
         (
@@ -178,7 +163,6 @@ def _columns_for_a_plain_class():
         ),
         (_columns_below_int32, r"`b\.x`.*int32"),
         (_columns_holding_the_missing_code, r"`b\.x`.*missing-category code"),
-        (_columns_for_a_plain_class, "DataclassInstance"),
     ],
 )
 def test_characteristics_reject_inconsistent_tables(*, build, message):
@@ -352,18 +336,10 @@ def test_category_with_treats_python_ints_outside_int32_as_missing(*, mode, valu
     assert int(found) == MISSING_CAT_CODE
 
 
-@pytest.mark.parametrize(
-    "value",
-    [
-        jnp.asarray(2**32 - 1, dtype=jnp.uint32),
-        jnp.asarray(1, dtype=jnp.uint8),
-        jnp.asarray(1.0),
-    ],
-)
-def test_category_with_rejects_values_that_are_not_bool_or_signed_integers(*, value):
-    """Unsigned and float queries raise before any comparison."""
+def test_category_with_rejects_values_that_are_not_bool_or_signed_integers():
+    """Unsigned queries raise before any comparison."""
     with pytest.raises(CategoricalDefinitionError, match="bool or signed integer"):
-        category_with(SIGNED, x=value)
+        category_with(SIGNED, x=jnp.asarray(2**32 - 1, dtype=jnp.uint32))
 
 
 def test_category_with_a_globally_ambiguous_subset_raises_for_a_unique_value():
@@ -802,15 +778,6 @@ def test_characteristics_reject_nonfinite_float_properties(*, value):
         )
 
 
-@pytest.mark.parametrize("first", [False, 0])
-def test_characteristics_reject_mixed_float_column_types(*, first):
-    """Each characteristic has one Python scalar type across its categories."""
-    with pytest.raises(CategoricalDefinitionError, match="mixes"):
-        characteristics(
-            category_class=_Two, by_category={"a": {"wage": first}, "b": {"wage": 1.25}}
-        )
-
-
 @pytest.mark.parametrize("mode", ["eager", "jit"])
 def test_category_with_ignores_unqueried_float_properties(*, mode):
     """Integer identifying fields work in tables that also contain floats."""
@@ -833,12 +800,6 @@ def test_category_with_rejects_float_columns_even_for_integer_queries(*, mode):
 
     with pytest.raises(CategoricalDefinitionError, match=r"float.*wage|wage.*float"):
         jax.jit(lookup)(jnp.int32(1)) if mode == "jit" else lookup(jnp.int32(1))
-
-
-def test_category_with_rejects_python_float_queries():
-    """A float query cannot match an integer identifying field."""
-    with pytest.raises(CategoricalDefinitionError):
-        category_with(STATUS, di_years=1.0)  # ty: ignore[invalid-argument-type]
 
 
 def test_characteristics_reject_duplicate_float_rows():

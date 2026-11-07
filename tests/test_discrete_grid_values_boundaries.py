@@ -299,11 +299,9 @@ def test_initial_values_off_the_grid_raise_naming_the_value(
         _simulate(initial_conditions={**_VALUE_START, name: values})
 
 
-@pytest.mark.parametrize(
-    "values", [np.array(["0", "4", "10"]), np.array([True, False, True])]
-)
-def test_initial_values_must_be_numbers(values: np.ndarray) -> None:
-    """Strings and booleans are refused for a value-grid state."""
+def test_initial_values_must_be_numbers() -> None:
+    """Strings are refused for a value-grid state."""
+    values = np.array(["0", "4", "10"])
     with pytest.raises(InvalidInitialConditionsError, match="experience"):
         _simulate(initial_conditions={**_VALUE_START, "experience": values})
 

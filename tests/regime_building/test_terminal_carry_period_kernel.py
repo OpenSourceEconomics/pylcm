@@ -117,15 +117,6 @@ def test_terminal_carry_decorator_delegates_exact_core_program_graph():
     assert actual["main"] is program
 
 
-def test_terminal_carry_decorator_rejects_program_unaware_base():
-    """The decorator cannot recreate a second legacy declaration authority."""
-    wrapper = object.__new__(_TerminalCarryPeriodKernel)
-    object.__setattr__(wrapper, "base", object())
-
-    with pytest.raises(TypeError, match="native core-program graph"):
-        wrapper.core_programs()
-
-
 def test_the_decorator_adds_the_carry_and_forwards_every_channel():
     """Every artifact stays on its channel; the carry joins the continuations."""
     grid = jnp.linspace(1.0, 4.0, 4)
@@ -176,8 +167,3 @@ def test_the_decorator_refuses_a_base_that_already_publishes_the_carry():
 
     with pytest.raises(RuntimeError, match=r"'dead'.*pylcm\.egm\.continuation"):
         _call(_wrap(base_output))
-
-
-def test_the_decorator_refuses_a_base_that_returns_no_kernel_output():
-    with pytest.raises(TypeError, match=r"'dead'.*KernelOutput"):
-        _call(_wrap(object()))

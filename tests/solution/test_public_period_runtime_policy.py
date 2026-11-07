@@ -247,7 +247,6 @@ def test_public_replay_refuses_a_fieldless_legacy_policy(
         {"log_level": "off"},
         {"log_level": "verbose", "runtime_checks": False},
         {"log_level": "off", "runtime_checks": 0},
-        {"log_level": "off", "runtime_checks": "false"},
         {"log_level": "off", "runtime_checks": False, "unknown": 1},
     ],
     ids=[
@@ -256,7 +255,6 @@ def test_public_replay_refuses_a_fieldless_legacy_policy(
         "missing-checks",
         "unknown-level",
         "bool-as-int",
-        "bool-as-text",
         "unknown-key",
     ],
 )

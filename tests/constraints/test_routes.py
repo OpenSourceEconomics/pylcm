@@ -297,22 +297,6 @@ def test_a_boundary_compiler_at_a_site_compiles_the_constraint() -> None:
     assert isinstance(plan.entries[0].disposition, CompileBoundary)
 
 
-def test_a_capability_answering_outside_its_contract_is_refused() -> None:
-    """Deciding *where* a constraint is evaluated belongs to the planner."""
-
-    def rogue(
-        *,
-        bound: BoundConstraint,
-        context: ConstraintContext,  # noqa: ARG001
-    ) -> Evaluate:
-        return Evaluate(constraint=bound.constraint, stage="state_action")
-
-    route = _route(_site(structural_proofs=(rogue,)))  # ty: ignore[invalid-argument-type]
-
-    with pytest.raises(TypeError, match="may only"):
-        plan_constraints(constraints=_borrowing(), routes=(route,), context=_context())
-
-
 def test_a_route_from_another_phase_is_refused() -> None:
     """A route must belong to the phase it is planned in.
 

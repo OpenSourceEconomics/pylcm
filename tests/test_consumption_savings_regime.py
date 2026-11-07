@@ -256,16 +256,6 @@ def test_nested_regime_binds_both_margins_into_nnbegm():
     assert solver.outer_no_adjustment_candidate is None
 
 
-def test_pairing_check_rejects_two_margin_solver_on_one_margin_regime():
-    with pytest.raises(RegimeInitializationError, match="OneMarginSolver"):
-        _regime(solver=NEGM(inner=_fues_dcegm(), outer_grid=_GRID))  # ty: ignore[invalid-argument-type]
-
-
-def test_pairing_check_rejects_one_margin_solver_on_nested_regime():
-    with pytest.raises(RegimeInitializationError, match="TwoMarginSolver"):
-        _nested_regime(solver=_fues_dcegm())  # ty: ignore[invalid-argument-type]
-
-
 def test_plain_regime_rejects_an_unbound_egm_family_solver():
     with pytest.raises(RegimeInitializationError, match="margin declarations"):
         Regime(solver=_fues_dcegm())

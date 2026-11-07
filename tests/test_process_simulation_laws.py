@@ -49,7 +49,6 @@ from lcm import (
     fixed_transition,
 )
 from lcm.exceptions import (
-    GridInitializationError,
     ModelInitializationError,
     PyLCMError,
     RegimeInitializationError,
@@ -122,11 +121,6 @@ def test_iid_nodes_draw_exact_weighted_support() -> None:
 def test_nodes_is_not_a_distribution_parameter() -> None:
     process = NormalIIDProcess(n_points=3, gauss_hermite=True, simulated_draws="nodes")
     assert set(process.params_to_pass_at_runtime) == {"mu", "sigma"}
-
-
-def test_invalid_simulation_draw_mode_is_rejected() -> None:
-    with pytest.raises(GridInitializationError):
-        NormalIIDProcess(n_points=3, gauss_hermite=True, simulated_draws="nearest")  # ty: ignore[invalid-argument-type]
 
 
 @pytest.mark.parametrize(

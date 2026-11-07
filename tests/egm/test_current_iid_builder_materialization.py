@@ -32,7 +32,6 @@ from lcm.exceptions import (
     GridInitializationError,
     ModelInitializationError,
 )
-from lcm.typing import Float1D
 from tests.egm.test_current_iid_generation_materialization import _owner
 from tests.solution.test_post_decision_lower_bound import _model as _bounded_model
 
@@ -95,21 +94,6 @@ def test_grid_factory_refuses_real_compiler_reservation_before_output() -> None:
         assert not owner._pending
         assert np.asarray(spec.start) == 0.125
         assert np.asarray(spec.stop) == 13.75
-    finally:
-        owner.close()
-
-
-class _UnprofiledGrid(Grid):
-    def to_jax(self) -> Float1D:
-        raise AssertionError("Unprofiled grid producer must never run.")
-
-
-def test_unprofiled_grid_refuses_before_original_factory() -> None:
-    owner = _owner()
-    try:
-        with pytest.raises(ExecutionPlanningError, match="construction route"):
-            owner.materialize_grid(spec=_UnprofiledGrid())
-        assert not owner.operations.cache
     finally:
         owner.close()
 

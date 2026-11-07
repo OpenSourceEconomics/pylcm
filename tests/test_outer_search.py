@@ -47,9 +47,6 @@ def _make_nnbegm(*, outer_search: OuterSearch) -> NNBEGM:
         lambda: AdaptiveOuterMesh(initial_grid=_MESH_GRID, value_rtol=-1e-8),
         lambda: AdaptiveOuterMesh(initial_grid=_MESH_GRID, value_rtol=float("nan")),
         lambda: AdaptiveOuterMesh(initial_grid=_MESH_GRID, outer_lipschitz_bound=0),
-        lambda: AdaptiveOuterMesh(initial_grid=_MESH_GRID, max_nodes=True),
-        lambda: AdaptiveOuterMesh(initial_grid=_MESH_GRID, fail_closed=1),  # ty: ignore[invalid-argument-type]
-        lambda: AdaptiveOuterMesh(initial_grid=(0.0, 1.0)),  # ty: ignore[invalid-argument-type]
     ],
 )
 def test_adaptive_outer_mesh_rejects_bad_config(

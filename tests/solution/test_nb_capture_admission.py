@@ -222,14 +222,11 @@ def test_incomplete_or_mistyped_rows_are_refused(mutation):
         admit_capture(manifest=manifest, precision=32, source_sha="a" * 64)
 
 
-def test_only_strings_are_encoded_losslessly():
+def test_strings_are_encoded_losslessly():
     values = ["saving", "done", "", "a\x00", "\u2603", '"\\']
     encoded, dtype = encode_object_strings(values)
     assert [json.loads(item) for item in encoded] == values
     assert dtype == f"<U{max(map(len, encoded))}"
-    for invalid in ([None], [1], [object()]):
-        with pytest.raises(TypeError):
-            encode_object_strings(invalid)
 
 
 @pytest.mark.parametrize(

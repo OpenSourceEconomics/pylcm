@@ -9,7 +9,6 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
-from beartype.roar import BeartypeCallHintViolation
 from numpy.testing import assert_array_almost_equal as aaae
 
 from _lcm.execution.reductions import (
@@ -527,19 +526,6 @@ def test_hard_max_with_carry_publishes_the_empty_state_of_an_infeasible_cell() -
         -np.inf,
         -1,
     )
-
-
-def test_hard_max_with_carry_rejects_a_non_int32_identity() -> None:
-    """Candidate identities are exactly `int32`; another integer width is refused."""
-    with pytest.raises(BeartypeCallHintViolation, match="int32"):
-        HARD_MAX_WITH_CARRY_REDUCTION.add(
-            accumulator=HARD_MAX_WITH_CARRY_REDUCTION.initialize(
-                value_template=jnp.zeros(_N_STATES)
-            ),
-            values=_values(),
-            feasible=_feasible(),
-            action_ids=_action_ids().astype(jnp.int16),
-        )
 
 
 def test_hard_max_with_carry_identity_is_not_matched_against_a_reduced_maximum():

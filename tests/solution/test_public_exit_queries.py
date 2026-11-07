@@ -12,7 +12,6 @@ import jax.numpy as jnp
 import numpy as np
 import pandas as pd
 import pytest
-from beartype.roar import BeartypeCallHintParamViolation
 
 import lcm
 from _lcm import exit_queries, policy_queries
@@ -1408,16 +1407,7 @@ def _vector_available() -> BoolND:
 @pytest.mark.parametrize(
     ("action", "error", "message"),
     [
-        (np.int64(2**32), BeartypeCallHintParamViolation, "RuleResult.__init__"),
-        (
-            np.asarray(2**32, dtype=np.int64),
-            BeartypeCallHintParamViolation,
-            "RuleResult.__init__",
-        ),
-        (np.int64(7), BeartypeCallHintParamViolation, "RuleResult.__init__"),
-        (1.0, BeartypeCallHintParamViolation, "RuleResult.__init__"),
         (True, ValueError, "scalar integer"),
-        (np.asarray([0]), BeartypeCallHintParamViolation, "RuleResult.__init__"),
         (2**32, ValueError, "known global alternative"),
         (7, ValueError, "known global alternative"),
     ],

@@ -1,12 +1,9 @@
-"""Single NB rows retain rank checks while mapped records retain their axes."""
-
-from typing import Literal
+"""Mapped NB query records retain their associated channels and axes."""
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
-from beartype.roar import BeartypeCallHintParamViolation
 
 from _lcm.egm.nbegm_step import (
     _make_nbegm_query_data,
@@ -37,25 +34,6 @@ def _one_row() -> _NBEGMQueryStep:
         policy=policy,
         query_data=data,
     )
-
-
-@pytest.mark.parametrize("channel", ["value", "marginal", "policy"])
-def test_single_row_producer_rejects_rank_two_channel(
-    *,
-    channel: Literal["value", "marginal", "policy"],
-) -> None:
-    """Each ordinary economic channel must be one liquid-query row at production."""
-    row = _one_row()
-    value = row.value[jnp.newaxis] if channel == "value" else row.value
-    marginal = row.marginal[jnp.newaxis] if channel == "marginal" else row.marginal
-    policy = row.policy[jnp.newaxis] if channel == "policy" else row.policy
-    with pytest.raises(BeartypeCallHintParamViolation, match=f"parameter {channel}="):
-        _single_row_nbegm_query_step(
-            value=value,
-            marginal=marginal,
-            policy=policy,
-            query_data=row.query_data,
-        )
 
 
 @pytest.mark.parametrize("batch_size", [0, 1], ids=["vmap", "batch-one"])

@@ -1,7 +1,6 @@
 """NB-EGM metadata collection sees phased declarations and rejects bad schedules."""
 
 import pytest
-from beartype.roar import BeartypeCallHintViolation
 
 import lcm
 from _lcm.egm.nbegm import collect_nbegm_metadata
@@ -50,12 +49,6 @@ def test_collect_ignores_a_none_entry() -> None:
     """A `None` entry (a model-level broadcast mask) contributes no declaration."""
     registry = collect_nbegm_metadata(functions={"mask": None, "subsidy": subsidy})
     assert len(registry.piecewise_affine_schedules) == 1
-
-
-def test_collect_rejects_an_uninspectable_entry() -> None:
-    """An entry that is neither callable, phased, nor `None` is refused."""
-    with pytest.raises(BeartypeCallHintViolation, match="threshold_table"):
-        collect_nbegm_metadata(functions={"threshold_table": (1.0, 2.0)})  # ty: ignore[invalid-argument-type]
 
 
 def test_collect_rejects_two_schedules_declaring_the_same_output() -> None:

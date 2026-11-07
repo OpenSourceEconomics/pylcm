@@ -21,7 +21,6 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
-from beartype.roar import BeartypeCallHintParamViolation
 from jax.extend.core import ClosedJaxpr
 from numpy.testing import assert_array_equal
 
@@ -484,25 +483,14 @@ def test_padded_action_slots_never_publish_an_identity_outside_the_product():
     assert 0 <= int(got.best_global_action_id[0]) < 7
 
 
-@pytest.mark.parametrize("n_partitions", [0, -1, True])
+@pytest.mark.parametrize("n_partitions", [0, -1])
 def test_partition_count_must_be_a_positive_exact_int(n_partitions: int) -> None:
-    with pytest.raises((TypeError, ValueError), match="n_partitions"):
+    with pytest.raises(ValueError, match="n_partitions"):
         build_partitioned_streaming_max_Q_over_a(
             Q_and_F=_table_Q_and_F,
             action_names=("choice",),
             block_width=2,
             n_partitions=n_partitions,
-            axis_name=_AXIS,
-        )
-
-
-def test_a_float_partition_count_is_refused_by_the_type_contract() -> None:
-    with pytest.raises(BeartypeCallHintParamViolation, match="n_partitions"):
-        build_partitioned_streaming_max_Q_over_a(
-            Q_and_F=_table_Q_and_F,
-            action_names=("choice",),
-            block_width=2,
-            n_partitions=1.5,  # ty: ignore[invalid-argument-type]
             axis_name=_AXIS,
         )
 

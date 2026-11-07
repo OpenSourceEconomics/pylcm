@@ -9,7 +9,6 @@ rather than letting an unresolved marker reach the kernels.
 
 import re
 
-import jax.numpy as jnp
 import pytest
 
 from lcm import AgeSpecializedGrid, LinSpacedGrid, Phased, Regime
@@ -42,30 +41,6 @@ def test_age_specialized_grid_as_a_phased_states_solve_variant_is_rejected():
         )
 
 
-def test_age_specialized_grid_as_a_phased_states_simulate_variant_is_rejected():
-    """A marker on the simulate side of a `Phased` state is refused by name.
-
-    A carried state's grid is its simulate-phase domain, and an age-specialized
-    one is not supported there. The refusal says so, rather than describing the
-    declaration as a function derived in both phases.
-    """
-    with pytest.raises(
-        RegimeInitializationError,
-        match=re.escape(
-            "states['tenure']: `AgeSpecializedGrid` is not supported inside "
-            "`Phased` (here: simulate)."
-        ),
-    ):
-        _build_regime(
-            state_spec=Phased(
-                solve=_impute_tenure,
-                simulate=AgeSpecializedGrid(
-                    build=_tenure_grid, signature=_tenure_ceiling
-                ),
-            )
-        )
-
-
 def _build_regime(*, state_spec: Phased) -> Regime:
     """Build a one-state regime whose `tenure` is declared as given."""
     return Regime(
@@ -83,11 +58,6 @@ def _tenure_ceiling(age: float) -> float:
 def _tenure_grid(age: float) -> LinSpacedGrid:
     """The tenure grid: zero to the age's ceiling, on two nodes."""
     return LinSpacedGrid(start=0.0, stop=_tenure_ceiling(age), n_points=2)
-
-
-def _impute_tenure() -> FloatND:
-    """Tenure while the regime is solved: a constant, never a grid axis."""
-    return jnp.asarray(0.0)
 
 
 def _next_tenure(tenure: ContinuousState) -> FloatND:

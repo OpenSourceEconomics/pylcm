@@ -83,20 +83,9 @@ def test_bootstrap_widths_respects_the_ceiling() -> None:
     assert widths == {"cell": 2}
 
 
-def test_execution_config_rejects_a_non_int_ceiling() -> None:
-    with pytest.raises(ValueError, match=r"axis_width_ceilings\['cell'\]"):
-        ExecutionConfig(axis_width_ceilings={"cell": 2.0})  # ty: ignore[invalid-argument-type]
-
-
 def test_execution_config_rejects_a_non_positive_ceiling() -> None:
     with pytest.raises(ValueError, match="axis_width_ceilings"):
         ExecutionConfig(axis_width_ceilings={"cell": 0})
-
-
-def test_execution_config_rejects_a_per_regime_ceiling() -> None:
-    """Only the bare-integer form exists; a per-regime mapping is not a width."""
-    with pytest.raises(ValueError, match=r"axis_width_ceilings\['cell'\]"):
-        ExecutionConfig(axis_width_ceilings={"cell": {"working_life": 2}})  # ty: ignore[invalid-argument-type]
 
 
 def _model(

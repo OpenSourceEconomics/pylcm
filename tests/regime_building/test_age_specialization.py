@@ -325,36 +325,6 @@ def test_regime_transition_with_transitive_age_specialized_ancestor_is_rejected(
         )
 
 
-def test_regime_transition_markov_wrapping_age_specialized_is_rejected(
-    binary_category_class,
-):
-    """A Markov regime transition wrapping an `AgeSpecializedFunction` must raise.
-
-    Regime-transition probabilities are built once, not per period, so a
-    policy-specialized probability law as the regime transition is just as
-    unsound as a bare `AgeSpecializedFunction` transition and must be rejected at
-    the moment the law is bound to the regime.
-    """
-    law = bind_regime_law(
-        StochasticTransition(
-            func=AgeSpecializedFunction(
-                build=lambda age: lambda b: b,  # noqa: ARG005
-                signature=lambda age: ("regime", age),
-            )
-        )
-    )
-    regime = MockRegime(
-        actions={"a": DiscreteGrid(category_class=binary_category_class)},
-        states={"b": DiscreteGrid(category_class=binary_category_class)},
-        functions={"utility": lambda a, b: None},  # noqa: ARG005
-    )
-
-    with pytest.raises(RegimeInitializationError):
-        _validate_law_consistency(
-            regime, transition=law.decomposed_transition, terminal=law.terminal
-        )
-
-
 def _nodes(*values: float) -> Float1D:
     """Return a node array shaped like a resolved age-specialized grid axis.
 

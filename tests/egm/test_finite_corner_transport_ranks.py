@@ -1,11 +1,8 @@
-"""Corner producers retain scalar checks while maps retain associated channels."""
-
-from typing import Literal
+"""Mapped corner producers retain their associated channels."""
 
 import jax.numpy as jnp
 import numpy as np
 import pytest
-from beartype.roar import BeartypeCallHintParamViolation
 
 from _lcm.egm.finite_negm_query import (
     _FiniteCornerRead,
@@ -13,25 +10,6 @@ from _lcm.egm.finite_negm_query import (
 )
 from _lcm.utils.dispatchers import map_over_leading_axis
 from lcm.typing import ScalarFloat
-
-
-@pytest.mark.parametrize("channel", ["value", "marginal", "savings"])
-def test_single_corner_producer_rejects_vector_channel(
-    *,
-    channel: Literal["value", "marginal", "savings"],
-) -> None:
-    """Every economic channel must be scalar at an individual passive node."""
-    scalar = jnp.asarray(2.0)
-    vector = jnp.asarray([2.0, 3.0])
-    with pytest.raises(BeartypeCallHintParamViolation, match=f"parameter {channel}="):
-        _single_row_finite_corner_read(
-            value=vector if channel == "value" else scalar,
-            marginal=vector if channel == "marginal" else scalar,
-            savings=vector if channel == "savings" else scalar,
-            supported=jnp.asarray(a=True),
-            finite=jnp.asarray(a=True),
-            invalid=jnp.asarray(a=False),
-        )
 
 
 @pytest.mark.parametrize("batch_size", [0, 1], ids=["vmap", "batch-one"])

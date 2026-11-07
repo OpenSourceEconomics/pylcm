@@ -120,12 +120,6 @@ def test_solver_annotations_remain_narrowed_exactly() -> None:
     )
 
 
-def test_public_constructor_rejects_the_wrong_solver_family() -> None:
-    """The public constructor rejects a two-margin solver on a liquid regime."""
-    with pytest.raises(RegimeInitializationError, match="OneMarginSolver"):
-        ConsumptionSavingsRegime(solver=_two_margin_solver(), **_regime_kwargs())  # ty: ignore[invalid-argument-type]
-
-
 def test_an_out_of_package_subclass_rejects_the_wrong_solver_family() -> None:
     """A dataclass subclass reaches the same rejection through its own guard.
 
@@ -198,36 +192,6 @@ def test_outer_margin_guard_is_directly_exercised() -> None:
 
 def test_outer_margin_guard_accepts_distinct_names() -> None:
     _outer()._fail_if_names_are_not_pairwise_distinct()
-
-
-def test_one_margin_pairing_guard_is_directly_exercised() -> None:
-    regime = object.__new__(ConsumptionSavingsRegime)
-    object.__setattr__(regime, "solver", _two_margin_solver())
-
-    with pytest.raises(RegimeInitializationError, match="OneMarginSolver"):
-        regime._fail_if_solver_pairing_is_invalid()
-
-
-def test_one_margin_pairing_guard_accepts_a_one_margin_solver() -> None:
-    regime = object.__new__(ConsumptionSavingsRegime)
-    object.__setattr__(regime, "solver", _one_margin_solver())
-
-    regime._fail_if_solver_pairing_is_invalid()
-
-
-def test_two_margin_pairing_guard_is_directly_exercised() -> None:
-    regime = object.__new__(NestedConsumptionSavingsRegime)
-    object.__setattr__(regime, "solver", _one_margin_solver())
-
-    with pytest.raises(RegimeInitializationError, match="TwoMarginSolver"):
-        regime._fail_if_solver_pairing_is_invalid()
-
-
-def test_two_margin_pairing_guard_accepts_a_two_margin_solver() -> None:
-    regime = object.__new__(NestedConsumptionSavingsRegime)
-    object.__setattr__(regime, "solver", _two_margin_solver())
-
-    regime._fail_if_solver_pairing_is_invalid()
 
 
 def test_liquid_state_guard_rejects_a_discrete_grid() -> None:

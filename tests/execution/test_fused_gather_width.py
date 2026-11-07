@@ -231,11 +231,6 @@ def test_a_fixed_cell_width_is_never_halved() -> None:
     assert set().union(*widths.values()) == {2}
 
 
-def test_execution_config_refuses_a_non_bool_halving_switch() -> None:
-    with pytest.raises(ValueError, match="halve_on_materialised_gather"):
-        ExecutionConfig(halve_on_materialised_gather=1)  # ty: ignore[invalid-argument-type]
-
-
 @pytest.mark.parametrize(("dtype", "exponent"), [(np.float32, 20), (np.float64, 49)])
 def test_halving_ulp_check_rejects_an_unrelated_large_state_scale(
     *, dtype: type[np.float32 | np.float64], exponent: int

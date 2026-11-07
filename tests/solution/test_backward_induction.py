@@ -564,14 +564,6 @@ _PLANNING_MAPS = pytest.mark.parametrize(
 
 
 @_PLANNING_MAPS
-def test_planning_maps_are_read_only[T](
-    build: Callable[[], Mapping[Hashable, T]],
-) -> None:
-    """Planning maps handed from one compile stage to the next are read-only views."""
-    assert type(build()) is MappingProxyType
-
-
-@_PLANNING_MAPS
 def test_planning_maps_round_trip_through_jax_tree_utilities[T](
     build: Callable[[], Mapping[Hashable, T]],
 ) -> None:

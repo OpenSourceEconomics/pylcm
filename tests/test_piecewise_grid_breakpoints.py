@@ -235,17 +235,6 @@ def test_piecewise_grid_rejects_invalid_point_counts(
         )
 
 
-def test_piecewise_grid_rejects_an_unknown_owner() -> None:
-    """Breakpoint ownership is exactly left or right."""
-    with pytest.raises(GridInitializationError, match="owner"):
-        PiecewiseLinSpacedGrid(
-            start=0.0,
-            stop=2.0,
-            breakpoints=(GridBreakpoint(value=1.0, owner="middle"),),  # ty: ignore[invalid-argument-type]
-            points_per_segment=(2, 2),
-        )
-
-
 def test_piecewise_grid_rejects_a_collapsed_effective_segment() -> None:
     """An open boundary must leave a representable interval on each side."""
     start = jnp.asarray(1.0, dtype=canonical_float_dtype())

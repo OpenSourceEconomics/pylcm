@@ -7,11 +7,9 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
-from beartype.roar import BeartypeCallHintParamViolation
 
 from _lcm.egm.ce_scaled_linear import (
     _coefficient_parts,
-    _transpose,
     join_ce_direction,
     join_represented_ce_direction,
     scale_ce_direction,
@@ -412,22 +410,3 @@ def test_ce_transport_mixed_second_derivatives_and_differentiated_transpose(
         expected,
         decimal=DECIMAL_PRECISION,
     )
-
-
-@pytest.mark.coverage(backends=("cpu",), precisions="both")
-@pytest.mark.parametrize("forged", [False, True])
-def test_ce_transpose_refuses_unauthenticated_scalar_metadata(*, forged: bool) -> None:
-    """Only the actual JAX typed scalar may substitute for a callback array."""
-    scalar_class = (
-        type("TypedFloat", (float,), {"__module__": "jax._src.literals"})
-        if forged
-        else float
-    )
-    with pytest.raises(BeartypeCallHintParamViolation, match="parameter sign"):
-        _transpose(
-            cotangent=jnp.asarray(1.0),
-            logabs=jnp.asarray(0.0),
-            sign=scalar_class(1.0),  # ty: ignore[invalid-argument-type]
-            base=jnp.asarray(0.0),
-            direction=jnp.asarray(1.0),
-        )

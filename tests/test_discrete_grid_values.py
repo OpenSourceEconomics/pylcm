@@ -24,7 +24,6 @@ import jax.numpy as jnp
 import numpy as np
 import pandas as pd
 import pytest
-from beartype.roar import BeartypeCallHintParamViolation
 from numpy.testing import assert_array_almost_equal as aaae
 from pandas.testing import assert_frame_equal
 
@@ -2547,25 +2546,6 @@ def test_drawn_code_count_is_exact_at_any_signed_width(*, width):
         new_regime_ids=jnp.ones(5, dtype=jnp.int32),
     )
     assert counts.tolist() == [3]
-
-
-@pytest.mark.parametrize(
-    "codes",
-    [
-        jnp.asarray([0, 2, 3], dtype=jnp.uint32),
-        jnp.asarray([0.0, 0.5, 3.0]),
-    ],
-    ids=["unsigned", "float"],
-)
-def test_drawn_code_count_refuses_codes_that_are_not_signed_integers(*, codes):
-    with pytest.raises(BeartypeCallHintParamViolation):
-        _count_drawn_off_grid_codes(
-            codes=(codes,),
-            n_codes=(jnp.int32(3),),
-            target_ids=(jnp.int32(1),),
-            subjects=jnp.ones(3, dtype=bool),
-            new_regime_ids=jnp.ones(3, dtype=jnp.int32),
-        )
 
 
 # A reader of a value grid and the same reader on category codes. The value

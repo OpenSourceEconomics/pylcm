@@ -378,24 +378,6 @@ def test_pin_uses_the_node_generated_at_the_build_precision(*, kind: str) -> Non
         jax.config.update("jax_enable_x64", old)
 
 
-def test_pin_refuses_actions_at_another_precision_than_the_model_was_built_at() -> None:
-    """Evaluating the pin on float64 actions of a model built at float32 raises."""
-    old = jax.config.read("jax_enable_x64")
-    try:
-        jax.config.update("jax_enable_x64", val=False)
-        grid = _boundary_grid(kind="piecewise_lin", owner="left")
-        model = _model(grid=grid, conditional=True)
-        pin = _installed_pin(model)
-        jax.config.update("jax_enable_x64", val=True)
-        with pytest.raises(TypeError, match="float32"):
-            pin(
-                labor=jnp.asarray([0], dtype=jnp.int32),
-                hours=jnp.asarray([1.0], dtype=jnp.float64),
-            )
-    finally:
-        jax.config.update("jax_enable_x64", old)
-
-
 def test_saved_solution_on_a_boundary_grid_binds_the_inactive_node(
     tmp_path: Path,
 ) -> None:

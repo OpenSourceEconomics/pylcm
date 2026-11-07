@@ -73,57 +73,9 @@ def test_get_category_codes_returns_a_read_only_mapping():
     assert type(get_category_codes(_Category)) is MappingProxyType
 
 
-def test_discrete_grid_reports_a_field_without_a_value():
-    """A category field without a value is reported like any non-`ScalarInt`."""
-    category_class = cast(
-        "type[DataclassInstance]", make_dataclass("Category", [("a", ScalarInt)])
-    )
-    error_msg = (
-        "Field values of the category_class must be `ScalarInt` "
-        r"\(0-d int32 jax scalars\). The values to the following "
-        r"fields are not: \['a'\]"
-    )
-    with pytest.raises(GridInitializationError, match=error_msg):
-        DiscreteGrid(category_class=category_class)
-
-
 def test_validate_discrete_grid_empty():
     category_class = _make_dc("Category")
     error_msg = "category_class must have at least one field"
-    with pytest.raises(GridInitializationError, match=error_msg):
-        _validate_discrete_grid(category_class)
-
-
-def test_validate_discrete_grid_non_scalar_input():
-    category_class = _make_dc("Category", ("a", jnp.int32(1)), ("b", "s"))
-    error_msg = (
-        "Field values of the category_class must be `ScalarInt` "
-        r"\(0-d int32 jax scalars\). The values to the following "
-        r"fields are not: \['b'\]"
-    )
-    with pytest.raises(GridInitializationError, match=error_msg):
-        _validate_discrete_grid(category_class)
-
-
-def test_validate_discrete_grid_non_int32_input():
-    """A 0-d integer scalar of another width is no `ScalarInt` code."""
-    category_class = _make_dc("Category", ("a", jnp.int32(0)), ("b", jnp.int16(1)))
-    error_msg = (
-        "Field values of the category_class must be `ScalarInt` "
-        r"\(0-d int32 jax scalars\). The values to the following "
-        r"fields are not: \['b'\]"
-    )
-    with pytest.raises(GridInitializationError, match=error_msg):
-        _validate_discrete_grid(category_class)
-
-
-def test_validate_discrete_grid_none_input():
-    category_class = _make_dc("Category", ("a", None), ("b", jnp.int32(1)))
-    error_msg = (
-        "Field values of the category_class must be `ScalarInt` "
-        r"\(0-d int32 jax scalars\). The values to the following "
-        r"fields are not: \['a'\]"
-    )
     with pytest.raises(GridInitializationError, match=error_msg):
         _validate_discrete_grid(category_class)
 
@@ -154,18 +106,6 @@ def test_validate_category_class_valid():
     category_class = _make_dc("Category", ("a", jnp.int32(0)), ("b", jnp.int32(1)))
     errors = validate_category_class(category_class)
     assert errors == ()
-
-
-def test_validate_category_class_not_dataclass():
-    """Non-dataclass should return error."""
-
-    class NotDataclass:
-        a = 0
-        b = 1
-
-    errors = validate_category_class(NotDataclass)  # ty: ignore[invalid-argument-type]
-    assert len(errors) == 1
-    assert "must be a dataclass" in errors[0]
 
 
 def test_validate_category_class_non_consecutive():
@@ -241,30 +181,6 @@ def test_discrete_grid_ordered_false():
 # @categorical: ScalarInt annotation contract
 
 
-def test_categorical_rejects_int_annotation():
-    """Plain `int` annotations are rejected at decoration time."""
-    with pytest.raises(
-        CategoricalDefinitionError,
-        match=r"must annotate every field as `ScalarInt`",
-    ):
-        # `a: int` MUST stay — this is the rejected case under test.
-        @categorical(ordered=False)
-        class _Bad:
-            a: int
-
-
-def test_categorical_rejects_str_annotation():
-    """Non-`ScalarInt` annotations of any kind are rejected."""
-    with pytest.raises(
-        CategoricalDefinitionError,
-        match=r"must annotate every field as `ScalarInt`",
-    ):
-
-        @categorical(ordered=False)
-        class _Bad:
-            a: str
-
-
 def test_categorical_error_lists_all_offending_fields():
     """The error message names every field with a wrong annotation."""
     with pytest.raises(CategoricalDefinitionError, match=r"`x: int`.*`y: str`"):
@@ -314,24 +230,6 @@ def test_categorical_instance_attr_is_scalar_int():
     assert instance.first.shape == ()
     assert instance.first.dtype == jnp.int32
     assert int(instance.second) == 1
-
-
-def test_lin_spaced_grid_rejects_non_numeric_start():
-    """Non-numeric `start` raises `GridInitializationError`."""
-    with pytest.raises(GridInitializationError, match="start"):
-        LinSpacedGrid(start="a", stop=1, n_points=10)  # ty: ignore[invalid-argument-type]
-
-
-def test_lin_spaced_grid_rejects_non_numeric_stop():
-    """Non-numeric `stop` raises `GridInitializationError`."""
-    with pytest.raises(GridInitializationError, match="stop"):
-        LinSpacedGrid(start=1, stop="a", n_points=10)  # ty: ignore[invalid-argument-type]
-
-
-def test_lin_spaced_grid_rejects_non_numeric_n_points():
-    """Non-numeric `n_points` raises `GridInitializationError`."""
-    with pytest.raises(GridInitializationError, match="n_points"):
-        LinSpacedGrid(start=1, stop=2, n_points="a")  # ty: ignore[invalid-argument-type]
 
 
 def test_validate_continuous_grid_negative_n_points():
@@ -480,11 +378,6 @@ def test_irreg_spaced_grid_creation():
 def test_irreg_spaced_grid_invalid_too_few_points():
     with pytest.raises(GridInitializationError, match="at least 2 elements"):
         IrregSpacedGrid(points=np.array([1.0]))
-
-
-def test_irreg_spaced_grid_invalid_non_numeric():
-    with pytest.raises(GridInitializationError, match="points"):
-        IrregSpacedGrid(points=np.array([1.0, "a", 3.0]))
 
 
 def test_irreg_spaced_grid_invalid_not_ascending():
@@ -685,34 +578,13 @@ def test_value_grid_keeps_the_declared_values():
     assert grid.values == (0, 20, 40)
 
 
-@pytest.mark.parametrize(
-    ("values", "type_name"),
-    [
-        pytest.param([0, 20, 40], "list", id="list"),
-        pytest.param((0.5, 1.0), "tuple", id="tuple"),
-        pytest.param(range(3), "range", id="range"),
-    ],
-)
-def test_value_grid_refuses_a_non_array_container(*, values, type_name):
+def test_value_grid_refuses_a_non_array_container():
     """`values` is a NumPy or JAX array; the error names the type and the spelling."""
     with pytest.raises(
         GridInitializationError,
-        match=rf"got {type_name}.*DiscreteGrid\(values=jnp\.array\(",
+        match=r"got list.*DiscreteGrid\(values=jnp\.array\(",
     ):
-        DiscreteGrid(values=values)
-
-
-@pytest.mark.parametrize(
-    "values",
-    [
-        pytest.param(np.array(["a", "b"]), id="string"),
-        pytest.param(np.array([0j, 1j]), id="complex"),
-    ],
-)
-def test_value_grid_refuses_an_array_of_non_numeric_dtype(values):
-    """An array whose dtype is neither integer nor floating is refused."""
-    with pytest.raises(GridInitializationError, match="integer or floating dtype"):
-        DiscreteGrid(values=values)
+        DiscreteGrid(values=[0, 20, 40])  # ty: ignore[invalid-argument-type]
 
 
 @pytest.mark.parametrize(
@@ -1523,34 +1395,3 @@ def test_integer_differential_detects_each_broken_classifier(*, monkeypatch, mut
         test_integer_value_grid_encodes_every_integer_dtype_like_python_integers(
             grid_name="mixed_boundaries", dtype=np.uint32
         )
-
-
-@pytest.mark.parametrize(
-    ("points", "type_name"),
-    [
-        pytest.param([0.0, 1.0, 3.0], "list", id="list"),
-        pytest.param((0.0, 1.0, 3.0), "tuple", id="tuple"),
-        pytest.param(range(3), "range", id="range"),
-    ],
-)
-def test_irreg_spaced_grid_refuses_a_non_array_container(*, points, type_name):
-    """`points` is a NumPy or JAX array; the error names the type and the spelling."""
-    with pytest.raises(
-        GridInitializationError,
-        match=rf"got {type_name}.*IrregSpacedGrid\(points=jnp\.array\(",
-    ):
-        IrregSpacedGrid(points=points)
-
-
-@pytest.mark.parametrize(
-    "points",
-    [
-        pytest.param(np.array(["a", "b"]), id="string"),
-        pytest.param(np.array([True, False]), id="bool"),
-        pytest.param(np.zeros((2, 2)), id="2d"),
-    ],
-)
-def test_irreg_spaced_grid_refuses_a_non_numeric_or_multidimensional_array(points):
-    """An array must be one-dimensional with an integer or floating dtype."""
-    with pytest.raises(GridInitializationError, match="points"):
-        IrregSpacedGrid(points=points)

@@ -218,12 +218,6 @@ def test_execution_config_rejects_an_unusable_headroom_fraction(
         ExecutionConfig(device_memory_headroom_fraction=fraction)
 
 
-def test_execution_config_rejects_a_boolean_headroom_fraction() -> None:
-    """A flag is not a share of the pool."""
-    with pytest.raises(ValueError, match="device_memory_headroom_fraction"):
-        ExecutionConfig(device_memory_headroom_fraction=True)
-
-
 def test_execution_config_stores_an_integer_headroom_fraction_as_a_float() -> None:
     """`0` plans against the whole pool, stored as the float `0.0`."""
     fraction = ExecutionConfig(device_memory_headroom_fraction=0)

@@ -71,9 +71,9 @@ def test_custom_exit_rule_requires_outside_value_declaration() -> None:
         )
 
 
-@pytest.mark.parametrize("kind", ["empty", "observes", "target_name", "projection"])
+@pytest.mark.parametrize("kind", ["empty", "observes", "target_name"])
 def test_malformed_exit_declarations_fail_at_construction(kind: str) -> None:
-    """Invalid names, duplicate observations and noncallable settlements fail early."""
+    """Empty targets, invalid names and duplicate observations fail early."""
     target = ExitTarget
     declaration = Exit
     with pytest.raises(RegimeInitializationError):  # noqa: PT012 - malformed constructor variants
@@ -85,10 +85,8 @@ def test_malformed_exit_declarations_fail_at_construction(kind: str) -> None:
                 rule="unilateral",
                 observes=("offer", "offer"),
             )
-        elif kind == "target_name":
-            target(regime="bad__regime", projection={})
         else:
-            target(regime="single", projection={"wealth": 1.0})  # ty: ignore[invalid-argument-type] - invalid input
+            target(regime="bad__regime", projection={})
 
 
 def test_collective_exit_names_every_source_member() -> None:

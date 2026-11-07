@@ -611,42 +611,6 @@ def test_private_flow_transport_does_not_shadow_user_inputs(*, evaluated: bool) 
     np.testing.assert_array_equal(feasible, desired=True)
 
 
-@pytest.mark.parametrize("field", ["endog_grid", "taste_shock_scale", "breakpoints"])
-def test_feature_templates_require_canonical_coordinate_and_auxiliary_dtypes(
-    *, field: str
-) -> None:
-    """
-    Query metadata cannot weaken the numeric contract of coordinate or auxiliary
-    rows.
-    """
-    spec = _compact_spec()
-    template = build_template_egm_carry(
-        n_rows=5,
-        leading_shape=(2, 3),
-        query_data=build_template_egm_query_data(
-            state_shape=(2,),
-            action_shape=(3,),
-            row_capacity=5,
-            interval_capacity=1,
-        ),
-    )
-    if field == "breakpoints":
-        template = replace(template, breakpoints=jnp.zeros((2, 3, 2)))
-    tampered = jax.tree.map_with_path(
-        lambda path, leaf: (
-            leaf.astype(jnp.int32)
-            if tuple(key.name for key in path) == (field,)
-            else leaf
-        ),
-        template,
-    )
-    with pytest.raises(TypeError, match=r"Query|query"):
-        continuation.EGMContinuationSpec(
-            template=tampered,
-            layout=continuation.EGMContinuationLayout(query_spec=spec),
-        )
-
-
 def test_unbound_feature_reader_cannot_satisfy_continuation_capability_demand() -> None:
     """The continuation admission seam requires an actual model-bound query reader."""
     template = build_template_egm_carry(

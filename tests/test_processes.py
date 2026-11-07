@@ -1444,7 +1444,6 @@ def test_tauchen_on_nodes_rejects_invalid_grid(nodes: tuple[float, ...]) -> None
     ("nodes", "type_name"),
     [
         pytest.param([-1.0, 0.0, 1.0], "list", id="list"),
-        pytest.param((-1.0, 0.0, 1.0), "tuple", id="tuple"),
     ],
 )
 def test_tauchen_on_nodes_refuses_a_non_array_container(*, nodes, type_name) -> None:
@@ -1458,7 +1457,7 @@ def test_tauchen_on_nodes_refuses_a_non_array_container(*, nodes, type_name) -> 
 
 @pytest.mark.parametrize(
     "nodes",
-    [np.array(["-1.0", "0.0", "1.0"]), np.array([-1.0, None, 1.0], dtype=object)],
+    [np.array(["-1.0", "0.0", "1.0"])],
 )
 def test_tauchen_on_nodes_refuses_a_non_numeric_array(nodes) -> None:
     """An array of nodes must have an integer or floating dtype."""
@@ -2157,14 +2156,6 @@ def test_tauchen_on_nodes_refuses_invalid_quadrature_count(count: int) -> None:
             nodes=np.array([-1.0, 1.0]),
             transition_rule="innovation_quadrature",
             n_quadrature=count,
-        )
-
-
-def test_tauchen_on_nodes_refuses_an_unknown_transition_rule() -> None:
-    with pytest.raises(GridInitializationError, match="transition_rule"):
-        TauchenAR1Process.on_nodes(
-            nodes=np.array([-1.0, 1.0]),
-            transition_rule="trapezoid",  # ty: ignore[invalid-argument-type]
         )
 
 

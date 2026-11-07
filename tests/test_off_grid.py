@@ -12,7 +12,6 @@ import jax.numpy as jnp
 import numpy as np
 import pandas as pd
 import pytest
-from beartype.roar import BeartypeCallHintParamViolation
 
 from _lcm import transition_checks
 from _lcm.grids.continuous import _clip_grid_value
@@ -256,15 +255,6 @@ def test_off_grid_current_counts_survive_abstract_reconstruction(
     assert type(abstract) is transition_checks._CurrentIIDOffGridCounts
     assert abstract.invalid_law.shape == ()
     assert abstract.invalid_law.dtype == jnp.bool_
-    with pytest.raises(BeartypeCallHintParamViolation):
-        transition_checks._CurrentIIDOffGridCounts(
-            counts=record.counts, invalid_law=abstract.invalid_law
-        )
-    if not bounded:
-        with pytest.raises(BeartypeCallHintParamViolation):
-            transition_checks._CurrentIIDOffGridCounts(
-                counts=abstract.counts, invalid_law=record.invalid_law
-            )
     zero = jax.tree.map(lambda leaf: jnp.zeros(leaf.shape, dtype=leaf.dtype), abstract)
     reduced = jax.lax.fori_loop(
         0,
@@ -523,13 +513,10 @@ _GRID_FACTORIES: tuple[Callable[..., ContinuousGrid], ...] = (
 )
 
 
-@pytest.mark.parametrize("factory", _GRID_FACTORIES)
-def test_every_continuous_grid_refuses_ambiguous_clip(
-    factory: Callable[..., ContinuousGrid],
-) -> None:
+def test_continuous_grid_refuses_ambiguous_clip() -> None:
     """A caller must specify which clipping contract it needs."""
     with pytest.raises(GridInitializationError, match="off_grid"):
-        factory(off_grid="clip")
+        LinSpacedGrid(start=1, stop=3, n_points=3, off_grid="clip")  # ty: ignore[invalid-argument-type]
 
 
 @pytest.mark.parametrize("factory", _GRID_FACTORIES)

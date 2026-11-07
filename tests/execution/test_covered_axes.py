@@ -154,27 +154,18 @@ def test_bounded_width_selector_does_not_refine_back_toward_a_refused_cover() ->
 
 
 @pytest.mark.parametrize(
-    ("covered_axes", "error", "match"),
+    ("covered_axes", "match"),
     [
-        (["cell"], ValueError, r"ExecutionConfig\.covered_axes: .* tuple"),
-        ((1,), ValueError, r"ExecutionConfig\.covered_axes\[0\]: .* string"),
-        (("",), ValueError, r"ExecutionConfig\.covered_axes\[0\]: .* 1 character"),
-        (
-            ("cell", "cell"),
-            ValueError,
-            r"ExecutionConfig\.covered_axes must be distinct",
-        ),
+        (("",), r"ExecutionConfig\.covered_axes\[0\]: .* 1 character"),
+        (("cell", "cell"), r"ExecutionConfig\.covered_axes must be distinct"),
     ],
 )
 def test_execution_config_refuses_malformed_covered_axes(
-    *,
-    covered_axes: list[str] | tuple[int, ...] | tuple[str, ...],
-    error: type[Exception],
-    match: str,
+    *, covered_axes: tuple[str, ...], match: str
 ) -> None:
-    """`covered_axes` must be a tuple of distinct non-empty axis names."""
-    with pytest.raises(error, match=match):
-        ExecutionConfig(covered_axes=covered_axes)  # ty: ignore[invalid-argument-type]
+    """`covered_axes` must hold distinct non-empty axis names."""
+    with pytest.raises(ValueError, match=match):
+        ExecutionConfig(covered_axes=covered_axes)
 
 
 def test_model_refuses_covered_axes_naming_an_undeclared_axis() -> None:

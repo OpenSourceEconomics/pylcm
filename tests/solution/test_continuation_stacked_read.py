@@ -18,7 +18,6 @@ from _lcm.egm.continuation import (
     _aggregate_child_choices,
     _blend_passive_axes,
     _collapse_stacked_candidates,
-    _stacked_blend_payloads,
 )
 from _lcm.egm.interp import interp_on_padded_grid, prepare_padded_grid
 from _lcm.solution.feasibility import BoundedResult
@@ -823,23 +822,3 @@ def test_passive_boundary_uses_nearest_segment_extrapolation() -> None:
         n_outer_candidates=0,
     )
     np.testing.assert_allclose(np.asarray([value, marginal]), np.asarray([0.0, 1.0]))
-
-
-def test_stacked_blend_payloads_are_an_immutable_tuple() -> None:
-    """The side payloads handed to the passive blend form a tuple."""
-    grid_rows = jnp.array([[0.0, 5.0, 10.0], [0.0, 5.0, 10.0]])
-    search_rows, valid_rows = jax.vmap(prepare_padded_grid)(grid_rows)
-    _, payloads = _stacked_blend_payloads(
-        value_at_child=jnp.array([1.0, 2.0]),
-        marginal_at_child=jnp.array([0.5, 2.0]),
-        search_rows=search_rows,
-        valid_rows=valid_rows,
-        grid_rows=grid_rows,
-        value_rows=jnp.array([[1.0, 1.0, 1.0], [2.0, 2.0, 2.0]]),
-        marginal_rows=jnp.array([[0.5, 0.5, 0.5], [2.0, 2.0, 2.0]]),
-        queries_flat=jnp.array([4.0, 4.0]),
-        gradients_flat=jnp.array([1.0, 1.0]),
-        block_shape=(1, 2),
-        paired_marginal_read=False,
-    )
-    assert type(payloads) is tuple

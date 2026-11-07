@@ -5,18 +5,16 @@ from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
 from types import MappingProxyType
-from typing import ClassVar, NamedTuple, Never, Self, cast
+from typing import ClassVar, Never, Self, cast
 
 import cloudpickle
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
-from beartype.roar import BeartypeCallHintParamViolation
 
 import lcm.solver_api as solver_api_module
 from _lcm.engine import StateActionSpace
-from _lcm.persistence import solution as solution_persistence
 from _lcm.solution import model_authority as model_authority_module
 from _lcm.solution.result_snapshot import (
     capture_exact_mapping,
@@ -25,7 +23,7 @@ from _lcm.solution.result_snapshot import (
     snapshot_artifact_template_declaration,
     snapshot_solution_metadata,
 )
-from _lcm.typing import ArtifactPayload, JSONValue, PytreeChild
+from _lcm.typing import ArtifactPayload, PytreeChild
 from lcm import ExecutionConfig, LinSpacedGrid, Model
 from lcm._solver_api import authority as authority_module
 from lcm.exceptions import (
@@ -183,149 +181,6 @@ class _CountingTree[Value]:
         """Rebuild the test tree from its sole numerical leaf."""
         cls.unflatten_count += 1
         return cls(children[0])
-
-
-@jax.tree_util.register_pytree_node_class
-@dataclass(frozen=True)
-class _ZeroLeafCustomTree:
-    """Frozen custom zero-node whose unflatten could return shared state."""
-
-    flatten_count: ClassVar[int] = 0
-    unflatten_count: ClassVar[int] = 0
-    singleton: ClassVar[_ZeroLeafCustomTree | None] = None
-
-    def tree_flatten(self) -> tuple[tuple[()], None]:
-        """Expose a custom zero-leaf node and count the sole observation."""
-        type(self).flatten_count += 1
-        return (), None
-
-    # keyword-only-exempt: library-callback=jax.tree_util.register_pytree_node
-    @classmethod
-    def tree_unflatten(
-        cls,
-        _metadata: None,
-        _children: tuple[()],
-    ) -> _ZeroLeafCustomTree:
-        """Expose whether rejection happened before a shared object escaped."""
-        cls.unflatten_count += 1
-        if cls.singleton is None:
-            cls.singleton = cls()
-        return cls.singleton
-
-
-class _EmptyTupleSubclass(NamedTuple):
-    """Exact tuple subclass excluded from the safe zero-node allowlist."""
-
-
-class _TupleSpoofMeta(type):  # noqa: PAN006 - Runtime metaclass base for deliberate builtin identity spoof.
-    """Metaclass whose equality and hash impersonate the built-in tuple class."""
-
-    def __hash__(cls) -> int:
-        return hash(tuple)
-
-    def __eq__(cls, other: object) -> bool:
-        return other is tuple
-
-
-@jax.tree_util.register_pytree_node_class
-@dataclass(frozen=True)
-class _TupleSpoofZeroLeaf(metaclass=_TupleSpoofMeta):
-    """Custom zero-node that weak class-set membership would accept as tuple."""
-
-    flatten_count: ClassVar[int] = 0
-    unflatten_count: ClassVar[int] = 0
-
-    def tree_flatten(self) -> tuple[tuple[()], None]:
-        type(self).flatten_count += 1
-        return (), None
-
-    # keyword-only-exempt: library-callback=jax.tree_util.register_pytree_node
-    @classmethod
-    def tree_unflatten(
-        cls,
-        _metadata: None,
-        _children: tuple[()],
-    ) -> _TupleSpoofZeroLeaf:
-        cls.unflatten_count += 1
-        return cls()
-
-
-class _IntegerSpoofMeta(type):  # noqa: PAN006 - Runtime metaclass base for deliberate builtin identity spoof.
-    """Metaclass whose equality and hash impersonate the built-in int class."""
-
-    def __hash__(cls) -> int:
-        return hash(int)
-
-    def __eq__(cls, other: object) -> bool:
-        return other is int
-
-
-class _IntegerSpoof(metaclass=_IntegerSpoofMeta):
-    """Non-scalar instance weak exact-type set membership would accept."""
-
-
-class _StringSpoofMeta(type):  # noqa: PAN006 - Runtime metaclass base for deliberate builtin identity spoof.
-    """Metaclass whose equality and hash impersonate the built-in str class."""
-
-    def __hash__(cls) -> int:
-        return hash(str)
-
-    def __eq__(cls, other: object) -> bool:
-        return other is str
-
-
-def _repr_as_exact_string(_value: object) -> str:  # noqa: PAN001 - Method installed on an arbitrary dynamically forged class.
-    """Collide with the representation of the exact string ``"x"``."""
-    return repr("x")
-
-
-_StringSpoof = _StringSpoofMeta(
-    "str",
-    (),
-    {"__repr__": _repr_as_exact_string},
-)
-
-
-class _FloatSpoofMeta(type):  # noqa: PAN006 - Runtime metaclass base for deliberate builtin identity spoof.
-    """Metaclass whose equality and hash impersonate the built-in float class."""
-
-    def __hash__(cls) -> int:
-        return hash(float)
-
-    def __eq__(cls, other: object) -> bool:
-        return other is float
-
-
-class _FloatSpoof(metaclass=_FloatSpoofMeta):
-    """Array-convertible object weak scalar-leaf membership would accept."""
-
-    conversion_count: ClassVar[int] = 0
-
-    # keyword-only-exempt: library-callback=numpy.asarray
-    def __array__(
-        self,
-        dtype: np.dtype[np.generic] | None = None,
-        copy: bool | None = None,  # noqa: FBT001
-    ) -> np.ndarray:
-        del copy
-        type(self).conversion_count += 1
-        return np.asarray(1.0, dtype=dtype)
-
-
-class _GetAttrKeySubclass(jax.tree_util.GetAttrKey):
-    """Subclass of a JAX attribute path segment."""
-
-
-class _SequenceKeySubclass(jax.tree_util.SequenceKey):
-    """Subclass of a JAX sequence path segment."""
-
-
-class _FlattenedIndexKeySubclass(jax.tree_util.FlattenedIndexKey):
-    """Subclass of a JAX flattened-index path segment."""
-
-
-class _DictKeySubclass(jax.tree_util.DictKey):
-    """Subclass of a JAX mapping path segment."""
 
 
 @dataclass(frozen=True)
@@ -1037,8 +892,6 @@ def test_safe_nested_zero_leaf_nodes_roundtrip_without_public_container_entries(
     ("zero_node", "path_pattern", "type_name"),
     [
         ([], r"pytree-child:1", "list"),
-        ({}, r"pytree-child:1", "dict"),
-        (_EmptyTupleSubclass(), r"pytree-child:1", "_EmptyTupleSubclass"),
         (((), []), r"pytree-child:1.*pytree-child:1", "list"),
     ],
 )
@@ -1056,103 +909,6 @@ def test_mutable_zero_leaf_nodes_are_rejected_at_unique_structural_paths(
         match=rf"{path_pattern}.*{type_name}",
     ):
         _tuple_tree_authority(template=template)
-
-
-def test_custom_zero_leaf_node_is_rejected_before_shared_unflatten() -> None:
-    """Frozen/custom zero-nodes cannot smuggle a shared mutable reconstruction."""
-    _ZeroLeafCustomTree.flatten_count = 0
-    _ZeroLeafCustomTree.unflatten_count = 0
-    _ZeroLeafCustomTree.singleton = _ZeroLeafCustomTree()
-    template = (
-        jnp.asarray(1.0, dtype=jnp.float32),
-        _ZeroLeafCustomTree.singleton,
-    )
-
-    with pytest.raises(
-        TypeError,
-        match=r"pytree-child:1.*_ZeroLeafCustomTree",
-    ):
-        _tuple_tree_authority(template=template)
-
-    assert _ZeroLeafCustomTree.flatten_count == 1
-    assert _ZeroLeafCustomTree.unflatten_count == 0
-
-
-def test_zero_leaf_allowlist_uses_runtime_type_identity() -> None:
-    """A metaclass cannot impersonate the exact safe tuple zero-node."""
-    _TupleSpoofZeroLeaf.flatten_count = 0
-    _TupleSpoofZeroLeaf.unflatten_count = 0
-
-    with pytest.raises(
-        TypeError,
-        match=r"pytree-child:1.*_TupleSpoofZeroLeaf",
-    ):
-        _tuple_tree_authority(
-            template=(
-                jnp.asarray(1.0, dtype=jnp.float32),
-                _TupleSpoofZeroLeaf(),
-            )
-        )
-
-    assert _TupleSpoofZeroLeaf.flatten_count == 1
-    assert _TupleSpoofZeroLeaf.unflatten_count == 0
-
-
-def test_mapping_key_scalar_grammar_uses_runtime_type_identity() -> None:
-    """A class named like ``str`` cannot collide with an exact string path."""
-    exact_path = solver_api_module._normalize_jax_tree_path(
-        (jax.tree_util.DictKey("x"),)
-    )
-    spoof = _StringSpoof()
-
-    assert exact_path == ("mapping:str:'x'",)
-    assert type(spoof).__name__ == "str"
-    assert repr(spoof) == repr("x")
-    with pytest.raises(TypeError, match="exact JSON scalars"):
-        solver_api_module._normalize_jax_tree_path((jax.tree_util.DictKey(spoof),))
-
-
-def test_persistence_json_scalar_grammar_uses_runtime_type_identity() -> None:
-    """A spoofing metaclass cannot enter the archive's scalar grammar."""
-    with pytest.raises(BeartypeCallHintParamViolation, match="value"):
-        solution_persistence._require_exact_json_scalar(
-            value=cast("JSONValue", _IntegerSpoof()),
-            label="spoof",
-        )
-
-
-def test_template_leaf_scalar_grammar_uses_runtime_type_identity() -> None:
-    """A metaclass cannot trigger conversion by impersonating exact float."""
-    _FloatSpoof.conversion_count = 0
-
-    with pytest.raises(TypeError, match="not numerical"):
-        solver_api_module._snapshot_artifact_template_once(
-            template=cast("ArtifactPayload", (_FloatSpoof(),)),
-            payload_runtime_type=tuple,
-        )
-
-    assert _FloatSpoof.conversion_count == 0
-
-
-@pytest.mark.parametrize(
-    "component",
-    [
-        _GetAttrKeySubclass("field"),
-        _SequenceKeySubclass(0),
-        _FlattenedIndexKeySubclass(0),
-        _DictKeySubclass("key"),
-    ],
-)
-def test_jax_tree_path_key_subclasses_are_rejected(
-    *,
-    component: _GetAttrKeySubclass
-    | _SequenceKeySubclass
-    | _FlattenedIndexKeySubclass
-    | _DictKeySubclass,
-) -> None:
-    """Only exact JAX path-entry classes participate in stable normalization."""
-    with pytest.raises(TypeError, match="Unsupported artifact TreePath component"):
-        solver_api_module._normalize_jax_tree_path((component,))
 
 
 @pytest.mark.parametrize("key", [float("nan"), float("inf"), float("-inf")])

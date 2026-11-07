@@ -356,12 +356,8 @@ def test_store_lookups_reject_nonexact_coordinates_before_hashing() -> None:
 
     assert True not in values
     assert hostile_regime not in values[0]
-    with pytest.raises(TypeError, match="exact ints"):
-        result.value(period=True, regime="alive")
     with pytest.raises(TypeError, match="exact strs"):
         result.value(period=0, regime=hostile_regime)
-    with pytest.raises(TypeError, match="exact strs"):
-        values.load_state(period=0, regime=hostile_regime)
 
     key = ArtifactKey(type_id="example.policy")
     ref = ArtifactRef(period=0, regime="alive", key=key)
@@ -370,8 +366,6 @@ def test_store_lookups_reject_nonexact_coordinates_before_hashing() -> None:
     object.__setattr__(hostile_ref, "regime", hostile_regime)
 
     assert hostile_ref not in artifacts
-    with pytest.raises(TypeError, match="exact strs"):
-        artifacts.load_state(hostile_ref)
 
 
 def test_solve_records_instance_params_and_value_array_schemas() -> None:

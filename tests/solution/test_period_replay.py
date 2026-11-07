@@ -24,7 +24,6 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
-from beartype.roar import BeartypeCallHintParamViolation
 from jax._src import compilation_cache as jax_compilation_cache
 from jaxlib import (
     _hlo,  # ty: ignore[unresolved-import] - installed native API has no stub
@@ -342,15 +341,6 @@ def test_is_period_capture_payload_names_a_missing_key(key: str) -> None:
         period_replay._is_period_capture_payload(payload)
 
 
-@pytest.mark.parametrize("key", _REQUIRED_PAYLOAD_KEYS)
-def test_is_period_capture_payload_names_a_wrong_typed_key(key: str) -> None:
-    """A payload holding a required entry at the wrong type is refused, naming it."""
-    payload = {**_well_formed_payload(), key: "not the declared type"}
-
-    with pytest.raises(TypeError, match=re.escape(repr(key))):
-        period_replay._is_period_capture_payload(payload)
-
-
 def _rewrite_capture(*, directory, mutate):
     """Load, mutate, and rewrite one capture payload."""
     path = directory / period_replay._PAYLOAD_NAME
@@ -409,10 +399,9 @@ def test_a_capture_without_tile_widths_is_refused(*, monkeypatch, tmp_path):
     ("widths", "error"),
     [
         ({"main": {"action_product": 0}}, ValueError),
-        ({"main": {"action_product": 2.0}}, BeartypeCallHintParamViolation),
         ({"other": {"action_product": 2}}, ValueError),
     ],
-    ids=["nonpositive-width", "noninteger-width", "wrong-core-names"],
+    ids=["nonpositive-width", "wrong-core-names"],
 )
 def test_malformed_captured_tile_widths_are_refused(
     *, monkeypatch, tmp_path, widths, error

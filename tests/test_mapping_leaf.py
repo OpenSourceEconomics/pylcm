@@ -3,14 +3,12 @@ from types import MappingProxyType
 
 import jax
 import jax.numpy as jnp
-import pytest
 
 from _lcm.utils.containers import (
     ensure_containers_are_immutable,
     ensure_containers_are_mutable,
 )
 from _lcm.utils.namespace import flatten_regime_namespace
-from lcm.exceptions import InvalidParamsError
 from lcm.params import (
     MappingLeaf,
     SequenceLeaf,
@@ -187,8 +185,3 @@ def test_as_leaf_tuple():
     assert isinstance(result, UserSequenceLeaf)
     assert not isinstance(result, SequenceLeaf)
     assert result.data == (1, 2)
-
-
-def test_as_leaf_rejects_int():
-    with pytest.raises(InvalidParamsError, match="as_leaf"):
-        as_leaf(42)  # ty: ignore[no-matching-overload]

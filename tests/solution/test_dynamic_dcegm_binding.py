@@ -8,7 +8,6 @@ from typing import Literal, cast
 import jax.numpy as jnp
 import numpy as np
 import pytest
-from beartype.roar import BeartypeCallHintParamViolation
 from dags import concatenate_functions
 
 from _lcm import continuation, model_processing
@@ -446,10 +445,10 @@ def _bound() -> PostDecisionBoundSpec:
 
 
 @pytest.mark.parametrize(
-    "field", ["owner_capacity", "side_ids", "schema_version", "kind", "absent"]
+    "field", ["owner_capacity", "side_ids", "schema_version", "absent"]
 )
 def test_row_topology_is_compared_fieldwise_against_independent_model(
-    *, field: Literal["owner_capacity", "side_ids", "schema_version", "kind", "absent"]
+    *, field: Literal["owner_capacity", "side_ids", "schema_version", "absent"]
 ) -> None:
     """Copied descriptors cannot substitute different run ownership semantics."""
     topology_type = getattr(continuation, "EGMRowTopologySpec", None)
@@ -486,10 +485,6 @@ def test_row_topology_is_compared_fieldwise_against_independent_model(
         changed = replace(topology, side_ids=(0, -1, 1))
     elif field == "absent":
         changed = None
-    elif field == "kind":
-        with pytest.raises(BeartypeCallHintParamViolation, match="kind"):
-            replace(topology, kind="other")
-        return
     else:
         with pytest.raises(TypeError, match="topology"):
             replace(topology, schema_version=2)

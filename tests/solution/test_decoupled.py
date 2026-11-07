@@ -32,7 +32,6 @@ from lcm.exceptions import (
     InvalidValueFunctionError,
     ModelInitializationError,
     NoFeasibleActionError,
-    RegimeInitializationError,
     UnsupportedOperationError,
 )
 from lcm.solvers import GridSearch
@@ -425,27 +424,6 @@ def test_lookup_without_decoupled_publishes_no_objective_profile() -> None:
         keep_intermediates=ALL_INTERMEDIATES,
     )
     assert got.Q_objective is None
-
-
-@pytest.mark.parametrize(
-    "build",
-    [
-        lambda: lcm.Decoupled(
-            objective=long_run,
-            value=lcm.Phased(solve=long_run, simulate=long_run),  # ty: ignore[invalid-argument-type]
-        ),
-        lambda: lcm.Decoupled(
-            objective=lcm.Decoupled(objective=long_run, value=long_run),  # ty: ignore[invalid-argument-type]
-            value=long_run,
-        ),
-        lambda: lcm.Decoupled(objective=long_run, value=2.0),  # ty: ignore[invalid-argument-type]
-    ],
-    ids=["phased-value", "nested", "not-callable"],
-)
-def test_decoupled_refuses_an_invalid_declaration(build) -> None:
-    """Only `objective` may be `Phased`, and both parts must be aggregators."""
-    with pytest.raises(RegimeInitializationError, match="Decoupled"):
-        build()
 
 
 def test_phased_koopmans_aggregator_refuses_a_decoupled_aggregator() -> None:

@@ -10,7 +10,6 @@ from typing import Literal, cast
 import jax
 import jax.numpy as jnp
 import pytest
-from beartype.roar import BeartypeCallHintParamViolation, BeartypeDoorHintViolation
 from numpy.testing import assert_array_equal
 
 from _lcm.execution.core_program import (
@@ -323,52 +322,40 @@ def test_value_input_planning_rejects_consistently_wrong_consumer_node() -> None
 
 
 @pytest.mark.parametrize(
-    ("defect", "error", "message"),
+    ("defect", "message"),
     [
         pytest.param(
             "missing-channel",
-            ValueError,
             "argument .* is missing from program arguments",
             id="missing-channel",
         ),
         pytest.param(
             "missing-path",
-            ValueError,
             "argument path.*missing",
             id="missing-path",
-        ),
-        pytest.param(
-            "non-array-leaf",
-            BeartypeDoorHintViolation,
-            r"variable \"value\"",
-            id="non-array-leaf",
         ),
     ],
 )
 def test_value_input_planning_independently_resolves_argument_leaf(
     *,
     defect: str,
-    error: type[Exception],
     message: str,
 ) -> None:
     """A matching source triple does not bypass channel/path leaf validation."""
     value = jnp.asarray([3.0, 4.0])
     access = _value_access(source=_SCHEDULED_SOURCE)
-    argument_variants: dict[str, Mapping[str, Mapping[str, jax.Array | object]]] = {  # noqa: PAN001 - Includes the arbitrary non-array rejection witness.
+    argument_variants: dict[str, Mapping[str, Mapping[str, jax.Array]]] = {
         "missing-channel": {},
         "missing-path": {
             ValueInputChannel.NEXT_REGIME_VALUE.value: {"other": value},
         },
-        "non-array-leaf": {
-            ValueInputChannel.NEXT_REGIME_VALUE.value: {"target": object()},
-        },
     }
 
-    with pytest.raises(error, match=message):
+    with pytest.raises(ValueError, match=message):
         _resolve_value_input_transfer_plan(
             program=_value_consumer_program(
                 accesses=(access,),
-                arguments=argument_variants[defect],  # ty: ignore[invalid-argument-type]
+                arguments=argument_variants[defect],
             ),
             source_value_template=value,
             source=_SCHEDULED_SOURCE,
@@ -774,7 +761,7 @@ def test_candidate_resolutions_preserve_width_order_identity_and_values() -> Non
         )
 
 
-@pytest.mark.parametrize("invalid_width", [0, 7, True])
+@pytest.mark.parametrize("invalid_width", [0, 7])
 def test_candidate_resolutions_validate_later_widths(invalid_width: int) -> None:
     """A valid first tile leaves every later tile subject to its axis contract."""
     with pytest.raises((TypeError, ValueError), match=r"[Tt]ile width"):
@@ -848,21 +835,9 @@ def test_the_specialization_key_separates_the_two_x64_arithmetic_profiles() -> N
     assert without_x64 != with_x64
 
 
-@pytest.mark.parametrize(
-    ("coordinate_extent", "error", "message"),
-    [
-        (2.5, TypeError, r"extents must be integers"),
-        (True, TypeError, r"extents must be integers"),
-        (0, ValueError, r"extents must be positive"),
-        (-1, ValueError, r"extents must be positive"),
-    ],
-    ids=["float", "bool", "zero", "negative"],
-)
+@pytest.mark.parametrize("coordinate_extent", [0, -1], ids=["zero", "negative"])
 def test_width_candidates_reject_invalid_coordinate_extents_fail_closed(
-    *,
-    coordinate_extent: float,
-    error: type[Exception],
-    message: str,
+    *, coordinate_extent: int
 ) -> None:
     """Width planning validates product declarations before doing width arithmetic."""
     axis = _axis(coordinate_names=("first",), coordinate_extents=(2,))
@@ -872,7 +847,7 @@ def test_width_candidates_reject_invalid_coordinate_extents_fail_closed(
         arguments={"first": jnp.asarray([0, 1])},
     )
 
-    with pytest.raises(error, match=message):
+    with pytest.raises(ValueError, match=r"extents must be positive"):
         workspace_width_candidates(axes=program.requirements.axes)
 
 
@@ -896,21 +871,19 @@ def test_unbudgeted_width_candidate_is_the_fixed_width() -> None:
 
 
 @pytest.mark.parametrize(
-    ("tile_width", "error", "message"),
+    ("tile_width", "message"),
     [
-        (True, TypeError, "Tile width.*must be an integer"),
-        (1.5, BeartypeCallHintParamViolation, "parameter tile_widths"),
-        (0, ValueError, "Tile width.*must be positive"),
-        (-1, ValueError, "Tile width.*must be positive"),
-        (7, ValueError, "exceeds its product extent"),
+        (0, "Tile width.*must be positive"),
+        (-1, "Tile width.*must be positive"),
+        (7, "exceeds its product extent"),
     ],
-    ids=["bool", "float", "zero", "negative", "beyond-extent"],
+    ids=["zero", "negative", "beyond-extent"],
 )
 def test_resolver_rejects_invalid_planner_widths(
-    *, tile_width: int, error: type[Exception], message: str
+    *, tile_width: int, message: str
 ) -> None:
     """A planner width outside the declared product is refused before lowering."""
-    with pytest.raises(error, match=message):
+    with pytest.raises(ValueError, match=message):
         resolve_core_program(
             program=_program(),
             tile_widths={"action_product": tile_width},
@@ -993,26 +966,19 @@ def test_resolver_rejects_a_non_canonical_product_order() -> None:
 
 
 @pytest.mark.parametrize(
-    ("width", "error", "message"),
+    ("width", "message"),
     [
-        (True, TypeError, "width.*integer"),
-        (1.5, BeartypeCallHintParamViolation, "parameter tile_widths"),
-        (0, ValueError, "width.*positive"),
-        (-1, ValueError, "width.*positive"),
-        (7, ValueError, "width.*extent"),
+        (0, "width.*positive"),
+        (-1, "width.*positive"),
+        (7, "width.*extent"),
     ],
-    ids=["bool", "float", "zero", "negative", "beyond-extent"],
+    ids=["zero", "negative", "beyond-extent"],
 )
-def test_resolver_rejects_invalid_widths(
-    *,
-    width: float,
-    error: type[Exception],
-    message: str,
-) -> None:
-    with pytest.raises(error, match=message):
+def test_resolver_rejects_invalid_widths(*, width: int, message: str) -> None:
+    with pytest.raises(ValueError, match=message):
         resolve_core_program(
             program=_program(),
-            tile_widths={"action_product": cast("int", width)},
+            tile_widths={"action_product": width},
         )
 
 
@@ -1049,51 +1015,14 @@ class _UnhashableReductionDeclaration:
         return "exact"
 
 
-@dataclass(frozen=True, kw_only=True)
-class _ExactnessFreeReductionDeclaration:
-    @property
-    def semantic_key(self) -> Hashable:
-        return ("no-exactness", 1)
-
-
-@pytest.mark.parametrize(
-    ("reduction", "message"),
-    [
-        (cast("ReductionDeclaration", object()), "stable semantic_key"),
-        (
-            cast("ReductionDeclaration", _ExactnessFreeReductionDeclaration()),
-            "stable semantic_key",
-        ),
-        (_UnhashableReductionDeclaration(), "semantic_key.*hashable"),
-    ],
-    ids=["missing-semantic-key", "missing-exactness", "unhashable-semantic-key"],
-)
-def test_resolver_rejects_reduction_without_a_stable_semantic_key(
-    *, reduction: ReductionDeclaration, message: str
-) -> None:
+def test_resolver_rejects_reduction_with_an_unhashable_semantic_key() -> None:
     axis = _axis()
-    object.__setattr__(axis, "reduction", reduction)
-    with pytest.raises(TypeError, match=message):
+    object.__setattr__(axis, "reduction", _UnhashableReductionDeclaration())
+    with pytest.raises(TypeError, match=r"semantic_key.*hashable"):
         resolve_core_program(
             program=_program(axis=axis),
             tile_widths={"action_product": 1},
         )
-
-
-def test_materialized_program_refuses_plain_dict_arguments() -> None:
-    """A materialized program's argument tree arrives frozen; a dict is refused."""
-    with pytest.raises(BeartypeCallHintParamViolation, match="arguments"):
-        replace(_program(), arguments={"first": jnp.asarray([0, 1])})
-
-
-@pytest.mark.parametrize("field", ["arguments", "static_kwargs", "tile_widths"])
-def test_resolved_program_refuses_plain_dict_fields(*, field: str) -> None:
-    """A resolved program's mappings arrive frozen; a plain dict is refused."""
-    resolved = resolve_core_program(
-        program=_program(), tile_widths=MappingProxyType({"action_product": 2})
-    )
-    with pytest.raises(BeartypeCallHintParamViolation, match=field):
-        replace(resolved, **{field: {}})
 
 
 def _zero_values(

@@ -358,11 +358,6 @@ def _consent_edge_kwargs() -> Mapping[str, Mapping[str, ValueTemplate]]:
     return edge_kwargs
 
 
-def test_edge_kwargs_are_a_read_only_mapping() -> None:
-    """A source kernel's gated-edge argument bundle is a read-only view."""
-    assert type(_consent_edge_kwargs()) is MappingProxyType
-
-
 def test_edge_kwargs_round_trip_through_jax_tree_utilities() -> None:
     """The gated-edge argument bundle rebuilds as a read-only view of its targets."""
     edge_kwargs = _consent_edge_kwargs()

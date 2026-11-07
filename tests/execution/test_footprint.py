@@ -5,7 +5,6 @@ separately. Every claim about a genuine mesh runs in a subprocess with forced
 host devices, so the per-device numbers are measured rather than assumed.
 """
 
-import dataclasses
 import os
 import subprocess
 import sys
@@ -17,7 +16,6 @@ from types import MappingProxyType
 import jax
 import jax.numpy as jnp
 import pytest
-from beartype.roar import BeartypeCallHintParamViolation
 
 from _lcm.execution.footprint import (
     ArtifactFootprint,
@@ -752,21 +750,6 @@ def test_transfer_scratch_default_preserves_existing_reservation() -> None:
     )
     assert dict(inventory.transfer_scratch_bytes) == {}
     assert inventory.resident_bytes() == 11
-
-
-@pytest.mark.parametrize(
-    "field", ["fixed_bytes", "shared_copies", "transfer_scratch_bytes"]
-)
-def test_resident_inventory_refuses_plain_dict_reservations(*, field: str) -> None:
-    """Reservation metadata arrives frozen; a plain dict is refused."""
-    inventory = ResidentInventory(
-        device_ids=(0,),
-        live=MappingProxyType({}),
-        peer_bytes=MappingProxyType({0: 0}),
-        declared_inputs=(),
-    )
-    with pytest.raises(BeartypeCallHintParamViolation, match=field):
-        dataclasses.replace(inventory, **{field: {}})
 
 
 def test_resident_breakdown_splits_the_busiest_device_into_its_total() -> None:

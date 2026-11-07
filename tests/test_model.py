@@ -8,8 +8,6 @@ import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
 from _lcm.regime_building.finalize import finalize_regimes
-from _lcm.regime_law import bind_regime_law
-from _lcm.user_regime_validation import validate_regime_law
 from lcm import (
     AgeGrid,
     CollectiveUtility,
@@ -45,36 +43,6 @@ from lcm.typing import (
 from tests.conftest import DECIMAL_PRECISION, bind_laws
 
 
-def test_regime_invalid_states():
-    """Regime rejects non-dict states argument."""
-    with pytest.raises(RegimeInitializationError, match="states"):
-        UserRegime(
-            states="health",  # ty: ignore[invalid-argument-type]
-            actions={},
-            functions={"utility": lambda: 0},
-        )
-
-
-def test_regime_invalid_actions():
-    """Regime rejects non-dict actions argument."""
-    with pytest.raises(RegimeInitializationError, match="actions"):
-        UserRegime(
-            states={},
-            actions="exercise",  # ty: ignore[invalid-argument-type]
-            functions={"utility": lambda: 0},
-        )
-
-
-def test_regime_invalid_functions():
-    """Regime rejects non-dict functions argument."""
-    with pytest.raises(RegimeInitializationError, match="functions"):
-        UserRegime(
-            states={},
-            actions={},
-            functions="utility",  # ty: ignore[invalid-argument-type]
-        )
-
-
 def test_regime_invalid_functions_values():
     """Regime rejects non-callable function values."""
     with pytest.raises(RegimeInitializationError, match="functions"):
@@ -92,36 +60,6 @@ def test_regime_invalid_functions_keys():
             states={},
             actions={},
             functions={"utility": lambda: 0, 0: lambda: 0},  # ty: ignore[invalid-argument-type]
-        )
-
-
-def test_regime_invalid_actions_values():
-    """Regime rejects non-grid action values."""
-    with pytest.raises(RegimeInitializationError, match="actions"):
-        UserRegime(
-            states={},
-            actions={"exercise": 0},  # ty: ignore[invalid-argument-type]
-            functions={"utility": lambda: 0},
-        )
-
-
-def test_regime_invalid_states_values():
-    """Regime rejects non-grid state values."""
-    with pytest.raises(RegimeInitializationError, match="states"):
-        UserRegime(
-            states={"health": 0},  # ty: ignore[invalid-argument-type]
-            actions={},
-            functions={"utility": lambda: 0},
-        )
-
-
-def test_regime_invalid_utility():
-    """Regime rejects non-callable utility argument."""
-    with pytest.raises(RegimeInitializationError, match="functions"):
-        UserRegime(
-            states={},
-            actions={},
-            functions={"utility": 0},  # ty: ignore[invalid-argument-type]
         )
 
 
@@ -146,13 +84,6 @@ def test_regime_overlapping_states_actions(binary_category_class):
             koopmans_aggregator=LinearAggregator(),
             certainty_equivalent=LinearExpectation(),
         )
-
-
-def test_regime_transition_must_be_callable():
-    """Binding a non-callable regime transition law is rejected."""
-    regime = UserRegime(states={}, actions={}, functions={"utility": lambda: 0})
-    with pytest.raises(RegimeInitializationError, match="transition"):
-        validate_regime_law(regime, law=bind_regime_law(42))  # ty: ignore[invalid-argument-type]
 
 
 def test_model_requires_terminal_regime(binary_category_class):

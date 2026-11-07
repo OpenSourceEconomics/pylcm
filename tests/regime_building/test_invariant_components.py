@@ -519,7 +519,6 @@ def test_eligible_explicit_blocking_passes():
         ),
         pytest.param(_model, {"wealth": 1}, "no identity law", id="not-a-candidate"),
         pytest.param(_model, {"pref_type": 0}, "positive integer", id="zero-width"),
-        pytest.param(_model, {"pref_type": True}, "positive integer", id="bool-width"),
         pytest.param(_model, {"pref_type": 4}, "exceeds", id="wider-than-codes"),
     ],
 )

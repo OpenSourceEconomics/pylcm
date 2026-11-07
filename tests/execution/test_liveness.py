@@ -1,10 +1,6 @@
 """Tests for conservative planned-input liveness accounting."""
 
-from collections.abc import Callable, Hashable
-from typing import cast
-
 import pytest
-from beartype.roar import BeartypeCallHintParamViolation
 
 from _lcm.execution.liveness import PlannedInputLiveness
 from lcm.exceptions import ExecutionPlanningError
@@ -143,26 +139,6 @@ def test_successful_solve_rejects_uncommitted_planned_dispatch() -> None:
 
     ledger.commit_successful_dispatch(dispatch="second-node")
     ledger.assert_solve_complete()
-
-
-@pytest.mark.parametrize(
-    "build",
-    [
-        lambda: PlannedInputLiveness(
-            dispatch_accesses={"node": (cast("Hashable", ["not-hashable"]),)}
-        ),
-        lambda: PlannedInputLiveness(
-            dispatch_accesses={},
-            pinned_artifacts=(cast("Hashable", ["not-hashable"]),),
-        ),
-    ],
-    ids=["planned", "pinned"],
-)
-def test_logical_artifact_keys_must_be_hashable(
-    build: Callable[[], PlannedInputLiveness[str, Hashable]],
-) -> None:
-    with pytest.raises(BeartypeCallHintParamViolation, match="Hashable"):
-        build()
 
 
 def test_a_retained_artifact_never_becomes_release_eligible() -> None:

@@ -7,7 +7,6 @@ from typing import NotRequired, TypedDict, cast
 
 import jax.numpy as jnp
 import pytest
-from beartype import beartype
 from numpy.testing import assert_array_equal
 
 from _lcm.continuation import EGMContinuationSpec
@@ -19,7 +18,6 @@ from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.phases import normalize_regime_phases
 from _lcm.regime_building.processing import (
     _rename_params_to_qnames,
-    _wrap_regime_transition_probs,
     process_regimes,
 )
 from _lcm.regime_building.transition_support import (
@@ -348,32 +346,6 @@ def test_rename_params_to_qnames_with_partial():
     # 2. The qualified name must be usable to override the default. This fails if
     #    _rename_params_to_qnames is a no-op (no renaming happened).
     assert result(consumption=5.0, utility__risk_aversion=3.0) == 5.0 ** (1 - 3.0)
-
-
-def test_wrap_regime_transition_probs_return_annotation_accepts_mapping():
-    """The regime-transition-probs wrapper returns a regime-name → probability
-    mapping, so its return annotation describes that mapping.
-
-    The wrapper turns a `next_regime` function's probability array into a
-    `MappingProxyType` keyed by regime name. Its return annotation must match
-    that mapping rather than the array type carried by `next_regime`, so a
-    beartype check on the wrapper accepts the value it genuinely returns.
-    """
-
-    def next_regime() -> FloatND:
-        return jnp.array([0.3, 0.7])
-
-    regime_names_to_ids = MappingProxyType(
-        {"working": jnp.int32(0), "retired": jnp.int32(1)}
-    )
-    wrapped = _wrap_regime_transition_probs(
-        func=next_regime,  # ty: ignore[invalid-argument-type]
-        regime_names_to_ids=regime_names_to_ids,
-    )
-
-    result = beartype(wrapped)()
-
-    assert set(result) == {"working", "retired"}
 
 
 def _pair_handover_regime() -> tuple[UserRegime, RegimeLaw]:

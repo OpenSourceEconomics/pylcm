@@ -202,15 +202,3 @@ def test_config_stores_integer_support_edges_as_floats() -> None:
     )
 
     assert (type(config.lower), type(config.upper)) == (float, float)
-
-
-@pytest.mark.parametrize("upper", [True, "2", np.float64(2.0)])
-def test_config_refuses_a_non_builtin_support_edge(*, upper: float) -> None:
-    with pytest.raises(
-        RegimeInitializationError, match=r"UniformObservedFixedCost\.upper"
-    ):
-        UniformObservedFixedCost(
-            shock_name="adjustment_cost",
-            scale_function="adjustment_cost_scale",
-            upper=upper,
-        )

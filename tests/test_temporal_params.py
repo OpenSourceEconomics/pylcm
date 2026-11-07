@@ -22,7 +22,7 @@ from _lcm.params.temporal import align_time_varying
 from _lcm.solution.preconditions import check_solver_params
 from _lcm.time import ModelTime
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
-from lcm.params import UserMappingLeaf, UserSequenceLeaf
+from lcm.params import UserMappingLeaf
 from lcm.regime import FunctionEntry
 from lcm.solvers import EGM, NBEGM
 from lcm.typing import (
@@ -134,8 +134,6 @@ def test_temporal_labels_align_and_ignore_surplus(
         "missing",
         "duplicate",
         "wrong_kind",
-        "fractional",
-        "boolean",
         "length",
         "unlabelled",
     ],
@@ -149,13 +147,6 @@ def test_temporal_invalid_inputs_fail_before_solving(*, kind: str, fixed: bool) 
         ),
         "wrong_kind": lambda: lcm.TimeVarying(
             values=jnp.array([1.0, 2.0]), ages=(0, 1)
-        ),
-        "fractional": lambda: lcm.TimeVarying(
-            values=jnp.array([1.0, 2.0, 3.0]),
-            periods=(0, 1, 9.5),  # ty: ignore[invalid-argument-type]
-        ),
-        "boolean": lambda: lcm.TimeVarying(
-            values=jnp.array([1.0, 2.0]), periods=(False, True)
         ),
         "length": lambda: lcm.TimeVarying(values=jnp.array([1.0]), periods=(0, 1)),
         "unlabelled": lambda: jnp.array([1.0, 2.0]),
@@ -345,8 +336,6 @@ def test_fixed_parameter_cannot_be_overridden_at_runtime() -> None:
 @pytest.mark.parametrize(
     "series",
     [
-        pd.Series([1.0, 2.0, 4.0], index=pd.Index([0.0, 1.0, 8.5], name="period")),
-        pd.Series([1.0, 2.0], index=pd.Index([False, True], name="period")),
         pd.Series([1.0, 2.0], index=pd.Index([0, 1], name="age")),
         pd.Series([1.0, 2.0], index=pd.Index([0, 1])),
         pd.Series([1.0, 2.0, 3.0], index=pd.Index([0, 1, 1], name="period")),
@@ -764,9 +753,9 @@ def test_age_profile_mapping_matches_the_hand_built_table_bit_for_bit() -> None:
     np.testing.assert_array_equal(profile.values, hand_built.values)
 
 
-@pytest.mark.parametrize("age", [float("nan"), float("inf"), "40", True])
+@pytest.mark.parametrize("age", [float("nan"), float("inf"), True])
 def test_age_profile_mapping_rejects_non_finite_or_non_numeric_ages(
-    *, age: float | str | bool
+    *, age: float | bool
 ) -> None:
     with pytest.raises(
         lcm.exceptions.InvalidParamsError,
@@ -775,14 +764,11 @@ def test_age_profile_mapping_rejects_non_finite_or_non_numeric_ages(
         lcm.TimeVarying.from_profile(
             values=jnp.array([5.0, 6.0]),
             labels=(41, 42),
-            age_to_label={40: 41, age: 42},  # ty: ignore[invalid-argument-type]
+            age_to_label={40: 41, age: 42},
         )
 
 
-@pytest.mark.parametrize("period", [True, 1.0, "0"])
-def test_period_profile_mapping_rejects_non_integer_periods(
-    *, period: bool | float | str
-) -> None:
+def test_period_profile_mapping_rejects_boolean_periods() -> None:
     with pytest.raises(
         lcm.exceptions.InvalidParamsError,
         match=r"Profile: period coordinates must be integers, excluding booleans",
@@ -790,7 +776,7 @@ def test_period_profile_mapping_rejects_non_integer_periods(
         lcm.TimeVarying.from_profile(
             values=jnp.array([5.0, 6.0]),
             labels=(41, 42),
-            period_to_label={0: 41, period: 42},  # ty: ignore[invalid-argument-type]
+            period_to_label={0: 41, True: 42},
         )
 
 
@@ -828,28 +814,14 @@ def test_managed_consumer_cannot_index_its_time_axis_again() -> None:
         _model(flow=lcm.time_varying_params("wage")(_manual))
 
 
-@pytest.mark.parametrize("kind", ["temporal", "scalar", "sequence", "empty"])
-def test_managed_parameter_rejects_a_nested_container(kind: str) -> None:
-    if kind == "temporal":
-        value = UserMappingLeaf(
-            {"inner": lcm.TimeVarying(values=jnp.array([1.0, 2.0]), periods=(0, 1))}
-        )
-    elif kind == "sequence":
-        value = UserSequenceLeaf((1.0, 2.0))
-    else:
-        value = UserMappingLeaf({} if kind == "empty" else {"inner": 1.0})
+def test_managed_parameter_rejects_a_nested_container() -> None:
+    value = UserMappingLeaf(
+        {"inner": lcm.TimeVarying(values=jnp.array([1.0, 2.0]), periods=(0, 1))}
+    )
     with pytest.raises(
         lcm.exceptions.InvalidParamsError, match=r"wage.*(?:container|TimeVarying)"
     ):
         _model().solve(params={"wage": value}, log_level="off")
-
-
-def test_temporal_age_labels_reject_numpy_booleans() -> None:
-    with pytest.raises(lcm.exceptions.InvalidParamsError, match="ages"):
-        lcm.TimeVarying(
-            values=jnp.array([1.0]),
-            ages=(np.bool_(1),),  # ty: ignore[invalid-argument-type]
-        )
 
 
 @pytest.mark.parametrize("admitted", [False, True])

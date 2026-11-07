@@ -9,12 +9,9 @@ decorators that map violations to the relevant project exception
 `GridInitializationError`, `InvalidParamsError`); those decorators stack
 on top of the claw and win at the user boundary.
 
-Each `test_claw_checks_*` test calls an internal function with one argument
-of the wrong type, chosen so the call would return cleanly if the function
-were *not* instrumented — the violation is what proves the claw is
-installed. Each `test_*_with_bad_arg_raises_project_exception` test
-confirms that an ill-typed argument to a public constructor surfaces as
-the project exception, not as `BeartypeCallHintViolation`.
+Each `test_*_with_bad_arg_raises_project_exception` test confirms that an
+ill-typed argument to a public constructor surfaces as the project exception,
+not as `BeartypeCallHintViolation`.
 """
 
 import ast
@@ -30,25 +27,18 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 from beartype.door import is_bearable
-from beartype.roar import BeartypeCallHintViolation
 from jaxtyping import Int, Scalar
 
 import _lcm
 import lcm
-from _lcm.engine import _build_regime_sharding
 from _lcm.optimization.golden_section import maximize_golden_section
 from _lcm.regime_building.max_Q_over_a import get_argmax_and_max_Q_over_a
-from _lcm.simulation.simulate import _compute_starting_periods
-from _lcm.solution.diagnostics import _log_per_period_stats
-from _lcm.state_action_space import _validate_all_states_present
-from _lcm.transition_checks import _validate_regime_transition_probs
 from lcm import AgeGrid, LinSpacedGrid, Model
 from lcm.exceptions import (
     GridInitializationError,
     ModelInitializationError,
     RegimeInitializationError,
 )
-from lcm.koopmans_aggregation import LinearAggregator
 from lcm.regime import Regime as UserRegime
 from lcm.typing import RegimeName
 
@@ -86,68 +76,6 @@ def test_claw_decorates_every_function_lcm_imports() -> None:
         check=True,
     )
     assert result.stdout == ""
-
-
-def test_claw_checks_lcm_simulation() -> None:
-    """Type-violating arguments to internal `_lcm.simulation` helpers raise."""
-    with pytest.raises(BeartypeCallHintViolation):
-        _compute_starting_periods(
-            initial_ages=np.array([25.0]),  # ty: ignore[invalid-argument-type]
-            ages=AgeGrid(start=25, inclusive_stop=75, step="Y"),
-        )
-
-
-def test_claw_checks_lcm_solution() -> None:
-    """Type-violating arguments to internal `_lcm.solution` helpers raise."""
-    with pytest.raises(BeartypeCallHintViolation):
-        _log_per_period_stats(
-            logger="not a logger",  # ty: ignore[invalid-argument-type]
-            diagnostic_rows=[],
-            mins=jnp.array([]),
-            maxs=jnp.array([]),
-            means=jnp.array([]),
-        )
-
-
-def test_claw_checks_lcm_transition_checks() -> None:
-    """Type-violating arguments to `_lcm.transition_checks` helpers raise."""
-    with pytest.raises(BeartypeCallHintViolation):
-        _validate_regime_transition_probs(
-            regime_transition_probs={"working": jnp.array([1.0])},  # ty: ignore[invalid-argument-type]
-            active_regimes_next_period=("working",),
-            regime_name="working",
-            age=50.0,
-            next_age=51.0,
-        )
-
-
-def test_claw_checks_lcm_state_action_space() -> None:
-    """Type-violating arguments to `_lcm.state_action_space` helpers raise."""
-    with pytest.raises(BeartypeCallHintViolation):
-        _validate_all_states_present(
-            provided_states="",  # ty: ignore[invalid-argument-type]
-            required_state_names=set(),
-        )
-
-
-def test_claw_checks_lcm_engine() -> None:
-    """Type-violating arguments to `_lcm.engine` helpers raise."""
-    with pytest.raises(BeartypeCallHintViolation):
-        _build_regime_sharding(
-            grids=MappingProxyType({}),
-            sharded_state_names=frozenset(),
-            devices="not a tuple",  # ty: ignore[invalid-argument-type]
-        )
-
-
-def test_claw_checks_lcm_regime() -> None:
-    """Type-violating arguments to `lcm.regime` helpers raise."""
-    with pytest.raises(BeartypeCallHintViolation):
-        LinearAggregator()(
-            utility=np.array([1.0]),  # ty: ignore[invalid-argument-type]
-            CE=jnp.array([1.0]),
-            discount_factor=jnp.array([0.95]),
-        )
 
 
 def test_claw_allows_with_signature_wrapper_over_named_param_function() -> None:

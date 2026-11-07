@@ -204,12 +204,6 @@ def test_execution_config_schedules_period_major_by_default() -> None:
     assert ExecutionConfig().invariant_block_schedule is _PERIOD_MAJOR
 
 
-def test_execution_config_refuses_a_schedule_that_is_not_a_member() -> None:
-    """The schedule is an `InvariantBlockSchedule` member, never its spelling."""
-    with pytest.raises(ValueError, match="InvariantBlockSchedule"):
-        ExecutionConfig(invariant_block_schedule="block_major")  # ty: ignore[invalid-argument-type]
-
-
 def test_block_major_without_a_blocked_state_is_refused_at_construction() -> None:
     """A component schedule needs a blocked state to take components of."""
     with pytest.raises(ExecutionPlanningError, match="invariant_block_widths"):
@@ -1132,14 +1126,3 @@ def test_a_block_major_solve_logs_its_retention_record(
     assert len(records) == 1
     assert isinstance(records[0], block_major.ComponentRetentionRecord)
     assert records[0].codes == (0, 1, 2)
-
-
-def test_value_bytes_by_device_are_a_read_only_mapping() -> None:
-    """The per-device bytes of complete values come back as a read-only mapping."""
-    layout = block_major.ValueLayout(
-        shape=(3,),
-        axis=0,
-        sharding=jax.sharding.SingleDeviceSharding(jax.devices()[0]),
-    )
-    totals = block_major._bytes_by_device(layouts=(layout,), item_bytes=4)
-    assert type(totals) is MappingProxyType

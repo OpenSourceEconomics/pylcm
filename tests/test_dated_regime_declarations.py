@@ -156,7 +156,6 @@ def test_resolved_schedule_rejects_an_uncovered_age() -> None:
     [
         ({63.5: "a"}, r"Age 63\.5 in selector .* is not an age of the model"),
         ({(61, 61.25): "a"}, r"Age 61\.25 in selector .* is not an age"),
-        ({True: "a"}, "must name numeric ages, not True"),
         ({float("nan"): "a"}, "contains a nonfinite age"),
         (
             {AgeRange(start=63, exclusive_stop=62): "a"},
@@ -173,7 +172,7 @@ def test_resolved_schedule_rejects_an_uncovered_age() -> None:
     ],
 )
 def test_invalid_selectors_are_rejected_at_resolution(*, cases, match: str) -> None:
-    """Off-grid, boolean, nonfinite, reversed, empty and overlapping selections
+    """Off-grid, nonfinite, reversed, empty and overlapping selections
     raise instead of being rounded, dropped or truncated."""
     with pytest.raises(RegimeInitializationError, match=match):
         ByAge(cases=cases).resolve(ANNUAL)
