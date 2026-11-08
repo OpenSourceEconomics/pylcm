@@ -161,6 +161,25 @@ class LowerWaveKwargs(TypedDict):
     labels: dict[backward_induction.Hashable, str]
 
 
+class FloorRefusalKwargs(TypedDict):
+    triples: tuple[backward_induction._CoreTriple, ...]
+    resident_inventory: Mapping[
+        backward_induction._CoreTriple, backward_induction.ResidentInventory
+    ]
+    host_storage_inventory: (
+        backward_induction.Callable[
+            [],
+            Mapping[
+                backward_induction._CoreTriple, backward_induction.ResidentInventory
+            ],
+        ]
+        | None
+    )
+    budget_bytes: int
+    execution: backward_induction.ResolvedExecution
+    logger: backward_induction.logging.Logger
+
+
 class MeasureVariantKwargs(TypedDict):
     variant_key: backward_induction.Hashable
     candidate: backward_induction._CoreCandidate
@@ -333,6 +352,25 @@ class CandidateResidentKwargs(TypedDict):
 
 
 type CandidateResidentResult = int
+
+
+class ResidentInventoryKwargs(TypedDict):
+    regimes: backward_induction.MappingProxyType[
+        backward_induction.RegimeName, backward_induction.Regime
+    ]
+    ledger: backward_induction.PlannedInputLiveness
+    templates: backward_induction.SolveInputMappings[backward_induction.ValueTemplate]
+    program_metadata: backward_induction.Mapping[
+        backward_induction._CoreTriple,
+        backward_induction._ProgramExecutionMetadata,
+    ]
+    device_ids: tuple[int, ...]
+    fixed_bytes: NotRequired[backward_induction.MappingProxyType[int, int]]
+
+
+type ResidentInventoryResult = backward_induction.MappingProxyType[
+    backward_induction._CoreTriple, backward_induction.ResidentInventory
+]
 
 
 class ValidateVKwargs(TypedDict):

@@ -481,7 +481,13 @@ def run_component_job(
                 "execution": _execution_record(model=model, log_level=log_level),
             },
             coordinates=retained.coordinates,
-            values={code: retained.host_blocks(code=code) for code in codes},
+            # Jobs run with device value storage only, so every block is NumPy.
+            values={
+                code: cast(
+                    "Mapping[Coordinate, np.ndarray]", retained.host_blocks(code=code)
+                )
+                for code in codes
+            },
             panel=panel,
         )
     except BaseException as error:
@@ -625,6 +631,14 @@ def _fail_if_not_block_major(*, model: Model) -> None:
             "invariant_block_schedule is "
             f"{model._execution.invariant_block_schedule!r}. "  # noqa: SLF001
             f"{_SCHEDULE_REMEDY} BLOCK_MAJOR is required."
+        )
+        raise ExecutionPlanningError(msg)
+    if model._execution.value_storage_kind != "device":  # noqa: SLF001
+        msg = (
+            "Component jobs write each code's values to job files of their own; "
+            "ExecutionConfig.value_storage="
+            f"{model._execution.value_storage!r} would not apply. Use "  # noqa: SLF001
+            "value_storage='device'."
         )
         raise ExecutionPlanningError(msg)
 

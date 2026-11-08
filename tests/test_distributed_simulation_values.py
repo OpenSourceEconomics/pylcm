@@ -6,8 +6,9 @@ Run this module alone so its four-CPU-device topology precedes JAX initializatio
 # Test-model declarations must run after the four-device configuration below.
 # ruff: noqa: PLC0415
 from functools import cache
+from pathlib import Path
 from types import MappingProxyType
-from typing import Never, cast
+from typing import Literal, Never, cast
 
 import jax
 import jax.numpy as jnp
@@ -15,6 +16,7 @@ import pandas as pd
 import pytest
 
 from _lcm.simulation.runtime import CompiledSimulationProgram
+from _lcm.simulation.simulate import SubjectChunkKwargs, SubjectChunkResults
 from _lcm.solution.artifacts import OwnedSolutionView
 from _lcm.typing import PytreeValue
 from lcm import (
@@ -34,8 +36,6 @@ from lcm.solver_api import SolutionResult
 from lcm.typing import ContinuousState, ScalarFloat, ScalarInt
 from tests.conftest import (
     PrepareMaterializedKwargs,
-    SubjectChunkKwargs,
-    SubjectChunkResults,
 )
 from tests.simulation._profile_comparison import (
     assert_values_agree as assert_agrees_to_ulp,
@@ -254,6 +254,7 @@ def _build_model(
     sharded: bool,
     subject_width: int | None = None,
     budget: int | None = None,
+    value_storage: Literal["device", "host"] | Path = "device",
 ) -> Model:
     """Build a sharded preference axis beside an unsharded terminal regime."""
     wealth = LinSpacedGrid(start=1, stop=20, n_points=6)
@@ -281,6 +282,7 @@ def _build_model(
             devices=devices,
             axis_widths={} if subject_width is None else {"subject": subject_width},
             device_memory_bytes=budget,
+            value_storage=value_storage,
         ),
         initial_nodes={0: "working"},
         edges={

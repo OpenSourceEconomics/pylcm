@@ -28,6 +28,7 @@ from types import MappingProxyType
 
 import jax
 
+from _lcm.solution.host_values import device_copies_of_view
 from _lcm.typing import FootprintTree, PytreeByPeriod
 from lcm.exceptions import ExecutionPlanningError
 
@@ -63,29 +64,42 @@ def measure_buffer_footprint(*, tree: FootprintTree) -> DeviceBufferFootprint:
     A deleted or partly non-addressable array cannot establish a complete inventory.
     """
     spans_by_device: dict[jax.Device, list[tuple[int, int]]] = {}
-    for leaf in jax.tree.leaves(tree):
-        if not isinstance(leaf, jax.Array):
-            continue
-        if leaf.is_deleted():
-            raise ExecutionPlanningError(
-                "A deleted array has no live payload footprint."
-            )
-        if not leaf.is_fully_addressable:
-            raise ExecutionPlanningError(
-                "Simulation residency requires every stored shard to be addressable."
-            )
-        for shard in leaf.addressable_shards:
-            size = int(shard.data.nbytes)
-            if size:
-                start = shard.data.unsafe_buffer_pointer()
-                spans_by_device.setdefault(shard.device, []).append(
-                    (start, start + size)
-                )
+    # The leaf test asks by id, without a typed parameter a runtime check would
+    # sample, since sampling a view copies a value onto the device.
+    for node in jax.tree.leaves(
+        tree, is_leaf=lambda node: device_copies_of_view(view_id=id(node)) is not None
+    ):
+        # A read-through view of values kept off the device pins only the copies
+        # it keeps; reading every entry would copy each value onto the device.
+        view_copies = device_copies_of_view(view_id=id(node))
+        for leaf in (node,) if view_copies is None else view_copies:
+            _add_spans(leaf=leaf, spans_by_device=spans_by_device)
     return DeviceBufferFootprint(
         spans=MappingProxyType(
             {device: tuple(spans) for device, spans in spans_by_device.items()}
         )
     )
+
+
+def _add_spans(
+    *,
+    leaf: FootprintTree,
+    spans_by_device: dict[jax.Device, list[tuple[int, int]]],
+) -> None:
+    """Add one leaf's live device spans; anything but a JAX array has none."""
+    if not isinstance(leaf, jax.Array):
+        return
+    if leaf.is_deleted():
+        raise ExecutionPlanningError("A deleted array has no live payload footprint.")
+    if not leaf.is_fully_addressable:
+        raise ExecutionPlanningError(
+            "Simulation residency requires every stored shard to be addressable."
+        )
+    for shard in leaf.addressable_shards:
+        size = int(shard.data.nbytes)
+        if size:
+            start = shard.data.unsafe_buffer_pointer()
+            spans_by_device.setdefault(shard.device, []).append((start, start + size))
 
 
 def union_buffer_footprints(

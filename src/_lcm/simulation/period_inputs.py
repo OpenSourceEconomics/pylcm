@@ -19,6 +19,7 @@ from _lcm.regime_building.gated_edges import edge_may_fold_at_period
 from _lcm.simulation.replay_inputs import PreparedReplayReader, replay_payload_reads
 from _lcm.simulation.value_reads import PeriodSimulationReads
 from _lcm.solution.continuation_reads import rekeyed_value_reads
+from _lcm.solution.host_values import DeclaredValues
 from _lcm.typing import QAndFArg, QAndFKwargs, SimulationPolicy
 from lcm.solver_api import SIMULATION_POLICY, ReplayReader
 from lcm.typing import FloatND, ReferenceName, RegimeName
@@ -58,7 +59,7 @@ def unit_value_reads(
     regime: Regime,
     name: str,
     period: int,
-    values: Mapping[int, Mapping[str, jax.Array]],
+    values: DeclaredValues,
     policy: SimulationPolicy | None,
     reader: PreparedReplayReader | ReplayReader | None,
 ) -> tuple[ValueRead, ...]:
@@ -113,12 +114,39 @@ def unit_value_reads(
     return tuple(reads)
 
 
+def period_read_targets(
+    *,
+    active: Mapping[RegimeName, Regime],
+    period: int,
+    values: DeclaredValues,
+) -> frozenset[tuple[int, RegimeName]]:
+    """Return the stored values `period` declares it reads, by `(period, regime)`.
+
+    Every regime a subject can occupy at the period counts. Which policy or replay
+    reader a regime uses does not change these targets, so none is needed;
+    nothing is read to find them.
+    """
+    return frozenset(
+        (read.target.period, read.target.regime)
+        for name, regime in active.items()
+        for read in unit_value_reads(
+            regime=regime,
+            name=name,
+            period=period,
+            values=values,
+            policy=None,
+            reader=None,
+        )
+        if read.target.kind is ValueArtifactKind.REGIME_VALUE
+    )
+
+
 def gate_reads(
     *,
     regime: Regime,
     name: str,
     period: int,
-    values: Mapping[int, Mapping[str, jax.Array]],
+    values: DeclaredValues,
 ) -> tuple[ValueRead, ...]:
     """Declare the raw target and reference V the fold and realized gate read.
 

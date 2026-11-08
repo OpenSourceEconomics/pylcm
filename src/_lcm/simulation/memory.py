@@ -41,7 +41,7 @@ from lcm.typing import ReferenceName
 _LEDGER_FOOTPRINT_FIELDS = ("inputs", "outputs", "chunk_inputs")
 
 # Fields holding live owner trees; assigning one measures it exactly once.
-_LEDGER_TREE_FIELDS = ("unit_inputs", "derived")
+_LEDGER_TREE_FIELDS = ("unit_inputs", "derived", "parked")
 
 # Owner-name family of the current unit's transient owners, released together.
 _HELD_PREFIX = "held:"
@@ -81,6 +81,8 @@ class SimulationMemory:
     )
     unit_inputs: ArrayTree = ()
     derived: PytreeValue = ()
+    parked: ArrayTree = ()
+    """Carries of the chunks waiting for their turn in the current period."""
     period_owner: PeriodSimulationReads | None = None
     ledger: OwnerLedger = field(default_factory=OwnerLedger, repr=False)
     """Call-local span metadata for every owner this scope binds."""

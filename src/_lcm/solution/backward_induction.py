@@ -31,7 +31,7 @@ from collections.abc import (
 )
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from types import MappingProxyType, TracebackType
-from typing import Self, cast
+from typing import Literal, Self, cast
 
 import jax
 import numpy as np
@@ -164,6 +164,13 @@ from _lcm.params.edges import (
     regime_kernel_params,
 )
 from _lcm.participation_continuation import participation_surface_leaves
+from _lcm.persistence.solution import (
+    DiskPolicyEntry,
+    DiskValueEntry,
+    PeriodValueWriter,
+    StreamedSolutionArchive,
+    WrittenPeriod,
+)
 from _lcm.processes.ar1 import RouwenhorstAR1Process
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.regime_building.gated_edges import (
@@ -193,6 +200,7 @@ from _lcm.solution.diagnostics import (
     _init_diagnostic_accumulators,
     _materialize_period_feasibility_counts,
     _states_for_period,
+    period_nan_error,
 )
 from _lcm.solution.feasibility import (
     BoundedResult,
@@ -212,6 +220,7 @@ from _lcm.solution.feasibility import (
     validate_runtime_bound_status,
 )
 from _lcm.solution.grid_search import _GridSearchArgumentBuilder
+from _lcm.solution.host_values import copy_values_to_host, wait_for_host_copies
 from _lcm.solution.kernel_attribution import (
     log_executed_kernel,
     log_module_fanout,
@@ -263,6 +272,8 @@ from _lcm.typing import (
     HostArray,
     LandingCheck,
     ParamsLeaf,
+    PeriodToRegimeToSimulationPolicy,
+    PeriodToRegimeToVArr,
     PRNGKeyND,
     PytreeByPeriod,
     PytreeValue,
@@ -426,6 +437,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
     executable_cache: ExecutableCache | None = None,
     period_capture: CaptureContext | None = None,
     structural_blueprints: StructuralBlueprintCache | None = None,
+    value_archive: StreamedSolutionArchive | None = None,
 ) -> BackwardInductionResult:
     """Solve a model by backward induction, whatever solver each regime declares.
 
@@ -480,6 +492,9 @@ def solve(  # noqa: C901, PLR0912, PLR0915
         structural_blueprints: The model's store of immutable structural
             blueprints, which a warm solve of the same abstract schema binds
             instead of resolving every program again. `None` resolves afresh.
+        value_archive: The archive disk value storage writes this solve's values
+            to; required with, and only with, a directory as value storage. The
+            returned values then read from it.
 
     Returns:
         The named backward-induction outputs: the immutable mapping of periods
@@ -532,6 +547,9 @@ def solve(  # noqa: C901, PLR0912, PLR0915
     # Resolve every solve program, then compile unique lowerings when enabled.
     diagnostics_enabled = validation_enabled(logger)
     narrowings = 0
+    # Each refused core's reservations by width and the chunk they were
+    # compiled with, so its next refusal shows whether narrowing pays off.
+    narrowed: dict[_CoreTriple, tuple[Mapping[_WidthKey, int], int]] = {}
     # A narrowing retry reuses every executable an earlier attempt compiled.
     if executable_cache is None:
         executable_cache = ExecutableCache()
@@ -576,6 +594,25 @@ def solve(  # noqa: C901, PLR0912, PLR0915
             # per planning pass however many of its cores were refused. Narrowing
             # one cell can move another's resident position, so the loop re-plans
             # until a pass is free of refusals.
+            # A cell that fits under host storage is refused at once: its
+            # message says to switch storage, which no narrowing replaces.
+            for error in refusals.errors:
+                if error.host_fits:
+                    raise error from refusals
+            # Every refused core keeps its own readings: two readings of
+            # different cores say nothing about either at a narrower chunk.
+            for error in refusals.errors:
+                readings = error.reservation_readings
+                chunk = _workspace_chunk(
+                    regime=regimes[error.triple[0]], period=error.triple[1]
+                )
+                if not readings or chunk is None:
+                    continue
+                if error.triple in narrowed:
+                    _fail_if_narrowing_cannot_fit(
+                        error=error, previous=narrowed[error.triple], chunk=chunk
+                    )
+                narrowed[error.triple] = (readings, chunk)
             first_by_cell: dict[tuple[RegimeName, int], _CellBudgetError] = {}
             for error in refusals.errors:
                 first_by_cell.setdefault(error.triple[:2], error)
@@ -650,8 +687,11 @@ def solve(  # noqa: C901, PLR0912, PLR0915
             extra={"release_skipped": "eager dispatch"},
         )
 
-    solution: dict[int, MappingProxyType[RegimeName, FloatND]] = {}
-    simulation_policies: dict[int, MappingProxyType[RegimeName, SimulationPolicy]] = {}
+    # A value disk storage has written is a lazy entry that reads it back.
+    solution: dict[int, MappingProxyType[RegimeName, FloatND | DiskValueEntry]] = {}
+    simulation_policies: dict[
+        int, MappingProxyType[RegimeName, SimulationPolicy | DiskPolicyEntry]
+    ] = {}
     generated_replay_authorities: dict[
         int, MappingProxyType[RegimeName, GeneratedReplayAuthority]
     ] = {}
@@ -697,6 +737,8 @@ def solve(  # noqa: C901, PLR0912, PLR0915
         running_any_nan,
         running_any_inf,
     ) = _init_diagnostic_accumulators()
+    # The enriched error of the first period with a NaN, built at its barrier.
+    nan_error: InvalidValueFunctionError | None = None
 
     logger.info("Starting solution")
     total_start = time.monotonic()
@@ -735,6 +777,14 @@ def solve(  # noqa: C901, PLR0912, PLR0915
     )
     # Every copy a period's transfer cache holds belongs to this solve alone.
     transfer_generation = uuid.uuid4().hex
+    store_on_host = resolved_execution.value_storage_kind != "device"
+    in_flight_host_copies: tuple[tuple[int, RegimeName, jax.Array], ...] = ()
+    if (resolved_execution.value_storage_kind == "disk") != (value_archive is not None):
+        msg = "A value archive is required with, and only with, disk value storage."
+        raise ValueError(msg)
+    value_writer = (
+        None if value_archive is None else PeriodValueWriter(archive=value_archive)
+    )
     with solve_phase(name="backward_induction", logger=logger, call_id=call_id):
         # Only declared continuation publishers can reach per-period collection.
         # Freeze the long-lived planning graph for those collections; rolled
@@ -1237,6 +1287,21 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                     period=period,
                     enabled=logger.isEnabledFor(logging.WARNING),
                 )
+                # The first NaN is diagnosed now, while this period's values and
+                # the next-period values its programs read are on the device.
+                if diagnostics_enabled and nan_error is None:
+                    nan_error = period_nan_error(
+                        logger=logger,
+                        diagnostic_rows=diagnostic_rows,
+                        period=period,
+                        period_values=MappingProxyType(period_solution),
+                        next_values=next_regime_to_V_arr,
+                        stored_values=solution,
+                        store_on_host=store_on_host,
+                        regimes=regimes,
+                        flat_params=flat_params,
+                        process_grid_resolver=process_grid_resolver,
+                    )
 
                 # Fold each declared gated edge whose target
                 # was solved this period onto the target grid, and roll the resulting
@@ -1316,18 +1381,58 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                 # period mappings below, so readers see exactly the periods of the
                 # root-derived domain, as persisted archives do.
                 if period_solution:
-                    solution[period] = MappingProxyType(period_solution)
+                    # Host storage dispatches the copy here, after this period's
+                    # kernels and before the next period's, so it runs while the
+                    # next period computes. The device copy stays reachable only
+                    # through the rolled inputs, which release it once read.
+                    host_copies = (
+                        copy_values_to_host(period=period, values=period_solution)
+                        if store_on_host
+                        else None
+                    )
+                    solution[period] = (
+                        MappingProxyType(period_solution)
+                        if host_copies is None
+                        else host_copies
+                    )
                 if period_solution and (retain_replay or period_simulation_policies):
-                    assert host_device is not None  # noqa: S101
-                    simulation_policies[period] = MappingProxyType(
-                        {
-                            regime_name: jax.block_until_ready(
-                                jax.device_put(simulation_policy, host_device)
-                            )
-                            for regime_name, simulation_policy in (
-                                period_simulation_policies.items()
-                            )
-                        }
+                    # Under host storage policies travel as values do; device
+                    # storage moves them to the CPU device before going on.
+                    if store_on_host:
+                        simulation_policies[period] = copy_values_to_host(
+                            period=period, values=period_simulation_policies
+                        )
+                    else:
+                        assert host_device is not None  # noqa: S101
+                        simulation_policies[period] = MappingProxyType(
+                            {
+                                regime_name: jax.block_until_ready(
+                                    jax.device_put(simulation_policy, host_device)
+                                )
+                                for regime_name, simulation_policy in (
+                                    period_simulation_policies.items()
+                                )
+                            }
+                        )
+                # Disk storage writes the period's host copies, values and
+                # policies, from a background thread and swaps each written
+                # period's copies for disk entries.
+                # Until written, the period holds its host copies, not entries.
+                if value_writer is not None and period_solution:
+                    _swap_in_written_periods(
+                        written=value_writer.submit(
+                            period=period,
+                            values=cast(
+                                "MappingProxyType[RegimeName, jax.Array]",
+                                solution[period],
+                            ),
+                            policies=cast(
+                                "MappingProxyType[RegimeName, SimulationPolicy]",
+                                simulation_policies.get(period, MappingProxyType({})),
+                            ),
+                        ),
+                        solution=solution,
+                        simulation_policies=simulation_policies,
                     )
                 if period_generated_replay_authorities:
                     generated_replay_authorities[period] = MappingProxyType(
@@ -1411,20 +1516,38 @@ def solve(  # noqa: C901, PLR0912, PLR0915
 
                 _release_rolled_continuations(period_continuations=period_continuations)
 
+                # The bound on the device is strict: before the next period is
+                # dispatched, the copy started one period earlier has finished, so
+                # its device values can go once the period reading them is done.
+                if store_on_host:
+                    wait_for_host_copies(copies=in_flight_host_copies)
+                    in_flight_host_copies = tuple(
+                        (period, regime_name, array)
+                        for period_mapping in (solution, simulation_policies)
+                        for regime_name, stored in period_mapping.get(
+                            period, MappingProxyType({})
+                        ).items()
+                        for array in jax.tree.leaves(stored)
+                        if isinstance(array, jax.Array)
+                    )
+
+            if value_writer is not None:
+                _swap_in_written_periods(
+                    written=value_writer.drain(),
+                    solution=solution,
+                    simulation_policies=simulation_policies,
+                )
+
             if diagnostics_enabled or stats_enabled:
                 try:
                     _emit_post_loop_diagnostics(
                         logger=logger,
                         diagnostic_rows=diagnostic_rows,
-                        solution=MappingProxyType(solution),
-                        regimes=regimes,
-                        flat_params=flat_params,
-                        running_any_nan=running_any_nan,
+                        nan_error=nan_error,
                         running_any_inf=running_any_inf,
                         diagnostic_min=diagnostic_min if stats_enabled else None,
                         diagnostic_max=diagnostic_max if stats_enabled else None,
                         diagnostic_mean=diagnostic_mean if stats_enabled else None,
-                        process_grid_resolver=process_grid_resolver,
                     )
                 except InvalidValueFunctionError as error:
                     raise_or_warn(logger=logger, error=error)
@@ -1437,13 +1560,20 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                 gc.unfreeze()
             if pending_work is not None:
                 pending_work.close()
+            if value_writer is not None:
+                value_writer.close()
 
     total_elapsed = time.monotonic() - total_start
     logger.info("Solution complete  (%s)", format_duration(seconds=total_elapsed))
 
     return BackwardInductionResult(
-        value_functions=MappingProxyType(solution),
-        simulation_policies=MappingProxyType(simulation_policies),
+        # Under disk storage some values are lazy entries reading the archive;
+        # the result's value store and device views read them back.
+        value_functions=cast("PeriodToRegimeToVArr", MappingProxyType(solution)),
+        # Under disk storage some policies are lazy entries reading the archive.
+        simulation_policies=cast(
+            "PeriodToRegimeToSimulationPolicy", MappingProxyType(simulation_policies)
+        ),
         generated_replay_authorities=MappingProxyType(generated_replay_authorities),
         diagnostics=MappingProxyType(solver_diagnostics),
         retained_continuations=ArtifactStore(retained_continuations),
@@ -2712,7 +2842,7 @@ def _fail_if_carried_rouwenhorst_nodes_differ(
 
 def _drain_V_arr_shards(
     *,
-    solution: dict[int, MappingProxyType[RegimeName, FloatND]],
+    solution: dict[int, MappingProxyType[RegimeName, FloatND | DiskValueEntry]],
 ) -> None:
     """Block until every V_arr shard is materialised.
 
@@ -2730,6 +2860,8 @@ def _drain_V_arr_shards(
         array
         for regime_mapping in solution.values()
         for array in regime_mapping.values()
+        # A value written to disk is no longer an array in flight.
+        if isinstance(array, jax.Array)
     )
     jax.block_until_ready(array_leaves)
 
@@ -2847,6 +2979,7 @@ def _build_planned_input_liveness(
     regimes: MappingProxyType[RegimeName, Regime],
     program_metadata: Mapping[_CoreTriple, _ProgramExecutionMetadata],
     persistable_artifact_refs: frozenset[ArtifactRef],
+    value_storage: Literal["device", "host"] = "device",
 ) -> PlannedInputLiveness[_InputDispatch, ValueArtifactAddress]:
     """Build one exact-dispatch ledger without authorizing physical release.
 
@@ -2858,6 +2991,19 @@ def _build_planned_input_liveness(
     leaves of the EGM family and every reachable input of a program that
     declares no reads. A rolled entry whose producer does not run at its period
     aliases the same address one period later.
+
+    Under host value storage the result keeps no regime value on the device. A
+    value then stays there through its own period, while its peers run, and
+    through the next one, while the period reading it runs and its copy to the
+    host finishes. Every dispatch of those two periods counts as a reader of
+    it, so a residency walk drops it exactly when the solve does. A read no
+    declaration covers happens while its own dispatch runs, so here it counts
+    as a read by that dispatch instead of a pin: pinned, a value or a
+    continuation leaf aliasing one would count as resident for the rest of the
+    solve, though the solve frees it once the reading period is done. Only the
+    residency walk reads such a ledger: release and donation keep the device
+    ledger, whose pins never let a release run ahead of an undeclared read, and
+    which never hands a value whose copy is in flight to another owner.
     """
     dispatch_accesses: dict[_InputDispatch, tuple[ValueArtifactAddress, ...]] = dict(
         _gated_edge_fold_dispatches(regimes=regimes)
@@ -2874,20 +3020,45 @@ def _build_planned_input_liveness(
         declared, declares_no_reads = _classify_dispatch_value_artifacts(
             programs=programs,
         )
-        dispatch_accesses[(period, regime_name)] = declared
-        pinned_artifacts.update(
-            undeclared_read_pins(
-                regimes=regimes,
-                regime_name=regime_name,
-                period=period,
-                declares_no_reads=declares_no_reads,
-            )
+        undeclared = undeclared_read_pins(
+            regimes=regimes,
+            regime_name=regime_name,
+            period=period,
+            declares_no_reads=declares_no_reads,
         )
+        if value_storage == "host":
+            dispatch_accesses[(period, regime_name)] = tuple(
+                dict.fromkeys((*declared, *undeclared))
+            )
+        else:
+            dispatch_accesses[(period, regime_name)] = declared
+            pinned_artifacts.update(undeclared)
 
     retained = _retained_solution_artifacts(
         regimes=regimes,
         persistable_artifact_refs=persistable_artifact_refs,
     )
+    if value_storage == "host":
+        values_by_period: dict[int, list[ValueArtifactAddress]] = {}
+        for artifact in retained:
+            if artifact.kind is ValueArtifactKind.REGIME_VALUE:
+                values_by_period.setdefault(artifact.period, []).append(artifact)
+        retained = tuple(
+            artifact
+            for artifact in retained
+            if artifact.kind is not ValueArtifactKind.REGIME_VALUE
+        )
+        for dispatch, reads in tuple(dispatch_accesses.items()):
+            period = dispatch[0]
+            dispatch_accesses[dispatch] = tuple(
+                dict.fromkeys(
+                    (
+                        *reads,
+                        *values_by_period.get(period, ()),
+                        *values_by_period.get(period + 1, ()),
+                    )
+                )
+            )
     known = {
         *retained,
         *pinned_artifacts,
@@ -4067,6 +4238,27 @@ def _candidate_resident_bytes(
     internal_arguments: Mapping[ReferenceName, ShapeDtypePytree],
     inventory: ResidentInventory,
 ) -> int:
+    """Measure one admission candidate's residency at its position.
+
+    Admission measures every candidate through this name. A refusal comparing
+    storages reads the same bytes through `_resident_bytes_excluding_reads`,
+    which is not an admission measurement.
+    """
+    return _resident_bytes_excluding_reads(
+        compiled=compiled,
+        program=program,
+        internal_arguments=internal_arguments,
+        inventory=inventory,
+    )
+
+
+def _resident_bytes_excluding_reads(
+    *,
+    compiled: jax.stages.Compiled,
+    program: ResolvedCoreProgram,
+    internal_arguments: Mapping[ReferenceName, ShapeDtypePytree],
+    inventory: ResidentInventory,
+) -> int:
     """Exclude only this specialization's aligned, compiler-live read buffers.
 
     Logical read occurrences identify scheduled storage. Template pointer aliases
@@ -4165,6 +4357,10 @@ class _CellBudgetError(WorkspaceBudgetError):
     With the smallest refused reservation, the resident bytes and the budget,
     `halvings` is how often a reservation proportional to the workspace width
     must halve before it fits beside the resident bytes; one otherwise.
+    `floor_bytes` are the resident bytes no narrower workspace changes, and
+    `host_fits` is whether a compiled candidate fits under host value storage.
+    `reservations_by_width` holds each compiled width's reservation, of which
+    `reservation_bytes` is the smallest.
     """
 
     def __init__(
@@ -4173,17 +4369,34 @@ class _CellBudgetError(WorkspaceBudgetError):
         message: str,
         triple: _CoreTriple,
         reservation_bytes: int | None = None,
+        reservations_by_width: Mapping[_WidthKey, int] | None = None,
         resident_bytes: int = 0,
         budget_bytes: int = 0,
+        floor_bytes: int = 0,
+        host_fits: bool = False,
     ) -> None:
         super().__init__(message)
         self.triple = triple
+        self.reservation_bytes = reservation_bytes
+        self.reservations_by_width = MappingProxyType(dict(reservations_by_width or {}))
+        self.budget_bytes = budget_bytes
+        self.floor_bytes = floor_bytes
+        self.host_fits = host_fits
         room = budget_bytes - resident_bytes
         halvings = 1
         if reservation_bytes is not None and room > 0:
             while reservation_bytes > room << halvings:
                 halvings += 1
         self.halvings = halvings
+
+    @property
+    def reservation_readings(self) -> Mapping[_WidthKey, int]:
+        """Each compiled width's reservation, or the smallest under one key."""
+        if self.reservations_by_width:
+            return self.reservations_by_width
+        if self.reservation_bytes is None:
+            return MappingProxyType({})
+        return MappingProxyType({(): self.reservation_bytes})
 
 
 class _CellBudgetRefusalsError(WorkspaceBudgetError):
@@ -4192,6 +4405,69 @@ class _CellBudgetRefusalsError(WorkspaceBudgetError):
     def __init__(self, errors: Sequence[_CellBudgetError]) -> None:
         super().__init__(" ".join(str(error) for error in errors))
         self.errors = tuple(errors)
+
+
+def _workspace_chunk(*, regime: Regime, period: int) -> int | None:
+    """Return the cells per chunk of a period's kernel, through any wrapper.
+
+    `None` for a kernel that has no chunk to narrow.
+    """
+    kernel = regime.solution.period_kernels[period]
+    # A participation kernel keeps the chunked kernel it borrows as its base.
+    while not hasattr(kernel, "chunk_size") and hasattr(kernel, "base"):
+        kernel = getattr(kernel, "base")  # noqa: B009
+    chunk = getattr(kernel, "chunk_size", None)
+    return chunk if isinstance(chunk, int) else None
+
+
+def _fail_if_narrowing_cannot_fit(
+    *,
+    error: _CellBudgetError,
+    previous: tuple[Mapping[_WidthKey, int], int],
+    chunk: int,
+) -> None:
+    """Refuse a core once narrowing shows no narrower workspace would fit it.
+
+    Each compiled width's reservation is taken as a part fixed by the core plus
+    a part proportional to its chunk, and the core's refusals before and after
+    one narrowing give both parts. Widths are read separately because the
+    smallest reservation across widths is not of that form when the smallest
+    width changes between chunks. Only when every width was refused at both
+    chunks and none of their fixed parts fits beside the bytes no narrowing
+    changes is the core refused, since every narrower chunk is then refused
+    too. The fixed parts are extrapolated from two chunks, not measured.
+
+    Raises:
+        WorkspaceBudgetError: No width's fixed part fits beside the floor.
+
+    """
+    previous_readings, previous_chunk = previous
+    readings = error.reservation_readings
+    if chunk >= previous_chunk or not readings.keys() <= previous_readings.keys():
+        return
+    room = error.budget_bytes - error.floor_bytes
+    fixed_parts = []
+    for width, reservation in readings.items():
+        per_cell = max(0, previous_readings[width] - reservation) / (
+            previous_chunk - chunk
+        )
+        fixed = max(0, round(reservation - per_cell * chunk))
+        if fixed <= room:
+            return
+        fixed_parts.append(fixed)
+    previous_reservation = min(previous_readings[width] for width in readings)
+    msg = (
+        f"{error} Narrowing the workspace from {previous_chunk} to {chunk} cells "
+        f"per chunk lowered the smallest compiler reservation only from "
+        f"{previous_reservation} to {min(readings.values())} bytes. Extrapolated "
+        f"from these two chunks, at least {min(fixed_parts)} bytes of it do not "
+        "shrink with the chunk at any compiled width, and beside the "
+        f"{error.floor_bytes} resident bytes no narrowing lowers they exceed "
+        f"the {error.budget_bytes}-byte budget, so no narrower workspace fits. "
+        "To try a narrower chunk anyway, set it directly with "
+        "`ExecutionConfig(axis_widths={'query_cell': ...})`."
+    )
+    raise WorkspaceBudgetError(msg) from error
 
 
 def _narrow_native_closure(
@@ -4218,6 +4494,239 @@ def _narrow_native_closure(
         ),
     )
     return MappingProxyType({**regimes, name: updated})
+
+
+def _swap_in_written_periods(
+    *,
+    written: tuple[WrittenPeriod, ...],
+    solution: dict[int, MappingProxyType[RegimeName, FloatND | DiskValueEntry]],
+    simulation_policies: dict[
+        int, MappingProxyType[RegimeName, SimulationPolicy | DiskPolicyEntry]
+    ],
+) -> None:
+    """Replace written periods' host copies by the entries reading them from disk."""
+    for period in written:
+        solution[period.period] = MappingProxyType(dict(period.values))
+        if period.policies:
+            simulation_policies[period.period] = MappingProxyType(dict(period.policies))
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class _HostStorageFit:
+    """What a cell refused under device storage would need under host storage."""
+
+    what: str
+    """What the bytes are, as the refusal names them."""
+
+    needed_bytes: int
+    """Those bytes in the plan host storage makes."""
+
+    fits: bool
+    """Whether they fit the budget."""
+
+
+def _stored_values_note(
+    *, execution: ResolvedExecution, host: _HostStorageFit | None = None
+) -> str:
+    """Return the clause naming host storage when solved values count as resident.
+
+    Empty under host storage, which already keeps them off the device. With
+    `host`, the clause says what the cell would need under host storage and
+    whether that fits. Leading space included, so a caller appends it to a
+    sentence.
+    """
+    if execution.value_storage_kind != "device":
+        return ""
+    if host is None:
+        return (
+            " The resident bytes include the values of every period solved so far; "
+            "ExecutionConfig(value_storage='host') keeps those in host memory and "
+            "leaves only the periods still being read on the device."
+        )
+    outcome = (
+        "which fits the budget: switch to host storage instead of narrowing the "
+        "workspace."
+        if host.fits
+        else "which still exceeds the budget, so host storage alone does not "
+        "make this cell fit."
+    )
+    return (
+        " The resident bytes include the values of every period solved so far. "
+        "Under ExecutionConfig(value_storage='host'), which keeps only the periods "
+        f"still being read on the device, {host.what} would be "
+        f"{host.needed_bytes} bytes, {outcome}"
+    )
+
+
+def _host_storage_inventory(
+    *,
+    regimes: MappingProxyType[RegimeName, Regime],
+    program_metadata: Mapping[_CoreTriple, _ProgramExecutionMetadata],
+    persistable_artifact_refs: frozenset[ArtifactRef],
+    templates: SolveInputMappings[ValueTemplate],
+    device_ids: tuple[int, ...],
+    fixed_bytes: MappingProxyType[int, int],
+    internal_bytes: Mapping[tuple[RegimeName, int], int],
+) -> MappingProxyType[_CoreTriple, ResidentInventory]:
+    """Place every cell in the plan host value storage makes.
+
+    A device-storage solve builds this only to say whether a cell it refuses
+    would fit under host storage; its own plan keeps every solved value.
+    """
+    inventory = _resident_inventory_by_triple(
+        regimes=regimes,
+        ledger=_build_planned_input_liveness(
+            regimes=regimes,
+            program_metadata=program_metadata,
+            persistable_artifact_refs=persistable_artifact_refs,
+            value_storage="host",
+        ),
+        templates=templates,
+        program_metadata=program_metadata,
+        device_ids=device_ids,
+        fixed_bytes=fixed_bytes,
+    )
+    return MappingProxyType(
+        {
+            triple: dataclasses.replace(
+                position, internal_bytes=internal_bytes[triple[:2]]
+            )
+            for triple, position in inventory.items()
+        }
+    )
+
+
+def _narrowing_floor_bytes(*, inventory: ResidentInventory) -> int:
+    """Return the resident bytes no narrower workspace of the cell changes.
+
+    That is everything the cell competes with on its busiest device except its
+    own internal-output reservation, the one part a narrower kernel shrinks:
+    stored values, its peers' outputs, solve-lifetime owners and transfer
+    scratch.
+    """
+    return dataclasses.replace(inventory, internal_bytes=0).resident_bytes()
+
+
+def _fail_if_a_floor_fills_the_budget(
+    *,
+    triples: tuple[_CoreTriple, ...],
+    resident_inventory: Mapping[_CoreTriple, ResidentInventory],
+    host_storage_inventory: Callable[[], Mapping[_CoreTriple, ResidentInventory]]
+    | None,
+    budget_bytes: int,
+    execution: ResolvedExecution,
+    logger: logging.Logger,
+) -> None:
+    """Refuse before compiling a cell whose floor alone reaches the budget.
+
+    No workspace width fits such a cell, and narrowing never lowers its floor,
+    so compiling the solve's programs and narrowing would only end in the same
+    refusal, after every compilation wave. The refusal is raised at once,
+    never narrowed.
+
+    Raises:
+        WorkspaceBudgetError: A cell's floor reaches the budget.
+
+    """
+    for triple in triples:
+        inventory = resident_inventory[triple]
+        floor = _narrowing_floor_bytes(inventory=inventory)
+        if floor < budget_bytes:
+            continue
+        _log_resident_split(
+            logger=logger, triple=triple, breakdown=inventory.resident_breakdown()
+        )
+        host = None
+        if host_storage_inventory is not None:
+            host_floor = _narrowing_floor_bytes(
+                inventory=host_storage_inventory()[triple]
+            )
+            host = _HostStorageFit(
+                what="those bytes",
+                needed_bytes=host_floor,
+                fits=host_floor < budget_bytes,
+            )
+        raise _width_selection_failure(
+            triple=triple,
+            resident_bytes=inventory.resident_bytes(),
+            transfer_scratch_bytes=inventory.transfer_scratch_bytes,
+            budget_bytes=budget_bytes,
+            execution=execution,
+            error=WorkspaceBudgetError(
+                f"Of the bytes resident at the node's position, {floor} are ones no "
+                "narrower workspace lowers; they reach the budget, so nothing was "
+                "compiled."
+            ),
+            floor_bytes=floor,
+            host=host,
+        )
+
+
+def _host_storage_fit(
+    *,
+    candidates: Sequence[_CoreCandidate],
+    lowering_keys: Mapping[_CoreCandidate, Hashable],
+    fallback_keys: Mapping[_CoreCandidate, Hashable],
+    compiled: Mapping[Hashable, jax.stages.Compiled],
+    memory_by_lowering_key: Mapping[Hashable, CompilerMemoryReservation],
+    resolved_programs: Mapping[_CoreCandidate, ResolvedCoreProgram],
+    internal_templates: Mapping[
+        _CoreCandidate, Mapping[ReferenceName, ShapeDtypePytree]
+    ],
+    device_inventory: ResidentInventory,
+    host_inventory: ResidentInventory,
+    budget_bytes: int,
+) -> _HostStorageFit | None:
+    """Return what a refused cell's compiled candidates need under host storage.
+
+    A candidate needs what admission charges it: the larger, over its compiled
+    variants, of a variant's compiler reservation plus the bytes it leaves
+    resident in the plan. The cell needs its cheapest candidate's total. A
+    fallback not compiled yet is not counted.
+
+    `None` when no candidate was compiled, or when the cell's total fits the
+    budget under device storage too: the refusal then has another cause, which
+    switching storage does not touch.
+    """
+
+    def _needed(inventory: ResidentInventory) -> int | None:
+        totals: list[int] = []
+        for candidate in candidates:
+            primary = lowering_keys.get(candidate)
+            if primary is None:
+                continue
+            keys = tuple(
+                key
+                for key in dict.fromkeys(
+                    (primary, fallback_keys.get(candidate, primary))
+                )
+                if key in compiled and key in memory_by_lowering_key
+            )
+            if keys:
+                totals.append(
+                    max(
+                        memory_by_lowering_key[key].reservation_bytes
+                        + _resident_bytes_excluding_reads(
+                            compiled=compiled[key],
+                            program=resolved_programs[candidate],
+                            internal_arguments=internal_templates[candidate],
+                            inventory=inventory,
+                        )
+                        for key in keys
+                    )
+                )
+        return min(totals, default=None)
+
+    on_device = _needed(device_inventory)
+    if on_device is None or on_device <= budget_bytes:
+        return None
+    needed = cast("int", _needed(host_inventory))
+    return _HostStorageFit(
+        what="the smallest total of its compiled candidates, compiler reservation "
+        "plus resident bytes,",
+        needed_bytes=needed,
+        fits=needed <= budget_bytes,
+    )
 
 
 _RESIDENT_SPLIT_OWNERS = 8
@@ -4273,7 +4782,9 @@ def _width_selection_failure(
     execution: ResolvedExecution,
     error: ExecutionPlanningError,
     skipped_fallback_evaluations: int = 0,
-    reservation_bytes: int | None = None,
+    reservations_by_width: Mapping[_WidthKey, int] | None = None,
+    floor_bytes: int = 0,
+    host: _HostStorageFit | None = None,
 ) -> ExecutionPlanningError:
     """Name the cell a workspace refusal belongs to and what it competed with.
 
@@ -4291,6 +4802,7 @@ def _width_selection_failure(
         f"resident on its busiest device against a {budget_bytes}-byte budget, "
         f"of which the period's transfer operators reserve up to {scratch} bytes "
         f"on a single device."
+        f"{_stored_values_note(execution=execution, host=host)}"
         f"{execution.device_memory_cap_note()} {error}"
     )
     if skipped_fallback_evaluations:
@@ -4303,9 +4815,12 @@ def _width_selection_failure(
         _CellBudgetError(
             message=msg,
             triple=triple,
-            reservation_bytes=reservation_bytes,
+            reservation_bytes=min((reservations_by_width or {}).values(), default=None),
+            reservations_by_width=reservations_by_width,
             resident_bytes=resident_bytes,
             budget_bytes=budget_bytes,
+            floor_bytes=floor_bytes,
+            host_fits=host is not None and host.fits,
         )
         if isinstance(error, WorkspaceBudgetError)
         else ExecutionPlanningError(msg)
@@ -4716,7 +5231,16 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
             if budget_bytes is None
             else _resident_inventory_by_triple(
                 regimes=regimes,
-                ledger=input_liveness,
+                ledger=(
+                    input_liveness
+                    if execution.value_storage_kind == "device"
+                    else _build_planned_input_liveness(
+                        regimes=regimes,
+                        program_metadata=representative_metadata,
+                        persistable_artifact_refs=persistable_artifact_refs,
+                        value_storage="host",
+                    )
+                ),
                 templates=SolveInputMappings(
                     next_regime_to_V_arr=next_regime_to_V_arr,
                     next_regime_to_continuation=next_regime_to_continuation,
@@ -4730,6 +5254,12 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
                 fixed_bytes=fixed_bytes,
             )
         )
+        # Under device storage a refused cell is also placed in the plan host
+        # storage would make, to say whether switching storage makes it fit; that
+        # plan is walked only once a refusal asks for it.
+        host_storage_inventory: (
+            Callable[[], Mapping[_CoreTriple, ResidentInventory]] | None
+        ) = None
         if budget_bytes is not None:
             internal_bytes = _internal_reservations_by_cell(
                 programs=resolved_programs,
@@ -4746,6 +5276,26 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
                     for triple, inventory in resident_inventory.items()
                 }
             )
+            if execution.value_storage_kind == "device":
+                host_storage_inventory = functools.cache(
+                    functools.partial(
+                        _host_storage_inventory,
+                        regimes=regimes,
+                        program_metadata=representative_metadata,
+                        persistable_artifact_refs=persistable_artifact_refs,
+                        templates=SolveInputMappings(
+                            next_regime_to_V_arr=next_regime_to_V_arr,
+                            next_regime_to_continuation=next_regime_to_continuation,
+                            continuation_templates_by_period=(
+                                _dated_continuation_templates(regimes=regimes)
+                            ),
+                            next_edge_to_V_arr=next_edge_to_V_arr,
+                        ),
+                        device_ids=execution.device_ids,
+                        fixed_bytes=fixed_bytes,
+                        internal_bytes=internal_bytes,
+                    )
+                )
         resident_bytes_by_triple = MappingProxyType(
             {
                 triple: 0
@@ -4754,6 +5304,15 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
                 for triple in candidates_by_triple
             }
         )
+        if budget_bytes is not None:
+            _fail_if_a_floor_fills_the_budget(
+                triples=tuple(candidates_by_triple),
+                resident_inventory=resident_inventory,
+                host_storage_inventory=host_storage_inventory,
+                budget_bytes=budget_bytes,
+                execution=execution,
+                logger=logger,
+            )
     n_workers = _resolve_compilation_workers(
         max_compilation_workers=max_compilation_workers
     )
@@ -5100,13 +5659,28 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
                     skipped_fallback_evaluations=skipped_fallback_evaluations.get(
                         triple, 0
                     ),
-                    reservation_bytes=min(
-                        (
-                            memory_by_compiled_id[id(executable)].reservation_bytes
-                            for executable in compiled_by_width.values()
-                            if id(executable) in memory_by_compiled_id
-                        ),
-                        default=None,
+                    reservations_by_width={
+                        width: memory_by_compiled_id[id(executable)].reservation_bytes
+                        for width, executable in compiled_by_width.items()
+                        if id(executable) in memory_by_compiled_id
+                    },
+                    floor_bytes=_narrowing_floor_bytes(
+                        inventory=resident_inventory[triple]
+                    ),
+                    host=None
+                    if host_storage_inventory is None
+                    or not isinstance(error, WorkspaceBudgetError)
+                    else _host_storage_fit(
+                        candidates=candidates,
+                        lowering_keys=lowering_keys,
+                        fallback_keys=fallback_keys,
+                        compiled=compiled,
+                        memory_by_lowering_key=memory_by_lowering_key,
+                        resolved_programs=resolved_programs,
+                        internal_templates=internal_templates,
+                        device_inventory=resident_inventory[triple],
+                        host_inventory=host_storage_inventory()[triple],
+                        budget_bytes=budget_bytes,
                     ),
                 )
                 if not isinstance(failure, _CellBudgetError):
@@ -7158,7 +7732,13 @@ def _structural_key(
             ),
             frozen_policy(
                 {
-                    field.name: getattr(execution, field.name)
+                    # Where values are kept shapes the plan; which directory
+                    # holds them does not.
+                    field.name: (
+                        execution.value_storage_kind
+                        if field.name == "value_storage"
+                        else getattr(execution, field.name)
+                    )
                     for field in dataclasses.fields(execution)
                     if field.name not in _ADMISSION_ONLY_EXECUTION_FIELDS
                 }

@@ -103,6 +103,10 @@ class IncompatibleSolutionError(PyLCMError):
     """Raised when a solution uses an unsupported schema or plugin version."""
 
 
+class ValueStorageError(PyLCMError):
+    """Raised when solved values cannot be copied or written to their value storage."""
+
+
 class ExecutionPlanningError(PyLCMError):
     """Raised when the requested execution policy cannot produce a valid plan."""
 

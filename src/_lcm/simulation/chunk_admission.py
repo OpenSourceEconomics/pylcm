@@ -16,6 +16,7 @@ import jax
 
 from _lcm.engine import Regime, placed_devices_for_ids
 from _lcm.execution.core_program import ReducedAxis, TiledOutputAxis
+from _lcm.execution.footprint import per_device_footprint
 from _lcm.execution.workspace_planning import workspace_width_candidates
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.simulation.chunk_inputs import (
@@ -34,7 +35,11 @@ from _lcm.simulation.chunk_profile_cache import profile_cache_registry
 from _lcm.simulation.chunk_profiles import profile_simulation_chunk
 from _lcm.simulation.current_iid_overrides import CurrentIIDOverrideSchema
 from _lcm.simulation.memory import SimulationMemory
-from _lcm.simulation.programs import budgeted_simulation_programs_ready
+from _lcm.simulation.period_inputs import period_read_targets
+from _lcm.simulation.programs import (
+    budgeted_simulation_programs_ready,
+    forward_regimes_by_period,
+)
 from _lcm.simulation.residency import (
     DeviceBufferFootprint,
     measure_buffer_footprint,
@@ -45,6 +50,11 @@ from _lcm.simulation.residency import (
 from _lcm.simulation.runtime import SimulationRuntime
 from _lcm.simulation.subject_groups import grouped_extent
 from _lcm.solution.backward_induction import _abstract_value_key, _hashable_metadata
+from _lcm.solution.host_values import (
+    StoredValues,
+    is_device_read_view,
+    planning_stand_in,
+)
 from _lcm.time import TimeAxis
 from _lcm.typing import (
     FlatParams,
@@ -66,6 +76,9 @@ class PreparedSimulationChunks:
     admitted_inputs: DeviceBufferFootprint
     budget_note: str = ""
     """Clause naming the budget and the remedies, appended to a chunk refusal."""
+    reserves_population_carry: bool = False
+    """Whether the width was admitted beside every subject's carry, as simulating
+    values kept off the device period by period across several chunks needs."""
 
     def require_chunk(
         self,
@@ -132,7 +145,7 @@ def prepare_simulation_chunks(
     *,
     regimes: MappingProxyType[RegimeName, Regime],
     flat_params: FlatParams,
-    values: Mapping[int, Mapping[str, jax.Array]],
+    values: StoredValues,
     ages: TimeAxis,
     initial_conditions: Mapping[str, jax.Array],
     regime_names_to_ids: RegimeNamesToIds,
@@ -230,8 +243,10 @@ def prepare_simulation_chunks(
         runtime=runtime,
         regimes=regimes,
         call_inputs=call_inputs,
-        values=values,
-        policies=policies,
+        # Profiles and their cache keys need only the values' shapes and
+        # placement; reading values kept off the device would copy them.
+        values=planning_stand_in(values),
+        policies=planning_stand_in(policies),
         participation_surfaces=participation_surfaces,
         ages=ages,
         initial_conditions=initial_conditions,
@@ -250,12 +265,124 @@ def prepare_simulation_chunks(
         current_iid_override_schema=current_iid_override_schema,
     )
     plan = _plan_independent_chunks(profiler=profiler, alignment=alignment)
+    # Values kept off the device are simulated period by period when there are
+    # several chunks, so every chunk's carry is live while one chunk runs. That
+    # carry grows with the population, not the width; admit beside it.
+    reserves_population_carry = (
+        group_sizes is None
+        and is_device_read_view(values)
+        and plan.profile.n_subjects < plan.profile.padded_population
+    )
+    if reserves_population_carry:
+        carry = _population_carry_bytes(
+            initial_conditions=initial_conditions,
+            subject_devices=runtime.subject_devices,
+        )
+        prefetch = _prefetch_bytes(
+            regimes=regimes,
+            values=planning_stand_in(values),
+            policies=planning_stand_in(policies),
+            n_periods=ages.n_periods,
+            devices=devices,
+        )
+        try:
+            plan = _plan_independent_chunks(
+                profiler=replace(
+                    profiler,
+                    resident=MappingProxyType(
+                        {
+                            device: bytes_
+                            + carry.get(device, 0)
+                            + prefetch.get(device, 0)
+                            for device, bytes_ in resident.items()
+                        }
+                    ),
+                ),
+                alignment=alignment,
+            )
+        except ExecutionPlanningError as error:
+            msg = (
+                "Simulating values kept off the device in several chunks runs every "
+                "chunk through a period before the next, so every subject's state "
+                f"stays on the device: about {dict(sorted(carry.items(), key=str))!r} "
+                "bytes, and the next period's reads are copied early: about "
+                f"{dict(sorted(prefetch.items(), key=str))!r} bytes, beside a chunk's "
+                "workspace. Simulate fewer subjects per call or raise "
+                "ExecutionConfig.device_memory_bytes."
+                f"{runtime.execution.device_memory_cap_note()}"
+            )
+            raise ExecutionPlanningError(msg) from error
     return PreparedSimulationChunks(
         plan=plan,
         call_inputs=call_inputs,
         admitted_inputs=memory.inputs,
         budget_note=runtime.execution.device_memory_cap_note(),
+        reserves_population_carry=reserves_population_carry,
     )
+
+
+def _population_carry_bytes(
+    *,
+    initial_conditions: Mapping[str, jax.Array],
+    subject_devices: tuple[jax.Device, ...],
+) -> dict[jax.Device, int]:
+    """Estimate each subject device's share of every subject's carry.
+
+    A carry holds a subject's states, regime and role, all shaped like its
+    initial conditions, and two route trackers of one 32-bit integer each; its
+    keys are per chunk. The estimate charges the whole population, the running
+    chunk included, whose carry its own profile also charges.
+    """
+    population = int(initial_conditions["regime_id"].shape[0])
+    total = sum(int(column.nbytes) for column in initial_conditions.values())
+    # Role (when the initial conditions name none) and the two route trackers.
+    total += 3 * population * 4
+    share = math.ceil(total / len(subject_devices))
+    return dict.fromkeys(subject_devices, share)
+
+
+def _prefetch_bytes(
+    *,
+    regimes: Mapping[RegimeName, Regime],
+    values: Mapping[int, Mapping[str, jax.Array | jax.ShapeDtypeStruct]],
+    policies: Mapping[int, Mapping[RegimeName, SimulationPolicy]] | None,
+    n_periods: int,
+    devices: tuple[jax.Device, ...],
+) -> dict[jax.Device, int]:
+    """Estimate each device's bytes of the largest read set one period copies early.
+
+    The period-by-period loop starts copying the next period's declared values
+    and policies while a period runs, so they sit beside that period's own reads.
+    Every argument is a planning stand-in: nothing is read.
+    """
+    by_id = {device.id: device for device in devices}
+    active_by_period = forward_regimes_by_period(regimes=regimes, n_periods=n_periods)
+    largest: dict[jax.Device, int] = {}
+    for period in range(1, n_periods):
+        active = active_by_period[period]
+        arrays = [
+            values[target_period][regime]
+            for target_period, regime in period_read_targets(
+                active=active, period=period, values=values
+            )
+            if regime in values.get(target_period, {})
+        ]
+        arrays.extend(
+            leaf
+            for name in active
+            for leaf in jax.tree.leaves((policies or {}).get(period, {}).get(name))
+            if isinstance(leaf, jax.Array | jax.ShapeDtypeStruct)
+        )
+        need: dict[jax.Device, int] = {}
+        for array in arrays:
+            footprint = per_device_footprint(array=array)
+            for device_id in footprint.device_ids:
+                if device_id in by_id:
+                    device = by_id[device_id]
+                    need[device] = need.get(device, 0) + footprint.bytes_per_device
+        for device, bytes_ in need.items():
+            largest[device] = max(largest.get(device, 0), bytes_)
+    return largest
 
 
 def _simulation_chunk_profile_key(
@@ -263,7 +390,7 @@ def _simulation_chunk_profile_key(
     runtime: SimulationRuntime,
     regimes: Mapping[str, Regime],
     call_inputs: SimulationCallInputs,
-    values: Mapping[int, Mapping[str, jax.Array]],
+    values: Mapping[int, Mapping[str, jax.Array | jax.ShapeDtypeStruct]],
     policies: Mapping[int, Mapping[RegimeName, SimulationPolicy]] | None,
     participation_surfaces: PeriodToRegimeToParticipationSurfaces = MappingProxyType(
         {}
@@ -374,7 +501,7 @@ class _ChunkProfiler:
     runtime: SimulationRuntime
     regimes: Mapping[str, Regime]
     call_inputs: SimulationCallInputs
-    values: Mapping[int, Mapping[str, jax.Array]]
+    values: Mapping[int, Mapping[str, jax.Array | jax.ShapeDtypeStruct]]
     ages: TimeAxis
     initial_conditions: Mapping[str, jax.Array]
     regime_names_to_ids: RegimeNamesToIds
