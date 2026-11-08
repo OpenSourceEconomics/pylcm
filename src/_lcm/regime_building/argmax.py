@@ -4,12 +4,18 @@
 the flat axis, and returns the winning flat index alongside its value.
 """
 
+from functools import partial
+
 import jax
 import jax.numpy as jnp
 import numpy as np
 from jax.dtypes import float0
+from jaxtyping import Int
 
 from lcm.typing import BoolND, FloatND, IntND
+
+# Encodings follow the float width, independently of canonical int32 action IDs.
+type _FloatBitsND = Int[jax.Array, "..."]
 
 # Identity of no element; it loses every tie against a real identity.
 NO_ID = jnp.iinfo(jnp.int32).max
@@ -64,9 +70,7 @@ def argmax_and_max(
     )
     is_nan = jnp.isnan(a)
     comparable = where & ~is_nan
-    lowest = (
-        -jnp.inf if jnp.issubdtype(a.dtype, jnp.floating) else jnp.iinfo(a.dtype).min
-    )
+    lowest = _lowest(a.dtype)
     positions = jnp.broadcast_to(jnp.arange(a.shape[-1], dtype=jnp.int32), a.shape)
     _max, _argmax = max_and_smallest_id(
         values=jnp.where(comparable, a, lowest),
@@ -93,9 +97,7 @@ def _argmax_and_max_of_one_candidate(
     feasible NaN stays NaN, and the derivative splits a tie as `jnp.max` does. No
     reduction is involved, so a candidate above `initial` keeps its exact bits.
     """
-    lowest = (
-        -jnp.inf if jnp.issubdtype(a.dtype, jnp.floating) else jnp.iinfo(a.dtype).min
-    )
+    lowest = _lowest(a.dtype)
     floor = jnp.asarray(lowest if initial is None else initial, dtype=a.dtype)
     admitted = (
         jnp.ones(a.shape, dtype=bool)
@@ -140,12 +142,25 @@ def _paired_max(
     values: FloatND | IntND, ids: IntND, initial: FloatND | IntND
 ) -> tuple[FloatND | IntND, IntND]:
     """Reduce `(value, id)` pairs over the last axis, without a derivative."""
-    return jax.lax.reduce(
+    no_id = jnp.asarray(NO_ID, dtype=jnp.int32)
+    if jnp.issubdtype(values.dtype, jnp.floating):
+        best_key, best_id = _reduce_float_keys(
+            keys=_float_order_key(values),
+            ids=ids,
+            initial_key=_float_order_key(initial),
+            infinity_key=_float_infinity_key(values.dtype),
+        )
+        return jax.lax.bitcast_convert_type(
+            _reverse_negative_bits(best_key), values.dtype
+        ), best_id
+    # XLA requires an identity initializer; a finite floor must compete afterward.
+    best = jax.lax.reduce(
         (values, ids),
-        (initial, jnp.asarray(NO_ID, dtype=jnp.int32)),
+        (jnp.asarray(_lowest(values.dtype), dtype=values.dtype), no_id),
         _larger_value_then_smaller_id,
         (values.ndim - 1,),
     )
+    return _larger_value_then_smaller_id(best, (initial, no_id))
 
 
 # keyword-only-exempt: library-callback=jax.custom_jvp.defjvp
@@ -155,26 +170,36 @@ def _paired_max_jvp(
 ) -> tuple[tuple[FloatND, IntND], tuple[FloatND, np.ndarray]]:
     """Average the tangents of the elements equal to the max, as `jnp.max` does.
 
-    The id's tangent, in and out, is JAX's `float0` zero tangent of an integer.
-
-    The tangent is linear in the value and `initial` tangents with weights
-    fixed by the primals, so reverse mode transposes it. `{-0, +0}` compare
-    equal, so a signed-zero tie averages both elements whatever sign the max
-    carries. The max and the equality test read one materialized copy of the
-    values: a producer the compiler evaluated once per use could round
-    differently and leave no element equal to the max.
+    One protected key array owns both the primal reduction and its tie mask.
+    Signed-zero keys compare equal for identity and tangent ownership.
     """
     values, ids, initial = primals
-    values = jax.lax.optimization_barrier(values)
     values_dot, _, initial_dot = tangents
-    best, best_id = _paired_max(values, ids, initial)
-    attains = (values == best[..., jnp.newaxis]).astype(values.dtype)
+    value_keys = _float_order_key(values)
+    initial_key = _float_order_key(initial)
+    infinity_key = _float_infinity_key(values.dtype)
+    best_key, best_id = _reduce_float_keys(
+        keys=value_keys,
+        ids=ids,
+        initial_key=initial_key,
+        infinity_key=infinity_key,
+    )
+    best = jax.lax.bitcast_convert_type(_reverse_negative_bits(best_key), values.dtype)
+    attains = (
+        _float_keys_equal(left=value_keys, right=best_key[..., jnp.newaxis])
+        & (value_keys >= ~infinity_key)
+        & (value_keys <= infinity_key)
+    ).astype(values.dtype)
     count = jnp.sum(attains, axis=-1)
     elements_dot = jnp.sum(values_dot * attains, axis=-1) / jnp.maximum(count, 1)
     initial_dot = jnp.broadcast_to(initial_dot, best.shape)
     best_dot = jnp.where(
         count > 0,
-        jnp.where(initial == best, (elements_dot + initial_dot) / 2, elements_dot),
+        jnp.where(
+            _float_keys_equal(left=initial_key, right=best_key),
+            (elements_dot + initial_dot) / 2,
+            elements_dot,
+        ),
         initial_dot,
     )
     return (best, best_id), (best_dot, np.zeros(best_id.shape, dtype=float0))
@@ -191,21 +216,95 @@ _paired_max_with_tangent = jax.custom_jvp(_paired_max)
 _paired_max_with_tangent.defjvp(_paired_max_jvp)  # ty: ignore[invalid-argument-type]
 
 
+def _lowest(dtype: np.dtype[np.generic]) -> float | int:
+    """Return the reduction identity for a floating or integer dtype."""
+    return -jnp.inf if jnp.issubdtype(dtype, jnp.floating) else jnp.iinfo(dtype).min
+
+
 # keyword-only-exempt: library-callback=jax.lax.reduce
 def _larger_value_then_smaller_id(
-    left: tuple[FloatND | IntND, IntND], right: tuple[FloatND | IntND, IntND]
-) -> tuple[FloatND | IntND, IntND]:
-    """Keep the pair with the larger value, and the smaller id on a tie.
-
-    A `{-0, +0}` tie keeps `+0` unless both are `-0`.
-    """
+    left: tuple[IntND, IntND], right: tuple[IntND, IntND]
+) -> tuple[IntND, IntND]:
+    """Keep the pair with the larger integer value, and the smaller id on a tie."""
     left_value, left_id = left
     right_value, right_id = right
     tie = right_value == left_value
     take_right = (right_value > left_value) | (tie & (right_id < left_id))
     value = jnp.where(take_right, right_value, left_value)
-    value = jnp.where(tie & (left_value == 0), left_value + right_value, value)
     return value, jnp.where(take_right, right_id, left_id)
+
+
+def _float_order_key(values: FloatND) -> _FloatBitsND:
+    """Protect reversible integer keys once, before any reduction or tie comparison.
+
+    Keys order represented IEEE values, with `-0` at -1 and `+0` at 0.
+    Decoding the winning key preserves subnormal bits without a float accumulator.
+    """
+    if values.dtype.itemsize not in (2, 4, 8):
+        msg = f"Use 16-, 32- and 64-bit IEEE floats; got {values.dtype}."
+        raise ValueError(msg)
+    integer = jnp.dtype(f"int{values.dtype.itemsize * 8}")
+    bits = jax.lax.bitcast_convert_type(values, integer)
+    return jax.lax.optimization_barrier(_reverse_negative_bits(bits))
+
+
+def _reverse_negative_bits(bits: _FloatBitsND) -> _FloatBitsND:
+    """Reverse negative IEEE encodings; applying this twice restores the input."""
+    magnitude_mask = jnp.iinfo(bits.dtype).max
+    return bits ^ ((bits >> (bits.dtype.itemsize * 8 - 1)) & magnitude_mask)
+
+
+def _float_infinity_key(dtype: np.dtype[np.generic]) -> int:
+    """Return the positive IEEE infinity encoding without allocating float data."""
+    info = jnp.finfo(dtype)
+    return (2 * info.maxexp - 1) << info.nmant
+
+
+def _float_keys_equal(*, left: _FloatBitsND, right: _FloatBitsND) -> BoolND:
+    """Equate represented values, including the two signed-zero keys."""
+    both_zero = (left >= -1) & (left <= 0) & (right >= -1) & (right <= 0)
+    return (left == right) | both_zero
+
+
+def _reduce_float_keys(
+    *, keys: _FloatBitsND, ids: IntND, initial_key: _FloatBitsND, infinity_key: int
+) -> tuple[_FloatBitsND, IntND]:
+    """Reduce protected keys once, then let a finite initial value compete."""
+    no_id = jnp.asarray(NO_ID, dtype=jnp.int32)
+    choose = partial(_larger_float_key_then_smaller_id, infinity_key=infinity_key)
+    best = jax.lax.reduce(
+        (keys, ids),
+        (jnp.asarray(~infinity_key, dtype=keys.dtype), no_id),
+        choose,
+        (keys.ndim - 1,),
+    )
+    return choose(best, (initial_key, no_id))
+
+
+# keyword-only-exempt: library-callback=jax.lax.reduce
+def _larger_float_key_then_smaller_id(
+    left: tuple[_FloatBitsND, IntND],
+    right: tuple[_FloatBitsND, IntND],
+    *,
+    infinity_key: int,
+) -> tuple[_FloatBitsND, IntND]:
+    """Compare precomputed keys, retaining the smallest id even at a zero tie."""
+    left_key, left_id = left
+    right_key, right_id = right
+    valid = (
+        (left_key >= ~infinity_key)
+        & (left_key <= infinity_key)
+        & (right_key >= ~infinity_key)
+        & (right_key <= infinity_key)
+    )
+    tie = _float_keys_equal(left=left_key, right=right_key)
+    key = jnp.where(valid, jnp.maximum(left_key, right_key), left_key)
+    identity = jnp.where(
+        tie,
+        jnp.minimum(left_id, right_id),
+        jnp.where(right_key > left_key, right_id, left_id),
+    )
+    return key, jnp.where(valid, identity, left_id)
 
 
 def _move_axes_to_back(
