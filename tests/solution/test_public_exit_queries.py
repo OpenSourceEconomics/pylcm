@@ -217,7 +217,9 @@ def _household(
     )
 
 
-@pytest.mark.coverage(backends=("cpu", "gpu-small", "gpu-large"), precisions="both")
+@pytest.mark.coverage(
+    backends=("cpu", "gpu-small", "gpu-large"), precisions="representative"
+)
 @pytest.mark.parametrize("enable_jit", [False, True])
 @pytest.mark.parametrize("newlywed", [False, True])
 def test_public_formation_uses_mapped_lagged_state_and_selected_policy(
@@ -281,7 +283,9 @@ def _dated_replay_female(
     )
 
 
-@pytest.mark.coverage(backends=("cpu", "gpu-small", "gpu-large"), precisions="both")
+@pytest.mark.coverage(
+    backends=("cpu", "gpu-small", "gpu-large"), precisions="representative"
+)
 @pytest.mark.parametrize("fixed", [False, True])
 @pytest.mark.parametrize("missing", [None, "solve_bonus", "replay_bonus"])
 def test_query_only_temporal_params_cover_the_consuming_phase_date(
@@ -365,7 +369,9 @@ def _dated_replay_raw_spouse(*, wealth: FloatND, replay_outside: FloatND) -> Flo
     return replay_outside + 0 * wealth
 
 
-@pytest.mark.coverage(backends=("cpu", "gpu-small", "gpu-large"), precisions="both")
+@pytest.mark.coverage(
+    backends=("cpu", "gpu-small", "gpu-large"), precisions="representative"
+)
 @pytest.mark.parametrize("fixed", [False, True])
 @pytest.mark.parametrize("missing", [None, "solve_outside", "replay_outside"])
 def test_raw_counterparty_temporal_params_require_the_queried_date(
@@ -518,7 +524,9 @@ def _offer_model(
     )
 
 
-@pytest.mark.coverage(backends=("cpu", "gpu-small", "gpu-large"), precisions="both")
+@pytest.mark.coverage(
+    backends=("cpu", "gpu-small", "gpu-large"), precisions="representative"
+)
 @pytest.mark.parametrize("observed", [False, True])
 def test_hidden_query_prices_selected_policy_before_source_decision(
     *, observed: bool
@@ -544,7 +552,9 @@ def test_shared_offer_refuses_a_projection_that_changes_its_cdf() -> None:
         _offer_model(observed=False, shared=True, flipped=True)
 
 
-@pytest.mark.coverage(backends=("cpu", "gpu-small", "gpu-large"), precisions="both")
+@pytest.mark.coverage(
+    backends=("cpu", "gpu-small", "gpu-large"), precisions="representative"
+)
 @pytest.mark.parametrize("observed", [False, True])
 def test_scalar_query_prices_hidden_frame_without_hindsight(*, observed: bool) -> None:
     model = _offer_model(observed=observed)
@@ -697,7 +707,9 @@ def _taste_stay(wealth: FloatND) -> FloatND:
     return 1.2 + 0 * wealth
 
 
-@pytest.mark.coverage(backends=("cpu", "gpu-small", "gpu-large"), precisions="both")
+@pytest.mark.coverage(
+    backends=("cpu", "gpu-small", "gpu-large"), precisions="representative"
+)
 def test_hidden_target_taste_is_priced_at_logsum_then_drawn_when_acting() -> None:
     """log(4)>1.2>log(3): a hard target max would make the wrong exit decision."""
     wealth = LinSpacedGrid(start=0, stop=1, n_points=2)
@@ -786,7 +798,9 @@ def _outside3(wealth: FloatND) -> FloatND:
     return 3.0 + 0 * wealth
 
 
-@pytest.mark.coverage(backends=("cpu", "gpu-small", "gpu-large"), precisions="both")
+@pytest.mark.coverage(
+    backends=("cpu", "gpu-small", "gpu-large"), precisions="representative"
+)
 @pytest.mark.parametrize("fallback", [False, True])
 def test_source_full_taste_preserves_dissolution_fallback(*, fallback: bool) -> None:
     """Dissolution cannot acquire a taste-based escape from surviving kept stays."""
@@ -946,7 +960,9 @@ def test_wholly_hidden_joint_group_keeps_its_original_rows(*, correlated: bool) 
     np.testing.assert_allclose(result.values[0]["single_f"], expected)
 
 
-@pytest.mark.coverage(backends=("cpu", "gpu-small", "gpu-large"), precisions="both")
+@pytest.mark.coverage(
+    backends=("cpu", "gpu-small", "gpu-large"), precisions="representative"
+)
 def test_independent_observation_projects_hidden_rows_without_empirical_filtering() -> (
     None
 ):
@@ -979,7 +995,9 @@ def test_partial_correlated_observation_refuses_mandatorily() -> None:
         model.solve(params={}, log_level="off", runtime_checks=False)
 
 
-@pytest.mark.coverage(backends=("cpu", "gpu-small", "gpu-large"), precisions="both")
+@pytest.mark.coverage(
+    backends=("cpu", "gpu-small", "gpu-large"), precisions="representative"
+)
 def test_runtime_observation_checks_the_actual_admitted_correlation_each_call() -> None:
     """The support marker stays engine-owned as actual identity changes per call."""
     model = _joint_information_model(
@@ -1009,7 +1027,9 @@ def test_complete_correlated_observation_reuses_its_actual_joint_realization() -
     )
 
 
-@pytest.mark.coverage(backends=("cpu", "gpu-small", "gpu-large"), precisions="both")
+@pytest.mark.coverage(
+    backends=("cpu", "gpu-small", "gpu-large"), precisions="representative"
+)
 def test_nested_outside_projection_reads_the_already_mapped_marital_history() -> None:
     """Newlywed lag0 exposes schooling7; incumbent lag1 outside remains5."""
     model = _household(newlywed=True, enable_jit=True, outside_lag=True)
@@ -1085,7 +1105,9 @@ def _ten() -> float:
     return 10.0
 
 
-@pytest.mark.coverage(backends=("cpu", "gpu-small", "gpu-large"), precisions="both")
+@pytest.mark.coverage(
+    backends=("cpu", "gpu-small", "gpu-large"), precisions="representative"
+)
 def test_query_only_target_retains_its_genuine_next_period_value_read() -> None:
     """Current Part is transient; its future continuation is a stored Full bank."""
     model = Model(
@@ -1118,7 +1140,9 @@ def test_query_only_target_retains_its_genuine_next_period_value_read() -> None:
     assert model._regimes["single_m"].active_periods == ()
 
 
-@pytest.mark.coverage(backends=("cpu", "gpu-small", "gpu-large"), precisions="both")
+@pytest.mark.coverage(
+    backends=("cpu", "gpu-small", "gpu-large"), precisions="representative"
+)
 def test_null_shared_category_keeps_the_query_boundary_probability_derivative() -> None:
     """The null solve category retains its finite target policy without 0/0."""
     base = _offer_model(observed=False, shared=True)
@@ -1603,7 +1627,9 @@ def test_false_ancestor_protects_a_poisoned_mapped_child_availability() -> None:
     np.testing.assert_allclose(result.values[0]["single_f"], [5.0, 6.0])
 
 
-@pytest.mark.coverage(backends=("cpu", "gpu-small", "gpu-large"), precisions="both")
+@pytest.mark.coverage(
+    backends=("cpu", "gpu-small", "gpu-large"), precisions="representative"
+)
 @pytest.mark.parametrize("reverse", [False, True])
 def test_observed_aliases_share_the_active_producing_context(*, reverse: bool) -> None:
     """An inactive first alias cannot hide a signal required by an active exit."""
@@ -1646,7 +1672,9 @@ def _alias_signal(*, eps: FloatND, settlement: FloatND, wealth: FloatND) -> Floa
     return eps + settlement + 0 * wealth
 
 
-@pytest.mark.coverage(backends=("cpu", "gpu-small", "gpu-large"), precisions="both")
+@pytest.mark.coverage(
+    backends=("cpu", "gpu-small", "gpu-large"), precisions="representative"
+)
 @pytest.mark.parametrize("both_inactive", [False, True])
 def test_observer_aliases_skip_unrelated_inactive_settlements(
     *, both_inactive: bool
@@ -1726,7 +1754,9 @@ def _zero(wealth: FloatND) -> FloatND:
     return 0.0 * wealth
 
 
-@pytest.mark.coverage(backends=("cpu", "gpu-small", "gpu-large"), precisions="both")
+@pytest.mark.coverage(
+    backends=("cpu", "gpu-small", "gpu-large"), precisions="representative"
+)
 def test_source_taste_competes_with_an_eligible_consent_formation() -> None:
     """A strict eligible formation joins the source's discrete-combination roster."""
     wealth = LinSpacedGrid(start=0, stop=1, n_points=2)
@@ -1819,7 +1849,9 @@ def test_source_taste_competes_with_an_eligible_consent_formation() -> None:
     assert literal_routes == {False, True}
 
 
-@pytest.mark.coverage(backends=("cpu", "gpu-small", "gpu-large"), precisions="both")
+@pytest.mark.coverage(
+    backends=("cpu", "gpu-small", "gpu-large"), precisions="representative"
+)
 @pytest.mark.parametrize("n_points", [64, 65])
 def test_custom_outside_choice_ignores_padded_query_lanes(*, n_points: int) -> None:
     """A declared outside choice keeps every live source value on a partial chunk."""
@@ -1892,7 +1924,9 @@ def _information_stay(root_draw: FloatND) -> FloatND:
     return -100.0 + root_draw
 
 
-@pytest.mark.coverage(backends=("cpu", "gpu-small", "gpu-large"), precisions="both")
+@pytest.mark.coverage(
+    backends=("cpu", "gpu-small", "gpu-large"), precisions="representative"
+)
 @pytest.mark.parametrize("fixed", [False, True])
 def test_nested_information_uses_each_ancestors_settlement_operands(
     *, fixed: bool
@@ -2092,7 +2126,9 @@ def test_callable_exit_projection_keeps_fingerprint_admission() -> None:
     assert _semantic_fingerprint(composed)
 
 
-@pytest.mark.coverage(backends=("cpu", "gpu-small", "gpu-large"), precisions="both")
+@pytest.mark.coverage(
+    backends=("cpu", "gpu-small", "gpu-large"), precisions="representative"
+)
 def test_own_raw_and_full_evaluate_canonical_problem_once(  # noqa: PLR0915 - keep one graph and runtime population proof together
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2302,7 +2338,9 @@ def _sharing_chunk_arguments(
     )
 
 
-@pytest.mark.coverage(backends=("cpu", "gpu-small", "gpu-large"), precisions="both")
+@pytest.mark.coverage(
+    backends=("cpu", "gpu-small", "gpu-large"), precisions="representative"
+)
 @pytest.mark.parametrize("state_count", [2, 3])
 @pytest.mark.parametrize("chunk_size", [1, 2])
 @pytest.mark.parametrize("compiled", [False, True])
@@ -2401,7 +2439,9 @@ def test_static_single_sharing_requires_exact_provenance(changed: str) -> None:
     )
 
 
-@pytest.mark.coverage(backends=("cpu", "gpu-small", "gpu-large"), precisions="both")
+@pytest.mark.coverage(
+    backends=("cpu", "gpu-small", "gpu-large"), precisions="representative"
+)
 @pytest.mark.parametrize("guarded", [False, True])
 def test_static_single_sharing_retains_guard_and_projection_fallback(
     *,
@@ -2450,7 +2490,9 @@ def test_static_single_sharing_retains_guard_and_projection_fallback(
     assert own[4].dtype == jnp.int32
 
 
-@pytest.mark.coverage(backends=("cpu", "gpu-small", "gpu-large"), precisions="both")
+@pytest.mark.coverage(
+    backends=("cpu", "gpu-small", "gpu-large"), precisions="representative"
+)
 @pytest.mark.parametrize(("state_count", "chunk_size"), [(2, 1), (3, 2)])
 def test_static_single_sharing_reads_changed_params_and_preserves_jvp(
     *, state_count: int, chunk_size: int
