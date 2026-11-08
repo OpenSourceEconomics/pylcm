@@ -193,7 +193,7 @@ def _select_width_keyword(*, context: SolverBuildContext, prefix: str) -> str:
 class GridSearch(Solver):
     """Grid-search solver over the full state-action product (the default)."""
 
-    lottery_contraction: bool = True
+    lottery_contraction: bool = False
     """Whether to sum eligible draws into the next-period value once per call.
 
     A draw qualifies when its weights read no state or action of the regime
@@ -205,6 +205,11 @@ class GridSearch(Solver):
     continuation. Only the solve contracts: the simulation evaluates its Q with
     every draw enumerated, so its choices can differ from the solve's only where
     two actions tie to rounding.
+
+    Off by default: the table is built inside the kernel's tile loops, and on GPU
+    the compiler does not hoist it, so it is rebuilt for every cell and action
+    tile. A period solved in a few wide tiles gains; one split into many narrow
+    tiles, as fixed `axis_widths` or unbudgeted widths can force, loses.
     """
 
     @property
