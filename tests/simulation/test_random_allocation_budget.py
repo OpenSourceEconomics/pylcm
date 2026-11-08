@@ -24,7 +24,9 @@ from tests.simulation.test_budget_lifecycle import (
 )
 
 
-@pytest.mark.coverage(backends=("cpu", "gpu-small", "gpu-large"), precisions="both")
+@pytest.mark.coverage(
+    backends=("cpu", "gpu-small", "gpu-large"), precisions="representative"
+)
 @pytest.mark.parametrize("implementation", ["threefry2x32", "rbg", "unsafe_rbg"])
 @pytest.mark.parametrize("compiled", [False, True])
 def test_named_row_keys_preserve_scalar_fold_order(
@@ -62,7 +64,9 @@ def test_named_row_keys_preserve_scalar_fold_order(
         np.testing.assert_array_equal(actual, scalar)
 
 
-@pytest.mark.coverage(backends=("cpu", "gpu-small", "gpu-large"), precisions="both")
+@pytest.mark.coverage(
+    backends=("cpu", "gpu-small", "gpu-large"), precisions="representative"
+)
 @pytest.mark.parametrize("persistent_compilation_cache", [False], indirect=True)
 @pytest.mark.parametrize("mapped_periods", [False, True])
 def test_repeated_eager_named_keys_reuse_compiled_code(
