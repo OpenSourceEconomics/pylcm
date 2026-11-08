@@ -118,6 +118,8 @@ jobs:
       - uses: prefix-dev/setup-pixi@v0.11.3
         with:
           pixi-version: v0.83.0
+          pixi-url: https://github.com/prefix-dev/pixi/releases/download/{{version}}/{{pixiFile}}
+          pixi-url-headers: '{"Authorization": "Bearer ${{ github.token }}"}'
           cache: true
           cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
           environments: tests-cpu
@@ -253,6 +255,8 @@ jobs:
       - uses: prefix-dev/setup-pixi@v0.11.3
         with:
           pixi-version: v0.83.0
+          pixi-url: https://github.com/prefix-dev/pixi/releases/download/{{version}}/{{pixiFile}}
+          pixi-url-headers: '{"Authorization": "Bearer ${{ github.token }}"}'
           cache: true
           cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
           environments: tests-cpu
@@ -364,6 +368,8 @@ jobs:
       - uses: prefix-dev/setup-pixi@v0.11.3
         with:
           pixi-version: v0.83.0
+          pixi-url: https://github.com/prefix-dev/pixi/releases/download/{{version}}/{{pixiFile}}
+          pixi-url-headers: '{"Authorization": "Bearer ${{ github.token }}"}'
           cache: true
           cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
           environments: tests-cpu
@@ -484,6 +490,8 @@ jobs:
       - uses: prefix-dev/setup-pixi@v0.11.3
         with:
           pixi-version: v0.83.0
+          pixi-url: https://github.com/prefix-dev/pixi/releases/download/{{version}}/{{pixiFile}}
+          pixi-url-headers: '{"Authorization": "Bearer ${{ github.token }}"}'
           cache: true
           cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
           environments: tests-cpu
@@ -582,6 +590,8 @@ jobs:
       - uses: prefix-dev/setup-pixi@v0.11.3
         with:
           pixi-version: v0.83.0
+          pixi-url: https://github.com/prefix-dev/pixi/releases/download/{{version}}/{{pixiFile}}
+          pixi-url-headers: '{"Authorization": "Bearer ${{ github.token }}"}'
           cache: true
           environments: tests-cpu
           activate-environment: true
@@ -645,6 +655,8 @@ jobs:
       - uses: prefix-dev/setup-pixi@v0.11.3
         with:
           pixi-version: v0.83.0
+          pixi-url: https://github.com/prefix-dev/pixi/releases/download/{{version}}/{{pixiFile}}
+          pixi-url-headers: '{"Authorization": "Bearer ${{ github.token }}"}'
           cache: true
           cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
           environments: tests-cpu
@@ -763,6 +775,8 @@ jobs:
       - uses: prefix-dev/setup-pixi@v0.11.3
         with:
           pixi-version: v0.83.0
+          pixi-url: https://github.com/prefix-dev/pixi/releases/download/{{version}}/{{pixiFile}}
+          pixi-url-headers: '{"Authorization": "Bearer ${{ github.token }}"}'
           cache: true
           cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
           environments: tests-cpu
@@ -881,6 +895,8 @@ jobs:
       - uses: prefix-dev/setup-pixi@v0.11.3
         with:
           pixi-version: v0.83.0
+          pixi-url: https://github.com/prefix-dev/pixi/releases/download/{{version}}/{{pixiFile}}
+          pixi-url-headers: '{"Authorization": "Bearer ${{ github.token }}"}'
           cache: true
           cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
           environments: tests-cpu
@@ -1037,6 +1053,8 @@ jobs:
       - uses: prefix-dev/setup-pixi@v0.11.3
         with:
           pixi-version: v0.83.0
+          pixi-url: https://github.com/prefix-dev/pixi/releases/download/{{version}}/{{pixiFile}}
+          pixi-url-headers: '{"Authorization": "Bearer ${{ github.token }}"}'
           cache: true
           cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
           environments: tests-cpu
@@ -1163,6 +1181,8 @@ jobs:
       - uses: prefix-dev/setup-pixi@v0.11.3
         with:
           pixi-version: v0.83.0
+          pixi-url: https://github.com/prefix-dev/pixi/releases/download/{{version}}/{{pixiFile}}
+          pixi-url-headers: '{"Authorization": "Bearer ${{ github.token }}"}'
           cache: true
           cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
           environments: tests-cpu
@@ -1859,6 +1879,8 @@ jobs:
       - uses: prefix-dev/setup-pixi@v0.11.3
         with:
           pixi-version: v0.83.0
+          pixi-url: https://github.com/prefix-dev/pixi/releases/download/{{version}}/{{pixiFile}}
+          pixi-url-headers: '{"Authorization": "Bearer ${{ github.token }}"}'
           cache: true
           cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
           environments: tests-cpu
@@ -2408,6 +2430,8 @@ jobs:
       - uses: prefix-dev/setup-pixi@v0.11.3
         with:
           pixi-version: v0.83.0
+          pixi-url: https://github.com/prefix-dev/pixi/releases/download/{{version}}/{{pixiFile}}
+          pixi-url-headers: '{"Authorization": "Bearer ${{ github.token }}"}'
           cache: true
           cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
           environments: tests-cpu
@@ -2576,6 +2600,8 @@ jobs:
       - uses: prefix-dev/setup-pixi@v0.11.3
         with:
           pixi-version: v0.83.0
+          pixi-url: https://github.com/prefix-dev/pixi/releases/download/{{version}}/{{pixiFile}}
+          pixi-url-headers: '{"Authorization": "Bearer ${{ github.token }}"}'
           cache: true
           cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
           environments: tests-cpu
@@ -2739,6 +2765,8 @@ jobs:
       - uses: prefix-dev/setup-pixi@v0.11.3
         with:
           pixi-version: v0.83.0
+          pixi-url: https://github.com/prefix-dev/pixi/releases/download/{{version}}/{{pixiFile}}
+          pixi-url-headers: '{"Authorization": "Bearer ${{ github.token }}"}'
           cache: true
           environments: tests-cpu
           activate-environment: true
@@ -2779,6 +2807,8 @@ jobs:
       - uses: prefix-dev/setup-pixi@v0.11.3
         with:
           pixi-version: v0.83.0
+          pixi-url: https://github.com/prefix-dev/pixi/releases/download/{{version}}/{{pixiFile}}
+          pixi-url-headers: '{"Authorization": "Bearer ${{ github.token }}"}'
           cache: true
           cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
           environments: tests-cpu
@@ -2863,6 +2893,8 @@ jobs:
       - uses: prefix-dev/setup-pixi@v0.11.3
         with:
           pixi-version: v0.83.0
+          pixi-url: https://github.com/prefix-dev/pixi/releases/download/{{version}}/{{pixiFile}}
+          pixi-url-headers: '{"Authorization": "Bearer ${{ github.token }}"}'
           cache: true
           environments: tests-cpu
           activate-environment: true
