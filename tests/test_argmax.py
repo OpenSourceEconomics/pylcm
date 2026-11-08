@@ -1,11 +1,13 @@
 import itertools
 import math
+from collections.abc import Iterator
 from functools import partial
 
 import jax.numpy as jnp
 import numpy as np
 import pytest
-from jax import Array, grad, jit, make_jaxpr, vmap
+from jax import Array, grad, jit, lax, make_jaxpr, vmap
+from jax.extend.core import Jaxpr
 from numpy.testing import assert_array_equal
 
 from _lcm.regime_building.argmax import (
@@ -561,3 +563,102 @@ def test_paired_float_order_retains_nan_mask_and_infinity_conventions(
     index, maximum = reduce(a=values)
     assert_array_equal(index, [1, 0, 0])
     assert_array_equal(maximum, [jnp.inf, jnp.nan, jnp.nan])
+
+
+@pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
+@pytest.mark.parametrize("dtype", ["float16", "bfloat16"])
+def test_paired_half_precision_keeps_ties_and_finite_floor(
+    *, compiled: bool, dtype: str
+) -> None:
+    """Both half formats keep values, winning identities and tie derivatives."""
+    values = jnp.asarray([[3, 3, 1], [-3, -2, -4], [-0.0, 0.0, -1]], dtype=dtype)
+    ids = jnp.broadcast_to(jnp.asarray([7, 3, 9], dtype=jnp.int32), values.shape)
+    reduce = partial(max_and_smallest_id, initial=-2.0)
+    derivative = grad(lambda a: reduce(values=a, ids=ids)[0].sum())
+    if compiled:
+        reduce = jit(reduce)
+        derivative = jit(derivative)
+    maximum, identity = reduce(values=values, ids=ids)
+    assert_array_equal(maximum, jnp.asarray([3, -2, 0], dtype=dtype))
+    assert maximum.dtype == jnp.dtype(dtype)
+    assert_array_equal(identity, [3, 3, 3])
+    assert_array_equal(
+        derivative(values),
+        jnp.asarray([[0.5, 0.5, 0], [0, 0.5, 0], [0.5, 0.5, 0]], dtype=dtype),
+    )
+
+
+@pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
+@pytest.mark.parametrize("dtype", ["float16", "bfloat16"])
+def test_paired_half_precision_preserves_subnormal_and_zero_encodings(
+    *, compiled: bool, dtype: str
+) -> None:
+    """Half-sized subnormals and signed zeros retain their exact represented order."""
+    sign = 1 << 15
+    encoded = jnp.asarray(
+        [[2, 1], [sign | 1, sign | 2], [sign, 0], [sign, sign], [1, sign | 1]],
+        dtype=jnp.uint16,
+    )
+    values = lax.bitcast_convert_type(encoded, jnp.dtype(dtype))
+    assert_array_equal(lax.bitcast_convert_type(values, jnp.uint16), encoded)
+    ids = jnp.broadcast_to(jnp.asarray([7, 3], dtype=jnp.int32), values.shape)
+    reduce = partial(max_and_smallest_id, initial=-jnp.inf)
+    derivative = grad(lambda a: reduce(values=a, ids=ids)[0].sum())
+    if compiled:
+        reduce = jit(reduce)
+        derivative = jit(derivative)
+    maximum, identity = reduce(values=values, ids=ids)
+    assert_array_equal(
+        lax.bitcast_convert_type(maximum, jnp.uint16), [2, sign | 1, 0, sign, 1]
+    )
+    assert_array_equal(identity, [7, 7, 3, 3, 7])
+    assert_array_equal(
+        derivative(values),
+        jnp.asarray([[1, 0], [1, 0], [0.5, 0.5], [0.5, 0.5], [1, 0]], dtype=dtype),
+    )
+
+
+def test_paired_combiner_does_not_recompute_float_order_keys() -> None:
+    """Bit ordering and materialization occur once before the paired reduction."""
+    values = jnp.asarray([[2.0, -1.0, 3.0]])
+    ids = jnp.asarray([[7, 3, 9]], dtype=jnp.int32)
+    program = make_jaxpr(partial(max_and_smallest_id, initial=-jnp.inf))(
+        values=values, ids=ids
+    ).jaxpr
+    reductions = [
+        eqn
+        for nested in _nested_jaxprs(program)
+        for eqn in nested.eqns
+        if eqn.primitive.name == "reduce"
+    ]
+    repeated_order_work = sum(
+        eqn.primitive.name in {"optimization_barrier", "shift_right_arithmetic", "xor"}
+        for reduction in reductions
+        for nested in _nested_jaxprs(reduction.params["jaxpr"])
+        for eqn in nested.eqns
+    )
+    assert (len(reductions), repeated_order_work) == (1, 0)
+
+
+def _nested_jaxprs(jaxpr: Jaxpr) -> Iterator[Jaxpr]:
+    yield jaxpr
+    for eqn in jaxpr.eqns:
+        for value in eqn.params.values():
+            nested = getattr(value, "jaxpr", value)
+            if isinstance(nested, Jaxpr):
+                yield from _nested_jaxprs(nested)
+
+
+@pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
+@pytest.mark.parametrize("dtype", ["float8_e4m3fn", "float8_e5m2"])
+def test_paired_max_rejects_unsupported_float_widths(
+    *, compiled: bool, dtype: str
+) -> None:
+    """Reject narrower formats explicitly instead of interpreting their bit layouts."""
+    values = jnp.asarray([1, 2], dtype=dtype)
+    assert values.dtype.itemsize == 1
+    reduce = partial(max_and_smallest_id, initial=0.0)
+    if compiled:
+        reduce = jit(reduce)
+    with pytest.raises(ValueError, match="16-, 32- and 64-bit IEEE"):
+        reduce(values=values, ids=jnp.asarray([7, 3], dtype=jnp.int32))

@@ -100,6 +100,7 @@ def _egm_panel(value_storage: ValueStorage) -> pd.DataFrame:
     ).to_dataframe(use_categorical_codes=True)
 
 
+@pytest.mark.slow
 @pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 @pytest.mark.parametrize("storage", ["host", "disk"])
 def test_budgeted_panel_of_stored_finite_nnbegm_policies_is_the_device_panel(
