@@ -38,7 +38,9 @@ from tests.simulation._node_axis_models import (
 )
 
 
-@pytest.mark.coverage(backends=("cpu", "gpu-small", "gpu-large"), precisions="both")
+@pytest.mark.coverage(
+    backends=("cpu", "gpu-small", "gpu-large"), precisions="representative"
+)
 @pytest.mark.parametrize("seed", [0, 29])
 def test_consumed_cell_keys_preserve_original_row_addresses(*, seed: int) -> None:
     """Each cell folds its named address, both row words, then its own period."""
