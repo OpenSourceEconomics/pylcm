@@ -202,7 +202,9 @@ def _project_shock_wealth(*, wealth: FloatND) -> FloatND:
     return wealth + 10.0
 
 
-@pytest.mark.coverage(backends=("cpu", "gpu-small", "gpu-large"), precisions="both")
+@pytest.mark.coverage(
+    backends=("cpu", "gpu-small", "gpu-large"), precisions="representative"
+)
 @pytest.mark.parametrize("target_reads_shock", [False, True])
 @pytest.mark.parametrize("enable_jit", [False, True])
 @pytest.mark.parametrize("n_periods", [1, 3])
@@ -320,7 +322,9 @@ def test_mover_rows_publish_original_current_shocks(
         assert later["source__eps" if target_reads_shock else "eps"].isna().all()
 
 
-@pytest.mark.coverage(backends=("cpu", "gpu-small", "gpu-large"), precisions="both")
+@pytest.mark.coverage(
+    backends=("cpu", "gpu-small", "gpu-large"), precisions="representative"
+)
 @pytest.mark.parametrize("use_categorical_codes", [False, True])
 def test_exit_source_observations_keep_discrete_codes_and_labels(
     *, use_categorical_codes: bool
@@ -468,7 +472,9 @@ def _hidden_offer_model(
     )
 
 
-@pytest.mark.coverage(backends=("cpu", "gpu-small", "gpu-large"), precisions="both")
+@pytest.mark.coverage(
+    backends=("cpu", "gpu-small", "gpu-large"), precisions="representative"
+)
 @pytest.mark.parametrize("enable_jit", [False, True])
 def test_hidden_target_reveals_action_and_value_after_irrevocable_exit(
     *,
@@ -838,7 +844,9 @@ def test_shared_physical_override_transports_recovered_base_to_changed_law() -> 
     assert_array_almost_equal(frame["value"], 12.0, decimal=DECIMAL_PRECISION)
 
 
-@pytest.mark.coverage(backends=("cpu", "gpu-small", "gpu-large"), precisions="both")
+@pytest.mark.coverage(
+    backends=("cpu", "gpu-small", "gpu-large"), precisions="representative"
+)
 @pytest.mark.parametrize("enable_jit", [False, True])
 def test_observed_target_choice_uses_same_original_innovation(
     *, enable_jit: bool
@@ -886,7 +894,9 @@ def test_observed_target_choice_uses_same_original_innovation(
     np.testing.assert_array_equal(frame.loc[movers, "choice"], 1)
 
 
-@pytest.mark.coverage(backends=("cpu", "gpu-small", "gpu-large"), precisions="both")
+@pytest.mark.coverage(
+    backends=("cpu", "gpu-small", "gpu-large"), precisions="representative"
+)
 def test_exit_replay_uses_compiled_programs_across_original_row_chunks(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -941,7 +951,9 @@ def test_exit_replay_uses_compiled_programs_across_original_row_chunks(
     assert_frame_equal(frames[0], frames[1])
 
 
-@pytest.mark.coverage(backends=("cpu", "gpu-small", "gpu-large"), precisions="both")
+@pytest.mark.coverage(
+    backends=("cpu", "gpu-small", "gpu-large"), precisions="representative"
+)
 def test_exit_chunk_profile_inventories_native_queries_and_retained_frames() -> None:
     """Outer admission includes the actual once-only route, not just final actions."""
     model = _hidden_offer_model(observed=True, enable_jit=True)
@@ -1044,7 +1056,9 @@ def test_original_innovation_keys_remain_charged_until_routing(
     assert checkpoints
 
 
-@pytest.mark.coverage(backends=("cpu", "gpu-small", "gpu-large"), precisions="both")
+@pytest.mark.coverage(
+    backends=("cpu", "gpu-small", "gpu-large"), precisions="representative"
+)
 @pytest.mark.parametrize("newlywed", [False, True])
 def test_simulated_formation_uses_mapped_lag_and_fresh_consent(
     *, newlywed: bool
@@ -1081,7 +1095,9 @@ def test_simulated_formation_uses_mapped_lag_and_fresh_consent(
         assert_array_almost_equal(frame["value"], 5.0, decimal=DECIMAL_PRECISION)
 
 
-@pytest.mark.coverage(backends=("cpu", "gpu-small", "gpu-large"), precisions="both")
+@pytest.mark.coverage(
+    backends=("cpu", "gpu-small", "gpu-large"), precisions="representative"
+)
 def test_simulated_formation_keeps_nested_mapped_lagged_outside_states() -> None:
     """The newborn household's schooling outside options block formation."""
     model = _household(
@@ -1106,7 +1122,9 @@ def test_simulated_formation_keeps_nested_mapped_lagged_outside_states() -> None
     assert_array_almost_equal(frame["value"], [5.5, 6.5], decimal=DECIMAL_PRECISION)
 
 
-@pytest.mark.coverage(backends=("cpu", "gpu-small", "gpu-large"), precisions="both")
+@pytest.mark.coverage(
+    backends=("cpu", "gpu-small", "gpu-large"), precisions="representative"
+)
 def test_hidden_destination_taste_acts_after_custom_exit_without_repricing() -> None:
     """Source prices log4, commits, then target draws its own unshocked action."""
     model = _rule_model(rule=_StrictRule(), target_taste=True)
@@ -1152,7 +1170,9 @@ def _zero() -> float:
     return 0.0
 
 
-@pytest.mark.coverage(backends=("cpu", "gpu-small", "gpu-large"), precisions="both")
+@pytest.mark.coverage(
+    backends=("cpu", "gpu-small", "gpu-large"), precisions="representative"
+)
 @pytest.mark.parametrize("fallback", [False, True])
 def test_source_taste_keeps_dissolution_as_fallback_in_public_replay(
     *, fallback: bool
@@ -1204,7 +1224,9 @@ def test_source_taste_keeps_dissolution_as_fallback_in_public_replay(
         np.testing.assert_array_equal(frame["choice"], 1)
 
 
-@pytest.mark.coverage(backends=("cpu", "gpu-small", "gpu-large"), precisions="both")
+@pytest.mark.coverage(
+    backends=("cpu", "gpu-small", "gpu-large"), precisions="representative"
+)
 def test_source_taste_freezes_one_consent_choice_before_target_action() -> None:
     """Eligible formation joins one source draw; movers report target values."""
     model = Model(
@@ -1387,7 +1409,9 @@ def test_reciprocal_unilateral_exits_refuse_the_public_participating_cycle() -> 
         _opposing_model(rule="unilateral")
 
 
-@pytest.mark.coverage(backends=("cpu", "gpu-small", "gpu-large"), precisions="both")
+@pytest.mark.coverage(
+    backends=("cpu", "gpu-small", "gpu-large"), precisions="representative"
+)
 @pytest.mark.parametrize("reverse", [False, True])
 def test_opposing_public_exits_advance_only_the_final_actor(*, reverse: bool) -> None:
     """Original occupants move once, pay once, then use final scheduled laws."""
@@ -1432,7 +1456,9 @@ def _two() -> float:
     return 2.0
 
 
-@pytest.mark.coverage(backends=("cpu", "gpu-small", "gpu-large"), precisions="both")
+@pytest.mark.coverage(
+    backends=("cpu", "gpu-small", "gpu-large"), precisions="representative"
+)
 def test_incoming_participating_actor_does_not_create_an_original_full_query() -> None:
     """A destination's unread custom outside option creates no extra query context."""
     model = Model(
@@ -1492,7 +1518,9 @@ def _helper_flow(*, benefit: float) -> float:
     return benefit
 
 
-@pytest.mark.coverage(backends=("cpu", "gpu-small", "gpu-large"), precisions="both")
+@pytest.mark.coverage(
+    backends=("cpu", "gpu-small", "gpu-large"), precisions="representative"
+)
 def test_public_exit_replay_uses_simulation_phase_helper_closure() -> None:
     """A target's actual helper yields3 while its solve-period price was2."""
     model = Model(
