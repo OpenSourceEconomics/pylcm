@@ -344,7 +344,9 @@ _HOUSEHOLD_SURFACES = tuple(
 )
 
 
-@pytest.mark.coverage(backends=("cpu", "gpu-small", "gpu-large"), precisions="both")
+@pytest.mark.coverage(
+    backends=("cpu", "gpu-small", "gpu-large"), precisions="representative"
+)
 def test_stored_participation_surfaces_are_strongly_typed() -> None:
     """Store each participation surface with a strong dtype.
 

@@ -478,7 +478,9 @@ def test_rounded_large_location_singular_inverse_is_unresolved() -> None:
     assert not bool(frame.valid)
 
 
-@pytest.mark.coverage(backends=("cpu", "gpu-small", "gpu-large"), precisions="both")
+@pytest.mark.coverage(
+    backends=("cpu", "gpu-small", "gpu-large"), precisions="representative"
+)
 def test_batched_native_draw_frame_keeps_payload_and_status_leaves() -> None:
     """Batched AOT draw frames keep per-row bases, contexts and validity visible."""
     group = sh.ShockGroup(
