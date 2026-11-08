@@ -548,9 +548,9 @@ def solve(  # noqa: C901, PLR0912, PLR0915
     # Resolve every solve program, then compile unique lowerings when enabled.
     diagnostics_enabled = validation_enabled(logger)
     narrowings = 0
-    # Each narrowed cell's smallest refused reservation and the chunk it was
-    # compiled with, so the next refusal shows whether narrowing pays off.
-    narrowed: dict[tuple[RegimeName, int], tuple[int, int]] = {}
+    # Each refused core's reservations by width and the chunk they were
+    # compiled with, so its next refusal shows whether narrowing pays off.
+    narrowed: dict[_CoreTriple, tuple[Mapping[_WidthKey, int], int]] = {}
     # A narrowing retry reuses every executable an earlier attempt compiled.
     if executable_cache is None:
         executable_cache = ExecutableCache()
@@ -600,18 +600,24 @@ def solve(  # noqa: C901, PLR0912, PLR0915
             for error in refusals.errors:
                 if error.host_fits:
                     raise error from refusals
+            # Every refused core keeps its own readings: two readings of
+            # different cores say nothing about either at a narrower chunk.
+            for error in refusals.errors:
+                readings = error.reservation_readings
+                chunk = _workspace_chunk(
+                    regime=regimes[error.triple[0]], period=error.triple[1]
+                )
+                if not readings or chunk is None:
+                    continue
+                if error.triple in narrowed:
+                    _fail_if_narrowing_cannot_fit(
+                        error=error, previous=narrowed[error.triple], chunk=chunk
+                    )
+                narrowed[error.triple] = (readings, chunk)
             first_by_cell: dict[tuple[RegimeName, int], _CellBudgetError] = {}
             for error in refusals.errors:
                 first_by_cell.setdefault(error.triple[:2], error)
             for error in first_by_cell.values():
-                cell = error.triple[:2]
-                chunk = _workspace_chunk(regime=regimes[cell[0]], period=cell[1])
-                if error.reservation_bytes is not None and chunk is not None:
-                    if cell in narrowed:
-                        _fail_if_narrowing_cannot_fit(
-                            error=error, previous=narrowed[cell], chunk=chunk
-                        )
-                    narrowed[cell] = (error.reservation_bytes, chunk)
                 narrowings += 1
                 regime_name, period, core_key = error.triple
                 logger.info(
@@ -4354,6 +4360,8 @@ class _CellBudgetError(WorkspaceBudgetError):
     must halve before it fits beside the resident bytes; one otherwise.
     `floor_bytes` are the resident bytes no narrower workspace changes, and
     `host_fits` is whether a compiled candidate fits under host value storage.
+    `reservations_by_width` holds each compiled width's reservation, of which
+    `reservation_bytes` is the smallest.
     """
 
     def __init__(
@@ -4362,6 +4370,7 @@ class _CellBudgetError(WorkspaceBudgetError):
         message: str,
         triple: _CoreTriple,
         reservation_bytes: int | None = None,
+        reservations_by_width: Mapping[_WidthKey, int] | None = None,
         resident_bytes: int = 0,
         budget_bytes: int = 0,
         floor_bytes: int = 0,
@@ -4370,6 +4379,7 @@ class _CellBudgetError(WorkspaceBudgetError):
         super().__init__(message)
         self.triple = triple
         self.reservation_bytes = reservation_bytes
+        self.reservations_by_width = MappingProxyType(dict(reservations_by_width or {}))
         self.budget_bytes = budget_bytes
         self.floor_bytes = floor_bytes
         self.host_fits = host_fits
@@ -4379,6 +4389,15 @@ class _CellBudgetError(WorkspaceBudgetError):
             while reservation_bytes > room << halvings:
                 halvings += 1
         self.halvings = halvings
+
+    @property
+    def reservation_readings(self) -> Mapping[_WidthKey, int]:
+        """Each compiled width's reservation, or the smallest under one key."""
+        if self.reservations_by_width:
+            return self.reservations_by_width
+        if self.reservation_bytes is None:
+            return MappingProxyType({})
+        return MappingProxyType({(): self.reservation_bytes})
 
 
 class _CellBudgetRefusalsError(WorkspaceBudgetError):
@@ -4403,35 +4422,51 @@ def _workspace_chunk(*, regime: Regime, period: int) -> int | None:
 
 
 def _fail_if_narrowing_cannot_fit(
-    *, error: _CellBudgetError, previous: tuple[int, int], chunk: int
+    *,
+    error: _CellBudgetError,
+    previous: tuple[Mapping[_WidthKey, int], int],
+    chunk: int,
 ) -> None:
-    """Refuse a cell once narrowing shows no narrower workspace would fit it.
+    """Refuse a core once narrowing shows no narrower workspace would fit it.
 
-    A reservation is taken as a part fixed by the cell plus a part proportional
-    to its chunk. The refusals before and after one narrowing give both parts.
-    When the fixed part beside the bytes no narrowing changes exceeds the
-    budget, every narrower chunk is refused too, so the cell is refused now
-    rather than after further compilation waves.
+    Each compiled width's reservation is taken as a part fixed by the core plus
+    a part proportional to its chunk, and the core's refusals before and after
+    one narrowing give both parts. Widths are read separately because the
+    smallest reservation across widths is not of that form when the smallest
+    width changes between chunks. Only when every width was refused at both
+    chunks and none of their fixed parts fits beside the bytes no narrowing
+    changes is the core refused, since every narrower chunk is then refused
+    too. The fixed parts are extrapolated from two chunks, not measured.
 
     Raises:
-        WorkspaceBudgetError: The fixed part does not fit beside the floor.
+        WorkspaceBudgetError: No width's fixed part fits beside the floor.
 
     """
-    reservation = cast("int", error.reservation_bytes)
-    previous_reservation, previous_chunk = previous
-    if chunk >= previous_chunk:
+    previous_readings, previous_chunk = previous
+    readings = error.reservation_readings
+    if chunk >= previous_chunk or not readings.keys() <= previous_readings.keys():
         return
-    per_cell = max(0, previous_reservation - reservation) / (previous_chunk - chunk)
-    fixed = max(0, round(reservation - per_cell * chunk))
-    if fixed + error.floor_bytes <= error.budget_bytes:
-        return
+    room = error.budget_bytes - error.floor_bytes
+    fixed_parts = []
+    for width, reservation in readings.items():
+        per_cell = max(0, previous_readings[width] - reservation) / (
+            previous_chunk - chunk
+        )
+        fixed = max(0, round(reservation - per_cell * chunk))
+        if fixed <= room:
+            return
+        fixed_parts.append(fixed)
+    previous_reservation = min(previous_readings[width] for width in readings)
     msg = (
         f"{error} Narrowing the workspace from {previous_chunk} to {chunk} cells "
         f"per chunk lowered the smallest compiler reservation only from "
-        f"{previous_reservation} to {reservation} bytes. About {fixed} bytes of "
-        "it do not shrink with the chunk, and beside the "
+        f"{previous_reservation} to {min(readings.values())} bytes. Extrapolated "
+        f"from these two chunks, at least {min(fixed_parts)} bytes of it do not "
+        "shrink with the chunk at any compiled width, and beside the "
         f"{error.floor_bytes} resident bytes no narrowing lowers they exceed "
-        f"the {error.budget_bytes}-byte budget, so no narrower workspace fits."
+        f"the {error.budget_bytes}-byte budget, so no narrower workspace fits. "
+        "To try a narrower chunk anyway, set it directly with "
+        "`ExecutionConfig(axis_widths={'query_cell': ...})`."
     )
     raise WorkspaceBudgetError(msg) from error
 
@@ -4748,7 +4783,7 @@ def _width_selection_failure(
     execution: ResolvedExecution,
     error: ExecutionPlanningError,
     skipped_fallback_evaluations: int = 0,
-    reservation_bytes: int | None = None,
+    reservations_by_width: Mapping[_WidthKey, int] | None = None,
     floor_bytes: int = 0,
     host: _HostStorageFit | None = None,
 ) -> ExecutionPlanningError:
@@ -4781,7 +4816,8 @@ def _width_selection_failure(
         _CellBudgetError(
             message=msg,
             triple=triple,
-            reservation_bytes=reservation_bytes,
+            reservation_bytes=min((reservations_by_width or {}).values(), default=None),
+            reservations_by_width=reservations_by_width,
             resident_bytes=resident_bytes,
             budget_bytes=budget_bytes,
             floor_bytes=floor_bytes,
@@ -5624,14 +5660,11 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
                     skipped_fallback_evaluations=skipped_fallback_evaluations.get(
                         triple, 0
                     ),
-                    reservation_bytes=min(
-                        (
-                            memory_by_compiled_id[id(executable)].reservation_bytes
-                            for executable in compiled_by_width.values()
-                            if id(executable) in memory_by_compiled_id
-                        ),
-                        default=None,
-                    ),
+                    reservations_by_width={
+                        width: memory_by_compiled_id[id(executable)].reservation_bytes
+                        for width, executable in compiled_by_width.items()
+                        if id(executable) in memory_by_compiled_id
+                    },
                     floor_bytes=_narrowing_floor_bytes(
                         inventory=resident_inventory[triple]
                     ),
