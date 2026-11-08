@@ -23,7 +23,7 @@ import re
 import subprocess
 import threading
 import weakref
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from types import MappingProxyType
 from typing import Literal, Unpack, cast
@@ -1050,13 +1050,18 @@ def test_a_refusal_says_when_host_storage_does_not_make_the_cell_fit() -> None:
 
 
 def _refused_cell(
-    *, reservation_bytes: int, host_fits: bool = False
+    *,
+    reservation_bytes: int | None = None,
+    reservations_by_width: Mapping[tuple[tuple[str, int], ...], int] | None = None,
+    core: str = "core",
+    host_fits: bool = False,
 ) -> backward_induction._CellBudgetError:
     """A refusal of the household's first single cell, with room for one chunk."""
     return backward_induction._CellBudgetError(
         message="Refused.",
-        triple=("single_f", 0, "core"),
+        triple=("single_f", 0, core),
         reservation_bytes=reservation_bytes,
+        reservations_by_width=reservations_by_width,
         resident_bytes=50,
         budget_bytes=100,
         floor_bytes=50,
@@ -1067,12 +1072,12 @@ def _refused_cell(
 def _planning_passes(
     *,
     monkeypatch: pytest.MonkeyPatch,
-    refusal: Callable[[int], backward_induction._CellBudgetError | None],
+    refusal: Callable[[int], Sequence[backward_induction._CellBudgetError]],
 ) -> list[int]:
     """Solve the household, refusing each planning pass as `refusal` says.
 
     `refusal` receives the chunk of the refused cell's kernel in that pass and
-    returns the refusal, or `None` to plan for real. Returns those chunks.
+    returns that pass's refusals, or none to plan for real. Returns the chunks.
     """
     chunks: list[int] = []
     compile_all_functions = backward_induction._compile_all_functions
@@ -1085,10 +1090,10 @@ def _planning_passes(
         )
         assert chunk is not None
         chunks.append(chunk)
-        error = refusal(chunk)
-        if error is None:
+        errors = refusal(chunk)
+        if not errors:
             return compile_all_functions(**kwargs)
-        raise backward_induction._CellBudgetRefusalsError([error])
+        raise backward_induction._CellBudgetRefusalsError(errors)
 
     monkeypatch.setattr(backward_induction, "_compile_all_functions", _refuse)
     household.get_model(
@@ -1106,14 +1111,18 @@ def test_narrowing_stops_once_the_reservation_stops_shrinking(
     """A reservation that stays put after a narrowing ends it after two passes."""
     chunks: list[int] = []
 
-    def _stalled(chunk: int) -> backward_induction._CellBudgetError:
+    def _stalled(chunk: int) -> list[backward_induction._CellBudgetError]:
         chunks.append(chunk)
-        return _refused_cell(reservation_bytes=80)
+        return [_refused_cell(reservation_bytes=80)]
 
-    with pytest.raises(WorkspaceBudgetError, match="no narrower workspace fits"):
+    with pytest.raises(
+        WorkspaceBudgetError, match="no narrower workspace fits"
+    ) as raised:
         _planning_passes(monkeypatch=monkeypatch, refusal=_stalled)
 
     assert chunks == [4, 2]
+    assert "Extrapolated from these two chunks" in str(raised.value)
+    assert "axis_widths={'query_cell': ...}" in str(raised.value)
 
 
 def test_narrowing_goes_on_while_the_reservation_shrinks_with_the_chunk(
@@ -1123,9 +1132,58 @@ def test_narrowing_goes_on_while_the_reservation_shrinks_with_the_chunk(
     chunks = _planning_passes(
         monkeypatch=monkeypatch,
         refusal=lambda chunk: (
-            None if chunk == 1 else _refused_cell(reservation_bytes=20 * chunk)
+            [] if chunk == 1 else [_refused_cell(reservation_bytes=20 * chunk)]
         ),
     )
+
+    assert chunks == [4, 2, 1]
+
+
+def test_narrowing_reads_each_refused_core_against_its_own_earlier_refusal(
+    *, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A core that fits after one narrowing does not end its cell-mate's narrowing.
+
+    Core `a` needs `20 * chunk` and fits at chunk 2. Core `b` needs
+    `20 + 30 * chunk` and fits at chunk 1. Read against `a`'s refusal at chunk
+    4, `b`'s at chunk 2 would extrapolate to a fixed part of 80 bytes.
+    """
+
+    def _two_cores(chunk: int) -> list[backward_induction._CellBudgetError]:
+        refused = {"a": 20 * chunk, "b": 20 + 30 * chunk}
+        return [
+            _refused_cell(reservation_bytes=reservation, core=core)
+            for core, reservation in refused.items()
+            if reservation > 50
+        ]
+
+    chunks = _planning_passes(monkeypatch=monkeypatch, refusal=_two_cores)
+
+    assert chunks == [4, 2, 1]
+
+
+def test_narrowing_reads_each_compiled_width_on_its_own(
+    *, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A narrow width that keeps shrinking keeps narrowing when a wide one stalls.
+
+    The wide width needs 80 bytes at every chunk and the narrow one `40 *
+    chunk`, so the smallest of the two is 80 at chunks 4 and 2 but 40 at 1.
+    """
+
+    def _two_widths(chunk: int) -> list[backward_induction._CellBudgetError]:
+        if chunk == 1:
+            return []
+        return [
+            _refused_cell(
+                reservations_by_width={
+                    (("lane", 2),): 80,
+                    (("lane", 1),): 40 * chunk,
+                }
+            )
+        ]
+
+    chunks = _planning_passes(monkeypatch=monkeypatch, refusal=_two_widths)
 
     assert chunks == [4, 2, 1]
 
@@ -1136,9 +1194,9 @@ def test_a_cell_that_fits_under_host_storage_is_refused_without_narrowing(
     """The refusal says to switch storage after the first pass."""
     chunks: list[int] = []
 
-    def _fits_on_the_host(chunk: int) -> backward_induction._CellBudgetError:
+    def _fits_on_the_host(chunk: int) -> list[backward_induction._CellBudgetError]:
         chunks.append(chunk)
-        return _refused_cell(reservation_bytes=80, host_fits=True)
+        return [_refused_cell(reservation_bytes=80, host_fits=True)]
 
     with pytest.raises(backward_induction._CellBudgetError):
         _planning_passes(monkeypatch=monkeypatch, refusal=_fits_on_the_host)

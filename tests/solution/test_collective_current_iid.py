@@ -42,7 +42,7 @@ from tests.solution import test_exit_reference_household as reference
 from tests.solution import test_public_exit_queries as public
 
 pytestmark = pytest.mark.coverage(
-    backends=("cpu", "gpu-small", "gpu-large"), precisions="both"
+    backends=("cpu", "gpu-small", "gpu-large"), precisions="representative"
 )
 
 

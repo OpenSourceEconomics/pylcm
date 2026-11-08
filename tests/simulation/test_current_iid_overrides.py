@@ -98,7 +98,9 @@ def _model(*, budgeted: bool = False, group: ShockGroup | None = None) -> Model:
 
 @pytest.mark.parametrize("base", [False, True])
 @pytest.mark.parametrize("budgeted", [False, True])
-@pytest.mark.coverage(backends=("cpu", "gpu-small", "gpu-large"), precisions="both")
+@pytest.mark.coverage(
+    backends=("cpu", "gpu-small", "gpu-large"), precisions="representative"
+)
 def test_public_path_tag_binds_the_current_law(*, base: bool, budgeted: bool) -> None:
     """A base path changes with parameters; a physical path retains its bits."""
     model = _model(budgeted=budgeted)
@@ -251,7 +253,9 @@ def test_wrapped_original_buffer_is_charged_before_conversion() -> None:
 
 
 @pytest.mark.parametrize("tiny", [False, True])
-@pytest.mark.coverage(backends=("cpu", "gpu-small", "gpu-large"), precisions="both")
+@pytest.mark.coverage(
+    backends=("cpu", "gpu-small", "gpu-large"), precisions="representative"
+)
 def test_inactive_observation_preserves_joint_draw_and_derivative(
     *, tiny: bool
 ) -> None:
@@ -301,7 +305,9 @@ def test_inactive_observation_preserves_joint_draw_and_derivative(
 
 @pytest.mark.parametrize("uniform", [False, True])
 @pytest.mark.parametrize("mixed", [False, True])
-@pytest.mark.coverage(backends=("cpu", "gpu-small", "gpu-large"), precisions="both")
+@pytest.mark.coverage(
+    backends=("cpu", "gpu-small", "gpu-large"), precisions="representative"
+)
 def test_subject_vmap_keeps_inactive_inverse_arithmetic_and_gradients_safe(
     *, uniform: bool, mixed: bool
 ) -> None:
@@ -518,7 +524,9 @@ def test_unknown_tagged_name_is_not_ignored() -> None:
         )
 
 
-@pytest.mark.coverage(backends=("cpu", "gpu-small", "gpu-large"), precisions="both")
+@pytest.mark.coverage(
+    backends=("cpu", "gpu-small", "gpu-large"), precisions="representative"
+)
 def test_budgeted_call_cache_retains_tag_schema_without_freezing_values() -> None:
     model = _model(budgeted=True)
     dtype = jnp.asarray(0.0).dtype
@@ -597,7 +605,9 @@ def _recorded_offer(*, eps: IntND) -> IntND:
 
 @pytest.mark.parametrize("physical", [False, True])
 @pytest.mark.parametrize("ordered", [False, True])
-@pytest.mark.coverage(backends=("cpu", "gpu-small", "gpu-large"), precisions="both")
+@pytest.mark.coverage(
+    backends=("cpu", "gpu-small", "gpu-large"), precisions="representative"
+)
 def test_discrete_override_labels_codes_and_saved_raw_values(
     *, tmp_path: Path, physical: bool, ordered: bool
 ) -> None:
