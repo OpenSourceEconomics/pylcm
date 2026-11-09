@@ -57,16 +57,6 @@ class _PrefixInterpolant(Protocol):
         valid_count: ScalarInt | None = None,
     ) -> tuple[FloatND, FloatND]: ...
 
-    def evaluate_validity(
-        self,
-        *,
-        nodes: FloatND,
-        values: FloatND,
-        query: FloatND,
-        interval_valid: BoolND | None = None,
-        valid_count: ScalarInt | None = None,
-    ) -> BoolND: ...
-
 
 class _PrefixSearch(Protocol):
     def __call__(
@@ -84,11 +74,7 @@ class _PrefixSearch(Protocol):
 def _prefix_interpolant(
     *, interpolant: LocalCubicOuterInterpolant
 ) -> _PrefixInterpolant:
-    for method_name in (
-        "evaluate",
-        "evaluate_with_derivative",
-        "evaluate_validity",
-    ):
+    for method_name in ("evaluate", "evaluate_with_derivative"):
         method = getattr(interpolant, method_name)
         assert "valid_count" in inspect.signature(method).parameters, (
             f"LocalCubicOuterInterpolant.{method_name} needs a runtime "
@@ -223,12 +209,6 @@ def test_padded_outer_reads_match_the_active_mesh(
     reference_pair = interp.evaluate_with_derivative(
         nodes=nodes, values=values, query=query
     )
-    reference_validity = interp.evaluate_validity(
-        nodes=nodes, values=values, query=query
-    )
-    np.testing.assert_array_equal(
-        reference_validity, (False, True, True, True, True, True, False)
-    )
     np.testing.assert_array_equal(reference_pair[0][jnp.asarray((0, -1))], -jnp.inf)
     np.testing.assert_array_equal(reference_pair[1][jnp.asarray((0, -1))], 0.0)
 
@@ -242,12 +222,6 @@ def test_padded_outer_reads_match_the_active_mesh(
     )
     for observed, expected in zip(none_pair, reference_pair, strict=True):
         np.testing.assert_array_equal(observed, expected)
-    np.testing.assert_array_equal(
-        prefix.evaluate_validity(
-            nodes=nodes, values=values, query=query, valid_count=None
-        ),
-        reference_validity,
-    )
     padded_nodes, padded_values = _padded(coordinates=coordinates, surface=surface)
     assert padded_nodes.shape == (_CAPACITY,)
     assert bool(jnp.all(jnp.isfinite(padded_nodes)))
@@ -271,15 +245,6 @@ def test_padded_outer_reads_match_the_active_mesh(
         ),
         reference_pair[0],
         decimal=DECIMAL_PRECISION,
-    )
-    np.testing.assert_array_equal(
-        prefix.evaluate_validity(
-            nodes=padded_nodes,
-            values=padded_values,
-            query=query,
-            valid_count=jnp.int32(len(coordinates)),
-        ),
-        reference_validity,
     )
 
 

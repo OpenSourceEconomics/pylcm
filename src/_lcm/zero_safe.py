@@ -77,7 +77,6 @@ from _lcm.probability import (
     is_live,
     is_negative,
     is_represented_zero,
-    nonzero_exact_product,
     scaled_by_power_of_two,
     scaled_down_by_power_of_two,
     scaled_exact_product,
@@ -138,57 +137,8 @@ _factored_with_tangent = jax.custom_jvp(_factored_primal)
 _factored_with_tangent.defjvp(_factored_jvp)
 
 
-def joint_weight(factors: FloatND) -> FloatND:
-    """Return the product of a node's probability factors, never rounded to zero.
-
-    A joint node carries one factor per stochastic axis, and the product is its
-    probability. Each factor can sit inside the dtype's normal range while the
-    product falls below it — in float32, `sqrt(tiny)/2` squared is subnormal —
-    at which point the hardware delivers exactly zero. That would make an event
-    which can occur indistinguishable from one which cannot, and downstream
-    nothing could tell them apart, because the two arrive as the same zero.
-
-    A product that vanishes this way leaves here as the **smallest representable
-    magnitude** instead, carrying the sign of the product. It is the smallest
-    value that is still nonzero, so a node that can occur keeps an infinity
-    standing at it, and it is as close to the discarded product as the format
-    allows. `zero_safe_weighted_term` decides which of those two properties is
-    the operative one, because that depends on the value.
-
-    The substitution is not one-sided. A product may underflow *below* the
-    smallest representable magnitude — in float32, `sqrt(tiny)/2` squared does —
-    and the substitute then overstates it. The overstatement is bounded by that
-    magnitude itself, so the node contributes at most
-    `smallest_subnormal * |value|`, which is smaller than the `tiny * |value|`
-    omission bound by a factor of `2**23` in single precision and `2**52` in
-    double. What is one-sided is the treatment of a weight that arrives
-    representable: `zero_safe_weighted_term` never enlarges one.
-
-    A product which is merely subnormal — the backend represented it rather than
-    flushing it — keeps its own magnitude, which is more informative than the
-    substitute.
-
-    A factor of exactly zero is the genuine null event, so the product keeps its
-    zero and the node contributes nothing whatever value stands at it. A NaN
-    factor stays poison.
-
-    Args:
-        factors: The factors stacked along the leading axis, one entry per
-            stochastic axis of the node. Trailing axes broadcast, so a scalar
-            regime probability stacked against a vector of node weights
-            reduces to one weight per node.
-
-    Returns:
-        Their product over the leading axis, with a product that vanished
-        despite every factor being able to occur replaced by the smallest
-        representable magnitude of the same sign.
-
-    """
-    return nonzero_exact_product(jnp.asarray(factors))
-
-
 def scaled_joint_weight(factors: FloatND) -> tuple[FloatND, IntND]:
-    """Return `joint_weight`'s product with its scale carried alongside it.
+    """Return a node's joint probability with its scale carried alongside it.
 
     The node's probability is `weights * 2**-shift`. A joint product that lands
     below the dtype's normal range cannot be carried as a plain float on this
@@ -204,9 +154,9 @@ def scaled_joint_weight(factors: FloatND) -> tuple[FloatND, IntND]:
     bring them onto a common scale first, which is what the shift is for.
 
     The shift is whatever the smallest product in the array needs, so nothing
-    that can occur is left below the format and none of `joint_weight`'s
-    substitution applies. A node that can occur therefore keeps its exact
-    probability, not an approximation of it.
+    that can occur is left below the format and no substitute magnitude stands in
+    for it. A node that can occur therefore keeps its exact probability, not an
+    approximation of it.
 
     Args:
         factors: The factors stacked along the leading axis, one entry per

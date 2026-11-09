@@ -1425,24 +1425,6 @@ def _merged_regime_params(
     }
 
 
-def _fail_if_state_names_are_wrong(
-    *,
-    initial_conditions: InitialConditions,
-    regimes: MappingProxyType[RegimeName, Regime],
-) -> None:
-    """Raise on an initial state no regime has; a set comparison, no device read."""
-    provided = set(initial_conditions) - {"regime_id", "own_stakeholder"}
-    known = set(PSEUDO_STATE_NAMES).union(
-        *(regime.simulation.state_names for regime in regimes.values())
-    )
-    if extra := provided - known:
-        msg = (
-            f"Unknown initial states: {sorted(extra)}. "
-            f"Valid states are: {sorted(known)}"
-        )
-        raise InvalidInitialConditionsError(format_messages([msg]))
-
-
 def _format_missing_states_message(*, missing: set[str], required: set[str]) -> str:
     """Format an error message for missing initial states.
 

@@ -6,7 +6,8 @@ import unittest
 from typing import TypedDict
 
 from _lcm_regime_finder.symbolic_frontier import (Budget, Diagram, Exhausted, check, digest, dominates,
-                             query, recover_witness, solve)
+                             query, solve)
+from tests.regime_finder._symbolic_witness import recover_witness
 
 
 type AxisName = str
@@ -160,7 +161,7 @@ def literal_frontier(packet):
     return {v for v in points if not any(u != v and all(u[i] <= v[i] for i in range(3)) for u in points)}
 
 
-class SymbolicAcceptance(unittest.TestCase):
+class SymbolicAcceptanceTests(unittest.TestCase):
     def test_joint_frontier_against_literal_policies_groupings_and_all_cuts(self):
         for seed in range(8):
             with self.subTest(seed=seed):

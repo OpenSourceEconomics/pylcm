@@ -12,8 +12,9 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from _lcm_regime_finder.callable_identity import CaptureIncomplete, CaptureSession, capture_session, resolve_callable, resolve_binding, validate_callable_records
+from _lcm_regime_finder.callable_identity import CaptureIncomplete, CaptureSession, capture_session, resolve_callable, resolve_binding
 from _lcm_regime_finder.model_snapshot import read_declarations, read_model, source_function
+from tests.regime_finder._callable_records import validate_callable_records
 
 
 def leaf(history):

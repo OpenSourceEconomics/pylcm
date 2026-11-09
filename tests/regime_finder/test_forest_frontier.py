@@ -4,7 +4,25 @@ import random
 import unittest
 
 from _lcm_regime_finder.forest_frontier import digest, optimize
-from _lcm_regime_finder.forest_check import materialize_verified_plan, query, verify
+from _lcm_regime_finder.forest_check import _decode, _normalize, _recover_assignment, query, verify
+
+
+def _materialize_verified_plan(instance, certificate, *, frontier_index):
+    """Return one provider-valid witness after complete independent verification."""
+    receipt = verify(instance, certificate)
+    if receipt["status"] != "PASS":
+        return receipt
+    if type(frontier_index) is not int or not 0 <= frontier_index < len(certificate["frontier"]):
+        raise ValueError("Invalid frontier witness index")
+    _, _, bins, *_ = _decode(instance)
+    point = certificate["frontier"][frontier_index]
+    assignment = _normalize(instance, _recover_assignment(certificate, certificate["root_table"], *point["source"]), bins)
+    groups = {}
+    for v, k in assignment.items():
+        groups.setdefault(k, []).append(v)
+    return {"status": "PASS", "cost": point["cost"], "assignment": assignment,
+            "blocks": sorted((sorted(members) for members in groups.values()), key=lambda b: tuple(b)),
+            "instance_sha256": receipt["instance_sha256"], "certificate_sha256": receipt["certificate_sha256"]}
 
 
 def example(layouts, *, pairs=(), sizes=None, actions=None, beta=1, chars=None):
@@ -123,7 +141,7 @@ class ExactForestTests(unittest.TestCase):
         instance = example([("x",), ("y",)])
         result = self.agreement(instance)
         for index in range(len(result["frontier"])):
-            plan = materialize_verified_plan(instance, result, frontier_index=index)
+            plan = _materialize_verified_plan(instance, result, frontier_index=index)
             self.assertEqual(plan["status"], "PASS")
             self.assertEqual(sorted(v for block in plan["blocks"] for v in block), ["0", "1"])
             for block in plan["blocks"]:

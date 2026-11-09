@@ -21,10 +21,11 @@ from _lcm.execution.value_transfer import (
     ValueTransferKind,
     ValueViewDescriptor,
     ValueViewLeaf,
+    _select_value_view,
+    _selection_operands,
     apply_value_transfer,
     classify_value_transfer,
 )
-from _lcm.execution.value_views import lower_value_view_selection
 from lcm.exceptions import ExecutionPlanningError
 
 # Run these tests on a four-CPU-device topology. The pin only applies in a
@@ -45,6 +46,24 @@ except RuntimeError:
 _skip_pytest_parallel = pytest.mark.skipif(
     _PYTEST_PARALLEL, reason="Can't set num cpus in pytest parallel"
 )
+
+
+def _lower_value_view_selection(
+    *, transfer: ResolvedValueTransfer
+) -> jax.stages.Lowered:
+    """Lower a selected view's selection stage exactly as dispatch runs it.
+
+    The stored value is described abstractly on its stored layout, so the
+    lowering and its compiled memory report describe the selection alone.
+    """
+    return _select_value_view.lower(
+        value=jax.ShapeDtypeStruct(
+            transfer.expected_shape,
+            transfer.expected_dtype,
+            sharding=transfer.stored_sharding,
+        ),
+        **_selection_operands(transfer=transfer),
+    )
 
 
 def _mesh(*, devices: list[jax.Device], axis: str) -> jax.sharding.Mesh:
@@ -470,7 +489,7 @@ def test_the_compiled_selection_communicates_nothing() -> None:
         kind=ValueTransferKind.CROSS_MESH_COPY,
     )
 
-    text = str(lower_value_view_selection(transfer=transfer).compile().as_text())
+    text = str(_lower_value_view_selection(transfer=transfer).compile().as_text())
 
     assert [op for op in _COLLECTIVE_OPS if op in text] == []
 
@@ -501,7 +520,7 @@ def test_the_compiled_selection_outputs_only_the_local_block() -> None:
         kind=ValueTransferKind.CROSS_MESH_COPY,
     )
 
-    stats = lower_value_view_selection(transfer=transfer).compile().memory_analysis()
+    stats = _lower_value_view_selection(transfer=transfer).compile().memory_analysis()
 
     assert stats is not None
     assert stats.output_size_in_bytes == _TYPE_VALUES[2].nbytes // 4

@@ -14,10 +14,10 @@ def test_action_partition_controls_are_complete_and_disjoint() -> None:
     """The partitioned route has its own complete, separately named population."""
     root = Path(__file__).parents[1]
     population = direct_flow.action_partition_mutation_specs(repo_root=root)
-    assert len(population) == 28
+    assert len(population) == 27
     assert (
         hashlib.sha256(("\n".join(sorted(population)) + "\n").encode()).hexdigest()
-        == "aea06e58244248014dafde2ddb9db4b566e1560d33fdfa4663b60b9b52ffae19"
+        == "7becddb63e053d1785d2636cd9d80ef0f3c0078bf370f3f347f756641ec214ae"
     )
     assert len(population) == direct_flow.EXPECTED_ACTION_PARTITION_MUTATION_COUNT
     for generator in (

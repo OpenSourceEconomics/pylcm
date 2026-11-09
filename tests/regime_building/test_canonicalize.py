@@ -1,4 +1,4 @@
-"""`canonicalize_regimes` — the model-level canonicalization stage.
+"""`canonicalize_phased_regimes` — the model-level canonicalization stage.
 
 Per regime and phase, every `state_transitions` value is expanded into the
 canonical target-granular form `Mapping[RegimeName, law]`:
@@ -27,7 +27,6 @@ from _lcm.reachability import build_phase_reachability
 from _lcm.regime_building.canonicalize import (
     _CoarseTransitionCell,
     canonicalize_phased_regimes,
-    canonicalize_regimes,
 )
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.phases import PhasedRegimeSpec, normalize_all_regime_phases
@@ -46,6 +45,7 @@ from lcm.regime import Regime as UserRegime
 from lcm.regime import RegimeReplacement
 from lcm.typing import FloatND, RegimeName, ScalarInt
 from tests.conftest import bind_laws
+from tests.regime_building._canonicalize import canonicalize_regimes
 
 
 class _RegimeOverrides(RegimeReplacement, total=False):
@@ -348,52 +348,3 @@ def test_terminal_regime_has_empty_canonical_transitions() -> None:
     specs = _two_regime_model_specs({"state_transitions": {"wealth": _next_wealth}})
     assert specs["dead"].solution.state_transitions == {}
     assert specs["dead"].solution.regime_transition is None
-
-
-def test_two_step_seam_matches_wrapper() -> None:
-    """`canonicalize_phased_regimes` over `normalize_all_regime_phases` equals
-    the `canonicalize_regimes` wrapper.
-
-    The main model path splits the wrapper into an explicit phase-normalization
-    step and a canonicalization step so that model-level age normalization can
-    sit between them. The split must not change the end result.
-    """
-    regimes, laws = _split(
-        {
-            "work": _regime(state_transitions={"wealth": _next_wealth}),
-            "retire": _regime(state_transitions={"wealth": _next_wealth}),
-            "dead": _dead(),
-        }
-    )
-    finalized = finalize_regimes(
-        user_regimes=regimes,
-        derived_categoricals={},
-        koopmans_aggregator=LinearAggregator(),
-        certainty_equivalent=LinearExpectation(),
-        laws=laws,
-    )
-
-    wrapper = canonicalize_regimes(user_regimes=finalized, laws=laws)
-
-    raw_specs = normalize_all_regime_phases(user_regimes=finalized, laws=laws)
-    two_step = canonicalize_phased_regimes(
-        raw_specs=raw_specs,
-        all_regime_names=frozenset(finalized),
-    )
-
-    assert set(wrapper) == set(two_step)
-    for regime_name in wrapper:
-        for phase in ("solution", "simulation"):
-            wrapped_slice = getattr(wrapper[regime_name], phase)
-            two_step_slice = getattr(two_step[regime_name], phase)
-            assert dict(wrapped_slice.functions) == dict(two_step_slice.functions)
-            assert dict(wrapped_slice.constraints) == dict(two_step_slice.constraints)
-            assert dict(wrapped_slice.grid_states) == dict(two_step_slice.grid_states)
-            assert dict(wrapped_slice.state_transitions) == dict(
-                two_step_slice.state_transitions
-            )
-            assert wrapped_slice.regime_transition == two_step_slice.regime_transition
-            assert (
-                wrapped_slice.stochastic_regime_transition
-                == two_step_slice.stochastic_regime_transition
-            )

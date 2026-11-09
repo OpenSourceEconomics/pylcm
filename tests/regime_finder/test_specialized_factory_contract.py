@@ -64,7 +64,7 @@ def original_case(*, clock="period", phased=False, resolved=False, values=(0, 1)
     return source
 
 
-class SpecializedFactoryContract(unittest.TestCase):
+class SpecializedFactoryContractTests(unittest.TestCase):
     def assert_no_unproved_removal(self, result, *, resolved=False):
         self.assertEqual(result.get("status"), "COMPLETE" if resolved else "UNRESOLVED",
                          "An unsupported specialization must preserve the valid original Model and remain explicit")

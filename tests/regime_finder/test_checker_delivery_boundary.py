@@ -15,7 +15,7 @@ from _lcm_regime_finder import cli, resources
 from .checker_delivery_oracle import assert_delivery, file_identity
 
 
-class CheckerDeliveryBoundary(unittest.TestCase):
+class CheckerDeliveryBoundaryTests(unittest.TestCase):
     def prepared(self, root, *, source_name='source.json'):
         source = root / source_name
         source.parent.mkdir(parents=True, exist_ok=True)

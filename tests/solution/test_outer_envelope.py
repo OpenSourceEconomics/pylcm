@@ -18,11 +18,12 @@ import numpy as np
 import pytest
 
 from _lcm.egm.carry import EGMCarry
-from _lcm.egm.outer_envelope import build_stacked_outer_carry, outer_envelope_at_query
+from _lcm.egm.outer_envelope import build_stacked_outer_carry
 from _lcm.solution.negm import _build_coh_shift_function
 from _lcm.typing import EconFunction, EconFunctionsMapping
 from lcm.exceptions import InvalidParamsError
 from lcm.typing import Float1D, FloatND
+from tests.solution._outer_envelope_reference import outer_envelope_at_query
 
 
 def test_coh_shift_derives_from_the_declared_cost_alone() -> None:

@@ -89,7 +89,7 @@ from _lcm.egm.validation import (
     fail_if_off_node_process_enters_utility,
 )
 from _lcm.grids import ContinuousGrid
-from _lcm.regime_law import RegimeLaw, RegimeLaws
+from _lcm.regime_law import RegimeLaw
 from _lcm.solution.dcegm import _BoundDCEGM
 from _lcm.solution.negm import _BoundNEGM
 from _lcm.typing import (
@@ -101,7 +101,6 @@ from _lcm.typing import (
 from lcm.exceptions import ModelInitializationError
 from lcm.regime import Regime as UserRegime
 from lcm.regime import StateTransitionEntry
-from lcm.solvers import NEGM
 from lcm.typing import (
     FloatND,
     IntND,
@@ -115,32 +114,6 @@ from lcm.typing import (
 # consumption and the durable independently and compares the mixed second
 # difference against zero, which a single point on either axis cannot form.
 _MIN_CROSS_DIFFERENCE_POINTS = 2
-
-
-def validate_negm_regimes(
-    *,
-    user_regimes: Mapping[RegimeName, UserRegime],
-    laws: RegimeLaws,
-) -> None:
-    """Validate the NEGM contract for every regime with an `NEGM` solver.
-
-    Args:
-        user_regimes: Mapping of regime names to user-provided `Regime`
-            instances.
-        laws: Each regime's law, bound from `Model(edges=...)`, by regime name.
-
-    Raises:
-        ModelInitializationError: If any regime with `solver=NEGM(...)` violates
-            the NEGM model contract.
-
-    """
-    for regime_name, user_regime in user_regimes.items():
-        if isinstance(user_regime.solver, NEGM):
-            validate_negm_regime(
-                regime_name=regime_name,
-                user_regime=user_regime,
-                law=laws[regime_name],
-            )
 
 
 def validate_negm_regime(

@@ -104,15 +104,6 @@ class _ShardConfig(TypedDict):
     workers: int
 
 
-class _LaneSummary(TypedDict):
-    job: str
-    workers: int
-    weighted_minutes: float
-    unweighted_file_count: int
-    largest_file: str | None
-    largest_file_seconds: float | None
-
-
 class _CeilingBacklog(TypedDict):
     file: str
     seconds_per_test: float
@@ -180,12 +171,6 @@ def unweighted_files(*, path: Path = MANIFEST_PATH) -> tuple[str, ...]:
     return tuple(load_manifest(path=path)["unweighted_files"])
 
 
-def file_weight_seconds(*, file_: str, path: Path = MANIFEST_PATH) -> float | None:
-    """Return one file's observed weight in seconds, or None if unweighted."""
-    row = load_manifest(path=path)["file_weights"].get(file_)
-    return None if row is None else float(row["seconds"])
-
-
 def guardrails(*, path: Path = MANIFEST_PATH) -> Mapping[str, float]:
     """Return the manifest's recorded operating budgets (minutes/seconds)."""
     return load_manifest(path=path)["guardrails"]
@@ -196,41 +181,6 @@ def invocations_for_job(
 ) -> tuple[Invocation, ...]:
     """Return every invocation recorded under one `cpu.yml` job name."""
     return tuple(inv for inv in invocations(path=path) if inv["job"] == job)
-
-
-def lane_summary(*, path: Path = MANIFEST_PATH) -> dict[str, _LaneSummary]:
-    """Return per-invocation worker count and weighted-minutes total.
-
-    Files with no observed weight are counted separately (`unweighted_files`
-    count) rather than folded into the weighted total as zero.
-    """
-    manifest = load_manifest(path=path)
-    weights = manifest["file_weights"]
-    summary: dict[str, _LaneSummary] = {}
-    for inv in manifest["invocations"]:
-        weighted_seconds = 0.0
-        unweighted = 0
-        largest_file = None
-        largest_seconds = -1.0
-        for file_ in inv["files"]:
-            row = weights.get(file_)
-            if row is None:
-                unweighted += 1
-                continue
-            seconds = float(row["seconds"])
-            weighted_seconds += seconds
-            if seconds > largest_seconds:
-                largest_seconds = seconds
-                largest_file = file_
-        summary[inv["id"]] = {
-            "job": inv["job"],
-            "workers": inv["environment"]["workers"],
-            "weighted_minutes": weighted_seconds / 60.0,
-            "unweighted_file_count": unweighted,
-            "largest_file": largest_file,
-            "largest_file_seconds": None if largest_file is None else largest_seconds,
-        }
-    return summary
 
 
 def leg_weights(*, leg: str, path: Path = MANIFEST_PATH) -> Mapping[str, float]:
@@ -336,7 +286,6 @@ __all__: Sequence[str] = (
     "coverage_contributors",
     "egm_acceptance_tests",
     "excluded_files",
-    "file_weight_seconds",
     "files_for",
     "general_leg_universe",
     "general_shard_universe",
@@ -344,7 +293,6 @@ __all__: Sequence[str] = (
     "invocation_by_id",
     "invocations",
     "invocations_for_job",
-    "lane_summary",
     "leg_names",
     "leg_weights",
     "linux_only_files",

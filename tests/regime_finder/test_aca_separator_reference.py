@@ -5,7 +5,7 @@ import random
 import unittest
 
 from _lcm_regime_finder.separator_frontier import (
-    Engine, METRICS, Problem, check, cost_query, dominates, produce, strictly_dominates_cost, validate_point,
+    Engine, METRICS, Problem, check, dominates, produce, validate_point,
 )
 
 
@@ -213,16 +213,6 @@ class OrderedSeparatorTests(unittest.TestCase):
                 bad["policy_sha256"] = "0" * 64
             self.assertEqual(check(problem, bad)["status"], "FAIL", mutation)
 
-    def test_exact_cost_queries_do_not_apply_legacy_endpoint_filter(self):
-        problem = Problem(fixture(2, left_count=1, right_count=1))
-        result = produce(problem)
-        self.assertEqual(check(problem, result)["status"], "PASS")
-        winner = cost_query(result, positive_weights={"work": "1/100", "storage": 1, "clarity": 10})
-        self.assertIn(winner, result["frontier"])
-        self.assertEqual(cost_query(result, upper_bounds={"work": -1}), [])
-        self.assertFalse(strictly_dominates_cost(result, winner["cost"]))
-        above = {k: max(p["cost"][k] for p in result["frontier"]) + 1 for k in METRICS}
-        self.assertTrue(strictly_dominates_cost(result, above))
 
 
 if __name__ == "__main__":

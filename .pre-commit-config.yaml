@@ -41,7 +41,7 @@ repos:
       - id: name-tests-test
         args:
           - --pytest-test-first
-        exclude: tests/mock_regime.py|tests/collective_fixtures.py|tests/envelope_configs.py|^tests/test_models/|^tests/data/|^tests/egm/_|^tests/execution/_|^tests/solution/_|^tests/simulation/_|^tests/simulation/initial_conditions/_|^tests/ci/|^tests/candidate_certificate/|^tests/conformance_solver/|^tests/regime_finder/(?!test_).*\.py$
+        exclude: tests/mock_regime.py|tests/collective_fixtures.py|tests/envelope_configs.py|^tests/test_models/|^tests/data/|^tests/egm/_|^tests/execution/_|^tests/params/_|^tests/regime_building/_|^tests/solution/_|^tests/simulation/_|^tests/simulation/initial_conditions/_|^tests/ci/|^tests/candidate_certificate/|^tests/conformance_solver/|^tests/regime_finder/(?!test_).*\.py$
       - id: no-commit-to-branch
         args:
           - --branch
@@ -207,6 +207,13 @@ repos:
         files: ^((src|tests|benchmarks)/.*\.py|docs/.*\.ipynb)$
         exclude: ^src/_lcm_regime_finder/
         require_serial: true
+      # Whole-repository analysis: a change in one file can orphan code in another.
+      - id: dead-code
+        name: no internal or test code without a caller
+        entry: pixi run -e type-checking python -m tests.ci.dead_code
+        language: system
+        pass_filenames: false
+        files: ^(src|tests|benchmarks|tools|docs|acceptance)/.*\.py$|^tests/ci/dead-code-allowlist\.toml$
       - id: no-hardcoded-user-paths
         name: no hardcoded user-specific absolute paths
         language: pygrep
@@ -285,6 +292,7 @@ ci:
     - candidate-certificate-anchors
     - keyword-only-convention
     - precise-annotations
+    - dead-code
     - ty
     - pixi-lock-check
     - ci-workload-weights

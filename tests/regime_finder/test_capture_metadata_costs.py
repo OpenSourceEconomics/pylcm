@@ -8,7 +8,7 @@ from _lcm_regime_finder.declarations import Normalizer
 from _lcm_regime_finder.structural_store import CaptureStore, LoadedCapture, relocate_captures
 
 
-class MetadataCosts(unittest.TestCase):
+class MetadataCostsTests(unittest.TestCase):
     def test_actual_source_object_uses_its_own_location(self):
         first = {'kind': 'object', 'fields': {'value': 1}}
         second = deepcopy(first)

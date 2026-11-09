@@ -7,12 +7,10 @@ from typing import Literal
 
 import pytest
 
-from _lcm.execution.workspace_planning import (
-    plan_workspace,
-    plan_workspace_bounded,
-)
+from _lcm.execution.workspace_planning import plan_workspace
 from lcm.exceptions import ExecutionPlanningError
 from lcm.execution import WidthSearch, WidthSearchPolicy
+from tests.execution._bounded_workspace_driver import plan_workspace_bounded
 from tests.execution.test_compiler_allocation_reservation import memory_stats
 from tests.execution.test_workspace_planning import _axis, _Compiler
 

@@ -500,16 +500,6 @@ class SimulationRuntime:
             wait=wait,
         )
 
-    def is_prepared(self, *, program: CoreProgram, period: int) -> bool:
-        """Return whether this period's declared body has a compiled selection."""
-        with self.lock:
-            selected = self.prepared.get(
-                (period, program.name, _func_dedup_key(func=program.function))
-            )
-        return selected is not None and isinstance(
-            selected.executable, jax.stages.Compiled
-        )
-
     def _prepare_materialized(
         self,
         *,

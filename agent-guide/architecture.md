@@ -48,7 +48,7 @@ short form an agent needs before editing.
   plain `Regime`; it enforces nothing and only documents that finalization has happened.
   A bare `Regime` validates only local, value-shape properties at construction —
   completeness may be satisfied only at the model level.
-- `canonicalize_regimes` (`src/_lcm/regime_building/canonicalize.py`): the model-level
+- `canonicalize_phased_regimes` (`src/_lcm/regime_building/canonicalize.py`): the model-level
   canonicalization stage. Rewrites every phase slice's laws into the canonical
   target-granular form `Mapping[RegimeName, law]` over exactly the reachable targets
   carrying the state in that phase — bare laws broadcast, per-target dicts pass through,
@@ -210,7 +210,7 @@ regime names to transition functions for target-dependent transitions.
 1. `prune_broadcast_variables()` weeds the broadcast states and actions per regime by
    DAG reachability, closing both phase slices jointly to one fixed point
 1. `normalize_regime_phases()` expands every slot into per-phase `RegimePhaseSpec`
-   slices, then `canonicalize_regimes()` rewrites each slice's laws and regime
+   slices, then `canonicalize_phased_regimes()` rewrites each slice's laws and regime
    transition into the canonical target-granular form
 1. `process_regimes()` converts the canonical spec into `_lcm.engine.Regime` objects and
    pre-compiles optimization functions

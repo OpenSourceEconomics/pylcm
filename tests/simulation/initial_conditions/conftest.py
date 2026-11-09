@@ -2,9 +2,9 @@
 
 import pytest
 
-from _lcm.params.processing import process_params
 from _lcm.typing import FlatParams
 from lcm import Model
+from tests.params._process_params import process_params
 from tests.simulation.initial_conditions._models import make_minimal_model
 
 

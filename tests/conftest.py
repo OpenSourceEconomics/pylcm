@@ -22,9 +22,6 @@ from numpy.typing import ArrayLike, NDArray
 from typing_extensions import TypedDict
 from xdist.workermanage import WorkerController
 
-from _lcm.egm.upper_envelope._exact_affine.ffi import (
-    kernel_built_for_current_backend,
-)
 from _lcm.engine import Regime
 from _lcm.execution.core_program import MaterializedCoreProgram
 from _lcm.execution.output_layout import ResolvedOutputLayout
@@ -64,6 +61,7 @@ from lcm.typing import (
     ScalarInt,
 )
 from tests.ci import ci_workloads, pytest_policy
+from tests.ci._capability import kernel_built_for_current_backend
 from tests.ci.cpu_suite_invocations import ignore_implicit_eight_device_collection
 from tests.ci.receipt_plugin import maybe_register as maybe_register_receipt_plugin
 from tests.ci.shard_test_files import (

@@ -19,9 +19,6 @@ from _lcm.regime_building.max_Q_over_a import (
     get_max_Q_over_a,
     get_streaming_max_Q_over_a,
 )
-from _lcm.solution.action_streaming import (
-    GridSearchEV1ActionReduction,
-)
 from _lcm.solution.contract import SolverBuildContext
 from _lcm.solution.grid_search import (
     _ActionStreamingDisposition,
@@ -406,18 +403,6 @@ def test_ev1_streaming_preserves_composite_nonfinite_semantics(
 
     assert bool(jnp.isnan(expected))
     assert bool(jnp.isnan(actual))
-
-
-def test_ev1_reduction_semantic_key_pins_the_composite_contract() -> None:
-    reduction = GridSearchEV1ActionReduction(n_discrete_action_axes=2)
-
-    assert reduction.semantic_key == (
-        "grid-search-ev1-action-reduction",
-        1,
-        2,
-        ("hard-max", 1),
-        ("logsumexp", 1),
-    )
 
 
 def _co_mapped_Q_and_F(

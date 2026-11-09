@@ -192,14 +192,6 @@ class HostDispatch(TypedDict):
     subject_outputs: NotRequired[bool]
 
 
-class MemoryRun[T: PytreeValue](TypedDict):
-    function: memory.Callable[..., T]
-    arguments: memory.Mapping[memory.ReferenceName, memory.PytreeValue]
-    subject_arg_names: NotRequired[tuple[memory.ReferenceName, ...]]
-    static_arguments: NotRequired[memory.Mapping[str, memory.StaticArgument]]
-    subject_outputs: NotRequired[bool]
-
-
 class InventoryCompiled(TypedDict):
     name: str
     executable: inventory.jax.stages.Compiled
@@ -245,13 +237,6 @@ class ChunkPreparation(TypedDict):
     current_iid_override_schema: NotRequired[chunk_admission.CurrentIIDOverrideSchema]
 
 
-class RuntimePrepare(TypedDict):
-    program: CoreProgram
-    arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree]
-    period: int
-    n_subjects: int
-
-
 type ChunkResults = dict[
     simulation.RegimeName, dict[int, simulation.PeriodRegimeSimulationData]
 ]
@@ -294,24 +279,6 @@ class PeriodValidation(TypedDict):
     ]
     memory: NotRequired[simulation.SimulationMemory | None]
     time_kind: NotRequired[Literal["age", "period"]]
-
-
-class ValueValidation(TypedDict):
-    value: simulation.FloatND
-    subject_ids_in_regime: simulation.BoolND
-    age: simulation.ScalarInt | simulation.ScalarFloat
-    regime_name: simulation.RegimeName
-    logger: simulation.logging.Logger
-    memory: NotRequired[simulation.SimulationMemory | None]
-    time_kind: NotRequired[Literal["age", "period"]]
-
-
-class TransitionCountsValidation(TypedDict):
-    logger: lcm_logging.logging.Logger
-    prev_regime_ids: lcm_logging.Int1D
-    new_regime_ids: lcm_logging.Int1D
-    regime_ids_to_names: lcm_logging.RegimeIdsToNames
-    counts_factory: NotRequired[lcm_logging.Callable[[], list[list[int]]] | None]
 
 
 class DiagnosticEnrichment(TypedDict):

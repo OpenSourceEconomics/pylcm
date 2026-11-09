@@ -297,7 +297,7 @@ _lcm/regime_building/
 ├── age_normalization.py  ← model-level normalization of age specialization
 ├── age_specialization.py ← per-age-specialized node resolution and
 │                            grid-shape validation
-├── canonicalize.py       ← canonicalize_regimes: rewrite every phase
+├── canonicalize.py       ← canonicalize_phased_regimes: rewrite every phase
 │                            slice's laws and regime transition into the
 │                            canonical target-granular form over exactly
 │                            the reachable targets

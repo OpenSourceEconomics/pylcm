@@ -13,11 +13,7 @@ from typing_extensions import TypedDict
 
 from _lcm.certainty_equivalent import CertaintyEquivalent
 from _lcm.grids import categorical
-from _lcm.params.processing import (
-    create_params_template,
-    get_flat_param_names,
-    process_params,
-)
+from _lcm.params.processing import create_params_template, get_flat_param_names
 from _lcm.probability import regime_mass_is_a_distribution
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.processing import process_regimes
@@ -60,6 +56,7 @@ from lcm.typing import (
     UserFunction,
 )
 from tests.conftest import bind_laws, build_prepared_structure
+from tests.params._process_params import process_params
 from tests.test_models.deterministic.regression import (
     LaborSupply,
     dead,

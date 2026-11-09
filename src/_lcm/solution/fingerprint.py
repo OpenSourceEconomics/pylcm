@@ -3732,11 +3732,6 @@ def _loaded_local_names(instruction: dis.Instruction) -> tuple[str, ...]:
     return (str(value),)
 
 
-def _referenced_global_names(code: types.CodeType) -> frozenset[str]:
-    """Collect global-name candidates from a function and nested code."""
-    return frozenset(_referenced_global_attribute_paths(code=code))
-
-
 def _referenced_global_attribute_paths(  # noqa: C901
     *,
     code: types.CodeType,

@@ -34,11 +34,12 @@ from _lcm.reachability import PhaseReachability
 from _lcm.regime_building.max_Q_over_a import get_max_Q_over_a
 from _lcm.regime_building.ndimage import map_coordinates
 from _lcm.solution.backward_induction import (
+    _apply_transfer_marks,
     _CoreCandidate,
     _count_triples_per_lowering_key,
     _drain_V_arr_shards,
     _group_cores_by_regime_period,
-    _mark_reused_transfers,
+    _transfer_consumer_counts,
     _uncompiled,
     solve,
 )
@@ -481,6 +482,19 @@ def _marks(*, marked: Mapping[_CoreCandidate, ResolvedCoreProgram]) -> list[bool
         for resolved in marked.values()
         for transfer in resolved.input_transfer_plan
     ]
+
+
+def _mark_reused_transfers(
+    *, resolved_programs: Mapping[_CoreCandidate, ResolvedCoreProgram]
+) -> dict[_CoreCandidate, ResolvedCoreProgram]:
+    """Mark every transfer whose result more than one source core of a period reads.
+
+    The two steps the solve loop runs over its resolved programs.
+    """
+    return _apply_transfer_marks(
+        programs=resolved_programs,
+        consumers=_transfer_consumer_counts(resolved_programs=resolved_programs),
+    )
 
 
 def test_two_width_candidates_of_one_core_are_one_consumer() -> None:

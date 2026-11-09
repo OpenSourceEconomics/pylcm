@@ -623,40 +623,25 @@ def test_period_capture_and_public_replay_report_no_age(tmp_path: Path) -> None:
     np.testing.assert_allclose(replay.value, 6.0)
 
 
-@pytest.mark.parametrize("surface", ["logical", "layout", "memory", "declared"])
+@pytest.mark.parametrize("surface", ["logical", "layout"])
 def test_period_inspection_reports_no_age(
     *, surface: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     model = _model(n_periods=3)
-    if surface == "declared":
-        records = model._compile_period_cores(
-            params={}, regime_name="work", period=1, axis_widths={}
-        )
-        assert records
-        for record in records:
-            assert record.period == 1
-            assert record.age is None
-        return
     monkeypatch.setenv("LCM_CAPTURE_PERIOD", "work@1")
     monkeypatch.setenv("LCM_CAPTURE_DIR", str(tmp_path))
     model.solve(params={}, log_level="off")
     directory = tmp_path / "work@1"
-    if surface == "memory":
-        analysis = period_replay.analyze_period_core_memory(directory=directory)
-        assert analysis.period == 1
-        assert analysis.age is None
-        assert analysis.core_memory_bytes
-    else:
-        replay = (
-            period_replay.replay_period(directory=directory)
-            if surface == "logical"
-            else period_replay.replay_period_on_recorded_layout(
-                directory=directory, devices=jax.devices()
-            )
+    replay = (
+        period_replay.replay_period(directory=directory)
+        if surface == "logical"
+        else period_replay.replay_period_on_recorded_layout(
+            directory=directory, devices=jax.devices()
         )
-        assert replay.period == 1
-        assert replay.age is None
-        np.testing.assert_allclose(replay.output.value, 6.0)
+    )
+    assert replay.period == 1
+    assert replay.age is None
+    np.testing.assert_allclose(replay.output.value, 6.0)
 
 
 def test_period_solve_and_simulation_logs_use_period_labels(

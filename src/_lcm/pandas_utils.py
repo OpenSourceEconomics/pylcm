@@ -400,7 +400,7 @@ def convert_series_in_params(
     """Convert pd.Series leaves in already-broadcast internal params to JAX arrays.
 
     Iterate over the template-shaped `flat_params` (produced by
-    `process_params`) and convert any `pd.Series` leaf values via
+    `broadcast_to_template`) and convert any `pd.Series` leaf values via
     `array_from_series`. `UserMappingLeaf` and `UserSequenceLeaf` values
     (and their canonical `MappingLeaf` / `SequenceLeaf` subclasses) are
     traversed and any Series inside are converted. Other values (scalars,
@@ -1386,36 +1386,6 @@ def _is_runtime_grid_param(*, func_name: FunctionName, user_regime: UserRegime) 
         grid = user_regime.actions[func_name]
         return isinstance(grid, IrregSpacedGrid) and grid.pass_points_at_runtime
     return False
-
-
-def _fail_if_period_level(sr: pd.Series) -> None:
-    """Raise if the Series has a 'period' level instead of 'age'."""
-    if "period" in sr.index.names:
-        msg = (
-            "Use 'age' (with actual age values) as the MultiIndex level name "
-            "instead of 'period'."
-        )
-        raise ValueError(msg)
-
-
-def _filter_to_grid_ages(
-    *,
-    series: pd.Series,
-    ages: TimeAxis,
-) -> pd.Series:
-    """Keep only rows whose `"age"` level value is on the `AgeGrid`.
-
-    Args:
-        series: Series with an `"age"` MultiIndex level.
-        ages: The model's `AgeGrid`.
-
-    Returns:
-        Filtered Series containing only rows with valid grid ages.
-
-    """
-    grid_ages = {float(v) for v in ages.exact_values}
-    age_values = series.index.get_level_values("age").astype(float)
-    return series.loc[age_values.isin(grid_ages)]
 
 
 @dataclass(frozen=True)

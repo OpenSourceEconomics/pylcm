@@ -159,10 +159,6 @@ class SolutionAuthority:
     )
     """Independently reconstructible public schemas, excluding private axes."""
 
-    def refs_for_key(self, key: ArtifactKey) -> tuple[ArtifactRef, ...]:
-        """Return active cells for one exact, versioned artifact identity."""
-        return tuple(ref for ref in self.replay if ref.key == key)
-
 
 # keyword-only-exempt: primary-argument=authority
 def snapshot_solution_authority(

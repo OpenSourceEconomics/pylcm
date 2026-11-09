@@ -190,20 +190,6 @@ def test_a_subnormal_affine_reading_is_never_published_as_zero() -> None:
 # the subnormal band. The float32 band is 23 halvings deep, so these stay
 # strictly inside it at both precisions — below that the query is not
 # unreadable, it is genuinely zero, which is a different thing and not a defect.
-def _backend_reads_subnormals() -> bool:
-    """Report whether arithmetic on this backend preserves a subnormal magnitude.
-
-    Asked of the backend rather than of its name, because this is a capability
-    and the two differ: XLA:CPU flushes subnormals to zero, XLA:GPU reads them
-    exactly. The probe multiplies by four, which is not an algebraic identity —
-    `* 1.0`, `+ 0.0` and `abs()` are, so XLA deletes them and they preserve the
-    bits on every backend while measuring nothing at all.
-    """
-    dtype = np.float32 if jnp.zeros(()).dtype.itemsize == 4 else np.float64
-    smallest = dtype(np.finfo(dtype).smallest_subnormal)
-    return float(jnp.asarray(smallest) * dtype(4.0)) != 0.0
-
-
 @pytest.mark.parametrize("halvings", [1, 2, 20])
 def test_strictly_ordered_lines_are_never_certified_level_at_a_subnormal_query(
     halvings: int,

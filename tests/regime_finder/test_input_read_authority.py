@@ -17,7 +17,7 @@ PROJECT = Path(__file__).resolve().parents[2]
 FIXTURE = PROJECT/'tests/regime_finder/data/generated-fixture'
 
 
-class InputReadAuthority(unittest.TestCase):
+class InputReadAuthorityTests(unittest.TestCase):
     def test_public_provenance_matrix(self):
         for case in matrix.cases():
             with self.subTest(case=case):

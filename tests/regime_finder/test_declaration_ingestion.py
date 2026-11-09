@@ -7,11 +7,12 @@ import marshal
 from pathlib import Path
 import unittest
 
-from _lcm_regime_finder.callable_identity import resolve_callable, validate_callable_records
+from _lcm_regime_finder.callable_identity import resolve_callable
 from _lcm_regime_finder.model_snapshot import source_function, normalize, read_declarations
 from _lcm_regime_finder.declarations import normalize_declarations, ScalarSource, DeclarationError
 from _lcm_regime_finder.model_adapter import adapt_snapshot
 from tests.regime_finder.test_model_adapter import snapshot, function, grid
+from tests.regime_finder._callable_records import validate_callable_records
 
 
 def where(condition,left,right):

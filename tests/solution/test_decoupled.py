@@ -746,49 +746,6 @@ def test_readout_follows_the_empty_tie_and_nan_contract(
     )
 
 
-def shocked_utility(*, choice: DiscreteAction, shock: FloatND) -> FloatND:
-    return utility(choice) + shock
-
-
-SHOCK_POINTS = 3
-
-
-def _shocked_model() -> lcm.Model:
-    return lcm.Model(
-        n_periods=3,
-        regimes={
-            "decide": lcm.Regime(
-                actions={"choice": lcm.DiscreteGrid(Choice)},
-                states={
-                    "wealth": lcm.DiscreteGrid(Wealth),
-                    "shock": lcm.NormalIIDProcess(
-                        n_points=SHOCK_POINTS,
-                        gauss_hermite=True,
-                        mu=0.0,
-                        sigma=1.0,
-                    ),
-                },
-                state_transitions={"wealth": next_wealth},
-                constraints={"can_afford": can_afford},
-                functions={"utility": shocked_utility},
-                koopmans_aggregator=PRESENT_BIAS,
-            ),
-            "end": lcm.Regime(
-                states={"wealth": lcm.DiscreteGrid(Wealth)},
-                functions={"utility": terminal_utility},
-            ),
-        },
-        regime_id_class=RegimeId,
-        initial_nodes=lcm.InitialNodes(by_period={0: "decide"}),
-        edges={
-            "decide": {
-                "decide": lcm.PeriodRange(exclusive_stop=1),
-                "end": lcm.Periods(values=(1,)),
-            }
-        },
-    )
-
-
 @pytest.mark.parametrize("period", [0, 1])
 def test_invariant_blocking_solves_like_the_unblocked_model(*, period: int) -> None:
     """Solving one mood at a time gives the unblocked stored values."""

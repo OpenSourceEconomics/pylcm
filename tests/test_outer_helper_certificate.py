@@ -60,7 +60,7 @@ def test_outer_helper_control_registry_keeps_every_explicit_name_and_association
     actual = direct_flow.outer_helper_mutation_specs(repo_root=_ROOT)
     expected = outer_helper_mutation_specs(repo_root=_ROOT)
     assert actual == expected
-    assert len(actual) == 40
+    assert len(actual) == 39
     assert set(actual) == direct_flow._EXPECTED_OUTER_HELPER_MUTATION_NAMES
     assert (
         len(
@@ -70,7 +70,7 @@ def test_outer_helper_control_registry_keeps_every_explicit_name_and_association
                 for owner in owners
             }
         )
-        == 20
+        == 19
     )
     assert {name for name in actual if ":surface:" in name} == {
         "outer_helpers:surface:golden_import_redirected",
@@ -138,7 +138,7 @@ def test_outer_helper_runner_keeps_the_new_population_separate_and_required(
     assert report["outer_helper_names_match_expected"]
     assert report["admitted_outer_helper_mutations"] == []
     assert report["all_rejected"]
-    assert report["mutation_count"] == 415
+    assert report["mutation_count"] == 412
     assert report["supplemental_mutation_count"] == 94
     assert report["retained_prefix_mutation_count"] == 115
     for name, case in cases.items():
@@ -272,7 +272,7 @@ def test_outer_helper_failure_prevents_the_actual_runner_aggregate(
     report = direct_flow_controls.run(repo_root=_ROOT)
     assert report["clean"]["ok"]
     assert report["clean"]["errors"] == []
-    assert report["mutation_count"] == 415
+    assert report["mutation_count"] == 412
     assert report["supplemental_mutation_count"] == 94
     assert report["retained_prefix_mutation_count"] == 115
     assert not report["all_rejected"]

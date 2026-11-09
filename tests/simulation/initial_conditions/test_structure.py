@@ -3,11 +3,11 @@
 import jax.numpy as jnp
 import pytest
 
-from _lcm.params.processing import process_params
 from _lcm.simulation.initial_conditions import validate_initial_conditions
 from _lcm.typing import FlatParams
 from lcm import Model
 from lcm.exceptions import InvalidInitialConditionsError
+from tests.params._process_params import process_params
 from tests.simulation.initial_conditions._models import make_asymmetric_state_model
 
 _ACTIVE = jnp.int32(0)

@@ -128,37 +128,6 @@ type _TransitionDeclaration = StateTransitionEntry | DecomposedTransition | AgeC
 _CONTINUITY_SHRINK_FACTOR = 0.4
 
 
-def validate_dcegm_regimes(
-    *,
-    user_regimes: Mapping[RegimeName, UserRegime],
-    laws: RegimeLaws,
-    solution_reachability: PhaseReachability | None = None,
-) -> None:
-    """Validate the DC-EGM contract for every regime with a `DCEGM` solver.
-
-    Args:
-        user_regimes: Mapping of regime names to user-provided `Regime`
-            instances.
-        laws: Each regime's law, bound from `Model(edges=...)`, by regime name.
-        solution_reachability: Static solution graph. When omitted, run only
-            regime-local checks.
-
-    Raises:
-        ModelInitializationError: If any regime with `solver=DCEGM(...)`
-            violates the DC-EGM model contract.
-
-    """
-    for regime_name, user_regime in user_regimes.items():
-        if isinstance(user_regime.solver, DCEGM):
-            validate_dcegm_regime(
-                regime_name=regime_name,
-                user_regime=user_regime,
-                user_regimes=user_regimes,
-                laws=laws,
-                solution_reachability=solution_reachability,
-            )
-
-
 def savings_stage_reads_euler_state(
     *, user_regime: UserRegime, law: RegimeLaw, solver: _BoundDCEGM
 ) -> bool:

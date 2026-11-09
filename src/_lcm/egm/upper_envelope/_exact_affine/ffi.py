@@ -110,31 +110,6 @@ def _default_backend() -> str:
 _REGISTERED: bool = False
 
 
-def kernel_built() -> bool:
-    """Return whether this platform has an exact-affine kernel at all.
-
-    Answers from the file alone, deliberately: a platform that never built one
-    is a different situation from a build that is present and cannot answer, and
-    only the first is a reason to stop asking. The second is a broken build and
-    belongs in front of whoever made it.
-    """
-    return _CPU_LIBRARY.is_file()
-
-
-def kernel_built_for_current_backend() -> bool:
-    """Return whether a kernel file exists for the selected JAX backend.
-
-    This is deliberately a file-presence predicate, not a loadability probe.
-    A missing file is a supported capability absence and can justify skipping a
-    test that explicitly declares an exact-kernel requirement. A file that is
-    present but stale, unloadable, or missing a symbol is a broken build and must
-    reach `_ensure_registered`, where it fails loudly.
-    """
-    if not kernel_built():
-        return False
-    return jax.default_backend() != "gpu" or cuda_kernel_built()
-
-
 def kernel_available() -> bool:
     """Return whether a verdict can be requested in this process.
 
@@ -1061,75 +1036,6 @@ def _shared_segment_winner_jvp(
 
 
 _shared_segment_winner = _shared_segment_winner_impl
-
-
-def exact_affine_handover(
-    *,
-    a_x0: FloatND,
-    a_x1: FloatND,
-    a_v0: FloatND,
-    a_v1: FloatND,
-    b_x0: FloatND,
-    b_x1: FloatND,
-    b_v0: FloatND,
-    b_v1: FloatND,
-    left: FloatND,
-    right: FloatND,
-) -> tuple[FloatND, IntND]:
-    """Return the first representable state where the incoming line owns.
-
-    The exact cross-multiplied line difference is affine. Its root is formed as
-    a fixed-width integer ratio and rounded directly to IEEE; an exact sign check
-    then moves at most one representable state to obtain the least float at or
-    above the root.
-
-    Args:
-        a_x0: Lower endpoint abscissa of the outgoing line.
-        a_x1: Upper endpoint abscissa of the outgoing line.
-        a_v0: Outgoing-line value at `a_x0`.
-        a_v1: Outgoing-line value at `a_x1`.
-        b_x0: Lower endpoint abscissa of the incoming line.
-        b_x1: Upper endpoint abscissa of the incoming line.
-        b_v0: Incoming-line value at `b_x0`.
-        b_v1: Incoming-line value at `b_x1`.
-        left: Left edge of the interval the outgoing line owns from.
-        right: Right edge of the interval in which the handover must lie.
-
-    Returns:
-        The first representable state the incoming line owns and a status. The
-        status is nonzero when the operands are invalid, the lines do not have a
-        unique increasing-slope handover, or that state cannot be represented.
-
-    Raises:
-        ExactAffineKernelUnavailableError: If the kernel is absent or unloadable.
-
-    """
-    _ensure_registered()
-    operands = _broadcast(
-        a_x0,
-        a_x1,
-        a_v0,
-        a_v1,
-        b_x0,
-        b_x1,
-        b_v0,
-        b_v1,
-        left,
-        right,
-    )
-    target = _target_for(
-        operands=operands,
-        f32="ExactAffineHandoverF32",
-        f64="ExactAffineHandoverF64",
-    )
-    result_shapes = (
-        jax.ShapeDtypeStruct(operands[0].shape, operands[0].dtype),
-        jax.ShapeDtypeStruct(operands[0].shape, jnp.int32),
-    )
-    handover, status = jax.ffi.ffi_call(
-        target, result_shapes, vmap_method="broadcast_all"
-    )(*operands)
-    return handover, status
 
 
 def exact_cell_hull(

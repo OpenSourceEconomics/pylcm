@@ -8,7 +8,7 @@ import unittest
 from _lcm_regime_finder.structural_store import CaptureStore, load_capture_structure, reference_info, final_input_check
 
 
-class StructuralStore(unittest.TestCase):
+class StructuralStoreTests(unittest.TestCase):
     def capture(self, root, source):
         store = CaptureStore(root / 'snapshot.json', check=lambda: None,
                              source_context={'source': 'literal unit-test roots'},

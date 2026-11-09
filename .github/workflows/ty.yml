@@ -46,6 +46,10 @@ jobs:
         # Every annotation under `src/`, `tests/`, `benchmarks/` and the docs names a
         # precise type, or carries a `# noqa: PANxxx - <reason>`.
         run: pixi run -e type-checking prek run precise-annotations --all-files
+      - name: Refuse dead internal and test code
+        shell: bash {0}
+        # Internal code that only tests call counts as dead; see tests/ci/dead_code.py.
+        run: pixi run -e type-checking prek run dead-code --all-files
   # A required status check matches by exact check-run name, and `name:` above
   # overrides what gets reported -- so branch protection's context `ty` never
   # matched `Run ty on the codebase on 3.14` and sat "Expected -- Waiting for

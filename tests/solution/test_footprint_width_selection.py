@@ -251,7 +251,7 @@ def _resident_bytes(
         metadata[(regime_name, period, core_key)] = metadata[
             (regime_name, period, "main")
         ]
-    return backward_induction._resident_bytes_by_triple(
+    inventory = backward_induction._resident_inventory_by_triple(
         regimes=kwargs["regimes"],
         ledger=programs.input_liveness,
         templates=SolveInputMappings(
@@ -261,6 +261,9 @@ def _resident_bytes(
         ),
         program_metadata=MappingProxyType(metadata),
         device_ids=kwargs["execution"].device_ids,
+    )
+    return MappingProxyType(
+        {triple: position.resident_bytes() for triple, position in inventory.items()}
     )
 
 

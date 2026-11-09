@@ -28,17 +28,6 @@ def _workflow_text() -> str:
     return _WORKFLOW_PATH.read_text(encoding="utf-8")
 
 
-def _workflow_run_blocks() -> list[str]:
-    workflow = yaml.safe_load(_workflow_text())
-    blocks: list[str] = []
-    for job in workflow["jobs"].values():
-        for step in job.get("steps", ()):
-            run = step.get("run")
-            if isinstance(run, str):
-                blocks.append(run)
-    return blocks
-
-
 def test_manifest_file_exists_and_parses():
     manifest = ci_workloads.load_manifest()
     assert manifest["schema_version"] == 2

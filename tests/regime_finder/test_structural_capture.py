@@ -13,8 +13,8 @@ from _lcm_regime_finder.cli import load_problem, save_json
 from _lcm_regime_finder.structural_check import Reader
 from _lcm_regime_finder.structural_events import source_anchor, compare_source
 from _lcm_regime_finder.structural_arrays import NativeWriter
-from _lcm_regime_finder.callable_identity import validate_callable_records
 from tests.regime_finder.test_round6_capture import FakeModel, callback_with_binding
+from tests.regime_finder._callable_records import validate_callable_records
 
 
 @dataclass(frozen=True)
@@ -24,7 +24,7 @@ class ReachabilityFixture:
     union: tuple[tuple[int, ...], ...]
 
 
-class StructuralCapture(unittest.TestCase):
+class StructuralCaptureTests(unittest.TestCase):
     def test_large_mapping_is_retained_without_expanding_capture_items(self):
         with tempfile.TemporaryDirectory() as tmp:
             model = FakeModel()

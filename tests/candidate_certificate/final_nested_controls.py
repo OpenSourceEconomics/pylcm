@@ -119,8 +119,6 @@ BODY_OWNERS = {
         "build_outer_candidate_bank",
         "_stack_leaves",
         "OuterCandidateBank.n_candidates",
-        "OuterCandidateBank.candidate_v_arr",
-        "OuterCandidateBank.candidate_carry",
     ),
 }
 
@@ -306,6 +304,6 @@ def final_nested_mutation_specs(
             "path": source,
             "source": ast.unparse(tree) + "\n",
         }
-    if len(specifications) != 103:
+    if len(specifications) != 101:
         raise ValueError("The declared final nested control population changed")
     return specifications

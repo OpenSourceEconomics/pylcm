@@ -17,7 +17,6 @@ from _lcm import transition_checks
 from _lcm.grids.continuous import _clip_grid_value
 from _lcm.off_grid import count_off_grid
 from _lcm.params.edges import regime_kernel_params
-from _lcm.regime_building.shock_average import average_over_shock
 from _lcm.regime_building.V import (
     VInterpolationInfo,
     _get_coordinate_finder,
@@ -93,6 +92,7 @@ from lcm.typing import (
     StateOrActionName,
 )
 from tests.conftest import DECIMAL_PRECISION
+from tests.regime_building._shock_average import average_over_shock
 from tests.simulation.test_entry_operation_reuse import _HostCompilation
 
 

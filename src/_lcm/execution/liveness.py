@@ -162,11 +162,6 @@ class PlannedInputLiveness[DispatchKey: Hashable, ArtifactKey: Hashable]:
         _require_hashable(value=artifact, label="artifact")
         return artifact in self._remaining_by_artifact
 
-    def remaining_consumers(self, *, artifact: ArtifactKey) -> int:
-        """Return the finite planned consumers remaining for ``artifact``."""
-        self._require_known(artifact=artifact)
-        return self._remaining_by_artifact[artifact]
-
     def is_retained(self, *, artifact: ArtifactKey) -> bool:
         """Report whether the solve result keeps the artifact on device."""
         self._require_known(artifact=artifact)

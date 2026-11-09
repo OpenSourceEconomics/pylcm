@@ -9,9 +9,9 @@ import unittest
 from _lcm_regime_finder.signature_proof import (
     METRICS, binary_model, check_frontier_certificate, check_unsat_tree,
     digest, frontier_cover_clauses, impossible, literal_partition_cost, pareto,
-    partition_frontier, signature_assignment_frontier, union_closure,
-    verify_binary_assignment, signature,
+    union_closure, verify_binary_assignment, signature,
 )
+from tests.regime_finder._signature_oracle import partition_frontier, signature_assignment_frontier
 
 
 def fixture(layouts=(('x',), ('y',), ('x',)), pairs=()):

@@ -14,7 +14,7 @@ import math
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from functools import partial
-from typing import Literal, NamedTuple, cast
+from typing import NamedTuple, cast
 
 import jax
 import jax.numpy as jnp
@@ -70,29 +70,6 @@ class _EV1ActionAccumulator(NamedTuple):
     active_branch_group_id: jax.Array
     branch_group: HardMaxAccumulator
     completed_branch_groups: LogSumExpAccumulator
-
-
-@dataclass(frozen=True)
-class GridSearchEV1ActionReduction:
-    """Composite reduction identity for streamed GridSearch EV1 values."""
-
-    n_discrete_action_axes: int
-
-    @property
-    def semantic_key(self) -> tuple[str, int, int, tuple[str, int], tuple[str, int]]:
-        """Identify the ordered branch-hard-max then log-sum-exp contract."""
-        return (
-            "grid-search-ev1-action-reduction",
-            1,
-            self.n_discrete_action_axes,
-            HARD_MAX_REDUCTION.semantic_key,
-            LOGSUMEXP_REDUCTION.semantic_key,
-        )
-
-    @property
-    def exactness(self) -> Literal["tolerance_equivalent"]:
-        """Return `"tolerance_equivalent"`: the branch mass is a floating-point sum."""
-        return "tolerance_equivalent"
 
 
 def build_streaming_max_Q_over_a(
@@ -179,21 +156,6 @@ class ActionPartitionLayout:
         padding blocks for the rest.
         """
         return -(-self.n_blocks // self.n_partitions)
-
-    def block_range(self, *, partition: int) -> tuple[int, int]:
-        """Return the half-open range of block indices one participant owns."""
-        return (
-            partition * self.n_blocks // self.n_partitions,
-            (partition + 1) * self.n_blocks // self.n_partitions,
-        )
-
-    def action_interval(self, *, partition: int) -> tuple[int, int]:
-        """Return the half-open global identity interval one participant owns."""
-        start_block, stop_block = self.block_range(partition=partition)
-        return (
-            min(start_block * self.block_width, self.n_actions),
-            min(stop_block * self.block_width, self.n_actions),
-        )
 
 
 def build_partitioned_streaming_max_Q_over_a(
@@ -624,7 +586,7 @@ class _PartitionedStreamingHardMax:
             block_width=self.block_width,
             n_partitions=self.n_partitions,
         )
-        # The traced form of `ActionPartitionLayout.block_range`.
+        # The half-open range of block indices this participant owns.
         n_blocks = jnp.int32(layout.n_blocks)
         first_block_index = partition * n_blocks // self.n_partitions
         stop_block_index = (partition + 1) * n_blocks // self.n_partitions

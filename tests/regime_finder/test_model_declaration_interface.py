@@ -10,7 +10,7 @@ from _lcm_regime_finder.semantic_check import _CallableRecords, _original_inputs
 from _lcm_regime_finder.structural_store import final_input_check
 
 
-class ModelDeclarationInterface(unittest.TestCase):
+class ModelDeclarationInterfaceTests(unittest.TestCase):
     def test_native_public_interfaces_cover_transition_wrappers(self):
         from beartype import beartype
         from lcm import Model, Regime, DiscreteGrid, InitialNodes, Periods, StochasticTransition, categorical

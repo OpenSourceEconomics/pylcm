@@ -533,27 +533,6 @@ class ResolvedGatedEdge:
             return compiled.channels
         return EdgeChannels(component_names=())
 
-    def combine_at(self, *, period: int) -> EdgeBranchCombiner:
-        """How to gate this edge's channels, compiled for one fold period.
-
-        Keyed by period for the same reason `folds_by_period` is: the combiner
-        carries this edge's projected readers, and a leg fallback on an
-        `AgeSpecializedGrid` is read on its own regime's nodes,
-        which move with age while their shape does not. A combiner taken from
-        another period would place that read on the wrong nodes and silently
-        gate on the wrong side.
-
-        The channel LAYOUT is period-invariant — an `AgeSpecializedGrid` moves
-        a read grid's nodes, never which components the legs open onto — so
-        `channels` still answers from any compiled period.
-        """
-        return _select_period_callable(
-            by_period=self.folds_by_period,
-            period=period,
-            what="combiner",
-            target=self.target,
-        ).combine
-
     def simulate_gate_evaluator_at(self, *, period: int) -> Callable[..., BoolND]:
         """Return the simulate gate evaluator for the period it routes against."""
         return _select_period_callable(

@@ -3613,27 +3613,6 @@ def _regime_retains_replay(*, regime: Regime, retain_replay: bool) -> bool:
     )
 
 
-def _resident_bytes_by_triple(
-    *,
-    regimes: MappingProxyType[RegimeName, Regime],
-    ledger: PlannedInputLiveness,
-    templates: SolveInputMappings[ValueTemplate],
-    program_metadata: Mapping[_CoreTriple, _ProgramExecutionMetadata],
-    device_ids: tuple[int, ...],
-) -> MappingProxyType[_CoreTriple, int]:
-    """Return the declared-read lower bound before candidates are compiled."""
-    inventory = _resident_inventory_by_triple(
-        regimes=regimes,
-        ledger=ledger,
-        templates=templates,
-        program_metadata=program_metadata,
-        device_ids=device_ids,
-    )
-    return MappingProxyType(
-        {triple: position.resident_bytes() for triple, position in inventory.items()}
-    )
-
-
 def _resident_inventory_by_triple(
     *,
     regimes: MappingProxyType[RegimeName, Regime],
@@ -7868,25 +7847,6 @@ def _donated_arguments(*, donations: tuple[ResolvedDonation, ...]) -> tuple[str,
     return tuple(donation.argument for donation in donations if donation.donated)
 
 
-def _mark_reused_transfers(
-    *, resolved_programs: Mapping[_CoreCandidate, ResolvedCoreProgram]
-) -> dict[_CoreCandidate, ResolvedCoreProgram]:
-    """Mark every transfer whose result more than one source core of a period reads.
-
-    Two source cores of one period that read one stored artifact into one required
-    layout need one copy between them, so the plan says so and the scheduler makes
-    it once. Consumers are counted by core triple, not by width candidate: two
-    widths of one core are alternatives, not two readers. The mark is a scheduling
-    fact and stays out of the specialization key, so every lowering key is the key
-    the unmarked program had. A program whose transfers already carry the marks the
-    count implies is returned unchanged, so the single-source case rebuilds nothing.
-    """
-    return _apply_transfer_marks(
-        programs=resolved_programs,
-        consumers=_transfer_consumer_counts(resolved_programs=resolved_programs),
-    )
-
-
 def _transfer_consumer_counts(
     *, resolved_programs: Mapping[_CoreCandidate, ResolvedCoreProgram]
 ) -> dict[_ConsumerKey, set[_CoreTriple]]:
@@ -7909,7 +7869,18 @@ def _apply_transfer_marks(
     programs: Mapping[_CoreCandidate, ResolvedCoreProgram],
     consumers: Mapping[_ConsumerKey, Collection[_CoreTriple]],
 ) -> dict[_CoreCandidate, ResolvedCoreProgram]:
-    """Write a census of shared transfer results onto each candidate's plan."""
+    """Write a census of shared transfer results onto each candidate's plan.
+
+    A transfer is marked when more than one source core of a period reads its
+    result: two source cores that read one stored artifact into one required layout
+    need one copy between them, so the plan says so and the scheduler makes it once.
+    Consumers are counted by core triple, not by width candidate
+    (`_transfer_consumer_counts`): two widths of one core are alternatives, not two
+    readers. The mark is a scheduling fact and stays out of the specialization key,
+    so every lowering key is the key the unmarked program had. A program whose
+    transfers already carry the marks the count implies is returned unchanged, so
+    the single-source case rebuilds nothing.
+    """
     marked: dict[_CoreCandidate, ResolvedCoreProgram] = {}
     for candidate, resolved in programs.items():
         triple = candidate[0]

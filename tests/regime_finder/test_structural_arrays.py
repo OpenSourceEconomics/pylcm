@@ -8,7 +8,7 @@ from _lcm_regime_finder.structural_transport import reseal
 
 
 @unittest.skipUnless(importlib.util.find_spec('numpy'), 'native NumPy environment required')
-class NativeArrays(unittest.TestCase):
+class NativeArraysTests(unittest.TestCase):
     def test_shared_contiguous_and_negative_stride_views(self):
         import numpy as np
         base = np.arange(12, dtype='<i4')

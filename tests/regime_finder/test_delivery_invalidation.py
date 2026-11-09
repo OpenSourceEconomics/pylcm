@@ -23,7 +23,7 @@ PUBLIC_DECISION_FILES = (
 )
 
 
-class DeliveryInvalidation(unittest.TestCase):
+class DeliveryInvalidationTests(unittest.TestCase):
     def source(self, root):
         path = root / 'input.json'
         source = json.loads(FIXTURE.read_text())

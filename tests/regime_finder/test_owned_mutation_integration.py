@@ -8,7 +8,7 @@ from . import rf10_checker_delivery_oracle as oracle
 from .owned_write_cases import cases, one_case
 
 
-class OwnedMutationIntegration(unittest.TestCase):
+class OwnedMutationIntegrationTests(unittest.TestCase):
     def test_public_owned_mutation_matrix(self):
         project = Path(__file__).resolve().parents[2]
         for case in cases():
@@ -32,11 +32,11 @@ class OwnedMutationIntegration(unittest.TestCase):
         import json
         import tempfile
         from _lcm_regime_finder import cli
-        from .test_delivery_invalidation import DeliveryInvalidation
+        from .test_delivery_invalidation import DeliveryInvalidationTests
         for artifact in ('manifest', 'chunk'):
             with self.subTest(artifact=artifact), tempfile.TemporaryDirectory() as folder:
                 root = Path(folder)
-                source, owner = DeliveryInvalidation().source(root)
+                source, owner = DeliveryInvalidationTests().source(root)
                 output = root/'analysis'
                 with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
                     self.assertEqual(cli.main(['analyze-model',str(source),'--output',str(output),'--worker']),0)

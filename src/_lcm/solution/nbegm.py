@@ -694,11 +694,6 @@ class NBEGM(OneMarginSolver):
             rows_share_state_grid=True,
         )
 
-    @property
-    def publishes_one_sided_jump_reads(self) -> bool:
-        """One-sided jump resolution duplicates abscissae across each jump."""
-        return self.jump_read == "one_sided"
-
     def build_constraint_routes(
         self, *, context: ConstraintRouteContext
     ) -> tuple[ConstraintRoute, ...]:
@@ -6750,11 +6745,6 @@ class _NBEGMRideAlongStatics:
     def n_published_jumps(self) -> int:
         """Number of jump preimages the carry publishes per row."""
         return self.n_jumps if self.publish_jump_topology else 0
-
-    @property
-    def n_continuation_classes(self) -> int:
-        """Number of continuation reads per ride cell across the branches."""
-        return len(self.continuation_representatives)
 
 
 def _nbegm_ride_along_statics(

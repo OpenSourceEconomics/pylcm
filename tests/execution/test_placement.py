@@ -175,28 +175,6 @@ def test_without_an_idle_device_the_smallest_footprint_wins() -> None:
     ) == ((0,), (1,))
 
 
-def test_a_full_mesh_and_device_zero_is_the_canonical_placement() -> None:
-    """A plan every regime of which sits where a single-device solve puts it."""
-    placement = plan_submesh_placement(
-        requests=(
-            _request(name="sharded", extents=(4,)),
-            _request(name="single", active=(3,)),
-        ),
-        n_devices=4,
-    )
-
-    assert placement.is_canonical
-
-
-def test_a_submesh_placement_is_not_canonical() -> None:
-    """A regime on three of four devices departs from the single-device layout."""
-    placement = plan_submesh_placement(
-        requests=(_request(name="sharded", extents=(3,)),), n_devices=4
-    )
-
-    assert not placement.is_canonical
-
-
 def test_the_placement_key_lists_every_regime_s_devices() -> None:
     """The key a lowering carries names each regime's device ids."""
     placement = plan_submesh_placement(

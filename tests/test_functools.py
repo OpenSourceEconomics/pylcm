@@ -9,7 +9,6 @@ from jax import vmap
 from numpy.testing import assert_array_almost_equal as aaae
 
 from _lcm.utils.functools import (
-    all_as_args,
     all_as_kwargs,
     allow_args,
     allow_only_kwargs,
@@ -77,33 +76,6 @@ def test_all_as_kwargs_returns_a_read_only_mapping():
     """The keyword view of the arguments cannot be mutated."""
     got = all_as_kwargs(args=(1,), kwargs={"b": 2}, arg_names=["a", "b"])
     assert isinstance(got, MappingProxyType)
-
-
-def test_all_as_args():
-    got = all_as_args(
-        args=(1, 2),
-        kwargs={"c": 3},
-        arg_names=["a", "b", "c"],
-    )
-    assert got == (1, 2, 3)
-
-
-def test_all_as_args_empty_args():
-    got = all_as_args(
-        args=(),
-        kwargs={"a": 1, "b": 2, "c": 3},
-        arg_names=["a", "b", "c"],
-    )
-    assert got == (1, 2, 3)
-
-
-def test_all_as_args_empty_kwargs():
-    got = all_as_args(
-        args=(1, 2, 3),
-        kwargs={},
-        arg_names=["a", "b", "c"],
-    )
-    assert got == (1, 2, 3)
 
 
 def test_convert_kwargs_to_args():

@@ -9,8 +9,9 @@ devices; a sharded one costs a single shard.
 
 `plan_resident_inventory` walks the schedule once and snapshots its live alias
 groups. Each candidate excludes only its own aligned compiler-retained reads;
-pruned inputs remain resident. `plan_resident_bytes` returns the earlier declared-
-read lower bound, which is insufficient for final candidate admission by itself.
+pruned inputs remain resident. Asked without a candidate's reads, an inventory
+returns the declared-read lower bound, which is insufficient for final candidate
+admission by itself.
 Actual fixed owners and predicted shared-copy/internal-output reservations add
 conservative per-device storage, allowing documented overlap with compiler peaks.
 """
@@ -66,7 +67,7 @@ class ScheduledUnit:
     """Artifact keys the unit's executables are handed as device arguments.
 
     A buffer named here is left out of the unit's resident bytes under the
-    argument convention `plan_resident_bytes` states. A value the plan copies
+    argument convention `plan_resident_inventory` states. A value the plan copies
     or reshards before the read does not belong here: the stored buffer and the
     copy are both live, and only the copy reaches the executable.
     """
@@ -294,34 +295,37 @@ def concrete_device_bytes(*, tree: FootprintTree) -> MappingProxyType[int, int]:
     return MappingProxyType(sizes)
 
 
-def plan_resident_bytes(
+def plan_resident_inventory(
     *,
     waves_by_period: Mapping[int, tuple[tuple[ScheduledUnit, ...], ...]],
     fold_dispatches: Mapping[tuple[int, RegimeName, RegimeName], Hashable],
     ledger: PlannedInputLiveness,
     footprints: Mapping[Hashable, ArtifactFootprint],
-) -> MappingProxyType[tuple[int, RegimeName], int]:
-    """Return the declared-read residency lower bound at each scheduled position.
+) -> MappingProxyType[tuple[int, RegimeName], ResidentInventory]:
+    """Walk the lifetime schedule once and retain immutable per-cell inventories.
+
+    Each snapshot precedes the cell's dispatch and includes its peers' outputs.
+    Candidate-specific compiler input exclusions are queried afterward; compilation
+    does not change the declared lifetime or the schedule's alias identities.
 
     The schedule is walked the way the loop will run it: periods descending,
     waves in order, and a period's gated-edge folds after its last wave. A
-    unit's number is what is already resident on its busiest device plus the
-    outputs of the units dispatched concurrently with it on that device; its
-    own outputs are not part of it, since the width it is being planned for
-    decides them, and neither are the buffers it is handed as arguments — see
-    the argument convention below.
+    unit's resident bytes are what is already resident on its busiest device
+    plus the outputs of the units dispatched concurrently with it on that device;
+    its own outputs are not part of them, since the width it is being planned for
+    decides them, and neither are the buffers it is handed as arguments — see the
+    argument convention below.
 
     **The argument convention.** Compiler peaks include only inputs surviving
-    compilation, while this pre-compilation bound excludes all declared aligned
-    inputs. Final admission must query ``ResidentInventory.resident_bytes`` with
-    the exact candidate's compiler-live reads and add its raw compiler peak.
-    Eliminated inputs remain owned and cannot inherit this lower bound's exclusion.
+    compilation, while the pre-compilation lower bound excludes all declared
+    aligned inputs. Final admission must query ResidentInventory.resident_bytes
+    with the exact candidate's compiler-live reads and add its raw compiler peak.
+    Eliminated inputs remain owned and cannot inherit the lower bound's exclusion.
 
-    A program declaring no reads
-    names no arguments, so the inputs the ledger pins on its behalf are charged
-    both here and inside its peak — an over-count, the safe direction. And the
-    lower-bound exclusion is per unit: a buffer another unit holds stays charged to that
-    unit, since it is not in that unit's peak.
+    A program declaring no reads names no arguments, so the inputs the ledger pins
+    on its behalf are charged both here and inside its peak — an over-count, the
+    safe direction. And the lower-bound exclusion is per unit: a buffer another
+    unit holds stays charged to that unit, since it is not in that unit's peak.
 
     `fold_dispatches` maps each fold dispatch id `(period, source, target)` to
     the artifact key it produces. Every unit's `(period, regime)` and every
@@ -340,30 +344,6 @@ def plan_resident_bytes(
     unit's own arguments into its output, and an argument is what the
     convention above assigns to the peak, so the buffer is charged once like
     any other — never twice, and never not at all.
-    """
-    inventory = plan_resident_inventory(
-        waves_by_period=waves_by_period,
-        fold_dispatches=fold_dispatches,
-        ledger=ledger,
-        footprints=footprints,
-    )
-    return MappingProxyType(
-        {cell: position.resident_bytes() for cell, position in inventory.items()}
-    )
-
-
-def plan_resident_inventory(
-    *,
-    waves_by_period: Mapping[int, tuple[tuple[ScheduledUnit, ...], ...]],
-    fold_dispatches: Mapping[tuple[int, RegimeName, RegimeName], Hashable],
-    ledger: PlannedInputLiveness,
-    footprints: Mapping[Hashable, ArtifactFootprint],
-) -> MappingProxyType[tuple[int, RegimeName], ResidentInventory]:
-    """Walk the lifetime schedule once and retain immutable per-cell inventories.
-
-    Each snapshot precedes the cell's dispatch and includes its peers' outputs.
-    Candidate-specific compiler input exclusions are queried afterward; compilation
-    does not change the declared lifetime or the schedule's alias identities.
     """
     _fail_if_footprint_is_unplanned(ledger=ledger, footprints=footprints)
     counts = dict(ledger.remaining_counts)
@@ -540,7 +520,7 @@ def _device_bytes(
     that device: the keys of an alias group are names for one allocation, so
     adding them up would bill the same bytes several times. A buffer the
     measured unit is handed as an argument on this device is not charged at
-    all, under the argument convention `plan_resident_bytes` states.
+    all, under the argument convention `plan_resident_inventory` states.
     """
     return sum(
         _group_bytes(members=members, device=device)

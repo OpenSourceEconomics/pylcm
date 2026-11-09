@@ -299,7 +299,7 @@ def test_transport_keeps_a_later_value_alive_until_the_predecessor_finishes() ->
     )
     ledger.commit_successful_dispatch(dispatch=(4, "producer"))
     assert not ledger.is_release_eligible(artifact=origin)
-    assert ledger.remaining_consumers(artifact=participation) == 1
+    assert ledger.remaining_counts[participation] == 1
     assert (3, "source") in ledger.pending_dispatches
     ledger.commit_successful_dispatch(dispatch=(3, "source"))
     assert ledger.is_release_eligible(artifact=origin)

@@ -1269,7 +1269,7 @@ def _resolve_fixed_params(
 ) -> FlatParams:
     """Resolve fixed_params against the params template.
 
-    Like `process_params`, support model/regime/function level specification, but
+    Like `broadcast_to_template`, support model/regime/function level specification, but
     do NOT require all template keys to be present — only match what's provided.
 
     Args:

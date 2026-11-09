@@ -8,7 +8,6 @@ from __future__ import annotations
 import hashlib
 import json
 import time
-from fractions import Fraction
 from .frontier_check import _Bounded
 from .cost_limits import count_limits
 
@@ -171,86 +170,3 @@ def check_cost_frontier(original, result, *, seconds=900, limits=None):
         return {'status': 'UNVERIFIED', 'cost_family_complete_verified': False, 'reason': str(exc)}
     except (KeyError, IndexError, ValueError, TypeError, RuntimeError, RecursionError) as exc:
         return {'status': 'FAIL', 'cost_family_complete_verified': False, 'reason': str(exc)}
-
-
-def _vectors(result):
-    if result['backend'] == 'protected-components':
-        return [tuple(v) for v in result['frontier']]
-    if result['backend'] == 'ordered-domain-separator':
-        return [tuple(p['cost'][k] for k in ('work', 'storage', 'clarity')) for p in result['proof']['frontier']]
-    return [tuple(v) for v in result['proof']['frontier']]
-
-
-def cost_query(original, result, *, upper_bounds=None, dominated_vector=None, weights=None, seconds=900, limits=None):
-    """Independently verified threshold/dominance/recommendation with one witness."""
-    seconds = float('inf') if seconds is None else seconds
-    counts = count_limits(limits)
-    checked = check_cost_frontier(original, result, seconds=seconds, limits=counts)
-    if not checked.get('cost_family_complete_verified'):
-        return checked
-    points = _vectors(result)
-    for value in (upper_bounds, dominated_vector):
-        if value is not None and (len(value) != 3 or any(type(v) is not int for v in value)):
-            raise ValueError('Cost bounds require an integer triple')
-    if upper_bounds is not None:
-        points = [p for p in points if all(a <= b for a, b in zip(p, upper_bounds))]
-    if dominated_vector is not None:
-        points = [p for p in points if p != tuple(dominated_vector)
-                  and all(a <= b for a, b in zip(p, dominated_vector))]
-    if weights is not None:
-        if len(weights) != 3:
-            raise ValueError('Cost weights require a positive rational triple')
-        coefficients = [Fraction(str(w)) for w in weights]
-        if any(w <= 0 for w in coefficients):
-            raise ValueError('Cost weights must be strictly positive')
-        points.sort(key=lambda p: (sum(w * v for w, v in zip(coefficients, p)), p))
-    else:
-        points.sort()
-    response = {'status': 'PASS', 'answer': bool(points), 'input_sha256': _hash(original),
-                'certificate_sha256': _hash(result), 'legacy_endpoint_preference': 'NOT_APPLIED',
-                'source_semantics': 'NOT_CHECKED_HERE'}
-    if not points:
-        return response
-    selected = points[0]
-    analysis = _analysis(original)
-    backend = result['backend']
-    if backend == 'symbolic-policy':
-        from .symbolic_frontier import recover_witness
-        witness = recover_witness(packet=_symbolic_packet(original, analysis), certificate=result['proof'], cost=selected,
-                                  max_seconds=seconds, max_equations=counts['symbolic_operations'],
-                                  max_leaf_candidates=counts['symbolic_leaf_candidates'],
-                                  max_frontier_points=counts['frontier_points'])
-    elif backend == 'ordered-domain-separator':
-        witness = next(p for p in result['proof']['frontier']
-                       if tuple(p['cost'][k] for k in ('work', 'storage', 'clarity')) == selected)
-    else:
-        from .frontier_check import IndependentFamily
-        from .forest_check import materialize_verified_plan
-        # Preserve one feasible predecessor per Pareto cost, not assignments for
-        # every recurrence point. All component proofs were already replayed.
-        partial = {(0, 0, 0): []}
-        for record in result['components']:
-            choices = ([tuple(p['cost']) for p in record['proof']['frontier']] if record['backend'] == 'singleton-forest'
-                       else [tuple(p['cost'][k] for k in ('work', 'storage', 'clarity')) for p in record['proof']['frontier']])
-            candidates = {}
-            for old, path in partial.items():
-                for index, vector in enumerate(choices):
-                    total = tuple(a + b for a, b in zip(old, vector))
-                    if all(a <= b for a, b in zip(total, selected)):
-                        candidates.setdefault(total, path + [index])
-            partial = {p: path for p, path in candidates.items()
-                       if not any(q != p and all(a <= b for a, b in zip(q, p)) for q in candidates)}
-        if selected not in partial:
-            raise ValueError('Verified root cost has no component witness')
-        family = IndependentFamily(analysis, seconds=seconds, max_segments=counts['segments'],
-            max_groupings=counts['groupings'], max_frontier_points=counts['frontier_points'])
-        policy = analysis['projection_policies'][0]['option_by_cell']
-        components = [part for c in family.components() for part in family.separate_domains(c, policy)]
-        witness = []
-        for component, record, index in zip(components, result['components'], partial[selected]):
-            if record['backend'] == 'singleton-forest':
-                witness.append(materialize_verified_plan(family.signature_instance(component, policy),
-                                                         record['proof'], frontier_index=index))
-            else:
-                witness.append(record['proof']['frontier'][index])
-    return response | {'witness_cost': selected, 'witness': witness}

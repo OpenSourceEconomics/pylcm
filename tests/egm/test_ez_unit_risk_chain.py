@@ -10,7 +10,6 @@ import pytest
 
 from _lcm.egm.ez_kernel import (
     ez_blend_partials,
-    ez_continuation,
     ez_invert_partials,
     ez_transform_partials,
 )
@@ -18,6 +17,7 @@ from _lcm.egm.ez_power_mean import continuation_power_mean
 from _lcm.power_mean import weighted_power_mean
 from lcm.typing import FloatND, ScalarFloat
 from tests.conftest import DECIMAL_PRECISION
+from tests.solution._ez_continuation import ez_continuation
 
 
 @pytest.mark.coverage(backends=("cpu",), precisions="both")

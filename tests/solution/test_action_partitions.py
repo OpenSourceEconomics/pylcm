@@ -374,14 +374,33 @@ def test_partitioned_reduction_keeps_each_hard_max_convention(
     )
 
 
+def _block_range(*, layout: ActionPartitionLayout, partition: int) -> tuple[int, int]:
+    """Return the half-open range of block indices one participant owns."""
+    return (
+        partition * layout.n_blocks // layout.n_partitions,
+        (partition + 1) * layout.n_blocks // layout.n_partitions,
+    )
+
+
+def _action_interval(
+    *, layout: ActionPartitionLayout, partition: int
+) -> tuple[int, int]:
+    """Return the half-open global action interval one participant owns."""
+    start_block, stop_block = _block_range(layout=layout, partition=partition)
+    return (
+        min(start_block * layout.block_width, layout.n_actions),
+        min(stop_block * layout.block_width, layout.n_actions),
+    )
+
+
 def test_more_participants_than_blocks_leaves_empty_partitions_that_change_nothing():
     values, feasible = _draw_case(seed=3, n_cells=8, n_actions=5)
     layout = ActionPartitionLayout(n_actions=5, block_width=2, n_partitions=7)
     empty = [
         partition
         for partition in range(7)
-        if layout.action_interval(partition=partition)[0]
-        == layout.action_interval(partition=partition)[1]
+        if _action_interval(layout=layout, partition=partition)[0]
+        == _action_interval(layout=layout, partition=partition)[1]
     ]
 
     got = _partitioned(n_partitions=7, block_width=2, values=values, feasible=feasible)
@@ -402,7 +421,8 @@ def test_partition_intervals_are_ordered_whole_blocks_covering_every_action_once
         n_actions=n_actions, block_width=block_width, n_partitions=n_partitions
     )
     intervals = [
-        layout.action_interval(partition=partition) for partition in range(n_partitions)
+        _action_interval(layout=layout, partition=partition)
+        for partition in range(n_partitions)
     ]
 
     covered = [action for start, stop in intervals for action in range(start, stop)]
@@ -412,7 +432,8 @@ def test_partition_intervals_are_ordered_whole_blocks_covering_every_action_once
     block_counts = [
         stop - start
         for start, stop in (
-            layout.block_range(partition=partition) for partition in range(n_partitions)
+            _block_range(layout=layout, partition=partition)
+            for partition in range(n_partitions)
         )
     ]
     no_idle_participant = layout.n_blocks < n_partitions or min(block_counts) >= 1

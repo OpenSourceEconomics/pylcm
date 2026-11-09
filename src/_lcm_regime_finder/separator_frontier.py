@@ -16,7 +16,6 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 from dataclasses import dataclass
-from fractions import Fraction
 from itertools import chain
 from pathlib import Path
 import argparse
@@ -606,32 +605,8 @@ def check(problem, result, *, seconds=900, max_points=50000):
         return {"status": "FAIL", "frontier_complete_verified": False, "reason": str(exc)}
 
 
-def cost_query(result, *, upper_bounds=None, positive_weights=None):
-    """Exact upper-threshold and positive-rational cost recommendation queries.
-
-    Call only after independent PASS. This query never applies the legacy
-    endpoint preference to a different representative and never claims to do so.
-    """
-    if result["status"] != "COMPLETE":
-        raise ValueError("A complete, independently checked result is required")
-    points = result["frontier"]
-    if upper_bounds is not None:
-        points = [p for p in points if all(p["cost"][k] <= v for k, v in upper_bounds.items())]
-    if positive_weights is None:
-        return points
-    weights = {k: Fraction(str(positive_weights[k])) for k in METRICS}
-    if any(w <= 0 for w in weights.values()):
-        raise ValueError("Strictly positive rational weights required")
-    return min(points, key=lambda p: (sum(weights[k] * p["cost"][k] for k in METRICS),
-               tuple(p["cost"][k] for k in METRICS))) if points else None
 
 
-def strictly_dominates_cost(result, candidate):
-    """After independent PASS, test strict cost domination of an arbitrary vector."""
-    if result["status"] != "COMPLETE":
-        raise ValueError("A complete, independently checked result is required")
-    value = tuple(candidate[k] for k in METRICS)
-    return any(dominates(tuple(point["cost"][k] for k in METRICS), value) for point in result["frontier"])
 
 
 def main():

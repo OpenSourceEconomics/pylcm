@@ -1,6 +1,6 @@
 """The model-level canonicalization stage.
 
-`canonicalize_regimes` rewrites every regime's phase slices into the canonical
+`canonicalize_phased_regimes` rewrites every regime's phase slices into the canonical
 target-granular form: each `state_transitions` value becomes a
 `Mapping[RegimeName, law]` over exactly the retained temporal targets that
 carry the state in that phase:
@@ -40,14 +40,11 @@ from _lcm.grids import Grid
 from _lcm.identity_transition import _IdentityTransition
 from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.reachability import PhaseReachability, candidate_targets_from_transition
-from _lcm.regime_building.finalize import FinalizedUserRegime
 from _lcm.regime_building.phases import (
     PhasedRegimeSpec,
     RegimePhaseSpec,
     _PhaseRegimeTransition,
-    normalize_all_regime_phases,
 )
-from _lcm.regime_law import RegimeLaws
 from _lcm.typing import RegimeName, StateName
 from _lcm.utils.error_messages import format_messages
 from lcm.exceptions import ModelInitializationError
@@ -65,42 +62,6 @@ type _CanonicalRegimeTransition = (
 type _CanonicalJointTransitions = MappingProxyType[
     RegimeName, MappingProxyType[str, JointTransition]
 ]
-
-
-def canonicalize_regimes(
-    *,
-    user_regimes: Mapping[RegimeName, FinalizedUserRegime],
-    laws: RegimeLaws,
-) -> MappingProxyType[RegimeName, PhasedRegimeSpec]:
-    """Split every finalized regime into phases and canonicalize its laws.
-
-    Convenience wrapper that normalizes every regime's `Phased` slots and then
-    canonicalizes the resulting specs. The main model path (`process_regimes`)
-    instead calls `normalize_all_regime_phases` and `canonicalize_phased_regimes`
-    explicitly, so that model-level age normalization can sit between the two
-    steps. This wrapper is retained for callers and unit tests that need the
-    former end-to-end behavior.
-
-    Args:
-        user_regimes: Mapping of regime names to finalized regimes.
-        laws: Each regime's law, bound from `Model(edges=...)`, by regime name.
-
-    Returns:
-        Immutable mapping of regime names to per-phase specs whose every
-        `state_transitions` value and every non-terminal regime transition
-        is a canonical per-target mapping.
-
-    Raises:
-        ModelInitializationError: If a per-target regime transition or state
-            law names an unknown regime, or a state law does not cover every
-            retained temporal target carrying the state.
-
-    """
-    raw_specs = normalize_all_regime_phases(user_regimes=user_regimes, laws=laws)
-    return canonicalize_phased_regimes(
-        raw_specs=raw_specs,
-        all_regime_names=frozenset(user_regimes),
-    )
 
 
 def canonicalize_phased_regimes(

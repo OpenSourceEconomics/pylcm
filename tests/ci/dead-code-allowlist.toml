@@ -1,0 +1,77 @@
+# Uses of internal or test code that vulture cannot see. Every entry needs a reason;
+# an entry that matches nothing fails `python -m tests.ci.dead_code`.
+
+[[allow]]
+path = "src/_lcm/egm/nbegm_validation.py"
+name = "visit_Match"
+reason = "ast.NodeVisitor dispatches visit_<NodeClass> by name from checker.visit(tree); vulture's visitor whitelist lacks ast.Match."
+
+[[allow]]
+path = "src/_lcm/egm/upper_envelope/_exact_affine/ffi.py"
+name = "_*_jvp"
+reason = "JAX custom_jvp rules registered with @<primitive>.defjvp; JAX invokes them under differentiation, never by name."
+
+[[allow]]
+path = "src/_lcm/optimization/implicit_outer_derivative.py"
+name = "_continuous_outer_optimum_jvp"
+reason = "JAX custom_jvp rule registered with @continuous_outer_optimum.defjvp; JAX invokes it under differentiation, never by name."
+
+[[allow]]
+path = "src/_lcm/simulation/programs.py"
+name = "_Gate*Arguments"
+reason = "TypedDicts used only as quoted cast() type expressions; ruff TC006 requires the quotes, so vulture sees no load."
+
+[[allow]]
+path = "src/_lcm/*"
+name = "exactness"
+reason = "Member of the runtime_checkable ReductionDeclaration protocol; core_program.py `isinstance(axis.reduction, ReductionDeclaration)` requires it on every reduction, and lcm.solvers documents it for custom reductions."
+
+[[allow]]
+path = "src/_lcm_regime_finder/pytask_api.py"
+name = "export_model"
+reason = "Pending maintainer decision (2026-11-09): whether the metadata-only pytask entry point for externally owned task setup stays public API. No in-repo caller exists; the regime-finder tests use it as their capture driver."
+
+[[allow]]
+path = "src/_lcm_regime_finder/model_snapshot.py"
+name = "read_declarations"
+reason = "Pending maintainer decision (2026-11-09): whether the documented public pre-program metadata contract, which a user-facing RuntimeError tells users to call, stays. Only tests call it."
+
+[[allow]]
+path = "src/_lcm_regime_finder/frontier_check.py"
+name = "verify_signature_cover"
+reason = "Pending maintainer decision (2026-11-09): whether the verifier for an externally produced exact Pareto cover proof, and its proof-checking kernel, stay as a hook for an external proof-capable backend. No producer in the repository emits such a proof."
+
+[[allow]]
+path = "src/_lcm_regime_finder/signature_proof.py"
+name = "check_frontier_certificate"
+reason = "Pending maintainer decision (2026-11-09): the instance-level counterpart of verify_signature_cover; whether checking an externally produced cover proof, and its proof-checking kernel, stays. No producer in the repository emits such a proof."
+
+[[allow]]
+path = "tests/*"
+name = "visit_*"
+reason = "ast.NodeVisitor methods dispatched by node class name through NodeVisitor.visit/generic_visit."
+
+[[allow]]
+path = "tests/*"
+name = "pytest_*"
+reason = "pytest and pytest-xdist hook implementations, called by the plugin manager by name. pytest rejects unknown pytest_* hooks, so the prefix cannot hide a typo."
+
+[[allow]]
+path = "tests/*"
+name = "report_*"
+reason = "Module-level entry points run in a child interpreter: the file's _run_in_*_process builds `python -c \"from <module> import <entry_point> as entry; ...\"`, so the only use is a string."
+
+[[allow]]
+path = "tests/solution/test_donation_read_multiplicity.py"
+name = "fanout_values_agree"
+reason = "Called only from the _FOUR_DEVICE_PROGRAM string executed in a `python -c` child."
+
+[[allow]]
+path = "tests/solution/test_donation_two_active_regimes.py"
+name = "_Counting*"
+reason = "Protocol and TypedDict named only in quoted cast(...) type expressions (ruff TC006 keeps them quoted)."
+
+[[allow]]
+path = "tests/test_grids.py"
+name = "_Bad"
+reason = "Defining the class under pytest.raises is the test; @categorical must reject it at decoration time."

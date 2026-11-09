@@ -41,6 +41,7 @@ from lcm.regime import Regime
 from lcm.solver_api import ArtifactKey, SolutionResult
 from lcm.solvers import EGM
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
+from tests.execution._buffer_registry import declared_shards
 from tests.regime_building.test_gated_edges_collective_solve import (
     EKLRegimeId,
     _make_full_topology_regimes,
@@ -495,7 +496,11 @@ def test_both_diagnostic_routes_declare_the_same_buffers() -> None:
         for field in dataclasses.fields(payload)
         for shard in shard_identities(array=getattr(payload, field.name))
     )
-    assert walked.declared_shards == enumerated.declared_shards == every_field
+    assert (
+        declared_shards(registry=walked)
+        == declared_shards(registry=enumerated)
+        == every_field
+    )
 
 
 def test_both_diagnostic_routes_leave_one_declaration_per_buffer() -> None:

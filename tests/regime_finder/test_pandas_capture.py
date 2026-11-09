@@ -13,7 +13,7 @@ from tests.regime_finder.test_round6_capture import FakeModel
 
 
 @unittest.skipUnless(importlib.util.find_spec('pandas'), 'actual pandas required')
-class PandasCapture(unittest.TestCase):
+class PandasCaptureTests(unittest.TestCase):
     def series(self):
         import pandas as pd
         return pd.Series([0.7, 0.9], name='survival', index=pd.MultiIndex.from_tuples(

@@ -1,7 +1,7 @@
 """Container helpers the engine uses to keep its own data immutable.
 
-`ensure_containers_are_immutable` and its inverse convert nested mappings and
-sequences between the frozen and mutable forms. The remaining helpers —
+`ensure_containers_are_immutable` converts nested mappings and sequences into
+their frozen forms. The remaining helpers —
 `find_duplicates`, `invert_regime_ids`, `first_non_none` — are the small
 lookups several build stages share.
 """
@@ -21,13 +21,6 @@ T = TypeVar("T")
 # A value inside a nested container: a leaf the caller stores, such as a grid, a
 # function, an array or a params leaf, or a container of such values.
 type _ContainerValue = object  # noqa: PAN001 - callers nest any leaf, and the conversion changes the container type at every level
-
-
-class Unset:
-    """Sentinel for parameters that haven't been explicitly set."""
-
-    def __repr__(self) -> str:
-        return "Unset()"
 
 
 def ensure_containers_are_immutable[K, V](
@@ -52,28 +45,6 @@ def ensure_containers_are_immutable[K, V](
 
     """
     return cast("MappingProxyType[K, V]", _make_immutable(value))
-
-
-def ensure_containers_are_mutable[K, V](value: Mapping[K, V]) -> dict[K, V]:
-    """Recursively convert immutable containers to mutable equivalents.
-
-    Conversions:
-        - MappingProxyType/Mapping -> dict
-        - tuple -> list
-        - frozenset -> set
-
-    This utility ensures deep mutability of nested data structures. Values that
-    are already mutable (dict, list, set) are returned as-is.
-
-    Args:
-        value: Any Mapping to convert.
-
-    Returns:
-        A dict containing the mapping's items, with all nested containers
-        converted to their mutable equivalents.
-
-    """
-    return cast("dict[K, V]", _make_mutable(value))
 
 
 def find_duplicates(*containers: Iterable[T]) -> set[T]:
@@ -137,21 +108,4 @@ def _make_immutable(value: _ContainerValue) -> _ContainerValue:
         return frozenset(_make_immutable(v) for v in value)
     if isinstance(value, list):
         return tuple(_make_immutable(v) for v in value)
-    return value
-
-
-def _make_mutable(value: _ContainerValue) -> _ContainerValue:  # noqa: PLR0911
-    """Recursively convert a value to its mutable equivalent."""
-    if isinstance(value, UserMappingLeaf):
-        return {k: _make_mutable(v) for k, v in value.data.items()}
-    if isinstance(value, UserSequenceLeaf):
-        return [_make_mutable(v) for v in value.data]
-    if isinstance(value, (set, list)):
-        return value
-    if isinstance(value, (MappingProxyType, Mapping)):
-        return {k: _make_mutable(v) for k, v in value.items()}
-    if isinstance(value, frozenset):
-        return {_make_mutable(v) for v in value}
-    if isinstance(value, tuple):
-        return [_make_mutable(v) for v in value]
     return value

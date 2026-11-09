@@ -28,6 +28,7 @@ from _lcm.execution.scheduler import (
 from lcm.exceptions import ExecutionPlanningError
 from lcm.solver_api import ArtifactKey
 from lcm.typing import RegimeName
+from tests.execution._buffer_registry import declared_shards
 
 
 def _logger() -> logging.Logger:
@@ -419,7 +420,7 @@ def test_declared_shards_names_the_shards_of_a_live_declaration() -> None:
 
     registry.declare_not_produced(tree=(array,))
 
-    assert registry.declared_shards == shard_identities(array=array)
+    assert declared_shards(registry=registry) == shard_identities(array=array)
 
 
 def test_a_declaration_expires_when_its_array_is_deleted() -> None:
@@ -430,7 +431,7 @@ def test_a_declaration_expires_when_its_array_is_deleted() -> None:
 
     array.delete()
 
-    assert registry.declared_shards == frozenset()
+    assert declared_shards(registry=registry) == frozenset()
 
 
 def test_a_declaration_expires_when_its_array_is_collected() -> None:
@@ -442,7 +443,7 @@ def test_a_declaration_expires_when_its_array_is_collected() -> None:
     del tree
     gc.collect()
 
-    assert registry.declared_shards == frozenset()
+    assert declared_shards(registry=registry) == frozenset()
 
 
 def test_a_live_declaration_stays_live_after_a_collection() -> None:
@@ -467,7 +468,7 @@ def test_a_passed_through_declaration_expires_with_its_arrays() -> None:
     del source
     gc.collect()
 
-    assert registry.declared_shards == frozenset()
+    assert declared_shards(registry=registry) == frozenset()
 
 
 def test_a_passed_through_declaration_lives_while_its_input_lives() -> None:
@@ -480,7 +481,7 @@ def test_a_passed_through_declaration_lives_while_its_input_lives() -> None:
 
     gc.collect()
 
-    assert registry.declared_shards == shard_identities(array=source)
+    assert declared_shards(registry=registry) == shard_identities(array=source)
 
 
 def test_a_registration_expires_when_its_array_is_collected() -> None:
@@ -654,4 +655,6 @@ def test_declare_not_produced_admits_artifact_keyed_payload_maps() -> None:
     registry.declare_not_produced(
         tree=({("working", ArtifactKey(type_id="example.carry")): array},)
     )
-    assert registry.declared_shards == frozenset(shard_identities(array=array))
+    assert declared_shards(registry=registry) == frozenset(
+        shard_identities(array=array)
+    )

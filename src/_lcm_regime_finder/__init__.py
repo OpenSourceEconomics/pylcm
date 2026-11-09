@@ -53,9 +53,6 @@ def check_cost_frontier(original, result, **kwargs):
     return check(original, result, **kwargs)
 
 
-def query_cost_frontier(original, result, **kwargs):
-    from .cost_family_check import cost_query
-    return cost_query(original, result, **kwargs)
 
 
 def verify_production_result(original, result, *, limits=None):

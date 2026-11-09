@@ -23,7 +23,11 @@ from _lcm.persistence.snapshots import (
     _bind_forward_refs as _bind_snapshot_forward_refs,
 )
 from _lcm.persistence.solution import load_solution_archive, save_solution_archive
-from _lcm.solution.period_replay import PeriodReplay, replay_period
+from _lcm.solution.period_replay import (
+    PeriodReplay,
+    replay_period,
+    replay_period_on_recorded_layout,
+)
 from _lcm.solution.public_period_capture import load_period_capture
 from _lcm.typing import InitialConditions, PeriodToRegimeToVArr
 from lcm.period_capture import CapturedPeriodReplay, PeriodCapture, PeriodCaptureRecord
@@ -42,6 +46,7 @@ __all__ = [
     "load_snapshot",
     "load_solution",
     "replay_period",
+    "replay_period_on_recorded_layout",
     "save_solution",
 ]
 

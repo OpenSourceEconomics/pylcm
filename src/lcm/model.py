@@ -283,10 +283,6 @@ from _lcm.solution.model_authority import (
 )
 from _lcm.solution.model_seal import BindingRecorder, SealedBindings
 from _lcm.solution.native_values import NativeValueMaterializer
-from _lcm.solution.period_replay import (
-    DeclaredCoreCompilation,
-    compile_declared_period_cores,
-)
 from _lcm.solution.preconditions import (
     check_pareto_weights,
     check_solver_params,
@@ -2421,50 +2417,6 @@ class Model:
             for name, slots in self._shock_registry.params_template.items()
         }
         return {**template, **group_templates}
-
-    @beartype(conf=PARAMS_CONF)
-    def _compile_period_cores(
-        self,
-        *,
-        params: UserParams,
-        regime_name: RegimeName,
-        period: int,
-        axis_widths: Mapping[str, int],
-    ) -> tuple[DeclaredCoreCompilation, ...]:
-        """Compile one declared regime-period at fixed widths, without solving.
-
-        Every core the period kernel publishes is materialized against the
-        model's own state-action spaces and continuation templates, lowered and
-        compiled. No period above it is solved, and no compiled program is
-        called, so the result describes the compiled programs and their
-        compiler-reported memory — never a run.
-
-        Args:
-            params: Parameters the cores are materialized against.
-            regime_name: Regime whose period kernel is compiled.
-            period: Index of the period in the model horizon.
-            axis_widths: Width per execution axis, for the model as a whole.
-                An axis a core declares and this mapping names takes that
-                width; one the mapping omits takes the bootstrap width the
-                unbudgeted route would lower it at. A width that binds no axis
-                of this period is refused.
-
-        Returns:
-            One entry per core, in compilation order, each carrying its widths,
-            its lowering and compile walls, and its compiler memory report.
-
-        """
-        flat_params, generation = self._prepare_call(params=params)
-        self = generation.execution  # noqa: PLW0642 - bind the remaining call to its acquired real programs
-        return compile_declared_period_cores(
-            regimes=self._regimes,
-            flat_params=flat_params,
-            ages=self._time,
-            regime_name=regime_name,
-            period=period,
-            axis_widths=axis_widths,
-            device_ids=self._execution.device_ids,
-        )
 
     @beartype(conf=PARAMS_CONF)
     def validate_transitions(

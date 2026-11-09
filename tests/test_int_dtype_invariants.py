@@ -9,7 +9,6 @@ import pandas as pd
 import pytest
 
 from _lcm.grids import Grid
-from _lcm.params.processing import process_params
 from _lcm.params.sequence_leaf import SequenceLeaf
 from _lcm.simulation.initial_conditions import (
     MISSING_CAT_CODE,
@@ -21,6 +20,7 @@ from _lcm.utils.containers import ensure_containers_are_immutable
 from lcm import Model
 from lcm.ages import AgeGrid
 from lcm.params import MappingLeaf
+from tests.params._process_params import process_params
 from tests.test_models.deterministic.regression import (
     RegimeId,
     dead,

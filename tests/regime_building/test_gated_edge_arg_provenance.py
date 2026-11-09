@@ -445,7 +445,7 @@ def _same_period_wbar(*, regimes, flat_params, solution):
         EDGE_REF_V_ARG: MappingProxyType(dict(solution[1])),
         EDGE_REF_PARAMS_ARG: flat_params,
     }
-    edge_fold = edge.combine_at(period=1)
+    edge_fold = edge.fold_at(period=1).combine
     combine = edge_fold.combine
     # A projected reference is read AT one landing point, and a projection is
     # written for one household — its state is that household's own scalar.

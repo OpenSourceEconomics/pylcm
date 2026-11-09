@@ -21,15 +21,16 @@ from _lcm.execution.core_program import (
 from _lcm.params.edges import regime_kernel_params
 from _lcm.processes.base import standard_normal
 from _lcm.simulation import chunk_admission as admission
-from _lcm.simulation.chunk_planning import (
-    SimulationChunkProfile,
-    plan_simulation_chunks,
-)
+from _lcm.simulation.chunk_planning import SimulationChunkProfile, _required_bytes
 from _lcm.simulation.entry_allocations import SimulationEntryAllocations
 from _lcm.simulation.program_arguments import current_iid_arguments
 from _lcm.simulation.program_types import SUBJECT_WIDTH_KEYWORD
 from _lcm.simulation.random_address import RandomAddress, draw_row_keys
-from _lcm.simulation.residency import measure_buffer_footprint
+from _lcm.simulation.residency import (
+    DeviceBufferFootprint,
+    measure_buffer_footprint,
+    resident_bytes_by_device,
+)
 from _lcm.zero_safe import factored_weighted_term
 from lcm import (
     AgeGrid,
@@ -1501,28 +1502,15 @@ def test_forward_inventory_reserves_physical_bank_and_actual_producers(
     assert names.count("draw_window_keys") == 16
     assert "_current_iid_invalid" in names
     # A controlled omission must change the real profile's strict admission result.
-    live = measure_buffer_footprint(tree=())
     devices = tuple(profile.output_reservation)
-    full = plan_simulation_chunks(
-        candidates=(32,),
-        profile_candidate=lambda *, n_subjects: {profile.n_subjects: profile}[
-            n_subjects
-        ],
-        live=live,
-        budget_bytes=2**27,
+    resident = resident_bytes_by_device(
+        live=measure_buffer_footprint(tree=()),
+        arguments=DeviceBufferFootprint(spans=MappingProxyType({})),
         devices=devices,
     )
-    budget = max(full.required_bytes.values()) - 1
-    with pytest.raises(ExecutionPlanningError, match=r"chunk"):
-        plan_simulation_chunks(
-            candidates=(32,),
-            profile_candidate=lambda *, n_subjects: {profile.n_subjects: profile}[
-                n_subjects
-            ],
-            live=live,
-            budget_bytes=budget,
-            devices=devices,
-        )
+    full = _required_bytes(profile=profile, resident=resident, devices=devices)
+    assert max(full.values()) <= 2**27
+    budget = max(full.values()) - 1
     physical_bytes = sum(
         value.nbytes
         for period in result.raw_results.values()
@@ -1538,16 +1526,8 @@ def test_forward_inventory_reserves_physical_bank_and_actual_producers(
             }
         ),
     )
-    control = plan_simulation_chunks(
-        candidates=(32,),
-        profile_candidate=lambda *, n_subjects: {omitted.n_subjects: omitted}[
-            n_subjects
-        ],
-        live=live,
-        budget_bytes=budget,
-        devices=devices,
-    )
-    assert max(control.required_bytes.values()) <= budget
+    control = _required_bytes(profile=omitted, resident=resident, devices=devices)
+    assert max(control.values()) <= budget
 
 
 def test_solve_law_reads_carried_imputation_without_a_grid_axis() -> None:

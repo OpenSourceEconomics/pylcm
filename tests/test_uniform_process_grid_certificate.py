@@ -49,15 +49,17 @@ def test_uniform_controls_preserve_both_historical_mutation_populations() -> Non
     # The dissolution-flag removal deleted streaming_collective:published_dissolution_
     # inverted and native_graph:collective_output_role_dropped with their targets;
     # the fold-machinery removal deleted ten streaming fold controls and two
-    # supplemental s02_status:fold_weight_* controls with theirs.
-    assert len(historical) == 398
+    # supplemental s02_status:fold_weight_* controls with theirs; the dead-code
+    # removal deleted the three streaming_ev1 semantic-key controls with
+    # GridSearchEV1ActionReduction.
+    assert len(historical) == 395
     assert (
         _name_digest(historical)
-        == "a00c2dd641b34fdfa7f618fb19d3e79648c1082583727f15fafbb004d62faf6d"
+        == "2f1f0e0a6ce13bc16159eb8f154cb230e9912ccae149cef245c1b531c8ec03e9"
     )
-    assert len(registered) == 415
+    assert len(registered) == 412
     assert _name_digest(registered) == (
-        "ed33be2d7ab323c90d394c00afadfdff869ac206499ef9221113ff2f9b1dcda5"
+        "39b2e6f7ea82047c1b09c454bbe353fb2cc1a89d81a588b5bd8a91f3ee02bb76"
     )
     assert len(supplemental) == 94
     assert _name_digest(supplemental) == (

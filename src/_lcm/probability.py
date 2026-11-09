@@ -27,8 +27,7 @@ caller supplied, bit for bit.
 """
 
 import dataclasses
-import functools
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable
 
 import jax
 import jax.numpy as jnp
@@ -345,89 +344,6 @@ def normalized_scaled_weights(
     )
 
 
-def flattened_to_one_scale(*, coefficients: FloatND, shifts: _BitsND) -> FloatND:
-    """Return scaled weights as plain numbers, on the one scale they all reach.
-
-    Every entry carries a scale of its own, which is what keeps it exact. A
-    consumer that reduces the lottery as numbers rather than as logarithms has
-    nowhere to put that scale, so the entries come down onto the largest one
-    all of them reach. An entry further below it than the format can express
-    underflows to zero: understated, the direction the contract allows, and
-    never enlarged.
-
-    Against a finite value that understatement is the whole story, and the
-    smallest error available to anything that has to name the weight as a
-    number. Against a non-finite one it is a lost answer instead, and
-    `restored_against_a_nonfinite_value` is what puts such a weight back. The
-    two are separate because only the second reads the values, and a consumer
-    that also needs the lottery's mass wants that mass to depend on the weights
-    alone.
-
-    Args:
-        coefficients: The scaled weights' significands.
-        shifts: Each one's own base-two scale.
-
-    Returns:
-        The weights on one scale, as ordinary numbers.
-
-    """
-    arr = jnp.asarray(coefficients)
-    shifts = jnp.asarray(shifts)
-    # The lottery is the last axis, and the lotteries beside it in a batch are
-    # unrelated. A scale taken across the whole array would let the likeliest
-    # node anywhere decide what is representable everywhere, so a batch row whose
-    # nodes are all rare would come down to nothing although on its own terms its
-    # weights are ordinary.
-    common = jnp.min(shifts, axis=-1, keepdims=True)
-    return jnp.ldexp(arr, (common - shifts).astype(jnp.int32))
-
-
-def restored_against_a_nonfinite_value(
-    *, coefficients: FloatND, lowered: FloatND, values: FloatND
-) -> FloatND:
-    """Return the lowered weights, with a vanished live one put back.
-
-    Lowering understates a weight too far below the scale to express, and
-    against a finite value that is the whole story. Against a non-finite one it
-    is a lost answer instead, so the weight comes back at the smallest normal
-    magnitude, keeping its sign — normal, not merely nonzero, because a
-    subnormal operand is what the backend flushes, and `0 * -inf` is the NaN
-    this is here to avoid.
-
-    Both non-finite values are ones whose contribution does not shrink with the
-    weight: every strictly positive weight against `+-inf` yields the same
-    infinity, and every strictly positive weight against a `NaN` yields the same
-    `NaN`. Letting the weight round to zero would make an event that can occur
-    impossible — reporting an ordinary number for a continuation that has none,
-    or a well-posed answer for a node whose entry lies outside the target's
-    support. What decides is the value at the node, never how small the weight
-    is: a weight the format cannot express is understated, and understating a
-    weight is not ruling the node out.
-
-    This is separate from the lowering because it is the only step that makes a
-    weight depend on the value beside it. A consumer that needs the mass of the
-    lottery as well as its weighted sum takes the mass from the lowered weights
-    and applies this to the weighted term alone, where the value is an operand
-    already — a live node against a non-finite value carries the result whatever
-    the mass is, so the mass never needs the restored weight.
-
-    Args:
-        coefficients: The scaled weights' significands, as they arrived.
-        lowered: The same weights on one scale, from `flattened_to_one_scale`.
-        values: What each weight stands against, read only for finiteness.
-
-    Returns:
-        The lowered weights, with every vanished live non-finite one restored.
-
-    """
-    arr = jnp.asarray(coefficients)
-    smallest = jnp.asarray(jnp.finfo(arr.dtype).tiny, dtype=arr.dtype)
-    vanished_against_nonfinite = (
-        is_live(arr) & ~is_live(lowered) & ~jnp.isfinite(jnp.asarray(values))
-    )
-    return jnp.where(vanished_against_nonfinite, jnp.copysign(smallest, arr), lowered)
-
-
 def rescaled_weight_pair(
     *, first_weight: FloatND, second_weight: FloatND
 ) -> tuple[FloatND, FloatND]:
@@ -442,47 +358,6 @@ def rescaled_weight_pair(
     return (
         scaled_by_power_of_two(values=first, shift=shift),
         scaled_by_power_of_two(values=second, shift=shift),
-    )
-
-
-def rescaled_weight_group(
-    *, weights: Sequence[FloatND], cofactors: Sequence[FloatND] | None = None
-) -> tuple[FloatND, ...]:
-    """Return weights carried as separate arrays, scaled by one common factor.
-
-    `rescaled_lottery_weights` for a lottery whose branches are held one array
-    per branch rather than stacked along an axis — the retained target regimes,
-    each contributing its own probability at every state-action point. The
-    factor is a single scalar, so it cancels out of any ratio taken within a
-    point, whichever point that is.
-
-    `cofactors[i]` is what `weights[i]` goes on to be multiplied by: the node
-    weights of that target's own lottery. Lifting a regime probability just
-    into the normal range is not enough when it is about to be multiplied by a
-    quadrature weight of a sixth — the product lands back below the range and
-    the node is lost before any lottery is assembled — so the factor is chosen
-    large enough for the products, not only for the probabilities.
-
-    Args:
-        weights: One array per branch.
-        cofactors: What each branch's weight is multiplied by afterwards, in
-            the same order. `None` scales for the weights alone.
-
-    Returns:
-        Tuple of the weights, each multiplied by the same power of two.
-
-    """
-    if cofactors is None:
-        cofactors = [jnp.asarray(1.0, dtype=jnp.asarray(w).dtype) for w in weights]
-    needed = [
-        _shift_to_keep_product_normal(weight=w, cofactor=c)
-        for w, c in zip(weights, cofactors, strict=True)
-    ]
-    shift = functools.reduce(jnp.maximum, needed)
-    headroom = functools.reduce(jnp.minimum, [_binades_of_headroom(w) for w in weights])
-    shift = jnp.minimum(shift, headroom)
-    return tuple(
-        scaled_by_power_of_two(values=jnp.asarray(w), shift=shift) for w in weights
     )
 
 
@@ -556,7 +431,7 @@ def exact_product(factors: FloatND) -> FloatND:
     multiply, exponents add, and the result is written into its bit pattern,
     subnormal or not. Nothing is lost that the format can hold, and what the
     format cannot hold — a product below the smallest subnormal — comes back as
-    zero. `nonzero_exact_product` is the form that marks that case.
+    zero.
 
     A zero factor is the genuine null event and a non-finite one is not a
     probability; both take the ordinary product, which says the right thing
@@ -579,45 +454,6 @@ def exact_product(factors: FloatND) -> FloatND:
             exponent=parts.exponent,
             negative=parts.negative,
         ),
-    )
-
-
-def nonzero_exact_product(factors: FloatND) -> FloatND:
-    """Return `exact_product`, never zero where every factor can occur.
-
-    A product below the smallest representable magnitude is the one case the
-    format genuinely cannot hold, and it comes back as the smallest
-    representable magnitude of the same sign rather than as zero, so an event
-    that can occur is never spelled the way one that cannot is.
-
-    Whether that substitution applies is read off the exponent the product
-    would need, not off the encoded number. A subnormal that exists only as an
-    intermediate cannot be classified: XLA:CPU answers a bit-level test of one
-    differently depending on whether the answer leaves the fused region or
-    merely selects inside it, so a float round-trip here would replace
-    perfectly representable products with the substitute.
-
-    Args:
-        factors: The factors stacked along the leading axis. Trailing axes
-            broadcast.
-
-    Returns:
-        Their product over the leading axis, with a vanished product replaced.
-
-    """
-    arr = jnp.asarray(factors)
-    parts = _product_parts(arr)
-    encoded = _encoded(
-        significand=parts.significand, exponent=parts.exponent, negative=parts.negative
-    )
-    smallest_magnitude = jnp.asarray(
-        jnp.finfo(arr.dtype).smallest_subnormal, dtype=arr.dtype
-    )
-    substitute = jnp.where(parts.negative, -smallest_magnitude, smallest_magnitude)
-    binades_below = (1 - _exponent_bias(arr)) - parts.exponent
-    vanished = ~parts.ordinary & (binades_below > _mantissa_bits(arr))
-    return jnp.where(
-        parts.ordinary, parts.plain, jnp.where(vanished, substitute, encoded)
     )
 
 
@@ -978,44 +814,6 @@ def _scaled_bits_jvp(
 # `__call__`, which loses `defjvp` along with everything else the object knows.
 _scaled_with_tangent = jax.custom_jvp(_scaled_bits)
 _scaled_with_tangent.defjvp(_scaled_bits_jvp)
-
-
-def _shift_to_keep_product_normal(*, weight: FloatND, cofactor: FloatND) -> _BitsND:
-    """Return the binades needed to keep `weight * cofactor` a normal number.
-
-    Read off the exponents rather than from the product itself, which is the
-    quantity that cannot be formed without losing what is being measured.
-    """
-    arr = jnp.asarray(weight)
-    smallest_exponent = _smallest_live_exponent(arr) + _smallest_live_exponent(cofactor)
-    needed = (1 - _exponent_bias(arr)) - smallest_exponent
-    return jnp.maximum(needed, jnp.zeros_like(needed))
-
-
-def _binades_of_headroom(values: FloatND) -> _BitsND:
-    """Return how far the largest entry can be scaled up and stay finite."""
-    arr = jnp.asarray(values)
-    return (_exponent_bias(arr) - 1) - _largest_live_exponent(arr)
-
-
-def _smallest_live_exponent(values: FloatND) -> _BitsND:
-    """Return the base-two exponent of the smallest live magnitude, or zero."""
-    arr = jnp.asarray(values)
-    live = is_live(arr) & jnp.isfinite(arr)
-    exponents = jnp.where(
-        live, _unbiased_exponent(arr), jnp.zeros_like(live, jnp.int32)
-    )
-    return jnp.min(jnp.where(live, exponents, jnp.max(exponents)))
-
-
-def _largest_live_exponent(values: FloatND) -> _BitsND:
-    """Return the base-two exponent of the largest live magnitude, or zero."""
-    arr = jnp.asarray(values)
-    live = is_live(arr) & jnp.isfinite(arr)
-    exponents = jnp.where(
-        live, _unbiased_exponent(arr), jnp.zeros_like(live, jnp.int32)
-    )
-    return jnp.max(exponents)
 
 
 def binades_above_smallest_normal(values: FloatND) -> _BitsND:

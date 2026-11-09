@@ -8,7 +8,6 @@ import numpy as np
 import pytest
 
 from _lcm.dtypes import canonical_float_dtype
-from _lcm.params.processing import process_params
 from _lcm.params.sequence_leaf import SequenceLeaf
 from _lcm.simulation.initial_conditions import (
     build_initial_states,
@@ -19,6 +18,7 @@ from _lcm.utils.containers import ensure_containers_are_immutable
 from lcm.grids import IrregSpacedGrid, LinSpacedGrid, LogSpacedGrid
 from lcm.params import MappingLeaf
 from lcm.typing import StateName
+from tests.params._process_params import process_params
 from tests.test_models.deterministic.regression import (
     RegimeId,
     get_model,

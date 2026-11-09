@@ -6,7 +6,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from _lcm_regime_finder import find_cost_frontier, check_cost_frontier, query_cost_frontier, find_regimes, verify_certificate
+from _lcm_regime_finder import find_cost_frontier, check_cost_frontier, find_regimes, verify_certificate
 from _lcm_regime_finder.cost_family import encode_analysis, chain_cover
 from tests.regime_finder.test_forest_frontier import example, literal
 from tests.regime_finder.test_aca_separator_reference import fixture
@@ -46,9 +46,6 @@ class CostFamilyTests(unittest.TestCase):
                 json.dumps(result, allow_nan=False)
                 self.assertTrue(check_cost_frontier(analysis, result, seconds=None,
                                                    limits=unlimited)['cost_family_complete_verified'])
-                query = query_cost_frontier(analysis, result, seconds=None, limits=unlimited, weights=(1, 1, 1))
-                self.assertEqual(query['status'], 'PASS')
-                self.assertTrue(query['witness'])
 
     def test_chain_coordinates_keep_layout_continuity_without_dropping_policies(self):
         candidate = {'cells': ['v0', 'z0', 'z1', 'a0', 'a1'],
@@ -150,12 +147,6 @@ class CostFamilyTests(unittest.TestCase):
         self.assertEqual(check_cost_frontier(analysis, result)['status'], 'PASS')
         self.assertIn((20, 20, 9), result['frontier'])
         self.assertEqual(result['legacy_endpoint_preference'], 'NOT_APPLIED')
-        queried = query_cost_frontier(analysis, result, upper_bounds=(20, 20, 9))
-        self.assertEqual(queried['witness_cost'], (20, 20, 9))
-        self.assertTrue(queried['witness'])
-        self.assertFalse(query_cost_frontier(analysis, result, upper_bounds=(0, 0, 0))['answer'])
-        self.assertFalse(query_cost_frontier(analysis, result, dominated_vector=(20, 20, 9))['answer'])
-        self.assertTrue(query_cost_frontier(analysis, result, dominated_vector=(21, 21, 10))['answer'])
 
     def test_exact_component_omission_and_source_promotion_fail(self):
         analysis, _ = forest_analysis()
@@ -180,7 +171,6 @@ class CostFamilyTests(unittest.TestCase):
         result = find_cost_frontier(analysis, seconds=30)
         self.assertEqual(result['backend'], 'ordered-domain-separator')
         self.assertEqual(check_cost_frontier(analysis, result)['status'], 'PASS')
-        self.assertTrue(query_cost_frontier(analysis, result, weights=(1, 1, 1))['witness'])
 
     def test_symbolic_complete_closure_and_source_boundary(self):
         packet, chains = toy()
@@ -188,7 +178,6 @@ class CostFamilyTests(unittest.TestCase):
         self.assertEqual(result['backend'], 'symbolic-policy')
         self.assertEqual(result['status'], 'COMPLETE_COST_FAMILY')
         self.assertEqual(verify_certificate(packet, result)['status'], 'PASS')
-        self.assertTrue(query_cost_frontier(packet, result, weights=(1, 1, 1))['witness'])
         cover = chain_cover(packet['characteristic_candidates'][0])
         self.assertEqual(set(c for row in cover for c in row), set(c for row in chains for c in row))
         changed = deepcopy(result)

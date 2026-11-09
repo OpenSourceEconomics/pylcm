@@ -6,7 +6,6 @@ import jax.numpy as jnp
 
 from _lcm.utils.containers import (
     ensure_containers_are_immutable,
-    ensure_containers_are_mutable,
 )
 from _lcm.utils.namespace import flatten_regime_namespace
 from lcm.params import (
@@ -107,40 +106,6 @@ def test_immutable_mapping_leaf_nested_inside_larger_dict():
     inner = result["regime"]["param"]
     assert isinstance(inner, MappingLeaf)
     assert isinstance(inner.data, MappingProxyType)
-
-
-def test_mutable_unwraps_mapping_leaf_to_dict():
-    leaf = MappingLeaf({"a": 1})
-    result = ensure_containers_are_mutable({"leaf": leaf})
-    assert isinstance(result["leaf"], dict)
-    assert result["leaf"] == {"a": 1}
-
-
-def test_mutable_mapping_leaf_nested_inside_mapping_proxy():
-    data = MappingProxyType(
-        {
-            "regime": MappingProxyType(
-                {
-                    "param": MappingLeaf({"x": 1}),
-                }
-            ),
-        }
-    )
-    result = ensure_containers_are_mutable(data)
-    assert isinstance(result["regime"], dict)
-    assert isinstance(result["regime"]["param"], dict)
-    assert result["regime"]["param"] == {"x": 1}
-
-
-def test_roundtrip_immutable_to_mutable():
-    original = {"leaf": MappingLeaf({"a": 1, "b": {"c": 2}})}
-    immutable = ensure_containers_are_immutable(original)
-    mutable = ensure_containers_are_mutable(immutable)
-    inner = mutable["leaf"]
-    assert isinstance(inner, dict)
-    assert isinstance(inner["b"], dict)
-    assert inner["a"] == 1
-    assert inner["b"]["c"] == 2
 
 
 def test_not_a_mapping():

@@ -17,7 +17,7 @@ from _lcm_regime_finder.structural_store import CaptureStore, LoadedCapture, fin
 FIXTURE = Path(__file__).resolve().parents[2] / 'tests/regime_finder/examples/declarations/tiny-huge-grid.json'
 
 
-class StructuralPublicationIdentity(unittest.TestCase):
+class StructuralPublicationIdentityTests(unittest.TestCase):
     def source(self, root):
         path = root / 'input.json'
         source = json.loads(FIXTURE.read_text())

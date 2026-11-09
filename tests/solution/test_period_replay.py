@@ -30,6 +30,7 @@ from jaxlib import (
     xla_client,
 )
 
+from _lcm.engine import Regime
 from _lcm.execution.output_layout import PlannedCore
 from _lcm.execution.workspace_planning import _tiled_bootstrap_cap, bootstrap_width
 from _lcm.solution import backward_induction, period_replay, public_period_capture
@@ -43,7 +44,6 @@ from tests.regime_building.test_gated_edges_collective_solve import (
     _with_full_topology_laws,
 )
 from tests.solution._callback_types import CompileFunctionsKwargs
-from tests.solution.test_period_core_memory import _StandInRegime
 from tests.test_models.deterministic import base as retirement_model
 from tests.test_models.deterministic.discrete import (
     RegimeId,
@@ -56,6 +56,14 @@ from tests.test_sharded_state_across_gated_edge import (
 )
 
 type CaptureSelection = str
+
+
+class _StandInRegime(Regime):
+    """An engine `Regime` with no fields, for payloads whose regime is never read."""
+
+    def __init__(self) -> None:
+        """Leave every field unset; the code under test only passes it through."""
+
 
 type CaptureFixtureValue = _StandInRegime | int | dict[str, dict[str, int]]
 type CacheReadResult = tuple[xla_client.LoadedExecutable | None, int | None]

@@ -8296,7 +8296,7 @@ def _extract_phase_transitions(*, phase_slice: RegimePhaseSpec) -> _TransitionBu
     """Transpose one canonical phase slice into per-target transition bundles.
 
     The slice's `state_transitions` values and its regime transition are
-    canonical per-target mappings (`canonicalize_regimes` resolved
+    canonical per-target mappings (`canonicalize_phased_regimes` resolved
     reachability and desugared identities), so the extraction is a pure
     transpose: bundle each target regime's `next_<state>` laws plus its
     regime-transition cell under `"next_regime"`. A target reachable through

@@ -222,39 +222,6 @@ def get_next_stochastic_weights_function(
     )
 
 
-def get_next_interpolation_basis_weights_function(
-    *,
-    regime_name: RegimeName,
-    functions: EconFunctionsMapping,
-    transitions: MappingProxyType[TransitionFunctionName, TransitionFunction],
-    transition_plans: TargetTransitionPlans,
-) -> Callable[..., dict[str, FloatND | IntND]]:
-    """Get function that computes the node-basis weights of the declared entries.
-
-    These weights place one declared value on the target's nodes; they are the
-    coefficients of an interpolation, not probabilities, and the caller contracts
-    them into a single continuation before any certainty equivalent runs.
-
-    Args:
-        regime_name: Name of the regime that the transitions target.
-        functions: Immutable mapping of auxiliary functions of the model.
-        transitions: Transitions to the target regime.
-        transition_plans: Immutable mapping of target regime names to their
-            transition laws.
-
-    Returns:
-        Function that computes the node-basis weights of the declared entries.
-
-    """
-    return _get_next_weights_function(
-        regime_name=regime_name,
-        functions=functions,
-        transitions=transitions,
-        transition_plans=transition_plans,
-        select=_has_interpolation_basis,
-    )
-
-
 def _get_next_weights_function(
     *,
     regime_name: RegimeName,
@@ -320,13 +287,6 @@ def _is_lottery(
 ) -> bool:
     """Whether `name` is a stochastic law of `target`."""
     return plans[target].is_lottery(name)
-
-
-def _has_interpolation_basis(
-    *, plans: TargetTransitionPlans, target: RegimeName, name: TransitionFunctionName
-) -> bool:
-    """Whether `name` is a declared entry placed on `target`'s nodes."""
-    return plans[target].has_interpolation_basis(name)
 
 
 def _extend_bundle_for_simulation(

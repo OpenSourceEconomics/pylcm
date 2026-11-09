@@ -76,14 +76,6 @@ class SubmeshPlacement:
         """Return the placement as a hashable, order-independent record."""
         return tuple(sorted(self.device_ids_by_regime.items()))
 
-    @property
-    def is_canonical(self) -> bool:
-        """Whether every regime sits where a one-device or full-mesh solve puts it."""
-        every_device = tuple(range(self.n_devices))
-        return all(
-            ids in {(0,), every_device} for ids in self.device_ids_by_regime.values()
-        )
-
 
 def mesh_size_for_extents(*, extents: Sequence[int], n_devices: int) -> int:
     """Return the number of devices a regime's distributed grids define.

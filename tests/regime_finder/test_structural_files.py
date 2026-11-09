@@ -8,7 +8,7 @@ from _lcm_regime_finder.structural_check import Reader
 from _lcm_regime_finder.structural_files import FilePayloads, load_store, verify_store_again
 
 
-class StructuralFiles(unittest.TestCase):
+class StructuralFilesTests(unittest.TestCase):
     def test_packed_rows_validate_without_expanding_python_tuple_objects(self):
         source = [tuple([i, i + 1]) for i in range(9000)]
         bundle = Writer().finish(source, {})

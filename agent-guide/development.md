@@ -148,7 +148,7 @@ There are exactly three exemptions:
 
 1. **A module that implements an arithmetic and nothing else** — operator surrogates
    keep the spelling their operation is known by (`two_sum(a, b)`,
-   `dd_mul(left, right)`). State it once in the module docstring; such a module may
+   `dd_add(left, right)`). State it once in the module docstring; such a module may
    contain *only* operators, so the exemption stays auditable rather than sprinkled per
    function. The declaration is `Keyword-only exemption: arithmetic-only module.`
 

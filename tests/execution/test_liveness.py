@@ -14,17 +14,17 @@ def test_remaining_consumers_reach_eligibility_only_at_zero() -> None:
         },
     )
 
-    assert ledger.remaining_consumers(artifact="target-V") == 2
+    assert ledger.remaining_counts["target-V"] == 2
     assert not ledger.is_release_eligible(artifact="target-V")
 
     assert not ledger.commit_successful_dispatch(dispatch="first-node")
-    assert ledger.remaining_consumers(artifact="target-V") == 1
+    assert ledger.remaining_counts["target-V"] == 1
     assert not ledger.is_release_eligible(artifact="target-V")
 
     assert ledger.commit_successful_dispatch(dispatch="second-node") == frozenset(
         {"target-V"}
     )
-    assert ledger.remaining_consumers(artifact="target-V") == 0
+    assert ledger.remaining_counts["target-V"] == 0
     assert ledger.is_release_eligible(artifact="target-V")
 
 
@@ -48,10 +48,10 @@ def test_unknown_successful_dispatch_is_rejected_without_partial_decrement() -> 
     with pytest.raises(KeyError, match="unknown planned ID"):
         ledger.commit_successful_dispatch(dispatch="unknown-node")
 
-    assert ledger.remaining_consumers(artifact="known") == 1
+    assert ledger.remaining_counts["known"] == 1
     assert ledger.pending_dispatches == frozenset({"known-node"})
     with pytest.raises(KeyError, match="Unknown planned input artifact"):
-        ledger.remaining_consumers(artifact="unknown")
+        ledger.is_retained(artifact="unknown")
 
 
 def test_duplicate_artifact_in_one_planned_dispatch_is_rejected() -> None:
@@ -73,7 +73,7 @@ def test_duplicate_dispatch_cannot_mask_peer_with_identical_accesses() -> None:
     with pytest.raises(RuntimeError, match="already committed"):
         ledger.commit_successful_dispatch(dispatch="first-node")
 
-    assert ledger.remaining_consumers(artifact="target-V") == 1
+    assert ledger.remaining_counts["target-V"] == 1
     assert ledger.pending_dispatches == frozenset({"second-node"})
     with pytest.raises(RuntimeError, match="second-node"):
         ledger.assert_solve_complete()
@@ -98,11 +98,11 @@ def test_unplanned_consumer_pin_prevents_release_eligibility() -> None:
         pinned_artifacts=("mixed-route-V", "legacy-only-V"),
     )
 
-    assert ledger.remaining_consumers(artifact="legacy-only-V") == 0
+    assert ledger.remaining_counts["legacy-only-V"] == 0
     assert not ledger.is_release_eligible(artifact="legacy-only-V")
 
     assert not ledger.commit_successful_dispatch(dispatch="planned-node")
-    assert ledger.remaining_consumers(artifact="mixed-route-V") == 0
+    assert ledger.remaining_counts["mixed-route-V"] == 0
     assert not ledger.is_release_eligible(artifact="mixed-route-V")
 
 
@@ -118,11 +118,11 @@ def test_failed_dispatch_has_no_liveness_side_effect() -> None:
         dispatch(fail=True)
 
     # The runtime commits only after the core returns successfully.
-    assert ledger.remaining_consumers(artifact="target-V") == 1
+    assert ledger.remaining_counts["target-V"] == 1
     assert ledger.pending_dispatches == frozenset({"target-node"})
     dispatch(fail=False)
     ledger.commit_successful_dispatch(dispatch="target-node")
-    assert ledger.remaining_consumers(artifact="target-V") == 0
+    assert ledger.remaining_counts["target-V"] == 0
 
 
 def test_successful_solve_rejects_uncommitted_planned_dispatch() -> None:
@@ -214,7 +214,7 @@ def test_an_alias_target_outside_the_plan_is_added_with_a_zero_count() -> None:
         dispatch_accesses={"node": ("t0",)}, aliases={"t0": "t1"}
     )
 
-    assert ledger.remaining_consumers(artifact="t1") == 0
+    assert ledger.remaining_counts["t1"] == 0
 
 
 def test_a_commit_reports_the_whole_group_when_the_last_count_closes() -> None:

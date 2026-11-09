@@ -9,11 +9,10 @@ The primitive implementations below are part of this oracle's stated boundary.
 from __future__ import annotations
 
 import ast
-from collections.abc import Callable, Hashable, Iterable, Iterator, Mapping
+from collections.abc import Callable, Hashable, Iterable, Mapping
 import hashlib
 import json
 from fractions import Fraction
-from itertools import product
 import math
 from typing import Any, TypedDict
 
@@ -327,22 +326,6 @@ def independent_joint_transport[Target, Projected: Hashable](original: Iterable[
             "max_absolute_residual": str(residual), "original_support": len(before), "reduced_support": len(after)}
 
 
-def set_partitions[Value](items: Iterable[Value]) -> Iterator[tuple[tuple[Value, ...], ...]]:
-    """Every unlabeled partition exactly once, using restricted-growth strings."""
-    items = tuple(items)
-    blocks: list[list[Value]] = []
-    def visit(index: int):
-        if index == len(items):
-            yield tuple(tuple(block) for block in blocks)
-            return
-        for block in blocks:
-            block.append(items[index])
-            yield from visit(index + 1)
-            block.pop()
-        blocks.append([items[index]])
-        yield from visit(index + 1)
-        blocks.pop()
-    yield from visit(0)
 
 
 def nondominated[Value](items: Iterable[Value], metrics=lambda item: item) -> list[Value]:
@@ -357,13 +340,3 @@ def nondominated[Value](items: Iterable[Value], metrics=lambda item: item) -> li
                    for other_index, other in enumerate(items)):
             result.append(item)
     return result
-
-
-def all_assignments[Value](domains: Mapping[str, list[Value]], *, max_rows: int = 4096):
-    """An explicit tiny-only guard; production metadata must never call this."""
-    size = math.prod(len(values) for values in domains.values())
-    if size > max_rows:
-        raise OracleUnsupported("Dense oracle is restricted to tiny regressions")
-    names = list(domains)
-    for values in product(*(domains[name] for name in names)):
-        yield dict(zip(names, values))

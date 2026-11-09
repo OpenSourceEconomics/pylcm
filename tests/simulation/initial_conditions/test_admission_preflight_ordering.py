@@ -13,7 +13,6 @@ import pytest
 
 import _lcm.simulation.initial_conditions as initial_module
 from _lcm.params.edges import regime_kernel_params
-from _lcm.params.processing import process_params
 from _lcm.simulation.initial_conditions import validate_simulation_inputs
 from _lcm.transition_checks import validate_transitions
 from _lcm.typing import (
@@ -45,6 +44,7 @@ from lcm.typing import (
     ScalarFloat,
     ScalarInt,
 )
+from tests.params._process_params import process_params
 from tests.simulation.initial_conditions._models import (
     make_asymmetric_state_model,
     make_constrained_asymmetric_model,

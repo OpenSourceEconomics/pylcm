@@ -224,36 +224,6 @@ def interp_on_located_grid(
     )
 
 
-def interp_left_record_on_padded_grid(
-    *,
-    x_query: FloatND,
-    xp: Float1D,
-    fp: Float1D,
-) -> FloatND:
-    """Linear read that publishes the *left* record at a duplicated abscissa.
-
-    Same row contract as `interp_on_padded_grid`; see
-    `interp_left_record_on_prepared_grid` for the read semantics.
-
-    Args:
-        x_query: Points at which to evaluate; any shape.
-        xp: Weakly ascending grid row with NaNs only in the tail.
-        fp: Function values on `xp`, NaN-padded in lockstep with `xp`.
-
-    Returns:
-        Interpolated values with the shape of `x_query`.
-
-    """
-    search_grid, valid_length = prepare_padded_grid(xp)
-    return interp_left_record_on_prepared_grid(
-        x_query=x_query,
-        search_grid=search_grid,
-        valid_length=valid_length,
-        xp=xp,
-        fp=fp,
-    )
-
-
 def interp_left_record_on_prepared_grid(
     *,
     x_query: FloatND,
@@ -731,232 +701,6 @@ def interp_on_indexed_rows(
     return jnp.where(jnp.isnan(x_query), jnp.nan, result), valid_length
 
 
-def interp_right_germ_on_padded_grid(
-    *,
-    x_query: FloatND,
-    xp: Float1D,
-    fp: Float1D,
-    fp_slopes: Float1D,
-) -> tuple[BoolND, FloatND, FloatND, FloatND]:
-    """Compute the right germ of the Hermite value read on a padded row.
-
-    Same row contract as `interp_on_padded_grid`; see
-    `interp_right_germ_on_prepared_grid` for the germ semantics.
-
-    Args:
-        x_query: Points at which to evaluate the right germ; any shape.
-        xp: Weakly ascending grid row with NaNs only in the tail.
-        fp: Function values on `xp`, NaN-padded in lockstep with `xp`.
-        fp_slopes: Derivatives of `fp` with respect to `xp` at the `xp` nodes,
-            NaN-padded in lockstep.
-
-    Returns:
-        Tuple of the right-finiteness flag and the first, second, and third
-        right derivatives, each with the shape of `x_query`.
-
-    """
-    search_grid, valid_length = prepare_padded_grid(xp)
-    return interp_right_germ_on_prepared_grid(
-        x_query=x_query,
-        search_grid=search_grid,
-        valid_length=valid_length,
-        xp=xp,
-        fp=fp,
-        fp_slopes=fp_slopes,
-    )
-
-
-def interp_right_germ_on_prepared_grid(
-    *,
-    x_query: FloatND,
-    search_grid: Float1D,
-    valid_length: ScalarInt,
-    xp: Float1D,
-    fp: Float1D,
-    fp_slopes: Float1D,
-) -> tuple[BoolND, FloatND, FloatND, FloatND]:
-    """Compute the right germ of the Hermite value read at each query.
-
-    The germ is the complete local description of the *value interpolant* that
-    `interp_on_prepared_grid` evaluates with `fp_slopes` immediately to the
-    right of the query — not a read of the slope row itself. Each local piece
-    is a cubic (or a constant clamp), so the germ is finite-dimensional: a
-    right-finiteness flag plus the first, second, and third one-sided
-    derivatives determine the read on a right neighborhood exactly. The germ
-    differs from the raw slope row exactly where a tie-owner decision needs the
-    truth: the Fritsch-Carlson limiter may cap a node's raw slope, the edge
-    clamps flatten the read outside the valid range, and a `-inf` bracket
-    endpoint kills the read immediately right of a finite node. Semantics:
-
-    - Strictly inside a bracket: the derivatives of that bracket's limited
-      cubic Hermite (the secant and zero curvature where the correction is
-      inapplicable — the linear fallback).
-    - Exactly on a node: the derivatives at the left edge of the node's *right*
-      bracket (the bracket search is right-continuous).
-    - Strictly below the first node, and at or above the last valid node: the
-      read clamps to a constant — right-finite with all derivatives zero.
-    - A bracket with a non-finite endpoint value: not right-finite (the read
-      is `-inf` on the bracket's interior), derivatives zero.
-
-    Args:
-        x_query: Points at which to evaluate the right germ; any shape.
-        search_grid: The row's `+inf`-padded search key from
-            `prepare_padded_grid`.
-        valid_length: The row's non-NaN prefix length from
-            `prepare_padded_grid`.
-        xp: The original NaN-padded grid row (the abscissa gather source).
-        fp: Function values on `xp`, NaN-padded in lockstep.
-        fp_slopes: Node derivatives, NaN-padded in lockstep.
-
-    Returns:
-        Tuple of the right-finiteness flag and the first, second, and third
-        right derivatives, each with the shape of `x_query`.
-
-    The germ is the *tie selector* over the published interpolants, one of two
-    derivative objects with a deliberately different terminal convention: the
-    germ's first derivative is zero at and above the last valid node (the read
-    clamps right of it), while the published query derivative of the value
-    read (`interp_on_prepared_grid` under autodiff) is the node's own limited
-    slope *at* the last node and zero only strictly above — the economics the
-    parent Euler inversion consumes. The two objects agree everywhere else and
-    share one bracket/limiter implementation.
-
-    """
-    first, second, third, endpoint_finite, _, _ = _hermite_bracket_derivatives(
-        x_query=x_query,
-        search_grid=search_grid,
-        valid_length=valid_length,
-        xp=xp,
-        fp=fp,
-        fp_slopes=fp_slopes,
-        side="right",
-    )
-    # The read clamps to a constant strictly below the first node and at or
-    # above the last valid one; the germ there is right-finite with all
-    # derivatives exactly zero. (`search_grid` is `+inf` on the pad, so a
-    # poisoned all-NaN row lands on the lower clamp.)
-    first_node = search_grid[0]
-    last_node = search_grid[jnp.maximum(valid_length - 1, 0)]
-    on_clamp_ray = (x_query < first_node) | (x_query >= last_node)
-    right_finite = on_clamp_ray | endpoint_finite
-    return (
-        right_finite,
-        jnp.where(on_clamp_ray, 0.0, first),
-        jnp.where(on_clamp_ray, 0.0, second),
-        jnp.where(on_clamp_ray, 0.0, third),
-    )
-
-
-def interp_left_germ_on_padded_grid(
-    *,
-    x_query: FloatND,
-    xp: Float1D,
-    fp: Float1D,
-    fp_slopes: Float1D,
-) -> tuple[BoolND, FloatND, FloatND, FloatND]:
-    """Compute the left germ of the Hermite value read on a padded row.
-
-    Same row contract as `interp_on_padded_grid`; see
-    `interp_left_germ_on_prepared_grid` for the germ semantics.
-
-    Args:
-        x_query: Points at which to evaluate the left germ; any shape.
-        xp: Weakly ascending grid row with NaNs only in the tail.
-        fp: Function values on `xp`, NaN-padded in lockstep with `xp`.
-        fp_slopes: Derivatives of `fp` with respect to `xp` at the `xp` nodes,
-            NaN-padded in lockstep.
-
-    Returns:
-        Tuple of the left-finiteness flag and the first, second, and third
-        left derivatives, each with the shape of `x_query`.
-
-    """
-    search_grid, valid_length = prepare_padded_grid(xp)
-    return interp_left_germ_on_prepared_grid(
-        x_query=x_query,
-        search_grid=search_grid,
-        valid_length=valid_length,
-        xp=xp,
-        fp=fp,
-        fp_slopes=fp_slopes,
-    )
-
-
-def interp_left_germ_on_prepared_grid(
-    *,
-    x_query: FloatND,
-    search_grid: Float1D,
-    valid_length: ScalarInt,
-    xp: Float1D,
-    fp: Float1D,
-    fp_slopes: Float1D,
-) -> tuple[BoolND, FloatND, FloatND, FloatND]:
-    """Compute the left germ of the Hermite value read at each query.
-
-    The mirror of `interp_right_germ_on_prepared_grid`: the complete local
-    description of the value interpolant immediately to the *left* of the
-    query, as a tie-selection object for the stacked candidate readers. A tie
-    whose right germs are identical (both candidates clamp at a shared
-    terminal abscissa) is owned by the branch that carries the envelope on the
-    left neighborhood, so the published payload is that branch's own economic
-    marginal — the meaningful one-sided value for a parent Euler inversion at
-    the boundary. Semantics:
-
-    - Strictly inside a bracket: the derivatives of that bracket's limited
-      cubic Hermite (the secant and zero curvature where the correction is
-      inapplicable — the linear fallback).
-    - Exactly on a node: the derivatives at the right edge of the node's
-      *left* bracket.
-    - At or below the first valid node: not left-finite, derivatives zero —
-      the stacked readers mask a candidate to `-inf` below its first finite
-      node, so as an envelope candidate the branch is dead immediately left.
-    - Strictly above the last valid node: the read clamps to a constant —
-      left-finite with all derivatives zero.
-    - A bracket with a non-finite endpoint value: not left-finite (the read
-      is `-inf` on the bracket's interior), derivatives zero.
-    - A zero-width located bracket (a duplicated first abscissa): derivatives
-      zero — no piece is defined on it.
-
-    Args:
-        x_query: Points at which to evaluate the left germ; any shape.
-        search_grid: The row's `+inf`-padded search key from
-            `prepare_padded_grid`.
-        valid_length: The row's non-NaN prefix length from
-            `prepare_padded_grid`.
-        xp: The original NaN-padded grid row (the abscissa gather source).
-        fp: Function values on `xp`, NaN-padded in lockstep.
-        fp_slopes: Node derivatives, NaN-padded in lockstep.
-
-    Returns:
-        Tuple of the left-finiteness flag and the first, second, and third
-        left derivatives, each with the shape of `x_query`.
-
-    """
-    first, second, third, endpoint_finite, zero_width, _ = _hermite_bracket_derivatives(
-        x_query=x_query,
-        search_grid=search_grid,
-        valid_length=valid_length,
-        xp=xp,
-        fp=fp,
-        fp_slopes=fp_slopes,
-        side="left",
-    )
-    first_node = search_grid[0]
-    last_node = search_grid[jnp.maximum(valid_length - 1, 0)]
-    # (`search_grid` is `+inf` on the pad, so a poisoned all-NaN row is dead
-    # left at every query: `first_node` is `+inf`.)
-    dead_left = x_query <= first_node
-    on_clamp_ray = x_query > last_node
-    left_finite = (on_clamp_ray | endpoint_finite) & ~dead_left
-    suppressed = dead_left | on_clamp_ray | zero_width
-    return (
-        left_finite,
-        jnp.where(suppressed, 0.0, first),
-        jnp.where(suppressed, 0.0, second),
-        jnp.where(suppressed, 0.0, third),
-    )
-
-
 def _hermite_bracket_derivatives(
     *,
     x_query: FloatND,
@@ -1148,17 +892,25 @@ def _interp_between_nodes(
     )
 
 
-def interp_and_derivative_on_padded_grid(
+def interp_and_derivative_on_prepared_grid(
     *,
     x_query: FloatND,
+    search_grid: Float1D,
+    valid_length: ScalarInt,
     xp: Float1D,
     fp: Float1D,
     fp_slopes: Float1D | None = None,
+    side: Literal["left", "right"] = "right",
 ) -> tuple[FloatND, FloatND]:
-    """Read a NaN-padded row and the analytic derivative of that exact read.
+    """Paired value-and-derivative read on a prepared row.
 
-    The value channel is identical to `interp_on_padded_grid`. The derivative
-    channel is the closed-form slope of the *selected piece* of that
+    Takes the row's `search_grid` and `valid_length` precomputed (via
+    `prepare_padded_grid`), mirroring `interp_on_prepared_grid`. With the
+    default `side="right"` the value channel matches `interp_on_prepared_grid`
+    bit for bit — both gather the same bracket and share the two-node
+    arithmetic.
+
+    The derivative channel is the closed-form slope of the *selected piece* of that
     interpolant — never an automatic derivative of the bracket-selection
     program, whose `searchsorted`/`clip` representation returns arbitrary
     subgradients at exact grid nodes. Side conventions at the boundaries of a
@@ -1187,48 +939,6 @@ def interp_and_derivative_on_padded_grid(
     - a singleton row is the constant pair `(fp[0], 0)`; an empty row is
       `(NaN, NaN)` — the NaN value carries a poisoned carry to the runtime
       diagnostics and the derivative is non-authoritative.
-
-    Args:
-        x_query: Points at which to evaluate; any shape.
-        xp: Weakly ascending grid row with NaNs only in the tail.
-        fp: Function values on `xp`, NaN-padded in lockstep.
-        fp_slopes: Node derivatives, NaN-padded in lockstep; `None` selects
-            linear interpolation.
-
-    Returns:
-        Tuple of the interpolated values and the read's analytic derivative,
-        each with the shape of `x_query`.
-
-    """
-    search_grid, valid_length = prepare_padded_grid(xp)
-    return interp_and_derivative_on_prepared_grid(
-        x_query=x_query,
-        search_grid=search_grid,
-        valid_length=valid_length,
-        xp=xp,
-        fp=fp,
-        fp_slopes=fp_slopes,
-    )
-
-
-def interp_and_derivative_on_prepared_grid(
-    *,
-    x_query: FloatND,
-    search_grid: Float1D,
-    valid_length: ScalarInt,
-    xp: Float1D,
-    fp: Float1D,
-    fp_slopes: Float1D | None = None,
-    side: Literal["left", "right"] = "right",
-) -> tuple[FloatND, FloatND]:
-    """Paired value-and-derivative read on a prepared row.
-
-    The contract is `interp_and_derivative_on_padded_grid`'s; this form takes
-    the row's `search_grid` and `valid_length` precomputed (via
-    `prepare_padded_grid`), mirroring `interp_on_prepared_grid`. With the
-    default `side="right"` the value channel matches `interp_on_prepared_grid`
-    bit for bit — both gather the same bracket and share the two-node
-    arithmetic.
 
     `side` selects which bracket an exactly-on-node query lands in, mirroring
     `_read_prepared_row`: `"right"` reads the node as the start of its right

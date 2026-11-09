@@ -8,7 +8,7 @@ from _lcm_regime_finder.structural_events import source_anchor, compare_source
 from _lcm_regime_finder.structural_transport import reseal
 
 
-class StructuralEvents(unittest.TestCase):
+class StructuralEventsTests(unittest.TestCase):
     def capture(self, source):
         anchor = source_anchor(source, source_context={'file': 'test-input'},
                                transaction={'kind': 'test-owned-quiescent-roots'})

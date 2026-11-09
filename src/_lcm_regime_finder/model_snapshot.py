@@ -14,7 +14,6 @@ import hashlib
 import inspect
 import json
 import os
-from pathlib import Path
 import sys
 import textwrap
 import types
@@ -22,11 +21,6 @@ from typing import Any
 from .records import JSONValue
 
 
-def digest_file(path: str) -> str | None:
-    try:
-        return hashlib.sha256(Path(path).read_bytes()).hexdigest()
-    except OSError:
-        return None
 
 
 def source_function(value: Any, *, depth: int = 0, seen: frozenset[int] = frozenset()) -> dict[str, Any]:
@@ -383,12 +377,3 @@ def read_declarations(spec: Any, *, production_metadata: dict | None = None,
     result["execution_contract"] = {"numerical_model_rows": 0, "solver_compilation": False,
                                      "specialization_factories_executed": 0}
     return result
-
-
-def pytest_configure(config: Any) -> None:
-    raise RuntimeError(
-        'Constructor interception is disabled: Model declaration preparation can '
-        'lower composite states or evaluate construction callbacks. Export the '
-        'original pre-program specification with read_declarations before Model '
-        'construction. Historical captured JSON remains supported as input.'
-    )

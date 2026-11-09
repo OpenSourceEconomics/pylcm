@@ -12,7 +12,6 @@ import pytest
 import _lcm.simulation.initial_conditions as initial_module
 from _lcm.dtypes import canonical_float_dtype
 from _lcm.execution.execution_plan import ResolvedExecution
-from _lcm.params.processing import process_params
 from _lcm.simulation.current_iid_entry import SuppliedEntryFrames
 from _lcm.simulation.initial_conditions import (
     _InitialCohorts,
@@ -32,6 +31,7 @@ from _lcm.typing import FlatParams, InitialConditions, PytreeValue
 from _lcm.utils.logging import get_logger
 from lcm import AgeGrid, Model
 from lcm.exceptions import ExecutionPlanningError, InvalidInitialConditionsError
+from tests.params._process_params import process_params
 from tests.simulation.initial_conditions._models import make_asymmetric_state_model
 
 

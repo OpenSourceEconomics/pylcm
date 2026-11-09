@@ -17,6 +17,7 @@ from _lcm.execution.core_program import (
     core_program_graph,
 )
 from _lcm.execution.workspace_planning import workspace_width_candidates
+from _lcm.simulation.program_types import SimulationPrograms
 from _lcm.simulation.programs import SUBJECT_AXIS
 from lcm import ExecutionConfig, Model
 from lcm.exceptions import ExecutionPlanningError
@@ -107,9 +108,31 @@ def _declared_simulation_axis_names(*, model: Model) -> tuple[str, ...]:
             {
                 name
                 for regime in model._regimes.values()
-                for name in regime.simulation.programs.declared_axis_names
+                for name in _program_axis_names(programs=regime.simulation.programs)
             }
         )
+    )
+
+
+def _program_axis_names(*, programs: SimulationPrograms) -> frozenset[str]:
+    """Return every planner axis name one regime's simulation programs declare."""
+    return frozenset(
+        name
+        for family in (
+            programs.decision,
+            programs.type_local_decision,
+            programs.transition,
+            programs.route,
+            programs.gate_fold,
+            programs.gate_route,
+            programs.policy_prepare,
+            programs.policy_rank,
+            programs.exit_full,
+            programs.exit_participating,
+            *programs.participation_families,
+        )
+        for program in family.values()
+        for name in program.requirements.axis_names
     )
 
 

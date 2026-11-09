@@ -8,45 +8,20 @@ interval's representative point recovers the active affine budget segment.
 import jax.numpy as jnp
 import numpy as np
 
-import lcm
 from _lcm.egm.nbegm_breakpoints import (
     affine_coefficients,
     clamp_breakpoints_to_grid,
     interval_midpoints,
     interval_segment_coefficients,
-    linear_asset_preimage,
     linear_asset_selection_preimage,
 )
-
-
-def _medicaid_pool():
-    """A one-boundary Medicaid asset-test pool with both subsidy pieces."""
-
-    medicaid_eligible = lcm.case_boundary(
-        condition=lcm.ref("assets") < lcm.ref("medicaid_asset_limit"),
-        kind="jump",
-    )
-
-    @lcm.piece(output="subsidy", when=medicaid_eligible)
-    def subsidy_medicaid(subsidy_amount):
-        return subsidy_amount
-
-    @lcm.piece(output="subsidy", otherwise=medicaid_eligible)
-    def subsidy_none(subsidy_amount):
-        return 0.0 * subsidy_amount
-
-    return {
-        "medicaid_eligible": medicaid_eligible,
-        "subsidy_medicaid": subsidy_medicaid,
-        "subsidy_none": subsidy_none,
-    }
 
 
 def test_clamp_sends_a_degenerate_preimage_outside_the_grid_and_keeps_it_finite():
     """A non-finite breakpoint is clamped to a finite point just outside the grid.
 
     A boundary whose derived variable has (near-)zero slope in the liquid state has no
-    finite asset preimage — `linear_asset_preimage` sends it to ±inf (never crossed) or
+    finite asset preimage — the affine preimage sends it to ±inf (never crossed) or
     NaN (exactly on the boundary). Clamping keeps every breakpoint finite and just
     outside `[grid_min, grid_max]`, so it collapses to an empty edge interval whose
     midpoint stays finite, while a genuine in-grid breakpoint is left untouched.
@@ -93,26 +68,36 @@ def test_affine_coefficients_recover_slope_and_intercept():
     np.testing.assert_allclose(intercept, 12_000.0, atol=1e-6)
 
 
-def test_linear_asset_preimage_inverts_an_increasing_boundary_variable():
-    """A threshold in an increasing affine variable maps to its asset value."""
+def test_linear_asset_selection_preimage_inverts_an_increasing_boundary_variable():
+    """A threshold in an increasing affine variable maps to its asset value.
+
+    Ownership above the threshold keeps the unshifted preimage when the slope is
+    positive.
+    """
 
     def gross_income(assets):
         return 0.04 * assets + 12_000.0
 
-    asset_value = linear_asset_preimage(
-        z_of_liquid=gross_income, threshold=jnp.asarray(20_000.0)
+    asset_value = linear_asset_selection_preimage(
+        z_of_liquid=gross_income,
+        threshold=jnp.asarray(20_000.0),
+        equality_owner="above",
     )
     np.testing.assert_allclose(asset_value, 200_000.0, atol=1e-3)
 
 
-def test_linear_asset_preimage_inverts_a_decreasing_boundary_variable():
-    """A threshold in a decreasing affine variable maps to its asset value."""
+def test_linear_asset_selection_preimage_inverts_a_decreasing_boundary_variable():
+    """A threshold in a decreasing affine variable maps to its asset value.
+
+    Ownership below the threshold keeps the unshifted preimage when the slope is
+    negative.
+    """
 
     def countable(assets):
         return -0.5 * assets + 3_000.0
 
-    asset_value = linear_asset_preimage(
-        z_of_liquid=countable, threshold=jnp.asarray(1_000.0)
+    asset_value = linear_asset_selection_preimage(
+        z_of_liquid=countable, threshold=jnp.asarray(1_000.0), equality_owner="below"
     )
     np.testing.assert_allclose(asset_value, 4_000.0, atol=1e-6)
 
@@ -134,7 +119,7 @@ def test_decreasing_coordinate_maps_above_equality_to_the_left_liquid_interval()
     np.testing.assert_array_equal(np.asarray(intervals), np.asarray([0, 1]))
 
 
-def test_linear_asset_preimage_traces_a_runtime_threshold_and_slope():
+def test_linear_asset_selection_preimage_traces_a_runtime_threshold_and_slope():
     """The preimage is a traced quantity in the runtime threshold and slope."""
 
     def make_gross_income(rate_of_return):
@@ -145,8 +130,10 @@ def test_linear_asset_preimage_traces_a_runtime_threshold_and_slope():
 
     # keyword-only-exempt: library-callback=jax.numpy.vectorize
     def preimage(rate_of_return, threshold):
-        return linear_asset_preimage(
-            z_of_liquid=make_gross_income(rate_of_return), threshold=threshold
+        return linear_asset_selection_preimage(
+            z_of_liquid=make_gross_income(rate_of_return),
+            threshold=threshold,
+            equality_owner="above",
         )
 
     jitted = jnp.vectorize(preimage)

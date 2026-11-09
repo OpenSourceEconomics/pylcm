@@ -22,7 +22,7 @@ class ReachableFixture:
 
 
 @unittest.skipUnless(importlib.util.find_spec('numpy'), 'actual NumPy required')
-class CompositeConsistency(unittest.TestCase):
+class CompositeConsistencyTests(unittest.TestCase):
     def capture(self, path, *, bad_union=False, bad_table=False, bad_encoder=False):
         import numpy as np
         union = ((0, 0), (1, 2))

@@ -7,13 +7,11 @@ from typing import cast
 import pytest
 
 from _lcm.engine import Regime
-from _lcm.params.processing import (
-    create_params_template,
-    process_params,
-)
+from _lcm.params.processing import create_params_template
 from _lcm.typing import ParamsTemplate
 from _lcm.utils.containers import ensure_containers_are_immutable
 from lcm.exceptions import InvalidNameError, InvalidParamsError
+from tests.params._process_params import process_params
 
 type _TemplateNode = str | Mapping[str, _TemplateNode]
 
