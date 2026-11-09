@@ -191,12 +191,21 @@ def _arm_role(arm: object) -> NumericRole:  # noqa: PAN001 - any annotation obje
     if arm is int:
         return NumericRole.INT
     if isinstance(arm, type) and issubclass(arm, jaxtyping.AbstractArray):
-        dtypes = tuple(arm.dtypes)
-        if dtypes and all(dtype.startswith(_FLOAT_DTYPE_PREFIXES) for dtype in dtypes):
+        # `Shaped` admits any dtype and stores a sentinel, not a list of names.
+        dtypes = arm.dtypes if isinstance(arm.dtypes, list | tuple) else ()
+        if dtypes and all(
+            _has_prefix(dtype=dtype, prefixes=_FLOAT_DTYPE_PREFIXES) for dtype in dtypes
+        ):
             return NumericRole.FLOAT
-        if dtypes and all(dtype.startswith(_INT_DTYPE_PREFIXES) for dtype in dtypes):
+        if dtypes and all(
+            _has_prefix(dtype=dtype, prefixes=_INT_DTYPE_PREFIXES) for dtype in dtypes
+        ):
             return NumericRole.INT
     return NumericRole.AS_GIVEN
+
+
+def _has_prefix(*, dtype: object, prefixes: tuple[str, ...]) -> bool:  # noqa: PAN001 - a dtype name or pattern
+    return isinstance(dtype, str) and dtype.startswith(prefixes)
 
 
 def _resolve(

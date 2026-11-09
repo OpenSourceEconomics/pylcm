@@ -677,11 +677,27 @@ def create_edge_params_template(
         source=source, params_by_path=law_params_by_path
     )
     # A mutable build buffer of nested slots; freezing gives it its template type.
+    # Edge laws are filed over every case and phase, demanded or not, so a slot
+    # read as a float by one and as an integer by another keeps the value's kind
+    # here; `schedules` refuses the two readings when a model demands both laws.
+    roles_by_slot: dict[tuple[str, ...], set[NumericRole]] = {}
+    for path, params in params_by_path:
+        for param_name, annotation in params.items():
+            roles_by_slot.setdefault((*path, param_name), set()).add(
+                role_of_leaf(annotation)
+            )
     template: _TemplateBranch = {}
     for path, params in params_by_path:
         for param_name, annotation in params.items():
+            slot = (*path, param_name)
             _insert_edge_slot(
-                template=template, path=(*path, param_name), annotation=annotation
+                template=template,
+                path=slot,
+                annotation=(
+                    TemplateAnnotation(str(annotation), role=NumericRole.AS_GIVEN)
+                    if {NumericRole.FLOAT, NumericRole.INT} <= roles_by_slot[slot]
+                    else annotation
+                ),
             )
     return cast("EdgeParamsTemplate", _freeze_template_node(template))
 
