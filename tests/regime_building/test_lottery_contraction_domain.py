@@ -15,6 +15,14 @@ every expectation is computable by hand:
   domain, so the contracted `-inf` is the pinned behavior and the enumerated NaN is
   recorded only to show where the routes part.
 - `dead_poison`: a zero-probability draw holding NaN and `+inf` drops out of both.
+
+The transposed cancellation goes the other way. With the large values on one draw's
+row, `(M, -M, 1/4)` and `(1, 1, 1/4)` on a three-node grid, enumeration cancels the
+large row exactly and keeps the small term, while the contracted table rounds
+`(+-M + 1) / 2` to `+-M/2` and loses it. Neither summation order is the accurate one;
+each is accurate only relative to the largest next-period value across the draws.
+There an action choosing between landing at 1/2 and at 2 picks the midpoint
+(exact 0.5) enumerated and the endpoint (0.25) contracted.
 """
 
 from collections.abc import Callable
@@ -35,7 +43,13 @@ from lcm import (
 )
 from lcm.regime import Regime
 from lcm.solvers import GridSearch
-from lcm.typing import ContinuousState, DiscreteState, FloatND, ScalarInt
+from lcm.typing import (
+    ContinuousState,
+    DiscreteAction,
+    DiscreteState,
+    FloatND,
+    ScalarInt,
+)
 
 type _Case = Literal["finite", "extended", "dead_poison"]
 
@@ -247,3 +261,81 @@ def test_contraction_pins_edge_tables_of_the_value_domain(
         _assert_all_equal(
             values=_alive_values(contract=False, **arguments), expected=enumerated
         )
+
+
+def _transposed_terminal_utility(
+    *, wealth: ContinuousState, z: DiscreteState
+) -> FloatND:
+    # Draw 0 holds `(M, -M, 1/4)` and draw 1 `(1, 1, 1/4)` at wealth 0, 1 and 2.
+    exponent = 60 if jax.config.jax_enable_x64 else 30
+    magnitude = jnp.asarray(float(2**exponent))
+    large_row = jnp.where(wealth == 0, magnitude, -magnitude)
+    small_row = jnp.asarray(1.0)
+    return jnp.where(wealth == 2, 0.25, jnp.where(z == 0, large_row, small_row))
+
+
+def _transposed_alive_utility(
+    *, wealth: ContinuousState, z: DiscreteState, landing: DiscreteAction
+) -> FloatND:
+    # Reads every state and the action so none is unused; adds exactly zero.
+    return jnp.zeros_like(wealth * 0.0 + z * 0.0 + landing * 0.0)
+
+
+def _next_wealth_by_landing(*, landing: DiscreteAction) -> ContinuousState:
+    return jnp.where(landing == 0, 0.5, 2.0)
+
+
+def _equal_probabilities() -> FloatND:
+    return jnp.asarray([0.5, 0.5])
+
+
+def _transposed_model(*, contract: bool) -> Model:
+    states = {
+        "wealth": LinSpacedGrid(start=0.0, stop=2.0, n_points=3),
+        "z": DiscreteGrid(category_class=_Binary),
+    }
+    alive = Regime(
+        states=states,
+        actions={"landing": DiscreteGrid(category_class=_Binary)},
+        state_transitions={
+            "wealth": _next_wealth_by_landing,
+            "z": StochasticTransition(func=_equal_probabilities),
+        },
+        functions={"utility": _transposed_alive_utility},
+        solver=GridSearch(lottery_contraction=contract),
+    )
+    final = Regime(states=states, functions={"utility": _transposed_terminal_utility})
+    return Model(
+        regimes={"alive": alive, "final": final},
+        regime_id_class=_Regimes,
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
+        initial_nodes=((0, "alive"),),
+        edges={"alive": {"final": 0}},
+        durable_identity=False,
+    )
+
+
+@pytest.mark.parametrize(
+    ("contract", "expected"),
+    [
+        pytest.param(False, 0.5, id="enumerated-keeps-the-small-term"),
+        pytest.param(True, 0.25, id="contracted-loses-the-small-term"),
+    ],
+)
+def test_transposed_cancellation_loses_the_small_term_when_contracted(
+    *, contract: bool, expected: float
+) -> None:
+    """The exact value is 0.5 at the midpoint; contracted, the endpoint's 0.25 wins.
+
+    Enumeration reads the midpoint exactly here, the transpose of the
+    `finite-cancel-*` cases, where contraction does. The contracted 0.25 is
+    recorded, so both orientations stay visible.
+    """
+    result = _transposed_model(contract=contract).solve(
+        params={
+            "alive": {"koopmans_aggregator": {"discount_factor": 1.0}},
+            "final": {},
+        },
+        log_level="off",
+    )
+    _assert_all_equal(values=np.asarray(result.values[0]["alive"]), expected=expected)
