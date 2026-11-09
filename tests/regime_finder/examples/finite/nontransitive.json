@@ -1,0 +1,70 @@
+{
+  "actions": {},
+  "ages": [
+    0,
+    1,
+    2,
+    3
+  ],
+  "implementation": {
+    "max_block_state_entries": 3
+  },
+  "name": "nontransitive-segment-size-global-optimum",
+  "parameters": {},
+  "programs": [
+    {
+      "discount": "1",
+      "feasible": "True",
+      "id": "original",
+      "reward": "x if age == 0 else (z if age == 2 else 0)",
+      "role": {
+        "actor": "household",
+        "commitments": [],
+        "discount_boundary": "annual",
+        "observations": []
+      },
+      "terminal": false,
+      "transitions": [
+        {
+          "probability": "1",
+          "updates": {
+            "x": "0",
+            "z": "0"
+          }
+        }
+      ],
+      "when": "age < 3"
+    },
+    {
+      "declared_actions": [],
+      "declared_states": [],
+      "id": "terminal",
+      "role": {
+        "actor": "household",
+        "commitments": [],
+        "discount_boundary": "annual",
+        "observations": []
+      },
+      "terminal": true,
+      "terminal_payoff": "0",
+      "transitions": [],
+      "when": "age == 3"
+    }
+  ],
+  "schema_version": 1,
+  "states": {
+    "x": {
+      "values": [
+        0,
+        1,
+        2
+      ]
+    },
+    "z": {
+      "values": [
+        0,
+        1
+      ]
+    }
+  }
+}

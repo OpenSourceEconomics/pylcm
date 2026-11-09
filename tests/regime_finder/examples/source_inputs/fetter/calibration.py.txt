@@ -1,0 +1,188 @@
+"""Construct the economic calibration from explicit workflow-supplied values."""
+
+from dataclasses import dataclass, field, replace
+
+import numpy as np
+
+from .eligibility import eligibility_probability
+from .latent_types import (
+    DisutilityGrid,
+    LatentRetirement,
+    ProfileConstruction,
+    assert_no_oaa_consistency,
+    disutility_grid,
+    latent_retirement_pmf,
+)
+
+
+@dataclass(frozen=True)
+class Calibration:
+    """Store inputs for the model and moment machinery."""
+
+    # Horizon and prices from paper scalars.
+    entry_age: int
+    terminal_age: int
+    eligibility_age: int
+    n_life: int
+    interest_rate: float
+    discount_factor: float
+
+    # Estimated preferences and eligibility used as the MSM starting values.
+    eta: float
+    alpha_e: float
+    beta_e: float
+
+    # Policy.
+    income_floor: float  # ybar, annual dollars (Massachusetts baseline)
+
+    # Information timing.
+    oaa_introduction_year: int
+    census_year: int
+
+    # Earnings groups.
+    wage_midpoints: np.ndarray
+    wage_bin_edges: np.ndarray
+    earnings_share: np.ndarray  # population weight of each group
+
+    # Companion-layer output.
+    latent: LatentRetirement
+    disutility: DisutilityGrid
+
+    # MSM targets.
+    empirical_moments: np.ndarray  # 15 proportional breaks at 65
+    moment_variances: np.ndarray  # diag of the VCV -> W = diag(1/var)
+
+    # Data provenance.
+    from_package: bool
+    notes: tuple[str, ...] = field(default_factory=tuple)
+
+    @property
+    def replacement_rates(self) -> np.ndarray:
+        """Compute ybar / w, the wage channel for each earnings group."""
+        return self.income_floor / self.wage_midpoints
+
+    @property
+    def eligibility_probabilities(self) -> np.ndarray:
+        return eligibility_probability(
+            self.wage_midpoints, alpha_e=self.alpha_e, beta_e=self.beta_e
+        )
+
+    def learn_age(self, age_in_census_year: int) -> int:
+        """Compute the cohort's age when it learned about OAA."""
+        return age_in_census_year - (self.census_year - self.oaa_introduction_year)
+
+
+def load_calibration(
+    *,
+    lfp_ages: np.ndarray,
+    lfp: np.ndarray,
+    earnings_share: np.ndarray,
+    moments: np.ndarray,
+    variances: np.ndarray,
+    beta_e: float,
+    eta: float,
+    alpha_e: float,
+    income_floor: float,
+    entry_age: int,
+    terminal_age: int,
+    eligibility_age: int,
+    interest_rate: float,
+    discount_factor: float,
+    oaa_introduction_year: int,
+    census_year: int,
+    wage_bin_edges: np.ndarray,
+    poly_degree: int,
+    construction: ProfileConstruction,
+    max_age: int,
+    max_latent_age: int,
+    from_package: bool,
+    input_notes: tuple[str, ...],
+) -> Calibration:
+    """Build a calibration without selecting scalar values or substitute profiles."""
+    notes = list(input_notes)
+    n_life = terminal_age - entry_age + 1
+    wage_midpoints = 0.5 * (wage_bin_edges[:-1] + wage_bin_edges[1:])
+    n_wage_groups = len(wage_midpoints)
+    latent = latent_retirement_pmf(
+        lfp_ages,
+        lfp,
+        poly_degree=poly_degree,
+        construction=construction,
+        max_age=max_age,
+        max_latent_age=max_latent_age,
+    )
+    notes.append(f"counterfactual profile construction: {construction}")
+    if latent.monotonized_ages:
+        notes.append(
+            "counterfactual profile: participation rose at ages "
+            f"{list(latent.monotonized_ages)} in the profile assembled "
+            "from the reported "
+            f"values (through age {int(lfp_ages[-1])}) and the fitted extension beyond "
+            "them, and was flattened to leave a survival function. "
+            "The default `fitted` "
+            "construction does not read the reported values and is unaffected."
+        )
+    grid = disutility_grid(
+        latent,
+        eta=eta,
+        discount_factor=discount_factor,
+        entry_age=entry_age,
+        n_life=n_life,
+    )
+    # Hard invariant: every midpoint must map back to the retirement age it encodes.
+    assert_no_oaa_consistency(
+        grid, eta=eta, discount_factor=discount_factor, n_life=n_life
+    )
+
+    if len(earnings_share) != n_wage_groups:
+        msg = f"earnings distribution must have {n_wage_groups} groups"
+        raise ValueError(msg)
+    if len(moments) != n_wage_groups:
+        msg = f"expected {n_wage_groups} empirical moments, got {len(moments)}"
+        raise ValueError(msg)
+    if len(variances) != n_wage_groups:
+        msg = f"expected {n_wage_groups} moment variances, got {len(variances)}"
+        raise ValueError(msg)
+
+    return Calibration(
+        entry_age=entry_age,
+        terminal_age=terminal_age,
+        eligibility_age=eligibility_age,
+        n_life=n_life,
+        interest_rate=interest_rate,
+        discount_factor=discount_factor,
+        eta=eta,
+        alpha_e=alpha_e,
+        beta_e=beta_e,
+        income_floor=income_floor,
+        oaa_introduction_year=oaa_introduction_year,
+        census_year=census_year,
+        wage_midpoints=wage_midpoints,
+        wage_bin_edges=wage_bin_edges,
+        earnings_share=np.asarray(earnings_share, dtype=float),
+        latent=latent,
+        disutility=grid,
+        empirical_moments=np.asarray(moments, dtype=float),
+        moment_variances=np.asarray(variances, dtype=float),
+        from_package=from_package,
+        notes=tuple(notes),
+    )
+
+
+def rebuild_disutility(cal: Calibration, *, eta: float) -> Calibration:
+    """Return `cal` with a new eta and the disutility grid re-inverted at that eta.
+
+    The MSM search over eta must call this: F(delta) is defined by inverting the model's
+    own no-OAA retirement map, which depends on eta (Appendix A.8.4).
+    """
+    grid = disutility_grid(
+        cal.latent,
+        eta=eta,
+        discount_factor=cal.discount_factor,
+        entry_age=cal.entry_age,
+        n_life=cal.n_life,
+    )
+    assert_no_oaa_consistency(
+        grid, eta=eta, discount_factor=cal.discount_factor, n_life=cal.n_life
+    )
+    return replace(cal, eta=eta, disutility=grid)

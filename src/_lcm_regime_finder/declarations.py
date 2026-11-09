@@ -7,6 +7,7 @@ Unknown capture data creates an obligation, never a fictitious domain or role.
 from __future__ import annotations
 
 import ast
+from collections.abc import Callable, Mapping
 import copy
 from fractions import Fraction
 import hashlib
@@ -416,7 +417,7 @@ class ScalarSource:
                 if isinstance(left,str) and isinstance(right,str):return '('+left+' '+symbols[type(node.op)]+' '+right+')'
                 return {"opaque":digest(ast.dump(node)),"reads":[],"arguments":[left,right],"source_operator":symbols[type(node.op)]}
         if isinstance(node,ast.Compare):
-            symbols={ast.Lt:'<',ast.LtE:'<=',ast.Gt:'>',ast.GtE:'>=',ast.Eq:'==',ast.NotEq:'!=',ast.In:'in',ast.NotIn:'not in'}  # codespell:ignore
+            symbols: Mapping[type[ast.cmpop], str] = {ast.Lt:'<',ast.LtE:'<=',ast.Gt:'>',ast.GtE:'>=',ast.Eq:'==',ast.NotEq:'!=',ast.In:'in',ast.NotIn:'not in'}  # codespell:ignore
             values=[self.node(node.left)]+[self.node(x) for x in node.comparators]
             if all(isinstance(x,str) for x in values):
                 return '('+values[0]+' '+ ' '.join(symbols[type(op)]+' '+v for op,v in zip(node.ops,values[1:]))+')'
@@ -491,7 +492,7 @@ def metadata_scalar(text,env):
     """Evaluate one categorical construction characteristic, never model rows."""
     binary={ast.Add:operator.add,ast.Sub:operator.sub,ast.Mult:operator.mul,ast.Div:operator.truediv,
             ast.FloorDiv:operator.floordiv,ast.Mod:operator.mod,ast.Pow:operator.pow}
-    compare={ast.Eq:operator.eq,ast.NotEq:operator.ne,ast.Lt:operator.lt,ast.LtE:operator.le,ast.Gt:operator.gt,ast.GtE:operator.ge}
+    compare: Mapping[type[ast.cmpop], Callable[..., bool]] = {ast.Eq:operator.eq,ast.NotEq:operator.ne,ast.Lt:operator.lt,ast.LtE:operator.le,ast.Gt:operator.gt,ast.GtE:operator.ge}
     def visit(n):
         if isinstance(n,ast.Constant):return n.value
         if isinstance(n,ast.Name):return env[n.id]
@@ -548,10 +549,11 @@ class Normalizer:
         except (KeyError,IndexError,ValueError,TypeError):pass
         if isinstance(value,(dict,list)):
             if self.source_object_paths is None:
-                self.source_object_paths={}
+                paths = {}
+                self.source_object_paths = paths
                 def index(node,path):
-                    if id(node) in self.source_object_paths:return
-                    self.source_object_paths[id(node)]=path
+                    if id(node) in paths:return
+                    paths[id(node)]=path
                     entries=node.items() if isinstance(node,dict) else enumerate(node)
                     for k,v in entries:
                         if isinstance(v,(dict,list)):index(v,pointer(path,k))
@@ -823,12 +825,14 @@ def normalize_declarations(snapshot,production_contract=None):
               'report_tags':list(contract.get('report_tags',{}).get(name,[])),
               'source_path':path,'provenance':{'source_path':path,'sha256':normal.value_digest(source_fields),'date':plain(date),'coordinate_kind':coordinate_kind}}
         if cell['role'] is None:normal.obligation('role_timing_contract',path,'Actor/information/commitment/discount equivalence is not supplied; preserve original identity')
+        axis_maps = {'states': {}, 'actions': {}}
+        cell.update(axis_maps)
         for kind in ('states','actions'):
             for axis,value in declaration.get(kind,{}).items():
-                cell[kind][axis]=normal.domain(value,pointer(pointer(fp,kind),axis),period)
-                domain=normal.domains[cell[kind][axis]]
+                axis_maps[kind][axis]=normal.domain(value,pointer(pointer(fp,kind),axis),period)
+                domain=normal.domains[axis_maps[kind][axis]]
                 if isinstance(domain.get('codes'),list) and isinstance(domain.get('values'),list):
-                    cell['category_codes'][axis]={'argument':axis+'_code','values':domain['values'],'codes':domain['codes'],'domain':cell[kind][axis]}
+                    cell['category_codes'][axis]={'argument':axis+'_code','values':domain['values'],'codes':domain['codes'],'domain':axis_maps[kind][axis]}
         for output,value in declaration.get('derived_categoricals',{}).items():
             cell['derived_categoricals'][output]=normal.domain(value,pointer(pointer(fp,'derived_categoricals'),output),period)
             cell['derived_code_providers'][output+'_code']=output
@@ -996,7 +1000,10 @@ def normalize_declarations(snapshot,production_contract=None):
                     normal.relation('joint',cell['id'],[target_id],jp,phase,callbacks=callbacks,joint_outputs=outputs,state_updates=outputs,
                                     joint_name=joint_name,support=copy.deepcopy(jf.get('support')),support_size=jf.get('support_size'),original=copy.deepcopy(selected),produces=sorted(outputs))
                     produced.update(outputs)
-                target_axes=[axis for axis,did in by_id[target_id]['states'].items() if phase!='solve' or normal.domains[did].get('solve_axis',True)]
+                target_states = by_id[target_id]['states']
+                if not isinstance(target_states, dict):
+                    raise DeclarationError('Target state domains must be a mapping')
+                target_axes=[axis for axis,did in target_states.items() if phase!='solve' or normal.domains[did].get('solve_axis',True)]
                 for axis in target_axes:
                     if axis in produced:continue
                     value=declaration.get('state_transitions',{}).get(axis)
@@ -1065,6 +1072,8 @@ def normalize_declarations(snapshot,production_contract=None):
                 if ownership is not None:
                     owners=by_id[tid].setdefault('ownership',[])
                     if owners is None:owners=[];by_id[tid]['ownership']=owners
+                    if not isinstance(owners, list):
+                        raise DeclarationError('Target ownership must be a list')
                     if ownership not in owners:owners.append(ownership)
                 return
             if isinstance(value,dict):

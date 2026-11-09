@@ -10,6 +10,8 @@ correspondence. All returned errors/budgets are exact rational strings.
 from __future__ import annotations
 
 from fractions import Fraction
+from .records import NumericalReport, NumericalRow
+from .records import JSONValue
 import math
 from typing import Mapping
 
@@ -72,7 +74,7 @@ def compare_fibers(rows, groups, *, probability_mass_absolute="1e-12",
     ``absolute + relative * max(original_mass, representative_mass)``.
     No argument is mutated. This is finite-data validation, not a source proof.
     """
-    report = {
+    report: NumericalReport = {
         "format_version": "1.0",
         "status": "FAIL",
         "guarantee": "none",
@@ -112,7 +114,7 @@ def compare_fibers(rows, groups, *, probability_mass_absolute="1e-12",
         for name, representative in groups.items():
             if representative not in rows or groups[representative] != representative:
                 raise ValueError(f"{name}: representative must be an existing fixed point")
-        parsed = {}
+        parsed: dict[str, NumericalRow] = {}
         for name, row in rows.items():
             if not isinstance(row, Mapping) or not {"reward", "discount", "kernel"} <= set(row):
                 raise ValueError(f"{name}: reward, discount and kernel are required")
@@ -154,7 +156,7 @@ def compare_fibers(rows, groups, *, probability_mass_absolute="1e-12",
         original = parsed[name]
         representative_id = groups[name]
         representative = parsed[representative_id]
-        entry = {"row": name, "representative": representative_id}
+        entry: dict[str, JSONValue] = {"row": name, "representative": representative_id}
         for destination, weight in original["kernel"].items():
             if weight > 0:
                 report["positive_edges"].append({"source": name, "destination": destination,
@@ -168,6 +170,8 @@ def compare_fibers(rows, groups, *, probability_mass_absolute="1e-12",
         failed = False
         for field in fields:
             a, b = original[field], representative[field]
+            if a is None or b is None:
+                raise ValueError("Mismatched terminal scalar")
             error, budget = abs(a - b), _budget(a, b, abs_tol, rel_tol)
             maxima[field] = max(maxima[field], error)
             entry[field] = {"original": str(a), "representative": str(b),

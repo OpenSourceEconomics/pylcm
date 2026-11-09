@@ -19,6 +19,7 @@ import sys
 import textwrap
 import types
 from typing import Any
+from .records import JSONValue
 
 
 def digest_file(path: str) -> str | None:
@@ -257,7 +258,7 @@ def read_model(model: Any, *, checkpoint=None, capture_limits=None, structural_s
         version = importlib.metadata.version("pylcm")
     except importlib.metadata.PackageNotFoundError:
         version = "unavailable; existing object inspection only"
-    result = {"schema": "constructed-pylcm-model-graph-1", "capture_format_revision": 4,
+    result: dict[str, JSONValue] = {"schema": "constructed-pylcm-model-graph-1", "capture_format_revision": 4,
               "pylcm_version": version, "description": model.description,
               "n_periods": model.n_periods, "regime_names": sorted(model.user_regimes),
               "scope": "Actual constructed graph and declarations; no solve or simulation executed."}
@@ -270,7 +271,7 @@ def read_model(model: Any, *, checkpoint=None, capture_limits=None, structural_s
             declarations = None
             native = sys.modules.get('lcm.model')
             getter = getattr(getattr(native, 'Model', None), 'get_declarations', None)
-            if getter is not None and isinstance(model, native.Model):
+            if native is not None and getter is not None and isinstance(model, native.Model):
                 declarations = getter(model)
                 if declarations.schema_version != 1:
                     raise CaptureIncomplete('Unsupported pylcm declaration API version')
@@ -278,9 +279,10 @@ def read_model(model: Any, *, checkpoint=None, capture_limits=None, structural_s
                 graph = declarations.graph
                 import inspect
                 filename = inspect.getsourcefile(type(declarations))
-                result['declaration_api'] = {'schema_version': 1, 'source_file': filename,
+                api_declaration: dict[str, JSONValue] = {'schema_version': 1, 'source_file': filename,
                     'source_sha256': session.file_digest(filename),
                     'scope': 'Original Model declared DAG inputs; callback implementation semantics remain separate'}
+                result['declaration_api'] = api_declaration
                 names = ('original_periods_by_regime', 'value_periods_by_regime',
                          'query_periods_by_phase', 'exit_function_demand')
                 result['construction_authorities'] = {
@@ -307,7 +309,7 @@ def read_model(model: Any, *, checkpoint=None, capture_limits=None, structural_s
                 session.check()
             _capture_cached_specializations(model, result['user_regimes'], declarations=declarations)
             if declarations is not None:
-                result['declaration_api']['function_interfaces'] = [
+                api_declaration['function_interfaces'] = [
                     {'function': normalize(row.function), 'arg_names': row.arg_names}
                     for row in declarations.functions]
             discrete = sys.modules.get('_lcm.grids.discrete')
@@ -328,7 +330,8 @@ def read_model(model: Any, *, checkpoint=None, capture_limits=None, structural_s
         finally:
             session.suspend_callbacks = False
     result["callable_records"] = session.records
-    result["capture_report"] = session.report()
+    capture_report = session.report()
+    result["capture_report"] = capture_report
     if structural_store is not None and structural_store.header is not None:
         from .structural_store import LoadedCapture
         result['structural_store'] = structural_store.header
@@ -348,7 +351,7 @@ def read_model(model: Any, *, checkpoint=None, capture_limits=None, structural_s
         {"file": record["source_file"], "qualname": record.get("qualname"), "sha256": record.get("source_sha256")}
         for record in session.records.values() if "/tests/" in (record.get("source_file") or "")]
     if checkpoint is not None:
-        checkpoint({"stage": "capture_complete" if result["capture_report"]["status"] == "COMPLETE" else "capture_incomplete",
+        checkpoint({"stage": "capture_complete" if capture_report["status"] == "COMPLETE" else "capture_incomplete",
                     "capture_report": result["capture_report"],
                     "original_graph_preserved": "graph" in result})
     return result
@@ -373,7 +376,8 @@ def read_declarations(spec: Any, *, production_metadata: dict | None = None,
         result["semantic_contract"] = normalize(semantic_contract or {})
         result["specialization_metadata"] = normalize(specialization_metadata or {})
     result["callable_records"] = session.records
-    result["capture_report"] = session.report()
+    capture_report = session.report()
+    result["capture_report"] = capture_report
     result["capture_format_revision"] = 4
     result["construction_capture_phase"] = "original declaration mapping before Model/program construction"
     result["execution_contract"] = {"numerical_model_rows": 0, "solver_compilation": False,

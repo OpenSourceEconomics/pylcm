@@ -3,6 +3,7 @@ from collections import defaultdict
 import json
 import hashlib
 import math
+from .records import LinearObjective, SignatureModel
 
 
 def encode(value):
@@ -13,15 +14,15 @@ def fingerprint(value):
     return hashlib.sha256(encode(value).encode()).hexdigest()
 
 
-def normalize_model(model):
+def normalize_model(model: SignatureModel) -> SignatureModel:
     """Canonical integer-polynomial serialization, preserving multiplicities."""
     def terms(values):
         coefficients=defaultdict(int)
         for name,value in values:coefficients[name]+=value
         return sorted((name,value) for name,value in coefficients.items() if value)
-    result=dict(model, schema='regime-signature-binary-model/v2')
-    result['constraints']=sorted((dict(row,terms=terms(row['terms'])) for row in model['constraints']),key=encode)
-    result['objectives']={name:dict(obj,terms=terms(obj['terms'])) for name,obj in model['objectives'].items()}
+    result: SignatureModel = {**model, 'schema': 'regime-signature-binary-model/v2'}
+    result['constraints']=sorted(({**row, 'terms': terms(row['terms'])} for row in model['constraints']),key=encode)
+    result['objectives']={name:{**obj, 'terms': terms(obj['terms'])} for name,obj in model['objectives'].items()}
     return result
 
 
@@ -82,7 +83,7 @@ def build(instance, *, check=lambda:None, max_signatures=4096, max_variables=100
         rows.append(tuple(math.prod(instance['domains'][d]['size'] for _,d in axes
                          if instance['domains'][d].get('solve_axis') is not False) for axes in (states,actions)))
     variables=set();constraints=[]
-    objectives={name:{'constant':0,'terms':[]} for name in ('work','storage','clarity')}
+    objectives: dict[str, LinearObjective]={name:{'constant':0,'terms':[]} for name in ('work','storage','clarity')}
     def rule(coefficients,relation,rhs):
         terms=[(name,value) for name,value in coefficients if value]
         variables.update(name for name,_ in terms)
@@ -115,8 +116,9 @@ def build(instance, *, check=lambda:None, max_signatures=4096, max_variables=100
             rule([(z,1),(f'x_{i}_{k}',-1)],'<=',0)
             rule([(z,1),(f'x_{j}_{k}',1)],'<=',1)
             cost('work',z,amount)
-    return normalize_model({'schema':'regime-signature-binary-model/v1','instance_sha256':fingerprint(instance),
+    model: SignatureModel = {'schema':'regime-signature-binary-model/v1','instance_sha256':fingerprint(instance),
         'cell_order':[c['id'] for c in cells],'bins':bins,'variables':sorted(variables),
         'constraints':constraints,'objectives':objectives,'pareto_complete_representation':True,
         'full_plan_set_preserved':False,'frontier_complete_verified':False,
-        'guard':'one cell per original label; one protected context; per_block; block > dispatch'})
+        'guard':'one cell per original label; one protected context; per_block; block > dispatch'}
+    return normalize_model(model)

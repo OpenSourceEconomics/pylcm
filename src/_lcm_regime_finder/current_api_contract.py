@@ -52,6 +52,8 @@ def inspect_authority(cls):
         source = inspect.getsource(cls).strip()
         filename = inspect.getsourcefile(cls)
         # Git checkouts may use CRLF without changing the source authority.
+        if filename is None:
+            return None
         file_bytes = Path(filename).read_bytes().replace(b"\r\n", b"\n")
         file_hash = hashlib.sha256(file_bytes).hexdigest()
     except (TypeError, OSError):

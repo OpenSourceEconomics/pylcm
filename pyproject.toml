@@ -444,8 +444,6 @@ collapse_tables = [ "tool.hatch", "tool.pytask", "tool.pytest", "tool.ty" ]
 
 [tool.ty]
 src.include = [ "docs/", "src/", "tests/" ]
-# The bundled checker keeps its independently validated dictionary schema.
-src.exclude = [ "src/_lcm_regime_finder/" ]
 # Standalone scripts and algebra tests import helpers from their own directories.
 environment.extra-paths = [ "tests/candidate_certificate", "tests/egm" ]
 # ty resolves third-party imports from this pixi env. The pre-commit hook runs

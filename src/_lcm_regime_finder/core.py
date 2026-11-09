@@ -16,6 +16,7 @@ import json
 import math
 import time
 
+from .records import PreparedAtom, IntervalCandidate, DependencyEdge
 from .expressions import AdmissionError, evaluate, jsonable, literal, partial
 
 
@@ -211,8 +212,8 @@ def prepare(problem):
         raise AdmissionError('Observed-status product exceeds declared support limit')
     status_names = sorted(status_axes)
     statuses = [dict(zip(status_names, vals)) for vals in itertools.product(*(values(status_axes[x]) for x in status_names))]
-    atoms = []
-    by_id = {}
+    atoms: list[PreparedAtom] = []
+    by_id: dict[str, PreparedAtom] = {}
     # Each original program is a symbolic decision primitive family, not a desired regime partition.
     for ai, age in enumerate(ages):
         for si, status in enumerate(statuses):
@@ -247,7 +248,7 @@ def prepare(problem):
                         raise AdmissionError('A primitive reads a state missing from its original domain: ' + ','.join(sorted(bad)))
                     direct.update(val.reads & set(sn))
                 identifier = f'a{ai}s{si}c{len(occupied)-1}'
-                atom = {'id': identifier, 'age': age, 'age_index': ai, 'status': status,
+                atom: PreparedAtom = {'id': identifier, 'age': age, 'age_index': ai, 'status': status,
                         'channel': channel, 'original_regime': program['id'],
                         'declared_states': sorted(sn), 'declared_actions': sorted(an),
                         'constant_states': constants, 'forced_actions': fixed,
@@ -267,10 +268,13 @@ def prepare(problem):
     for atom in atoms:
         lookup[atom['age_index']].append(atom)
     numerical_admission=_finite_admission(problem,atoms,lookup)
-    edges = []
+    edges: list[DependencyEdge] = []
     probability_checks = []
     for atom in atoms:
         program, env = atom['_program'], atom['_env']
+        live_states = atom['live_states']
+        if not isinstance(live_states, set):
+            raise AdmissionError('Dependency discovery requires the working state set')
         raw_edges = [('transition', e) for e in program.get('transitions', [])]
         raw_edges += [('read', e) for e in program.get('reads', [])]
         for kind, edge in raw_edges:
@@ -282,7 +286,7 @@ def prepare(problem):
             for expr in [edge.get('when',True),weight_expr,*edge.get('updates',{}).values(),*edge.get('status_updates',{}).values()]:
                 unknown_names=partial(expr,env).reads-set(atom['declared_states'])-set(atom['declared_actions'])-set(problem.get('external_parameters',[]))
                 if unknown_names:raise AdmissionError('Undeclared transition variable: '+','.join(sorted(unknown_names)))
-            atom['live_states'].update((gate.reads | weight.reads) & set(atom['declared_states']))
+            live_states.update((gate.reads | weight.reads) & set(atom['declared_states']))
             if weight.known:
                 if not isinstance(weight.value, (int, float, Fraction)) or weight.value < 0:
                     raise AdmissionError('A declared transition/read weight is negative or nonnumeric')
@@ -297,7 +301,7 @@ def prepare(problem):
             target_status = {}
             for name in status_names:
                 v = partial(edge.get('status_updates', {}).get(name, name), env)
-                atom['live_states'].update(v.reads & set(atom['declared_states']))
+                live_states.update(v.reads & set(atom['declared_states']))
                 if v.known:
                     if v.value not in [literal(x) for x in values(status_axes[name])]:
                         raise AdmissionError('Transition leaves the declared observed-status domain')
@@ -312,11 +316,12 @@ def prepare(problem):
             if phase not in ['solve', 'simulation', 'both']:
                 raise AdmissionError('Unknown transition phase')
             for target in destinations:
-                edges.append({'source': atom['id'], 'target': target['id'], 'kind': kind,
+                dependency: DependencyEdge = {'source': atom['id'], 'target': target['id'], 'kind': kind,
                               'phase': phase, 'offset': offset, 'updates': edge.get('updates', {}),
                               'probability': jsonable(weight.value) if weight.known else 'symbolic_possible_positive',
                               'weight_expression': weight_expr,
-                              'source_anchor': edge.get('source_anchor', atom['source_anchor'])})
+                              'source_anchor': edge.get('source_anchor', atom['source_anchor'])}
+                edges.append(dependency)
         # Check constant rows separately, without renormalization or deleting support.
         for phase in ['solve', 'simulation']:
             relevant = [e for e in program.get('transitions', []) if e.get('phase', 'both') in [phase, 'both']]
@@ -368,7 +373,10 @@ def prepare(problem):
                 raise AdmissionError('Incoming history/update reads absent source state: ' + ','.join(sorted(bad)))
             for dep in sorted(val.reads & set(source['declared_states']) - set(source['constant_states'])):
                 if dep not in source['live_states']:
-                    source['live_states'].add(dep)
+                    live = source['live_states']
+                    if not isinstance(live, set):
+                        raise AdmissionError('Liveness propagation needs its mutable working set')
+                    live.add(dep)
                     pending.append((source['id'], dep))
                 reason = f"{edge['phase']} {edge['kind']} into {target_id}.{coordinate}"
                 if reason not in reasons[source['id']].setdefault(dep, []):
@@ -576,9 +584,9 @@ def find_regimes(problem, budget=None):
         max_segments=int(budget.get('candidate_segments',problem.get('limits',{}).get('candidate_segments',200000)))
         max_seconds=float(budget.get('seconds',problem.get('limits',{}).get('seconds',60)))
         if max_segments<0 or max_seconds<0: raise AdmissionError('Invalid negative search budget')
-        all_candidates={}; rejected=[]; count=0; complete=True
+        all_candidates: dict[str, list[IntervalCandidate]]={}; rejected=[]; count=0; complete=True
         for key,lane in model['lanes'].items():
-            entries=[]
+            entries: list[IntervalCandidate]=[]
             for i in range(len(lane)):
                 for j in range(i+1,len(lane)+1):
                     if count>=max_segments or time.perf_counter()-started>=max_seconds:

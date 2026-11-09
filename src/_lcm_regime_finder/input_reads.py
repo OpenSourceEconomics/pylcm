@@ -5,6 +5,8 @@ callbacks. After freezing, loaders can open only registered input identities.
 The single-owner contract excludes concurrent namespace mutation.
 """
 from dataclasses import dataclass
+from collections.abc import Mapping
+from .records import JSONValue
 import json
 from pathlib import Path
 from types import MappingProxyType
@@ -41,9 +43,9 @@ class DocumentContext:
 @dataclass(frozen=True)
 class InputReads:
     identities: tuple[InputIdentity, ...]
-    paths: object
-    documents: object
-    texts: object
+    paths: Mapping[Path, Path]
+    documents: Mapping[Path, JSONValue]
+    texts: Mapping[Path, str]
     edges: tuple
 
     def bind(self, path):

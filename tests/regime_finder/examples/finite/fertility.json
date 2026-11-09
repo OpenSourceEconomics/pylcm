@@ -1,0 +1,71 @@
+{
+  "actions": {
+    "birth": {
+      "values": [
+        0,
+        1
+      ]
+    }
+  },
+  "ages": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8
+  ],
+  "name": "missing-fertility-and-last-child-consumer",
+  "parameters": {},
+  "programs": [
+    {
+      "discount": "1",
+      "feasible": "birth == 0 if age >= 2 else True",
+      "id": "original",
+      "reward": "(child if age < 5 else 0) + (birth if age < 2 else 0)",
+      "role": {
+        "actor": "household",
+        "commitments": [],
+        "discount_boundary": "annual",
+        "observations": []
+      },
+      "terminal": false,
+      "transitions": [
+        {
+          "probability": "1",
+          "updates": {
+            "child": "child"
+          }
+        }
+      ],
+      "when": "age < 8"
+    },
+    {
+      "declared_actions": [],
+      "declared_states": [],
+      "id": "terminal",
+      "role": {
+        "actor": "household",
+        "commitments": [],
+        "discount_boundary": "annual",
+        "observations": []
+      },
+      "terminal": true,
+      "terminal_payoff": "0",
+      "transitions": [],
+      "when": "age == 8"
+    }
+  ],
+  "schema_version": 1,
+  "states": {
+    "child": {
+      "values": [
+        0,
+        1
+      ]
+    }
+  }
+}

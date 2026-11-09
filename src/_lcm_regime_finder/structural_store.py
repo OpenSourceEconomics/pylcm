@@ -10,6 +10,7 @@ import shutil
 import uuid
 
 from .structural_arrays import NativeWriter
+from .structural_check import Reader
 from .structural_events import source_anchor, compare_source
 from .structural_files import FilePayloads, load_store, verify_store_again
 from .structural_transport import canonical
@@ -20,6 +21,8 @@ from .structural_context import register, reference_info, validate_references, c
 
 class LoadedCapture(dict):
     """JSON mapping retaining its independently checked, immutable store context."""
+    structure: Reader
+    structures: tuple[Reader, ...]
     def __deepcopy__(self, memo):
         result = type(self)()
         memo[id(self)] = result

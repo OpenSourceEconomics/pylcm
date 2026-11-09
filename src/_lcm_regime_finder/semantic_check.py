@@ -10,9 +10,11 @@ state/action products and Bellman rows are never enumerated here.
 from __future__ import annotations
 
 import ast
+from collections.abc import Callable, Mapping
 from collections import defaultdict
 from dataclasses import dataclass
 from fractions import Fraction
+from .records import SemanticCheck, Diagnostic
 import hashlib
 import json
 import math
@@ -526,7 +528,7 @@ class SourceProof:
             return _join(*values)
         if isinstance(node, ast.Compare):
             values = [e(node.left)] + [e(child) for child in node.comparators]
-            operations = {ast.Eq: operator.eq, ast.NotEq: operator.ne, ast.Lt: operator.lt, ast.LtE: operator.le,
+            operations: Mapping[type[ast.cmpop], Callable[..., bool]] = {ast.Eq: operator.eq, ast.NotEq: operator.ne, ast.Lt: operator.lt, ast.LtE: operator.le,
                           ast.Gt: operator.gt, ast.GtE: operator.ge, ast.In: lambda a, b: a in b, ast.NotIn: lambda a, b: a not in b}  # codespell:ignore
             if all(value.value is not _UNKNOWN for value in values) and all(type(op) in operations for op in node.ops):
                 return _constant(all(operations[type(op)](a.value, b.value) for op, a, b in zip(node.ops, values, values[1:])))
@@ -700,7 +702,7 @@ def _feasibility_channels(consumer: Mapping[str, Any], decision_phase: str) -> t
     return channels if decision_phase in applicability else ()
 
 
-def check_semantics(original: dict, normalized: dict, analysis: dict, *, check_coverage: bool = True) -> dict:
+def check_semantics(original: dict, normalized: dict, analysis: dict, *, check_coverage: bool = True) -> SemanticCheck:
     """Reject malformed certificates as data; never promote unchecked input."""
     try:
         return _check_semantics(original, normalized, analysis, check_coverage=check_coverage)
@@ -710,20 +712,20 @@ def check_semantics(original: dict, normalized: dict, analysis: dict, *, check_c
                 "projection_family_complete_verified": False}
 
 
-def _check_semantics(original: dict, normalized: dict, analysis: dict, *, check_coverage: bool = True) -> dict:
+def _check_semantics(original: dict, normalized: dict, analysis: dict, *, check_coverage: bool = True) -> SemanticCheck:
     """Verify source retention, dependencies, projections and future closure.
 
     PASS is relative to the supplied original declaration/capture contract.
     Missing original source or actual-object bindings yield explicit unresolved
     obligations; they are never promoted to a complete-discovery statement.
     """
-    errors: list[dict] = []
-    unresolved: list[dict] = []
+    errors: list[Diagnostic] = []
+    unresolved: list[Diagnostic] = []
     checks = 0
     diagnostic_scope = {"scope": "source"}
     def fail(kind: str, **data): errors.append({"kind": kind, **diagnostic_scope, **data})
     def unknown(kind: str, **data):
-        item = {"kind": kind, **diagnostic_scope, **data}
+        item: Diagnostic = {"kind": kind, **diagnostic_scope, **data}
         if item not in unresolved: unresolved.append(item)
     if normalized.get("schema") != "regime-declarations/v1":
         return {"status": "FAIL", "errors": [{"kind": "declaration schema"}], "unresolved": [], "checks": 0}
