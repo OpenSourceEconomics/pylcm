@@ -8,6 +8,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from _lcm_regime_finder.pytask_api import analyse_snapshot
 from _lcm_regime_finder.resources import run_bounded, _tree_rss
@@ -100,27 +101,37 @@ class Round6MetadataBudgetTests(unittest.TestCase):
             self.assertIsNone(report['recommendation'])
 
     def test_late_budget_exit_cannot_publish_worker_success(self):
-        with tempfile.TemporaryDirectory() as folder:
-            output = Path(folder) / 'result'
-            # A supported command_prefix runs a minimal stand-in worker that
-            # publishes a result and then exceeds its deadline. This tests the
-            # supervisor boundary, not model or private-object manipulation.
-            script = ('import json,time; from pathlib import Path; '
-                      f'p=Path({str(output)!r}); '
-                      '(p/"summary.json").write_text(json.dumps({"status":"COMPLETE","decisions":["old success"]})); '
-                      '(p/"report.json").write_text(json.dumps({"status":"COMPLETE","recommendation":"old success"})); '
-                      'time.sleep(5)')
-            with self.assertRaisesRegex(RuntimeError, 'INCOMPLETE'):
-                analyse_snapshot(SOURCE, output, seconds=0.12,
-                                 command_prefix=[sys.executable, '-c', script])
-            summary = json.loads((output / 'summary.json').read_text())
-            report = json.loads((output / 'report.json').read_text())
-            self.assertEqual(summary['status'], 'INCOMPLETE')
-            self.assertNotIn('decisions', summary)
-            self.assertEqual(report['status'], 'INCOMPLETE')
-            self.assertIsNone(report['recommendation'])
-            retained = json.loads((output / report['completed_worker_evidence']).read_text())
-            self.assertEqual(retained['recommendation'], 'old success')
+        for report_published in (False, True):
+            with self.subTest(report_published=report_published), tempfile.TemporaryDirectory() as folder:
+                output = Path(folder) / 'result'
+
+                def exhausted_worker(_command, **_options):
+                    # Fix the supervisor outcome, not the child startup speed.
+                    # Real process termination/checkpoints are tested separately.
+                    if report_published:
+                        (output / 'summary.json').write_text(json.dumps({
+                            'status': 'COMPLETE', 'decisions': ['old success']}))
+                        (output / 'report.json').write_text(json.dumps({
+                            'status': 'COMPLETE', 'recommendation': 'old success'}))
+                    return 2
+
+                with patch('_lcm_regime_finder.resources.run_bounded', side_effect=exhausted_worker) as supervisor:
+                    with self.assertRaisesRegex(RuntimeError, 'INCOMPLETE'):
+                        analyse_snapshot(SOURCE, output, seconds=10)
+                supervisor.assert_called_once()
+                self.assertEqual(supervisor.call_args.kwargs['output'], output / 'outer-resource')
+                summary = json.loads((output / 'summary.json').read_text())
+                report = json.loads((output / 'report.json').read_text())
+                self.assertEqual(summary['status'], 'INCOMPLETE')
+                self.assertNotIn('decisions', summary)
+                self.assertEqual(report['status'], 'INCOMPLETE')
+                self.assertIsNone(report['recommendation'])
+                if report_published:
+                    retained = json.loads((output / report['completed_worker_evidence']).read_text())
+                    self.assertEqual(retained['recommendation'], 'old success')
+                else:
+                    self.assertIsNone(report.get('completed_worker_evidence'))
+                    self.assertFalse((output / 'completed-before-budget-check.json').exists())
 
     def test_direct_cli_guards_the_entire_output_namespace(self):
         from _lcm_regime_finder.cli import main
