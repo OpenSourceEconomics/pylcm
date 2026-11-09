@@ -449,3 +449,50 @@ def test_conflicting_slot_roles_are_refused_in_either_order(
 ) -> None:
     with pytest.raises(ModelInitializationError, match="gain"):
         _terminal_model(utility=Phased(solve=solve, simulate=simulate))
+
+
+@categorical(ordered=False)
+class _EdgeRegimes:
+    source: ScalarInt
+    sink: ScalarInt
+    unused: ScalarInt
+
+
+def _flat_utility() -> FloatND:
+    return jnp.asarray(0.0)
+
+
+def _certain() -> FloatND:
+    return jnp.asarray(1.0)
+
+
+def _scaled_zero(*, hazard: float) -> FloatND:
+    return jnp.asarray(0.0) * hazard
+
+
+def test_fixed_float_law_argument_is_a_float_when_evaluated_at_build() -> None:
+    """A fixed law is evaluated at build to prove a zero edge; a float argument
+    fixed to an integer past the int32 range is read as a float there too."""
+    model = Model(
+        regimes={
+            name: Regime(functions={"utility": _flat_utility})
+            for name in ("source", "sink", "unused")
+        },
+        ages=AgeGrid(start=25, inclusive_stop=26, step="Y"),
+        regime_id_class=_EdgeRegimes,
+        edges={
+            "source": lcm.Transition(
+                law={
+                    "sink": lcm.StochasticTransition(func=_certain),
+                    "unused": lcm.StochasticTransition(func=_scaled_zero),
+                }
+            ),
+            "unused": {"sink": 25},
+        },
+        initial_nodes=InitialNodes(by_age={25: "source"}),
+        fixed_params={"hazard": 2**31},
+    )
+
+    assert model.graph.pruned_edges["simulate"] == {
+        (25, "source", "unused"): "fixed_zero_probability"
+    }
