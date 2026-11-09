@@ -1,5 +1,8 @@
 """Unbudgeted simulation operations accept grid points beside sharded subject rows."""
 
+import gc
+import weakref
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -53,3 +56,39 @@ def test_run_simulation_operation_keeps_sharded_outputs_sharded() -> None:
     )
     np.testing.assert_array_equal(np.asarray(shifted), np.arange(6.0) + 10.0)
     assert shifted.sharding.is_equivalent_to(sharding, ndim=1)
+
+
+def _return_points(*, values: jax.Array, points: jax.Array) -> jax.Array:  # noqa: ARG001
+    return points
+
+
+def test_run_simulation_operation_reuses_the_replica_of_a_live_operand() -> None:
+    """Repeated operations on one single-device operand read the same replica."""
+    sharding = _subject_sharding()
+    values = jax.device_put(jnp.arange(6.0), sharding)
+    points = jax.device_put(jnp.array([0.0, 1.5, 3.0]), jax.devices()[0])
+    first, second = (
+        run_simulation_operation(
+            memory=None,
+            function=_return_points,
+            arguments={"values": values, "points": points},
+        )
+        for _ in range(2)
+    )
+    assert first is second
+
+
+def test_run_simulation_operation_replica_does_not_keep_its_operand_alive() -> None:
+    """A single-device operand is freed once its last outside reference goes."""
+    sharding = _subject_sharding()
+    values = jax.device_put(jnp.arange(6.0), sharding)
+    points = jax.device_put(jnp.array([0.0, 1.5, 3.0]), jax.devices()[0])
+    run_simulation_operation(
+        memory=None,
+        function=_return_points,
+        arguments={"values": values, "points": points},
+    )
+    operand = weakref.ref(points)
+    del points
+    gc.collect()
+    assert operand() is None
