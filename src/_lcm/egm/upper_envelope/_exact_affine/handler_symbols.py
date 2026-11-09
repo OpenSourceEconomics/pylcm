@@ -22,8 +22,6 @@ EXACT_AFFINE_HANDLER_SYMBOLS = (
     "ExactQueryWinnerF64",
     "ExactQueryWinnerBatchedF32",
     "ExactQueryWinnerBatchedF64",
-    "ExactAffineHandoverF32",
-    "ExactAffineHandoverF64",
     "ExactCellHullF32",
     "ExactCellHullF64",
 )
