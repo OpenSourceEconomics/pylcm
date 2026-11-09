@@ -20,7 +20,7 @@ from .source_adapter import (Declaration, Function, Module, Scope,
                              SourceAdapterError, _body_without_docstring, _name)
 
 
-@dataclass
+@dataclass(frozen=True)
 class Constructed:
     kind: str
     fields: dict

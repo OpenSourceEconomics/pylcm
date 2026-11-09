@@ -186,7 +186,9 @@ class HeuristicSearch(Search):
                 return {'cost': block['cost'],
                         'blocks': (_BlockRef.from_materialized(self, block, policy),)}
         n = len(buckets)
-        costs, following, segments = [None] * (n + 1), [None] * n, [None] * n
+        costs = [None] * (n + 1)
+        following = [-1] * n
+        segments = [None] * n
         costs[n] = dict.fromkeys(METRICS, 0)
         for start in range(n - 1, -1, -1):
             growing = _GrowingInterval(self, policy)
@@ -197,9 +199,10 @@ class HeuristicSearch(Search):
                 cost = growing.cost()
                 if cost is None:
                     break  # Conflicting identities cannot disappear on extension.
-                if costs[stop] is None:
+                suffix_cost = costs[stop]
+                if suffix_cost is None:
                     continue
-                total = {key: cost[key] + costs[stop][key] for key in METRICS}
+                total = {key: cost[key] + suffix_cost[key] for key in METRICS}
                 # The stop index is a stable local tie, never an optimality claim
                 # about ties across other groupings or omitted policies.
                 rank = (self.scalar(total), vector(total), stop)
@@ -210,7 +213,10 @@ class HeuristicSearch(Search):
             return None
         blocks, start = [], 0
         while start < n:
-            blocks.append(segments[start])
+            segment = segments[start]
+            if segment is None or following[start] <= start:
+                raise ValueError('Incomplete interval backpointer')
+            blocks.append(segment)
             start = following[start]
         return {'cost': costs[0], 'blocks': tuple(blocks)}
 
@@ -359,6 +365,8 @@ class HeuristicSearch(Search):
                             if self.scalar(proposal['cost']) < self.scalar(current['cost']):
                                 group_plans, current = coarse_plans, proposal
                     rounds = 0
+                    if group_plans is None:
+                        raise ValueError('Missing incumbent group plans')
                     while self.effort['rounds'] is None or rounds < self.effort['rounds']:
                         winner, winning_plans = None, None
                         for removed, added in self.moves(group_plans, policy):
@@ -373,8 +381,8 @@ class HeuristicSearch(Search):
                                 # source block, so unaffected groups cancel exactly.
                                 cost = {key: current['cost'][key]
                                         - sum(group_plans[group]['cost'][key] for group in removed)
-                                        + sum(plan['cost'][key] for plan in new_plans.values()) for key in METRICS}
-                                proposed_plans = {group: plan for group, plan in group_plans.items()
+                                        + sum(added_plan['cost'][key] for added_plan in new_plans.values()) for key in METRICS}
+                                proposed_plans = {group: retained_plan for group, retained_plan in group_plans.items()
                                                   if group not in removed} | new_plans
                                 proposal = self.point(proposed_plans, policy_id, cost)
                                 self.consider(proposal)
@@ -387,6 +395,8 @@ class HeuristicSearch(Search):
                         rounds += 1
                         if winner is None:
                             break
+                        if winning_plans is None:
+                            raise ValueError('A winning move requires group plans')
                         current, group_plans = winner, winning_plans
                         self.accepted_moves += 1
                     self.completed_policy_ids.append(policy_id)

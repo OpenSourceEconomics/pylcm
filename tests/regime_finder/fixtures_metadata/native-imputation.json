@@ -1,0 +1,372 @@
+{
+  "schema": "constructed-pylcm-model-graph-1",
+  "n_periods": 6,
+  "ages": null,
+  "user_regimes": {
+    "original": {
+      "kind": "dataclass",
+      "type": "lcm.Regime",
+      "fields": {
+        "states": {
+          "x": {
+            "kind": "object",
+            "type": "lcm.DiscreteGrid",
+            "fields": {
+              "values": [
+                0,
+                1
+              ],
+              "codes": [
+                0,
+                1
+              ],
+              "categories": [
+                "0",
+                "1"
+              ]
+            }
+          },
+          "history": {
+            "kind": "object",
+            "type": "lcm.DiscreteGrid",
+            "fields": {
+              "values": [
+                0,
+                1
+              ],
+              "codes": [
+                0,
+                1
+              ],
+              "categories": [
+                "0",
+                "1"
+              ]
+            }
+          },
+          "belief": {
+            "kind": "object",
+            "type": "lcm.Phased",
+            "fields": {
+              "solve": {
+                "kind": "callable",
+                "source": "def impute(history):\n    return history\n",
+                "arguments": [
+                  "history"
+                ],
+                "bindings": {},
+                "source_file": "original.py",
+                "source_sha256": "original-fixture",
+                "source_line": 1
+              },
+              "simulate": {
+                "kind": "object",
+                "type": "lcm.DiscreteGrid",
+                "fields": {
+                  "values": [
+                    0,
+                    1
+                  ],
+                  "codes": [
+                    0,
+                    1
+                  ],
+                  "categories": [
+                    "0",
+                    "1"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "actions": {
+          "choice": {
+            "kind": "object",
+            "type": "lcm.DiscreteGrid",
+            "fields": {
+              "values": [
+                0,
+                1
+              ],
+              "codes": [
+                0,
+                1
+              ],
+              "categories": [
+                "0",
+                "1"
+              ]
+            }
+          }
+        },
+        "functions": {
+          "utility": {
+            "kind": "callable",
+            "source": "def utility(belief):\n    return belief\n",
+            "arguments": [
+              "belief"
+            ],
+            "bindings": {},
+            "source_file": "original.py",
+            "source_sha256": "original-fixture",
+            "source_line": 1
+          }
+        },
+        "constraints": {
+          "allowed": {
+            "kind": "callable",
+            "source": "def allowed(choice, age):\n    return (choice == 0) | (age < CUTOFF)\n",
+            "arguments": [
+              "choice",
+              "age"
+            ],
+            "bindings": {
+              "CUTOFF": 2
+            },
+            "source_file": "original.py",
+            "source_sha256": "original-fixture",
+            "source_line": 1
+          }
+        },
+        "state_transitions": {
+          "x": {
+            "kind": "callable",
+            "source": "def next_x(x):\n    return x\n",
+            "arguments": [
+              "x"
+            ],
+            "bindings": {},
+            "source_file": "original.py",
+            "source_sha256": "original-fixture",
+            "source_line": 1
+          },
+          "history": {
+            "kind": "callable",
+            "source": "def next_history(history):\n    return history\n",
+            "arguments": [
+              "history"
+            ],
+            "bindings": {},
+            "source_file": "original.py",
+            "source_sha256": "original-fixture",
+            "source_line": 1
+          },
+          "belief": {
+            "kind": "callable",
+            "source": "def next_belief(belief):\n    return belief\n",
+            "arguments": [
+              "belief"
+            ],
+            "bindings": {},
+            "source_file": "original.py",
+            "source_sha256": "original-fixture",
+            "source_line": 1
+          }
+        }
+      }
+    }
+  },
+  "reachability": {
+    "kind": "dataclass",
+    "fields": {
+      "nodes": [
+        [
+          0,
+          "original"
+        ],
+        [
+          1,
+          "original"
+        ],
+        [
+          2,
+          "original"
+        ],
+        [
+          3,
+          "original"
+        ],
+        [
+          4,
+          "original"
+        ],
+        [
+          5,
+          "original"
+        ]
+      ],
+      "solution": {
+        "kind": "dataclass",
+        "fields": {
+          "targets_by_period": [
+            {
+              "original": [
+                "original"
+              ]
+            },
+            {
+              "original": [
+                "original"
+              ]
+            },
+            {
+              "original": [
+                "original"
+              ]
+            },
+            {
+              "original": [
+                "original"
+              ]
+            },
+            {
+              "original": [
+                "original"
+              ]
+            }
+          ]
+        }
+      },
+      "simulation": {
+        "kind": "dataclass",
+        "fields": {
+          "targets_by_period": [
+            {
+              "original": [
+                "original"
+              ]
+            },
+            {
+              "original": [
+                "original"
+              ]
+            },
+            {
+              "original": [
+                "original"
+              ]
+            },
+            {
+              "original": [
+                "original"
+              ]
+            },
+            {
+              "original": [
+                "original"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  },
+  "graph": {
+    "kind": "dataclass",
+    "fields": {
+      "reachability": {
+        "kind": "dataclass",
+        "fields": {
+          "nodes": [
+            [
+              0,
+              "original"
+            ],
+            [
+              1,
+              "original"
+            ],
+            [
+              2,
+              "original"
+            ],
+            [
+              3,
+              "original"
+            ],
+            [
+              4,
+              "original"
+            ],
+            [
+              5,
+              "original"
+            ]
+          ],
+          "solution": {
+            "kind": "dataclass",
+            "fields": {
+              "targets_by_period": [
+                {
+                  "original": [
+                    "original"
+                  ]
+                },
+                {
+                  "original": [
+                    "original"
+                  ]
+                },
+                {
+                  "original": [
+                    "original"
+                  ]
+                },
+                {
+                  "original": [
+                    "original"
+                  ]
+                },
+                {
+                  "original": [
+                    "original"
+                  ]
+                }
+              ]
+            }
+          },
+          "simulation": {
+            "kind": "dataclass",
+            "fields": {
+              "targets_by_period": [
+                {
+                  "original": [
+                    "original"
+                  ]
+                },
+                {
+                  "original": [
+                    "original"
+                  ]
+                },
+                {
+                  "original": [
+                    "original"
+                  ]
+                },
+                {
+                  "original": [
+                    "original"
+                  ]
+                },
+                {
+                  "original": [
+                    "original"
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      },
+      "initial_nodes": [
+        [
+          0,
+          "original"
+        ]
+      ],
+      "laws": {}
+    }
+  }
+}

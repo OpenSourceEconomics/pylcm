@@ -6,6 +6,7 @@ The saved report.json is the unchanged result; report-data.json adds exact graph
 and selected-interface records for reviewing every frontier alternative.
 """
 from __future__ import annotations
+from .records import RenderPoint, RenderScenario
 
 import binascii
 from collections import Counter, defaultdict
@@ -288,7 +289,7 @@ def _view(result):
     decisions = {(row.get("scenario_index"), row.get("graph_id")): row
                  for row in result.get("proposal_decisions", [])}
     selections = {row.get('scenario_index'): row for row in result.get('recommendations', [])}
-    scenarios = []
+    scenarios: list[RenderScenario] = []
     for si, scenario in enumerate(result.get("scenarios", []), 1):
         contract = scenario.get("allocation_contract") or {}
         conditional = contract.get("status") not in ("known", "declared")
@@ -296,7 +297,7 @@ def _view(result):
         title = {"per_block": "Separate allocation for each block", "global_union": "Shared global axis allocation"}.get(kind, "Allocation contract not supplied")
         if conditional:
             title += " — conditional scenario"
-        points = []
+        points: list[RenderPoint] = []
         if result.get('search_mode') == 'heuristic':
             # Presentation uses the source-checked selection; the original
             # cost-only preference remains untouched in canonical report.json.

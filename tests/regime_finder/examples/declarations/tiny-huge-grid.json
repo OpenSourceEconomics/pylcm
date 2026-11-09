@@ -1,0 +1,291 @@
+{
+  "allocation": {
+    "boundary_unit": 1,
+    "identity": "explicit-fixture-allocation",
+    "kind": "per_block",
+    "source_path": "/allocation",
+    "status": "known"
+  },
+  "callbacks": {
+    "children": {
+      "arguments": [
+        "family"
+      ],
+      "bindings": {},
+      "expression": "[0, 1, 1, 2][family]",
+      "identity": "615a7f148f6a2e62b9ae9bb7685acdf6fd9db359c2c3204b588f5d015dc7b64d",
+      "original": {
+        "arguments": [
+          "family"
+        ],
+        "bindings": {},
+        "call_targets": {},
+        "defaults": {},
+        "kind": "callable",
+        "module": "independent_fixture",
+        "qualname": "children",
+        "source": "def children(family):\n    return [0, 1, 1, 2][family]\n",
+        "source_sha256": "f50f07b2556c25568a7aed81bede10c3885a9af7dd0bf2e8dcc593d0da8029a3"
+      },
+      "reads": [
+        "family"
+      ],
+      "source": "def children(family):\n    return [0, 1, 1, 2][family]\n",
+      "source_path": "/callbacks/children",
+      "status": "proved"
+    },
+    "u_early": {
+      "arguments": [
+        "assets",
+        "family"
+      ],
+      "bindings": {},
+      "expression": "assets + family",
+      "identity": "ed0e08987f1b8fc9ffbccdea2f386ef529978ca0dff2cb09cd153faa9ab8ccee",
+      "original": {
+        "arguments": [
+          "assets",
+          "family"
+        ],
+        "bindings": {},
+        "call_targets": {},
+        "defaults": {},
+        "kind": "callable",
+        "module": "independent_fixture",
+        "qualname": "u_early",
+        "source": "def u_early(assets, family):\n    return assets + family\n",
+        "source_sha256": "f1a1c48cd868991d6fcfa7dd3b0e359b718fd04b79d86c18b49633cf57201b4c"
+      },
+      "reads": [
+        "assets",
+        "family"
+      ],
+      "source": "def u_early(assets, family):\n    return assets + family\n",
+      "source_path": "/callbacks/u_early",
+      "status": "proved"
+    },
+    "u_late": {
+      "arguments": [
+        "assets",
+        "children"
+      ],
+      "bindings": {},
+      "expression": "assets + children",
+      "identity": "b114b33a43935401a79517a642554c5f330a7d8b217a9089c62ff74a3eeccc29",
+      "original": {
+        "arguments": [
+          "assets",
+          "children"
+        ],
+        "bindings": {},
+        "call_targets": {},
+        "defaults": {},
+        "kind": "callable",
+        "module": "independent_fixture",
+        "qualname": "u_late",
+        "source": "def u_late(assets, children):\n    return assets + children\n",
+        "source_sha256": "00366cd6a61de3ba23a7b8cd7a81a1a29f9450cd5d9b3f5ea73b18c592fdd5c9"
+      },
+      "reads": [
+        "assets",
+        "children"
+      ],
+      "source": "def u_late(assets, children):\n    return assets + children\n",
+      "source_path": "/callbacks/u_late",
+      "status": "proved"
+    }
+  },
+  "cells": [
+    {
+      "actions": {},
+      "admissible_start": true,
+      "age": 20,
+      "consumers": [
+        {
+          "callback": "u_early",
+          "kind": "reward",
+          "phase": "both"
+        }
+      ],
+      "functions": {
+        "children": "children",
+        "utility": "u_early"
+      },
+      "id": "c0",
+      "ownership": null,
+      "period": 0,
+      "regime": "life",
+      "report_tags": [],
+      "role": {
+        "actor": "household",
+        "commitments": [],
+        "discount_boundary": "each biological year",
+        "observations": [
+          "family",
+          "assets"
+        ]
+      },
+      "source_path": "/cells/0",
+      "stage": "choice",
+      "states": {
+        "assets": "assets_large",
+        "family": "family4"
+      },
+      "terminal": false
+    },
+    {
+      "actions": {},
+      "admissible_start": false,
+      "age": 21,
+      "consumers": [
+        {
+          "callback": "u_late",
+          "kind": "reward",
+          "phase": "both"
+        }
+      ],
+      "functions": {
+        "children": "children",
+        "utility": "u_late"
+      },
+      "id": "c1",
+      "ownership": null,
+      "period": 1,
+      "regime": "life",
+      "report_tags": [],
+      "role": {
+        "actor": "household",
+        "commitments": [],
+        "discount_boundary": "each biological year",
+        "observations": [
+          "family",
+          "assets"
+        ]
+      },
+      "source_path": "/cells/1",
+      "stage": "choice",
+      "states": {
+        "assets": "assets_large",
+        "family": "family4"
+      },
+      "terminal": false
+    },
+    {
+      "actions": {},
+      "admissible_start": false,
+      "age": 22,
+      "consumers": [
+        {
+          "callback": "u_late",
+          "kind": "terminal",
+          "phase": "both"
+        }
+      ],
+      "functions": {
+        "children": "children",
+        "utility": "u_late"
+      },
+      "id": "c2",
+      "ownership": null,
+      "period": 2,
+      "regime": "death",
+      "report_tags": [],
+      "role": {
+        "actor": "household",
+        "commitments": [],
+        "discount_boundary": "each biological year",
+        "observations": [
+          "family",
+          "assets"
+        ]
+      },
+      "source_path": "/cells/2",
+      "stage": "terminal",
+      "states": {
+        "assets": "assets_large",
+        "family": "family4"
+      },
+      "terminal": true
+    }
+  ],
+  "characteristics": {
+    "children": {
+      "callback": "children",
+      "domain": "family4",
+      "name": "children",
+      "state": "family"
+    }
+  },
+  "domains": {
+    "assets_large": {
+      "identity": "original-assets-grid-1e12",
+      "kind": "continuous",
+      "size": 1000000000000,
+      "source_path": "/domains/assets_large"
+    },
+    "family4": {
+      "codes": [
+        17,
+        3,
+        21,
+        8
+      ],
+      "identity": "family-source-v1",
+      "kind": "categorical",
+      "size": 4,
+      "source_path": "/domains/family4",
+      "values": [
+        0,
+        1,
+        2,
+        3
+      ]
+    }
+  },
+  "obligations": [],
+  "production_metadata": {
+    "scope": "synthetic original declaration; original dimensions, no dense product",
+    "status": "complete"
+  },
+  "relations": [
+    {
+      "callbacks": [],
+      "id": "t0",
+      "joint_outputs": [],
+      "kind": "transition",
+      "ownership": null,
+      "phase": "both",
+      "source": "c0",
+      "source_path": "/relations/0",
+      "state_updates": {
+        "assets": "assets",
+        "family": "family"
+      },
+      "targets": [
+        "c1"
+      ]
+    },
+    {
+      "callbacks": [],
+      "id": "t1",
+      "joint_outputs": [],
+      "kind": "transition",
+      "ownership": null,
+      "phase": "both",
+      "source": "c1",
+      "source_path": "/relations/1",
+      "state_updates": {
+        "assets": "assets",
+        "family": "family"
+      },
+      "targets": [
+        "c2"
+      ]
+    }
+  ],
+  "schema": "regime-declarations/v1",
+  "source_identity": {
+    "kind": "explicit original fixture",
+    "sha256": "ad8506d89dc0479abb07102a334e5040f8108b1397213f6015964daa91f1f56a"
+  }
+}

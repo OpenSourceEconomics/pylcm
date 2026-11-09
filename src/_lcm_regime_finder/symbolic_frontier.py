@@ -7,6 +7,7 @@ The result concerns the finite cost family. It does not certify native rewrites.
 from __future__ import annotations
 
 import argparse
+from .records import BaselineBlock
 from collections import defaultdict
 from copy import deepcopy
 from fractions import Fraction
@@ -459,7 +460,7 @@ def baseline_incumbent(*, instance):
     The original declaration/option packet remains the authoritative input.
     """
     thresholds = [len(c) for c in instance.chains]
-    blocks = []
+    blocks: list[BaselineBlock] = []
     for ci, component in enumerate(instance.components):
         for index, (_, members) in enumerate(component.items()):
             groups = [members]
@@ -533,12 +534,16 @@ def solve(*, packet, chains, seconds=900, max_nodes=1_000_000,
     interval_records, component_records, block_roots = {}, [], {}
 
     def block(ids):
+        if d is None:
+            raise ValueError("Symbolic diagram is not initialized")
         key = tuple(sorted(ids))
         if key not in block_roots:
             block_roots[key] = instance.symbolic_block(ids=key, diagram=d)
         return block_roots[key]
 
     def interval(ci, mask):
+        if d is None:
+            raise ValueError("Symbolic diagram is not initialized")
         key = (ci, mask)
         if key in interval_records:
             return interval_records[key][0]

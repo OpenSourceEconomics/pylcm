@@ -57,7 +57,7 @@ class CaptureIncomplete(RuntimeError):
     """Capture stopped without asserting a complete original declaration."""
 
 
-_CAPTURE_SESSION = ContextVar('regime_finder_capture_session', default=None)
+_CAPTURE_SESSION: ContextVar[CaptureSession | None] = ContextVar('regime_finder_capture_session', default=None)
 
 
 def current_capture_session():

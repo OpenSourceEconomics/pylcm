@@ -1,4 +1,6 @@
 ---
+# Parser and transport fixtures retain the exact bytes their manifests describe.
+exclude: ^tests/regime_finder/((examples|source_fixtures)/.*\.py\.txt$|data/)
 repos:
   - repo: meta
     hooks:
@@ -39,7 +41,7 @@ repos:
       - id: name-tests-test
         args:
           - --pytest-test-first
-        exclude: tests/mock_regime.py|tests/collective_fixtures.py|tests/envelope_configs.py|^tests/test_models/|^tests/data/|^tests/egm/_|^tests/execution/_|^tests/solution/_|^tests/simulation/_|^tests/simulation/initial_conditions/_|^tests/ci/|^tests/candidate_certificate/|^tests/conformance_solver/
+        exclude: tests/mock_regime.py|tests/collective_fixtures.py|tests/envelope_configs.py|^tests/test_models/|^tests/data/|^tests/egm/_|^tests/execution/_|^tests/solution/_|^tests/simulation/_|^tests/simulation/initial_conditions/_|^tests/ci/|^tests/candidate_certificate/|^tests/conformance_solver/|^tests/regime_finder/(?!test_).*\.py$
       - id: no-commit-to-branch
         args:
           - --branch
@@ -66,7 +68,7 @@ repos:
       - id: ruff-format
         # Keep the imported checker source stable for comparison with its reviewed
         # implementation. Its directory has a separate Ruff lint configuration.
-        exclude: ^src/_lcm_regime_finder/
+        exclude: ^(src/_lcm_regime_finder|tests/regime_finder)/
         types_or:
           - jupyter
           - pyi
@@ -75,7 +77,6 @@ repos:
     rev: v0.0.95
     hooks:
       - id: ty
-        exclude: ^src/_lcm_regime_finder/
         # Run ty directly so import resolution uses `[tool.ty] environment.python`.
         # Keep this dependency pin aligned with the hook revision above.
         entry: ty check
@@ -193,7 +194,7 @@ repos:
         name: functions with two named arguments are keyword-only
         entry: pixi run -e type-checking python -m tests.ci.keyword_only_convention
         language: system
-        exclude: ^src/_lcm_regime_finder/
+        exclude: ^(src/_lcm_regime_finder|tests/regime_finder)/
         types_or:
           - python
           - jupyter
