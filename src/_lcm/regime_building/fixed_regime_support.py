@@ -31,6 +31,7 @@ from jax import Array
 
 from _lcm.materialization import DatedGenerationMaterializer
 from _lcm.params.edges import EDGES
+from _lcm.params.numeric_roles import NumericRole, callable_param_roles
 from _lcm.params.processing import (
     cast_params_to_canonical_dtypes,
     find_param_candidates,
@@ -491,6 +492,7 @@ def _evaluate_fixed_function(
     """Evaluate a complete fixed DAG, or retain an unresolved conditional edge."""
     arguments: dict[ReferenceName, _FixedValue] = {}
     keys: set[str] = set()
+    roles = callable_param_roles(func)
     for arg_name, parameter in inspect.signature(func).parameters.items():
         if parameter.kind not in (
             inspect.Parameter.POSITIONAL_OR_KEYWORD,
@@ -501,6 +503,7 @@ def _evaluate_fixed_function(
             return None
         evaluated = _resolve_fixed_argument(
             arg_name=arg_name,
+            role=roles.get(arg_name, NumericRole.AS_GIVEN),
             path=path,
             side=side,
             regime=regime,
@@ -533,6 +536,7 @@ def _evaluate_fixed_function(
 def _resolve_fixed_argument(
     *,
     arg_name: ReferenceName,
+    role: NumericRole,
     path: tuple[str, ...],
     side: Side,
     regime: UserRegime,
@@ -544,7 +548,8 @@ def _resolve_fixed_argument(
 
     `path` is the params path of the callable reading the argument: a regime
     function's `(regime, function)`, or a law cell's slot below
-    `("edges", regime, target)`.
+    `("edges", regime, target)`. `role` is the argument's numeric role in that
+    callable.
     """
     regime_name = path[1] if path[0] == EDGES else path[0]
     helper = regime.functions.get(arg_name)
@@ -580,6 +585,7 @@ def _resolve_fixed_argument(
         regime_name=regime_name,
         qname=qname,
         value=fixed_flat[key],
+        role=role,
         materializer=materializer,
     ), frozenset((key,))
 
@@ -600,6 +606,7 @@ def _canonicalize_fixed_leaf(
     regime_name: RegimeName,
     qname: QualifiedName,
     value: UserParamsLeaf,
+    role: NumericRole,
     materializer: DatedGenerationMaterializer | None = None,
 ) -> ParamsLeaf:
     """Apply the parameter dtype boundary before executing a fixed callable."""
@@ -609,6 +616,7 @@ def _canonicalize_fixed_leaf(
             MappingProxyType({regime_name: MappingProxyType({qname: value})}),
         ),
         array_writer=materializer,
+        roles={qname_from_tree_path((regime_name, qname)): role},
     )
     # The cast input holds one regime level only, so no edge level comes back.
     return cast("FlatRegimeParams", canonical[regime_name])[qname]
@@ -738,6 +746,7 @@ def _get_declared_fixed_keys(
     Runtime arguments the law or its helpers read are added to `reads`.
     """
     result: set[str] = set()
+    roles = callable_param_roles(func)
     for arg_name in inspect.signature(func).parameters:
         if arg_name in non_params:
             continue
@@ -775,6 +784,7 @@ def _get_declared_fixed_keys(
                         regime_name=path[0],
                         qname=qname,
                         value=fixed_flat[candidate],
+                        role=roles.get(arg_name, NumericRole.AS_GIVEN),
                         materializer=materializer,
                     )
             result.update(candidates)

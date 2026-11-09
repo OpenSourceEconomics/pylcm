@@ -41,6 +41,21 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 - `StateConditioned.by` is stored as a read-only mapping of floats; a later change to
   the caller's mapping does not reach it. It pickles through its constructor.
 
+### A parameter's kind follows the slot that reads it
+
+- A params slot read as a float takes an integer value as a float: a library
+  coefficient (`discount_factor`, a Koopmans or certainty-equivalent coefficient, a
+  taste-shock `scale`, a runtime process law or grid point) and a callback argument
+  annotated `float` or with a float array alias such as `ScalarFloat`. This holds for
+  ordinary, edge, exit and shock-callback parameters, fixed or supplied at runtime, and
+  for each entry of a `TimeVarying` series. A slot read as an integer, or not
+  annotated, keeps the value's kind, and a Boolean always stays Boolean.
+- A model that fixes such a slot to an integer has the fingerprint of its float twin,
+  which differs from the one an earlier version gave it; solve again.
+- One parameter read as a float by one function and as an integer by another raises
+  `ModelInitializationError`; give the two readings distinct names. The same Python
+  object may feed a float slot and an integer slot; each slot gets its own cast.
+
 ### Public grid, process and condition classes live in `lcm`
 
 - The grids (`LinSpacedGrid`, `LogSpacedGrid`, `IrregSpacedGrid`,

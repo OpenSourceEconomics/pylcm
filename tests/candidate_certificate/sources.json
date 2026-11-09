@@ -14,7 +14,7 @@
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "2",
-  "source_inventory_sha256": "74a3b67c2c6740eca724f932fdccc326e853b1dcc97052e4e52bfd99b75c9b29",
+  "source_inventory_sha256": "a0b7b8e75bd28b7ffc08382c7e110136baf0572189968cbdffd0047535dab720",
   "sources": [
     {
       "path": "src/_lcm/constraints/bounds.py",
@@ -262,7 +262,7 @@
     },
     {
       "path": "src/_lcm/model_processing.py",
-      "sha256": "e305ba302cb6642043eae99142d16f7947dd33913f7c89f0a4efc11ad417422d"
+      "sha256": "0ca71d4d84781b5824be2c0bc5a31370a901b55e53d9d1b4d5889d5dedc79178"
     },
     {
       "path": "src/_lcm/optimization/golden_section.py",
@@ -274,11 +274,11 @@
     },
     {
       "path": "src/_lcm/params/processing.py",
-      "sha256": "c2fc7d20055fa52f4b72b56e1f07bcd7e8aa78a93b611a217cccf197b54ea35c"
+      "sha256": "da95bc087e7113bf8b4648ba918b52f458643d6fa29e18ecb735bb02d9263388"
     },
     {
       "path": "src/_lcm/params/regime_template.py",
-      "sha256": "5112b59f798a8e83ad945737479eb4c80133da18a532211f77f7dc63b8b76507"
+      "sha256": "fc2ca545e1ad429858454fbfd4ec13e37d1cf234b9632b9a9d971beb76b380ea"
     },
     {
       "path": "src/_lcm/persistence/solution.py",
@@ -718,7 +718,7 @@
     },
     {
       "path": "src/lcm/model.py",
-      "sha256": "b8cc85993d0da83cd86e167eb1ffb12a827dfbaf1a7ff8f55f847a4a7b3d4180"
+      "sha256": "b422642824d0776279c9c6e5007541886e8e12b4d8fdf61df63a78d48ee60c67"
     },
     {
       "path": "src/lcm/processes.py",

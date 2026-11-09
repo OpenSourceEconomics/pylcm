@@ -401,13 +401,28 @@ def _cast_shared(
     array_writer: CanonicalArrayWriter | None,
     to_float: bool,
 ) -> ParamsLeaf:
-    """Cast `value` once per input object and conversion, memoized in `memo`."""
-    key = (id(value), to_float)
+    """Cast `value` once per input object and conversion, memoized in `memo`.
+
+    The role enters the key only for a value holding integers, the one case in which
+    it changes the cast, so a float shared by float and as-given slots stays one leaf.
+    """
+    key = (id(value), to_float and _holds_integers(value))
     if key not in memo:
         memo[key] = _cast_leaves_to_canonical_dtype(
             value=value, name=name, array_writer=array_writer, to_float=to_float
         )
     return memo[key]
+
+
+def _holds_integers(value: LeafEntry) -> bool:
+    """Whether a params leaf holds a non-Boolean integer, scalar or array."""
+    if isinstance(value, UserMappingLeaf):
+        return any(_holds_integers(inner) for inner in value.data.values())
+    if isinstance(value, UserSequenceLeaf):
+        return any(_holds_integers(inner) for inner in value.data)
+    if isinstance(value, (Array, np.ndarray)):
+        return value.dtype.kind in ("i", "u")
+    return isinstance(value, int) and not isinstance(value, bool)
 
 
 def _cast_leaves_to_canonical_dtype(  # noqa: C901, PLR0911

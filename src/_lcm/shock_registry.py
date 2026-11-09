@@ -13,7 +13,11 @@ from typing import cast
 
 import jax.numpy as jnp
 
-from _lcm.params.numeric_roles import NumericRole
+from _lcm.params.numeric_roles import (
+    NumericRole,
+    callable_param_roles,
+    merge_roles,
+)
 from _lcm.processes.iid import _IIDProcess
 from _lcm.regime_building.value_adapter import adapt_user_function, encoding_grid
 from _lcm.regime_law import RegimeLaw, RegimeLaws
@@ -158,7 +162,13 @@ class ShockRegistry:
         """Return each group-local slot's numeric role across active declarations."""
         groups: dict[ShockGroupName, dict[ParameterName, NumericRole]] = {}
         for (_, _, name), binding in self.bindings.items():
-            groups.setdefault(name, {}).update(binding.param_roles)
+            slots = groups.setdefault(name, {})
+            for slot, role in binding.param_roles.items():
+                slots[slot] = merge_roles(
+                    name=f"{name}__{slot}",
+                    left=slots.get(slot, NumericRole.AS_GIVEN),
+                    right=role,
+                )
         return MappingProxyType(
             {name: MappingProxyType(slots) for name, slots in groups.items()}
         )
@@ -456,26 +466,35 @@ def _create_group_template(  # noqa: C901 - enumerate law slots and callable lea
     """Return a group's slots, their numeric roles and its callable leaves.
 
     A law coefficient and the correlation matrix are floats. A callable's
-    argument keeps the kind of its value.
+    argument takes the role its annotation declares, merged over every callable
+    reading it.
     """
     template: dict[ParameterName, str] = {}
     roles: dict[ParameterName, NumericRole] = {}
     callable_parameters: set[ParameterName] = set()
 
-    def visit(name: ReferenceName) -> None:
+    def visit(*, name: ReferenceName, role: NumericRole) -> None:
         if name in functions:
-            for argument in _arguments(functions[name]):
-                visit(argument)
+            visit_arguments(functions[name])
         elif name.endswith("_code") and name[:-5] in states:
-            visit(name[:-5])
+            visit(name=name[:-5], role=NumericRole.AS_GIVEN)
         elif (
             name not in states
             and name not in {"period", "age"}
             and not (name.endswith("_code") and name[:-5] in states)
         ):
             template[name] = "float"
-            roles[name] = NumericRole.AS_GIVEN
+            roles[name] = merge_roles(
+                name=name, left=roles.get(name, NumericRole.AS_GIVEN), right=role
+            )
             callable_parameters.add(name)
+
+    def visit_arguments(function: LawCallable) -> None:
+        argument_roles = callable_param_roles(function)
+        for argument in _arguments(function):
+            visit(
+                name=argument, role=argument_roles.get(argument, NumericRole.AS_GIVEN)
+            )
 
     for shock_name, law in group.shocks.items():
         for item in fields(law):
@@ -486,10 +505,9 @@ def _create_group_template(  # noqa: C901 - enumerate law slots and callable lea
                 template[f"{shock_name}__{item.name}"] = "float"
                 roles[f"{shock_name}__{item.name}"] = NumericRole.FLOAT
             elif isinstance(value, StateConditioned | _ConditionedLookup):
-                visit(value.on)
+                visit(name=value.on, role=NumericRole.AS_GIVEN)
             elif callable(value):
-                for argument in _arguments(value):
-                    visit(argument)
+                visit_arguments(value)
     if group.correlation is None:
         template["corr"] = "array"
         roles["corr"] = NumericRole.FLOAT

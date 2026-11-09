@@ -32,6 +32,7 @@ from lcm.typing import (
     DiscreteAction,
     DiscreteState,
     FloatND,
+    IntND,
     Period,
     ScalarInt,
     UserFacingRegimeParamsTemplate,
@@ -50,6 +51,10 @@ class RegimeId:
 
 def _flow(*, wage: FloatND) -> FloatND:
     return wage
+
+
+def _integer_flow(*, wage: IntND) -> FloatND:
+    return wage * 1.0
 
 
 def _manual(*, wage: FloatND, period: Period) -> FloatND:
@@ -842,6 +847,7 @@ def test_temporal_alignment_keeps_values_for_canonical_range_validation(
 
 @pytest.mark.parametrize("builder", ["hand_built", "from_profile"])
 def test_out_of_range_integer_table_is_rejected_before_solving(builder: str) -> None:
+    """An integer slot keeps an integer table, so its int32 range is checked."""
     values = np.array([2**32, 1], dtype=np.int64)
     table = (
         lcm.TimeVarying(values=values, ages=(40, 41))
@@ -850,8 +856,9 @@ def test_out_of_range_integer_table_is_rejected_before_solving(builder: str) -> 
             values=values, labels=(40, 41), age_to_label={40: 40, 41: 41}
         )
     )
+    flow = lcm.time_varying_params("wage")(_integer_flow)
     with pytest.raises(ValueError, match=r"wage.*int32 overflow"):
-        _model(age=True).solve(params={"wage": table}, log_level="off")
+        _model(age=True, flow=flow).solve(params={"wage": table}, log_level="off")
 
 
 @pytest.mark.parametrize("builder", ["hand_built", "from_profile"])

@@ -75,7 +75,7 @@ from _lcm.pandas_utils import (
 )
 from _lcm.params.edges import regime_kernel_params
 from _lcm.params.mapping_leaf import UserMappingLeaf
-from _lcm.params.numeric_roles import NumericRole
+from _lcm.params.numeric_roles import NumericRole, template_roles
 from _lcm.params.processing import (
     broadcast_to_template,
     cast_params_to_canonical_dtypes,
@@ -6514,7 +6514,9 @@ class Model:
             # before canonicalization can allocate another numeric payload.
             array_writer.publish(stage="params", tree=flat_params)
         flat_params = cast_params_to_canonical_dtypes(
-            flat_params, array_writer=array_writer
+            flat_params,
+            array_writer=array_writer,
+            roles=template_roles(self._params_template),
         )
         flat_params = materialize_granular_transition_params(
             flat_params=flat_params,
@@ -6859,7 +6861,7 @@ def _as_float_denotation(value: UserParamsNode) -> UserParamsNode:
 def _readable_template(node: RegimeParamsTemplateNode) -> _UserFacingTemplateNode:
     """Copy a params-template node into plain dicts, keeping its annotation leaves."""
     if isinstance(node, str):
-        return node
+        return str(node)
     return {key: _readable_template(inner) for key, inner in node.items()}
 
 
