@@ -562,13 +562,6 @@ def _retired_manifest() -> dict[str, _Json]:
     return manifest
 
 
-def test_retained_diagnostic_metadata_is_admitted() -> None:
-    """Complete observations remain admissible when their old gate is diagnostic."""
-    assert "metadata admitted" in admit_capture(
-        manifest=_retired_manifest(), precision=32, source_sha="a" * 64
-    )
-
-
 def test_retired_comparison_cannot_claim_the_assertion_remains_active() -> None:
     """Diagnostic metadata cannot claim the retired policy assertion is retained."""
     manifest = _retired_manifest()

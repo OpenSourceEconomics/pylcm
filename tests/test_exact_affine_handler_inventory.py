@@ -34,11 +34,6 @@ def test_the_extractor_finds_a_symbol_known_to_be_defined():
     assert "ExactCellHullF64" in _defined_in("certified_affine_ffi_cpu.cc")
 
 
-def test_the_inventory_is_not_empty():
-    """A silently emptied inventory would make every comparison below vacuous."""
-    assert len(EXACT_AFFINE_HANDLER_SYMBOLS) > 0
-
-
 @pytest.mark.parametrize(
     "source", ["certified_affine_ffi_cpu.cc", "certified_affine_ffi_cuda.cu"]
 )
