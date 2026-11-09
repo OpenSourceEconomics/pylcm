@@ -6510,6 +6510,18 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
             continuation_functions=solve_functions,
             grid_schedule=grid_schedule,
             gated_continuations=gated_continuations,
+            # The simulation reads the solve's continuation, so it contracts the
+            # same draws; a subject's process value may lie off its nodes.
+            lottery_contraction_source=(
+                LotteryContractionSource(
+                    state_grids=state_grids[regime_name],
+                    action_names=frozenset(state_action_space.action_names),
+                    rebound_targets=frozenset(law.participation),
+                    current_values_on_nodes=False,
+                )
+                if isinstance(solver, GridSearch) and solver.lottery_contraction
+                else None
+            ),
         )
         Q_and_F_functions = decision_Q_and_F().by_period
         # Typed queries may receive parent coordinates outside this source's

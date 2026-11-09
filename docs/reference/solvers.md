@@ -40,15 +40,17 @@ cancelling values, either summation order can lose a small term. The contraction
 only under the linear expectation, and not to a target reached through a participation
 check or to a stochastic process whose nodes come from runtime parameters. A next-period
 value of `+inf` is outside the supported domain: where one meets an infeasible `-inf`
-across draws, the contracted read is `-inf`, while per-draw enumeration gives NaN. Only
-the solve contracts: the simulation evaluates its Q with every draw enumerated, so with
-such cancelling values its choices can differ from the solve's by more than a tie, until
-the simulation contracts as well.
+across draws, the contracted read is `-inf`, while per-draw enumeration gives NaN.
+
+The simulation contracts the same draws, so its choices maximize the Q the solve
+maximized, cancelling values included. The one exception is a stochastic process whose
+probabilities read the subject's current value: a simulated value may lie between the
+process's nodes, so that draw keeps its axis in the simulation.
 
 The contraction is off by default. Its table is built inside the kernel's tile loops,
-and on GPU the compiler does not hoist it out of them, so it is rebuilt for every cell
-and action tile. A period solved in a few wide tiles gains, while one split into many
-narrow tiles, as fixed `axis_widths` or unbudgeted widths can force, loses.
+and on GPU the compiler does not hoist it out of them, so it is rebuilt for every cell,
+action and subject tile. A period solved in a few wide tiles gains, while one split into
+many narrow tiles, as fixed `axis_widths` or unbudgeted widths can force, loses.
 
 ## Capability table
 

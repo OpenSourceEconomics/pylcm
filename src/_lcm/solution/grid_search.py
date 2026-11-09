@@ -204,15 +204,15 @@ class GridSearch(Solver):
     continuation. Values agree with the per-candidate expectation to rounding
     relative to the largest next-period value magnitude across the draws, not
     relative to the expectation itself: with large cancelling values, either
-    summation order can lose a small term. Only the solve contracts: the
-    simulation evaluates its Q with every draw enumerated, so with such values
-    its choices can differ from the solve's by more than a tie, until the
-    simulation contracts as well.
+    summation order can lose a small term. The simulation contracts the same
+    draws, so it reads the Q the solve maximized, except a process draw whose
+    weights read the subject's own value: that value may lie between the
+    process's nodes, so the draw keeps its axis there.
 
     Off by default: the table is built inside the kernel's tile loops, and on GPU
-    the compiler does not hoist it, so it is rebuilt for every cell and action
-    tile. A period solved in a few wide tiles gains; one split into many narrow
-    tiles, as fixed `axis_widths` or unbudgeted widths can force, loses.
+    the compiler does not hoist it, so it is rebuilt for every cell, action and
+    subject tile. A period solved in a few wide tiles gains; one split into many
+    narrow tiles, as fixed `axis_widths` or unbudgeted widths can force, loses.
     """
 
     @property
