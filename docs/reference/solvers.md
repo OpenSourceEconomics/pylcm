@@ -34,13 +34,16 @@ no state or action of the regime other than the drawn state itself, and no law o
 reads the drawn value. Spousal income, a Markov health state or an income process are
 typical cases. The solve then reads one pre-averaged value per candidate instead of
 averaging over the draw at every state-action candidate. Values agree with the
-per-candidate expectation to rounding. The contraction applies only under the linear
-expectation, and not to a target reached through a participation check or to a
-stochastic process whose nodes come from runtime parameters. A next-period value of
-`+inf` is outside the supported domain: where one meets an infeasible `-inf` across
-draws, the contracted read is `-inf`, while per-draw enumeration gives NaN. Only the
-solve contracts: the simulation evaluates its Q with every draw enumerated, so its
-choices can differ from the solve's only where two actions tie to rounding.
+per-candidate expectation to rounding relative to the largest next-period value
+magnitude across the draws, not relative to the expectation itself: with large
+cancelling values, either summation order can lose a small term. The contraction applies
+only under the linear expectation, and not to a target reached through a participation
+check or to a stochastic process whose nodes come from runtime parameters. A next-period
+value of `+inf` is outside the supported domain: where one meets an infeasible `-inf`
+across draws, the contracted read is `-inf`, while per-draw enumeration gives NaN. Only
+the solve contracts: the simulation evaluates its Q with every draw enumerated, so with
+such cancelling values its choices can differ from the solve's by more than a tie, until
+the simulation contracts as well.
 
 The contraction is off by default. Its table is built inside the kernel's tile loops,
 and on GPU the compiler does not hoist it out of them, so it is rebuilt for every cell
