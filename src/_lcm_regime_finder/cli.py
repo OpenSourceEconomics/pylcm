@@ -156,10 +156,14 @@ def _run_parent(args, argv, delivery):
     if check:
         print(json.dumps(result, sort_keys=True))
     else:
+        semantic = result.get('semantic_check', {})
+        scenarios = result.get('scenarios', [])
+        if not isinstance(semantic, dict) or not isinstance(scenarios, list):
+            raise ValueError('Malformed analysis result')
         print(json.dumps({'status': result.get('status'), 'output': str(destination),
                           'resources': str(output / 'resource.json'),
-                          'source_semantics': result.get('semantic_check', {}).get('status'),
-                          'frontier_points': [len(s.get('frontier', [])) for s in result.get('scenarios', [])]}, sort_keys=True))
+                          'source_semantics': semantic.get('status'),
+                          'frontier_points': [len(s.get('frontier', [])) for s in scenarios]}, sort_keys=True))
     return code
 
 
@@ -224,6 +228,8 @@ def main(argv=None):
             if delivery is not None:
                 delivery.publish(result)
             print(json.dumps(result, indent=2, sort_keys=True)); return exit_status(result['status'])
+        if delivery is None:
+            raise ValueError('Analysis requires an output delivery plan')
         output = delivery.run_output; output.mkdir(parents=True, exist_ok=True)
         if problem.get('schema') == 'exact-graph-cost-instance/v1':
             from . import find_cost_frontier, check_cost_frontier

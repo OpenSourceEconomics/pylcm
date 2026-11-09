@@ -10,6 +10,7 @@ from itertools import product, combinations
 import ast
 import time
 
+from .records import Scenario
 from .expressions import partial, jsonable, AdmissionError
 from .frontier import canonical, digest, search_frontier
 
@@ -505,6 +506,8 @@ class MetadataAnalysis:
                 break
             pairs_visited += 1
             left, right = representatives[left_name], representatives[right_name]
+            if left is None or right is None:
+                raise ValueError('Missing representative declaration')
             if left.get('role') is not None and right.get('role') is not None:
                 continue
             # A known conflicting protected fact is not a useful
@@ -715,7 +718,7 @@ def analyze_production(original, *, limits=None, recommendation=None, production
     if checkpoint:
         checkpoint({'stage': 'analysis', 'analysis': analysis, 'semantic_check': semantic,
                     'phase_timings': dict(phase_timings)})
-    scenarios = []
+    scenarios: list[Scenario] = []
     phase_timings['frontier_search_seconds'] = 0.0
     phase_timings['frontier_check_seconds'] = 0.0
     allocation = declarations.get('allocation', {})

@@ -8,6 +8,7 @@ JSON and runs the public CLI inside an outer process-tree budget.
 from __future__ import annotations
 
 import hashlib
+from .records import JSONValue
 import json
 from pathlib import Path
 import sys
@@ -246,6 +247,7 @@ def _analyse_snapshot(snapshot, output, *, seconds, host_gib, command_prefix,
     finished = output/'completed-before-budget-check.json'
     if code == 2 and (output/'report.json').is_file():
         (output/'report.json').replace(finished)
+    record: dict[str, JSONValue]
     if input_error is not None:
         if (output/'report.json').is_file():
             _write_json(output/'completed-before-source-check.json', json.loads((output/'report.json').read_text()))
@@ -259,9 +261,10 @@ def _analyse_snapshot(snapshot, output, *, seconds, host_gib, command_prefix,
             (output/(name+'.html')).write_text('<!doctype html><meta charset="utf-8"><title>Structural input invalid</title><pre>' + html.escape(message) + '</pre>')
             (output/(name+'.md')).write_text(message + '\n')
     elif code == 2 or not summary.exists():
+        incomplete_reason = 'Outer process did not complete its bounded readable summary'
         record = {'status':'INCOMPLETE' if code==2 else 'FAILED',
                   'operation':'metadata analysis only',
-                  'reason':'Outer process did not complete its bounded readable summary',
+                  'reason': incomplete_reason,
                   'output':str(output), 'exit_code':code}
         outer_report = output/'outer-resource/report.json'
         incomplete = json.loads(outer_report.read_text()) if outer_report.is_file() else {
@@ -270,7 +273,7 @@ def _analyse_snapshot(snapshot, output, *, seconds, host_gib, command_prefix,
         _write_json(output/'report.json', incomplete)
         # A killed worker cannot finish the rich report. Publish a small readable
         # result instead of leaving a stale successful report from an older run.
-        message = ('# Metadata analysis incomplete\n\n' + record['reason'] +
+        message = ('# Metadata analysis incomplete\n\n' + incomplete_reason +
                    '. No optimum or transformation is authorized. The original snapshot is unchanged.\n\n'
                    'See outer-resource/resource.json and report.json for retained checkpoint references.\n')
         (output/'next-actions.md').write_text(message)
@@ -288,9 +291,10 @@ def _analyse_snapshot(snapshot, output, *, seconds, host_gib, command_prefix,
     }
     if code == 2 or (elapsed > seconds and code in (0, 3)):
         record['status'] = 'INCOMPLETE'
-        record['reason'] = ('The outer metadata resource boundary was reached; completed worker candidates remain unverified for delivery'
+        reason = ('The outer metadata resource boundary was reached; completed worker candidates remain unverified for delivery'
                             if code == 2 else
                             'Capture, checking and reporting together exceeded the metadata time budget')
+        record['reason'] = reason
         # Preserve the completed worker evidence by rename, without decoding a
         # potentially large report outside its budget. The public entry report
         # must not keep claiming complete delivery after this final check.
@@ -298,12 +302,12 @@ def _analyse_snapshot(snapshot, output, *, seconds, host_gib, command_prefix,
             (output/'report.json').replace(finished)
         _write_json(output/'report.json', {
             'schema': 'regime-production-result/v1', 'status': 'INCOMPLETE',
-            'reason': record['reason'], 'recommendation': None,
+            'reason': reason, 'recommendation': None,
             'completed_worker_evidence': finished.name if finished.exists() else None,
             'resource_report': 'outer-resource/report.json' if (output/'outer-resource/report.json').is_file() else None,
             'scope': 'Worker evidence is retained; complete metadata delivery exceeded its budget. No automatic graph change is authorized.'})
         record.pop('decisions', None)
-        message = ('# Metadata analysis incomplete\n\n' + record['reason'] +
+        message = ('# Metadata analysis incomplete\n\n' + reason +
                    '. No optimum or transformation is authorized. The original snapshot is unchanged.\n')
         for name in ('next-actions.md', 'report.md'):
             (output/name).write_text(message)

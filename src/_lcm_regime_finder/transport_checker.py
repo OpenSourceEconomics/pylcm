@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 import re
 import sys
+from .records import CheckLayer
 
 LAYERS = ("finite_model", "finite_operator", "source_alignment", "allocation", "runtime")
 KINDS = {"relabel", "age_split", "support", "forced_coordinate", "quotient", "merge", "dominance"}
@@ -84,7 +85,7 @@ def nonzero(weights):
 class Report:
     def __init__(self, name, claims, probability_tolerance):
         self.name = name
-        self.layers = {layer: {"status": "NOT_RUN", "checks": 0, "witnesses": [], "notes": []}
+        self.layers: dict[str, CheckLayer] = {layer: {"status": "NOT_RUN", "checks": 0, "witnesses": [], "notes": []}
                        for layer in claims}
         self.case_results = []
         self.probability_tolerance = probability_tolerance

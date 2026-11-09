@@ -13,13 +13,13 @@ from types import MappingProxyType
 from .structural_transport import Writer, reseal
 
 
-@dataclass
+@dataclass(frozen=True)
 class BufferSource:
     owner: object
     flavor: str
 
 
-@dataclass
+@dataclass(frozen=True)
 class TypeSource:
     cls: type
 
@@ -100,7 +100,8 @@ class NativeWriter(Writer):
             self.check()
             if id(value) in self.active: raise ValueError('Cyclic structural data')
             if id(value) in self.memo: return self.memo[id(value)][1]
-            ref = ['ref', len(self.records)]
+            record_index = len(self.records)
+            ref = ['ref', record_index]
             self.memo[id(value)] = (value, ref)
             self.records.append(None); self.active.add(id(value))
             self.watchers.append((value, self.stamp(value)))
@@ -111,7 +112,7 @@ class NativeWriter(Writer):
                 info = type_information(type(value))
                 self.watchers.append((authority, info))
                 body = ['native-dataclass', info, [[field.name, self.visit(getattr(value, field.name))] for field in fields(value)]]
-            self.records[ref[1]] = body
+            self.records[record_index] = body
             self.active.remove(id(value))
             return ref
         flavor = self.flavor(value)
@@ -119,7 +120,8 @@ class NativeWriter(Writer):
         self.check()
         if id(value) in self.memo: return self.memo[id(value)][1]
         shape, dtype, strides, offset, owner_id, readonly = self.geometry(value, flavor)
-        ref = ['ref', len(self.records)]
+        record_index = len(self.records)
+        ref = ['ref', record_index]
         self.memo[id(value)] = (value, ref)
         self.records.append(None)
         self.watchers.append((value, self.geometry(value, flavor)))
@@ -147,7 +149,7 @@ class NativeWriter(Writer):
                 packed.append(item); item *= dimension
             strides = tuple(reversed(packed))
             self.storage_obligations.append('JAX physical device-buffer layout is not a model-value contract')
-        self.records[ref[1]] = ['native-array', flavor, list(shape), dtype, list(strides), offset, buffer_ref, bool(readonly)]
+        self.records[record_index] = ['native-array', flavor, list(shape), dtype, list(strides), offset, buffer_ref, bool(readonly)]
         return ref
 
     def finish(self, source, anchor, before_final_validation=None):

@@ -86,6 +86,8 @@ def resolve_result_delivery(command, *, output, problem, report=None):
     checker = command in {'check-result', 'check-model-result'}
     protected = {Path(problem).resolve()}
     if checker:
+        if report is None:
+            raise ValueError('Verification requires an original report')
         protected.add(Path(report).resolve())
         destination = (Path(output) if output else
                        Path(report).parent / 'verification' / 'check.json').resolve()

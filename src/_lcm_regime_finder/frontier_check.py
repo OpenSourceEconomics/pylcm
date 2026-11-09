@@ -302,6 +302,8 @@ class IndependentFamily:
         if kind == "per_block":
             states, actions = (self.union(option[key] for option in options) for key in ("states", "actions"))
         elif kind == "global_union":
+            if self.global_axes is None:
+                raise ValueError("Missing global allocation axes")
             states, actions = self.global_axes
         else:
             raise ValueError("No explicit allocation contract or scenario")

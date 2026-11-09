@@ -2,6 +2,7 @@
 from __future__ import annotations
 import argparse
 from collections import Counter
+from .records import DecisionSummary, EndpointPreference
 import hashlib
 import html
 import json
@@ -16,7 +17,7 @@ def _digest(path):
 def readable_summary(report, *, snapshot, output):
     decisions = report.get('proposal_decisions',[])
     family = report.get('analysis', {}).get('family_boundary', {})
-    rows=[]
+    rows: list[DecisionSummary]=[]
     for decision in decisions:
         counts=Counter(item.get('kind','unspecified') for item in decision.get('residual_obligations',[]))
         examples=[]
@@ -40,10 +41,11 @@ def readable_summary(report, *, snapshot, output):
              'numerical_scope':'Metadata only; no solve, simulation or scientific validation',
              'paper_action_policy':'Do not implement recommendations without separate authorization'}
     selected = {row.get('scenario_index'): row for row in report.get('recommendations', [])}
-    summary['recommendation_preferences'] = [
+    preferences: list[EndpointPreference] = [
         {'scenario': index, 'recommended_graph': (selected.get(index, {}) if report.get('search_mode') == 'heuristic' else scenario.get('recommendation') or {}).get('graph_id'),
          **((selected.get(index, {}) if report.get('search_mode') == 'heuristic' else scenario.get('recommendation') or {}).get('endpoint_preference') or {})}
         for index, scenario in enumerate(report.get('scenarios', []))]
+    summary['recommendation_preferences'] = preferences
     lines=['# Regime analysis: what can be concluded','',
            'This analysis uses production declarations, not a smaller numerical model. It does not certify paper economics or measured speed.','',
            '## Read the decisions','',
@@ -57,7 +59,7 @@ def readable_summary(report, *, snapshot, output):
                   'The search can omit layouts and has an unknown optimality gap. '
                   'Each selected graph below is a freshly checked adoptable specification; otherwise retain the original. '
                   'Request --search-mode exact only for an explicit complete-family oracle run.', '']
-    for preference in summary['recommendation_preferences']:
+    for preference in preferences:
         if 'allow_final_only_split' in preference:
             lines += ['## Endpoint recommendation preference', '', preference['reason'], '',
                       'Explicit override: ' + str(preference['allow_final_only_split']) + '. '

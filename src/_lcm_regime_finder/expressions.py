@@ -7,6 +7,7 @@ source adapters record where those original dependency facts came from.
 from __future__ import annotations
 
 import ast
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from fractions import Fraction
 from functools import lru_cache
@@ -64,7 +65,7 @@ def disjunction(values):
 BIN = {ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul,
        ast.Div: lambda x, y: Fraction(x) / Fraction(y), ast.FloorDiv: operator.floordiv,
        ast.Mod: operator.mod, ast.Pow: operator.pow}
-CMP = {ast.Eq: operator.eq, ast.NotEq: operator.ne, ast.Lt: operator.lt,
+CMP: Mapping[type[ast.cmpop], Callable[..., bool]] = {ast.Eq: operator.eq, ast.NotEq: operator.ne, ast.Lt: operator.lt,
        ast.LtE: operator.le, ast.Gt: operator.gt, ast.GtE: operator.ge,
        ast.In: lambda x, y: x in y, ast.NotIn: lambda x, y: x not in y}  # codespell:ignore
 FUN = {'min': min, 'max': max, 'abs': abs, 'len': len,

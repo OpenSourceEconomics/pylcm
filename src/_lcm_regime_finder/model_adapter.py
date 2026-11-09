@@ -77,7 +77,7 @@ class _RuntimeModule:
         self.callable_records = callable_records or metadata.get("callable_records", {})
         self.digest = digest({key: value for key, value in metadata.items() if key not in {"callable_records", "capture_report"}})
         self.path = Path(str(metadata.get("source_file", "generated-callback")) + "#" + self.digest)
-        self.functions: dict[str, Function] = {}
+        self.functions: dict[str, Function[_RuntimeModule]] = {}
         bindings = {**metadata.get("bindings", {}), **metadata.get("partial_keywords", {})}
         self.scope = _RuntimeScope(bindings)
 
@@ -87,7 +87,10 @@ class _RuntimeModule:
 
 
 class _GraphAnalysis(CallbackAnalysis):
-    def predicate(self, entry: Any) -> Any:
+    period_expression: str = "age"
+    period_only: bool = False
+    def predicate(self, fn: Any) -> Any:
+        entry = fn
         if isinstance(entry, Function) and entry.module.metadata.get("analysis_only_stub"):
             return self.opaque(entry)
         return super().predicate(entry)
@@ -214,13 +217,13 @@ class _GraphAnalysis(CallbackAnalysis):
 
 def _callback(value: Any, coordinates: set[str], notes: list[str], callable_records=None) -> Any:
     if isinstance(value, dict) and value.get("kind") == "callable":
-        metadata = value
+        metadata = dict(value)
         if metadata.get("capture_status", "COMPLETE") != "COMPLETE":
             notes.append("Changed/incomplete capture: retain all original coordinates")
-            metadata = {**metadata, "arguments": sorted(coordinates), "variadic": True, "source": ""}
+            metadata.update(arguments=sorted(coordinates), variadic=True, source="")
         if "/tests/" in (metadata.get("source_file") or ""):
             notes.append("Test-defined callback: retain all original coordinates; scientific source bridge unresolved")
-            metadata = {**metadata, "arguments": sorted(coordinates), "variadic": True, "source": ""}
+            metadata.update(arguments=sorted(coordinates), variadic=True, source="")
         module = _RuntimeModule(metadata, callable_records)
         source = metadata.get("source", "")
         try:
@@ -231,7 +234,7 @@ def _callback(value: Any, coordinates: set[str], notes: list[str], callable_reco
             if set(actual) != set(original) or metadata.get("variadic"):
                 raise ValueError("Evaluated signature differs from wrapped source")
         except (SyntaxError, StopIteration, ValueError):
-            metadata = {**metadata, "analysis_only_stub": True}
+            metadata.update(analysis_only_stub=True)
             module = _RuntimeModule(metadata, callable_records)
             args = metadata.get("arguments", [])
             if metadata.get("variadic"):
@@ -239,6 +242,8 @@ def _callback(value: Any, coordinates: set[str], notes: list[str], callable_reco
                 notes.append("Unavailable variadic callback: all original coordinates retained")
             fn = ast.parse("def callback(" + ",".join(args) + "):\n    return (" + ",".join(args) + ",)\n" if args
                            else "def callback():\n    return 0\n").body[0]
+            if not isinstance(fn, ast.FunctionDef):
+                raise SourceAdapterError("Generated callback is not a function")
         fn.lineno = 1
         fn.end_lineno = getattr(fn, "end_lineno", 1)
         return Function(module, fn)
@@ -291,7 +296,10 @@ def _grid(value: dict[str, Any]) -> dict[str, Any]:
     if short == "Phased":
         solve, simulate = attrs.get("solve"), attrs.get("simulate")
         imputed = isinstance(solve, dict) and solve.get("kind") == "callable"
-        result = _grid(simulate if imputed else solve)
+        chosen = simulate if imputed else solve
+        if not isinstance(chosen, dict):
+            raise ModelAdapterError("Phased grid lacks its selected declaration")
+        result = _grid(chosen)
         result.update(grid_id=digest(value), solve_axis=not imputed, phase_declaration=value)
         return result
     if short == "ConditionalAction":
@@ -470,9 +478,10 @@ def adapt_snapshot(snapshot: dict[str, Any], *, name: str = "Constructed pylcm m
     lanes = _lanes(nodes)
     count_lanes = max(lanes.values()) + 1
     phase_graphs = {phase: fields(reach.get(phase)) for phase in ("solution", "simulation")}
-    regimes = {n: fields(r) for n, r in snapshot["user_regimes"].items() if n in nodes}
+    regimes = {n: dict(fields(r)) for n, r in snapshot["user_regimes"].items() if n in nodes}
     routing_owners, protected_value_routes = _value_route_obligations(snapshot, regimes)
-    regimes = {n: {**declaration, "__routing_owner": routing_owners.get(n)} for n, declaration in regimes.items()}
+    for regime_name, declaration in regimes.items():
+        declaration["__routing_owner"] = routing_owners.get(regime_name)
     channels, cadence = _stage_channels(snapshot, regimes, nodes)
     domains = {"states": {}, "actions": {}}
     aliases: dict[str, dict[str, str]] = {}
@@ -634,7 +643,10 @@ def adapt_snapshot(snapshot: dict[str, Any], *, name: str = "Constructed pylcm m
             program[key] = _rewrite(program[key], replacements, scalar_replacements)
         for row in rows:
             row["probability"] = _rewrite(row["probability"], replacements, scalar_replacements)
-            row["updates"] = {key: _rewrite(value, replacements, scalar_replacements) for key, value in row["updates"].items()}
+            updates = row["updates"]
+            if not isinstance(updates, dict):
+                raise ModelAdapterError("Transition updates must be a mapping")
+            row["updates"] = {key: _rewrite(value, replacements, scalar_replacements) for key, value in updates.items()}
         programs.append(program)
         if local_notes:
             notes.append({"regime": regime, "notes": sorted(set(local_notes))})

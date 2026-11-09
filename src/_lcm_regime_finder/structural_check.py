@@ -3,6 +3,8 @@
 No writer intern table, normalizer, digest function or exclusion list is used.
 """
 from array import array
+from collections.abc import Mapping
+from typing import cast
 from dataclasses import dataclass
 import hashlib
 import json
@@ -11,7 +13,7 @@ import sys
 from types import MappingProxyType
 
 
-@dataclass
+@dataclass(frozen=True)
 class LogicalArray:
     shape: tuple
     dtype: str
@@ -23,7 +25,7 @@ class LogicalArray:
 class BufferView:
     chunks: tuple
     size: int
-    payloads: object
+    payloads: Mapping[str, bytes]
 
     def iter_bytes(self):
         for key in self.chunks: yield self.payloads[key]
@@ -227,6 +229,8 @@ class Reader:
                 raise ValueError('Unsupported primitive dtype descriptor')
             storage = self.read(buffer)
             if type(storage) is not BufferView: raise ValueError('Wrong native buffer reference type')
+            shape = cast(tuple[int, ...], shape)
+            strides = cast(tuple[int, ...], strides)
             low = offset + sum(min(0, (n - 1) * s) for n, s in zip(shape, strides))
             high = offset + sum(max(0, (n - 1) * s) for n, s in zip(shape, strides)) + int(match[2])
             if 0 not in shape and (low < 0 or high > storage.size): raise ValueError('Native view escapes source buffer')

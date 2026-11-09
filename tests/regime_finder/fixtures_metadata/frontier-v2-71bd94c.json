@@ -1,0 +1,1528 @@
+{
+  "recorded_source": "71bd94cb36db600e346e3751134e939536a14cd9",
+  "analysis": {
+    "schema": "regime-semantic-analysis/v1",
+    "declarations": {
+      "schema": "regime-declarations/v1",
+      "source_identity": {
+        "kind": "explicit original fixture",
+        "sha256": "ad8506d89dc0479abb07102a334e5040f8108b1397213f6015964daa91f1f56a"
+      },
+      "production_metadata": {
+        "status": "complete",
+        "scope": "synthetic original declaration; original dimensions, no dense product"
+      },
+      "domains": {
+        "family4": {
+          "kind": "categorical",
+          "size": 4,
+          "values": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "codes": [
+            17,
+            3,
+            21,
+            8
+          ],
+          "identity": "family-source-v1",
+          "source_path": "/domains/family4"
+        },
+        "assets_large": {
+          "kind": "continuous",
+          "size": 1000000000000,
+          "identity": "original-assets-grid-1e12",
+          "source_path": "/domains/assets_large"
+        }
+      },
+      "callbacks": {
+        "children": {
+          "arguments": [
+            "family"
+          ],
+          "reads": [
+            "family"
+          ],
+          "source": "def children(family):\n    return [0, 1, 1, 2][family]\n",
+          "identity": "615a7f148f6a2e62b9ae9bb7685acdf6fd9db359c2c3204b588f5d015dc7b64d",
+          "bindings": {},
+          "expression": "[0, 1, 1, 2][family]",
+          "status": "proved",
+          "source_path": "/callbacks/children",
+          "original": {
+            "kind": "callable",
+            "source": "def children(family):\n    return [0, 1, 1, 2][family]\n",
+            "arguments": [
+              "family"
+            ],
+            "bindings": {},
+            "defaults": {},
+            "call_targets": {},
+            "module": "independent_fixture",
+            "qualname": "children",
+            "source_sha256": "f50f07b2556c25568a7aed81bede10c3885a9af7dd0bf2e8dcc593d0da8029a3"
+          }
+        },
+        "u_early": {
+          "arguments": [
+            "assets",
+            "family"
+          ],
+          "reads": [
+            "assets",
+            "family"
+          ],
+          "source": "def u_early(assets, family):\n    return assets + family\n",
+          "identity": "ed0e08987f1b8fc9ffbccdea2f386ef529978ca0dff2cb09cd153faa9ab8ccee",
+          "bindings": {},
+          "expression": "assets + family",
+          "status": "proved",
+          "source_path": "/callbacks/u_early",
+          "original": {
+            "kind": "callable",
+            "source": "def u_early(assets, family):\n    return assets + family\n",
+            "arguments": [
+              "assets",
+              "family"
+            ],
+            "bindings": {},
+            "defaults": {},
+            "call_targets": {},
+            "module": "independent_fixture",
+            "qualname": "u_early",
+            "source_sha256": "f1a1c48cd868991d6fcfa7dd3b0e359b718fd04b79d86c18b49633cf57201b4c"
+          }
+        },
+        "u_late": {
+          "arguments": [
+            "assets",
+            "children"
+          ],
+          "reads": [
+            "assets",
+            "children"
+          ],
+          "source": "def u_late(assets, children):\n    return assets + children\n",
+          "identity": "b114b33a43935401a79517a642554c5f330a7d8b217a9089c62ff74a3eeccc29",
+          "bindings": {},
+          "expression": "assets + children",
+          "status": "proved",
+          "source_path": "/callbacks/u_late",
+          "original": {
+            "kind": "callable",
+            "source": "def u_late(assets, children):\n    return assets + children\n",
+            "arguments": [
+              "assets",
+              "children"
+            ],
+            "bindings": {},
+            "defaults": {},
+            "call_targets": {},
+            "module": "independent_fixture",
+            "qualname": "u_late",
+            "source_sha256": "00366cd6a61de3ba23a7b8cd7a81a1a29f9450cd5d9b3f5ea73b18c592fdd5c9"
+          }
+        }
+      },
+      "cells": [
+        {
+          "id": "c0",
+          "regime": "life",
+          "period": 0,
+          "age": 20,
+          "stage": "choice",
+          "states": {
+            "family": "family4",
+            "assets": "assets_large"
+          },
+          "actions": {},
+          "functions": {
+            "children": "children",
+            "utility": "u_early"
+          },
+          "consumers": [
+            {
+              "kind": "reward",
+              "callback": "u_early",
+              "phase": "both"
+            }
+          ],
+          "role": {
+            "actor": "household",
+            "observations": [
+              "family",
+              "assets"
+            ],
+            "commitments": [],
+            "discount_boundary": "each biological year"
+          },
+          "ownership": null,
+          "terminal": false,
+          "admissible_start": true,
+          "report_tags": [],
+          "source_path": "/cells/0"
+        },
+        {
+          "id": "c1",
+          "regime": "life",
+          "period": 1,
+          "age": 21,
+          "stage": "choice",
+          "states": {
+            "family": "family4",
+            "assets": "assets_large"
+          },
+          "actions": {},
+          "functions": {
+            "children": "children",
+            "utility": "u_late"
+          },
+          "consumers": [
+            {
+              "kind": "reward",
+              "callback": "u_late",
+              "phase": "both"
+            }
+          ],
+          "role": {
+            "actor": "household",
+            "observations": [
+              "family",
+              "assets"
+            ],
+            "commitments": [],
+            "discount_boundary": "each biological year"
+          },
+          "ownership": null,
+          "terminal": false,
+          "admissible_start": false,
+          "report_tags": [],
+          "source_path": "/cells/1"
+        },
+        {
+          "id": "c2",
+          "regime": "death",
+          "period": 2,
+          "age": 22,
+          "stage": "terminal",
+          "states": {
+            "family": "family4",
+            "assets": "assets_large"
+          },
+          "actions": {},
+          "functions": {
+            "children": "children",
+            "utility": "u_late"
+          },
+          "consumers": [
+            {
+              "kind": "terminal",
+              "callback": "u_late",
+              "phase": "both"
+            }
+          ],
+          "role": {
+            "actor": "household",
+            "observations": [
+              "family",
+              "assets"
+            ],
+            "commitments": [],
+            "discount_boundary": "each biological year"
+          },
+          "ownership": null,
+          "terminal": true,
+          "admissible_start": false,
+          "report_tags": [],
+          "source_path": "/cells/2"
+        }
+      ],
+      "relations": [
+        {
+          "id": "t0",
+          "kind": "transition",
+          "source": "c0",
+          "targets": [
+            "c1"
+          ],
+          "phase": "both",
+          "callbacks": [],
+          "state_updates": {
+            "family": "family",
+            "assets": "assets"
+          },
+          "joint_outputs": [],
+          "ownership": null,
+          "source_path": "/relations/0"
+        },
+        {
+          "id": "t1",
+          "kind": "transition",
+          "source": "c1",
+          "targets": [
+            "c2"
+          ],
+          "phase": "both",
+          "callbacks": [],
+          "state_updates": {
+            "family": "family",
+            "assets": "assets"
+          },
+          "joint_outputs": [],
+          "ownership": null,
+          "source_path": "/relations/1"
+        }
+      ],
+      "characteristics": {
+        "children": {
+          "state": "family",
+          "domain": "family4",
+          "callback": "children",
+          "name": "children"
+        }
+      },
+      "allocation": {
+        "status": "known",
+        "kind": "per_block",
+        "boundary_unit": 1,
+        "identity": "explicit-fixture-allocation",
+        "source_path": "/allocation"
+      },
+      "obligations": []
+    },
+    "interfaces": {
+      "c0": {
+        "options": [
+          {
+            "states": {
+              "family": "family4",
+              "assets": "assets_large"
+            },
+            "actions": {},
+            "state_projection": {
+              "family": {
+                "kind": "identity",
+                "target": "family"
+              },
+              "assets": {
+                "kind": "identity",
+                "target": "assets"
+              }
+            },
+            "action_reconstruction": {},
+            "constants": {},
+            "function_interfaces": {
+              "solve": {
+                "children": {
+                  "original_callback": "children",
+                  "source_identity": "615a7f148f6a2e62b9ae9bb7685acdf6fd9db359c2c3204b588f5d015dc7b64d",
+                  "original_arguments": [
+                    "family"
+                  ],
+                  "arguments": [
+                    "family"
+                  ],
+                  "bound_arguments": {},
+                  "unused_arguments": [],
+                  "implementation": {
+                    "kind": "source_bound_partial_application",
+                    "native_execution": "NOT_RUN"
+                  }
+                },
+                "utility": {
+                  "original_callback": "u_early",
+                  "source_identity": "ed0e08987f1b8fc9ffbccdea2f386ef529978ca0dff2cb09cd153faa9ab8ccee",
+                  "original_arguments": [
+                    "assets",
+                    "family"
+                  ],
+                  "arguments": [
+                    "assets",
+                    "family"
+                  ],
+                  "bound_arguments": {},
+                  "unused_arguments": [],
+                  "implementation": {
+                    "kind": "source_bound_partial_application",
+                    "native_execution": "NOT_RUN"
+                  }
+                }
+              },
+              "simulation": {
+                "children": {
+                  "original_callback": "children",
+                  "source_identity": "615a7f148f6a2e62b9ae9bb7685acdf6fd9db359c2c3204b588f5d015dc7b64d",
+                  "original_arguments": [
+                    "family"
+                  ],
+                  "arguments": [
+                    "family"
+                  ],
+                  "bound_arguments": {},
+                  "unused_arguments": [],
+                  "implementation": {
+                    "kind": "source_bound_partial_application",
+                    "native_execution": "NOT_RUN"
+                  }
+                },
+                "utility": {
+                  "original_callback": "u_early",
+                  "source_identity": "ed0e08987f1b8fc9ffbccdea2f386ef529978ca0dff2cb09cd153faa9ab8ccee",
+                  "original_arguments": [
+                    "assets",
+                    "family"
+                  ],
+                  "arguments": [
+                    "assets",
+                    "family"
+                  ],
+                  "bound_arguments": {},
+                  "unused_arguments": [],
+                  "implementation": {
+                    "kind": "source_bound_partial_application",
+                    "native_execution": "NOT_RUN"
+                  }
+                }
+              }
+            },
+            "derived_code_bindings": {},
+            "witnesses": [
+              {
+                "kind": "dependency_closure",
+                "retained": {
+                  "family": [
+                    "current/phase/required-output consumer"
+                  ],
+                  "assets": [
+                    "current/phase/required-output consumer"
+                  ]
+                }
+              },
+              {
+                "kind": "symbolic_characteristic_factorization",
+                "characteristics": []
+              }
+            ],
+            "id": "interface:e098244dc6c514bbd410"
+          }
+        ]
+      },
+      "c1": {
+        "options": [
+          {
+            "states": {
+              "family": "family4",
+              "assets": "assets_large"
+            },
+            "actions": {},
+            "state_projection": {
+              "family": {
+                "kind": "identity",
+                "target": "family"
+              },
+              "assets": {
+                "kind": "identity",
+                "target": "assets"
+              }
+            },
+            "action_reconstruction": {},
+            "constants": {},
+            "function_interfaces": {
+              "solve": {
+                "children": {
+                  "original_callback": "children",
+                  "source_identity": "615a7f148f6a2e62b9ae9bb7685acdf6fd9db359c2c3204b588f5d015dc7b64d",
+                  "original_arguments": [
+                    "family"
+                  ],
+                  "arguments": [
+                    "family"
+                  ],
+                  "bound_arguments": {},
+                  "unused_arguments": [],
+                  "implementation": {
+                    "kind": "source_bound_partial_application",
+                    "native_execution": "NOT_RUN"
+                  }
+                },
+                "utility": {
+                  "original_callback": "u_late",
+                  "source_identity": "b114b33a43935401a79517a642554c5f330a7d8b217a9089c62ff74a3eeccc29",
+                  "original_arguments": [
+                    "assets",
+                    "children"
+                  ],
+                  "arguments": [
+                    "assets",
+                    "children"
+                  ],
+                  "bound_arguments": {},
+                  "unused_arguments": [],
+                  "implementation": {
+                    "kind": "source_bound_partial_application",
+                    "native_execution": "NOT_RUN"
+                  }
+                }
+              },
+              "simulation": {
+                "children": {
+                  "original_callback": "children",
+                  "source_identity": "615a7f148f6a2e62b9ae9bb7685acdf6fd9db359c2c3204b588f5d015dc7b64d",
+                  "original_arguments": [
+                    "family"
+                  ],
+                  "arguments": [
+                    "family"
+                  ],
+                  "bound_arguments": {},
+                  "unused_arguments": [],
+                  "implementation": {
+                    "kind": "source_bound_partial_application",
+                    "native_execution": "NOT_RUN"
+                  }
+                },
+                "utility": {
+                  "original_callback": "u_late",
+                  "source_identity": "b114b33a43935401a79517a642554c5f330a7d8b217a9089c62ff74a3eeccc29",
+                  "original_arguments": [
+                    "assets",
+                    "children"
+                  ],
+                  "arguments": [
+                    "assets",
+                    "children"
+                  ],
+                  "bound_arguments": {},
+                  "unused_arguments": [],
+                  "implementation": {
+                    "kind": "source_bound_partial_application",
+                    "native_execution": "NOT_RUN"
+                  }
+                }
+              }
+            },
+            "derived_code_bindings": {},
+            "witnesses": [
+              {
+                "kind": "dependency_closure",
+                "retained": {
+                  "family": [
+                    "current/phase/required-output consumer"
+                  ],
+                  "assets": [
+                    "current/phase/required-output consumer"
+                  ]
+                }
+              },
+              {
+                "kind": "symbolic_characteristic_factorization",
+                "characteristics": []
+              }
+            ],
+            "id": "interface:f655167dcebf04f1fe68"
+          },
+          {
+            "states": {
+              "assets": "assets_large",
+              "children": "characteristic:5e34ba71543e4f98b65b5690"
+            },
+            "actions": {},
+            "state_projection": {
+              "family": {
+                "kind": "characteristic",
+                "callback": "children",
+                "target": "children",
+                "domain": "characteristic:5e34ba71543e4f98b65b5690",
+                "values": [
+                  0,
+                  1,
+                  1,
+                  2
+                ]
+              },
+              "assets": {
+                "kind": "identity",
+                "target": "assets"
+              }
+            },
+            "action_reconstruction": {},
+            "constants": {},
+            "function_interfaces": {
+              "solve": {
+                "children": {
+                  "original_callback": "children",
+                  "source_identity": "615a7f148f6a2e62b9ae9bb7685acdf6fd9db359c2c3204b588f5d015dc7b64d",
+                  "original_arguments": [
+                    "family"
+                  ],
+                  "arguments": [
+                    "children"
+                  ],
+                  "implementation": {
+                    "kind": "read_reduced_coordinate",
+                    "coordinate": "children"
+                  },
+                  "witness": "existing characteristic map, checked over its complete original categorical domain"
+                },
+                "utility": {
+                  "original_callback": "u_late",
+                  "source_identity": "b114b33a43935401a79517a642554c5f330a7d8b217a9089c62ff74a3eeccc29",
+                  "original_arguments": [
+                    "assets",
+                    "children"
+                  ],
+                  "arguments": [
+                    "assets",
+                    "children"
+                  ],
+                  "bound_arguments": {},
+                  "unused_arguments": [],
+                  "implementation": {
+                    "kind": "source_bound_partial_application",
+                    "native_execution": "NOT_RUN"
+                  }
+                }
+              },
+              "simulation": {
+                "children": {
+                  "original_callback": "children",
+                  "source_identity": "615a7f148f6a2e62b9ae9bb7685acdf6fd9db359c2c3204b588f5d015dc7b64d",
+                  "original_arguments": [
+                    "family"
+                  ],
+                  "arguments": [
+                    "children"
+                  ],
+                  "implementation": {
+                    "kind": "read_reduced_coordinate",
+                    "coordinate": "children"
+                  },
+                  "witness": "existing characteristic map, checked over its complete original categorical domain"
+                },
+                "utility": {
+                  "original_callback": "u_late",
+                  "source_identity": "b114b33a43935401a79517a642554c5f330a7d8b217a9089c62ff74a3eeccc29",
+                  "original_arguments": [
+                    "assets",
+                    "children"
+                  ],
+                  "arguments": [
+                    "assets",
+                    "children"
+                  ],
+                  "bound_arguments": {},
+                  "unused_arguments": [],
+                  "implementation": {
+                    "kind": "source_bound_partial_application",
+                    "native_execution": "NOT_RUN"
+                  }
+                }
+              }
+            },
+            "derived_code_bindings": {},
+            "witnesses": [
+              {
+                "kind": "dependency_closure",
+                "retained": {
+                  "family": [
+                    "current/phase/required-output consumer"
+                  ],
+                  "assets": [
+                    "current/phase/required-output consumer"
+                  ]
+                }
+              },
+              {
+                "kind": "symbolic_characteristic_factorization",
+                "characteristics": [
+                  "children"
+                ]
+              }
+            ],
+            "id": "interface:9d563b1d46221774607c"
+          }
+        ]
+      },
+      "c2": {
+        "options": [
+          {
+            "states": {
+              "family": "family4",
+              "assets": "assets_large"
+            },
+            "actions": {},
+            "state_projection": {
+              "family": {
+                "kind": "identity",
+                "target": "family"
+              },
+              "assets": {
+                "kind": "identity",
+                "target": "assets"
+              }
+            },
+            "action_reconstruction": {},
+            "constants": {},
+            "function_interfaces": {
+              "solve": {
+                "children": {
+                  "original_callback": "children",
+                  "source_identity": "615a7f148f6a2e62b9ae9bb7685acdf6fd9db359c2c3204b588f5d015dc7b64d",
+                  "original_arguments": [
+                    "family"
+                  ],
+                  "arguments": [
+                    "family"
+                  ],
+                  "bound_arguments": {},
+                  "unused_arguments": [],
+                  "implementation": {
+                    "kind": "source_bound_partial_application",
+                    "native_execution": "NOT_RUN"
+                  }
+                },
+                "utility": {
+                  "original_callback": "u_late",
+                  "source_identity": "b114b33a43935401a79517a642554c5f330a7d8b217a9089c62ff74a3eeccc29",
+                  "original_arguments": [
+                    "assets",
+                    "children"
+                  ],
+                  "arguments": [
+                    "assets",
+                    "children"
+                  ],
+                  "bound_arguments": {},
+                  "unused_arguments": [],
+                  "implementation": {
+                    "kind": "source_bound_partial_application",
+                    "native_execution": "NOT_RUN"
+                  }
+                }
+              },
+              "simulation": {
+                "children": {
+                  "original_callback": "children",
+                  "source_identity": "615a7f148f6a2e62b9ae9bb7685acdf6fd9db359c2c3204b588f5d015dc7b64d",
+                  "original_arguments": [
+                    "family"
+                  ],
+                  "arguments": [
+                    "family"
+                  ],
+                  "bound_arguments": {},
+                  "unused_arguments": [],
+                  "implementation": {
+                    "kind": "source_bound_partial_application",
+                    "native_execution": "NOT_RUN"
+                  }
+                },
+                "utility": {
+                  "original_callback": "u_late",
+                  "source_identity": "b114b33a43935401a79517a642554c5f330a7d8b217a9089c62ff74a3eeccc29",
+                  "original_arguments": [
+                    "assets",
+                    "children"
+                  ],
+                  "arguments": [
+                    "assets",
+                    "children"
+                  ],
+                  "bound_arguments": {},
+                  "unused_arguments": [],
+                  "implementation": {
+                    "kind": "source_bound_partial_application",
+                    "native_execution": "NOT_RUN"
+                  }
+                }
+              }
+            },
+            "derived_code_bindings": {},
+            "witnesses": [
+              {
+                "kind": "dependency_closure",
+                "retained": {
+                  "family": [
+                    "current/phase/required-output consumer"
+                  ],
+                  "assets": [
+                    "current/phase/required-output consumer"
+                  ]
+                }
+              },
+              {
+                "kind": "symbolic_characteristic_factorization",
+                "characteristics": []
+              }
+            ],
+            "id": "interface:f655167dcebf04f1fe68"
+          },
+          {
+            "states": {
+              "assets": "assets_large",
+              "children": "characteristic:5e34ba71543e4f98b65b5690"
+            },
+            "actions": {},
+            "state_projection": {
+              "family": {
+                "kind": "characteristic",
+                "callback": "children",
+                "target": "children",
+                "domain": "characteristic:5e34ba71543e4f98b65b5690",
+                "values": [
+                  0,
+                  1,
+                  1,
+                  2
+                ]
+              },
+              "assets": {
+                "kind": "identity",
+                "target": "assets"
+              }
+            },
+            "action_reconstruction": {},
+            "constants": {},
+            "function_interfaces": {
+              "solve": {
+                "children": {
+                  "original_callback": "children",
+                  "source_identity": "615a7f148f6a2e62b9ae9bb7685acdf6fd9db359c2c3204b588f5d015dc7b64d",
+                  "original_arguments": [
+                    "family"
+                  ],
+                  "arguments": [
+                    "children"
+                  ],
+                  "implementation": {
+                    "kind": "read_reduced_coordinate",
+                    "coordinate": "children"
+                  },
+                  "witness": "existing characteristic map, checked over its complete original categorical domain"
+                },
+                "utility": {
+                  "original_callback": "u_late",
+                  "source_identity": "b114b33a43935401a79517a642554c5f330a7d8b217a9089c62ff74a3eeccc29",
+                  "original_arguments": [
+                    "assets",
+                    "children"
+                  ],
+                  "arguments": [
+                    "assets",
+                    "children"
+                  ],
+                  "bound_arguments": {},
+                  "unused_arguments": [],
+                  "implementation": {
+                    "kind": "source_bound_partial_application",
+                    "native_execution": "NOT_RUN"
+                  }
+                }
+              },
+              "simulation": {
+                "children": {
+                  "original_callback": "children",
+                  "source_identity": "615a7f148f6a2e62b9ae9bb7685acdf6fd9db359c2c3204b588f5d015dc7b64d",
+                  "original_arguments": [
+                    "family"
+                  ],
+                  "arguments": [
+                    "children"
+                  ],
+                  "implementation": {
+                    "kind": "read_reduced_coordinate",
+                    "coordinate": "children"
+                  },
+                  "witness": "existing characteristic map, checked over its complete original categorical domain"
+                },
+                "utility": {
+                  "original_callback": "u_late",
+                  "source_identity": "b114b33a43935401a79517a642554c5f330a7d8b217a9089c62ff74a3eeccc29",
+                  "original_arguments": [
+                    "assets",
+                    "children"
+                  ],
+                  "arguments": [
+                    "assets",
+                    "children"
+                  ],
+                  "bound_arguments": {},
+                  "unused_arguments": [],
+                  "implementation": {
+                    "kind": "source_bound_partial_application",
+                    "native_execution": "NOT_RUN"
+                  }
+                }
+              }
+            },
+            "derived_code_bindings": {},
+            "witnesses": [
+              {
+                "kind": "dependency_closure",
+                "retained": {
+                  "family": [
+                    "current/phase/required-output consumer"
+                  ],
+                  "assets": [
+                    "current/phase/required-output consumer"
+                  ]
+                }
+              },
+              {
+                "kind": "symbolic_characteristic_factorization",
+                "characteristics": [
+                  "children"
+                ]
+              }
+            ],
+            "id": "interface:9d563b1d46221774607c"
+          }
+        ]
+      }
+    },
+    "derived_domains": {
+      "characteristic:5e34ba71543e4f98b65b5690": {
+        "kind": "categorical",
+        "size": 3,
+        "values": [
+          0,
+          1,
+          2
+        ],
+        "codes": [
+          0,
+          1,
+          2
+        ],
+        "identity": "ececd6223dc09d2e857275af858048aa27ed4dddcdc14d9101c9cb4191cd3826",
+        "source_path": "/characteristics/children"
+      }
+    },
+    "projection_policies": [
+      {
+        "id": "projection:4f53cda18c2baa0c",
+        "option_by_cell": {
+          "c0": "interface:e098244dc6c514bbd410",
+          "c1": "interface:f655167dcebf04f1fe68",
+          "c2": "interface:f655167dcebf04f1fe68"
+        },
+        "characteristics": []
+      },
+      {
+        "id": "projection:6252d56cba745b2c",
+        "option_by_cell": {
+          "c0": "interface:e098244dc6c514bbd410",
+          "c1": "interface:f655167dcebf04f1fe68",
+          "c2": "interface:9d563b1d46221774607c"
+        },
+        "characteristics": [
+          {
+            "id": "children",
+            "cells": [
+              "c2"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "projection:0c2f4580a8710712",
+        "option_by_cell": {
+          "c0": "interface:e098244dc6c514bbd410",
+          "c1": "interface:9d563b1d46221774607c",
+          "c2": "interface:9d563b1d46221774607c"
+        },
+        "characteristics": [
+          {
+            "id": "children",
+            "cells": [
+              "c1",
+              "c2"
+            ]
+          }
+        ]
+      }
+    ],
+    "characteristic_candidates": [
+      {
+        "id": "children",
+        "state": "family",
+        "domain": "family4",
+        "callback": "children",
+        "target": "children",
+        "values": [
+          0,
+          1,
+          1,
+          2
+        ],
+        "target_values": [
+          0,
+          1,
+          2
+        ],
+        "target_domain": "characteristic:5e34ba71543e4f98b65b5690",
+        "cells": [
+          "c1",
+          "c2"
+        ],
+        "requires": {
+          "c1": [
+            "c2"
+          ],
+          "c2": []
+        }
+      }
+    ],
+    "dependency_closure": {
+      "c0": [
+        "assets",
+        "family"
+      ],
+      "c1": [
+        "assets",
+        "family"
+      ],
+      "c2": [
+        "assets",
+        "family"
+      ]
+    },
+    "discovery_complete": true,
+    "family_boundary": {
+      "schema": "regime-discovery-family/v2",
+      "complete_claim_scope": "coherent source-bound projection policies and the explicitly admitted context/grouping interval family",
+      "unrestricted_model_representation_optimum_claimed": false,
+      "original_regime_labels_are_semantic_restrictions": false,
+      "unknown_context_policy": "retain original context in the admitted family; expose conditional merge obligations separately",
+      "endpoint_preference_is_admissibility_rule": false,
+      "conditional_merge_candidates": [],
+      "conditional_merge_candidates_omitted_by_display_budget": 0,
+      "conditional_merge_pairs_unexamined": 0,
+      "callback_obligations": [],
+      "parameter_family_sharing": "NOT_ESTABLISHED: each source/fixed-input identity requires its own checked feasibility, liveness and support closure"
+    },
+    "obligations": [],
+    "production_execution": {
+      "callbacks_called": 0,
+      "bellman_rows_evaluated": 0,
+      "dense_cartesian_cells_enumerated": 0,
+      "characteristic_metadata_values": 4
+    },
+    "elapsed_seconds": 0.0014039520174264908
+  },
+  "result": {
+    "schema": "regime-frontier/v2",
+    "status": "COMPLETE",
+    "frontier": [
+      {
+        "cost": {
+          "work": 15000000000000,
+          "storage": 11000000000000,
+          "clarity": 10
+        },
+        "projection_policy": "projection:6252d56cba745b2c",
+        "blocks": [
+          {
+            "cells": [
+              "c0",
+              "c1"
+            ],
+            "option_by_cell": {
+              "c0": "interface:e098244dc6c514bbd410",
+              "c1": "interface:f655167dcebf04f1fe68"
+            },
+            "periods": [
+              0,
+              1
+            ],
+            "ages": [
+              20,
+              21
+            ],
+            "original_regimes": [
+              "life"
+            ],
+            "state_axes": {
+              "family": "family4",
+              "assets": "assets_large"
+            },
+            "action_axes": {},
+            "cost": {
+              "work": 12000000000000,
+              "storage": 8000000000000,
+              "clarity": 4
+            },
+            "cost_detail": {
+              "enumeration": 8000000000000,
+              "boundary": 4000000000000,
+              "boundary_incidences": 1,
+              "state_rows_per_atom": 4000000000000,
+              "action_rows_per_atom": 1,
+              "dispatch_clauses": 0,
+              "characteristic_count": 0
+            },
+            "allocation_kind": "per_block",
+            "peak_live_storage": null
+          },
+          {
+            "cells": [
+              "c2"
+            ],
+            "option_by_cell": {
+              "c2": "interface:9d563b1d46221774607c"
+            },
+            "periods": [
+              2
+            ],
+            "ages": [
+              22
+            ],
+            "original_regimes": [
+              "death"
+            ],
+            "state_axes": {
+              "assets": "assets_large",
+              "children": "characteristic:5e34ba71543e4f98b65b5690"
+            },
+            "action_axes": {},
+            "cost": {
+              "work": 3000000000000,
+              "storage": 3000000000000,
+              "clarity": 6
+            },
+            "cost_detail": {
+              "enumeration": 3000000000000,
+              "boundary": 0,
+              "boundary_incidences": 0,
+              "state_rows_per_atom": 3000000000000,
+              "action_rows_per_atom": 1,
+              "dispatch_clauses": 0,
+              "characteristic_count": 1
+            },
+            "allocation_kind": "per_block",
+            "peak_live_storage": null
+          }
+        ],
+        "id": "G0000"
+      },
+      {
+        "cost": {
+          "work": 16000000000000,
+          "storage": 12000000000000,
+          "clarity": 8
+        },
+        "projection_policy": "projection:4f53cda18c2baa0c",
+        "blocks": [
+          {
+            "cells": [
+              "c0",
+              "c1"
+            ],
+            "option_by_cell": {
+              "c0": "interface:e098244dc6c514bbd410",
+              "c1": "interface:f655167dcebf04f1fe68"
+            },
+            "periods": [
+              0,
+              1
+            ],
+            "ages": [
+              20,
+              21
+            ],
+            "original_regimes": [
+              "life"
+            ],
+            "state_axes": {
+              "family": "family4",
+              "assets": "assets_large"
+            },
+            "action_axes": {},
+            "cost": {
+              "work": 12000000000000,
+              "storage": 8000000000000,
+              "clarity": 4
+            },
+            "cost_detail": {
+              "enumeration": 8000000000000,
+              "boundary": 4000000000000,
+              "boundary_incidences": 1,
+              "state_rows_per_atom": 4000000000000,
+              "action_rows_per_atom": 1,
+              "dispatch_clauses": 0,
+              "characteristic_count": 0
+            },
+            "allocation_kind": "per_block",
+            "peak_live_storage": null
+          },
+          {
+            "cells": [
+              "c2"
+            ],
+            "option_by_cell": {
+              "c2": "interface:f655167dcebf04f1fe68"
+            },
+            "periods": [
+              2
+            ],
+            "ages": [
+              22
+            ],
+            "original_regimes": [
+              "death"
+            ],
+            "state_axes": {
+              "family": "family4",
+              "assets": "assets_large"
+            },
+            "action_axes": {},
+            "cost": {
+              "work": 4000000000000,
+              "storage": 4000000000000,
+              "clarity": 4
+            },
+            "cost_detail": {
+              "enumeration": 4000000000000,
+              "boundary": 0,
+              "boundary_incidences": 0,
+              "state_rows_per_atom": 4000000000000,
+              "action_rows_per_atom": 1,
+              "dispatch_clauses": 0,
+              "characteristic_count": 0
+            },
+            "allocation_kind": "per_block",
+            "peak_live_storage": null
+          }
+        ],
+        "id": "G0001"
+      },
+      {
+        "cost": {
+          "work": 17000000000000,
+          "storage": 10000000000000,
+          "clarity": 16
+        },
+        "projection_policy": "projection:0c2f4580a8710712",
+        "blocks": [
+          {
+            "cells": [
+              "c0"
+            ],
+            "option_by_cell": {
+              "c0": "interface:e098244dc6c514bbd410"
+            },
+            "periods": [
+              0
+            ],
+            "ages": [
+              20
+            ],
+            "original_regimes": [
+              "life"
+            ],
+            "state_axes": {
+              "family": "family4",
+              "assets": "assets_large"
+            },
+            "action_axes": {},
+            "cost": {
+              "work": 8000000000000,
+              "storage": 4000000000000,
+              "clarity": 4
+            },
+            "cost_detail": {
+              "enumeration": 4000000000000,
+              "boundary": 4000000000000,
+              "boundary_incidences": 1,
+              "state_rows_per_atom": 4000000000000,
+              "action_rows_per_atom": 1,
+              "dispatch_clauses": 0,
+              "characteristic_count": 0
+            },
+            "allocation_kind": "per_block",
+            "peak_live_storage": null
+          },
+          {
+            "cells": [
+              "c1"
+            ],
+            "option_by_cell": {
+              "c1": "interface:9d563b1d46221774607c"
+            },
+            "periods": [
+              1
+            ],
+            "ages": [
+              21
+            ],
+            "original_regimes": [
+              "life"
+            ],
+            "state_axes": {
+              "assets": "assets_large",
+              "children": "characteristic:5e34ba71543e4f98b65b5690"
+            },
+            "action_axes": {},
+            "cost": {
+              "work": 6000000000000,
+              "storage": 3000000000000,
+              "clarity": 6
+            },
+            "cost_detail": {
+              "enumeration": 3000000000000,
+              "boundary": 3000000000000,
+              "boundary_incidences": 1,
+              "state_rows_per_atom": 3000000000000,
+              "action_rows_per_atom": 1,
+              "dispatch_clauses": 0,
+              "characteristic_count": 1
+            },
+            "allocation_kind": "per_block",
+            "peak_live_storage": null
+          },
+          {
+            "cells": [
+              "c2"
+            ],
+            "option_by_cell": {
+              "c2": "interface:9d563b1d46221774607c"
+            },
+            "periods": [
+              2
+            ],
+            "ages": [
+              22
+            ],
+            "original_regimes": [
+              "death"
+            ],
+            "state_axes": {
+              "assets": "assets_large",
+              "children": "characteristic:5e34ba71543e4f98b65b5690"
+            },
+            "action_axes": {},
+            "cost": {
+              "work": 3000000000000,
+              "storage": 3000000000000,
+              "clarity": 6
+            },
+            "cost_detail": {
+              "enumeration": 3000000000000,
+              "boundary": 0,
+              "boundary_incidences": 0,
+              "state_rows_per_atom": 3000000000000,
+              "action_rows_per_atom": 1,
+              "dispatch_clauses": 0,
+              "characteristic_count": 1
+            },
+            "allocation_kind": "per_block",
+            "peak_live_storage": null
+          }
+        ],
+        "id": "G0002"
+      }
+    ],
+    "certificate": {
+      "analysis_sha256": "88065c170f3fda6c4f37294fd1b308d5e1f8d46ee77171c145db6ca89a77240f",
+      "family_sha256": "069d163baacf97a04fefef2f1a5f68980067557f4b33fee9b06cc2d6e8dc73b8",
+      "family_encoding": "canonical JSON group/date buckets once; newline [group,start,stop,cost], reverse start order; unique groups",
+      "complete": true,
+      "family": "all protected-role-compatible original-regime groupings; every interval of exact date buckets; every offered coherent categorical policy; source certification checked separately",
+      "component_regimes": [
+        [
+          "life"
+        ],
+        [
+          "death"
+        ]
+      ],
+      "component_reductions": [],
+      "projection_policies": [
+        "projection:4f53cda18c2baa0c",
+        "projection:6252d56cba745b2c",
+        "projection:0c2f4580a8710712"
+      ],
+      "search_counts": {
+        "segments": 8,
+        "groupings": 6
+      },
+      "interval_records": [
+        {
+          "group_id": "018e9a3c2b612abc618da227488ea093e9361c7a7645dadac1e36675d9d29315",
+          "buckets": [
+            [
+              "c0"
+            ],
+            [
+              "c1"
+            ]
+          ],
+          "option_by_cell": {
+            "c0": "interface:e098244dc6c514bbd410",
+            "c1": "interface:f655167dcebf04f1fe68"
+          },
+          "suffix_frontiers": [
+            [
+              {
+                "work": 12000000000000,
+                "storage": 8000000000000,
+                "clarity": 4
+              }
+            ],
+            [
+              {
+                "work": 8000000000000,
+                "storage": 4000000000000,
+                "clarity": 4
+              }
+            ],
+            [
+              {
+                "work": 0,
+                "storage": 0,
+                "clarity": 0
+              }
+            ]
+          ]
+        },
+        {
+          "group_id": "0697e47c9efa27295b2a1a727d771f85f981f44e338ffb3bdd5a70d5a8a31bd4",
+          "buckets": [
+            [
+              "c2"
+            ]
+          ],
+          "option_by_cell": {
+            "c2": "interface:f655167dcebf04f1fe68"
+          },
+          "suffix_frontiers": [
+            [
+              {
+                "work": 4000000000000,
+                "storage": 4000000000000,
+                "clarity": 4
+              }
+            ],
+            [
+              {
+                "work": 0,
+                "storage": 0,
+                "clarity": 0
+              }
+            ]
+          ]
+        },
+        {
+          "group_id": "e8d3da79195ade39d07c52937fec8ca9829015c2a6d169c2ffe9ffae18b54d67",
+          "buckets": [
+            [
+              "c2"
+            ]
+          ],
+          "option_by_cell": {
+            "c2": "interface:9d563b1d46221774607c"
+          },
+          "suffix_frontiers": [
+            [
+              {
+                "work": 3000000000000,
+                "storage": 3000000000000,
+                "clarity": 6
+              }
+            ],
+            [
+              {
+                "work": 0,
+                "storage": 0,
+                "clarity": 0
+              }
+            ]
+          ]
+        },
+        {
+          "group_id": "7bbdb5b6d46864d106a7fb92bc67a96a0ce08ecd2ed6a2d1d8768dcd5bee41e6",
+          "buckets": [
+            [
+              "c0"
+            ],
+            [
+              "c1"
+            ]
+          ],
+          "option_by_cell": {
+            "c0": "interface:e098244dc6c514bbd410",
+            "c1": "interface:9d563b1d46221774607c"
+          },
+          "suffix_frontiers": [
+            [
+              {
+                "work": 14000000000000,
+                "storage": 7000000000000,
+                "clarity": 10
+              },
+              {
+                "work": 36000000000000,
+                "storage": 24000000000000,
+                "clarity": 6
+              }
+            ],
+            [
+              {
+                "work": 6000000000000,
+                "storage": 3000000000000,
+                "clarity": 6
+              }
+            ],
+            [
+              {
+                "work": 0,
+                "storage": 0,
+                "clarity": 0
+              }
+            ]
+          ]
+        }
+      ],
+      "lower_bound": null,
+      "frontier_scope": "all candidates in the declared finite family"
+    },
+    "elapsed_seconds": 0.0007534329779446125,
+    "exhaustion_reason": null,
+    "allocation_contract": {
+      "status": "known",
+      "kind": "per_block",
+      "boundary_unit": 1,
+      "identity": "explicit-fixture-allocation",
+      "source_path": "/allocation"
+    },
+    "clarity_weights": {
+      "block": 4,
+      "characteristic": 2,
+      "dispatch": 1
+    },
+    "endpoint_clarity_policy": "All semantically admissible final-date intervals are searched. By default the recommendation defers extra final-decision-date regimes used only to omit newly inactive coordinates; allow_final_only_split explicitly overrides this preference. The admissible family and Pareto frontier are unchanged.",
+    "recommendation": {
+      "graph_id": "G0000",
+      "score": "989/408",
+      "weights": {
+        "work": "1",
+        "storage": "1",
+        "clarity": "1"
+      },
+      "reference_scales": {
+        "work": 17000000000000,
+        "storage": 12000000000000,
+        "clarity": 16
+      },
+      "endpoint_preference": {
+        "allow_final_only_split": false,
+        "deferred_graph_ids": [],
+        "reason": "All semantically admissible final-date intervals are searched. By default the recommendation defers extra final-decision-date regimes used only to omit newly inactive coordinates; allow_final_only_split explicitly overrides this preference. The admissible family and Pareto frontier are unchanged."
+      },
+      "rule": "minimum positive weighted reference-normalized cost among preference-eligible frontier points; exact rational score; deterministic cost/layout ties; retain the original if none is eligible"
+    }
+  }
+}
