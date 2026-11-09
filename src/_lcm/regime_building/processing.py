@@ -44,7 +44,7 @@ from _lcm.continuation import (
     FiniteOuterQuerySpec,
 )
 from _lcm.current_iid import CurrentIIDDrawPlan, CurrentIIDPlan
-from _lcm.dtypes import canonical_float_dtype
+from _lcm.dtypes import as_canonical_float, as_code, canonical_float_dtype
 from _lcm.egm.budget import (
     DCEGM_BUDGET_CONSTRAINT_NAME,
     INTRINSIC_BUDGET_SOLVERS,
@@ -356,6 +356,7 @@ from lcm.typing import (
     ParameterName,
     ReferenceName,
     UserFunction,
+    ValueND,
 )
 
 type _TransitionBundles = MappingProxyType[
@@ -7291,11 +7292,14 @@ def _process_regime_core(
         names_key = _extract_template_names_key(
             func_name=func_name, regime_params_template=regime_params_template
         )
-        processed_functions[func_name] = _rename_params_to_qnames(
-            func=func,
-            regime_params_template=regime_params_template,
-            param_key=func_name,
-            names_key=names_key,
+        processed_functions[func_name] = _as_next_state_role(
+            func=_rename_params_to_qnames(
+                func=func,
+                regime_params_template=regime_params_template,
+                param_key=func_name,
+                names_key=names_key,
+            ),
+            grid=flat_grids.get(func_name.replace("next_", "")),
         )
 
     original_lottery_layouts: dict[str, OriginalLotteryLayout] = {}
@@ -7377,6 +7381,7 @@ def _process_regime_core(
         joint_transitions=joint_transitions,
         processed_functions=processed_functions,
         regime_params_template=regime_params_template,
+        flat_grids=flat_grids,
     )
     # A joint output is a declared law whether or not the source carries the
     # process: it names the physical value the correlated draw lands on, which
@@ -7639,8 +7644,13 @@ def _process_joint_transitions(
     joint_transitions: Mapping[RegimeName, Mapping[str, JointTransition]],
     processed_functions: dict[str, EconFunction],
     regime_params_template: RegimeParamsTemplate,
+    flat_grids: Mapping[str, Grid],
 ) -> tuple[str, ...]:
-    """Compile joint kernels into target-local DAG nodes and output laws."""
+    """Compile joint kernels into target-local DAG nodes and output laws.
+
+    The probabilities and each output take their role's kind where the engine
+    receives them, so a kernel may return integer weights or a constant `1`.
+    """
     transition_keys: dict[str, None] = {}
     for target, kernels in joint_transitions.items():
         for kernel_name, kernel in kernels.items():
@@ -7665,19 +7675,27 @@ def _process_joint_transitions(
                 regime_params_template=regime_params_template,
                 param_key=qname_from_tree_path((target, kernel_name, "support")),
             )
-            processed_functions[f"weight_{axis_name}"] = _rename_params_to_qnames(
-                func=kernel.probabilities,
-                regime_params_template=regime_params_template,
-                param_key=qname_from_tree_path((target, kernel_name, "probabilities")),
+            processed_functions[f"weight_{axis_name}"] = _OutputInRole(
+                func=_rename_params_to_qnames(
+                    func=kernel.probabilities,
+                    regime_params_template=regime_params_template,
+                    param_key=qname_from_tree_path(
+                        (target, kernel_name, "probabilities")
+                    ),
+                ),
+                code=False,
             )
             transition_keys.update(dict.fromkeys((axis_name, support_name)))
 
             for state_name, output in kernel.outputs.items():
                 output_name = qname_from_tree_path((target, f"next_{state_name}"))
-                processed_functions[output_name] = _rename_params_to_qnames(
-                    func=output,
-                    regime_params_template=regime_params_template,
-                    param_key=output_name,
+                processed_functions[output_name] = _as_next_state_role(
+                    func=_rename_params_to_qnames(
+                        func=output,
+                        regime_params_template=regime_params_template,
+                        param_key=output_name,
+                    ),
+                    grid=flat_grids.get(qname_from_tree_path((target, state_name))),
                 )
                 transition_keys[output_name] = None
     return tuple(transition_keys)
@@ -9879,6 +9897,50 @@ def _fail_if_not_one_entry_per_regime(*, result: FloatND, n_regimes: int) -> Non
             "regime id, in `regime_id_class` order; `targets` names the "
             "support, not the vector's layout."
         )
+
+
+def _as_next_state_role(*, func: EconFunction, grid: Grid | None) -> EconFunction:
+    """Convert a deterministic law's output to its target state's kind.
+
+    This is where the engine receives a user's next state: a continuous target
+    reads the canonical float dtype and a discrete target an `int32` code, so a
+    law may return `1`, `True` or an integer array. An identity law already
+    returns the state's own kind.
+    """
+    if grid is None or isinstance(func, _IdentityTransition):
+        return func
+    return cast(
+        "EconFunction",
+        _OutputInRole(func=func, code=isinstance(grid, DiscreteGrid)),
+    )
+
+
+@dataclass(frozen=True, eq=False, kw_only=True)
+class _OutputInRole:
+    """A user law returning its role's canonical kind: a code or a float.
+
+    A frozen callable instance rather than a nested function: the beartype claw
+    memoizes every function it decorates, so a function defined per model build
+    would pin that build's law after the model is dropped.
+    """
+
+    func: EconFunction
+    """The law, with qualified parameter names."""
+    code: bool
+    """Whether the law returns a discrete state's code rather than a float."""
+
+    def __post_init__(self) -> None:
+        for name in ("__module__", "__name__", "__qualname__", "__doc__"):
+            value = getattr(self.func, name, None)
+            if value is not None:
+                object.__setattr__(self, name, value)
+        object.__setattr__(self, "__signature__", inspect.signature(self.func))
+        object.__setattr__(self, "__annotations__", get_annotations(self.func))
+
+    @no_type_check
+    def __call__(self, *args: EconFunctionArg, **kwargs: EconFunctionArg) -> ValueND:
+        value = self.func(*args, **kwargs)
+        return as_code(value) if self.code else as_canonical_float(value)
 
 
 @dataclass(frozen=True, eq=False, kw_only=True)

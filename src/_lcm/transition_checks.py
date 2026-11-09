@@ -56,6 +56,7 @@ from _lcm.current_iid import (
     CurrentIIDPlan,
     NodeOperands,
 )
+from _lcm.dtypes import as_canonical_float
 from _lcm.engine import (
     Regime,
     SimulationPhase,
@@ -4014,14 +4015,21 @@ def _state_probability_law(
     grid_names: tuple[StateOrActionName, ...],
     func: Callable[..., FloatND],
 ) -> FloatND:
-    """Evaluate one state law and its Cartesian grid inside one compiled producer."""
+    """Evaluate one state law and its Cartesian grid inside one compiled producer.
+
+    The validation reads the declared law, so it receives the user's
+    probabilities here and takes them at the canonical float dtype, as the
+    solve and simulation do through `StochasticTransition`.
+    """
     if not grid_names:
-        return func(**scalar_kwargs)
+        return as_canonical_float(func(**scalar_kwargs))
     mesh = jnp.meshgrid(*(grid_args[name] for name in grid_names), indexing="ij")
     flat_arrays = tuple(array.ravel() for array in mesh)
-    return jax.vmap(
-        _GridPointCall(names=grid_names, scalar_kwargs=scalar_kwargs, func=func)
-    )(*flat_arrays)
+    return as_canonical_float(
+        jax.vmap(
+            _GridPointCall(names=grid_names, scalar_kwargs=scalar_kwargs, func=func)
+        )(*flat_arrays)
+    )
 
 
 def _abstract_transition_operand(

@@ -117,7 +117,7 @@ from _lcm.egm.nested_floor import (
     nested_floor_at_cell,
 )
 from _lcm.egm.one_asset_egm_step import _EGMSavingsSupport
-from _lcm.egm.preferences import Preferences
+from _lcm.egm.preferences import Preferences, concatenate_felicity
 from _lcm.egm.published_policy import NBEGMGridPolicy
 from _lcm.egm.query_data import (
     EGMQueryData,
@@ -5752,7 +5752,7 @@ def _collect_nbegm_schedule_spec(
         for name in coh_args
         if name not in state_names and name not in discrete_action_names
     )
-    utility_dag = concatenate_functions(dict(context.functions), targets="utility")
+    utility_dag = concatenate_felicity(functions=context.functions)
     # A regime whose discount factor is a DAG function (e.g. a per-preference-type
     # beta indexed by a ride-along state) exposes it as a target; absent that, the
     # default flat `koopmans_aggregator__discount_factor` param drives discounting.

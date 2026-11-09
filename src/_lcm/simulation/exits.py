@@ -19,6 +19,7 @@ from _lcm.current_iid import (
     _law_inputs,
     source_law_params,
 )
+from _lcm.dtypes import as_canonical_float
 from _lcm.execution.core_program import (
     CoreExecutionDisposition,
     CoreExecutionRequirements,
@@ -550,7 +551,7 @@ class OriginalExitDecision:
                     if helper is None
                     else jax.lax.cond(
                         selected,
-                        lambda helper=helper, operands=operands: jnp.asarray(
+                        lambda helper=helper, operands=operands: as_canonical_float(
                             helper(
                                 **{
                                     name: operands[name]

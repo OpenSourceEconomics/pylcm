@@ -324,11 +324,11 @@ class Gate:
 
     Reads ordinary target states, the edge's own params, and the target fold's
     `period` / `age`. An argument named `V_target`, `V_target_<s>` or
-    `D_target` raises `GateReadsValueError` when the gate is declared. A
-    predicate returning a probability rather than a Boolean is rejected when it
-    is evaluated, i.e. on the first `solve()` rather than at model build: the
-    branch is selected with a strict `where`, in which every nonzero value is
-    true.
+    `D_target` raises `GateReadsValueError` when the gate is declared. An
+    integer `1` or `0` is converted to a Boolean. A predicate returning a
+    floating probability is rejected when it is evaluated, i.e. on the first
+    `solve()` rather than at model build: the branch is selected with a strict
+    `where`, in which every nonzero value is true.
     """
 
     routes: Mapping[str, StakeholderRoute]

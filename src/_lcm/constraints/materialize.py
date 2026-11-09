@@ -10,13 +10,15 @@ condition over a discrete state can compose at all.
 
 import inspect
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from types import MappingProxyType
 from typing import cast, no_type_check
 
 from dags import concatenate_functions, get_annotations
 from dags.annotations import ensure_annotations_are_strings
 
 from _lcm.constraints.processed import ProcessedConstraint
+from _lcm.dtypes import as_bool
 from _lcm.typing import ConstraintFunction, FunctionName
 from _lcm.utils.functools import get_union_of_args
 from lcm.typing import BoolND, UserFunction, ValueND
@@ -48,8 +50,33 @@ def as_constraint_function(
         # and the DAG requires every consumer of a name to annotate it as its
         # producer does — so a rewrite turns a composable predicate into an
         # annotation conflict. Only a condition built from references needs
-        # annotations supplied, because it has none of its own.
-        return cast("ConstraintFunction", constraint.declaration)
+        # annotations supplied, because it has none of its own. Its output is
+        # converted where the engine receives it, so it may return `1` or `0`.
+        from _lcm.regime_building.age_normalization import (  # noqa: PLC0415
+            PeriodizedUserFunction,
+        )
+
+        declaration = constraint.declaration
+        if isinstance(declaration, PeriodizedUserFunction):
+            # Age-specialized: convert each period's concrete constraint.
+            return cast(
+                "ConstraintFunction",
+                replace(
+                    declaration,
+                    representative=_BooleanPredicate(
+                        function=declaration.representative
+                    ),
+                    concrete_by_period=MappingProxyType(
+                        {
+                            period: _BooleanPredicate(function=function)
+                            for period, function in (
+                                declaration.concrete_by_period.items()
+                            )
+                        }
+                    ),
+                ),
+            )
+        return cast("ConstraintFunction", _BooleanPredicate(function=declaration))
 
     return cast(
         "ConstraintFunction",
@@ -61,6 +88,31 @@ def as_constraint_function(
             },
         ),
     )
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _BooleanPredicate:
+    """An opaque constraint, as its author wrote it, returning a Boolean.
+
+    A frozen callable instance rather than a nested function: the beartype claw
+    memoizes every function it decorates, so a function defined per model build
+    would pin that build's constraint after the model is dropped.
+    """
+
+    function: UserFunction
+    """The constraint as declared."""
+
+    def __post_init__(self) -> None:
+        for name in ("__module__", "__name__", "__qualname__", "__doc__"):
+            value = getattr(self.function, name, None)
+            if value is not None:
+                object.__setattr__(self, name, value)
+        object.__setattr__(self, "__signature__", inspect.signature(self.function))
+        object.__setattr__(self, "__annotations__", get_annotations(self.function))
+
+    @no_type_check
+    def __call__(self, *args: ValueND, **kwargs: ValueND) -> BoolND:
+        return as_bool(self.function(*args, **kwargs))
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)

@@ -328,7 +328,10 @@ def test_a_numeric_gate_output_fails_with_logging_off() -> None:
     """A gate returning floats instead of booleans is refused."""
     with pytest.raises(
         ValueError,
-        match=r"^A participation predicate must return a scalar Boolean\.(?:\n|$)",
+        match=(
+            r"^A participation predicate must return a scalar Boolean or "
+            r"integer\.(?:\n|$)"
+        ),
     ):
         _numeric_gate_model().solve(params=_PARAMS, log_level="off")
 

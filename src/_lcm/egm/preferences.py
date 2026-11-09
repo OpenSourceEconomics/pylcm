@@ -17,15 +17,17 @@ a separate runtime scalar: it multiplies a continuation, not an action, and the
 steps read it where they read the continuation.
 """
 
-from collections.abc import Callable
+import inspect
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import cast
+from typing import cast, no_type_check
 
 import jax
 import jax.numpy as jnp
-from dags import concatenate_functions
+from dags import concatenate_functions, get_annotations
 from dags.tree import QNAME_DELIMITER
 
+from _lcm.dtypes import as_canonical_float
 from _lcm.egm.numeric_inverse import numeric_inverse_marginal_utility
 from _lcm.regime_building.w_dag import _get_build_W_kwargs
 from _lcm.typing import (
@@ -34,6 +36,7 @@ from _lcm.typing import (
     EconFunctionKwargs,
     EconFunctionsMapping,
     FunctionName,
+    PytreeValue,
 )
 from lcm.typing import (
     ActionName,
@@ -177,7 +180,7 @@ def get_preferences_builder(
         `Preferences` bundle.
 
     """
-    utility_func = concatenate_regime_function(functions=functions, target="utility")
+    utility_func = concatenate_felicity(functions=functions)
     analytic_inverse = (
         concatenate_regime_function(
             functions=functions, target=INVERSE_MARGINAL_UTILITY
@@ -238,6 +241,47 @@ def concatenate_regime_function(
         enforce_signature=False,
         set_annotations=True,
     )
+
+
+def concatenate_felicity(
+    *, functions: Mapping[FunctionName, Callable[..., PytreeValue]]
+) -> Callable[..., FloatND]:
+    """Concatenate the regime's `utility` target at the canonical float dtype.
+
+    Every endogenous-grid route that evaluates or differentiates the felicity
+    outside the utilities-and-feasibility kernel composes it here, so a felicity
+    returning `0` or an integer array is converted before its first consumer.
+    """
+    return CanonicalFelicity(
+        function=concatenate_functions(
+            functions=dict(functions),
+            targets="utility",
+            enforce_signature=False,
+            set_annotations=True,
+        )
+    )
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class CanonicalFelicity:
+    """A composed felicity returning the canonical float dtype.
+
+    A frozen callable instance rather than a nested function: the beartype claw
+    memoizes every function it decorates, so a function defined per model build
+    would pin that build's DAG after the model is dropped.
+    """
+
+    function: Callable[..., FloatND]
+    """The concatenated `utility` DAG."""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "__signature__", inspect.signature(self.function))
+        object.__setattr__(self, "__annotations__", get_annotations(self.function))
+        object.__setattr__(self, "__name__", "utility")
+
+    @no_type_check
+    def __call__(self, *args: EconFunctionArg, **kwargs: EconFunctionArg) -> FloatND:
+        return as_canonical_float(self.function(*args, **kwargs))
 
 
 def _elementwise(

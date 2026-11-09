@@ -250,11 +250,11 @@ raises `GateReadsValueError` when the `Gate` is declared, and a `Gate` takes no
 `references`. Write a comparison of values as a `ParticipationCheck` with named reads,
 or as an `Exit` of the source regime.
 
-The Boolean requirement is not a build-time check: the dtype is examined where the gate
-is actually evaluated, so a gate returning a probability is refused on the first
-`solve()` rather than at construction. The branch is selected with a strict `where`, in
-which every nonzero value is true, so a `0.25` would otherwise open the edge for every
-row.
+A gate may return an integer `1` or `0`, which is converted to a Boolean. The
+requirement is not a build-time check: the dtype is examined where the gate is actually
+evaluated, so a gate returning a floating probability is refused on the first `solve()`
+rather than at construction. The branch is selected with a strict `where`, in which
+every nonzero value is true, so a `0.25` would otherwise open the edge for every row.
 
 ### The key is always the open branch
 

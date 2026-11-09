@@ -262,7 +262,7 @@ def test_floor_is_a_real_scalar_when_the_dag_is_evaluated(bad: FloatND) -> None:
     )
     node = cast("UserFunction", regime.decomposed_functions["borrowing_lower"])
     with pytest.raises(
-        ModelInitializationError, match=r"borrowing.*real floating scalar"
+        ModelInitializationError, match=r"borrowing.*real integer or floating scalar"
     ):
         node()
 
@@ -816,16 +816,12 @@ def test_unknown_parameter_shape_is_checked_with_actual_inputs(kind: str) -> Non
     np.testing.assert_allclose(values, [[0.5, 0.5], [1.5, 1.5]], atol=1e-6)
 
 
-@pytest.mark.parametrize("kind", ["integer", "boolean", "vector"])
+@pytest.mark.parametrize("kind", ["boolean", "vector"])
 @pytest.mark.parametrize("handwritten", [False, True])
-def test_actual_floor_output_is_real_floating_scalar(
-    *, kind: str, handwritten: bool
-) -> None:
+def test_actual_floor_output_is_a_real_scalar(*, kind: str, handwritten: bool) -> None:
     """Both declaration spellings validate actual parameter-dependent floor outputs."""
 
     def floor(*, theta: FloatND) -> FloatND:
-        if kind == "integer":
-            return jnp.asarray(theta, dtype=jnp.int32)
         if kind == "boolean":
             return theta > 0.0
         return jnp.stack([theta])
@@ -841,7 +837,7 @@ def test_actual_floor_output_is_real_floating_scalar(
         functions={"floor": floor} if handwritten else None,
     )
     with pytest.raises(
-        ModelInitializationError, match=r"borrowing.*real floating scalar"
+        ModelInitializationError, match=r"borrowing.*real integer or floating scalar"
     ):
         model.solve(params={"theta": 0.5}, log_level="off")
 

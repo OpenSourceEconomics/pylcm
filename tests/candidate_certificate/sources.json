@@ -14,7 +14,7 @@
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "2",
-  "source_inventory_sha256": "ac1b6cfc787a66425f1e3b3e4c6774968e93a4a7dc79e66bb11f74e70125182d",
+  "source_inventory_sha256": "106461dd08e5e1399c8931ceeb53f66e47c209f76a4877c488bdf12b82376239",
   "sources": [
     {
       "path": "src/_lcm/constraints/bounds.py",
@@ -22,7 +22,7 @@
     },
     {
       "path": "src/_lcm/constraints/dynamic_bound.py",
-      "sha256": "c0d89a09bba81ee8a620b5066cc0ec3bfa6ea95bbbbedca7c383be2e0611bd66"
+      "sha256": "3e9f4b029456df4550c24b3ebbf0913e9252f579b778ec165dad90cfe44bd2e8"
     },
     {
       "path": "src/_lcm/constraints/processed.py",
@@ -38,7 +38,7 @@
     },
     {
       "path": "src/_lcm/dtypes.py",
-      "sha256": "1be61ef17ecb00309aed5a9dec4d4e8d11b9a03cfef8d7e6a812691835e87ec6"
+      "sha256": "306e8ac65759f86b5becbac3e23bb9a0d448a203e93d925ad0101ec1c1e31498"
     },
     {
       "path": "src/_lcm/egm/adaptive_nbegm_producer.py",
@@ -138,7 +138,7 @@
     },
     {
       "path": "src/_lcm/egm/preferences.py",
-      "sha256": "12d41ccb73192a7742267ffaa688fff3fe337ae40ef2373f6fe93541b8effcba"
+      "sha256": "007a59b283695679f55e916420c66e3cf4664fbb4acb0256472d21ddaa520ef2"
     },
     {
       "path": "src/_lcm/egm/published_policy.py",
@@ -158,7 +158,7 @@
     },
     {
       "path": "src/_lcm/egm/step.py",
-      "sha256": "97f9fa73f3001584eafebb3ac40696702a3faa9752947f91642ae9e1115942cd"
+      "sha256": "7fd71afb528cfea704d3b65dd75e3037e46ee2d3ec3e5e64a82d3cd1a649406a"
     },
     {
       "path": "src/_lcm/egm/step_core.py",
@@ -322,7 +322,7 @@
     },
     {
       "path": "src/_lcm/regime_building/Q_and_F.py",
-      "sha256": "a9a0f370b175c693cd9fb372aceb944537c2e4d3bb5a3d94bbcbb4d42c40f8c7"
+      "sha256": "fc369c6bd8efff635b32ab90e3fef747b562d3bf7365be87141ba22ccc111a9c"
     },
     {
       "path": "src/_lcm/regime_building/age_normalization.py",
@@ -346,7 +346,7 @@
     },
     {
       "path": "src/_lcm/regime_building/processing.py",
-      "sha256": "d35d6dac1a17a4c01672c266568afa3302eef95e1847e94ff1e6aa1e9f512209"
+      "sha256": "b78b1ca394371187d2fbbead591c4f9e19ba655b24670c0cc5b2de17b2e8946f"
     },
     {
       "path": "src/_lcm/regime_building/zero_safe.py",
@@ -614,7 +614,7 @@
     },
     {
       "path": "src/_lcm/solution/nbegm.py",
-      "sha256": "1c14e7aa48663f3017b8420166cf2fbceec9eb18ba3d55cef1e735424ea2a709"
+      "sha256": "b985a20323a78e240a55c73e442851f6e61aed358b5648bdf281b3a4e5efdea4"
     },
     {
       "path": "src/_lcm/solution/negm.py",
@@ -658,7 +658,7 @@
     },
     {
       "path": "src/_lcm/transition_checks.py",
-      "sha256": "2d2b49c860b71cf9b83c5e58f3c468ee4f0dde2123fe1b48f3f1cc4de28f73b7"
+      "sha256": "c342a45509c0868756c8eb9dbd5707c5e4a82e7e0b738d1022680f1c69f6f55e"
     },
     {
       "path": "src/_lcm/utils/containers.py",
@@ -710,7 +710,7 @@
     },
     {
       "path": "src/lcm/consumption_savings_regime.py",
-      "sha256": "5be32fa6b2ae7d1ed1312c2430f49cb6ce8c666e91e96f1c1cffeb8d61a553db"
+      "sha256": "751e18767bccd13540094eb5e518503c0d029faed30bf05a818c1f8c1cc01e21"
     },
     {
       "path": "src/lcm/grids.py",

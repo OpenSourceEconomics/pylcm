@@ -161,7 +161,8 @@ def post_decision_lower_bound(
     Args:
         margin: The Euler margin whose post-decision state is bounded below.
         lower: A literal floor or a callable DAG producer. Callable floors must
-            return a real floating scalar and may read only information fixed
+            return a real scalar (an integer is converted to the active float
+            precision) and may read only information fixed
             before actions are chosen. A literal must equal the savings grid's
             lowest node exactly, where the solver has one.
 
