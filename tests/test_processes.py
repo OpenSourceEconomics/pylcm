@@ -192,7 +192,7 @@ def test_lognormal_fixture_panel_matches_normal_income_representation() -> None:
 @pytest.mark.parametrize(
     "distribution_type", ["uniform", "normal", "lognormal", "tauchen", "rouwenhorst"]
 )
-def test_model_with_process(distribution_type):
+def test_model_with_process(distribution_type: DistributionType) -> None:
     model = get_model(n_periods=4, distribution_type=distribution_type)
     params = get_params(distribution_type)
 

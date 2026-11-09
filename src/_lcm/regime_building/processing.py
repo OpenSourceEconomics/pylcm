@@ -174,6 +174,7 @@ from _lcm.regime_building.gated_edges import (
     source_reads_folded_wbar,
 )
 from _lcm.regime_building.invariant_blocking import bound_state_names
+from _lcm.regime_building.lottery_contraction import LotteryContractionSource
 from _lcm.regime_building.max_Q_over_a import (
     BoundedArgmaxOutput,
     get_argmax_and_max_Q_over_a,
@@ -5134,6 +5135,15 @@ def _prepare_numerical_solution_phase(  # noqa: PLR0915 - native route admission
             grid_schedule=grid_schedule,
             gated_continuations=gated_continuations,
             count_raise_landings=counts_raise_landings,
+            lottery_contraction_source=(
+                LotteryContractionSource(
+                    state_grids=state_grids[regime_name],
+                    action_names=frozenset(state_action_space.action_names),
+                    rebound_targets=frozenset(laws[regime_name].participation),
+                )
+                if isinstance(solver, GridSearch) and solver.lottery_contraction
+                else None
+            ),
         )
         grouped_Q_and_F = decision_Q_and_F()
         Q_and_F_functions = grouped_Q_and_F.by_period
@@ -10167,6 +10177,7 @@ def _build_Q_and_F_per_period(
         MappingProxyType({})
     ),
     count_raise_landings: bool = False,
+    lottery_contraction_source: LotteryContractionSource | None = None,
 ) -> _GroupedQAndF:
     """Build Q-and-F closures for each active period of a non-terminal regime.
 
@@ -10221,6 +10232,10 @@ def _build_Q_and_F_per_period(
             regime without gated edges.
         count_raise_landings: Whether each closure also returns its raw landing
             counts on the raise-rule grids it reads. Only the solve site sets it.
+        lottery_contraction_source: The source regime's state grids and action
+            names, under which a singleton closure sums each eligible draw into
+            its target's value array once per call; `None` enumerates every draw.
+            Only the solve site of a `GridSearch` regime sets it.
 
     Returns:
         Immutable mapping of period index to the per-period Q-and-F closure.
@@ -10404,6 +10419,7 @@ def _build_Q_and_F_per_period(
             ),
             gated_continuations=period_gated_continuations,
             count_raise_landings=count_raise_landings,
+            lottery_contraction_source=lottery_contraction_source,
         )
 
     return _GroupedQAndF(
