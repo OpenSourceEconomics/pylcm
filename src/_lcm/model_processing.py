@@ -26,6 +26,7 @@ from _lcm.params.edges import (
     flat_namespaces,
     regime_kernel_params,
 )
+from _lcm.params.numeric_roles import template_roles
 from _lcm.params.processing import (
     broadcast_to_template,
     cast_params_to_canonical_dtypes,
@@ -303,7 +304,9 @@ def _normalize_fixed_parameters(
             name: regime.required_periods for name, regime in metadata.items()
         },
     )
-    fixed_flat_params = cast_params_to_canonical_dtypes(fixed_flat_params)
+    fixed_flat_params = cast_params_to_canonical_dtypes(
+        fixed_flat_params, roles=template_roles(raw_params_template)
+    )
     _validate_param_types(fixed_flat_params)
 
     # The template trim works on the template-shaped (user-coarse) form;

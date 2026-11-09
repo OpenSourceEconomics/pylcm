@@ -13,6 +13,11 @@ from typing import cast
 
 import jax.numpy as jnp
 
+from _lcm.params.numeric_roles import (
+    NumericRole,
+    callable_param_roles,
+    merge_roles,
+)
 from _lcm.processes.iid import _IIDProcess
 from _lcm.regime_building.value_adapter import adapt_user_function, encoding_grid
 from _lcm.regime_law import RegimeLaw, RegimeLaws
@@ -31,7 +36,7 @@ from lcm.regime import Regime, StateEntry
 from lcm.shocks import (
     Discrete,
     LawCallable,
-    LawValue,
+    LawInput,
     ShockGroup,
     ShockGroupName,
     ShockName,
@@ -87,6 +92,8 @@ class ShockBinding:
     """Current-state DAG available to the law in this phase."""
     params_template: Mapping[ParameterName, str]
     """Group-local runtime slots; these are not ordinary regime parameters."""
+    param_roles: Mapping[ParameterName, NumericRole]
+    """Mapping of each group-local slot to the numeric role its value is cast to."""
     callable_parameters: frozenset[ParameterName]
     """Parameter leaves read by the law's transitive callable closure."""
 
@@ -149,6 +156,24 @@ class ShockRegistry:
         )
 
     @property
+    def param_roles(
+        self,
+    ) -> Mapping[ShockGroupName, Mapping[ParameterName, NumericRole]]:
+        """Return each group-local slot's numeric role across active declarations."""
+        groups: dict[ShockGroupName, dict[ParameterName, NumericRole]] = {}
+        for (_, _, name), binding in self.bindings.items():
+            slots = groups.setdefault(name, {})
+            for slot, role in binding.param_roles.items():
+                slots[slot] = merge_roles(
+                    name=f"{name}__{slot}",
+                    left=slots.get(slot, NumericRole.AS_GIVEN),
+                    right=role,
+                )
+        return MappingProxyType(
+            {name: MappingProxyType(slots) for name, slots in groups.items()}
+        )
+
+    @property
     def state_inputs_by_regime(self) -> Mapping[RegimeName, frozenset[StateName]]:
         """Retain current-law state dependencies in both canonical phase walks."""
         inputs: dict[RegimeName, frozenset[StateName]] = {}
@@ -168,7 +193,7 @@ class ShockRegistry:
 
 
 def law_input_validity(
-    *, binding: ShockBinding, inputs: Mapping[ReferenceName, LawValue]
+    *, binding: ShockBinding, inputs: Mapping[ReferenceName, LawInput]
 ) -> ScalarBool:
     """Validate canonical category codes before a callable can hide an invalid one."""
     valid = jnp.asarray(a=True)
@@ -319,10 +344,12 @@ def create_shock_registry(  # noqa: C901 - bind declarations and phase-specific 
                 helpers = _law_helpers(
                     group=group, functions=functions, states=frozenset(regime.states)
                 )
-                params_template, callable_parameters = _create_group_template(
-                    group=group,
-                    states=frozenset(regime.states),
-                    functions=functions,
+                params_template, param_roles, callable_parameters = (
+                    _create_group_template(
+                        group=group,
+                        states=frozenset(regime.states),
+                        functions=functions,
+                    )
                 )
                 bindings[regime_name, phase, group_name] = ShockBinding(
                     group=_adapt_law_values(
@@ -358,6 +385,7 @@ def create_shock_registry(  # noqa: C901 - bind declarations and phase-specific 
                         }
                     ),
                     params_template=params_template,
+                    param_roles=param_roles,
                     callable_parameters=callable_parameters,
                 )
             _fail_if_shock_reads_are_unlowered(
@@ -430,23 +458,43 @@ def _create_group_template(  # noqa: C901 - enumerate law slots and callable lea
     group: ShockGroup,
     states: frozenset[StateName],
     functions: Mapping[FunctionName, LawCallable],
-) -> tuple[Mapping[ParameterName, str], frozenset[ParameterName]]:
+) -> tuple[
+    Mapping[ParameterName, str],
+    Mapping[ParameterName, NumericRole],
+    frozenset[ParameterName],
+]:
+    """Return a group's slots, their numeric roles and its callable leaves.
+
+    A law coefficient and the correlation matrix are floats. A callable's
+    argument takes the role its annotation declares, merged over every callable
+    reading it.
+    """
     template: dict[ParameterName, str] = {}
+    roles: dict[ParameterName, NumericRole] = {}
     callable_parameters: set[ParameterName] = set()
 
-    def visit(name: ReferenceName) -> None:
+    def visit(*, name: ReferenceName, role: NumericRole) -> None:
         if name in functions:
-            for argument in _arguments(functions[name]):
-                visit(argument)
+            visit_arguments(functions[name])
         elif name.endswith("_code") and name[:-5] in states:
-            visit(name[:-5])
+            visit(name=name[:-5], role=NumericRole.AS_GIVEN)
         elif (
             name not in states
             and name not in {"period", "age"}
             and not (name.endswith("_code") and name[:-5] in states)
         ):
             template[name] = "float"
+            roles[name] = merge_roles(
+                name=name, left=roles.get(name, NumericRole.AS_GIVEN), right=role
+            )
             callable_parameters.add(name)
+
+    def visit_arguments(function: LawCallable) -> None:
+        argument_roles = callable_param_roles(function)
+        for argument in _arguments(function):
+            visit(
+                name=argument, role=argument_roles.get(argument, NumericRole.AS_GIVEN)
+            )
 
     for shock_name, law in group.shocks.items():
         for item in fields(law):
@@ -455,14 +503,19 @@ def _create_group_template(  # noqa: C901 - enumerate law slots and callable lea
             value = getattr(law, item.name)
             if value is None:
                 template[f"{shock_name}__{item.name}"] = "float"
+                roles[f"{shock_name}__{item.name}"] = NumericRole.FLOAT
             elif isinstance(value, StateConditioned | _ConditionedLookup):
-                visit(value.on)
+                visit(name=value.on, role=NumericRole.AS_GIVEN)
             elif callable(value):
-                for argument in _arguments(value):
-                    visit(argument)
+                visit_arguments(value)
     if group.correlation is None:
         template["corr"] = "array"
-    return MappingProxyType(template), frozenset(callable_parameters)
+        roles["corr"] = NumericRole.FLOAT
+    return (
+        MappingProxyType(template),
+        MappingProxyType(roles),
+        frozenset(callable_parameters),
+    )
 
 
 def _phase_functions(
