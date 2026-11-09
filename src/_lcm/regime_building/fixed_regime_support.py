@@ -527,6 +527,9 @@ def _evaluate_fixed_function(
     if not isinstance(value, Array | np.ndarray | np.generic | float | int):
         # Only a numeric value can prove a structural zero.
         return None
+    if isinstance(value, int):
+        # A constant law may return a Python integer or Boolean, such as `0`.
+        value = np.asarray(value)
     return value, frozenset(keys)
 
 

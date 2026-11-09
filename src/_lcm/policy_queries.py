@@ -2146,11 +2146,16 @@ def _mapped_query_states(
     Under a false `guard` a cell runs only as a discarded lane of a batch, and the
     target reads its first grid point instead: a point its own solve evaluates.
     """
+    grid = node.context.state_action_space.states
+    # Where the engine receives a projected state: it takes the target state's
+    # kind, so a projection may return `1` for a continuous state or a Python
+    # integer for a code.
     mapped = {
         name: jnp.asarray(
             helper(
                 **{key: available[key] for key in inspect.signature(helper).parameters}
-            )
+            ),
+            dtype=grid[name].dtype if name in grid else None,
         )
         for name, helper in node.read.projection.items()
         if names is None or name in names
@@ -2159,7 +2164,6 @@ def _mapped_query_states(
         raise ValueError("A mapped query state must be scalar per source cell.")
     if guard is None:
         return mapped
-    grid = node.context.state_action_space.states
     return {
         name: jnp.where(guard, value, jnp.asarray(grid[name][0], value.dtype))
         for name, value in mapped.items()

@@ -14,7 +14,7 @@
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "2",
-  "source_inventory_sha256": "46d7eb10fd7c57274c89f749f58da217a8e5471218dc5676cc5edc8c80e4c1aa",
+  "source_inventory_sha256": "50b3f1b1c2c7204d1c3a2f1d62aa0ae56e9250b08d0ccc3775ef77c4d2340b56",
   "sources": [
     {
       "path": "src/_lcm/constraints/bounds.py",
@@ -22,7 +22,7 @@
     },
     {
       "path": "src/_lcm/constraints/dynamic_bound.py",
-      "sha256": "c0d89a09bba81ee8a620b5066cc0ec3bfa6ea95bbbbedca7c383be2e0611bd66"
+      "sha256": "3e9f4b029456df4550c24b3ebbf0913e9252f579b778ec165dad90cfe44bd2e8"
     },
     {
       "path": "src/_lcm/constraints/processed.py",
@@ -38,7 +38,7 @@
     },
     {
       "path": "src/_lcm/dtypes.py",
-      "sha256": "1b6158cdd521ec801bd0623e3a00cca744a1b387445447df878b2ad25ac09990"
+      "sha256": "306e8ac65759f86b5becbac3e23bb9a0d448a203e93d925ad0101ec1c1e31498"
     },
     {
       "path": "src/_lcm/egm/adaptive_nbegm_producer.py",
@@ -346,7 +346,7 @@
     },
     {
       "path": "src/_lcm/regime_building/processing.py",
-      "sha256": "31ef674cb71e5fe5a45578e233190bb3a70fa29cbc21eb5c1b4732bafb15cff3"
+      "sha256": "5d4c638e4712d782afba58bacdffa46e8db959a9467c2b97bab1dba3d3f4f89b"
     },
     {
       "path": "src/_lcm/regime_building/zero_safe.py",
@@ -658,7 +658,7 @@
     },
     {
       "path": "src/_lcm/transition_checks.py",
-      "sha256": "2d2b49c860b71cf9b83c5e58f3c468ee4f0dde2123fe1b48f3f1cc4de28f73b7"
+      "sha256": "c342a45509c0868756c8eb9dbd5707c5e4a82e7e0b738d1022680f1c69f6f55e"
     },
     {
       "path": "src/_lcm/utils/containers.py",
@@ -710,7 +710,7 @@
     },
     {
       "path": "src/lcm/consumption_savings_regime.py",
-      "sha256": "5be32fa6b2ae7d1ed1312c2430f49cb6ce8c666e91e96f1c1cffeb8d61a553db"
+      "sha256": "751e18767bccd13540094eb5e518503c0d029faed30bf05a818c1f8c1cc01e21"
     },
     {
       "path": "src/lcm/grids.py",

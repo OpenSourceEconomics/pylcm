@@ -17,6 +17,7 @@ from dags.tree import qname_from_tree_path
 from jax.core import Tracer
 
 from _lcm.current_iid import CurrentIIDPlan
+from _lcm.dtypes import as_canonical_float
 from _lcm.engine import Regime
 from _lcm.exits import exit_functions, exits_for_phase
 from _lcm.policy_queries import (
@@ -145,8 +146,10 @@ class _ExitReducer:
                 if member in self.adjustments.get(name, {}):
                     adjustment = jax.lax.cond(
                         active,
-                        lambda helper=self.adjustments[name][member]: jnp.asarray(
-                            _call(function=helper, operands=operands)
+                        lambda helper=self.adjustments[name][member]: (
+                            as_canonical_float(
+                                _call(function=helper, operands=operands)
+                            )
                         ),
                         lambda: jnp.asarray(0.0),
                     )

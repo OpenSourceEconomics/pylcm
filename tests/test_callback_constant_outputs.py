@@ -28,6 +28,7 @@ from lcm import (
     Transition,
     categorical,
     post_decision_lower_bound,
+    ref,
 )
 from lcm.collective import CollectiveUtility
 from lcm.exceptions import InvalidValueFunctionError
@@ -39,7 +40,6 @@ from lcm.typing import (
     DiscreteAction,
     DiscreteState,
     FloatND,
-    IntND,
     ScalarInt,
     UserFunction,
     UserFunctionResult,
@@ -122,7 +122,6 @@ def _two_period_model(
         initial_nodes={0: "alive"},
         edges={"alive": {"final": 0}},
         enable_jit=enable_jit,
-        durable_identity=False,
     )
 
 
@@ -308,7 +307,6 @@ def _health_model(*, health_law: StateTransitionEntry) -> Model:
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         initial_nodes={0: "alive"},
         edges={"alive": {"final": 0}},
-        durable_identity=False,
     )
 
 
@@ -365,7 +363,6 @@ def _regime_model(*, law: TransitionLaw) -> Model:
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         initial_nodes={0: "alive"},
         edges={"alive": Transition(targets={"final": 0, "other": 0}, law=law)},
-        durable_identity=False,
     )
 
 
@@ -457,7 +454,7 @@ def _stay(*, wealth: FloatND) -> FloatND:
     return wealth
 
 
-def _exit_model(*, adjustment: UserFunction) -> Model:
+def _exit_model(*, adjustment: UserFunction, projection: UserFunction = _stay) -> Model:
     return Model(
         regimes={
             "source": Regime(
@@ -467,7 +464,7 @@ def _exit_model(*, adjustment: UserFunction) -> Model:
                         targets={
                             "self": ExitTarget(
                                 regime="target",
-                                projection={"wealth": _stay},
+                                projection={"wealth": projection},
                                 utility_adjustment=adjustment,
                             )
                         },
@@ -493,12 +490,24 @@ def test_constant_exit_utility_adjustment(*, form: str) -> None:
     def adjustment() -> FloatND:
         return raw  # ty: ignore[invalid-return-type]
 
-    values = _exit_model(adjustment=adjustment).solve(params={}, log_level="off")
+    model = _exit_model(adjustment=adjustment)
+    values = model.solve(params={}, log_level="off")
     np.testing.assert_array_equal(values.values[0]["source"], [1.0, 1.0, 2.0])
+    df = model.simulate(
+        params={},
+        initial_conditions={
+            "period": jnp.array([0, 0]),
+            "wealth": jnp.array([0.0, 2.0]),
+            "regime_id": jnp.array([ExitRegimeId.source] * 2),
+        },
+        log_level="off",
+    ).to_dataframe()
+    np.testing.assert_array_equal(df.sort_values("subject_id")["value"], [1.0, 2.0])
 
 
 @pytest.mark.parametrize("form", ["python_int", "python_float", "int_array"])
-def test_constant_borrowing_floor(*, form: str) -> None:
+@pytest.mark.parametrize("handwritten", [False, True])
+def test_constant_borrowing_floor(*, form: str, handwritten: bool) -> None:
     """A zero floor written as `0` binds like the floating floor `0.0`."""
     raw = _constant(form=form, value=0)
 
@@ -508,11 +517,32 @@ def test_constant_borrowing_floor(*, form: str) -> None:
     def float_floor() -> FloatND:
         return jnp.asarray(0.0)
 
-    def solved(lower: UserFunction) -> IntND:
+    def solved(lower: UserFunction) -> FloatND:
         model = _floor_model(
-            declaration=post_decision_lower_bound(margin=LIQUID, lower=lower),
+            declaration=ref("savings") >= ref("floor")
+            if handwritten
+            else post_decision_lower_bound(margin=LIQUID, lower=lower),
             helper=None,
+            functions={"floor": lower} if handwritten else None,
         )
         return model.solve(params={}, log_level="off").values[0]["done"]
 
     np.testing.assert_array_equal(solved(zero_floor), solved(float_floor))
+
+
+@pytest.mark.parametrize(
+    "form", ["python_int", "python_float", "int_array", "float_array"]
+)
+def test_constant_exit_projection_lands_on_its_float_node(*, form: str) -> None:
+    """Projecting every leaver to wealth `2` values the exit at the target's `2.0`."""
+    raw = _constant(form=form, value=2)
+
+    def projection() -> FloatND:
+        return raw  # ty: ignore[invalid-return-type]
+
+    def no_adjustment() -> FloatND:
+        return jnp.asarray(0.0)
+
+    model = _exit_model(adjustment=no_adjustment, projection=projection)
+    values = model.solve(params={}, log_level="off").values
+    np.testing.assert_array_equal(values[0]["source"], [2.0, 2.0, 2.0])

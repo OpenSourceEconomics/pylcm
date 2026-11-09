@@ -149,8 +149,12 @@ def safe_to_float_dtype(
 
 
 def as_canonical_float(value: _UserOutput) -> FloatND:
-    """Return a user function's numeric output at the canonical float dtype."""
-    return jnp.asarray(value, dtype=canonical_float_dtype())
+    """Return a user function's numeric output at the canonical float dtype.
+
+    JAX canonicalizes the Python `float` dtype to the active precision, so the
+    adapter reads no configuration: model fingerprints walk its code.
+    """
+    return jnp.asarray(value, dtype=float)
 
 
 def as_bool(value: _UserOutput) -> BoolND:
