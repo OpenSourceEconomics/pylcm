@@ -66,7 +66,7 @@ from dags import concatenate_functions, get_ancestors
 from _lcm.constraints.bounds import lower_bound_declaration
 from _lcm.constraints.processed import ConstraintLike, normalize_constraints
 from _lcm.egm.outer_search import FiniteOuterGrid
-from _lcm.egm.preferences import BoundUtilityOfAction
+from _lcm.egm.preferences import BoundUtilityOfAction, concatenate_felicity
 from _lcm.grids import ContinuousGrid, Grid
 from _lcm.post_decision_bound import _PostDecisionLowerBound
 from _lcm.processes import _ContinuousStochasticProcess
@@ -1314,7 +1314,7 @@ def _fail_if_inverse_marginal_utility_inconsistent(
         )
         raise ModelInitializationError(msg)
 
-    utility_func = concatenate_functions(functions, targets="utility")
+    utility_func = concatenate_felicity(functions=functions)
     if solver.continuous_action not in inspect.signature(utility_func).parameters:
         return
     # Run the concavity and round-trip checks at a few discrete-combo contexts,

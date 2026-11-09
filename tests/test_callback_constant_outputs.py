@@ -1,12 +1,15 @@
 """User functions may return Python scalars where the engine expects arrays.
 
-A felicity, a constraint, a next state, a regime-transition probability, a
-stochastic weight, an exit utility adjustment and a borrowing floor may each
-return `0`, `0.0`, `True` or an array. Each solves and simulates to the same
-values as its array-returning twin, at the active precision.
+A felicity (under grid search and every endogenous-grid family), a constraint,
+a next state, a regime-transition probability, a stochastic weight, an exit
+utility adjustment, exit availability, a gate or participation predicate, a
+fallback projection, a joint-transition output or probability, a current-IID
+law parameter and a borrowing floor may each return `0`, `0.0`, `True` or an
+array. Each solves and simulates to the same values as its array-returning
+twin, at the active precision.
 """
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import cast
 
 import jax.numpy as jnp
@@ -16,23 +19,31 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    ByAge,
     DiscreteGrid,
     Exit,
     ExitTarget,
+    Gate,
     InitialNodes,
     IrregSpacedGrid,
+    JointTransition,
     LinSpacedGrid,
     Model,
+    ParticipationCheck,
+    ProjectedRegimeValue,
     Regime,
+    StakeholderRoute,
     StochasticTransition,
     Transition,
     categorical,
+    fixed_transition,
     post_decision_lower_bound,
     ref,
 )
-from lcm.collective import CollectiveUtility
+from lcm.collective import CollectiveUtility, ValueDependentConstraint
 from lcm.exceptions import InvalidValueFunctionError
 from lcm.regime import StateTransitionEntry
+from lcm.shocks import Discrete, GaussHermite, Normal, Product, ShockGroup
 from lcm.transition import TransitionLaw
 from lcm.typing import (
     BoolND,
@@ -53,6 +64,10 @@ from tests.collective_fixtures import (
 )
 from tests.constraints.test_dynamic_lower_bound import LIQUID
 from tests.constraints.test_dynamic_lower_bound import _model as _floor_model
+from tests.solution import test_egm_model_validation as egm_fixture
+from tests.test_models import dcegm_paper_twin as dcegm_twin
+from tests.test_models import nbegm_tax_toy as tax_toy
+from tests.test_models.nbegm_common import make_alive_dead_model, resolve_solver
 
 
 @categorical(ordered=False)
@@ -454,7 +469,12 @@ def _stay(*, wealth: FloatND) -> FloatND:
     return wealth
 
 
-def _exit_model(*, adjustment: UserFunction, projection: UserFunction = _stay) -> Model:
+def _exit_model(
+    *,
+    adjustment: UserFunction,
+    projection: UserFunction = _stay,
+    available: UserFunction | None = None,
+) -> Model:
     return Model(
         regimes={
             "source": Regime(
@@ -469,6 +489,7 @@ def _exit_model(*, adjustment: UserFunction, projection: UserFunction = _stay) -
                             )
                         },
                         rule="unilateral",
+                        available=available,
                     )
                 },
             ),
@@ -546,3 +567,461 @@ def test_constant_exit_projection_lands_on_its_float_node(*, form: str) -> None:
     model = _exit_model(adjustment=no_adjustment, projection=projection)
     values = model.solve(params={}, log_level="off").values
     np.testing.assert_array_equal(values[0]["source"], [2.0, 2.0, 2.0])
+
+
+def _egm_solved(*, raw: UserFunctionResult, monkeypatch: pytest.MonkeyPatch) -> FloatND:
+    def terminal(*, wealth: ContinuousState) -> FloatND:  # noqa: ARG001
+        return raw  # ty: ignore[invalid-return-type]
+
+    monkeypatch.setattr(egm_fixture, "terminal_utility", terminal)
+    model = egm_fixture._model()
+    values = model.solve(params={"discount_factor": 0.95}, log_level="off").values
+    return values[0]["saving"]
+
+
+def _nbegm_solved(
+    *,
+    raw: UserFunctionResult,
+    monkeypatch: pytest.MonkeyPatch,  # noqa: ARG001
+) -> FloatND:
+    def terminal(*, liquid: ContinuousState) -> FloatND:  # noqa: ARG001
+        return raw  # ty: ignore[invalid-return-type]
+
+    params = tax_toy.build_params()
+    params.pop("dead")
+    model = _nbegm_model(terminal=terminal)
+    return model.solve(params=params, log_level="off").values[0]["alive"]
+
+
+def _dcegm_solved(
+    *, raw: UserFunctionResult, monkeypatch: pytest.MonkeyPatch
+) -> FloatND:
+    def terminal(*, wealth: ContinuousState) -> FloatND:  # noqa: ARG001
+        return raw  # ty: ignore[invalid-return-type]
+
+    done = Regime(
+        states={"wealth": dcegm_twin.WEALTH_GRID}, functions={"utility": terminal}
+    )
+    monkeypatch.setattr(dcegm_twin, "done_retired", done)
+    model = dcegm_twin.build_dcegm_model()
+    values = model.solve(params=dcegm_twin.get_params(), log_level="off").values
+    return values[0]["working_life"]
+
+
+@pytest.mark.parametrize("form", ["python_int", "python_float", "int_array"])
+@pytest.mark.parametrize(
+    "solved", [_egm_solved, _nbegm_solved, _dcegm_solved], ids=["egm", "nbegm", "dcegm"]
+)
+def test_constant_terminal_utility_under_endogenous_grids(
+    *, form: str, solved, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A terminal felicity `0` solves like the floating `0.0` in every EGM family."""
+    got = solved(raw=_constant(form=form, value=0), monkeypatch=monkeypatch)
+    expected = solved(
+        raw=_constant(form="float_array", value=0), monkeypatch=monkeypatch
+    )
+    assert got.dtype == expected.dtype
+    np.testing.assert_array_equal(np.asarray(got), np.asarray(expected))
+
+
+def _no_adjustment() -> FloatND:
+    return jnp.asarray(0.0)
+
+
+@pytest.mark.parametrize("value", [0, 1])
+@pytest.mark.parametrize(
+    "form", ["python_int", "python_bool", "int_array", "bool_array"]
+)
+@pytest.mark.parametrize("reads_state", [False, True])
+def test_constant_exit_availability(
+    *, value: int, form: str, reads_state: bool
+) -> None:
+    """Availability `1` or `0` opens or closes the exit like `True` or `False`."""
+    raw = (
+        jnp.asarray(bool(value))
+        if form == "bool_array"
+        else _constant(form=form, value=value)
+    )
+
+    def constant() -> BoolND:
+        return raw  # ty: ignore[invalid-return-type]
+
+    def by_state(*, wealth: FloatND) -> BoolND:  # noqa: ARG001
+        return raw  # ty: ignore[invalid-return-type]
+
+    model = _exit_model(
+        adjustment=_no_adjustment, available=by_state if reads_state else constant
+    )
+    values = model.solve(params={}, log_level="off").values[0]["source"]
+    np.testing.assert_array_equal(values, [1.0, 1.0, 2.0] if value else [1.0] * 3)
+
+
+def test_floating_exit_availability_is_refused() -> None:
+    """A floating availability is not a 0/1 spelling and stays refused."""
+
+    def availability(*, wealth: FloatND) -> FloatND:
+        return wealth - 0.5
+
+    model = _exit_model(adjustment=_no_adjustment, available=availability)
+    with pytest.raises(ValueError, match="scalar Boolean or integer"):
+        model.solve(params={}, log_level="off")
+
+
+@categorical(ordered=False)
+class GateRegimeId:
+    source: ScalarInt
+    target: ScalarInt
+    fallback: ScalarInt
+
+
+_GATE_WEALTH = LinSpacedGrid(start=0.0, stop=2.0, n_points=3)
+
+
+def _certain(age: FloatND) -> FloatND:
+    return jnp.ones_like(age, dtype=float)
+
+
+def _ten_plus_wealth(*, wealth: ContinuousState) -> FloatND:
+    return wealth + 10.0
+
+
+def _gate_model(
+    *, predicate: UserFunction, fallback: UserFunction = _stay, gated: bool = False
+) -> Model:
+    route = StakeholderRoute(
+        fallback=ProjectedRegimeValue(
+            regime="fallback", projection={"wealth": fallback}
+        )
+    )
+    gates = {"target": Gate(predicate=predicate, routes={"self": route})}
+    checks = {"target": ParticipationCheck(predicate=predicate, routes={"self": route})}
+    return Model(
+        regimes={
+            "source": Regime(
+                states={"wealth": _GATE_WEALTH},
+                state_transitions={"wealth": fixed_transition("wealth")},
+                functions={"utility": _zero_array_utility},
+            ),
+            "target": Regime(
+                states={"wealth": _GATE_WEALTH}, functions={"utility": _ten_plus_wealth}
+            ),
+            "fallback": Regime(
+                states={"wealth": _GATE_WEALTH}, functions={"utility": _stay}
+            ),
+        },
+        ages=AgeGrid(start=40, inclusive_stop=45, step="5Y"),
+        regime_id_class=GateRegimeId,
+        initial_nodes={40: "source"},
+        edges={
+            "source": Transition(
+                targets={"target": 40, "fallback": 40},
+                law=ByAge(cases={40: {"target": StochasticTransition(func=_certain)}}),
+                gates=gates if gated else {},
+                participation={} if gated else checks,
+            )
+        },
+    )
+
+
+def _gated_values(model: Model) -> np.ndarray:
+    values = model.solve(params={"discount_factor": 1.0}, log_level="off").values
+    return np.asarray(values[0]["source"])
+
+
+def _gated_landings(model: Model) -> pd.DataFrame:
+    """Each subject's regime and wealth in the period after the gated edge."""
+    frame = model.simulate(
+        params={"discount_factor": 1.0},
+        initial_conditions={
+            "age": jnp.array([40.0, 40.0, 40.0]),
+            "wealth": jnp.array([0.0, 1.0, 2.0]),
+            "regime_id": jnp.array([GateRegimeId.source] * 3),
+        },
+        log_level="off",
+    ).to_dataframe()
+    landed = frame[frame["period"] == 1].sort_values("subject_id")
+    return landed[["regime_name", "wealth"]].reset_index(drop=True)
+
+
+_GATE_KINDS = pytest.mark.parametrize("gated", [False, True], ids=["check", "gate"])
+
+
+@_GATE_KINDS
+@pytest.mark.parametrize("value", [0, 1])
+@pytest.mark.parametrize("form", ["python_int", "python_bool", "int_array"])
+def test_constant_landing_predicate(*, gated: bool, value: int, form: str) -> None:
+    """A gate or participation predicate `1` or `0` admits or diverts like a Boolean."""
+    raw = _constant(form=form, value=value)
+
+    def predicate() -> BoolND:
+        return raw  # ty: ignore[invalid-return-type]
+
+    model = _gate_model(predicate=predicate, gated=gated)
+    np.testing.assert_array_equal(
+        _gated_values(model), [10.0, 11.0, 12.0] if value else [0.0, 1.0, 2.0]
+    )
+    landed = _gated_landings(model)
+    assert list(landed["regime_name"]) == ["target" if value else "fallback"] * 3
+    np.testing.assert_array_equal(landed["wealth"], [0.0, 1.0, 2.0])
+
+
+@_GATE_KINDS
+@pytest.mark.parametrize(
+    "form", ["python_int", "python_float", "int_array", "float_array"]
+)
+def test_constant_gated_fallback_projection(*, gated: bool, form: str) -> None:
+    """A fallback projecting every subject to wealth `2` lands there at 2.0."""
+    raw = _constant(form=form, value=2)
+
+    def projection() -> FloatND:
+        return raw  # ty: ignore[invalid-return-type]
+
+    def never() -> BoolND:
+        return jnp.asarray(a=False)
+
+    model = _gate_model(predicate=never, fallback=projection, gated=gated)
+    np.testing.assert_array_equal(_gated_values(model), [2.0] * 3)
+    landed = _gated_landings(model)
+    assert list(landed["regime_name"]) == ["fallback"] * 3
+    assert landed["wealth"].dtype.kind == "f"
+    np.testing.assert_array_equal(landed["wealth"], [2.0] * 3)
+
+
+def _nbegm_model(
+    *,
+    terminal: UserFunction | None = None,
+    constraints: Mapping[str, UserFunction] | None = None,
+) -> Model:
+    return make_alive_dead_model(
+        n_periods=2,
+        n_liquid=8,
+        liquid_max=30.0,
+        n_consumption=8,
+        alive_functions={
+            "utility": tax_toy.utility,
+            "tax": tax_toy.tax,
+            "resources": tax_toy.resources,
+            "savings": tax_toy.savings,
+        },
+        liquid_law=tax_toy.next_liquid_from_savings,
+        alive_solver=resolve_solver(
+            variant="nbegm",
+            savings_grid=LinSpacedGrid(start=0.0, stop=28.0, n_points=8),
+        ),
+        constraints={} if constraints is None else constraints,
+        dead_functions=None if terminal is None else {"utility": terminal},
+    )
+
+
+@pytest.mark.parametrize("form", ["python_bool", "python_int", "int_array"])
+def test_constant_constraint_under_endogenous_grids(*, form: str) -> None:
+    """An NBEGM predicate returning `1` admits every action like `True`."""
+    raw = _constant(form=form, value=1)
+
+    def allowed(*, liquid: ContinuousState) -> BoolND:  # noqa: ARG001
+        return raw  # ty: ignore[invalid-return-type]
+
+    def admitted(*, liquid: ContinuousState) -> BoolND:  # noqa: ARG001
+        return jnp.asarray(a=True)
+
+    def solved(constraint: UserFunction) -> np.ndarray:
+        model = _nbegm_model(constraints={"allowed": constraint})
+        values = model.solve(params=tax_toy.build_params(), log_level="off").values
+        return np.asarray(values[0]["alive"])
+
+    np.testing.assert_array_equal(solved(allowed), solved(admitted))
+
+
+@categorical(ordered=False)
+class JointRegimeId:
+    source: ScalarInt
+    target: ScalarInt
+
+
+def _matched_income(match: Mapping[str, FloatND]) -> FloatND:
+    return match["income"]
+
+
+def _joint_model(
+    *, wealth: UserFunction, probabilities: Callable[..., FloatND]
+) -> Model:
+    grid = LinSpacedGrid(start=0.0, stop=1.0, n_points=2)
+    return Model(
+        regimes={
+            "source": Regime(
+                functions={"utility": _source_utility},
+                joint_transitions={
+                    "target": {
+                        "match": JointTransition(
+                            support_size=2,
+                            support={"income": jnp.asarray([0.0, 1.0])},
+                            probabilities=probabilities,
+                            outputs={"wealth": wealth, "income": _matched_income},
+                        )
+                    }
+                },
+            ),
+            "target": Regime(
+                states={"wealth": grid, "income": grid},
+                functions={"utility": _joint_utility},
+            ),
+        },
+        ages=AgeGrid(start=20, inclusive_stop=21, step="Y"),
+        regime_id_class=JointRegimeId,
+        initial_nodes={20: "source"},
+        edges={"source": {"target": 20}},
+    )
+
+
+def _joint_utility(*, wealth: ContinuousState, income: ContinuousState) -> FloatND:
+    return wealth + 2 * income
+
+
+_JOINT_PARAMS = {
+    "source": {
+        "target": {
+            "match": {"support": {}, "probabilities": {}},
+            "next_wealth": {},
+            "next_income": {},
+        },
+        "koopmans_aggregator": {"discount_factor": 1.0},
+    },
+    "target": {"utility": {}},
+}
+
+
+def _uniform_match() -> FloatND:
+    return jnp.asarray([0.5, 0.5])
+
+
+def _joint_landings(model: Model) -> pd.DataFrame:
+    frame = model.simulate(
+        params=_JOINT_PARAMS,
+        initial_conditions={
+            "age": jnp.full(4, 20.0),
+            "regime_id": jnp.full(4, JointRegimeId.source),
+        },
+        log_level="off",
+    ).to_dataframe(terminal_rows="all")
+    return frame[frame["regime_name"] == "target"]
+
+
+@pytest.mark.parametrize("form", _FORMS)
+def test_constant_joint_transition_output(*, form: str) -> None:
+    """A joint output `1` lands every subject on wealth 1.0."""
+    raw = _constant(form=form, value=1)
+
+    def wealth() -> FloatND:
+        return raw  # ty: ignore[invalid-return-type]
+
+    model = _joint_model(wealth=wealth, probabilities=_uniform_match)
+    values = model.solve(params=_JOINT_PARAMS, log_level="off").values
+    np.testing.assert_array_equal(np.asarray(values[0]["source"]), 3.0)
+    landed = _joint_landings(model)
+    assert landed["wealth"].dtype.kind == "f"
+    np.testing.assert_array_equal(landed["wealth"], [1.0] * 4)
+
+
+def _stay_wealth() -> FloatND:
+    return jnp.asarray(0.0)
+
+
+def test_integer_joint_transition_probabilities() -> None:
+    """An integer one-hot probability vector selects its node like a float one."""
+
+    def probabilities() -> FloatND:
+        return jnp.asarray([0, 1], dtype=jnp.int32)
+
+    model = _joint_model(wealth=_stay_wealth, probabilities=probabilities)
+    values = model.solve(params=_JOINT_PARAMS, log_level="off").values
+    np.testing.assert_array_equal(np.asarray(values[0]["source"]), 3.0)
+    np.testing.assert_array_equal(_joint_landings(model)["income"], [1.0] * 4)
+
+
+@categorical(ordered=False)
+class ShockRegimeId:
+    alive: ScalarInt
+
+
+@categorical(ordered=True)
+class Outcome:
+    low: ScalarInt
+    high: ScalarInt
+
+
+def _shock_value(*, eps: FloatND) -> FloatND:
+    return eps
+
+
+def _shock_model(*, law: Normal | Discrete) -> Model:
+    return Model(
+        regimes={
+            "alive": Regime(functions={"utility": _shock_value}, shocks=("innovation",))
+        },
+        n_periods=1,
+        regime_id_class=ShockRegimeId,
+        initial_nodes=InitialNodes(by_period={0: "alive"}),
+        edges={},
+        shocks={
+            "innovation": ShockGroup(
+                shocks={"eps": law},
+                nodes=Product(eps=GaussHermite(n=1))
+                if isinstance(law, Normal)
+                else Product(),
+            )
+        },
+    )
+
+
+@pytest.mark.parametrize(
+    "form", ["python_int", "python_float", "int_array", "float_array"]
+)
+def test_constant_current_iid_law_parameters(*, form: str) -> None:
+    """A degenerate law centred by `2` and a one-hot integer law both read 2.0."""
+    raw = _constant(form=form, value=2)
+
+    def location() -> FloatND:
+        return raw  # ty: ignore[invalid-return-type]
+
+    def one_hot() -> FloatND:
+        if form == "float_array":
+            return jnp.asarray([0.0, 1.0])
+        return jnp.asarray([0, 1], dtype=jnp.int32)
+
+    normal = _shock_model(law=Normal(mu=location, sigma=0))
+    values = normal.solve(params={}, log_level="off").values[0]["alive"]
+    np.testing.assert_array_equal(np.asarray(values), 2.0)
+    discrete = _shock_model(law=Discrete(categories=Outcome, probs=one_hot))
+    values = discrete.solve(params={}, log_level="off").values[0]["alive"]
+    np.testing.assert_array_equal(np.asarray(values), 1.0)
+
+
+@pytest.mark.parametrize("form", ["python_bool", "python_int", "int_array"])
+def test_constant_value_dependent_constraint(*, form: str) -> None:
+    """A value-dependent predicate `1` admits every cell like `True`."""
+    raw = _constant(form=form, value=1)
+
+    def participation(*, Q_f: FloatND) -> BoolND:  # noqa: ARG001
+        return raw  # ty: ignore[invalid-return-type]
+
+    base, params = make_stateless_collective_target_model()
+    couple = base.user_regimes["couple"]
+    model = Model(
+        regimes={
+            "couple": couple.replace(
+                constraints={
+                    **dict(couple.constraints),
+                    "participation": ValueDependentConstraint(predicate=participation),
+                }
+            ),
+            "couple_terminal": base.user_regimes["couple_terminal"],
+        },
+        ages=AGES,
+        regime_id_class=CoupleRegimeId,
+        initial_nodes={0: "couple"},
+        edges={"couple": {"couple_terminal": 0}},
+    )
+    values = model.solve(params=params, log_level="off").values
+    np.testing.assert_allclose(
+        values[0]["couple"], STATELESS_TARGET_V_PERIOD_0, rtol=1e-6
+    )

@@ -29,7 +29,7 @@ from dags import (
 from dags.tree import qname_from_tree_path
 
 from _lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
-from _lcm.dtypes import as_bool, as_canonical_float, canonical_float_dtype
+from _lcm.dtypes import as_bool, as_canonical_float, as_code, canonical_float_dtype
 from _lcm.grids import ContinuousGrid
 from _lcm.grids.discrete import read_at_codes
 from _lcm.post_decision_bound import PostDecisionBoundSpec
@@ -1825,11 +1825,18 @@ class _SamePeriodReferenceReader:
         )
 
     @no_type_check
-    def coordinates(self, **kwargs: ParamsLeaf) -> dict[StateName, FloatND]:
-        """Project the cell onto the reference regime's states, unclipped."""
+    def coordinates(self, **kwargs: ParamsLeaf) -> dict[StateName, FloatND | IntND]:
+        """Project the cell onto the reference regime's states, unclipped.
+
+        Each coordinate takes its state's role, so a projection may return `2` for
+        a continuous state or a Python integer for a code.
+        """
+        discrete = self.v_interpolation_info.discrete_states
         return {
-            state: self.projection_funcs[state](
-                **{arg: kwargs[arg] for arg in self.projection_args[state]}
+            state: (as_code if state in discrete else as_canonical_float)(
+                self.projection_funcs[state](
+                    **{arg: kwargs[arg] for arg in self.projection_args[state]}
+                )
             )
             for state in self.v_interpolation_info.state_names
         }

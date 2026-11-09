@@ -70,8 +70,8 @@ from collections.abc import Mapping
 from typing import cast
 
 import jax.numpy as jnp
-from dags import concatenate_functions
 
+from _lcm.egm.preferences import concatenate_felicity
 from _lcm.egm.validation import (
     _call_with_varied,
     _continuous_non_process_names,
@@ -522,12 +522,7 @@ def _fail_if_utility_couples_action_and_outer_margin(
     functions_without_outer = _without(
         functions=functions, names={solver.outer_post_decision}
     )
-    utility_func = concatenate_functions(
-        functions=functions_without_outer,
-        targets="utility",
-        enforce_signature=False,
-        set_annotations=True,
-    )
+    utility_func = concatenate_felicity(functions=functions_without_outer)
     varied = {inner.continuous_action, solver.outer_post_decision}
     if not varied <= set(inspect.signature(utility_func).parameters):
         return

@@ -18,7 +18,7 @@ from _lcm.current_iid import (
     CURRENT_IID_ROWS_ARGUMENT,
     CurrentIIDPlan,
 )
-from _lcm.dtypes import canonical_float_dtype
+from _lcm.dtypes import as_bool, canonical_float_dtype
 from _lcm.engine import Regime
 from _lcm.execution.core_program import CoreArgumentBuilder, CoreBuildContext, ValueRead
 from _lcm.execution.value_transfer import (
@@ -1249,8 +1249,11 @@ class _ParticipationReducer:
         accepted = jnp.asarray(
             call_with_declared_arguments(function=self.predicate, operands=values)
         )
-        if accepted.shape != () or accepted.dtype != jnp.bool_:
-            raise ValueError("A participation predicate must return a scalar Boolean.")
+        if accepted.shape != () or accepted.dtype.kind not in "biu":
+            raise ValueError(
+                "A participation predicate must return a scalar Boolean or integer."
+            )
+        accepted = as_bool(accepted)
         target = cast("PolicyAnswer", operands[_ACTING_TARGET])
         accepted &= target[2]
         valid &= target[3]

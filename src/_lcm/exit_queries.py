@@ -17,7 +17,7 @@ from dags.tree import qname_from_tree_path
 from jax.core import Tracer
 
 from _lcm.current_iid import CurrentIIDPlan
-from _lcm.dtypes import as_canonical_float
+from _lcm.dtypes import as_bool, as_canonical_float
 from _lcm.engine import Regime
 from _lcm.exits import exit_functions, exits_for_phase
 from _lcm.policy_queries import (
@@ -60,11 +60,11 @@ def _predicate(
     function: Callable[..., PytreeValue],
     operands: Mapping[ReferenceName, PytreeValue],
 ) -> BoolND:
-    """Normalize scalar Python booleans without reducing undeclared axes."""
+    """Convert a scalar Boolean or 0/1 integer, without reducing undeclared axes."""
     value = jnp.asarray(_call(function=function, operands=operands))
-    if value.shape != () or value.dtype != jnp.bool_:
-        raise ValueError("Exit availability must be a scalar boolean.")
-    return value
+    if value.shape != () or value.dtype.kind not in "biu":
+        raise ValueError("Exit availability must be a scalar Boolean or integer.")
+    return as_bool(value)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -128,12 +128,8 @@ class _ExitReducer:
             active = (
                 jnp.asarray(a=True)
                 if name not in self.availability
-                else jnp.asarray(
-                    _call(function=self.availability[name], operands=operands)
-                )
+                else _predicate(function=self.availability[name], operands=operands)
             )
-            if active.shape != () or active.dtype != jnp.bool_:
-                raise ValueError("Exit availability must be a scalar boolean.")
             availability[name] = active
             member_values = {}
             for member in declaration.targets:

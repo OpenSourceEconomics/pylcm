@@ -7381,6 +7381,7 @@ def _process_regime_core(
         joint_transitions=joint_transitions,
         processed_functions=processed_functions,
         regime_params_template=regime_params_template,
+        flat_grids=flat_grids,
     )
     # A joint output is a declared law whether or not the source carries the
     # process: it names the physical value the correlated draw lands on, which
@@ -7643,8 +7644,13 @@ def _process_joint_transitions(
     joint_transitions: Mapping[RegimeName, Mapping[str, JointTransition]],
     processed_functions: dict[str, EconFunction],
     regime_params_template: RegimeParamsTemplate,
+    flat_grids: Mapping[str, Grid],
 ) -> tuple[str, ...]:
-    """Compile joint kernels into target-local DAG nodes and output laws."""
+    """Compile joint kernels into target-local DAG nodes and output laws.
+
+    The probabilities and each output take their role's kind where the engine
+    receives them, so a kernel may return integer weights or a constant `1`.
+    """
     transition_keys: dict[str, None] = {}
     for target, kernels in joint_transitions.items():
         for kernel_name, kernel in kernels.items():
@@ -7669,19 +7675,27 @@ def _process_joint_transitions(
                 regime_params_template=regime_params_template,
                 param_key=qname_from_tree_path((target, kernel_name, "support")),
             )
-            processed_functions[f"weight_{axis_name}"] = _rename_params_to_qnames(
-                func=kernel.probabilities,
-                regime_params_template=regime_params_template,
-                param_key=qname_from_tree_path((target, kernel_name, "probabilities")),
+            processed_functions[f"weight_{axis_name}"] = _OutputInRole(
+                func=_rename_params_to_qnames(
+                    func=kernel.probabilities,
+                    regime_params_template=regime_params_template,
+                    param_key=qname_from_tree_path(
+                        (target, kernel_name, "probabilities")
+                    ),
+                ),
+                code=False,
             )
             transition_keys.update(dict.fromkeys((axis_name, support_name)))
 
             for state_name, output in kernel.outputs.items():
                 output_name = qname_from_tree_path((target, f"next_{state_name}"))
-                processed_functions[output_name] = _rename_params_to_qnames(
-                    func=output,
-                    regime_params_template=regime_params_template,
-                    param_key=output_name,
+                processed_functions[output_name] = _as_next_state_role(
+                    func=_rename_params_to_qnames(
+                        func=output,
+                        regime_params_template=regime_params_template,
+                        param_key=output_name,
+                    ),
+                    grid=flat_grids.get(qname_from_tree_path((target, state_name))),
                 )
                 transition_keys[output_name] = None
     return tuple(transition_keys)
@@ -9897,13 +9911,13 @@ def _as_next_state_role(*, func: EconFunction, grid: Grid | None) -> EconFunctio
         return func
     return cast(
         "EconFunction",
-        _NextStateInRole(func=func, code=isinstance(grid, DiscreteGrid)),
+        _OutputInRole(func=func, code=isinstance(grid, DiscreteGrid)),
     )
 
 
 @dataclass(frozen=True, eq=False, kw_only=True)
-class _NextStateInRole:
-    """A deterministic law returning its target state's canonical kind.
+class _OutputInRole:
+    """A user law returning its role's canonical kind: a code or a float.
 
     A frozen callable instance rather than a nested function: the beartype claw
     memoizes every function it decorates, so a function defined per model build
@@ -9913,7 +9927,7 @@ class _NextStateInRole:
     func: EconFunction
     """The law, with qualified parameter names."""
     code: bool
-    """Whether the target state is discrete, so the law returns a code."""
+    """Whether the law returns a discrete state's code rather than a float."""
 
     def __post_init__(self) -> None:
         for name in ("__module__", "__name__", "__qualname__", "__doc__"):

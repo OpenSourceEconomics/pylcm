@@ -1476,7 +1476,7 @@ def test_public_availability_accepts_python_scalar_but_refuses_vector_reduction(
         params={}, log_level="off", runtime_checks=False
     )
     np.testing.assert_allclose(result.values[0]["single_f"], 1.0)
-    with pytest.raises(ValueError, match="scalar boolean"):
+    with pytest.raises(ValueError, match="scalar Boolean or integer"):
         _rule_model(rule="unilateral", available=_vector_available).solve(
             params={}, log_level="off", runtime_checks=False
         )
