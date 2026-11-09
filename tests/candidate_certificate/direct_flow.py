@@ -12831,8 +12831,8 @@ _UNIFORM_PROCESS_MUTATIONS = {
         UNIFORM_PROCESS_GRID_SOURCE,
         "_uniform_parameters",
         "expression",
-        "np.asarray(value, dtype=dtype)",
-        "np.asarray(value + 1, dtype=dtype)",
+        "np.asarray(value, dtype=canonical_float_dtype())",
+        "np.asarray(value + 1, dtype=canonical_float_dtype())",
         1,
     ),
     "uniform_grid:support_order_reversed": (
