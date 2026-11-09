@@ -14,7 +14,7 @@ from _lcm.processes.base import (
     _ContinuousStochasticProcess,
 )
 from _lcm.typing import PRNGKeyND
-from lcm.typing import ScalarFloat, ScalarInt
+from lcm.typing import ScalarFloat
 
 FOLD_REMOVED = (
     "The `fold=` argument was removed. Drop it: pylcm infers whether a shock "
@@ -39,5 +39,5 @@ class _IIDProcess(_ContinuousStochasticProcess):
 
     @abstractmethod
     def draw_shock(
-        self, *, params: MappingProxyType[str, ScalarFloat | ScalarInt], key: PRNGKeyND
+        self, *, params: MappingProxyType[str, ScalarFloat], key: PRNGKeyND
     ) -> ScalarFloat: ...

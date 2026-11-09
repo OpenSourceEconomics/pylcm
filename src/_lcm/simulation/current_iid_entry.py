@@ -41,7 +41,7 @@ from lcm.shocks import (
     BaseInnovations,
     Discrete,
     HostArray,
-    LawValue,
+    LawInput,
     PhysicalValues,
     ShockGroupName,
     ShockName,
@@ -77,7 +77,7 @@ class _SuppliedGroup:
         *,
         arguments: Mapping[ReferenceName, FloatND | IntND],
         values: Mapping[ShockName, FloatND | IntND],
-        params: Mapping[ParameterName, LawValue],
+        params: Mapping[ParameterName, LawInput],
     ) -> tuple[Mapping[ShockName, FloatND | IntND], BoolND]:
         support = cast("BoolND | None", params.get(CORRELATION_SUPPORT_ARGUMENT))
         law_params = {

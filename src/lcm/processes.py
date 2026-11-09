@@ -15,10 +15,10 @@ Naming convention: `<Distribution><Kind>Process`.
 - `*IIDProcess`: independent draws at each period.
 - `*AR1Process`: AR(1) process with a chosen discretization scheme.
 
-Process-law values keep the numeric kind the user wrote (`3` versus `3.0`):
-the kind is part of a law's identity, so these classes never normalize it. The
-shared bases, quadrature helpers and transition-row builders live in
-`_lcm.processes`.
+Process-law values are floats. A value written as an `int` is accepted and stored
+as a Python `float`, so `mu=3` and `mu=3.0` declare one law; a Boolean is
+refused. The shared bases, quadrature helpers and transition-row builders live
+in `_lcm.processes`.
 """
 
 import math
@@ -58,7 +58,7 @@ from _lcm.processes.joint_normal import (
     covariance_factor,
 )
 from _lcm.processes.state_conditioned import tauchen_row
-from _lcm.typing import PRNGKeyND, ProcessLawScalar
+from _lcm.typing import PRNGKeyND
 from lcm.exceptions import GridInitializationError
 from lcm.state_conditioned import StateConditioned
 from lcm.typing import (
@@ -67,7 +67,6 @@ from lcm.typing import (
     FloatND,
     OffGrid,
     ScalarFloat,
-    ScalarInt,
     StateName,
 )
 
@@ -94,23 +93,23 @@ class UniformIIDProcess(_IIDProcess):
 
     """
 
-    start: ProcessLawScalar | None = None
+    start: float | None = None
     """Lower bound of the uniform distribution."""
 
-    stop: ProcessLawScalar | None = None
+    stop: float | None = None
     """Upper bound of the uniform distribution."""
 
-    def compute_gridpoints(self, **kwargs: ScalarFloat | ScalarInt) -> Float1D:
+    def compute_gridpoints(self, **kwargs: ScalarFloat) -> Float1D:
         return jnp.linspace(
             start=kwargs["start"], stop=kwargs["stop"], num=self.n_points
         )
 
-    def compute_transition_probs(self, **kwargs: ScalarFloat | ScalarInt) -> FloatND:  # noqa: ARG002
+    def compute_transition_probs(self, **kwargs: ScalarFloat) -> FloatND:  # noqa: ARG002
         n_points = self.n_points
         return jnp.full((n_points, n_points), fill_value=1 / n_points)
 
     def draw_shock(
-        self, *, params: MappingProxyType[str, ScalarFloat | ScalarInt], key: PRNGKeyND
+        self, *, params: MappingProxyType[str, ScalarFloat], key: PRNGKeyND
     ) -> ScalarFloat:
         return jax.random.uniform(
             key=key, minval=params["start"], maxval=params["stop"]
@@ -134,10 +133,10 @@ class NormalIIDProcess(_IIDProcess):
     gauss_hermite: bool
     """Use Gauss-Hermite quadrature nodes and weights."""
 
-    mu: ProcessLawScalar | None = None
+    mu: float | None = None
     """Mean of the distribution."""
 
-    sigma: ProcessLawScalar | StateConditioned | None = None
+    sigma: float | StateConditioned | None = None
     """Standard deviation of the distribution.
 
     A `StateConditioned` here conditions the innovation scale on a discrete state
@@ -145,7 +144,7 @@ class NormalIIDProcess(_IIDProcess):
     places the nodes.
     """
 
-    n_std: ProcessLawScalar | None = None
+    n_std: float | None = None
     """Number of standard deviations from the mean to the grid boundary."""
 
     def __post_init__(self) -> None:
@@ -161,7 +160,7 @@ class NormalIIDProcess(_IIDProcess):
             exclude = exclude | {"n_std"}
         return tuple(f.name for f in fields(self) if f.name not in exclude)
 
-    def compute_gridpoints(self, **kwargs: ScalarFloat | ScalarInt) -> Float1D:
+    def compute_gridpoints(self, **kwargs: ScalarFloat) -> Float1D:
         n_points = self.n_points
         mu, sigma = kwargs["mu"], kwargs["sigma"]
         if self.gauss_hermite:
@@ -174,7 +173,7 @@ class NormalIIDProcess(_IIDProcess):
         x_max = mu + n_std * sigma
         return jnp.linspace(start=x_min, stop=x_max, num=n_points)
 
-    def compute_transition_probs(self, **kwargs: ScalarFloat | ScalarInt) -> FloatND:
+    def compute_transition_probs(self, **kwargs: ScalarFloat) -> FloatND:
         n_points = self.n_points
         mu, sigma = kwargs["mu"], kwargs["sigma"]
         if self.gauss_hermite:
@@ -193,7 +192,7 @@ class NormalIIDProcess(_IIDProcess):
         return jnp.full((n_points, n_points), fill_value=P)
 
     def draw_shock(
-        self, *, params: MappingProxyType[str, ScalarFloat | ScalarInt], key: PRNGKeyND
+        self, *, params: MappingProxyType[str, ScalarFloat], key: PRNGKeyND
     ) -> ScalarFloat:
         return params["mu"] + sealed(params["sigma"] * standard_normal(key))
 
@@ -209,17 +208,17 @@ class LogNormalIIDProcess(_IIDProcess):
     gauss_hermite: bool
     """Use Gauss-Hermite quadrature nodes and weights."""
 
-    mu: ProcessLawScalar | None = None
+    mu: float | None = None
     """Mean of the underlying normal distribution ($E[\\ln X]$)."""
 
-    sigma: ProcessLawScalar | StateConditioned | None = None
+    sigma: float | StateConditioned | None = None
     """Standard deviation of the underlying normal distribution.
 
     A `StateConditioned` is accepted so that declaring one is refused with an
     explanation when the model is built, rather than by the type checker alone.
     """
 
-    n_std: ProcessLawScalar | None = None
+    n_std: float | None = None
     """Number of standard deviations in log-space for the grid boundary."""
 
     def __post_init__(self) -> None:
@@ -235,7 +234,7 @@ class LogNormalIIDProcess(_IIDProcess):
             exclude = exclude | {"n_std"}
         return tuple(f.name for f in fields(self) if f.name not in exclude)
 
-    def compute_gridpoints(self, **kwargs: ScalarFloat | ScalarInt) -> Float1D:
+    def compute_gridpoints(self, **kwargs: ScalarFloat) -> Float1D:
         n_points = self.n_points
         mu, sigma = kwargs["mu"], kwargs["sigma"]
         if self.gauss_hermite:
@@ -246,7 +245,7 @@ class LogNormalIIDProcess(_IIDProcess):
         n_std = kwargs["n_std"]
         return jnp.exp(jnp.linspace(mu - n_std * sigma, mu + n_std * sigma, n_points))
 
-    def compute_transition_probs(self, **kwargs: ScalarFloat | ScalarInt) -> FloatND:
+    def compute_transition_probs(self, **kwargs: ScalarFloat) -> FloatND:
         n_points = self.n_points
         mu, sigma = kwargs["mu"], kwargs["sigma"]
         if self.gauss_hermite:
@@ -265,7 +264,7 @@ class LogNormalIIDProcess(_IIDProcess):
         return jnp.full((n_points, n_points), fill_value=P)
 
     def draw_shock(
-        self, *, params: MappingProxyType[str, ScalarFloat | ScalarInt], key: PRNGKeyND
+        self, *, params: MappingProxyType[str, ScalarFloat], key: PRNGKeyND
     ) -> ScalarFloat:
         return jnp.exp(params["mu"] + sealed(params["sigma"] * standard_normal(key)))
 
@@ -286,25 +285,25 @@ class NormalMixtureIIDProcess(_IIDProcess):
 
     """
 
-    n_std: ProcessLawScalar | None = None
+    n_std: float | None = None
     """Number of mixture standard deviations for the grid boundary."""
 
-    p1: ProcessLawScalar | None = None
+    p1: float | None = None
     """Probability of the first mixture component."""
 
-    mu1: ProcessLawScalar | None = None
+    mu1: float | None = None
     """Mean of the first mixture component."""
 
-    sigma1: ProcessLawScalar | None = None
+    sigma1: float | None = None
     """Standard deviation of the first mixture component."""
 
-    mu2: ProcessLawScalar | None = None
+    mu2: float | None = None
     """Mean of the second mixture component."""
 
-    sigma2: ProcessLawScalar | None = None
+    sigma2: float | None = None
     """Standard deviation of the second mixture component."""
 
-    def compute_gridpoints(self, **kwargs: ScalarFloat | ScalarInt) -> Float1D:
+    def compute_gridpoints(self, **kwargs: ScalarFloat) -> Float1D:
         n_points = self.n_points
         n_std = kwargs["n_std"]
         p1, mu1, sigma1 = kwargs["p1"], kwargs["mu1"], kwargs["sigma1"]
@@ -319,7 +318,7 @@ class NormalMixtureIIDProcess(_IIDProcess):
             mean_eps - n_std * std_eps, mean_eps + n_std * std_eps, n_points
         )
 
-    def compute_transition_probs(self, **kwargs: ScalarFloat | ScalarInt) -> FloatND:
+    def compute_transition_probs(self, **kwargs: ScalarFloat) -> FloatND:
         n_points = self.n_points
         n_std = kwargs["n_std"]
         p1, mu1, sigma1 = kwargs["p1"], kwargs["mu1"], kwargs["sigma1"]
@@ -348,7 +347,7 @@ class NormalMixtureIIDProcess(_IIDProcess):
         return jnp.full((n_points, n_points), fill_value=w)
 
     def draw_shock(
-        self, *, params: MappingProxyType[str, ScalarFloat | ScalarInt], key: PRNGKeyND
+        self, *, params: MappingProxyType[str, ScalarFloat], key: PRNGKeyND
     ) -> ScalarFloat:
         key1, key2 = jax.random.split(key=key)
         component = jax.random.bernoulli(key1, params["p1"])
@@ -383,7 +382,7 @@ class TauchenAR1Process(_AR1Process):
     gauss_hermite: bool
     """Use Gauss-Hermite quadrature nodes and weights."""
 
-    sigma: ProcessLawScalar | StateConditioned | None = None
+    sigma: float | StateConditioned | None = None
     """Standard deviation of the innovation.
 
     A `StateConditioned` here conditions the innovation scale on a discrete state
@@ -391,10 +390,10 @@ class TauchenAR1Process(_AR1Process):
     places the nodes.
     """
 
-    mu: ProcessLawScalar | None = None
+    mu: float | None = None
     """Intercept (drift) of the AR(1) process."""
 
-    n_std: ProcessLawScalar | None = None
+    n_std: float | None = None
     """Number of standard deviations for the grid boundary."""
 
     @staticmethod
@@ -481,7 +480,7 @@ class TauchenAR1Process(_AR1Process):
             exclude = exclude | {"n_std"}
         return tuple(f.name for f in fields(self) if f.name not in exclude)
 
-    def compute_gridpoints(self, **kwargs: ScalarFloat | ScalarInt) -> Float1D:
+    def compute_gridpoints(self, **kwargs: ScalarFloat) -> Float1D:
         n_points = self.n_points
         rho, sigma, mu = kwargs["rho"], kwargs["sigma"], kwargs["mu"]
         std_y = jnp.sqrt(sigma**2 / (1 - rho**2))
@@ -494,7 +493,7 @@ class TauchenAR1Process(_AR1Process):
         x = jnp.linspace(-x_max, x_max, n_points)
         return x + mu / (1 - rho)
 
-    def compute_transition_probs(self, **kwargs: ScalarFloat | ScalarInt) -> FloatND:
+    def compute_transition_probs(self, **kwargs: ScalarFloat) -> FloatND:
         n_points = self.n_points
         rho, sigma = kwargs["rho"], kwargs["sigma"]
         std_y = jnp.sqrt(sigma**2 / (1 - rho**2))
@@ -522,7 +521,7 @@ class TauchenAR1Process(_AR1Process):
         )
 
     def transition_row_at(
-        self, *, from_value: ScalarFloat, **kwargs: ScalarFloat | ScalarInt
+        self, *, from_value: ScalarFloat, **kwargs: ScalarFloat
     ) -> Float1D:
         """Return the law's transition row from any current value, on the nodes.
 
@@ -541,7 +540,7 @@ class TauchenAR1Process(_AR1Process):
     def draw_shock(
         self,
         *,
-        params: MappingProxyType[str, ScalarFloat | ScalarInt],
+        params: MappingProxyType[str, ScalarFloat],
         key: PRNGKeyND,
         current_value: ScalarFloat,
     ) -> ScalarFloat:
@@ -565,7 +564,7 @@ class RouwenhorstAR1Process(_AR1Process):
 
     """
 
-    sigma: ProcessLawScalar | StateConditioned | None = None
+    sigma: float | StateConditioned | None = None
     """Standard deviation of the innovation.
 
     A `StateConditioned` is accepted so that declaring one is refused with an
@@ -573,17 +572,17 @@ class RouwenhorstAR1Process(_AR1Process):
     alone, so fixing the nodes would leave a conditioned `sigma` no channel.
     """
 
-    mu: ProcessLawScalar | None = None
+    mu: float | None = None
     """Intercept (drift) of the AR(1) process."""
 
-    def compute_gridpoints(self, **kwargs: ScalarFloat | ScalarInt) -> Float1D:
+    def compute_gridpoints(self, **kwargs: ScalarFloat) -> Float1D:
         n_points = self.n_points
         rho, sigma, mu = kwargs["rho"], kwargs["sigma"], kwargs["mu"]
         nu = jnp.sqrt((n_points - 1) / (1 - rho**2)) * sigma
         long_run_mean = mu / (1.0 - rho)
         return jnp.linspace(long_run_mean - nu, long_run_mean + nu, n_points)
 
-    def compute_transition_probs(self, **kwargs: ScalarFloat | ScalarInt) -> FloatND:
+    def compute_transition_probs(self, **kwargs: ScalarFloat) -> FloatND:
         n_points = self.n_points
         rho = kwargs["rho"]
         q = (rho + 1) / 2
@@ -613,7 +612,7 @@ class RouwenhorstAR1Process(_AR1Process):
     def draw_shock(
         self,
         *,
-        params: MappingProxyType[str, ScalarFloat | ScalarInt],
+        params: MappingProxyType[str, ScalarFloat],
         key: PRNGKeyND,
         current_value: ScalarFloat,
     ) -> ScalarFloat:
@@ -640,25 +639,25 @@ class TauchenNormalMixtureAR1Process(_AR1Process):
 
     """
 
-    mu: ProcessLawScalar | None = None
+    mu: float | None = None
     """Intercept (drift) of the AR(1) process."""
 
-    n_std: ProcessLawScalar | None = None
+    n_std: float | None = None
     """Number of unconditional standard deviations for the grid boundary."""
 
-    p1: ProcessLawScalar | None = None
+    p1: float | None = None
     """Probability of the first mixture component."""
 
-    mu1: ProcessLawScalar | None = None
+    mu1: float | None = None
     """Mean of the first mixture component."""
 
-    sigma1: ProcessLawScalar | None = None
+    sigma1: float | None = None
     """Standard deviation of the first mixture component."""
 
-    mu2: ProcessLawScalar | None = None
+    mu2: float | None = None
     """Mean of the second mixture component."""
 
-    sigma2: ProcessLawScalar | None = None
+    sigma2: float | None = None
     """Standard deviation of the second mixture component."""
 
     @staticmethod
@@ -674,7 +673,7 @@ class TauchenNormalMixtureAR1Process(_AR1Process):
         mean_eps = p1 * mu1 + (1 - p1) * mu2
         return p1 * (sigma1**2 + mu1**2) + (1 - p1) * (sigma2**2 + mu2**2) - mean_eps**2
 
-    def compute_gridpoints(self, **kwargs: ScalarFloat | ScalarInt) -> Float1D:
+    def compute_gridpoints(self, **kwargs: ScalarFloat) -> Float1D:
         n_points = self.n_points
         rho, mu = kwargs["rho"], kwargs["mu"]
         n_std = kwargs["n_std"]
@@ -690,7 +689,7 @@ class TauchenNormalMixtureAR1Process(_AR1Process):
         x_max = n_std * std_y
         return jnp.linspace(long_run_mean - x_max, long_run_mean + x_max, n_points)
 
-    def compute_transition_probs(self, **kwargs: ScalarFloat | ScalarInt) -> FloatND:
+    def compute_transition_probs(self, **kwargs: ScalarFloat) -> FloatND:
         n_points = self.n_points
         rho, mu = kwargs["rho"], kwargs["mu"]
         n_std = kwargs["n_std"]
@@ -723,7 +722,7 @@ class TauchenNormalMixtureAR1Process(_AR1Process):
         return P.at[:, -1].set(1 - lower[:, -1])
 
     def transition_row_at(
-        self, *, from_value: ScalarFloat, **kwargs: ScalarFloat | ScalarInt
+        self, *, from_value: ScalarFloat, **kwargs: ScalarFloat
     ) -> Float1D:
         """Return the law's transition row from any current value, on the nodes.
 
@@ -742,7 +741,7 @@ class TauchenNormalMixtureAR1Process(_AR1Process):
     def draw_shock(
         self,
         *,
-        params: MappingProxyType[str, ScalarFloat | ScalarInt],
+        params: MappingProxyType[str, ScalarFloat],
         key: PRNGKeyND,
         current_value: ScalarFloat,
     ) -> ScalarFloat:
@@ -784,7 +783,7 @@ class JointNormalIIDProcess:
     """Joint mean; `None` leaves it as a runtime parameter."""
     cov: NormalCovariance | None = None
     """Symmetric positive-semidefinite covariance; `None` leaves it at runtime."""
-    n_std: ProcessLawScalar | None = None
+    n_std: float | None = None
     """Equally spaced support halfwidth, required without Gauss-Hermite."""
     exact_zero_pivots: tuple[tuple[str, tuple[bool, ...] | None], ...] = field(
         init=False, default=(), repr=False, compare=False
@@ -803,6 +802,7 @@ class JointNormalIIDProcess:
         return super().__new__(cls)
 
     def __post_init__(self) -> None:
+        self._store_law_values_as_floats()
         if not self.states or len(set(self.states)) != len(self.states):
             raise GridInitializationError(
                 "Joint normal states must be nonempty and unique."
@@ -834,14 +834,8 @@ class JointNormalIIDProcess:
             self.standard_normal_process(count)
         if self.mean is not None:
             self.validate_mean(self.mean)
-            object.__setattr__(self, "mean", tuple(float(value) for value in self.mean))
         if self.cov is not None:
             self.validate_covariance(self.cov)
-            object.__setattr__(
-                self,
-                "cov",
-                tuple(tuple(float(value) for value in row) for row in self.cov),
-            )
             object.__setattr__(
                 self,
                 "exact_zero_pivots",
@@ -852,6 +846,40 @@ class JointNormalIIDProcess:
                     )
                     for dtype in (np.float32, np.float64)
                 ),
+            )
+
+    def _store_law_values_as_floats(self) -> None:
+        """Store `mean`, `cov` and `n_std` as Python floats before validating them.
+
+        A Boolean entry names no number and is refused.
+        """
+        for name in ("mean", "cov", "n_std"):
+            value = getattr(self, name)
+            if value is None:
+                continue
+            boolean = (
+                value.dtype.kind == "b"
+                if hasattr(value, "dtype")
+                else any(
+                    isinstance(entry, bool)
+                    for entry in np.asarray(value, dtype=object).ravel()
+                )
+            )
+            if boolean:
+                msg = (
+                    f"JointNormalIIDProcess: `{name}` must hold real numbers, "
+                    f"not Booleans, but got {value!r}."
+                )
+                raise GridInitializationError(msg)
+        if self.n_std is not None:
+            object.__setattr__(self, "n_std", float(self.n_std))
+        if self.mean is not None:
+            object.__setattr__(self, "mean", tuple(float(value) for value in self.mean))
+        if self.cov is not None:
+            object.__setattr__(
+                self,
+                "cov",
+                tuple(tuple(float(value) for value in row) for row in self.cov),
             )
 
     @property

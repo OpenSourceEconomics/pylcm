@@ -796,16 +796,16 @@ class _ShockNodeProcess(_IIDProcess):
         "weights",
     }
 
-    def compute_gridpoints(self, **kwargs: ScalarFloat | ScalarInt) -> Float1D:  # noqa: ARG002
+    def compute_gridpoints(self, **kwargs: ScalarFloat) -> Float1D:  # noqa: ARG002
         return jnp.asarray(self.nodes)
 
-    def compute_transition_probs(self, **kwargs: ScalarFloat | ScalarInt) -> FloatND:  # noqa: ARG002
+    def compute_transition_probs(self, **kwargs: ScalarFloat) -> FloatND:  # noqa: ARG002
         return jnp.full(
             (self.n_points, self.n_points), fill_value=jnp.asarray(self.weights)
         )
 
     def draw_shock(
-        self, *, params: MappingProxyType[str, ScalarFloat | ScalarInt], key: PRNGKeyND
+        self, *, params: MappingProxyType[str, ScalarFloat], key: PRNGKeyND
     ) -> ScalarFloat:
         del params
         ((name, law),) = self.group.shocks.items()
@@ -952,6 +952,7 @@ def _cell_program(
                 categorical_domains=MappingProxyType({}),
                 functions=MappingProxyType({}),
                 params_template=MappingProxyType({}),
+                param_roles=MappingProxyType({}),
                 callable_parameters=frozenset(),
             )
         }

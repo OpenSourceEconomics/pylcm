@@ -20,10 +20,9 @@ from _lcm.grids import coordinates as grid_coordinates
 from _lcm.processes.ar1 import TransitionRule, _normal_density_row
 from _lcm.processes.base import _ContinuousStochasticProcess, sealed
 from _lcm.processes.state_conditioned import tauchen_row
-from _lcm.typing import ProcessLawScalar
 from lcm.exceptions import GridInitializationError
 from lcm.processes import TauchenAR1Process
-from lcm.typing import Float1D, FloatND, IntND, ScalarFloat, ScalarInt
+from lcm.typing import Float1D, FloatND, ScalarFloat
 
 
 @beartype(conf=GRID_CONF)
@@ -74,14 +73,12 @@ class _TauchenOnNodesProcess(TauchenAR1Process):
         """Name of the public call that builds this process, for error messages."""
         return "TauchenAR1Process.on_nodes"
 
-    def fail_if_nonstationary_rho(
-        self, *, rho: ProcessLawScalar | FloatND | IntND
-    ) -> None:
+    def fail_if_nonstationary_rho(self, *, rho: float | FloatND) -> None:
         """Require finite persistence; supplied nodes need no stationary law."""
         if not np.isfinite(np.asarray(rho)).all():
             raise GridInitializationError("rho must be finite for supplied nodes.")
 
-    def compute_gridpoints(self, **kwargs: ScalarFloat | ScalarInt) -> Float1D:
+    def compute_gridpoints(self, **kwargs: ScalarFloat) -> Float1D:
         """Return the supplied nodes, independent of runtime law parameters."""
         del kwargs
         return jnp.asarray(self.nodes, dtype=canonical_float_dtype())
@@ -94,12 +91,12 @@ class _TauchenOnNodesProcess(TauchenAR1Process):
         """Interpolate a coordinate on the supplied physical axis."""
         return grid_coordinates.get_irreg_coordinate(value=value, points=self.to_jax())
 
-    def compute_transition_probs(self, **kwargs: ScalarFloat | ScalarInt) -> FloatND:
+    def compute_transition_probs(self, **kwargs: ScalarFloat) -> FloatND:
         """Evaluate the selected transition row at each supplied source node."""
         return jax.vmap(partial(self.compute_transition_row, **kwargs))(self.to_jax())
 
     def transition_row_at(
-        self, *, from_value: ScalarFloat, **kwargs: ScalarFloat | ScalarInt
+        self, *, from_value: ScalarFloat, **kwargs: ScalarFloat
     ) -> Float1D:
         """Return the selected rule's row from any current value."""
         return self.compute_transition_row(
@@ -111,9 +108,9 @@ class _TauchenOnNodesProcess(TauchenAR1Process):
         self,
         from_value: ScalarFloat,
         *,
-        rho: ScalarFloat | ScalarInt,
-        sigma: ScalarFloat | ScalarInt,
-        mu: ScalarFloat | ScalarInt,
+        rho: ScalarFloat,
+        sigma: ScalarFloat,
+        mu: ScalarFloat,
     ) -> Float1D:
         """Return destination probabilities at an actual physical source value."""
         nodes = self.compute_gridpoints()

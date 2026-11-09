@@ -6,7 +6,8 @@ leaf to a canonical pylcm dtype:
 
 - Python `bool` (and `np.bool_` arrays) cast to `jnp.bool_`.
 - Python `int` and typed integer arrays cast to `jnp.int32`. Out-of-
-  range values surface as `ValueError`.
+  range values surface as `ValueError`. In a slot whose numeric role is
+  `NumericRole.FLOAT` they cast to `canonical_float_dtype()` instead.
 - Python `float` and typed float arrays cast to `canonical_float_dtype()`.
   Down-cast overflow surfaces as `OverflowError`.
 - `UserMappingLeaf` / `UserSequenceLeaf` containers (covering both the
@@ -36,6 +37,7 @@ from jax import Array
 from _lcm.dtypes import CanonicalArrayWriter, safe_to_float_dtype, safe_to_int_dtype
 from _lcm.params.edges import EDGES, user_path
 from _lcm.params.mapping_leaf import LeafEntry, MappingLeaf, UserMappingLeaf
+from _lcm.params.numeric_roles import NumericRole
 from _lcm.params.sequence_leaf import SequenceLeaf, UserSequenceLeaf
 from _lcm.typing import (
     EdgeParamsTemplate,
@@ -305,7 +307,10 @@ def materialize_granular_transition_params(
 
 # keyword-only-exempt: primary-argument=flat_params
 def cast_params_to_canonical_dtypes(
-    flat_params: FlatParams, *, array_writer: CanonicalArrayWriter | None = None
+    flat_params: FlatParams,
+    *,
+    array_writer: CanonicalArrayWriter | None = None,
+    roles: Mapping[QualifiedName, NumericRole] = MappingProxyType({}),
 ) -> FlatParams:
     """Cast every numeric leaf of `flat_params` to its canonical pylcm dtype.
 
@@ -318,16 +323,20 @@ def cast_params_to_canonical_dtypes(
             after `convert_series_in_params`.
         array_writer: Optional owner admitting each validated canonical leaf before
             its device upload; traversal and top-level identity memo stay unchanged.
+        roles: Mapping of each slot's full qualified name — `regime__func__param`,
+            or `edges__source__...__param` — to its numeric role. A slot it does not
+            name keeps the kind of its value.
 
     Returns:
         New immutable mapping with every leaf cast to its canonical dtype.
 
     """
-    # One cast per distinct input object: a value broadcast into several
-    # slots (e.g. a coarse value resolved into per-target template slots)
-    # stays one shared leaf, so downstream consumers can deduplicate by
-    # identity and large array leaves are not copied per slot.
-    memo: dict[int, ParamsLeaf] = {}
+    # One cast per distinct input object and conversion: a value broadcast into
+    # several slots of one role (e.g. a coarse value resolved into per-target
+    # template slots) stays one shared leaf, so downstream consumers can
+    # deduplicate by identity and large array leaves are not copied per slot. The
+    # same object read as a float and as an integer gets one leaf per reading.
+    memo: dict[tuple[int, bool], ParamsLeaf] = {}
 
     return MappingProxyType(
         {
@@ -339,6 +348,7 @@ def cast_params_to_canonical_dtypes(
                             prefix=f"{EDGES}{QNAME_DELIMITER}{source}",
                             memo=memo,
                             array_writer=array_writer,
+                            roles=roles,
                         )
                         for source, source_leaves in cast(
                             "FlatEdgeParams", leaves
@@ -351,6 +361,7 @@ def cast_params_to_canonical_dtypes(
                     prefix=regime,
                     memo=memo,
                     array_writer=array_writer,
+                    roles=roles,
                 )
             )
             for regime, leaves in flat_params.items()
@@ -364,35 +375,37 @@ def _cast_flat_leaves(
     leaves: Mapping[QualifiedName, UserParamsLeaf],
     prefix: str,
     # Shared with `_cast_shared`, whose memo holds the canonical leaves.
-    memo: dict[int, ParamsLeaf],
+    memo: dict[tuple[int, bool], ParamsLeaf],
     array_writer: CanonicalArrayWriter | None,
+    roles: Mapping[QualifiedName, NumericRole],
 ) -> FlatRegimeParams:
     """Cast one flat mapping's leaves, naming each by `prefix` and its key."""
-    return MappingProxyType(
-        {
-            param_qname: _cast_shared(
-                value=value,
-                name=f"{prefix}{QNAME_DELIMITER}{param_qname}",
-                memo=memo,
-                array_writer=array_writer,
-            )
-            for param_qname, value in leaves.items()
-        }
-    )
+    cast_leaves: dict[QualifiedName, ParamsLeaf] = {}
+    for param_qname, value in leaves.items():
+        name = f"{prefix}{QNAME_DELIMITER}{param_qname}"
+        cast_leaves[param_qname] = _cast_shared(
+            value=value,
+            name=name,
+            memo=memo,
+            array_writer=array_writer,
+            to_float=roles.get(name, NumericRole.AS_GIVEN).converts_to_float,
+        )
+    return MappingProxyType(cast_leaves)
 
 
 def _cast_shared(
     *,
     value: UserParamsLeaf,
     name: str,
-    memo: dict[int, ParamsLeaf],
+    memo: dict[tuple[int, bool], ParamsLeaf],
     array_writer: CanonicalArrayWriter | None,
+    to_float: bool,
 ) -> ParamsLeaf:
-    """Cast `value` once per distinct input object, memoized by identity in `memo`."""
-    key = id(value)
+    """Cast `value` once per input object and conversion, memoized in `memo`."""
+    key = (id(value), to_float)
     if key not in memo:
         memo[key] = _cast_leaves_to_canonical_dtype(
-            value=value, name=name, array_writer=array_writer
+            value=value, name=name, array_writer=array_writer, to_float=to_float
         )
     return memo[key]
 
@@ -402,6 +415,7 @@ def _cast_leaves_to_canonical_dtype(  # noqa: C901, PLR0911
     value: LeafEntry,
     name: str,
     array_writer: CanonicalArrayWriter | None,
+    to_float: bool = False,
 ) -> ParamsLeaf:
     """Cast a single params leaf to its canonical pylcm dtype.
 
@@ -414,11 +428,13 @@ def _cast_leaves_to_canonical_dtype(  # noqa: C901, PLR0911
       canonical `MappingLeaf` / `SequenceLeaf`.
     - Python `bool`: `jnp.bool_(value)` (must come before `int` —
       `True` is a Python `int` subclass).
-    - Python `int`: `safe_to_int_dtype(value)` → `jnp.int32`.
+    - Python `int`: `safe_to_int_dtype(value)` → `jnp.int32`, or
+      `safe_to_float_dtype(float(value))` when `to_float`.
     - Python `float`: `safe_to_float_dtype(value)` → canonical float.
     - JAX or numpy array, dispatch on `dtype.kind`:
       - `"b"` (bool) → `jnp.asarray(..., dtype=jnp.bool_)`.
-      - `"i"` / `"u"` (signed/unsigned int) → `safe_to_int_dtype`.
+      - `"i"` / `"u"` (signed/unsigned int) → `safe_to_int_dtype`, or
+        `safe_to_float_dtype` when `to_float`.
       - `"f"` (float) → `safe_to_float_dtype`.
 
     Raises `InvalidParamsError` for:
@@ -436,7 +452,10 @@ def _cast_leaves_to_canonical_dtype(  # noqa: C901, PLR0911
         return MappingLeaf(
             {
                 k: _cast_leaves_to_canonical_dtype(
-                    value=v, name=f"{name}.{k}", array_writer=array_writer
+                    value=v,
+                    name=f"{name}.{k}",
+                    array_writer=array_writer,
+                    to_float=to_float,
                 )
                 for k, v in value.data.items()
             }
@@ -445,7 +464,10 @@ def _cast_leaves_to_canonical_dtype(  # noqa: C901, PLR0911
         return SequenceLeaf(
             [
                 _cast_leaves_to_canonical_dtype(
-                    value=v, name=f"{name}[{i}]", array_writer=array_writer
+                    value=v,
+                    name=f"{name}[{i}]",
+                    array_writer=array_writer,
+                    to_float=to_float,
                 )
                 for i, v in enumerate(value.data)
             ]
@@ -464,19 +486,21 @@ def _cast_leaves_to_canonical_dtype(  # noqa: C901, PLR0911
                 value=np.asarray(value), dtype=np.dtype(np.bool_), name=name
             )
         return jnp.bool_(value)
+    if isinstance(value, float) or (isinstance(value, int) and to_float):
+        return safe_to_float_dtype(
+            value=float(value), name=name, array_writer=array_writer
+        )
     if isinstance(value, int):
         return safe_to_int_dtype(value=value, name=name, array_writer=array_writer)
-    if isinstance(value, float):
-        return safe_to_float_dtype(value=value, name=name, array_writer=array_writer)
     if isinstance(value, (Array, np.ndarray)):
         kind = value.dtype.kind
         if kind == "b":
             if array_writer is not None:
                 return array_writer(value=value, dtype=np.dtype(np.bool_), name=name)
             return jnp.asarray(value, dtype=jnp.bool_)
-        if kind in ("i", "u"):
+        if kind in ("i", "u") and not to_float:
             return safe_to_int_dtype(value=value, name=name, array_writer=array_writer)
-        if kind == "f":
+        if kind in ("i", "u", "f"):
             return safe_to_float_dtype(
                 value=value, name=name, array_writer=array_writer
             )

@@ -66,10 +66,6 @@ from lcm.typing import (
 # age on an age axis. The kind says which axis a specialization was built for.
 type AgeValue = int | float
 
-# A process-law parameter as declared. Its numeric kind (`3` versus `3.0`) is part
-# of the law's identity and its binding fingerprint, so it is never normalized.
-type ProcessLawScalar = int | float
-
 type QueryLandingCheck = tuple[RegimeName, int, RegimeName, StateName]
 # Actual source/date/target/state of a nested reached landing.
 type LandingCheck = tuple[RegimeName, StateName] | QueryLandingCheck

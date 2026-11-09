@@ -22,7 +22,7 @@ from _lcm.processes.base import (
     _ContinuousStochasticProcess,
     sealed,
 )
-from _lcm.typing import PRNGKeyND, ProcessLawScalar
+from _lcm.typing import PRNGKeyND
 from lcm.exceptions import GridInitializationError
 from lcm.typing import (
     Bool1D,
@@ -30,7 +30,6 @@ from lcm.typing import (
     FloatND,
     IntND,
     ScalarFloat,
-    ScalarInt,
 )
 
 type TransitionRule = Literal["midpoint", "innovation_quadrature", "density"]
@@ -40,7 +39,7 @@ type TransitionRule = Literal["midpoint", "innovation_quadrature", "density"]
 class _AR1Process(_ContinuousStochasticProcess):
     """Base for AR(1) processes — draw depends on previous value."""
 
-    rho: ProcessLawScalar | None = None
+    rho: float | None = None
     """Persistence parameter of the stationary AR(1) process."""
 
     def __post_init__(self) -> None:
@@ -48,9 +47,7 @@ class _AR1Process(_ContinuousStochasticProcess):
         if self.rho is not None:
             self.fail_if_nonstationary_rho(rho=self.rho)
 
-    def fail_if_nonstationary_rho(
-        self, *, rho: ProcessLawScalar | FloatND | IntND
-    ) -> None:
+    def fail_if_nonstationary_rho(self, *, rho: float | FloatND) -> None:
         """Reject persistence that cannot place a stationary grid at entry."""
         values = np.asarray(rho)
         if not np.all((values > -1) & (values < 1)):
@@ -65,7 +62,7 @@ class _AR1Process(_ContinuousStochasticProcess):
     def draw_shock(
         self,
         *,
-        params: MappingProxyType[str, ScalarFloat | ScalarInt],
+        params: MappingProxyType[str, ScalarFloat],
         key: PRNGKeyND,
         current_value: ScalarFloat,
     ) -> ScalarFloat: ...

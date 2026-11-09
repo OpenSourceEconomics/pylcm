@@ -25,7 +25,6 @@ import jax.numpy as jnp
 from jax.scipy.stats.norm import cdf
 
 from _lcm.processes.base import sealed
-from _lcm.typing import ProcessLawScalar
 from lcm.grids import DiscreteGrid
 from lcm.typing import Float1D, FloatND, ScalarFloat, ScalarInt
 
@@ -45,7 +44,7 @@ __all__ = [
 type Family = Literal["iid_normal", "tauchen"]
 
 # A law parameter as declared, or as the canonical 0-d array a runtime binding holds.
-type _Scalar = ProcessLawScalar | ScalarFloat | ScalarInt
+type _Scalar = float | ScalarFloat
 
 
 def sigma_array_by_code(*, cond_grid: DiscreteGrid, by: Mapping[str, float]) -> Float1D:

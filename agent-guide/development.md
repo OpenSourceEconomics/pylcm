@@ -66,8 +66,10 @@ identity and is never rebuilt from a dictionary.
 
 Keep these out of Pydantic:
 
-- Process-law values. Their numeric kind (`3` versus `3.0`, signed zero, weak versus
-  strong scalars) is part of their identity, so they never pass through `CONFIG_FLOAT`.
+- Process-law values. They follow the `CONFIG_FLOAT` rule — an `int` or `float` is
+  stored as a Python `float`, a Boolean is refused — but in the process classes' own
+  `__post_init__`, since the processes are frozen dataclasses rather than Pydantic
+  records.
 - Grid constructors, `Model`, `Regime` and runtime parameter processing, which
   normalize into canonical JAX storage or depend on the whole model.
 - Anything traced, vmapped or differentiated.

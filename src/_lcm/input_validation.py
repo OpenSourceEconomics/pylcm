@@ -12,8 +12,9 @@ shared across them:
   subclasses are refused.
 - `NON_EMPTY_NAME` admits a non-empty `str`, unchanged.
 
-Process-law values do not use `CONFIG_FLOAT`: their numeric kind is part of
-their identity.
+Process-law values follow the `CONFIG_FLOAT` rule without being Pydantic
+fields: the process classes, `StateConditioned` and the shock laws store an
+`int` or `float` as a Python `float` and refuse a Boolean.
 
 `translate_validation_errors` maps a record's `pydantic.ValidationError` to a
 project exception that names the class, each failing field path and the

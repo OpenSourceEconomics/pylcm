@@ -49,7 +49,6 @@ from lcm.typing import (
     IntND,
     ReferenceName,
     ScalarFloat,
-    ScalarInt,
 )
 
 
@@ -646,7 +645,7 @@ class _AR1NextState:
     """Name of the process state whose current value the draw conditions on."""
     args: dict[ReferenceName, str]
     """Argument names and annotations, in signature order."""
-    fixed_params: dict[str, ScalarFloat | ScalarInt]
+    fixed_params: dict[str, ScalarFloat]
     """Process parameters fixed at construction."""
     runtime_param_names: dict[str, str]
     """Mapping of qualified runtime-param names to the process's own names."""
@@ -714,7 +713,7 @@ class _IIDNextState:
     """Qualified `<target>__next_<state>` name of the transition."""
     args: dict[ReferenceName, str]
     """Argument names and annotations, in signature order."""
-    fixed_params: dict[str, ScalarFloat | ScalarInt]
+    fixed_params: dict[str, ScalarFloat]
     """Process parameters fixed at construction."""
     runtime_param_names: dict[str, str]
     """Mapping of qualified runtime-param names to the process's own names."""

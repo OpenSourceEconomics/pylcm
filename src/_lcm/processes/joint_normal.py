@@ -12,12 +12,11 @@ import numpy as np
 from jaxtyping import Float
 
 from _lcm.processes.base import sealed
-from _lcm.typing import ProcessLawScalar
 from lcm.exceptions import GridInitializationError
 from lcm.typing import BoolND, Float1D, Float2D, FloatND
 
-type NormalMean = tuple[ProcessLawScalar, ...] | Float1D
-type NormalCovariance = tuple[tuple[ProcessLawScalar, ...], ...] | Float2D
+type NormalMean = tuple[float, ...] | Float1D
+type NormalCovariance = tuple[tuple[float, ...], ...] | Float2D
 type HostNormalArray = Float[np.ndarray, "..."]
 
 
