@@ -400,6 +400,8 @@ class Search:
         if allocation_kind not in ('per_block', 'global_union'):
             raise ValueError('An explicit allocation scenario is required to compute costs')
         if allocation_kind == 'global_union':
+            if self.global_axes is None:
+                raise ValueError("Missing global allocation axes")
             states, actions = self.global_axes
         else:
             states = self.union_axes(o['states'] for o in options)
@@ -854,7 +856,8 @@ def recommend(result, reference=None, weights=None, *, deferred_graph_ids=(), al
     if reference is None:
         reference = {k: max(p['cost'][k] for p in points) or 1 for k in METRICS}
     scales = {k: max(1, int(reference[k])) for k in METRICS}
-    score = lambda p: sum(weights[k] * Fraction(p['cost'][k], scales[k]) for k in METRICS)
+    fixed_weights = weights
+    score = lambda p: sum(fixed_weights[k] * Fraction(p['cost'][k], scales[k]) for k in METRICS)
     deferred = sorted(deferred_graph_ids)
     eligible = points if allow_final_only_split else [p for p in points if p['id'] not in deferred]
     winner = min(eligible, key=lambda p: (score(p), vector(p['cost']), plan_key(p))) if eligible else None

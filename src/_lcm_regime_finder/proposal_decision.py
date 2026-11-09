@@ -15,6 +15,7 @@ from copy import deepcopy
 
 from .frontier_check import IndependentFamily, _Bounded
 from .semantic_check import check_semantics
+from .records import SemanticCheck
 
 
 def _digest(value):
@@ -25,7 +26,7 @@ def _digest(value):
 class _DecisionContext:
     """In-memory independent replay result, never deserialized from a status row."""
 
-    def __init__(self, original, analysis, semantic):
+    def __init__(self, original, analysis, semantic: SemanticCheck):
         self._original = original
         self._analysis = analysis
         self._semantic = deepcopy(semantic)
@@ -38,7 +39,7 @@ class _DecisionContext:
                        | {"declarations_sha256": self.declaration_digest})
 
     @property
-    def semantic(self):
+    def semantic(self) -> SemanticCheck:
         # The enclosing producer may serialize or annotate its copy; this does
         # not turn a serialized PASS flag back into independently checked data.
         return deepcopy(self._semantic)
@@ -322,6 +323,7 @@ def build_decisions(original, analysis, scenarios, *, seconds=900, _context=None
         "family_coverage": {"candidate_admission": "identity", "frontier_complete_verified": False},
         "structural_cost_tradeoff": {"cost": None, "authority": "not_claimed"},
         "adoption_scope": "retain existing artifact only; original economics and numerical validity remain separate"}]
+    semantic: SemanticCheck
     if _context is not None:
         semantic = _context.semantic
     elif time.perf_counter() < deadline:

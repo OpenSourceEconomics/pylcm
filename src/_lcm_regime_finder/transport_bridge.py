@@ -173,11 +173,13 @@ def validate_generated_transport(problem, report, max_cells=20000):
     It does not execute opaque callbacks, native backend layouts, distinct
     simulation reoptimization preferences, or a same-period value-read extension.
     """
+    generated: dict[str, int | dict[str, int]] = {'original_cells': 0, 'reduced_cells': 0,
+        'original_feasible_action_rows': 0, 'reduced_feasible_action_rows': 0,
+        'original_terminal_rows': 0, 'reduced_terminal_rows': 0}
+    layers: dict[str, dict[str, str | int]] = {'generation': {'status': 'NOT_RUN'}, 'finite_transport': {'status': 'NOT_RUN'}}
     result = {'status': 'NOT_RUN', 'checker_executed': False, 'checker_result': None,
-              'checker_input': None, 'generated': {'original_cells': 0, 'reduced_cells': 0,
-                  'original_feasible_action_rows': 0, 'reduced_feasible_action_rows': 0,
-                  'original_terminal_rows': 0, 'reduced_terminal_rows': 0},
-              'layers': {'generation': {'status': 'NOT_RUN'}, 'finite_transport': {'status': 'NOT_RUN'}},
+              'checker_input': None, 'generated': generated,
+              'layers': layers,
               'guarantee': 'none', 'diagnostics': [],
               'scope': {'representation': 'reported per-atom semantic interfaces; dense layout padding is not state',
                         'support': 'all declared finite states/statuses and all feasible actions, each state admitted as an incoming start',
@@ -382,7 +384,6 @@ def validate_generated_transport(problem, report, max_cells=20000):
                                     'state_map': projection, 'action_embedding': embeddings,
                                     'fixed_action_attributes': fixed, 'taste_group_map': tastes},
                     'subjects': {'original': {}, 'reduced': {}}}], 'obligations': []}
-        generated = result['generated']
         for side, cells in [('original', old_cells), ('reduced', new_cells)]:
             generated[side + '_cells'] = len(cells)
             generated[side + '_feasible_action_rows'] = sum(len(c['actions']) for c in cells.values())
@@ -394,7 +395,7 @@ def validate_generated_transport(problem, report, max_cells=20000):
         result.update(checker_input=data, checker_input_sha256=digest(data),
                       problem_sha256=digest(problem), bound_parameters=_wire(problem.get('parameters', {})),
                       representatives=representatives)
-        result['layers']['generation'] = {'status': 'PASS', 'candidate_rows': estimates['candidate_rows']}
+        layers['generation'] = {'status': 'PASS', 'candidate_rows': estimates['candidate_rows']}
         check, checker_hash = _load_checker()
         numerical = problem.get('numerical', {})
         tolerance = Fraction(0) if numerical.get('strict', False) else Fraction(str(numerical.get('probability_mass_absolute', '1e-12')))
@@ -412,15 +413,15 @@ def validate_generated_transport(problem, report, max_cells=20000):
         result['status'] = exc.status
         result['diagnostics'].append({'code': exc.code, 'reason': exc.reason, **_wire(exc.witness)})
         if exc.status == 'FAIL':
-            result['layers']['generation']['status'] = 'FAIL'
+            layers['generation']['status'] = 'FAIL'
     except AdmissionError as exc:
         unexecuted = 'not numerically executable' in str(exc)
         result['status'] = 'NOT_RUN' if unexecuted else 'FAIL'
         result['diagnostics'].append({'code': 'unexecuted_expression' if unexecuted else 'original_ir_admission', 'reason': str(exc)})
         if not unexecuted:
-            result['layers']['generation']['status'] = 'FAIL'
+            layers['generation']['status'] = 'FAIL'
     except (KeyError, TypeError, ValueError, ArithmeticError) as exc:
         result['status'] = 'FAIL'
-        result['layers']['generation']['status'] = 'FAIL'
+        layers['generation']['status'] = 'FAIL'
         result['diagnostics'].append({'code': 'malformed_generated_input', 'reason': str(exc)})
     return result

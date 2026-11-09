@@ -25,7 +25,7 @@ def row_bytes(row):
         return b'bigint' + encoded([str(v) for v in row])
 
 
-@dataclass
+@dataclass(frozen=True)
 class _SourceBuffer:
     owner: object
     flavor: str

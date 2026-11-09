@@ -10,6 +10,7 @@ from itertools import product
 import hashlib
 import json
 import math
+from .records import LinearObjective
 
 METRICS = ('work', 'storage', 'clarity')
 
@@ -208,7 +209,7 @@ def binary_model(instance):
     choices = {i: [k for k, sig in enumerate(bins) if join(signature(c), sig) == sig]
                for i, c in enumerate(cells)}
     variables, constraints = set(), []
-    objectives = {metric: {'constant': 0, 'terms': []} for metric in METRICS}
+    objectives: dict[str, LinearObjective] = {metric: {'constant': 0, 'terms': []} for metric in METRICS}
     x = lambda i, k: f'x_{i}_{k}'
     y = lambda k: f'y_{k}'
     def constraint(terms, relation, rhs):

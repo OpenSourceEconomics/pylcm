@@ -1,0 +1,653 @@
+"""Implement the Fetter and Lockwood (2018) OAA model in pylcm.
+
+The life-cycle labor-supply / retirement DP of Section V.B and online Appendix A.8-A.10:
+an individual chooses consumption and (once) when to leave the labor force, facing an Old
+Age Assistance income floor with a 100% earnings test from age 65.
+
+Structurally this is a deterministic,
+absorbing retirement entered by a discrete action, certain death at a known age -- plus the
+OAA benefit. There are NO stochastic shocks anywhere in the model.
+
+NORMALIZED UNITS (the load-bearing design choice; see model.md Sec. 7)
+Potential earnings w_i = what_i * hbar are CONSTANT over the life cycle, initial assets are
+0, and OAA is the only non-labor income. The problem is therefore exactly homothetic in w:
+with
+
+    c_hat = c/w,   a_hat = a/w,   y_hat = ybar/w (the REPLACEMENT RATE),
+    d     = delta / w^(1+eta),
+
+lifetime utility becomes w^(1+eta) * sum beta^k [ c_hat^(1+eta)/(1+eta) - d*1(work) ], and
+w^(1+eta) > 0 for every real eta (w > 0 is assumed in the paper), so the argmax is
+unchanged. The budget, the borrowing constraint and the benefit rule retain the same form
+(b_hat = max{0, y_hat - h}). **Everything below is in these units: labor earnings are
+exactly 1.0 when working.** The DP therefore depends on potential earnings ONLY through the
+replacement rate y_hat = ybar/w -- which is precisely the paper's identification claim (the
+convex kink at 65 is sharper the higher ybar/w).
+
+Consequences you must not get wrong:
+  * The disutility grid is common across earnings groups in NORMALIZED units d, and
+    de-normalizes as delta = d * w^(1+eta). Since 1+eta < 0 at the estimates, delta is
+    DECREASING in w at a fixed retirement age. Working in delta rather than d silently
+    inverts the heterogeneity.
+  * The asset/consumption grids are normalized, so the discretization error is the same for
+    every earnings group. A common DOLLAR grid would make the grid error vary with w and
+    masquerade as the fade-out in w that identifies eta.
+
+ELIGIBILITY AND THE 1936 SURPRISE
+Ineligibility is exactly `replacement_rate = 0` (then b = max{0, 0 - h} = 0 always), so no
+eligibility state is needed: the eligible model uses y_hat = ybar/w, while the
+ineligible counterfactual uses y_hat = 0. Their life-cycle profiles are mixed ex
+post with Pr(elig | w). Eligibility is drawn
+independently of assets in the paper, so there is no endogenous means test and no asset
+cliff in the DP.
+
+The paper describes the 1936 introduction of OAA as unanticipated. A time-varying benefit
+inside a common information set would give the agent foresight from age 21. The phased
+graph instead values no-OAA belief regimes separately; only simulation switches into
+informed regimes at the news age, carrying realized assets and disutility through the
+source-period state laws. See `simulate.py` in this module.
+
+NB: no `from __future__ import annotations` -- pylcm's `@categorical` introspects the
+real `ScalarInt` annotation object, which PEP 563 would hide.
+"""
+
+# ruff: noqa: E501
+
+from dataclasses import replace
+
+import jax.numpy as jnp
+import numpy as np
+import pandas as pd
+from lcm import (
+    AgeGrid,
+    AgeRange,
+    ByAge,
+    DiscreteGrid,
+    IrregSpacedGrid,
+    LinSpacedGrid,
+    Model,
+    Phased,
+    Regime,
+    Transition,
+    categorical,
+)
+from lcm.typing import (
+    Age,
+    BoolND,
+    ContinuousAction,
+    ContinuousState,
+    DiscreteAction,
+    FloatND,
+    ScalarInt,
+)
+
+from .calibration import Calibration
+
+__all__ = [
+    "LaborSupply",
+    "RegimeId",
+    "consumption_grid_max",
+    "create_inputs",
+    "create_model",
+    "create_params",
+    "disutility_nodes_ascending",
+]
+
+
+@categorical(ordered=True)
+class LaborSupply:
+    """Define the extensive labor-supply margin."""
+
+    work: ScalarInt
+    retire: ScalarInt
+
+
+@categorical(ordered=False)
+class RegimeId:
+    """Match member names to the `regimes` keys passed to `Model`."""
+
+    working_life: ScalarInt
+    retirement: ScalarInt
+    dead: ScalarInt
+
+
+@categorical(ordered=False)
+class NewsRegimeId:
+    """Keep post-news codes unchanged and add the no-news belief regimes."""
+
+    working_life: ScalarInt
+    retirement: ScalarInt
+    dead: ScalarInt
+    pre_working_life: ScalarInt
+    pre_retirement: ScalarInt
+
+
+# Economic functions (DAG nodes; wired by argument name). NORMALIZED units.           #
+def is_working(labor_supply: DiscreteAction) -> BoolND:
+    """Return whether h = hbar this period. Choosing `retire` at age t means h_t = 0 ALREADY at t.
+
+    So the "retirement age" T_r is the first age with h = 0: the agent works at ages
+    21..T_r-1 (K = T_r - 21 working periods) and earns no wage and incurs no disutility at
+    T_r itself. This matches the closed-form inversion in `latent_types.py`.
+    """
+    # @pro: The retirement-age convention sets h_t=0 in the period the agent chooses retire.
+    # Thus T_r=21+K after K working periods at ages 21 through T_r-1, and both wages and work
+    # disutility vanish at T_r. The closed-form inversion uses the same timing. RESOLVED
+    # against the replication package: the authors label the mirror case, where T_r is the
+    # LAST working year, so their `TrDistToLFPOverLC` returns P(T_r >= t) where this returns
+    # P(T_r > t). The labels differ by one year and nothing else does. For the same injected
+    # profile their cell at t carries mass L(t) - L(t+1) with t - 20 working periods, and
+    # this implementation's cell at t+1 carries the same mass with the same t - 20 working
+    # periods, so no disutility threshold shifts.
+    return labor_supply == LaborSupply.work
+
+
+def earnings_working(is_working: BoolND) -> FloatND:
+    """Compute normalized potential earnings: exactly 1.0 when working, 0 when not."""
+    return jnp.where(is_working, 1.0, 0.0)
+
+
+def earnings_retired() -> FloatND:
+    """Return zero earnings after the absorbing labor-force exit."""
+    return jnp.asarray(0.0)
+
+
+def oaa_benefit(
+    earnings: FloatND,
+    age: Age,
+    replacement_rate: FloatND,
+    eligibility_age: FloatND,
+) -> FloatND:
+    """Compute b = max{0, ybar - what*h}, normalized: b_hat = max{0, y_hat - h}, only from age 65.
+
+    Paper Section V.B: `b_it = max{0, ybar_it - what_it h_it}` with `ybar_it = 0` if i is
+    not eligible at t -- "due to being too young, to not meeting an asset test, or to having
+    relatives who are able to support him". Age-eligibility is imposed here; every other
+    eligibility channel is folded into `replacement_rate = 0` for the ineligible (see the
+    module docstring), which makes this expression return 0 identically for them.
+
+    The 100% earnings test is the `- earnings` inside the max: a worker with potential
+    earnings above the floor (y_hat < 1) gets nothing, and one with y_hat > 1 has his
+    benefit clawed back dollar-for-dollar, so his total income while working is exactly
+    y_hat -- the same as if he retired. That is the convex kink the whole paper is about.
+    """
+    # @pro: The implementation applies the age test in the period an agent turns 65, encodes
+    # ineligibility as replacement_rate=0, and applies the earnings test to normalized
+    # potential earnings whenever the binary work action is chosen. The paper's statement
+    # that ybar_it=0 for ineligible people supports the zero-benefit branch. The precise age
+    # timing is source-dependent.
+    age_eligible = age >= eligibility_age
+    return jnp.where(age_eligible, jnp.maximum(0.0, replacement_rate - earnings), 0.0)
+
+
+def income(earnings: FloatND, oaa_benefit: FloatND) -> FloatND:
+    """Compute total period income. Non-labor income other than OAA is zero (paper Section V.B)."""
+    return earnings + oaa_benefit
+
+
+# @pro: EXACT HOMOTHETIC NORMALIZATION. The state and action are divided by constant positive
+# potential earnings; normalized labor earnings are exactly one and the only wage-specific DP
+# input is the replacement rate. This preserves the argmax because utility is multiplied by the
+# positive constant w ** (1 + eta). The analytic no-OAA oracle uses the same normalization.
+def resources(assets: ContinuousState, income: FloatND) -> FloatND:
+    """Return cash available for consumption at t, a_t + y_t."""
+    return assets + income
+
+
+def next_assets(
+    resources: FloatND, consumption: ContinuousAction, interest_rate: FloatND
+) -> ContinuousState:
+    """Compute a_{t+1} = (1+r)(a_t + N_t + what_t h_t + b_t - c_t), paper Section V.B.
+
+    NOTE the timing: the gross return (1+r) multiplies the WHOLE end-of-period balance,
+    income included -- income received at t earns interest between t and t+1. pylcm's
+    The alternative convention adds income after the return; the paper's equation adds
+    income before the return.
+    """
+    # @pro: BUDGET TIMING. The paper writes a_{t+1} = (1+r)(a_t + N_t + what h_t + b_t - c_t),
+    # so income earns interest WITHIN the period it arrives. The pylcm retirement
+    # example instead does (1+r)(a - c) + y. With beta(1+r) = 1 exactly (the paper sets
+    # beta = 1/(1+r)), the intertemporal budget telescopes to sum_k beta^k c_k = sum_k beta^k y_k
+    # with a_21 = a_76 = 0, which is what the closed-form no-OAA solution in latent_types.py
+    # assumes. The implementation follows the paper's within-period return timing, and the
+    # companion closed form uses the resulting telescoped lifetime budget.
+    return (1.0 + interest_rate) * (resources - consumption)
+
+
+def borrowing_constraint(consumption: ContinuousAction, resources: FloatND) -> BoolND:
+    """Compute c_t <= a_t + y_t  <=>  a_{t+1} >= 0. "assets must be nonnegative rules out
+    borrowing" (paper Section V.B). Binding this constraint is what generates the bunching
+    of retirements at 65: OAA's benefits arrive only from 65 and cannot be borrowed against.
+    """
+    return consumption <= resources
+
+
+def _crra(consumption: FloatND, eta: FloatND, consumption_floor: FloatND) -> FloatND:
+    """Compute a policy-equivalent, normalized isoelastic utility level.
+
+    With ``q = 1 + eta``, the paper's level is ``c**q / q``. Subtracting the
+    action-invariant ``1 / q`` gives ``expm1(q * log(c)) / q`` and removes the divergent
+    level that erases float32 action differences near ``eta = -1``. At ``q = 0`` the
+    expression is exactly ``log(c)``. The normalization is common to every living-period
+    action and therefore preserves Bellman policies throughout the supported horizon.
+
+    MAX-FORM CONSUMPTION FLOOR (a numerical device, not a model change; model.md M6).
+    With 1+eta < 0 the true u(0) = -inf, and the DP grid contains states with no feasible
+    positive consumption -- e.g. (retired, a = 0, ineligible), whose TRUE value is -inf.
+    pylcm would carry that -inf into the linear interpolation of the continuation value and
+    poison neighbouring cells (NaN from 0 * -inf). Evaluating u at max(c, floor) keeps V
+    finite everywhere. The floor is 1e-6 in normalized units (a millionth of a year's
+    potential earnings) and is never binding at an optimum, so no optimal choice changes.
+    """
+    # @pro: NUMERICAL FLOOR WITH NO PAPER COUNTERPART. This max-form floor is applied only
+    # inside utility. Feasibility still uses the actual action, and reachable simulated optima
+    # are asserted strictly above the floor; its purpose is solely to keep unreachable grid
+    # nodes finite for interpolation.
+    c = jnp.maximum(consumption, consumption_floor)
+    exponent = 1.0 + eta
+    is_log = exponent == 0.0
+    exponent_safe = jnp.where(is_log, 1.0, exponent)
+    normalized = jnp.expm1(exponent_safe * jnp.log(c)) / exponent_safe
+    return jnp.where(is_log, jnp.log(c), normalized)
+
+
+def utility_working(
+    consumption: ContinuousAction,
+    is_working: BoolND,
+    disutility: ContinuousState,
+    eta: FloatND,
+    consumption_floor: FloatND,
+) -> FloatND:
+    """Compute u = c^(1+eta)/(1+eta) - delta * 1(h = hbar), in normalized units (delta -> d).
+
+    The disutility is incurred ONLY in periods actually spent working, so an agent who
+    chooses `retire` this period already escapes it this period.
+    """
+    return _crra(consumption, eta, consumption_floor) - jnp.where(
+        is_working, disutility, 0.0
+    )
+
+
+def utility_retired(
+    consumption: ContinuousAction, eta: FloatND, consumption_floor: FloatND
+) -> FloatND:
+    """Return utility without work disutility."""
+    return _crra(consumption, eta, consumption_floor)
+
+
+def next_disutility(disutility: ContinuousState) -> ContinuousState:
+    """Keep fixed type delta_i through an identity transition.
+
+    It sits on an `IrregSpacedGrid` whose nodes equal the values simulated agents carry
+    (the midpoints from `latent_types.disutility_grid`), so multilinear interpolation over
+    this coordinate puts weight 1 on the agent's own node.
+    It is a type, not a genuine Euler state.
+    """
+    return disutility
+
+
+def next_regime_from_working(
+    labor_supply: DiscreteAction, age: Age, final_age_alive: FloatND
+) -> ScalarInt:
+    """Apply absorbing retirement and certain death after the final living age."""
+    # @pro: TRANSITION TIMING. The action at age t determines both h_t and the regime at
+    # t+1. Choosing `retire` therefore removes earnings/disutility at t (via `is_working`) and
+    # enters the absorbing retirement regime at t+1. At age 75 every action transitions to the
+    # terminal dead regime at 76; no stochastic state transition fires on either edge.
+    return jnp.where(
+        age >= final_age_alive,
+        RegimeId.dead,
+        jnp.where(
+            labor_supply == LaborSupply.retire,
+            RegimeId.retirement,
+            RegimeId.working_life,
+        ),
+    )
+
+
+def dead_utility() -> FloatND:
+    """Return zero continuation after age 75 when no bequest motive is present."""
+    return jnp.asarray(0.0)
+
+
+def consumption_grid_max(
+    cal: Calibration, *, assets_max: float, consumption_grid_buffer: float
+) -> float:
+    """Compute upper endpoint of the normalized consumption grid.
+
+    Resources never exceed assets plus `max(1, replacement_rate)`. The extra unit is a
+    deliberate solver-only buffer, so every feasible resource level is strictly interior to
+    the action grid rather than merely equal to its endpoint.
+    """
+    if not np.isfinite(consumption_grid_buffer) or consumption_grid_buffer <= 0:
+        raise ValueError("consumption_grid_buffer must be finite and strictly positive")
+    return (
+        assets_max
+        + max(1.0, float(cal.replacement_rates.max()))
+        + consumption_grid_buffer
+    )
+
+
+def disutility_nodes_ascending(cal: Calibration) -> np.ndarray:
+    """Compute the delta-grid nodes in ASCENDING order (pylcm requires it).
+
+    `latent_types.disutility_grid` returns midpoints DECREASING in K (more disutility ->
+    earlier retirement), so they are reversed here. Use `disutility_index_of_cell` to map a
+    latent-retirement cell back to its node.
+    """
+    return np.asarray(cal.disutility.d, dtype=float)[::-1].copy()
+
+
+def create_model(
+    cal: Calibration,
+    *,
+    n_assets: int,
+    n_consumption: int,
+    assets_max: float,
+    consumption_grid_buffer: float,
+) -> Model:
+    """Build the (normalized) OAA life-cycle DP.
+
+    Grid sizes and endpoints are supplied by the workflow.
+
+    The `disutility` grid points are supplied AT RUNTIME via params, because the disutility
+    grid is re-derived at every MSM trial (it is the inversion of the model's own no-OAA
+    retirement map, which depends on eta). This keeps one compiled model across the whole
+    eta search.
+    """
+    if n_assets < 2 or n_consumption < 2:
+        msg = "asset and consumption grids must each contain at least two points"
+        raise ValueError(msg)
+    if not np.isfinite(assets_max) or assets_max <= 0:
+        msg = "assets_max must be finite and strictly positive"
+        raise ValueError(msg)
+
+    # Decision ages are 21..75 inclusive; age 76 is the terminal `dead` period. Getting
+    # this off by one silently deletes a working year and shifts every delta-threshold.
+    # @pro: TERMINAL HANDLING / off-by-one. The paper: "Individuals live to age 75 with
+    # certainty (T = 75)", entering at 21 -> 55 DECISION periods, ages 21..75. Here the age
+    # grid runs 21..76; `working_life`/`retirement` are active for age < 76, and
+    # `final_age_alive = 75` sends every agent to `dead` after age 75. So age 75 IS a
+    # decision period and the dead regime (utility 0, no bequest) forces a_76 = 0. Copying
+    # the example's `final_age_alive = start + (n_periods - 2)*step` naively would
+    # delete a working year and shift every delta-threshold. The age grid therefore contains
+    # 55 decision periods.
+    ages = AgeGrid(start=cal.entry_age, inclusive_stop=cal.terminal_age + 1, step="Y")
+    last_age = int(ages.exact_values[-1])
+    assert last_age == cal.terminal_age + 1
+    assert ages.n_periods == cal.n_life + 1
+
+    # @pro: SOLVER CONVENTIONS WITH NO PAPER COUNTERPART. Assets use [0, 15], with zero
+    # implementing the paper's borrowing limit and the upper endpoint pinned by a reachable-
+    # path headroom assertion. Consumption has an independently configurable cardinality and
+    # spans every feasible cash-on-hand value with the caller's explicit buffer.
+    assets_grid = LinSpacedGrid(start=0.0, stop=assets_max, n_points=n_assets)
+    # Consumption can be as large as resources = assets + income; income while eligible is
+    # at most the replacement rate, which for the lowest earnings group is ybar/w = 360/50.
+    c_max = consumption_grid_max(
+        cal, assets_max=assets_max, consumption_grid_buffer=consumption_grid_buffer
+    )
+    consumption_grid = LinSpacedGrid(start=0.0, stop=c_max, n_points=n_consumption)
+    disutility_grid = IrregSpacedGrid(n_points=len(cal.disutility.d))
+
+    working_life = Regime(
+        states={"assets": assets_grid, "disutility": disutility_grid},
+        state_transitions={"assets": next_assets, "disutility": next_disutility},
+        actions={
+            "labor_supply": DiscreteGrid(LaborSupply),
+            "consumption": consumption_grid,
+        },
+        constraints={"borrowing_constraint": borrowing_constraint},
+        functions={
+            "utility": utility_working,
+            "is_working": is_working,
+            "earnings": earnings_working,
+            "oaa_benefit": oaa_benefit,
+            "income": income,
+            "resources": resources,
+        },
+    )
+    # `disutility` is carried in the retirement regime too, even though retired utility does
+    # not use it: pylcm carries a state across a regime switch only if the target regime
+    # declares it, and keeping it makes the type observable in the simulated panel (it is
+    # what identifies each simulated agent).
+    retirement = Regime(
+        states={"assets": assets_grid, "disutility": disutility_grid},
+        state_transitions={"assets": next_assets, "disutility": next_disutility},
+        actions={"consumption": consumption_grid},
+        constraints={"borrowing_constraint": borrowing_constraint},
+        functions={
+            "utility": utility_retired,
+            "earnings": earnings_retired,
+            "oaa_benefit": oaa_benefit,
+            "income": income,
+            "resources": resources,
+        },
+    )
+    dead = Regime(
+        functions={"utility": dead_utility},
+    )
+
+    # @pro: BELLMAN AGGREGATION / SHOCK CONVENTION. No custom H, certainty equivalent,
+    # stochastic process, or taste shock appears in the paper or here. Omitting those fields
+    # selects pylcm's linear expected-utility aggregator; with deterministic transitions its
+    # continuation object is simply next period's value. The dead regime is terminal and has
+    # no continuation term.
+    return Model(
+        regimes={
+            "working_life": working_life,
+            "retirement": retirement,
+            "dead": dead,
+        },
+        ages=ages,
+        edges={
+            "working_life": Transition(
+                targets={
+                    "working_life": AgeRange(
+                        start=cal.entry_age, exclusive_stop=cal.terminal_age
+                    ),
+                    "retirement": AgeRange(
+                        start=cal.entry_age, exclusive_stop=cal.terminal_age
+                    ),
+                    "dead": cal.terminal_age,
+                },
+                law=next_regime_from_working,
+            ),
+            "retirement": {
+                "retirement": AgeRange(
+                    start=cal.entry_age, exclusive_stop=cal.terminal_age
+                ),
+                "dead": cal.terminal_age,
+            },
+        },
+        # Admit the realized working or retired state at any supported news date.
+        # Population weights and assets remain supplied by the simulation caller.
+        initial_nodes=tuple(
+            (age, regime)
+            for age in range(cal.entry_age, cal.terminal_age + 1)
+            for regime in ("working_life", "retirement")
+        ),
+        regime_id_class=RegimeId,
+        description=(
+            "Fetter & Lockwood (2018) OAA life-cycle labor-supply model, normalized by "
+            "potential earnings."
+        ),
+    )
+
+
+# Runtime params + simulation initial conditions                                      #
+def next_pre_regime_from_working(
+    labor_supply: DiscreteAction, age: Age, final_age_alive: FloatND
+) -> ScalarInt:
+    """Keep the no-news belief in the pre regimes through the full horizon."""
+    return jnp.where(
+        age >= final_age_alive,
+        NewsRegimeId.dead,
+        jnp.where(
+            labor_supply == LaborSupply.work,
+            NewsRegimeId.pre_working_life,
+            NewsRegimeId.pre_retirement,
+        ),
+    )
+
+
+def create_news_model(model: Model, *, learn_age: int) -> Model:
+    """Add an unanticipated switch without changing supplied grids or economics.
+
+    Edge ages are source ages: assets earned under the old policy at learn_age-1
+    enter the new policy at learn_age. Solve edges never reveal that switch.
+    """
+    ages = model.ages
+    if ages is None:
+        raise TypeError("the Fetter news model requires an age grid")
+    entry_age = int(ages.exact_values[0])
+    terminal_age = int(ages.exact_values[-2])
+    if learn_age not in range(entry_age, terminal_age + 1):
+        raise ValueError("learn_age must be a living age in the model")
+    if learn_age == entry_age:
+        return model
+    base_edges = model.edges
+    if isinstance(base_edges, Phased):
+        raise TypeError("create_news_model requires the original no-news model")
+
+    working = model.user_regimes["working_life"]
+    retired = model.user_regimes["retirement"]
+
+    def handoff(regime: Regime, targets: tuple[str, ...]) -> Regime:
+        return replace(
+            regime,
+            state_transitions={
+                state: dict.fromkeys(targets, law)
+                for state, law in regime.state_transitions.items()
+            },
+        )
+
+    alive = AgeRange(start=entry_age, exclusive_stop=terminal_age)
+    before_switch = AgeRange(start=entry_age, exclusive_stop=learn_age - 1)
+    solve_edges = {
+        "working_life": base_edges["working_life"],
+        "retirement": base_edges["retirement"],
+        "pre_working_life": Transition(
+            targets={
+                "pre_working_life": alive,
+                "pre_retirement": alive,
+                "dead": terminal_age,
+            },
+            law=next_pre_regime_from_working,
+        ),
+        "pre_retirement": {"pre_retirement": alive, "dead": terminal_age},
+    }
+    return Model(
+        ages=ages,
+        regimes={
+            "working_life": handoff(working, ("working_life", "retirement")),
+            "retirement": handoff(retired, ("retirement",)),
+            "dead": model.user_regimes["dead"],
+            "pre_working_life": handoff(
+                working,
+                ("pre_working_life", "pre_retirement", "working_life", "retirement"),
+            ),
+            "pre_retirement": handoff(retired, ("pre_retirement", "retirement")),
+        },
+        edges=Phased(
+            solve=solve_edges,
+            simulate={
+                "working_life": solve_edges["working_life"],
+                "retirement": solve_edges["retirement"],
+                "pre_working_life": Transition(
+                    targets={
+                        "pre_working_life": before_switch,
+                        "pre_retirement": before_switch,
+                        "working_life": learn_age - 1,
+                        "retirement": learn_age - 1,
+                    },
+                    law=ByAge(
+                        cases={
+                            before_switch: next_pre_regime_from_working,
+                            learn_age - 1: next_regime_from_working,
+                        }
+                    ),
+                ),
+                "pre_retirement": {
+                    "pre_retirement": before_switch,
+                    "retirement": learn_age - 1,
+                },
+            },
+        ),
+        initial_nodes=tuple(
+            (age, ("pre_" if age < learn_age else "") + regime)
+            for age in range(entry_age, terminal_age + 1)
+            for regime in ("working_life", "retirement")
+        ),
+        regime_id_class=NewsRegimeId,
+        fixed_params=model.fixed_params,
+        enable_jit=model.enable_jit,
+        description=f"{model.description} Unanticipated OAA news at age {learn_age}.",
+    )
+
+
+def create_params(
+    cal: Calibration,
+    *,
+    replacement_rate: float,
+    consumption_floor: float,
+    eta: float | None = None,
+) -> dict:
+    """Create params for one solve.
+
+    Args:
+        cal: the injected calibration.
+        replacement_rate: y_hat = ybar / w for this earnings group. **0.0 is the
+            ineligible / no-OAA counterfactual** -- the benefit is then identically zero.
+        eta: override the calibration's eta. NOTE: eta also determines the disutility grid
+            (`latent_types`), so an MSM step must rebuild the calibration with
+            `calibration.rebuild_disutility` and pass the SAME eta here; passing a
+            mismatched eta silently mixes two models.
+    """
+    if not np.isfinite(consumption_floor) or consumption_floor <= 0:
+        raise ValueError("consumption_floor must be finite and strictly positive")
+    eta_used = cal.eta if eta is None else eta
+    if eta is not None and not np.isclose(eta, cal.eta):
+        msg = (
+            "eta differs from the calibration's eta: the disutility grid was inverted at "
+            f"eta={cal.eta} but the DP would be solved at eta={eta}. Call "
+            "calibration.rebuild_disutility(cal, eta=...) first."
+        )
+        raise ValueError(msg)
+
+    points = jnp.asarray(disutility_nodes_ascending(cal))
+    util = {"eta": eta_used, "consumption_floor": consumption_floor}
+    benefit = {
+        "replacement_rate": float(replacement_rate),
+        "eligibility_age": float(cal.eligibility_age),
+    }
+    per_regime = {
+        "utility": dict(util),
+        "oaa_benefit": dict(benefit),
+        "disutility": {"points": points},
+    }
+    return {
+        "discount_factor": cal.discount_factor,
+        "interest_rate": cal.interest_rate,
+        "edges": {"working_life": {"final_age_alive": float(cal.terminal_age)}},
+        "working_life": dict(per_regime),
+        "retirement": dict(per_regime),
+    }
+
+
+def create_inputs(
+    cal: Calibration,
+    *,
+    replacement_rate: float,
+    initial_conditions: pd.DataFrame,
+    consumption_floor: float,
+    eta: float | None = None,
+) -> tuple[dict, pd.DataFrame]:
+    """Combine runtime parameters with the caller's explicit starting population."""
+    params = create_params(
+        cal,
+        replacement_rate=replacement_rate,
+        consumption_floor=consumption_floor,
+        eta=eta,
+    )
+    return params, initial_conditions

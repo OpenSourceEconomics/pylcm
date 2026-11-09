@@ -8,6 +8,7 @@ Only original model source and ordinary parameter/grid inputs are accepted.
 from __future__ import annotations
 
 import ast
+from collections.abc import Callable, Mapping
 import hashlib
 import itertools
 import json
@@ -22,24 +23,24 @@ class SourceAdapterError(ValueError):
     """The requested source construct is outside this adapter's declared subset."""
 
 
-@dataclass
+@dataclass(frozen=True)
 class Symbol:
     path: str
 
 
-@dataclass
+@dataclass(frozen=True)
 class Category:
     name: str
     members: tuple[str, ...]
 
 
-@dataclass
-class Function:
-    module: "Module"
+@dataclass(frozen=True)
+class Function[ModuleType]:
+    module: ModuleType
     node: ast.FunctionDef
 
 
-@dataclass
+@dataclass(frozen=True)
 class Declaration:
     kind: str
     node: ast.Call
@@ -64,7 +65,7 @@ _BINARY = {ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul,
            ast.Div: operator.truediv, ast.FloorDiv: operator.floordiv,
            ast.Mod: operator.mod, ast.Pow: operator.pow,
            ast.BitOr: operator.or_, ast.BitAnd: operator.and_}
-_COMPARISON = {ast.Lt: operator.lt, ast.LtE: operator.le, ast.Gt: operator.gt,
+_COMPARISON: Mapping[type[ast.cmpop], Callable[..., bool]] = {ast.Lt: operator.lt, ast.LtE: operator.le, ast.Gt: operator.gt,
                ast.GtE: operator.ge, ast.Eq: operator.eq, ast.NotEq: operator.ne,
                ast.In: lambda a, b: a in b, ast.NotIn: lambda a, b: a not in b}  # codespell:ignore
 
@@ -600,7 +601,7 @@ class CallbackAnalysis:
             if isinstance(value, (int, float, bool)): return repr(value)
             raise SourceAdapterError("Nonliteral attribute")
         if isinstance(node, ast.Compare):
-            operators = {ast.Lt:"<", ast.LtE:"<=", ast.Gt:">", ast.GtE:">=",
+            operators: Mapping[type[ast.cmpop], str]={ast.Lt:"<", ast.LtE:"<=", ast.Gt:">", ast.GtE:">=",
                          ast.Eq:"==", ast.NotEq:"!=", ast.In:"in", ast.NotIn:"not in"}  # codespell:ignore
             return "(" + self._scalar(fn, node.left, local, seen) + " " + " ".join(
                 operators[type(op)] + " " + self._scalar(fn, rhs, local, seen)

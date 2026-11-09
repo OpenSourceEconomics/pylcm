@@ -1,0 +1,1055 @@
+"""Paper-derived pylcm model for Adda, Dustmann, and Stevens (2017).
+
+Implements equations (1)--(8) and (A1)--(A16) from paper-side evidence.
+"""
+
+from dataclasses import make_dataclass
+from fractions import Fraction
+
+import jax.numpy as jnp
+from lcm import (
+    AgeGrid,
+    AgeRange,
+    DiscreteGrid,
+    ExtremeValueTasteShocks,
+    IrregSpacedGrid,
+    LinSpacedGrid,
+    Model,
+    NormalIIDProcess,
+    Phased,
+    Regime,
+    StochasticTransition,
+    categorical,
+    category_with,
+    characteristics,
+    fixed_transition,
+)
+from lcm.typing import (
+    BoolND,
+    ContinuousAction,
+    ContinuousState,
+    DiscreteAction,
+    DiscreteState,
+    FloatND,
+    ScalarInt,
+)
+
+from .calibration import (
+    AGE_INFERTILE,
+    OFFER_LAB,
+    OFFER_OCC,
+    Calibration,
+)
+
+ages = AgeGrid(start=18, inclusive_stop=Fraction(159, 2), step="6M")
+assert ages.n_periods == 124
+
+LEAVE_CONSUMPTION_TIMING = "sequential_reoptimization"
+# The second leave-period consumption choice is made after that period's state shocks.
+# Exact leave-entry commitment of both consumptions is outside the fidelity claim.
+
+EARNINGS_BASE_CONVENTION = "carried_realized_last_working_period"
+# Earnings-linked benefits and pensions use actual half-year earnings from the most
+# recent working period, including FT/PT hours and the realized iid wage shock. The
+# paper leaves this construction unspecified, so this is a bounded implementation
+# convention rather than an authors' source-code parity claim.
+
+# n_children and age_youngest move jointly: one compound state. @pro:
+_N_AGE = 21
+_FAMILY_CASES = {
+    "no_child": {"n_children": 0, "age_index": _N_AGE - 1},
+    **{
+        f"{label}_age_{i:02d}": {"n_children": n, "age_index": i}
+        for n, label in ((1, "one"), (2, "two"))
+        for i in range(_N_AGE)
+    },
+}
+Family = categorical(ordered=False)(
+    make_dataclass("Family", [(name, ScalarInt) for name in _FAMILY_CASES])
+)
+FAMILY = characteristics(category_class=Family, by_category=_FAMILY_CASES)
+_AGED_FAMILY = category_with(
+    FAMILY,
+    n_children=jnp.asarray(FAMILY["n_children"]),
+    age_index=jnp.minimum(jnp.asarray(FAMILY["age_index"]) + 1, _N_AGE - 1),
+)
+
+
+@categorical(ordered=False)
+class RegimeId:
+    working: ScalarInt
+    retired: ScalarInt
+    terminal: ScalarInt
+
+
+@categorical(ordered=False)
+class Occupation:
+    routine: ScalarInt
+    abstract: ScalarInt
+    manual: ScalarInt
+
+
+@categorical(ordered=False)
+class Labor:
+    ft: ScalarInt
+    pt: ScalarInt
+    u: ScalarInt
+    olf: ScalarInt
+
+
+@categorical(ordered=False)
+class Move:
+    stay: ScalarInt
+    unemp: ScalarInt
+    olf: ScalarInt
+    accept: ScalarInt
+    leave: ScalarInt
+
+
+@categorical(ordered=False)
+class Conception:
+    no: ScalarInt
+    yes: ScalarInt
+
+
+@categorical(ordered=False)
+class Fecundity:
+    infertile: ScalarInt
+    fertile: ScalarInt
+
+
+def perceived_fecundity() -> DiscreteState:
+    """Impute full fertility at every decision, including after failed attempts."""
+    return jnp.asarray(Fecundity.fertile, dtype=jnp.int32)
+
+
+@categorical(ordered=False)
+class MaritalStatus:
+    single: ScalarInt
+    married: ScalarInt
+
+
+@categorical(ordered=False)
+class Type:
+    la_hc: ScalarInt
+    la_lc: ScalarInt
+    ha_hc: ScalarInt
+    ha_lc: ScalarInt
+
+
+@categorical(ordered=False)
+class Opportunity:
+    laid_off: ScalarInt
+    no_offer: ScalarInt
+    offer_routine_ft: ScalarInt
+    offer_routine_pt: ScalarInt
+    offer_abstract_ft: ScalarInt
+    offer_abstract_pt: ScalarInt
+    offer_manual_ft: ScalarInt
+    offer_manual_pt: ScalarInt
+
+
+def n_children(family: DiscreteState) -> ScalarInt:
+    return jnp.asarray(FAMILY["n_children"])[family]
+
+
+def age_youngest(family: DiscreteState) -> FloatND:
+    return 0.5 * jnp.asarray(FAMILY["age_index"])[family]
+
+
+def on_leave(n_children: ScalarInt, age_youngest: FloatND) -> BoolND:
+    """Implement A14/A15: mandatory leave is exactly ageK 0 and 0.5."""
+    return (n_children > 0) & (age_youngest < 1.0)
+
+
+def conception_probability(
+    age: FloatND,
+    conception_max: FloatND,
+    conception_age_mid: FloatND,
+    conception_age_slope: FloatND,
+) -> FloatND:
+    p = conception_max / (
+        1.0 + jnp.exp((age - conception_age_mid) / conception_age_slope)
+    )
+    return jnp.where(age >= AGE_INFERTILE, 0.0, p)
+
+
+def next_family(  # noqa: PLR0917
+    family: DiscreteState,
+    conceive: DiscreteAction,
+    age: FloatND,
+    conception_max: FloatND,
+    conception_age_mid: FloatND,
+    conception_age_slope: FloatND,
+    fecundity: FloatND,
+) -> FloatND:
+    """Compute joint A6 family law; solve fixes perceived fecundity to one. @pro:"""
+    n = n_children(family)
+    eligible = (
+        (conceive == Conception.yes) & (n < 2) & (~on_leave(n, age_youngest(family)))
+    )
+    p_birth = (
+        eligible
+        * fecundity
+        * conception_probability(
+            age, conception_max, conception_age_mid, conception_age_slope
+        )
+    )
+    no_birth = _AGED_FAMILY[family]
+    birth = jnp.where(n == 0, Family.one_age_00, Family.two_age_00)
+    probs = jnp.zeros(len(_FAMILY_CASES)).at[no_birth].add(1.0 - p_birth)
+    return probs.at[birth].add(p_birth)
+
+
+def next_family_from_fecundity(  # noqa: PLR0917
+    family: DiscreteState,
+    conceive: DiscreteAction,
+    age: FloatND,
+    conception_max: FloatND,
+    conception_age_mid: FloatND,
+    conception_age_slope: FloatND,
+    fecundity: DiscreteState,
+) -> FloatND:
+    """Convert the latent category code at the family-law boundary."""
+    return next_family(
+        family=family,
+        conceive=conceive,
+        age=age,
+        conception_max=conception_max,
+        conception_age_mid=conception_age_mid,
+        conception_age_slope=conception_age_slope,
+        fecundity=fecundity.astype(float),
+    )
+
+
+def move_feasible(
+    move: DiscreteAction,
+    l_prev: DiscreteState,
+    opportunity: DiscreteState,
+    on_leave: BoolND,
+) -> BoolND:
+    """Implement A8 alternatives, preserving separate stay/accept shocks. @pro:"""
+    working = (l_prev == Labor.ft) | (l_prev == Labor.pt)
+    ordinary = (
+        ((move == Move.stay) & working)
+        | (move == Move.unemp)
+        | (move == Move.olf)
+        | ((move == Move.accept) & (opportunity >= Opportunity.offer_routine_ft))
+    )
+    ordinary &= ~((move == Move.unemp) & (l_prev == Labor.olf))
+    ordinary &= ~((move == Move.stay) & (l_prev == Labor.u))
+    return jnp.where(
+        on_leave,
+        move == Move.leave,
+        jnp.where(
+            opportunity == Opportunity.laid_off,
+            move == Move.unemp,
+            ordinary,
+        ),
+    )
+
+
+def conception_feasible(
+    conceive: DiscreteAction,
+    n_children: ScalarInt,
+    on_leave: BoolND,
+    age: FloatND,
+) -> BoolND:
+    can_try = (n_children < 2) & (~on_leave) & (age < AGE_INFERTILE)
+    return (conceive == Conception.no) | can_try
+
+
+def effective_labor(
+    move: DiscreteAction,
+    l_prev: DiscreteState,
+    opportunity: DiscreteState,
+    on_leave: BoolND,
+) -> ScalarInt:
+    offered = jnp.asarray(OFFER_LAB)[opportunity]
+    ordinary = jnp.where(
+        move == Move.stay,
+        l_prev,
+        jnp.where(
+            move == Move.unemp,
+            Labor.u,
+            jnp.where(move == Move.olf, Labor.olf, offered),
+        ),
+    )
+    return jnp.where(on_leave, Labor.olf, ordinary)
+
+
+def effective_occupation(
+    move: DiscreteAction,
+    occupation: DiscreteState,
+    opportunity: DiscreteState,
+) -> ScalarInt:
+    return jnp.where(
+        move == Move.accept,
+        jnp.asarray(OFFER_OCC)[opportunity],
+        occupation,
+    )
+
+
+def deterministic_daily_wage(  # noqa: PLR0917
+    skills: ContinuousState,
+    effective_occupation: ScalarInt,
+    utype: DiscreteState,
+    alpha_o: FloatND,
+    alpha_x: FloatND,
+    alpha_xx: FloatND,
+    type_ability: FloatND,
+    skill_cap: FloatND,
+) -> FloatND:
+    """Implement equation (3), excluding eta."""
+    x = jnp.minimum(skills, skill_cap)
+    return jnp.exp(
+        alpha_o[effective_occupation]
+        + alpha_x[effective_occupation] * x
+        + alpha_xx[effective_occupation] * x**2
+        + type_ability[utype]
+    )
+
+
+def daily_wage(
+    deterministic_daily_wage: FloatND, wage_shock: ContinuousState
+) -> FloatND:
+    return deterministic_daily_wage * jnp.exp(wage_shock)
+
+
+def husband_daily_earnings(  # noqa: PLR0917
+    age: FloatND,
+    effective_occupation: ScalarInt,
+    utype: DiscreteState,
+    husband_shock: ContinuousState,
+    husband_const: FloatND,
+    husband_age: FloatND,
+    husband_age2: FloatND,
+    husband_occ: FloatND,
+    husband_high_ability: FloatND,
+) -> FloatND:
+    return jnp.maximum(
+        husband_const
+        + husband_age * age
+        + husband_age2 * age**2
+        + husband_occ[effective_occupation]
+        + husband_high_ability * (utype >= Type.ha_hc)
+        + husband_shock,
+        0.0,
+    )
+
+
+def _net_labour(  # noqa: PLR0917
+    gross: FloatND,
+    married: DiscreteState,
+    ssc_rate: FloatND,
+    ssc_ceiling: FloatND,
+    tax_progressivity: FloatND,
+    tax_level_single: FloatND,
+    tax_level_married: FloatND,
+) -> FloatND:
+    after_ssc = gross - ssc_rate * jnp.minimum(gross, ssc_ceiling)
+    level = jnp.where(
+        married == MaritalStatus.married,
+        tax_level_married,
+        tax_level_single,
+    )
+    return level * jnp.maximum(after_ssc, 0.0) ** (1.0 - tax_progressivity)
+
+
+def resources_working(  # noqa: PLR0917
+    assets: ContinuousState,
+    effective_labor: ScalarInt,
+    l_prev: DiscreteState,
+    married: DiscreteState,
+    n_children: ScalarInt,
+    age_youngest: FloatND,
+    on_leave: BoolND,
+    daily_wage: FloatND,
+    last_earnings: ContinuousState,
+    husband_daily_earnings: FloatND,
+    interest_rate: FloatND,
+    days_per_period: FloatND,
+    pt_earnings_share: FloatND,
+    ssc_rate: FloatND,
+    ssc_ceiling: FloatND,
+    tax_progressivity: FloatND,
+    tax_level_single: FloatND,
+    tax_level_married: FloatND,
+    ub_no_kids: FloatND,
+    ub_with_kids: FloatND,
+    erziehungsgeld: FloatND,
+    maternity_replacement: FloatND,
+    maternity_periods: FloatND,
+    kindergeld: FloatND,
+    child_support_share: FloatND,
+    social_assistance_floor: FloatND,
+    childcare_young: FloatND,
+    childcare_old: FloatND,
+) -> FloatND:
+    """Implement equation (1) with the statutory substitute. @pro:
+
+    The implementation uses the institutional schedule in `taxes.py`.
+    """
+    ft = effective_labor == Labor.ft
+    pt = effective_labor == Labor.pt
+    female = days_per_period * daily_wage * (ft + pt_earnings_share * pt)
+    husband = (
+        days_per_period * husband_daily_earnings * (married == MaritalStatus.married)
+    )
+    net = _net_labour(
+        female + husband,
+        married,
+        ssc_rate,
+        ssc_ceiling,
+        tax_progressivity,
+        tax_level_single,
+        tax_level_married,
+    )
+    reference_net = _net_labour(
+        last_earnings,
+        MaritalStatus.single,
+        ssc_rate,
+        ssc_ceiling,
+        tax_progressivity,
+        tax_level_single,
+        tax_level_married,
+    )
+    unemployment = (
+        (effective_labor == Labor.u)
+        * jnp.where(n_children > 0, ub_with_kids, ub_no_kids)
+        * reference_net
+    )
+    worked_before = (l_prev == Labor.ft) | (l_prev == Labor.pt)
+    maternity = on_leave * (
+        erziehungsgeld
+        + worked_before * maternity_replacement * reference_net * maternity_periods / 2
+    )
+    support = (
+        (married == MaritalStatus.single)
+        * (n_children > 0)
+        * child_support_share
+        * n_children
+        * days_per_period
+        * husband_daily_earnings
+    )
+    disposable = jnp.maximum(
+        net + unemployment + maternity + kindergeld[n_children] + support,
+        social_assistance_floor,
+    )
+    childcare = (
+        (ft | pt)
+        * (n_children > 0)
+        * days_per_period
+        * jnp.where(age_youngest <= 6, childcare_young, childcare_old)
+    )
+    return (1 + interest_rate) * assets + disposable - childcare
+
+
+def equivalence_scale(
+    married: DiscreteState,
+    n_children: ScalarInt,
+    adult_equiv_weight: FloatND,
+    child_equiv_weight: FloatND,
+) -> FloatND:
+    return (
+        1
+        + adult_equiv_weight * (married == MaritalStatus.married)
+        + child_equiv_weight * n_children
+    )
+
+
+def post_decision_assets(
+    resources_working: FloatND,
+    consumption: ContinuousAction,
+    equivalence_scale: FloatND,
+) -> FloatND:
+    """Implement equation (1): cHH is own consumption times equivalence scale."""
+    return resources_working - consumption * equivalence_scale
+
+
+def next_assets(post_decision_assets: FloatND) -> ContinuousState:
+    """Carry the current-period post-decision stock into the next period."""
+    return post_decision_assets
+
+
+def assets_feasible(post_decision_assets: FloatND, assets_max: FloatND) -> BoolND:
+    """Enforce no borrowing and no continuation extrapolation. @pro:"""
+    return (post_decision_assets >= 0) & (post_decision_assets <= assets_max)
+
+
+def utility_working(  # noqa: PLR0917
+    consumption: ContinuousAction,
+    effective_labor: ScalarInt,
+    effective_occupation: ScalarInt,
+    married: DiscreteState,
+    n_children: ScalarInt,
+    age_youngest: FloatND,
+    utype: DiscreteState,
+    crra: FloatND,
+    consumption_scale: FloatND,
+    gamma1_pt: FloatND,
+    gamma1_u: FloatND,
+    gamma1_olf: FloatND,
+    gamma_nc: FloatND,
+    gamma_nh: FloatND,
+    gamma_u_children: FloatND,
+    gamma_olf_children: FloatND,
+    gamma_agek_olf: FloatND,
+    gamma_occ_ft: FloatND,
+    gamma_occ_pt: FloatND,
+    gamma_agek_pt: FloatND,
+    type_leisure: FloatND,
+    type_child1: FloatND,
+    type_child2: FloatND,
+) -> FloatND:
+    """Implement equation (A3), term by term; pylcm supplies both EV1 terms. @pro:"""
+    leisure = type_leisure[utype]
+    u1_shift = (
+        gamma1_pt * (effective_labor == Labor.pt)
+        + (gamma1_u + leisure) * (effective_labor == Labor.u)
+        + (gamma1_olf + leisure) * (effective_labor == Labor.olf)
+    )
+    u1 = (
+        ((consumption / consumption_scale) ** (1 - crra) - 1)
+        / (1 - crra)
+        * jnp.exp(u1_shift)
+        * jnp.exp(gamma_nc * (n_children > 0))
+    )
+    child_base = jnp.where(
+        n_children == 1,
+        type_child1[utype],
+        jnp.where(n_children == 2, type_child2[utype], 0),
+    )
+    age_index = jnp.where(age_youngest <= 3, 0, jnp.where(age_youngest <= 6, 1, 2))
+    u2_shift = jnp.where(
+        effective_labor == Labor.u,
+        gamma_u_children,
+        jnp.where(
+            effective_labor == Labor.olf,
+            gamma_olf_children + gamma_agek_olf[age_index],
+            jnp.where(
+                effective_labor == Labor.pt,
+                gamma_occ_pt[effective_occupation] + gamma_agek_pt[age_index],
+                gamma_occ_ft[effective_occupation],
+            ),
+        ),
+    )
+    u2 = (
+        child_base
+        * jnp.exp(gamma_nh * ((n_children > 0) & (married == MaritalStatus.married)))
+        * jnp.exp(u2_shift)
+    )
+    return u1 + u2
+
+
+def next_skills(
+    skills: ContinuousState,
+    effective_labor: ScalarInt,
+    effective_occupation: ScalarInt,
+    atrophy: FloatND,
+    skills_max: FloatND,
+) -> ContinuousState:
+    bracket = jnp.where(skills < 5, 0, jnp.where(skills < 7, 1, 2))
+    worked = (
+        skills
+        + 0.5 * (effective_labor == Labor.ft)
+        + 0.25 * (effective_labor == Labor.pt)
+    )
+    not_worked = skills * atrophy[bracket, effective_occupation]
+    # @pro: paper grid ends at 30; clip instead of linearly extrapolating.
+    return jnp.minimum(
+        jnp.where(effective_labor <= Labor.pt, worked, not_worked),
+        skills_max,
+    )
+
+
+def next_l_prev(
+    l_prev: DiscreteState,
+    effective_labor: ScalarInt,
+    on_leave: BoolND,
+) -> ScalarInt:
+    """Freeze the pre-birth job through both leave periods, A14/A15. @pro:"""
+    return jnp.where(on_leave, l_prev, effective_labor)
+
+
+def next_occupation(effective_occupation: ScalarInt) -> ScalarInt:
+    return effective_occupation
+
+
+def identity_occupation(occupation: DiscreteState) -> ScalarInt:
+    return occupation
+
+
+def next_last_earnings(
+    last_earnings: ContinuousState,
+    daily_wage: FloatND,
+    effective_labor: ScalarInt,
+    days_per_period: FloatND,
+    pt_earnings_share: FloatND,
+) -> ContinuousState:
+    """Carry realized earnings for earnings-linked benefits and pensions."""
+    current = (
+        days_per_period
+        * daily_wage
+        * jnp.where(effective_labor == Labor.pt, pt_earnings_share, 1)
+    )
+    working = (effective_labor == Labor.ft) | (effective_labor == Labor.pt)
+    return jnp.where(working, current, last_earnings)
+
+
+def _bracket(age: FloatND, cutoffs: FloatND, values: FloatND) -> FloatND:
+    return values[jnp.sum(age >= cutoffs)]
+
+
+def next_married(  # noqa: PLR0917
+    married: DiscreteState,
+    age: FloatND,
+    skills: ContinuousState,
+    n_children: ScalarInt,
+    effective_occupation: ScalarInt,
+    utype: DiscreteState,
+    marriage_cutoffs: FloatND,
+    marriage_values: FloatND,
+    marriage_skills: FloatND,
+    marriage_high_fertility: FloatND,
+    divorce_cutoffs: FloatND,
+    divorce_values: FloatND,
+    divorce_const: FloatND,
+    divorce_n_children: FloatND,
+    divorce_occ: FloatND,
+) -> FloatND:
+    """Compute semiannual hazards, A1 and A2."""
+    hc = (utype == Type.la_hc) | (utype == Type.ha_hc)
+    p_m = jnp.clip(
+        _bracket(age, marriage_cutoffs, marriage_values)
+        + marriage_skills * skills
+        + marriage_high_fertility * hc,
+        0,
+        1,
+    )
+    p_d = jnp.clip(
+        divorce_const
+        + _bracket(age, divorce_cutoffs, divorce_values)
+        + divorce_n_children * n_children
+        + divorce_occ[effective_occupation],
+        0,
+        1,
+    )
+    return jnp.where(
+        married == MaritalStatus.single,
+        jnp.asarray([1 - p_m, p_m]),
+        jnp.asarray([p_d, 1 - p_d]),
+    )
+
+
+def next_opportunity(
+    effective_occupation: ScalarInt,
+    effective_labor: ScalarInt,
+    l_prev: DiscreteState,
+    on_leave: BoolND,
+    offer_probabilities: FloatND,
+) -> FloatND:
+    """Implement A6 and A14/A15, suppressing only layoff on leave return."""
+    ordinary = offer_probabilities[effective_occupation, effective_labor]
+    return_base = offer_probabilities[effective_occupation, l_prev]
+    return_without_layoff = return_base.at[Opportunity.laid_off].set(0.0)
+    return_without_layoff /= return_without_layoff.sum()
+    return jnp.where(on_leave, return_without_layoff, ordinary)
+
+
+def resources_retired(  # noqa: PLR0917
+    assets: ContinuousState,
+    last_earnings: ContinuousState,
+    married: DiscreteState,
+    husband_daily_earnings: FloatND,
+    interest_rate: FloatND,
+    pension_replacement: FloatND,
+    days_per_period: FloatND,
+    social_assistance_floor: FloatND,
+) -> FloatND:
+    disposable = jnp.maximum(
+        pension_replacement * last_earnings
+        + days_per_period * husband_daily_earnings * (married == MaritalStatus.married),
+        social_assistance_floor,
+    )
+    return (1 + interest_rate) * assets + disposable
+
+
+def post_decision_assets_retired(
+    resources_retired: FloatND,
+    consumption: ContinuousAction,
+    equivalence_scale: FloatND,
+) -> FloatND:
+    return resources_retired - consumption * equivalence_scale
+
+
+def next_assets_retired(post_decision_assets_retired: FloatND) -> ContinuousState:
+    """Carry the retired household's post-decision stock into the next period."""
+    return post_decision_assets_retired
+
+
+def retired_assets_feasible(
+    post_decision_assets_retired: FloatND,
+    assets_max: FloatND,
+) -> BoolND:
+    return (post_decision_assets_retired >= 0) & (
+        post_decision_assets_retired <= assets_max
+    )
+
+
+def terminal_budget_feasible(
+    resources_retired: FloatND,
+    consumption: ContinuousAction,
+    equivalence_scale: FloatND,
+) -> BoolND:
+    return consumption * equivalence_scale <= resources_retired
+
+
+def utility_retired(  # noqa: PLR0917
+    consumption: ContinuousAction,
+    effective_occupation: ScalarInt,
+    married: DiscreteState,
+    n_children: ScalarInt,
+    age_youngest: FloatND,
+    utype: DiscreteState,
+    crra: FloatND,
+    consumption_scale: FloatND,
+    gamma1_pt: FloatND,
+    gamma1_u: FloatND,
+    gamma1_olf: FloatND,
+    gamma_nc: FloatND,
+    gamma_nh: FloatND,
+    gamma_u_children: FloatND,
+    gamma_olf_children: FloatND,
+    gamma_agek_olf: FloatND,
+    gamma_occ_ft: FloatND,
+    gamma_occ_pt: FloatND,
+    gamma_agek_pt: FloatND,
+    type_leisure: FloatND,
+    type_child1: FloatND,
+    type_child2: FloatND,
+    adult_equiv_weight: FloatND,
+    child_equiv_weight: FloatND,
+) -> FloatND:
+    """Evaluate A3 in retirement using the OLF labor/leisure mapping.
+
+    Consumption is the woman's own consumption. Household equivalence scaling enters the
+    budget constraint once and does not rescale consumption again inside utility.
+    """
+    del adult_equiv_weight, child_equiv_weight
+    return utility_working(
+        consumption=consumption,
+        effective_labor=jnp.asarray(Labor.olf, dtype=jnp.int32),
+        effective_occupation=effective_occupation,
+        married=married,
+        n_children=n_children,
+        age_youngest=age_youngest,
+        utype=utype,
+        crra=crra,
+        consumption_scale=consumption_scale,
+        gamma1_pt=gamma1_pt,
+        gamma1_u=gamma1_u,
+        gamma1_olf=gamma1_olf,
+        gamma_nc=gamma_nc,
+        gamma_nh=gamma_nh,
+        gamma_u_children=gamma_u_children,
+        gamma_olf_children=gamma_olf_children,
+        gamma_agek_olf=gamma_agek_olf,
+        gamma_occ_ft=gamma_occ_ft,
+        gamma_occ_pt=gamma_occ_pt,
+        gamma_agek_pt=gamma_agek_pt,
+        type_leisure=type_leisure,
+        type_child1=type_child1,
+        type_child2=type_child2,
+    )
+
+
+def _common_states(cal: Calibration) -> dict:
+    return {
+        "assets": LinSpacedGrid(
+            start=0, stop=cal.grid.assets_max, n_points=cal.grid.n_assets
+        ),
+        "family": DiscreteGrid(Family),
+        "occupation": DiscreteGrid(Occupation),
+        "married": DiscreteGrid(MaritalStatus),
+        "utype": DiscreteGrid(Type),
+        "last_earnings": LinSpacedGrid(
+            start=0,
+            stop=cal.grid.last_earnings_max,
+            n_points=cal.grid.n_last_earnings,
+        ),
+        "husband_shock": NormalIIDProcess(
+            n_points=cal.grid.n_husband_nodes,
+            gauss_hermite=True,
+            mu=0.0,
+            sigma=cal.sigma_husband,
+        ),
+    }
+
+
+def _fixed(cal: Calibration) -> dict:
+    tax = cal.tax
+    equiv = {
+        "adult_equiv_weight": cal.adult_equiv_weight,
+        "child_equiv_weight": cal.child_equiv_weight,
+    }
+    return {
+        "deterministic_daily_wage": {
+            "alpha_o": jnp.asarray(cal.alpha_o),
+            "alpha_x": jnp.asarray(cal.alpha_x),
+            "alpha_xx": jnp.asarray(cal.alpha_xx),
+            "type_ability": jnp.asarray(cal.type_ability),
+            "skill_cap": cal.skill_cap,
+        },
+        "husband_daily_earnings": {
+            "husband_const": cal.husband_const,
+            "husband_age": cal.husband_age,
+            "husband_age2": cal.husband_age2,
+            "husband_occ": jnp.asarray(cal.husband_occ),
+            "husband_high_ability": cal.husband_high_ability,
+        },
+        "equivalence_scale": equiv,
+        "utility": {
+            "crra": cal.crra,
+            "consumption_scale": tax.consumption_scale,
+            "gamma1_pt": cal.gamma1_pt,
+            "gamma1_u": cal.gamma1_u,
+            "gamma1_olf": cal.gamma1_olf,
+            "gamma_nc": cal.gamma_nc,
+            "gamma_nh": cal.gamma_nh,
+            "gamma_u_children": cal.gamma_u_children,
+            "gamma_olf_children": cal.gamma_olf_children,
+            "gamma_agek_olf": jnp.asarray(cal.gamma_agek_olf),
+            "gamma_occ_ft": jnp.asarray(cal.gamma_occ_ft),
+            "gamma_occ_pt": jnp.asarray(cal.gamma_occ_pt),
+            "gamma_agek_pt": jnp.asarray(cal.gamma_agek_pt),
+            "type_leisure": jnp.asarray(cal.type_leisure),
+            "type_child1": jnp.asarray(cal.type_child1),
+            "type_child2": jnp.asarray(cal.type_child2),
+        },
+        "resources_working": {
+            "interest_rate": cal.interest_rate,
+            "days_per_period": cal.days_per_period,
+            "pt_earnings_share": cal.pt_earnings_share,
+            "ssc_rate": tax.ssc_rate,
+            "ssc_ceiling": tax.ssc_ceiling_per_period,
+            "tax_progressivity": tax.tax_progressivity,
+            "tax_level_single": tax.tax_level_single,
+            "tax_level_married": tax.tax_level_married,
+            "ub_no_kids": tax.ub_replacement_no_kids,
+            "ub_with_kids": tax.ub_replacement_with_kids,
+            "erziehungsgeld": tax.erziehungsgeld_per_period,
+            "maternity_replacement": tax.mutterschaftsgeld_replacement,
+            "maternity_periods": tax.mutterschaftsgeld_periods,
+            "kindergeld": jnp.asarray(tax.kindergeld_per_period),
+            "child_support_share": tax.child_support_share,
+            "social_assistance_floor": tax.social_assistance_floor_per_period,
+            "childcare_young": cal.childcare_young,
+            "childcare_old": cal.childcare_old,
+        },
+        "assets_feasible": {"assets_max": cal.grid.assets_max},
+        "next_skills": {
+            "atrophy": jnp.asarray(cal.atrophy),
+            "skills_max": max(cal.grid.skills_nodes),
+        },
+        "next_last_earnings": {
+            "days_per_period": cal.days_per_period,
+            "pt_earnings_share": cal.pt_earnings_share,
+        },
+        "next_family": {
+            "conception_max": cal.conception_max,
+            "conception_age_mid": cal.conception_age_mid,
+            "conception_age_slope": cal.conception_age_slope,
+        },
+        "next_married": {
+            "marriage_cutoffs": jnp.asarray(cal.marriage_age_brackets),
+            "marriage_values": jnp.asarray(cal.marriage_by_age),
+            "marriage_skills": cal.marriage_skills,
+            "marriage_high_fertility": cal.marriage_high_fertility,
+            "divorce_cutoffs": jnp.asarray(cal.divorce_age_brackets),
+            "divorce_values": jnp.asarray(cal.divorce_by_age),
+            "divorce_const": cal.divorce_const,
+            "divorce_n_children": cal.divorce_n_children,
+            "divorce_occ": jnp.asarray(cal.divorce_occ),
+        },
+        "next_opportunity": {
+            "offer_probabilities": jnp.asarray(cal.offer_probabilities())
+        },
+        "resources_retired": {
+            "interest_rate": cal.interest_rate,
+            "pension_replacement": tax.pension_replacement,
+            "days_per_period": cal.days_per_period,
+            "social_assistance_floor": tax.social_assistance_floor_per_period,
+        },
+        "retired_assets_feasible": {"assets_max": cal.grid.assets_max},
+        "utility_retired": {
+            "crra": cal.crra,
+            "consumption_scale": tax.consumption_scale,
+            "gamma1_pt": cal.gamma1_pt,
+            "gamma1_u": cal.gamma1_u,
+            "gamma1_olf": cal.gamma1_olf,
+            "gamma_nc": cal.gamma_nc,
+            "gamma_nh": cal.gamma_nh,
+            "gamma_u_children": cal.gamma_u_children,
+            "gamma_olf_children": cal.gamma_olf_children,
+            "gamma_agek_olf": jnp.asarray(cal.gamma_agek_olf),
+            "gamma_occ_ft": jnp.asarray(cal.gamma_occ_ft),
+            "gamma_occ_pt": jnp.asarray(cal.gamma_occ_pt),
+            "gamma_agek_pt": jnp.asarray(cal.gamma_agek_pt),
+            "type_leisure": jnp.asarray(cal.type_leisure),
+            "type_child1": jnp.asarray(cal.type_child1),
+            "type_child2": jnp.asarray(cal.type_child2),
+            **equiv,
+        },
+    }
+
+
+def create_model(cal: Calibration, *, enable_jit: bool = True) -> Model:
+    """Build the default model used by tests and reports."""
+    cal.validate()
+    common = _common_states(cal)
+    c_grid = LinSpacedGrid(
+        start=1, stop=cal.grid.consumption_max, n_points=cal.grid.n_consumption
+    )
+    working = Regime(
+        states={
+            **common,
+            # Fertility affects working-life births; retired family states are fixed.
+            # Terminal regimes cannot carry a state into a subsequent period.
+            "fecundity": Phased(
+                solve=perceived_fecundity, simulate=DiscreteGrid(Fecundity)
+            ),
+            "skills": IrregSpacedGrid(points=jnp.asarray(cal.grid.skills_nodes)),
+            "l_prev": DiscreteGrid(Labor),
+            "wage_shock": NormalIIDProcess(
+                n_points=cal.grid.n_wage_nodes,
+                gauss_hermite=True,
+                mu=0.0,
+                sigma=cal.sigma_wage,
+            ),
+            "opportunity": DiscreteGrid(Opportunity),
+        },
+        actions={
+            "move": DiscreteGrid(Move),
+            "conceive": DiscreteGrid(Conception),
+            "consumption": c_grid,
+        },
+        functions={
+            "n_children": n_children,
+            "age_youngest": age_youngest,
+            "on_leave": on_leave,
+            "effective_labor": effective_labor,
+            "effective_occupation": effective_occupation,
+            "deterministic_daily_wage": deterministic_daily_wage,
+            "daily_wage": daily_wage,
+            "husband_daily_earnings": husband_daily_earnings,
+            "resources_working": resources_working,
+            "equivalence_scale": equivalence_scale,
+            "post_decision_assets": post_decision_assets,
+            "utility": utility_working,
+        },
+        constraints={
+            "move_feasible": move_feasible,
+            "conception_feasible": conception_feasible,
+            "assets_feasible": assets_feasible,
+        },
+        state_transitions={
+            "assets": next_assets,
+            "skills": next_skills,
+            "family": StochasticTransition(func=next_family_from_fecundity),
+            "fecundity": fixed_transition("fecundity"),
+            "occupation": next_occupation,
+            "married": StochasticTransition(func=next_married),
+            "utype": fixed_transition("utype"),
+            "last_earnings": next_last_earnings,
+            "l_prev": next_l_prev,
+            "opportunity": StochasticTransition(func=next_opportunity),
+        },
+        taste_shocks=ExtremeValueTasteShocks(),
+    )
+    retirement_functions = {
+        "n_children": n_children,
+        "age_youngest": age_youngest,
+        "effective_occupation": identity_occupation,
+        "husband_daily_earnings": husband_daily_earnings,
+        "resources_retired": resources_retired,
+        "equivalence_scale": equivalence_scale,
+        "utility": utility_retired,
+    }
+    retired = Regime(
+        states=common,
+        actions={"consumption": c_grid},
+        functions={
+            **retirement_functions,
+            "post_decision_assets_retired": post_decision_assets_retired,
+        },
+        constraints={"retired_assets_feasible": retired_assets_feasible},
+        state_transitions={
+            "assets": next_assets_retired,
+            "family": fixed_transition("family"),
+            "occupation": fixed_transition("occupation"),
+            "married": fixed_transition("married"),
+            "utype": fixed_transition("utype"),
+            "last_earnings": fixed_transition("last_earnings"),
+        },
+    )
+    terminal = Regime(
+        states=common,
+        actions={"consumption": c_grid},
+        functions=retirement_functions,
+        constraints={"terminal_budget_feasible": terminal_budget_feasible},
+    )
+    fixed = _fixed(cal)
+    working_fixed = {
+        name: fixed[name]
+        for name in (
+            "deterministic_daily_wage",
+            "husband_daily_earnings",
+            "equivalence_scale",
+            "utility",
+            "resources_working",
+            "assets_feasible",
+            "next_skills",
+            "next_last_earnings",
+            "next_family",
+            "next_married",
+            "next_opportunity",
+        )
+    }
+    retirement_fixed = {
+        "husband_daily_earnings": fixed["husband_daily_earnings"],
+        "equivalence_scale": fixed["equivalence_scale"],
+        "utility": fixed["utility_retired"],
+        "resources_retired": fixed["resources_retired"],
+        "retired_assets_feasible": fixed["retired_assets_feasible"],
+    }
+    terminal_fixed = {
+        "husband_daily_earnings": fixed["husband_daily_earnings"],
+        "equivalence_scale": fixed["equivalence_scale"],
+        "utility": fixed["utility_retired"],
+        "resources_retired": fixed["resources_retired"],
+    }
+    return Model(
+        regimes={"working": working, "retired": retired, "terminal": terminal},
+        ages=ages,
+        initial_nodes=((18, "working"),),
+        edges={
+            "working": {
+                "working": AgeRange(exclusive_stop=59.5),
+                "retired": 59.5,
+            },
+            "retired": {
+                "retired": AgeRange(start=60, exclusive_stop=79),
+                "terminal": 79,
+            },
+            "terminal": {},
+        },
+        regime_id_class=RegimeId,
+        fixed_params={
+            "working": working_fixed,
+            "retired": retirement_fixed,
+            "terminal": terminal_fixed,
+        },
+        enable_jit=enable_jit,
+        description="Adda, Dustmann & Stevens (2017) career costs of children.",
+    )

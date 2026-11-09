@@ -4,6 +4,7 @@ import hashlib
 import json
 import struct
 import sys
+from collections.abc import MutableMapping
 
 
 def canonical(value):
@@ -41,7 +42,8 @@ class Writer:
         self.check = check or (lambda: None)
         self.array_type = logical_array_type
         self.records, self.rows, self.memo = [], {}, {}
-        self.payloads, self.blobs, self.content = {}, {}, {}
+        self.payloads: MutableMapping[str, bytes] = {}
+        self.blobs, self.content = {}, {}
         self.watchers, self.active = [], set()
 
     def put(self, data):
@@ -94,7 +96,8 @@ class Writer:
             table['handles'].append(row_id)
             self.memo[key] = (value, ref)
             return ref
-        ref = ['ref', len(self.records)]
+        record_index = len(self.records)
+        ref = ['ref', record_index]
         self.memo[key] = (value, ref)
         self.records.append(None)
         self.active.add(key)
@@ -117,7 +120,7 @@ class Writer:
             body = ['array', self.visit(value.shape), value.dtype, value.order, self.visit(value.data)]
         else:
             raise ValueError('Unsupported structural source type: ' + kind.__qualname__)
-        self.records[ref[1]] = body
+        self.records[record_index] = body
         self.active.remove(key)
         return ref
 

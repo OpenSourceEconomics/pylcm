@@ -32,7 +32,7 @@ def run_corpus(manifest_path, output, *, seconds=900, host_gib=8, reuse_verified
                 record['missing_original_inputs'].append('Missing declared capture: ' + str(source))
             else:
                 raw_hash = hashlib.sha256(source.read_bytes()).hexdigest()
-                command = [sys.executable, '-m', __package__, 'analyze-model', str(source),
+                command = [sys.executable, '-m', __package__ or '_lcm_regime_finder', 'analyze-model', str(source),
                            '--output', str(folder), '--seconds', str(seconds), '--host-gib', str(host_gib)]
                 # Reuse is only for assembling a final index after this exact
                 # CLI already ran. Input and producer/checker identity must match.
@@ -74,7 +74,7 @@ def run_corpus(manifest_path, output, *, seconds=900, host_gib=8, reuse_verified
                          'missing_capture': sum(r['analysis_report'] is None for r in records),
                          'complete_verified': sum(r['status'] == 'COMPLETE' for r in records),
                          'production_complete_verified': sum(r['status'] == 'COMPLETE' and
-                            (r.get('production_metadata') or {}).get('status') in ('production', 'verified') for r in records)},
+                            isinstance(metadata := r.get('production_metadata'), dict) and metadata.get('status') in ('production', 'verified') for r in records)},
               'budget_per_model': {'seconds': seconds, 'host_gib': host_gib},
               'native_execution': 'NOT_RUN',
               'scope': 'Every manifest entry is accounted for. Fixture captures demonstrate declaration handling only; they do not substitute for missing production inputs.'}
