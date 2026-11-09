@@ -7,8 +7,7 @@ from tests.regime_finder.test_model_adapter import snapshot, function
 from tests.regime_finder.test_query_owners import policy_snapshot
 
 def process(name):
-    module='ar1' if 'AR1' in name else 'iid'
-    return {'kind':'dataclass','type':f'_lcm.processes.{module}.{name}',
+    return {'kind':'dataclass','type':f'lcm.processes.{name}',
             'fields':{'n_points':3,'state_conditioned':None,'sigma':1.0,'mu':0.0,'rho':0.8}}
 
 class GraphBuiltinProcessTests(unittest.TestCase):
@@ -54,7 +53,7 @@ class GraphBuiltinProcessTests(unittest.TestCase):
         coordinate=process('NormalIIDProcess')
         coordinate['type']='_lcm.processes.joint_normal_lowering._JointNormalCoordinate'
         coordinate['fields']['group']='income'
-        coordinate['fields']['joint']={'kind':'dataclass','type':'_lcm.processes.joint_normal.JointNormalIIDProcess',
+        coordinate['fields']['joint']={'kind':'dataclass','type':'lcm.processes.JointNormalIIDProcess',
             'fields':{'states':['income','return'],'cov':[[1,.5],[.5,1]],'mean':[0,0]}}
         fields['states']['x']=coordinate;del fields['state_transitions']['x']
         result=self.checked(source)
@@ -98,6 +97,9 @@ class GraphBuiltinProcessTests(unittest.TestCase):
             'solve':process('RouwenhorstAR1Process'),'simulate':process('TauchenAR1Process')}}
         fields['states']['x']=process_grid;del fields['state_transitions']['x']
         result=self.checked(source)
-        for callback in result['analysis']['declarations']['callbacks'].values():
-            if callback.get('original',{}).get('type','').startswith('_lcm.processes.ar1.'):
-                self.assertEqual(callback['arguments'],['x'])
+        expected={'lcm.processes.RouwenhorstAR1Process','lcm.processes.TauchenAR1Process'}
+        callbacks=[callback for callback in result['analysis']['declarations']['callbacks'].values()
+                   if callback.get('original',{}).get('type') in expected]
+        self.assertEqual({callback['original']['type'] for callback in callbacks},expected)
+        for callback in callbacks:
+            self.assertEqual(callback['arguments'],['x'])
