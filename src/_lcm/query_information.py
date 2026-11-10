@@ -31,7 +31,7 @@ from _lcm.policy_queries import (
     QueryNode,
     StayTable,
 )
-from _lcm.probability import is_represented_zero
+from _lcm.probability import exact_product, is_represented_zero
 from _lcm.shock_registry import ShockBinding
 from _lcm.typing import PytreeValue, QAndFKwargs
 from _lcm.utils.counts import sum_counts
@@ -324,6 +324,93 @@ def _pinned_rows(
         (representatives[:, None] * extra + offsets).ravel(),
         (gather.ravel()[:, None] * extra + offsets).ravel(),
     )
+
+
+# A shock group's rows of a query's factor stack and, when the group is pinned,
+# one support row per node of the group.
+type _FactorColumn = tuple[np.ndarray, np.ndarray | None]
+
+
+def representative_columns(
+    *, name: str, definitions: Mapping[str, QueryNode]
+) -> tuple[_FactorColumn, ...] | None:
+    """The factor layout that lets `name` weight its representatives alone.
+
+    A group contributes its node weights and one factor per categorical shock, in
+    plan order. A pinned group's support rows hold every other group at its first
+    node, so they list the group's nodes once each. None keeps every row: the
+    query has no pinned group, or it crosses its rows with observation axes.
+    """
+    node = definitions[name]
+    plan = node.context.current_iid_plans.get(node.read.period)
+    pinned = _pinned_columns(name=name, definitions=definitions)
+    # ponytail: a query with observation axes weights every row; give those
+    # axes their own factor layout if such a query's rows ever dominate.
+    if plan is None or not pinned or node.observation_sources:
+        return None
+    sizes = tuple(nodes.weights.size for _, _, nodes in plan.bindings)
+    columns = []
+    first = 0
+    for column, (_, binding, _) in enumerate(plan.bindings):
+        count = 1 + sum(
+            isinstance(law, Discrete) for law in binding.group.shocks.values()
+        )
+        stride = math.prod(sizes[column + 1 :])
+        columns.append(
+            (
+                np.arange(first, first + count),
+                np.arange(sizes[column]) * stride if column in pinned else None,
+            )
+        )
+        first += count
+    return tuple(columns)
+
+
+def representative_factors(
+    *,
+    factors: FloatND,
+    columns: tuple[_FactorColumn, ...],
+    representatives: IntND,
+) -> tuple[FloatND, IntND]:
+    """Factors of each representative row and the number of present rows it stands for.
+
+    The rows a representative stands for cross every node of the pinned groups
+    and share its answer, so their weighted terms sum to the answer times the
+    product, over the pinned groups, of the group's mass: the sum over its nodes
+    of the exact product of the node's factors. Each mass enters as one factor,
+    with no normalization. A row is present when none of its factors is a
+    represented zero.
+
+    Args:
+        factors: One row per factor of the query's shock groups, over all rows.
+        columns: The layout from `representative_columns`.
+        representatives: The representative rows.
+
+    Returns:
+        The factors over the representatives, a pinned group reduced to its mass,
+        and each representative's count of present rows.
+
+    """
+    if factors.shape[0] != sum(rows.size for rows, _ in columns):
+        msg = (
+            f"The factor stack has {factors.shape[0]} rows; the shock groups "
+            f"declare {sum(rows.size for rows, _ in columns)}."
+        )
+        raise RegimeInitializationError(msg)
+    terms = []
+    copies = jnp.ones(representatives.shape, jnp.int32)
+    for rows, nodes in columns:
+        if nodes is None:
+            kept = factors[rows][:, representatives]
+            terms.extend(kept)
+            copies *= jnp.all(~is_represented_zero(kept), axis=0)
+        else:
+            group = factors[rows][:, nodes]
+            terms.append(
+                jnp.broadcast_to(jnp.sum(exact_product(group)), representatives.shape)
+            )
+            copies *= sum_counts(counts=jnp.all(~is_represented_zero(group), axis=0))
+    return jnp.stack(terms), copies
 
 
 # A shock of one query's information frame, named by the query's key.
@@ -928,7 +1015,7 @@ class InformationQueryCell:
     def _map_own(
         self, *, point: Callable[[IntND, IntND], PolicyAnswer]
     ) -> PolicyAnswer:
-        """Evaluate each distinct own row once and spread it over its copies."""
+        """Evaluate each distinct own row once: one answer per representative."""
         from _lcm.policy_queries import map_lanes  # noqa: PLC0415
 
         pinned = self._pinned(name=self.name)
@@ -941,13 +1028,12 @@ class InformationQueryCell:
                 operands=positions,
                 batch_size=self.row_batch,
             )
-        representatives, gather = pinned
-        answers = map_lanes(
+        representatives = pinned[0]
+        return map_lanes(
             function=lambda position: point(representatives[position], position),
             operands=positions,
             batch_size=self.row_batch,
         )
-        return jax.tree.map(lambda leaf: leaf[gather], answers)
 
     def _map_ancestor(
         self,
@@ -1626,20 +1712,40 @@ class InformationQueryCell:
                 )
 
             answers = self._map_own(point=point)
+            pinned = self._pinned(name=self.name)
+            columns = (
+                None
+                if pinned is None
+                else representative_columns(
+                    name=self.name, definitions=self.definitions
+                )
+            )
+            if pinned is not None and columns is None:
+                answers = jax.tree.map(lambda leaf: leaf[pinned[1]], answers)
             values, actions, support, valid, landings = answers
+            if pinned is None or columns is None:
+                copies = jnp.all(~is_represented_zero(factors), axis=0).astype(
+                    jnp.int32
+                )
+            else:
+                factors, copies = representative_factors(
+                    factors=factors, columns=columns, representatives=pinned[0]
+                )
+                actions = actions[pinned[1]]
             expanded = jnp.broadcast_to(
                 factors.reshape((*factors.shape, *((1,) * (values.ndim - 1)))),
                 (factors.shape[0], *values.shape),
             )
-            present = jnp.all(~is_represented_zero(factors), axis=0)
             return (
                 jnp.sum(
                     factored_weighted_term(factors=expanded, values=values), axis=0
                 ),
                 actions,
-                jnp.all(~present | support),
+                jnp.all((copies == 0) | support),
                 jnp.all(frame.valid) & jnp.all(valid),
-                sum_counts(counts=jnp.where(present[:, None], landings, 0), axis=0),
+                sum_counts(
+                    counts=_scaled_counts(counts=landings, copies=copies), axis=0
+                ),
             )
 
         absent = vary_carry_like_body(
