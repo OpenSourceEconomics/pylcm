@@ -820,3 +820,64 @@ def test_a_continuation_reading_an_observed_shock_runs_once_per_class(
         "single_f": (3 + 6 + 18) * 2,
         "single_m": (3 + 6 + 18) * 2,
     }
+
+
+def _weighted_rows(
+    *, model: Model, monkeypatch: pytest.MonkeyPatch
+) -> dict[tuple[str, str, str], int]:
+    """Rows each (root, kind, target) query weights by its own shock factors.
+
+    A query forms one weighted term per row it passes to the weighting, in every
+    lane it runs in.
+    """
+    rows: dict[tuple[str, str, str], int] = {}
+    keys: list[tuple[str, str, str]] = []
+    call_cell = query_information.InformationQueryCell.__call__
+    weighted_term = query_information.factored_weighted_term
+
+    # keyword-only-exempt: primary-argument=self
+    def cell(
+        self: query_information.InformationQueryCell,
+        *,
+        live: BoolND,
+        source: query_information.SourceStates,
+        dependencies: query_information.Dependencies,
+    ) -> policy_queries.PolicyAnswer:
+        root = next(
+            node.read.target for node in self.definitions.values() if not node.ancestors
+        )
+        keys.append((root, self.node.read.kind.name, self.node.read.target))
+        try:
+            return call_cell(self, live=live, source=source, dependencies=dependencies)
+        finally:
+            keys.pop()
+
+    def counted_term(*, factors: FloatND, values: FloatND) -> FloatND:
+        rows[keys[-1]] = values.shape[0]
+        return weighted_term(factors=factors, values=values)
+
+    monkeypatch.setattr(query_information.InformationQueryCell, "__call__", cell)
+    monkeypatch.setattr(query_information, "factored_weighted_term", counted_term)
+    _solve(model)
+    return rows
+
+
+@pytest.mark.parametrize("n_match", [2, 3])
+def test_a_query_weights_one_term_per_representative_of_its_rows(
+    *, n_match: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A query's rows that differ only in shocks its caller observes hold one answer.
+
+    Each single observes all three couple shocks, so the couple below it has one
+    representative row whatever the wage and match supports; it weights that one
+    answer by the mass of the rows it stands for. The counterparty's wage is
+    observed and its taste is not, so it keeps its 3 taste rows. The single's own
+    stay benchmark repeats the caller's row.
+    """
+    rows = _weighted_rows(model=_model(n_match=n_match), monkeypatch=monkeypatch)
+    assert {key[1:]: count for key, count in rows.items() if key[0] == "single_f"} == {
+        ("FULL", "single_f"): 144 * n_match // 2,
+        ("PARTICIPATING", "couple"): 1,
+        ("RAW", "single_f"): 1,
+        ("RAW", "single_m"): 3,
+    }
