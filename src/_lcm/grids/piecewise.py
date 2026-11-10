@@ -5,7 +5,6 @@ this module validates and caches their segments and builds their nodes and
 coordinates.
 """
 
-import operator
 from typing import TYPE_CHECKING, Any
 
 import jax.numpy as jnp
@@ -143,27 +142,16 @@ def _init_piecewise_grid(
 def _integer_point_counts(
     *, points_per_segment: PiecewisePointCounts
 ) -> tuple[int, ...]:
-    """Return exact Python integer counts, refusing lossy numeric coercion."""
-    counts: list[int] = []
-    errors: list[str] = []
-    for index, value in enumerate(points_per_segment):
-        if isinstance(value, bool):
-            errors.append(
-                f"points_per_segment[{index}] must be an integer >= 2, but is bool"
-            )
-            continue
-        try:
-            count = operator.index(value)
-        except TypeError:
-            errors.append(
-                f"points_per_segment[{index}] must be an integer >= 2, but is "
-                f"{type(value).__name__}"
-            )
-            continue
-        counts.append(count)
+    """Return the counts, refusing anything but a Python integer."""
+    errors = [
+        f"points_per_segment[{index}] must be a Python integer >= 2, but is "
+        f"{type(value).__name__}"
+        for index, value in enumerate(points_per_segment)
+        if isinstance(value, bool) or not isinstance(value, int)
+    ]
     if errors:
         raise GridInitializationError(format_messages(errors))
-    return tuple(counts)
+    return tuple(points_per_segment)
 
 
 _MIN_POINTS_PER_SEGMENT = 2
