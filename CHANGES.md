@@ -76,7 +76,13 @@ chronological order. We follow [semantic versioning](https://semver.org/).
     weights and outputs, exit utility adjustments and borrowing bounds return a number.
     A Boolean is refused.
 - A discrete law's code keeps a width wider than `int32` until the off-grid check, so
-  `2**32 + 1` is reported as off the grid rather than wrapped onto a valid code.
+  `2**32 + 1` is reported as off the grid rather than wrapped onto a valid code. At
+  single precision there is no 64-bit integer array, so a NumPy `int64` code that
+  `int32` cannot hold is refused with `InvalidFunctionOutputError`.
+- A `ByAge` or per-period law is checked case by case, each by the role of the function
+  that wrote it, before the cases are combined.
+- A parameter read by an edge law takes its numeric role from the laws that are live at
+  some age; a declaration no age uses does not change it.
 - See [What a function returns](docs/reference/model_and_regime.md#api-function-returns).
 
 ### Grid bounds and counts are host numbers
