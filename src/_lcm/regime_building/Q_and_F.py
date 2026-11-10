@@ -144,7 +144,9 @@ class EvaluatedUtilitiesAndF(NamedTuple):
     """One scalar record per model-owned declaration, independently of F."""
 
 
-def _canonical_utilities_and_F(raw: RawUtilitiesAndF) -> UtilitiesAndF:
+def _canonical_utilities_and_F(
+    *, raw: RawUtilitiesAndF, utility_names: Sequence[str]
+) -> UtilitiesAndF:
     """Convert the user's felicities to the canonical float dtype.
 
     This is where the engine receives the user's flow outputs, so a felicity may
@@ -154,7 +156,10 @@ def _canonical_utilities_and_F(raw: RawUtilitiesAndF) -> UtilitiesAndF:
     """
     *utilities, F = raw
     return (
-        *(as_canonical_float(value) for value in utilities),
+        *(
+            as_canonical_float(value=value, source=f"Utility '{name}'")
+            for name, value in zip(utility_names, utilities, strict=True)
+        ),
         cast("BoolND", F),
     )
 
@@ -170,6 +175,8 @@ class _CanonicalUtilitiesAndF:
 
     function: Callable[..., RawUtilitiesAndF]
     """The concatenated felicity and feasibility DAG."""
+    utility_names: tuple[str, ...]
+    """The felicity targets, in output order."""
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "__signature__", inspect.signature(self.function))
@@ -178,7 +185,9 @@ class _CanonicalUtilitiesAndF:
 
     @no_type_check
     def __call__(self, **kwargs: QAndFArg) -> UtilitiesAndF:
-        return _canonical_utilities_and_F(self.function(**kwargs))
+        return _canonical_utilities_and_F(
+            raw=self.function(**kwargs), utility_names=self.utility_names
+        )
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)
@@ -232,7 +241,8 @@ class _BoundUtilitiesAndF:
             )
         return EvaluatedUtilitiesAndF(
             utilities_and_F=_canonical_utilities_and_F(
-                (*tuple(values[name] for name in self.utility_names), F)
+                raw=(*tuple(values[name] for name in self.utility_names), F),
+                utility_names=self.utility_names,
             ),
             bound_status=tuple(statuses),
         )
@@ -1839,9 +1849,10 @@ class _SamePeriodReferenceReader:
                 if isinstance(discrete.get(state), DiscreteGrid)
                 else as_canonical_float
             )(
-                self.projection_funcs[state](
+                value=self.projection_funcs[state](
                     **{arg: kwargs[arg] for arg in self.projection_args[state]}
-                )
+                ),
+                source=f"The projection onto '{self.ref.regime}' state '{state}'",
             )
             for state in self.v_interpolation_info.state_names
         }
@@ -2441,7 +2452,13 @@ def _apply_value_constraints(
                 predicate_kwargs[arg] = reference_values[arg]
             else:
                 predicate_kwargs[arg] = states_actions_params[arg]
-        F_arr = jnp.logical_and(F_arr, evaluate(**predicate_kwargs))
+        F_arr = jnp.logical_and(
+            F_arr,
+            as_bool(
+                value=evaluate(**predicate_kwargs),
+                source=f"Value-dependent constraint '{constraint_name}'",
+            ),
+        )
     return F_arr
 
 
@@ -5948,7 +5965,8 @@ def _get_U_and_F(
             targets=[*utility_names, "feasibility"],
             enforce_signature=False,
             set_annotations=True,
-        )
+        ),
+        utility_names=tuple(utility_names),
     )
 
 
@@ -6035,9 +6053,9 @@ def _get_feasibility(
 class _CanonicalFeasibility:
     """The combined constraint DAG, returning a JAX Boolean mask.
 
-    A user constraint may return `True` or a non-Boolean array; the engine reads
-    it by truthiness. A frozen callable instance rather than a nested function,
-    for the reason `_CanonicalUtilitiesAndF` gives.
+    Each user constraint is already checked to return a Boolean where it is
+    materialized; this pins the combined mask's kind. A frozen callable instance
+    rather than a nested function, for the reason `_CanonicalUtilitiesAndF` gives.
     """
 
     function: Callable[..., BoolND | bool]
@@ -6050,7 +6068,7 @@ class _CanonicalFeasibility:
 
     @no_type_check
     def __call__(self, **kwargs: QAndFArg) -> BoolND:
-        return as_bool(self.function(**kwargs))
+        return as_bool(value=self.function(**kwargs), source="The combined constraints")
 
 
 def _always_feasible() -> BoolND:

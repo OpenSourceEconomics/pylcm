@@ -69,17 +69,16 @@ class ScalarFloor:
 
     @no_type_check
     def __call__(self, *args: FloatND, **kwargs: FloatND) -> FloatND:
-        value = jnp.asarray(self.function(*args, **kwargs))
-        if value.ndim != 0 or not (
-            jnp.issubdtype(value.dtype, jnp.floating)
-            or jnp.issubdtype(value.dtype, jnp.integer)
-        ):
+        value = as_canonical_float(
+            value=self.function(*args, **kwargs),
+            source=f"Borrowing bound '{self.constraint_name}'",
+        )
+        if value.ndim != 0:
             raise ModelInitializationError(
-                f"Borrowing bound '{self.constraint_name}' must return a real "
-                f"integer or floating scalar; "
-                f"got shape {value.shape}, dtype {value.dtype}."
+                f"Borrowing bound '{self.constraint_name}' must return a scalar; "
+                f"got shape {value.shape}."
             )
-        return as_canonical_float(value)
+        return value
 
 
 @dataclass(frozen=True, kw_only=True)

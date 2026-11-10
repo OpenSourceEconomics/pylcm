@@ -281,7 +281,9 @@ class CanonicalFelicity:
 
     @no_type_check
     def __call__(self, *args: EconFunctionArg, **kwargs: EconFunctionArg) -> FloatND:
-        return as_canonical_float(self.function(*args, **kwargs))
+        return as_canonical_float(
+            value=self.function(*args, **kwargs), source="The utility function"
+        )
 
 
 def _elementwise(

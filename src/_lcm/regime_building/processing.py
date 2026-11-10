@@ -45,7 +45,7 @@ from _lcm.continuation import (
     FiniteOuterQuerySpec,
 )
 from _lcm.current_iid import CurrentIIDDrawPlan, CurrentIIDPlan
-from _lcm.dtypes import as_canonical_float, as_code, canonical_float_dtype
+from _lcm.dtypes import as_canonical_float, as_code, canonical_float_dtype, name_of
 from _lcm.egm.budget import (
     DCEGM_BUDGET_CONSTRAINT_NAME,
     INTRINSIC_BUDGET_SOLVERS,
@@ -9942,7 +9942,10 @@ class _OutputInRole:
     @no_type_check
     def __call__(self, *args: EconFunctionArg, **kwargs: EconFunctionArg) -> ValueND:
         value = self.func(*args, **kwargs)
-        return as_code(value) if self.code else as_canonical_float(value)
+        source = f"Law '{name_of(self.func)}'"
+        if self.code:
+            return as_code(value=value, source=source)
+        return as_canonical_float(value=value, source=source)
 
 
 @dataclass(frozen=True, eq=False, kw_only=True)

@@ -131,6 +131,15 @@ class InvalidAdditionalTargetsError(PyLCMError):
     """Raised when the additional targets are invalid."""
 
 
+class InvalidFunctionOutputError(PyLCMError):
+    """Raised when a user function returns a value of the wrong kind.
+
+    A predicate (constraint, gate, participation or exit availability) returns a
+    Boolean, a discrete state's law an integer code, and a utility, continuous
+    law or probability a number. Only the returned dtype is checked.
+    """
+
+
 class ModelInitializationError(PyLCMError):
     """Raised when there is an error in the model initialization."""
 

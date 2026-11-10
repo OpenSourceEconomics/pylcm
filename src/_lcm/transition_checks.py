@@ -56,7 +56,7 @@ from _lcm.current_iid import (
     CurrentIIDPlan,
     NodeOperands,
 )
-from _lcm.dtypes import as_canonical_float
+from _lcm.dtypes import as_canonical_float, name_of
 from _lcm.engine import (
     Regime,
     SimulationPhase,
@@ -4027,14 +4027,20 @@ def _state_probability_law(
     solve and simulation do through `StochasticTransition`.
     """
     if not grid_names:
-        return as_canonical_float(func(**scalar_kwargs))
+        return as_canonical_float(value=func(**scalar_kwargs), source=_law_source(func))
     mesh = jnp.meshgrid(*(grid_args[name] for name in grid_names), indexing="ij")
     flat_arrays = tuple(array.ravel() for array in mesh)
     return as_canonical_float(
-        jax.vmap(
+        value=jax.vmap(
             _GridPointCall(names=grid_names, scalar_kwargs=scalar_kwargs, func=func)
-        )(*flat_arrays)
+        )(*flat_arrays),
+        source=_law_source(func),
     )
+
+
+def _law_source(func: Callable[..., FloatND]) -> str:
+    """Name a stochastic state law in an output-kind error."""
+    return f"Stochastic transition '{name_of(func)}'"
 
 
 def _abstract_transition_operand(

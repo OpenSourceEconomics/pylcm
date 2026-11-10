@@ -551,12 +551,15 @@ class OriginalExitDecision:
                     if helper is None
                     else jax.lax.cond(
                         selected,
-                        lambda helper=helper, operands=operands: as_canonical_float(
-                            helper(
-                                **{
-                                    name: operands[name]
-                                    for name in signature(helper).parameters
-                                }
+                        lambda helper=helper, operands=operands, member=member: (
+                            as_canonical_float(
+                                value=helper(
+                                    **{
+                                        name: operands[name]
+                                        for name in signature(helper).parameters
+                                    }
+                                ),
+                                source=f"Exit utility adjustment of '{member}'",
                             )
                         ),
                         lambda: jnp.asarray(0.0),

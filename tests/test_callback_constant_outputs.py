@@ -41,7 +41,7 @@ from lcm import (
     ref,
 )
 from lcm.collective import CollectiveUtility, ValueDependentConstraint
-from lcm.exceptions import InvalidValueFunctionError
+from lcm.exceptions import InvalidFunctionOutputError, InvalidValueFunctionError
 from lcm.regime import StateTransitionEntry
 from lcm.shocks import Discrete, GaussHermite, Normal, Product, ShockGroup
 from lcm.transition import TransitionLaw
@@ -83,7 +83,9 @@ class Health:
 
 
 _GRID = IrregSpacedGrid(points=jnp.asarray([1.0, 2.0]))
-_FORMS = ("python_int", "python_float", "python_bool", "int_array", "float_array")
+# A float role takes a number; a predicate a Boolean (see `_lcm.dtypes`).
+_NUMBER_FORMS = ("python_int", "python_float", "int_array", "float_array")
+_BOOLEAN_FORMS = ("python_bool", "bool_array")
 
 
 def _constant(*, form: str, value: int) -> UserFunctionResult:
@@ -96,6 +98,8 @@ def _constant(*, form: str, value: int) -> UserFunctionResult:
         return bool(value)
     if form == "int_array":
         return jnp.asarray(value, dtype=jnp.int32)
+    if form == "bool_array":
+        return jnp.asarray(bool(value))
     return jnp.asarray(float(value))
 
 
@@ -165,14 +169,12 @@ def _simulated(model: Model) -> pd.DataFrame:
 
 
 @pytest.mark.parametrize("value", [-1, 0, 1])
-@pytest.mark.parametrize("form", _FORMS)
+@pytest.mark.parametrize("form", _NUMBER_FORMS)
 @pytest.mark.parametrize("enable_jit", [False, True])
 def test_constant_felicity_solves_to_its_literal_sum(
     *, value: int, form: str, enable_jit: bool
 ) -> None:
     """A constant felicity `c` gives terminal value `c` and earlier value `2c`."""
-    if form == "python_bool" and value == -1:
-        pytest.skip("A Boolean spells only 0 and 1.")
     raw = _constant(form=form, value=value)
 
     def utility(*, wealth: ContinuousState) -> FloatND:  # noqa: ARG001
@@ -184,7 +186,7 @@ def test_constant_felicity_solves_to_its_literal_sum(
     _assert_values(model=model, alive=np.full(2, 2.0 * value), final=np.full(2, value))
 
 
-@pytest.mark.parametrize("form", _FORMS)
+@pytest.mark.parametrize("form", _NUMBER_FORMS)
 def test_constant_felicity_simulates_like_its_array_twin(*, form: str) -> None:
     """Simulated values of a constant felicity equal those of its array twin."""
     raw = _constant(form=form, value=1)
@@ -261,13 +263,13 @@ def test_nan_diagnostics_read_a_constant_felicity() -> None:
     assert fractions["Q_nan_fraction"]["overall"] == 1.0
 
 
-@pytest.mark.parametrize("form", ["python_bool", "python_int", "bool_array"])
+@pytest.mark.parametrize("form", _BOOLEAN_FORMS)
 @pytest.mark.parametrize("enable_jit", [False, True])
 def test_constant_constraint_admits_every_action(
     *, form: str, enable_jit: bool
 ) -> None:
     """A constraint returning `True` leaves the unconstrained values unchanged."""
-    raw = jnp.asarray(a=True) if form == "bool_array" else _constant(form=form, value=1)
+    raw = _constant(form=form, value=1)
 
     def allowed() -> BoolND:
         return raw  # ty: ignore[invalid-return-type]
@@ -282,7 +284,7 @@ def test_constant_constraint_admits_every_action(
     np.testing.assert_array_equal(df["value"], [1.0, 1.0, 2.0, 2.0])
 
 
-@pytest.mark.parametrize("form", _FORMS)
+@pytest.mark.parametrize("form", _NUMBER_FORMS)
 def test_constant_continuous_next_state_lands_on_its_float_node(*, form: str) -> None:
     """`next_wealth = 1` moves every subject to the float node `1.0`."""
     raw = _constant(form=form, value=1)
@@ -388,7 +390,7 @@ _BRANCH_PARAMS = {
 }
 
 
-@pytest.mark.parametrize("form", _FORMS)
+@pytest.mark.parametrize("form", _NUMBER_FORMS)
 def test_constant_per_target_regime_probability(*, form: str) -> None:
     """Per-target probabilities `1` and `0` put all mass on the final regime."""
     one = _constant(form=form, value=1)
@@ -503,7 +505,7 @@ def _exit_model(
     )
 
 
-@pytest.mark.parametrize("form", _FORMS)
+@pytest.mark.parametrize("form", _NUMBER_FORMS)
 def test_constant_exit_utility_adjustment(*, form: str) -> None:
     """A zero adjustment leaves the outside option at the target's value."""
     raw = _constant(form=form, value=0)
@@ -629,19 +631,13 @@ def _no_adjustment() -> FloatND:
 
 
 @pytest.mark.parametrize("value", [0, 1])
-@pytest.mark.parametrize(
-    "form", ["python_int", "python_bool", "int_array", "bool_array"]
-)
+@pytest.mark.parametrize("form", _BOOLEAN_FORMS)
 @pytest.mark.parametrize("reads_state", [False, True])
 def test_constant_exit_availability(
     *, value: int, form: str, reads_state: bool
 ) -> None:
-    """Availability `1` or `0` opens or closes the exit like `True` or `False`."""
-    raw = (
-        jnp.asarray(bool(value))
-        if form == "bool_array"
-        else _constant(form=form, value=value)
-    )
+    """Availability `True` or `False` opens or closes the exit."""
+    raw = _constant(form=form, value=value)
 
     def constant() -> BoolND:
         return raw  # ty: ignore[invalid-return-type]
@@ -656,14 +652,18 @@ def test_constant_exit_availability(
     np.testing.assert_array_equal(values, [1.0, 1.0, 2.0] if value else [1.0] * 3)
 
 
-def test_floating_exit_availability_is_refused() -> None:
-    """A floating availability is not a 0/1 spelling and stays refused."""
+@pytest.mark.parametrize("form", ["python_int", "int_array", "float_array"])
+def test_numeric_exit_availability_is_refused(*, form: str) -> None:
+    """An availability `1` is a number, not a Boolean, and is refused."""
+    raw = _constant(form=form, value=1)
 
-    def availability(*, wealth: FloatND) -> FloatND:
-        return wealth - 0.5
+    def availability(*, wealth: FloatND) -> BoolND:  # noqa: ARG001
+        return raw  # ty: ignore[invalid-return-type]
 
     model = _exit_model(adjustment=_no_adjustment, available=availability)
-    with pytest.raises(ValueError, match="scalar Boolean or integer"):
+    with pytest.raises(
+        InvalidFunctionOutputError, match=r"^Exit availability returned dtype"
+    ):
         model.solve(params={}, log_level="off")
 
 
@@ -748,9 +748,9 @@ _GATE_KINDS = pytest.mark.parametrize("gated", [False, True], ids=["check", "gat
 
 @_GATE_KINDS
 @pytest.mark.parametrize("value", [0, 1])
-@pytest.mark.parametrize("form", ["python_int", "python_bool", "int_array"])
+@pytest.mark.parametrize("form", _BOOLEAN_FORMS)
 def test_constant_landing_predicate(*, gated: bool, value: int, form: str) -> None:
-    """A gate or participation predicate `1` or `0` admits or diverts like a Boolean."""
+    """A gate or participation predicate `True` or `False` admits or diverts."""
     raw = _constant(form=form, value=value)
 
     def predicate() -> BoolND:
@@ -813,9 +813,9 @@ def _nbegm_model(
     )
 
 
-@pytest.mark.parametrize("form", ["python_bool", "python_int", "int_array"])
+@pytest.mark.parametrize("form", _BOOLEAN_FORMS)
 def test_constant_constraint_under_endogenous_grids(*, form: str) -> None:
-    """An NBEGM predicate returning `1` admits every action like `True`."""
+    """An NBEGM predicate returning `True` admits every action."""
     raw = _constant(form=form, value=1)
 
     def allowed(*, liquid: ContinuousState) -> BoolND:  # noqa: ARG001
@@ -906,7 +906,7 @@ def _joint_landings(model: Model) -> pd.DataFrame:
     return frame[frame["regime_name"] == "target"]
 
 
-@pytest.mark.parametrize("form", _FORMS)
+@pytest.mark.parametrize("form", _NUMBER_FORMS)
 def test_constant_joint_transition_output(*, form: str) -> None:
     """A joint output `1` lands every subject on wealth 1.0."""
     raw = _constant(form=form, value=1)
@@ -996,9 +996,9 @@ def test_constant_current_iid_law_parameters(*, form: str) -> None:
     np.testing.assert_array_equal(np.asarray(values), 1.0)
 
 
-@pytest.mark.parametrize("form", ["python_bool", "python_int", "int_array"])
+@pytest.mark.parametrize("form", _BOOLEAN_FORMS)
 def test_constant_value_dependent_constraint(*, form: str) -> None:
-    """A value-dependent predicate `1` admits every cell like `True`."""
+    """A value-dependent predicate `True` admits every cell."""
     raw = _constant(form=form, value=1)
 
     def participation(*, Q_f: FloatND) -> BoolND:  # noqa: ARG001
@@ -1025,3 +1025,120 @@ def test_constant_value_dependent_constraint(*, form: str) -> None:
     np.testing.assert_allclose(
         values[0]["couple"], STATELESS_TARGET_V_PERIOD_0, rtol=1e-6
     )
+
+
+# What each role refuses: a predicate refuses numbers, a discrete code refuses
+# floats and a float role refuses Booleans. Only the returned dtype is checked.
+
+
+@pytest.mark.parametrize("form", _BOOLEAN_FORMS)
+def test_boolean_felicity_is_refused(*, form: str) -> None:
+    """A Boolean utility is a comparison returned in place of its consequence."""
+    raw = _constant(form=form, value=1)
+
+    def utility(*, wealth: ContinuousState) -> FloatND:  # noqa: ARG001
+        return raw  # ty: ignore[invalid-return-type]
+
+    model = _two_period_model(final_utility=utility)
+    with pytest.raises(
+        InvalidFunctionOutputError, match=r"^Utility 'utility' returned dtype 'bool'"
+    ):
+        model.solve(params=_PARAMS, log_level="off")
+
+
+@pytest.mark.parametrize("form", _BOOLEAN_FORMS)
+def test_boolean_continuous_next_state_is_refused(*, form: str) -> None:
+    """A continuous state's law returns a number, never a Boolean."""
+    raw = _constant(form=form, value=1)
+
+    def next_wealth(*, wealth: ContinuousState) -> ContinuousState:  # noqa: ARG001
+        return raw  # ty: ignore[invalid-return-type]
+
+    model = _two_period_model(next_wealth=next_wealth)
+    with pytest.raises(
+        InvalidFunctionOutputError, match="returned dtype 'bool', but must return a"
+    ):
+        model.solve(params=_PARAMS, log_level="off")
+
+
+@pytest.mark.parametrize("form", _BOOLEAN_FORMS)
+def test_boolean_regime_probability_is_refused(*, form: str) -> None:
+    """A probability `True` is refused rather than read as 1.0."""
+    one = _constant(form=form, value=1)
+
+    def to_final() -> FloatND:
+        return one  # ty: ignore[invalid-return-type]
+
+    def to_other() -> FloatND:
+        return jnp.asarray(0.0)
+
+    model = _regime_model(
+        law={
+            "final": StochasticTransition(func=to_final),
+            "other": StochasticTransition(func=to_other),
+        }
+    )
+    with pytest.raises(
+        InvalidFunctionOutputError,
+        match=r"^Stochastic transition 'to_final' returned dtype 'bool'",
+    ):
+        model.solve(params=_BRANCH_PARAMS, log_level="off")
+
+
+@pytest.mark.parametrize("form", ["python_int", "python_float", "int_array"])
+def test_numeric_constraint_is_refused(*, form: str) -> None:
+    """A constraint `1` is a number, not a Boolean, and is refused."""
+    raw = _constant(form=form, value=1)
+
+    def allowed() -> BoolND:
+        return raw  # ty: ignore[invalid-return-type]
+
+    model = _two_period_model(constraints={"allowed": allowed})
+    with pytest.raises(
+        InvalidFunctionOutputError, match=r"^Constraint 'allowed' returned dtype"
+    ):
+        model.solve(params=_PARAMS, log_level="off")
+
+
+@_GATE_KINDS
+@pytest.mark.parametrize("form", ["python_int", "int_array"])
+def test_numeric_landing_predicate_is_refused(*, gated: bool, form: str) -> None:
+    """A gate or participation predicate `1` is refused rather than read as true."""
+    raw = _constant(form=form, value=1)
+
+    def predicate() -> BoolND:
+        return raw  # ty: ignore[invalid-return-type]
+
+    model = _gate_model(predicate=predicate, gated=gated)
+    with pytest.raises(
+        InvalidFunctionOutputError,
+        match=r"returned dtype 'int(32|64)', but must return a Boolean",
+    ):
+        _gated_values(model)
+
+
+@pytest.mark.parametrize("form", ["python_float", "float_array"])
+def test_float_discrete_next_state_is_refused(*, form: str) -> None:
+    """A float code would be truncated onto a code, so it is refused."""
+    raw = _constant(form=form, value=int(Health.good))
+
+    def next_health() -> DiscreteState:
+        return raw  # ty: ignore[invalid-return-type]
+
+    model = _health_model(health_law=next_health)
+    with pytest.raises(
+        InvalidFunctionOutputError, match="but must return an integer code"
+    ):
+        model.solve(params=_PARAMS, log_level="off")
+
+
+def test_boolean_discrete_next_state_names_codes_zero_and_one() -> None:
+    """`next_health = True` names the code 1, `Health.good`."""
+
+    def next_health() -> DiscreteState:
+        return True  # ty: ignore[invalid-return-type]
+
+    values = _health_model(health_law=next_health).solve(
+        params=_PARAMS, log_level="off"
+    )
+    np.testing.assert_array_equal(values.values[0]["alive"], [1.0, 1.0])

@@ -18,7 +18,7 @@ from dags import concatenate_functions, get_annotations
 from dags.annotations import ensure_annotations_are_strings
 
 from _lcm.constraints.processed import ProcessedConstraint
-from _lcm.dtypes import as_bool
+from _lcm.dtypes import as_bool, name_of
 from _lcm.typing import ConstraintFunction, FunctionName
 from _lcm.utils.functools import get_union_of_args
 from lcm.typing import BoolND, UserFunction, ValueND
@@ -112,7 +112,10 @@ class _BooleanPredicate:
 
     @no_type_check
     def __call__(self, *args: ValueND, **kwargs: ValueND) -> BoolND:
-        return as_bool(self.function(*args, **kwargs))
+        return as_bool(
+            value=self.function(*args, **kwargs),
+            source=f"Constraint '{name_of(self.function)}'",
+        )
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)

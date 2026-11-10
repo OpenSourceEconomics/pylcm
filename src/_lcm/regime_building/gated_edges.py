@@ -86,7 +86,7 @@ from _lcm.typing import (
     TransitionFunctionName,
 )
 from _lcm.utils.functools import get_union_of_args
-from lcm.exceptions import ModelInitializationError, RegimeInitializationError
+from lcm.exceptions import ModelInitializationError
 from lcm.typing import (
     BoolND,
     FloatND,
@@ -854,12 +854,10 @@ def _as_boolean_gate(
     """Return the gate output as a Boolean array, or reject its dtype.
 
     A gate selects a branch with a strict `jnp.where`, where every nonzero
-    value counts as true. A floating gate would therefore open the edge for
-    every cell instead of expressing a probability or failing, changing both
-    the solved continuation and the simulated route with no diagnostic. The
-    return annotation cannot constrain what a user function returns, so the
-    realized dtype is checked here, at each of the two places a gate is
-    evaluated. An integer gate spells `1` and `0` and is converted.
+    value counts as true, so an integer or floating gate would open the edge
+    wherever it is nonzero instead of failing. The return annotation cannot
+    constrain what a user function returns, so the realized dtype is checked
+    here, at each of the two places a gate is evaluated.
 
     Args:
         value: Whatever the compiled gate evaluator returned.
@@ -870,22 +868,13 @@ def _as_boolean_gate(
         The gate output as a Boolean array.
 
     Raises:
-        RegimeInitializationError: The output dtype is neither Boolean nor integer.
+        InvalidFunctionOutputError: The output dtype is not Boolean.
 
     """
-    gate = jnp.asarray(value)
-    if gate.dtype.kind not in "biu":
-        msg = (
-            f"The gate of the gated edge into regime '{target}' returned dtype "
-            f"'{gate.dtype}' in the {phase} phase, but a gate must return a "
-            "boolean or a 0/1 integer. A gate selects a branch with a strict "
-            "`where`, which treats every nonzero value as true, so a floating "
-            "gate would open the edge everywhere rather than express a "
-            "probability. Return a "
-            "comparison or a boolean combination, e.g. `wealth > threshold`."
-        )
-        raise RegimeInitializationError(msg)
-    return as_bool(gate)
+    return as_bool(
+        value=value,
+        source=f"The gate of the gated edge into regime '{target}' ({phase} phase)",
+    )
 
 
 def _compile_edge_gate(

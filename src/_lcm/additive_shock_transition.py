@@ -94,4 +94,7 @@ class AdditiveShockTransition:
     def __call__(self, **kwargs: FloatND) -> ContinuousState:
         # Where the engine receives the next state: `base` and `shock` are user
         # functions, which may return integers.
-        return as_canonical_float(kwargs[self.base] + kwargs[self.shock])
+        return as_canonical_float(
+            value=kwargs[self.base] + kwargs[self.shock],
+            source=f"Next state '{self.__name__}'",
+        )
