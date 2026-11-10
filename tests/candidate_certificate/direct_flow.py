@@ -756,7 +756,7 @@ _SOURCE_SEALS = {
     PANDAS_UTILS_SOURCE: "72be789d92caae2474c1d8d706b54bd2a82da3fdc202d5b85aa94523b5de603d",
     MODEL_PROCESSING_SOURCE: "45c64844b245ee1306a451a574780bc4057848f68039a9afc45e7d725bd78365",
     "src/_lcm/egm/upper_envelope/__init__.py": "2615b9a364b7ca1c927ca68b752cff17b318268adddbb2c234c145ed59c196d8",
-    "src/_lcm/egm/upper_envelope/segment_envelope.py": "775cf8168e83d4d4da9188d344abab33434e0e341c001de259bcf4dc49a11262",
+    "src/_lcm/egm/upper_envelope/segment_envelope.py": "ac5cb6020b9742734ce67f8748299a5314d958522e17b41e90e46e54bb4b82dc",
     "src/_lcm/egm/nested_floor.py": "8983b037774946af7a90aa106268659a69963e2d8f5dd4b55c6f5532dd2dbb72",
     "src/_lcm/egm/finite_negm_query.py": "7ce90cf75e272da35fbe28608c88b2cbd1a93201e5c1b785b480b75f1e311289",
     "src/_lcm/egm/adaptive_nbegm_producer.py": "6e981492ef9f803816a1b6e579818e02c9754395b0dac2a19355c0361b115574",
@@ -3236,7 +3236,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     "src/_lcm/egm/upper_envelope/segment_envelope.py": (
-        "ac340fe2712c80387b314eb0f54c513a7df9906497b367726aed4ccf31c248c4",
+        "0121a211aeff3a960afcfe843c91af7e6de8048d25adb762e05b47dddeb92fbc",
         {
             "refine_envelope_exact": "07f2b11939b72dc85a9d670773ac540dd09daa67839b4654537c138a7310f6fb",
         },
