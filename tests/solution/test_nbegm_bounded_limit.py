@@ -26,7 +26,11 @@ def test_limit_from_below_stays_below_the_cliff_when_no_node_lies_between():
     """
     below = float(
         _bounded_limit_below(
-            grid=GRID, values=VALUES, limit=0.7, prev_limit=0.3, n=GRID.shape[0]
+            grid=GRID,
+            values=VALUES,
+            limit=0.7,
+            prev_limit=jnp.asarray(0.3),
+            n=GRID.shape[0],
         )
     )
     np.testing.assert_allclose(below, 0.0, atol=1e-12)
@@ -36,7 +40,11 @@ def test_limit_from_above_stays_above_the_cliff_when_no_node_lies_between():
     """With `(0.3, 0.7)` empty, the limit above `0.3` reads the node at `1.0`."""
     above = float(
         _bounded_limit_above(
-            grid=GRID, values=VALUES, limit=0.3, next_limit=0.7, n=GRID.shape[0]
+            grid=GRID,
+            values=VALUES,
+            limit=0.3,
+            next_limit=jnp.asarray(0.7),
+            n=GRID.shape[0],
         )
     )
     np.testing.assert_allclose(above, 1.0, atol=1e-12)
@@ -50,7 +58,11 @@ def test_limit_from_below_extrapolates_from_two_in_interval_nodes():
     """
     below = float(
         _bounded_limit_below(
-            grid=GRID, values=VALUES, limit=3.5, prev_limit=0.5, n=GRID.shape[0]
+            grid=GRID,
+            values=VALUES,
+            limit=3.5,
+            prev_limit=jnp.asarray(0.5),
+            n=GRID.shape[0],
         )
     )
     np.testing.assert_allclose(below, 11.5, atol=1e-12)
@@ -64,7 +76,11 @@ def test_limit_from_above_extrapolates_from_two_in_interval_nodes():
     """
     above = float(
         _bounded_limit_above(
-            grid=GRID, values=VALUES, limit=0.5, next_limit=3.5, n=GRID.shape[0]
+            grid=GRID,
+            values=VALUES,
+            limit=0.5,
+            next_limit=jnp.asarray(3.5),
+            n=GRID.shape[0],
         )
     )
     np.testing.assert_allclose(above, -0.5, atol=1e-12)

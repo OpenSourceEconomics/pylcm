@@ -5230,8 +5230,8 @@ def _boundary_targeting_coh(
     savings_grid: Float1D,
     next_liquid: Float1D,
     asset_limit: ScalarFloat | float,
-    prev_limit: ScalarFloat | float,
-    next_limit: ScalarFloat | float,
+    prev_limit: ScalarFloat,
+    next_limit: ScalarFloat,
     equality_owner: EqualityOwner,
     side: Literal["below", "above"],
     retain_savings: Literal[False] = False,
@@ -5254,8 +5254,8 @@ def _boundary_targeting_coh(
     savings_grid: Float1D,
     next_liquid: Float1D,
     asset_limit: ScalarFloat | float,
-    prev_limit: ScalarFloat | float,
-    next_limit: ScalarFloat | float,
+    prev_limit: ScalarFloat,
+    next_limit: ScalarFloat,
     equality_owner: EqualityOwner,
     side: Literal["below", "above"],
     retain_savings: Literal[True],
@@ -5278,8 +5278,8 @@ def _boundary_targeting_coh(
     savings_grid: Float1D,
     next_liquid: Float1D,
     asset_limit: ScalarFloat | float,
-    prev_limit: ScalarFloat | float,
-    next_limit: ScalarFloat | float,
+    prev_limit: ScalarFloat,
+    next_limit: ScalarFloat,
     equality_owner: EqualityOwner,
     side: Literal["below", "above"],
     retain_savings: bool = False,
@@ -5304,8 +5304,8 @@ def _boundary_targeting_coh(
     savings_grid: Float1D,
     next_liquid: Float1D,
     asset_limit: ScalarFloat | float,
-    prev_limit: ScalarFloat | float,
-    next_limit: ScalarFloat | float,
+    prev_limit: ScalarFloat,
+    next_limit: ScalarFloat,
     equality_owner: EqualityOwner,
     side: Literal["below", "above"],
     retain_savings: bool = False,
@@ -5844,7 +5844,7 @@ def _recurring_jump_case(
         continuation_at_savings=value_next,
         preferences=preferences,
         discount_factor=discount_factor,
-        coh_slope=1.0,
+        coh_slope=None,
         valid=True,
         first_segment=next_segment + float(n_boundary_branches),
         endog_parts=endog_parts,
@@ -6401,7 +6401,7 @@ def _case_step(
         continuation_at_savings=value_next,
         preferences=preferences,
         discount_factor=discount_factor,
-        coh_slope=1.0,
+        coh_slope=None,
         valid=True,
         first_segment=_next_segment_id(segment=interior_segment, offset=3.0),
         endog_parts=endog_parts,
@@ -6451,8 +6451,8 @@ def _boundary_targeting_branch(
     next_liquid: Float1D,
     subsidy: ScalarFloat | float,
     asset_limit: ScalarFloat | float,
-    prev_limit: ScalarFloat | float,
-    next_limit: ScalarFloat | float,
+    prev_limit: ScalarFloat,
+    next_limit: ScalarFloat,
     equality_owner: EqualityOwner,
     side: Literal["below", "above"],
     retain_savings: Literal[False] = False,
@@ -6473,8 +6473,8 @@ def _boundary_targeting_branch(
     next_liquid: Float1D,
     subsidy: ScalarFloat | float,
     asset_limit: ScalarFloat | float,
-    prev_limit: ScalarFloat | float,
-    next_limit: ScalarFloat | float,
+    prev_limit: ScalarFloat,
+    next_limit: ScalarFloat,
     equality_owner: EqualityOwner,
     side: Literal["below", "above"],
     retain_savings: Literal[True],
@@ -6495,8 +6495,8 @@ def _boundary_targeting_branch(
     next_liquid: Float1D,
     subsidy: ScalarFloat | float,
     asset_limit: ScalarFloat | float,
-    prev_limit: ScalarFloat | float,
-    next_limit: ScalarFloat | float,
+    prev_limit: ScalarFloat,
+    next_limit: ScalarFloat,
     equality_owner: EqualityOwner,
     side: Literal["below", "above"],
     retain_savings: bool = False,
@@ -6519,8 +6519,8 @@ def _boundary_targeting_branch(
     next_liquid: Float1D,
     subsidy: ScalarFloat | float,
     asset_limit: ScalarFloat | float,
-    prev_limit: ScalarFloat | float,
-    next_limit: ScalarFloat | float,
+    prev_limit: ScalarFloat,
+    next_limit: ScalarFloat,
     equality_owner: EqualityOwner,
     side: Literal["below", "above"],
     retain_savings: bool = False,
@@ -6653,7 +6653,7 @@ def _kink_aware_interp(
         grid=grid,
         values=values,
         limit=limit,
-        prev_limit=-jnp.inf,
+        prev_limit=None,
         n=n,
         owns_limit_node=owner_is_when,
     )
@@ -6661,7 +6661,7 @@ def _kink_aware_interp(
         grid=grid,
         values=values,
         limit=limit,
-        next_limit=jnp.inf,
+        next_limit=None,
         n=n,
         owns_limit_node=not owner_is_when,
     )
@@ -6699,12 +6699,14 @@ def _bounded_limit_below(
     grid: Float1D,
     values: Float1D,
     limit: ScalarFloat | float,
-    prev_limit: ScalarFloat | float,
+    prev_limit: ScalarFloat | None,
     n: int,
     owns_limit_node: bool = False,
 ) -> ScalarFloat:
     """One-sided limit approaching `limit` from below, using only nodes strictly
     inside `(prev_limit, limit)` so the stencil never crosses the previous cliff.
+
+    `prev_limit=None` leaves the stencil unbounded below.
 
     Falls back to the nearest in-interval node's value when fewer than two such
     nodes exist, rather than extrapolating across the neighbouring discontinuity.
@@ -6717,7 +6719,7 @@ def _bounded_limit_below(
     this side's value; it does when this side owns equality at the boundary.
     """
     last_below = jnp.sum(grid <= limit if owns_limit_node else grid < limit) - 1
-    floor = jnp.sum(grid <= prev_limit)
+    floor = 0 if prev_limit is None else jnp.sum(grid <= prev_limit)
     hi = jnp.clip(last_below, 0, n - 1).astype(jnp.int32)
     lo = jnp.clip(jnp.maximum(last_below - 1, floor), 0, n - 1).astype(jnp.int32)
     lo = jnp.minimum(lo, hi)
@@ -6733,12 +6735,14 @@ def _bounded_limit_above(
     grid: Float1D,
     values: Float1D,
     limit: ScalarFloat | float,
-    next_limit: ScalarFloat | float,
+    next_limit: ScalarFloat | None,
     n: int,
     owns_limit_node: bool = False,
 ) -> ScalarFloat:
     """One-sided limit approaching `limit` from above, using only nodes strictly
     inside `(limit, next_limit)` so the stencil never crosses the next cliff.
+
+    `next_limit=None` leaves the stencil unbounded above.
 
     Falls back to the nearest in-interval node's value when fewer than two such
     nodes exist, rather than extrapolating across the neighbouring discontinuity.
@@ -6751,7 +6755,7 @@ def _bounded_limit_above(
     this side's value; it does when this side owns equality at the boundary.
     """
     first_above = jnp.sum(grid < limit if owns_limit_node else grid <= limit)
-    ceil = jnp.sum(grid < next_limit) - 1
+    ceil = n - 1 if next_limit is None else jnp.sum(grid < next_limit) - 1
     lo = jnp.clip(first_above, 0, n - 1).astype(jnp.int32)
     hi = jnp.clip(jnp.minimum(first_above + 1, ceil), 0, n - 1).astype(jnp.int32)
     hi = jnp.maximum(hi, lo)
@@ -6814,9 +6818,9 @@ def _append_savings_endpoint_corners(
     continuation_at_savings: Float1D,
     preferences: Preferences,
     discount_factor: ScalarFloat | float,
-    coh_slope: Float1D | ScalarFloat | float,
+    coh_slope: FloatND | None,
     valid: BoolND | bool,
-    first_segment: ScalarFloat | float,
+    first_segment: ScalarFloat,
     endog_parts: list[Float1D],
     value_parts: list[Float1D],
     policy_parts: list[Float1D],
@@ -6862,7 +6866,7 @@ def _fixed_savings_corner(
     preferences: Preferences,
     discount_factor: ScalarFloat | float,
     continuation: FloatND,
-    coh_slope: Float1D | ScalarFloat | float = 1.0,
+    coh_slope: FloatND | None = None,
     valid: BoolND | bool = True,
 ) -> tuple[Float1D, Float1D, Float1D, Float1D]:
     """Build an endpoint, dead where residual consumption is non-positive.
@@ -6888,7 +6892,8 @@ def _fixed_savings_corner(
             marginal, each a callable of one array.
         discount_factor: Discount factor.
         continuation: Next period's value at the corner's post-decision node.
-        coh_slope: `d coh / d liquid` at each point, for the marginal channel.
+        coh_slope: `d coh / d liquid` at each point, for the marginal channel;
+            `None` for a unit slope.
         valid: Further per-point validity (e.g. an interval or case mask).
 
     Returns:
@@ -6903,7 +6908,11 @@ def _fixed_savings_corner(
         endog_grid=endog_grid,
         value=preferences.utility(safe) + discount_factor * continuation,
         policy=consumption,
-        marginal=coh_slope * preferences.marginal_utility(safe),
+        marginal=(
+            preferences.marginal_utility(safe)
+            if coh_slope is None
+            else coh_slope * preferences.marginal_utility(safe)
+        ),
         valid=feasible & valid,
     )
 

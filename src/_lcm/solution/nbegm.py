@@ -3329,9 +3329,7 @@ def _build_nbegm_core(
     returns the value array and the marginal-value carry on the liquid grid.
     """
     from _lcm.egm.preferences import (  # noqa: PLC0415
-        NEWTON_ACTION_FLOOR,
         get_preferences_builder,
-        newton_action_ceiling,
     )
 
     return _NBEGMCaseCore(
@@ -3339,8 +3337,7 @@ def _build_nbegm_core(
         build_preferences=get_preferences_builder(
             functions=functions,
             action_name=consumption_action,
-            action_lower=NEWTON_ACTION_FLOOR,
-            action_upper=newton_action_ceiling(savings_grid),
+            scale_grid=savings_grid,
         ),
         case_spec=case_spec,
         envelope_arithmetic=envelope_arithmetic,
@@ -6382,19 +6379,15 @@ def _build_nbegm_continuous_core(
     `coh` at each interval's representative, and runs the kind-appropriate EGM step.
     """
     from _lcm.egm.preferences import (  # noqa: PLC0415
-        NEWTON_ACTION_FLOOR,
         get_preferences_builder,
-        newton_action_ceiling,
     )
 
-    action_upper = newton_action_ceiling(savings_grid)
     return _NBEGMContinuousCore(
         savings_grid=savings_grid,
         build_preferences=get_preferences_builder(
             functions=functions,
             action_name=consumption_action,
-            action_lower=NEWTON_ACTION_FLOOR,
-            action_upper=action_upper,
+            scale_grid=savings_grid,
         ),
         # Host preconditions remain on the separately returned original checks
         # tuple. They are not called by this numerical core and must not become
@@ -10181,9 +10174,7 @@ def _build_nbegm_schedule_discrete_core(
     taste-shock scale.
     """
     from _lcm.egm.preferences import (  # noqa: PLC0415
-        NEWTON_ACTION_FLOOR,
         get_preferences_builder,
-        newton_action_ceiling,
     )
 
     return _NBEGMScheduleDiscreteCore(
@@ -10191,8 +10182,7 @@ def _build_nbegm_schedule_discrete_core(
         build_preferences=get_preferences_builder(
             functions=functions,
             action_name=consumption_action,
-            action_lower=NEWTON_ACTION_FLOOR,
-            action_upper=newton_action_ceiling(savings_grid),
+            scale_grid=savings_grid,
         ),
         spec=spec,
         taste_shock_scale=taste_shock_scale,
@@ -10368,9 +10358,7 @@ def _build_nbegm_discrete_core(
     takes the discrete choice by the upper envelope (`nbegm_discrete_envelope_step`).
     """
     from _lcm.egm.preferences import (  # noqa: PLC0415
-        NEWTON_ACTION_FLOOR,
         get_preferences_builder,
-        newton_action_ceiling,
     )
 
     return _NBEGMDiscreteCore(
@@ -10378,8 +10366,7 @@ def _build_nbegm_discrete_core(
         build_preferences=get_preferences_builder(
             functions=functions,
             action_name=consumption_action,
-            action_lower=NEWTON_ACTION_FLOOR,
-            action_upper=newton_action_ceiling(savings_grid),
+            scale_grid=savings_grid,
         ),
         discrete_spec=discrete_spec,
         taste_shock_scale=taste_shock_scale,
