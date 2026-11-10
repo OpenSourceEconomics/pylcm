@@ -26,6 +26,7 @@ from _lcm.typing import JSONValue
 from benchmarks.asv._compile_counters import count_compile_requests
 from benchmarks.asv._simulation_witnesses import WITNESSES
 from lcm.exceptions import InvalidInitialConditionsError
+from lcm.typing import UserInitialConditions, UserParams
 from tests.simulation._callback_types import WholeInputValidation
 from tests.simulation.test_compile_requests import (
     HOST_TIME_BAR,
@@ -34,6 +35,22 @@ from tests.simulation.test_compile_requests import (
     _require_a_steady_host,
     _steady_median_host_times,
 )
+
+_REAL_CONVERTERS = {name: getattr(np, name) for name in ("asarray", "array")}
+
+
+def _build_witness(
+    witness: str,
+) -> tuple[lcm.model.Model, UserParams, UserInitialConditions]:
+    """Build a witness under NumPy's own converters.
+
+    The model fingerprint walks the engine's output adapters down to
+    `np.asarray`, and it cannot give the recording wrapper a durable identity.
+    """
+    with pytest.MonkeyPatch.context() as real:
+        for name, converter in _REAL_CONVERTERS.items():
+            real.setattr(np, name, converter)
+        return WITNESSES[witness]()
 
 
 @dataclass
@@ -182,7 +199,7 @@ def test_valid_whole_call_preflight_has_two_host_summaries(
             initial_module, name, require_valid_fast_path(operation=operation)
         )
 
-    model, params, initial = WITNESSES[witness]()
+    model, params, initial = _build_witness(witness)
     with _lcm_log_output_held_fixed():
         solution = model.solve(params=params, log_level="off")
         warm = model.simulate(
@@ -274,7 +291,7 @@ def test_invalid_regime_wins_before_missing_state_or_transition_work(
     requests: _Requests,
 ) -> None:
     """A known invalid specimen activates validation and preserves error order."""
-    model, params, initial = WITNESSES["multi_regime"]()
+    model, params, initial = _build_witness("multi_regime")
     invalid = dict(initial)
     invalid["regime_id"] = jax.numpy.full_like(initial["regime_id"], 999)
     del invalid["wealth"]
