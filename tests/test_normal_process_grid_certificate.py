@@ -127,7 +127,9 @@ def test_normal_controls_preserve_all_historical_populations() -> None:
         "feasibility:count_capacity_refusal_omitted",
     }
     assert exact_count_controls <= historical
-    assert len(historical) == 602
+    # The dead-code cleanup deleted the streamed EV1 reduction's `semantic_key` and
+    # its three `streaming_ev1:` controls.
+    assert len(historical) == 599
     historical = historical - exact_count_controls
     added_feasibility_controls = {
         "feasibility_summary:published_value_changed",
@@ -159,13 +161,13 @@ def test_normal_controls_preserve_all_historical_populations() -> None:
     # inverted and native_graph:collective_output_role_dropped with their targets;
     # the fold-machinery removal deleted ten streaming fold controls and two
     # supplemental s02_status:fold_weight_* controls with theirs.
-    assert len(historical) == 600
+    assert len(historical) == 597
     historical_before_s1 = historical - added_rng_controls - added_engine_controls
-    assert len(historical_before_s1) == 598
-    assert len(historical_before_s1 - added_initial_controls) == 586
+    assert len(historical_before_s1) == 595
+    assert len(historical_before_s1 - added_initial_controls) == 583
     assert (
         len(historical_before_s1 - added_initial_controls - added_feasibility_controls)
-        == 584
+        == 581
     )
     assert "src/_lcm/solution/feasibility.py" in direct_flow._CERTIFIED_CORRIDOR_SOURCES
     assert len(direct_flow._CERTIFIED_CORRIDOR_SOURCES) == 182
