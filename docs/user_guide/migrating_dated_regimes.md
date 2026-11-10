@@ -332,10 +332,10 @@ explicitly reads the stored shock-integrated Full value and exposes neither poli
 support nor realized physical information. Name the reads in the predicate's signature;
 `V_target` is not injected implicitly, and `D_target` is unsupported.
 
-The participation predicate must return a scalar Boolean. Its ordinary inputs and
-projections use the landed target's state and helper vocabulary. An explicit named read
-binds its own value operand, even when a target state or helper has the same name.
-Declare physical information with `ParticipationCheck.observes` or the individual
+The participation predicate must return a scalar Boolean or a 0/1 integer. Its ordinary
+inputs and projections use the landed target's state and helper vocabulary. An explicit
+named read binds its own value operand, even when a target state or helper has the same
+name. Declare physical information with `ParticipationCheck.observes` or the individual
 `ParticipationRead.observes`; a supplied simulation path never enlarges that
 information. Preserve the original comparison, including its tie rule, target role,
 projection and fallback, when replacing a value-reading `Gate`.

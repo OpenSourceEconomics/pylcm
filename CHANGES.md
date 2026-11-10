@@ -23,6 +23,39 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   raises `RegimeInitializationError`. Positional, missing and unexpected arguments
   still raise `TypeError`.
 
+### Process laws are floats
+
+- Every process-law value is a float, however it is written: a stochastic process's
+  `mu`, `sigma`, `rho`, `n_std`, `start`/`stop` and mixture parameters,
+  `JointNormalIIDProcess`'s `mean`, `cov` and `n_std`, and the values of
+  `StateConditioned.by`. An `int` is accepted and stored as a Python `float`, so
+  `NormalIIDProcess(mu=1, ...)` and `NormalIIDProcess(mu=1.0, ...)` declare one law,
+  with one set of nodes and transition rows. A Boolean is refused with
+  `GridInitializationError`.
+- The same holds for a law fixed through `Model(fixed_params=...)` and for a
+  shock-group coefficient or correlation, fixed or supplied at runtime: an integer
+  becomes a float before any integer range check, so `mu=2**31` is a valid law.
+- A model whose law was written with integers has the semantic fingerprint of its
+  float twin. Solutions saved with an earlier version from such a model do not load;
+  solve again.
+- `StateConditioned.by` is stored as a read-only mapping of floats; a later change to
+  the caller's mapping does not reach it. It pickles through its constructor.
+
+### A parameter's kind follows the slot that reads it
+
+- A params slot read as a float takes an integer value as a float: a library
+  coefficient (`discount_factor`, a Koopmans or certainty-equivalent coefficient, a
+  taste-shock `scale`, a runtime process law or grid point) and a callback argument
+  annotated `float` or with a float array alias such as `ScalarFloat`. This holds for
+  ordinary, edge, exit and shock-callback parameters, fixed or supplied at runtime, and
+  for each entry of a `TimeVarying` series. A slot read as an integer, or not
+  annotated, keeps the value's kind, and a Boolean always stays Boolean.
+- A model that fixes such a slot to an integer has the fingerprint of its float twin,
+  which differs from the one an earlier version gave it; solve again.
+- One parameter read as a float by one function and as an integer by another raises
+  `ModelInitializationError`; give the two readings distinct names. The same Python
+  object may feed a float slot and an integer slot; each slot gets its own cast.
+
 ### Public grid, process and condition classes live in `lcm`
 
 - The grids (`LinSpacedGrid`, `LogSpacedGrid`, `IrregSpacedGrid`,
@@ -35,7 +68,7 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   so a solution saved with an earlier version cannot be loaded against a model built
   with this one. Solve again.
 - A grid's `start`, `stop` and breakpoint values are converted to `float` at
-  construction. Process-law parameters keep the numeric kind they were declared with.
+  construction.
 - A number compared with a `ref(...)` is stored as a `float` and a flag as a `bool`, so
   `ref("x") <= 1` and `ref("x") <= 1.0` declare the same condition and both render as
   `x <= 1.0`. An integer literal now works as a case threshold.

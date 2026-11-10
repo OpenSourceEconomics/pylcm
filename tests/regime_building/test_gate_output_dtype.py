@@ -1,4 +1,4 @@
-"""A gated edge's gate must return a Boolean.
+"""A gated edge's gate must return a Boolean or a 0/1 integer, never a float.
 
 The gate selects a branch with a strict `where`, and JAX treats every nonzero
 value as true there. A gate returning `0.25` would therefore open the edge for

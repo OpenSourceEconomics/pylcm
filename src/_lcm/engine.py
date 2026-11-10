@@ -74,7 +74,6 @@ from lcm.typing import (
     Int1D,
     IntND,
     ScalarFloat,
-    ScalarInt,
 )
 
 if TYPE_CHECKING:
@@ -752,7 +751,7 @@ def resolve_phase_process_grids(
             spec=spec,
             required=required,
             parameters={
-                param: cast("ScalarFloat | ScalarInt", all_params[f"{name}__{param}"])
+                param: cast("ScalarFloat", all_params[f"{name}__{param}"])
                 for param in spec.params_to_pass_at_runtime
             },
         )
@@ -827,13 +826,11 @@ def phase_state_action_space(
             )
             if not all_present:
                 continue
-            process_kw: dict[str, ScalarFloat | ScalarInt] = dict(spec.params)
+            process_kw: dict[str, ScalarFloat] = dict(spec.params)
             for p in spec.params_to_pass_at_runtime:
                 # Runtime process-grid params are flat JAX scalars — never
                 # a `MappingLeaf` / `SequenceLeaf` — so narrow via `cast`.
-                process_kw[p] = cast(
-                    "ScalarFloat | ScalarInt", all_params[f"{name}__{p}"]
-                )
+                process_kw[p] = cast("ScalarFloat", all_params[f"{name}__{p}"])
             state_replacements[name] = spec.compute_gridpoints(**process_kw)
 
     new_states = (

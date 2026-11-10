@@ -29,6 +29,7 @@ import jax.numpy as jnp
 from dags.tree import qname_from_tree_path, tree_path_from_qname
 
 from _lcm.grids import Grid
+from _lcm.params.numeric_roles import NumericRole
 from _lcm.params.processing import (
     cast_params_to_canonical_dtypes,
     find_param_candidates,
@@ -38,7 +39,6 @@ from _lcm.typing import (
     FlatParams,
     FlatRegimeParams,
     ParamsLeaf,
-    ProcessLawScalar,
     QualifiedName,
     RegimeName,
     StateName,
@@ -124,9 +124,7 @@ def _resolve_process_law_params(
     *,
     user_regimes: Mapping[RegimeName, UserRegime],
     params_flat: Mapping[QualifiedName, UserParamsLeaf],
-) -> tuple[
-    dict[RegimeName, dict[StateName, dict[str, ProcessLawScalar | bool]]], set[str]
-]:
+) -> tuple[dict[RegimeName, dict[StateName, dict[str, float]]], set[str]]:
     """Resolve every runtime process parameter against the user's `fixed_params`.
 
     The slots come from the regimes as declared, before any binding: binding only
@@ -180,14 +178,20 @@ def _resolve_process_law_params(
     # The same boundary cast every other fixed parameter goes through, so a
     # process law has one dtype and leaf-type contract rather than a second one.
     # It also raises on the leaf types no parameter may take, naming the qname.
+    # Every slot is a law coefficient, so an integer becomes a float here, before
+    # any integer range check could apply to it.
     canonical = cast_params_to_canonical_dtypes(
         cast(
             "FlatParams",
             MappingProxyType({k: MappingProxyType(v) for k, v in raw.items()}),
         ),
+        roles={
+            qname_from_tree_path((regime_name, slot)): NumericRole.FLOAT
+            for regime_name, slot in slot_owner
+        },
     )
 
-    resolved: dict[RegimeName, dict[StateName, dict[str, ProcessLawScalar | bool]]] = {}
+    resolved: dict[RegimeName, dict[StateName, dict[str, float]]] = {}
     for regime_name, regime_slots in canonical.items():
         # The cast input holds regime levels only, so no edge level comes back.
         for slot, value in cast("FlatRegimeParams", regime_slots).items():
@@ -277,12 +281,10 @@ def _fail_if_a_process_law_field_varies(
     raise InvalidParamsError(msg)
 
 
-def _as_process_field(
-    *, value: ParamsLeaf, qname: QualifiedName
-) -> ProcessLawScalar | bool:
-    """Return a canonically cast leaf as the Python scalar a process field takes.
+def _as_process_field(*, value: ParamsLeaf, qname: QualifiedName) -> float:
+    """Return a canonically cast leaf as the Python float a process field takes.
 
-    A process's distribution fields are Python scalars, and it computes its nodes
+    A process's distribution fields are Python floats, and it computes its nodes
     eagerly, so the 0-d array the boundary cast produces is materialized here.
 
     Args:
@@ -293,24 +295,23 @@ def _as_process_field(
         The scalar to bake into the process.
 
     Raises:
-        InvalidParamsError: If the leaf is not a scalar. A process's law is one
-            number per field, so an array — an age-varying or per-subject one —
-            has no field to become.
+        InvalidParamsError: If the leaf is not a scalar, or is a Boolean. A
+            process's law is one number per field, so an array — an age-varying
+            or per-subject one — has no field to become.
 
     """
     array = jnp.asarray(value)
     _fail_if_a_process_law_field_varies(value=value, qname=qname)
     if array.dtype.kind == "b":
-        return bool(array)
-    if array.dtype.kind in "iu":
-        return int(array)
+        msg = f"The fixed parameter {qname!r} is a process law, which takes a number."
+        raise InvalidParamsError(msg)
     return float(array)
 
 
 def _bind_regime(
     *,
     user_regime: UserRegime,
-    regime_values: Mapping[StateName, Mapping[str, ProcessLawScalar | bool]],
+    regime_values: Mapping[StateName, Mapping[str, float]],
 ) -> UserRegime:
     """Return one regime with every resolved process law baked into its grids.
 
@@ -335,14 +336,14 @@ def _bind_regime(
 
 @overload
 def _bind_declaration(
-    *, declaration: StateEntry, values: Mapping[str, ProcessLawScalar | bool]
+    *, declaration: StateEntry, values: Mapping[str, float]
 ) -> StateEntry: ...
 @overload
 def _bind_declaration(
-    *, declaration: StateDeclaration, values: Mapping[str, ProcessLawScalar | bool]
+    *, declaration: StateDeclaration, values: Mapping[str, float]
 ) -> StateDeclaration: ...
 def _bind_declaration(
-    *, declaration: StateDeclaration, values: Mapping[str, ProcessLawScalar | bool]
+    *, declaration: StateDeclaration, values: Mapping[str, float]
 ) -> StateDeclaration:
     """Bind a state declaration, which may be `Phased` over two grids.
 

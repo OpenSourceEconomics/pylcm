@@ -36,7 +36,7 @@ class Offer:
 
 
 def _plan(*, group: sh.ShockGroup) -> CurrentIIDDrawPlan:
-    params_template, callable_parameters = _create_group_template(
+    params_template, param_roles, callable_parameters = _create_group_template(
         group=group, states=frozenset(), functions={}
     )
     return CurrentIIDDrawPlan(
@@ -48,6 +48,7 @@ def _plan(*, group: sh.ShockGroup) -> CurrentIIDDrawPlan:
                 categorical_domains={},
                 functions={},
                 params_template=params_template,
+                param_roles=param_roles,
                 callable_parameters=callable_parameters,
             )
         }

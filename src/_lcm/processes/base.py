@@ -21,10 +21,10 @@ from jax.scipy.stats.norm import cdf
 from _lcm.grids import ContinuousGrid
 from _lcm.grids import coordinates as grid_coordinates
 from _lcm.grids.continuous import _validate_off_grid
-from _lcm.typing import PRNGKeyND, ProcessLawScalar
+from _lcm.typing import PRNGKeyND
 from lcm.exceptions import GridInitializationError
 from lcm.state_conditioned import StateConditioned
-from lcm.typing import Float1D, FloatND, OffGrid, ScalarFloat, ScalarInt
+from lcm.typing import Float1D, FloatND, OffGrid, ScalarFloat
 
 
 def standard_normal(key: PRNGKeyND) -> ScalarFloat:
@@ -150,6 +150,7 @@ class _ContinuousStochasticProcess(ContinuousGrid):
             msg = "simulated_draws must be 'continuous' or 'nodes'."
             raise GridInitializationError(msg)
         _validate_off_grid(self.off_grid)
+        self._store_law_values_as_floats()
         self._resolve_conditioned_sigma()
 
     def has_same_law_as(self, other: _ContinuousStochasticProcess) -> bool:
@@ -161,6 +162,29 @@ class _ContinuousStochasticProcess(ContinuousGrid):
         return replace(self, simulated_draws="continuous") == replace(
             other, simulated_draws="continuous"
         )
+
+    def _store_law_values_as_floats(self) -> None:
+        """Store every fixed law value as a Python `float`, however it was written.
+
+        A law written with `1` describes the law written with `1.0`, so both store
+        one value and share one identity. A Boolean is refused: it names no number.
+        """
+        law_fields = (
+            spec.name
+            for spec in fields(self)
+            if spec.name not in self._NON_PARAM_FIELDS | {"gauss_hermite"}
+        )
+        for name in law_fields:
+            value = getattr(self, name)
+            if value is None or isinstance(value, StateConditioned):
+                continue
+            if isinstance(value, bool) or not isinstance(value, int | float):
+                msg = (
+                    f"{self.constructor_name}: `{name}` must be a real number, "
+                    f"but got {value!r}."
+                )
+                raise GridInitializationError(msg)
+            object.__setattr__(self, name, float(value))
 
     def _resolve_conditioned_sigma(self) -> None:
         """Split a conditioned `sigma` into its declaration and its node-placing value.
@@ -176,10 +200,7 @@ class _ContinuousStochasticProcess(ContinuousGrid):
         unusable = {
             category: value
             for category, value in declaration.by.items()
-            if not isinstance(value, float | int)
-            or isinstance(value, bool)
-            or not math.isfinite(value)
-            or value <= 0.0
+            if not math.isfinite(value) or value <= 0.0
         }
         if not values or unusable:
             msg = (
@@ -198,27 +219,21 @@ class _ContinuousStochasticProcess(ContinuousGrid):
         )
 
     @property
-    def params(self) -> MappingProxyType[str, ScalarFloat | ScalarInt]:
-        """Distribution parameters as canonical 0-d JAX scalars.
+    def params(self) -> MappingProxyType[str, ScalarFloat]:
+        """Fixed distribution parameters as 0-d JAX floats of the active precision.
 
-        Boundary cast: dataclass fields supplied by the user as Python
-        `bool` / `int` / `float` are returned as `ScalarInt` / `ScalarFloat`
-        so every consumer downstream — `compute_gridpoints`,
-        `compute_transition_probs`, the regime-building runtime closures —
-        sees the canonical dtype.
+        Every fixed law value is a Python `float`, so each consumer downstream —
+        `compute_gridpoints`, `compute_transition_probs`, the regime-building
+        runtime closures — receives a floating scalar.
 
         """
-        out: dict[str, ScalarFloat | ScalarInt] = {}
-        for name in self._param_field_names:
-            value = getattr(self, name)
-            if value is None:
-                continue
-            # `bool` before `int` — `True` is a Python `int` subclass.
-            if isinstance(value, bool | int):
-                out[name] = jnp.int32(value)
-            else:
-                out[name] = jnp.asarray(value)
-        return MappingProxyType(out)
+        return MappingProxyType(
+            {
+                name: jnp.asarray(getattr(self, name))
+                for name in self._param_field_names
+                if getattr(self, name) is not None
+            }
+        )
 
     @property
     def params_to_pass_at_runtime(self) -> tuple[str, ...]:
@@ -233,11 +248,11 @@ class _ContinuousStochasticProcess(ContinuousGrid):
         return not self.params_to_pass_at_runtime
 
     @abstractmethod
-    def compute_gridpoints(self, **kwargs: ScalarFloat | ScalarInt) -> Float1D:
+    def compute_gridpoints(self, **kwargs: ScalarFloat) -> Float1D:
         """Compute discretized gridpoints for the process."""
 
     @abstractmethod
-    def compute_transition_probs(self, **kwargs: ScalarFloat | ScalarInt) -> FloatND:
+    def compute_transition_probs(self, **kwargs: ScalarFloat) -> FloatND:
         """Compute transition probability matrix for the process."""
 
     def get_gridpoints(self) -> Float1D:
@@ -292,7 +307,7 @@ def _validate_gauss_hermite_grid(
     *,
     n_points: int,
     gauss_hermite: bool,
-    n_std: ProcessLawScalar | None,
+    n_std: float | None,
 ) -> None:
     """Validate Gauss-Hermite node counts and mutually exclusive grid options."""
     if gauss_hermite and n_points < 1:

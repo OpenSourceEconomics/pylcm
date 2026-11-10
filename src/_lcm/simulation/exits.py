@@ -19,6 +19,7 @@ from _lcm.current_iid import (
     _law_inputs,
     source_law_params,
 )
+from _lcm.dtypes import as_canonical_float
 from _lcm.execution.core_program import (
     CoreExecutionDisposition,
     CoreExecutionRequirements,
@@ -33,7 +34,7 @@ from _lcm.utils.dispatchers import vary_carry_like_body
 from lcm.shocks import (
     BaseInnovations,
     Discrete,
-    LawValue,
+    LawInput,
     PhysicalValues,
     ShockGroupName,
     ShockName,
@@ -55,8 +56,8 @@ type ExitFramePayload = tuple[
     Mapping[str, FloatND | IntND],
     Mapping[str, FloatND],
     Mapping[str, FloatND],
-    Mapping[str, Mapping[str, LawValue | BoolND]],
-    Mapping[str, Mapping[str, LawValue]],
+    Mapping[str, Mapping[str, LawInput | BoolND]],
+    Mapping[str, Mapping[str, LawInput]],
     Mapping[str, FloatND],
     BoolND,
     Mapping[str, BoolND],
@@ -396,7 +397,7 @@ def _realise_frame(
     *,
     draw: CurrentIIDDrawPlan,
     keys: Mapping[ShockName, jax.Array],
-    group_params: Mapping[ShockGroupName, Mapping[ReferenceName, LawValue | BoolND]],
+    group_params: Mapping[ShockGroupName, Mapping[ReferenceName, LawInput | BoolND]],
     arguments: Mapping[ReferenceName, PytreeValue],
     overrides: Mapping[ShockName, CurrentIIDOverride],
     held_bases: Mapping[ShockName, FloatND] = MappingProxyType({}),
@@ -450,7 +451,7 @@ class OriginalExitDecision:
         *,
         states: Mapping[str, FloatND | IntND],
         keys: Mapping[str, jax.Array],
-        group_params: Mapping[str, Mapping[str, LawValue | BoolND]],
+        group_params: Mapping[str, Mapping[str, LawInput | BoolND]],
         query_arguments: Mapping[str, Mapping[str, PytreeValue]],
         _holders: BoolND,
         taste_keys: Mapping[str, jax.Array],
@@ -550,7 +551,7 @@ class OriginalExitDecision:
                     if helper is None
                     else jax.lax.cond(
                         selected,
-                        lambda helper=helper, operands=operands: jnp.asarray(
+                        lambda helper=helper, operands=operands: as_canonical_float(
                             helper(
                                 **{
                                     name: operands[name]
@@ -578,7 +579,7 @@ class RevealedExitDecision:
         states: Mapping[str, FloatND | IntND],
         keys: Mapping[str, jax.Array],
         held_bases: Mapping[str, FloatND],
-        group_params: Mapping[str, Mapping[str, LawValue | BoolND]],
+        group_params: Mapping[str, Mapping[str, LawInput | BoolND]],
         query_arguments: Mapping[str, Mapping[str, PytreeValue]],
         _holders: BoolND,
         taste_keys: Mapping[str, jax.Array],
@@ -638,7 +639,7 @@ def _observe_query_frame(
     query_arguments: Mapping[str, Mapping[str, PytreeValue]],
     frame: CurrentIIDDrawFrame,
     keys: Mapping[str, jax.Array],
-    group_params: Mapping[str, Mapping[str, LawValue | BoolND]],
+    group_params: Mapping[str, Mapping[str, LawInput | BoolND]],
     overrides: Mapping[ShockName, CurrentIIDOverride],
     produced: Mapping[ShockName, BoolND] = MappingProxyType({}),
     supplied_only: bool = False,
@@ -712,7 +713,7 @@ def _produce_observed_group(
     query_arguments: Mapping[str, Mapping[str, PytreeValue]],
     frame: CurrentIIDDrawFrame,
     keys: Mapping[str, jax.Array],
-    group_params: Mapping[str, Mapping[str, LawValue | BoolND]],
+    group_params: Mapping[str, Mapping[str, LawInput | BoolND]],
     group: str,
     producer: str,
     overrides: Mapping[ShockName, CurrentIIDOverride],

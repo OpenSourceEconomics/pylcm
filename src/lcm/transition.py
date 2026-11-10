@@ -24,6 +24,7 @@ from beartype import beartype
 from jax.tree_util import PyTreeDef
 
 from _lcm.beartype_conf import REGIME_CONF
+from _lcm.dtypes import as_canonical_float
 from _lcm.grids.continuous import ContinuousGrid
 from _lcm.identity_transition import _IdentityTransition
 from _lcm.time import ModelTime, TimeAxis, coordinate_kind
@@ -358,7 +359,11 @@ class StochasticTransition:
     """
 
     func: Callable[..., FloatND]
-    """The transition function returning a probability distribution."""
+    """The transition function returning a probability distribution.
+
+    It may return integer or Python-scalar probabilities, such as `1` for a
+    certain target; the engine reads them at the active float precision.
+    """
 
     fixed_component: tuple[int, ...] | None = field(
         default=None, metadata={"fingerprint_omit_if_default": True}
@@ -381,7 +386,9 @@ class StochasticTransition:
         )
 
     def __call__(self, *args: EconFunctionArg, **kwargs: EconFunctionArg) -> FloatND:
-        return self.func(*args, **kwargs)
+        # Where the engine receives the user's probabilities: every stochastic
+        # state weight and regime probability is evaluated through this call.
+        return as_canonical_float(self.func(*args, **kwargs))
 
 
 @beartype(conf=REGIME_CONF)

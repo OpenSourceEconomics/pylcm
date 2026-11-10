@@ -2,7 +2,10 @@
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from functools import partial
+from types import MappingProxyType
 
+from lcm.exceptions import GridInitializationError
 from lcm.typing import StateName
 
 
@@ -51,6 +54,10 @@ class StateConditioned:
     All of it is fixed at build time. Neither `by` nor the process's own parameters
     reach the params template, so none of them can be estimated.
 
+    Each value of `by` is a float: one written as an `int` is stored as a Python
+    `float`, a Boolean is refused. The stored mapping is read-only, so a later change
+    to the caller's mapping cannot reach the declaration.
+
     Defined in this leaf module so the engine's process base class can annotate the
     field without an import cycle; re-exported from `lcm.processes`.
     """
@@ -60,3 +67,28 @@ class StateConditioned:
 
     by: Mapping[str, float]
     """Mapping of that state's category names to the value used for each."""
+
+    def __post_init__(self) -> None:
+        unusable = {
+            category: value
+            for category, value in self.by.items()
+            if isinstance(value, bool) or not isinstance(value, int | float)
+        }
+        if unusable:
+            msg = (
+                "StateConditioned.by needs a real number for every category, but got "
+                f"{unusable}."
+            )
+            raise GridInitializationError(msg)
+        object.__setattr__(
+            self,
+            "by",
+            MappingProxyType(
+                {category: float(value) for category, value in self.by.items()}
+            ),
+        )
+
+    def __reduce__(self) -> tuple[partial[StateConditioned], tuple[()]]:
+        # A read-only mapping has no pickle payload of its own: rebuild from a
+        # plain one through the constructor.
+        return partial(StateConditioned, on=self.on, by=dict(self.by)), ()

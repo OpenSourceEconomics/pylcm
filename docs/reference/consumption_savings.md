@@ -110,13 +110,14 @@ def saving_floor(*, limit_level: ScalarFloat) -> ScalarFloat:
 borrowing_limit = lcm.post_decision_lower_bound(margin=liquid, lower=saving_floor)
 ```
 
-A callable returns one finite real floating scalar for each supported fixed-state cell.
-In every solver it may read only pre-decision information: parameters, time and the
-fixed states admitted by the selected solver. Plain EGM admits parameter/time floors;
-DC-EGM and NB-EGM also admit their supported discrete, process and passive states. The
-floor cannot read the liquid state, any chosen action, a post-decision state, or a
-helper depending on them. In a nested problem the current outer state is fixed
-information; the outer choice is an action.
+A callable returns one finite real scalar for each supported fixed-state cell; an
+integer result such as `0` is converted to the active float precision. In every solver
+it may read only pre-decision information: parameters, time and the fixed states
+admitted by the selected solver. Plain EGM admits parameter/time floors; DC-EGM and
+NB-EGM also admit their supported discrete, process and passive states. The floor cannot
+read the liquid state, any chosen action, a post-decision state, or a helper depending
+on them. In a nested problem the current outer state is fixed information; the outer
+choice is an action.
 
 A nested solver with an `AdaptiveOuterMesh` outer search supports only literal floors:
 honouring a callable floor at every refined outer node is prohibitively slow, so model

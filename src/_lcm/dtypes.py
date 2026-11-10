@@ -3,7 +3,9 @@
 Used at every API boundary that accepts user data (params, initial
 conditions, regime-id arrays) — always called from Python, never inside
 JIT. Each helper validates that the value fits the target dtype and
-raises a clearly-named error if not. Once an input has crossed the
+raises a clearly-named error if not. The user-output adapters at the end
+of the module are the one exception: they convert what a user function
+returns inside traced code, without validation. Once an input has crossed the
 boundary it carries the canonical dtype unchanged through the simulate
 stack; downstream code does not re-cast.
 """
@@ -14,7 +16,13 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from lcm.typing import CanonicalArrayWriter, FloatND, IntND, ValueND
+from lcm.typing import (
+    BoolND,
+    CanonicalArrayWriter,
+    FloatND,
+    IntND,
+    ValueND,
+)
 
 _INT32_MIN = int(np.iinfo(np.int32).min)
 _INT32_MAX = int(np.iinfo(np.int32).max)
@@ -23,6 +31,10 @@ _FLOAT32_MAX = float(np.finfo(np.float32).max)
 # A numeric value crossing the boundary: a Python or NumPy scalar, or a host or
 # device array.
 type _NumericValue = int | float | np.integer | np.floating | np.ndarray | ValueND
+
+# What a user function may return where the engine expects one array: a Python
+# scalar, a NumPy scalar or array, or a JAX array of any numeric kind.
+type _UserOutput = bool | int | float | np.generic | np.ndarray | ValueND
 
 
 def canonical_float_dtype() -> type:  # noqa: PAN006 - JAX scalar classes use a private metaclass exposed as callable values in its stubs
@@ -126,3 +138,30 @@ def safe_to_float_dtype(
     if array_writer is not None:
         return array_writer(value=np_value, dtype=np.dtype(target_dtype), name=name)
     return jnp.asarray(np_value, dtype=target_dtype)
+
+
+# User-output adapters. Unlike the host helpers above, these run inside traced
+# code: they are the one place a user function's return value is converted to
+# the kind its engine consumer requires. Each is a single `jnp.asarray` with an
+# explicit dtype, so it never reads, validates or synchronizes a traced value.
+# A Python scalar returned by a user function (`0`, `0.0`, `True`) and an
+# integer or Boolean array take the same route as an array of the target kind.
+
+
+def as_canonical_float(value: _UserOutput) -> FloatND:
+    """Return a user function's numeric output at the canonical float dtype.
+
+    JAX canonicalizes the Python `float` dtype to the active precision, so the
+    adapter reads no configuration: model fingerprints walk its code.
+    """
+    return jnp.asarray(value, dtype=float)
+
+
+def as_bool(value: _UserOutput) -> BoolND:
+    """Return a user predicate's output as a JAX Boolean, by truthiness."""
+    return jnp.asarray(value, dtype=jnp.bool_)
+
+
+def as_code(value: _UserOutput) -> IntND:
+    """Return a user function's discrete-code output as `int32`."""
+    return jnp.asarray(value, dtype=jnp.int32)

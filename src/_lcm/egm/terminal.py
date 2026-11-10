@@ -33,10 +33,10 @@ from typing import cast
 
 import jax
 import jax.numpy as jnp
-from dags import concatenate_functions
 
 from _lcm.dtypes import canonical_float_dtype
 from _lcm.egm.carry import EGMCarry
+from _lcm.egm.preferences import concatenate_felicity
 from _lcm.typing import (
     EconFunctionArg,
     EconFunctionKwargs,
@@ -124,12 +124,7 @@ def get_terminal_wealth_carry_producer(
         value-function array to the terminal carry.
 
     """
-    utility_func = concatenate_functions(
-        functions=dict(functions),
-        targets="utility",
-        enforce_signature=False,
-        set_annotations=True,
-    )
+    utility_func = concatenate_felicity(functions=functions)
     utility_extra_arg_names = tuple(
         get_union_of_args([utility_func])
         - {state_name}

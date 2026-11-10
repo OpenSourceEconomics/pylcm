@@ -27,6 +27,7 @@ import numpy as np
 import pandas as pd
 from beartype import beartype
 from beartype.roar import BeartypeCallHintViolation
+from dags.tree import qname_from_tree_path
 
 from _lcm.beartype_conf import MODEL_CONF, PARAMS_CONF, SIMULATION_INPUT_CONF
 from _lcm.current_iid_node_adapter import NodeAxisAdapter, adapt_declaration
@@ -74,6 +75,7 @@ from _lcm.pandas_utils import (
 )
 from _lcm.params.edges import regime_kernel_params
 from _lcm.params.mapping_leaf import UserMappingLeaf
+from _lcm.params.numeric_roles import NumericRole, template_roles
 from _lcm.params.processing import (
     broadcast_to_template,
     cast_params_to_canonical_dtypes,
@@ -446,6 +448,7 @@ from lcm.typing import (
     FloatND,
     Intermediate,
     IntND,
+    ParameterName,
     Phase,
     PRNGKey,
     ReferenceName,
@@ -455,6 +458,7 @@ from lcm.typing import (
     UserInitialConditions,
     UserInitialConditionsInput,
     UserParams,
+    UserParamsNode,
     UserSeed,
     ValueND,
     _UserFacingTemplateNode,
@@ -2105,11 +2109,14 @@ class Model:
                 binding_recorder=recorder,
                 array_recorder=numeric_roots.append,
                 shock_groups=self.shocks,
-                shock_fixed_params={
-                    name: value
-                    for name, value in self.fixed_params.items()
-                    if name in self.shocks
-                },
+                shock_fixed_params=_float_role_identity(
+                    fixed_params={
+                        name: value
+                        for name, value in self.fixed_params.items()
+                        if name in self.shocks
+                    },
+                    roles=self._shock_registry.param_roles,
+                ),
             )
         except (TypeError, ValueError) as error:
             msg = (
@@ -6459,7 +6466,9 @@ class Model:
             # before canonicalization can allocate another numeric payload.
             array_writer.publish(stage="params", tree=flat_params)
         flat_params = cast_params_to_canonical_dtypes(
-            flat_params, array_writer=array_writer
+            flat_params,
+            array_writer=array_writer,
+            roles=template_roles(self._params_template),
         )
         flat_params = materialize_granular_transition_params(
             flat_params=flat_params,
@@ -6516,7 +6525,13 @@ class Model:
                 ),
             )
             group_flat_params = cast_params_to_canonical_dtypes(
-                group_flat_params, array_writer=array_writer
+                group_flat_params,
+                array_writer=array_writer,
+                roles={
+                    qname_from_tree_path((name, slot)): role
+                    for name, slots in self._shock_registry.param_roles.items()
+                    for slot, role in slots.items()
+                },
             )
             flat_params = MappingProxyType({**flat_params, **group_flat_params})
         _validate_param_types(flat_params)
@@ -6755,10 +6770,50 @@ def _missing_policy_message(
     )
 
 
+def _float_role_identity(
+    *,
+    fixed_params: Mapping[ShockGroupName, UserParamsNode],
+    roles: Mapping[ShockGroupName, Mapping[ParameterName, NumericRole]],
+) -> MappingProxyType[ShockGroupName, UserParamsNode]:
+    """Write each fixed float-role group leaf as the float its value denotes.
+
+    The boundary cast turns an integer in a float-role slot into a float, so the
+    semantic identity reads that slot as a float too: `mu=1` and `mu=1.0` fix one
+    law. Every other leaf, an integer callback input included, is unchanged.
+    """
+    return MappingProxyType(
+        {
+            name: (
+                {
+                    slot: _as_float_denotation(value)
+                    if roles.get(name, {}).get(slot, NumericRole.AS_GIVEN)
+                    is NumericRole.FLOAT
+                    else value
+                    for slot, value in slots.items()
+                }
+                if isinstance(slots, Mapping)
+                else slots
+            )
+            for name, slots in fixed_params.items()
+        }
+    )
+
+
+def _as_float_denotation(value: UserParamsNode) -> UserParamsNode:
+    """Return an integer scalar or array as the float a user would have written."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return float(value)
+    if isinstance(value, np.ndarray | jax.Array) and value.dtype.kind in "iu":
+        return np.asarray(value, dtype=np.float64)
+    return value
+
+
 def _readable_template(node: RegimeParamsTemplateNode) -> _UserFacingTemplateNode:
     """Copy a params-template node into plain dicts, keeping its annotation leaves."""
     if isinstance(node, str):
-        return node
+        return str(node)
     return {key: _readable_template(inner) for key, inner in node.items()}
 
 

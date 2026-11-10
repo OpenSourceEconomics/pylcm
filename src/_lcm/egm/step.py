@@ -162,7 +162,7 @@ from _lcm.egm.dcegm_query_model import DCEGMQueryModel
 from _lcm.egm.kernel_scope import _find_unsupported_feature
 from _lcm.egm.nbegm_query_model import NBEGMQueryModel
 from _lcm.egm.nested_floor import PreparedNestedFloor
-from _lcm.egm.preferences import concatenate_regime_function
+from _lcm.egm.preferences import concatenate_felicity, concatenate_regime_function
 from _lcm.egm.published_policy import EGMSimPolicy
 from _lcm.egm.query_data import EGMQueryData, build_template_egm_query_data
 from _lcm.egm.regime_introspection import (
@@ -1325,7 +1325,7 @@ def _build_kernel_pieces(
         + own_passive_state_names
         + tuple(own_discrete_action_values),
         euler_axis_in_V=euler_axis_in_V,
-        utility_func=concatenate_regime_function(functions=functions, target="utility"),
+        utility_func=concatenate_felicity(functions=functions),
         inverse_marginal_utility_func=(
             concatenate_regime_function(
                 functions=functions, target="inverse_marginal_utility"

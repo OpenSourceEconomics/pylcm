@@ -16,7 +16,7 @@ from _lcm.constraints.processed import (
     ProcessedConstraint,
     normalize_constraints,
 )
-from _lcm.dtypes import canonical_float_dtype
+from _lcm.dtypes import as_canonical_float, canonical_float_dtype
 from _lcm.post_decision_bound import (
     BoundDependencyEntry,
     PostDecisionBoundSpec,
@@ -50,7 +50,12 @@ else:
 
 @dataclass(frozen=True, kw_only=True, eq=False)
 class ScalarFloor:
-    """Preserve a floor's signature while checking its scalar floating result."""
+    """Preserve a floor's signature while checking its real scalar result.
+
+    This is where the engine receives a callable floor: an integer result, such
+    as `return 0`, is converted to the canonical float dtype, while a Boolean,
+    complex or non-scalar result is refused.
+    """
 
     function: UserFunction
     """Original producer, composed through the ordinary DAG."""
@@ -65,13 +70,16 @@ class ScalarFloor:
     @no_type_check
     def __call__(self, *args: FloatND, **kwargs: FloatND) -> FloatND:
         value = jnp.asarray(self.function(*args, **kwargs))
-        if value.ndim != 0 or not jnp.issubdtype(value.dtype, jnp.floating):
+        if value.ndim != 0 or not (
+            jnp.issubdtype(value.dtype, jnp.floating)
+            or jnp.issubdtype(value.dtype, jnp.integer)
+        ):
             raise ModelInitializationError(
                 f"Borrowing bound '{self.constraint_name}' must return a real "
-                f"floating scalar; "
+                f"integer or floating scalar; "
                 f"got shape {value.shape}, dtype {value.dtype}."
             )
-        return value.astype(canonical_float_dtype())
+        return as_canonical_float(value)
 
 
 @dataclass(frozen=True, kw_only=True)
