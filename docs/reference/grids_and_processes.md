@@ -47,6 +47,11 @@ when the economics declares it.
 | `GridBreakpoint(value, owner=...)`                                     | Interior boundary and which adjacent segment owns it    |
 | `ConditionalAction(grid, active_when, inactive_value)`                 | Action grid used only under some discrete-action values |
 
+A grid's `start`, `stop` and breakpoint values are floats: an `int` is stored as a
+Python `float`, and a JAX scalar is refused. `n_points` and `points_per_segment` are
+Python integers. Write bounds as numbers, not arrays, so that `dataclasses.replace` and
+equality work on the stored values.
+
 Piecewise grids control **grid density** at known locations. They do not declare an
 economic budget kink to a specialized solver. Use [case pieces](case_pieces.md) or a
 [piecewise-affine schedule](piecewise_affine.md) for that structure.
@@ -94,6 +99,11 @@ Density-rule differentiation uses normalized scaled arithmetic without a host
 certificate. A componentwise accuracy certificate exists only as a test oracle and adds
 no check to solve, simulation or routine AD. See
 [density derivatives](../user_guide/continuous_stochastic_processes.md).
+
+Process-law values (`mu`, `sigma`, `rho`, `n_std`, `start`/`stop`, mixture parameters,
+`JointNormalIIDProcess`'s `mean` and `cov`, and the values of `StateConditioned.by`) are
+floats. An `int` is accepted and stored as a `float`, so `mu=1` and `mu=1.0` declare one
+law; a Boolean is refused.
 
 A process owns its transition mechanism. Adding a second law under `state_transitions`
 is an ambiguous declaration and is rejected.

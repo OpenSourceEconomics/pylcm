@@ -9971,7 +9971,11 @@ class _OneHotRegimeTransition:
 
     @no_type_check
     def __call__(self, *args: EconFunctionArg, **kwargs: EconFunctionArg) -> FloatND:
-        return jax.nn.one_hot(self.func(*args, **kwargs), self.n_regimes)
+        code = as_code(
+            value=self.func(*args, **kwargs),
+            source=f"Regime selector '{name_of(self.func)}'",
+        )
+        return jax.nn.one_hot(code, self.n_regimes)
 
 
 def _wrap_deterministic_regime_transition(

@@ -457,6 +457,22 @@ def test_constant_deterministic_regime_code(*, form: str) -> None:
     np.testing.assert_array_equal(values.values[0]["alive"], [1.0, 2.0])
 
 
+@pytest.mark.parametrize("form", ["python_float", "float_array"])
+def test_float_regime_code_is_refused(*, form: str) -> None:
+    """A regime code returned as a float is refused rather than one-hot encoded."""
+    raw = _constant(form=form, value=int(BranchRegimeId.final))
+
+    def next_regime() -> ScalarInt:
+        return raw  # ty: ignore[invalid-return-type]
+
+    model = _regime_model(law=next_regime)
+    with pytest.raises(
+        InvalidFunctionOutputError,
+        match=r"^Regime selector 'next_regime' returned dtype 'float",
+    ):
+        model.solve(params=_BRANCH_PARAMS, log_level="off")
+
+
 @categorical(ordered=False)
 class ExitRegimeId:
     source: ScalarInt
