@@ -1013,6 +1013,7 @@ class NBEGM(OneMarginSolver):
             _collect_nbegm_case_spec(
                 context=representative_context,
                 continuous_state=bound.continuous_state,
+                dtype=savings_grid.dtype,
             )
             if not is_schedule and not is_discrete and schedule_discrete_spec is None
             else None
@@ -2706,12 +2707,12 @@ class _RideAlongNBEGMPeriodKernel:
 class _LiteralCaseThreshold:
     """A case threshold declared as a literal number."""
 
-    literal: float
-    """The declared boundary value; `_normalize_case_boundary` refuses a flag."""
+    literal: ScalarFloat
+    """The declared boundary value, bound at the consumer's float dtype at build."""
 
-    def __call__(self, _params: EconFunctionKwargs) -> FloatND:
-        """Return the literal as an array; the params play no part."""
-        return jnp.asarray(self.literal)
+    def __call__(self, _params: EconFunctionKwargs) -> ScalarFloat:
+        """Return the bound literal; the params play no part."""
+        return self.literal
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -3218,9 +3219,13 @@ def _single_liquid_state_name(
 
 
 def _collect_nbegm_case_spec(
-    *, context: SolverBuildContext, continuous_state: StateName
+    *, context: SolverBuildContext, continuous_state: StateName, dtype: DTypeLike
 ) -> _NBEGMCaseSpec:
-    """Collect the single binary case split from the regime's user functions."""
+    """Collect the single binary case split from the regime's user functions.
+
+    A literal threshold is bound as a JAX scalar of `dtype`, the float dtype of the
+    kernel's grids, so the compiled body compares against it without converting.
+    """
     import inspect  # noqa: PLC0415
 
     from _lcm.egm.nbegm import collect_nbegm_metadata  # noqa: PLC0415
@@ -3268,6 +3273,7 @@ def _collect_nbegm_case_spec(
             context=context,
             predicate_name=piece_set.predicate_name,
             threshold=threshold,
+            dtype=dtype,
         ),
         equality_owner=equality_owner,
     )
@@ -3278,6 +3284,7 @@ def _case_threshold_resolver(
     context: SolverBuildContext,
     predicate_name: FunctionName,
     threshold: Const | Ref,
+    dtype: DTypeLike,
 ) -> _LiteralCaseThreshold | _ParameterCaseThreshold | _ComputedCaseThreshold:
     """Compile a case threshold without inventing a second predicate."""
     import inspect  # noqa: PLC0415
@@ -3285,7 +3292,7 @@ def _case_threshold_resolver(
     from lcm.exceptions import NBEGMCaseError  # noqa: PLC0415
 
     if isinstance(threshold, Const):
-        return _LiteralCaseThreshold(literal=threshold.value)
+        return _LiteralCaseThreshold(literal=jnp.asarray(threshold.value, dtype=dtype))
 
     threshold_name = threshold.name
     if threshold_name not in context.functions:
@@ -10642,6 +10649,7 @@ def _build_nbegm_single_axis_group(
         spec = _collect_nbegm_case_spec(
             context=context,
             continuous_state=solver.continuous_state,
+            dtype=savings_grid.dtype,
         )
         core = _build_nbegm_core(
             savings_grid=savings_grid,
@@ -11062,7 +11070,9 @@ def build_nbegm_interval_recipe(
             reserved_names=frozenset((*state_names, *action_names)),
         )
         if isinstance(threshold, Const):
-            read_threshold = _LiteralCaseThreshold(literal=threshold.value)
+            read_threshold = _LiteralCaseThreshold(
+                literal=jnp.asarray(threshold.value, dtype=canonical_float_dtype())
+            )
             threshold_identity = ("literal", threshold.value)
         elif threshold.name in functions:
             function = concatenate_functions(dict(functions), targets=threshold.name)
