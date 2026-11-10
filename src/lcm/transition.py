@@ -598,7 +598,7 @@ class JointTransition:
 
 
 @dataclass(frozen=True)
-class _AgeSpecialized[Coordinate: int | float = float]:
+class _AgeSpecialized[Coordinate: (int, float) = float]:
     """Base for the age-specialized build-time markers.
 
     An age-specialized marker binds a per-age object (a function or a grid) at model
@@ -648,7 +648,7 @@ class _AgeSpecialized[Coordinate: int | float = float]:
 
 @beartype(conf=REGIME_CONF)
 @dataclass(frozen=True)
-class AgeSpecializedFunction[Coordinate: int | float = float](
+class AgeSpecializedFunction[Coordinate: (int, float) = float](
     _AgeSpecialized[Coordinate]
 ):
     """Wrapper marking a function whose closure is bound per age at build time.
@@ -695,7 +695,7 @@ class AgeSpecializedFunction[Coordinate: int | float = float](
 
 @beartype(conf=REGIME_CONF)
 @dataclass(frozen=True)
-class AgeSpecializedGrid[Coordinate: int | float = float](_AgeSpecialized[Coordinate]):
+class AgeSpecializedGrid[Coordinate: (int, float) = float](_AgeSpecialized[Coordinate]):
     """Wrapper marking a continuous-state grid whose bounds vary per age.
 
     Wrap a grid *factory* to indicate that the grid's bounds/nodes depend on the

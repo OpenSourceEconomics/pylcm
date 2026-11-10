@@ -83,7 +83,7 @@ class IdentityParseReuseTests(unittest.TestCase):
 class ConstantParseReuseTests(unittest.TestCase):
     def test_constant_reuses_syntax_but_rechecks_its_bound_receiver(self):
         from _lcm_regime_finder.semantic_check import _closed_native_constant
-        tag='_lcm.regime_building.schedules._Constant'
+        tag='_lcm.regime_building.schedules._RegimeCodeConstant'
         original: ConstantCapture = {'type':tag,'fields':{'value':0},'callable':{
             'bound_self':{'type':tag,'fields':{'value':0}},
             'capture_contract':'inspection-only-frozen-bindings-2',

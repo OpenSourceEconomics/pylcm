@@ -9,7 +9,7 @@ import jax.numpy as jnp
 from _lcm.typing import AgeValue
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError
-from lcm.typing import Float1D, Int1D, UserAge
+from lcm.typing import Float1D, Int1D, ScalarFloat, ScalarInt, UserAge
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -86,3 +86,12 @@ def specialization_coordinate_at(*, ages: TimeAxis, period: int) -> AgeValue:
 def age_at(*, ages: TimeAxis, period: int) -> float | None:
     """Report an age only when the model declares one."""
     return None if coordinate_kind(ages) == "period" else float(ages.values[period])
+
+
+def format_age(age: AgeValue | ScalarInt | ScalarFloat) -> str:
+    """Return an age for a message: an integer when whole, otherwise two decimals.
+
+    A device-held age is read on the host, so pass only a concrete value.
+    """
+    value = float(age)
+    return str(int(value)) if value.is_integer() else f"{value:.2f}"

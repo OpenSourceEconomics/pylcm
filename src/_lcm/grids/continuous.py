@@ -200,11 +200,11 @@ def _validate_continuous_grid(
         raise GridInitializationError(msg)
 
 
-def _validate_irreg_spaced_grid(points: list[int | float]) -> None:
+def _validate_irreg_spaced_grid(points: list[float]) -> None:
     """Validate the irregular spaced grid parameters.
 
     Args:
-        points: The grid points, as Python scalars of one numeric array.
+        points: The grid points, as Python floats.
 
     Raises:
         GridInitializationError: If the grid parameters are invalid.

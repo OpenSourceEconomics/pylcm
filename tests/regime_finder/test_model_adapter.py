@@ -97,7 +97,7 @@ class GraphAdapterTests(unittest.TestCase):
         source["graph"]["fields"]["laws"] = {"original": {"kind": "dataclass", "fields": {
             "transition": {"kind": "dataclass", "type": "engine._PeriodDispatch", "fields": {
                 "case_by_period": [0, 0, 0, 0, 0], "cases": [
-                    {"kind": "dataclass", "type": "engine._Constant", "fields": {"value": 0}}]}}}}}
+                    {"kind": "dataclass", "type": "engine._RegimeCodeConstant", "fields": {"value": 0}}]}}}}}
         self.assertEqual(adapt_snapshot(source), adapt_snapshot(deepcopy(source)))
 
     def alternating(self):

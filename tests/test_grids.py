@@ -343,6 +343,13 @@ def test_irreg_spaced_grid_rejects_points_that_round_to_one_node() -> None:
         IrregSpacedGrid(points=np.array([lower, lower + 1]))
 
 
+def test_irreg_spaced_grid_stores_integer_points_as_canonical_floats() -> None:
+    grid = IrregSpacedGrid(points=np.array([0, 1, 3]))
+    np.testing.assert_array_equal(
+        np.asarray(grid.to_jax()), np.array([0.0, 1.0, 3.0], dtype=_canonical_float())
+    )
+
+
 def test_irreg_spaced_grid_keeps_adjacent_representable_points() -> None:
     dtype = _canonical_float()
     upper = np.nextafter(dtype(1.0), dtype(np.inf))

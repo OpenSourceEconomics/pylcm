@@ -634,12 +634,12 @@ _SOURCE_SEALS = {
     LIQUID_BOUND_DECLARATION_SOURCE: "751e18767bccd13540094eb5e518503c0d029faed30bf05a818c1f8c1cc01e21",
     FEASIBILITY_SOURCE: "8cb8cb1ec3da487dac2b5eec451aa4ac61d5222f565c91986c6c2ca7baed1402",
     ACTION_GRID_SOURCE: "76a059f7cc7d7e7d2a99e0ffd626ddbd76b89724d5e24f3bb10ad86501268309",
-    SUPPORT_TRANSITION_CHECKS_SOURCE: "c342a45509c0868756c8eb9dbd5707c5e4a82e7e0b738d1022680f1c69f6f55e",
+    SUPPORT_TRANSITION_CHECKS_SOURCE: "85fa2159014e82de79b5be13bbb702f2d53deb02230470358ba5baae829f3dcd",
     SUPPORT_DIAGNOSTICS_SOURCE: "15aab27db77f3f9f9699697bc32f201a018f43b1a4653f9c3b2caee0e7ae16db",
     SUPPORT_PRECONDITIONS_SOURCE: "5df8b182b8cb3c37f6ab76719386cc809052bcc00cda63772d698c75071f4092",
     SUPPORT_AUTHORITY_SOURCE: "d25dd5ef989c84bdccbd5a16c45cfa8106b1abdae2d10938e54ed029a7d7814a",
     SUPPORT_FINGERPRINT_SOURCE: "e0e010e24348739e9efce1a7b6447b2955ff8b2a6dccd7783c0b19d72baba190",
-    UNIFORM_PROCESS_GRID_SOURCE: "24bf815b99bdf0c1a8a37eb838fbdf7f474a3d7f0a536c7a3d4bddd84e6ce924",
+    UNIFORM_PROCESS_GRID_SOURCE: "3cd2faf78b21b2862946ee4c12ffb79f474a43430615e952e5f1c582cc02ac5a",
     EAGER_STAGE_SOURCE: "d0a52778e4966ecf9bbac4ecaee87f85f49df0aeb4bf7c390f8599bf7d97efa8",
     PROCESS_GRID_RESOLUTION_SOURCE: "2d00bbc058e022abc9150a60782b9689b8446d894029b30d99f916e5a7d128bf",
     NATIVE_VALUES_SOURCE: "4e7302d6cacb53a20f6a0a08e7f57d6e074dedddd8f6a95944a9ed1ed4df7bda",
@@ -662,7 +662,7 @@ _SOURCE_SEALS = {
     COMBINED_PROGRAM_ARGUMENTS_SOURCE: "c37d2650f9a8cf6ce4b7f6cfeeef9c4b79017d5f491b088b69f57e72f89d9e6f",
     COMBINED_SOLUTION_COPIES_SOURCE: "fbe188d3954a523522624823c769fda4c5831e138d2cb8421fc0f1453946886d",
     COMBINED_RESULT_SNAPSHOT_SOURCE: "5c37cfd9f8fc527d915387f85f0c0963e5c6a23787cc0a851a2fb7bb8f5402a9",
-    COMBINED_VALIDATE_V_SOURCE: "4f62a4f0451dd16c90fde82439c0a0a4f1a41e5f7f759c2f4c0f0e37fd201de6",
+    COMBINED_VALIDATE_V_SOURCE: "3bfdd8cbbd7aeaa9d075f32d04709a9e50a24f803b85f83d8a96a9cc8360ae5b",
     COMBINED_LOGGING_SOURCE: "95f189e5713c7e97516b69e8298a79eea24f2baca9f7b55b62b56b81a1163023",
     COMBINED_AUTHORITY_SOURCE: "7de23fa0421409d62ddfa45d7528596e7166107c2f1e580a7ac72c962b117785",
     COMBINED_ENTRIES_SOURCE: "0c27d42858dde4a34b5e82a3622dee9c7b240c0c9c3284a2ba4a898bbf9a6510",
@@ -697,7 +697,7 @@ _SOURCE_SEALS = {
     SIMULATION_PROGRAM_TYPES_SOURCE: "677a3c49f34ceb56f9f6de970c98535384f907fa8ea6bff6e936e35dee388b81",
     SIMULATION_RUNTIME_SOURCE: "87865ad0c4cfabca80937c118015ca5b16dcff9af62004144ff5b638b0cecedb",
     LOGSUM_SOURCE: "e12061dd4f0f0176324182a2eb875cb6ebe4b97174091c597d46a622df93ff1b",
-    ARGMAX_SOURCE: "ac0fbcf8014f35d9b614851ee6c68136da8faa6e577e56377b7d0d8693f7721e",
+    ARGMAX_SOURCE: "43c4ea119967ff598f197566016f6647481af95418b515fee6fea285d9e2b1f0",
     COLLECTIVE_SOURCE: "4cc0683d493f597684f5801909d297145d8bade0aa752c3e35cf8af2cb55edd9",
     MAX_Q_SOURCE: "62e5010e5f535ed3731218a5549167d6f5ea332b145d2dcece88d492949fd78c",
     PROCESSING_SOURCE: "c688fd712323bedc632b126b74ce01cfa9a53be4a87575dfba10587b63b0e6a8",
@@ -718,7 +718,7 @@ _SOURCE_SEALS = {
     PROBABILITY_SOURCE: "ad036db316b521cc702b27503b1eab6ed7635e207f9cfac2272c45982578e18a",
     ENGINE_SOURCE: "147b5b7b1d0fb25fdb01fa5a4c4aed2c7af8106faf8ada6e7e84d314560b67bf",
     STATE_ACTION_SPACE_SOURCE: "fbde26f323f91ace90251be29911bbccdd4560e0768fa3422d23cfa5bea4418d",
-    SIMULATION_SOURCE: "462a0fedfb36f3c88a355f1d1d46f607508c09407cd7bfda5520415598fd52e6",
+    SIMULATION_SOURCE: "0584fb395ad1ea601d48210927c35eb63c9122245495ac302676d47ffead6680",
     SIMULATION_TRANSITIONS_SOURCE: "e3f72d4fffe5c861a4b3a9214bf470ddcbadcf56b35b588234a2011b2cfeff5d",
     SIMULATION_COMPILE_SOURCE: "2c54bd385d0205897bebd42c6b63d55eb0896a04e208786f4e0028b20e81074d",
     MODEL_SOURCE: "00151409bbb53940073e34d49172ecb04711377fd7637d0f988f9e1ae9455c55",
@@ -737,14 +737,14 @@ _SOURCE_SEALS = {
     GRID_BASE_SOURCE: "2d9c7f1a0827f3ca172417a2ee2bf60b15c9ccb3dcedf3a94fb502e2d57538de",
     GRID_COORDINATES_SOURCE: "9dd0cf9e3c702023cd3cfa40a3164bf399ea295c57349223b8ab617c7f3533d5",
     DISCRETE_GRID_SOURCE: "52a33a14523fd38e1ad705903495031aed79754e7011baefdb11d65fcd4e81d3",
-    CONTINUOUS_GRID_SOURCE: "1afb5790ccd11a491fb377a967ed9f91aa51a6c2f0716b30ad3d4fe8d1001d4f",
+    CONTINUOUS_GRID_SOURCE: "83391c2db59bf7156da92268bbd5533df8d8c2166a659125fa6fc0eb9fa8e084",
     PIECEWISE_GRID_SOURCE: "8b44d9b0bbc4e470538f37992fb8b7c6d94e6c15d3a6baeb34fa06268abcccc3",
     PROCESSES_INIT_SOURCE: "fbce6ed4c889cf4c30f5242c142b4dcf2fa9e186b75cd17be1557f827abff00a",
     PROCESS_BASE_SOURCE: "60cde8025c7926f20a29bf36d44b2d1e340e3dad607a7f23ac899fc3d6a9793d",
     PROCESS_IID_SOURCE: "3833704ce1e2cac4a12391d08602b34fbf4518309976b8c884528f2697b78b40",
     PROCESS_AR1_SOURCE: "0b4a90e1f6dc5f3f2624975a8b0563b60d35cfffd6afbf01cfaa5ab14c6f8a8a",
     PROCESS_AR1_ON_NODES_SOURCE: "1da6c847824d8ca4afc8d4c06235b987163fcc89791c4ab71f913d0b07f1c292",
-    LCM_GRIDS_SOURCE: "4c227d16687c39c191c09e2b33926e146270a97eca4e9c17a38f5f9742b2ff62",
+    LCM_GRIDS_SOURCE: "5cc4e9325c869f2cf7ef5e21341f1911cc11816e07f50355820fe9e29643e486",
     LCM_PROCESSES_SOURCE: "0f43090442258f71fc4c32fcd7b69096cce674e582e8fe3ee4720aed3e528ca6",
     LCM_STATE_CONDITIONED_SOURCE: "367bb5d6fbd1ae20974c8905cf7277f7d4e6ea1d18d8d3e59df716a377bdcfbe",
     VARIABLES_SOURCE: "8445fd5d92144d013955027460ee204debfdcedf8bb5ef5d10092538cd18de8c",
@@ -756,7 +756,7 @@ _SOURCE_SEALS = {
     PANDAS_UTILS_SOURCE: "72be789d92caae2474c1d8d706b54bd2a82da3fdc202d5b85aa94523b5de603d",
     MODEL_PROCESSING_SOURCE: "45c64844b245ee1306a451a574780bc4057848f68039a9afc45e7d725bd78365",
     "src/_lcm/egm/upper_envelope/__init__.py": "2615b9a364b7ca1c927ca68b752cff17b318268adddbb2c234c145ed59c196d8",
-    "src/_lcm/egm/upper_envelope/segment_envelope.py": "775cf8168e83d4d4da9188d344abab33434e0e341c001de259bcf4dc49a11262",
+    "src/_lcm/egm/upper_envelope/segment_envelope.py": "ac5cb6020b9742734ce67f8748299a5314d958522e17b41e90e46e54bb4b82dc",
     "src/_lcm/egm/nested_floor.py": "8983b037774946af7a90aa106268659a69963e2d8f5dd4b55c6f5532dd2dbb72",
     "src/_lcm/egm/finite_negm_query.py": "7ce90cf75e272da35fbe28608c88b2cbd1a93201e5c1b785b480b75f1e311289",
     "src/_lcm/egm/adaptive_nbegm_producer.py": "6e981492ef9f803816a1b6e579818e02c9754395b0dac2a19355c0361b115574",
@@ -1561,7 +1561,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     SIMULATION_SOURCE: (
-        "c0771a778ab60fdfc826c0ab30222fedc113b91a4d221967c9c0a438cc7f5e91",
+        "181a93ee981e7df81a0861292fef78f15ab86c57790d6823051ef83d0bf12d8f",
         {
             "simulate": "8646640ef90b88aa8467d5942b25f3854bbdfe03a1b4ff6ae547db825158a95f",
             "_simulate_regime_in_period": "43231c3c82ee4678838f5542327977445739fdf679d761a0c480e9007813f195",
@@ -1581,7 +1581,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_prepare_nnbegm_candidate_bank": "07a38f7b95fd21404f19512426ed2ccb9c244928f372ac1c354e440f5d0c8c75",
             "_rank_nnbegm_candidate_bank": "e58788ebde739cee544df7a8b5cdddc0522ca5f08836ef6c2492bb69b01991c9",
             "_initialize_chunk_state": "ce97dba339426c926a50f326577ea8a09cdc8f18f9193b3ea3cdcc5403956092",
-            "_canonical_Q_at_actions": "cef0bc3a11bbae4ae74b98a55dea15e8cf6007e6bdb35b5c4863d3fc65b9f14e",
+            "_canonical_Q_at_actions": "03605ac570ed1ed1491d495a89e1c2402c656a591b4efa4fc91c789e4c5d50a9",
             "_current_iid_invalid": "03f8f1abc5e8c93c93b5e606af988dbc139a874fe75a93c7aca63dad8900c877",
         },
     ),
@@ -1897,9 +1897,9 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     COMBINED_VALIDATE_V_SOURCE: (
-        "4f1bda21fe8129239ab9d9bb41cfc2a5700be0dbbfe39d0f31d4b32976a91bb6",
+        "408fcbd033730fdf5b4991500ffe03ab94c9eddb965991d34de51eef5e172fe1",
         {
-            "value_function_nan_error": "c14ba988a0d9109997d96ce5d88942d02f37de1d0e126ad7cfcf852dfb68a795",
+            "value_function_nan_error": "f1178b0c83670af1b6c4d369aa7a855ff6662735c9ac57e9b7aaa6b64b8a49a2",
             "_entry_support_cause": "eaf8001c1762ca0d88cc374068a06ad22d43868b03ff8fa462c574dc788771b2",
         },
     ),
@@ -2175,7 +2175,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     SUPPORT_TRANSITION_CHECKS_SOURCE: (
-        "8bdd403e4b93fd6b771aa404adebce55e253076474d0ccca94671297669d5fd1",
+        "35a4edafe58d2e304f766dba793526622616d307508dd556939e35ce7a826d43",
         {
             "_ValidationSummary.state_action_space": "130e9abc335a298a37205deb98e1a3583e7632fd371ad0feae8413d91732cc4f",
             "validate_transitions": "e3cf9c7f61aa3bd979d51f625d31ea0bf1a554c2a18e06db0535bbf77100256b",
@@ -2185,7 +2185,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_evaluate_regime_probability_law": "c26148c3519d19ff749d06a65bb484f50fbf0a7ce0df36d09e1a1d98fbbf2e7f",
             "_regime_probability_law": "45faf8cf57fd2fb8a754589d2edcda7a1eb82910c7dd4f3c9fc8115caf6728a1",
             "_check_and_release_regime_probability": "f54a64b0239559ff0527404fe7dcaaf0783361ee24d5bf628d971f8037873b4b",
-            "_validate_regime_transition_probs": "403ad994ea48ce5ee2982ffe904f3d57adbd1039d8fe9056e989019d0af19749",
+            "_validate_regime_transition_probs": "196af53d199a1600c086a902f9a07f82ad70994ff91dae1a49443ec1877e037a",
             "validate_state_transitions_all_periods": "052d7def3951d720d31b8b46e20a8f9cb623d9f725f636bd6ffc1b869eaae03a",
             "validate_joint_transitions_all_periods": "27a6e3026d603052c37201fb8c406b4ca150c58ccbf0721db0ce698e1823dd90",
             "_own_transition_outputs": "3fbee994063b5cb63b318f51f35e7a88ada8a61ab8c9155867a54e9fd8b22a1e",
@@ -2194,8 +2194,8 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_validate_joint_laws": "41025cf308ccf0b7bf790c6e6a7dc2318135788f73a18827c4d5a984b8111b42",
             "_check_joint_support_schema": "4a31efe636b7d62f6b50ba39abc8aea16c7d46f1f1449983ef1e2c0512126da7",
             "_evaluate_joint_support": "79fa2c4e900159df49878f67069af9ba69eaa1f621502442b4bb8fe6ff37ec73",
-            "_validate_joint_support": "d2d75d2d4cad7d0ed8508c00941c7e83875385b151046a7700c07ce728528ac2",
-            "_validate_joint_probabilities": "3b124fe5d4fba178edd52773f48eb1361a1de5b437281bfb4c9434b001775442",
+            "_validate_joint_support": "dabecceb47fd75421b689d922936567cd672412d4a83f14b01f80f38f9e0ce92",
+            "_validate_joint_probabilities": "eb59cc9f542cfe8e6ac8a7a273cd1a81edd145874f1051aac76bfe8efdb28300",
             "_evaluate_joint_weights": "ad98e50978a61c64fc8e90ac84db7cb7cac6551491aceb3446dc352e38f8622d",
             "_joint_weight_law": "3ee7cd29818e915de77c8ed40d905b741912c49706cf76a3fd09a900d3c38fd9",
             "_validate_state_transition_single": "bd70fcd5f16e1fdaff02d044906eb873a8c732bb626e25e8144ced17510a1194",
@@ -2204,7 +2204,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_evaluate_admitted_transition_producer": "7656122b58624710c785c129472ba65d73bda0a334a8bdb9d7b9e7ee6ecdc6be",
             "_state_probability_law": "2ef105658b58927c624b6e1384e5848917a01b68b0409d53fbcc3808f3fddb24",
             "_abstract_transition_operand": "da4ed98dd978aa74b9e1e8886ab15e60f875198ad048d68ff23d143d370af33c",
-            "_check_state_probs": "4e4e56e44907490ddbf993e53fd1f4e49611a505884128c66124d455143f23c7",
+            "_check_state_probs": "67bdcf4597f2dcd78cb527cceefc51dbebea089465ca9ede3576801dcc49dc21",
             "validate_off_grid_transitions": "efd8bfadc10f8acacb7eabbbcbadfcd7a23971a10750f5cabaa8df4afad6f11c",
             "_off_grid_target_counts": "ded21e0c8600d5e2d63879bb2c1dad732054b9470076bc083a8b4b96d30f94d7",
             "_off_grid_consumed_names": "2384e46328723bccb7e70a4c7321763c0fc83cbff27bd750d406afb080ce8aa0",
@@ -2227,7 +2227,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     UNIFORM_PROCESS_GRID_SOURCE: (
-        "0134498ff4a1009aaa2aa8cdcb46f1f14a7b9e339efc9166effa6cbcc40ca755",
+        "98fd8829bc02d027ae86a0eb48e51fdb92527db651d5bd70e997d6fee50596e4",
         {
             "_shared_uniform_operations": "77e4fa81b76a13e05edecb8cbc14571226bb6e34a9a80842289ac345cef3ad6e",
             "SimulationProcessGrids.supports": "47c6617af89cdcd6ba3a99aae345a8c32f8aec740f838bd0b37817236306ab79",
@@ -2243,7 +2243,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "SimulationProcessGrids._produce_normal": "5776e4f59b1eef6dbbcbacdb3d873321595222c3ab0d3939560c28d0eb1d6aed",
             "_normal_parameters": "9637755db33138bf9984a614e11bb12a571b3c4d44dbdfe954b91a2160fb9467",
             "_normal_fixed_identity": "9ae632aac46dc9398350124f255f8b293fa62d53dea8fb80978718a36a76d08e",
-            "_compute_normal_stage": "e49e8d6ed2760a94e39877a1717a6567220467d098de8f1670033411016d003f",
+            "_compute_normal_stage": "d5a6db00748e05a57671be677af8e93992fffd557b9d16c64818e23a2d73c119",
             "SimulationProcessGrids._produce_staged": "831f8107d8c1be270ce94a13d5f17e32b982f27758a2f6238bdecfc69950b0c2",
             "_complete_process_parameters": "494d07fc99007f66a2b245cd0c9f4cfa490d1c1e1f8d95ab58364f78219ff7d0",
             "_process_fixed_identity": "d57c85438453167cf5251f11eb4d9463465ffc9a3e5aec5183f41b776a2dcdae",
@@ -3236,7 +3236,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     "src/_lcm/egm/upper_envelope/segment_envelope.py": (
-        "ac340fe2712c80387b314eb0f54c513a7df9906497b367726aed4ccf31c248c4",
+        "0121a211aeff3a960afcfe843c91af7e6de8048d25adb762e05b47dddeb92fbc",
         {
             "refine_envelope_exact": "07f2b11939b72dc85a9d670773ac540dd09daa67839b4654537c138a7310f6fb",
         },
@@ -9650,7 +9650,6 @@ def _argmax_reducer_errors(tree: ast.Module) -> list[str]:
         move = _definition(tree=tree, name="_move_axes_to_back")
         flatten = _definition(tree=tree, name="_flatten_last_n_axes")
         pair_max = _definition(tree=tree, name="max_and_smallest_id")
-        pair_order = _definition(tree=tree, name="_larger_value_then_smaller_id")
         pair_reduce = _definition(tree=tree, name="_paired_max")
         pair_jvp = _definition(tree=tree, name="_paired_max_jvp")
         float_order_key = _definition(tree=tree, name="_float_order_key")
@@ -9661,7 +9660,6 @@ def _argmax_reducer_errors(tree: ast.Module) -> list[str]:
         float_key_order = _definition(
             tree=tree, name="_larger_float_key_then_smaller_id"
         )
-        lowest = _definition(tree=tree, name="_lowest")
     except ValueError as error:
         return [f"argmax reducer: {error}"]
 
@@ -9692,7 +9690,7 @@ if where is not None and where.ndim != 0:
 where = jnp.ones(a.shape, dtype=bool) if where is None else jnp.broadcast_to(where, a.shape)
 is_nan = jnp.isnan(a)
 comparable = where & ~is_nan
-lowest = _lowest(a.dtype)
+lowest = -jnp.inf
 positions = jnp.broadcast_to(jnp.arange(a.shape[-1], dtype=jnp.int32), a.shape)
 _max, _argmax = max_and_smallest_id(values=jnp.where(comparable, a, lowest), ids=jnp.where(comparable, positions, NO_ID), initial=lowest if initial is None else initial)
 any_nan = jnp.any(where & is_nan, axis=-1)
@@ -9701,16 +9699,10 @@ _argmax = jnp.where(any_nan | (_argmax == NO_ID), 0, _argmax)
 return (_argmax, _max)
 """
     expected_pair_max = r"""initial_arr = jnp.asarray(initial, dtype=values.dtype)
-if jnp.issubdtype(values.dtype, jnp.floating):
-    return _paired_max_with_tangent(values, ids, initial_arr)
-return _paired_max(values, ids, initial_arr)
+return _paired_max_with_tangent(values, ids, initial_arr)
 """
-    expected_pair_reduce = r"""no_id = jnp.asarray(NO_ID, dtype=jnp.int32)
-if jnp.issubdtype(values.dtype, jnp.floating):
-    best_key, best_id = _reduce_float_keys(keys=_float_order_key(values), ids=ids, initial_key=_float_order_key(initial), infinity_key=_float_infinity_key(values.dtype))
-    return (jax.lax.bitcast_convert_type(_reverse_negative_bits(best_key), values.dtype), best_id)
-best = jax.lax.reduce((values, ids), (jnp.asarray(_lowest(values.dtype), dtype=values.dtype), no_id), _larger_value_then_smaller_id, (values.ndim - 1,))
-return _larger_value_then_smaller_id(best, (initial, no_id))
+    expected_pair_reduce = r"""best_key, best_id = _reduce_float_keys(keys=_float_order_key(values), ids=ids, initial_key=_float_order_key(initial), infinity_key=_float_infinity_key(values.dtype))
+return (jax.lax.bitcast_convert_type(_reverse_negative_bits(best_key), values.dtype), best_id)
 """
     expected_pair_jvp = r"""values, ids, initial = primals
 values_dot, _, initial_dot = tangents
@@ -9725,13 +9717,6 @@ elements_dot = jnp.sum(values_dot * attains, axis=-1) / jnp.maximum(count, 1)
 initial_dot = jnp.broadcast_to(initial_dot, best.shape)
 best_dot = jnp.where(count > 0, jnp.where(_float_keys_equal(left=initial_key, right=best_key), (elements_dot + initial_dot) / 2, elements_dot), initial_dot)
 return ((best, best_id), (best_dot, np.zeros(best_id.shape, dtype=float0)))
-"""
-    expected_pair_order = r"""left_value, left_id = left
-right_value, right_id = right
-tie = right_value == left_value
-take_right = (right_value > left_value) | tie & (right_id < left_id)
-value = jnp.where(take_right, right_value, left_value)
-return (value, jnp.where(take_right, right_id, left_id))
 """
     expected_float_key = r"""if values.dtype.itemsize not in (2, 4, 8):
     msg = f'Use 16-, 32- and 64-bit IEEE floats; got {values.dtype}.'
@@ -9762,8 +9747,6 @@ choose = partial(_larger_float_key_then_smaller_id, infinity_key=infinity_key)
 best = jax.lax.reduce((keys, ids), (jnp.asarray(~infinity_key, dtype=keys.dtype), no_id), choose, (keys.ndim - 1,))
 return choose(best, (initial_key, no_id))
 """
-    expected_lowest = r"""return -jnp.inf if jnp.issubdtype(dtype, jnp.floating) else jnp.iinfo(dtype).min
-"""
     expected_move = r"""front_axes = sorted(set(range(a.ndim)) - set(axes))
 return a.transpose((*front_axes, *axes))
 """
@@ -9774,12 +9757,7 @@ return a.transpose((*front_axes, *axes))
             "argmax reducer: executable body differs from the full paired "
             "value/feasibility reduction"
         )
-    if (
-        pair_max.decorator_list
-        or pair_order.decorator_list
-        or pair_reduce.decorator_list
-        or pair_jvp.decorator_list
-    ):
+    if pair_max.decorator_list or pair_reduce.decorator_list or pair_jvp.decorator_list:
         errors.append("argmax reducer: decorators are not allowlisted")
     if not _positional_signature(
         node=pair_reduce, names=("values", "ids", "initial")
@@ -9830,7 +9808,6 @@ return a.transpose((*front_axes, *axes))
         (float_order_key, ("values",), expected_float_key),
         (float_reverse_bits, ("bits",), expected_float_reverse_bits),
         (float_infinity_key, ("dtype",), expected_float_infinity_key),
-        (lowest, ("dtype",), expected_lowest),
     ):
         if (
             helper.decorator_list
@@ -9867,10 +9844,6 @@ return a.transpose((*front_axes, *axes))
         )
     ):
         errors.append("argmax reducer: encoded key comparison changed")
-    if not _body_matches(node=pair_order, expected_source=expected_pair_order):
-        errors.append(
-            "argmax reducer: the (value, id) order is not larger value, then smaller id"
-        )
     no_id = [
         statement
         for statement in tree.body
@@ -9898,10 +9871,8 @@ return a.transpose((*front_axes, *axes))
         and {
             "argmax_and_max",
             "max_and_smallest_id",
-            "_larger_value_then_smaller_id",
             "_paired_max",
             "_paired_max_jvp",
-            "_lowest",
             "_float_order_key",
             "_reverse_negative_bits",
             "_float_infinity_key",

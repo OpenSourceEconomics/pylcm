@@ -378,8 +378,8 @@ def test_period_declared_transitions_preserve_coordinate_kind() -> None:
 def test_period_model_rejects_age_specialization() -> None:
     with pytest.raises(ModelInitializationError, match=r"[Aa]geSpecialized|coordinate"):
         _specialized_model(
-            lcm.AgeSpecializedFunction(
-                build=_specialized_flow,  # ty: ignore[invalid-argument-type] - Period builder is refused before age specialization.
+            lcm.AgeSpecializedFunction(  # ty: ignore[invalid-argument-type] - A period builder is refused before age specialization.
+                build=_specialized_flow,
                 signature=int,
             )
         )
