@@ -26,39 +26,39 @@ jitted_argmax = jit(argmax_and_max, static_argnames=["axis", "initial"])
 
 
 def test_argmax_1d_with_mask():
-    a = jnp.arange(10, dtype=jnp.int32)
+    a = jnp.arange(10.0)
     mask = jnp.array([1, 0, 0, 1, 1, 0, 0, 0, 0, 0], dtype=bool)
-    _argmax, _max = jitted_argmax(a=a, where=mask, initial=-1)
+    _argmax, _max = jitted_argmax(a=a, where=mask, initial=-1.0)
     assert _argmax == 4
     assert _max == 4
 
 
 def test_argmax_2d_with_mask():
-    a = jnp.arange(10, dtype=jnp.int32).reshape(2, 5)
+    a = jnp.arange(10.0).reshape(2, 5)
     mask = jnp.array([1, 0, 0, 1, 1, 0, 0, 0, 0, 0], dtype=bool).reshape(a.shape)
 
-    _argmax, _max = jitted_argmax(a=a, axis=None, where=mask, initial=-1)
+    _argmax, _max = jitted_argmax(a=a, axis=None, where=mask, initial=-1.0)
     assert _argmax == 4
     assert _max == 4
 
-    _argmax, _max = jitted_argmax(a=a, axis=0, where=mask, initial=-1)
+    _argmax, _max = jitted_argmax(a=a, axis=0, where=mask, initial=-1.0)
     assert_array_equal(_argmax, jnp.array([0, 0, 0, 0, 0]))
     assert_array_equal(_max, jnp.array([0, -1, -1, 3, 4]))
 
-    _argmax, _max = jitted_argmax(a=a, axis=1, where=mask, initial=-1)
+    _argmax, _max = jitted_argmax(a=a, axis=1, where=mask, initial=-1.0)
     assert_array_equal(_argmax, jnp.array([4, 0]))
     assert_array_equal(_max, jnp.array([4, -1]))
 
 
 def test_argmax_1d_no_mask():
-    a = jnp.arange(10, dtype=jnp.int32)
+    a = jnp.arange(10.0)
     _argmax, _max = jitted_argmax(a=a)
     assert _argmax == 9
     assert _max == 9
 
 
 def test_argmax_2d_no_mask():
-    a = jnp.arange(10, dtype=jnp.int32).reshape(2, 5)
+    a = jnp.arange(10.0).reshape(2, 5)
 
     _argmax, _max = jitted_argmax(a=a, axis=None)
     assert _argmax == 9
@@ -78,7 +78,7 @@ def test_argmax_2d_no_mask():
 
 
 def test_argmax_3d_no_mask():
-    a = jnp.arange(24, dtype=jnp.int32).reshape(2, 3, 4)
+    a = jnp.arange(24.0).reshape(2, 3, 4)
 
     _argmax, _max = jitted_argmax(a=a, axis=None)
     assert _argmax == 23
@@ -358,15 +358,11 @@ def test_argmax_and_max_of_one_candidate_differentiates_like_jnp_max(
 
 @pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
 @pytest.mark.parametrize("feasible", [False, True])
-@pytest.mark.parametrize("integer", [False, True], ids=["float", "int"])
 def test_singleton_action_axis_includes_finite_initial(
-    *, compiled: bool, feasible: bool, integer: bool
+    *, compiled: bool, feasible: bool
 ) -> None:
     """A finite floor competes with each singleton action, including masked actions."""
-    dtype = jnp.int32 if integer else None
-    a = jnp.asarray([[-8], [-2], [4]], dtype=dtype)
-    if not integer:
-        a = a.astype(jnp.asarray(0.0).dtype)
+    a = jnp.asarray([[-8.0], [-2.0], [4.0]])
     reduce = jitted_argmax if compiled else argmax_and_max
     index, maximum = reduce(a=a, axis=1, where=jnp.asarray(feasible), initial=-2.0)
     expected = [-2, -2, 4] if feasible else [-2, -2, -2]

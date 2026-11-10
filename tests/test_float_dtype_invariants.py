@@ -245,15 +245,16 @@ def test_continuous_grid_to_jax_dtype_is_canonical_under_no_x64(
     assert grid.to_jax().dtype == jnp.float32
 
 
-@pytest.mark.parametrize("attr", ["start", "stop"])
-def test_uniform_grid_stores_endpoints_as_canonical_jax_scalar(
-    *, attr: str, x64_disabled: None
+@pytest.mark.parametrize(("attr", "index"), [("start", 0), ("stop", -1)])
+def test_uniform_grid_materializes_host_endpoints_at_canonical_dtype(
+    *, attr: str, index: int, x64_disabled: None
 ):
-    """`LinSpacedGrid` stores `start`/`stop` as JAX scalars at canonical dtype."""
+    """`start`/`stop` are host floats; the grid's nodes take the canonical dtype."""
     grid = LinSpacedGrid(start=0.0, stop=100.0, n_points=10)
-    value = getattr(grid, attr)
-    assert isinstance(value, jnp.ndarray)
-    assert value.dtype == canonical_float_dtype()
+    assert type(getattr(grid, attr)) is float
+    nodes = grid.to_jax()
+    assert nodes.dtype == canonical_float_dtype()
+    assert float(nodes[index]) == getattr(grid, attr)
 
 
 def test_irreg_grid_stores_points_as_canonical_jax_array(x64_disabled: None):

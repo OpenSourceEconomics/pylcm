@@ -1246,14 +1246,14 @@ class _ParticipationReducer:
                 else answer[0][index]
             )
             valid &= answer[3]
-        accepted = jnp.asarray(
-            call_with_declared_arguments(function=self.predicate, operands=values)
+        accepted = as_bool(
+            value=jnp.asarray(
+                call_with_declared_arguments(function=self.predicate, operands=values)
+            ),
+            source="A participation predicate",
         )
-        if accepted.shape != () or accepted.dtype.kind not in "biu":
-            raise ValueError(
-                "A participation predicate must return a scalar Boolean or integer."
-            )
-        accepted = as_bool(accepted)
+        if accepted.shape != ():
+            raise ValueError("A participation predicate must return a scalar Boolean.")
         target = cast("PolicyAnswer", operands[_ACTING_TARGET])
         accepted &= target[2]
         valid &= target[3]

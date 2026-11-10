@@ -246,6 +246,22 @@ def test_conditional_action_normalizes_codes_to_sets() -> None:
 
 
 @pytest.mark.parametrize(
+    ("listed", "stored"),
+    [((0, 1), {0, 1}), ((0, 1.0), {0.0, 1.0}), ((jnp.int32(0), 1.5), {0.0, 1.5})],
+    ids=["ints", "int-and-float", "code-and-float"],
+)
+def test_conditional_action_stores_each_condition_in_one_numeric_kind(
+    *, listed: tuple[int | float | ScalarInt, ...], stored: set[int | float]
+) -> None:
+    action = ConditionalAction(
+        grid=HOURS_GRID, active_when={"labor": listed}, inactive_value=0.0
+    )
+    values = action.active_when["labor"]
+    kind = type(next(iter(stored)))
+    assert (values, {type(value) for value in values}) == (stored, {kind})
+
+
+@pytest.mark.parametrize(
     ("grid", "active_when", "inactive_value", "match"),
     [
         (HOURS_GRID, {"labor": 1}, 5.0, "not a node"),

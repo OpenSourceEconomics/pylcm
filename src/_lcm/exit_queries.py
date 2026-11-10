@@ -60,11 +60,14 @@ def _predicate(
     function: Callable[..., PytreeValue],
     operands: Mapping[ReferenceName, PytreeValue],
 ) -> BoolND:
-    """Convert a scalar Boolean or 0/1 integer, without reducing undeclared axes."""
-    value = jnp.asarray(_call(function=function, operands=operands))
-    if value.shape != () or value.dtype.kind not in "biu":
-        raise ValueError("Exit availability must be a scalar Boolean or integer.")
-    return as_bool(value)
+    """Return a scalar Boolean, without reducing undeclared axes."""
+    value = as_bool(
+        value=jnp.asarray(_call(function=function, operands=operands)),
+        source="Exit availability",
+    )
+    if value.shape != ():
+        raise ValueError("Exit availability must be a scalar Boolean.")
+    return value
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -142,9 +145,10 @@ class _ExitReducer:
                 if member in self.adjustments.get(name, {}):
                     adjustment = jax.lax.cond(
                         active,
-                        lambda helper=self.adjustments[name][member]: (
+                        lambda helper=self.adjustments[name][member], member=member: (
                             as_canonical_float(
-                                _call(function=helper, operands=operands)
+                                value=_call(function=helper, operands=operands),
+                                source=f"Exit utility adjustment of '{member}'",
                             )
                         ),
                         lambda: jnp.asarray(0.0),

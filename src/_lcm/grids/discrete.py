@@ -27,7 +27,6 @@ from _lcm.grids.categorical import (
 from lcm.exceptions import GridInitializationError
 from lcm.typing import (
     BoolND,
-    DiscreteGridValue,
     Float1D,
     FloatND,
     Int1D,
@@ -44,6 +43,9 @@ _INT32_MAX = jnp.iinfo(jnp.int32).max
 
 # A code array of any integer width; with x64 enabled, `jnp.array([0])` is int64.
 type _CodeIndex = Int[Array, "..."]
+
+# A value grid's declared values, all of the declaring array's one numeric kind.
+type _DeclaredValues = tuple[int, ...] | tuple[float, ...]
 
 
 class _DiscreteGrid(Grid):
@@ -66,7 +68,7 @@ class _DiscreteGrid(Grid):
         # comes from `to_jax()`.
         self.__codes = tuple(int(code) for code in category_codes.values())
         self.__ordered: bool = getattr(category_class, "_ordered", False)
-        self.__values: tuple[DiscreteGridValue, ...] | None = None
+        self.__values: _DeclaredValues | None = None
         self.__nodes_by_dtype: dict[np.dtype, _Nodes] = {}
         self.__tolerance = 0.0
         self.__holds_integers = False
@@ -83,8 +85,14 @@ class _DiscreteGrid(Grid):
             argument="values",
             example="DiscreteGrid(values=jnp.array([0, 5, 10]))",
         )
-        declared = _validate_values(np.asarray(values).tolist())
-        is_integer = isinstance(declared[0], int)
+        host_values = np.asarray(values)
+        is_integer = bool(np.issubdtype(host_values.dtype, np.integer))
+        declared = _validate_values(
+            scalars=tuple(int(value) for value in host_values.tolist())
+            if is_integer
+            else tuple(float(value) for value in host_values.tolist()),
+            is_integer=is_integer,
+        )
         self.__values = declared
         self.__tolerance = tolerance
         self.__holds_integers = is_integer
@@ -117,7 +125,7 @@ class _DiscreteGrid(Grid):
         return self.__ordered
 
     @property
-    def values(self) -> tuple[DiscreteGridValue, ...] | None:
+    def values(self) -> _DeclaredValues | None:
         """Return the declared values, or `None` for a category-class grid."""
         return self.__values
 
@@ -252,7 +260,7 @@ class _Nodes(NamedTuple):
 
 
 def _build_nodes(
-    *, declared: tuple[DiscreteGridValue, ...], tolerance: float, dtype: np.dtype
+    *, declared: _DeclaredValues, tolerance: float, dtype: np.dtype
 ) -> _Nodes:
     """Store the declared values at `dtype`, or raise if they do not survive it."""
     is_integer = dtype.kind == "i"
@@ -283,24 +291,21 @@ def _build_nodes(
     return _Nodes(values=value_array, midpoints=midpoints)
 
 
-def _validate_values(values: list[DiscreteGridValue]) -> tuple[DiscreteGridValue, ...]:
-    """Return the values as Python scalars, or raise if they are no value grid."""
-    if len(values) == 0:
+def _validate_values(*, scalars: _DeclaredValues, is_integer: bool) -> _DeclaredValues:
+    """Return the normalized values, or raise if they are no value grid."""
+    if len(scalars) == 0:
         raise GridInitializationError("`values` must hold at least one value.")
-    scalars = tuple(values)
-    message = _value_kind_error(scalars) or _value_order_error(scalars)
+    message = _value_kind_error(
+        scalars=scalars, is_integer=is_integer
+    ) or _value_order_error(scalars)
     if message is not None:
         raise GridInitializationError(message)
     return scalars
 
 
-def _value_kind_error(scalars: tuple[DiscreteGridValue, ...]) -> str | None:
-    """Report integer values outside int32 or float values that are not finite.
-
-    The scalars come from one array's `tolist()`, so they are all `int` or all
-    `float`.
-    """
-    if isinstance(scalars[0], int):
+def _value_kind_error(*, scalars: _DeclaredValues, is_integer: bool) -> str | None:
+    """Report integer values outside int32 or float values that are not finite."""
+    if is_integer:
         out_of_range = [
             value for value in scalars if not MISSING_CAT_CODE < value < 2**31
         ]
@@ -316,7 +321,7 @@ def _value_kind_error(scalars: tuple[DiscreteGridValue, ...]) -> str | None:
     return None
 
 
-def _value_order_error(scalars: tuple[DiscreteGridValue, ...]) -> str | None:
+def _value_order_error(scalars: _DeclaredValues) -> str | None:
     """Report the first pair of values that is not strictly ascending."""
     for position, (left, right) in enumerate(itertools.pairwise(scalars)):
         if not left < right:

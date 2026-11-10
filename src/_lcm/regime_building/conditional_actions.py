@@ -18,7 +18,7 @@ from dags.annotations import ensure_annotations_are_strings
 
 from _lcm.regime_building.age_specialization import resolve_node
 from _lcm.time import TimeAxis, specialization_coordinate_at
-from _lcm.typing import AgeValue, DiscreteGridValue
+from _lcm.typing import DiscreteGridValue
 from lcm.collective import CollectiveUtility, ValueDependentConstraint
 from lcm.grids import ConditionalAction, DiscreteGrid
 from lcm.phased import Phased
@@ -301,11 +301,11 @@ def _sign(*, pin: _ConditionalActionPin, readers: tuple[_Reader, ...]) -> _Signe
     )
 
 
-def _resolved(
+def _resolved[A: (int, float)](
     *,
     readers: tuple[_Reader, ...],
-    coordinate: AgeValue,
-    simulated_coordinate: AgeValue,
+    coordinate: A,
+    simulated_coordinate: A,
 ) -> Iterator[_Reader]:
     """Yield `readers` with every callable built per age or period built, through
     phased and per-target entries.

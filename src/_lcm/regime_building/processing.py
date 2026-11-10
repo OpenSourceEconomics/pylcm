@@ -35,6 +35,7 @@ from dags.signature import rename_arguments
 from dags.tree import qname_from_tree_path, tree_path_from_qname
 from jax import numpy as jnp
 
+from _lcm.additive_shock_transition import AdditiveShockTransition
 from _lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
 from _lcm.coarse_transition import _CoarseTransitionCell
 from _lcm.constraints.dynamic_bound import validate_declared_bounds
@@ -44,7 +45,7 @@ from _lcm.continuation import (
     FiniteOuterQuerySpec,
 )
 from _lcm.current_iid import CurrentIIDDrawPlan, CurrentIIDPlan
-from _lcm.dtypes import as_canonical_float, as_code, canonical_float_dtype
+from _lcm.dtypes import as_canonical_float, as_code, canonical_float_dtype, name_of
 from _lcm.egm.budget import (
     DCEGM_BUDGET_CONSTRAINT_NAME,
     INTRINSIC_BUDGET_SOLVERS,
@@ -9915,11 +9916,12 @@ def _as_next_state_role(*, func: EconFunction, grid: Grid | None) -> EconFunctio
     """Convert a deterministic law's output to its target state's kind.
 
     This is where the engine receives a user's next state: a continuous target
-    reads the canonical float dtype and a discrete target an `int32` code, so a
+    reads the canonical float dtype and a discrete target an integer code, so a
     law may return `1`, `True` or an integer array. An identity law already
-    returns the state's own kind.
+    returns the state's own kind, and an additive shock law converts its own sum:
+    the shock average recognizes it by its type.
     """
-    if grid is None or isinstance(func, _IdentityTransition):
+    if grid is None or isinstance(func, _IdentityTransition | AdditiveShockTransition):
         return func
     return cast(
         "EconFunction",
@@ -9952,7 +9954,10 @@ class _OutputInRole:
     @no_type_check
     def __call__(self, *args: EconFunctionArg, **kwargs: EconFunctionArg) -> ValueND:
         value = self.func(*args, **kwargs)
-        return as_code(value) if self.code else as_canonical_float(value)
+        source = f"Law '{name_of(self.func)}'"
+        if self.code:
+            return as_code(value=value, source=source)
+        return as_canonical_float(value=value, source=source)
 
 
 @dataclass(frozen=True, eq=False, kw_only=True)
@@ -9978,7 +9983,11 @@ class _OneHotRegimeTransition:
 
     @no_type_check
     def __call__(self, *args: EconFunctionArg, **kwargs: EconFunctionArg) -> FloatND:
-        return jax.nn.one_hot(self.func(*args, **kwargs), self.n_regimes)
+        code = as_code(
+            value=self.func(*args, **kwargs),
+            source=f"Regime selector '{name_of(self.func)}'",
+        )
+        return jax.nn.one_hot(code, self.n_regimes)
 
 
 def _wrap_deterministic_regime_transition(

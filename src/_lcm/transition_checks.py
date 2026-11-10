@@ -56,7 +56,7 @@ from _lcm.current_iid import (
     CurrentIIDPlan,
     NodeOperands,
 )
-from _lcm.dtypes import as_canonical_float
+from _lcm.dtypes import as_canonical_float, name_of
 from _lcm.engine import (
     Regime,
     SimulationPhase,
@@ -104,7 +104,7 @@ from _lcm.solution.feasibility import (
     reduce_bound_input_status,
     validate_runtime_bound_status,
 )
-from _lcm.time import TimeAxis
+from _lcm.time import TimeAxis, format_age
 from _lcm.transition_plans import (
     LotteryLifetime,
     TargetTransitionPlans,
@@ -1977,7 +1977,9 @@ def _validate_regime_transition_probs(
         return
     # Formatting a device-held age is a host read, so it waits for a violation.
     span = (
-        f"after age {age}" if next_age is None else f"between ages {age} and {next_age}"
+        f"after age {format_age(age)}"
+        if next_age is None
+        else f"between ages {format_age(age)} and {format_age(next_age)}"
     )
     inactive = tuple(names[index] for index in static_arguments["inactive_indices"])
     if nonfinite:
@@ -2018,7 +2020,7 @@ def _validate_regime_transition_probs(
             period_detail = "" if period is None else f" in period {period}"
             error = InvalidRegimeTransitionProbabilitiesError(
                 f"Regime '{r}' is outside the declared targets of '{regime_name}' "
-                f"at age {age} but has positive "
+                f"at age {format_age(age)} but has positive "
                 f"transition probability from '{regime_name}' "
                 f"{span}{period_detail}. Its mass is not represented in the "
                 f"continuation, so what the remaining targets carry is less than "
@@ -2030,7 +2032,8 @@ def _validate_regime_transition_probs(
             error.unit_mass_violation = (regime_name, period)  # ty: ignore[unresolved-attribute]
             error.mass_detail = (  # ty: ignore[unresolved-attribute]
                 f"Regime transition probabilities from '{regime_name}' {span} put "
-                f"positive mass on '{r}', which is not a target at age {age}."
+                f"positive mass on '{r}', which is not a target at age "
+                f"{format_age(age)}."
             )
             error.outside_target = r  # ty: ignore[unresolved-attribute]
             raise error
@@ -2542,7 +2545,8 @@ def _validate_discrete_state_laws(  # noqa: C901
                     cell=cell,
                     target_grid=target_grid,
                     description=(
-                        f"In regime '{regime_name}' at age {age} (period {period}), "
+                        f"In regime '{regime_name}' at age {format_age(age)} "
+                        f"(period {period}), "
                         f"the law '{name}' to regime '{target}'"
                     ),
                     value_dependent=regime.solution.counts_raise_landings,
@@ -3349,7 +3353,7 @@ def _validate_joint_support(
             error=RegimeInitializationError(
                 f"Joint transition {kernel_name}.support contains nonfinite or "
                 f"unsupported leaf values ({phase_name} phase of regime "
-                f"{regime_name}, target {target}, age {age})."
+                f"{regime_name}, target {target}, age {format_age(age)})."
             ),
         )
     return True
@@ -3385,7 +3389,8 @@ def _validate_joint_probabilities(
                 f"Joint transition {kernel_name}.probabilities returned shape "
                 f"{probs.shape}; expected {expected_shape}. The function {owes}, and "
                 f"support_size is {support_size} ({phase_name} phase of regime "
-                f"{regime_name}, target {target}, age {age}). An axis beyond those "
+                f"{regime_name}, target {target}, age {format_age(age)}). "
+                "An axis beyond those "
                 "has no declared source variable, so no row of it can be attributed "
                 "to a source cell."
             ),
@@ -3412,7 +3417,7 @@ def _validate_joint_probabilities(
                 f"Joint transition {kernel_name}.probabilities contains nonfinite or "
                 "out-of-range values, or rows that do not sum to one "
                 f"({phase_name} phase of regime {regime_name}, target {target}, "
-                f"age {age})."
+                f"age {format_age(age)})."
             ),
         )
 
@@ -4022,14 +4027,20 @@ def _state_probability_law(
     solve and simulation do through `StochasticTransition`.
     """
     if not grid_names:
-        return as_canonical_float(func(**scalar_kwargs))
+        return as_canonical_float(value=func(**scalar_kwargs), source=_law_source(func))
     mesh = jnp.meshgrid(*(grid_args[name] for name in grid_names), indexing="ij")
     flat_arrays = tuple(array.ravel() for array in mesh)
     return as_canonical_float(
-        jax.vmap(
+        value=jax.vmap(
             _GridPointCall(names=grid_names, scalar_kwargs=scalar_kwargs, func=func)
-        )(*flat_arrays)
+        )(*flat_arrays),
+        source=_law_source(func),
     )
+
+
+def _law_source(func: Callable[..., FloatND]) -> str:
+    """Name a stochastic state law in an output-kind error."""
+    return f"Stochastic transition '{name_of(func)}'"
 
 
 def _abstract_transition_operand(
@@ -4196,13 +4207,13 @@ def _check_state_probs(
     if outside_bounds:
         raise InvalidStateTransitionProbabilitiesError(
             f"StochasticTransition for {state_label} in regime '{regime_name}' "
-            f"at age {age} returned values outside [0, 1]."
+            f"at age {format_age(age)} returned values outside [0, 1]."
         )
 
     if invalid_mass:
         raise InvalidStateTransitionProbabilitiesError(
             f"StochasticTransition for {state_label} in regime '{regime_name}' "
-            f"at age {age} returned rows that do not sum to 1 along the "
+            f"at age {format_age(age)} returned rows that do not sum to 1 along the "
             f"outcome axis."
         )
 
@@ -4214,7 +4225,8 @@ def _check_state_probs(
         source = int(np.asarray(source_codes)[point])
         raise InvalidStateTransitionProbabilitiesError(
             f"StochasticTransition for {state_label} in regime '{regime_name}' "
-            f"at age {age} moves mass from code {source} (group {groups[source]}) "
+            f"at age {format_age(age)} moves mass from code {source} "
+            f"(group {groups[source]}) "
             f"to code {target} (group {groups[target]}); its fixed_component "
             f"requires zero mass outside the source code's group."
         )
@@ -4245,7 +4257,7 @@ def _check_state_outcome_axis(
             raise _SerialValidationRequired
         raise InvalidStateTransitionProbabilitiesError(
             f"StochasticTransition for {state_label} in regime '{regime_name}' "
-            f"at age {age} returned an outcome axis of size "
+            f"at age {format_age(age)} returned an outcome axis of size "
             f"{shape[-1]}; expected {transition.n_outcomes} from the "
             f"state's DiscreteGrid."
         )

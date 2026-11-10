@@ -17,6 +17,7 @@ from typing import Literal
 import jax.numpy as jnp
 
 from _lcm.engine import StateActionSpace
+from _lcm.time import format_age
 from _lcm.typing import (
     FlatRegimeParams,
     JSONValue,
@@ -159,8 +160,8 @@ def value_function_nan_error[PartialSolution: PeriodToRegimeToVArr](
     all_nan = n_nan == total
     fraction_hint = "all" if all_nan else f"{n_nan} of {total}"
     exc = InvalidValueFunctionError(
-        f"Value function at {time_kind} {age}{regime_part}: {fraction_hint} values "
-        f"are NaN.\n\n"
+        f"Value function at {time_kind} {format_age(age)}{regime_part}: "
+        f"{fraction_hint} values are NaN.\n\n"
         "NaN propagates through Q = U + beta * CE. Common causes:\n"
         "- A missing feasibility constraint (e.g. negative leisure passed "
         "to a fractional exponent).\n"

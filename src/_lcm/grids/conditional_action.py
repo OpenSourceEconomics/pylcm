@@ -27,7 +27,11 @@ def normalize_conditions(
     *,
     active_when: Mapping[ActionName, UserDiscreteValues],
 ) -> MappingProxyType[ActionName, frozenset[DiscreteGridValue]]:
-    """Return each condition's admitted values as a frozenset of Python numbers."""
+    """Return each condition's admitted values as a frozenset of Python numbers.
+
+    The values of one condition share one kind: all floats when any listed value
+    is a float, all ints otherwise.
+    """
     if not active_when:
         raise GridInitializationError(
             "The `active_when` of a ConditionalAction names no discrete action; an "
@@ -37,6 +41,8 @@ def normalize_conditions(
     for name, values in active_when.items():
         listed = values if isinstance(values, Sequence | AbstractSet) else (values,)
         normalized = frozenset(_as_python_number(value) for value in listed)
+        if any(isinstance(value, float) for value in normalized):
+            normalized = frozenset(float(value) for value in normalized)
         if not normalized:
             raise GridInitializationError(
                 f"The condition on {name!r} lists no value, so the action would "

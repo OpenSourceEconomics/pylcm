@@ -172,7 +172,7 @@ def test_raises_for_nan_values():
     )
     with pytest.raises(
         InvalidRegimeTransitionProbabilitiesError,
-        match=r"Non-finite values.*between ages 25\.0 and 26\.0",
+        match=r"Non-finite values.*between ages 25 and 26\.",
     ):
         _validate_regime_transition_probs(
             regime_transition_probs=probs,
@@ -494,3 +494,27 @@ def test_validate_transitions_sweeps_every_action_and_matches_solve() -> None:
     with pytest.raises(InvalidRegimeTransitionProbabilitiesError) as solve:
         model.solve(params=params, log_level="off")
     assert str(preflight.value) == str(solve.value)
+
+
+@pytest.mark.parametrize(
+    ("age", "next_age", "span"),
+    [
+        (jnp.int32(25), jnp.int32(26), "between ages 25 and 26"),
+        (jnp.asarray(25.0), jnp.asarray(26.0), "between ages 25 and 26"),
+        (jnp.asarray(25.25), jnp.asarray(91 / 3), "between ages 25.25 and 30.33"),
+    ],
+    ids=["int", "whole-float", "fraction"],
+)
+def test_error_names_ages_as_integers_when_whole_else_two_decimals(
+    *, age: ScalarInt | ScalarFloat, next_age: ScalarInt | ScalarFloat, span: str
+) -> None:
+    probs = MappingProxyType({"working_life": jnp.array([1.5, -0.5])})
+    with pytest.raises(InvalidRegimeTransitionProbabilitiesError) as error:
+        _validate_regime_transition_probs(
+            regime_transition_probs=probs,
+            active_regimes_next_period=("working_life",),
+            regime_name="working_life",
+            age=age,
+            next_age=next_age,
+        )
+    assert f"from 'working_life' {span} contain" in str(error.value)

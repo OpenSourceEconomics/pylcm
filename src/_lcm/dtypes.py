@@ -15,7 +15,9 @@ from typing import cast
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jaxtyping import Array, Int
 
+from lcm.exceptions import InvalidFunctionOutputError
 from lcm.typing import (
     BoolND,
     CanonicalArrayWriter,
@@ -34,6 +36,12 @@ type _NumericValue = int | float | np.integer | np.floating | np.ndarray | Value
 
 # What a user function may return where the engine expects one array: a Python
 # scalar, a NumPy scalar or array, or a JAX array of any numeric kind.
+# A discrete code from a user function: `int32`, or wider when it arrives wider.
+type _Code = Int[Array, "..."]
+
+# Names the user function an output-kind error refers to, e.g. "Constraint 'c'".
+type OutputSource = str
+
 type _UserOutput = bool | int | float | np.generic | np.ndarray | ValueND
 
 
@@ -142,26 +150,76 @@ def safe_to_float_dtype(
 
 # User-output adapters. Unlike the host helpers above, these run inside traced
 # code: they are the one place a user function's return value is converted to
-# the kind its engine consumer requires. Each is a single `jnp.asarray` with an
-# explicit dtype, so it never reads, validates or synchronizes a traced value.
-# A Python scalar returned by a user function (`0`, `0.0`, `True`) and an
-# integer or Boolean array take the same route as an array of the target kind.
+# the kind its engine consumer requires. Each checks only the dtype, which is
+# static under tracing, so it never reads, validates or synchronizes a traced
+# value. A Python scalar returned by a user function (`0`, `0.0`, `True`) takes
+# the same route as an array of its kind.
 
 
-def as_canonical_float(value: _UserOutput) -> FloatND:
-    """Return a user function's numeric output at the canonical float dtype.
+def name_of(function: object) -> OutputSource:  # noqa: PAN001 - any user callable
+    """Return a function's `__name__` for an output-kind error, else its repr."""
+    return getattr(function, "__name__", repr(function))
+
+
+def as_canonical_float(*, value: _UserOutput, source: OutputSource) -> FloatND:
+    """Return a float-role output (an integer or float) at the canonical dtype.
 
     JAX canonicalizes the Python `float` dtype to the active precision, so the
     adapter reads no configuration: model fingerprints walk its code.
+
+    Raises:
+        InvalidFunctionOutputError: `source` returned a Boolean or complex value.
+
     """
-    return jnp.asarray(value, dtype=float)
+    array = jnp.asarray(value)
+    if array.dtype.kind not in "iuf":
+        msg = (
+            f"{source} returned dtype '{array.dtype}', but must return a number. "
+            "A Boolean here is usually a comparison returned in place of its "
+            "consequence: use `jnp.where(condition, a, b)`, or a constraint to "
+            "rule cells out."
+        )
+        raise InvalidFunctionOutputError(msg)
+    return jnp.asarray(array, dtype=float)
 
 
-def as_bool(value: _UserOutput) -> BoolND:
-    """Return a user predicate's output as a JAX Boolean, by truthiness."""
-    return jnp.asarray(value, dtype=jnp.bool_)
+def as_bool(*, value: _UserOutput, source: OutputSource) -> BoolND:
+    """Return a predicate's output, which must be Boolean, as a JAX Boolean.
+
+    Raises:
+        InvalidFunctionOutputError: `source` returned a non-Boolean value.
+
+    """
+    array = jnp.asarray(value)
+    if array.dtype != jnp.bool_:
+        msg = (
+            f"{source} returned dtype '{array.dtype}', but must return a Boolean. "
+            "Compare a discrete code explicitly, e.g. `work == 1`; a probability "
+            "belongs in a stochastic transition."
+        )
+        raise InvalidFunctionOutputError(msg)
+    return array
 
 
-def as_code(value: _UserOutput) -> IntND:
-    """Return a user function's discrete-code output as `int32`."""
-    return jnp.asarray(value, dtype=jnp.int32)
+def as_code(*, value: _UserOutput, source: OutputSource) -> _Code:
+    """Return a discrete-code output (an integer or Boolean) as an integer array.
+
+    A Boolean becomes the code 0 or 1. An integer keeps at least 32 bits and a
+    wider width: narrowing `2**32 + 1` to `int32` here would wrap it onto the
+    code `1` before the off-grid check could see it.
+
+    Raises:
+        InvalidFunctionOutputError: `source` returned a float or complex value.
+
+    """
+    array = jnp.asarray(value)
+    if array.dtype.kind == "b":
+        return array.astype(jnp.int32)
+    if array.dtype.kind not in "iu":
+        msg = (
+            f"{source} returned dtype '{array.dtype}', but must return an integer "
+            "code. A float would be truncated onto a code: compute the code as "
+            "an integer, e.g. with `.astype(jnp.int32)` after rounding on purpose."
+        )
+        raise InvalidFunctionOutputError(msg)
+    return jnp.asarray(array, dtype=jnp.promote_types(array.dtype, jnp.int32))

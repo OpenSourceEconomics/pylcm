@@ -57,7 +57,6 @@ from lcm.typing import (
     ParameterName,
     ReferenceName,
     ScalarFloat,
-    ScalarInt,
     ValueND,
 )
 
@@ -987,7 +986,7 @@ def _compute_uniform_grid(
 
 def _compute_normal_stage(
     *,
-    parameters: Mapping[str, ScalarFloat | ScalarInt],
+    parameters: Mapping[str, ScalarFloat],
     n_points: int,
     stage: _GridStage,
 ) -> ValueND:

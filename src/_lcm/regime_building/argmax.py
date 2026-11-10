@@ -20,18 +20,14 @@ type _FloatBitsND = Int[jax.Array, "..."]
 # Identity of no element; it loses every tie against a real identity.
 NO_ID = jnp.iinfo(jnp.int32).max
 
-# The floor of a max reduction, in the kind of the reduced array: a float for a
-# float array, an int (an integer dtype's minimum, say) for an integer one.
-type ReductionFloor = float | int
-
 
 def argmax_and_max(
     *,
-    a: FloatND | IntND,
+    a: FloatND,
     axis: int | tuple[int, ...] | None = None,
-    initial: ReductionFloor | None = None,
+    initial: float | None = None,
     where: BoolND | None = None,
-) -> tuple[IntND, FloatND | IntND]:
+) -> tuple[IntND, FloatND]:
     """Compute the argmax of an n-dim array along axis.
 
     If multiple maxima exist, the first index will be selected.
@@ -74,7 +70,7 @@ def argmax_and_max(
     )
     is_nan = jnp.isnan(a)
     comparable = where & ~is_nan
-    lowest = _lowest(a.dtype)
+    lowest = -jnp.inf
     positions = jnp.broadcast_to(jnp.arange(a.shape[-1], dtype=jnp.int32), a.shape)
     _max, _argmax = max_and_smallest_id(
         values=jnp.where(comparable, a, lowest),
@@ -91,18 +87,17 @@ def argmax_and_max(
 
 
 def _argmax_and_max_of_one_candidate(
-    *, a: FloatND | IntND, where: BoolND | None, initial: ReductionFloor | None
-) -> tuple[IntND, FloatND | IntND]:
+    *, a: FloatND, where: BoolND | None, initial: float | None
+) -> tuple[IntND, FloatND]:
     """Return the index and value of each cell of `a` when nothing is reduced.
 
     Every cell has one candidate, its own value, at index zero. The value is the
     larger of the candidate and `initial` where `where` admits the candidate, and
-    `initial` elsewhere; without `initial` the dtype's lowest value stands in. A
+    `initial` elsewhere; without `initial`, `-inf` stands in. A
     feasible NaN stays NaN, and the derivative splits a tie as `jnp.max` does. No
     reduction is involved, so a candidate above `initial` keeps its exact bits.
     """
-    lowest = _lowest(a.dtype)
-    floor = jnp.asarray(lowest if initial is None else initial, dtype=a.dtype)
+    floor = jnp.asarray(-jnp.inf if initial is None else initial, dtype=a.dtype)
     admitted = (
         jnp.ones(a.shape, dtype=bool)
         if where is None
@@ -115,8 +110,8 @@ def _argmax_and_max_of_one_candidate(
 
 
 def max_and_smallest_id(
-    *, values: FloatND | IntND, ids: IntND, initial: ReductionFloor
-) -> tuple[FloatND | IntND, IntND]:
+    *, values: FloatND, ids: IntND, initial: float
+) -> tuple[FloatND, IntND]:
     """Return the max over the last axis and the smallest `int32` id attaining it.
 
     Both come out of one reduction over `(value, id)` pairs, so the id always
@@ -126,7 +121,7 @@ def max_and_smallest_id(
     no value equal to the max. When `initial` exceeds every value the id is
     `NO_ID`; mask an element out by giving it the lowest value and `NO_ID`.
 
-    A floating max differentiates like `jnp.max` with the same `initial`:
+    The max differentiates like `jnp.max` with the same `initial`:
     - no tie with `initial`: the average of the tangents of the elements equal
       to the max;
     - `initial` equal to the max: half that average plus half the tangent of
@@ -136,35 +131,21 @@ def max_and_smallest_id(
     The id carries no derivative.
     """
     initial_arr = jnp.asarray(initial, dtype=values.dtype)
-    if jnp.issubdtype(values.dtype, jnp.floating):
-        return _paired_max_with_tangent(values, ids, initial_arr)
-    return _paired_max(values, ids, initial_arr)
+    return _paired_max_with_tangent(values, ids, initial_arr)
 
 
 # keyword-only-exempt: library-callback=jax.custom_jvp
-def _paired_max(
-    values: FloatND | IntND, ids: IntND, initial: FloatND | IntND
-) -> tuple[FloatND | IntND, IntND]:
+def _paired_max(values: FloatND, ids: IntND, initial: FloatND) -> tuple[FloatND, IntND]:
     """Reduce `(value, id)` pairs over the last axis, without a derivative."""
-    no_id = jnp.asarray(NO_ID, dtype=jnp.int32)
-    if jnp.issubdtype(values.dtype, jnp.floating):
-        best_key, best_id = _reduce_float_keys(
-            keys=_float_order_key(values),
-            ids=ids,
-            initial_key=_float_order_key(initial),
-            infinity_key=_float_infinity_key(values.dtype),
-        )
-        return jax.lax.bitcast_convert_type(
-            _reverse_negative_bits(best_key), values.dtype
-        ), best_id
-    # XLA requires an identity initializer; a finite floor must compete afterward.
-    best = jax.lax.reduce(
-        (values, ids),
-        (jnp.asarray(_lowest(values.dtype), dtype=values.dtype), no_id),
-        _larger_value_then_smaller_id,
-        (values.ndim - 1,),
+    best_key, best_id = _reduce_float_keys(
+        keys=_float_order_key(values),
+        ids=ids,
+        initial_key=_float_order_key(initial),
+        infinity_key=_float_infinity_key(values.dtype),
     )
-    return _larger_value_then_smaller_id(best, (initial, no_id))
+    return jax.lax.bitcast_convert_type(
+        _reverse_negative_bits(best_key), values.dtype
+    ), best_id
 
 
 # keyword-only-exempt: library-callback=jax.custom_jvp.defjvp
@@ -218,24 +199,6 @@ _paired_max_with_tangent = jax.custom_jvp(_paired_max)
 # JAX types a JVP rule's tangents as its primals; an integer's `float0` tangent
 # is no `IntND`.
 _paired_max_with_tangent.defjvp(_paired_max_jvp)  # ty: ignore[invalid-argument-type]
-
-
-def _lowest(dtype: np.dtype[np.generic]) -> float | int:
-    """Return the reduction identity for a floating or integer dtype."""
-    return -jnp.inf if jnp.issubdtype(dtype, jnp.floating) else jnp.iinfo(dtype).min
-
-
-# keyword-only-exempt: library-callback=jax.lax.reduce
-def _larger_value_then_smaller_id(
-    left: tuple[IntND, IntND], right: tuple[IntND, IntND]
-) -> tuple[IntND, IntND]:
-    """Keep the pair with the larger integer value, and the smaller id on a tie."""
-    left_value, left_id = left
-    right_value, right_id = right
-    tie = right_value == left_value
-    take_right = (right_value > left_value) | (tie & (right_id < left_id))
-    value = jnp.where(take_right, right_value, left_value)
-    return value, jnp.where(take_right, right_id, left_id)
 
 
 def _float_order_key(values: FloatND) -> _FloatBitsND:

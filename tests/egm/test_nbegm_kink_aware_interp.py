@@ -35,7 +35,7 @@ def test_kink_aware_interp_reads_the_owning_side_at_the_limit(
         query=jnp.array(_LIMIT),
         grid=_GRID,
         values=values,
-        limit=_LIMIT,
+        limit=jnp.asarray(_LIMIT),
         equality_owner=equality_owner,
     )
     np.testing.assert_allclose(read, value_at_limit)
@@ -56,7 +56,7 @@ def test_kink_aware_interp_reads_the_far_side_just_past_an_on_node_limit(
         query=query,
         grid=_GRID,
         values=values,
-        limit=_LIMIT,
+        limit=jnp.asarray(_LIMIT),
         equality_owner=equality_owner,
     )
     np.testing.assert_allclose(read, _LIMIT + _JUMP, rtol=1e-12)
@@ -69,7 +69,7 @@ def test_kink_aware_interp_interpolates_within_the_lower_branch() -> None:
         query=jnp.array(1.5),
         grid=_GRID,
         values=values,
-        limit=_LIMIT,
+        limit=jnp.asarray(_LIMIT),
         equality_owner="otherwise",
     )
     np.testing.assert_allclose(read, 1.5, rtol=1e-12)
@@ -82,7 +82,7 @@ def test_kink_aware_interp_interpolates_within_the_upper_branch() -> None:
         query=jnp.array(3.5),
         grid=_GRID,
         values=values,
-        limit=_LIMIT,
+        limit=jnp.asarray(_LIMIT),
         equality_owner="otherwise",
     )
     np.testing.assert_allclose(read, 13.5, rtol=1e-12)

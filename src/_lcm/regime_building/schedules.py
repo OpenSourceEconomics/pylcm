@@ -1154,12 +1154,11 @@ def _with_signature[F: UserFunction](
 
 
 @dataclass(frozen=True, eq=False)
-class _Constant:
-    """Return `value` as an array; read nothing."""
+class _RegimeCodeConstant:
+    """Return the regime code `value` as an array; read nothing."""
 
-    value: int | float | tuple[float, ...]
-    """The regime code a deterministic law returns, or a stochastic law's
-    probability or probability vector."""
+    value: int
+    """The regime code a deterministic law returns."""
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "__signature__", inspect.Signature())
@@ -1167,7 +1166,24 @@ class _Constant:
         object.__setattr__(self, "__name__", "constant")
 
     @no_type_check
-    def __call__(self) -> FloatND | IntND:
+    def __call__(self) -> IntND:
+        return jnp.asarray(self.value)
+
+
+@dataclass(frozen=True, eq=False)
+class _ProbabilityConstant:
+    """Return the probability or probability vector `value`; read nothing."""
+
+    value: float | tuple[float, ...]
+    """A stochastic law's probability, or its probability vector over regimes."""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "__signature__", inspect.Signature())
+        object.__setattr__(self, "__annotations__", {})
+        object.__setattr__(self, "__name__", "constant")
+
+    @no_type_check
+    def __call__(self) -> FloatND:
         return jnp.asarray(self.value)
 
 
@@ -1399,7 +1415,7 @@ def _plain_law(
     if isinstance(law, str):
         if code_by_name is None:
             return _DeclaredExit(target=law)
-        return _Constant(value=_code(name=law, code_by_name=code_by_name))
+        return _RegimeCodeConstant(value=_code(name=law, code_by_name=code_by_name))
     if isinstance(law, DeterministicTransition):
         return law.func
     return law
@@ -1528,7 +1544,7 @@ def _vector_case(
         )
     one_hot = [0.0] * n_regimes
     one_hot[_code(name=law, code_by_name=code_by_name)] = 1.0
-    return _Constant(value=tuple(one_hot))
+    return _ProbabilityConstant(value=tuple(one_hot))
 
 
 def _mapping_union(
@@ -1642,7 +1658,9 @@ def _law_cells(
     if isinstance(law, Mapping):
         return law
     if isinstance(law, str):
-        return MappingProxyType({law: StochasticTransition(func=_Constant(value=1.0))})
+        return MappingProxyType(
+            {law: StochasticTransition(func=_ProbabilityConstant(value=1.0))}
+        )
     if isinstance(law, DeterministicTransition):
         names = _argument_names(law.func)
         return MappingProxyType(

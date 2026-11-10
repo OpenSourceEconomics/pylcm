@@ -222,7 +222,7 @@ class _SolvePlacementArguments(TypedDict, closed=True):
 
 class _ProcessArguments(TypedDict, closed=True):
     spec: process_grids._ContinuousStochasticProcess
-    parameters: Mapping[str, process_grids.ScalarFloat | process_grids.ScalarInt]
+    parameters: Mapping[str, process_grids.ScalarFloat]
     required: jax.sharding.Sharding
 
 

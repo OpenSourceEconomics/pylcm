@@ -162,7 +162,11 @@ from _lcm.egm.dcegm_query_model import DCEGMQueryModel
 from _lcm.egm.kernel_scope import _find_unsupported_feature
 from _lcm.egm.nbegm_query_model import NBEGMQueryModel
 from _lcm.egm.nested_floor import PreparedNestedFloor
-from _lcm.egm.preferences import concatenate_felicity, concatenate_regime_function
+from _lcm.egm.preferences import (
+    concatenate_felicity,
+    concatenate_regime_function,
+    newton_action_bracket,
+)
 from _lcm.egm.published_policy import EGMSimPolicy
 from _lcm.egm.query_data import EGMQueryData, build_template_egm_query_data
 from _lcm.egm.regime_introspection import (
@@ -1291,6 +1295,7 @@ def _build_kernel_pieces(
         solver.savings_grid.to_jax(), dtype=canonical_float_dtype()
     )
     n_constrained = solver.n_constrained_points
+    action_lower, action_upper = newton_action_bracket(savings_nodes)
     continuation_plan = build_continuation_plan(
         user_regimes=user_regimes,
         laws=laws,
@@ -1313,6 +1318,8 @@ def _build_kernel_pieces(
         action_name=solver.continuous_action,
         savings_nodes=savings_nodes,
         borrowing_limit=(savings_nodes[0]),
+        action_lower=action_lower,
+        action_upper=action_upper,
         n_constrained=n_constrained,
         # Static geometric ratio: the constrained actions run from
         # `span * CONSTRAINED_OFFSET_FRACTION` up to `span`, so the ratio

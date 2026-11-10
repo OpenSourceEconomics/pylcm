@@ -56,6 +56,44 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   `ModelInitializationError`; give the two readings distinct names. The same Python
   object may feed a float slot and an integer slot; each slot gets its own cast.
 
+### What a user function returns
+
+- A user function may return a Python scalar where an array is read, and an integer
+  where a float is read: a utility `return 0`, a transition probability `return 1`, a
+  constraint `return True`. The value is converted where the engine receives it, at the
+  model's precision.
+- Each role's returned dtype is checked when the function is first evaluated in
+  `solve()`, and a mismatch raises the new `InvalidFunctionOutputError`, naming the
+  function:
+  - constraints, `ValueDependentConstraint` predicates, gates, participation predicates
+    and exit availability return a Boolean. An integer `0`/`1`, which gates,
+    participation predicates and exit availability accepted before, is refused; write
+    the comparison, e.g. `work == 1`;
+  - laws of discrete states and deterministic regime selectors return an integer code,
+    or a Boolean for the codes 0 and 1. A float is refused rather than truncated onto a
+    code;
+  - utilities, laws of continuous states, transition probabilities, joint-transition
+    weights and outputs, exit utility adjustments and borrowing bounds return a number.
+    A Boolean is refused.
+- A discrete law's code keeps a width wider than `int32` until the off-grid check, so
+  `2**32 + 1` is reported as off the grid rather than wrapped onto a valid code.
+- See [What a function returns](docs/reference/model_and_regime.md#api-function-returns).
+
+### Grid bounds and counts are host numbers
+
+- A continuous grid stores `start` and `stop` as Python `float`s and `n_points` and
+  `points_per_segment` as Python `int`s. An `int` bound is converted. A JAX scalar
+  bound, and a JAX array as a count, are refused with `GridInitializationError`.
+  `dataclasses.replace`, equality and pickling work on the stored values.
+- The semantic fingerprint of every model with a linearly, log- or piecewise-spaced grid
+  changes, as do those of models with a constant regime law, a deterministic regime
+  selector or a stochastic transition. Solutions saved with an
+  earlier version do not load; solve again.
+- An error or log message prints an age as an integer when it is whole and with two
+  decimals otherwise, e.g. `age 25` and `age 25.33`.
+- A `ConditionalAction` condition is stored in one numeric kind: as floats if any listed
+  value is a float, otherwise as integers.
+
 ### Public grid, process and condition classes live in `lcm`
 
 - The grids (`LinSpacedGrid`, `LogSpacedGrid`, `IrregSpacedGrid`,
