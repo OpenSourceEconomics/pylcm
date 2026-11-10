@@ -49,8 +49,9 @@ when the economics declares it.
 
 A grid's `start`, `stop` and breakpoint values are floats: an `int` is stored as a
 Python `float`, and a JAX scalar is refused. `n_points` and `points_per_segment` are
-Python integers. Write bounds as numbers, not arrays, so that `dataclasses.replace` and
-equality work on the stored values.
+Python integers; a JAX array count is refused, since a count fixes an array shape. Write
+bounds as numbers, not arrays, so that `dataclasses.replace` and equality work on the
+stored values.
 
 Piecewise grids control **grid density** at known locations. They do not declare an
 economic budget kink to a specialized solver. Use [case pieces](case_pieces.md) or a

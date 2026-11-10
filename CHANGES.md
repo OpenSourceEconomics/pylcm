@@ -82,9 +82,9 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 ### Grid bounds and counts are host numbers
 
 - A continuous grid stores `start` and `stop` as Python `float`s and `n_points` and
-  `points_per_segment` as Python `int`s. An `int` bound is converted; a JAX scalar bound
-  is refused with `GridInitializationError`. `dataclasses.replace`, equality and pickling
-  work on the stored values.
+  `points_per_segment` as Python `int`s. An `int` bound is converted. A JAX scalar
+  bound, and a JAX array as a count, are refused with `GridInitializationError`.
+  `dataclasses.replace`, equality and pickling work on the stored values.
 - The semantic fingerprint of every model with a linearly, log- or piecewise-spaced grid
   changes, as do those of models with a constant regime law, a deterministic regime
   selector or a stochastic transition. Solutions saved with an
