@@ -487,6 +487,21 @@ def read_columns(
             if part is None:
                 return every
             pending.extend(part)
+    seen = _closed_reads(pending=pending, ancestor=ancestor, definitions=definitions)
+    if seen is None:
+        return every
+    return frozenset(shock for owner, shock in seen if owner == ancestor) & every
+
+
+def _closed_reads(
+    *, pending: list[_FrameCell], ancestor: str, definitions: Mapping[str, QueryNode]
+) -> set[_FrameCell] | None:
+    """Frame cells that fix the given ones, followed up to an ancestor's frame.
+
+    A cell of a frame below the ancestor follows the parent cell it copies and
+    what fixes its frame (`_frame_determinants`). None when such a frame is not
+    attributable.
+    """
     seen: set[_FrameCell] = set()
     expanded: set[str] = set()
     while pending:
@@ -507,9 +522,95 @@ def read_columns(
         expanded.add(owner)
         determinants = _frame_determinants(key=owner, definitions=definitions)
         if determinants is None:
-            return every
+            return None
         pending.extend(determinants)
-    return frozenset(shock for owner, shock in seen if owner == ancestor) & every
+    return seen
+
+
+def continuation_columns(
+    *, name: str, ancestor: str, definitions: Mapping[str, QueryNode]
+) -> frozenset[ShockName] | None:
+    """Shocks an ancestor draws that fix a query's continuation and its guards.
+
+    The continuation reaches the ancestor's frame through:
+    - the query's projection, which maps its states;
+    - the query's own frame shocks its continuation names, whose values the
+      frame may copy from the ancestor;
+    - the guards of the query and of every query between the two, which decide
+      whether it runs at all.
+
+    None when a read is not attributable, or when one of the shocks is observed
+    by the ancestor rather than drawn by it: an observed value also follows the
+    shocks its producer reads.
+    """
+    node = definitions[name]
+    reads = getattr(
+        node.context.Q_and_F_functions[node.read.period], "continuation_reads", None
+    )
+    chain = node.ancestors
+    parts = (
+        _projection_reads(key=name, definitions=definitions),
+        *(
+            _guard_reads(key=step, definitions=definitions)
+            for step in (*chain[chain.index(ancestor) + 1 :], name)
+        ),
+    )
+    if reads is None or any(part is None for part in parts):
+        return None
+    seen = _closed_reads(
+        pending=[
+            *(
+                (name, shock)
+                for shock in _frame_shocks(key=name, definitions=definitions) & reads
+            ),
+            *(
+                cell
+                for part in cast("tuple[frozenset[_FrameCell], ...]", parts)
+                for cell in part
+            ),
+        ],
+        ancestor=ancestor,
+        definitions=definitions,
+    )
+    if seen is None:
+        return None
+    columns = frozenset(shock for owner, shock in seen if owner == ancestor)
+    plan = _plan(node=definitions[ancestor])
+    drawn = {
+        shock
+        for _, binding, _ in (() if plan is None else plan.bindings)
+        for shock in binding.group.shocks
+    }
+    return columns if columns <= drawn else None
+
+
+def continuation_members(
+    *, name: str, ancestor: str, rows: np.ndarray, definitions: Mapping[str, QueryNode]
+) -> tuple[tuple[ShockName, ...], np.ndarray] | None:
+    """Equal groups of an ancestor's rows that share a query's continuation.
+
+    Returns the ancestor shocks that fix the continuation (`continuation_columns`)
+    and, per group, the positions in `rows` that agree on all of them. None when
+    the rows do not group: the shocks are not attributable, every row differs,
+    or the groups differ in size.
+    """
+    columns = continuation_columns(
+        name=name, ancestor=ancestor, definitions=definitions
+    )
+    if columns is None:
+        return None
+    shocks = tuple(sorted(columns))
+    codes = _support_codes(key=ancestor, definitions=definitions, shocks=shocks)[rows]
+    groups, sizes = (
+        (np.zeros(rows.size, dtype=np.int64), np.asarray([rows.size]))
+        if not shocks
+        else np.unique(codes, axis=0, return_inverse=True, return_counts=True)[1:]
+    )
+    # ponytail: equal groups only, as a product support gives; ragged groups
+    # would need padded lanes.
+    if sizes.size == rows.size or np.any(sizes != sizes[0]):
+        return None
+    return shocks, np.argsort(groups.ravel(), kind="stable").reshape((sizes.size, -1))
 
 
 def _shock_codes(
@@ -756,42 +857,16 @@ class InformationQueryCell:
             mapped.append(at if theirs is None else jnp.asarray(theirs[1])[at])
         return tuple(mapped)
 
-    def _map_support(
-        self,
-        *,
-        point: Callable[[IntND, IntND], PolicyAnswer],
-        name: str,
-        node: QueryNode,
-        spread: bool,
+    def _map_own(
+        self, *, point: Callable[[IntND, IntND], PolicyAnswer]
     ) -> PolicyAnswer:
-        """Evaluate each distinct support row once, at its row and its axis position.
-
-        With `spread`, the answers are spread over every copy; otherwise they keep
-        one entry per representative, the axis a descendant's answer carries. An
-        ancestor's rows that this query reads alike share one entry, evaluated
-        at the class's first row.
-        """
+        """Evaluate each distinct own row once and spread it over its copies."""
         from _lcm.policy_queries import map_lanes  # noqa: PLC0415
 
-        pinned = self._pinned(name=name)
-        classes = None if spread else self._classes(name=self.name, ancestor=name)
-        if classes is not None:
-            first = classes[0]
-            rows = jnp.asarray(
-                first
-                if pinned is None
-                else cast(
-                    "tuple[np.ndarray, np.ndarray]",
-                    _pinned_rows(name=name, definitions=self.definitions),
-                )[0][first],
-                dtype=jnp.int32,
-            )
-            return map_lanes(
-                function=lambda position: point(rows[position], position),
-                operands=jnp.arange(first.size, dtype=jnp.int32),
-                batch_size=self.row_batch,
-            )
-        positions = jnp.arange(self._axis(name=name, node=node), dtype=jnp.int32)
+        pinned = self._pinned(name=self.name)
+        positions = jnp.arange(
+            self._axis(name=self.name, node=self.node), dtype=jnp.int32
+        )
         if pinned is None:
             return map_lanes(
                 function=lambda row: point(row, row),
@@ -804,7 +879,77 @@ class InformationQueryCell:
             operands=positions,
             batch_size=self.row_batch,
         )
-        return jax.tree.map(lambda leaf: leaf[gather], answers) if spread else answers
+        return jax.tree.map(lambda leaf: leaf[gather], answers)
+
+    def _map_ancestor(
+        self,
+        *,
+        point: Callable[
+            [IntND, IntND, Mapping[ShockName, FloatND | IntND]], PolicyAnswer
+        ],
+        frame: CurrentIIDDrawFrame,
+        name: str,
+        node: QueryNode,
+    ) -> PolicyAnswer:
+        """Evaluate this query once per entry it keeps along one ancestor.
+
+        An entry is a representative row of the ancestor, or the first row of a
+        class this query reads alike. `point` takes the entry's row, its
+        position and the shock values to hold in place of the row's.
+
+        Entries that agree on every shock fixing the continuation
+        (`continuation_members`) run as one group of lanes that takes those
+        shocks from its first entry. Nothing that follows from them alone then
+        varies across the group, so the group computes it once.
+        """
+        from _lcm.policy_queries import map_lanes  # noqa: PLC0415
+
+        pinned = self._pinned(name=name)
+        classes = self._classes(name=self.name, ancestor=name)
+        rows = (
+            np.arange(self._size(name=name, node=node))
+            if pinned is None
+            else cast(
+                "tuple[np.ndarray, np.ndarray]",
+                _pinned_rows(name=name, definitions=self.definitions),
+            )[0]
+        )
+        rows = rows if classes is None else rows[classes[0]]
+        split = (
+            None
+            if name == self.realised_root
+            else continuation_members(
+                name=self.name, ancestor=name, rows=rows, definitions=self.definitions
+            )
+        )
+        at_rows = jnp.asarray(rows, dtype=jnp.int32)
+        if split is None:
+            return map_lanes(
+                function=lambda position: point(at_rows[position], position, {}),
+                operands=jnp.arange(rows.size, dtype=jnp.int32),
+                batch_size=self.row_batch,
+            )
+        shocks, members = split
+
+        def group(positions: IntND) -> PolicyAnswer:
+            held = {
+                shock: frame.physical[shock][at_rows[positions[0]]] for shock in shocks
+            }
+            return map_lanes(
+                function=lambda position: point(at_rows[position], position, held),
+                operands=positions,
+                batch_size=self.row_batch,
+            )
+
+        grouped = map_lanes(
+            function=group,
+            operands=jnp.asarray(members, dtype=jnp.int32),
+            batch_size=max(1, self.row_batch // members.shape[1]),
+        )
+        entry = jnp.asarray(np.argsort(members.ravel()), dtype=jnp.int32)
+        return jax.tree.map(
+            lambda leaf: leaf.reshape((rows.size, *leaf.shape[2:]))[entry], grouped
+        )
 
     def __call__(
         self, *, live: BoolND, source: SourceStates, dependencies: Dependencies
@@ -1195,18 +1340,24 @@ class InformationQueryCell:
                     dependencies=dependencies,
                 )
 
-            # keyword-only-exempt: library-callback=_map_support
-            def point(row: IntND, at: IntND) -> PolicyAnswer:
+            # keyword-only-exempt: library-callback=_map_ancestor
+            def point(
+                row: IntND, at: IntND, held: Mapping[ShockName, FloatND | IntND]
+            ) -> PolicyAnswer:
+                lane = _row(frame=frame, row=row)
                 return self._ancestors(
                     position=position + 1,
-                    frames={**frames, name: _row(frame=frame, row=row)},
+                    frames={
+                        **frames,
+                        name: lane._replace(physical={**lane.physical, **held}),
+                    },
                     indices=(*indices, at),
                     live=live,
                     source=source,
                     dependencies=dependencies,
                 )
 
-            answers = self._map_support(point=point, name=name, node=node, spread=False)
+            answers = self._map_ancestor(point=point, frame=frame, name=name, node=node)
             present = jnp.all(~is_represented_zero(factors), axis=0)
             pinned = self._pinned(name=name)
             # A representative's landings count once per present row it stands
@@ -1356,7 +1507,7 @@ class InformationQueryCell:
 
             stay = self._stay(frame=frame, frames=frames, live=live, source=source)
 
-            # keyword-only-exempt: library-callback=_map_support
+            # keyword-only-exempt: library-callback=_map_own
             def point(row: IntND, at: IntND) -> PolicyAnswer:
                 local = _has_local_information(
                     node=self.node, period=self.node.read.period
@@ -1399,9 +1550,7 @@ class InformationQueryCell:
                     else jax.tree.map(lambda leaf: leaf[stay[1][at]], stay[0]),
                 )
 
-            answers = self._map_support(
-                point=point, name=self.name, node=self.node, spread=True
-            )
+            answers = self._map_own(point=point)
             values, actions, support, valid, landings = answers
             expanded = jnp.broadcast_to(
                 factors.reshape((*factors.shape, *((1,) * (values.ndim - 1)))),

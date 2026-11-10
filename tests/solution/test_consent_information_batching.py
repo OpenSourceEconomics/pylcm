@@ -516,6 +516,7 @@ def test_pinned_rows_reproduce_the_full_row_reduction(
     monkeypatch.setattr(query_information, "pinned_support", lambda **_: None)
     monkeypatch.setattr(query_information, "ancestor_classes", lambda **_: None)
     monkeypatch.setattr(query_information, "own_stay_classes", lambda **_: None)
+    monkeypatch.setattr(query_information, "continuation_members", lambda **_: None)
     _assert_same_values(
         got=batched, expected=_values(_model(n_match=3, marry_available=_experienced))
     )
@@ -530,6 +531,7 @@ def _unpinned_scalar_values(
         patch.setattr(query_information, "pinned_support", lambda **_: None)
         patch.setattr(query_information, "ancestor_classes", lambda **_: None)
         patch.setattr(query_information, "own_stay_classes", lambda **_: None)
+        patch.setattr(query_information, "continuation_members", lambda **_: None)
         return _values(model())
 
 
@@ -547,8 +549,15 @@ def test_pinned_ancestor_rows_stay_one_per_representative(
     shapes = {}
     original = query_information.InformationQueryCell.__call__
 
-    def record(self, **kwargs):
-        answer = original(self, **kwargs)
+    # keyword-only-exempt: primary-argument=self
+    def record(
+        self: query_information.InformationQueryCell,
+        *,
+        live: BoolND,
+        source: query_information.SourceStates,
+        dependencies: query_information.Dependencies,
+    ) -> policy_queries.PolicyAnswer:
+        answer = original(self, live=live, source=source, dependencies=dependencies)
         if len(self.node.ancestors) == 2:
             shapes[self.node.read.target] = answer[0].shape
         return answer

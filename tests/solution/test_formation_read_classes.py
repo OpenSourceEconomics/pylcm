@@ -10,9 +10,11 @@ gather that answer back to every caller row.
 """
 
 import math
+from collections import Counter
 from collections.abc import Callable, Mapping
 from dataclasses import replace
-from typing import ClassVar
+from types import MappingProxyType
+from typing import ClassVar, TypedDict, Unpack
 
 import jax
 import jax.numpy as jnp
@@ -22,7 +24,8 @@ from dags import with_signature
 
 from _lcm import policy_queries, query_information
 from _lcm.policy_queries import QueryKind, QueryNode
-from _lcm.typing import PytreeValue
+from _lcm.regime_building import Q_and_F
+from _lcm.typing import PytreeValue, QAndFKwargs
 from lcm import (
     CollectiveUtility,
     Consent,
@@ -245,7 +248,7 @@ def _gauss(*, name: str, n: int, sigma: float) -> ShockGroup:
     )
 
 
-def _model(*, dissolution: bool = False) -> Model:
+def _model(*, dissolution: bool = False, n_match: int = 2) -> Model:
     """Two singles marry by consent; with `dissolution` the couple may split."""
     experience = DiscreteGrid(values=jnp.arange(_N_EXP))
     work = DiscreteGrid(values=jnp.arange(2))
@@ -312,7 +315,7 @@ def _model(*, dissolution: bool = False) -> Model:
         shocks={
             "wage_f": _gauss(name="wage_f", n=2, sigma=0.5),
             "wage_m": _gauss(name="wage_m", n=2, sigma=0.4),
-            "match": _gauss(name="match", n=2, sigma=0.3),
+            "match": _gauss(name="match", n=n_match, sigma=0.3),
             "taste_f": _gauss(name="taste_f", n=3, sigma=1.0),
             "taste_m": _gauss(name="taste_m", n=3, sigma=1.0),
             **marriage,
@@ -511,6 +514,7 @@ def _every_row_values(
         patch.setattr(query_information, "pinned_support", lambda **_: None)
         patch.setattr(query_information, "ancestor_classes", lambda **_: None)
         patch.setattr(query_information, "own_stay_classes", lambda **_: None)
+        patch.setattr(query_information, "continuation_members", lambda **_: None)
         return _solve(model())
 
 
@@ -652,3 +656,88 @@ def test_stay_reads_are_the_stay_problem_s_shocks() -> None:
     assert (
         query_information.own_stay_classes(name=couple, definitions=definitions) is None
     )
+
+
+class _ContinuationKwargs(TypedDict):
+    """Arguments of one continuation evaluation."""
+
+    next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND]
+    zero: FloatND
+    states_actions_params: QAndFKwargs
+
+
+def _continuation_values(
+    *, model: Model, monkeypatch: pytest.MonkeyPatch
+) -> dict[RegimeName, int]:
+    """Continuation values computed over one solve, by the regime they belong to.
+
+    A run-time callback on the continuation's result sees one element per value
+    the solve computes: a lane map that leaves the continuation's inputs alone
+    leaves the result unbatched, so its lanes share one evaluation.
+    """
+    seen: Counter[RegimeName] = Counter()
+    targets: list[RegimeName] = []
+    call_cell = query_information.InformationQueryCell.__call__
+    call_ce = Q_and_F._ComputeCE.__call__
+
+    # keyword-only-exempt: primary-argument=self
+    def cell(
+        self: query_information.InformationQueryCell,
+        *,
+        live: BoolND,
+        source: query_information.SourceStates,
+        dependencies: query_information.Dependencies,
+    ) -> policy_queries.PolicyAnswer:
+        targets.append(self.node.read.target)
+        try:
+            return call_cell(self, live=live, source=source, dependencies=dependencies)
+        finally:
+            targets.pop()
+
+    def continuation(
+        self: Q_and_F._ComputeCE, **kwargs: Unpack[_ContinuationKwargs]
+    ) -> Q_and_F.ContinuationAggregate:
+        target = targets[-1]
+        leaves, tree = jax.tree.flatten(call_ce(self, **kwargs))
+
+        def record(value: np.ndarray) -> np.ndarray:
+            seen[target] += value.size
+            return value
+
+        leaves[0] = jax.pure_callback(
+            record,
+            jax.ShapeDtypeStruct(leaves[0].shape, leaves[0].dtype),
+            leaves[0],
+            vmap_method="expand_dims",
+        )
+        return jax.tree.unflatten(tree, leaves)
+
+    monkeypatch.setattr(query_information.InformationQueryCell, "__call__", cell)
+    monkeypatch.setattr(Q_and_F._ComputeCE, "__call__", continuation)
+    _solve(model)
+    return dict(seen)
+
+
+@pytest.mark.parametrize("n_match", [2, 3])
+def test_a_query_computes_its_continuation_once_per_class_that_fixes_it(
+    *, n_match: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A continuation runs once per combination of the caller shocks that fix it.
+
+    The couple's continuation follows the offered partner, and the offer guard
+    decides whether it runs: 6 classes per single state, whatever the wage and
+    match supports. Each of its lanes holds 4 actions for 2 spouses, and it runs
+    in 3 x 6 lanes below each single and in 12 lanes of its own.
+
+    A single's continuation holds 2 actions. It runs once per own state (3),
+    per offer flag as the own stay benchmark (3 x 2), and per offer flag and
+    offered partner as the counterparty (3 x 6).
+    """
+    values = _continuation_values(
+        model=_model(n_match=n_match), monkeypatch=monkeypatch
+    )
+    assert values == {
+        "couple": (18 + 18 + 12) * 8,
+        "single_f": (3 + 6 + 18) * 2,
+        "single_m": (3 + 6 + 18) * 2,
+    }
