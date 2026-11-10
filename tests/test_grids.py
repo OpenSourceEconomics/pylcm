@@ -1401,3 +1401,10 @@ def test_integer_differential_detects_each_broken_classifier(*, monkeypatch, mut
         test_integer_value_grid_encodes_every_integer_dtype_like_python_integers(
             grid_name="mixed_boundaries", dtype=np.uint32
         )
+
+
+def test_value_grid_stores_a_mixed_literal_float_array_as_floats():
+    """`np.array([0, 1.0, 2])` is a float array, so its grid stores three floats."""
+    values = DiscreteGrid(values=np.array([0, 1.0, 2])).values
+    assert values is not None
+    assert [type(value) for value in values] == [float, float, float]
