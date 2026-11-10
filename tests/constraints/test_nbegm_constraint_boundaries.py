@@ -18,6 +18,7 @@ from _lcm.constraints.processed import ConstraintLike, normalize_constraints
 from _lcm.constraints.routes import BoundConstraint, ConstraintSite
 from _lcm.egm.nbegm_constraint_boundaries import (
     NBEGMFeasibilityBoundaryProgram,
+    bind_feasibility_surfaces,
     build_nbegm_feasibility_boundary_compiler,
     feasibility_axis_boundaries,
 )
@@ -132,9 +133,14 @@ def test_compiled_surfaces_resolve_runtime_thresholds_inside_jit() -> None:
     program = disposition.program.payload
     assert isinstance(program, NBEGMFeasibilityBoundaryProgram)
 
+    surfaces = bind_feasibility_surfaces(
+        program=program,
+        bind_literal=lambda value: jnp.asarray(value, dtype=jnp.float32),
+    )
+
     def resolve_values(limit):
         boundaries = feasibility_axis_boundaries(
-            programs=(program,),
+            surfaces=surfaces,
             params={"eligible__limit": limit},
         )
         partition = resolve_axis_partition(

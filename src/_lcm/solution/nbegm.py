@@ -77,7 +77,9 @@ from _lcm.egm.nbegm_breakpoints import (
     interval_segment_coefficients,
 )
 from _lcm.egm.nbegm_constraint_boundaries import (
+    BoundFeasibilitySurface,
     NBEGMFeasibilityBoundaryProgram,
+    bind_feasibility_surfaces,
     feasibility_axis_boundaries,
 )
 from _lcm.egm.nbegm_probe_stages import (
@@ -828,14 +830,18 @@ class NBEGM(OneMarginSolver):
         representative_context = resolve_solver_build_context(
             context=context, period=representative_period
         )
-        feasibility_constraints = _consume_nbegm_feasibility_constraints(
-            context=context,
-            solver_path=("nbegm",),
-        )
         savings_grid = (
             self.savings_grid.to_jax()
             if materializer is None
             else materializer.materialize_grid(spec=self.savings_grid)
+        )
+        feasibility_constraints = _bind_nbegm_feasibility_literals(
+            constraints=_consume_nbegm_feasibility_constraints(
+                context=context,
+                solver_path=("nbegm",),
+            ),
+            dtype=savings_grid.dtype,
+            materializer=materializer,
         )
 
         functions = context.solve_functions
@@ -1717,6 +1723,36 @@ class _NBEGMFeasibilityConstraint:
     predicate: Callable[..., BoolND]
     """Executable predicate generated from the same declaration."""
 
+    bound_surfaces: tuple[BoundFeasibilitySurface, ...] | None = None
+    """The program's surfaces with literal thresholds bound; `None` until bound."""
+
+
+def _bind_nbegm_feasibility_literals(
+    *,
+    constraints: tuple[_NBEGMFeasibilityConstraint, ...],
+    dtype: DTypeLike,
+    materializer: DatedGenerationMaterializer | None,
+) -> tuple[_NBEGMFeasibilityConstraint, ...]:
+    """Bind every literal threshold at the precision of the kernel being built."""
+
+    def bind_literal(value: float) -> ScalarFloat:
+        if materializer is None:
+            return jnp.asarray(value, dtype=dtype)
+        return materializer.evaluate_validation(
+            function=functools.partial(jnp.asarray, value, dtype=dtype),
+            arguments={},
+        )
+
+    return tuple(
+        replace(
+            constraint,
+            bound_surfaces=bind_feasibility_surfaces(
+                program=constraint.program, bind_literal=bind_literal
+            ),
+        )
+        for constraint in constraints
+    )
+
 
 def _compiled_boundaries_for_inner(
     *, plan: ConstraintPlan, solver_path: tuple[str, ...]
@@ -1859,6 +1895,19 @@ class _ResolvedNBEGMFeasibility:
     """Equality ownership aligned with `boundary_values`."""
 
 
+def _required_bound_surfaces(
+    *, constraint: _NBEGMFeasibilityConstraint
+) -> tuple[BoundFeasibilitySurface, ...]:
+    """Return a constraint's bound surfaces; refuse one no kernel has bound."""
+    if constraint.bound_surfaces is None:
+        msg = (
+            f"Internal error: the feasibility boundaries of constraint "
+            f"{constraint.program.constraint_name!r} were not bound to a kernel."
+        )
+        raise TypeError(msg)
+    return constraint.bound_surfaces
+
+
 def _resolve_nbegm_feasibility(
     *,
     constraints: tuple[_NBEGMFeasibilityConstraint, ...],
@@ -1882,7 +1931,11 @@ def _resolve_nbegm_feasibility(
         for value, kind in zip(schedule_breakpoints, schedule_kinds, strict=True)
     )
     feasibility_sources = feasibility_axis_boundaries(
-        programs=tuple(constraint.program for constraint in constraints),
+        surfaces=tuple(
+            surface
+            for constraint in constraints
+            for surface in _required_bound_surfaces(constraint=constraint)
+        ),
         params=params,
     )
     partition = resolve_axis_partition(
