@@ -103,6 +103,43 @@ def _row(*, frame: CurrentIIDDrawFrame, row: jax.Array) -> CurrentIIDDrawFrame:
     )
 
 
+def _hold(
+    *,
+    lane: CurrentIIDDrawFrame,
+    first: CurrentIIDDrawFrame,
+    shocks: frozenset[ShockName],
+    groups: frozenset[ShockGroupName],
+) -> CurrentIIDDrawFrame:
+    """Take from another row what a descendant reads of the named shocks.
+
+    A descendant reads a shock's value directly, or copies it as an observation:
+    then it reads the held base, whether the observation is active, and the
+    producing law's parameters and inputs.
+    """
+    return lane._replace(
+        physical={**lane.physical, **{name: first.physical[name] for name in shocks}},
+        held_bases={
+            **lane.held_bases,
+            **{name: first.held_bases[name] for name in shocks},
+        },
+        information_available={
+            **lane.information_available,
+            **{
+                name: first.information_available[name]
+                for name in shocks & lane.information_available.keys()
+            },
+        },
+        source_params={
+            **lane.source_params,
+            **{name: first.source_params[name] for name in groups},
+        },
+        source_inputs={
+            **lane.source_inputs,
+            **{name: first.source_inputs[name] for name in groups},
+        },
+    )
+
+
 def _empty_frame() -> CurrentIIDDrawFrame:
     return CurrentIIDDrawFrame({}, {}, {}, {}, {}, {}, jnp.asarray(a=True))
 
@@ -390,6 +427,32 @@ def _copied_cells(
     )
 
 
+def _observation_reads(
+    *,
+    key: str,
+    definitions: Mapping[str, QueryNode],
+    groups: frozenset[ShockGroupName] | None = None,
+) -> frozenset[_FrameCell] | None:
+    """Frame cells that realise a query's observed shock groups; None if unknown.
+
+    The projection and guard of each producer of an observed group map the
+    states its law reads and decide whether the observation exists.
+    """
+    cells: frozenset[_FrameCell] = frozenset()
+    for group, producers in definitions[key].observation_aliases.items():
+        if groups is not None and group not in groups:
+            continue
+        for producer in producers:
+            for part in (
+                _projection_reads(key=producer, definitions=definitions),
+                _guard_reads(key=producer, definitions=definitions),
+            ):
+                if part is None:
+                    return None
+                cells |= part
+    return cells
+
+
 def _reads(
     *,
     key: str,
@@ -397,19 +460,10 @@ def _reads(
     states: frozenset[str] | None,
     copies: bool = True,
 ) -> frozenset[_FrameCell] | None:
-    node = definitions[key]
     parts = [
         _projection_reads(key=key, definitions=definitions, states=states),
         _guard_reads(key=key, definitions=definitions),
-        *(
-            reads
-            for producers in node.observation_aliases.values()
-            for producer in producers
-            for reads in (
-                _projection_reads(key=producer, definitions=definitions),
-                _guard_reads(key=producer, definitions=definitions),
-            )
-        ),
+        _observation_reads(key=key, definitions=definitions),
     ]
     if any(part is None for part in parts):
         return None
@@ -498,18 +552,40 @@ def _closed_reads(
 ) -> set[_FrameCell] | None:
     """Frame cells that fix the given ones, followed up to an ancestor's frame.
 
-    A cell of a frame below the ancestor follows the parent cell it copies and
-    what fixes its frame (`_frame_determinants`). None when such a frame is not
-    attributable.
+    - A cell of a frame below the ancestor follows the parent cell it copies
+      and what fixes its frame (`_frame_determinants`).
+    - A shock the ancestor observes follows what realises that observation in
+      the ancestor's frame (`_observation_reads`).
+
+    None when one of these is not attributable.
     """
     seen: set[_FrameCell] = set()
     expanded: set[str] = set()
+    top = definitions[ancestor]
+    observed = {
+        shock: group
+        for shock, (group, _, is_observed) in (
+            _parent_sources(parent=top, definitions=definitions).items()
+            if top.observation_sources
+            else ()
+        )
+        if is_observed
+    }
     while pending:
         cell = pending.pop()
         if cell in seen:
             continue
         seen.add(cell)
         owner = cell[0]
+        if owner == ancestor and cell[1] in observed:
+            realising = _observation_reads(
+                key=ancestor,
+                definitions=definitions,
+                groups=frozenset({observed[cell[1]]}),
+            )
+            if realising is None:
+                return None
+            pending.extend(realising)
         if owner == ancestor or ancestor not in definitions[owner].ancestors:
             continue
         pending.extend(
@@ -530,7 +606,7 @@ def _closed_reads(
 def continuation_columns(
     *, name: str, ancestor: str, definitions: Mapping[str, QueryNode]
 ) -> frozenset[ShockName] | None:
-    """Shocks an ancestor draws that fix a query's continuation and its guards.
+    """Shocks of an ancestor's frame that fix a query's continuation and its guards.
 
     The continuation reaches the ancestor's frame through:
     - the query's projection, which maps its states;
@@ -539,9 +615,8 @@ def continuation_columns(
     - the guards of the query and of every query between the two, which decide
       whether it runs at all.
 
-    None when a read is not attributable, or when one of the shocks is observed
-    by the ancestor rather than drawn by it: an observed value also follows the
-    shocks its producer reads.
+    A shock the ancestor observes brings the shocks that realise the observation
+    with it. None when a read is not attributable.
     """
     node = definitions[name]
     reads = getattr(
@@ -574,14 +649,7 @@ def continuation_columns(
     )
     if seen is None:
         return None
-    columns = frozenset(shock for owner, shock in seen if owner == ancestor)
-    plan = _plan(node=definitions[ancestor])
-    drawn = {
-        shock
-        for _, binding, _ in (() if plan is None else plan.bindings)
-        for shock in binding.group.shocks
-    }
-    return columns if columns <= drawn else None
+    return frozenset(shock for owner, shock in seen if owner == ancestor)
 
 
 def continuation_members(
@@ -885,7 +953,8 @@ class InformationQueryCell:
         self,
         *,
         point: Callable[
-            [IntND, IntND, Mapping[ShockName, FloatND | IntND]], PolicyAnswer
+            [IntND, IntND, Callable[[CurrentIIDDrawFrame], CurrentIIDDrawFrame]],
+            PolicyAnswer,
         ],
         frame: CurrentIIDDrawFrame,
         name: str,
@@ -895,12 +964,12 @@ class InformationQueryCell:
 
         An entry is a representative row of the ancestor, or the first row of a
         class this query reads alike. `point` takes the entry's row, its
-        position and the shock values to hold in place of the row's.
+        position and a function that replaces part of the row's frame.
 
         Entries that agree on every shock fixing the continuation
         (`continuation_members`) run as one group of lanes that takes those
-        shocks from its first entry. Nothing that follows from them alone then
-        varies across the group, so the group computes it once.
+        shocks from its first entry (`_hold`). Nothing that follows from them
+        alone then varies across the group, so the group computes it once.
         """
         from _lcm.policy_queries import map_lanes  # noqa: PLC0415
 
@@ -925,18 +994,26 @@ class InformationQueryCell:
         at_rows = jnp.asarray(rows, dtype=jnp.int32)
         if split is None:
             return map_lanes(
-                function=lambda position: point(at_rows[position], position, {}),
+                function=lambda position: point(
+                    at_rows[position], position, lambda lane: lane
+                ),
                 operands=jnp.arange(rows.size, dtype=jnp.int32),
                 batch_size=self.row_batch,
             )
         shocks, members = split
+        sources = _parent_sources(parent=node, definitions=self.definitions)
+        groups = frozenset(sources[shock][0] for shock in shocks)
 
         def group(positions: IntND) -> PolicyAnswer:
-            held = {
-                shock: frame.physical[shock][at_rows[positions[0]]] for shock in shocks
-            }
+            first = _row(frame=frame, row=at_rows[positions[0]])
             return map_lanes(
-                function=lambda position: point(at_rows[position], position, held),
+                function=lambda position: point(
+                    at_rows[position],
+                    position,
+                    lambda lane: _hold(
+                        lane=lane, first=first, shocks=frozenset(shocks), groups=groups
+                    ),
+                ),
                 operands=positions,
                 batch_size=self.row_batch,
             )
@@ -1342,15 +1419,13 @@ class InformationQueryCell:
 
             # keyword-only-exempt: library-callback=_map_ancestor
             def point(
-                row: IntND, at: IntND, held: Mapping[ShockName, FloatND | IntND]
+                row: IntND,
+                at: IntND,
+                hold: Callable[[CurrentIIDDrawFrame], CurrentIIDDrawFrame],
             ) -> PolicyAnswer:
-                lane = _row(frame=frame, row=row)
                 return self._ancestors(
                     position=position + 1,
-                    frames={
-                        **frames,
-                        name: lane._replace(physical={**lane.physical, **held}),
-                    },
+                    frames={**frames, name: hold(_row(frame=frame, row=row))},
                     indices=(*indices, at),
                     live=live,
                     source=source,

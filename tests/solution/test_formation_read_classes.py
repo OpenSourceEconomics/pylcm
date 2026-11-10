@@ -35,6 +35,7 @@ from lcm import (
     Exit,
     ExitTarget,
     InitialNodes,
+    LinSpacedGrid,
     Model,
     Periods,
     Regime,
@@ -126,6 +127,32 @@ def _consumption(
         + work_m * (3 + 0.2 * experience_m + wage_m)
         + match
     )
+
+
+def _lasting_consumption(
+    *,
+    experience_f: IntND,
+    experience_m: IntND,
+    work_f: IntND,
+    work_m: IntND,
+    wage_f: FloatND,
+    wage_m: FloatND,
+    match: FloatND,
+    last_match: FloatND,
+) -> FloatND:
+    return last_match + _consumption(
+        experience_f=experience_f,
+        experience_m=experience_m,
+        work_f=work_f,
+        work_m=work_m,
+        wage_f=wage_f,
+        wage_m=wage_m,
+        match=match,
+    )
+
+
+def _carry_match(*, match: FloatND) -> FloatND:
+    return match
 
 
 def _couple_f(*, consumption: FloatND, work_f: IntND) -> FloatND:
@@ -248,8 +275,14 @@ def _gauss(*, name: str, n: int, sigma: float) -> ShockGroup:
     )
 
 
-def _model(*, dissolution: bool = False, n_match: int = 2) -> Model:
-    """Two singles marry by consent; with `dissolution` the couple may split."""
+def _model(
+    *, dissolution: bool = False, n_match: int = 2, lasting_match: bool = False
+) -> Model:
+    """Two singles marry by consent; with `dissolution` the couple may split.
+
+    With `lasting_match` the couple carries its match shock into its terminal
+    period, so the couple's continuation reads that shock.
+    """
     experience = DiscreteGrid(values=jnp.arange(_N_EXP))
     work = DiscreteGrid(values=jnp.arange(2))
     regimes = {
@@ -270,7 +303,15 @@ def _model(*, dissolution: bool = False, n_match: int = 2) -> Model:
             "utility": CollectiveUtility(utilities={"f": _couple_f, "m": _couple_m}),
             "consumption": _consumption,
         },
-        state_transitions={"experience_f": _next_f, "experience_m": _next_m},
+        state_transitions={
+            "experience_f": _next_f,
+            "experience_m": _next_m,
+            **(
+                {"last_match": {"couple_terminal": _carry_match}}
+                if lasting_match
+                else {}
+            ),
+        },
         shocks=("wage_f", "wage_m", "match"),
         exits={"dissolve": _dissolve()} if dissolution else {},
     )
@@ -291,6 +332,18 @@ def _model(*, dissolution: bool = False, n_match: int = 2) -> Model:
                 group for group in regime.shocks if not group.startswith("marriage")
             ),
             exits={},
+        )
+    if lasting_match:
+        regimes["couple_terminal"] = replace(
+            regimes["couple_terminal"],
+            states={
+                **regimes["couple"].states,
+                "last_match": LinSpacedGrid(start=-1.0, stop=1.0, n_points=2),
+            },
+            functions={
+                **regimes["couple"].functions,
+                "consumption": _lasting_consumption,
+            },
         )
     marriage = {
         f"marriage_from_{member}": ShockGroup(
@@ -518,19 +571,23 @@ def _every_row_values(
         return _solve(model())
 
 
-@pytest.mark.parametrize("dissolution", [False, True], ids=["formation", "dissolution"])
+@pytest.mark.parametrize("variant", ["formation", "dissolution", "lasting_match"])
 def test_read_classes_reproduce_every_caller_row(
-    *, dissolution: bool, monkeypatch: pytest.MonkeyPatch
+    *, variant: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Gathering class answers back to caller rows equals evaluating every row.
 
     With dissolution the gathers compose over three generations: the formation
     root, the couple's classes of it, and the dissolution benchmarks' coarser
-    classes of both.
+    classes of both. With a lasting match the couple's continuation reads a
+    shock each single observes.
     """
 
     def model() -> Model:
-        return _model(dissolution=dissolution)
+        return _model(
+            dissolution=variant == "dissolution",
+            lasting_match=variant == "lasting_match",
+        )
 
     got = _solve(model())
     expected = _every_row_values(model=model, monkeypatch=monkeypatch)
@@ -738,6 +795,28 @@ def test_a_query_computes_its_continuation_once_per_class_that_fixes_it(
     )
     assert values == {
         "couple": (18 + 18 + 12) * 8,
+        "single_f": (3 + 6 + 18) * 2,
+        "single_m": (3 + 6 + 18) * 2,
+    }
+
+
+@pytest.mark.parametrize("n_match", [2, 3])
+def test_a_continuation_reading_an_observed_shock_runs_once_per_class(
+    *, n_match: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A continuation that reads a shock its caller observes runs once per class.
+
+    The couple carries its match shock into its terminal period, and each single
+    observes that shock from the couple it may form. The offer guard and the
+    offered partner realise the observation, so the continuation has
+    6 x `n_match` classes per single state. The couple's own 12 lanes cross
+    every node of its own shocks (4 x `n_match`).
+    """
+    values = _continuation_values(
+        model=_model(n_match=n_match, lasting_match=True), monkeypatch=monkeypatch
+    )
+    assert values == {
+        "couple": (18 * n_match + 18 * n_match + 12 * 4 * n_match) * 8,
         "single_f": (3 + 6 + 18) * 2,
         "single_m": (3 + 6 + 18) * 2,
     }
