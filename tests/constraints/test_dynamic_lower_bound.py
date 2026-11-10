@@ -44,7 +44,7 @@ from lcm import (
 )
 from lcm.collective import CollectiveUtility
 from lcm.consumption_savings_regime import NestedConsumptionSavingsRegime
-from lcm.exceptions import ModelInitializationError
+from lcm.exceptions import InvalidFunctionOutputError, ModelInitializationError
 from lcm.solvers import EGM, AdaptiveOuterMesh, GridSearch
 from lcm.transition import AgeSpecializedFunction
 from lcm.typing import (
@@ -247,8 +247,25 @@ def test_grid_search_solves_named_floor_with_transitive_parameter(
     np.testing.assert_allclose(values, [[1.0, 0.5], [2.0, 1.5]], atol=1e-6)
 
 
-@pytest.mark.parametrize("bad", [jnp.array([0.0]), jnp.array(1.0 + 0.0j)])
-def test_floor_is_a_real_scalar_when_the_dag_is_evaluated(bad: FloatND) -> None:
+@pytest.mark.parametrize(
+    ("bad", "error", "pattern"),
+    [
+        (
+            jnp.array([0.0]),
+            ModelInitializationError,
+            r"borrowing.*must return a scalar",
+        ),
+        (
+            jnp.array(1.0 + 0.0j),
+            InvalidFunctionOutputError,
+            r"^Borrowing bound 'borrowing' returned dtype 'complex",
+        ),
+    ],
+    ids=["vector", "complex"],
+)
+def test_floor_is_a_real_scalar_when_the_dag_is_evaluated(
+    *, bad: FloatND, error: type[Exception], pattern: str
+) -> None:
     """A floor does not broadcast a vector or impose a complex ordering."""
 
     def invalid() -> FloatND:
@@ -261,9 +278,7 @@ def test_floor_is_a_real_scalar_when_the_dag_is_evaluated(bad: FloatND) -> None:
         },
     )
     node = cast("UserFunction", regime.decomposed_functions["borrowing_lower"])
-    with pytest.raises(
-        ModelInitializationError, match=r"borrowing.*real integer or floating scalar"
-    ):
+    with pytest.raises(error, match=pattern):
         node()
 
 
@@ -836,9 +851,11 @@ def test_actual_floor_output_is_a_real_scalar(*, kind: str, handwritten: bool) -
         helper=None,
         functions={"floor": floor} if handwritten else None,
     )
-    with pytest.raises(
-        ModelInitializationError, match=r"borrowing.*real integer or floating scalar"
-    ):
+    if kind == "boolean":
+        error, pattern = InvalidFunctionOutputError, r"^Borrowing bound .* 'bool'"
+    else:
+        error, pattern = ModelInitializationError, r"borrowing.*must return a scalar"
+    with pytest.raises(error, match=pattern):
         model.solve(params={"theta": 0.5}, log_level="off")
 
 

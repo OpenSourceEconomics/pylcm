@@ -22,8 +22,9 @@ _AUTHORITIES = {
             "587518f47dc4909c070ffd72e161cec0be134919a7d89f480976e6c1b0d1c496",
             # Specialization types changed in the same file. Transition is identical.
             "bee97101a92d339e52e930066ac63b88158ca786f3d63cbb562d129ea10c1383",
-            # `StochasticTransition` converts its output in the same file.
-            "17da853e9db9a08971dc16fc93bf27a7b417030ca6b2862569e39827e62fac4e",
+            # `StochasticTransition` converts its output and the age-specialized
+            # types are constrained in the same file. Transition is identical.
+            "12e409188007d10443b59c25db287487d24971dd1036b2d115a353d84e3df9c6",
         ),
     ),
 }
