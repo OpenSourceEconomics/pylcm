@@ -655,7 +655,10 @@ def _closed_native_constant(original: Mapping[str, Any], captures=None) -> bool:
     advertised empty signature alone is insufficient. It does not authenticate
     the capture process or prove arbitrary Python source equivalence.
     """
-    if original.get("type") != "_lcm.regime_building.schedules._Constant":
+    if original.get("type") not in {
+        "_lcm.regime_building.schedules._RegimeCodeConstant",
+        "_lcm.regime_building.schedules._ProbabilityConstant",
+    }:
         return False
     declaration = original.get("fields", {})
     meta = original.get("callable", {})
