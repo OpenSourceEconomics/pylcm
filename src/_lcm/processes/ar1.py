@@ -25,7 +25,6 @@ from _lcm.processes.base import (
 from _lcm.typing import PRNGKeyND
 from lcm.exceptions import GridInitializationError
 from lcm.typing import (
-    Bool1D,
     Float1D,
     FloatND,
     IntND,
@@ -257,32 +256,6 @@ def _scaled_density_ratio_words(
     )
 
 
-def _scaled_linear_product(*, coefficient: _ScaledFloat, tangent: FloatND) -> FloatND:
-    """Multiply a tangent by finite power-of-two factors before any overflow.
-
-    A partial derivative may exceed maxfloat while its directional product is
-    finite, or its tangent is zero. Never mint that infinite coefficient.
-    Each step is linear in the tangent and uses a finite normal multiplier,
-    so reverse transposition also keeps zero cotangents zero. Six steps cover
-    the exponent range of gap*source/sigma**2 for either supported IEEE format.
-    """
-    mantissa, exponent = coefficient
-    info = jnp.finfo(mantissa.dtype)
-    integer = jnp.dtype(f"int{info.bits}")
-    growing = exponent > 0
-    multiplier = jnp.where(growing, 2 * mantissa, mantissa)
-    remaining = jnp.where(mantissa != 0, exponent - growing.astype(exponent.dtype), 0)
-    result = multiplier * tangent
-    for _ in range(6):
-        shift = jnp.clip(remaining, info.minexp, info.maxexp - 1)
-        factor = jax.lax.bitcast_convert_type(
-            (shift.astype(integer) + info.maxexp - 1) << info.nmant, mantissa.dtype
-        )
-        result = result * factor
-        remaining = remaining - shift
-    return result
-
-
 def _density_contrasts_and_gap(
     operands: tuple[Float1D, FloatND, FloatND, FloatND, FloatND],
 ) -> tuple[Float1D, _ScaledFloat, _ScaledFloat, Int[jax.Array, ""]]:
@@ -323,203 +296,11 @@ def _density_contrasts_and_gap(
     return contrasts, half_gap, contrast_words, center_index
 
 
-type _ScaledPair = tuple[_ScaledFloat, _ScaledFloat]
-
-
-def _scaled_multiply(*, left: _ScaledFloat, right: _ScaledFloat) -> _ScaledFloat:
-    """Multiply normal mantissas without materializing physical operands."""
-    return _normalize_scaled(
-        mantissa=sealed(left[0] * right[0]), exponent=left[1] + right[1]
-    )
-
-
-def _scaled_exp(
-    logarithm: Float1D,
-) -> tuple[_ScaledFloat, tuple[Float1D, IntND, Float1D, Bool1D]]:
-    """Keep recoverable normal-tail weights below physical exp underflow.
-
-    The exponent floor is below any recoverable first derivative: finite IEEE
-    operands give score exponents below 8*maxexp; even a maxfloat direction
-    cannot rescue a weight below 16*maxexp. The reduction uses split ln(2),
-    so its rounding error scales with the small residual, not the log weight.
-    """
-    info = jnp.finfo(logarithm.dtype)
-    floor = -16 * info.maxexp
-    active = jnp.isfinite(logarithm) & (logarithm >= floor * np.log(2.0))
-    value = jnp.where(active, logarithm, 0.0)
-    power = jnp.floor(value / np.log(2.0)).astype(jnp.int32)
-    if logarithm.dtype == jnp.float64:
-        high, low = 0.6931471803691238, 1.9082149292705877e-10
-    else:
-        high, low = 0.693359375, -0.00021219444005469058
-    residual = sealed(sealed(value - sealed(power * high)) - sealed(power * low))
-    selected_exp = jax.lax.exp(residual, accuracy=jax.lax.Tolerance(ulps=2))
-    mantissa, exponent = _normalize_scaled(mantissa=selected_exp, exponent=power)
-    weights = jnp.where(active, mantissa, 0.0), jnp.where(active, exponent, -100_000)
-    return weights, (residual, power, selected_exp, active)
-
-
-def _scaled_accumulate(*, total: _ScaledPair, term: _ScaledFloat) -> _ScaledPair:
-    """Compensated twofold sum in exponent-separated physical units.
-
-    This is a bounded floating reduction, not an exact arbitrary-grid sum.
-    It retains the leading rounding residual; its standard accumulation error
-    is O(n*u**2*sum(abs(terms))), plus input formation and final rounding.
-    """
-    high, error = _scaled_two_sum(left=total[0], right=term)
-    low = _scaled_sum((total[1], error))
-    return _scaled_two_sum(left=high, right=low)
-
-
-# keyword-only-exempt: library-callback=jax.lax.scan
-def _scaled_scan_step(
-    carry: _ScaledPair, term: _ScaledFloat
-) -> tuple[_ScaledPair, _ScaledPair]:
-    updated = _scaled_accumulate(total=carry, term=term)
-    return updated, updated
-
-
-def _scaled_other_sums(values: _ScaledFloat) -> _ScaledPair:
-    """Pool every element except its own using linear-work prefix/suffix scans.
-
-    Exclusion is structural: the almost-unit component never computes 1-p or
-    subtracts its own dominant score from a rounded pooled moment.
-    """
-    zero = (jnp.zeros_like(values[0][0]), jnp.asarray(-100_000, dtype=jnp.int32))
-    _, prefix = jax.lax.scan(_scaled_scan_step, (zero, zero), values)
-    _, suffix = jax.lax.scan(_scaled_scan_step, (zero, zero), values, reverse=True)
-
-    def exclusive(*, values: _ScaledPair, reverse: bool) -> _ScaledPair:
-        def shift(word: _ScaledFloat) -> _ScaledFloat:
-            mantissa, exponent = word
-            zeros = jnp.zeros_like(mantissa[:1])
-            powers = jnp.full_like(exponent[:1], -100_000)
-            if reverse:
-                return jnp.concatenate((mantissa[1:], zeros)), jnp.concatenate(
-                    (exponent[1:], powers)
-                )
-            return jnp.concatenate((zeros, mantissa[:-1])), jnp.concatenate(
-                (powers, exponent[:-1])
-            )
-
-        return shift(values[0]), shift(values[1])
-
-    left = exclusive(values=prefix, reverse=False)
-    right = exclusive(values=suffix, reverse=True)
-    result = _scaled_accumulate(total=left, term=right[0])
-    return _scaled_accumulate(total=result, term=right[1])
-
-
-def _normalized_density_slope(
-    *,
-    weights: _ScaledFloat,
-    total: _ScaledFloat,
-    other_weights: _ScaledPair,
-    scores: _ScaledFloat,
-) -> _ScaledFloat:
-    """Form the normalized Jacobian column before its physical-range boundary.
-
-    For w_i=exp(l_i), Z=sum(w), relative score d_i, the exact identity is
-    dp_i = w_i/Z**2 * [sum(j!=i,w_j)*d_i - sum(j!=i,w_j*d_j)].
-    Every product and sum stays scaled until that final coefficient. In
-    particular, w_i*d_i can be finite when d_i overflows or w_i underflows.
-    """
-    weighted = _scaled_multiply(left=weights, right=scores)
-    other_scores = _scaled_other_sums(weighted)
-    first = _scaled_multiply(left=other_weights[0], right=scores)
-    second = _scaled_multiply(left=other_weights[1], right=scores)
-    centered = _scaled_sum(
-        (
-            first,
-            second,
-            (-other_scores[0][0], other_scores[0][1]),
-            (-other_scores[1][0], other_scores[1][1]),
-        )
-    )
-    numerator = _scaled_multiply(left=weights, right=centered)
-    return _normalize_scaled(
-        mantissa=numerator[0] / total[0] ** 2,
-        exponent=numerator[1] - 2 * total[1],
-    )
-
-
-def _normal_density_row_impl(
+def _normal_density_row(
     operands: tuple[Float1D, FloatND, FloatND, FloatND, FloatND],
 ) -> Float1D:
     """Evaluate the preserved represented-input density row."""
     return jax.nn.softmax(_density_contrasts_and_gap(operands)[0])
-
-
-def _density_derivative_data(
-    operands: tuple[Float1D, FloatND, FloatND, FloatND, FloatND],
-) -> tuple[
-    Float1D, FloatND, IntND, Int[jax.Array, ""], tuple[Float1D, IntND, Float1D, Bool1D]
-]:
-    """Form normalized coefficient words and their certification operands."""
-    nodes, _location, rho, source, sigma = operands
-    contrasts, half_gap, contrast_words, reference = _density_contrasts_and_gap(
-        operands
-    )
-    weights, exp_metadata = _scaled_exp(contrasts)
-    other_weights = _scaled_other_sums(weights)
-    total = _scaled_sum((weights, *other_weights))
-    scale = _scaled_float(sigma)
-    unit = _scaled_float(jnp.ones_like(nodes))
-    location_score = _scaled_density_ratio_words(
-        left=half_gap, right=unit, sigma=scale, factor=2.0
-    )
-    contrast_m, contrast_e = contrast_words
-    sigma_score = _normalize_scaled(
-        mantissa=-2 * contrast_m / scale[0], exponent=contrast_e - scale[1]
-    )
-    location_slope = _normalized_density_slope(
-        weights=weights, total=total, other_weights=other_weights, scores=location_score
-    )
-    sigma_slope = _normalized_density_slope(
-        weights=weights, total=total, other_weights=other_weights, scores=sigma_score
-    )
-    rho_slope = _scaled_multiply(left=location_slope, right=_scaled_float(source))
-    source_slope = _scaled_multiply(left=location_slope, right=_scaled_float(rho))
-    mantissas = jnp.stack(
-        (location_slope[0], rho_slope[0], source_slope[0], sigma_slope[0])
-    )
-    exponents = jnp.stack(
-        (location_slope[1], rho_slope[1], source_slope[1], sigma_slope[1])
-    )
-    return contrasts, mantissas, exponents, reference, exp_metadata
-
-
-# keyword-only-exempt: library-callback=jax.custom_jvp.defjvp
-def _normal_density_row_jvp(
-    primals: tuple[tuple[Float1D, FloatND, FloatND, FloatND, FloatND]],
-    tangents: tuple[tuple[Float1D, FloatND, FloatND, FloatND, FloatND]],
-) -> tuple[Float1D, Float1D]:
-    """Normalize scaled score moments before materializing row sensitivities.
-
-    Nodes are fixed constructor data; the actual-source path remains active.
-    Coefficients depend only on primals. The final finite-factor operations
-    are linear in tangents and therefore preserve reverse transposition.
-    """
-    (operands,), (dots,) = primals, tangents
-    _nodes_dot, location_dot, rho_dot, source_dot, sigma_dot = dots
-    contrasts, mantissas, exponents, _reference, _metadata = _density_derivative_data(
-        operands
-    )
-    location_slope = mantissas[0], exponents[0]
-    rho_slope = mantissas[1], exponents[1]
-    source_slope = mantissas[2], exponents[2]
-    sigma_slope = mantissas[3], exponents[3]
-    tangent = (
-        _scaled_linear_product(coefficient=location_slope, tangent=location_dot)
-        + _scaled_linear_product(coefficient=rho_slope, tangent=rho_dot)
-        + _scaled_linear_product(coefficient=source_slope, tangent=source_dot)
-        + _scaled_linear_product(coefficient=sigma_slope, tangent=sigma_dot)
-    )
-    return jax.nn.softmax(contrasts), tangent
-
-
-_normal_density_row = jax.custom_jvp(_normal_density_row_impl)
-_normal_density_row.defjvp(_normal_density_row_jvp)
 
 
 def _prepare_innovation_quadrature(

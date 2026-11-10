@@ -94,6 +94,14 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 - A `ConditionalAction` condition is stored in one numeric kind: as floats if any listed
   value is a float, otherwise as integers.
 
+### Density-rule derivatives are no longer supported
+
+- `TauchenAR1Process.on_nodes(transition_rule="density")` rows no longer carry a custom
+  derivative rule. Their values are unchanged. Differentiating them with respect to
+  `mu`, `rho`, `sigma` or the source value is not supported: gradients of simulated
+  statistics are not meaningful in models with discrete choices, so no transition rule
+  carries a derivative guarantee.
+
 ### Public grid, process and condition classes live in `lcm`
 
 - The grids (`LinSpacedGrid`, `LogSpacedGrid`, `IrregSpacedGrid`,
