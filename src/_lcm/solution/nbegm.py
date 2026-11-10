@@ -2722,7 +2722,7 @@ class _ParameterCaseThreshold:
     qualified_name: QualifiedName
     """The `<predicate>__<threshold>` key the boundary value is read under."""
 
-    def __call__(self, params: EconFunctionKwargs) -> FloatND | float:
+    def __call__(self, params: EconFunctionKwargs) -> FloatND:
         """Read the threshold from the regime's flat params."""
         return _numeric_nbegm_argument(value=params[self.qualified_name])
 
@@ -10982,11 +10982,13 @@ class _NBEGMQueryIntervalEvaluators:
             else:
                 function = source.derived_of_liquid_dag
                 variable = _numeric_nbegm_argument(
-                    value=function(
-                        **{
-                            name: pool[name]
-                            for name in inspect.signature(function).parameters
-                        }
+                    value=array_result(
+                        function(
+                            **{
+                                name: pool[name]
+                                for name in inspect.signature(function).parameters
+                            }
+                        )
                     )
                 )
             sides.append(
@@ -11352,9 +11354,13 @@ def _required_unprepared_nbegm_read(*, read: _NBEGMPreparedRead) -> _NBEGMCellRe
     return read
 
 
-def _numeric_nbegm_argument(*, value: EconFunctionArg) -> FloatND | float:
-    """Require a numeric role after any declared grouped threshold selection."""
-    if isinstance(value, jax.Array | float):
+def _numeric_nbegm_argument(*, value: EconFunctionArg) -> FloatND:
+    """Require a numeric role after any declared grouped threshold selection.
+
+    Flat params arrive cast to canonical JAX arrays and states are grid arrays, so a
+    numeric role is already an array; a grouped parameter leaf is refused.
+    """
+    if isinstance(value, jax.Array):
         return value
     raise TypeError("An NB numeric role cannot read a grouped parameter leaf.")
 
