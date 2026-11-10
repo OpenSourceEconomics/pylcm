@@ -302,6 +302,10 @@ def _validate_exits(regime: Regime) -> None:
             raise RegimeInitializationError(
                 f"Exit {name!r} targets must name {sorted(expected)!r}."
             )
+    if len({declaration.nodes for declaration in regime.exits.values()} - {None}) > 1:
+        raise RegimeInitializationError(
+            "The exits of a regime share one draw rule; these name different ones."
+        )
     if (
         sum(
             isinstance(declaration.rule, str | Consent)

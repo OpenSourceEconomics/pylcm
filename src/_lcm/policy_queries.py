@@ -68,7 +68,7 @@ from _lcm.utils.counts import sum_counts
 from _lcm.utils.dispatchers import productmap, vary_carry_like_body
 from lcm.exceptions import ExecutionPlanningError, UnsupportedOperationError
 from lcm.grids import DiscreteGrid
-from lcm.shocks import ShockGroupName
+from lcm.shocks import MonteCarlo, QuasiMonteCarlo, ShockGroupName
 from lcm.solver_api import KernelOutput
 from lcm.typing import (
     BoolND,
@@ -249,6 +249,12 @@ class QueryNode:
     """Explicit own-outside producer of a singleton Consent comparison."""
     answer_shape: tuple[int, ...] | None = None
     """Source-owned payoff tuple when it differs from the physical context."""
+    sample: tuple[MonteCarlo | QuasiMonteCarlo, tuple[int, ...]] | None = None
+    """Draw rule of an occupant's rows and the plan positions kept as a product.
+
+    The context's plan indices then span the kept groups alone; every other
+    group and every observation axis is drawn once per sample.
+    """
 
     def __post_init__(self) -> None:
         """Freeze edges and require the actual canonical target authority."""

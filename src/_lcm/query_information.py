@@ -5,7 +5,10 @@ information axes remain transient native outputs until their actual caller
 selects a policy; only the occupant root integrates into a durable value bank.
 """
 
+import functools
+import hashlib
 import inspect
+import json
 import math
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -14,6 +17,7 @@ from typing import NoReturn, cast
 import jax
 import jax.numpy as jnp
 import numpy as np
+from scipy.stats import qmc
 
 from _lcm.current_iid import (
     CURRENT_IID_ARGUMENT,
@@ -33,6 +37,7 @@ from _lcm.policy_queries import (
 )
 from _lcm.probability import exact_product, is_represented_zero
 from _lcm.shock_registry import ShockBinding
+from _lcm.simulation.random_address import inverse_cdf_index
 from _lcm.typing import PytreeValue, QAndFKwargs
 from _lcm.utils.counts import sum_counts
 from _lcm.utils.dispatchers import vary_carry_like_body
@@ -42,9 +47,11 @@ from lcm.shocks import (
     Discrete,
     Law,
     LogNormal,
+    MonteCarlo,
     NodeSet,
     Normal,
     NormalMixture,
+    QuasiMonteCarlo,
     ShockGroupName,
     ShockName,
     Uniform,
@@ -61,7 +68,56 @@ def support_size(*, node: QueryNode, period: int) -> int:
     """Return the declared finite row count without materializing physical draws."""
     plan = node.context.current_iid_plans.get(period)
     size = 1 if plan is None else plan.indices.shape[0]
+    if node.sample is not None:
+        return size * node.sample[0].n
     return size * math.prod(node.observation_counts)
+
+
+@functools.cache
+def _uniforms(
+    *, rule: MonteCarlo | QuasiMonteCarlo, period: int, owner: str, dimension: int
+) -> np.ndarray:
+    """One point of the unit cube per sample, fixed by the rule, period and owner."""
+    encoded = json.dumps(
+        ("pylcm-exit-query-rule", 1, rule.seed, period, owner),
+        ensure_ascii=True,
+        separators=(",", ":"),
+    ).encode()
+    generator = np.random.Generator(
+        np.random.PCG64(int.from_bytes(hashlib.sha256(encoded).digest(), "big"))
+    )
+    uniforms = (
+        generator.random((rule.n, dimension))
+        if isinstance(rule, MonteCarlo)
+        else qmc.Sobol(d=dimension, scramble=True, bits=52, rng=generator).random_base2(
+            m=rule.n.bit_length() - 1
+        )
+    )
+    # A uniform that rounds to one in single precision selects no cell.
+    return np.minimum(uniforms, np.nextafter(np.float32(1), np.float32(0)))
+
+
+def _draw(*, weights: FloatND, uniform: FloatND) -> tuple[IntND, FloatND]:
+    """Draw one node of a group per uniform, in proportion to its mass.
+
+    Args:
+        weights: The group's factors, one row per factor, over its nodes.
+        uniform: Points of the unit interval, one per draw.
+
+    Returns:
+        The drawn node and the factor that scales its own mass to the group's
+        total, zero for a group without mass.
+    """
+    # ponytail: one comparison per node and draw; search the cumulative masses
+    # if a group's node count ever dominates.
+    mass = exact_product(weights)
+    total = jnp.sum(mass)
+    row = inverse_cdf_index(
+        probabilities=mass / jnp.where(total > 0, total, 1.0),
+        uniform=jnp.asarray(uniform, mass.dtype),
+    )
+    drawn = mass[row]
+    return row, jnp.where(drawn > 0, total / jnp.where(drawn > 0, drawn, 1.0), 0.0)
 
 
 def _has_local_information(*, node: QueryNode, period: int) -> bool:
@@ -794,6 +850,8 @@ def _support_codes(
     """Per support row of a query, the node code of each named frame shock."""
     node = definitions[key]
     plan = _plan(node=node)
+    if node.sample is not None:
+        return _drawn_codes(key=key, definitions=definitions, shocks=shocks)
     extents = (1 if plan is None else plan.indices.shape[0], *node.observation_counts)
     bindings = _bindings(node=node, definitions=definitions, period=node.read.period)
     own = () if plan is None else plan.bindings
@@ -829,6 +887,54 @@ def _support_codes(
         columns.append(np.broadcast_to(codes.reshape(shape), extents).ravel())
     if not columns:
         return np.zeros((math.prod(extents), 0), dtype=np.int64)
+    return np.stack(columns, axis=1)
+
+
+def _drawn_codes(
+    *, key: str, definitions: Mapping[str, QueryNode], shocks: tuple[ShockName, ...]
+) -> np.ndarray:
+    """Per row of a drawn query, a code of each named frame shock.
+
+    A kept group's shock has its node code. A drawn group's shock is named by
+    its sample and an observed shock by its row.
+    """
+    node = definitions[key]
+    rule, kept = cast(
+        "tuple[MonteCarlo | QuasiMonteCarlo, tuple[int, ...]]", node.sample
+    )
+    plan = _plan(node=node)
+    own = () if plan is None else plan.bindings
+    size = 1 if plan is None else plan.indices.shape[0]
+    bindings = _bindings(node=node, definitions=definitions, period=node.read.period)
+    columns = []
+    for shock in shocks:
+        position = next(
+            (
+                position
+                for position, (_, binding, _) in enumerate(own)
+                if shock in binding.group.shocks
+            ),
+            None,
+        )
+        if position in kept:
+            _, binding, nodes = own[position]
+            codes = _shock_codes(binding=binding, nodes=nodes, shock=shock)
+            rows = np.asarray(cast("CurrentIIDPlan", plan).indices)[:, position]
+            columns.append(np.repeat(codes[rows], rule.n))
+        elif position is not None:
+            # ponytail: two samples that draw one node stay apart; merge them
+            # if draws ever coincide often enough to matter.
+            columns.append(np.tile(np.arange(rule.n), size))
+        elif any(
+            shock in bindings[group].group.shocks for group in node.observation_sources
+        ):
+            # ponytail: name an observation by its sample where its law reads
+            # no kept group; its rows then repeat across the kept rows.
+            columns.append(np.arange(size * rule.n))
+        else:
+            raise ValueError(f"Shock {shock!r} is not in query {key!r}'s frame.")
+    if not columns:
+        return np.zeros((size * rule.n, 0), dtype=np.int64)
     return np.stack(columns, axis=1)
 
 
@@ -1227,7 +1333,15 @@ class InformationQueryCell:
         plan = node.context.current_iid_plans.get(node.read.period)
         parent = node.ancestors[-1] if node.ancestors else None
         previous = None if parent is None else frames[parent]
-        if plan is None:
+        draws = None
+        if node.sample is not None:
+            frame, factors, draws = self._drawn(
+                node=node,
+                plan=plan,
+                fixed=fixed,
+                arguments=cast("QAndFKwargs", {**fixed, **mapped}),
+            )
+        elif plan is None:
             frame, factors = _empty_frame(), jnp.ones((1, 1))
         else:
             frame, factors = plan.realise_information_nodes(
@@ -1261,6 +1375,78 @@ class InformationQueryCell:
             factors=factors,
             source=source,
             frames=frames,
+            draws=draws,
+        )
+
+    def _drawn(
+        self,
+        *,
+        node: QueryNode,
+        plan: CurrentIIDPlan | None,
+        fixed: QueryArguments,
+        arguments: QAndFKwargs,
+    ) -> tuple[CurrentIIDDrawFrame, FloatND, tuple[FloatND, ...]]:
+        """Cross a drawn query's kept rows with one draw of every other own group.
+
+        Row `kept * n + sample` holds kept row `kept` and sample `sample`; every
+        kept row sees the same draws. Each drawn group adds the factor that
+        scales its node's mass to the group total, and one more factor holds
+        the sample weight. Also returns one uniform per observation axis and row.
+        """
+        rule, kept = cast(
+            "tuple[MonteCarlo | QuasiMonteCarlo, tuple[int, ...]]", node.sample
+        )
+        bindings = () if plan is None else plan.bindings
+        drawn = tuple(column for column in range(len(bindings)) if column not in kept)
+        uniforms = jnp.asarray(
+            _uniforms(
+                rule=rule,
+                period=node.read.period,
+                owner=node.read.target,
+                dimension=len(drawn) + len(node.observation_sources),
+            )
+        )
+        size = 1 if plan is None else plan.indices.shape[0]
+        scales = [jnp.full(rule.n, 1 / rule.n, uniforms.dtype)]
+        if plan is None:
+            frame, factors = _empty_frame(), jnp.stack(scales)
+        else:
+            params = cast("AdmittedGroupParams", fixed[CURRENT_IID_ARGUMENT])
+            operands = cast("NodeOperands", fixed[CURRENT_IID_NODES_ARGUMENT])
+            indices = jnp.repeat(plan.indices, rule.n, axis=0)
+            for position, column in enumerate(drawn):
+                group, _, nodes = bindings[column]
+                site = CurrentIIDPlan(
+                    bindings=(bindings[column],),
+                    indices=jnp.arange(nodes.weights.size, dtype=jnp.int32)[:, None],
+                )
+                # ponytail: the group's law runs here and again below at the
+                # drawn rows; share one realisation if it ever shows in a trace.
+                _, weights = site.realise_information_nodes(
+                    arguments=arguments,
+                    group_params={group: params[group]},
+                    node_operands={group: operands[group]},
+                    indices=site.indices,
+                )
+                row, scale = _draw(weights=weights, uniform=uniforms[:, position])
+                indices = indices.at[:, column].set(jnp.tile(row, size))
+                scales.append(scale)
+            frame, factors = plan.realise_information_nodes(
+                arguments=arguments,
+                group_params=params,
+                node_operands=operands,
+                indices=indices,
+            )
+            factors = jnp.concatenate(
+                [factors, jnp.tile(jnp.stack(scales).astype(factors.dtype), (1, size))]
+            )
+        return (
+            frame,
+            factors,
+            tuple(
+                jnp.tile(uniforms[:, len(drawn) + axis], size)
+                for axis in range(len(node.observation_sources))
+            ),
         )
 
     def _observations(
@@ -1271,14 +1457,24 @@ class InformationQueryCell:
         factors: FloatND,
         source: SourceStates,
         frames: Frames,
+        draws: tuple[FloatND, ...] | None = None,
     ) -> tuple[CurrentIIDDrawFrame, FloatND]:
+        """Cross the primary rows with every observation row, or with `draws`.
+
+        `draws` holds one uniform per primary row for each observation axis;
+        each row then meets the one observation row its uniforms select.
+        """
         key = next(
             name for name, candidate in self.definitions.items() if candidate is node
         )
         extents = (factors.shape[1], *node.observation_counts)
 
         def point(flat: IntND) -> tuple[CurrentIIDDrawFrame, FloatND]:
-            rows = jnp.unravel_index(flat, extents)
+            rows = (
+                jnp.unravel_index(flat, extents)
+                if draws is None
+                else (flat, *(draw[flat] for draw in draws))
+            )
             frame = _row(frame=primary, row=rows[0])
             terms = [factors[:, rows[0]]]
             for axis, (group, producer) in enumerate(
@@ -1332,7 +1528,9 @@ class InformationQueryCell:
 
         frame, weights = map_lanes(
             function=point,
-            operands=jnp.arange(math.prod(extents), dtype=jnp.int32),
+            operands=jnp.arange(
+                math.prod(extents) if draws is None else extents[0], dtype=jnp.int32
+            ),
             batch_size=self.row_batch,
         )
         return frame, weights.T
@@ -1344,7 +1542,7 @@ class InformationQueryCell:
         target: QueryNode,
         group: ShockGroupName,
         fixed: QueryArguments,
-        row: IntND,
+        row: IntND | FloatND,
         observed: frozenset[str],
         source: SourceStates,
         frames: Frames,
@@ -1353,6 +1551,10 @@ class InformationQueryCell:
 
         Its settlement and law run only on a discarded batch lane, reading the
         producer's stand-in state rather than an unusable projection.
+
+        A floating `row` is a uniform: the group's node is drawn with it, and
+        the weights gain the factor that scales the node's mass to the group
+        total.
         """
         from _lcm.current_iid import (  # noqa: PLC0415
             law_informativeness,
@@ -1377,6 +1579,7 @@ class InformationQueryCell:
             },
         }
 
+        drawn = jnp.issubdtype(row.dtype, jnp.floating)
         active = _observation_available(
             node=observer,
             group=group,
@@ -1428,16 +1631,21 @@ class InformationQueryCell:
             identity = binding.group._has_identity_correlation(  # noqa: SLF001 - shared exact represented-matrix proof
                 params=params
             )
+            if drawn:
+                at, scale = _draw(weights=weights, uniform=row)
+                chosen_weights = jnp.concatenate([weights[:, at], scale[None]])
+            else:
+                at, chosen_weights = row, weights[:, row]
             chosen = _row(
                 frame=_batch_metadata(frame=produced, size=nodes.weights.size),
-                row=row,
+                row=at,
             )
             return chosen._replace(
                 valid=chosen.valid & (identity | jnp.all(mask) | ~jnp.any(mask)),
                 information_available={
                     name: jnp.asarray(a=True) for name in chosen.physical
                 },
-            ), weights[:, row]
+            ), chosen_weights
 
         def prototype_fields() -> tuple[tuple[PytreeValue, ...], FloatND]:
             frame, weights = produce()
@@ -1453,8 +1661,11 @@ class InformationQueryCell:
         )
         # Inactive support is a single numerical no-information representative;
         # it does not consult an unsafe target law to obtain a probability mass.
+        # Every drawn row is its own sample of that representative.
         neutral_weights = (
             jnp.ones_like(neutral_weights)
+            if drawn
+            else jnp.ones_like(neutral_weights)
             .at[0]
             .set((row == 0).astype(neutral_weights.dtype))
         )
