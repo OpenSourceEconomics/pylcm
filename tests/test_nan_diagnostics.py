@@ -9,7 +9,7 @@ import pytest
 from typing_extensions import TypedDict
 
 from _lcm.engine import StateActionSpace
-from _lcm.solution.validate_V import _Reductions, validate_V
+from _lcm.solution.validate_V import _Reductions, validate_V, value_function_nan_error
 from _lcm.typing import JSONValue
 from _lcm.utils.logging import LogLevel
 from lcm import ExecutionConfig, Model, categorical
@@ -22,6 +22,7 @@ from lcm.typing import (
     ContinuousAction,
     ContinuousState,
     FloatND,
+    ScalarFloat,
     ScalarInt,
     UserParams,
 )
@@ -298,3 +299,15 @@ def test_diagnostic_failure_preserves_original_error():
 class _MetricSummary(TypedDict):
     overall: float
     by_dim: dict[str, list[float]]
+
+
+@pytest.mark.parametrize(
+    ("age", "printed"),
+    [(jnp.int32(30), "30"), (jnp.asarray(30.0), "30"), (jnp.asarray(91 / 3), "30.33")],
+    ids=["int", "whole-float", "fraction"],
+)
+def test_nan_error_names_the_age_as_integer_when_whole_else_two_decimals(
+    *, age: ScalarInt | ScalarFloat, printed: str
+) -> None:
+    error = value_function_nan_error(n_nan=1, total=2, age=age)
+    assert str(error).startswith(f"Value function at age {printed}: ")
