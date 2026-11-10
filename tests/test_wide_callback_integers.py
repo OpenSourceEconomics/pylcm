@@ -9,6 +9,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from jax import Array
 
 from _lcm.dtypes import as_canonical_float, as_code
 from lcm import AgeGrid, InitialNodes, IrregSpacedGrid, Model, Regime, categorical
@@ -121,17 +122,36 @@ def test_float_output_adapter_matches_host_reference(
     [np.int64(2**32 + 1), np.asarray(2**32 + 1, dtype=np.int64)],
     ids=["numpy-scalar", "numpy-0d"],
 )
+@pytest.mark.parametrize("traced", [False, True])
 def test_wide_host_code_is_never_wrapped_onto_the_grid(
-    raw: np.int64 | np.ndarray,
+    *, raw: np.int64 | np.ndarray, traced: bool
 ) -> None:
     """`2**32 + 1` stays itself at double precision and is refused at single."""
+
+    def call() -> Array:
+        return as_code(value=raw, source="wide integer regime selector")
+
+    run = jax.jit(call) if traced else call
     if jax.config.x64_enabled:
-        got = as_code(value=raw, source="wide integer regime selector")
+        got = run()
         assert got.dtype == jnp.int64
         assert int(got) == 2**32 + 1
     else:
         with pytest.raises(InvalidFunctionOutputError, match="cannot hold"):
-            as_code(value=raw, source="wide integer regime selector")
+            run()
+
+
+def test_traced_code_keeps_its_width_under_jit() -> None:
+    """A traced code leaves the adapter at the widest integer the precision has."""
+    exact = 2**32 + 1 if jax.config.x64_enabled else 2**31 - 1
+
+    def call(code: Array) -> Array:
+        return as_code(value=code, source="wide integer regime selector")
+
+    wide = jnp.asarray(exact)
+    got = jax.jit(call)(wide)
+    assert got.dtype == wide.dtype
+    assert int(got) == exact
 
 
 @pytest.mark.parametrize("exact", [0, 1, 2**24])
