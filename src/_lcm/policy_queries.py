@@ -18,7 +18,7 @@ from dags import with_signature
 from jax.core import Tracer
 
 from _lcm.current_iid import CurrentIIDDrawFrame
-from _lcm.dtypes import as_canonical_float, as_code
+from _lcm.dtypes import Code, as_canonical_float, as_code
 from _lcm.engine import StateActionSpace
 from _lcm.execution.core_program import (
     CoreArgumentBuilder,
@@ -31,6 +31,7 @@ from _lcm.execution.core_program import (
 )
 from _lcm.execution.output_layout import VALUE, StateAxesLeading
 from _lcm.execution.pending_work import PendingSolveWork
+from _lcm.grids.discrete import MISSING_CAT_CODE
 from _lcm.params.edges import EDGES, flat_namespaces, regime_kernel_params
 from _lcm.regime_building.argmax import argmax_and_max
 from _lcm.regime_building.collective import ParetoWeights, collective_argmax_and_readout
@@ -2152,9 +2153,16 @@ def _mapped_query_states(
     # kind, so a projection may return `1` for a continuous state or a Python
     # integer for a code.
     mapped = {
-        name: _as_target_state(
-            value=helper(
-                **{key: available[key] for key in inspect.signature(helper).parameters}
+        name: _at_target_dtype(
+            value=_as_target_state(
+                value=helper(
+                    **{
+                        key: available[key]
+                        for key in inspect.signature(helper).parameters
+                    }
+                ),
+                name=name,
+                grid=grid,
             ),
             name=name,
             grid=grid,
@@ -2173,9 +2181,13 @@ def _mapped_query_states(
 
 
 def _as_target_state(
-    *, value: PytreeValue, name: str, grid: Mapping[str, FloatND | IntND]
-) -> FloatND | IntND:
-    """Adapt one projection's output to the role of the target state it lands on."""
+    *, value: PytreeValue, name: str, grid: Mapping[str, FloatND | Code]
+) -> FloatND | Code:
+    """Adapt one projection's output to the role of the target state it lands on.
+
+    A code keeps the width the projection gave it: `_at_target_dtype` decides
+    whether the target's dtype can hold it.
+    """
     # A projection returns one array-like; the adapters refuse any other kind.
     output = cast("FloatND | IntND | BoolND", value)
     if name not in grid:
@@ -2183,7 +2195,21 @@ def _as_target_state(
     source = f"The projection of state '{name}'"
     if grid[name].dtype.kind == "f":
         return as_canonical_float(value=output, source=source)
-    return as_code(value=output, source=source).astype(grid[name].dtype)
+    return as_code(value=output, source=source)
+
+
+def _at_target_dtype(
+    *, value: FloatND | Code, name: str, grid: Mapping[str, FloatND | IntND]
+) -> FloatND | IntND:
+    """Return a mapped state at its target's dtype without wrapping a wide code.
+
+    A code the target's dtype cannot hold names no node. It becomes
+    `MISSING_CAT_CODE`, so every later support check still finds it off the grid.
+    """
+    if name not in grid or value.dtype == grid[name].dtype:
+        return value
+    narrow = value.astype(grid[name].dtype)
+    return jnp.where(narrow == value, narrow, MISSING_CAT_CODE)
 
 
 def _query_action(

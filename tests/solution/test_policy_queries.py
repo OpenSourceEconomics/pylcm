@@ -27,6 +27,7 @@ from _lcm.execution.core_program import (
 from _lcm.execution.footprint import ResidentBreakdown
 from _lcm.execution.output_layout import StateAxesLeading, resolve_output_layout
 from _lcm.execution.value_transfer import ValueArtifactAddress, ValueArtifactKind
+from _lcm.grids.discrete import MISSING_CAT_CODE
 from _lcm.participation_queries import bind_participation_query_graph
 from _lcm.policy_queries import (
     PolicyAnswer,
@@ -53,6 +54,7 @@ from lcm import (
     categorical,
 )
 from lcm.collective import ProjectedRegimeValue, StakeholderRoute
+from lcm.exceptions import InvalidFunctionOutputError
 from lcm.participation import ParticipationCheck, ParticipationRead
 from lcm.shocks import Normal, ShockGroup, UserNodes
 from lcm.solvers import EGM, GridSearch
@@ -902,6 +904,65 @@ def test_query_mapped_category_domain_is_mandatory() -> None:
     model = _native_model(enable_jit=True, invalid_mapped_code=True)
     with pytest.raises(backward.ExecutionPlanningError, match="status"):
         model.solve(params={}, log_level="off", runtime_checks=False)
+
+
+def _wide_invalid_code(wealth: FloatND) -> IntND:
+    """A code that wraps onto node 1 of the target when narrowed to its dtype."""
+    exact = 2**32 + 1 if jax.config.x64_enabled else 99
+    return jnp.asarray(exact) + jnp.zeros_like(wealth, dtype=jnp.asarray(exact).dtype)
+
+
+@pytest.mark.parametrize("enable_jit", [False, True])
+def test_query_rejects_a_mapped_code_wider_than_its_target(
+    *, monkeypatch: pytest.MonkeyPatch, enable_jit: bool
+) -> None:
+    """A wide off-grid code is off the grid, not the node its low bits name."""
+    monkeypatch.setitem(globals(), "_invalid_code", _wide_invalid_code)
+    model = _native_model(enable_jit=enable_jit, invalid_mapped_code=True)
+    with pytest.raises(backward.ExecutionPlanningError, match="status"):
+        model.solve(params={}, log_level="off", runtime_checks=False)
+
+
+@pytest.mark.parametrize("enable_jit", [False, True])
+def test_code_wider_than_an_int32_target_is_missing_or_refused(
+    *, enable_jit: bool
+) -> None:
+    """`2**32 + 1` settles as the missing code at double precision.
+
+    Single precision has no integer that wide, so the host code is refused.
+    """
+    grid = {"wealth": jnp.asarray([0, 1], dtype=jnp.int32)}
+    raw = np.int64(2**32 + 1)
+
+    def adapt() -> tuple[IntND, IntND]:
+        code = queries._as_target_state(value=raw, name="wealth", grid=grid)
+        return code, queries._at_target_dtype(value=code, name="wealth", grid=grid)
+
+    run = jax.jit(adapt) if enable_jit else adapt
+    if not jax.config.x64_enabled:
+        with pytest.raises(InvalidFunctionOutputError, match="cannot hold"):
+            run()
+        return
+    code, settled = run()
+    assert int(code) == 2**32 + 1
+    assert settled.dtype == jnp.int32
+    assert int(settled) == MISSING_CAT_CODE
+
+
+@pytest.mark.parametrize("code", [0, 1, 99])
+@pytest.mark.parametrize("enable_jit", [False, True])
+def test_mapped_code_the_target_dtype_holds_is_unchanged(
+    *, code: int, enable_jit: bool
+) -> None:
+    grid = {"wealth": jnp.asarray([0, 1], dtype=jnp.int32)}
+
+    def adapt(value: IntND) -> IntND:
+        mapped = queries._as_target_state(value=value, name="wealth", grid=grid)
+        return queries._at_target_dtype(value=mapped, name="wealth", grid=grid)
+
+    settled = (jax.jit(adapt) if enable_jit else adapt)(jnp.asarray(code))
+    assert settled.dtype == jnp.int32
+    assert int(settled) == code
 
 
 def _vector_keep(*, q: FloatND, outside: PolicyAnswer) -> jax.Array:
