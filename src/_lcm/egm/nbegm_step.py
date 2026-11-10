@@ -102,10 +102,10 @@ from lcm.typing import (
     ScalarInt,
 )
 
-# A jump breakpoint's index into the sorted breakpoints: a Python `int` when the
-# positions are static, a traced 0-d index of JAX's default integer width when
-# they are recovered per cell.
-type JumpPosition = int | Int[Scalar, ""]
+# A jump breakpoint's index into the sorted breakpoints: an int32 scalar bound with
+# the kernel when the positions are static, a traced 0-d index of JAX's default
+# integer width when they are recovered per cell.
+type JumpPosition = Int[Scalar, ""]
 
 # Below this |xi| = |phi (1-rho) - 1| the Euler equation is treated as constant in
 # consumption: the closed-form inversion `c = x^(1/xi)` is undefined at xi = 0, so

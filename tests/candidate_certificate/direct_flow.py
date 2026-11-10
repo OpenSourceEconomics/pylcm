@@ -670,7 +670,7 @@ _SOURCE_SEALS = {
     SIMULATION_POLICY_PROGRAMS_SOURCE: "bf8f7602e45b6b6b5cec3b84aaf81878bd7e98b9a16aa5552893f9e0acb28be9",
     PUBLISHED_POLICY_SOURCE: "6e0e77a3e47cec4690b9e3d917159c5a2503efd1a6e7239fcc72f74ae0146316",
     SIMULATION_ENTRY_ALLOCATIONS_SOURCE: "4573b31cd4e3e1e7cf7a908202b79ea4e75e0aa6c637d87497098738c26843b7",
-    NBEGM_SOURCE: "9def630a1470b01dbc78cd1c8616aebf3f4656294d621e1dcf17fdb8c7c12b4b",
+    NBEGM_SOURCE: "cd238a539925a96c2e4dd023d01808d77f94eb08c43bbffad2d560ea409515fc",
     CONTINUATION_ARGUMENTS_SOURCE: "2bfffbd49e5a2e267fcfdefadd21cf4249dcc6979a6ff4889098c37a06dcc0e1",
     SIMULATION_TASTE_STREAM_SOURCE: "f6b629ed946bb3e211f890dc20f32741db6497c119ebb3b66adc578f7732352c",
     SIMULATION_MEMBERSHIP_SOURCE: "c0c92de4e55be3e7b814a67761caa75e8affe835e1887359d432341f1d85a18d",
@@ -770,7 +770,7 @@ _SOURCE_SEALS = {
     "src/_lcm/optimization/golden_section.py": "9e76572097e0281e76e59c0b7b430929cc9147754354780a6321f500bcd53f85",
     "src/_lcm/egm/upper_envelope/query.py": "c555477ccb82c30b5ef4b037b3bffb7867664963da0304479e16e3726bce4487",
     "src/_lcm/utils/counts.py": "a9087a3c42d32ff0ca82cf24fda2b59ed57cb77efef94714a37a6ca7cf7a3f82",
-    "src/_lcm/egm/nbegm_step.py": "a03bc489d548b4677253cfea8c2be95c649ed408b11cf54b0806c2c45b9dc763",
+    "src/_lcm/egm/nbegm_step.py": "2e5624186894928c7109eb8f8a85dfd78440137a496eedbe4bda1386798bd026",
     "src/_lcm/egm/nbegm_segments.py": "658a74ca40e3da1c025c3d03e0f8bf695feb45953113521a4700f2c1d1890505",
     "src/_lcm/egm/framed_arithmetic.py": "f4b1fa68cc765fc1450222f7370256306d22b92a6488b40c3575e98f44e43877",
     "src/_lcm/egm/ez_kernel.py": "551ace1c09f0ceeab69b748deea122c973f260e057fbdb7801c4522e297b827f",
@@ -2520,7 +2520,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     NBEGM_SOURCE: (
-        "63729b4a66b5625a6e185581ccec00bfb9193d5d964e0ea8bfc3efabd0dcdb69",
+        "88eb51bd4593920ccfc22f7ca545da2bbc42907d7224312a6a8bfe53989638c1",
         {
             "NBEGM.declare_continuation_reads": "b3aea84195a77cc3f4de92e284acd79cbb0e452f0f204dcd91b2aa930b4e632c",
             "_with_ride_marginal_reads": "8fe7ef4e91312fedb70de6d7bc72cb38fd80b50798b6d6e4a4ce712a7507cf56",
@@ -2978,7 +2978,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     "src/_lcm/egm/nbegm_step.py": (
-        "bbf15909f44be95eccf4da91ccac3fc54e6955b5c0e85952ba3c9c43e55b2f03",
+        "ddb93778c3dd2cb5b3c620743b957ab30af7ef256702ceee8cf914b7ed4dcc87",
         {
             "_IntervalCaseSolver.__call__": "9e8e6e6d6fcffbc0cec5c9ad8989131c66e0efd7e7e5ae8cba8e3954723fbf36",
             "_IntervalWinnerStep.__call__": "ddf80f381682b42c09566ed3bccde34580596b828d215a3c68ea4aae429332e3",

@@ -6587,12 +6587,12 @@ def _ride_along_jump_config(
     *,
     kinds: tuple[str, ...],
     materializer: DatedGenerationMaterializer | None = None,
-) -> tuple[BoolND, int, bool, tuple[int, ...], bool]:
+) -> tuple[BoolND, int, bool, tuple[JumpPosition, ...], bool]:
     """Derive the merged partition's jump statics from the declared breakpoint kinds.
 
     Returns the per-breakpoint jump flags, the static jump count, whether any jump
-    is present, the declared-order jump positions, and whether the jump positions
-    must be recovered per cell.
+    is present, the declared-order jump positions as int32 scalars bound with the
+    kernel, and whether the jump positions must be recovered per cell.
 
     The positions are recovered per cell whenever jumps and kinks are mixed, on
     however many variables. A single schedule is enough to reorder them: the
@@ -6604,7 +6604,16 @@ def _ride_along_jump_config(
     jump_flags = tuple(kind == "jump" for kind in kinds)
     n_jumps = sum(jump_flags)
     static_jump_positions = tuple(
-        index for index, is_jump in enumerate(jump_flags) if is_jump
+        (
+            jnp.asarray(index, dtype=jnp.int32)
+            if materializer is None
+            else materializer.evaluate_validation(
+                function=functools.partial(jnp.asarray, index, dtype=jnp.int32),
+                arguments={},
+            )
+        )
+        for index, is_jump in enumerate(jump_flags)
+        if is_jump
     )
     dynamic_jumps = 0 < n_jumps < len(kinds)
     return (
@@ -6630,7 +6639,7 @@ def _partition_jumps(
     dynamic_jumps: bool,
     jump_flags: BoolND,
     n_jumps: int,
-    static_jump_positions: tuple[int, ...],
+    static_jump_positions: tuple[JumpPosition, ...],
 ) -> tuple[Float1D, tuple[JumpPosition, ...]]:
     """Sort a cell's breakpoint preimages and locate the jumps in the sorted order.
 
@@ -6714,7 +6723,7 @@ class _NBEGMRideAlongStatics:
     """
     has_jump: bool
     """Whether any declared breakpoint is a jump (vs. a continuous kink)."""
-    static_jump_positions: tuple[int, ...]
+    static_jump_positions: tuple[JumpPosition, ...]
     """Jump indices in the sorted partition when a single variable fixes the order."""
     dynamic_jumps: bool
     """Whether the sorted-order jump indices must be recovered per cell."""
