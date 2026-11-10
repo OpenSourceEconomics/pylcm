@@ -36,6 +36,7 @@ from _lcm.regime_building.schedules import RegimeTransitionLaw
 from _lcm.regime_law import RegimeLaw, RegimeLaws
 from _lcm.typing import AgeValue, EconFunctionArg, FunctionName, RegimeName
 from _lcm.utils.ast_inspection import value_indexed_arrays
+from _lcm.utils.functools import is_user_function
 from lcm.collective import (
     CollectiveUtility,
     ProjectedRegimeValue,
@@ -805,11 +806,11 @@ def adapt_collective_utility(
     objective = declaration.objective
     if objective is not None:
         weights = {
-            stakeholder: weight
-            if isinstance(weight, float | int)
-            else adapt_user_function(
+            stakeholder: adapt_user_function(
                 func=weight, value_grids=value_grids, encode=None, adapters=adapters
             )
+            if is_user_function(weight)
+            else weight
             for stakeholder, weight in objective.weights.items()
         }
         if any(weights[s] is not w for s, w in objective.weights.items()):

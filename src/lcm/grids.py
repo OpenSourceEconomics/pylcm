@@ -207,7 +207,7 @@ class IrregSpacedGrid(ContinuousGrid):
                 argument="points",
                 example="IrregSpacedGrid(points=jnp.array([-1.73, -0.58, 0.58, 1.73]))",
             )
-            _validate_irreg_spaced_grid(np.asarray(points).tolist())
+            _validate_irreg_spaced_grid(np.asarray(points, dtype=np.float64).tolist())
             derived_n = len(points)
             if n_points is None:
                 n_points = derived_n
