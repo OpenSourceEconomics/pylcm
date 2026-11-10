@@ -11,6 +11,7 @@ from types import MappingProxyType
 
 import numpy as np
 
+from _lcm.dtypes import as_canonical_float
 from _lcm.typing import FunctionName
 from lcm.typing import ContinuousState, FloatND
 
@@ -91,4 +92,6 @@ class AdditiveShockTransition:
         }
 
     def __call__(self, **kwargs: FloatND) -> ContinuousState:
-        return kwargs[self.base] + kwargs[self.shock]
+        # Where the engine receives the next state: `base` and `shock` are user
+        # functions, which may return integers.
+        return as_canonical_float(kwargs[self.base] + kwargs[self.shock])

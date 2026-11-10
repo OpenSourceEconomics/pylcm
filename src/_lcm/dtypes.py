@@ -15,6 +15,7 @@ from typing import cast
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jaxtyping import Array, Int
 
 from lcm.typing import (
     BoolND,
@@ -34,6 +35,9 @@ type _NumericValue = int | float | np.integer | np.floating | np.ndarray | Value
 
 # What a user function may return where the engine expects one array: a Python
 # scalar, a NumPy scalar or array, or a JAX array of any numeric kind.
+# A discrete code from a user function: `int32`, or wider when it arrives wider.
+type _Code = Int[Array, "..."]
+
 type _UserOutput = bool | int | float | np.generic | np.ndarray | ValueND
 
 
@@ -162,6 +166,14 @@ def as_bool(value: _UserOutput) -> BoolND:
     return jnp.asarray(value, dtype=jnp.bool_)
 
 
-def as_code(value: _UserOutput) -> IntND:
-    """Return a user function's discrete-code output as `int32`."""
+def as_code(value: _UserOutput) -> _Code:
+    """Return a user function's discrete-code output as an integer array.
+
+    A Python scalar or a Boolean or narrow integer array becomes `int32`. A wider
+    integer array keeps its width: narrowing `2**32 + 1` to `int32` would wrap it
+    onto the code `1`, where the off-grid check could no longer see it.
+    """
+    dtype = getattr(value, "dtype", None)
+    if dtype is not None and jnp.issubdtype(dtype, jnp.integer):
+        return jnp.asarray(value, dtype=jnp.promote_types(dtype, jnp.int32))
     return jnp.asarray(value, dtype=jnp.int32)

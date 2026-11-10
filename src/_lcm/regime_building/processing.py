@@ -35,6 +35,7 @@ from dags.signature import rename_arguments
 from dags.tree import qname_from_tree_path, tree_path_from_qname
 from jax import numpy as jnp
 
+from _lcm.additive_shock_transition import AdditiveShockTransition
 from _lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
 from _lcm.coarse_transition import _CoarseTransitionCell
 from _lcm.constraints.dynamic_bound import validate_declared_bounds
@@ -9903,11 +9904,12 @@ def _as_next_state_role(*, func: EconFunction, grid: Grid | None) -> EconFunctio
     """Convert a deterministic law's output to its target state's kind.
 
     This is where the engine receives a user's next state: a continuous target
-    reads the canonical float dtype and a discrete target an `int32` code, so a
+    reads the canonical float dtype and a discrete target an integer code, so a
     law may return `1`, `True` or an integer array. An identity law already
-    returns the state's own kind.
+    returns the state's own kind, and an additive shock law converts its own sum:
+    the shock average recognizes it by its type.
     """
-    if grid is None or isinstance(func, _IdentityTransition):
+    if grid is None or isinstance(func, _IdentityTransition | AdditiveShockTransition):
         return func
     return cast(
         "EconFunction",

@@ -100,7 +100,7 @@ from _lcm.zero_safe import (
     zero_safe_weighted_term,
 )
 from lcm.exceptions import ModelInitializationError
-from lcm.grids import IrregSpacedGrid
+from lcm.grids import DiscreteGrid, IrregSpacedGrid
 from lcm.typing import (
     ActionName,
     BoolND,
@@ -1829,11 +1829,16 @@ class _SamePeriodReferenceReader:
         """Project the cell onto the reference regime's states, unclipped.
 
         Each coordinate takes its state's role, so a projection may return `2` for
-        a continuous state or a Python integer for a code.
+        a continuous state or a Python integer for a code. A process axis is read
+        by value, not by node code.
         """
         discrete = self.v_interpolation_info.discrete_states
         return {
-            state: (as_code if state in discrete else as_canonical_float)(
+            state: (
+                as_code
+                if isinstance(discrete.get(state), DiscreteGrid)
+                else as_canonical_float
+            )(
                 self.projection_funcs[state](
                     **{arg: kwargs[arg] for arg in self.projection_args[state]}
                 )

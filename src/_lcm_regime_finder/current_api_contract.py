@@ -22,6 +22,8 @@ _AUTHORITIES = {
             "587518f47dc4909c070ffd72e161cec0be134919a7d89f480976e6c1b0d1c496",
             # Specialization types changed in the same file. Transition is identical.
             "bee97101a92d339e52e930066ac63b88158ca786f3d63cbb562d129ea10c1383",
+            # `StochasticTransition` converts its output in the same file.
+            "17da853e9db9a08971dc16fc93bf27a7b417030ca6b2862569e39827e62fac4e",
         ),
     ),
 }
