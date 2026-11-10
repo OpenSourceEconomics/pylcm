@@ -923,6 +923,7 @@ def prepare_regime_builder(
                 declared_transitions=prepared_structure.declared_transitions.get(
                     regime_name, ()
                 ),
+                demanded_law=laws[regime_name].transition,
                 vocabulary_by_regime=edge_vocabulary,
             )
             for regime_name in representative_user_regimes

@@ -588,6 +588,7 @@ def create_edge_params_template(
     *,
     source: RegimeName,
     declared_transitions: tuple[Transition, ...],
+    demanded_law: _LawNode,
     vocabulary_by_regime: Mapping[RegimeName, EdgeVocabulary],
 ) -> EdgeParamsTemplate:
     """Create a source regime's branch of the `edges` parameter template.
@@ -619,6 +620,8 @@ def create_edge_params_template(
         source: The source regime's name.
         declared_transitions: The `Transition`s declared for the source, one per
             phase of `Model(edges=...)`.
+        demanded_law: The source's law lowered over its demanded periods. Its
+            callables decide each slot's numeric role.
         vocabulary_by_regime: The edge vocabulary of each regime of the model.
 
     Returns:
@@ -633,7 +636,11 @@ def create_edge_params_template(
 
     """
     variables = set(vocabulary_by_regime[source].variables)
+    demanded = {
+        id(func) for _, func, _ in iter_edge_callables(law=demanded_law, path=())
+    }
     params_by_path: list[tuple[tuple[str, ...], Mapping[ParameterName, str]]] = []
+    demanded_roles: dict[tuple[str, ...], set[NumericRole]] = {}
     law_params_by_path: list[tuple[tuple[str, ...], Mapping[ParameterName, str]]] = []
     for transition in declared_transitions:
         for path, func, gate in iter_transition_callables(transition):
@@ -672,31 +679,50 @@ def create_edge_params_template(
             params_by_path.append((path, params))
             if gate is None:
                 law_params_by_path.append((path, params))
+            if gate is not None or id(func) in demanded:
+                for param_name, annotation in params.items():
+                    demanded_roles.setdefault((*path, param_name), set()).add(
+                        role_of_leaf(annotation)
+                    )
     # Only the law's own cases decide its form; a gate is no case of it.
     _fail_if_coarse_law_params_meet_per_target_cells(
         source=source, params_by_path=law_params_by_path
     )
-    # A mutable build buffer of nested slots; freezing gives it its template type.
-    # Edge laws are filed over every case and phase, demanded or not, so a slot
-    # read as a float by one and as an integer by another keeps the value's kind
-    # here; `schedules` refuses the two readings when a model demands both laws.
+    return _edge_template(params_by_path=params_by_path, demanded_roles=demanded_roles)
+
+
+def _edge_template(
+    *,
+    params_by_path: list[tuple[tuple[str, ...], Mapping[ParameterName, str]]],
+    demanded_roles: Mapping[tuple[str, ...], set[NumericRole]],
+) -> EdgeParamsTemplate:
+    """File every declared slot under the role its demanded readers give it.
+
+    Slots are filed over every case and phase, demanded or not. A slot only
+    undemanded cases read, as a float by one and as an integer by another, keeps
+    the value's kind. `schedules` refuses the two readings when a model demands
+    both laws.
+    """
     roles_by_slot: dict[tuple[str, ...], set[NumericRole]] = {}
     for path, params in params_by_path:
         for param_name, annotation in params.items():
             roles_by_slot.setdefault((*path, param_name), set()).add(
                 role_of_leaf(annotation)
             )
+    # A mutable build buffer of nested slots; freezing gives it its template type.
     template: _TemplateBranch = {}
     for path, params in params_by_path:
         for param_name, annotation in params.items():
             slot = (*path, param_name)
+            roles = demanded_roles.get(slot, roles_by_slot[slot]) - {
+                NumericRole.AS_GIVEN
+            }
             _insert_edge_slot(
                 template=template,
                 path=slot,
-                annotation=(
-                    TemplateAnnotation(str(annotation), role=NumericRole.AS_GIVEN)
-                    if {NumericRole.FLOAT, NumericRole.INT} <= roles_by_slot[slot]
-                    else annotation
+                annotation=TemplateAnnotation(
+                    str(annotation),
+                    role=next(iter(roles)) if len(roles) == 1 else NumericRole.AS_GIVEN,
                 ),
             )
     return cast("EdgeParamsTemplate", _freeze_template_node(template))
