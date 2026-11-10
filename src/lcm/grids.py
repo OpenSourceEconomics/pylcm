@@ -55,7 +55,6 @@ from lcm.typing import (
     Int1D,
     OffGrid,
     ScalarFloat,
-    ScalarInt,
 )
 
 __all__ = [
@@ -89,7 +88,7 @@ class LinSpacedGrid(UniformContinuousGrid):
         *,
         start: float | ScalarFloat,
         stop: float | ScalarFloat,
-        n_points: int | ScalarInt,
+        n_points: int,
         off_grid: OffGrid = "extrapolate",
     ) -> None:
         _init_uniform_grid(
@@ -113,7 +112,7 @@ class LinSpacedGrid(UniformContinuousGrid):
             value=value,
             start=self.start,
             stop=self.stop,
-            n_points=self.n_points,
+            n_points=self._n_points_operand,
         )
 
 
@@ -134,7 +133,7 @@ class LogSpacedGrid(UniformContinuousGrid):
         *,
         start: float | ScalarFloat,
         stop: float | ScalarFloat,
-        n_points: int | ScalarInt,
+        n_points: int,
         off_grid: OffGrid = "extrapolate",
     ) -> None:
         _init_uniform_grid(
@@ -158,7 +157,7 @@ class LogSpacedGrid(UniformContinuousGrid):
             value=value,
             start=self.start,
             stop=self.stop,
-            n_points=self.n_points,
+            n_points=self._n_points_operand,
         )
 
 
@@ -295,7 +294,7 @@ class _PiecewiseGrid(ContinuousGrid):
     breakpoints: tuple[GridBreakpoint, ...]
     """Strictly increasing interior boundaries and their equality owners."""
 
-    points_per_segment: tuple[ScalarInt, ...]
+    points_per_segment: tuple[int, ...]
     """Output-node count contributed by each nominal segment."""
 
     off_grid: OffGrid = dataclasses.field(
@@ -334,16 +333,16 @@ class _PiecewiseGrid(ContinuousGrid):
         object.__setattr__(self, "off_grid", off_grid)
 
     @property
-    def n_points(self) -> ScalarInt:
+    def n_points(self) -> int:
         """Return the number of output nodes contributed by all segments."""
-        return self._segment_n_points.sum(dtype=jnp.int32)
+        return sum(self.points_per_segment)
 
     def _to_jax(self, *, logarithmic: bool) -> Float1D:
         """Construct and concatenate every segment's output nodes."""
         return piecewise_nodes(
             segment_starts=self._segment_starts,
             segment_stops=self._segment_stops,
-            segment_n_points=self._segment_n_points,
+            points_per_segment=self.points_per_segment,
             logarithmic=logarithmic,
         )
 

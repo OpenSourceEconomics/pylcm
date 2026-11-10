@@ -39,8 +39,7 @@ def admitted_grid_extent(*, spec: Grid) -> int:
     if isinstance(spec, PiecewiseLinSpacedGrid | PiecewiseLogSpacedGrid) and type(
         spec
     ) in (PiecewiseLinSpacedGrid, PiecewiseLogSpacedGrid):
-        counts = tuple(int(np.asarray(n)) for n in spec.points_per_segment)
-        count = sum(counts)
+        count = spec.n_points
         if count > np.iinfo(np.int32).max:
             raise ExecutionPlanningError(
                 "Admitted piecewise grid extent exceeds the original int32 axis."
@@ -49,7 +48,7 @@ def admitted_grid_extent(*, spec: Grid) -> int:
     if isinstance(spec, LinSpacedGrid | LogSpacedGrid | IrregSpacedGrid) and type(
         spec
     ) in (LinSpacedGrid, LogSpacedGrid, IrregSpacedGrid):
-        return int(np.asarray(spec.n_points))
+        return spec.n_points
     if isinstance(spec, _ContinuousStochasticProcess):
         # Process dimensions are plain declaration metadata; .params is not.
         return int(spec.n_points)
@@ -177,7 +176,7 @@ def materialize_original_grid(
                     owner=owner,
                     start=start,
                     stop=stop,
-                    n_points=int(np.asarray(n)),
+                    n_points=n,
                     logarithmic=type(spec) is PiecewiseLogSpacedGrid,
                 )
             )

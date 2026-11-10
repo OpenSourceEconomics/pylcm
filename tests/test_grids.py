@@ -235,7 +235,7 @@ def test_validate_continuous_grid_negative_n_points():
     error_msg = "n_points must be an int greater than 0 but is -1"
     with pytest.raises(GridInitializationError, match=error_msg):
         _validate_continuous_grid(
-            start=jnp.asarray(1.0), stop=jnp.asarray(2.0), n_points=jnp.int32(-1)
+            start=jnp.asarray(1.0), stop=jnp.asarray(2.0), n_points=-1
         )
 
 
@@ -243,7 +243,7 @@ def test_validate_continuous_grid_start_greater_than_stop():
     error_msg = "start must be less than stop"
     with pytest.raises(GridInitializationError, match=error_msg):
         _validate_continuous_grid(
-            start=jnp.asarray(2.0), stop=jnp.asarray(1.0), n_points=jnp.int32(10)
+            start=jnp.asarray(2.0), stop=jnp.asarray(1.0), n_points=10
         )
 
 
@@ -319,7 +319,7 @@ def test_validate_continuous_grid_rejects_nan_start():
         _validate_continuous_grid(
             start=jnp.asarray(float("nan")),
             stop=jnp.asarray(10.0),
-            n_points=jnp.int32(5),
+            n_points=5,
         )
 
 
@@ -328,7 +328,7 @@ def test_validate_continuous_grid_rejects_inf_stop():
         _validate_continuous_grid(
             start=jnp.asarray(1.0),
             stop=jnp.asarray(float("inf")),
-            n_points=jnp.int32(5),
+            n_points=5,
         )
 
 

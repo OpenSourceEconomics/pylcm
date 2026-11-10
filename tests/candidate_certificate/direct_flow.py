@@ -735,16 +735,16 @@ _SOURCE_SEALS = {
     SOLUTION_CONTRACT_SOURCE: "df9102d7c670dde6d8b10d693f5258081df8a9d5e33e28f62d3f7ea9f6e221aa",
     GRIDS_INIT_SOURCE: "a3b489f06a70dc3604b6d46f7e085a3b2fd7747b5788855c4c9859a0c6341f50",
     GRID_BASE_SOURCE: "2d9c7f1a0827f3ca172417a2ee2bf60b15c9ccb3dcedf3a94fb502e2d57538de",
-    GRID_COORDINATES_SOURCE: "9dd0cf9e3c702023cd3cfa40a3164bf399ea295c57349223b8ab617c7f3533d5",
+    GRID_COORDINATES_SOURCE: "81a1e3137fc659d0600c519b3966ecc69ea83ad0ecad27727fb57fbf73ab31ed",
     DISCRETE_GRID_SOURCE: "48df6b6ddb10022581a5b5215d5ecb816fbc09b27932fe34c9e494da11e42902",
-    CONTINUOUS_GRID_SOURCE: "83391c2db59bf7156da92268bbd5533df8d8c2166a659125fa6fc0eb9fa8e084",
-    PIECEWISE_GRID_SOURCE: "8b44d9b0bbc4e470538f37992fb8b7c6d94e6c15d3a6baeb34fa06268abcccc3",
+    CONTINUOUS_GRID_SOURCE: "c3786ae35ae9b9a4d8b75ea2bd48f8f110fb591fd2f57c193516d96bfde731ad",
+    PIECEWISE_GRID_SOURCE: "cf9c8ac5ad179ddc72739f49c641c5c6a6da032632bdbfc67115f663f2aac687",
     PROCESSES_INIT_SOURCE: "fbce6ed4c889cf4c30f5242c142b4dcf2fa9e186b75cd17be1557f827abff00a",
     PROCESS_BASE_SOURCE: "60cde8025c7926f20a29bf36d44b2d1e340e3dad607a7f23ac899fc3d6a9793d",
     PROCESS_IID_SOURCE: "3833704ce1e2cac4a12391d08602b34fbf4518309976b8c884528f2697b78b40",
     PROCESS_AR1_SOURCE: "0b4a90e1f6dc5f3f2624975a8b0563b60d35cfffd6afbf01cfaa5ab14c6f8a8a",
     PROCESS_AR1_ON_NODES_SOURCE: "1da6c847824d8ca4afc8d4c06235b987163fcc89791c4ab71f913d0b07f1c292",
-    LCM_GRIDS_SOURCE: "5cc4e9325c869f2cf7ef5e21341f1911cc11816e07f50355820fe9e29643e486",
+    LCM_GRIDS_SOURCE: "5bd0880e78ebac08c5c8253bedf82d1f8bbf69cf64149e9ba7057d419ab9ac73",
     LCM_PROCESSES_SOURCE: "0f43090442258f71fc4c32fcd7b69096cce674e582e8fe3ee4720aed3e528ca6",
     LCM_STATE_CONDITIONED_SOURCE: "367bb5d6fbd1ae20974c8905cf7277f7d4e6ea1d18d8d3e59df716a377bdcfbe",
     VARIABLES_SOURCE: "8445fd5d92144d013955027460ee204debfdcedf8bb5ef5d10092538cd18de8c",
@@ -16913,12 +16913,8 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             "path": GRID_COORDINATES_SOURCE,
             "source": replace_once(
                 source=grid_coordinates_source,
-                old=(
-                    "    return jnp.linspace(start, stop, n_points)  # ty: ignore[no-matching-overload]"
-                ),
-                new=(
-                    "    return jnp.linspace(start, stop, n_points)[:-1]  # ty: ignore[no-matching-overload]"
-                ),
+                old=("    return jnp.linspace(start, stop, n_points)"),
+                new=("    return jnp.linspace(start, stop, n_points)[:-1]"),
                 label="shared linear coordinate omission",
             ),
         },
@@ -16970,8 +16966,8 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             "path": CONTINUOUS_GRID_SOURCE,
             "source": replace_once(
                 source=continuous_grid_source,
-                old="    n_points_jax = jnp.int32(n_points)",
-                new="    n_points_jax = jnp.int32(n_points) - 1",
+                old='    object.__setattr__(grid, "n_points", n_points)',
+                new='    object.__setattr__(grid, "n_points", n_points - 1)',
                 label="uniform grid point-count omission",
             ),
         },

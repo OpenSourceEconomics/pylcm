@@ -16,10 +16,10 @@ from _lcm.grids import coordinates as grid_coordinates
 from _lcm.grids.continuous import ContinuousGrid
 from _lcm.utils.error_messages import format_messages
 from lcm.exceptions import GridInitializationError
-from lcm.typing import Float1D, FloatND, Int1D, ScalarFloat, ScalarInt
+from lcm.typing import Float1D, FloatND, Int1D, ScalarFloat
 
 if TYPE_CHECKING:
-    type PiecewisePointCounts = tuple[int | ScalarInt, ...]
+    type PiecewisePointCounts = tuple[int, ...]
 else:
     # The constructor's validator owns element errors and maps them to the
     # public GridInitializationError. The runtime alias keeps the package claw
@@ -31,7 +31,7 @@ def piecewise_nodes(
     *,
     segment_starts: Float1D,
     segment_stops: Float1D,
-    segment_n_points: Int1D,
+    points_per_segment: tuple[int, ...],
     logarithmic: bool,
 ) -> Float1D:
     """Construct and concatenate every segment's output nodes."""
@@ -40,16 +40,16 @@ def piecewise_nodes(
             grid_coordinates.logspace(
                 start=segment_starts[i],
                 stop=segment_stops[i],
-                n_points=segment_n_points[i],
+                n_points=n_points,
             )
             if logarithmic
             else grid_coordinates.linspace(
                 start=segment_starts[i],
                 stop=segment_stops[i],
-                n_points=segment_n_points[i],
+                n_points=n_points,
             )
         )
-        for i in range(segment_n_points.shape[0])
+        for i, n_points in enumerate(points_per_segment)
     ]
     return jnp.concatenate(segments)
 
@@ -127,11 +127,7 @@ def _init_piecewise_grid(
 
     object.__setattr__(grid, "start", start_jax)
     object.__setattr__(grid, "stop", stop_jax)
-    object.__setattr__(
-        grid,
-        "points_per_segment",
-        tuple(jnp.int32(count) for count in integer_counts),
-    )
+    object.__setattr__(grid, "points_per_segment", integer_counts)
     object.__setattr__(grid, "_breakpoint_values", breakpoint_values_jax)
     object.__setattr__(
         grid,
