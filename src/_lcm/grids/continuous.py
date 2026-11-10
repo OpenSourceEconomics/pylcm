@@ -49,16 +49,17 @@ class ContinuousGrid(Grid):
 class UniformContinuousGrid(ContinuousGrid, ABC):
     """Grid with start/stop/n_points for linearly or logarithmically spaced values.
 
-    `start` and `stop` are stored as JAX scalars at `canonical_float_dtype()`.
-    `n_points` is the host `int` node count, a static shape; `_n_points_operand`
-    binds the same count once as an int32 scalar for coordinate arithmetic.
+    `start`, `stop` and `n_points` are stored as the host values the grid was
+    declared with, so stdlib `dataclasses.replace`, equality and pickling work on
+    them. The private operands bind them once, at construction, for numerical
+    use: `start` and `stop` at `canonical_float_dtype()`, `n_points` as int32.
     """
 
-    start: ScalarFloat
-    """The start value of the grid (JAX scalar at `canonical_float_dtype()`)."""
+    start: float
+    """The start value of the grid."""
 
-    stop: ScalarFloat
-    """The stop value of the grid (JAX scalar at `canonical_float_dtype()`)."""
+    stop: float
+    """The stop value of the grid."""
 
     n_points: int
     """The number of points in the grid."""
@@ -67,6 +68,12 @@ class UniformContinuousGrid(ContinuousGrid, ABC):
         default="extrapolate", metadata={"fingerprint_omit_if_default": True}
     )
     """Extrapolate, clip only lookup, clip the next state, or refuse exterior states."""
+
+    _start: ScalarFloat = dataclasses.field(init=False, repr=False, compare=False)
+    """`start` at `canonical_float_dtype()`, the operand of grid arithmetic."""
+
+    _stop: ScalarFloat = dataclasses.field(init=False, repr=False, compare=False)
+    """`stop` at `canonical_float_dtype()`, the operand of grid arithmetic."""
 
     _n_points_operand: ScalarInt = dataclasses.field(
         init=False, repr=False, compare=False
@@ -81,15 +88,13 @@ class UniformContinuousGrid(ContinuousGrid, ABC):
     def get_coordinate(self, value: FloatND) -> FloatND:
         """Return the generalized coordinate of a value in the grid."""
 
-    def replace(
-        self, **kwargs: float | int | ScalarFloat | OffGrid
-    ) -> UniformContinuousGrid:
+    def replace(self, **kwargs: float | int | OffGrid) -> UniformContinuousGrid:
         """Replace the attributes of the grid.
 
         Args:
             **kwargs: Keyword arguments to replace the attributes of the grid: a
-                float or scalar for `start` and `stop`, an int for `n_points`,
-                and an `OffGrid` policy.
+                float for `start` and `stop`, an int for `n_points`, and an
+                `OffGrid` policy.
 
         Returns:
             A new grid with the replaced attributes.
@@ -112,14 +117,13 @@ def _init_uniform_grid(
     requires_positive_start: bool,
     off_grid: OffGrid,
 ) -> None:
-    """Cast `start` / `stop` to canonical JAX scalars, validate, store.
+    """Validate the declared host values, store them and bind their operands.
 
-    The public constructor hands `start` and `stop` in as Python floats, whether
-    the user wrote literals or `dataclasses.replace` round-trips stored JAX
-    scalars. `jnp.asarray(..., dtype=canonical_float_dtype())` lifts them to the
-    stored form, so the validator can assume strict `ScalarFloat` types and only
-    check value invariants (finiteness, ordering, positivity). `n_points` stays
-    the host count; its int32 operand is bound once it is validated.
+    The public constructor hands `start` and `stop` in as Python floats.
+    `jnp.asarray(..., dtype=canonical_float_dtype())` binds their operands, so
+    the validator can assume strict `ScalarFloat` types and only check value
+    invariants (finiteness, ordering, positivity). `n_points` stays the host
+    count; its int32 operand is bound once it is validated.
     """
     dtype = canonical_float_dtype()
     _validate_off_grid(off_grid)
@@ -131,8 +135,10 @@ def _init_uniform_grid(
         n_points=n_points,
         requires_positive_start=requires_positive_start,
     )
-    object.__setattr__(grid, "start", start_jax)
-    object.__setattr__(grid, "stop", stop_jax)
+    object.__setattr__(grid, "start", start)
+    object.__setattr__(grid, "stop", stop)
+    object.__setattr__(grid, "_start", start_jax)
+    object.__setattr__(grid, "_stop", stop_jax)
     object.__setattr__(grid, "n_points", n_points)
     object.__setattr__(grid, "_n_points_operand", jnp.int32(n_points))
     object.__setattr__(grid, "off_grid", off_grid)

@@ -14,7 +14,7 @@
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "2",
-  "source_inventory_sha256": "af70891f475a3c7fff73bda968f48f2f73313c43dd6349afda03259fe74ac7c1",
+  "source_inventory_sha256": "a2de1744a45600303fc0858de5a0a6ad68ed965d2980c5525b152f9b3f9e0b2d",
   "sources": [
     {
       "path": "src/_lcm/constraints/bounds.py",
@@ -242,7 +242,7 @@
     },
     {
       "path": "src/_lcm/grids/continuous.py",
-      "sha256": "c3786ae35ae9b9a4d8b75ea2bd48f8f110fb591fd2f57c193516d96bfde731ad"
+      "sha256": "8ad1a56dc9ecd31ee4005ee835cd2dca63df82804e9a9190103bf92f8c65fef3"
     },
     {
       "path": "src/_lcm/grids/coordinates.py",
@@ -254,7 +254,7 @@
     },
     {
       "path": "src/_lcm/grids/piecewise.py",
-      "sha256": "cf9c8ac5ad179ddc72739f49c641c5c6a6da032632bdbfc67115f663f2aac687"
+      "sha256": "46e09a9d4103ffdeab0c47534e9d7736a4944b08994471db9b389f25a01d6dda"
     },
     {
       "path": "src/_lcm/logsum.py",
@@ -714,7 +714,7 @@
     },
     {
       "path": "src/lcm/grids.py",
-      "sha256": "5bd0880e78ebac08c5c8253bedf82d1f8bbf69cf64149e9ba7057d419ab9ac73"
+      "sha256": "8db8618ce4f281827dca9614fda7f7a3899d428d7982c02be3b96d8f41437693"
     },
     {
       "path": "src/lcm/model.py",

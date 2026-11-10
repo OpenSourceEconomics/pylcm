@@ -86,8 +86,8 @@ class LinSpacedGrid(UniformContinuousGrid):
     def __init__(
         self,
         *,
-        start: float | ScalarFloat,
-        stop: float | ScalarFloat,
+        start: float,
+        stop: float,
         n_points: int,
         off_grid: OffGrid = "extrapolate",
     ) -> None:
@@ -103,15 +103,15 @@ class LinSpacedGrid(UniformContinuousGrid):
     def to_jax(self) -> Float1D:
         """Convert the grid to a Jax array."""
         return grid_coordinates.linspace(
-            start=self.start, stop=self.stop, n_points=self.n_points
+            start=self._start, stop=self._stop, n_points=self.n_points
         )
 
     def get_coordinate(self, value: FloatND) -> FloatND:
         """Return the generalized coordinate of a value in the grid."""
         return grid_coordinates.get_linspace_coordinate(
             value=value,
-            start=self.start,
-            stop=self.stop,
+            start=self._start,
+            stop=self._stop,
             n_points=self._n_points_operand,
         )
 
@@ -131,8 +131,8 @@ class LogSpacedGrid(UniformContinuousGrid):
     def __init__(
         self,
         *,
-        start: float | ScalarFloat,
-        stop: float | ScalarFloat,
+        start: float,
+        stop: float,
         n_points: int,
         off_grid: OffGrid = "extrapolate",
     ) -> None:
@@ -148,15 +148,15 @@ class LogSpacedGrid(UniformContinuousGrid):
     def to_jax(self) -> Float1D:
         """Convert the grid to a Jax array."""
         return grid_coordinates.logspace(
-            start=self.start, stop=self.stop, n_points=self.n_points
+            start=self._start, stop=self._stop, n_points=self.n_points
         )
 
     def get_coordinate(self, value: FloatND) -> FloatND:
         """Return the generalized coordinate of a value in the grid."""
         return grid_coordinates.get_logspace_coordinate(
             value=value,
-            start=self.start,
-            stop=self.stop,
+            start=self._start,
+            stop=self._stop,
             n_points=self._n_points_operand,
         )
 
@@ -285,11 +285,11 @@ class GridBreakpoint:
 class _PiecewiseGrid(ContinuousGrid):
     """Common storage and coordinate geometry for piecewise continuous grids."""
 
-    start: ScalarFloat
-    """Closed lower endpoint at pylcm's canonical floating dtype."""
+    start: float
+    """Closed lower endpoint, as declared."""
 
-    stop: ScalarFloat
-    """Closed upper endpoint at pylcm's canonical floating dtype."""
+    stop: float
+    """Closed upper endpoint, as declared."""
 
     breakpoints: tuple[GridBreakpoint, ...]
     """Strictly increasing interior boundaries and their equality owners."""
@@ -302,19 +302,25 @@ class _PiecewiseGrid(ContinuousGrid):
     )
     """Policy at the closed outer endpoints; interior ownership stays unchanged."""
 
-    _breakpoint_values: Float1D = dataclasses.field(init=False, repr=False)
-    _segment_selection_thresholds: Float1D = dataclasses.field(init=False, repr=False)
-    _segment_starts: Float1D = dataclasses.field(init=False, repr=False)
-    _segment_stops: Float1D = dataclasses.field(init=False, repr=False)
-    _segment_n_points: Int1D = dataclasses.field(init=False, repr=False)
-    _cumulative_offsets: Int1D = dataclasses.field(init=False, repr=False)
+    _breakpoint_values: Float1D = dataclasses.field(
+        init=False, repr=False, compare=False
+    )
+    _segment_selection_thresholds: Float1D = dataclasses.field(
+        init=False, repr=False, compare=False
+    )
+    _segment_starts: Float1D = dataclasses.field(init=False, repr=False, compare=False)
+    _segment_stops: Float1D = dataclasses.field(init=False, repr=False, compare=False)
+    _segment_n_points: Int1D = dataclasses.field(init=False, repr=False, compare=False)
+    _cumulative_offsets: Int1D = dataclasses.field(
+        init=False, repr=False, compare=False
+    )
 
     @beartype(conf=GRID_CONF)
     def __init__(
         self,
         *,
-        start: float | ScalarFloat,
-        stop: float | ScalarFloat,
+        start: float,
+        stop: float,
         breakpoints: tuple[GridBreakpoint, ...],
         points_per_segment: PiecewisePointCounts,
         off_grid: OffGrid = "extrapolate",

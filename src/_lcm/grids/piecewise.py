@@ -125,8 +125,8 @@ def _init_piecewise_grid(
         )
     )
 
-    object.__setattr__(grid, "start", start_jax)
-    object.__setattr__(grid, "stop", stop_jax)
+    object.__setattr__(grid, "start", start)
+    object.__setattr__(grid, "stop", stop)
     object.__setattr__(grid, "points_per_segment", integer_counts)
     object.__setattr__(grid, "_breakpoint_values", breakpoint_values_jax)
     object.__setattr__(

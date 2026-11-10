@@ -153,8 +153,8 @@ def materialize_original_grid(
     ):
         return _uniform_points(
             owner=owner,
-            start=spec.start,
-            stop=spec.stop,
+            start=spec._start,  # noqa: SLF001 - the bound canonical operand
+            stop=spec._stop,  # noqa: SLF001 - the bound canonical operand
             n_points=count,
             logarithmic=type(spec) is LogSpacedGrid,
         )

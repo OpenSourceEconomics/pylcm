@@ -737,14 +737,14 @@ _SOURCE_SEALS = {
     GRID_BASE_SOURCE: "2d9c7f1a0827f3ca172417a2ee2bf60b15c9ccb3dcedf3a94fb502e2d57538de",
     GRID_COORDINATES_SOURCE: "81a1e3137fc659d0600c519b3966ecc69ea83ad0ecad27727fb57fbf73ab31ed",
     DISCRETE_GRID_SOURCE: "48df6b6ddb10022581a5b5215d5ecb816fbc09b27932fe34c9e494da11e42902",
-    CONTINUOUS_GRID_SOURCE: "c3786ae35ae9b9a4d8b75ea2bd48f8f110fb591fd2f57c193516d96bfde731ad",
-    PIECEWISE_GRID_SOURCE: "cf9c8ac5ad179ddc72739f49c641c5c6a6da032632bdbfc67115f663f2aac687",
+    CONTINUOUS_GRID_SOURCE: "8ad1a56dc9ecd31ee4005ee835cd2dca63df82804e9a9190103bf92f8c65fef3",
+    PIECEWISE_GRID_SOURCE: "46e09a9d4103ffdeab0c47534e9d7736a4944b08994471db9b389f25a01d6dda",
     PROCESSES_INIT_SOURCE: "fbce6ed4c889cf4c30f5242c142b4dcf2fa9e186b75cd17be1557f827abff00a",
     PROCESS_BASE_SOURCE: "60cde8025c7926f20a29bf36d44b2d1e340e3dad607a7f23ac899fc3d6a9793d",
     PROCESS_IID_SOURCE: "3833704ce1e2cac4a12391d08602b34fbf4518309976b8c884528f2697b78b40",
     PROCESS_AR1_SOURCE: "0b4a90e1f6dc5f3f2624975a8b0563b60d35cfffd6afbf01cfaa5ab14c6f8a8a",
     PROCESS_AR1_ON_NODES_SOURCE: "1da6c847824d8ca4afc8d4c06235b987163fcc89791c4ab71f913d0b07f1c292",
-    LCM_GRIDS_SOURCE: "5bd0880e78ebac08c5c8253bedf82d1f8bbf69cf64149e9ba7057d419ab9ac73",
+    LCM_GRIDS_SOURCE: "8db8618ce4f281827dca9614fda7f7a3899d428d7982c02be3b96d8f41437693",
     LCM_PROCESSES_SOURCE: "0f43090442258f71fc4c32fcd7b69096cce674e582e8fe3ee4720aed3e528ca6",
     LCM_STATE_CONDITIONED_SOURCE: "367bb5d6fbd1ae20974c8905cf7277f7d4e6ea1d18d8d3e59df716a377bdcfbe",
     VARIABLES_SOURCE: "8445fd5d92144d013955027460ee204debfdcedf8bb5ef5d10092538cd18de8c",
@@ -16901,10 +16901,10 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             "source": replace_once(
                 source=lcm_grids_source,
                 old=(
-                    "        return grid_coordinates.linspace(\n            start=self.start, stop=self.stop, n_points=self.n_points\n        )"
+                    "        return grid_coordinates.linspace(\n            start=self._start, stop=self._stop, n_points=self.n_points\n        )"
                 ),
                 new=(
-                    "        return grid_coordinates.linspace(\n            start=self.start, stop=self.stop, n_points=self.n_points\n        )[:-1]"
+                    "        return grid_coordinates.linspace(\n            start=self._start, stop=self._stop, n_points=self.n_points\n        )[:-1]"
                 ),
                 label="linear action point omission",
             ),
