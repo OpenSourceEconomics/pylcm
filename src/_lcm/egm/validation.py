@@ -65,6 +65,7 @@ from dags import concatenate_functions, get_ancestors
 
 from _lcm.constraints.bounds import lower_bound_declaration
 from _lcm.constraints.processed import ConstraintLike, normalize_constraints
+from _lcm.dtypes import canonical_float_dtype
 from _lcm.egm.outer_search import FiniteOuterGrid
 from _lcm.egm.preferences import BoundUtilityOfAction, concatenate_felicity
 from _lcm.grids import ContinuousGrid, Grid
@@ -496,7 +497,11 @@ def fail_if_declared_lower_bound_disagrees_with_the_grid(
             solver_name=solver_name,
         )
         declared_start = getattr(grid, "start", None)
-        grid_low = declared_start if declared_start is not None else grid.to_jax()[0]
+        grid_low = (
+            jnp.asarray(declared_start, dtype=canonical_float_dtype())
+            if declared_start is not None
+            else grid.to_jax()[0]
+        )
         # Put the declaration through the grid's own dtype before comparing.
         # Both numbers are decimals the user wrote, but the grid holds its
         # lowest node at the active precision, so widening that node to a
