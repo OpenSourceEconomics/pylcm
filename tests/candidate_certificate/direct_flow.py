@@ -770,7 +770,7 @@ _SOURCE_SEALS = {
     "src/_lcm/optimization/golden_section.py": "9e76572097e0281e76e59c0b7b430929cc9147754354780a6321f500bcd53f85",
     "src/_lcm/egm/upper_envelope/query.py": "c555477ccb82c30b5ef4b037b3bffb7867664963da0304479e16e3726bce4487",
     "src/_lcm/utils/counts.py": "a9087a3c42d32ff0ca82cf24fda2b59ed57cb77efef94714a37a6ca7cf7a3f82",
-    "src/_lcm/egm/nbegm_step.py": "f34f6e4ba205332ea2b405119fe5cfcfaad218e4f96fe9532ec2b25b067c5089",
+    "src/_lcm/egm/nbegm_step.py": "a2006cd5d302b55b973da06ae596ec345248848fea5e825cd5e47dcca2568599",
     "src/_lcm/egm/nbegm_segments.py": "658a74ca40e3da1c025c3d03e0f8bf695feb45953113521a4700f2c1d1890505",
     "src/_lcm/egm/framed_arithmetic.py": "f4b1fa68cc765fc1450222f7370256306d22b92a6488b40c3575e98f44e43877",
     "src/_lcm/egm/ez_kernel.py": "551ace1c09f0ceeab69b748deea122c973f260e057fbdb7801c4522e297b827f",
@@ -2978,7 +2978,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     "src/_lcm/egm/nbegm_step.py": (
-        "894e4781f6353555c84bb136707fd9248c3a77012e698b73fdbde8b9286641dd",
+        "4bd57cb154a3d641da710beef383b91319823fc7e63e18b6853b9fce2f44c051",
         {
             "_IntervalCaseSolver.__call__": "9e8e6e6d6fcffbc0cec5c9ad8989131c66e0efd7e7e5ae8cba8e3954723fbf36",
             "_IntervalWinnerStep.__call__": "ddf80f381682b42c09566ed3bccde34580596b828d215a3c68ea4aae429332e3",
@@ -2988,7 +2988,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_degenerate_inversion": "c45a20c732e9e12a2ddc130b597bf820465b82a7712d9bbafd32f00c4d2cf33f",
             "_discounted_continuation": "591bb2c3551df40fe5a372a7b747ae3f484764ca6f3f03c421310a97ccf4fe0a",
             "_ez_flow_power_structure": "286d32f0dd485c182b7701fa77d66fcb4d52642da794ad7554d31ae15d442c7b",
-            "_fixed_savings_corner": "0e5c9d2754abd64edde1d62d530a0dfafb0cb4d0287763412a952d2bb2bdb584",
+            "_fixed_savings_corner": "aa1705c8f8711210395a0f33e90f99cb8e59dbed8212a72cbc0f239c3675e762",
             "_interval_corner_candidates": "a484de163b226040b43732b479abbe5e27bd7e8523300fb1dfc2a41ea0e6ee70",
             "_invert_coh_with_linear_extension": "b908750cf32a30016e295606fd8fd9f5fd08ac43dc12e722dd514decab67dbbc",
             "_invert_euler_at_node": "91ad4d855f5f74dc76555b18112a97e8e83dab42ead221936d07f6b55efa4da3",

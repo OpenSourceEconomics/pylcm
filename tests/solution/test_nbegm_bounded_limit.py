@@ -28,7 +28,7 @@ def test_limit_from_below_stays_below_the_cliff_when_no_node_lies_between():
         _bounded_limit_below(
             grid=GRID,
             values=VALUES,
-            limit=0.7,
+            limit=jnp.asarray(0.7),
             prev_limit=jnp.asarray(0.3),
             n=GRID.shape[0],
         )
@@ -42,7 +42,7 @@ def test_limit_from_above_stays_above_the_cliff_when_no_node_lies_between():
         _bounded_limit_above(
             grid=GRID,
             values=VALUES,
-            limit=0.3,
+            limit=jnp.asarray(0.3),
             next_limit=jnp.asarray(0.7),
             n=GRID.shape[0],
         )
@@ -60,7 +60,7 @@ def test_limit_from_below_extrapolates_from_two_in_interval_nodes():
         _bounded_limit_below(
             grid=GRID,
             values=VALUES,
-            limit=3.5,
+            limit=jnp.asarray(3.5),
             prev_limit=jnp.asarray(0.5),
             n=GRID.shape[0],
         )
@@ -78,7 +78,7 @@ def test_limit_from_above_extrapolates_from_two_in_interval_nodes():
         _bounded_limit_above(
             grid=GRID,
             values=VALUES,
-            limit=0.5,
+            limit=jnp.asarray(0.5),
             next_limit=jnp.asarray(3.5),
             n=GRID.shape[0],
         )
