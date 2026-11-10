@@ -697,7 +697,7 @@ _SOURCE_SEALS = {
     SIMULATION_PROGRAM_TYPES_SOURCE: "677a3c49f34ceb56f9f6de970c98535384f907fa8ea6bff6e936e35dee388b81",
     SIMULATION_RUNTIME_SOURCE: "87865ad0c4cfabca80937c118015ca5b16dcff9af62004144ff5b638b0cecedb",
     LOGSUM_SOURCE: "e12061dd4f0f0176324182a2eb875cb6ebe4b97174091c597d46a622df93ff1b",
-    ARGMAX_SOURCE: "ac0fbcf8014f35d9b614851ee6c68136da8faa6e577e56377b7d0d8693f7721e",
+    ARGMAX_SOURCE: "43c4ea119967ff598f197566016f6647481af95418b515fee6fea285d9e2b1f0",
     COLLECTIVE_SOURCE: "4cc0683d493f597684f5801909d297145d8bade0aa752c3e35cf8af2cb55edd9",
     MAX_Q_SOURCE: "62e5010e5f535ed3731218a5549167d6f5ea332b145d2dcece88d492949fd78c",
     PROCESSING_SOURCE: "c688fd712323bedc632b126b74ce01cfa9a53be4a87575dfba10587b63b0e6a8",
@@ -9650,7 +9650,6 @@ def _argmax_reducer_errors(tree: ast.Module) -> list[str]:
         move = _definition(tree=tree, name="_move_axes_to_back")
         flatten = _definition(tree=tree, name="_flatten_last_n_axes")
         pair_max = _definition(tree=tree, name="max_and_smallest_id")
-        pair_order = _definition(tree=tree, name="_larger_value_then_smaller_id")
         pair_reduce = _definition(tree=tree, name="_paired_max")
         pair_jvp = _definition(tree=tree, name="_paired_max_jvp")
         float_order_key = _definition(tree=tree, name="_float_order_key")
@@ -9661,7 +9660,6 @@ def _argmax_reducer_errors(tree: ast.Module) -> list[str]:
         float_key_order = _definition(
             tree=tree, name="_larger_float_key_then_smaller_id"
         )
-        lowest = _definition(tree=tree, name="_lowest")
     except ValueError as error:
         return [f"argmax reducer: {error}"]
 
@@ -9692,7 +9690,7 @@ if where is not None and where.ndim != 0:
 where = jnp.ones(a.shape, dtype=bool) if where is None else jnp.broadcast_to(where, a.shape)
 is_nan = jnp.isnan(a)
 comparable = where & ~is_nan
-lowest = _lowest(a.dtype)
+lowest = -jnp.inf
 positions = jnp.broadcast_to(jnp.arange(a.shape[-1], dtype=jnp.int32), a.shape)
 _max, _argmax = max_and_smallest_id(values=jnp.where(comparable, a, lowest), ids=jnp.where(comparable, positions, NO_ID), initial=lowest if initial is None else initial)
 any_nan = jnp.any(where & is_nan, axis=-1)
@@ -9701,16 +9699,10 @@ _argmax = jnp.where(any_nan | (_argmax == NO_ID), 0, _argmax)
 return (_argmax, _max)
 """
     expected_pair_max = r"""initial_arr = jnp.asarray(initial, dtype=values.dtype)
-if jnp.issubdtype(values.dtype, jnp.floating):
-    return _paired_max_with_tangent(values, ids, initial_arr)
-return _paired_max(values, ids, initial_arr)
+return _paired_max_with_tangent(values, ids, initial_arr)
 """
-    expected_pair_reduce = r"""no_id = jnp.asarray(NO_ID, dtype=jnp.int32)
-if jnp.issubdtype(values.dtype, jnp.floating):
-    best_key, best_id = _reduce_float_keys(keys=_float_order_key(values), ids=ids, initial_key=_float_order_key(initial), infinity_key=_float_infinity_key(values.dtype))
-    return (jax.lax.bitcast_convert_type(_reverse_negative_bits(best_key), values.dtype), best_id)
-best = jax.lax.reduce((values, ids), (jnp.asarray(_lowest(values.dtype), dtype=values.dtype), no_id), _larger_value_then_smaller_id, (values.ndim - 1,))
-return _larger_value_then_smaller_id(best, (initial, no_id))
+    expected_pair_reduce = r"""best_key, best_id = _reduce_float_keys(keys=_float_order_key(values), ids=ids, initial_key=_float_order_key(initial), infinity_key=_float_infinity_key(values.dtype))
+return (jax.lax.bitcast_convert_type(_reverse_negative_bits(best_key), values.dtype), best_id)
 """
     expected_pair_jvp = r"""values, ids, initial = primals
 values_dot, _, initial_dot = tangents
@@ -9725,13 +9717,6 @@ elements_dot = jnp.sum(values_dot * attains, axis=-1) / jnp.maximum(count, 1)
 initial_dot = jnp.broadcast_to(initial_dot, best.shape)
 best_dot = jnp.where(count > 0, jnp.where(_float_keys_equal(left=initial_key, right=best_key), (elements_dot + initial_dot) / 2, elements_dot), initial_dot)
 return ((best, best_id), (best_dot, np.zeros(best_id.shape, dtype=float0)))
-"""
-    expected_pair_order = r"""left_value, left_id = left
-right_value, right_id = right
-tie = right_value == left_value
-take_right = (right_value > left_value) | tie & (right_id < left_id)
-value = jnp.where(take_right, right_value, left_value)
-return (value, jnp.where(take_right, right_id, left_id))
 """
     expected_float_key = r"""if values.dtype.itemsize not in (2, 4, 8):
     msg = f'Use 16-, 32- and 64-bit IEEE floats; got {values.dtype}.'
@@ -9762,8 +9747,6 @@ choose = partial(_larger_float_key_then_smaller_id, infinity_key=infinity_key)
 best = jax.lax.reduce((keys, ids), (jnp.asarray(~infinity_key, dtype=keys.dtype), no_id), choose, (keys.ndim - 1,))
 return choose(best, (initial_key, no_id))
 """
-    expected_lowest = r"""return -jnp.inf if jnp.issubdtype(dtype, jnp.floating) else jnp.iinfo(dtype).min
-"""
     expected_move = r"""front_axes = sorted(set(range(a.ndim)) - set(axes))
 return a.transpose((*front_axes, *axes))
 """
@@ -9774,12 +9757,7 @@ return a.transpose((*front_axes, *axes))
             "argmax reducer: executable body differs from the full paired "
             "value/feasibility reduction"
         )
-    if (
-        pair_max.decorator_list
-        or pair_order.decorator_list
-        or pair_reduce.decorator_list
-        or pair_jvp.decorator_list
-    ):
+    if pair_max.decorator_list or pair_reduce.decorator_list or pair_jvp.decorator_list:
         errors.append("argmax reducer: decorators are not allowlisted")
     if not _positional_signature(
         node=pair_reduce, names=("values", "ids", "initial")
@@ -9830,7 +9808,6 @@ return a.transpose((*front_axes, *axes))
         (float_order_key, ("values",), expected_float_key),
         (float_reverse_bits, ("bits",), expected_float_reverse_bits),
         (float_infinity_key, ("dtype",), expected_float_infinity_key),
-        (lowest, ("dtype",), expected_lowest),
     ):
         if (
             helper.decorator_list
@@ -9867,10 +9844,6 @@ return a.transpose((*front_axes, *axes))
         )
     ):
         errors.append("argmax reducer: encoded key comparison changed")
-    if not _body_matches(node=pair_order, expected_source=expected_pair_order):
-        errors.append(
-            "argmax reducer: the (value, id) order is not larger value, then smaller id"
-        )
     no_id = [
         statement
         for statement in tree.body
@@ -9898,10 +9871,8 @@ return a.transpose((*front_axes, *axes))
         and {
             "argmax_and_max",
             "max_and_smallest_id",
-            "_larger_value_then_smaller_id",
             "_paired_max",
             "_paired_max_jvp",
-            "_lowest",
             "_float_order_key",
             "_reverse_negative_bits",
             "_float_infinity_key",
