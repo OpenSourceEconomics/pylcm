@@ -622,6 +622,19 @@ class _QueryGraphBuilder:
                 ages=context.ages,
             )
         }
+        # Only the solved occupant draws; simulation realises its shocks.
+        rule = (
+            next(
+                (
+                    declaration.nodes
+                    for name, declaration in exits.items()
+                    if name not in inactive and declaration.nodes is not None
+                ),
+                None,
+            )
+            if kind is QueryKind.FULL and not ancestors and self.phase == "solve"
+            else None
+        )
         functions = {
             path: self.bound(owner=owner, path=path, function=function)
             for path, function in exit_functions(exits=exits, phase=self.phase).items()
@@ -755,6 +768,7 @@ class _QueryGraphBuilder:
                 reducer.n_actions + offset: reducer.adjustments[name]
                 for offset, name in enumerate(exits)
             },
+            sample=None if rule is None else (rule, ()),
         )
         return key
 
@@ -994,7 +1008,52 @@ def bind_exit_query_graph(
     )
     _bind_observation_sources(nodes=builder.nodes, period=period)
     _validate_query_projection_bindings(nodes=builder.nodes, period=period)
+    _bind_sample(nodes=builder.nodes, root=root_key)
     return MappingProxyType(builder.nodes), root_key
+
+
+def _bind_sample(*, nodes: dict[str, QueryNode], root: str) -> None:
+    """Keep the root's stay-read groups as a product; every other axis is drawn.
+
+    A stay problem whose shock reads are not attributable keeps every own group.
+    A root with nothing left to draw integrates over its full product.
+    """
+    from _lcm.query_information import stay_read_shocks  # noqa: PLC0415
+
+    node = nodes[root]
+    if node.sample is None:
+        return
+    plan = node.context.current_iid_plans.get(node.read.period)
+    bindings = () if plan is None else plan.bindings
+    shocks = stay_read_shocks(name=root, definitions=nodes)
+    kept = tuple(
+        position
+        for position, (_, binding, _) in enumerate(bindings)
+        if shocks is None or shocks & binding.group.shocks.keys()
+    )
+    if len(kept) == len(bindings) and not node.observation_sources:
+        nodes[root] = replace(node, sample=None)
+        return
+    context = node.context
+    if plan is not None:
+        indices = jnp.asarray(
+            tuple(
+                product(
+                    *(
+                        range(support.weights.size if position in kept else 1)
+                        for position, (_, _, support) in enumerate(bindings)
+                    )
+                )
+            ),
+            dtype=jnp.int32,
+        )
+        context = replace(
+            context,
+            current_iid_plans=MappingProxyType(
+                {node.read.period: replace(plan, indices=indices)}
+            ),
+        )
+    nodes[root] = replace(node, context=context, sample=(node.sample[0], kept))
 
 
 def _bind_observation_sources(*, nodes: dict[str, QueryNode], period: int) -> None:

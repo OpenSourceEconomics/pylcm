@@ -13,6 +13,7 @@ import math
 from collections import Counter
 from collections.abc import Callable, Mapping
 from dataclasses import replace
+from functools import partial
 from types import MappingProxyType
 from typing import ClassVar, TypedDict, Unpack
 
@@ -42,7 +43,15 @@ from lcm import (
     RuleResult,
     categorical,
 )
-from lcm.shocks import Discrete, GaussHermite, Normal, Product, ShockGroup
+from lcm.exceptions import RegimeInitializationError
+from lcm.shocks import (
+    Discrete,
+    GaussHermite,
+    Normal,
+    Product,
+    QuasiMonteCarlo,
+    ShockGroup,
+)
 from lcm.typing import BoolND, FloatND, IntND, RegimeName, ScalarInt
 from tests.conftest import assert_agrees_to_ulp
 
@@ -227,7 +236,7 @@ class _StrictParticipation:
         )
 
 
-def _formation(member: str) -> Exit:
+def _formation(*, member: str, nodes: QuasiMonteCarlo | None = None) -> Exit:
     spouse = "m" if member == "f" else "f"
     offered = _offered_m if member == "f" else _offered_f
     return Exit(
@@ -250,6 +259,7 @@ def _formation(member: str) -> Exit:
         ),
         available=_offer_f if member == "f" else _offer_m,
         observes=("wage_f", "wage_m", "match", f"offer_{member}", f"offered_{spouse}"),
+        nodes=nodes,
     )
 
 
@@ -276,12 +286,19 @@ def _gauss(*, name: str, n: int, sigma: float) -> ShockGroup:
 
 
 def _model(
-    *, dissolution: bool = False, n_match: int = 2, lasting_match: bool = False
+    *,
+    dissolution: bool = False,
+    n_match: int = 2,
+    lasting_match: bool = False,
+    nodes: QuasiMonteCarlo | None = None,
+    offer_probs: tuple[float, float] = (0.4, 0.6),
+    offered_probs: tuple[float, float, float] = (0.2, 0.5, 0.3),
 ) -> Model:
     """Two singles marry by consent; with `dissolution` the couple may split.
 
     With `lasting_match` the couple carries its match shock into its terminal
-    period, so the couple's continuation reads that shock.
+    period, so the couple's continuation reads that shock. With `nodes` each
+    single draws the rows of its formation choice that its stay problem ignores.
     """
     experience = DiscreteGrid(values=jnp.arange(_N_EXP))
     work = DiscreteGrid(values=jnp.arange(2))
@@ -292,7 +309,7 @@ def _model(
             functions={"utility": _single_f if member == "f" else _single_m},
             shocks=(f"wage_{member}", f"taste_{member}", f"marriage_from_{member}"),
             state_transitions={"experience": _next_experience},
-            exits={"marry": _formation(member)},
+            exits={"marry": _formation(member=member, nodes=nodes)},
         )
         for member in ("f", "m")
     }
@@ -348,9 +365,9 @@ def _model(
     marriage = {
         f"marriage_from_{member}": ShockGroup(
             shocks={
-                f"offer_{member}": Discrete(categories=_Offer, probs=(0.4, 0.6)),
+                f"offer_{member}": Discrete(categories=_Offer, probs=offer_probs),
                 f"offered_{'m' if member == 'f' else 'f'}": Discrete(
-                    categories=_Offered, probs=(0.2, 0.5, 0.3)
+                    categories=_Offered, probs=offered_probs
                 ),
             }
         )
@@ -881,3 +898,94 @@ def test_a_query_weights_one_term_per_representative_of_its_rows(
         ("RAW", "single_f"): 1,
         ("RAW", "single_m"): 3,
     }
+
+
+def test_a_drawn_formation_crosses_its_stay_rows_with_the_draws(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With 4 draws on the exit a single has 24 rows, not 144.
+
+    Its stay problem reads its wage and taste, whose 6 node combinations stay
+    exact. The offer group and the observed couple shocks are drawn 4 times, and
+    every stay row meets the same draws.
+    """
+    rows = _evaluated_rows(
+        model=_model(nodes=QuasiMonteCarlo(n=4, seed=0)), monkeypatch=monkeypatch
+    )
+    assert {root: rows[(root, "FULL", root)] for root in ("single_f", "single_m")} == {
+        "single_f": 24,
+        "single_m": 24,
+    }
+
+
+def test_a_drawn_formation_keeps_one_stay_problem_per_stay_row(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Draws never multiply the stay problem: it runs once per wage and taste."""
+    counts = _root_stay_problems(
+        model=_model(nodes=QuasiMonteCarlo(n=4, seed=0)), monkeypatch=monkeypatch
+    )
+    assert {root: counts[root] for root in ("single_f", "single_m")} == {
+        "single_f": 6,
+        "single_m": 6,
+    }
+
+
+def test_a_drawn_formation_equals_the_product_when_the_draws_are_exact() -> None:
+    """A drawn formation value equals the product value under dyadic laws.
+
+    Each drawn group has node masses that are multiples of 1/8 (the offer group)
+    or 1/2 (each observed couple shock). 64 scrambled Sobol points in those three
+    dimensions put exactly 64 times its mass on every node combination, so the
+    equal-weight average over the draws is the product expectation.
+    """
+    dyadic = partial(_model, offer_probs=(0.5, 0.5), offered_probs=(0.25, 0.5, 0.25))
+    got = _solve(dyadic(nodes=QuasiMonteCarlo(n=64, seed=0)))
+    expected = _solve(dyadic())
+    np.testing.assert_allclose(
+        np.concatenate([got[name].ravel() for name in sorted(expected)]),
+        np.concatenate([expected[name].ravel() for name in sorted(expected)]),
+        rtol=1e-12,
+    )
+
+
+# Two factors of a 4-node group whose node masses are 1/4, 0, 1/2, 1/4.
+_MASS = np.array([[0.5, 0.5, 0.5, 0.5], [0.5, 0.0, 1.0, 0.5]])
+
+
+def test_draw_picks_each_node_in_proportion_to_its_mass() -> None:
+    """Evenly spread uniforms pick each node as often as its mass says."""
+    row, _ = query_information._draw(
+        weights=jnp.asarray(_MASS), uniform=jnp.asarray((np.arange(8) + 0.5) / 8)
+    )
+    assert np.bincount(np.asarray(row), minlength=4).tolist() == [2, 0, 4, 2]
+
+
+def test_draw_scales_a_node_s_own_mass_to_the_group_total() -> None:
+    """A drawn node's mass times its scale is the group's total mass."""
+    row, scale = query_information._draw(
+        weights=jnp.asarray(2 * _MASS), uniform=jnp.asarray((np.arange(8) + 0.5) / 8)
+    )
+    np.testing.assert_allclose(
+        np.asarray(scale) * (4 * _MASS.prod(axis=0))[np.asarray(row)],
+        np.full(8, 4.0),
+        rtol=1e-15,
+    )
+
+
+def test_a_regime_rejects_exits_that_name_different_draw_rules() -> None:
+    """A regime's exits share one draw rule."""
+    with pytest.raises(RegimeInitializationError, match="share one draw rule"):
+        Regime(
+            states={"experience": DiscreteGrid(values=jnp.arange(_N_EXP))},
+            actions={"work": DiscreteGrid(values=jnp.arange(2))},
+            functions={"utility": _single_f},
+            shocks=("wage_f", "taste_f", "marriage_from_f"),
+            state_transitions={"experience": _next_experience},
+            exits={
+                f"marry_{seed}": _formation(
+                    member="f", nodes=QuasiMonteCarlo(n=4, seed=seed)
+                )
+                for seed in (0, 1)
+            },
+        )

@@ -14,6 +14,7 @@ from _lcm.utils.containers import ensure_containers_are_immutable
 from _lcm.utils.error_messages import path_segment_name_errors
 from lcm.exceptions import RegimeInitializationError
 from lcm.phased import Phased
+from lcm.shocks import MonteCarlo, QuasiMonteCarlo
 from lcm.typing import RegimeName, StateName, UserFunction
 
 type ExitRole = str
@@ -87,6 +88,17 @@ class Exit:
     """State/parameter/observed-shock predicate, evaluated before benchmarks."""
     observes: tuple[str, ...] = ()
     """Target information observed at this choice, in addition to source reads."""
+    nodes: MonteCarlo | QuasiMonteCarlo | None = None
+    """Draws replacing the product of this choice's rows the stay problem ignores.
+
+    The shock groups the regime's own stay problem reads keep their declared
+    nodes. Every other group of the choice, observed target information
+    included, is drawn `n` times from its law at the current state, and the
+    same draws serve every kept row. `None` integrates over the full product.
+
+    The rule serves the regime's whole exit choice when it is solved, so a
+    regime's exits name at most one rule.
+    """
     _reads_outside_values: bool | None = field(init=False, repr=False)
     """Snapshot the custom rule's explicit DAG declaration into model identity."""
 
