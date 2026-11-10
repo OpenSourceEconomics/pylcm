@@ -55,7 +55,7 @@ def find_duplicates(*containers: Iterable[T]) -> set[T]:
 
 
 def invert_regime_ids[K](
-    mapping: Mapping[K, ScalarInt | int],
+    mapping: Mapping[K, ScalarInt],
 ) -> MappingProxyType[int, K]:
     """Return the inverse of a regime-name → id mapping, with Python-`int` keys.
 
