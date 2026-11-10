@@ -101,13 +101,13 @@ def test_next_period_arrays_are_read_on_the_next_period_grid(next_nodes):
         liquid_grid=jnp.asarray(_CURRENT_GRID),
         next_liquid_grid=next_grid,
         savings_grid=jnp.asarray(_SAVINGS_GRID),
-        discount_factor=_DISCOUNT,
+        discount_factor=jnp.asarray(_DISCOUNT),
         preferences=crra_preferences(crra=1.0),
         next_liquid=(1.0 + _RETURN) * jnp.asarray(_SAVINGS_GRID) + _INCOME,
         marginal_return=jnp.full_like(jnp.asarray(_SAVINGS_GRID), 1.0 + _RETURN),
         subsidy_when=0.0,
         subsidy_otherwise=0.0,
-        asset_limit=_ASSET_LIMIT,
+        asset_limit=jnp.asarray(_ASSET_LIMIT),
         equality_owner="otherwise",
     )
 
