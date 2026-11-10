@@ -262,7 +262,7 @@ from _lcm.solution.v_topology import (
     _RegimeVTopology,
     placed_V_sharding,
 )
-from _lcm.time import TimeAxis, coordinate_at, coordinate_kind
+from _lcm.time import TimeAxis, coordinate_at, coordinate_kind, display_age_at
 from _lcm.typing import (
     AgeValue,
     ArgumentTree,
@@ -840,7 +840,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
 
                 log_period_header(
                     logger=logger,
-                    age=ages.values[period],
+                    age_label=display_age_at(ages=ages, period=period),
                     n_active_regimes=len(active_regimes),
                     time_kind=coordinate_kind(ages),
                 )

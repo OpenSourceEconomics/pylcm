@@ -204,6 +204,7 @@ def test_entry_carriers_stay_live_roots_through_diagnostics_and_next_setup(
         *,
         logger: logging.Logger,
         age: ScalarInt | ScalarFloat,
+        age_label: str,
         period_results: tuple[tuple[RegimeName, PeriodRegimeSimulationData], ...],
         memory: SimulationMemory | None = None,
         time_kind: Literal["age", "period"] = "age",
@@ -212,6 +213,7 @@ def test_entry_carriers_stay_live_roots_through_diagnostics_and_next_setup(
         original_validate(
             logger=logger,
             age=age,
+            age_label=age_label,
             period_results=period_results,
             memory=memory,
             time_kind=time_kind,
