@@ -27,7 +27,8 @@ caller supplied, bit for bit.
 """
 
 import dataclasses
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
+from typing import NoReturn
 
 import jax
 import jax.numpy as jnp
@@ -36,15 +37,45 @@ from jax import Array
 from jax.typing import DTypeLike
 from jaxtyping import Int
 
+from lcm.exceptions import UnsupportedDifferentiationError
 from lcm.typing import BoolND, FloatND, ValueND
-
-# The bit pattern of a float, as an integer of the same width. Genuinely
-# width-polymorphic: `int32` beside `float32`, `int64` beside `float64`.
-type _BitsND = Int[Array, "..."]
 
 # The tangent JAX pairs with an integer primal: a `float0` zero array, held on
 # the host or traced.
 type _IntegerTangent = ValueND | np.ndarray
+
+
+# keyword-only-exempt: library-callback=jax.custom_jvp.defjvp
+def _refuse_derivative(
+    primals: tuple[ValueND, ...], tangents: tuple[_IntegerTangent, ...]
+) -> NoReturn:
+    """Raise rather than report the zero plain differentiation would return."""
+    del primals, tangents
+    msg = (
+        "This operation states no derivative: it is computed on the bit pattern "
+        "of its operands, which automatic differentiation reads as a constant. "
+        "pylcm does not support differentiating a solution or a simulation with "
+        "respect to model parameters."
+    )
+    raise UnsupportedDifferentiationError(msg)
+
+
+def without_derivative[**P, R](primal: Callable[P, R]) -> Callable[P, R]:
+    """Wrap a bit-level operation so that differentiating through it raises.
+
+    Evaluation, `jit` and `vmap` are unaffected. Without the wrapper, automatic
+    differentiation would silently return zero.
+    """
+    # Built by call rather than by decorator: `@jax.custom_jvp` produces a callable
+    # instance, which the package claw rebinds to a bound method of its `__call__`.
+    guarded = jax.custom_jvp(primal)
+    guarded.defjvp(_refuse_derivative)
+    return guarded
+
+
+# The bit pattern of a float, as an integer of the same width. Genuinely
+# width-polymorphic: `int32` beside `float32`, `int64` beside `float64`.
+type _BitsND = Int[Array, "..."]
 
 _FLOAT32_BYTES = 4
 _FLOAT32_MANTISSA_BITS = 23
@@ -119,8 +150,7 @@ def log_of_nonnegative(values: FloatND) -> FloatND:
     significand is passed to `log`.
 
     Zero, infinities, NaNs, and negative inputs retain the ordinary logarithm
-    conventions.  The custom tangent is the mathematical `dx / x`; the bit
-    decomposition is only a representation device for the primal.
+    conventions.  The bit decomposition is only a representation device.
 
     Args:
         values: Nonnegative floating values.
@@ -129,7 +159,7 @@ def log_of_nonnegative(values: FloatND) -> FloatND:
         Elementwise natural logarithms.
 
     """
-    return _log_of_nonnegative_with_tangent(jnp.asarray(values))
+    return _log_of_nonnegative_bits(jnp.asarray(values))
 
 
 def _log_of_nonnegative_bits(values: FloatND) -> FloatND:
@@ -147,20 +177,6 @@ def _log_of_nonnegative_bits(values: FloatND) -> FloatND:
     # one prevents a dead direct-log branch from ever consuming the value.
     direct_log = jnp.log(jnp.where(subnormal, jnp.ones_like(arr), arr))
     return jnp.where(subnormal, subnormal_log, direct_log)
-
-
-# keyword-only-exempt: library-callback=jax.custom_jvp.defjvp
-def _log_of_nonnegative_jvp(
-    primals: tuple[FloatND], tangents: tuple[FloatND]
-) -> tuple[FloatND, FloatND]:
-    """Differentiate the representation-aware logarithm as `dx / x`."""
-    (values,) = primals
-    (values_dot,) = tangents
-    return _log_of_nonnegative_with_tangent(values), values_dot / values
-
-
-_log_of_nonnegative_with_tangent = jax.custom_jvp(_log_of_nonnegative_bits)
-_log_of_nonnegative_with_tangent.defjvp(_log_of_nonnegative_jvp)
 
 
 def is_represented_zero(values: FloatND) -> BoolND:
@@ -480,7 +496,7 @@ def balanced_product(*, weight: FloatND, value: FloatND) -> FloatND:
         Their product.
 
     """
-    return _balanced_with_tangent(jnp.asarray(weight), jnp.asarray(value))
+    return _balanced_no_derivative(jnp.asarray(weight), jnp.asarray(value))
 
 
 # keyword-only-exempt: library-callback=jax.custom_jvp
@@ -513,33 +529,7 @@ def _balanced_bits(weight: FloatND, value: FloatND) -> FloatND:
     return _scaled_bits(values=weight_arr, shift=shift) * lowered_value
 
 
-# keyword-only-exempt: library-callback=jax.custom_jvp.defjvp
-def _balanced_jvp(
-    primals: tuple[FloatND, FloatND], tangents: tuple[FloatND, FloatND]
-) -> tuple[FloatND, FloatND]:
-    """Differentiate the product against each operand as the other's slope.
-
-    The slopes are the primals, which differentiation treats as constants, so
-    the tangent is an ordinary multiplication — reverse mode has to transpose
-    it, and neither a bitcast nor a `custom_jvp` call has a transpose. The
-    balanced form is therefore the primal's alone. Where the weight is below
-    the normal range the derivative with respect to the value flushes to zero;
-    that derivative is the weight itself, so what is lost is a slope already
-    smaller than the format can hold.
-    """
-    weight, value = primals
-    weight_dot, value_dot = tangents
-    return (
-        _balanced_with_tangent(weight, value),
-        weight_dot * value + value_dot * weight,
-    )
-
-
-# One differentiable boundary for the whole product, rather than one per
-# operand: the bit manipulation inside carries no derivative and does not need
-# to, and a wrapper per operand costs a second trace of the same machinery.
-_balanced_with_tangent = jax.custom_jvp(_balanced_bits)
-_balanced_with_tangent.defjvp(_balanced_jvp)
+_balanced_no_derivative = without_derivative(_balanced_bits)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -646,9 +636,7 @@ def scaled_down_by_power_of_two(*, values: FloatND, shift: _BitsND) -> FloatND:
     for every non-positive shift, including the normal/subnormal boundary,
     without materialising a subnormal scaling operand.
 
-    The map is linear in `values` away from the usual rounding boundaries, so
-    its custom derivative multiplies by the same exact power of two. The tangent
-    remains an ordinary multiplication and can be transposed by reverse mode.
+    Differentiating through the map raises `UnsupportedDifferentiationError`.
 
     Args:
         values: Values to scale.
@@ -658,7 +646,7 @@ def scaled_down_by_power_of_two(*, values: FloatND, shift: _BitsND) -> FloatND:
         `values * 2**shift` with IEEE round-to-nearest-even semantics.
 
     """
-    return _scaled_down_with_tangent(jnp.asarray(values), shift)
+    return _scaled_down_no_derivative(jnp.asarray(values), shift)
 
 
 # keyword-only-exempt: library-callback=jax.custom_jvp
@@ -710,22 +698,7 @@ def _scaled_down_bits(values: FloatND, shift: _BitsND) -> FloatND:
     return jax.lax.bitcast_convert_type(output_bits, arr.dtype)
 
 
-# keyword-only-exempt: library-callback=jax.custom_jvp.defjvp
-def _scaled_down_jvp(
-    primals: tuple[FloatND, _BitsND], tangents: tuple[FloatND, _IntegerTangent]
-) -> tuple[FloatND, FloatND]:
-    """Differentiate downward scaling as multiplication by `2**shift`."""
-    values, shift = primals
-    values_dot, _ = tangents
-    slope = _scaled_down_bits(values=jnp.ones_like(values), shift=shift)
-    return (
-        _scaled_down_with_tangent(values, shift),
-        values_dot * slope,
-    )
-
-
-_scaled_down_with_tangent = jax.custom_jvp(_scaled_down_bits)
-_scaled_down_with_tangent.defjvp(_scaled_down_jvp)
+_scaled_down_no_derivative = without_derivative(_scaled_down_bits)
 
 
 def scaled_by_power_of_two(*, values: FloatND, shift: _BitsND) -> FloatND:
@@ -814,29 +787,6 @@ def _scaled_bits_jvp(
 # `__call__`, which loses `defjvp` along with everything else the object knows.
 _scaled_with_tangent = jax.custom_jvp(_scaled_bits)
 _scaled_with_tangent.defjvp(_scaled_bits_jvp)
-
-
-def binades_above_smallest_normal(values: FloatND) -> _BitsND:
-    """How far each entry can be halved before it leaves the normal range.
-
-    A caller with a power of two to apply to a product decides how much of it
-    the weight can absorb before it becomes a subnormal the backend may flush,
-    and how much has to be applied to the product instead. An entry already
-    below the normal range has no room at all.
-
-    Args:
-        values: Entries whose headroom is wanted.
-
-    Returns:
-        The number of binades each entry has above the smallest normal.
-
-    """
-    arr = jnp.asarray(values)
-    return jnp.where(
-        is_below_smallest_normal(arr),
-        jnp.zeros((), jnp.int32),
-        (_unbiased_exponent(arr) - (1 - _exponent_bias(arr))).astype(jnp.int32),
-    )
 
 
 def _unbiased_exponent(values: FloatND) -> _BitsND:

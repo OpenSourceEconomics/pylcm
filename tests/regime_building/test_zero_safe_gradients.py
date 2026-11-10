@@ -41,18 +41,6 @@ ACCOUNTED = pytest.mark.parametrize(
 
 
 @ACCOUNTED
-@pytest.mark.parametrize("weight", [0.0, 0.25, 1.0])
-def test_derivative_in_the_weight_is_the_value_including_at_zero(*, weight, accounted):
-    """``d/dw [w * v] == v`` for finite ``v``, at ``w == 0`` as much as anywhere."""
-    grad = jax.grad(
-        lambda w: zero_safe_weighted_term(
-            weight=w, value=jnp.asarray(7.0), subnormal_is_accounted_for=accounted
-        )
-    )
-    assert float(grad(jnp.asarray(weight))) == pytest.approx(7.0)
-
-
-@ACCOUNTED
 @pytest.mark.parametrize("value", [-jnp.inf, jnp.inf, jnp.nan])
 def test_zero_weight_still_annihilates_a_nonfinite_value(*, value, accounted):
     """The load-bearing property: a zero weight kills any value, never yielding nan."""

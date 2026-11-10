@@ -7,16 +7,6 @@ name = "visit_Match"
 reason = "ast.NodeVisitor dispatches visit_<NodeClass> by name from checker.visit(tree); vulture's visitor whitelist lacks ast.Match."
 
 [[allow]]
-path = "src/_lcm/egm/upper_envelope/_exact_affine/ffi.py"
-name = "_*_jvp"
-reason = "JAX custom_jvp rules registered with @<primitive>.defjvp; JAX invokes them under differentiation, never by name."
-
-[[allow]]
-path = "src/_lcm/optimization/implicit_outer_derivative.py"
-name = "_continuous_outer_optimum_jvp"
-reason = "JAX custom_jvp rule registered with @continuous_outer_optimum.defjvp; JAX invokes it under differentiation, never by name."
-
-[[allow]]
 path = "src/_lcm/simulation/programs.py"
 name = "_Gate*Arguments"
 reason = "TypedDicts used only as quoted cast() type expressions; ruff TC006 requires the quotes, so vulture sees no load."

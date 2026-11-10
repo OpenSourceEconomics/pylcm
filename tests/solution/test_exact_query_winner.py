@@ -362,29 +362,6 @@ def test_strict_primary_diagnostic_handles_batched_strict_and_tied_rows(dtype) -
     np.testing.assert_array_equal(np.asarray(winner), [[0], [0]])
 
 
-def test_strict_primary_output_has_float0_tangent() -> None:
-    dtype = _jdtype()
-    left = jnp.asarray([0.0, 0.0], dtype=dtype)
-    right = jnp.asarray([1.0, 2.0], dtype=dtype)
-    values = jnp.asarray([0.0, 0.0], dtype=dtype)
-    right_values = jnp.asarray([1.0, 2.0], dtype=dtype)
-    query = jnp.asarray([0.5], dtype=dtype)
-
-    def resolve(q):
-        return exact_query_winner(
-            left_grid=left,
-            right_grid=right,
-            left_value=values,
-            right_value=right_values,
-            live=jnp.asarray([True, True]),
-            x_query=q,
-            return_strict_primary=True,
-        )
-
-    _primal, tangent = jax.jvp(resolve, (query,), (jnp.ones_like(query),))
-    assert all(value.dtype == jax.dtypes.float0 for value in tangent)
-
-
 def test_lowering_has_one_winner_and_three_selected_reads() -> None:
     """Representation width never appears as per-candidate traced arithmetic."""
     jdtype = _jdtype()

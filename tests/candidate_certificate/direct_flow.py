@@ -638,7 +638,7 @@ _SOURCE_SEALS = {
     SUPPORT_DIAGNOSTICS_SOURCE: "15aab27db77f3f9f9699697bc32f201a018f43b1a4653f9c3b2caee0e7ae16db",
     SUPPORT_PRECONDITIONS_SOURCE: "5df8b182b8cb3c37f6ab76719386cc809052bcc00cda63772d698c75071f4092",
     SUPPORT_AUTHORITY_SOURCE: "d25dd5ef989c84bdccbd5a16c45cfa8106b1abdae2d10938e54ed029a7d7814a",
-    SUPPORT_FINGERPRINT_SOURCE: "e0e010e24348739e9efce1a7b6447b2955ff8b2a6dccd7783c0b19d72baba190",
+    SUPPORT_FINGERPRINT_SOURCE: "58f5807931325b43c92e89e2b8cb1917f1c6d425bc67610b6af9a79756acec61",
     UNIFORM_PROCESS_GRID_SOURCE: "3cd2faf78b21b2862946ee4c12ffb79f474a43430615e952e5f1c582cc02ac5a",
     EAGER_STAGE_SOURCE: "d0a52778e4966ecf9bbac4ecaee87f85f49df0aeb4bf7c390f8599bf7d97efa8",
     PROCESS_GRID_RESOLUTION_SOURCE: "2d00bbc058e022abc9150a60782b9689b8446d894029b30d99f916e5a7d128bf",
@@ -697,7 +697,7 @@ _SOURCE_SEALS = {
     SIMULATION_PROGRAM_TYPES_SOURCE: "677a3c49f34ceb56f9f6de970c98535384f907fa8ea6bff6e936e35dee388b81",
     SIMULATION_RUNTIME_SOURCE: "87865ad0c4cfabca80937c118015ca5b16dcff9af62004144ff5b638b0cecedb",
     LOGSUM_SOURCE: "e12061dd4f0f0176324182a2eb875cb6ebe4b97174091c597d46a622df93ff1b",
-    ARGMAX_SOURCE: "43c4ea119967ff598f197566016f6647481af95418b515fee6fea285d9e2b1f0",
+    ARGMAX_SOURCE: "4f90ea10ea15558701da18fcfdf0d56e0e7e999afcf576f3d2d6c4d1bfeba916",
     COLLECTIVE_SOURCE: "4cc0683d493f597684f5801909d297145d8bade0aa752c3e35cf8af2cb55edd9",
     MAX_Q_SOURCE: "62e5010e5f535ed3731218a5549167d6f5ea332b145d2dcece88d492949fd78c",
     PROCESSING_SOURCE: "9b2f840a0f6288c3e96058ac85d65a9be3c5de1dceb51cd07d7f4d65e20acd20",
@@ -713,9 +713,9 @@ _SOURCE_SEALS = {
     DISPATCHERS_SOURCE: "a78d5271fcfc7437b68bd755ce7c2b8b0b78d5f26ed00a3fb4424133725da8b2",
     FUNCTOOLS_SOURCE: "f0bac3bd822f157e43b08b2f677aca8142fa0e60e101cfd6af5a2e69327132dd",
     CONTAINERS_SOURCE: "f6b3f4590d382b2a501daebc615da5937340edcc2b390ee13c705570c57ebf9a",
-    ZERO_SAFE_SOURCE: "7078fe35668939058c7c9528add8939b255e8be2a533f8f0280f28fc086a6cd2",
+    ZERO_SAFE_SOURCE: "d158f151e047d82ea039c370f47092d7c7ff5f8e7715c098e82dd59da5c5c6e8",
     LOGSUMEXP_ACTION_REDUCTION_SOURCE: "4799ad9bfbc02ae1e5d5270a18ed81fe682f1004d63ae6cf796ff48ac5699445",
-    PROBABILITY_SOURCE: "ad036db316b521cc702b27503b1eab6ed7635e207f9cfac2272c45982578e18a",
+    PROBABILITY_SOURCE: "2e0b3a7edad96b1de50c4a815ca6022994f08f0ca72b19173f2da921f86025a1",
     ENGINE_SOURCE: "147b5b7b1d0fb25fdb01fa5a4c4aed2c7af8106faf8ada6e7e84d314560b67bf",
     STATE_ACTION_SPACE_SOURCE: "fbde26f323f91ace90251be29911bbccdd4560e0768fa3422d23cfa5bea4418d",
     SIMULATION_SOURCE: "6f9c311aadd3f5ea347e464650761192072f5b43506fed09661295f4089e734d",
@@ -731,7 +731,7 @@ _SOURCE_SEALS = {
     RESULT_METADATA_SOURCE: "c610f969fe4569f0637054f446ae8529ab192bb054463aec080509af385e8a49",
     ADDITIONAL_TARGETS_SOURCE: "3769b0eb0dad646767068fd4cf6e73a707115d2ede3ae5e3d9859b82b75d63fd",
     SIMULATION_RANDOM_SOURCE: "314164a170cf4eb3d4680dd575022c83943998f2c1ec78ba09d1085984d34a5e",
-    FOLD_ZERO_SAFE_SOURCE: "f1f8a856013f15d09dbb2da93881b587634f0bb429876dda83e96b7af0e2dd83",
+    FOLD_ZERO_SAFE_SOURCE: "f7f857268527f1c1472afa8800ebef9fdea68a2d3f6971d8b2fbc39b27670e29",
     SOLUTION_CONTRACT_SOURCE: "df9102d7c670dde6d8b10d693f5258081df8a9d5e33e28f62d3f7ea9f6e221aa",
     GRIDS_INIT_SOURCE: "a3b489f06a70dc3604b6d46f7e085a3b2fd7747b5788855c4c9859a0c6341f50",
     GRID_BASE_SOURCE: "2d9c7f1a0827f3ca172417a2ee2bf60b15c9ccb3dcedf3a94fb502e2d57538de",
@@ -773,8 +773,8 @@ _SOURCE_SEALS = {
     "src/_lcm/egm/nbegm_step.py": "a2006cd5d302b55b973da06ae596ec345248848fea5e825cd5e47dcca2568599",
     "src/_lcm/egm/nbegm_segments.py": "658a74ca40e3da1c025c3d03e0f8bf695feb45953113521a4700f2c1d1890505",
     "src/_lcm/egm/framed_arithmetic.py": "f4b1fa68cc765fc1450222f7370256306d22b92a6488b40c3575e98f44e43877",
-    "src/_lcm/egm/ez_kernel.py": "551ace1c09f0ceeab69b748deea122c973f260e057fbdb7801c4522e297b827f",
-    "src/_lcm/power_mean.py": "cc82199d42488b7619917fcfb3d8112c7c76d99253ca8812cb41b2a79b5e3e59",
+    "src/_lcm/egm/ez_kernel.py": "1cbc9e887fcb5916c16ca4a93a8f1855eee4885760892e16e7ab564a85b95d00",
+    "src/_lcm/power_mean.py": "c6765430269abadea3d46196071be20173411632836848b73844b9a8c833b60c",
     "src/_lcm/simulation/random_address.py": "ffe7406eb2819c4621db6ac9e9a53c58d408c25c4f62e8b8a21f2c5d9866d76e",
     "src/lcm/shocks.py": "9a4c4dc1863614cec300d3a8d130cbd72ab0def2dc53397f9f5053787bdd17d5",
     "src/_lcm/shock_overrides.py": "4b12042afd1020b1f213f95e5aee2d5dea175fb0cce0225558160e57bf0d61ea",
@@ -964,7 +964,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     "src/_lcm/zero_safe.py": (
-        "dc759de3425fc617fe87d837117c8e7c757f0207a2692516e62e994761c32c75",
+        "ec355fbfe3ef0ac8de4f49240f54e7514830956958d6037a65050fe613891b3c",
         {
             "zero_safe_weighted_term": "1f9682a923d63877e5ec668bb404bf92911278ee806e99b5ef60c098a9c82dd1",
         },
@@ -2142,7 +2142,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     SUPPORT_FINGERPRINT_SOURCE: (
-        "d163e4f5fe82cc41df22a3e905e946b61878403845dc80d19a908f3102baca9a",
+        "d0ade0d8bd6bba2b9deed4f5963475de877a14cc88b82e03beb9cb1566a072c7",
         {
             "fingerprint_solution_support": "7b96d4f0c60f892df96d252b6dd5c8e3454db6da5509990e9f8d7d7e25e21174",
             "fingerprint_model": "04c8f2960e52d4144353b1e3b962edbc17b00eb05fc68a3207cf4826acbbda51",
@@ -2151,7 +2151,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_query_semantic_descriptor": "602544e2ed8bb315d1bd8a9425e486338810ba663c55197bebcfbe1e9eccac0d",
             "_project_user_regime_declaration": "cf9c88e3fbc354dc4d5f0bf1bd46eb12fbebe06febb284ab69649955398ade99",
             "_semantic_fingerprint": "75f98beb48082f6fda273258837d03a38221af56812f8d621163ebfdfdda893b",
-            "_SemanticHasher.visit": "eafce96fac57920b50fc278c6972607d1e829919f077de1acd7ab9ae47808f63",
+            "_SemanticHasher.visit": "6e37a6ba03d335635a810f65b99d61374fe501bf5f7992fccb7c7cfc258cae32",
         },
     ),
     SUPPORT_AUTHORITY_SOURCE: (
@@ -2894,7 +2894,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     "src/_lcm/probability.py": (
-        "b10b6e7aacf8aca551fa7571af8f312ec8141de87bf0336cb1d56eeb42462b0d",
+        "29e31db3213dd06b53db1d4b6e19eb130309043507636dba34ebd12ac708f51c",
         {
             "_encoded": "58d2dd01903a637adc4af5d18dcf3767eae9b16f685a0652e24c156164511bdd",
             "_exponent_bias": "c3a992302c901ac4ff4bb7c25cb2dc54965e8d08c9b8dd18fe98832431c469fe",
@@ -2917,8 +2917,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "regime_mass_is_a_distribution": "77c20e7a228127a1b1bd072ba17a8f0e5140f8a87ab7b67e93c3304b514ea2c9",
             "scaled_by_power_of_two": "66ac45005852e867fe423327bcd3e61ae40217a4d27459d1f726d119ce6c7cb0",
             "_log_of_nonnegative_bits": "f08993db3a70bdf1d0d2a52f633994db0bcb327a0e31a62aabd3b31de4472bc7",
-            "_log_of_nonnegative_jvp": "16da7f663340bad73c31f62493e755b0aa8f9584b253ab8f28fac11e908d6643",
-            "log_of_nonnegative": "f1dc842ddb6d656c4422e2e36e7b1b33c54345aaa199afd112d04f05c39c813d",
+            "log_of_nonnegative": "6b4bc976272b4e2c8b7024408d4088ff5cc74d4e442e41145d3836d0f6fe9015",
             "rescaled_weight_pair": "d90ca0876a8a90af2ab72f50750d8bc499e2e5538c202181c0cb3896cec42244",
         },
     ),
@@ -2953,7 +2952,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         {},
     ),
     "src/_lcm/egm/ez_kernel.py": (
-        "6f65f5be52aaac703f9f346a6597e808164328080712b3bcf67eb23678ecb422",
+        "8da25b9d1849abe47fe7a5f8ec07c95c64347ef1edf098f0de325f441ee469d0",
         {
             "ez_consumption_from_euler": "085242c1acc653e5624001827643fa5acf67f0624be144d50acafb2b0328899e",
             "ez_marginal_of_resource": "3eb273105d066cafbb7a1be233af83065c6a42aea37ca60ad3d8572651b3b6cf",
@@ -3055,10 +3054,9 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     "src/_lcm/power_mean.py": (
-        "754874381d6e85669a5dbc30a450b1f987c53292c0b98ed083bae0e939204089",
+        "fc7b57cc85214d79fe6eee211730bbee39cc3abe209b6923f7b91677bc1de730",
         {
-            "_applied_to_anchor": "51174b5a83bfd9f26290c8bf863f1930fd9232838c7c8c02c13c3a8dc54d999b",
-            "_anchor_primal": "8f15f6000318be7e71bad6cac00992842d90e9ba4ec9a35c0d4ce85fff67955a",
+            "_applied_to_anchor": "b7db4643c486197852ac69f8d9abc66cd380084efde4a607a7a7eafbf0b3324d",
             "_log_term": "759e0e60399615ea3a80b6d78e589c4432cce43d1947ade1e89a428d6afbfdaa",
             "weighted_power_mean_of_pair": "d2ccbc6e4a64e60f8e7ceed5107fbdd47898d0dc24c7b3f350deccb48b939306",
         },
@@ -8890,13 +8888,11 @@ _RETAINED_PREFIX_CONTRACTS = _contracts(
         "src/_lcm/power_mean.py": (
             "weighted_power_mean_of_pair",
             "_applied_to_anchor",
-            "_anchor_primal",
             "_log_term",
         ),
         "src/_lcm/probability.py": (
             "log_of_nonnegative",
             "_log_of_nonnegative_bits",
-            "_log_of_nonnegative_jvp",
             "rescaled_weight_pair",
         ),
     }
@@ -9651,7 +9647,6 @@ def _argmax_reducer_errors(tree: ast.Module) -> list[str]:
         flatten = _definition(tree=tree, name="_flatten_last_n_axes")
         pair_max = _definition(tree=tree, name="max_and_smallest_id")
         pair_reduce = _definition(tree=tree, name="_paired_max")
-        pair_jvp = _definition(tree=tree, name="_paired_max_jvp")
         float_order_key = _definition(tree=tree, name="_float_order_key")
         float_reverse_bits = _definition(tree=tree, name="_reverse_negative_bits")
         float_infinity_key = _definition(tree=tree, name="_float_infinity_key")
@@ -9699,24 +9694,10 @@ _argmax = jnp.where(any_nan | (_argmax == NO_ID), 0, _argmax)
 return (_argmax, _max)
 """
     expected_pair_max = r"""initial_arr = jnp.asarray(initial, dtype=values.dtype)
-return _paired_max_with_tangent(values, ids, initial_arr)
+return _paired_max_no_derivative(values, ids, initial_arr)
 """
     expected_pair_reduce = r"""best_key, best_id = _reduce_float_keys(keys=_float_order_key(values), ids=ids, initial_key=_float_order_key(initial), infinity_key=_float_infinity_key(values.dtype))
 return (jax.lax.bitcast_convert_type(_reverse_negative_bits(best_key), values.dtype), best_id)
-"""
-    expected_pair_jvp = r"""values, ids, initial = primals
-values_dot, _, initial_dot = tangents
-value_keys = _float_order_key(values)
-initial_key = _float_order_key(initial)
-infinity_key = _float_infinity_key(values.dtype)
-best_key, best_id = _reduce_float_keys(keys=value_keys, ids=ids, initial_key=initial_key, infinity_key=infinity_key)
-best = jax.lax.bitcast_convert_type(_reverse_negative_bits(best_key), values.dtype)
-attains = (_float_keys_equal(left=value_keys, right=best_key[..., jnp.newaxis]) & (value_keys >= ~infinity_key) & (value_keys <= infinity_key)).astype(values.dtype)
-count = jnp.sum(attains, axis=-1)
-elements_dot = jnp.sum(values_dot * attains, axis=-1) / jnp.maximum(count, 1)
-initial_dot = jnp.broadcast_to(initial_dot, best.shape)
-best_dot = jnp.where(count > 0, jnp.where(_float_keys_equal(left=initial_key, right=best_key), (elements_dot + initial_dot) / 2, elements_dot), initial_dot)
-return ((best, best_id), (best_dot, np.zeros(best_id.shape, dtype=float0)))
 """
     expected_float_key = r"""if values.dtype.itemsize not in (2, 4, 8):
     msg = f'Use 16-, 32- and 64-bit IEEE floats; got {values.dtype}.'
@@ -9757,7 +9738,7 @@ return a.transpose((*front_axes, *axes))
             "argmax reducer: executable body differs from the full paired "
             "value/feasibility reduction"
         )
-    if pair_max.decorator_list or pair_reduce.decorator_list or pair_jvp.decorator_list:
+    if pair_max.decorator_list or pair_reduce.decorator_list:
         errors.append("argmax reducer: decorators are not allowlisted")
     if not _positional_signature(
         node=pair_reduce, names=("values", "ids", "initial")
@@ -9765,38 +9746,21 @@ return a.transpose((*front_axes, *axes))
         errors.append(
             "argmax reducer: the paired primal is not an identity-initialized `lax.reduce`"
         )
-    if not _positional_signature(
-        node=pair_jvp, names=("primals", "tangents")
-    ) or not _body_matches(node=pair_jvp, expected_source=expected_pair_jvp):
-        errors.append(
-            "argmax reducer: the paired max's tangent is not `jnp.max`'s "
-            "tie-averaged tangent"
-        )
-    tangent_wiring = [
+    refusal_wiring = [
         statement
         for statement in tree.body
-        if (
-            isinstance(statement, ast.Assign | ast.AnnAssign | ast.AugAssign)
-            and "_paired_max_with_tangent" in _assigned_names(statement)
-        )
-        or (
-            isinstance(statement, ast.Expr)
-            and _expression_matches(
-                node=statement.value,
-                source="_paired_max_with_tangent.defjvp(_paired_max_jvp)",
-            )
-        )
+        if isinstance(statement, ast.Assign | ast.AnnAssign | ast.AugAssign)
+        and "_paired_max_no_derivative" in _assigned_names(statement)
     ]
     if not (
-        len(tangent_wiring) == 2
-        and isinstance(tangent_wiring[0], ast.Assign)
+        len(refusal_wiring) == 1
+        and isinstance(refusal_wiring[0], ast.Assign)
         and _expression_matches(
-            node=tangent_wiring[0].value, source="jax.custom_jvp(_paired_max)"
+            node=refusal_wiring[0].value, source="without_derivative(_paired_max)"
         )
-        and isinstance(tangent_wiring[1], ast.Expr)
     ):
         errors.append(
-            "argmax reducer: the paired primal is not wrapped with its tangent rule"
+            "argmax reducer: the paired primal is not wrapped to refuse differentiation"
         )
     if not _keyword_only_signature(
         node=pair_max, names=("values", "ids", "initial")
@@ -9872,7 +9836,6 @@ return a.transpose((*front_axes, *axes))
             "argmax_and_max",
             "max_and_smallest_id",
             "_paired_max",
-            "_paired_max_jvp",
             "_float_order_key",
             "_reverse_negative_bits",
             "_float_infinity_key",
@@ -16381,7 +16344,7 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             "path": PROBABILITY_SOURCE,
             "source": replace_once(
                 source=probability_source,
-                old="return _balanced_with_tangent(jnp.asarray(weight), jnp.asarray(value))",
+                old="return _balanced_no_derivative(jnp.asarray(weight), jnp.asarray(value))",
                 new="return jnp.asarray(weight) * jnp.asarray(value)",
                 label="zero-safe balanced product",
             ),
@@ -18473,7 +18436,6 @@ _RETAINED_PREFIX_OWNER_SELECTION = {
     "src/_lcm/probability.py": (
         "log_of_nonnegative",
         "_log_of_nonnegative_bits",
-        "_log_of_nonnegative_jvp",
         "rescaled_weight_pair",
     ),
 }
@@ -18685,18 +18647,10 @@ _RETAINED_PREFIX_SEMANTIC_MUTATIONS = {
     ),
     "retained_prefix:pair_anchor_exact_payoff": (
         "src/_lcm/power_mean.py",
-        "_anchor_primal",
+        "_applied_to_anchor",
         "expression",
         "jnp.where(deviation == 0.0, payoff, payoff * jnp.exp(deviation))",
         "payoff * jnp.exp(deviation)",
-        1,
-    ),
-    "retained_prefix:log_JVP_not_recomputed_bits": (
-        "src/_lcm/probability.py",
-        "_log_of_nonnegative_jvp",
-        "expression",
-        "values_dot / values",
-        "values_dot",
         1,
     ),
 }
@@ -19172,14 +19126,6 @@ _RETAINED_PREFIX_DIAGNOSTICS = {
     "corridor "
     "'_log_of_nonnegative_bits' "
     "changed",
-    "retained_prefix:body:src/_lcm/probability.py::_log_of_nonnegative_jvp": "retained "
-    "DC/NB "
-    "dependency: "
-    "exact "
-    "callable "
-    "corridor "
-    "'_log_of_nonnegative_jvp' "
-    "changed",
     "retained_prefix:body:src/_lcm/probability.py::rescaled_weight_pair": "retained "
     "DC/NB "
     "dependency: "
@@ -19280,11 +19226,7 @@ _RETAINED_PREFIX_DIAGNOSTICS = {
     "changed",
     "retained_prefix:pair_anchor_exact_payoff": "retained DC/NB dependency: exact "
     "callable corridor "
-    "'_anchor_primal' changed",
-    "retained_prefix:log_JVP_not_recomputed_bits": "retained DC/NB dependency: "
-    "exact callable corridor "
-    "'_log_of_nonnegative_jvp' "
-    "changed",
+    "'_applied_to_anchor' changed",
     "retained_prefix:multi_stub_type": "retained DC/NB dependency: "
     "nbegm_multi_interval_step_savings "
     "overload declarations changed",

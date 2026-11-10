@@ -94,13 +94,26 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 - A `ConditionalAction` condition is stored in one numeric kind: as floats if any listed
   value is a float, otherwise as integers.
 
-### Density-rule derivatives are no longer supported
+### Derivatives with respect to model parameters are no longer supported
 
-- `TauchenAR1Process.on_nodes(transition_rule="density")` rows no longer carry a custom
-  derivative rule. Their values are unchanged. Differentiating them with respect to
-  `mu`, `rho`, `sigma` or the source value is not supported: gradients of simulated
-  statistics are not meaningful in models with discrete choices, so no transition rule
-  carries a derivative guarantee.
+Gradients of simulated statistics are not meaningful in models with discrete choices,
+so the custom derivative rules that existed only for them are removed. Values are
+unchanged. The solvers keep the derivative rules they use themselves.
+
+- `TauchenAR1Process.on_nodes(transition_rule="density")` rows, the mixture quantile,
+  the certainty-equivalent power means and the Epstein–Zin continuation mean no longer
+  carry a custom derivative rule.
+- The zero-safe weighted reductions, the balanced and scaled-down products and the hard
+  maximum work on the bit pattern of their operands, where plain automatic
+  differentiation would return zero. Differentiating through them raises the new
+  `lcm.exceptions.UnsupportedDifferentiationError`.
+- The native exact-affine reads and query winners carry no derivative rule;
+  differentiating through them raises.
+- The implicit derivative of a continuous outer optimum
+  (`_lcm.optimization.implicit_outer_derivative`) and its Mahler–Yum pilot
+  (`lcm_examples.mahler_yum_2024.implicit_pilot`) are removed.
+- Semantic fingerprints change for every model; solutions saved with an earlier version
+  do not load.
 
 ### Public grid, process and condition classes live in `lcm`
 

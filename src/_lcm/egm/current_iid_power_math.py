@@ -12,9 +12,7 @@ import jax.numpy as jnp
 
 from _lcm.probability import (
     _unbiased_exponent,
-    is_negative,
     is_represented_zero,
-    log_of_nonnegative,
     scaled_by_power_of_two,
     scaled_down_by_power_of_two,
 )
@@ -26,41 +24,6 @@ class _SignedLog(NamedTuple):
 
     logabs: FloatND
     sign: FloatND
-
-
-def _signed(*, value: FloatND) -> _SignedLog:
-    zero = is_represented_zero(value)
-    sign = jnp.where(zero, 0.0, jnp.where(is_negative(value), -1.0, 1.0))
-    return _SignedLog(log_of_nonnegative(jnp.abs(value)), sign)
-
-
-def _sum_signed(*, terms: _SignedLog, axis: int | None = None) -> _SignedLog:
-    live = (terms.sign != 0.0) & (terms.logabs != -jnp.inf)
-    peak = jnp.max(jnp.where(live, terms.logabs, -jnp.inf), axis=axis, keepdims=True)
-    low = jnp.min(jnp.where(live, terms.logabs, jnp.inf), axis=axis, keepdims=True)
-    # A same-sign inner sum may lose a small constituent before an outer sum
-    # opposes its aggregate. Refuse wide span before ANY aggregation, so a
-    # later merge cannot borrow a false equal-scale cancellation certificate.
-    # shortcut: wide spans refuse; add multi-scale accumulation only when
-    # required workloads need them.
-    cancellation_unresolved = (peak - low) > jnp.finfo(
-        terms.logabs.dtype
-    ).nmant * jnp.log(2.0)
-    peak = jnp.where(jnp.isfinite(peak), peak, 0.0)
-    mantissa = jnp.sum(
-        jnp.where(live, terms.sign * jnp.exp(terms.logabs - peak), 0.0),
-        axis=axis,
-        keepdims=True,
-    )
-    result = _signed(value=mantissa)
-    logabs = peak + result.logabs
-    invalid = cancellation_unresolved | jnp.any(
-        jnp.isnan(terms.logabs), axis=axis, keepdims=True
-    )
-    logabs = jnp.where(invalid, jnp.nan, logabs)
-    if axis is None:
-        return _SignedLog(jnp.reshape(logabs, ()), jnp.reshape(result.sign, ()))
-    return _SignedLog(jnp.squeeze(logabs, axis), jnp.squeeze(result.sign, axis))
 
 
 def _materialize(*, value: _SignedLog) -> FloatND:

@@ -175,29 +175,6 @@ def test_weights_with_no_mass_anywhere_are_rejected_rather_than_averaged(
         _expectation(values=_array(values), weights=_array([0.0, 0.0]))
 
 
-def test_a_null_node_leaves_both_cotangents_finite() -> None:
-    """Differentiating through a null node produces no NaN in either channel.
-
-    Nothing here claims a classical derivative of the expectation with respect
-    to a probability at a zero-mass `-inf` boundary — any positive mass sends
-    the expectation to `-inf`. What is claimed is that the structural mask
-    keeps the computation differentiable instead of poisoning the tape.
-    """
-
-    # keyword-only-exempt: library-callback=jax.grad
-    def expectation(values: Float1D, weights: Float1D) -> ScalarFloat:
-        return _expectation(values=values, weights=weights)
-
-    values = _array([-jnp.inf, 1.0, 2.0])
-    weights = _array([0.0, 0.5, 0.5])
-
-    d_values = jax.grad(expectation, argnums=0)(values, weights)
-    d_weights = jax.grad(expectation, argnums=1)(values, weights)
-
-    assert bool(jnp.all(jnp.isfinite(d_values)))
-    assert bool(jnp.all(jnp.isfinite(d_weights)))
-
-
 def test_zero_probability_stateless_target_is_a_null_event() -> None:
     """An unreachable stateless target does not contaminate the joint lottery."""
     values, weights, mass = _scalar_lottery(

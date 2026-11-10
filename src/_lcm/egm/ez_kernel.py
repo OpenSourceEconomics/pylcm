@@ -31,8 +31,7 @@ small-but-nonzero elasticity into the wrong formula.
 
 import jax.numpy as jnp
 
-from _lcm.egm.ez_power_mean import continuation_power_mean
-from _lcm.power_mean import weighted_power_mean_of_pair
+from _lcm.power_mean import weighted_power_mean, weighted_power_mean_of_pair
 from lcm.typing import FloatND, ScalarFloat
 
 
@@ -56,7 +55,7 @@ def ez_transform_partials(
     positive = broadcast_weights > 0.0
     masked_weights = jnp.where(positive, broadcast_weights, broadcast_weights * 0.0)
     weight_sum = jnp.sum(masked_weights, axis=-1)
-    certainty_equivalent = continuation_power_mean(
+    certainty_equivalent = weighted_power_mean(
         values=child_values,
         weights=broadcast_weights,
         exponent=exponent,
@@ -115,7 +114,7 @@ def ez_blend_partials(
     joint_weights = jnp.where(reachable, probs * weight_sums, probs * 0.0)
     blended_weight = jnp.sum(joint_weights, axis=0)
     moved_weights = jnp.moveaxis(joint_weights, 0, -1)
-    joint_certainty_equivalent = continuation_power_mean(
+    joint_certainty_equivalent = weighted_power_mean(
         values=jnp.moveaxis(certainty_equivalents, 0, -1),
         weights=moved_weights,
         exponent=jnp.asarray(1.0 - risk_aversion),

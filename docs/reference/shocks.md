@@ -57,11 +57,8 @@ Validation never silently normalizes a malformed vector.
 
 The mixture solver brackets a quantile between the component quantiles at its common
 base probability. Log-CDF and log-survival equations retain both tails. A capacity or
-floating-point failure produces an invalid status rather than an unchecked quantile.
-Smooth first derivatives follow the implicit CDF equation. Differentiating through an
-inactive zero-scale component is outside that smooth derivative contract: derivative
-consumers must additionally reject nonfinite tangents or marginals. Primal validity
-alone is insufficient to admit a derivative consumer.
+floating-point failure produces an invalid status rather than an unchecked quantile. The
+quantile carries no derivative rule.
 
 Omitted `correlation` means independent base coordinates. Explicit `correlation=None`
 requests runtime `corr` in the group namespace. A matrix fixes Gaussian correlation in
