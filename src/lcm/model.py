@@ -143,6 +143,7 @@ from _lcm.regime_building.processing import (
     prepare_model_structure,
 )
 from _lcm.regime_building.schedules import (
+    demanded_declared_laws,
     gated_source_periods,
     lower_demanded_transitions,
     resolve_initial_nodes,
@@ -1737,6 +1738,10 @@ class Model:
             gated_source_periods=gated_source_periods(schedules=schedules),
             visited_periods_by_regime=schedules.acting_periods_by_regime,
             declared_transitions=self._declared_transitions,
+            demanded_edge_laws=demanded_declared_laws(
+                schedules=schedules,
+                declared_transitions=prepared_graph.declarations,
+            ),
             declared_edge_vocabulary=declared_edge_vocabulary,
             post_decision_shocks=post_decision_shock_processes,
             # The pruning candidates combine state and action names. Only the

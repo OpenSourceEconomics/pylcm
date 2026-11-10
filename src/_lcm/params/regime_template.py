@@ -588,7 +588,7 @@ def create_edge_params_template(
     *,
     source: RegimeName,
     declared_transitions: tuple[Transition, ...],
-    demanded_law: _LawNode,
+    demanded_laws: tuple[_LawNode, ...],
     vocabulary_by_regime: Mapping[RegimeName, EdgeVocabulary],
 ) -> EdgeParamsTemplate:
     """Create a source regime's branch of the `edges` parameter template.
@@ -620,8 +620,8 @@ def create_edge_params_template(
         source: The source regime's name.
         declared_transitions: The `Transition`s declared for the source, one per
             phase of `Model(edges=...)`.
-        demanded_law: The source's law lowered over its demanded periods. Its
-            callables decide each slot's numeric role.
+        demanded_laws: The source's declared laws at its demanded periods, one
+            phase side each. Their callables decide each slot's numeric role.
         vocabulary_by_regime: The edge vocabulary of each regime of the model.
 
     Returns:
@@ -636,11 +636,16 @@ def create_edge_params_template(
 
     """
     variables = set(vocabulary_by_regime[source].variables)
-    demanded = {
-        id(func) for _, func, _ in iter_edge_callables(law=demanded_law, path=())
-    }
-    params_by_path: list[tuple[tuple[str, ...], Mapping[ParameterName, str]]] = []
     demanded_roles: dict[tuple[str, ...], set[NumericRole]] = {}
+    for law in demanded_laws:
+        for path, func, _ in iter_edge_callables(law=law, path=()):
+            for param_name, annotation in _edge_callable_params(
+                source=source, path=path, func=func, non_params=variables
+            ).items():
+                demanded_roles.setdefault((*path, param_name), set()).add(
+                    role_of_leaf(annotation)
+                )
+    params_by_path: list[tuple[tuple[str, ...], Mapping[ParameterName, str]]] = []
     law_params_by_path: list[tuple[tuple[str, ...], Mapping[ParameterName, str]]] = []
     for transition in declared_transitions:
         for path, func, gate in iter_transition_callables(transition):
@@ -667,19 +672,15 @@ def create_edge_params_template(
                     ),
                 )
             )
-            params = _discovered_params(
-                name="edge",
-                func=func,
-                non_params=non_params,
-                kind=(
-                    "Edge-callable (at "
-                    f"{user_path(path=(EDGES, source, *path))}) argument"
-                ),
+            params = _edge_callable_params(
+                source=source, path=path, func=func, non_params=non_params
             )
             params_by_path.append((path, params))
             if gate is None:
                 law_params_by_path.append((path, params))
-            if gate is not None or id(func) in demanded:
+            else:
+                # A gate, a participation check or a projection is demanded
+                # wherever its edge is.
                 for param_name, annotation in params.items():
                     demanded_roles.setdefault((*path, param_name), set()).add(
                         role_of_leaf(annotation)
@@ -689,6 +690,22 @@ def create_edge_params_template(
         source=source, params_by_path=law_params_by_path
     )
     return _edge_template(params_by_path=params_by_path, demanded_roles=demanded_roles)
+
+
+def _edge_callable_params(
+    *,
+    source: RegimeName,
+    path: tuple[str, ...],
+    func: UserFunction,
+    non_params: AbstractSet[str],
+) -> Mapping[ParameterName, str]:
+    """The parameters one edge callable reads, with their annotations."""
+    return _discovered_params(
+        name="edge",
+        func=func,
+        non_params=non_params,
+        kind=f"Edge-callable (at {user_path(path=(EDGES, source, *path))}) argument",
+    )
 
 
 def _edge_template(

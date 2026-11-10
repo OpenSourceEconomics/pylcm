@@ -237,6 +237,7 @@ from _lcm.regime_building.Q_and_F import (
     has_objective_profile,
     partition_continuation_targets,
 )
+from _lcm.regime_building.schedules import PhaseLaw
 from _lcm.regime_building.stochastic_state_transitions import (
     collect_stochastic_state_transitions,
 )
@@ -421,6 +422,10 @@ class PreparedModelStructure:
     """Per source regime, its `Transition` declarations in `Model(edges=...)`,
     which the `edges` parameter template is read off."""
 
+    demanded_edge_laws: MappingProxyType[RegimeName, tuple[PhaseLaw, ...]]
+    """Per nonterminal source regime, its declared laws at the demanded periods,
+    which decide each `edges` parameter's numeric role."""
+
     declared_edge_vocabulary: MappingProxyType[RegimeName, EdgeVocabulary]
     """Per regime, the names it declares before demand prunes any, which the
     declared laws read as variables rather than parameters."""
@@ -460,6 +465,7 @@ def prepare_model_structure(
         tuple[RegimeName, RegimeName], tuple[int, ...]
     ],
     declared_transitions: Mapping[RegimeName, tuple[Transition, ...]],
+    demanded_edge_laws: Mapping[RegimeName, tuple[PhaseLaw, ...]],
     declared_edge_vocabulary: Mapping[RegimeName, EdgeVocabulary],
     visited_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
     value_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
@@ -539,6 +545,7 @@ def prepare_model_structure(
         active_periods_by_regime=active_periods_by_regime,
         gated_source_periods=gated_source_periods,
         declared_transitions=MappingProxyType(dict(declared_transitions)),
+        demanded_edge_laws=MappingProxyType(dict(demanded_edge_laws)),
         declared_edge_vocabulary=MappingProxyType(dict(declared_edge_vocabulary)),
         post_decision_shocks=MappingProxyType(
             {
@@ -923,7 +930,9 @@ def prepare_regime_builder(
                 declared_transitions=prepared_structure.declared_transitions.get(
                     regime_name, ()
                 ),
-                demanded_law=laws[regime_name].transition,
+                demanded_laws=prepared_structure.demanded_edge_laws.get(
+                    regime_name, ()
+                ),
                 vocabulary_by_regime=edge_vocabulary,
             )
             for regime_name in representative_user_regimes

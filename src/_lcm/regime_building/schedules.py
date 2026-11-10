@@ -535,29 +535,16 @@ def lower_demanded_transitions(
         if declared is None:
             lowered[name] = None
             continue
-        law_by_period = schedules.law_by_period_by_regime[name]
-        solve_periods = schedules.context_periods_by_regime[name]
-        if not solve_periods:
-            if not law_by_period:
-                # A declared nonterminal law is a case law or a schedule of them.
-                law_by_period = {
-                    0: cast(
-                        "CaseLaw",
-                        declared.laws[0] if isinstance(declared, ByAge) else declared,
-                    )
-                }
-            solve_periods = (min(law_by_period),)
-        else:
+        law_by_period, solve_periods = _lowering_inputs(
+            schedules=schedules, name=name, declared=declared
+        )
+        if schedules.context_periods_by_regime[name]:
             _fail_if_conflicting_annotations(
                 regime_name=name,
-                laws=tuple(
-                    _phase_side(law=law_by_period[period], side=side)
-                    for side, periods in zip(
-                        _SIDES,
-                        (solve_periods, visited_periods[name]),
-                        strict=True,
-                    )
-                    for period in periods
+                laws=_demanded_sides(
+                    law_by_period=law_by_period,
+                    solve_periods=solve_periods,
+                    simulate_periods=visited_periods[name],
                 ),
             )
         lowered[name] = _lower(
@@ -567,6 +554,73 @@ def lower_demanded_transitions(
             code_by_name=code_by_name,
         )
     return MappingProxyType(lowered)
+
+
+def demanded_declared_laws(
+    *,
+    schedules: RegimeSchedules,
+    declared_transitions: Mapping[RegimeName, RegimeTransitionLaw],
+) -> MappingProxyType[RegimeName, tuple[PhaseLaw, ...]]:
+    """Each nonterminal regime's declared laws at the periods lowering reads.
+
+    These are the laws `lower_demanded_transitions` combines, as the user wrote
+    them: the solve side at the valued periods and the simulate side at the
+    visited ones. Whatever form lowering gives their union, these decide how
+    the model reads an edge parameter.
+    """
+    return MappingProxyType(
+        {
+            name: _demanded_sides(
+                law_by_period=law_by_period,
+                solve_periods=solve_periods,
+                simulate_periods=schedules.acting_periods_by_regime[name],
+            )
+            for name, declared in declared_transitions.items()
+            if declared is not None
+            for law_by_period, solve_periods in (
+                _lowering_inputs(schedules=schedules, name=name, declared=declared),
+            )
+        }
+    )
+
+
+def _lowering_inputs(
+    *,
+    schedules: RegimeSchedules,
+    name: RegimeName,
+    declared: CaseLaw | ByAge,
+) -> tuple[Mapping[int, CaseLaw], tuple[int, ...]]:
+    """A regime's per-period laws and the periods its solve side is lowered over.
+
+    A regime without valued periods keeps one declared law, at one period.
+    """
+    law_by_period = schedules.law_by_period_by_regime[name]
+    solve_periods = schedules.context_periods_by_regime[name]
+    if solve_periods:
+        return law_by_period, solve_periods
+    if not law_by_period:
+        # A declared nonterminal law is a case law or a schedule of them.
+        law_by_period = {
+            0: cast(
+                "CaseLaw",
+                declared.laws[0] if isinstance(declared, ByAge) else declared,
+            )
+        }
+    return law_by_period, (min(law_by_period),)
+
+
+def _demanded_sides(
+    *,
+    law_by_period: Mapping[int, CaseLaw],
+    solve_periods: tuple[int, ...],
+    simulate_periods: tuple[int, ...],
+) -> tuple[PhaseLaw, ...]:
+    """The solve side at the solve periods, then the simulate side at its own."""
+    return tuple(
+        _phase_side(law=law_by_period[period], side=side)
+        for side, periods in zip(_SIDES, (solve_periods, simulate_periods), strict=True)
+        for period in periods
+    )
 
 
 def _fail_if_conflicting_annotations(
