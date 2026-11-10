@@ -114,6 +114,12 @@ class _EgmKernelPieces:
     borrowing_limit: ScalarFloat
     """Lower bound of the savings grid."""
 
+    action_lower: ScalarFloat
+    """Lower bracket of the numerical Euler inversion, bound at the grid's dtype."""
+
+    action_upper: ScalarFloat
+    """Initial upper bracket of the numerical Euler inversion."""
+
     n_constrained: int
     """Number of closed-form credit-constrained candidate points."""
 
@@ -1079,12 +1085,10 @@ def _get_compute_node(
         # above the savings scale) is mis-scaled for this grid and would clamp a
         # real interior root to the bound (reported with `dc/dm = 0`, like a binding
         # corner); widen the savings grid or supply an analytic inverse in that case.
-        action_upper = pieces.savings_nodes[-1] * 1000.0 + 1000.0
-        action_lower = jnp.asarray(1e-8, dtype=action_upper.dtype)
         inverse_marginal_utility = get_numeric_inverse_marginal_utility(
             marginal_utility=jax.grad(utility_of_action),
-            action_lower=action_lower,
-            action_upper=action_upper,
+            action_lower=pieces.action_lower,
+            action_upper=pieces.action_upper,
         )
     return _ComputeNode(
         continuation=continuation,

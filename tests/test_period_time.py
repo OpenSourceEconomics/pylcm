@@ -1066,3 +1066,38 @@ def test_valid_clock_support_preserves_solve_and_simulation(
     )
     assert np.isin(terminal["x"].to_numpy(), expected_nodes).all()
     np.testing.assert_array_equal(terminal["value"], terminal["x"])
+
+
+@pytest.mark.parametrize("phase", ["solve", "simulate"])
+def test_period_header_prints_a_sub_annual_age_with_two_decimals(
+    *, phase: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A Fraction-valued age reads `0.33` in the period header of both phases."""
+    model = lcm.Model(
+        ages=lcm.AgeGrid(exact_values=(0, Fraction(1, 3), Fraction(2, 3))),
+        regimes={
+            "work": lcm.Regime(functions={"utility": _flow}),
+            "done": lcm.Regime(functions={"utility": _terminal}),
+        },
+        regime_id_class=RegimeId,
+        initial_nodes=((0, "work"),),
+        edges={"work": {"work": (0,), "done": (Fraction(1, 3),)}},
+        fixed_params={"discount_factor": 0.5},
+    )
+    solution = model.solve(params={}, log_level="off")
+    with caplog.at_level(logging.INFO, logger="lcm"):
+        if phase == "solve":
+            model.solve(params={}, log_level="progress")
+        else:
+            model.simulate(
+                params={},
+                initial_conditions={
+                    "age": jnp.array([0.0]),
+                    "regime_id": jnp.array([RegimeId.work]),
+                },
+                solution=solution,
+                seed=3,
+                log_level="progress",
+            )
+    messages = [record.getMessage() for record in caplog.records]
+    assert any(message.startswith("Age 0.33 (") for message in messages)

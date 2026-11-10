@@ -2,6 +2,7 @@ import dataclasses
 import functools
 import itertools
 import math
+import pickle
 from dataclasses import make_dataclass
 from fractions import Fraction
 from types import MappingProxyType
@@ -24,6 +25,7 @@ from _lcm.typing import DataclassInstance
 from lcm.exceptions import CategoricalDefinitionError, GridInitializationError
 from lcm.grids import (
     DiscreteGrid,
+    GridBreakpoint,
     IrregSpacedGrid,
     LinSpacedGrid,
     LogSpacedGrid,
@@ -235,7 +237,7 @@ def test_validate_continuous_grid_negative_n_points():
     error_msg = "n_points must be an int greater than 0 but is -1"
     with pytest.raises(GridInitializationError, match=error_msg):
         _validate_continuous_grid(
-            start=jnp.asarray(1.0), stop=jnp.asarray(2.0), n_points=jnp.int32(-1)
+            start=jnp.asarray(1.0), stop=jnp.asarray(2.0), n_points=-1
         )
 
 
@@ -243,7 +245,7 @@ def test_validate_continuous_grid_start_greater_than_stop():
     error_msg = "start must be less than stop"
     with pytest.raises(GridInitializationError, match=error_msg):
         _validate_continuous_grid(
-            start=jnp.asarray(2.0), stop=jnp.asarray(1.0), n_points=jnp.int32(10)
+            start=jnp.asarray(2.0), stop=jnp.asarray(1.0), n_points=10
         )
 
 
@@ -319,7 +321,7 @@ def test_validate_continuous_grid_rejects_nan_start():
         _validate_continuous_grid(
             start=jnp.asarray(float("nan")),
             stop=jnp.asarray(10.0),
-            n_points=jnp.int32(5),
+            n_points=5,
         )
 
 
@@ -328,7 +330,7 @@ def test_validate_continuous_grid_rejects_inf_stop():
         _validate_continuous_grid(
             start=jnp.asarray(1.0),
             stop=jnp.asarray(float("inf")),
-            n_points=jnp.int32(5),
+            n_points=5,
         )
 
 
@@ -1401,3 +1403,74 @@ def test_integer_differential_detects_each_broken_classifier(*, monkeypatch, mut
         test_integer_value_grid_encodes_every_integer_dtype_like_python_integers(
             grid_name="mixed_boundaries", dtype=np.uint32
         )
+
+
+def test_value_grid_stores_a_mixed_literal_float_array_as_floats():
+    """`np.array([0, 1.0, 2])` is a float array, so its grid stores three floats."""
+    values = DiscreteGrid(values=np.array([0, 1.0, 2])).values
+    assert values is not None
+    assert [type(value) for value in values] == [float, float, float]
+
+
+_FLOAT_BOUND_GRIDS = {
+    "lin": lambda: LinSpacedGrid(start=1, stop=5, n_points=5),
+    "log": lambda: LogSpacedGrid(start=1, stop=5, n_points=5),
+    "piecewise-lin": lambda: PiecewiseLinSpacedGrid(
+        start=0,
+        stop=4,
+        breakpoints=(GridBreakpoint(value=2.0),),
+        points_per_segment=(3, 3),
+    ),
+    "piecewise-log": lambda: PiecewiseLogSpacedGrid(
+        start=1,
+        stop=4,
+        breakpoints=(GridBreakpoint(value=2.0),),
+        points_per_segment=(3, 3),
+    ),
+}
+
+
+@pytest.mark.parametrize("kind", sorted(_FLOAT_BOUND_GRIDS))
+def test_grid_stores_integer_bounds_as_python_floats(kind):
+    """`start` and `stop` written as ints are stored as Python floats."""
+    grid = _FLOAT_BOUND_GRIDS[kind]()
+    assert (type(grid.start), type(grid.stop)) == (float, float)
+
+
+@pytest.mark.parametrize("kind", sorted(_FLOAT_BOUND_GRIDS))
+def test_grid_stdlib_replace_reconstructs_from_the_stored_values(kind):
+    """`dataclasses.replace` rebuilds an equal grid from the stored fields."""
+    grid = _FLOAT_BOUND_GRIDS[kind]()
+    assert dataclasses.replace(grid) == grid
+
+
+@pytest.mark.parametrize("grid_class", [LinSpacedGrid, LogSpacedGrid])
+def test_grid_replace_reconstructs_from_the_stored_values(grid_class):
+    """The grid's own `replace` changes one field and keeps the stored others."""
+    grid = grid_class(start=1, stop=5, n_points=5)
+    assert grid.replace(stop=6) == grid_class(start=1.0, stop=6.0, n_points=5)
+
+
+@pytest.mark.parametrize("kind", sorted(_FLOAT_BOUND_GRIDS))
+def test_grids_built_from_equal_declarations_are_equal(kind):
+    """Two grids built from one declaration compare equal."""
+    assert _FLOAT_BOUND_GRIDS[kind]() == _FLOAT_BOUND_GRIDS[kind]()
+
+
+@pytest.mark.parametrize("kind", sorted(_FLOAT_BOUND_GRIDS))
+def test_grid_is_frozen(kind):
+    """Assigning a field of a built grid raises."""
+    grid = _FLOAT_BOUND_GRIDS[kind]()
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        grid.start = 0.0  # ty: ignore[invalid-assignment]
+
+
+@pytest.mark.parametrize("kind", sorted(_FLOAT_BOUND_GRIDS))
+def test_grid_survives_a_pickle_round_trip(kind):
+    """A pickled grid loads as an equal grid with the same nodes."""
+    grid = _FLOAT_BOUND_GRIDS[kind]()
+    restored = pickle.loads(pickle.dumps(grid))
+    assert (restored == grid, restored.to_jax().tolist()) == (
+        True,
+        grid.to_jax().tolist(),
+    )

@@ -63,11 +63,21 @@ def newton_action_ceiling(scale_grid: Float1D) -> ScalarFloat:
     return scale_grid[-1] * 1000.0 + 1000.0
 
 
+def newton_action_bracket(scale_grid: Float1D) -> tuple[ScalarFloat, ScalarFloat]:
+    """Return the Newton inverse's initial action bracket at the grid's precision.
+
+    Called while a kernel is built, so `NEWTON_ACTION_FLOOR` becomes a JAX scalar
+    of the bound grid's dtype outside any compiled numerical body.
+    """
+    action_upper = newton_action_ceiling(scale_grid)
+    return jnp.asarray(NEWTON_ACTION_FLOOR, dtype=action_upper.dtype), action_upper
+
+
 def get_numeric_inverse_marginal_utility(
     *,
     marginal_utility: Callable[[ScalarFloat], ScalarFloat],
-    action_lower: ScalarFloat | float,
-    action_upper: ScalarFloat | float,
+    action_lower: ScalarFloat,
+    action_upper: ScalarFloat,
 ) -> Callable[[ScalarFloat], ScalarFloat]:
     """Return the bracketed Newton inverse of a marginal felicity — the iEGM path.
 
@@ -116,8 +126,8 @@ class Preferences:
 def preferences_from_utility(
     *,
     utility_of_action: Callable[[FloatND], FloatND],
-    action_lower: ScalarFloat | float,
-    action_upper: ScalarFloat | float,
+    action_lower: ScalarFloat,
+    action_upper: ScalarFloat,
 ) -> Preferences:
     """Bundle a felicity with its autodiff marginal and its bracketed Newton inverse.
 
@@ -154,8 +164,7 @@ def get_preferences_builder(
     *,
     functions: EconFunctionsMapping,
     action_name: ActionName,
-    action_lower: ScalarFloat | float,
-    action_upper: ScalarFloat | float,
+    scale_grid: Float1D,
 ) -> Callable[[EconFunctionKwargs], Preferences]:
     """Return a closure binding a regime's preference maps to a parameter set.
 
@@ -169,11 +178,9 @@ def get_preferences_builder(
             `inverse_marginal_utility` is optional.
         action_name: The regime's own name for the consumption action, the
             argument the three maps are functions of.
-        action_lower: Lower bracket for the Newton inverse — a small positive
-            floor on the action. Unused when the regime declares an analytic
-            inverse.
-        action_upper: Initial upper bracket for the Newton inverse. The numerical
-            solver expands it when necessary.
+        scale_grid: Post-decision grid whose top node scales the Newton inverse's
+            initial bracket (`newton_action_bracket`), bound here at the grid's
+            precision. Unused when the regime declares an analytic inverse.
 
     Returns:
         Callable mapping the regime's flat parameters to the bound
@@ -189,6 +196,7 @@ def get_preferences_builder(
         else None
     )
 
+    action_lower, action_upper = newton_action_bracket(scale_grid)
     return _PreferencesBuilder(
         utility_func=utility_func,
         analytic_inverse=analytic_inverse,
@@ -356,18 +364,18 @@ class _NumericInverseMarginalUtility:
     marginal_utility: Callable[[ScalarFloat], ScalarFloat]
     """Marginal felicity `u'(c)` of a scalar action, bound to one parameter set."""
 
-    action_lower: ScalarFloat | float
+    action_lower: ScalarFloat
     """Lower bracket on the action — a small positive floor."""
 
-    action_upper: ScalarFloat | float
+    action_upper: ScalarFloat
     """Initial upper bracket on the action, expanded when the root lies above it."""
 
     def __call__(self, marginal_continuation: ScalarFloat) -> ScalarFloat:
         return numeric_inverse_marginal_utility(
             marginal_continuation=marginal_continuation,
             marginal_utility=self.marginal_utility,
-            c_lower=jnp.asarray(self.action_lower),
-            c_upper=jnp.asarray(self.action_upper),
+            c_lower=self.action_lower,
+            c_upper=self.action_upper,
         )
 
 
@@ -389,10 +397,10 @@ class _PreferencesBuilder:
     action_name: ActionName
     """The regime's own name for the consumption action."""
 
-    action_lower: ScalarFloat | float
+    action_lower: ScalarFloat
     """Lower bracket for the Newton inverse (unused with an analytic inverse)."""
 
-    action_upper: ScalarFloat | float
+    action_upper: ScalarFloat
     """Initial upper bracket for the Newton inverse."""
 
     def __call__(self, params: EconFunctionKwargs) -> Preferences:

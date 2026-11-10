@@ -25,12 +25,10 @@ from _lcm.egm.ez_kernel import ez_marginal_of_resource, ez_period_value
 from _lcm.egm.interp import interp_on_padded_grid
 from _lcm.egm.nbegm_query_model import NBEGMIntervalRecipe, NBEGMQueryModel
 from _lcm.egm.preferences import (
-    NEWTON_ACTION_FLOOR,
     Preferences,
     concatenate_regime_function,
     get_discount_factor_reader,
     get_preferences_builder,
-    newton_action_ceiling,
 )
 from _lcm.egm.query_data import EGMQueryData, QueryNodeKind, select_query_data
 from _lcm.grids.discrete import read_at_codes
@@ -154,8 +152,7 @@ def build_nbegm_query(
         build_preferences=get_preferences_builder(
             functions=functions,
             action_name=bound.action,
-            action_lower=NEWTON_ACTION_FLOOR,
-            action_upper=newton_action_ceiling(model.offsets),
+            scale_grid=model.offsets,
         ),
         read_discount_factor=get_discount_factor_reader(
             functions=functions,

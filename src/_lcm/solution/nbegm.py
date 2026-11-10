@@ -77,7 +77,9 @@ from _lcm.egm.nbegm_breakpoints import (
     interval_segment_coefficients,
 )
 from _lcm.egm.nbegm_constraint_boundaries import (
+    BoundFeasibilitySurface,
     NBEGMFeasibilityBoundaryProgram,
+    bind_feasibility_surfaces,
     feasibility_axis_boundaries,
 )
 from _lcm.egm.nbegm_probe_stages import (
@@ -828,14 +830,18 @@ class NBEGM(OneMarginSolver):
         representative_context = resolve_solver_build_context(
             context=context, period=representative_period
         )
-        feasibility_constraints = _consume_nbegm_feasibility_constraints(
-            context=context,
-            solver_path=("nbegm",),
-        )
         savings_grid = (
             self.savings_grid.to_jax()
             if materializer is None
             else materializer.materialize_grid(spec=self.savings_grid)
+        )
+        feasibility_constraints = _bind_nbegm_feasibility_literals(
+            constraints=_consume_nbegm_feasibility_constraints(
+                context=context,
+                solver_path=("nbegm",),
+            ),
+            dtype=savings_grid.dtype,
+            materializer=materializer,
         )
 
         functions = context.solve_functions
@@ -1717,6 +1723,36 @@ class _NBEGMFeasibilityConstraint:
     predicate: Callable[..., BoolND]
     """Executable predicate generated from the same declaration."""
 
+    bound_surfaces: tuple[BoundFeasibilitySurface, ...] | None = None
+    """The program's surfaces with literal thresholds bound; `None` until bound."""
+
+
+def _bind_nbegm_feasibility_literals(
+    *,
+    constraints: tuple[_NBEGMFeasibilityConstraint, ...],
+    dtype: DTypeLike,
+    materializer: DatedGenerationMaterializer | None,
+) -> tuple[_NBEGMFeasibilityConstraint, ...]:
+    """Bind every literal threshold at the precision of the kernel being built."""
+
+    def bind_literal(value: float) -> ScalarFloat:
+        if materializer is None:
+            return jnp.asarray(value, dtype=dtype)
+        return materializer.evaluate_validation(
+            function=functools.partial(jnp.asarray, value, dtype=dtype),
+            arguments={},
+        )
+
+    return tuple(
+        replace(
+            constraint,
+            bound_surfaces=bind_feasibility_surfaces(
+                program=constraint.program, bind_literal=bind_literal
+            ),
+        )
+        for constraint in constraints
+    )
+
 
 def _compiled_boundaries_for_inner(
     *, plan: ConstraintPlan, solver_path: tuple[str, ...]
@@ -1859,6 +1895,19 @@ class _ResolvedNBEGMFeasibility:
     """Equality ownership aligned with `boundary_values`."""
 
 
+def _required_bound_surfaces(
+    *, constraint: _NBEGMFeasibilityConstraint
+) -> tuple[BoundFeasibilitySurface, ...]:
+    """Return a constraint's bound surfaces; refuse one no kernel has bound."""
+    if constraint.bound_surfaces is None:
+        msg = (
+            f"Internal error: the feasibility boundaries of constraint "
+            f"{constraint.program.constraint_name!r} were not bound to a kernel."
+        )
+        raise TypeError(msg)
+    return constraint.bound_surfaces
+
+
 def _resolve_nbegm_feasibility(
     *,
     constraints: tuple[_NBEGMFeasibilityConstraint, ...],
@@ -1882,7 +1931,11 @@ def _resolve_nbegm_feasibility(
         for value, kind in zip(schedule_breakpoints, schedule_kinds, strict=True)
     )
     feasibility_sources = feasibility_axis_boundaries(
-        programs=tuple(constraint.program for constraint in constraints),
+        surfaces=tuple(
+            surface
+            for constraint in constraints
+            for surface in _required_bound_surfaces(constraint=constraint)
+        ),
         params=params,
     )
     partition = resolve_axis_partition(
@@ -3276,9 +3329,7 @@ def _build_nbegm_core(
     returns the value array and the marginal-value carry on the liquid grid.
     """
     from _lcm.egm.preferences import (  # noqa: PLC0415
-        NEWTON_ACTION_FLOOR,
         get_preferences_builder,
-        newton_action_ceiling,
     )
 
     return _NBEGMCaseCore(
@@ -3286,8 +3337,7 @@ def _build_nbegm_core(
         build_preferences=get_preferences_builder(
             functions=functions,
             action_name=consumption_action,
-            action_lower=NEWTON_ACTION_FLOOR,
-            action_upper=newton_action_ceiling(savings_grid),
+            scale_grid=savings_grid,
         ),
         case_spec=case_spec,
         envelope_arithmetic=envelope_arithmetic,
@@ -6329,19 +6379,15 @@ def _build_nbegm_continuous_core(
     `coh` at each interval's representative, and runs the kind-appropriate EGM step.
     """
     from _lcm.egm.preferences import (  # noqa: PLC0415
-        NEWTON_ACTION_FLOOR,
         get_preferences_builder,
-        newton_action_ceiling,
     )
 
-    action_upper = newton_action_ceiling(savings_grid)
     return _NBEGMContinuousCore(
         savings_grid=savings_grid,
         build_preferences=get_preferences_builder(
             functions=functions,
             action_name=consumption_action,
-            action_lower=NEWTON_ACTION_FLOOR,
-            action_upper=action_upper,
+            scale_grid=savings_grid,
         ),
         # Host preconditions remain on the separately returned original checks
         # tuple. They are not called by this numerical core and must not become
@@ -6534,12 +6580,12 @@ def _ride_along_jump_config(
     *,
     kinds: tuple[str, ...],
     materializer: DatedGenerationMaterializer | None = None,
-) -> tuple[BoolND, int, bool, tuple[int, ...], bool]:
+) -> tuple[BoolND, int, bool, tuple[JumpPosition, ...], bool]:
     """Derive the merged partition's jump statics from the declared breakpoint kinds.
 
     Returns the per-breakpoint jump flags, the static jump count, whether any jump
-    is present, the declared-order jump positions, and whether the jump positions
-    must be recovered per cell.
+    is present, the declared-order jump positions as int32 scalars bound with the
+    kernel, and whether the jump positions must be recovered per cell.
 
     The positions are recovered per cell whenever jumps and kinks are mixed, on
     however many variables. A single schedule is enough to reorder them: the
@@ -6551,7 +6597,16 @@ def _ride_along_jump_config(
     jump_flags = tuple(kind == "jump" for kind in kinds)
     n_jumps = sum(jump_flags)
     static_jump_positions = tuple(
-        index for index, is_jump in enumerate(jump_flags) if is_jump
+        (
+            jnp.asarray(index, dtype=jnp.int32)
+            if materializer is None
+            else materializer.evaluate_validation(
+                function=functools.partial(jnp.asarray, index, dtype=jnp.int32),
+                arguments={},
+            )
+        )
+        for index, is_jump in enumerate(jump_flags)
+        if is_jump
     )
     dynamic_jumps = 0 < n_jumps < len(kinds)
     return (
@@ -6577,7 +6632,7 @@ def _partition_jumps(
     dynamic_jumps: bool,
     jump_flags: BoolND,
     n_jumps: int,
-    static_jump_positions: tuple[int, ...],
+    static_jump_positions: tuple[JumpPosition, ...],
 ) -> tuple[Float1D, tuple[JumpPosition, ...]]:
     """Sort a cell's breakpoint preimages and locate the jumps in the sorted order.
 
@@ -6661,7 +6716,7 @@ class _NBEGMRideAlongStatics:
     """
     has_jump: bool
     """Whether any declared breakpoint is a jump (vs. a continuous kink)."""
-    static_jump_positions: tuple[int, ...]
+    static_jump_positions: tuple[JumpPosition, ...]
     """Jump indices in the sorted partition when a single variable fixes the order."""
     dynamic_jumps: bool
     """Whether the sorted-order jump indices must be recovered per cell."""
@@ -10119,9 +10174,7 @@ def _build_nbegm_schedule_discrete_core(
     taste-shock scale.
     """
     from _lcm.egm.preferences import (  # noqa: PLC0415
-        NEWTON_ACTION_FLOOR,
         get_preferences_builder,
-        newton_action_ceiling,
     )
 
     return _NBEGMScheduleDiscreteCore(
@@ -10129,8 +10182,7 @@ def _build_nbegm_schedule_discrete_core(
         build_preferences=get_preferences_builder(
             functions=functions,
             action_name=consumption_action,
-            action_lower=NEWTON_ACTION_FLOOR,
-            action_upper=newton_action_ceiling(savings_grid),
+            scale_grid=savings_grid,
         ),
         spec=spec,
         taste_shock_scale=taste_shock_scale,
@@ -10306,9 +10358,7 @@ def _build_nbegm_discrete_core(
     takes the discrete choice by the upper envelope (`nbegm_discrete_envelope_step`).
     """
     from _lcm.egm.preferences import (  # noqa: PLC0415
-        NEWTON_ACTION_FLOOR,
         get_preferences_builder,
-        newton_action_ceiling,
     )
 
     return _NBEGMDiscreteCore(
@@ -10316,8 +10366,7 @@ def _build_nbegm_discrete_core(
         build_preferences=get_preferences_builder(
             functions=functions,
             action_name=consumption_action,
-            action_lower=NEWTON_ACTION_FLOOR,
-            action_upper=newton_action_ceiling(savings_grid),
+            scale_grid=savings_grid,
         ),
         discrete_spec=discrete_spec,
         taste_shock_scale=taste_shock_scale,

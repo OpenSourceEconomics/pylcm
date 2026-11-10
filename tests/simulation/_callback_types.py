@@ -274,6 +274,7 @@ class MemoryCreation(TypedDict):
 class PeriodValidation(TypedDict):
     logger: simulation.logging.Logger
     age: simulation.ScalarInt | simulation.ScalarFloat
+    age_label: str
     period_results: tuple[
         tuple[simulation.RegimeName, simulation.PeriodRegimeSimulationData], ...
     ]
@@ -298,6 +299,7 @@ class DiagnosticEnrichment(TypedDict):
 class DiagnosticInputs(TypedDict, total=False):
     logger: lcm_logging.logging.Logger
     age: simulation.ScalarInt | simulation.ScalarFloat
+    age_label: str
     period_results: tuple[
         tuple[simulation.RegimeName, simulation.PeriodRegimeSimulationData], ...
     ]

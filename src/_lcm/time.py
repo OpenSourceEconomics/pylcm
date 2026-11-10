@@ -88,6 +88,15 @@ def age_at(*, ages: TimeAxis, period: int) -> float | None:
     return None if coordinate_kind(ages) == "period" else float(ages.values[period])
 
 
+def display_age_at(*, ages: TimeAxis, period: int) -> str:
+    """Return a period's coordinate for a log line, read from the exact host values.
+
+    The exact coordinates are Python `int` or `Fraction`, so formatting them
+    never reads the device-held `values`.
+    """
+    return format_age(float(ages.exact_values[period]))
+
+
 def format_age(age: AgeValue | ScalarInt | ScalarFloat) -> str:
     """Return an age for a message: an integer when whole, otherwise two decimals.
 

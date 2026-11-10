@@ -206,7 +206,7 @@ from _lcm.solution.host_values import (
 )
 from _lcm.solution.solve_phase_records import CallId, solve_phase
 from _lcm.solution.validate_V import validate_V, value_function_nan_error
-from _lcm.time import TimeAxis, coordinate_at, coordinate_kind
+from _lcm.time import TimeAxis, coordinate_at, coordinate_kind, display_age_at
 from _lcm.typing import (
     ActionName,
     AgeValue,
@@ -1292,9 +1292,10 @@ def _subject_chunk_periods(  # noqa: PLR0915
             subject_outputs=True,
         )
 
+        age_label = display_age_at(ages=ages, period=period)
         log_period_header(
             logger=logger,
-            age=age,
+            age_label=age_label,
             n_active_regimes=len(active_regimes),
             time_kind=coordinate_kind(ages),
         )
@@ -1512,6 +1513,7 @@ def _subject_chunk_periods(  # noqa: PLR0915
         _validate_period_values(
             logger=logger,
             age=age,
+            age_label=age_label,
             time_kind=coordinate_kind(ages),
             memory=memory,
             period_results=tuple(
@@ -1911,6 +1913,7 @@ def _validate_period_values(
     *,
     logger: logging.Logger,
     age: ScalarInt | ScalarFloat,
+    age_label: str,
     period_results: tuple[tuple[RegimeName, PeriodRegimeSimulationData], ...],
     memory: SimulationMemory | None = None,
     time_kind: Literal["age", "period"] = "age",
@@ -1933,6 +1936,7 @@ def _validate_period_values(
     Args:
         logger: Logger carrying the runtime-validation policy.
         age: Age corresponding to the current period.
+        age_label: The same coordinate, formatted on the host for log lines.
         period_results: Tuple of (regime name, that regime's simulated data for
             this period) pairs, in the order the period simulated them.
         memory: Optional current-period owner for profiled diagnostic admission.
@@ -1957,7 +1961,7 @@ def _validate_period_values(
     has_nan, has_non_finite = flags.tolist()
     log_non_finite_values(
         logger=logger,
-        age=age,
+        age_label=age_label,
         regime_names=regime_names,
         flags=tuple(has_non_finite),
         time_kind=time_kind,

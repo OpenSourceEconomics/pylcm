@@ -242,7 +242,7 @@ def test_piecewise_grid_rejects_a_collapsed_effective_segment() -> None:
 
     with pytest.raises(GridInitializationError, match="representable"):
         PiecewiseLinSpacedGrid(
-            start=start,
+            start=float(start),
             stop=2.0,
             breakpoints=(GridBreakpoint(value=float(adjacent), owner="right"),),
             points_per_segment=(2, 2),
@@ -262,7 +262,7 @@ def test_piecewise_log_grid_requires_a_positive_domain(start: float) -> None:
 
 
 def test_piecewise_grid_uses_the_canonical_float_dtype() -> None:
-    """Endpoint, breakpoint, and output arithmetic share pylcm's float dtype."""
+    """The output nodes are at pylcm's canonical float dtype."""
     grid = PiecewiseLinSpacedGrid(
         start=0,
         stop=2,
@@ -270,6 +270,4 @@ def test_piecewise_grid_uses_the_canonical_float_dtype() -> None:
         points_per_segment=(2, 2),
     )
 
-    assert grid.start.dtype == canonical_float_dtype()
-    assert grid.stop.dtype == canonical_float_dtype()
     assert grid.to_jax().dtype == canonical_float_dtype()
