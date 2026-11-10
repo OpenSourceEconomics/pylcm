@@ -4888,8 +4888,9 @@ def _score_nnbegm_winner(
         next_regime_to_V_arr=next_regime_to_V_arr,
         flat_params=flat_params,
         referenced_value_kwargs=referenced_value_kwargs,
-        period=period,
+        period=jnp.asarray(period, dtype=jnp.int32),
         age=age,
+        Q_and_F=cast("QAndFFunction", regime.simulation.Q_and_F[period]),
     )
     if type(scored) is not BoundedResult or bound_summary:
         return scored
@@ -5450,8 +5451,9 @@ def _canonical_Q_at_actions(
         action_names=action_names,
         next_regime_to_V_arr=next_regime_to_V_arr,
         flat_params=flat_params,
-        period=period,
+        period=jnp.asarray(period, dtype=jnp.int32),
         age=age,
+        Q_and_F=cast("QAndFFunction", regime.simulation.Q_and_F[period]),
         referenced_value_kwargs=referenced_value_kwargs,
         active_subjects=active_subjects,
     )
@@ -5488,24 +5490,22 @@ def _evaluate_canonical_Q_at_actions(
     action_names: tuple[ActionName, ...],
     next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
     flat_params: FlatRegimeParams,
-    period: int | IntND,
+    period: ScalarInt,
     age: ScalarFloat | ScalarInt,
+    Q_and_F: QAndFFunction,
     referenced_value_kwargs: QAndFKwargs = MappingProxyType({}),
     active_subjects: BoolND | None = None,
-    Q_and_F: QAndFFunction | None = None,
 ) -> tuple[FloatND, BoolND] | BoundedResult[tuple[FloatND, BoolND]]:
     """Evaluate canonical actions once, retaining integrity through transformations.
 
-    `Q_and_F` is the period's `regime.simulation.Q_and_F` entry; a caller that
-    traces `period` passes it, since a traced period cannot index the mapping.
+    `Q_and_F` is the period's `regime.simulation.Q_and_F` entry, looked up by the
+    caller with the host period; `period` is the `int32` value it receives.
     """
     from _lcm.regime_building.processing import (  # noqa: PLC0415 - completed model's pointwise owner
         _SubjectPointwiseQAndF,
     )
 
-    function = (
-        regime.simulation.Q_and_F[cast("int", period)] if Q_and_F is None else Q_and_F
-    )
+    function = Q_and_F
     owner = function
     while isinstance(owner, functools.partial):
         if owner.args:
@@ -5519,7 +5519,7 @@ def _evaluate_canonical_Q_at_actions(
         next_regime_to_V_arr=next_regime_to_V_arr,
         **referenced_value_kwargs,
         **flat_params,
-        period=jnp.asarray(period, dtype=jnp.int32),
+        period=period,
         age=age,
         **(
             {ACTIVE_SUBJECTS_ARGUMENT: active_subjects}
@@ -5544,7 +5544,7 @@ def _evaluate_canonical_Q_at_actions(
         raise TypeError(
             "Canonical actual-action evaluation must produce mandatory integrity."
         )
-    values, feasible = cast("tuple[FloatND, BoolND]", evaluated)
+    values, feasible = evaluated
     return jnp.asarray(values), jnp.asarray(feasible).astype(bool)
 
 
