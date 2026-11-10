@@ -6034,7 +6034,7 @@ def _get_feasibility(
         )
         return _BoundFeasibility(flow=flow, periods=bound_periods)
     if not constraints:
-        return cast("ConstraintFunction", _always_feasible)
+        return cast("ConstraintFunction", _AlwaysFeasible(value=jnp.asarray(a=True)))
     return cast(
         "ConstraintFunction",
         _CanonicalFeasibility(
@@ -6071,9 +6071,15 @@ class _CanonicalFeasibility:
         return as_bool(value=self.function(**kwargs), source="The combined constraints")
 
 
-def _always_feasible() -> BoolND:
+@dataclass(frozen=True, eq=False, kw_only=True)
+class _AlwaysFeasible:
     """Feasibility of a regime without constraints: every cell is feasible."""
-    return jnp.asarray(a=True)
+
+    value: BoolND
+    """The constant, built once with the kernel rather than at each evaluation."""
+
+    def __call__(self) -> BoolND:
+        return self.value
 
 
 def _aggregate_joint_lottery(

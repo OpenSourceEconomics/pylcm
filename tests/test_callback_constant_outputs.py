@@ -587,6 +587,23 @@ def test_constant_exit_projection_lands_on_its_float_node(*, form: str) -> None:
     np.testing.assert_array_equal(values[0]["source"], [2.0, 2.0, 2.0])
 
 
+def test_boolean_exit_projection_is_refused() -> None:
+    """A projection onto a continuous state returns a number, not a comparison."""
+
+    def projection() -> FloatND:
+        return True  # ty: ignore[invalid-return-type]
+
+    def no_adjustment() -> FloatND:
+        return jnp.asarray(0.0)
+
+    model = _exit_model(adjustment=no_adjustment, projection=projection)
+    with pytest.raises(
+        InvalidFunctionOutputError,
+        match=r"^The projection of state 'wealth' returned dtype 'bool'",
+    ):
+        model.solve(params={}, log_level="off")
+
+
 def _egm_solved(*, raw: UserFunctionResult, monkeypatch: pytest.MonkeyPatch) -> FloatND:
     def terminal(*, wealth: ContinuousState) -> FloatND:  # noqa: ARG001
         return raw  # ty: ignore[invalid-return-type]

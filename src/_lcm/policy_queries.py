@@ -18,6 +18,7 @@ from dags import with_signature
 from jax.core import Tracer
 
 from _lcm.current_iid import CurrentIIDDrawFrame
+from _lcm.dtypes import as_canonical_float, as_code
 from _lcm.engine import StateActionSpace
 from _lcm.execution.core_program import (
     CoreArgumentBuilder,
@@ -2151,11 +2152,12 @@ def _mapped_query_states(
     # kind, so a projection may return `1` for a continuous state or a Python
     # integer for a code.
     mapped = {
-        name: jnp.asarray(
-            helper(
+        name: _as_target_state(
+            value=helper(
                 **{key: available[key] for key in inspect.signature(helper).parameters}
             ),
-            dtype=grid[name].dtype if name in grid else None,
+            name=name,
+            grid=grid,
         )
         for name, helper in node.read.projection.items()
         if names is None or name in names
@@ -2168,6 +2170,20 @@ def _mapped_query_states(
         name: jnp.where(guard, value, jnp.asarray(grid[name][0], value.dtype))
         for name, value in mapped.items()
     }
+
+
+def _as_target_state(
+    *, value: PytreeValue, name: str, grid: Mapping[str, FloatND | IntND]
+) -> FloatND | IntND:
+    """Adapt one projection's output to the role of the target state it lands on."""
+    # A projection returns one array-like; the adapters refuse any other kind.
+    output = cast("FloatND | IntND | BoolND", value)
+    if name not in grid:
+        return jnp.asarray(output)
+    source = f"The projection of state '{name}'"
+    if grid[name].dtype.kind == "f":
+        return as_canonical_float(value=output, source=source)
+    return as_code(value=output, source=source).astype(grid[name].dtype)
 
 
 def _query_action(

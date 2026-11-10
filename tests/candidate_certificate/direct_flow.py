@@ -621,7 +621,7 @@ _SOURCE_SEALS = {
     S02__LCM_EGM_BUDGET_SOURCE: "1c8fb0cbc8f9156950bea34c71c9ccce2c58ac17ec6b9f1221f8c8966f1031d2",
     S02__LCM_EGM_CARRY_SOURCE: "17c85a9146e68a8b57487754bcb89b879e62bcd391699d82ac4116ec7e4c4691",
     S02__LCM_EGM_QUERY_DATA_SOURCE: "5ca53117248f9009d4d9b696fdb46a361fa47c5b082757ccc9beb6ccd967bde3",
-    S02__LCM_REGIME_BUILDING_Q_AND_F_SOURCE: "8ce780fcaee9e8f1ba279f407921e9a60a32970e7f72400df2a41889ceedca49",
+    S02__LCM_REGIME_BUILDING_Q_AND_F_SOURCE: "61ca9c84944cb8790d8959ae887d3f51e565590a15c87ad9ccc6c17e88bd90ca",
     S02__LCM_SIMULATION_SUBJECT_PARALLEL_SOURCE: "66d70a81a7ec535d92933bc8841c6bbe7472e227509f88fc6d3bdd00b6c95e76",
     S02__LCM_SOLUTION_EGM_SOURCE: "b112fda2bcafe0f139203df84628385ac2d65e47c2f04379e0a780f67857b7c2",
     S02__LCM_SOLUTION_KERNEL_OUTPUT_SOURCE: "4b814b0aecacb22cc1f5b47d6bb9006f3f0f5eb08dc0eb18f1345fcd4becb770",
@@ -2660,7 +2660,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     "src/_lcm/regime_building/Q_and_F.py": (
-        "a180631929d3449fa2aee5248aac8a47d1b41b796c0d9bbc55c48b1180633594",
+        "398f1fd2290688800460e5f2516fe6b862bf8a3e51b3a8fd7bd7f9cbfb3e70b9",
         {
             "runtime_bound_specs": "84f9e94e2f2fa9cf0f27f8900a244cf80b64681bf23b2973e5c08875c76155a0",
             "BoundedQAndF.__post_init__": "ba409022a0b51498849a82498a8c53e3cd74adbab150de8880eaebdb81b58d75",
@@ -2669,7 +2669,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_BoundUtilitiesAndF.evaluated": "33796a051306077f769704ebe46d259b8ce68b57a1ea27ef23695dec8e216ed1",
             "_get_U_and_F": "6d85019509ced38ac91274478c77dfdd5f53c2eb9ccd27b2c07864b57f0fa29f",
             "_BoundFeasibility.__call__": "990d971d7cfd42eb27f41be5a2393460bee167f5150727e91fa0a9ce58701e71",
-            "_get_feasibility": "c67d6df1bf23fd48f534f15678b49cd03f757ed86d0f902d23bd8d08271536f3",
+            "_get_feasibility": "cd9d8623dbb7122b2f23fac37098f1b8224f9a4cc7fa30e2f0e77fc981b640ad",
             "_QAndF.evaluated": "bc56c7283a7e3f0e31b41e0d9a4c9fae176bcb691c52ebf81ba2fcae7a6ce4fa",
             "_TerminalQAndF.evaluated": "9773c0ae2b658ddab50c9bcaa10ba7838609e84a350ea9d3d7399a538f86e6fe",
             "_TerminalCollectiveQAndF.evaluated": "9b695227ba1f0b27b84597c466fa8ebde4042011e69505053c51eacbd738ca92",
