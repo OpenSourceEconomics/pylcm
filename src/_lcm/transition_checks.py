@@ -2248,7 +2248,8 @@ def validate_discrete_state_laws_all_periods(
     variables either reads. A feasible cell whose code lies outside `0..n-1`
     of the target grid raises: a value on no node of a value grid, or a code
     off a category grid. Infeasible cells never count, since the solve masks
-    them before any maximum.
+    them before any maximum, and neither do cells whose regime transition gives
+    the law's target no probability, since nothing reads the law there.
 
     Feasibility here is the ordinary constraints. A value-dependent constraint or
     a gate that reads a value cannot exclude a cell whose code is off the grid,
@@ -2343,6 +2344,13 @@ def _validate_discrete_state_laws(  # noqa: C901
     for side, phase in (("solve", regime.solution), ("simulate", regime.simulation)):
         if period not in phase.feasibility_pools_by_period:
             continue
+        # A simulation phase without a realized law of its own realizes the
+        # solve law.
+        regime_law = (
+            regime.solution.validation_regime_transition_probs
+            if phase.validation_regime_transition_probs is None
+            else phase.validation_regime_transition_probs
+        )
         functions, _ = phase.feasibility_pools_by_period[period]
         grids = {
             **state_action_space.states,
@@ -2468,7 +2476,11 @@ def _validate_discrete_state_laws(  # noqa: C901
                 continue
             owner = memory.producers if memory is not None else producers
             feasibility = _discrete_law_feasibility(
-                phase=phase, period=period, owner=owner
+                phase=phase,
+                period=period,
+                regime_law=regime_law,
+                target=target,
+                owner=owner,
             )
             feasibility_names = frozenset(inspect.signature(feasibility).parameters)
             diagnostic_names = tuple(
@@ -2607,18 +2619,84 @@ def _discrete_law_feasibility(
     *,
     phase: SolutionPhase | SimulationPhase,
     period: int,
+    regime_law: RegimeTransitionFunction | None,
+    target: RegimeName,
     owner: ProfiledSimulationOperations | None,
 ) -> ConstraintFunction:
-    """Bind the original phase's ordinary constraints at this exact date."""
+    """Bind the cells at which the law to `target` is consumed at this exact date.
+
+    A cell counts when the phase's ordinary constraints admit it and
+    `regime_law` gives `target` positive probability there; a law to a target
+    the cell does not reach is never read.
+    """
     functions, constraints = phase.feasibility_pools_by_period[period]
+    inputs = {
+        "functions": functions,
+        "constraints": constraints,
+        "regime_law": regime_law,
+        "target": target,
+    }
     return cast(
         "ConstraintFunction",
-        _get_feasibility(functions=functions, constraints=constraints)
+        _get_routed_feasibility(**inputs)
         if owner is None
         else owner.built(
-            builder=_get_feasibility, functions=functions, constraints=constraints
+            builder=_get_routed_feasibility,
+            **cast("Mapping[str, _BuilderInput]", inputs),
         ),
     )
+
+
+def _get_routed_feasibility(
+    *,
+    functions: EconFunctionsMapping,
+    constraints: ConstraintFunctionsMapping,
+    regime_law: RegimeTransitionFunction | None,
+    target: RegimeName,
+) -> Callable[..., BoolND]:
+    """Compose the ordinary constraints with the routing to `target`."""
+    # Without bound specifications the conjunction is a plain boolean.
+    feasibility = cast(
+        "ConstraintFunction",
+        _get_feasibility(functions=functions, constraints=constraints),
+    )
+    if regime_law is None:
+        return feasibility
+    return _RoutedFeasibility(
+        feasibility=_NamedArgumentsCall(
+            func=feasibility, names=frozenset(inspect.signature(feasibility).parameters)
+        ),
+        regime_law=_NamedArgumentsCall(
+            func=regime_law, names=frozenset(inspect.signature(regime_law).parameters)
+        ),
+        target=target,
+    )
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _RoutedFeasibility:
+    """Admit a cell that is feasible and gives the target positive probability."""
+
+    feasibility: _NamedArgumentsCall[BoolND]
+    """The conjunction of the phase's ordinary constraints."""
+    regime_law: _NamedArgumentsCall[Mapping[RegimeName, FloatND]]
+    """The phase's regime transition probabilities, by target."""
+    target: RegimeName
+    """The target whose probability must be positive."""
+
+    def __post_init__(self) -> None:
+        _publish_signature(
+            target=self,
+            arg_names=tuple(sorted(self.feasibility.names | self.regime_law.names)),
+            return_annotation="BoolND",
+            name="routed_feasibility",
+        )
+
+    @no_type_check
+    def __call__(self, **kwargs: EconFunctionArg) -> BoolND:
+        return self.feasibility(**kwargs) & is_live(
+            self.regime_law(**kwargs)[self.target]
+        )
 
 
 def _find_discrete_law_off_grid(
