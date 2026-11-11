@@ -155,10 +155,13 @@ def _two_law_model(
     form: str,
     enable_jit: bool,
     second_reads_integer: bool = False,
+    first_ignores_slot: bool = False,
     fixed_params: UserParams | None = None,
 ) -> Model:
     """Ages 0 and 1 are demanded and read `hazard` as a float; age 2 never is."""
     first, second, integer = _LAW_FORMS[form]
+    if first_ignores_slot:
+        first = {name: StochasticTransition(func=_half) for name in ("source", "sink")}
     cases = {0: first, 1: integer if second_reads_integer else second, 2: integer}
     # A law over all targets cannot return to `source` before the last age, so
     # those forms enter `source` at both demanded ages and leave it for good.
@@ -211,6 +214,15 @@ def test_two_demanded_float_laws_receive_a_float_after_lowering(
     for by_regime in values.values():
         for value in by_regime.values():
             np.testing.assert_array_equal(np.asarray(value), 0.0)
+
+
+@pytest.mark.parametrize("hazard", [1, 1.0, np.asarray(1, dtype=np.int32)])
+def test_a_slot_only_a_later_demanded_law_reads_receives_a_float(
+    *, hazard: float | np.ndarray
+) -> None:
+    """Every demanded law decides its slots, not only the first one."""
+    model = _two_law_model(form="cells", enable_jit=False, first_ignores_slot=True)
+    model.solve(params=_two_law_params(form="cells", hazard=hazard), log_level="off")
 
 
 @pytest.mark.parametrize("form", list(_LAW_FORMS))
