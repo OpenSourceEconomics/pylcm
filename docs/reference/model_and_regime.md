@@ -314,8 +314,10 @@ example a spread read from a state that the exit changes, naming what would have
 implemented to support it.
 
 The cells of a query chunk and the rows of an information support run as batched lanes.
-A lane whose exit is unavailable is still computed and then discarded; its target reads
-its first grid point instead of the projected state, so a projection that is meaningless
+Unless `ExecutionConfig(axis_widths={"query_cell": ...})` fixes the chunk, it holds as
+many cells as fill one step with the rows of the widest query, and at least 64. A lane
+whose exit is unavailable is still computed and then discarded; its target reads its
+first grid point instead of the projected state, so a projection that is meaningless
 when the exit is unavailable cannot reach user functions there.
 
 Native current-period exits use each queried regime's declared `GridSearch` solver.

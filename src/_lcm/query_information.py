@@ -30,6 +30,7 @@ from _lcm.current_iid import (
 )
 from _lcm.policy_queries import (
     _ROW_BATCH,
+    _STEP_LANES,
     PolicyAnswer,
     QueryKind,
     QueryNode,
@@ -71,6 +72,23 @@ def support_size(*, node: QueryNode, period: int) -> int:
     if node.sample is not None:
         return size * node.sample[0].n
     return size * math.prod(node.observation_counts)
+
+
+def default_chunk_size(*, definitions: Mapping[str, QueryNode]) -> int:
+    """Return the source cells per chunk that fill one step with the widest query.
+
+    A step holds chunk-times-row-batch lanes. A graph whose widest query has few
+    rows fills that step only with more cells, so its chunk grows until the
+    widest query's rows times the chunk reach the lane target. A chunk is never
+    narrower than the row batch floor.
+    """
+    rows = max(
+        support_size(node=node, period=node.read.period)
+        for node in definitions.values()
+    )
+    # ponytail: the padded last position of a wider chunk can pass int32 where a
+    # 64-cell chunk's would not; cap the chunk by the source count if that bites.
+    return max(_ROW_BATCH, _STEP_LANES // rows)
 
 
 @functools.cache

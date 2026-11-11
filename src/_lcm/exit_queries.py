@@ -30,6 +30,7 @@ from _lcm.policy_queries import (
     _taste_stay_roster,
     build_policy_query_kernel,
 )
+from _lcm.query_information import default_chunk_size
 from _lcm.solution.contract import SolverBuildContext
 from _lcm.typing import PytreeValue, QualifiedName
 from _lcm.utils.functools import (
@@ -1265,7 +1266,9 @@ def lower_exit_queries(
         period=period,
         definitions=nodes,
         root=root_key,
-        chunk_size=root_context.axis_widths.get("query_cell", 64),
+        chunk_size=root_context.axis_widths.get(
+            "query_cell", default_chunk_size(definitions=nodes)
+        ),
     )
     return kernel.with_fixed_params(
         fixed_flat_params=MappingProxyType(
