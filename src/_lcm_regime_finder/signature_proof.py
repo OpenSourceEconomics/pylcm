@@ -1,12 +1,11 @@
-"""Independent singleton-signature formulation, tiny oracles and proof kernel.
+"""Independent singleton-signature cost formulation.
 
-This file imports no production module. Tiny enumeration is an offline oracle.
-The binary model is a scalable representation, not a claim of solved optimization.
+The binary model represents Pareto costs; completeness is checked by
+replaying the independently reconstructed component recurrence.
 The caller must first establish source semantics and protected-context identity.
 """
 from __future__ import annotations
-from collections import Counter, defaultdict
-from itertools import product
+from collections import Counter
 import hashlib
 import json
 import math
@@ -147,53 +146,10 @@ def literal_partition_cost(instance, blocks):
     return tuple(total)
 
 
-def all_partitions(items):
-    """Tiny-only independent set-partition oracle; never the production path."""
-    if not items:
-        yield []
-        return
-    first, *rest = items
-    for partition in all_partitions(rest):
-        yield [[first], *[b[:] for b in partition]]
-        for i in range(len(partition)):
-            candidate = [b[:] for b in partition]
-            candidate[i].append(first)
-            yield candidate
 
 
-def partition_frontier(instance, *, max_cells=7):
-    if len(instance['cells']) > max_cells:
-        raise ValueError('Tiny oracle cell limit')
-    ids = sorted(c['id'] for c in instance['cells'])
-    return pareto(cost for blocks in all_partitions(ids)
-                  if (cost := literal_partition_cost(instance, blocks)) is not None)
 
 
-def signature_assignment_frontier(instance, *, max_cells=7):
-    """Different enumeration: cell-to-union-signature assignments, not partitions."""
-    validate(instance)
-    if len(instance['cells']) > max_cells:
-        raise ValueError('Tiny oracle cell limit')
-    cells = sorted(instance['cells'], key=lambda c: c['id'])
-    bins = union_closure(instance)
-    choices = [[k for k, sig in enumerate(bins) if join(signature(c), sig) == sig] for c in cells]
-    values = []
-    for labels in product(*choices):
-        groups = defaultdict(list)
-        for c, k in zip(cells, labels):
-            groups[k].append(c)
-        if any(union_signatures(signature(c) for c in group) != bins[k] for k, group in groups.items()):
-            continue
-        owner = {c['id']: k for c, k in zip(cells, labels)}
-        w, b = instance['clarity_weights'], instance['boundary_unit']
-        work = sum(rows(instance, bins[owner[c['id']]])[0] * rows(instance, bins[owner[c['id']]])[1] for c in cells)
-        work += sum(b * math.prod(rows(instance, bins[owner[s]])) for s, t in set(map(tuple, instance['pairs']))
-                    if t not in owner or owner[t] != owner[s])
-        storage = sum(rows(instance, bins[owner[c['id']]])[0] for c in cells)
-        clarity = w['dispatch'] * len(cells) + sum(
-            w['block'] - w['dispatch'] + w['characteristic'] * len(bins[k][2]) for k in groups)
-        values.append((work, storage, clarity))
-    return pareto(values)
 
 
 def binary_model(instance):
@@ -258,98 +214,3 @@ def binary_model(instance):
             'pareto_complete_representation': True, 'full_plan_set_preserved': False,
             'frontier_complete_verified': False,
             'guard': 'one cell per original label; one protected context; per_block; block > dispatch'}
-
-
-def verify_binary_assignment(model, assignment):
-    """Check integer constraints and objectives; no producer cost routine."""
-    if set(assignment) != set(model['variables']) or any(type(v) is not int or v not in (0, 1) for v in assignment.values()):
-        raise ValueError('Full binary assignment required')
-    for row in model['constraints']:
-        value = sum(a * assignment[v] for v, a in row['terms'])
-        good = {'==': value == row['rhs'], '<=': value <= row['rhs'], '>=': value >= row['rhs']}[row['relation']]
-        if not good:
-            raise ValueError('Infeasible binary witness')
-    return tuple(obj['constant'] + sum(a * assignment[v] for v, a in obj['terms'])
-                 for obj in (model['objectives'][m] for m in METRICS))
-
-
-def impossible(row, partial):
-    """Sound interval contradiction over remaining independent binary values."""
-    low = high = 0
-    coefficients = defaultdict(int)
-    for variable, coefficient in row['terms']:
-        coefficients[variable] += coefficient
-    for variable, coefficient in coefficients.items():
-        if variable in partial:
-            low += coefficient * partial[variable]
-            high += coefficient * partial[variable]
-        else:
-            low += min(0, coefficient)
-            high += max(0, coefficient)
-    if row['relation'] == '<=':
-        return low > row['rhs']
-    if row['relation'] == '>=':
-        return high < row['rhs']
-    if row['relation'] == '==':
-        return high < row['rhs'] or low > row['rhs']
-    raise ValueError('Unknown relation')
-
-
-def check_unsat_tree(model, clauses, proof, *, max_visits=1000000, check=lambda:None):
-    """Independent, deliberately small query-proof kernel.
-
-    clauses is a conjunction of disjunctions of exact integer inequalities.
-    A branch covers both values of an unassigned binary variable. A leaf names
-    one model constraint or query clause that is impossible on that subcube.
-    No unproved solver status, floating LP bound, or omitted child is accepted.
-    This reference tree can be large; proof DAG memoization is receiver work.
-    """
-    variables = set(model['variables'])
-    visits = 0
-    def visit(node, partial):
-        check()
-        nonlocal visits
-        visits += 1
-        if visits > max_visits:
-            raise RuntimeError('UNRESOLVED: proof verification budget')
-        if node['kind'] == 'split':
-            v = node['variable']
-            if v not in variables or v in partial:
-                raise ValueError('Invalid split variable')
-            visit(node['zero'], {**partial, v: 0})
-            visit(node['one'], {**partial, v: 1})
-        elif node['kind'] == 'constraint':
-            at = node['index']
-            if type(at) is not int or not 0 <= at < len(model['constraints']) or not impossible(model['constraints'][at], partial):
-                raise ValueError('Unproved constraint contradiction')
-        elif node['kind'] == 'clause':
-            at = node['index']
-            if type(at) is not int or not 0 <= at < len(clauses) or not all(impossible(row, partial) for row in clauses[at]):
-                raise ValueError('Unproved clause contradiction')
-        else:
-            raise ValueError('Unknown proof node')
-    visit(proof, {})
-    return {'status': 'PASS', 'visited_nodes': visits, 'claim': 'specified integer query is infeasible'}
-
-
-def frontier_cover_clauses(model, frontier):
-    """For every claimed p require C < p in at least one coordinate.
-
-    Infeasibility means every feasible cost is weakly dominated by a reported
-    feasible p. Feasible reported vectors + antichain + this cover proof suffice
-    for the full Pareto frontier, including unsupported weighted optima.
-    """
-    return [[{'terms': model['objectives'][metric]['terms'], 'relation': '<=',
-              'rhs': point[j] - 1 - model['objectives'][metric]['constant']}
-             for j, metric in enumerate(METRICS)] for point in frontier]
-
-
-def check_frontier_certificate(instance, certificate):
-    model = binary_model(instance)
-    if certificate['model_sha256'] != digest(model):
-        raise ValueError('Certificate model identity mismatch')
-    vectors = [verify_binary_assignment(model, assignment) for assignment in certificate['assignments']]
-    if len(vectors) != len(set(vectors)) or sorted(vectors) != pareto(vectors):
-        raise ValueError('Claimed frontier is not a unique antichain')
-    check_unsat_tree(model, frontier_cover_clauses(model, vectors), certificate['coverage_proof'])
-    return {'status': 'PASS', 'frontier_complete_verified': True, 'vectors': sorted(vectors)}
