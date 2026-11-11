@@ -1,9 +1,10 @@
 """Bind public exits to the canonical scalar policy-query decision."""
 
+import hashlib
 import inspect
 import math
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field, fields, replace
 from itertools import product
 from types import MappingProxyType
 from typing import cast
@@ -27,6 +28,7 @@ from _lcm.policy_queries import (
     QueryNode,
     QueryRead,
     _PolicyQueryKernel,
+    _QueryChunks,
     _taste_stay_roster,
     build_policy_query_kernel,
 )
@@ -1286,13 +1288,22 @@ def install_exit_policy_queries(
     contexts: Mapping[RegimeName, SolverBuildContext],
     value_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
 ) -> MappingProxyType[RegimeName, Regime]:
-    """Install Full roots for exits and tuple-preserving collective integration."""
-    from dataclasses import replace  # noqa: PLC0415
+    """Install Full roots for exits and tuple-preserving collective integration.
 
+    Periods of one regime whose query graphs trace the same programs run the
+    functions of the first such period and publish its period in their
+    signature, so one lowering serves all of them.
+    """
     updated = dict(canonical_regimes)
     for owner, context in contexts.items():
-        kernels = dict(canonical_regimes[owner].solution.period_kernels)
-        changed = False
+        solution = canonical_regimes[owner].solution
+        kernels = dict(solution.period_kernels)
+        # ponytail: linear scan over a regime's distinct structures; index them by
+        # a hashable digest if a regime ever carries more than a handful.
+        groups: list[
+            tuple[_Structure, int, dict[tuple[str, int], Callable[..., PytreeValue]]]
+        ] = []
+        traced_at: dict[int, int] = {}
         for period in kernels:
             if (
                 value_periods_by_regime is not None
@@ -1307,32 +1318,174 @@ def install_exit_policy_queries(
                     and context.current_iid_plans.get(period) is not None
                 )
             ):
-                kernels[period] = lower_exit_queries(
+                kernel = lower_exit_queries(
                     contexts=contexts,
                     canonical_regimes=canonical_regimes,
                     root=owner,
                     period=period,
                 )
-                changed = True
-        if changed:
+                structure = (
+                    solution.period_signatures[period],
+                    _traced_structure(kernel=kernel),
+                )
+                first, functions = next(
+                    (
+                        (first, functions)
+                        for known, first, functions in groups
+                        if _is_same_structure(left=known, right=structure)
+                    ),
+                    (period, {}),
+                )
+                if first == period:
+                    groups.append((structure, period, functions))
+                kernels[period] = kernel.sharing(functions=functions)
+                traced_at[period] = first
+        if traced_at:
+            solver_keys = solution.solver_period_group_keys
             updated[owner] = replace(
                 canonical_regimes[owner],
                 solution=replace(
-                    canonical_regimes[owner].solution,
+                    solution,
                     period_kernels=MappingProxyType(kernels),
+                    # Grid search, the one solver a query admits, keys each period
+                    # with a law plan apart. A query kernel takes the plan's nodes
+                    # as operands and its structure holds the rest of the plan, so
+                    # the group shares one key.
+                    solver_period_group_keys=MappingProxyType(
+                        {
+                            period: solver_keys[traced_at.get(period, period)]
+                            for period in solver_keys
+                        }
+                    ),
                     period_signatures=MappingProxyType(
                         {
-                            period: (signature, "typed-exit-query", period)
+                            period: (
+                                signature,
+                                "typed-exit-query",
+                                traced_at.get(period, period),
+                            )
                             if isinstance(kernels[period], _PolicyQueryKernel)
                             else signature
-                            for period, signature in canonical_regimes[
-                                owner
-                            ].solution.period_signatures.items()
+                            for period, signature in (
+                                solution.period_signatures.items()
+                            )
                         }
                     ),
                 ),
             )
     return MappingProxyType(updated)
+
+
+type _Structure = tuple[object, ...]  # noqa: PAN001 - a query node's fields share only object
+
+
+def _traced_structure(*, kernel: _PolicyQueryKernel) -> _Structure:
+    """Describe what the kernel's programs trace, apart from their operands.
+
+    Two periods with the same structure trace the same programs. The period,
+    its age, its draws, parameters and stored values enter as operands and stay
+    out of the structure.
+    """
+    chunks = cast("_QueryChunks", kernel.programs["_chunks"].function)
+    return (
+        kernel.root,
+        kernel.chunk_size,
+        chunks.chunks,
+        dict(chunks.raw_sources),
+        tuple(
+            (name, _node_structure(node=node))
+            for name, node in kernel.definitions.items()
+        ),
+    )
+
+
+def _is_same_structure(*, left: _Structure, right: _Structure) -> bool:
+    """Compare two structures; one that cannot be compared matches nothing."""
+    try:
+        return bool(left == right)
+    except TypeError, ValueError:
+        return False
+
+
+def _node_structure(*, node: QueryNode) -> _Structure:
+    """One node's fields, with each per-period object replaced by its sources.
+
+    - The read drops its period and keeps the names its projection writes.
+    - The context becomes `_context_structure`.
+    - A closure bound per period keeps only its presence: it is built from the
+      declaration, the closed exits and the child queries, which the context and
+      the remaining fields hold.
+    """
+    parts: _Structure = ()
+    for item in fields(node):
+        value = getattr(node, item.name)
+        if item.name == "read":
+            value = tuple(
+                tuple(getattr(value, part.name))
+                if part.name == "projection"
+                else getattr(value, part.name)
+                for part in fields(value)
+                if part.name != "period"
+            )
+        elif item.name == "context":
+            value = _context_structure(node=node)
+        elif item.name in {"participation", "decision", "available"}:
+            value = value is not None
+        elif item.name == "source_projection":
+            value = tuple(value)
+        parts = (*parts, value)
+    return parts
+
+
+def _context_structure(*, node: QueryNode) -> _Structure:
+    """The node's context, with each period-keyed field read at the node's period.
+
+    A field shared by every period stands by its identity. The law plan stands by
+    its bindings and the content of its node arrays, because every period holds
+    a plan of its own.
+    """
+    from _lcm.model_graph import _exit_is_statically_unavailable  # noqa: PLC0415
+
+    context, period = node.context, node.read.period
+    declaration = context.user_regimes_at(period=period)[node.read.target]
+    plan = context.current_iid_plans.get(period)
+    return (
+        tuple(
+            id(getattr(context, item.name))
+            for item in fields(context)
+            if item.name != "current_iid_plans"
+        ),
+        id(context.Q_and_F_functions[period]),
+        id(declaration),
+        id(context.participation_queries.get(period)),
+        tuple(
+            _exit_is_statically_unavailable(
+                predicate=item.available, period=period, ages=context.ages
+            )
+            for item in exits_for_phase(
+                exits=declaration.exits, phase=node.read.phase
+            ).values()
+        ),
+        None
+        if plan is None
+        else (
+            tuple(
+                (name, id(binding), _content_digest(tree=nodes))
+                for name, binding, nodes in plan.bindings
+            ),
+            _content_digest(tree=plan.indices),
+        ),
+    )
+
+
+def _content_digest(*, tree: PytreeValue) -> str:
+    """Digest the shape, dtype and bytes of every array leaf."""
+    digest = hashlib.sha256()
+    for leaf in jax.tree.leaves(tree):
+        array = np.asarray(leaf)
+        digest.update(repr((array.shape, array.dtype.str)).encode())
+        digest.update(array.tobytes())
+    return digest.hexdigest()
 
 
 def _validate_custom_rules(*, exits: Mapping[str, Exit]) -> None:

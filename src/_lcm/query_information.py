@@ -29,6 +29,7 @@ from _lcm.current_iid import (
     NodeOperands,
 )
 from _lcm.policy_queries import (
+    _DRAWS,
     _ROW_BATCH,
     _STEP_LANES,
     PolicyAnswer,
@@ -113,6 +114,22 @@ def _uniforms(
     )
     # A uniform that rounds to one in single precision selects no cell.
     return np.minimum(uniforms, np.nextafter(np.float32(1), np.float32(0)))
+
+
+def sample_uniforms(*, node: QueryNode) -> np.ndarray:
+    """A drawn query's points: one column per drawn group, then per observation."""
+    rule, kept = cast(
+        "tuple[MonteCarlo | QuasiMonteCarlo, tuple[int, ...]]", node.sample
+    )
+    plan = node.context.current_iid_plans.get(node.read.period)
+    groups = 0 if plan is None else len(plan.bindings)
+    return _uniforms(
+        rule=rule,
+        period=node.read.period,
+        owner=node.read.target,
+        dimension=sum(column not in kept for column in range(groups))
+        + len(node.observation_sources),
+    )
 
 
 def _draw(*, weights: FloatND, uniform: FloatND) -> tuple[IntND, FloatND]:
@@ -1416,14 +1433,7 @@ class InformationQueryCell:
         )
         bindings = () if plan is None else plan.bindings
         drawn = tuple(column for column in range(len(bindings)) if column not in kept)
-        uniforms = jnp.asarray(
-            _uniforms(
-                rule=rule,
-                period=node.read.period,
-                owner=node.read.target,
-                dimension=len(drawn) + len(node.observation_sources),
-            )
-        )
+        uniforms = cast("FloatND", fixed[_DRAWS])
         size = 1 if plan is None else plan.indices.shape[0]
         scales = [jnp.full(rule.n, 1 / rule.n, uniforms.dtype)]
         if plan is None:
