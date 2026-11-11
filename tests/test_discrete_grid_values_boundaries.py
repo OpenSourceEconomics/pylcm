@@ -198,40 +198,33 @@ def value_frame() -> pd.DataFrame:
 def test_to_dataframe_value_grid_categories_are_its_values(
     *, value_frame: pd.DataFrame, column: str, categories: list[float]
 ) -> None:
-    """A value-grid column is ordered and lists every value, observed or not."""
+    """A value-grid column is ordered and lists every value, observed or not.
+
+    Integer grids publish integer categories, float grids float ones.
+    """
     accessor = value_frame[column].cat
     assert (accessor.ordered, accessor.categories.tolist()) == (True, categories)
-
-
-@pytest.mark.parametrize(
-    ("column", "kind"), [("experience", "i"), ("level", "f"), ("hours", "i")]
-)
-def test_to_dataframe_value_grid_categories_keep_the_numeric_kind(
-    *, value_frame: pd.DataFrame, column: str, kind: str
-) -> None:
-    """Integer grids publish integer categories, float grids float ones."""
-    assert value_frame[column].cat.categories.dtype.kind == kind
-
-
-def test_to_dataframe_value_grid_rows_hold_values() -> None:
-    """Each row holds the value of the node its subject occupies."""
-    frame = _first_alive_rows(
-        _MODEL.simulate(
-            params=_PARAMS, initial_conditions=_VALUE_START, log_level="off", seed=0
-        ).to_dataframe()
-    )
-    numbers = frame[["experience", "level", "hours"]].astype(float).to_numpy()
-    assert numbers.tolist() == [
-        [0.0, 0.5, 20.0],
-        [4.0, 1.0, 40.0],
-        [10.0, 2.0, 40.0],
-    ]
+    kind = {"experience": "i", "level": "f", "hours": "i"}[column]
+    assert accessor.categories.dtype.kind == kind
 
 
 def test_to_dataframe_value_grid_column_casts_to_float_for_arithmetic(
     value_frame: pd.DataFrame,
 ) -> None:
-    """`.astype(float)` turns a value-grid column into numbers for moments."""
+    """`.astype(float)` turns a value-grid column into numbers for moments.
+
+    Each row holds the value of the node its subject occupies.
+    """
+    numbers = (
+        _first_alive_rows(value_frame)[["experience", "level", "hours"]]
+        .astype(float)
+        .to_numpy()
+    )
+    assert numbers.tolist() == [
+        [0.0, 0.5, 20.0],
+        [4.0, 1.0, 40.0],
+        [10.0, 2.0, 40.0],
+    ]
     alive = value_frame.loc[value_frame["regime_name"] == "alive"]
     aaae(alive["hours"].astype(float).mean(), (20 + 40 + 40) / 3, DECIMAL_PRECISION)
 

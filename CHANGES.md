@@ -69,14 +69,20 @@ chronological order. We follow [semantic versioning](https://semver.org/).
     and exit availability return a Boolean. An integer `0`/`1`, which gates,
     participation predicates and exit availability accepted before, is refused; write
     the comparison, e.g. `work == 1`;
-  - laws of discrete states and deterministic regime selectors return an integer code,
-    or a Boolean for the codes 0 and 1. A float is refused rather than truncated onto a
-    code;
+  - laws of discrete states, deterministic regime selectors and projections onto a
+    discrete state return an integer code, or a Boolean for the codes 0 and 1. A float
+    is refused rather than truncated onto a code;
   - utilities, laws of continuous states, transition probabilities, joint-transition
     weights and outputs, exit utility adjustments and borrowing bounds return a number.
     A Boolean is refused.
-- A discrete law's code keeps a width wider than `int32` until the off-grid check, so
-  `2**32 + 1` is reported as off the grid rather than wrapped onto a valid code.
+- An integer code of any width or signedness, and an integer a law returns for an
+  integer value grid, is converted to `int32` where the engine receives it, at both
+  precisions. Values outside the `int32` range are outside the contract and wrap;
+  declared codes and grid values are already confined to it.
+- A `ByAge` or per-period law is checked case by case, each by the role of the function
+  that wrote it, before the cases are combined.
+- A parameter read by an edge law takes its numeric role from the laws that are live at
+  some age; a declaration no age uses does not change it.
 - See [What a function returns](docs/reference/model_and_regime.md#api-function-returns).
 
 ### Grid bounds and counts are host numbers
@@ -93,6 +99,27 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   decimals otherwise, e.g. `age 25` and `age 25.33`.
 - A `ConditionalAction` condition is stored in one numeric kind: as floats if any listed
   value is a float, otherwise as integers.
+
+### Derivatives with respect to model parameters are no longer supported
+
+Gradients of simulated statistics are not meaningful in models with discrete choices,
+so the custom derivative rules that existed only for them are removed. Values are
+unchanged. The solvers keep the derivative rules they use themselves.
+
+- `TauchenAR1Process.on_nodes(transition_rule="density")` rows, the mixture quantile,
+  the certainty-equivalent power means and the Epstein–Zin continuation mean no longer
+  carry a custom derivative rule.
+- The zero-safe weighted reductions, the balanced and scaled-down products and the hard
+  maximum work on the bit pattern of their operands, where plain automatic
+  differentiation would return zero. Differentiating through them raises the new
+  `lcm.exceptions.UnsupportedDifferentiationError`.
+- The native exact-affine reads and query winners carry no derivative rule;
+  differentiating through them raises.
+- The implicit derivative of a continuous outer optimum
+  (`_lcm.optimization.implicit_outer_derivative`) and its Mahler–Yum pilot
+  (`lcm_examples.mahler_yum_2024.implicit_pilot`) are removed.
+- Semantic fingerprints change for every model; solutions saved with an earlier version
+  do not load.
 
 ### Public grid, process and condition classes live in `lcm`
 

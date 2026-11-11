@@ -415,9 +415,6 @@ class TauchenAR1Process(_AR1Process):
 
         The default rule integrates midpoint bins with open first and last tails.
         ``density`` normalizes normal densities at the nodes; it ignores cell widths.
-        Density derivatives use normalized scaled arithmetic without host checks.
-        A test-suite certificate checks explicitly supplied rows;
-        routine differentiation makes no componentwise certificate promise.
         ``innovation_quadrature`` maps standardized innovations linearly to adjacent
         state nodes, clipping targets to the endpoints. Supply ``n_quadrature``
         (default 9 Gauss-Hermite points), or both innovation arrays. Weights must be

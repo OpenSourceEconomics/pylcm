@@ -36,13 +36,13 @@ type _NumericValue = int | float | np.integer | np.floating | np.ndarray | Value
 
 # What a user function may return where the engine expects one array: a Python
 # scalar, a NumPy scalar or array, or a JAX array of any numeric kind.
-# A discrete code from a user function: `int32`, or wider when it arrives wider.
-type _Code = Int[Array, "..."]
+type UserOutput = bool | int | float | np.generic | np.ndarray | ValueND
+
+# A discrete code from a user function, converted to `int32`.
+type Code = Int[Array, "..."]
 
 # Names the user function an output-kind error refers to, e.g. "Constraint 'c'".
 type OutputSource = str
-
-type _UserOutput = bool | int | float | np.generic | np.ndarray | ValueND
 
 
 def canonical_float_dtype() -> type:  # noqa: PAN006 - JAX scalar classes use a private metaclass exposed as callable values in its stubs
@@ -161,7 +161,7 @@ def name_of(function: object) -> OutputSource:  # noqa: PAN001 - any user callab
     return getattr(function, "__name__", repr(function))
 
 
-def as_canonical_float(*, value: _UserOutput, source: OutputSource) -> FloatND:
+def as_canonical_float(*, value: UserOutput, source: OutputSource) -> FloatND:
     """Return a float-role output (an integer or float) at the canonical dtype.
 
     JAX canonicalizes the Python `float` dtype to the active precision, so the
@@ -171,7 +171,7 @@ def as_canonical_float(*, value: _UserOutput, source: OutputSource) -> FloatND:
         InvalidFunctionOutputError: `source` returned a Boolean or complex value.
 
     """
-    array = jnp.asarray(value)
+    array = _first_array(value)
     if array.dtype.kind not in "iuf":
         msg = (
             f"{source} returned dtype '{array.dtype}', but must return a number. "
@@ -183,7 +183,7 @@ def as_canonical_float(*, value: _UserOutput, source: OutputSource) -> FloatND:
     return jnp.asarray(array, dtype=float)
 
 
-def as_bool(*, value: _UserOutput, source: OutputSource) -> BoolND:
+def as_bool(*, value: UserOutput, source: OutputSource) -> BoolND:
     """Return a predicate's output, which must be Boolean, as a JAX Boolean.
 
     Raises:
@@ -201,25 +201,36 @@ def as_bool(*, value: _UserOutput, source: OutputSource) -> BoolND:
     return array
 
 
-def as_code(*, value: _UserOutput, source: OutputSource) -> _Code:
-    """Return a discrete-code output (an integer or Boolean) as an integer array.
+def as_code(*, value: UserOutput, source: OutputSource) -> Code:
+    """Return a discrete-code output (an integer or Boolean) as an `int32` array.
 
-    A Boolean becomes the code 0 or 1. An integer keeps at least 32 bits and a
-    wider width: narrowing `2**32 + 1` to `int32` here would wrap it onto the
-    code `1` before the off-grid check could see it.
+    A Boolean becomes the code 0 or 1. Any integer is converted to `int32`; a
+    code outside the `int32` range is outside the contract and wraps.
 
     Raises:
         InvalidFunctionOutputError: `source` returned a float or complex value.
 
     """
-    array = jnp.asarray(value)
-    if array.dtype.kind == "b":
-        return array.astype(jnp.int32)
-    if array.dtype.kind not in "iu":
+    array = _first_array(value)
+    if array.dtype.kind not in "biu":
         msg = (
             f"{source} returned dtype '{array.dtype}', but must return an integer "
             "code. A float would be truncated onto a code: compute the code as "
             "an integer, e.g. with `.astype(jnp.int32)` after rounding on purpose."
         )
         raise InvalidFunctionOutputError(msg)
-    return jnp.asarray(array, dtype=jnp.promote_types(array.dtype, jnp.int32))
+    # A host array is converted in NumPy, so JAX never sees a 64-bit host integer
+    # it would refuse at single precision.
+    return jnp.asarray(
+        array.astype(np.int32 if isinstance(array, np.ndarray) else jnp.int32)
+    )
+
+
+def _first_array(value: UserOutput) -> np.ndarray | ValueND:
+    """Return a user output as an array without narrowing it.
+
+    JAX narrows a host integer to 32 bits at single precision, or refuses it, so
+    a host value is read with NumPy: `2**32` is a float-role output like any
+    other integer.
+    """
+    return value if isinstance(value, Array) else np.asarray(value)

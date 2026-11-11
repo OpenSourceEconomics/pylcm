@@ -180,8 +180,10 @@ def test_characteristics_reject_inconsistent_tables(*, build, message):
     ],
 )
 def test_category_with_returns_the_code_of_the_matching_category(*, row, code):
-    """A full row maps back to its category's code."""
-    assert int(category_with(STATUS, **row)) == code
+    """A full row maps back to its category's code, in the dtype of codes."""
+    found = category_with(STATUS, **row)
+    assert found.dtype == jnp.int32
+    assert int(found) == code
 
 
 def test_category_with_accepts_a_subset_that_tells_all_categories_apart():
@@ -198,13 +200,6 @@ def test_category_with_returns_the_missing_code_for_an_unlisted_combination():
     found = category_with(STATUS, has_job=True, on_di=True, di_years=1)
 
     assert int(found) == MISSING_CAT_CODE
-
-
-def test_category_with_returns_int32():
-    """Codes come back in the dtype of category codes."""
-    assert (
-        category_with(STATUS, has_job=True, on_di=False, di_years=0).dtype == jnp.int32
-    )
 
 
 def test_category_with_under_jit_matches_eager():
@@ -308,18 +303,6 @@ def test_category_with_finds_int32_extremes_exactly(*, mode):
 
     np.testing.assert_array_equal(
         found, np.array([MISSING_CAT_CODE, 0, 1, 2, MISSING_CAT_CODE, 3])
-    )
-
-
-@pytest.mark.skipif(not X64_ENABLED, reason="int64 queries need x64")
-def test_category_with_treats_int64_values_outside_int32_as_missing():
-    """Wide signed queries keep their value: beyond int32 nothing matches."""
-    queries = jnp.array([-(2**31) - 1, -1, 2**31, 2**32 - 1], dtype=jnp.int64)
-
-    found = category_with(SIGNED, x=queries)
-
-    np.testing.assert_array_equal(
-        found, np.array([MISSING_CAT_CODE, 1, MISSING_CAT_CODE, MISSING_CAT_CODE])
     )
 
 
@@ -436,6 +419,18 @@ def test_category_with_int64_neighbourhoods_of_every_characteristic(
     found = _TRANSFORMS[mode](queries)
 
     np.testing.assert_array_equal(found, _exact_signed_codes(values))
+    if (mode, representation) == ("eager", "strong"):
+        # Wide signed queries keep their value: beyond int32 nothing matches.
+        literal = {
+            -(2**31) - 1: MISSING_CAT_CODE,
+            -1: 1,
+            2**31: MISSING_CAT_CODE,
+            2**32 - 1: MISSING_CAT_CODE,
+        }
+        np.testing.assert_array_equal(
+            np.asarray(found)[[values.index(value) for value in literal]],
+            np.array(list(literal.values())),
+        )
 
 
 @pytest.mark.parametrize("mode", ["eager", "jit", "vmap", "jit_vmap"])

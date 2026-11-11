@@ -43,6 +43,7 @@ from typing import TYPE_CHECKING, Literal, NoReturn, cast, no_type_check
 
 import jax.numpy as jnp
 
+from _lcm.dtypes import Code, UserOutput, as_canonical_float, as_code, name_of
 from _lcm.gated_edge import GatedEdge
 from _lcm.reachability import PhaseName
 from _lcm.regime_building.transition_support import (
@@ -534,29 +535,16 @@ def lower_demanded_transitions(
         if declared is None:
             lowered[name] = None
             continue
-        law_by_period = schedules.law_by_period_by_regime[name]
-        solve_periods = schedules.context_periods_by_regime[name]
-        if not solve_periods:
-            if not law_by_period:
-                # A declared nonterminal law is a case law or a schedule of them.
-                law_by_period = {
-                    0: cast(
-                        "CaseLaw",
-                        declared.laws[0] if isinstance(declared, ByAge) else declared,
-                    )
-                }
-            solve_periods = (min(law_by_period),)
-        else:
+        law_by_period, solve_periods = _lowering_inputs(
+            schedules=schedules, name=name, declared=declared
+        )
+        if schedules.context_periods_by_regime[name]:
             _fail_if_conflicting_annotations(
                 regime_name=name,
-                laws=tuple(
-                    _phase_side(law=law_by_period[period], side=side)
-                    for side, periods in zip(
-                        _SIDES,
-                        (solve_periods, visited_periods[name]),
-                        strict=True,
-                    )
-                    for period in periods
+                laws=_demanded_sides(
+                    law_by_period=law_by_period,
+                    solve_periods=solve_periods,
+                    simulate_periods=visited_periods[name],
                 ),
             )
         lowered[name] = _lower(
@@ -566,6 +554,73 @@ def lower_demanded_transitions(
             code_by_name=code_by_name,
         )
     return MappingProxyType(lowered)
+
+
+def demanded_declared_laws(
+    *,
+    schedules: RegimeSchedules,
+    declared_transitions: Mapping[RegimeName, RegimeTransitionLaw],
+) -> MappingProxyType[RegimeName, tuple[PhaseLaw, ...]]:
+    """Each nonterminal regime's declared laws at the periods lowering reads.
+
+    These are the laws `lower_demanded_transitions` combines, as the user wrote
+    them: the solve side at the valued periods and the simulate side at the
+    visited ones. Whatever form lowering gives their union, these decide how
+    the model reads an edge parameter.
+    """
+    return MappingProxyType(
+        {
+            name: _demanded_sides(
+                law_by_period=law_by_period,
+                solve_periods=solve_periods,
+                simulate_periods=schedules.acting_periods_by_regime[name],
+            )
+            for name, declared in declared_transitions.items()
+            if declared is not None
+            for law_by_period, solve_periods in (
+                _lowering_inputs(schedules=schedules, name=name, declared=declared),
+            )
+        }
+    )
+
+
+def _lowering_inputs(
+    *,
+    schedules: RegimeSchedules,
+    name: RegimeName,
+    declared: CaseLaw | ByAge,
+) -> tuple[Mapping[int, CaseLaw], tuple[int, ...]]:
+    """A regime's per-period laws and the periods its solve side is lowered over.
+
+    A regime without valued periods keeps one declared law, at one period.
+    """
+    law_by_period = schedules.law_by_period_by_regime[name]
+    solve_periods = schedules.context_periods_by_regime[name]
+    if solve_periods:
+        return law_by_period, solve_periods
+    if not law_by_period:
+        # A declared nonterminal law is a case law or a schedule of them.
+        law_by_period = {
+            0: cast(
+                "CaseLaw",
+                declared.laws[0] if isinstance(declared, ByAge) else declared,
+            )
+        }
+    return law_by_period, (min(law_by_period),)
+
+
+def _demanded_sides(
+    *,
+    law_by_period: Mapping[int, CaseLaw],
+    solve_periods: tuple[int, ...],
+    simulate_periods: tuple[int, ...],
+) -> tuple[PhaseLaw, ...]:
+    """The solve side at the solve periods, then the simulate side at its own."""
+    return tuple(
+        _phase_side(law=law_by_period[period], side=side)
+        for side, periods in zip(_SIDES, (solve_periods, simulate_periods), strict=True)
+        for period in periods
+    )
 
 
 def _fail_if_conflicting_annotations(
@@ -1241,7 +1296,10 @@ class _Indicator:
                 "A declaration view is for construction-time checks only and is "
                 "never evaluated."
             )
-        selected = self.selector(**{name: kwargs[name] for name in self.names})
+        selected = _as_regime_code(
+            function=self.selector,
+            value=self.selector(**_read(kwargs=kwargs, names=self.names)),
+        )
         return jnp.asarray(selected == self.code, dtype=float)
 
 
@@ -1269,9 +1327,31 @@ class _PeriodMasked:
 
     @no_type_check
     def __call__(self, **kwargs: EconFunctionArg) -> FloatND:
-        value = self.cell(**{name: kwargs[name] for name in self.names})
+        value = _as_probability(
+            function=self.cell,
+            value=self.cell(**_read(kwargs=kwargs, names=self.names)),
+        )
         selected = jnp.isin(kwargs["period"], jnp.asarray(self.periods))
         return jnp.where(selected, value, jnp.zeros_like(value))
+
+
+def _read(
+    *, kwargs: Mapping[str, EconFunctionArg], names: tuple[str, ...]
+) -> dict[str, EconFunctionArg]:
+    return {name: kwargs[name] for name in names}
+
+
+def _as_regime_code(*, function: UserFunction, value: UserOutput) -> Code:
+    return as_code(value=value, source=f"Regime selector '{name_of(function)}'")
+
+
+def _as_probability(*, function: UserFunction, value: UserOutput) -> FloatND:
+    return as_canonical_float(
+        value=value, source=f"Regime transition probability '{name_of(function)}'"
+    )
+
+
+type _CaseAdapter = Callable[..., FloatND | Code]
 
 
 def _period_dispatch(
@@ -1279,12 +1359,16 @@ def _period_dispatch(
     cases: tuple[UserFunction, ...],
     case_names: tuple[tuple[str, ...], ...],
     case_by_period: tuple[int, ...],
+    adapt: _CaseAdapter,
 ) -> Callable[..., FloatND | IntND]:
     """Evaluate the case callable selected for the current period."""
     names = tuple(sorted({name for names in case_names for name in names}))
     return _with_signature(
         _PeriodDispatch(
-            cases=cases, case_names=case_names, case_by_period=case_by_period
+            cases=cases,
+            case_names=case_names,
+            case_by_period=case_by_period,
+            adapt=adapt,
         ),
         names=_with_period(names),
         sources=cases,
@@ -1301,6 +1385,8 @@ class _PeriodDispatch:
     """The arguments each case reads."""
     case_by_period: tuple[int, ...]
     """The position in `cases` selected at each period."""
+    adapt: _CaseAdapter
+    """The role every case's result has: a regime code or a probability."""
 
     @no_type_check
     def __call__(self, **kwargs: EconFunctionArg) -> FloatND | IntND:
@@ -1308,9 +1394,10 @@ class _PeriodDispatch:
         # declared law of this regime evaluated on the same arguments, so an
         # unselected case can at worst produce a value that is discarded. The
         # regime law is never differentiated, so a discarded non-finite value
-        # cannot reach a gradient.
+        # cannot reach a gradient. Each result is checked in its own role first:
+        # selecting among them would promote a wrong kind onto a right one.
         values = [
-            jnp.asarray(case(**{name: kwargs[name] for name in names}))
+            self.adapt(function=case, value=case(**_read(kwargs=kwargs, names=names)))
             for case, names in zip(self.cases, self.case_names, strict=True)
         ]
         index = jnp.asarray(self.case_by_period)[kwargs["period"]]
@@ -1481,6 +1568,7 @@ def _deterministic_dispatch(
         cases=cast("tuple[UserFunction, ...]", cases),
         laws=laws,
         law_by_period=law_by_period,
+        adapt=_as_regime_code,
     )
 
 
@@ -1489,6 +1577,7 @@ def _dispatch(
     cases: tuple[UserFunction, ...],
     laws: tuple[PhaseLaw, ...],
     law_by_period: Mapping[int, PhaseLaw],
+    adapt: _CaseAdapter,
 ) -> Callable[..., FloatND | IntND]:
     n_periods = max(law_by_period) + 2
     position = {id(law): index for index, law in enumerate(laws)}
@@ -1499,6 +1588,7 @@ def _dispatch(
             position[id(law_by_period[period])] if period in law_by_period else 0
             for period in range(n_periods)
         ),
+        adapt=adapt,
     )
 
 
@@ -1526,7 +1616,12 @@ def _vector_union(
         for law in laws
     )
     return _SupportedStochasticTransition(
-        func=_dispatch(cases=cases, laws=laws, law_by_period=law_by_period),
+        func=_dispatch(
+            cases=cases,
+            laws=laws,
+            law_by_period=law_by_period,
+            adapt=_as_probability,
+        ),
         targets=targets,
     )
 

@@ -18,6 +18,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from jax import Array
 
 from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.processes.state_conditioned import sigma_array_by_code
@@ -432,7 +433,7 @@ def _innovation_utility(*, innovation: FloatND) -> FloatND:
     return innovation
 
 
-def _shock_model(fixed_mu: float) -> Model:
+def _shock_model(fixed_mu: float | np.ndarray | Array) -> Model:
     group = ShockGroup(
         shocks={"innovation": Normal(mu=None, sigma=0.0)},
         nodes=Product(innovation=GaussHermite(1)),
@@ -459,4 +460,27 @@ def test_fixed_shock_coefficient_has_one_float_identity() -> None:
     np.testing.assert_array_equal(
         np.asarray(integer.solve(params={}, log_level="off").values[0]["terminal"]),
         np.asarray(floating.solve(params={}, log_level="off").values[0]["terminal"]),
+    )
+
+
+@pytest.mark.parametrize(
+    "floating",
+    [
+        np.asarray(1.0, dtype=np.float32),
+        np.asarray(1.0, dtype=np.float64),
+        jnp.asarray(1.0),
+    ],
+    ids=["numpy_float32", "numpy_float64", "jax_active_float"],
+)
+@pytest.mark.parametrize(
+    "integer",
+    [np.asarray(1, dtype=np.int32), jnp.asarray(1, dtype=jnp.int32)],
+    ids=["numpy_int32", "jax_int32"],
+)
+def test_fixed_shock_coefficient_array_has_one_float_identity(
+    *, integer: np.ndarray | Array, floating: np.ndarray | Array
+) -> None:
+    assert (
+        _shock_model(integer)._model_structure_fingerprint
+        == _shock_model(floating)._model_structure_fingerprint
     )

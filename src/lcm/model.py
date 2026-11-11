@@ -143,6 +143,7 @@ from _lcm.regime_building.processing import (
     prepare_model_structure,
 )
 from _lcm.regime_building.schedules import (
+    demanded_declared_laws,
     gated_source_periods,
     lower_demanded_transitions,
     resolve_initial_nodes,
@@ -1737,6 +1738,10 @@ class Model:
             gated_source_periods=gated_source_periods(schedules=schedules),
             visited_periods_by_regime=schedules.acting_periods_by_regime,
             declared_transitions=self._declared_transitions,
+            demanded_edge_laws=demanded_declared_laws(
+                schedules=schedules,
+                declared_transitions=prepared_graph.declarations,
+            ),
             declared_edge_vocabulary=declared_edge_vocabulary,
             post_decision_shocks=post_decision_shock_processes,
             # The pruning candidates combine state and action names. Only the
@@ -6800,12 +6805,16 @@ def _float_role_identity(
 
 
 def _as_float_denotation(value: UserParamsNode) -> UserParamsNode:
-    """Return an integer scalar or array as the float a user would have written."""
+    """Return a real scalar or array as the float its value denotes.
+
+    An integer or float array of any width, NumPy or JAX, becomes a float64
+    array, so equal values written in different dtypes fix one law.
+    """
     if isinstance(value, bool):
         return value
     if isinstance(value, int):
         return float(value)
-    if isinstance(value, np.ndarray | jax.Array) and value.dtype.kind in "iu":
+    if isinstance(value, np.ndarray | jax.Array) and value.dtype.kind in "iuf":
         return np.asarray(value, dtype=np.float64)
     return value
 

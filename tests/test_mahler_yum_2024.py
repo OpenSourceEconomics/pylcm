@@ -26,6 +26,7 @@ import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
 from lcm import ByAge, Model, StochasticTransition
+from lcm.solver_api import SolutionResult
 from lcm.typing import RegimeName
 from lcm_examples.mahler_yum_2024 import (
     MODEL_EDGES,
@@ -268,12 +269,24 @@ _EXPECTED_V_SUMS = {
 
 
 @pytest.fixture(scope="module")
-def value_function_sums(*, mahler_gpu_model: Model) -> dict[tuple[int, str], float]:
-    """Solve once with START_PARAMS and sum each checked value array."""
+def mahler_solution(*, mahler_gpu_model: Model) -> SolutionResult:
+    """Solve once with START_PARAMS; every test in the module reads or replays it.
+
+    `create_inputs` builds the model params before it draws anything from its
+    seed, so the params every simulation below passes equal the ones solved here.
+    """
     model_params, _ = create_inputs(
         seed=32, n_simulation_subjects=4, params=START_PARAMS
     )
-    values = mahler_gpu_model.solve(params=model_params, log_level="off").values
+    return mahler_gpu_model.solve(params=model_params, log_level="off")
+
+
+@pytest.fixture(scope="module")
+def value_function_sums(
+    *, mahler_solution: SolutionResult
+) -> dict[tuple[int, str], float]:
+    """Sum each checked value array of the shared solution."""
+    values = mahler_solution.values
     return {
         (period, regime): float(np.sum(np.asarray(values[period][regime])))
         for period, regime in _EXPECTED_V_SUMS
@@ -297,7 +310,9 @@ def test_value_function_sums(
 
 
 @_gpu_x64
-def test_model_solves_and_simulates(*, mahler_gpu_model: Model) -> None:
+def test_model_solves_and_simulates(
+    *, mahler_gpu_model: Model, mahler_solution: SolutionResult
+) -> None:
     """Smoke test: model runs end-to-end with small n."""
     model_params, ic_df = create_inputs(
         seed=0, n_simulation_subjects=4, params=START_PARAMS
@@ -305,6 +320,7 @@ def test_model_solves_and_simulates(*, mahler_gpu_model: Model) -> None:
     result = mahler_gpu_model.simulate(
         params=model_params,
         initial_conditions=ic_df,
+        solution=mahler_solution,
         seed=12345,
         log_level="debug",
     )
@@ -316,7 +332,9 @@ def test_model_solves_and_simulates(*, mahler_gpu_model: Model) -> None:
 
 
 @pytest.fixture(scope="module")
-def simulation_result(*, mahler_gpu_model: Model) -> pd.DataFrame:
+def simulation_result(
+    *, mahler_gpu_model: Model, mahler_solution: SolutionResult
+) -> pd.DataFrame:
     """Simulate 10000 subjects with population seed 32 and simulation seed 42."""
     model_params, initial_conditions = create_inputs(
         seed=32, n_simulation_subjects=10000, params=START_PARAMS
@@ -324,6 +342,7 @@ def simulation_result(*, mahler_gpu_model: Model) -> pd.DataFrame:
     result = mahler_gpu_model.simulate(
         params=model_params,
         initial_conditions=initial_conditions,
+        solution=mahler_solution,
         seed=42,
         log_level="debug",
     )

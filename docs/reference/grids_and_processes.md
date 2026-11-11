@@ -96,11 +96,6 @@ finite nonnegative masses with positive total. Quadrature configuration is stati
 process parameter. All rules accept `StateConditioned` scales. Continuous simulation
 retains the normal law; node simulation uses the selected matrix.
 
-Density-rule differentiation uses normalized scaled arithmetic without a host
-certificate. A componentwise accuracy certificate exists only as a test oracle and adds
-no check to solve, simulation or routine AD. See
-[density derivatives](../user_guide/continuous_stochastic_processes.md).
-
 Process-law values (`mu`, `sigma`, `rho`, `n_std`, `start`/`stop`, mixture parameters,
 `JointNormalIIDProcess`'s `mean` and `cov`, and the values of `StateConditioned.by`) are
 floats. An `int` is accepted and stored as a `float`, so `mu=1` and `mu=1.0` declare one

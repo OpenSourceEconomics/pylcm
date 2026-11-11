@@ -11,7 +11,6 @@ from collections.abc import Sequence
 from decimal import Decimal, localcontext
 from fractions import Fraction
 from itertools import pairwise
-from typing import Literal
 
 
 def _fraction(value: float) -> Fraction:
@@ -61,52 +60,6 @@ def density_matrix(
         density_row(nodes=nodes, source=source, rho=rho, sigma=sigma, mu=mu)
         for source in nodes
     )
-
-
-def density_derivative(
-    *,
-    nodes: Sequence[float],
-    source: float,
-    rho: float,
-    sigma: float,
-    mu: float,
-    parameter: Literal["mu", "rho", "sigma"],
-) -> tuple[float, ...]:
-    """Differentiate the normalized law while holding its physical nodes fixed."""
-    logs = _normal_log_densities(
-        nodes=nodes, source=source, rho=rho, sigma=sigma, mu=mu
-    )
-    mean = _fraction(mu) + _fraction(rho) * _fraction(source)
-    scale = _fraction(sigma)
-    distances = tuple(_fraction(x) - mean for x in nodes)
-    if parameter == "sigma":
-        scores = tuple(distance**2 / scale**3 for distance in distances)
-    elif parameter == "mu":
-        scores = tuple(distance / scale**2 for distance in distances)
-    elif parameter == "rho":
-        scores = tuple(
-            _fraction(source) * distance / scale**2 for distance in distances
-        )
-    else:
-        raise ValueError(f"Unknown derivative parameter: {parameter}")
-    # A common score cancels analytically. Remove it with exact rational arithmetic
-    # before converting, so an enormous common score cannot erase its differences.
-    offsets = tuple(score - scores[0] for score in scores)
-    with localcontext() as context:
-        context.prec = 120
-        weights = _density_weights(logs)
-        decimal_scores = tuple(_decimal(offset) for offset in offsets)
-        weighted_score = sum(
-            (
-                weight * score
-                for weight, score in zip(weights, decimal_scores, strict=True)
-            ),
-            Decimal(0),
-        )
-        return tuple(
-            float(weight * (score - weighted_score))
-            for weight, score in zip(weights, decimal_scores, strict=True)
-        )
 
 
 def quadrature_row(

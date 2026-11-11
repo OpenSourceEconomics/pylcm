@@ -168,6 +168,13 @@ def _simulated(model: Model) -> pd.DataFrame:
     )
 
 
+def _read_only(values: FloatND | np.ndarray | pd.Series) -> np.ndarray:
+    """Return a read-only host copy, so a shared reference cannot be altered."""
+    copy = np.array(values)
+    copy.setflags(write=False)
+    return copy
+
+
 @pytest.mark.parametrize("value", [-1, 0, 1])
 @pytest.mark.parametrize("form", _NUMBER_FORMS)
 @pytest.mark.parametrize("enable_jit", [False, True])
@@ -186,20 +193,29 @@ def test_constant_felicity_solves_to_its_literal_sum(
     _assert_values(model=model, alive=np.full(2, 2.0 * value), final=np.full(2, value))
 
 
+@pytest.fixture(scope="module")
+def felicity_twin_simulated_values() -> np.ndarray:
+    """Simulate the array twin of the constant felicity once for every form."""
+
+    def twin(*, wealth: ContinuousState) -> FloatND:
+        return wealth * 0.0 + 1.0
+
+    expected = _simulated(_two_period_model(alive_utility=twin, final_utility=twin))
+    return _read_only(expected["value"])
+
+
 @pytest.mark.parametrize("form", _NUMBER_FORMS)
-def test_constant_felicity_simulates_like_its_array_twin(*, form: str) -> None:
+def test_constant_felicity_simulates_like_its_array_twin(
+    *, form: str, felicity_twin_simulated_values: np.ndarray
+) -> None:
     """Simulated values of a constant felicity equal those of its array twin."""
     raw = _constant(form=form, value=1)
 
     def utility(*, wealth: ContinuousState) -> FloatND:  # noqa: ARG001
         return raw  # ty: ignore[invalid-return-type]
 
-    def twin(*, wealth: ContinuousState) -> FloatND:
-        return wealth * 0.0 + 1.0
-
     got = _simulated(_two_period_model(alive_utility=utility, final_utility=utility))
-    expected = _simulated(_two_period_model(alive_utility=twin, final_utility=twin))
-    np.testing.assert_array_equal(got["value"], expected["value"])
+    np.testing.assert_array_equal(got["value"], felicity_twin_simulated_values)
     np.testing.assert_array_equal(got["value"], [2.0, 1.0, 2.0, 1.0])
 
 
@@ -544,29 +560,48 @@ def test_constant_exit_utility_adjustment(*, form: str) -> None:
     np.testing.assert_array_equal(df.sort_values("subject_id")["value"], [1.0, 2.0])
 
 
+def _floor_values(*, lower: UserFunction, handwritten: bool) -> FloatND:
+    """Solve the borrowing-floor model with `lower` as its floor."""
+    model = _floor_model(
+        declaration=ref("savings") >= ref("floor")
+        if handwritten
+        else post_decision_lower_bound(margin=LIQUID, lower=lower),
+        helper=None,
+        functions={"floor": lower} if handwritten else None,
+    )
+    return model.solve(params={}, log_level="off").values[0]["done"]
+
+
+@pytest.fixture(scope="module")
+def float_floor_values() -> dict[bool, np.ndarray]:
+    """Solve the floating floor `0.0` once per declaration mode, keyed by it."""
+
+    def float_floor() -> FloatND:
+        return jnp.asarray(0.0)
+
+    return {
+        handwritten: _read_only(
+            _floor_values(lower=float_floor, handwritten=handwritten)
+        )
+        for handwritten in (False, True)
+    }
+
+
 @pytest.mark.parametrize("form", ["python_int", "python_float", "int_array"])
 @pytest.mark.parametrize("handwritten", [False, True])
-def test_constant_borrowing_floor(*, form: str, handwritten: bool) -> None:
+def test_constant_borrowing_floor(
+    *, form: str, handwritten: bool, float_floor_values: dict[bool, np.ndarray]
+) -> None:
     """A zero floor written as `0` binds like the floating floor `0.0`."""
     raw = _constant(form=form, value=0)
 
     def zero_floor() -> FloatND:
         return raw  # ty: ignore[invalid-return-type]
 
-    def float_floor() -> FloatND:
-        return jnp.asarray(0.0)
-
-    def solved(lower: UserFunction) -> FloatND:
-        model = _floor_model(
-            declaration=ref("savings") >= ref("floor")
-            if handwritten
-            else post_decision_lower_bound(margin=LIQUID, lower=lower),
-            helper=None,
-            functions={"floor": lower} if handwritten else None,
-        )
-        return model.solve(params={}, log_level="off").values[0]["done"]
-
-    np.testing.assert_array_equal(solved(zero_floor), solved(float_floor))
+    np.testing.assert_array_equal(
+        _floor_values(lower=zero_floor, handwritten=handwritten),
+        float_floor_values[handwritten],
+    )
 
 
 @pytest.mark.parametrize(
@@ -585,6 +620,23 @@ def test_constant_exit_projection_lands_on_its_float_node(*, form: str) -> None:
     model = _exit_model(adjustment=no_adjustment, projection=projection)
     values = model.solve(params={}, log_level="off").values
     np.testing.assert_array_equal(values[0]["source"], [2.0, 2.0, 2.0])
+
+
+def test_boolean_exit_projection_is_refused() -> None:
+    """A projection onto a continuous state returns a number, not a comparison."""
+
+    def projection() -> FloatND:
+        return True  # ty: ignore[invalid-return-type]
+
+    def no_adjustment() -> FloatND:
+        return jnp.asarray(0.0)
+
+    model = _exit_model(adjustment=no_adjustment, projection=projection)
+    with pytest.raises(
+        InvalidFunctionOutputError,
+        match=r"^The projection of state 'wealth' returned dtype 'bool'",
+    ):
+        model.solve(params={}, log_level="off")
 
 
 def _egm_solved(*, raw: UserFunctionResult, monkeypatch: pytest.MonkeyPatch) -> FloatND:
@@ -829,23 +881,36 @@ def _nbegm_model(
     )
 
 
+def _constrained_nbegm_values(constraint: UserFunction) -> np.ndarray:
+    """Solve the NBEGM tax toy with `constraint` as its only constraint."""
+    model = _nbegm_model(constraints={"allowed": constraint})
+    values = model.solve(params=tax_toy.build_params(), log_level="off").values
+    return np.asarray(values[0]["alive"])
+
+
+@pytest.fixture(scope="module")
+def admitted_nbegm_values() -> np.ndarray:
+    """Solve once with the array predicate `True` that admits every action."""
+
+    def admitted(*, liquid: ContinuousState) -> BoolND:  # noqa: ARG001
+        return jnp.asarray(a=True)
+
+    return _read_only(_constrained_nbegm_values(admitted))
+
+
 @pytest.mark.parametrize("form", _BOOLEAN_FORMS)
-def test_constant_constraint_under_endogenous_grids(*, form: str) -> None:
+def test_constant_constraint_under_endogenous_grids(
+    *, form: str, admitted_nbegm_values: np.ndarray
+) -> None:
     """An NBEGM predicate returning `True` admits every action."""
     raw = _constant(form=form, value=1)
 
     def allowed(*, liquid: ContinuousState) -> BoolND:  # noqa: ARG001
         return raw  # ty: ignore[invalid-return-type]
 
-    def admitted(*, liquid: ContinuousState) -> BoolND:  # noqa: ARG001
-        return jnp.asarray(a=True)
-
-    def solved(constraint: UserFunction) -> np.ndarray:
-        model = _nbegm_model(constraints={"allowed": constraint})
-        values = model.solve(params=tax_toy.build_params(), log_level="off").values
-        return np.asarray(values[0]["alive"])
-
-    np.testing.assert_array_equal(solved(allowed), solved(admitted))
+    np.testing.assert_array_equal(
+        _constrained_nbegm_values(allowed), admitted_nbegm_values
+    )
 
 
 @categorical(ordered=False)
@@ -1007,6 +1072,10 @@ def test_constant_current_iid_law_parameters(*, form: str) -> None:
     normal = _shock_model(law=Normal(mu=location, sigma=0))
     values = normal.solve(params={}, log_level="off").values[0]["alive"]
     np.testing.assert_array_equal(np.asarray(values), 2.0)
+    # `one_hot` returns the same `int32` array for every form but `float_array`,
+    # so the integer-probability law is solved once, under `python_int`.
+    if form not in ("python_int", "float_array"):
+        return
     discrete = _shock_model(law=Discrete(categories=Outcome, probs=one_hot))
     values = discrete.solve(params={}, log_level="off").values[0]["alive"]
     np.testing.assert_array_equal(np.asarray(values), 1.0)

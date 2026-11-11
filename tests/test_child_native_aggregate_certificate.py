@@ -48,7 +48,7 @@ def _assert_historical_counts(*, report: direct_flow.DirectMutationControls) -> 
     """Keep every independently declared family population intact."""
     assert report["mutation_count"] == 412
     assert report["supplemental_mutation_count"] == 94
-    assert report["retained_prefix_mutation_count"] == 115
+    assert report["retained_prefix_mutation_count"] == 113
     assert report["outer_helper_mutation_count"] == 39
     assert report["final_nested_mutation_count"] == 101
     assert report["additional_helper_mutation_count"] == 48

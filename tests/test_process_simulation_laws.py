@@ -53,7 +53,7 @@ from lcm.exceptions import (
     ModelInitializationError,
     PyLCMError,
     RegimeInitializationError,
-    ScaledLotteryDifferentiationError,
+    UnsupportedDifferentiationError,
 )
 from lcm.typing import ContinuousState, FloatND, ScalarInt, UserParams
 from tests.conftest import DECIMAL_PRECISION
@@ -1298,124 +1298,6 @@ def test_linear_process_edges_read_only_each_targets_local_corners(
     assert reader_calls == (8 if two_coordinates else 4)
 
 
-@pytest.mark.parametrize("two_coordinates", [False, True])
-def test_process_edge_program_traces_each_target_twice(
-    *, monkeypatch: pytest.MonkeyPatch, two_coordinates: bool
-) -> None:
-    """Trace the base and one corner body without leaking state between transforms."""
-    reader_calls = 0
-    captured: list[q_and_f._ComputeCE] = []
-    original_target = q_and_f._build_target_continuation
-    original_edges = q_and_f._get_compute_CE_with_process_edges
-
-    def count_reader[**P, R](func: Callable[P, R]) -> Callable[P, R]:
-        @functools.wraps(func)
-        def counted(*args: P.args, **kwargs: P.kwargs) -> R:
-            nonlocal reader_calls
-            reader_calls += 1
-            return func(*args, **kwargs)
-
-        return counted
-
-    def wrap_target[**P](
-        func: Callable[P, q_and_f._TargetContinuation],
-    ) -> Callable[P, q_and_f._TargetContinuation]:
-        @functools.wraps(func)
-        def wrapped(*args: P.args, **kwargs: P.kwargs) -> q_and_f._TargetContinuation:
-            target = func(*args, **kwargs)
-            assert target.next_V is not None
-            return replace(target, next_V=count_reader(target.next_V))
-
-        return wrapped
-
-    def observed(
-        *,
-        functions: EconFunctionsMapping,
-        period_targets: tuple[RegimeName, ...],
-        phase: Literal["solution", "simulation"],
-        build: Callable[..., _EdgeBuildResult],
-    ) -> _EdgeBuildResult:
-        result = original_edges(
-            functions=functions, period_targets=period_targets, phase=phase, build=build
-        )
-        if phase == "simulation" and set(period_targets) == {"left", "right"}:
-            assert isinstance(result[0], q_and_f._ComputeCE)
-            captured.append(result[0])
-        return result
-
-    monkeypatch.setattr(
-        q_and_f, "_build_target_continuation", wrap_target(original_target)
-    )
-    monkeypatch.setattr(q_and_f, "_get_compute_CE_with_process_edges", observed)
-    _fork_model(certainty_equivalent=None, two_coordinates=two_coordinates)
-    assert captured
-    compute = captured[0]
-    assert compute.edge_extension is not None
-    assert len(compute.edge_extension.distances) == (4 if two_coordinates else 2)
-    values = MappingProxyType(
-        {
-            "left": jnp.asarray(
-                [[5.0, 3.0], [3.0, 5.0]] if two_coordinates else [1.0, 2.0]
-            ),
-            "right": jnp.asarray(
-                [[8.0, 4.0], [4.0, 8.0]] if two_coordinates else [1.0, 4.0]
-            ),
-        }
-    )
-
-    def evaluate(next_values: MappingProxyType[RegimeName, FloatND]) -> FloatND:
-        result = compute(
-            next_regime_to_V_arr=next_values,
-            zero=jnp.asarray(0.0),
-            states_actions_params=MappingProxyType(
-                {
-                    "income": jnp.asarray(3.0),
-                    **({"wage": jnp.asarray(3.0)} if two_coordinates else {}),
-                }
-            ),
-        )
-        assert isinstance(result, tuple)
-        return result[0]
-
-    reader_calls = 0
-    with jax.checking_leaks():
-        compiled = jax.jit(evaluate)
-        actual = compiled(values)
-    assert reader_calls == 4
-    # E[income] = E[wage] = rho * 3 = 1.8; the two target weights are one half.
-    expected = 9.86 if two_coordinates else 3.8
-    np.testing.assert_allclose(actual, expected, rtol=10.0**-DECIMAL_PRECISION)
-    np.testing.assert_allclose(
-        compiled(jax.tree.map(lambda value: value + 10.0, values)),
-        expected + 10.0,
-        rtol=10.0**-DECIMAL_PRECISION,
-    )
-    with jax.checking_leaks():
-        np.testing.assert_allclose(
-            evaluate(values), expected, rtol=10.0**-DECIMAL_PRECISION
-        )
-        with jax.disable_jit():
-            np.testing.assert_allclose(
-                evaluate(values), expected, rtol=10.0**-DECIMAL_PRECISION
-            )
-        batched = jax.vmap(evaluate)(
-            jax.tree.map(lambda value: jnp.stack((value, value + 10.0)), values)
-        )
-    np.testing.assert_allclose(
-        batched, [expected, expected + 10.0], rtol=10.0**-DECIMAL_PRECISION
-    )
-    _, tangent = jax.jvp(evaluate, (values,), (jax.tree.map(jnp.ones_like, values),))
-    np.testing.assert_allclose(tangent, 1.0, rtol=10.0**-DECIMAL_PRECISION)
-    gradients = jax.grad(evaluate)(values)
-    expected_gradient = (
-        [[0.08, -0.28], [-0.28, 0.98]] if two_coordinates else [-0.2, 0.7]
-    )
-    for gradient in gradients.values():
-        np.testing.assert_allclose(
-            gradient, expected_gradient, rtol=10.0**-DECIMAL_PRECISION
-        )
-
-
 @pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
 @pytest.mark.parametrize("case", ["negative-inf", "signed-zero", "finite-overflow"])
 def test_process_edge_corners_keep_nonfinite_and_zero_semantics(
@@ -1637,9 +1519,9 @@ def test_process_edges_retain_the_original_cartesian_corners(
                 assert isinstance(aggregate, tuple)
                 return aggregate[0]
 
-            with pytest.raises(ScaledLotteryDifferentiationError):
+            with pytest.raises(UnsupportedDifferentiationError):
                 jax.jvp(evaluate, (values,), (jax.tree.map(jnp.ones_like, values),))
-            with pytest.raises(ScaledLotteryDifferentiationError):
+            with pytest.raises(UnsupportedDifferentiationError):
                 jax.vjp(evaluate, values)
 
 

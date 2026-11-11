@@ -7,16 +7,6 @@ name = "visit_Match"
 reason = "ast.NodeVisitor dispatches visit_<NodeClass> by name from checker.visit(tree); vulture's visitor whitelist lacks ast.Match."
 
 [[allow]]
-path = "src/_lcm/egm/upper_envelope/_exact_affine/ffi.py"
-name = "_*_jvp"
-reason = "JAX custom_jvp rules registered with @<primitive>.defjvp; JAX invokes them under differentiation, never by name."
-
-[[allow]]
-path = "src/_lcm/optimization/implicit_outer_derivative.py"
-name = "_continuous_outer_optimum_jvp"
-reason = "JAX custom_jvp rule registered with @continuous_outer_optimum.defjvp; JAX invokes it under differentiation, never by name."
-
-[[allow]]
 path = "src/_lcm/simulation/programs.py"
 name = "_Gate*Arguments"
 reason = "TypedDicts used only as quoted cast() type expressions; ruff TC006 requires the quotes, so vulture sees no load."
@@ -35,16 +25,6 @@ reason = "Pending maintainer decision (2026-11-09): whether the metadata-only py
 path = "src/_lcm_regime_finder/model_snapshot.py"
 name = "read_declarations"
 reason = "Pending maintainer decision (2026-11-09): whether the documented public pre-program metadata contract, which a user-facing RuntimeError tells users to call, stays. Only tests call it."
-
-[[allow]]
-path = "src/_lcm_regime_finder/frontier_check.py"
-name = "verify_signature_cover"
-reason = "Pending maintainer decision (2026-11-09): whether the verifier for an externally produced exact Pareto cover proof, and its proof-checking kernel, stay as a hook for an external proof-capable backend. No producer in the repository emits such a proof."
-
-[[allow]]
-path = "src/_lcm_regime_finder/signature_proof.py"
-name = "check_frontier_certificate"
-reason = "Pending maintainer decision (2026-11-09): the instance-level counterpart of verify_signature_cover; whether checking an externally produced cover proof, and its proof-checking kernel, stays. No producer in the repository emits such a proof."
 
 [[allow]]
 path = "tests/*"

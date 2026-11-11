@@ -454,9 +454,9 @@ from lcm.exceptions import ExecutionPlanningError, PyLCMError
   budget while validation-marked intervals remained. Inference-grade continuous-outer
   solves fail closed rather than silently return a degraded solution.
 
-- **`ScaledLotteryDifferentiationError`**: A lottery is differentiated with respect to
-  probabilities too small to represent as ordinary floating-point numbers. Returning
-  zero would suggest a locally flat objective to an optimizer, so pylcm raises instead.
+- **`UnsupportedDifferentiationError`**: A reduction that works on the bit pattern of
+  its operands is differentiated. Automatic differentiation would return zero, which
+  suggests a locally flat objective, so pylcm raises instead.
 
 - **`UnrepresentableOuterCandidateError`**: Replay cannot reconstruct an outer candidate
   the solve kept, because the recovered action reaches a stock outside the outer state's

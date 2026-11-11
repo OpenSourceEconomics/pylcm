@@ -39,6 +39,7 @@ from _lcm.regime_building.processing import (
     prepare_model_structure,
 )
 from _lcm.regime_building.schedules import (
+    demanded_declared_laws,
     gated_source_periods,
     lower_demanded_transitions,
     resolve_regime_schedules,
@@ -846,6 +847,10 @@ def build_prepared_structure(
             for name, law in bound.items()
             if not law.terminal
         },
+        demanded_edge_laws=demanded_declared_laws(
+            schedules=schedules,
+            declared_transitions={name: law.transition for name, law in laws.items()},
+        ),
         declared_edge_vocabulary=create_edge_vocabulary(user_regimes=user_regimes),
     )
 

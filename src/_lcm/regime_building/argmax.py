@@ -9,9 +9,9 @@ from functools import partial
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jax.dtypes import float0
 from jaxtyping import Int
 
+from _lcm.probability import without_derivative
 from lcm.typing import BoolND, FloatND, IntND
 
 # Encodings follow the float width, independently of canonical int32 action IDs.
@@ -94,8 +94,8 @@ def _argmax_and_max_of_one_candidate(
     Every cell has one candidate, its own value, at index zero. The value is the
     larger of the candidate and `initial` where `where` admits the candidate, and
     `initial` elsewhere; without `initial`, `-inf` stands in. A
-    feasible NaN stays NaN, and the derivative splits a tie as `jnp.max` does. No
-    reduction is involved, so a candidate above `initial` keeps its exact bits.
+    feasible NaN stays NaN. No reduction is involved, so a candidate above
+    `initial` keeps its exact bits.
     """
     floor = jnp.asarray(-jnp.inf if initial is None else initial, dtype=a.dtype)
     admitted = (
@@ -121,17 +121,11 @@ def max_and_smallest_id(
     no value equal to the max. When `initial` exceeds every value the id is
     `NO_ID`; mask an element out by giving it the lowest value and `NO_ID`.
 
-    The max differentiates like `jnp.max` with the same `initial`:
-    - no tie with `initial`: the average of the tangents of the elements equal
-      to the max;
-    - `initial` equal to the max: half that average plus half the tangent of
-      `initial`;
-    - `initial` above every element: the tangent of `initial`.
-
-    The id carries no derivative.
+    Differentiating through the reduction raises
+    `UnsupportedDifferentiationError`.
     """
     initial_arr = jnp.asarray(initial, dtype=values.dtype)
-    return _paired_max_with_tangent(values, ids, initial_arr)
+    return _paired_max_no_derivative(values, ids, initial_arr)
 
 
 # keyword-only-exempt: library-callback=jax.custom_jvp
@@ -148,57 +142,7 @@ def _paired_max(values: FloatND, ids: IntND, initial: FloatND) -> tuple[FloatND,
     ), best_id
 
 
-# keyword-only-exempt: library-callback=jax.custom_jvp.defjvp
-def _paired_max_jvp(
-    primals: tuple[FloatND, IntND, FloatND],
-    tangents: tuple[FloatND, jax.Array | np.ndarray, FloatND],
-) -> tuple[tuple[FloatND, IntND], tuple[FloatND, np.ndarray]]:
-    """Average the tangents of the elements equal to the max, as `jnp.max` does.
-
-    One protected key array owns both the primal reduction and its tie mask.
-    Signed-zero keys compare equal for identity and tangent ownership.
-    """
-    values, ids, initial = primals
-    values_dot, _, initial_dot = tangents
-    value_keys = _float_order_key(values)
-    initial_key = _float_order_key(initial)
-    infinity_key = _float_infinity_key(values.dtype)
-    best_key, best_id = _reduce_float_keys(
-        keys=value_keys,
-        ids=ids,
-        initial_key=initial_key,
-        infinity_key=infinity_key,
-    )
-    best = jax.lax.bitcast_convert_type(_reverse_negative_bits(best_key), values.dtype)
-    attains = (
-        _float_keys_equal(left=value_keys, right=best_key[..., jnp.newaxis])
-        & (value_keys >= ~infinity_key)
-        & (value_keys <= infinity_key)
-    ).astype(values.dtype)
-    count = jnp.sum(attains, axis=-1)
-    elements_dot = jnp.sum(values_dot * attains, axis=-1) / jnp.maximum(count, 1)
-    initial_dot = jnp.broadcast_to(initial_dot, best.shape)
-    best_dot = jnp.where(
-        count > 0,
-        jnp.where(
-            _float_keys_equal(left=initial_key, right=best_key),
-            (elements_dot + initial_dot) / 2,
-            elements_dot,
-        ),
-        initial_dot,
-    )
-    return (best, best_id), (best_dot, np.zeros(best_id.shape, dtype=float0))
-
-
-# Built by call rather than by decorator: `@jax.custom_jvp` produces a callable
-# instance, which the package claw rebinds to a bound method of its `__call__`,
-# losing `defjvp` along with everything else the object knows. The generic
-# differentiation of a two-operand `lax.reduce` cannot carry the integer id's
-# tangent, so the pair needs its own rule.
-_paired_max_with_tangent = jax.custom_jvp(_paired_max)
-# JAX types a JVP rule's tangents as its primals; an integer's `float0` tangent
-# is no `IntND`.
-_paired_max_with_tangent.defjvp(_paired_max_jvp)  # ty: ignore[invalid-argument-type]
+_paired_max_no_derivative = without_derivative(_paired_max)
 
 
 def _float_order_key(values: FloatND) -> _FloatBitsND:

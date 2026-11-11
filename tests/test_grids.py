@@ -16,7 +16,6 @@ from numpy.testing import assert_array_almost_equal as aaae
 
 from _lcm.dtypes import canonical_float_dtype
 from _lcm.grids import categorical, validate_category_class
-from _lcm.grids import discrete as discrete_module
 from _lcm.grids.categorical import _validate_discrete_grid, get_category_codes
 from _lcm.grids.continuous import _validate_continuous_grid
 from _lcm.grids.discrete import MISSING_CAT_CODE
@@ -919,38 +918,6 @@ def _canonical_np_float() -> type[np.floating]:
     return np.float64 if X64_ENABLED else np.float32
 
 
-@pytest.mark.parametrize("shape", [(), (1,), (1, 1)])
-@pytest.mark.parametrize(
-    ("integer_dtype", "value"),
-    [(np.int64, 2**32 + 20), (np.int64, -(2**32) + 20), (np.uint64, 2**32 + 20)],
-)
-@pytest.mark.parametrize("route", ["eager", "jit_closure"])
-def test_integer_value_grid_keeps_wide_host_integers_off_the_grid(
-    *, shape, integer_dtype, value, route
-):
-    """A wide host integer whose low int32 word is a node does not match it."""
-    grid = DiscreteGrid(values=np.array([0, 20, 40]))
-    query = np.asarray(value, dtype=integer_dtype).reshape(shape)
-    observed = np.asarray(
-        jax.jit(lambda: grid.encode(query))()
-        if route == "jit_closure"
-        else grid.encode(query)
-    )
-    np.testing.assert_array_equal(observed, np.full(shape, MISSING_CAT_CODE))
-
-
-def test_integer_value_grid_matches_across_int32_boundaries():
-    """Membership follows the original integer on both sides of the int32 range."""
-    nodes = (-(2**31) + 1, -1, 0, 20, 2**31 - 1)
-    query = np.asarray(
-        [-(2**31) - 1, -(2**31), -(2**31) + 1, -1, 0, 20, 2**31 - 1, 2**31, 2**32 + 20],
-        dtype=np.int64,
-    )
-    expected = [nodes.index(v) if v in nodes else MISSING_CAT_CODE for v in query]
-    observed = DiscreteGrid(values=np.array(nodes)).encode(query)
-    assert np.asarray(observed).tolist() == expected
-
-
 @pytest.mark.parametrize("integer_dtype", [np.int64, np.uint64])
 def test_float_value_grid_reads_wide_host_integers_as_floats(integer_dtype):
     """A wide host integer reaches a float grid as its own float, not its low word."""
@@ -960,29 +927,6 @@ def test_float_value_grid_reads_wide_host_integers_as_floats(integer_dtype):
         np.asarray(grid.encode(query)).tolist(),
         np.asarray(grid.nearest(query)).tolist(),
     ) == ([MISSING_CAT_CODE], [40.0])
-
-
-@pytest.mark.parametrize("float_grid", [False, True])
-@pytest.mark.parametrize("integer_dtype", [np.int64, np.uint64])
-@pytest.mark.parametrize("route", ["eager", "jit_closure"])
-def test_value_grid_decodes_wide_host_codes_as_off_grid(
-    *, float_grid, integer_dtype, route
-):
-    """A host code outside `0..n-1` reads off-grid even when its low word is valid."""
-    alias = -(2**32) if integer_dtype == np.int64 else 2**33
-    codes = np.asarray([[0, 2**32, alias], [1, 2**32 + 1, alias + 1]], integer_dtype)
-    nodes = (0.0, 0.25, 0.5) if float_grid else (0, 20, 40)
-    off = math.nan if float_grid else MISSING_CAT_CODE
-    grid = DiscreteGrid(values=np.array(nodes))
-    observed = np.asarray(
-        jax.jit(lambda: grid.decode(codes))()
-        if route == "jit_closure"
-        else grid.decode(codes)
-    )
-    expected = np.asarray(
-        [nodes[int(c)] if 0 <= int(c) < 3 else off for c in codes.flat]
-    ).reshape(codes.shape)
-    np.testing.assert_array_equal(observed, expected)
 
 
 @pytest.mark.skipif(X64_ENABLED, reason="these floats are finite at float64")
@@ -1217,27 +1161,6 @@ def test_value_grid_decodes_narrow_device_codes_by_their_integer_bounds(
     )
 
 
-@pytest.mark.parametrize("dtype", [np.int64, np.uint64])
-@pytest.mark.parametrize("kind", ["integer", "float"])
-@pytest.mark.parametrize("route", ["eager", "jit_closure"])
-def test_value_grid_decodes_wide_host_codes_by_their_original_bounds(
-    *, dtype, kind, route
-):
-    """Wide host codes are bounded before any narrowing, around both int32 edges."""
-    values = [0, 1, 2, 3, 2**31, 2**32, 2**32 + 1, 2**32 + 2]
-    values += [-1, -(2**31), -(2**32)] if dtype is np.int64 else [2**64 - 1]
-    codes = np.asarray(values, dtype=dtype)
-    grid = _range_grid(n_nodes=3, kind=kind)
-    decoded = (
-        jax.jit(lambda: grid.decode(codes))()
-        if route == "jit_closure"
-        else grid.decode(codes)
-    )
-    _assert_decodes_like_python_integers(
-        decoded=decoded, codes=codes, n_nodes=3, kind=kind
-    )
-
-
 @pytest.mark.parametrize("dtype", [np.int8, np.uint8, np.int16, np.uint16])
 def test_integer_value_grid_encodes_narrow_host_integers_by_membership(dtype):
     """Narrow host integers match exactly the nodes they equal."""
@@ -1281,8 +1204,10 @@ def _reference_decode(*, nodes, code, floating):
 
 
 def _representable(*, dtype, candidates):
+    """The candidates `dtype` holds, within `int32`: wider ones are out of contract."""
     info = np.iinfo(dtype)
-    return sorted({c for c in candidates if info.min <= c <= info.max})
+    low, high = max(info.min, MISSING_CAT_CODE), min(info.max, 2**31 - 1)
+    return sorted({c for c in candidates if low <= c <= high})
 
 
 def _integer_routes(*, function, host, dtype):
@@ -1367,41 +1292,6 @@ def test_value_grid_decodes_every_integer_dtype_like_python_integers(*, kind, dt
     ).items():
         np.testing.assert_array_equal(
             np.asarray(decoded, dtype=float), expected, err_msg=route
-        )
-
-
-_CLASSIFY_INTEGERS = discrete_module._classify_integers
-
-
-def _classify_bypassing_device_inputs(value):
-    if isinstance(value, jax.Array):
-        return jnp.asarray(value).astype(jnp.int32)
-    return _CLASSIFY_INTEGERS(value)
-
-
-def _classify_after_casting_to_int32(value):
-    return _CLASSIFY_INTEGERS(jnp.asarray(value).astype(jnp.int32))
-
-
-def _classify_with_a_zero_fill(value):
-    classified = _CLASSIFY_INTEGERS(value)
-    return jnp.where(classified == MISSING_CAT_CODE, 0, classified)
-
-
-@pytest.mark.parametrize(
-    "mutant",
-    [
-        _classify_bypassing_device_inputs,
-        _classify_after_casting_to_int32,
-        _classify_with_a_zero_fill,
-    ],
-)
-def test_integer_differential_detects_each_broken_classifier(*, monkeypatch, mutant):
-    """Each way of losing the original integer makes the encode differential fail."""
-    monkeypatch.setattr(discrete_module, "_classify_integers", mutant)
-    with pytest.raises(AssertionError):
-        test_integer_value_grid_encodes_every_integer_dtype_like_python_integers(
-            grid_name="mixed_boundaries", dtype=np.uint32
         )
 
 

@@ -145,10 +145,16 @@ def test_runtime_grid_requires_points_or_n_points():
 
 
 def test_get_params_template_lists_each_parameter_with_its_annotation():
-    """Each regime maps its functions to their parameters' annotation names."""
-    assert cast(
-        "dict[str, UserFacingRegimeParamsTemplate]", _make_model().get_params_template()
-    ) == {
+    """Each regime maps its functions to their parameters' annotation names.
+
+    Every branch of the template is a plain `dict` a user can fill in, and filling
+    in one returned template leaves the next call's template as is.
+    """
+    model = _make_model()
+    template = cast(
+        "dict[str, UserFacingRegimeParamsTemplate]", model.get_params_template()
+    )
+    assert template == {
         "alive": {
             "utility": {},
             "borrowing_constraint": {},
@@ -158,31 +164,17 @@ def test_get_params_template_lists_each_parameter_with_its_annotation():
         },
         "dead": {"utility": {}},
     }
-
-
-def test_get_params_template_is_built_from_plain_dicts():
-    """Every branch of the template is a plain `dict` a user can fill in."""
-    template = cast(
-        "dict[str, UserFacingRegimeParamsTemplate]", _make_model().get_params_template()
-    )
     branch_types = {type(template)} | {
         type(branch)
         for regime in template.values()
         for branch in (regime, *regime.values())
     }
     assert branch_types == {dict}
-
-
-def test_get_params_template_returns_a_fresh_copy_on_each_call():
-    """Filling in one returned template leaves the next call's template as is."""
-    model = _make_model()
-    cast("dict[str, UserFacingRegimeParamsTemplate]", model.get_params_template())[
-        "alive"
-    ]["next_wealth"]["interest_rate"] = "filled"
-    template = cast(
+    template["alive"]["next_wealth"]["interest_rate"] = "filled"
+    fresh = cast(
         "dict[str, UserFacingRegimeParamsTemplate]", model.get_params_template()
     )
-    assert template["alive"]["next_wealth"]["interest_rate"] == "float"
+    assert fresh["alive"]["next_wealth"]["interest_rate"] == "float"
 
 
 def _template_resources(wealth: ContinuousState) -> FloatND:
@@ -221,7 +213,11 @@ def test_near_miss_names_do_not_warn_at_build() -> None:
 
 
 def test_get_params_template_notes_near_miss_names(near_miss_model: Model) -> None:
-    """The returned template suggests nearby state, action and function names."""
+    """The returned template suggests nearby state, action and function names.
+
+    The suggestions leave the internal runtime parameter template plain, and
+    filling a displayed suggestion leaves the next template copy intact.
+    """
     assert cast(
         "dict[str, UserFacingRegimeParamsTemplate]",
         near_miss_model.get_params_template(),
@@ -231,22 +227,12 @@ def test_get_params_template_notes_near_miss_names(near_miss_model: Model) -> No
         "resourcz": "FloatND  [close to function 'resources'; typo?]",
         "coefficient": "FloatND",
     }
-
-
-def test_near_miss_names_leave_the_internal_template_plain(
-    near_miss_model: Model,
-) -> None:
-    """Display suggestions leave the internal runtime parameter template intact."""
     assert near_miss_model._params_template["alive"]["utility"] == {
         "consumptioz": "FloatND",
         "wealt": "FloatND",
         "resourcz": "FloatND",
         "coefficient": "FloatND",
     }
-
-
-def test_near_miss_template_is_a_fresh_copy(near_miss_model: Model) -> None:
-    """Filling a displayed suggestion leaves the next template copy intact."""
     cast(
         "dict[str, UserFacingRegimeParamsTemplate]",
         near_miss_model.get_params_template(),
@@ -420,18 +406,15 @@ def _make_pruned_template_model(variable_kind: str) -> Model:
 
 
 @pytest.mark.parametrize("variable_kind", ["state", "action"])
-def test_near_miss_names_do_not_retain_broadcast_variables(variable_kind: str) -> None:
-    """A misspelled argument does not consume the broadcast variable it resembles."""
-    model = _make_pruned_template_model(variable_kind)
-    assert "consumption" in model.pruned_variables["alive"]
-
-
-@pytest.mark.parametrize("variable_kind", ["state", "action"])
 def test_get_params_template_notes_pruned_broadcast_variables(
     variable_kind: str,
 ) -> None:
-    """A misspelling retains its hint when the unread broadcast variable is pruned."""
+    """A misspelling retains its hint when the unread broadcast variable is pruned.
+
+    The misspelled argument does not consume the broadcast variable it resembles.
+    """
     model = _make_pruned_template_model(variable_kind)
+    assert "consumption" in model.pruned_variables["alive"]
     assert cast(
         "dict[str, UserFacingRegimeParamsTemplate]", model.get_params_template()
     )["alive"]["utility"] == {
@@ -507,32 +490,11 @@ def test_get_params_template_notes_carried_state_function_arguments() -> None:
     )["alive"]["wealth"] == {"wealt": "FloatND  [close to state 'wealth'; typo?]"}
 
 
-def test_runtime_grid_in_params_template():
-    """IrregSpacedGrid with runtime-supplied points adds 'points' to template."""
-    model = _make_model(
-        wealth_grid=IrregSpacedGrid(n_points=5),
-    )
-    alive_template = model._params_template["alive"]
-    assert "wealth" in alive_template
-    assert "points" in alive_template["wealth"]
-
-
-def test_solve_with_runtime_grid():
-    """Solve should work when grid points are provided via params."""
-    model = _make_model(
-        wealth_grid=IrregSpacedGrid(n_points=5),
-    )
-    params = {
-        "discount_factor": 0.95,
-        "interest_rate": 0.05,
-        "alive": {"wealth": {"points": jnp.linspace(1, 10, 5)}},
-    }
-    period_to_regime_to_V_arr = model.solve(params=params, log_level="debug").values
-    assert len(period_to_regime_to_V_arr) > 0
-
-
 def test_runtime_grid_matches_fixed():
-    """Runtime-supplied grid with same points should give same results as fixed."""
+    """Runtime-supplied grid with same points should give same results as fixed.
+
+    The runtime grid adds `points` to the params template and solves.
+    """
     points = jnp.linspace(1, 10, 5)
 
     # Fixed-points model
@@ -551,7 +513,11 @@ def test_runtime_grid_matches_fixed():
         "interest_rate": 0.05,
         "alive": {"wealth": {"points": points}},
     }
+    alive_template = model_runtime._params_template["alive"]
+    assert "wealth" in alive_template
+    assert "points" in alive_template["wealth"]
     V_runtime = model_runtime.solve(params=params_runtime, log_level="debug").values
+    assert len(V_runtime) > 0
 
     # V_arr for period 0, regime "alive" should match
     for period in V_fixed:
@@ -580,32 +546,11 @@ def _make_action_grid_model(*, consumption_grid: IrregSpacedGrid) -> Model:
     )
 
 
-def test_runtime_action_grid_in_params_template():
-    """IrregSpacedGrid action with runtime-supplied points adds 'points' to template."""
-    model = _make_action_grid_model(
-        consumption_grid=IrregSpacedGrid(n_points=5),
-    )
-    alive_template = model._params_template["alive"]
-    assert "consumption" in alive_template
-    assert "points" in alive_template["consumption"]
-
-
-def test_solve_with_runtime_action_grid():
-    """Solve should work when action grid points are provided via params."""
-    model = _make_action_grid_model(
-        consumption_grid=IrregSpacedGrid(n_points=5),
-    )
-    params = {
-        "discount_factor": 0.95,
-        "interest_rate": 0.05,
-        "alive": {"consumption": {"points": jnp.linspace(0.1, 5.0, 5)}},
-    }
-    period_to_regime_to_V_arr = model.solve(params=params, log_level="debug").values
-    assert len(period_to_regime_to_V_arr) > 0
-
-
 def test_runtime_action_grid_matches_fixed():
-    """Runtime action grid with same points gives same V as a fixed action grid."""
+    """Runtime action grid with same points gives same V as a fixed action grid.
+
+    The runtime action grid adds `points` to the params template and solves.
+    """
     points = jnp.linspace(0.1, 5.0, 5)
 
     model_fixed = _make_action_grid_model(
@@ -622,7 +567,11 @@ def test_runtime_action_grid_matches_fixed():
         "interest_rate": 0.05,
         "alive": {"consumption": {"points": points}},
     }
+    alive_template = model_runtime._params_template["alive"]
+    assert "consumption" in alive_template
+    assert "points" in alive_template["consumption"]
     V_runtime = model_runtime.solve(params=params_runtime, log_level="debug").values
+    assert len(V_runtime) > 0
 
     for period in V_fixed:
         if "alive" in V_fixed[period] and "alive" in V_runtime[period]:

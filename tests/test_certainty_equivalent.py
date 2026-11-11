@@ -45,7 +45,7 @@ from lcm.exceptions import (
     InvalidNameError,
     ModelInitializationError,
     RegimeInitializationError,
-    ScaledLotteryDifferentiationError,
+    UnsupportedDifferentiationError,
 )
 from lcm.regime import FunctionEntry, RegimeReplacement
 from lcm.solvers import DCEGM, NBEGM, NNBEGM, FiniteOuterGrid, RFCEnvelope
@@ -2489,7 +2489,7 @@ def test_differentiating_a_scaled_lottery_fails_loudly(mean) -> None:
             values=values, coefficients=coefficients, shifts=shifts, params={}
         )
 
-    with pytest.raises(ScaledLotteryDifferentiationError, match="aggregate_scaled"):
+    with pytest.raises(UnsupportedDifferentiationError):
         jax.grad(reduce_lottery)(values)
 
 

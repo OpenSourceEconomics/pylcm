@@ -31,7 +31,7 @@ from _lcm.solution.action_streaming import (
     build_streaming_max_Q_over_a,
     merge_partition_accumulators,
 )
-from lcm.typing import Float2D, ScalarFloat
+from lcm.typing import Float2D
 from tests.solution.test_action_streaming import (
     count_primitive,
     scan_lengths,
@@ -279,25 +279,6 @@ def test_partitioned_reduction_equals_the_unpartitioned_stream_bit_for_bit(
 def _one_cell(*, row: list[float], mask: list[bool]) -> tuple[np.ndarray, np.ndarray]:
     dtype = jnp.zeros(()).dtype
     return np.asarray([row], dtype=dtype), np.asarray([mask], dtype=bool)
-
-
-def test_partitioned_unique_max_preserves_its_analytic_parameter_derivative() -> None:
-    """The winning action in a nonzero partition carries its slope through exchange."""
-    coefficients = jnp.asarray([[1.0, 3.0, 2.0, 4.0, 0.0]])
-
-    def maximum(theta: ScalarFloat) -> ScalarFloat:
-        return _partitioned_lanes(
-            n_partitions=3,
-            block_width=2,
-            values=theta * coefficients,
-            feasible=np.ones((1, 5), dtype=bool),
-        ).best_value[0, 0]
-
-    derivative = jax.grad(maximum)(jnp.asarray(2.0))
-
-    assert_array_equal(
-        np.asarray(derivative), np.asarray(4.0, dtype=coefficients.dtype)
-    )
 
 
 # Each case names one convention; every value of interest sits in a later

@@ -29,7 +29,13 @@ from dags import (
 from dags.tree import qname_from_tree_path
 
 from _lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
-from _lcm.dtypes import as_bool, as_canonical_float, as_code, canonical_float_dtype
+from _lcm.dtypes import (
+    UserOutput,
+    as_bool,
+    as_canonical_float,
+    as_code,
+    canonical_float_dtype,
+)
 from _lcm.grids import ContinuousGrid
 from _lcm.grids.discrete import read_at_codes
 from _lcm.post_decision_bound import PostDecisionBoundSpec
@@ -126,7 +132,7 @@ type Intermediates = tuple[
 # What the user's felicity nodes return at a cell, before
 # `_canonical_utilities_and_F`: any numeric array or Python scalar, then the
 # feasibility mask.
-type RawUtilitiesAndF = tuple[FloatND | IntND | BoolND | int | float | bool, ...]
+type RawUtilitiesAndF = tuple[UserOutput, ...]
 
 # What the utilities-and-feasibility evaluation returns at a cell: each felicity
 # at the canonical float dtype, then the feasibility mask as a JAX Boolean.
@@ -221,7 +227,13 @@ class _BoundUtilitiesAndF:
         """Share RHS evaluation while preserving invalid-input flags through F=false."""
         values = dict(zip(self.target_names, self.function(**kwargs), strict=True))
         F = (
-            jnp.all(jnp.stack(tuple(values[name] for name in self.constraint_names)))
+            jnp.all(
+                jnp.stack(
+                    tuple(
+                        cast("BoolND", values[name]) for name in self.constraint_names
+                    )
+                )
+            )
             if self.constraint_names
             else jnp.asarray(a=True)
         )
@@ -6034,7 +6046,7 @@ def _get_feasibility(
         )
         return _BoundFeasibility(flow=flow, periods=bound_periods)
     if not constraints:
-        return cast("ConstraintFunction", _always_feasible)
+        return cast("ConstraintFunction", _AlwaysFeasible(value=jnp.asarray(a=True)))
     return cast(
         "ConstraintFunction",
         _CanonicalFeasibility(
@@ -6071,9 +6083,15 @@ class _CanonicalFeasibility:
         return as_bool(value=self.function(**kwargs), source="The combined constraints")
 
 
-def _always_feasible() -> BoolND:
+@dataclass(frozen=True, eq=False, kw_only=True)
+class _AlwaysFeasible:
     """Feasibility of a regime without constraints: every cell is feasible."""
-    return jnp.asarray(a=True)
+
+    value: BoolND
+    """The constant, built once with the kernel rather than at each evaluation."""
+
+    def __call__(self) -> BoolND:
+        return self.value
 
 
 def _aggregate_joint_lottery(
