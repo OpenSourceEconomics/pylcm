@@ -18,6 +18,7 @@ import math
 from pathlib import Path
 import re
 import struct
+import textwrap
 import unicodedata
 import zlib
 
@@ -37,7 +38,7 @@ STATUS_NAMES = {"HEURISTIC": "Heuristic effort; unknown optimality gap",
                 "UNRESOLVED": "Unresolved obligations", "INVALID": "Verification failed",
                 "FAIL": "Failed", "PASS": "Passed", "VERIFIED": "Independently checked",
                 "DECLARED": "Declared contract", "NOT_RUN": "Not run", "UNKNOWN": "Not supplied"}
-LAYER_NAMES = {"source_semantics": "Source and semantic check", "discovery": "Candidate-family coverage",
+LAYER_NAMES = {"source_semantics": "Source and semantic check", "discovery": "Dependency and local-option discovery",
                "allocation": "Backend allocation contract", "frontier": "Independent frontier check",
                "native_numerical_execution": "Native solve and simulation"}
 
@@ -112,8 +113,9 @@ def _model_name(result, declarations):
     identity = result.get("source_identity") or declarations.get("source_identity") or {}
     if not isinstance(identity, dict):
         identity = {"name": identity}
-    return (result.get("name") or declarations.get("name") or identity.get("project")
-            or identity.get("name") or identity.get("model") or "Original model")
+    name = (result.get("name") or declarations.get("name") or identity.get("project")
+            or identity.get("name") or identity.get("model"))
+    return name if name and not re.fullmatch(r'[0-9a-f]{32,64}', str(name)) else "Regime structure analysis"
 
 
 def _dates(values, limit=None):
@@ -153,7 +155,8 @@ def _consequences(analysis, declarations, plan):
     cells = {c.get("id"): c for c in declarations.get("cells", [])}
     drops, characteristics, constants = defaultdict(list), defaultdict(list), defaultdict(list)
     for cid, option in selected.items():
-        date = cells.get(cid, {}).get("age", cells.get(cid, {}).get("period"))
+        cell = cells.get(cid, {})
+        date = cell.get("age") if cell.get("age") is not None else cell.get("period")
         for axis, projection in option.get("state_projection", {}).items():
             if projection.get("kind") == "drop":
                 drops[axis].append({"cell": cid, "date": date})
@@ -210,7 +213,7 @@ def _graph(declarations, plan=None, title="Original declaration graph"):
             key = f"N{i}"
             owner[cell["id"]] = key;ordering[key] = i
             nodes.append({"id": key, "kind": "cell", "label": _text(cell.get("regime", cell["id"])),
-                          "dates": [cell.get("age", cell.get("period"))], "cells": [cell["id"]],
+                          "dates": [cell.get("age") if cell.get("age") is not None else cell.get("period")], "cells": [cell["id"]],
                           "states": list(cell.get("states", {})), "actions": list(cell.get("actions", {})),
                           "stage": cell.get("stage"), "terminal": bool(cell.get("terminal")), "order": i * 10})
     else:
@@ -219,7 +222,7 @@ def _graph(declarations, plan=None, title="Original declaration graph"):
             for cid in block.get("cells", []):
                 owner[cid] = key
             nodes.append({"id": key, "kind": "block", "label": " / ".join(block.get("original_regimes", [])) or f"Block {i+1}",
-                          "dates": block.get("ages", []), "cells": block.get("cells", []),
+                          "dates": [cells[cid].get('age') if cells[cid].get('age') is not None else cells[cid].get('period') for cid in block.get('cells', [])], "cells": block.get("cells", []),
                           "states": list(block.get("state_axes", {})), "actions": list(block.get("action_axes", {})),
                           "terminal": bool(block.get("cells")) and all(cells.get(cid, {}).get("terminal") for cid in block.get("cells", [])),
                           "order": i * 10})
@@ -466,12 +469,13 @@ def render_markdown(result, *, _prepared_view=None):
               f'Recorded metadata execution: {_md(analysis.get("production_execution", "Not supplied"))}.', "",
               (f'Resource record: {_md(result.get("resources", result.get("measurement")))}.'
                if result.get("resources", result.get("measurement")) is not None else
-               '[Whole-command resource measurement](resource.json): supplied by the parent run wrapper after analysis, independent checking and initial report generation; no inline measurement was supplied.'), "",
+               'No resource measurement was supplied. Structural costs are not execution measurements.'), "",
               "report.json preserves the complete supplied result. report-data.json contains exact graph adjacency and every selected interface. The report manifest records generated-file hashes. Graph PNGs are bounded pages with abbreviated labels; the full graphs and exact dates remain available in Mermaid/JSON.", ""]
     return "\n".join(lines)
 
 
 CSS = """
+.graphs{overflow-x:auto}.graphs svg{display:block;width:1060px;max-width:none;height:auto}.graphs figure{overflow-x:auto;max-width:100%}
 :root{--ink:#172c42;--muted:#526577;--line:#dce5eb;--paper:#f4f7f9;--accent:#0b6f78}
 *{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font:15px/1.55 system-ui,-apple-system,Segoe UI,sans-serif}
 main{max-width:1260px;margin:auto;padding:32px}h1{font-size:34px;line-height:1.15;margin:10px 0}h2{font-size:25px;margin:32px 0 12px}h3{font-size:20px}h4{font-size:16px}
@@ -500,8 +504,30 @@ def _graph_html(prefix, graph, previews):
     note = _preview_note(prefix, graph, previews)
     if note:
         result.insert(1, f'<p class="callout">{_h(note)}</p>')
-    for i, filename in enumerate(_image_names(prefix, graph, previews), 1):
-        result.append(f'<figure><a href="{filename}"><img loading="lazy" src="{filename}" alt="{_h(graph["title"])}; graph page {i} of {count}"></a><figcaption>Page {i} of {count}. Cross-page relations are marked; all adjacency and exact labels remain in Mermaid and report-data.json.</figcaption></figure>')
+    for page, filename in enumerate(_image_names(prefix, graph, previews)):
+        nodes = graph['nodes'][page*PAGE_NODES:(page+1)*PAGE_NODES]
+        labels = {node['id']: [line for label in (
+            node['label'], 'Dates: '+_dates(node['dates']),
+            'States: '+(', '.join(node['states']) or 'none'),
+            'Actions: '+(', '.join(node['actions']) or 'none'))
+            for line in textwrap.wrap(label, width=34)] for node in nodes}
+        box_height = 30 + max(len(lines) for lines in labels.values())*18
+        positions = {node['id']: (10+(index%3)*350, 12+(index//3)*(box_height+45)) for index,node in enumerate(nodes)}
+        height = math.ceil(len(nodes)/3)*(box_height+45)+20
+        marker = prefix+'-arrow-'+str(page)
+        svg = [f'<svg viewBox="0 0 1060 {height}" role="img" aria-label="{_h(graph["title"])}"><defs><marker id="{marker}" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8" fill="#526577"/></marker></defs>']
+        for edge in graph['edges']:
+            if edge['source'] in positions and edge['target'] in positions:
+                x,y=positions[edge['source']];xx,yy=positions[edge['target']]
+                svg.append(f'<path d="M{x+165},{y+box_height} L{xx+165},{yy}" stroke="#526577" fill="none" marker-end="url(#{marker})"><title>{_h(KIND_NAMES.get(edge["kind"],edge["kind"]))} · {_h(edge.get("phase"))}</title></path>')
+        for node in nodes:
+            x,y=positions[node['id']]
+            svg.append(f'<g><title>{_h(node["label"])}</title><rect x="{x}" y="{y}" width="330" height="{box_height}" rx="6" fill="white" stroke="#147d86"/>')
+            for index,line in enumerate(labels[node['id']]):
+                svg.append(f'<text x="{x+12}" y="{y+22+index*18}" font-size="14" fill="#172c42">{_h(line)}</text>')
+            svg.append('</g>')
+        svg.append('</svg>')
+        result.append('<figure>'+''.join(svg)+f'<figcaption>Page {page+1} of {count}. Full labels are wrapped. <a href="{filename}">Download PNG preview</a>; exact cross-page relations remain in Mermaid and JSON.</figcaption></figure>')
     return "".join(result) + "</div>"
 
 
@@ -529,11 +555,39 @@ def render_html(result, *, _prepared_view=None):
     view = _prepared_view if _prepared_view is not None else _view(result)
     analysis = view["analysis"];decl = view["declarations"]
     title = f'Regime representation report — {view["name"]}'
+    summary = ['<section class="card" id="recommendation"><h2>Recommendation</h2>']
+    for s in view['scenarios']:
+        scenario=s['scenario'];rec=scenario.get('recommendation') or {}
+        original=(scenario.get('original') or {}).get('cost')
+        chosen=next((point for point in s['points'] if point['cost_preferred']),None)
+        summary.append('<h3>'+('Keep the original representation' if chosen is None else ('Use option ' if chosen['decision'].get('disposition')=='adopt' else 'Investigate option ')+str(chosen['ordinal']))+'</h3>')
+        rows=[['Original representation', *[_number((original or {}).get(key)) for key in METRICS], rec.get('original_score','Not comparable')]]
+        if chosen:
+            cost=chosen['point'].get('cost',{})
+            rows.append(['Recommended option '+str(chosen['ordinal']), *[_number(cost.get(key)) for key in METRICS],rec.get('score')])
+            summary.append('<ul>'+''.join('<li>'+_h(sentence)+'</li>' for sentence in chosen['consequences']['sentences'])+'</ul>')
+            for block in chosen['point'].get('blocks',[]):
+                if len(block.get('original_regimes',[]))>1:
+                    summary.append('<p>Computational block: <strong>'+_h(' / '.join(block['original_regimes']))+'</strong>. The economic regimes retain their own dispatch rules.</p>')
+            if original:
+                deltas=[f'{name}: {_number(original[key])} → {_number(cost[key])}' for key,name in [('work','Work'),('storage','Value entries'),('clarity','Structural complexity')]]
+                summary.append('<p>'+_h('; '.join(deltas))+'. A lower complexity score reflects the declared formula, not a measured improvement in readability.</p>')
+            summary.append('<p>Local proposal disposition: '+_badge(chosen['decision'].get('disposition'))+'. Local source check: '+_badge((chosen['decision'].get('semantic_checks') or {}).get('status'))+'.</p>')
+        else:
+            summary.append('<p>No eligible source-checked candidate meets the declared improvement rule. Retaining the supplied model does not prove it is optimal.</p>')
+        summary.append(_table(['Representation','Work','Value entries','Structural complexity','Weighted score'],rows,numeric=(1,2,3,4)))
+        summary.append('<p>'+_h(_recommendation_note(scenario))+'</p>')
+        if chosen:
+            summary.append('<details><summary>Compare before and after graphs</summary><div class="two"><div><h4>Original representation</h4>'+_graph_html('original',view['original_graph'],view['preview_counts'])+'</div><div><h4>Recommended computational blocks</h4>'+_graph_html(chosen['prefix'],chosen['graph'],view['preview_counts'])+'</div></div></details>')
+    if not view['scenarios']:
+        summary.append('<p>No checked alternative is available. Keep the supplied model and inspect the unresolved checks below.</p>')
+    summary.append('</section>')
     parts = ['<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">',
              f'<title>{_h(title)}</title><style>{CSS}</style></head><body><main>',
              '<header><div class="eyebrow">Source and metadata analysis</div>', f'<h1>{_h(view["name"])}</h1>',
              f'<p>{_badge(result.get("status"))}</p><p class="lead">{_h(_headline(view))}</p><p class="scope">Compare declared work, allocated value entries and structural complexity. Source validity, family coverage and native numerical execution remain separate checks.</p></header>',
-             '<nav><a href="#overview">Input and checks</a><a href="#alternatives">Candidate alternatives</a><a href="#original">Original graph</a><a href="#obligations">Obligations</a><a href="#provenance">Provenance</a><a href="report.md">Markdown</a><a href="report.json">Complete JSON</a></nav>',
+             '<nav><a href="#recommendation">Recommendation and comparison</a><a href="#overview">Input and checks</a><a href="#alternatives">Candidate alternatives</a><a href="#original">Original graph</a><a href="#obligations">Obligations</a><a href="#provenance">Provenance</a><a href="report.md">Markdown</a><a href="report.json">Complete JSON</a></nav>',
+             ''.join(summary),
              '<section class="card" id="overview"><h2>Input and checks</h2><div class="two"><div>',
              f'<p><strong>{len(decl.get("cells", []))}</strong> declared cells · <strong>{len({c.get("regime") for c in decl.get("cells", [])})}</strong> original regimes · <strong>{len(decl.get("relations", []))}</strong> typed relations</p>',
              f'<p class="scope">{_h(decl.get("production_metadata", "Original configuration metadata was not supplied."))}</p></div><div>']
@@ -589,7 +643,7 @@ def render_html(result, *, _prepared_view=None):
                 parts.append('<p class="callout">The local source/semantic check has not passed. These are candidate changes, not an established source-equivalent transformation.</p>')
             parts.append('<h4>Consequences for this model</h4><ul>' + "".join(f'<li>{_h(x)}</li>' for x in p["consequences"]["sentences"]) + '</ul>')
             parts.append(_table(["Block", "Original regimes", "Declared dates", "Allocated states", "Allocated actions", "Work", "Value entries", "Clarity"],
-                [[i, ", ".join(b.get("original_regimes", [])), _dates(b.get("ages", [])), _axes(b.get("state_axes"), view["domains"]), _axes(b.get("action_axes"), view["domains"]),
+                [[i, ", ".join(b.get("original_regimes", [])), _dates(b.get("ages", []) if any(age is not None for age in b.get("ages", [])) else b.get("periods", [])), _axes(b.get("state_axes"), view["domains"]), _axes(b.get("action_axes"), view["domains"]),
                   *[_number(b.get("cost", {}).get(k)) for k in METRICS]] for i, b in enumerate(p["point"].get("blocks", []), 1)], numeric=(5, 6, 7)))
             parts += [_graph_html(p["prefix"], p["graph"], view["preview_counts"]), '<details><summary>Exact cell projections, action reconstruction and source witnesses</summary>',
                       f'<pre>{_h(_json(p["consequences"]["selected_interfaces"]))}</pre></details>',
@@ -610,7 +664,7 @@ def render_html(result, *, _prepared_view=None):
               f'<h4>Recorded metadata execution</h4><pre>{_h(_json(analysis.get("production_execution", "Not supplied")))}</pre>',
               ('<h4>Resource record</h4><pre>' + _h(_json(result.get("resources", result.get("measurement")))) + '</pre>'
                if result.get("resources", result.get("measurement")) is not None else
-               '<h4>Resource record</h4><p><a href="resource.json">Whole-command resource measurement</a> is supplied by the parent run wrapper after analysis, independent checking and initial report generation. No inline measurement was supplied.</p>'),
+               '<h4>Resource record</h4><p>No resource measurement was supplied. Structural costs are not execution measurements.</p>'),
               '<p><a href="report.json">Complete unchanged result</a> · <a href="report-data.json">Exact graph and selected-interface records</a> · <a href="report-manifest.json">Generated file hashes</a> · <a href="report.md">Markdown report</a></p></section>',
               '<footer>PNG diagrams use deterministic, bounded standard-library rasterization. Labels are abbreviated only in the image; full graph topology, cells and exact source metadata remain in the accompanying files. Rendering performs no economic-model evaluation.</footer></main></body></html>']
     return "".join(parts)
@@ -807,7 +861,7 @@ def write_production_report(result, outdir):
         save(f"graphs/{prefix}.mmd", graph_mermaid(graph))
         files.extend(_write_graph_pages(graph, prefix, outdir, view["preview_counts"].get(prefix, 0)))
     manifest = {"schema": "regime-report-manifest/v1", "status": "WRITTEN",
-                "renderer": "stdlib deterministic HTML/Markdown/Mermaid/RGB PNG",
+                "renderer": "stdlib deterministic HTML/inline SVG/Markdown/Mermaid/RGB PNG",
                 "input_status": result.get("status"), "models": 1,
                 "scenario_count": len(view["scenarios"]), "frontier_alternative_count": sum(len(s["points"]) for s in view["scenarios"]),
                 "graph_count": len(graphs), "png_page_count": sum(view["preview_counts"].values()),

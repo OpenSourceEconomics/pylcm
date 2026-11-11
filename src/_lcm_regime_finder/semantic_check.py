@@ -765,7 +765,7 @@ def _check_semantics(original: dict, normalized: dict, analysis: dict, *, check_
                 fail('declared-input contract outside structural Model scope', callback=key)
             if isinstance(raw_callback, dict) and 'arguments' in raw_callback and callback.get('arguments') != raw_callback['arguments']:
                 fail('Model callback declared signature changed', callback=key)
-            if isinstance(raw_callback,dict) and raw_callback.get('type') in {'lcm.decoupled.Decoupled', 'lcm.shocks.ShockGroup'}:
+            if isinstance(raw_callback,dict):
                 def declared_inputs(value):
                     if isinstance(value,dict):
                         if value.get('kind') in {'callable','primitive','callable-reference'}:
@@ -776,24 +776,31 @@ def _check_semantics(original: dict, normalized: dict, analysis: dict, *, check_
                                 return set().union(*(declared_inputs(v) for v in value.get('fields',{}).values()))
                             side='solve' if callback.get('selected_phase')=='solve' else 'simulate'
                             return declared_inputs(value.get('fields',{}).get(side))
+                        if value.get('type')=='_lcm.processes.base.StateConditioned':
+                            on=value.get('fields',{}).get('on')
+                            if not isinstance(on,str):
+                                unknown('conditional law input is not captured',callback=key)
+                                return set()
+                            return {on}
                         return set().union(*(declared_inputs(v) for v in value.values()))
                     if isinstance(value,list):return set().union(*(declared_inputs(v) for v in value))
                     return set()
                 if raw_callback.get('type') == 'lcm.decoupled.Decoupled' and set(raw_callback.get('fields',{}))!={'objective','value'}:
                     unknown('declared aggregator fields not captured',callback=key)
-                expected=declared_inputs(raw_callback)
-                if set(callback.get('arguments',[]))!=expected or set(callback.get('reads',[]))!=expected:
-                    kind = 'shock-law' if raw_callback.get('type') == 'lcm.shocks.ShockGroup' else 'aggregator'
-                    fail('declared '+kind+' inputs changed',callback=key)
+                if raw_callback.get('type') in {'lcm.decoupled.Decoupled', 'lcm.shocks.ShockGroup'}:
+                    expected=declared_inputs(raw_callback)
+                    if set(callback.get('arguments',[]))!=expected or set(callback.get('reads',[]))!=expected:
+                        kind = 'shock-law' if raw_callback.get('type') == 'lcm.shocks.ShockGroup' else 'aggregator'
+                        fail('declared '+kind+' inputs changed',callback=key)
             if isinstance(raw_callback, dict) and '/states/' in callback.get('source_path',''):
                 typ=raw_callback.get('type')
                 iid={'_lcm.processes.iid.'+n for n in ('NormalIIDProcess','UniformIIDProcess','LogNormalIIDProcess','NormalMixtureIIDProcess')}
                 iid.add('_lcm.processes.joint_normal_lowering._JointNormalCoordinate')
                 ar1={'_lcm.processes.ar1.'+n for n in ('TauchenAR1Process','RouwenhorstAR1Process','TauchenNormalMixtureAR1Process','_TauchenOnNodesProcess')}
-                if typ in iid|ar1 and raw_callback.get('fields',{}).get('state_conditioned') is None:
+                if typ in iid|ar1:
                     axis=callback['source_path'].split('/states/',1)[1].split('/',1)[0].replace('~1','/').replace('~0','~')
-                    expected=[] if typ in iid else [axis]
-                    if callback.get('arguments')!=expected or callback.get('reads')!=expected:
+                    expected=declared_inputs(raw_callback) | (set() if typ in iid else {axis})
+                    if set(callback.get('arguments',[]))!=expected or set(callback.get('reads',[]))!=expected:
                         fail('intrinsic process dependency changed',callback=key)
         if dependency.reads & formals - declared: fail("omitted original callback dependency", callback=key, missing=sorted(dependency.reads & formals - declared))
         if callback.get("status") == "proved" and not dependency.proved: unknown("callback proof unavailable", callback=key, reasons=sorted(proof.notes))
@@ -1664,6 +1671,19 @@ def _check_capture(original: dict, normalized: dict, fail, unknown) -> None:
                 if isinstance(value,dict) and not value:continue
                 record = callbacks.get(providers.get("next_" + axis), {})
                 if record.get("original") != selected(value, phase, period): fail("original next-state provider changed", cell=cell["id"], phase=phase, state=axis)
+            iid={'_lcm.processes.iid.'+name for name in ('NormalIIDProcess','UniformIIDProcess','LogNormalIIDProcess','NormalMixtureIIDProcess')}
+            iid.add('_lcm.processes.joint_normal_lowering._JointNormalCoordinate')
+            persistent={'_lcm.processes.ar1.'+name for name in ('TauchenAR1Process','RouwenhorstAR1Process','TauchenNormalMixtureAR1Process','_TauchenOnNodesProcess')}
+            for axis,value in declaration.get('states',{}).items():
+                value=selected(value,phase,period)
+                if isinstance(value,dict) and value.get('type') in iid|persistent:
+                    record=callbacks.get(providers.get('next_'+axis),{})
+                    if record.get('original')!=value:
+                        fail('original intrinsic draw provider changed',cell=cell['id'],phase=phase,state=axis)
+                    owner_path=record.get('source_path','').split('/states/',1)
+                    owner=owner_path[1].split('/',1)[0].replace('~1','/').replace('~0','~') if len(owner_path)==2 else None
+                    if owner!=axis:
+                        fail('original intrinsic draw provider owner changed',cell=cell['id'],phase=phase,state=axis)
             if phase == "solve":
                 if declaration.get("certainty_equivalent") is not None:
                     expected_roots.append(("certainty_equivalent", "solve", selected(declaration["certainty_equivalent"], "solve", period)))

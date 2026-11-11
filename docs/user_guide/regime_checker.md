@@ -12,20 +12,29 @@ Model construction is sufficient. The checker does not solve or simulate the mod
 ## Check your model
 
 After installing PyLCM, construct your `Model` using your usual setup. Call
-`find_regimes` in the same Python environment.
+`analyze_regime_structure` in the same Python environment.
 
 ```python
-from pathlib import Path
+from lcm.graphs import analyze_regime_structure
 
-from lcm.graphs import find_regimes
-
-report = find_regimes(model, output=Path("regime-check-results"))
-print(report["recommendations"])
+result = analyze_regime_structure(model)
+print(result.original.cost)
+for candidate in result.recommendations:
+    print(candidate.cost, candidate.blocks, candidate.checks)
+result.write_report("regime-check-results")
 ```
 
 Open `regime-check-results/report.html` for the graph, alternatives and supporting
-checks. Use a new output directory, or omit `output` to get the report in memory. Review
-saved reports before sharing them because they can contain source and model inputs.
+checks. Analysis and writing are separate operations. `write_report` accepts a string or
+`Path` and requires a new directory. Review saved reports before sharing them because
+they can contain source and model inputs.
+
+`RegimeAnalysisResult` and its candidate, block, check and cost records are frozen
+dataclasses. Recommendations reference candidate objects directly. `result.checks`
+contains global layers; each candidate has its own scoped checks and reasons.
+`result.data` exposes recursively immutable detailed records, and `result.to_dict()`
+returns a detached serializable copy. The existing `find_regimes(model, output=...)`
+helper remains available for callers needing the dictionary interface.
 
 ## Read the result
 
@@ -91,10 +100,10 @@ invalid or absent from the admissible family. The snapshot runner below exposes
 
 ### Is it the best representation?
 
-`lcm.graphs.find_regimes(model)` uses a heuristic search. Its recommendation is selected
-from the eligible checked candidates it found. Better unexamined representations can
-exist, and the global optimality gap is unknown. A checked improvement is useful without
-being a certified optimum.
+`analyze_regime_structure(model)` uses a heuristic search. Its recommendation is
+selected from the eligible checked candidates it found. Better unexamined
+representations can exist, and the global optimality gap is unknown. A checked
+improvement is useful without being a certified optimum.
 
 The bundled analysis machinery also includes exact searches and independent coverage
 checkers for specified finite families of state projections, regime groupings and date
@@ -112,10 +121,48 @@ pass its preservation checks without any proof that search covered the full fami
 incomplete search or verification result cannot support the stronger optimality claim.
 Worker completion or a successful command exit is not a completeness certificate.
 
-The public `find_regimes` function does not expose an exact-search option or cost
-configuration arguments. The exact machinery does not strengthen the guarantee of its
-default heuristic result. The snapshot runner exposes exact search explicitly, as
-described below.
+The public model-analysis functions do not expose an exact-search option. The exact
+machinery does not strengthen the guarantee of their default heuristic result. The
+snapshot runner exposes exact search explicitly, as described below.
+
+## Compare alternative linear cost models
+
+Pass a `LinearRegimeCostModel` to `analyze_regime_structure` to select a supported
+objective before candidate generation and pruning. This reruns the search. Reranking the
+candidates from an earlier search is not equivalent, because the objective also affects
+which candidates are explored and retained.
+
+```python
+from lcm.graphs import LinearRegimeCostModel, analyze_regime_structure
+
+cost = LinearRegimeCostModel(
+    work_weight=7.0,
+    storage_weight=3.0,
+    complexity_weight=2.0,
+    reference_scales=(1, 1, 1),
+    minimum_improvement=0.05,
+)
+result = analyze_regime_structure(model, cost_model=cost)
+```
+
+The coefficients above are illustrative priorities, not fitted runtime predictions.
+Weights must be finite and strictly positive. Reference scales must be positive
+integers; when omitted, the search uses the unchanged original costs. The minimum
+relative improvement is in `[0, 1)`. `allow_final_only_split=True` permits the endpoint
+preference override. The supplied objective is recorded with the result.
+
+The supported class is a positive linear combination of declared work, allocated value
+entries and structural complexity. Arbitrary nonlinear functions and custom callbacks
+are not supported. This restriction preserves the additive cost and dominance conditions
+used by the search and independent checks.
+
+The structural score is not an empirically validated predictor of runtime or peak
+memory. To evaluate alternatives, measure equivalent implementations separately,
+distinguishing construction, compilation, warm execution and memory. Fit coefficients
+outside the checker and compare predicted rankings on held-out models or hardware. Fixed
+unit reference scales can express fitted coefficients directly. Report the measured
+evidence alongside the resulting cost model; running this analysis does not perform that
+validation.
 
 ## Replay the bundled snapshot
 

@@ -1,6 +1,7 @@
 """Actual-Model conditional-shock checks, isolated from metadata-only test RSS."""
+
 from copy import deepcopy
-import unittest
+import pytest
 
 import jax.numpy as jnp
 
@@ -50,104 +51,145 @@ def model(*, shock_group=None):
     return Model(
         n_periods=1,
         regime_id_class=Regimes,
-        initial_nodes=InitialNodes(by_period={0: ('source', 'target')}),
+        initial_nodes=InitialNodes(by_period={0: ("source", "target")}),
         edges={},
         regimes={
-            'source': Regime(
-                states={'lagged_school': DiscreteGrid(Binary)},
-                functions={'utility': stay},
-                exits={'leave': Exit(targets={'self': ExitTarget(
-                    regime='target', projection={'lagged_school': same_history})},
-                    rule='unilateral', observes=('offer',))}),
-            'target': Regime(
-                states={'lagged_school': DiscreteGrid(Binary)},
-                actions={'choice': DiscreteGrid(Binary)},
-                functions={'utility': payoff}, shocks=('offers',)),
+            "source": Regime(
+                states={"lagged_school": DiscreteGrid(Binary)},
+                functions={"utility": stay},
+                exits={
+                    "leave": Exit(
+                        targets={
+                            "self": ExitTarget(
+                                regime="target",
+                                projection={"lagged_school": same_history},
+                            )
+                        },
+                        rule="unilateral",
+                        observes=("offer",),
+                    )
+                },
+            ),
+            "target": Regime(
+                states={"lagged_school": DiscreteGrid(Binary)},
+                actions={"choice": DiscreteGrid(Binary)},
+                functions={"utility": payoff},
+                shocks=("offers",),
+            ),
         },
-        shocks={'offers': shock_group or ShockGroup(shocks={'offer': Discrete(
-            categories=Binary, probs=offer_probabilities)}),
-            'unregistered': ShockGroup(shocks={'other': Discrete(
-                categories=Binary, probs=offer_probabilities)})},
+        shocks={
+            "offers": shock_group
+            or ShockGroup(
+                shocks={"offer": Discrete(categories=Binary, probs=offer_probabilities)}
+            ),
+            "unregistered": ShockGroup(
+                shocks={"other": Discrete(categories=Binary, probs=offer_probabilities)}
+            ),
+        },
         enable_jit=False,
     )
 
 
-class ConditionalCurrentShockTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.captured = read_model(model())
-        cls.report = analyze_production(cls.captured)
-
-    def test_capture_to_recommendation_retains_probability_only_history(self):
-        # Literal observed-exit oracle: max(stay=.5, target=0/2) in
-        # the two offer outcomes. Only their probabilities use this state.
-        probabilities = offer_probabilities(jnp.asarray([0, 1], dtype=jnp.int32))
-        values = probabilities[:, 0] * 0.5 + probabilities[:, 1] * 2.0
-        self.assertAlmostEqual(float(values[0]), 1.0, places=6)
-        self.assertAlmostEqual(float(values[1]), 1.5, places=6)
-        captured, report = self.captured, self.report
-        self.assertEqual(verify_production_result(captured, report)['status'], 'PASS')
-        cells = report['analysis']['declarations']['cells']
-        self.assertEqual({cell['regime'] for cell in cells}, {'source', 'target'})
-        for cell in cells:
-            options = report['analysis']['interfaces'][cell['id']]['options']
-            self.assertTrue(all('lagged_school' in option['states'] for option in options))
-
-    def test_continuous_law_inputs_and_shared_callable_references_remain_live(self):
-        group = ShockGroup(shocks={'offer': Normal(
-            mu=conditional_location, sigma=conditional_location)},
-            nodes=Product(offer=GaussHermite(n=3)))
-        captured = read_model(model(shock_group=group))
-        law = captured['shocks']['offers']['fields']['shocks']['offer']['fields']
-        # The compact capture format stores reused callbacks by identity.
-        # Exercise that spelling as well as the expanded native mu record.
-        law['sigma'] = {'kind': 'callable-reference', **{
-            key: law['sigma'][key]
-            for key in ('capture_ref', 'identity_sha256', 'capture_graph_sha256')}}
-        report = analyze_production(captured)
-        self.assertEqual(verify_production_result(captured, report)['status'], 'PASS')
-        for cell in report['analysis']['declarations']['cells']:
-            self.assertTrue(all('lagged_school' in option['states']
-                for option in report['analysis']['interfaces'][cell['id']]['options']))
-
-    def test_unregistered_conditional_group_does_not_keep_an_unused_state(self):
-        # Change only the captured law to a constant. Reconstructing a Model
-        # would reject its now-unused history before the checker can inspect it.
-        captured = deepcopy(self.captured)
-        captured['shocks']['offers']['fields']['shocks']['offer']['fields']['probs'] = [0.5, 0.5]
-        report = analyze_production(captured)
-        self.assertEqual(verify_production_result(captured, report)['status'], 'PASS')
-        targets = [c for c in report['analysis']['declarations']['cells'] if c['regime'] == 'target']
-        self.assertTrue(targets)
-        for cell in targets:
-            self.assertTrue(all('lagged_school' not in option['states']
-                for option in report['analysis']['interfaces'][cell['id']]['options']))
-
-    def test_independent_source_check_rejects_missing_or_miswired_law(self):
-        for mutation in ('omit', 'rename', 'phase', 'erase_inputs', 'missing_group'):
-            analysis = deepcopy(self.report['analysis'])
-            declaration = analysis['declarations']
-            for cell in declaration['cells']:
-                laws = [c for c in cell['consumers'] if c['kind'] == 'shock_law']
-                if not laws:
-                    continue
-                law = laws[0]
-                if mutation == 'omit': cell['consumers'].remove(law)
-                elif mutation == 'rename': law['group'] = 'unregistered'
-                elif mutation == 'phase': law['phase'] = 'both'
-                elif mutation == 'missing_group': del law['group']
-                else:
-                    callback = declaration['callbacks'][law['callback']]
-                    callback['arguments'] = callback['reads'] = []
-            with self.subTest(mutation=mutation):
-                checked = check_semantics(self.captured, declaration, analysis, check_coverage=False)
-                self.assertEqual(checked['status'], 'FAIL', checked)
-
-    def test_original_shock_probability_mutation_invalidates_saved_recommendation(self):
-        source = deepcopy(self.captured)
-        source['shocks']['offers'] = source['shocks']['unregistered']
-        self.assertEqual(verify_production_result(source, self.report)['status'], 'FAIL')
+def test_capture_to_recommendation_retains_probability_only_history() -> None:
+    captured = read_model(model())
+    report = analyze_production(captured)
+    # Literal observed-exit oracle: max(stay=.5, target=0/2) in
+    # the two offer outcomes. Only their probabilities use this state.
+    probabilities = offer_probabilities(jnp.asarray([0, 1], dtype=jnp.int32))
+    values = probabilities[:, 0] * 0.5 + probabilities[:, 1] * 2.0
+    assert float(values[0]) == pytest.approx(1.0, abs=1e-6)
+    assert float(values[1]) == pytest.approx(1.5, abs=1e-6)
+    assert (verify_production_result(captured, report)["status"]) == ("PASS")
+    cells = report["analysis"]["declarations"]["cells"]
+    assert ({cell["regime"] for cell in cells}) == ({"source", "target"})
+    for cell in cells:
+        options = report["analysis"]["interfaces"][cell["id"]]["options"]
+        assert all("lagged_school" in option["states"] for option in options)
 
 
-if __name__ == '__main__':
-    unittest.main()
+def test_continuous_law_inputs_and_shared_callable_references_remain_live() -> None:
+    group = ShockGroup(
+        shocks={"offer": Normal(mu=conditional_location, sigma=conditional_location)},
+        nodes=Product(offer=GaussHermite(n=3)),
+    )
+    captured = read_model(model(shock_group=group))
+    law = captured["shocks"]["offers"]["fields"]["shocks"]["offer"]["fields"]
+    # The compact capture format stores reused callbacks by identity.
+    # Exercise that spelling as well as the expanded native mu record.
+    law["sigma"] = {
+        "kind": "callable-reference",
+        **{
+            key: law["sigma"][key]
+            for key in ("capture_ref", "identity_sha256", "capture_graph_sha256")
+        },
+    }
+    report = analyze_production(captured)
+    assert (verify_production_result(captured, report)["status"]) == ("PASS")
+    for cell in report["analysis"]["declarations"]["cells"]:
+        assert all(
+            "lagged_school" in option["states"]
+            for option in report["analysis"]["interfaces"][cell["id"]]["options"]
+        )
+
+
+def test_unregistered_conditional_group_does_not_keep_an_unused_state() -> None:
+    captured = read_model(model())
+    # Change only the captured law to a constant. Reconstructing a Model
+    # would reject its now-unused history before the checker can inspect it.
+    captured = deepcopy(captured)
+    captured["shocks"]["offers"]["fields"]["shocks"]["offer"]["fields"]["probs"] = [
+        0.5,
+        0.5,
+    ]
+    report = analyze_production(captured)
+    assert (verify_production_result(captured, report)["status"]) == ("PASS")
+    targets = [
+        c
+        for c in report["analysis"]["declarations"]["cells"]
+        if c["regime"] == "target"
+    ]
+    assert targets
+    for cell in targets:
+        assert all(
+            "lagged_school" not in option["states"]
+            for option in report["analysis"]["interfaces"][cell["id"]]["options"]
+        )
+
+
+def test_independent_source_check_rejects_missing_or_miswired_law(
+    *, subtests: pytest.Subtests
+) -> None:
+    captured = read_model(model())
+    report = analyze_production(captured)
+    for mutation in ("omit", "rename", "phase", "erase_inputs", "missing_group"):
+        analysis = deepcopy(report["analysis"])
+        declaration = analysis["declarations"]
+        for cell in declaration["cells"]:
+            laws = [c for c in cell["consumers"] if c["kind"] == "shock_law"]
+            if not laws:
+                continue
+            law = laws[0]
+            if mutation == "omit":
+                cell["consumers"].remove(law)
+            elif mutation == "rename":
+                law["group"] = "unregistered"
+            elif mutation == "phase":
+                law["phase"] = "both"
+            elif mutation == "missing_group":
+                del law["group"]
+            else:
+                callback = declaration["callbacks"][law["callback"]]
+                callback["arguments"] = callback["reads"] = []
+        with subtests.test(mutation=mutation):
+            checked = check_semantics(
+                captured, declaration, analysis, check_coverage=False
+            )
+            assert (checked["status"]) == ("FAIL"), checked
+
+
+def test_original_shock_probability_mutation_invalidates_saved_recommendation() -> None:
+    captured = read_model(model())
+    report = analyze_production(captured)
+    source = deepcopy(captured)
+    source["shocks"]["offers"] = source["shocks"]["unregistered"]
+    assert (verify_production_result(source, report)["status"]) == ("FAIL")

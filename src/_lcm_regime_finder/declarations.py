@@ -538,7 +538,7 @@ class Normalizer:
         payload=b'{"declaration":'+self.encoded(value)[1]+b',"'+field.encode()+b'":'+json.dumps(setting,default=str).encode()+b'}'
         return hashlib.sha256(payload).hexdigest()
 
-    def source_path(self,value,preferred):
+    def source_path(self,value,preferred,*,preserve_owner=False):
         """Resolve exact captured records through wrappers; synthetic records fail."""
         current=self.original
         try:
@@ -547,6 +547,14 @@ class Normalizer:
                 current=current[int(token)] if isinstance(current,list) else current[token]
             if current==value:return preferred
         except (KeyError,IndexError,ValueError,TypeError):pass
+        if preserve_owner:
+            pending=[(current,preferred)]
+            while pending:
+                node,path=pending.pop()
+                if isinstance(node,type(value)) and node==value:return path
+                if isinstance(node,dict):pending.extend((child,pointer(path,key)) for key,child in node.items())
+                elif isinstance(node,list):pending.extend((child,pointer(path,index)) for index,child in enumerate(node))
+            return preferred
         if isinstance(value,(dict,list)):
             if self.source_object_paths is None:
                 paths = {}
@@ -589,10 +597,11 @@ class Normalizer:
         scalar_callable=isinstance(value,dict) and value.get('kind') in {'callable','primitive','callable-reference'}
         source_key=self.value_digest(value)
         key=source_key if scalar_callable or phase is None else self.declaration_key(value,'selected_phase',phase)
-        if '/states/' in path and short(value).endswith('Process') and 'IID' not in short(value):
-            key=self.declaration_key(value,'persistent_state_owner',path.split('/states/',1)[1].split('/',1)[0])
+        process_owner = '/states/' in path and (short(value).endswith('Process') or short(value)=='_JointNormalCoordinate')
+        if process_owner:
+            key=digest([key,'intrinsic_state_owner',path.split('/states/',1)[1].split('/',1)[0]])
         if key in self.callback_keys:return self.callback_keys[key]
-        path=self.source_path(value,path)
+        path=self.source_path(value,path,preserve_owner=process_owner)
         cid='F'+key[:24];self.callback_keys[key]=cid
         if scalar_callable:
             metadata = resolve_callable(value, self.callable_records)
@@ -620,27 +629,32 @@ class Normalizer:
                     'original':copy.deepcopy(value),'provenance':{'source_path':path,'sha256':source_key}}
         else:
             child=[]
+            conditioning=set()
             def walk(item,p):
                 if phase is not None and short(item)=='Phased':
                     side='solve' if phase=='solve' else 'simulate'
                     walk(fields(item).get(side),pointer(pointer(p,'fields'),side));return
                 if isinstance(item,dict) and item.get('kind') in {'object','dataclass'} and 'callable' in item:
                     walk(item['callable'],pointer(p,'callable'));return
+                if short(item)=='StateConditioned':
+                    on=fields(item).get('on')
+                    if isinstance(on,str):conditioning.add(on)
+                    else:raise DeclarationError('Conditional law has no captured conditioning state at '+p)
                 if isinstance(item,dict) and item.get('kind') in {'callable','primitive','callable-reference'}:child.append(self.callback(item,p));return
                 if isinstance(item,dict):
                     for k,v in item.items():walk(v,pointer(p,k))
                 elif isinstance(item,list):
                     for i,v in enumerate(item):walk(v,pointer(p,i))
             walk(value,path)
-            reads=sorted({a for c in child for a in self.callbacks[c]['reads']})
+            reads=sorted(conditioning | {a for c in child for a in self.callbacks[c]['reads']})
             if isinstance(value,dict) and value.get('type') in {'lcm.decoupled.Decoupled', 'lcm.shocks.ShockGroup'}:
-                reads=sorted({a for c in child for a in self.callbacks[c]['arguments']})
+                reads=sorted(conditioning | {a for c in child for a in self.callbacks[c]['arguments']})
             constant=isinstance(value,(int,float,bool,str)) or value is None
             record={'arguments':reads,'reads':reads,'source':None,'identity':key,'bindings':{},
                     'expression':repr(value) if constant else None,'status':'proved' if constant else 'unresolved' if any(self.callbacks[c].get('status')=='unresolved' for c in child) else 'opaque',
                     'source_path':path,'original':copy.deepcopy(value),'members':child,'declaration_type':short(value),
                     'selected_phase':phase,'provenance':{'source_path':path,'sha256':source_key}}
-            if not constant and not child:
+            if not constant and not child and not conditioning:
                 builtin_reads={'lcm.koopmans_aggregation.LinearAggregator':['utility','CE','discount_factor'],
                                'lcm.koopmans_aggregation.CESAggregator':['utility','CE','discount_factor','intertemporal_elasticity_of_substitution'],
                                'lcm.shocks.ShockGroup':[],
@@ -847,6 +861,17 @@ def normalize_declarations(snapshot,production_contract=None):
                 output='next_'+axis
                 if output in cell['phase_functions'][phase]:raise DeclarationError('Ambiguous original next-state DAG provider '+output)
                 cell['phase_functions'][phase][output]=normal.callback(_select(value,phase,period,date),pointer(pointer(fp,'state_transitions'),axis),phase)
+            # A draw consumed by a source law need not be carried by its target.
+            for axis,value in declaration.get('states',{}).items():
+                selected=_select(value,phase,period,date)
+                from .graph_scope import IID_TYPES, AR1_TYPES
+                if isinstance(selected,dict) and selected.get('type') in IID_TYPES|AR1_TYPES:
+                    cid=normal.callback(selected,pointer(pointer(fp,'states'),axis),phase)
+                    reads=set(normal.callbacks[cid]['reads'])
+                    if selected['type'] in AR1_TYPES:reads.add(axis)
+                    normal.callbacks[cid].update(arguments=sorted(reads),reads=sorted(reads),expression=None,
+                                                intrinsic_process_contract=short(selected))
+                    cell['phase_functions'][phase].setdefault('next_'+axis,cid)
         cell['functions']=dict(cell['phase_functions']['solve'])
         # Conditional current shocks affect the integrated value even when no
         # payoff or ordinary next-state function reads their conditioning state.
