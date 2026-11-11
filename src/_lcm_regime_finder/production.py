@@ -6,11 +6,12 @@ one explicitly finite original coordinate, under a small pure language.
 """
 from __future__ import annotations
 from copy import deepcopy
+from collections.abc import Mapping, Sequence
 from itertools import product, combinations
 import ast
 import time
 
-from .records import Scenario
+from .records import Scenario, JSONValue
 from .expressions import partial, jsonable, AdmissionError
 from .frontier import canonical, digest, search_frontier
 
@@ -25,6 +26,7 @@ class MetadataAnalysis:
         if len(self.cells) != len(declarations['cells']):
             raise ValueError('Duplicate exact admission cell')
         self.callbacks = declarations['callbacks']
+        self._transition_contexts = _transition_provider_index(relations=declarations['relations'], callbacks=self.callbacks)
         self.domains = declarations['domains']
         self.limits = {'seconds': 900, 'metadata_categories': 100000,
                        'projection_policies': 4096} | (limits or {})
@@ -137,8 +139,9 @@ class MetadataAnalysis:
                 pass
         return set(cb.get('reads', cb.get('arguments', []))) - set(env)
 
-    def expanded_reads(self, callback_id, cell, phase='solve', stops=frozenset(), trail=frozenset()):
-        key = (callback_id, cell['id'], phase, tuple(sorted(stops)))
+    def expanded_reads(self, callback_id, cell, phase='solve', stops=frozenset(), trail=frozenset(), *, provider_overrides=None):
+        provider_overrides = provider_overrides or {}
+        key = (callback_id, cell['id'], phase, tuple(sorted(stops)), tuple(sorted(provider_overrides.items())))
         if key in self._cache:
             return set(self._cache[key])
         if callback_id in stops:
@@ -148,7 +151,7 @@ class MetadataAnalysis:
         cb = self.callbacks[callback_id]
         if cb.get('status') == 'unresolved':
             return set(cell['states']) | set(cell['actions'])
-        providers = cell.get('phase_functions', {}).get(phase, cell.get('functions', {}))
+        providers = cell.get('phase_functions', {}).get(phase, cell.get('functions', {})) | provider_overrides
         result = set()
         code_axes = {v['argument']: k for k, v in cell.get('category_codes', {}).items()}
         for name in self.direct_reads(callback_id, cell, phase=phase):
@@ -157,7 +160,7 @@ class MetadataAnalysis:
             if name in cell['states'] or name in cell['actions']:
                 result.add(name)
             elif name in providers:
-                result.update(self.expanded_reads(providers[name], cell, phase, stops, trail | {callback_id}))
+                result.update(self.expanded_reads(providers[name], cell, phase, stops, trail | {callback_id}, provider_overrides=provider_overrides))
         self._cache[key] = frozenset(result)
         return result
 
@@ -180,7 +183,7 @@ class MetadataAnalysis:
                 continue
             for cb in relation.get('callbacks', []):
                 for phase in self.phases(relation):
-                    reads.update(self.expanded_reads(cb, cell, phase, stops))
+                    reads.update(self.expanded_reads(cb, cell, phase, stops, provider_overrides=self._transition_contexts.get((id(relation),phase),{})))
         return reads
 
     def update_reads(self, relation, target_axis, stops=frozenset()):
@@ -194,7 +197,7 @@ class MetadataAnalysis:
         if isinstance(update, str) and update in self.callbacks:
             result = set()
             for phase in self.phases(relation):
-                result.update(self.expanded_reads(update, source, phase, stops))
+                result.update(self.expanded_reads(update, source, phase, stops, provider_overrides=self._transition_contexts.get((id(relation),phase),{})))
             return result
         if isinstance(update, dict):
             if update.get('kind') == 'identity':
@@ -204,7 +207,7 @@ class MetadataAnalysis:
             if update.get('callback') in self.callbacks:
                 result = set()
                 for phase in self.phases(relation):
-                    result.update(self.expanded_reads(update['callback'], source, phase, stops))
+                    result.update(self.expanded_reads(update['callback'], source, phase, stops, provider_overrides=self._transition_contexts.get((id(relation),phase),{})))
                 return result
         return set(source['states']) | set(source['actions'])
 
@@ -652,6 +655,36 @@ class MetadataAnalysis:
                                          'dense_cartesian_cells_enumerated': 0,
                                          'characteristic_metadata_values': sum(len(c['values']) for c in candidates)},
                 'elapsed_seconds': time.perf_counter() - self.started}
+
+
+def _transition_provider_index(*, relations: Sequence[Mapping[str, JSONValue]], callbacks: Mapping[str, JSONValue]) -> dict[tuple[int, str], dict[str, str]]:
+    """Bind next-state providers separately for every original edge and phase."""
+    contexts: dict[tuple[str, tuple[str, ...], str], dict[str, str]] = {}
+    index: dict[tuple[int, str], dict[str, str]] = {}
+    for relation in relations:
+        if relation.get('kind') not in {'transition','joint'}:
+            continue
+        source, targets = relation.get('source'), relation.get('targets', [])
+        if not isinstance(source,str) or not isinstance(targets,list) or any(not isinstance(target,str) for target in targets):
+            raise ValueError('Transition context lacks original source/target identifiers')
+        target_names = tuple(target for target in targets if isinstance(target,str))
+        updates = relation.get('state_updates', {})
+        if not isinstance(updates,Mapping):
+            raise ValueError('Transition context lacks a state-update mapping')
+        selected = relation.get('phase','both')
+        if not isinstance(selected,str) or selected not in ('both','solve','simulation'):
+            raise ValueError('Transition context has an unsupported phase')
+        for phase in ('solve','simulation') if selected=='both' else (selected,):
+            context = contexts.setdefault((source,target_names,phase),{})
+            index[id(relation),phase] = context
+            for axis, callback in updates.items():
+                if not isinstance(callback,str) or callback not in callbacks:
+                    continue
+                name = 'next_' + axis
+                if name in context and context[name] != callback:
+                    raise ValueError('Conflicting original next-state providers in one edge/phase')
+                context[name] = callback
+    return index
 
 
 def analyze_production(original, *, limits=None, recommendation=None, production_contract=None,

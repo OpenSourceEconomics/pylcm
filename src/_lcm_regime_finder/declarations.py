@@ -538,7 +538,7 @@ class Normalizer:
         payload=b'{"declaration":'+self.encoded(value)[1]+b',"'+field.encode()+b'":'+json.dumps(setting,default=str).encode()+b'}'
         return hashlib.sha256(payload).hexdigest()
 
-    def source_path(self,value,preferred,*,preserve_owner=False):
+    def source_path(self,value,preferred,*,preserve_owner=False,phase=None):
         """Resolve exact captured records through wrappers; synthetic records fail."""
         current=self.original
         try:
@@ -552,7 +552,10 @@ class Normalizer:
             while pending:
                 node,path=pending.pop()
                 if isinstance(node,type(value)) and node==value:return path
-                if isinstance(node,dict):pending.extend((child,pointer(path,key)) for key,child in node.items())
+                if phase is not None and short(node)=='Phased':
+                    side='solve' if phase=='solve' else 'simulate'
+                    pending.append((fields(node).get(side),pointer(pointer(path,'fields'),side)))
+                elif isinstance(node,dict):pending.extend((child,pointer(path,key)) for key,child in node.items())
                 elif isinstance(node,list):pending.extend((child,pointer(path,index)) for index,child in enumerate(node))
             return preferred
         if isinstance(value,(dict,list)):
@@ -599,9 +602,9 @@ class Normalizer:
         key=source_key if scalar_callable or phase is None else self.declaration_key(value,'selected_phase',phase)
         process_owner = '/states/' in path and (short(value).endswith('Process') or short(value)=='_JointNormalCoordinate')
         if process_owner:
-            key=digest([key,'intrinsic_state_owner',path.split('/states/',1)[1].split('/',1)[0]])
+            key=digest([key,'intrinsic_state_owner',path])
         if key in self.callback_keys:return self.callback_keys[key]
-        path=self.source_path(value,path,preserve_owner=process_owner)
+        path=self.source_path(value,path,preserve_owner=process_owner,phase=phase)
         cid='F'+key[:24];self.callback_keys[key]=cid
         if scalar_callable:
             metadata = resolve_callable(value, self.callable_records)
@@ -1036,22 +1039,16 @@ def normalize_declarations(snapshot,production_contract=None):
                     if value is not None:
                         relation['state_updates'][axis]=normal.callback(_select(value,phase,period,date),pointer(pointer(fp,'state_transitions'),axis))
                     else:
-                        from .graph_scope import unconditioned_iid
-                        domain_value=_select(declaration.get('states',{}).get(axis),phase,period,date)
-                        domain_path=pointer(pointer(fp,'states'),axis)
-                        if domain_value is None:
-                            from .graph_scope import unconditioned_iid
-                            arriving=regimes[target].get('states',{}).get(axis)
-                            arriving=_select(arriving,phase,period+1,time[period+1])
-                            if unconditioned_iid(arriving):
-                                domain_value=arriving
-                                raw_target=source.get(regime_key,{}).get(target,{})
-                                target_path=pointer(pointer(base,regime_key),target)
-                                if raw_target.get('kind') in {'dataclass','object'}:target_path=pointer(target_path,'fields')
-                                domain_path=pointer(pointer(target_path,'states'),axis)
-                        if short(domain_value).endswith('Process') or unconditioned_iid(domain_value):
-                            cid=normal.callback(domain_value,domain_path)
-                            reads=sorted(set(normal.callbacks[cid].get('reads',[])) | (set() if 'IID' in short(domain_value) or unconditioned_iid(domain_value) else {axis}))
+                        from .graph_scope import IID_TYPES, AR1_TYPES, unconditioned_iid
+                        domain_value=_select(functions_by_cell[target_id].get('states',{}).get(axis),phase,period+1,time[period+1])
+                        raw_target=source.get(regime_key,{}).get(target,{})
+                        target_path=by_id[target_id]['source_path']
+                        if raw_target.get('kind') in {'dataclass','object'}:target_path=pointer(target_path,'fields')
+                        domain_path=pointer(pointer(target_path,'states'),axis)
+                        if (isinstance(domain_value,dict) and domain_value.get('type') in IID_TYPES|AR1_TYPES
+                                and (axis in cell['states'] or unconditioned_iid(domain_value))):
+                            cid=normal.callback(domain_value,domain_path,phase)
+                            reads=sorted(set(normal.callbacks[cid].get('reads',[])) | ({axis} if domain_value['type'] in AR1_TYPES else set()))
                             normal.callbacks[cid].update(arguments=reads,reads=reads,expression=None,status='opaque',
                                                          intrinsic_process_contract=short(domain_value))
                             relation['state_updates'][axis]=cid

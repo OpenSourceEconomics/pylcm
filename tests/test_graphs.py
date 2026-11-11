@@ -639,3 +639,82 @@ def test_conditioned_persistent_process_preserves_original_phase_inputs(
     semantic_check = _record(report["semantic_check"])
     assert semantic_check["status"] in {"PASS", "UNRESOLVED"}, semantic_check
     assert report["status"] != "INVALID", semantic_check
+
+
+def _current_process_payoff(*, z: ContinuousState) -> ContinuousState:
+    return z
+
+
+def _terminal_process_payoff(*, z: ContinuousState) -> ContinuousState:
+    return z * z
+
+
+def _reset_process_history() -> int:
+    return 0
+
+
+def test_target_conditioned_process_preserves_needed_source_history() -> None:
+    """A target's transition law consumes the source's current conditioning state."""
+    # Use the accepted normal-process boundary; changing its table leaves the
+    # three grid nodes fixed but changes the target transition distribution.
+    from lcm.processes import NormalIIDProcess  # noqa: PLC0415
+
+    source_process = NormalIIDProcess(
+        n_points=3, gauss_hermite=False, mu=0.0, n_std=2.0, sigma=1.0
+    )
+    target_process = NormalIIDProcess(
+        n_points=3,
+        gauss_hermite=False,
+        mu=0.0,
+        n_std=2.0,
+        sigma=StateConditioned(on="history", by={"low": 0.5, "high": 1.0}),
+    )
+    model = Model(
+        n_periods=2,
+        regime_id_class=GraphRegimes,
+        regimes={
+            "alive": Regime(
+                states={
+                    "z": source_process,
+                    "history": DiscreteGrid(ProcessConditionHistory),
+                },
+                functions={"utility": _current_process_payoff},
+                state_transitions={"history": _reset_process_history},
+            ),
+            "final": Regime(
+                states={
+                    "z": target_process,
+                    "history": DiscreteGrid(ProcessConditionHistory),
+                },
+                functions={"utility": _terminal_process_payoff},
+            ),
+        },
+        initial_nodes=InitialNodes(by_period={0: "alive"}),
+        edges={"alive": {"final": Periods(values=(0,))}},
+        fixed_params={"discount_factor": 1.0},
+        enable_jit=False,
+    )
+    report = import_module("lcm.graphs").analyze_regime_structure(model).to_dict()
+    analysis = _record(report["analysis"])
+    declaration = _record(analysis["declarations"])
+    cells = {str(cell["id"]): cell for cell in _records(declaration["cells"])}
+    source = next(cell for cell in cells.values() if cell["regime"] == "alive")
+    options = _records(
+        _record(_record(analysis["interfaces"])[str(source["id"])])["options"]
+    )
+    assert options
+    assert all("history" in _record(option["states"]) for option in options)
+    callbacks = _record(declaration["callbacks"])
+    transitions = [
+        relation
+        for relation in _records(declaration["relations"])
+        if relation["kind"] == "transition" and relation["source"] == source["id"]
+    ]
+    assert {relation["phase"] for relation in transitions} == {"solve", "simulation"}
+    for relation in transitions:
+        callback = _record(callbacks[str(_record(relation["state_updates"])["z"])])
+        assert str(callback["source_path"]).startswith(
+            "/user_regimes/final/fields/states/z"
+        )
+        assert callback["arguments"] == ["history"]
+        assert callback["reads"] == ["history"]

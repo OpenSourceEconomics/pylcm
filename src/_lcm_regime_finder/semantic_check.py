@@ -10,7 +10,7 @@ state/action products and Bellman rows are never enumerated here.
 from __future__ import annotations
 
 import ast
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from collections import defaultdict
 from dataclasses import dataclass
 from fractions import Fraction
@@ -622,6 +622,36 @@ def _providers(cell: dict, domains: dict, phase: str = "solve") -> dict:
     return result
 
 
+def _original_transition_contexts(*, relations: Sequence[Mapping[str, JSONValue]], callbacks: Mapping[str, JSONValue]) -> dict[tuple[int, str], dict[str, str]]:
+    """Rebuild each source-bound transition/joint DAG without producer read sets."""
+    grouped: dict[tuple[str, tuple[str, ...], str], dict[str, str]] = {}
+    result: dict[tuple[int, str], dict[str, str]] = {}
+    for row in relations:
+        if row.get('kind') not in ('transition','joint'):
+            continue
+        source, targets = row.get('source'), row.get('targets', [])
+        if not isinstance(source,str) or not isinstance(targets,list) or not all(isinstance(target,str) for target in targets):
+            raise ValueError('Original transition context has invalid endpoints')
+        target_names = tuple(target for target in targets if isinstance(target,str))
+        selected = row.get('phase','both')
+        if not isinstance(selected,str) or selected not in ('solve','simulation','both'):
+            raise ValueError('Original transition context has an invalid phase')
+        updates = row.get('state_updates',{})
+        if not isinstance(updates,Mapping):
+            raise ValueError('Original transition context has invalid state updates')
+        for phase in ('solve','simulation') if selected=='both' else (selected,):
+            bindings = grouped.setdefault((source,target_names,phase),{})
+            result[id(row),phase] = bindings
+            for state, callback in updates.items():
+                if isinstance(callback,str) and callback in callbacks:
+                    name = 'next_' + state
+                    previous = bindings.get(name)
+                    if previous is not None and previous != callback:
+                        raise ValueError('Original edge/phase has conflicting state producers')
+                    bindings[name] = callback
+    return result
+
+
 def _identity_callback(callback: dict, state: str, captures=None) -> bool:
     """Syntactic alias proof, not a one-point numerical identity test."""
     original = callback.get("original", callback)
@@ -742,6 +772,7 @@ def _check_semantics(original: dict, normalized: dict, analysis: dict, *, check_
     for error in captures.errors:
         fail("compact callable capture identity", detail=error)
     callbacks = normalized.get("callbacks", {})
+    transition_contexts = _original_transition_contexts(relations=normalized.get('relations',[]), callbacks=callbacks)
     domains = {**normalized.get("domains", {}), **analysis.get("derived_domains", {})}
     cells = {cell["id"]: cell for cell in normalized.get("cells", [])}
     if len(cells) != len(normalized.get("cells", [])): fail("duplicate original cell IDs")
@@ -948,10 +979,11 @@ def _check_semantics(original: dict, normalized: dict, analysis: dict, *, check_
             phases = ("solve", "simulation") if relation.get("phase", "both") == "both" else (relation["phase"],)
             def relation_dependency(callback, phase):
                 # Frozen local objects, not producer IDs or producer verdicts.
-                key = (source_cell['id'], id(source_option), callback, phase)
+                key = (source_cell['id'], id(source_option), callback, phase, id(relation))
                 if key in relation_dependencies:
                     return relation_dependencies[key]
                 providers = _providers(source_cell, domains, phase)
+                providers.update(transition_contexts.get((id(relation),phase),{}))
                 phase_stops = dict(stops)
                 for name, provider in providers.items():
                     if isinstance(provider, dict): continue
@@ -1024,6 +1056,7 @@ def _policy_coverage(declaration: dict, analysis: dict, fail, unknown, captures=
     cells = {cell["id"]: cell for cell in declaration["cells"]}
     callbacks, domains = declaration["callbacks"], declaration["domains"]
     relations = [relation for relation in declaration["relations"] if relation.get("support") != "zero"]
+    transition_contexts = _original_transition_contexts(relations=relations, callbacks=callbacks)
     def phases(record): return ("solve", "simulation") if record.get("phase", "both") == "both" else (record["phase"],)
     static_by_cell = {cell_id: _static(cell, domains) for cell_id, cell in cells.items()}
     expected_forced = {}
@@ -1056,8 +1089,10 @@ def _policy_coverage(declaration: dict, analysis: dict, fail, unknown, captures=
                     reconstruction = option.get("action_reconstruction", {}).get(axis, {})
                     if reconstruction.get("kind") != "constant" or _digest(reconstruction.get("value")) != _digest(value):
                         fail("complete discovery omitted a provably forced original choice", cell=cell_id, action=axis, value=value)
-    def original_dependency(callback, cell, phase, stop_id=None):
+    def original_dependency(callback, cell, phase, stop_id=None, relation=None):
         providers = _providers(cell, domains, phase)
+        if relation is not None:
+            providers.update(transition_contexts.get((id(relation),phase),{}))
         stops = {name: "@retained_characteristic" for name, provider in providers.items()
                  if not isinstance(provider, dict) and stop_id is not None and (provider == stop_id or callbacks.get(provider, {}).get("identity") == callbacks.get(stop_id, {}).get("identity"))}
         proof = SourceProof(callbacks, providers, _codes(cell, domains, static_by_cell[cell["id"]]), stops, captures)
@@ -1089,12 +1124,12 @@ def _policy_coverage(declaration: dict, analysis: dict, fail, unknown, captures=
     current_cache = {}
     relations_by_source = defaultdict(list)
     for relation in relations: relations_by_source[relation['source']].append(relation)
-    def dependency(callback, cell, phase, stop_id=None):
+    def dependency(callback, cell, phase, stop_id=None, relation=None):
         # Static bindings are finalized above, and the supplied source DAG is
         # frozen for this check. Cache only this checker's own source result.
-        key = (callback, cell['id'], phase, stop_id)
+        key = (callback, cell['id'], phase, stop_id, id(relation) if relation is not None else None)
         if key not in dependency_cache:
-            dependency_cache[key] = frozenset(original_dependency(callback, cell, phase, stop_id))
+            dependency_cache[key] = frozenset(original_dependency(callback, cell, phase, stop_id, relation))
         return dependency_cache[key]
     def current(cell, stop_id=None):
         key = (cell['id'], stop_id)
@@ -1104,7 +1139,7 @@ def _policy_coverage(declaration: dict, analysis: dict, fail, unknown, captures=
             for phase in phases(consumer): names.update(dependency(consumer["callback"], cell, phase, stop_id))
         for relation in relations_by_source[cell['id']]:
             for callback in relation.get("callbacks", []):
-                for phase in phases(relation): names.update(dependency(callback, cell, phase, stop_id))
+                for phase in phases(relation): names.update(dependency(callback, cell, phase, stop_id, relation))
         current_cache[key] = frozenset(names)
         return names
     def is_identity(update, axis):
@@ -1117,7 +1152,7 @@ def _policy_coverage(declaration: dict, analysis: dict, fail, unknown, captures=
         if isinstance(update, dict) and update.get("kind") == "constant": return set()
         if isinstance(update, dict): update = update.get("callback")
         if isinstance(update, str) and update in callbacks:
-            return set().union(*(dependency(update, cell, phase, stop_id) for phase in phases(relation)))
+            return set().union(*(dependency(update, cell, phase, stop_id, relation) for phase in phases(relation)))
         return set(cell["states"])
     live = {cell_id: (current(cell) & set(cell["states"])) - set(static_by_cell[cell_id]) for cell_id, cell in cells.items()}
     changed = True
@@ -1631,6 +1666,28 @@ def _check_capture(original: dict, normalized: dict, fail, unknown) -> None:
         for key in ("source", "arguments", "bindings", "call_targets"):
             if key in callback_source and key in callback and callback[key] != callback_source[key]: fail("normalized callback source field changed", callback=callback_id, field=key)
     original_regimes = {key: dict(fields(value)) for key, value in source.get("user_regimes", source.get("regimes", {})).items()}
+    def process_has_owner(*, record: Mapping[str, JSONValue], regime: str, axis: str, phase: str) -> bool:
+        regime_token = regime.replace('~','~0').replace('/','~1')
+        axis_token = axis.replace('~','~0').replace('/','~1')
+        regime_key = 'user_regimes' if 'user_regimes' in source else 'regimes'
+        root = '/graph_snapshot' if 'graph_snapshot' in original else ''
+        raw_owner = source.get(regime_key,{}).get(regime,{})
+        states = fields(raw_owner).get('states',{})
+        if axis in states:
+            prefix = root + '/' + regime_key + '/' + regime_token
+            if raw_owner.get('kind') in {'dataclass','object'}:prefix += '/fields'
+            prefix += '/states/' + axis_token
+            value = states[axis]
+        elif axis in source.get('states',{}):
+            prefix = root + '/states/' + axis_token
+            value = source['states'][axis]
+        else:
+            return False
+        if short(value)=='Phased':
+            prefix += '/fields/' + ('solve' if phase=='solve' else 'simulate')
+        path = record.get('source_path')
+        return (record.get('selected_phase') == phase and isinstance(path,str)
+                and (path == prefix or path.startswith(prefix + '/')))
     for declaration in original_regimes.values():
         for key in ("states", "actions", "functions", "constraints", "state_transitions", "derived_categoricals"):
             declaration[key] = {name: value for name, value in {**source.get(key, {}), **declaration.get(key, {})}.items() if value is not None}
@@ -1699,9 +1756,7 @@ def _check_capture(original: dict, normalized: dict, fail, unknown) -> None:
                     record=callbacks.get(providers.get('next_'+axis),{})
                     if record.get('original')!=value:
                         fail('original intrinsic draw provider changed',cell=cell['id'],phase=phase,state=axis)
-                    owner_path=record.get('source_path','').split('/states/',1)
-                    owner=owner_path[1].split('/',1)[0].replace('~1','/').replace('~0','~') if len(owner_path)==2 else None
-                    if owner!=axis:
+                    if not process_has_owner(record=record,regime=cell['regime'],axis=axis,phase=phase):
                         fail('original intrinsic draw provider owner changed',cell=cell['id'],phase=phase,state=axis)
             if phase == "solve":
                 if declaration.get("certainty_equivalent") is not None:
@@ -1804,31 +1859,33 @@ def _check_capture(original: dict, normalized: dict, fail, unknown) -> None:
         target_axes = {axis for axis, did in target["states"].items() if phase != "solve" or domains[did].get("solve_axis", True)} - produced_by_joint
         if set(transition.get("produces", [])) != target_axes: fail("original state-producer coverage changed", relation=transition.get("id"))
         for axis in target_axes:
+            intrinsic = False
             raw = declaration.get("state_transitions", {}).get(axis)
             if isinstance(raw, dict) and "kind" not in raw: raw = raw.get(target["regime"])
             if raw is not None: raw = selected(raw, phase, cell["period"])
             else:
-                candidate = selected(declaration.get("states", {}).get(axis), phase, cell["period"])
                 latent='_lcm.processes.joint_normal_lowering._JointNormalCoordinate'
-                if short(candidate).endswith("Process") or (isinstance(candidate,dict) and candidate.get('type')==latent): raw = candidate
-                elif candidate is None:
-                    arriving=selected(original_regimes[target['regime']].get('states',{}).get(axis),phase,target['period'])
-                    iid={'_lcm.processes.iid.'+n for n in ('NormalIIDProcess','UniformIIDProcess','LogNormalIIDProcess','NormalMixtureIIDProcess')}
-                    iid.add(latent)
-                    if (isinstance(arriving,dict) and arriving.get('type') in iid
-                            and fields(arriving).get('state_conditioned') is None):raw=arriving
+                iid={'_lcm.processes.iid.'+n for n in ('NormalIIDProcess','UniformIIDProcess','LogNormalIIDProcess','NormalMixtureIIDProcess')} | {latent}
+                persistent={'_lcm.processes.ar1.'+n for n in ('TauchenAR1Process','RouwenhorstAR1Process','TauchenNormalMixtureAR1Process','_TauchenOnNodesProcess')}
+                arriving=selected(original_regimes[target['regime']].get('states',{}).get(axis),phase,target['period'])
+                conditioning=_original_process_conditioning_inputs(arriving)
+                if (isinstance(arriving,dict) and arriving.get('type') in iid|persistent
+                        and (axis in cell['states'] or (arriving.get('type') in iid and conditioning == frozenset()))):
+                    raw, intrinsic = arriving, True
             if raw is None:
                 unknown("original state producer is not exposed", source=source_id, target=target_id, state=axis, phase=phase)
             elif callbacks.get(transition.get("state_updates", {}).get(axis), {}).get("original") != raw:
                 fail("original state update consumer changed", relation=transition.get("id"), state=axis)
-            elif isinstance(raw,dict) and raw.get('type') in {'_lcm.processes.ar1.'+n for n in ('TauchenAR1Process','RouwenhorstAR1Process','TauchenNormalMixtureAR1Process','_TauchenOnNodesProcess')}:
+            elif intrinsic:
                 callback=callbacks[transition['state_updates'][axis]]
+                if not process_has_owner(record=callback,regime=target['regime'],axis=axis,phase=phase):
+                    fail('original target process owner changed',relation=transition.get('id'),state=axis)
                 conditioning = _original_process_conditioning_inputs(raw)
                 if conditioning is None:
                     unknown('original process conditioning input is not captured',
                             relation=transition.get('id'), state=axis)
                 else:
-                    expected = {axis} | conditioning
+                    expected = conditioning | ({axis} if raw.get('type') in persistent else set())
                     arguments, reads = callback.get('arguments'), callback.get('reads')
                     finite = all(isinstance(items, list) and all(isinstance(name, str) for name in items)
                                  for items in (arguments, reads))
