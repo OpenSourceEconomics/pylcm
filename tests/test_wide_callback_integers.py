@@ -1,8 +1,8 @@
-"""Wide integers from user functions keep their value at both precisions.
+"""Integers of any width from user functions, at both precisions.
 
 A float-role output written as `2**32`, or as a NumPy `int64`, is the float a
-host conversion gives, eagerly and under JIT. A code keeps its width until the
-off-grid check; a host code the active precision cannot hold is refused.
+host conversion gives, eagerly and under JIT. A code of any integer dtype becomes
+an `int32` code.
 """
 
 import jax

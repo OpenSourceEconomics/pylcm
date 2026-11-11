@@ -38,7 +38,7 @@ type _NumericValue = int | float | np.integer | np.floating | np.ndarray | Value
 # scalar, a NumPy scalar or array, or a JAX array of any numeric kind.
 type UserOutput = bool | int | float | np.generic | np.ndarray | ValueND
 
-# A discrete code from a user function: `int32`, or wider when it arrives wider.
+# A discrete code from a user function, converted to `int32`.
 type Code = Int[Array, "..."]
 
 # Names the user function an output-kind error refers to, e.g. "Constraint 'c'".
@@ -231,6 +231,6 @@ def _first_array(value: UserOutput) -> np.ndarray | ValueND:
 
     JAX narrows a host integer to 32 bits at single precision, or refuses it, so
     a host value is read with NumPy: `2**32` is a float-role output like any
-    other integer, and a wide code is still wide when it is checked.
+    other integer.
     """
     return value if isinstance(value, Array) else np.asarray(value)
