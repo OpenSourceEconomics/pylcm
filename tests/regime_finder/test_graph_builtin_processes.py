@@ -4,6 +4,7 @@ from copy import deepcopy
 
 import pytest
 from _lcm_regime_finder.production import analyze_production
+from _lcm_regime_finder.records import JSONValue
 from _lcm_regime_finder import verify_production_result
 from tests.regime_finder.test_model_adapter import snapshot, function
 from tests.regime_finder.test_query_owners import policy_snapshot
@@ -299,3 +300,235 @@ def test_equal_iid_specs_keep_distinct_source_draw_providers() -> None:
     for cell in result["analysis"]["declarations"]["cells"]:
         for providers in cell["phase_functions"].values():
             assert providers["next_x"] != providers["next_history"]
+
+
+def _json_object(value: JSONValue) -> dict[str, JSONValue]:
+    assert isinstance(value, dict)
+    return value
+
+
+def _json_rows(value: JSONValue) -> list[dict[str, JSONValue]]:
+    assert isinstance(value, list)
+    return [_json_object(item) for item in value]
+
+
+def _input_names(value: JSONValue) -> frozenset[str]:
+    assert isinstance(value, list)
+    names = []
+    for name in value:
+        assert isinstance(name, str)
+        names.append(name)
+    return frozenset(names)
+
+
+def _conditioned_ar1_declaration(
+    *, conditioning: str | None, low_sigma: float = 0.5
+) -> dict[str, JSONValue]:
+    return {
+        "kind": "dataclass",
+        "type": "_lcm.processes.ar1.TauchenAR1Process",
+        "fields": {
+            "n_points": 3,
+            "gauss_hermite": False,
+            "sigma": 1.0,
+            "mu": 0.0,
+            "rho": 0.5,
+            "n_std": 2.0,
+            "state_conditioned": {
+                "kind": "dataclass",
+                "type": "_lcm.processes.base.StateConditioned",
+                "fields": {"on": conditioning, "by": {"low": low_sigma, "high": 1.0}},
+            }
+            if conditioning is not None
+            else None,
+        },
+    }
+
+
+def _conditioned_ar1_capture(
+    *,
+    axis: str = "z",
+    conditioning: str = "history",
+    conditioned: bool = True,
+    reverse_order: bool = False,
+) -> dict[str, JSONValue]:
+    original: dict[str, JSONValue] = snapshot()
+    declaration = _json_object(
+        _json_object(_json_object(original["user_regimes"])["original"])["fields"]
+    )
+    states: dict[str, JSONValue] = {
+        axis: _conditioned_ar1_declaration(
+            conditioning=conditioning if conditioned else None
+        ),
+        conditioning: {
+            "kind": "object",
+            "type": "lcm.DiscreteGrid",
+            "fields": {
+                "values": [0, 1],
+                "codes": [0, 1],
+                "categories": ["low", "high"],
+            },
+        },
+    }
+    declaration.update(
+        states=dict(reversed(tuple(states.items()))) if reverse_order else states,
+        actions={},
+        constraints={},
+        functions={
+            "utility": function(
+                f"def utility({axis}, {conditioning}):\n    return {axis} + {conditioning}\n",
+                [axis, conditioning],
+            )
+        },
+        state_transitions={
+            conditioning: function(
+                f"def next_state({conditioning}):\n    return {conditioning}\n",
+                [conditioning],
+            )
+        },
+    )
+    return original
+
+
+@pytest.mark.parametrize(
+    ("axis", "conditioning"),
+    [("z", "history"), ("income", "status"), ("state_b", "state_a")],
+)
+@pytest.mark.parametrize("conditioned", [False, True])
+@pytest.mark.parametrize("reverse_order", [False, True])
+def test_persistent_process_inputs_do_not_depend_on_names_or_declaration_order(
+    *, axis: str, conditioning: str, conditioned: bool, reverse_order: bool
+) -> None:
+    source = _conditioned_ar1_capture(
+        axis=axis,
+        conditioning=conditioning,
+        conditioned=conditioned,
+        reverse_order=reverse_order,
+    )
+    result = _check_analysis(source)
+    expected = {axis, conditioning} if conditioned else {axis}
+    declarations = _json_object(result["analysis"]["declarations"])
+    callbacks = _json_object(declarations["callbacks"])
+    transitions = [
+        row
+        for row in _json_rows(declarations["relations"])
+        if row["kind"] == "transition"
+    ]
+    assert transitions
+    for relation in transitions:
+        callback = _json_object(
+            callbacks[str(_json_object(relation["state_updates"])[axis])]
+        )
+        assert _input_names(callback["arguments"]) == expected
+        assert _input_names(callback["reads"]) == expected
+
+
+@pytest.mark.parametrize("mutation", ["drop_condition", "drop_axis", "extra_input"])
+@pytest.mark.parametrize("field", ["arguments", "reads", "both"])
+def test_conditioned_process_rejects_missing_or_extra_declared_inputs(
+    *, mutation: str, field: str
+) -> None:
+    from _lcm_regime_finder.production import MetadataAnalysis
+    from _lcm_regime_finder.semantic_check import check_semantics
+
+    source = _conditioned_ar1_capture()
+    result = _check_analysis(source)
+    declarations = deepcopy(result["analysis"]["declarations"])
+    names = {
+        "drop_condition": ["z"],
+        "drop_axis": ["history"],
+        "extra_input": ["history", "z", "invented"],
+    }[mutation]
+    mutated = []
+    for callback in _json_rows(list(declarations["callbacks"].values())):
+        original = callback.get("original")
+        if (
+            not isinstance(original, dict)
+            or original.get("type") != "_lcm.processes.ar1.TauchenAR1Process"
+        ):
+            continue
+        for selected_field in ("arguments", "reads") if field == "both" else (field,):
+            callback[selected_field] = names
+        mutated.append(callback)
+    assert mutated
+    analysis = MetadataAnalysis(declarations, search_mode="heuristic").run()
+    checked = check_semantics(source, declarations, analysis, check_coverage=False)
+    assert checked["status"] == "FAIL", checked
+
+
+def test_conditioned_process_rejects_foreign_original_law_with_the_same_axis() -> None:
+    from _lcm_regime_finder.production import MetadataAnalysis
+    from _lcm_regime_finder.semantic_check import check_semantics
+
+    source = _conditioned_ar1_capture()
+    regimes = _json_object(source["user_regimes"])
+    foreign = deepcopy(_json_object(regimes["original"]))
+    _json_object(_json_object(foreign["fields"])["states"])["z"] = (
+        _conditioned_ar1_declaration(conditioning="history", low_sigma=0.25)
+    )
+    regimes["foreign"] = foreign
+    reachability = _json_object(_json_object(source["reachability"])["fields"])
+    nodes = reachability["nodes"]
+    assert isinstance(nodes, list)
+    nodes.extend([[period, "foreign"] for period in range(6)])
+    for phase in ("solution", "simulation"):
+        rows = _json_object(_json_object(reachability[phase])["fields"])[
+            "targets_by_period"
+        ]
+        for targets in _json_rows(rows):
+            targets["foreign"] = ["foreign"]
+    starts = _json_object(_json_object(source["graph"])["fields"])["initial_nodes"]
+    assert isinstance(starts, list)
+    starts.append([0, "foreign"])
+    result = _check_analysis(source)
+    declarations = deepcopy(result["analysis"]["declarations"])
+    cells = {cell["id"]: cell for cell in declarations["cells"]}
+    original_relation = next(
+        row
+        for row in declarations["relations"]
+        if row["kind"] == "transition"
+        and row["phase"] == "solve"
+        and cells[row["source"]]["regime"] == "original"
+    )
+    foreign_relation = next(
+        row
+        for row in declarations["relations"]
+        if row["kind"] == "transition"
+        and row["phase"] == "solve"
+        and cells[row["source"]]["regime"] == "foreign"
+    )
+    original_relation["state_updates"]["z"] = foreign_relation["state_updates"]["z"]
+    analysis = MetadataAnalysis(declarations, search_mode="heuristic").run()
+    checked = check_semantics(source, declarations, analysis, check_coverage=False)
+    assert checked["status"] == "FAIL", checked
+    assert any(
+        row["kind"] == "original state update consumer changed"
+        for row in checked["errors"]
+    ), checked
+
+
+@pytest.mark.parametrize("invalid_condition", [None, 0, ["history"]])
+def test_original_process_without_a_conditioning_name_has_no_source_authority(
+    invalid_condition: int | list[str] | None,
+) -> None:
+    source = _conditioned_ar1_capture()
+    regimes = _json_object(source["user_regimes"])
+    states = _json_object(
+        _json_object(_json_object(regimes["original"])["fields"])["states"]
+    )
+    process_fields = _json_object(_json_object(states["z"])["fields"])
+    _json_object(_json_object(process_fields["state_conditioned"])["fields"])["on"] = (
+        invalid_condition
+    )
+    result = analyze_production(source)
+    assert result["status"] in {"UNRESOLVED", "INVALID"}, result
+    assert "conditioning" in result.get("error", "").lower(), result
+    assert any(
+        row.get("kind") == "metadata_admission"
+        and "conditioning" in row.get("detail", "").lower()
+        for row in result.get("analysis", {}).get("obligations", [])
+    )
+    assert all(
+        row["authority"] != "source_checked"
+        for row in result.get("recommendations", [])
+    )

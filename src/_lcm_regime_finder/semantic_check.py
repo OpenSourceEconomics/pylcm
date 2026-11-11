@@ -14,7 +14,7 @@ from collections.abc import Callable, Mapping
 from collections import defaultdict
 from dataclasses import dataclass
 from fractions import Fraction
-from .records import SemanticCheck, Diagnostic
+from .records import SemanticCheck, Diagnostic, JSONValue
 import hashlib
 import json
 import math
@@ -1491,6 +1491,25 @@ def _check_current_type_sources(original, fail):
             pending.extend(value.values())
 
 
+def _original_process_conditioning_inputs(value: JSONValue) -> frozenset[str] | None:
+    """Reconstruct conditioning names from the untouched original process."""
+    pending = [value]
+    names: set[str] = set()
+    while pending:
+        item = pending.pop()
+        if isinstance(item, dict):
+            if item.get("type") == "_lcm.processes.base.StateConditioned":
+                fields = item.get("fields")
+                on = fields.get("on") if isinstance(fields, dict) else None
+                if not isinstance(on, str):
+                    return None
+                names.add(on)
+            pending.extend(item.values())
+        elif isinstance(item, list):
+            pending.extend(item)
+    return frozenset(names)
+
+
 def _check_capture(original: dict, normalized: dict, fail, unknown) -> None:
     _check_current_type_sources(original, fail)
     """Independent source-pointer and graph-admission replay for native captures.
@@ -1804,8 +1823,17 @@ def _check_capture(original: dict, normalized: dict, fail, unknown) -> None:
                 fail("original state update consumer changed", relation=transition.get("id"), state=axis)
             elif isinstance(raw,dict) and raw.get('type') in {'_lcm.processes.ar1.'+n for n in ('TauchenAR1Process','RouwenhorstAR1Process','TauchenNormalMixtureAR1Process','_TauchenOnNodesProcess')}:
                 callback=callbacks[transition['state_updates'][axis]]
-                if callback.get('arguments')!=[axis]:
-                    fail('original process dependency owner changed',relation=transition.get('id'),state=axis)
+                conditioning = _original_process_conditioning_inputs(raw)
+                if conditioning is None:
+                    unknown('original process conditioning input is not captured',
+                            relation=transition.get('id'), state=axis)
+                else:
+                    expected = {axis} | conditioning
+                    arguments, reads = callback.get('arguments'), callback.get('reads')
+                    finite = all(isinstance(items, list) and all(isinstance(name, str) for name in items)
+                                 for items in (arguments, reads))
+                    if not finite or set(arguments) != expected or set(reads) != expected:
+                        fail('original process dependency owner changed',relation=transition.get('id'),state=axis)
     # Independently bind every owned fallback to the leg of the ORIGINAL gate.
     laws = graph.get("laws", {})
     def refs(value, phase=None):

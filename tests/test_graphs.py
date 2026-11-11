@@ -16,6 +16,7 @@ from _lcm.reachability import EdgeStatus
 from _lcm.typing import JSONValue
 from lcm import (
     AgeGrid,
+    DiscreteGrid,
     InitialNodes,
     LinSpacedGrid,
     Model,
@@ -27,8 +28,13 @@ from lcm import (
     categorical,
 )
 from lcm.graphs import find_regimes
-from lcm.processes import RouwenhorstAR1Process, UniformIIDProcess
-from lcm.typing import ContinuousState, FloatND, Phase, ScalarInt
+from lcm.processes import (
+    RouwenhorstAR1Process,
+    StateConditioned,
+    TauchenAR1Process,
+    UniformIIDProcess,
+)
+from lcm.typing import ContinuousState, DiscreteState, FloatND, Phase, ScalarInt
 from lcm_examples.stochastic_volatility import get_model as stochastic_volatility_model
 
 
@@ -537,3 +543,99 @@ def test_analysis_cost_rejects_invalid_weights(weight: float) -> None:
     assert hasattr(module, "LinearRegimeCostModel")
     with pytest.raises(ValueError, match="work_weight"):
         module.LinearRegimeCostModel(work_weight=weight)
+
+
+@categorical(ordered=True)
+class ProcessConditionHistory:
+    low: ScalarInt
+    high: ScalarInt
+
+
+def _conditional_process_utility(
+    *, z: ContinuousState, history: DiscreteState
+) -> ContinuousState:
+    return z + history
+
+
+def _carry_process_history(*, history: DiscreteState) -> DiscreteState:
+    return history
+
+
+def _conditional_persistent_process(*, conditioned: bool) -> TauchenAR1Process:
+    return TauchenAR1Process(
+        n_points=3,
+        gauss_hermite=False,
+        mu=0.0,
+        rho=0.5,
+        n_std=2.0,
+        sigma=StateConditioned(on="history", by={"low": 0.5, "high": 1.0})
+        if conditioned
+        else 1.0,
+    )
+
+
+@pytest.mark.parametrize(
+    "conditioning_phase", ["both", "solve", "simulation", "neither"]
+)
+def test_conditioned_persistent_process_preserves_original_phase_inputs(
+    conditioning_phase: str,
+) -> None:
+    """An intrinsic transition reads its owner and its original conditioning state."""
+    process: TauchenAR1Process | Phased[TauchenAR1Process, TauchenAR1Process]
+    if conditioning_phase in {"both", "neither"}:
+        process = _conditional_persistent_process(
+            conditioned=conditioning_phase == "both"
+        )
+    else:
+        process = Phased(
+            solve=_conditional_persistent_process(
+                conditioned=conditioning_phase == "solve"
+            ),
+            simulate=_conditional_persistent_process(
+                conditioned=conditioning_phase == "simulation"
+            ),
+        )
+    model = Model(
+        n_periods=2,
+        regime_id_class=GraphRegimes,
+        regimes={
+            "alive": Regime(
+                states={"z": process, "history": DiscreteGrid(ProcessConditionHistory)},
+                functions={"utility": _conditional_process_utility},
+                state_transitions={"history": _carry_process_history},
+            ),
+            "final": Regime(
+                states={"z": process, "history": DiscreteGrid(ProcessConditionHistory)},
+                functions={"utility": _conditional_process_utility},
+            ),
+        },
+        initial_nodes=InitialNodes(by_period={0: "alive"}),
+        edges={"alive": {"final": Periods(values=(0,))}},
+        fixed_params={"discount_factor": 1.0},
+        enable_jit=False,
+    )
+    module = import_module("lcm.graphs")
+    report = module.analyze_regime_structure(model).to_dict()
+    declaration = _record(_record(report["analysis"])["declarations"])
+    cells = {str(cell["id"]): cell for cell in _records(declaration["cells"])}
+    transitions = [
+        row
+        for row in _records(declaration["relations"])
+        if row["kind"] == "transition"
+        and cells[str(row["source"])]["regime"] == "alive"
+    ]
+    assert {row["phase"] for row in transitions} == {"solve", "simulation"}
+    callbacks = _record(declaration["callbacks"])
+    for row in transitions:
+        expected = {"z"}
+        if conditioning_phase in {"both", row["phase"]}:
+            expected.add("history")
+        callback = _record(callbacks[str(_record(row["state_updates"])["z"])])
+        for field in ("arguments", "reads"):
+            names = callback[field]
+            assert isinstance(names, list)
+            assert all(isinstance(name, str) for name in names)
+            assert set(names) == expected
+    semantic_check = _record(report["semantic_check"])
+    assert semantic_check["status"] in {"PASS", "UNRESOLVED"}, semantic_check
+    assert report["status"] != "INVALID", semantic_check
