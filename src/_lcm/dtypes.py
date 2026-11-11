@@ -202,40 +202,28 @@ def as_bool(*, value: UserOutput, source: OutputSource) -> BoolND:
 
 
 def as_code(*, value: UserOutput, source: OutputSource) -> Code:
-    """Return a discrete-code output (an integer or Boolean) as an integer array.
+    """Return a discrete-code output (an integer or Boolean) as an `int32` array.
 
-    A Boolean becomes the code 0 or 1. An integer keeps at least 32 bits and a
-    wider width: narrowing `2**32 + 1` to `int32` here would wrap it onto the
-    code `1` before the off-grid check could see it.
+    A Boolean becomes the code 0 or 1. Any integer is converted to `int32`; a
+    code outside the `int32` range is outside the contract and wraps.
 
     Raises:
         InvalidFunctionOutputError: `source` returned a float or complex value.
 
     """
     array = _first_array(value)
-    if array.dtype.kind == "b":
-        return jnp.asarray(array, dtype=jnp.int32)
-    if array.dtype.kind not in "iu":
+    if array.dtype.kind not in "biu":
         msg = (
             f"{source} returned dtype '{array.dtype}', but must return an integer "
             "code. A float would be truncated onto a code: compute the code as "
             "an integer, e.g. with `.astype(jnp.int32)` after rounding on purpose."
         )
         raise InvalidFunctionOutputError(msg)
-    if not isinstance(array, np.ndarray):
-        return array.astype(jnp.promote_types(array.dtype, jnp.int32))
-    # A host constant, never a tracer: its value can be read.
-    # JAX narrows a host array to the active precision without a warning.
-    active = jnp.asarray(np.zeros((), dtype=array.dtype)).dtype
-    dtype = jnp.promote_types(active, jnp.int32)
-    code = array.astype(dtype)
-    if not np.array_equal(code, array):
-        msg = (
-            f"{source} returned an integer code that the active precision's "
-            f"'{code.dtype}' cannot hold."
-        )
-        raise InvalidFunctionOutputError(msg)
-    return jnp.asarray(code)
+    # A host array is converted in NumPy, so JAX never sees a 64-bit host integer
+    # it would refuse at single precision.
+    return jnp.asarray(
+        array.astype(np.int32 if isinstance(array, np.ndarray) else jnp.int32)
+    )
 
 
 def _first_array(value: UserOutput) -> np.ndarray | ValueND:

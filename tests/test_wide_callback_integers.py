@@ -13,7 +13,6 @@ from jax import Array
 
 from _lcm.dtypes import as_canonical_float, as_code
 from lcm import AgeGrid, InitialNodes, IrregSpacedGrid, Model, Regime, categorical
-from lcm.exceptions import InvalidFunctionOutputError
 from lcm.typing import ContinuousState, FloatND, ScalarInt
 
 
@@ -117,45 +116,36 @@ def test_float_output_adapter_matches_host_reference(
     np.testing.assert_array_equal(np.asarray(got), expected)
 
 
-@pytest.mark.parametrize(
-    "raw",
-    [np.int64(2**32 + 1), np.asarray(2**32 + 1, dtype=np.int64)],
-    ids=["numpy-scalar", "numpy-0d"],
-)
-@pytest.mark.parametrize("traced", [False, True])
-def test_wide_host_code_is_never_wrapped_onto_the_grid(
-    *, raw: np.int64 | np.ndarray, traced: bool
-) -> None:
-    """`2**32 + 1` stays itself at double precision and is refused at single."""
-
-    def call() -> Array:
-        return as_code(value=raw, source="wide integer regime selector")
-
-    run = jax.jit(call) if traced else call
-    if jax.config.x64_enabled:
-        got = run()
-        assert got.dtype == jnp.int64
-        assert int(got) == 2**32 + 1
-    else:
-        with pytest.raises(InvalidFunctionOutputError, match="cannot hold"):
-            run()
-
-
-def test_traced_code_keeps_its_width_under_jit() -> None:
-    """A traced code leaves the adapter at the widest integer the precision has."""
-    exact = 2**32 + 1 if jax.config.x64_enabled else 2**31 - 1
-
-    def call(code: Array) -> Array:
-        return as_code(value=code, source="wide integer regime selector")
-
-    wide = jnp.asarray(exact)
-    got = jax.jit(call)(wide)
-    assert got.dtype == wide.dtype
-    assert int(got) == exact
-
-
 @pytest.mark.parametrize("exact", [0, 1, 2**24])
 def test_code_output_small_integer_controls(exact: int) -> None:
     got = np.asarray(as_code(value=exact, source="integer code control"))
     assert got.dtype.kind in "iu"
     assert int(got.item()) == exact
+
+
+@pytest.mark.parametrize("dtype", [np.uint8, np.uint32, np.uint64])
+@pytest.mark.parametrize("form", ["host-scalar", "host-0d", "jax"])
+@pytest.mark.parametrize("traced", [False, True])
+@pytest.mark.parametrize("exact", [0, 1])
+def test_unsigned_code_becomes_an_int32_code(
+    *, dtype: type[np.unsignedinteger], form: str, traced: bool, exact: int
+) -> None:
+    """An unsigned code converts to `int32` like a signed one, at both precisions.
+
+    `uint64` and `int32` promote to a float, so promoting rather than converting
+    would leave a `uint64` code as a float at double precision.
+    """
+    if form == "jax" and dtype is np.uint64 and not jax.config.x64_enabled:
+        pytest.skip("JAX has no uint64 at single precision.")
+    raw = {
+        "host-scalar": lambda: dtype(exact),
+        "host-0d": lambda: np.asarray(exact, dtype=dtype),
+        "jax": lambda: jnp.asarray(exact, dtype=dtype),
+    }[form]()
+
+    def call() -> Array:
+        return as_code(value=raw, source="Law 'unsigned_code'")
+
+    got = (jax.jit(call) if traced else call)()
+    assert got.dtype == jnp.int32
+    assert int(got) == exact

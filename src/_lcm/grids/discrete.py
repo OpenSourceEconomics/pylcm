@@ -39,7 +39,6 @@ from lcm.typing import (
 # out of bounds after JAX normalizes a negative index by adding the axis length,
 # so a fill-mode read cannot wrap it onto the last node the way `-1` would.
 MISSING_CAT_CODE = jnp.iinfo(jnp.int32).min
-_INT32_MAX = jnp.iinfo(jnp.int32).max
 
 # A code array of any integer width; with x64 enabled, `jnp.array([0])` is int64.
 type _CodeIndex = Int[Array, "..."]
@@ -181,7 +180,7 @@ class _DiscreteGrid(Grid):
         """
         nodes, midpoints = self.__nodes()
         if midpoints is None:
-            value = _classify_integers(value)
+            value = _as_int32(value)
             index = jnp.clip(
                 jnp.searchsorted(nodes, value, side="left"), 0, nodes.shape[0] - 1
             )
@@ -202,7 +201,7 @@ class _DiscreteGrid(Grid):
         clamped or wrapped onto a node.
         """
         nodes = self.__nodes().values
-        codes = _classify_integers(code)
+        codes = _as_int32(code)
         n_nodes = nodes.shape[0]
         index = jnp.where((codes >= 0) & (codes < n_nodes), codes, n_nodes)
         return nodes.at[index].get(
@@ -433,21 +432,11 @@ def _downward_midpoints(*, nodes: np.ndarray) -> np.ndarray:
     return np.asarray(cuts, dtype=nodes.dtype)
 
 
-def _classify_integers(value: ArrayLike) -> IntND:
-    """Return each integer as int32 if int32 holds it, else `MISSING_CAT_CODE`.
+def _as_int32(value: ArrayLike) -> IntND:
+    """Return integers as `int32`; one outside the `int32` range wraps.
 
-    The range test runs on the original integers, in their own dtype, before any
-    conversion, so no integer of any width or signedness can alias a different
-    int32. `MISSING_CAT_CODE` is never a node and never a valid code, so callers
-    need no separate validity mask:
-
-    - int8, int16, uint8 and uint16 widen to int32 first, which is exact; a
-      bound wider than the dtype would otherwise wrap into it.
-    - int32, int64, uint32 and uint64 compare against bounds built in their own
-      dtype, so no comparison promotes; unsigned integers are never negative, so
-      their lower bound is 0.
-    - Host values are classified in NumPy before they reach the device, so a
-      64-bit host integer is never truncated on upload when x64 is off.
+    Host values are converted in NumPy, so JAX never sees a 64-bit host integer
+    it would refuse at single precision.
 
     Raises:
         TypeError: If the values are not integers.
@@ -458,15 +447,7 @@ def _classify_integers(value: ArrayLike) -> IntND:
     if integers.dtype.kind not in "iu":
         msg = f"Value-grid integers and codes must be integers; got {integers.dtype}."
         raise TypeError(msg)
-    if integers.dtype.itemsize < np.dtype(np.int32).itemsize:
-        integers = integers.astype(library.int32)
-    bound = integers.dtype.type
-    lowest = 0 if integers.dtype.kind == "u" else MISSING_CAT_CODE + 1
-    in_range = (integers >= bound(lowest)) & (integers <= bound(_INT32_MAX))
-    classified = library.where(
-        in_range, integers.astype(library.int32), library.int32(MISSING_CAT_CODE)
-    )
-    return jnp.asarray(classified, dtype=jnp.int32)
+    return jnp.asarray(integers.astype(library.int32))
 
 
 def _as_float_query(*, value: ArrayLike, dtype: np.dtype) -> FloatND:

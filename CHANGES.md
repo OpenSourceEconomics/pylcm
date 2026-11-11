@@ -69,16 +69,16 @@ chronological order. We follow [semantic versioning](https://semver.org/).
     and exit availability return a Boolean. An integer `0`/`1`, which gates,
     participation predicates and exit availability accepted before, is refused; write
     the comparison, e.g. `work == 1`;
-  - laws of discrete states and deterministic regime selectors return an integer code,
-    or a Boolean for the codes 0 and 1. A float is refused rather than truncated onto a
-    code;
+  - laws of discrete states, deterministic regime selectors and projections onto a
+    discrete state return an integer code, or a Boolean for the codes 0 and 1. A float
+    is refused rather than truncated onto a code;
   - utilities, laws of continuous states, transition probabilities, joint-transition
     weights and outputs, exit utility adjustments and borrowing bounds return a number.
     A Boolean is refused.
-- A discrete law's code keeps a width wider than `int32` until the off-grid check, so
-  `2**32 + 1` is reported as off the grid rather than wrapped onto a valid code. At
-  single precision there is no 64-bit integer array, so a NumPy `int64` code that
-  `int32` cannot hold is refused with `InvalidFunctionOutputError`.
+- An integer code of any width or signedness, and an integer a law returns for an
+  integer value grid, is converted to `int32` where the engine receives it, at both
+  precisions. Values outside the `int32` range are outside the contract and wrap;
+  declared codes and grid values are already confined to it.
 - A `ByAge` or per-period law is checked case by case, each by the role of the function
   that wrote it, before the cases are combined.
 - A parameter read by an edge law takes its numeric role from the laws that are live at
