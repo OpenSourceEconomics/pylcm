@@ -2684,3 +2684,50 @@ def test_exact_empty_default_containers_keep_semantic_fingerprints() -> None:
         dataclasses.replace(original, mapping={}),
     ):
         assert baseline != fingerprints._semantic_fingerprint(changed)
+
+
+def _shared_helper(*, x: float) -> float:
+    return x + 1.0
+
+
+def test_a_function_reached_repeatedly_is_walked_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Later visits of one function replay the first walk instead of repeating it."""
+    walked = []
+    full_walk = fingerprints._SemanticHasher._visit_value
+
+    # keyword-only-exempt: primary-argument=self
+    def counting_walk(
+        self: fingerprints._SemanticHasher,
+        *,
+        value: fingerprints._Reachable,
+        _ignore_beartype_guards: bool = False,
+    ) -> None:
+        if value is _shared_helper:
+            walked.append(value)
+        full_walk(self, value=value, _ignore_beartype_guards=_ignore_beartype_guards)
+
+    monkeypatch.setattr(fingerprints._SemanticHasher, "_visit_value", counting_walk)
+    fingerprints._semantic_fingerprint(
+        (_shared_helper, [_shared_helper], {"f": _shared_helper})
+    )
+
+    assert len(walked) == 1
+
+
+def test_replayed_function_visits_give_the_full_walk_digest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A model whose adapters recur fingerprints as if every visit walked in full."""
+    from lcm_examples import collective_household  # noqa: PLC0415
+
+    replayed = collective_household.get_model(n_periods=3)._model_structure_fingerprint
+    monkeypatch.setattr(
+        fingerprints._SemanticHasher,
+        "visit",
+        fingerprints._SemanticHasher._visit_value,
+    )
+    walked = collective_household.get_model(n_periods=3)._model_structure_fingerprint
+
+    assert replayed == walked
