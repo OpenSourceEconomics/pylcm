@@ -15,13 +15,13 @@ from _lcm.regime_building.ndimage import map_coordinates
 from tests.conftest import DECIMAL_PRECISION
 
 
-def test_linspace():
+def test_linspace() -> None:
     calculated = linspace(start=jnp.asarray(1.0), stop=jnp.asarray(2.0), n_points=6)
     expected = np.array([1, 1.2, 1.4, 1.6, 1.8, 2])
     aaae(calculated, expected, decimal=DECIMAL_PRECISION)
 
 
-def test_linspace_mapped_value():
+def test_linspace_mapped_value() -> None:
     """For reference of the grid values, see expected grid in `test_linspace`."""
     start = jnp.asarray(1.0)
     stop = jnp.asarray(2.0)
@@ -55,7 +55,7 @@ def test_linspace_mapped_value():
     assert np.allclose(calculated, -2.0)
 
 
-def test_logspace():
+def test_logspace() -> None:
     calculated = logspace(start=jnp.asarray(1.0), stop=jnp.asarray(100.0), n_points=7)
     expected = np.array(
         [
@@ -71,7 +71,7 @@ def test_logspace():
     aaae(calculated, expected, decimal=DECIMAL_PRECISION)
 
 
-def test_logspace_mapped_value():
+def test_logspace_mapped_value() -> None:
     """For reference of the grid values, see expected grid in `test_logspace`."""
     calculated = get_logspace_coordinate(
         value=jnp.asarray((2.15443469 + 4.64158883) / 2),
@@ -83,7 +83,7 @@ def test_logspace_mapped_value():
 
 
 @pytest.mark.illustrative
-def test_map_coordinates_linear():
+def test_map_coordinates_linear() -> None:
     """Illustrative test on how the output of get_linspace_coordinate can be used."""
     grid_info = {
         "start": jnp.asarray(0.0),
@@ -112,7 +112,7 @@ def test_map_coordinates_linear():
 
 
 @pytest.mark.illustrative
-def test_map_coordinates_logarithmic():
+def test_map_coordinates_logarithmic() -> None:
     """Illustrative test on how the output of get_logspace_coordinate can be used."""
     grid_info = {
         "start": jnp.asarray(1.0),
@@ -141,7 +141,7 @@ def test_map_coordinates_logarithmic():
 
 
 @pytest.mark.illustrative
-def test_map_coordinates_linear_outside_grid():
+def test_map_coordinates_linear_outside_grid() -> None:
     """Illustrative test on what happens to values outside the grid."""
     grid_info = {
         "start": jnp.asarray(1.0),
@@ -170,7 +170,7 @@ def test_map_coordinates_linear_outside_grid():
     aaae(interpolated_value, [-2, 0, 6], decimal=DECIMAL_PRECISION)
 
 
-def test_get_linspace_coordinate_with_array():
+def test_get_linspace_coordinate_with_array() -> None:
     values = jnp.array([1.0, 1.2, 1.5])
     coords = get_linspace_coordinate(
         value=values,
@@ -182,7 +182,7 @@ def test_get_linspace_coordinate_with_array():
     aaae(coords, expected, decimal=DECIMAL_PRECISION)
 
 
-def test_get_logspace_coordinate_with_array():
+def test_get_logspace_coordinate_with_array() -> None:
     grid = logspace(start=jnp.asarray(1.0), stop=jnp.asarray(100.0), n_points=7)
     mid = (float(grid[1]) + float(grid[2])) / 2
     values = jnp.array([mid])
@@ -195,7 +195,7 @@ def test_get_logspace_coordinate_with_array():
     aaae(coords, jnp.array([1.5]), decimal=DECIMAL_PRECISION)
 
 
-def test_get_irreg_coordinate_with_array():
+def test_get_irreg_coordinate_with_array() -> None:
     points = jnp.array([0.0, 1.0, 3.0, 6.0])
     values = jnp.array([0.5, 3.0, 4.5])
     coords = get_irreg_coordinate(value=values, points=points)
@@ -217,3 +217,43 @@ def test_concrete_linspace_coordinate_compiles_one_division_by_the_value() -> No
         )
     ).lower(jnp.asarray(2.0))
     assert lowered.as_text().count("stablehlo.divide") == 1
+
+
+def test_irreg_coordinate_compiles_without_a_loop() -> None:
+    """The interval search of an irregular grid is straight-line code.
+
+    A loop inside the coordinate lookup splits every compiled program that reads
+    a value function on such a grid at that loop, once per lookup.
+    """
+    points = jnp.array([0.0, 1.0, 3.0, 6.0, 10.0])
+    lowered = jax.jit(
+        jax.vmap(lambda value: get_irreg_coordinate(value=value, points=points))
+    ).lower(jnp.linspace(-1.0, 11.0, 7))
+    assert lowered.as_text().count("stablehlo.while") == 0
+
+
+def _irreg_coordinate_by_counting(*, value: float, points: np.ndarray) -> float:
+    """Coordinate from the count of points at or below the value."""
+    upper = min(max(int(np.sum(points <= value)), 1), len(points) - 1)
+    lower_point, upper_point = points[upper - 1], points[upper]
+    return upper - 1 + (value - lower_point) / (upper_point - lower_point)
+
+
+@pytest.mark.parametrize("n_points", range(2, 10))
+def test_irreg_coordinate_matches_a_count_of_points_below(n_points: int) -> None:
+    """Nodes, their adjacent floats, interior and exterior values all agree."""
+    points = np.cumsum(np.random.default_rng(seed=n_points).uniform(0.1, 2.0, n_points))
+    values = np.concatenate(
+        [
+            points,
+            np.nextafter(points, -np.inf),
+            np.nextafter(points, np.inf),
+            (points[:-1] + points[1:]) / 2,
+            [points[0] - 1.0, points[-1] + 1.0],
+        ]
+    )
+    expected = [_irreg_coordinate_by_counting(value=v, points=points) for v in values]
+    got = jax.jit(get_irreg_coordinate)(
+        value=jnp.asarray(values), points=jnp.asarray(points)
+    )
+    np.testing.assert_array_equal(np.asarray(got), np.asarray(expected))
