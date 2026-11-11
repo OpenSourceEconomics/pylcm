@@ -1026,13 +1026,13 @@ def test_a_regime_rejects_exits_that_name_different_draw_rules() -> None:
         )
 
 
-@pytest.mark.parametrize(("query_cell", "expected"), [(None, 910), (4, 4)])
+@pytest.mark.parametrize(("query_cell", "expected"), [(None, 7281), (4, 4)])
 def test_an_unset_chunk_width_fills_one_step_with_the_widest_query(
     *, monkeypatch: pytest.MonkeyPatch, query_cell: int | None, expected: int
 ) -> None:
-    """A single's 144 rows get 910 cells per chunk, and a set width is kept.
+    """A single's 144 rows get 7281 cells per chunk, and a set width is kept.
 
-    910 cells of 144 rows are the most that stay within the 131072 lanes of one
+    7281 cells of 144 rows are the most that stay within the 1048576 lanes of one
     step, so a query with few rows does not pay one launch per 64 cells.
     """
     requested = {}

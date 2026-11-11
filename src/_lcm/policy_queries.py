@@ -94,9 +94,11 @@ _EVALUATED = "_lcm_query_evaluated"
 # A step evaluates chunk-times-row-batch lanes. Holding that product at
 # `_STEP_LANES` lets a narrowed chunk widen its rows: the per-step workspace stays
 # put while the step count, and with it the launch count, does not grow.
-# ponytail: a fixed lane target; derive it from the budget if a step outgrows it.
+# ponytail: a fixed lane target. Admission halves a chunk whose step outgrows the
+# budget, at one extra lowering each; derive the target from the budget if those
+# retries cost more compile time than they save.
 _ROW_BATCH = 64
-_STEP_LANES = 131072
+_STEP_LANES = 1048576
 _FLAT_OPERAND_PATH_LENGTH = 2
 
 
