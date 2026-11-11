@@ -23,9 +23,10 @@ import numpy as np
 import pytest
 from dags import with_signature
 
-from _lcm import policy_queries, query_information
+from _lcm import exit_queries, policy_queries, query_information
 from _lcm.policy_queries import QueryKind, QueryNode
 from _lcm.regime_building import Q_and_F
+from _lcm.solution.contract import SolverBuildContext
 from _lcm.typing import PytreeValue, QAndFKwargs
 from lcm import (
     CollectiveUtility,
@@ -293,12 +294,14 @@ def _model(
     nodes: QuasiMonteCarlo | None = None,
     offer_probs: tuple[float, float] = (0.4, 0.6),
     offered_probs: tuple[float, float, float] = (0.2, 0.5, 0.3),
+    query_cell: int | None = 4,
 ) -> Model:
     """Two singles marry by consent; with `dissolution` the couple may split.
 
     With `lasting_match` the couple carries its match shock into its terminal
     period, so the couple's continuation reads that shock. With `nodes` each
     single draws the rows of its formation choice that its stay problem ignores.
+    With `query_cell=None` the chunk width is left to the engine.
     """
     experience = DiscreteGrid(values=jnp.arange(_N_EXP))
     work = DiscreteGrid(values=jnp.arange(2))
@@ -395,7 +398,8 @@ def _model(
         initial_nodes=InitialNodes(by_period={0: ("couple", "single_f", "single_m")}),
         edges={name: {f"{name}_terminal": Periods(values=(0,))} for name in sources},
         execution_config=ExecutionConfig(
-            device_memory_bytes=None, axis_widths={"query_cell": 4}
+            device_memory_bytes=None,
+            axis_widths={} if query_cell is None else {"query_cell": query_cell},
         ),
     )
 
@@ -989,3 +993,37 @@ def test_a_regime_rejects_exits_that_name_different_draw_rules() -> None:
                 for seed in (0, 1)
             },
         )
+
+
+@pytest.mark.parametrize(("query_cell", "expected"), [(None, 910), (4, 4)])
+def test_an_unset_chunk_width_fills_one_step_with_the_widest_query(
+    *, monkeypatch: pytest.MonkeyPatch, query_cell: int | None, expected: int
+) -> None:
+    """A single's 144 rows get 910 cells per chunk, and a set width is kept.
+
+    910 cells of 144 rows are the most that stay within the 131072 lanes of one
+    step, so a query with few rows does not pay one launch per 64 cells.
+    """
+    requested = {}
+    build = exit_queries.build_policy_query_kernel
+
+    def record(
+        *,
+        root_context: SolverBuildContext,
+        period: int,
+        definitions: Mapping[str, QueryNode],
+        root: str,
+        chunk_size: int,
+    ) -> policy_queries._PolicyQueryKernel:
+        requested[definitions[root].read.target] = chunk_size
+        return build(
+            root_context=root_context,
+            period=period,
+            definitions=definitions,
+            root=root,
+            chunk_size=chunk_size,
+        )
+
+    monkeypatch.setattr(exit_queries, "build_policy_query_kernel", record)
+    _model(query_cell=query_cell)
+    assert requested["single_f"] == expected

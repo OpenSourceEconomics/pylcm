@@ -1745,7 +1745,9 @@ def test_custom_outside_choice_ignores_padded_query_lanes(*, n_points: int) -> N
         initial_nodes=InitialNodes(by_period={0: ("single_f",)}),
         edges={},
         enable_jit=True,
-        execution_config=ExecutionConfig(device_memory_bytes=None),
+        execution_config=ExecutionConfig(
+            device_memory_bytes=None, axis_widths={"query_cell": 64}
+        ),
     )
     kernel = model._regimes["single_f"].solution.period_kernels[0]
     assert isinstance(kernel, _PolicyQueryKernel)
