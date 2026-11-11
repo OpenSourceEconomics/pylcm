@@ -2,6 +2,7 @@
   "32": {
     "dissolution": "467481b55f1f06051e0e2cb2feb04551baf322a019d92e4ba16de64effa1bbcc",
     "ds_app2_housing": "a1b6c49d626ca929172b027d061a732b8c1d4d3358a79e1ceb67818eeb797671",
+    "marriage_market": "42c0551216177685c9a6ae71e93824afb6c42f12e3502e3419d97eb91bcc8b3c",
     "multi_regime_normal": "c52a801403e4521dcf1a7dcbfd47b50d6c3e42571ff4350a5138cab3ba86cd49",
     "n_nbegm_toy": "c2f2091654315533dbcf9163309075dbbe3d2a8afa96e043fb081646c42f832e",
     "nbegm_ride_along_toy": "4bea65b3706024abef557d9d2115823d04e6dd8f053dc217ff95ad42a75c03af",
@@ -11,6 +12,7 @@
   "64": {
     "dissolution": "b51184b5c4c2ab6d9bf2b2f90b7786096bbda648fb50e702c4f2af86c9575200",
     "ds_app2_housing": "c236de934e3a8313bc789e03749e49d378adf31bce61fab11afcfb5491dc3e52",
+    "marriage_market": "b191ce9b97da9bfddea1fd7aa2a97df97f17735dd774352cd501a0817273236e",
     "multi_regime_normal": "587010452929845cd77ade7b59f00e7d21d8addc37803e28cd25d7dcf72ef281",
     "n_nbegm_toy": "837f690ce0c494747cfa361c4aea0f74b7bb20571a4b3a849bdc01023f569c19",
     "nbegm_ride_along_toy": "4ce289621b07e47ff28bb7b5171f4617de3f0c9cd4352e5cb2e59f031a5436cc",
