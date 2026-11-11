@@ -194,6 +194,63 @@ def _row(*, frame: CurrentIIDDrawFrame, row: jax.Array) -> CurrentIIDDrawFrame:
     )
 
 
+def _physical_row(
+    *, frame: CurrentIIDDrawFrame, row: IntND
+) -> Mapping[ShockName, FloatND | IntND]:
+    """The physical shocks of one row of `frame`."""
+    return {name: value[row] for name, value in frame.physical.items()}
+
+
+def _map_product(
+    *,
+    point: Callable[[Mapping[ShockName, FloatND | IntND], IntND], PolicyAnswer],
+    physical: Mapping[ShockName, FloatND | IntND],
+    groups: tuple[tuple[int, tuple[ShockName, ...]], ...],
+    size: int,
+) -> PolicyAnswer:
+    """Evaluate `point` at every row of a product of groups, one lane map per group.
+
+    The rows are the product of the groups in declared order, the last varying
+    fastest. A group's shock is read off its own axis of that product, so it varies
+    only in its group's map. The answers come back flattened in row order.
+    """
+    from _lcm.policy_queries import map_lanes  # noqa: PLC0415
+
+    counts = tuple(count for count, _ in groups)
+    strides = tuple(math.prod(counts[axis + 1 :]) for axis in range(len(counts)))
+    owner = {
+        shock: axis for axis, (_, members) in enumerate(groups) for shock in members
+    }
+
+    def at_codes(codes: tuple[IntND, ...]) -> PolicyAnswer:
+        shocks = {
+            name: value.reshape((*counts, *value.shape[1:]))[
+                tuple(
+                    codes[axis] if axis == owner[name] else 0
+                    for axis in range(len(counts))
+                )
+            ]
+            for name, value in physical.items()
+        }
+        row = sum(
+            (code * stride for code, stride in zip(codes, strides, strict=True)),
+            start=jnp.asarray(0, jnp.int32),
+        )
+        return point(shocks, row)
+
+    def level(codes: tuple[IntND, ...]) -> PolicyAnswer:
+        if len(codes) == len(counts):
+            return at_codes(codes)
+        return map_lanes(
+            function=lambda code: level((*codes, code)),
+            operands=jnp.arange(counts[len(codes)], dtype=jnp.int32),
+        )
+
+    return jax.tree.map(
+        lambda leaf: leaf.reshape((size, *leaf.shape[len(counts) :])), level(())
+    )
+
+
 def _hold(
     *,
     lane: CurrentIIDDrawFrame,
@@ -1154,27 +1211,72 @@ class InformationQueryCell:
         return tuple(mapped)
 
     def _map_own(
-        self, *, point: Callable[[IntND, IntND], PolicyAnswer]
+        self,
+        *,
+        point: Callable[[Mapping[ShockName, FloatND | IntND], IntND], PolicyAnswer],
+        frame: CurrentIIDDrawFrame,
     ) -> PolicyAnswer:
-        """Evaluate each distinct own row once: one answer per representative."""
+        """Evaluate each distinct own row once: one answer per representative.
+
+        `point` takes the row's physical shocks and its position. When the own rows
+        are the whole product of independent shock groups, each group runs in its
+        own lane map, so a term reading only some groups is computed over those
+        groups' nodes alone.
+        """
         from _lcm.policy_queries import map_lanes  # noqa: PLC0415
 
         pinned = self._pinned(name=self.name)
-        positions = jnp.arange(
-            self._axis(name=self.name, node=self.node), dtype=jnp.int32
-        )
+        size = self._axis(name=self.name, node=self.node)
+        positions = jnp.arange(size, dtype=jnp.int32)
         if pinned is None:
+            product = self._product_groups(frame=frame, size=size)
+            if product is not None:
+                return _map_product(
+                    point=point, physical=frame.physical, groups=product, size=size
+                )
             return map_lanes(
-                function=lambda row: point(row, row),
+                function=lambda row: point(_physical_row(frame=frame, row=row), row),
                 operands=positions,
                 batch_size=self.row_batch,
             )
         representatives = pinned[0]
         return map_lanes(
-            function=lambda position: point(representatives[position], position),
+            function=lambda position: point(
+                _physical_row(frame=frame, row=representatives[position]), position
+            ),
             operands=positions,
             batch_size=self.row_batch,
         )
+
+    def _product_groups(
+        self, *, frame: CurrentIIDDrawFrame, size: int
+    ) -> tuple[tuple[int, tuple[ShockName, ...]], ...] | None:
+        """Each independent group's node count and shocks, if the own rows are
+        their whole product in declared order and fit one step; else `None`.
+
+        Drawn rows, observation axes and the realised root are not such a product.
+        """
+        plan = self.node.context.current_iid_plans.get(self.node.read.period)
+        if (
+            plan is None
+            or len(plan.bindings) < 2  # noqa: PLR2004 - one group is already one map
+            or self.node.sample is not None
+            or self.node.observation_sources
+            or self.name == self.realised_root
+        ):
+            return None
+        groups = tuple(
+            (int(nodes.weights.size), tuple(binding.group.shocks))
+            for _, binding, nodes in plan.bindings
+        )
+        shocks = {shock for _, members in groups for shock in members}
+        if (
+            math.prod(count for count, _ in groups) != size
+            or size > self.row_batch
+            or not frame.physical.keys() <= shocks
+        ):
+            return None
+        return groups
 
     def _map_ancestor(
         self,
@@ -1908,11 +2010,13 @@ class InformationQueryCell:
             stay = self._stay(frame=frame, frames=frames, live=live, source=source)
 
             # keyword-only-exempt: library-callback=_map_own
-            def point(row: IntND, at: IntND) -> PolicyAnswer:
+            def point(
+                shocks: Mapping[ShockName, FloatND | IntND], at: IntND
+            ) -> PolicyAnswer:
                 local = _has_local_information(
                     node=self.node, period=self.node.read.period
                 )
-                physical = {} if not local else _row(frame=frame, row=row).physical
+                physical = shocks if local else {}
                 projected = {
                     name: (
                         answer[0][index],
@@ -1950,7 +2054,7 @@ class InformationQueryCell:
                     else jax.tree.map(lambda leaf: leaf[stay[1][at]], stay[0]),
                 )
 
-            answers = self._map_own(point=point)
+            answers = self._map_own(point=point, frame=frame)
             pinned = self._pinned(name=self.name)
             columns = (
                 None

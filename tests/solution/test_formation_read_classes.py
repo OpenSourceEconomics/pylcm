@@ -679,17 +679,18 @@ def test_no_query_reads_more_rows_than_its_consumer() -> None:
                 ), (consumer, producer, ancestor)
 
 
-def _root_stay_problems(
+def _root_stay_maps(
     *, model: Model, monkeypatch: pytest.MonkeyPatch
-) -> dict[RegimeName, int]:
-    """Stay problems each root evaluates per source cell.
+) -> dict[RegimeName, tuple[int, ...]]:
+    """Lane maps each root's stay problem runs in, inside one source cell.
 
     The root's action problem runs inside nested lane maps: the chunk's source
-    cells, then its own rows (or the classes of them it evaluates). The product
-    of the maps inside the cell map is the count per source cell.
+    cells, then one map per independent group of shocks it reads. The product
+    of the maps inside the cell map is the count of stay problems per source
+    cell.
     """
     sizes: list[int] = []
-    counts: dict[RegimeName, int] = {}
+    counts: dict[RegimeName, tuple[int, ...]] = {}
     map_lanes = policy_queries.map_lanes
     query_action = policy_queries._query_action
 
@@ -720,7 +721,7 @@ def _root_stay_problems(
         **actions: PytreeValue,
     ) -> policy_queries.StayTable:
         if not node.ancestors and node.read.kind is QueryKind.FULL:
-            counts[node.read.target] = math.prod(sizes[1:])
+            counts[node.read.target] = tuple(sizes[1:])
         return query_action(
             node=node,
             period=period,
@@ -743,11 +744,27 @@ def test_a_caller_evaluates_its_own_stay_once_per_class_it_reads(
     offer group and the observed couple shocks matter only to its exit. Its stay
     problem reads its wage and taste, so it runs 6 times; the exit decision still
     runs at every row."""
-    counts = _root_stay_problems(model=_model(), monkeypatch=monkeypatch)
-    assert counts["single_f"] == 6
-    assert counts["single_m"] == 6
+    maps = _root_stay_maps(model=_model(), monkeypatch=monkeypatch)
     # The couple's stay problem reads every couple shock.
-    assert counts["couple"] == 8
+    assert {
+        name: math.prod(maps[name]) for name in ("single_f", "single_m", "couple")
+    } == {
+        "single_f": 6,
+        "single_m": 6,
+        "couple": 8,
+    }
+
+
+def test_a_stay_problem_maps_each_independent_shock_on_its_own(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The couple's 8 rows are the product of three shocks of 2 nodes each.
+
+    Its stay problem runs in one lane map per shock, so a function of one shock
+    is computed at that shock's 2 nodes and not at the 8 joint rows.
+    """
+    maps = _root_stay_maps(model=_model(), monkeypatch=monkeypatch)
+    assert maps["couple"] == (2, 2, 2)
 
 
 def test_stay_reads_are_the_stay_problem_s_shocks() -> None:
@@ -861,14 +878,15 @@ def test_a_continuation_reading_an_observed_shock_runs_once_per_class(
     The couple carries its match shock into its terminal period, and each single
     observes that shock from the couple it may form. The offer guard and the
     offered partner realise the observation, so the continuation has
-    6 x `n_match` classes per single state. The couple's own 12 lanes cross
-    every node of its own shocks (4 x `n_match`).
+    6 x `n_match` classes per single state. Each of the couple's own 12 lanes maps
+    its shocks one group at a time, so the continuation runs once per node of the
+    match shock it reads (`n_match`), not at every joint row (4 x `n_match`).
     """
     values = _continuation_values(
         model=_model(n_match=n_match, lasting_match=True), monkeypatch=monkeypatch
     )
     assert values == {
-        "couple": (18 * n_match + 18 * n_match + 12 * 4 * n_match) * 8,
+        "couple": (18 * n_match + 18 * n_match + 12 * n_match) * 8,
         "single_f": (3 + 6 + 18) * 2,
         "single_m": (3 + 6 + 18) * 2,
     }
@@ -957,10 +975,10 @@ def test_a_drawn_formation_keeps_one_stay_problem_per_stay_row(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Draws never multiply the stay problem: it runs once per wage and taste."""
-    counts = _root_stay_problems(
+    maps = _root_stay_maps(
         model=_model(nodes=QuasiMonteCarlo(n=4, seed=0)), monkeypatch=monkeypatch
     )
-    assert {root: counts[root] for root in ("single_f", "single_m")} == {
+    assert {root: math.prod(maps[root]) for root in ("single_f", "single_m")} == {
         "single_f": 6,
         "single_m": 6,
     }
