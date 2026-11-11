@@ -12,6 +12,7 @@ not control â€” a period owner's materialized reads, a caller's transient tree â
 re-measured conservatively on every snapshot.
 """
 
+import weakref
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from types import MappingProxyType
@@ -292,9 +293,17 @@ def run_simulation_operation[T: PytreeValue](
     static_arguments: Mapping[str, StaticArgument] = MappingProxyType({}),
     subject_outputs: bool = False,
 ) -> T:
-    """Execute a pure operation under the current optional workspace budget."""
+    """Execute a pure operation under the current optional workspace budget.
+
+    Unbudgeted operations run eagerly, so an operand committed to one device,
+    such as a grid's points, is first replicated onto the mesh of the subject
+    rows it meets; JAX refuses to combine operands committed to different
+    device sets.
+    """
     if memory is None:
-        return function(**arguments, **static_arguments)
+        return function(
+            **_replicate_onto_subject_mesh(arguments=arguments), **static_arguments
+        )
     return memory.run(
         function=function,
         arguments=arguments,
@@ -354,3 +363,63 @@ def run_simulation_producer[T: PytreeValue](
     jax.block_until_ready(result)
     memory.hold(tree=result)
     return cast("T", result)
+
+
+def _replicate_onto_subject_mesh(
+    *, arguments: Mapping[ReferenceName, PytreeValue]
+) -> dict[ReferenceName, PytreeValue]:
+    """Replicate single-device operands onto the one mesh sharding the others.
+
+    Arguments are returned unchanged unless exactly one multi-device mesh
+    places some of them; operands already on that mesh's devices keep their
+    placement. Each operand is replicated once per mesh while it lives, see
+    `_replica_on_mesh`.
+    """
+    leaves = [
+        leaf for leaf in jax.tree.leaves(arguments) if isinstance(leaf, jax.Array)
+    ]
+    meshes = {
+        leaf.sharding.mesh
+        for leaf in leaves
+        if isinstance(leaf.sharding, jax.NamedSharding)
+        and len(leaf.sharding.device_set) > 1
+    }
+    if len(meshes) != 1:
+        return dict(arguments)
+    (mesh,) = meshes
+    devices = set(mesh.devices.flat)
+    replicated = jax.NamedSharding(mesh, jax.P())
+
+    def place(leaf: PytreeValue) -> PytreeValue:
+        if isinstance(leaf, jax.Array) and leaf.sharding.device_set != devices:
+            return _replica_on_mesh(leaf=leaf, sharding=replicated)
+        return leaf
+
+    return {name: jax.tree.map(place, value) for name, value in arguments.items()}
+
+
+_REPLICAS: dict[
+    tuple[int, jax.NamedSharding], tuple[weakref.ref[jax.Array], jax.Array]
+] = {}
+
+
+def _replica_on_mesh(*, leaf: jax.Array, sharding: jax.NamedSharding) -> jax.Array:
+    """Return the replica of `leaf` under `sharding`, copying it only once.
+
+    On GPU every copy of a buffer to other devices leaves a usage event on the
+    source that is freed only with the source
+    (https://github.com/jax-ml/jax/issues/42433), so repeatedly copying a
+    long-lived operand such as a grid's points grows host memory without bound.
+    The replica is kept for as long as `leaf` lives and dropped with it; the cache
+    never keeps `leaf` alive.
+    """
+    key = (id(leaf), sharding)
+    cached = _REPLICAS.get(key)
+    if cached is not None and cached[0]() is leaf and not cached[1].is_deleted():
+        return cached[1]
+    replica = jax.device_put(leaf, sharding)
+    _REPLICAS[key] = (
+        weakref.ref(leaf, lambda _: _REPLICAS.pop(key, None)),
+        replica,
+    )
+    return replica

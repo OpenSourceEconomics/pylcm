@@ -1116,14 +1116,11 @@ class Model:
 
     """Runtime-only declaration custody before a genuine execution is installed."""
 
-    _simulate_runtime_regimes: dict[
-        tuple[str, int], MappingProxyType[RegimeName, Regime]
-    ]
+    _simulate_runtime_regimes: dict[int, MappingProxyType[RegimeName, Regime]]
     """Program executors shared by calls with the same outer subject shape."""
 
     _shock_path_runtime_regimes: dict[
         tuple[
-            str,
             int,
             frozenset[StateName],
             str,
@@ -3181,18 +3178,15 @@ class Model:
         return internal_result
 
     def _runtime_regimes_for_shape(
-        self,
-        *,
-        compile_batch_size: int,
-        generation_key: str | None = None,
+        self, *, compile_batch_size: int
     ) -> MappingProxyType[RegimeName, Regime]:
-        """Return the call-local regime copies sharing this shape's executor."""
-        key = (
-            self._model_structure_fingerprint
-            if generation_key is None
-            else generation_key,
-            compile_batch_size,
-        )
+        """Return the call-local regime copies sharing this shape's executor.
+
+        The runtime binds only the model's regimes and execution, never a
+        generation's grid points or other values, so every parameter set shares
+        one runtime, and with it one set of compiled programs, per shape.
+        """
+        key = compile_batch_size
         with self._simulate_compile_lock:
             if key not in self._simulate_runtime_regimes:
                 self._simulate_runtime_regimes[key] = bind_simulation_runtime(
@@ -3208,21 +3202,17 @@ class Model:
         compile_batch_size: int,
         supplied: frozenset[StateName],
         flat_params: FlatParams,
-        generation: CanonicalModelGeneration,
     ) -> MappingProxyType[RegimeName, Regime]:
         """Return the runtime regimes with transitions reading the supplied shocks.
 
         Bound once per shape, supplied shock names and parameter names, so calls
         differing only in path values reuse one set of compiled programs.
         """
-        regimes = self._runtime_regimes_for_shape(
-            compile_batch_size=compile_batch_size, generation_key=generation.key
-        )
+        regimes = self._runtime_regimes_for_shape(compile_batch_size=compile_batch_size)
         if not supplied:
             return regimes
         param_names = kernel_param_names(regimes=regimes, params=flat_params)
         key = (
-            generation.key,
             compile_batch_size,
             supplied,
             canonical_parameter_schema(flat_params=flat_params),
@@ -5013,7 +5003,6 @@ class Model:
                 )
                 if entry_allocations is not None:
                     simulate_regimes = self._shock_path_regimes_for_shape(
-                        generation=generation,
                         compile_batch_size=padded_n_subjects,
                         supplied=frozenset(resolved_shock_paths)
                         | (
@@ -5072,7 +5061,6 @@ class Model:
                             multiple=compile_batch_size,
                         )
                     simulate_regimes = self._shock_path_regimes_for_shape(
-                        generation=generation,
                         compile_batch_size=compile_batch_size,
                         supplied=frozenset(resolved_shock_paths)
                         | (
