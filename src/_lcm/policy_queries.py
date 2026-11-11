@@ -85,6 +85,7 @@ _LIVE = "_lcm_query_live"
 _PROJECTION = "_lcm_query_projection"
 _PHYSICAL_CONTEXTS = "_lcm_query_physical_contexts"
 _INFORMATION = "_lcm_query_information"
+_DRAWS = "_lcm_query_draws"
 _ACTING = "_lcm_query_acting"
 _TASTE = "_lcm_query_taste"
 _QUERY_ARGUMENTS = "query_arguments"
@@ -1279,6 +1280,8 @@ class _QueryArguments:
         arguments[_PROJECTION] = _query_projection_operands(
             node=self.node, context=context
         )
+        if self.node.sample is not None:
+            arguments[_DRAWS] = _sample_draws(node=self.node)
         if self.information_nodes:
             from _lcm.current_iid import (  # noqa: PLC0415
                 CURRENT_IID_ARGUMENT,
@@ -1316,6 +1319,11 @@ class _QueryArguments:
                                 _PROJECTION: _query_projection_operands(
                                     node=node, context=context
                                 ),
+                                **(
+                                    {}
+                                    if node.sample is None
+                                    else {_DRAWS: _sample_draws(node=node)}
+                                ),
                             }
                         )
                         for name, node in self.information_nodes.items()
@@ -1323,6 +1331,13 @@ class _QueryArguments:
                 ),
             )
         return MappingProxyType(arguments)
+
+
+def _sample_draws(*, node: QueryNode) -> FloatND:
+    """A drawn query's unit-cube points, an operand so that no trace holds them."""
+    from _lcm.query_information import sample_uniforms  # noqa: PLC0415
+
+    return jnp.asarray(sample_uniforms(node=node))
 
 
 def query_parameter_namespaces(*, builder: CoreArgumentBuilder) -> frozenset[str]:
@@ -2363,10 +2378,37 @@ class _PolicyQueryKernel:
     root_context: SolverBuildContext
     period: int
     fixed_flat_params: FlatParams = MappingProxyType({})
+    shared_functions: dict[tuple[str, int], Callable[..., PytreeValue]] | None = None
+    """Program functions by name and chunk width, one dict per group of periods.
+
+    Periods that trace the same programs hold the same dict and run its
+    functions, so one lowering serves the group. The dict is mutable because a
+    narrowed period adds its width for the periods narrowed after it.
+    """
 
     def core_programs(self) -> Mapping[str, CoreProgram]:
         """Publish the sole native declaration authority."""
         return self.programs
+
+    def sharing(
+        self, *, functions: dict[tuple[str, int], Callable[..., PytreeValue]]
+    ) -> Self:
+        """Run the functions of the first period that entered `functions`."""
+        return replace(
+            self,
+            shared_functions=functions,
+            programs=MappingProxyType(
+                {
+                    name: replace(
+                        program,
+                        function=functions.setdefault(
+                            (name, self.chunk_size), program.function
+                        ),
+                    )
+                    for name, program in self.programs.items()
+                }
+            ),
+        )
 
     def narrow_workspace(self, *, halvings: int = 1) -> PeriodKernel | None:
         """Halve the common chunk `halvings` times, refusing below one source cell."""
@@ -2379,7 +2421,12 @@ class _PolicyQueryKernel:
             root=self.root,
             chunk_size=max(1, self.chunk_size >> halvings),
         )
-        return candidate.with_fixed_params(fixed_flat_params=self.fixed_flat_params)
+        candidate = candidate.with_fixed_params(
+            fixed_flat_params=self.fixed_flat_params
+        )
+        if self.shared_functions is None:
+            return candidate
+        return candidate.sharing(functions=self.shared_functions)
 
     def with_fixed_params(self, *, fixed_flat_params: FlatParams) -> Self:
         """Expose each target's fixed operands through its canonical argument pool."""
