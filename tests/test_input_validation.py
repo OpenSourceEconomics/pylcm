@@ -350,3 +350,15 @@ def test_outer_mesh_tolerances_must_be_finite(*, name: str) -> None:
 def test_outer_mesh_lipschitz_bound_may_be_infinite() -> None:
     mesh = AdaptiveOuterMesh(initial_grid=_GRID, outer_lipschitz_bound=float("inf"))
     assert mesh.outer_lipschitz_bound == float("inf")
+
+
+def test_record_signature_shows_plain_annotations() -> None:
+    parameter = inspect.signature(FUESEnvelope).parameters["jump_thresh"]
+    assert (parameter.annotation, parameter.default) == (float, 2.0)
+
+
+@pytest.mark.parametrize("record", [FUESEnvelope, DCEGM, ExecutionConfig])
+def test_record_signature_hides_validators(*, record: type[_Built]) -> None:
+    text = str(inspect.signature(record))
+    assert "Annotated" not in text
+    assert "Validator" not in text

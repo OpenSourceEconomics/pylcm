@@ -10,7 +10,7 @@ shared across them:
   objects implementing `__float__` are refused.
 - `EXACT_INT` admits a builtin `int` only. Booleans, floats and `int`
   subclasses are refused.
-- `NON_EMPTY_NAME` admits a non-empty `str`, unchanged.
+- `NonEmptyName` admits a non-empty `str`, unchanged.
 
 Process-law values do not use `CONFIG_FLOAT`: their numeric kind is part of
 their identity.
@@ -26,8 +26,10 @@ checking of ordinary functions and methods is unaffected.
 
 import functools
 import inspect
+import operator
 from collections.abc import Callable, Mapping, Sequence
-from typing import Annotated, cast
+from types import UnionType
+from typing import Annotated, Literal, Union, cast, get_args, get_origin
 
 from pydantic import (
     AllowInfNan,
@@ -109,6 +111,8 @@ def translate_validation_errors[T](
                 ) from error
 
         cls.__init__ = __init__  # ty: ignore[invalid-assignment]
+        # Show the declared types, not the validators attached to them.
+        cls.__signature__ = _plain_signature(signature)  # ty: ignore[unresolved-attribute]
         return cls
 
     return decorate
@@ -209,6 +213,32 @@ def _supplied_steps(
             continue
         steps.append(step)
     return tuple(steps)
+
+
+def _plain_signature(signature: inspect.Signature) -> inspect.Signature:
+    """Strip validator metadata from each `Annotated` parameter annotation."""
+    return signature.replace(
+        parameters=[
+            parameter.replace(annotation=_plain(parameter.annotation))
+            for parameter in signature.parameters.values()
+        ]
+    )
+
+
+def _plain(annotation: object) -> object:  # noqa: PAN001 - any annotation object
+    """Return `annotation` with every `Annotated` layer replaced by its type."""
+    value = getattr(annotation, "__value__", None)
+    if get_origin(value) is Annotated:
+        return _plain(value)
+    origin, args = get_origin(annotation), get_args(annotation)
+    if origin is Annotated:
+        return _plain(args[0])
+    if origin is None or not args or origin is Literal:
+        return annotation
+    plain_args = tuple(_plain(arg) for arg in args)
+    if origin in (Union, UnionType):
+        return functools.reduce(operator.or_, plain_args)
+    return origin[plain_args]
 
 
 _ASSIGNED_WITHOUT_ANNOTATIONS = tuple(
