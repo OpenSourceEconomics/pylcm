@@ -17,15 +17,17 @@ their identity.
 
 `translate_validation_errors` maps a record's `pydantic.ValidationError` to a
 project exception that names the class, each failing field path and the
-violated requirement. A call with positional, missing or unexpected arguments
-raises `TypeError` before any field is validated. Package-wide beartype
+violated requirement. A path names only fields, keys and indices of what the
+caller supplied, never the labels Pydantic gives union members. A call with
+positional, missing or unexpected arguments raises a `TypeError` that names the
+class, before any field is validated. Package-wide beartype
 checking of ordinary functions and methods is unaffected.
 """
 
 import functools
 import inspect
-from collections.abc import Callable
-from typing import Annotated
+from collections.abc import Callable, Mapping, Sequence
+from typing import Annotated, cast
 
 from pydantic import (
     AllowInfNan,
@@ -92,12 +94,18 @@ def translate_validation_errors[T](
 
         @functools.wraps(validating_init, assigned=_ASSIGNED_WITHOUT_ANNOTATIONS)
         def __init__(self: object, *args: object, **kwargs: object) -> None:  # noqa: N807, PAN001 - forwards the record's own call
-            signature.bind(*args, **kwargs)
+            try:
+                bound = signature.bind(*args, **kwargs)
+            except TypeError as error:
+                raise TypeError(f"{cls.__name__}: {error}") from None
             try:
                 validating_init(self, *args, **kwargs)
             except ValidationError as error:
+                bound.apply_defaults()
                 raise error_type(
-                    format_validation_error(class_name=cls.__name__, error=error)
+                    format_validation_error(
+                        class_name=cls.__name__, error=error, inputs=bound.arguments
+                    )
                 ) from error
 
         cls.__init__ = __init__  # ty: ignore[invalid-assignment]
@@ -133,18 +141,30 @@ def validate_field[T](
         return validate(value)
     except ValidationError as error:
         raise error_type(
-            format_validation_error(class_name=owner, error=error, prefix=(field_name,))
+            format_validation_error(
+                class_name=owner,
+                error=error,
+                inputs={field_name: value},
+                prefix=(field_name,),
+            )
         ) from error
 
 
 def format_validation_error(
-    *, class_name: str, error: ValidationError, prefix: tuple[str, ...] = ()
+    *,
+    class_name: str,
+    error: ValidationError,
+    inputs: Mapping[str, object],  # noqa: PAN001 - the caller's arguments, any kind
+    prefix: tuple[str, ...] = (),
 ) -> str:
     """Render each failing field path of `error` with its violated requirement.
 
     Args:
         class_name: Name of the record that refused its input.
         error: The Pydantic validation error.
+        inputs: The validated values by field name. A location step is part of
+            the path only where it indexes the supplied value; the other steps
+            are labels of union members or key markers, and are dropped.
         prefix: Path of the validated value inside the record, when the error
             comes from validating one field on its own.
 
@@ -158,12 +178,37 @@ def format_validation_error(
             # A relation check names its own fields in its message.
             lines.append(f"  {detail['ctx']['error']}")
             continue
+        steps = _supplied_steps(inputs=inputs, loc=(*prefix, *detail["loc"]))
         path = "".join(
-            f"[{part!r}]" if isinstance(part, int) or index > 0 else f".{part}"
-            for index, part in enumerate((*prefix, *detail["loc"]))
+            f".{step}" if index == 0 else f"[{step!r}]"
+            for index, step in enumerate(steps)
         )
         lines.append(f"  {class_name}{path}: {detail['msg']} (got {detail['input']!r})")
     return "\n".join(lines)
+
+
+def _supplied_steps(
+    *,
+    inputs: Mapping[str, object],  # noqa: PAN001 - the caller's arguments, any kind
+    loc: tuple[int | str, ...],
+) -> tuple[int | str, ...]:
+    """Keep the location steps that index the supplied value, in order."""
+    node: object = inputs  # noqa: PAN001 - walks arbitrary caller input
+    steps: list[int | str] = []
+    for step in loc:
+        if isinstance(node, Mapping) and step in node:
+            node = cast("Mapping[int | str, object]", node)[step]  # noqa: PAN001 - arbitrary caller input
+        elif (
+            isinstance(step, int)
+            and isinstance(node, Sequence)
+            and not isinstance(node, str)
+            and -len(node) <= step < len(node)
+        ):
+            node = node[step]
+        else:
+            continue
+        steps.append(step)
+    return tuple(steps)
 
 
 _ASSIGNED_WITHOUT_ANNOTATIONS = tuple(

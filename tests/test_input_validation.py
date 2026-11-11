@@ -207,7 +207,7 @@ def test_missing_required_argument_raises_type_error() -> None:
 def test_ordinary_functions_keep_beartype_checking() -> None:
     """The package claw still checks functions in the validation module."""
     with pytest.raises(BeartypeCallHintViolation):
-        format_validation_error(class_name=1, error=None)  # ty: ignore[invalid-argument-type]
+        format_validation_error(class_name=1, error=None, inputs={})  # ty: ignore[invalid-argument-type]
 
 
 @pytest.mark.parametrize(
@@ -254,6 +254,78 @@ def test_record_signature_is_keyword_only() -> None:
     assert {parameter.kind for parameter in parameters} == {
         inspect.Parameter.KEYWORD_ONLY
     }
+
+
+def test_an_error_path_names_the_field_not_the_union_members() -> None:
+    """Each line names the field the caller wrote, never a schema member label."""
+    with pytest.raises(ValueError, match="Invalid ExecutionConfig") as raised:
+        ExecutionConfig(value_storage="scratch")  # ty: ignore[invalid-argument-type]
+    assert str(raised.value) == (
+        "Invalid ExecutionConfig:\n"
+        "  ExecutionConfig.value_storage: Input should be 'device' or 'host'"
+        " (got 'scratch')\n"
+        "  ExecutionConfig.value_storage: Input should be an instance of Path"
+        " (got 'scratch')"
+    )
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "path"),
+    [
+        pytest.param({"device_memory_bytes": "x"}, ".device_memory_bytes:", id="tag"),
+        pytest.param(
+            {"axis_widths": {"b": {"working": 0}}},
+            ".axis_widths['b']['working']:",
+            id="nested_union",
+        ),
+        pytest.param({"axis_widths": {"": 2}}, ".axis_widths['']:", id="key"),
+    ],
+)
+def test_an_error_path_follows_the_supplied_containers(
+    *, kwargs: dict[str, str | dict[str, int] | dict[str, dict[str, int]]], path: str
+) -> None:
+    with pytest.raises(ValueError, match="Invalid ExecutionConfig") as raised:
+        ExecutionConfig(**kwargs)  # ty: ignore[invalid-argument-type]
+    lines = str(raised.value).splitlines()[1:]
+    assert lines
+    assert all(line.startswith(f"  ExecutionConfig{path}") for line in lines), lines
+
+
+def test_an_error_path_names_a_refused_inner_key() -> None:
+    with pytest.raises(ValueError, match="Invalid WidthSearchPolicy") as raised:
+        WidthSearchPolicy(hints={"working": {"": 1}})
+    assert (
+        str(raised.value)
+        .splitlines()[1]
+        .startswith("  WidthSearchPolicy.hints['working']['']:")
+    ), str(raised.value)
+
+
+@pytest.mark.parametrize(
+    ("record", "args", "kwargs", "name"),
+    [
+        pytest.param(ExecutionConfig, (5,), {}, "ExecutionConfig", id="positional"),
+        pytest.param(
+            UniformObservedFixedCost,
+            (),
+            {},
+            "UniformObservedFixedCost",
+            id="missing",
+        ),
+        pytest.param(
+            FUESEnvelope, (), {"jump_threshold": 2.0}, "FUESEnvelope", id="unexpected"
+        ),
+    ],
+)
+def test_a_wrong_call_shape_names_the_record(
+    *,
+    record: _Record,
+    args: tuple[int, ...],
+    kwargs: dict[str, float],
+    name: str,
+) -> None:
+    with pytest.raises(TypeError, match=rf"^{name}\b"):
+        record(*args, **kwargs)
 
 
 @pytest.mark.parametrize(
