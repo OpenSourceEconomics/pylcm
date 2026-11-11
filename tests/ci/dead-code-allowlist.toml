@@ -27,16 +27,6 @@ name = "read_declarations"
 reason = "Pending maintainer decision (2026-11-09): whether the documented public pre-program metadata contract, which a user-facing RuntimeError tells users to call, stays. Only tests call it."
 
 [[allow]]
-path = "src/_lcm_regime_finder/frontier_check.py"
-name = "verify_signature_cover"
-reason = "Pending maintainer decision (2026-11-09): whether the verifier for an externally produced exact Pareto cover proof, and its proof-checking kernel, stay as a hook for an external proof-capable backend. No producer in the repository emits such a proof."
-
-[[allow]]
-path = "src/_lcm_regime_finder/signature_proof.py"
-name = "check_frontier_certificate"
-reason = "Pending maintainer decision (2026-11-09): the instance-level counterpart of verify_signature_cover; whether checking an externally produced cover proof, and its proof-checking kernel, stays. No producer in the repository emits such a proof."
-
-[[allow]]
 path = "tests/*"
 name = "visit_*"
 reason = "ast.NodeVisitor methods dispatched by node class name through NodeVisitor.visit/generic_visit."

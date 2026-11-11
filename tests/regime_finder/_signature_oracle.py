@@ -5,11 +5,13 @@ cell-to-union-signature assignments — that the tests compare with the binary m
 Never the production path.
 """
 from collections import defaultdict
+from collections.abc import Mapping
 from itertools import product
 import math
 
+from _lcm_regime_finder.records import SignatureModel
 from _lcm_regime_finder.signature_proof import (
-    join, literal_partition_cost, pareto, rows, signature, union_closure, union_signatures,
+    METRICS, join, literal_partition_cost, pareto, rows, signature, union_closure, union_signatures,
     validate,
 )
 
@@ -61,3 +63,16 @@ def signature_assignment_frontier(instance, *, max_cells=7):
             w['block'] - w['dispatch'] + w['characteristic'] * len(bins[k][2]) for k in groups)
         values.append((work, storage, clarity))
     return pareto(values)
+
+
+def verify_binary_assignment(model: SignatureModel, assignment: Mapping[str, int]) -> tuple[int, ...]:
+    """Check integer constraints and objectives; no producer cost routine."""
+    if set(assignment) != set(model['variables']) or any(type(v) is not int or v not in (0, 1) for v in assignment.values()):
+        raise ValueError('Full binary assignment required')
+    for row in model['constraints']:
+        value = sum(a * assignment[v] for v, a in row['terms'])
+        good = {'==': value == row['rhs'], '<=': value <= row['rhs'], '>=': value >= row['rhs']}[row['relation']]
+        if not good:
+            raise ValueError('Infeasible binary witness')
+    return tuple(obj['constant'] + sum(a * assignment[v] for v, a in obj['terms'])
+                 for obj in (model['objectives'][m] for m in METRICS))

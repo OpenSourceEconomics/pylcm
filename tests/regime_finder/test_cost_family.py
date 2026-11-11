@@ -11,6 +11,8 @@ from _lcm_regime_finder.cost_family import encode_analysis, chain_cover
 from tests.regime_finder.test_forest_frontier import example, literal
 from tests.regime_finder.test_aca_separator_reference import fixture
 from tests.regime_finder.test_borella_symbolic import toy
+from tests.regime_finder.test_signature_integration import heterogeneous
+from tests.regime_finder.round6_frontier_oracle import brute_family
 
 
 def forest_analysis():
@@ -31,7 +33,78 @@ def forest_analysis():
         'projection_policies': [{'id': 'original', 'option_by_cell': policy}]}, original
 
 
+
 class CostFamilyTests(unittest.TestCase):
+    def test_all_directed_three_cell_graphs_preserve_the_literal_cost_family(self) -> None:
+        from _lcm_regime_finder.cost_limits import DEFAULTS
+        from _lcm_regime_finder.frontier import search_frontier
+        from _lcm_regime_finder.frontier_check import check_frontier
+        unlimited = dict.fromkeys(DEFAULTS)
+        possible_edges = [(a + ':0', b + ':0') for a in 'abc' for b in 'abc' if a != b]
+        for compatible, mask in product((False, True), range(64)):
+            with self.subTest(compatible_domains=compatible, mask=mask):
+                analysis = heterogeneous(edges=[(*edge, 'unknown') for i, edge in enumerate(possible_edges)
+                                                if mask & (1 << i)])
+                analysis['declarations']['analysis_scope'] = 'pylcm-structural-graph/v1'
+                if compatible:
+                    cell = analysis['declarations']['cells'][2]
+                    cell['states']['other_health'] = cell['states'].pop('health')
+                    option = analysis['interfaces'][cell['id']]['options'][0]
+                    option['states']['other_health'] = option['states'].pop('health')
+                    option['state_projection']['other_health'] = option['state_projection'].pop('health')
+                expected = sorted(tuple(point['cost'][key] for key in ('work', 'storage', 'clarity'))
+                                  for point in brute_family(analysis))
+                result = find_cost_frontier(analysis, seconds=None, limits=unlimited)
+                recurrence = search_frontier(analysis)
+                self.assertEqual(result['status'], 'COMPLETE_COST_FAMILY')
+                self.assertEqual(sorted(map(tuple, result['frontier'])), expected)
+                self.assertEqual([tuple(point['cost'][key] for key in ('work', 'storage', 'clarity'))
+                                  for point in recurrence['frontier']], expected)
+                self.assertTrue(check_cost_frontier(analysis, result, seconds=None,
+                                                   limits=unlimited)['cost_family_complete_verified'])
+                self.assertTrue(check_frontier(analysis, recurrence)['frontier_complete_verified'])
+                edges = {tuple(sorted((relation['source'], relation['targets'][0])))
+                         for relation in analysis['declarations']['relations']}
+                backend = 'legacy-exact-component' if len(edges) == 3 else 'singleton-forest'
+                self.assertEqual([component['backend'] for component in result['components']], [backend])
+
+    def test_forest_and_cyclic_certificates_reject_source_frontier_and_witness_changes(self) -> None:
+        from _lcm_regime_finder.cost_limits import DEFAULTS
+        unlimited = dict.fromkeys(DEFAULTS)
+        possible_edges = [(a + ':0', b + ':0') for a in 'abc' for b in 'abc' if a != b]
+        for mask in (1, 11):
+            analysis = heterogeneous(edges=[(*edge, 'unknown') for i, edge in enumerate(possible_edges)
+                                            if mask & (1 << i)])
+            analysis['declarations']['analysis_scope'] = 'pylcm-structural-graph/v1'
+            cell = analysis['declarations']['cells'][2]
+            cell['states']['other_health'] = cell['states'].pop('health')
+            option = analysis['interfaces'][cell['id']]['options'][0]
+            option['states']['other_health'] = option['states'].pop('health')
+            option['state_projection']['other_health'] = option['state_projection'].pop('health')
+            result = find_cost_frontier(analysis, seconds=None, limits=unlimited)
+            for mutation in ('input_identity', 'domain', 'edge', 'omitted_point', 'component', 'witness'):
+                with self.subTest(mask=mask, mutation=mutation):
+                    original, changed = deepcopy(analysis), deepcopy(result)
+                    if mutation == 'input_identity':
+                        changed['input_sha256'] = 'wrong input'
+                    elif mutation == 'domain':
+                        original['declarations']['domains']['wealth']['size'] += 1
+                    elif mutation == 'edge':
+                        original['declarations']['relations'].append({
+                            'source': 'c:0', 'targets': ['outside'], 'support': 'positive'})
+                    elif mutation == 'omitted_point':
+                        changed['frontier'].pop()
+                    elif mutation == 'component':
+                        changed['components'] = []
+                    else:
+                        component = changed['components'][0]
+                        if component['backend'] == 'singleton-forest':
+                            component['proof']['frontier'][0]['normalized_witness_sha256'] = 'forged witness'
+                        else:
+                            component['proof']['frontier'][0]['blocks'][0]['cells'] = []
+                    self.assertEqual(check_cost_frontier(original, changed, seconds=None,
+                                                        limits=unlimited)['status'], 'FAIL')
+
     def test_no_time_or_count_limits_across_all_cost_backends(self):
         from _lcm_regime_finder.cost_limits import DEFAULTS
         unlimited = dict.fromkeys(DEFAULTS)
@@ -146,6 +219,11 @@ class CostFamilyTests(unittest.TestCase):
         self.assertEqual(result['frontier'], sorted(literal(original)))
         self.assertEqual(check_cost_frontier(analysis, result)['status'], 'PASS')
         self.assertIn((20, 20, 9), result['frontier'])
+        omitted = deepcopy(result)
+        omitted['frontier'] = [point for point in omitted['frontier'] if tuple(point) != (20, 20, 9)]
+        proof = omitted['components'][0]['proof']
+        proof['frontier'] = [point for point in proof['frontier'] if tuple(point['cost']) != (20, 20, 9)]
+        self.assertEqual(check_cost_frontier(analysis, omitted)['status'], 'FAIL')
         self.assertEqual(result['legacy_endpoint_preference'], 'NOT_APPLIED')
 
     def test_exact_component_omission_and_source_promotion_fail(self):
