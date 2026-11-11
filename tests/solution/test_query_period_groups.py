@@ -2,7 +2,8 @@
 
 The formation toy lives through three periods before its terminal one. The first
 two read a living next period and so trace the same chunk program; the third
-reads the terminal regimes and traces another.
+reads the terminal regimes and traces another. A single who marries is paid a
+gift, an exit adjustment the engine binds anew in every period.
 """
 
 from collections import Counter
@@ -21,7 +22,7 @@ _ROOTS = ("couple", "single_f", "single_m")
 
 
 def _four_period_values() -> dict[str, np.ndarray]:
-    return _solve(_model(nodes=QuasiMonteCarlo(n=8, seed=0), n_periods=4))
+    return _solve(_model(nodes=QuasiMonteCarlo(n=8, seed=0), n_periods=4, gift=True))
 
 
 def test_periods_with_one_query_structure_lower_their_chunk_program_once(

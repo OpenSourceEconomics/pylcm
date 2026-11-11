@@ -1415,6 +1415,8 @@ def _node_structure(*, node: QueryNode) -> _Structure:
     - A closure bound per period keeps only its presence: it is built from the
       declaration, the closed exits and the child queries, which the context and
       the remaining fields hold.
+    - An exit adjustment keeps its exit and member: it is bound per period from
+      the declaration and the regime's functions, which the context holds.
     """
     parts: _Structure = ()
     for item in fields(node):
@@ -1433,6 +1435,10 @@ def _node_structure(*, node: QueryNode) -> _Structure:
             value = value is not None
         elif item.name == "source_projection":
             value = tuple(value)
+        elif item.name == "exit_adjustments":
+            value = tuple(
+                (exit_id, tuple(members)) for exit_id, members in value.items()
+            )
         parts = (*parts, value)
     return parts
 

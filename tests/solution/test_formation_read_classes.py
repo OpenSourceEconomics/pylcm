@@ -161,6 +161,14 @@ def _lasting_consumption(
     )
 
 
+def _gift(*, experience: IntND) -> FloatND:
+    return 0.05 * experience
+
+
+def _take_gift(*, gift: FloatND) -> FloatND:
+    return gift
+
+
 def _carry_match(*, match: FloatND) -> FloatND:
     return match
 
@@ -237,7 +245,9 @@ class _StrictParticipation:
         )
 
 
-def _formation(*, member: str, nodes: QuasiMonteCarlo | None = None) -> Exit:
+def _formation(
+    *, member: str, nodes: QuasiMonteCarlo | None = None, gift: bool = False
+) -> Exit:
     spouse = "m" if member == "f" else "f"
     offered = _offered_m if member == "f" else _offered_f
     return Exit(
@@ -249,6 +259,7 @@ def _formation(*, member: str, nodes: QuasiMonteCarlo | None = None) -> Exit:
                     f"experience_{member}": _experience,
                     f"experience_{spouse}": offered,
                 },
+                utility_adjustment=_take_gift if gift else None,
             )
         },
         rule=Consent(
@@ -296,6 +307,7 @@ def _model(
     offered_probs: tuple[float, float, float] = (0.2, 0.5, 0.3),
     query_cell: int | None = 4,
     n_periods: int = 2,
+    gift: bool = False,
 ) -> Model:
     """Two singles marry by consent; with `dissolution` the couple may split.
 
@@ -304,6 +316,7 @@ def _model(
     single draws the rows of its formation choice that its stay problem ignores.
     With `query_cell=None` the chunk width is left to the engine. Every regime
     lives through the periods before the last one and ends in its terminal twin.
+    With `gift` a single who marries is paid a gift its regime computes.
     """
     experience = DiscreteGrid(values=jnp.arange(_N_EXP))
     work = DiscreteGrid(values=jnp.arange(2))
@@ -311,10 +324,11 @@ def _model(
         f"single_{member}": Regime(
             states={"experience": experience},
             actions={"work": work},
-            functions={"utility": _single_f if member == "f" else _single_m},
+            functions={"utility": _single_f if member == "f" else _single_m}
+            | ({"gift": _gift} if gift else {}),
             shocks=(f"wage_{member}", f"taste_{member}", f"marriage_from_{member}"),
             state_transitions={"experience": _next_experience},
-            exits={"marry": _formation(member=member, nodes=nodes)},
+            exits={"marry": _formation(member=member, nodes=nodes, gift=gift)},
         )
         for member in ("f", "m")
     }
@@ -349,6 +363,11 @@ def _model(
     for name, regime in tuple(regimes.items()):
         regimes[f"{name}_terminal"] = replace(
             regime,
+            functions={
+                name: function
+                for name, function in regime.functions.items()
+                if name != "gift"
+            },
             state_transitions={},
             shocks=tuple(
                 group for group in regime.shocks if not group.startswith("marriage")
