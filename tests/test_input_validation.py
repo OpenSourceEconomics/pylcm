@@ -254,3 +254,27 @@ def test_record_signature_is_keyword_only() -> None:
     assert {parameter.kind for parameter in parameters} == {
         inspect.Parameter.KEYWORD_ONLY
     }
+
+
+@pytest.mark.parametrize(
+    "support",
+    [
+        pytest.param({"lower": -np.inf}, id="lower"),
+        pytest.param({"upper": np.inf}, id="upper"),
+        pytest.param({"lower": -np.inf, "upper": np.inf}, id="both"),
+    ],
+)
+def test_fixed_cost_support_must_be_finite(*, support: dict[str, float]) -> None:
+    with pytest.raises(RegimeInitializationError, match="finite"):
+        UniformObservedFixedCost(shock_name="chi", scale_function="scale", **support)
+
+
+@pytest.mark.parametrize("name", ["value_atol", "value_rtol"])
+def test_outer_mesh_tolerances_must_be_finite(*, name: str) -> None:
+    with pytest.raises(RegimeInitializationError, match=rf"AdaptiveOuterMesh\.{name}"):
+        AdaptiveOuterMesh(initial_grid=_GRID, **{name: float("inf")})  # ty: ignore[invalid-argument-type]
+
+
+def test_outer_mesh_lipschitz_bound_may_be_infinite() -> None:
+    mesh = AdaptiveOuterMesh(initial_grid=_GRID, outer_lipschitz_bound=float("inf"))
+    assert mesh.outer_lipschitz_bound == float("inf")

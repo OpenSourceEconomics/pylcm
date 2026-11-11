@@ -37,6 +37,7 @@ from pydantic.dataclasses import dataclass as pydantic_dataclass
 
 from _lcm.input_validation import (
     CONFIG_FLOAT,
+    FINITE,
     STRICT_CONFIG,
     translate_validation_errors,
 )
@@ -80,10 +81,10 @@ class UniformObservedFixedCost(OuterBranchAggregator):
     scale_function: FunctionName
     """Model function returning the cost scale `B >= 0` per state cell."""
 
-    lower: Annotated[float, CONFIG_FLOAT] = 0.0
+    lower: Annotated[float, CONFIG_FLOAT, FINITE] = 0.0
     """Lower support edge `a` of the uniform shock."""
 
-    upper: Annotated[float, CONFIG_FLOAT] = 1.0
+    upper: Annotated[float, CONFIG_FLOAT, FINITE] = 1.0
     """Upper support edge `b` of the uniform shock; must exceed `lower`."""
 
     def __post_init__(self) -> None:
