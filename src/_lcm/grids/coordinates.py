@@ -176,8 +176,10 @@ def get_irreg_coordinate(
     if n_points == 1:
         return jnp.zeros_like(value)
 
-    # Find the index of the first point greater than value
-    idx_upper = jnp.searchsorted(points, value, side="right")
+    # Find the index of the first point greater than value. An unrolled search is
+    # the same bisection without a loop instruction, so a compiled program that
+    # reads many grids stays one program.
+    idx_upper = jnp.searchsorted(points, value, side="right", method="scan_unrolled")
 
     # Clamp to valid range for interpolation
     idx_upper = jnp.clip(idx_upper, 1, n_points - 1)
