@@ -862,29 +862,3 @@ def check_frontier(analysis, result, *, limits=None):
         return {"status": "FAIL", "errors": errors + ["malformed frontier certificate: " + str(exc)],
                 "unresolved": unresolved, "frontier_complete_verified": False,
                 "checked_complete_plans": checked, "dense_cartesian_rows_evaluated": 0}
-
-
-def verify_signature_cover(analysis,component_record,certificate,*,seconds=900,max_visits=1000000):
-    """Check a component's exact integer Pareto cover against the analysis.
-
-    This is not a whole-Model or source-semantics certificate. No solver status
-    or producer constraint model is trusted; the integer model is rebuilt here.
-    """
-    from .signature_proof import digest, verify_binary_assignment, frontier_cover_clauses, check_unsat_tree
-    try:
-        family=IndependentFamily(analysis,seconds=seconds)
-        model=family.check_signature_record(component_record)
-        if certificate['model_sha256']!=digest(model):raise ValueError('Cover proof model identity changed')
-        vectors=[verify_binary_assignment(model,assignment) for assignment in certificate['assignments']]
-        if len(vectors)!=len(set(vectors)) or sorted(vectors)!=_antichain(vectors):
-            raise ValueError('Cover witnesses are not a unique Pareto antichain')
-        receipt=check_unsat_tree(model,frontier_cover_clauses(model,vectors),certificate['coverage_proof'],
-                                 max_visits=max_visits,check=family.bound)
-        return {'status':'PASS','component_frontier_complete_verified':True,
-                'global_frontier_complete_verified':False,'source_semantics':'NOT_CHECKED_HERE',
-                'analysis_sha256':family.analysis_digest,'model_sha256':digest(model),
-                'vectors':sorted(vectors),'proof':receipt}
-    except RuntimeError as exc:
-        return {'status':'UNRESOLVED','component_frontier_complete_verified':False,'reason':str(exc)}
-    except (KeyError,TypeError,ValueError,OverflowError,RecursionError) as exc:
-        return {'status':'FAIL','component_frontier_complete_verified':False,'errors':[str(exc)]}

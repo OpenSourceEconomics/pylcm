@@ -1,17 +1,14 @@
-"""Unexecuted acceptance suite for the proposed replacement seam; stdlib only.
-
-Run from this directory with python -m unittest -v test_exact_signature_reference.
-No test here runs the native model, imports the audited producer, or benchmarks it.
-"""
+"""Independent tiny partition, signature-assignment and binary-model oracles."""
 from copy import deepcopy
 from itertools import product
 import unittest
 from _lcm_regime_finder.signature_proof import (
-    METRICS, binary_model, check_frontier_certificate, check_unsat_tree,
-    digest, frontier_cover_clauses, impossible, literal_partition_cost, pareto,
-    partition_frontier, signature_assignment_frontier, union_closure,
-    verify_binary_assignment, signature,
+    binary_model, literal_partition_cost, pareto, union_closure, signature,
 )
+from tests.regime_finder._signature_oracle import (
+    partition_frontier, signature_assignment_frontier, verify_binary_assignment,
+)
+
 
 
 def fixture(layouts=(('x',), ('y',), ('x',)), pairs=()):
@@ -40,24 +37,6 @@ def witness(instance, model, bins_by_cell):
             result[variable] = int(owner[source] == k and owner.get(target) != k)
     return result
 
-
-def prove_query_tiny(model, clauses):
-    """Exhaustive proof emitter; proof checking is a separate code path."""
-    variables = model['variables']
-    def recurse(index, assigned):
-        for i, row in enumerate(model['constraints']):
-            if impossible(row, assigned):
-                return {'kind': 'constraint', 'index': i}
-        for i, clause in enumerate(clauses):
-            if all(impossible(row, assigned) for row in clause):
-                return {'kind': 'clause', 'index': i}
-        if index == len(variables):
-            raise ValueError('SAT: cannot emit an infeasibility proof')
-        variable = variables[index]
-        return {'kind': 'split', 'variable': variable,
-                'zero': recurse(index + 1, {**assigned, variable: 0}),
-                'one': recurse(index + 1, {**assigned, variable: 1})}
-    return recurse(0, {})
 
 
 class ExactSignatureReferenceTests(unittest.TestCase):
@@ -191,63 +170,6 @@ class ExactSignatureReferenceTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'INCOMPLETE'):
             union_closure(fixture(), max_signatures=2)
 
-    def test_unsupported_weighted_optimum_requires_complete_cover(self):
-        # Three exclusive choices. The middle point is Pareto, but no strictly
-        # positive weighted linear objective uniquely selects it.
-        model = {'variables': ['a', 'b', 'c'],
-                 'constraints': [{'terms': [('a', 1), ('b', 1), ('c', 1)],
-                                  'relation': '==', 'rhs': 1}],
-                 'objectives': {
-                     'work': {'constant': 0, 'terms': [('b', 3), ('c', 4)]},
-                     'storage': {'constant': 0, 'terms': [('a', 4), ('b', 3)]},
-                     'clarity': {'constant': 0, 'terms': []}}}
-        assignments = [{'a': 1, 'b': 0, 'c': 0}, {'a': 0, 'b': 1, 'c': 0},
-                       {'a': 0, 'b': 0, 'c': 1}]
-        vectors = [verify_binary_assignment(model, a) for a in assignments]
-        self.assertEqual(pareto(vectors), [(0, 4, 0), (3, 3, 0), (4, 0, 0)])
-        complete = frontier_cover_clauses(model, vectors)
-        proof = prove_query_tiny(model, complete)
-        self.assertEqual(check_unsat_tree(model, complete, proof)['status'], 'PASS')
-        endpoints_only = frontier_cover_clauses(model, [vectors[0], vectors[2]])
-        with self.assertRaisesRegex(ValueError, 'SAT'):
-            prove_query_tiny(model, endpoints_only)
-
-    def test_complete_cover_proof_and_mutations(self):
-        instance = fixture(layouts=(('x',), ('x',)), pairs=(('0', '1'),))
-        model = binary_model(instance)
-        assignment = witness(instance, model, (0, 0))
-        vector = verify_binary_assignment(model, assignment)
-        clauses = frontier_cover_clauses(model, [vector])
-        proof = prove_query_tiny(model, clauses)
-        certificate = {'model_sha256': digest(model), 'assignments': [assignment], 'coverage_proof': proof}
-        self.assertTrue(check_frontier_certificate(instance, certificate)['frontier_complete_verified'])
-        tampered = deepcopy(certificate)
-        tampered['model_sha256'] = '0' * 64
-        with self.assertRaises(ValueError):
-            check_frontier_certificate(instance, tampered)
-        with self.assertRaises(ValueError):
-            check_unsat_tree(model, [], {'kind': 'clause', 'index': 0})
-        # Omitting all frontier vectors leaves a satisfiable family, not COMPLETE.
-        with self.assertRaisesRegex(ValueError, 'SAT'):
-            prove_query_tiny(model, [])
-        with self.assertRaisesRegex(RuntimeError, 'UNRESOLVED'):
-            check_unsat_tree(model, clauses, proof, max_visits=0)
-        with self.assertRaises(ValueError):
-            check_unsat_tree(model, clauses, {'kind': 'constraint', 'index': -1})
-        with self.assertRaises(ValueError):
-            check_unsat_tree(model, clauses, {'kind': 'constraint', 'index': 0})
-        with self.assertRaises(ValueError):
-            check_unsat_tree(model, clauses, {'kind': 'split', 'variable': 'unknown'})
-        variable = model['variables'][0]
-        repeat = {'kind': 'split', 'variable': variable,
-                  'zero': {'kind': 'split', 'variable': variable}}
-        with self.assertRaises(ValueError):
-            check_unsat_tree(model, clauses, repeat)
-        self.assertEqual(proof['kind'], 'split')
-        missing_child = dict(proof)
-        del missing_child['one']
-        with self.assertRaises((KeyError, ValueError)):
-            check_unsat_tree(model, clauses, missing_child)
 
 
 if __name__ == '__main__':
