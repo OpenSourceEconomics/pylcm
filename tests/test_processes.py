@@ -148,31 +148,25 @@ def _solve_process_representation(
 @pytest.mark.skipif(
     not X64_ENABLED, reason="Income representation parity uses float64."
 )
-@pytest.mark.parametrize("period", [0, 1, 2])
-def test_lognormal_fixture_values_match_normal_income_representation(
-    period: int,
-) -> None:
-    """Moving exponentiation into the income process preserves solved values."""
-    lognormal, _ = _solve_process_representation("lognormal")
-    normal, _ = _solve_process_representation("normal")
-    np.testing.assert_allclose(
-        np.asarray(lognormal.values[period]["alive"]),
-        np.asarray(normal.values[period]["alive"]),
-        rtol=10.0**-DECIMAL_PRECISION,
-        atol=0,
-    )
+def test_lognormal_fixture_values_match_normal_income_representation() -> None:
+    """Moving exponentiation into the income process preserves values and panel.
 
-
-@pytest.mark.skipif(
-    not X64_ENABLED, reason="Income representation parity uses float64."
-)
-def test_lognormal_fixture_panel_matches_normal_income_representation() -> None:
-    """A common seed gives the same panel with income expressed in levels."""
-    _, lognormal = _solve_process_representation("lognormal")
-    _, normal = _solve_process_representation("normal")
+    Solved values agree in every period, and a common seed gives the same panel
+    with income expressed in levels.
+    """
+    lognormal_solution, lognormal_panel = _solve_process_representation("lognormal")
+    normal_solution, normal_panel = _solve_process_representation("normal")
+    for period in (0, 1, 2):
+        np.testing.assert_allclose(
+            np.asarray(lognormal_solution.values[period]["alive"]),
+            np.asarray(normal_solution.values[period]["alive"]),
+            rtol=10.0**-DECIMAL_PRECISION,
+            atol=0,
+            err_msg=f"period {period}",
+        )
     assert_frame_equal(
-        lognormal,
-        normal.assign(income=np.exp(normal["income"])),
+        lognormal_panel,
+        normal_panel.assign(income=np.exp(normal_panel["income"])),
         rtol=10.0**-DECIMAL_PRECISION,
         atol=0,
     )
