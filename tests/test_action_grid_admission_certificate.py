@@ -1,13 +1,38 @@
 """Keep Cartesian preflight admission controls independent of historic populations."""
 
 import hashlib
+from collections.abc import Mapping
 from pathlib import Path
 from shutil import copyfile
+from types import MappingProxyType
 
 import pytest
 
 from tests.candidate_certificate import direct_flow
 from tests.candidate_certificate.generate_sources import sha256_file
+
+type RepositoryRelativePath = str
+
+
+@pytest.fixture(scope="module")
+def clean_corridor_sources() -> tuple[RepositoryRelativePath, ...]:
+    """Check the frozen checkout once, independently of all resealed mutants."""
+    clean = direct_flow.verify_direct_candidate_flow(
+        repo_root=Path(__file__).parents[1]
+    )
+    assert clean["ok"], clean["errors"]
+    return tuple(clean["certified_corridor_sources"])
+
+
+@pytest.fixture(scope="module")
+def action_grid_mutations() -> Mapping[str, Mapping[str, str]]:
+    """Generate the complete population once, read-only; do not sample names."""
+    population = direct_flow.action_grid_mutation_specs(
+        repo_root=Path(__file__).parents[1]
+    )
+    return MappingProxyType(
+        {name: MappingProxyType(dict(spec)) for name, spec in population.items()}
+    )
 
 
 def test_action_grid_controls_preserve_historical_mutation_populations() -> None:
@@ -89,18 +114,21 @@ def _nested_corridor_controls() -> dict[str, dict[str, str]]:
 
 @pytest.mark.parametrize("mutation", tuple(direct_flow._ACTION_GRID_MUTATIONS))
 def test_action_grid_mutation_is_rejected_after_independent_byte_reseal(
-    *, mutation: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    *,
+    mutation: str,
+    clean_corridor_sources: tuple[RepositoryRelativePath, ...],
+    action_grid_mutations: Mapping[str, Mapping[str, str]],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A Cartesian producer defect identifies its corridor after byte resealing."""
     root = Path(__file__).parents[1]
-    clean = direct_flow.verify_direct_candidate_flow(repo_root=root)
-    assert clean["ok"], clean["errors"]
-    sources = clean["certified_corridor_sources"]
+    sources = clean_corridor_sources
     for relative in sources:
         destination = tmp_path / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
         copyfile(root / relative, destination)
-    spec = direct_flow.action_grid_mutation_specs(repo_root=root)[mutation]
+    spec = action_grid_mutations[mutation]
     (tmp_path / spec["path"]).write_text(spec["source"], encoding="utf-8")
     monkeypatch.setattr(
         direct_flow,
