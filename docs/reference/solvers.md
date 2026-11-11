@@ -43,9 +43,16 @@ value of `+inf` is outside the supported domain: where one meets an infeasible `
 across draws, the contracted read is `-inf`, while per-draw enumeration gives NaN.
 
 The simulation contracts the same draws, so its choices maximize the Q the solve
-maximized, cancelling values included. The one exception is a stochastic process whose
-probabilities read the subject's current value: a simulated value may lie between the
-process's nodes, so that draw keeps its axis in the simulation.
+maximized, cancelling values included. A regime with a gated edge or a value constraint
+contracts nothing in either phase. Two reads keep every draw enumerated even where the
+simulation contracts:
+
+- a stochastic process whose probabilities read the subject's current value, since a
+  simulated value may lie between the process's nodes;
+- policy, participation and exit queries, which count their landings on the nodes.
+
+With cancelling values, such a read can therefore differ from the simulated choice by
+more than a tie.
 
 The contraction is off by default. Its table is built inside the kernel's tile loops,
 and on GPU the compiler does not hoist it out of them, so it is rebuilt for every cell,

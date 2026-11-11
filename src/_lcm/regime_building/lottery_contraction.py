@@ -163,6 +163,15 @@ class ContractedLottery:
         return self.state_name in self.weight_arg_names
 
     @property
+    def reads_process_value(self) -> bool:
+        """Whether the weights read a process state's current value.
+
+        The table holds one row per node, so such a row is the subject's own only
+        where the current value is a node.
+        """
+        return self.reads_state and not self.is_discrete
+
+    @property
     def source_node_array(self) -> FloatND | IntND:
         """The source nodes as the cell holds the state: codes as `int32`."""
         if self.is_discrete:
@@ -439,23 +448,19 @@ def _plan_one_lottery(
         name in cell_inputs or name.startswith("next_") for name in weight_arg_names
     ):
         return None
-    is_discrete = isinstance(source_grid, DiscreteGrid)
-    if (
-        not source.current_values_on_nodes
-        and not is_discrete
-        and state_name in weight_arg_names
-    ):
-        return None
-    return ContractedLottery(
+    lottery = ContractedLottery(
         state_name=state_name,
         law_name=law_name,
         weight_name=info.weight_name,
         axis=received_state_names.index(state_name),
         source_nodes=source_nodes,
-        is_discrete=is_discrete,
+        is_discrete=isinstance(source_grid, DiscreteGrid),
         weights=weights,
         weight_arg_names=weight_arg_names,
     )
+    if lottery.reads_process_value and not source.current_values_on_nodes:
+        return None
+    return lottery
 
 
 def _is_pure_index(

@@ -2,8 +2,9 @@
 
 Its Q reads the solve's continuation, so a contracted draw is summed into the
 next-period value there as well, inside the subject tiles as the solve builds it
-inside the cell and action tiles. The one exception is a process draw whose
-weights read the subject's own value, which may lie between the process's nodes.
+inside the cell and action tiles. A process draw whose weights read the subject's
+own value, which may lie between the process's nodes, keeps its axis. A source with
+a gated edge contracts in neither phase.
 
 With both contracting, the transposed cancellation of
 `test_lottery_contraction_domain` makes the simulation choose what the solve chose.
@@ -15,8 +16,22 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from lcm import ExecutionConfig
+from lcm import (
+    AgeGrid,
+    DiscreteGrid,
+    ExecutionConfig,
+    Gate,
+    LinSpacedGrid,
+    Model,
+    ProjectedRegimeValue,
+    Regime,
+    StakeholderRoute,
+    StochasticTransition,
+    Transition,
+    categorical,
+)
 from lcm.solvers import GridSearch
+from lcm.typing import BoolND, FloatND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
 from tests.regime_building.test_lottery_contraction import (
     _model,
@@ -26,9 +41,23 @@ from tests.regime_building.test_lottery_contraction import (
 )
 from tests.regime_building.test_lottery_contraction_domain import (
     _assert_all_equal,
+    _Binary,
+    _equal_probabilities,
+    _next_wealth_by_landing,
     _Regimes,
+    _transposed_alive_utility,
     _transposed_model,
+    _transposed_terminal_utility,
 )
+
+
+@categorical(ordered=False)
+class _GatedRegimes:
+    alive: ScalarInt
+    final: ScalarInt
+    gated: ScalarInt
+    fallback: ScalarInt
+
 
 # Two subjects per tile, so five subjects run in several subject tiles.
 _NARROW_TILES = ExecutionConfig(axis_widths={"cell": 2, "subject": 2})
@@ -42,7 +71,8 @@ def _initial_conditions(*, n_subjects: int) -> dict[str, jnp.ndarray]:
     codes = jnp.arange(n_subjects) % 2
     return {
         "wealth": jnp.linspace(0.5, 3.5, n_subjects),
-        "income": jnp.zeros(n_subjects),
+        # Between the process's nodes, where a contracted row would be a node's.
+        "income": jnp.linspace(-0.15, 0.2, n_subjects),
         "z": jnp.arange(n_subjects) % 3,
         "q": codes,
         "w": 1 - codes,
@@ -139,3 +169,112 @@ def test_simulation_chooses_what_the_solve_chose_under_cancellation(
 
     assert first["landing"].astype(str).tolist() == [landing] * 3
     _assert_all_equal(values=np.asarray(solution.values[0]["alive"]), expected=value)
+    # The simulated value is the solve's maximum, so its choice is the solve's.
+    _assert_all_equal(values=first["value"].to_numpy(dtype=float), expected=value)
+
+
+def _half(age: FloatND) -> FloatND:
+    return jnp.full_like(age, 0.5, dtype=float)
+
+
+def _gated_utility() -> FloatND:
+    return jnp.asarray(1.0)
+
+
+def _fallback_utility() -> FloatND:
+    return jnp.asarray(0.0)
+
+
+def _gate_open(age: FloatND) -> BoolND:
+    return jnp.ones_like(age, dtype=bool)
+
+
+def _transposed_model_with_a_gated_edge(*, contract: bool) -> Model:
+    """The transposed cancellation toward `final`, half the mass on a gated edge."""
+    states = {
+        "wealth": LinSpacedGrid(start=0.0, stop=2.0, n_points=3),
+        "z": DiscreteGrid(category_class=_Binary),
+    }
+    alive = Regime(
+        states=states,
+        actions={"landing": DiscreteGrid(category_class=_Binary)},
+        state_transitions={
+            "wealth": _next_wealth_by_landing,
+            "z": StochasticTransition(func=_equal_probabilities),
+        },
+        functions={"utility": _transposed_alive_utility},
+        solver=GridSearch(lottery_contraction=contract),
+    )
+    return Model(
+        regimes={
+            "alive": alive,
+            "final": Regime(
+                states=states, functions={"utility": _transposed_terminal_utility}
+            ),
+            "gated": Regime(functions={"utility": _gated_utility}),
+            "fallback": Regime(functions={"utility": _fallback_utility}),
+        },
+        regime_id_class=_GatedRegimes,
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
+        initial_nodes=((0, "alive"),),
+        edges={
+            "alive": Transition(
+                targets={"final": 0, "gated": 0, "fallback": 0},
+                law={
+                    "final": StochasticTransition(func=_half),
+                    "gated": StochasticTransition(func=_half),
+                },
+                gates={
+                    "gated": Gate(
+                        predicate=_gate_open,
+                        routes={
+                            "only": StakeholderRoute(
+                                fallback=ProjectedRegimeValue(
+                                    regime="fallback", projection={}
+                                )
+                            )
+                        },
+                    )
+                },
+            )
+        },
+        durable_identity=False,
+    )
+
+
+@pytest.mark.parametrize("contract", [False, True])
+def test_simulation_enumerates_where_a_gated_edge_keeps_the_solve_enumerating(
+    *, contract: bool
+) -> None:
+    """A gated edge keeps every draw of its source enumerated, in both phases.
+
+    Half the mass reaches `final` through the transposed cancellation and half the
+    open gate, worth 1. Enumerated, the midpoint is worth `0.5 * 0.5 + 0.5 = 0.75`
+    and the endpoint `0.5 * 0.25 + 0.5 = 0.625`, so both phases choose the midpoint
+    whether contraction is requested or not.
+    """
+    model = _transposed_model_with_a_gated_edge(contract=contract)
+    params = {
+        "alive": {"koopmans_aggregator": {"discount_factor": 1.0}},
+        "final": {},
+        "gated": {},
+        "fallback": {},
+    }
+    solution = model.solve(params=params, log_level="off")
+    frame = model.simulate(
+        params=params,
+        solution=solution,
+        initial_conditions={
+            "wealth": jnp.array([0.0, 1.0, 2.0]),
+            "z": jnp.array([0, 1, 0]),
+            "age": jnp.zeros(3),
+            "regime_id": jnp.full(3, _GatedRegimes.alive, dtype=jnp.int32),
+        },
+        seed=0,
+        log_level="off",
+    ).to_dataframe()
+    first = frame.loc[frame["age"] == 0]
+
+    assert first["landing"].astype(str).tolist() == ["low"] * 3
+    _assert_all_equal(values=np.asarray(solution.values[0]["alive"]), expected=0.75)
+    _assert_all_equal(values=first["value"].to_numpy(dtype=float), expected=0.75)
