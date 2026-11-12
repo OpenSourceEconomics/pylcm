@@ -9,6 +9,7 @@ from collections import defaultdict
 from itertools import combinations, product
 import json
 import math
+from importlib.resources import files
 from typing import TypedDict
 
 
@@ -32,18 +33,14 @@ def canonical(value):
 
 
 def context(cell):
-    role = cell.get("role")
-    if role is None:
-        role = {"unresolved_original_role": cell["regime"]}
+    specification = json.loads(
+        files("_lcm_regime_finder").joinpath("block_admission_v1.json").read_text()
+    )
+    rules = specification["block"]
     return canonical(
         [
-            role,
-            cell.get("ownership"),
-            cell.get("stage"),
-            bool(cell.get("terminal")),
-            cell.get("declaration_type"),
-            cell.get("structural_roles", {}),
-            cell.get("solver_identity"),
+            cell.get(field, rules["missing_field_values"][field])
+            for field in rules["equal_fields"]
         ]
     )
 
@@ -113,9 +110,9 @@ def block(analysis, members, policy):
         if value["kind"] == "characteristic"
     }
     weights = {
-        "block": 4,
-        "characteristic": 2,
-        "dispatch": 1,
+        "block": 1,
+        "characteristic": 0,
+        "dispatch": 0,
         **analysis.get("clarity_weights", {}),
     }
     cost = {

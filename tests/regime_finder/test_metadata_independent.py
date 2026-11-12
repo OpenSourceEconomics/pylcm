@@ -145,6 +145,7 @@ def _produce(spec=None):
     source = original() if spec is None else spec
     declarations = normalize_declarations(source)
     analysis = MetadataAnalysis(declarations).run()
+    analysis["clarity_weights"] = {"block": 4, "characteristic": 2, "dispatch": 1}
     return source, declarations, analysis, search_frontier(analysis)
 
 
@@ -260,12 +261,10 @@ def test_sparse_biological_dates_and_arbitrary_labels() -> None:
     )
 
 
-def test_actor_information_solver_and_ownership_protect_grouping(
+def test_common_execution_interfaces_protect_grouping(
     *, subtests: pytest.Subtests
 ) -> None:
     for field, changed in [
-        ("ownership", {"person": "other"}),
-        ("role", {"actor": "other"}),
         ("stage", "later commitment"),
         ("solver_identity", "another original solver"),
         ("structural_roles", {"liquid": "family"}),

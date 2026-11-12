@@ -4,6 +4,7 @@ This module reads the ORIGINAL declaration fixture and has no producer/checker
 imports. The pure original children callback is interpreted separately. It
 enumerates every coherent categorical choice and every life-stage cut directly;
 costs follow cardinality products and explicit original dependency incidences.
+This historical six-layout example explicitly uses block/map/dispatch prices4/2/1.
 """
 
 from __future__ import annotations

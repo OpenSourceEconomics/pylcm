@@ -313,7 +313,9 @@ def test_bounded_interpretation_keeps_actual_input_at_any_helper_depth() -> None
             assert not (answer.proved)
 
 
-def test_unknown_context_has_concrete_unadopted_merge_question() -> None:
+def test_unknown_context_has_structural_admission_and_separate_semantic_obligations() -> (
+    None
+):
     source = native_fixture()
     for regime in source["user_regimes"].values():
         regime["fields"].pop("semantic_role")
@@ -323,9 +325,13 @@ def test_unknown_context_has_concrete_unadopted_merge_question() -> None:
     assert not (boundary["endpoint_preference_is_admissibility_rule"])
     candidates = boundary["conditional_merge_candidates"]
     assert ([row["regimes"] for row in candidates]) == ([["opaque", "safe"]])
-    assert (candidates[0]["status"]) == ("CONDITIONAL_NOT_ADMITTED")
+    assert (candidates[0]["status"]) == ("ADMITTED_STRUCTURAL_BLOCK")
     assert not (candidates[0]["automatic_graph_change"])
-    assert (len(candidates[0]["source_paths"])) == (2)
+    assert (len(candidates[0]["witness"]["cells"])) == (2)
+    assert (
+        candidates[0]["witness"]["admission"]["schema"]
+        == "lcm-regime-block-admission/v1"
+    )
     assert candidates[0]["required_obligations"]
     assert any(
         row["disposition"] == "adopt" and row["changed_interfaces"]

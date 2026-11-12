@@ -31,7 +31,8 @@ def readable_summary(report, *, snapshot, output):
                      'remaining_kinds':dict(counts),'examples':examples,
                      'reasons':decision.get('reasons',[])})
     summary={'status':report.get('status'),'source_snapshot_sha256':_digest(snapshot),
-             'checker_module_sha256':{p.name:_digest(p) for p in sorted(Path(__file__).parent.glob('*.py'))},
+             'checker_module_sha256':{p.name:_digest(p) for p in sorted(Path(__file__).parent.iterdir())
+                                      if p.suffix in ('.py', '.json')},
              'semantic_status':report.get('semantic_check',{}).get('status'),
              'semantic_errors':report.get('semantic_check',{}).get('errors',[]),
              'search_mode':report.get('search_mode', 'exact'),
@@ -155,7 +156,8 @@ def main():
         return 0
     from .cli import main as cli_main
     try:
-        identities_before={p.name:_digest(p) for p in sorted(Path(__file__).parent.glob('*.py'))}
+        identities_before={p.name:_digest(p) for p in sorted(Path(__file__).parent.iterdir())
+                           if p.suffix in ('.py', '.json')}
         arguments=['analyze-model',str(args.snapshot),'--output',str(args.output),
                    '--seconds',str(args.seconds),'--host-gib',str(args.host_gib),'--worker',
                    '--search-mode', args.search_mode, '--heuristic-rounds', str(args.heuristic_rounds),

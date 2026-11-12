@@ -16,9 +16,9 @@ def test_shared_subproblems_complete_beyond_partition_count_budget() -> None:
     analysis = fixture(2, labels=tuple("abcdefgh"))
     result = search_frontier(analysis, limits={"groupings": 1500})
     assert (result["status"]) == ("COMPLETE")
-    assert (result["schema"]) == ("regime-frontier/v5")
+    assert (result["schema"]) == ("regime-frontier/v6")
     assert ([p["cost"] for p in result["frontier"]]) == (
-        [{"work": 48 * 10**12, "storage": 16 * 10**12, "clarity": 11}]
+        [{"work": 48 * 10**12, "storage": 16 * 10**12, "clarity": 1}]
     )
     assert (check_frontier(analysis, result, limits={"groupings": 1500})["status"]) == (
         "PASS"

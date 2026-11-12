@@ -45,6 +45,7 @@ def forest_analysis():
         interfaces[c["id"]] = {"options": [option]}
         policy[c["id"]] = option["id"]
     return {
+        "clarity_weights": dict(original["clarity_weights"]),
         "declarations": {
             "analysis_scope": "pylcm-structural-graph/v1",
             "allocation": {"kind": "per_block", "boundary_unit": 1},

@@ -1,0 +1,43 @@
+{
+  "schema": "lcm-regime-block-admission/v1",
+  "family": "original-regime-groups-and-contiguous-original-period-buckets",
+  "scope": "existing family, no dense start",
+  "source_unit": "original-regime-period-cell",
+  "allocation": "per_block",
+  "membership": {
+    "source_cells": "each original cell exactly once",
+    "grouping": "one fixed partition of original regime labels within each compatible block context",
+    "intervals": "nonempty contiguous intervals of each group's ordered original period buckets",
+    "projection_policy": "one globally coherent original-cell projection policy fixed before grouping"
+  },
+  "block": {
+    "nonempty": true,
+    "unique_source_cell_ids": true,
+    "equal_fields": ["stage", "declaration_type", "structural_roles", "solver_identity"],
+    "missing_field_values": {
+      "stage": null,
+      "declaration_type": null,
+      "structural_roles": {},
+      "solver_identity": null
+    },
+    "axis_union": "a shared axis name must refer to the same original or declared-derived domain identity",
+    "same_actor_required": false,
+    "one_choice_per_period_required": false,
+    "uniform_terminal_required": false,
+    "uniform_role_required": false,
+    "uniform_ownership_required": false
+  },
+  "source_dispatch": {
+    "key": ["id", "regime", "period"],
+    "preserve_fields": ["role", "ownership", "stage", "terminal", "decision_objective", "declaration_type", "structural_roles", "solver_identity", "report_tags"],
+    "missing_context": "preserve its original absence; do not infer equality or authority",
+    "economic_nodes": "retain original nodes and incidence laws; sharing an allocation block does not identify information sets or decision makers",
+    "terminal": "preserve the terminal classification, current payoff and feasible choices separately for every source cell; terminal cells acquire no continuation from living members of the block"
+  },
+  "preservation": {
+    "structural_admission_is_economic_certification": false,
+    "required_independent_checks": ["original-source identity", "global dependency and joint-law coherence", "source-cell context and terminal semantics", "requested outputs and reconstruction", "feasible complete layout witness"],
+    "unresolved_original_semantics": "report unresolved; do not promote a structural cost candidate to an adoptable economic rewrite"
+  },
+  "outside_scope": ["status fibres", "lane grouping", "new action-grid restriction", "dense-model construction", "same-actor equivalence inference", "hardware time ranking"]
+}

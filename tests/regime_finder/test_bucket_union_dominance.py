@@ -193,7 +193,7 @@ def test_changed_final_bucket_matches_literal_partition_oracle() -> None:
 
 
 def test_varying_axes_or_nonpositive_coalescence_saving_cannot_use_rule() -> None:
-    for mutation in ("axis", "weight", "allocation", "characteristic", "role"):
+    for mutation in ("axis", "weight", "allocation", "characteristic", "stage"):
         analysis = mixed(3)
         if mutation == "axis":
             option = analysis["interfaces"]["b:1"]["options"][0]
@@ -208,7 +208,7 @@ def test_varying_axes_or_nonpositive_coalescence_saving_cannot_use_rule() -> Non
                 "health"
             ] = {"kind": "characteristic", "id": "age-dependent"}
         else:
-            analysis["declarations"]["cells"][1]["role"] = {"actor": "other"}
+            analysis["declarations"]["cells"][1]["stage"] = "another-stage"
         search = Search(analysis)
         ids = list(search.cells)
         policy = analysis["projection_policies"][0]["option_by_cell"]

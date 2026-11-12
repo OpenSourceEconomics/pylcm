@@ -14,6 +14,7 @@ import time
 from .records import Scenario, JSONValue
 from .expressions import partial, jsonable, AdmissionError
 from .frontier import canonical, digest, search_frontier
+from .block_admission import admission_record, context_key
 
 
 class MetadataAnalysis:
@@ -484,58 +485,74 @@ class MetadataAnalysis:
         self._interface_cache[key] = deepcopy(rewritten)
         return rewritten
 
-    def family_boundary(self):
-        """Make conditional cross-regime questions visible without adopting them.
-
-        Missing actor/information authority cannot be filled from equal shapes.
-        These candidates are reporting records, not additions to the optimizer's
-        admitted family. There is one record per original-regime pair, not per
-        date pair, and enumeration is bounded independently of grid sizes.
-        """
-        representatives = {}
+    def family_boundary(self, interfaces, policies):
+        """Report witnessed structural admission separately from economic adoption."""
+        by_regime = {}
         for cell in self.cells.values():
-            representatives.setdefault(cell['regime'], cell)
+            by_regime.setdefault(cell['regime'], []).append(cell)
+        options = {cid: {option['id']: option for option in record['options']}
+                   for cid, record in interfaces.items()}
         candidates = []
         omitted = 0
-        names = sorted(representatives)
+        names = sorted(by_regime)
         limit = self.limits.get('conditional_merge_candidates', 2048)
-        protected = ('terminal', 'stage', 'ownership', 'declaration_type',
-                     'structural_roles', 'solver_identity', 'report_tags')
         pairs_visited = 0
+        cells_checked = 0
         pair_budget = self.limits.get('conditional_merge_pair_checks', 8192)
         for left_name, right_name in combinations(names, 2):
             self.guard()
             if pairs_visited >= pair_budget:
                 break
             pairs_visited += 1
-            left, right = representatives[left_name], representatives[right_name]
-            if left is None or right is None:
-                raise ValueError('Missing representative declaration')
-            if left.get('role') is not None and right.get('role') is not None:
-                continue
-            # A known conflicting protected fact is not a useful
-            # conditional merge suggestion. Missing facts stay missing.
-            conflict = [key for key in protected if left.get(key) is not None
-                        and right.get(key) is not None
-                        and canonical(left.get(key)) != canonical(right.get(key))]
-            if conflict:
-                continue
             if len(candidates) >= limit:
                 omitted += 1
                 continue
+            witness = None
+            exhausted = False
+            for left, right in product(by_regime[left_name], by_regime[right_name]):
+                self.guard()
+                if witness is not None or exhausted:
+                    break
+                if cells_checked >= pair_budget:
+                    exhausted = True
+                    break
+                cells_checked += 1
+                if context_key(left) != context_key(right):
+                    continue
+                for record in policies:
+                    if cells_checked >= pair_budget:
+                        exhausted = True
+                        break
+                    cells_checked += 1
+                    policy = record['option_by_cell']
+                    selected = [options[cell['id']][policy[cell['id']]] for cell in (left, right)]
+                    compatible = True
+                    for kind in ('states', 'actions'):
+                        union = {}
+                        for option in selected:
+                            for name, domain in option[kind].items():
+                                if name in union and union[name] != domain:
+                                    compatible = False
+                                union[name] = domain
+                    if compatible:
+                        witness = {'cells': [left['id'], right['id']],
+                                   'projection_policy': record['id'],
+                                   'admission': admission_record([left, right])}
+                        break
             candidates.append({
                 'regimes': [left_name, right_name],
-                'source_paths': [left.get('source_path'), right.get('source_path')],
-                'status': 'CONDITIONAL_NOT_ADMITTED',
-                'known_matching_fields': [key for key in protected
-                    if left.get(key) is not None and right.get(key) is not None],
+                'status': ('ADMITTED_STRUCTURAL_BLOCK' if witness is not None else
+                           'UNEXAMINED' if exhausted else 'NOT_ADMITTED'),
+                'witness': witness,
+                'witness_scope': 'local block admission only; complete grouping/date-interval membership is checked separately',
+                'reason': ('Compatible original-cell dispatch and axis domains under a coherent policy.'
+                           if witness is not None else
+                           'Diagnostic cell/policy budget exhausted; no negative admission claim.'
+                           if exhausted else 'No compatible original-cell interfaces under the offered coherent policies.'),
                 'required_obligations': [
-                    {'kind': 'actor_information_timing_equivalence',
-                     'component': 'native declaration context adapter',
-                     'required_fact': 'Source-bound equality of actor/stakeholder, information, commitment and discount timing for both original regimes.'},
                     {'kind': 'merge_semantic_and_incidence_check',
                      'component': 'semantic and frontier checkers',
-                     'required_fact': 'After context authority is supplied, check feasible actions, rewards, joint/phased laws, requested outputs and every owned current-policy/read route for the proposed group.'}],
+                     'required_fact': 'Preserve each original actor, information stage, terminal payoff, feasible actions, joint/phased laws, requested outputs and owned query route; structural admission does not discharge source semantics.'}],
                 'automatic_graph_change': False})
         opaque = []
         for identifier, callback in sorted(self.callbacks.items()):
@@ -547,11 +564,11 @@ class MetadataAnalysis:
                            'component': 'source-bound callback/declaration interpreter',
                            'required_fact': 'Interpret the original body and actual bindings over these captured inputs, or supply a separately checked declaration contract. Preserve the current conservative dependency boundary until then.'})
         return {
-            'schema': 'regime-discovery-family/v2',
+            'schema': 'regime-discovery-family/v3',
             'complete_claim_scope': 'coherent source-bound projection policies and the explicitly admitted context/grouping interval family',
             'unrestricted_model_representation_optimum_claimed': False,
             'original_regime_labels_are_semantic_restrictions': False,
-            'unknown_context_policy': 'retain original context in the admitted family; expose conditional merge obligations separately',
+            'unknown_context_policy': 'retain every original source-cell context by dispatch; structural admission and semantic adoption are separate',
             'endpoint_preference_is_admissibility_rule': False,
             'conditional_merge_candidates': candidates,
             'conditional_merge_candidates_omitted_by_display_budget': omitted,
@@ -649,7 +666,7 @@ class MetadataAnalysis:
                 'projection_policies': policies, 'characteristic_candidates': candidates,
                 'dependency_closure': {c: sorted(v) for c, v in self.live.items()},
                 'discovery_complete': policy_complete,
-                'family_boundary': self.family_boundary(),
+                'family_boundary': self.family_boundary(interfaces, policies),
                 'obligations': self.obligations,
                 'production_execution': {'callbacks_called': 0, 'bellman_rows_evaluated': 0,
                                          'dense_cartesian_cells_enumerated': 0,

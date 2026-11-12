@@ -84,14 +84,19 @@ additional economic discount period. See
 The search compares structural costs using the original grid sizes and the stated
 allocation contract:
 
-| Cost                                            | Meaning                                                                                                                                            |
-| ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Work                                            | Declared state-action evaluations plus an assigned cost for interfaces between local problems.                                                     |
-| Storage                                         | Allocated value entries. Under separate arrays per representation block, a block's common state domain determines its allocation across its dates. |
-| Structural complexity (`clarity` in the report) | A weighted count of blocks, state characteristics and dispatch rules.                                                                              |
+| Cost                                   | Meaning                                                                                                                                            |
+| -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Work                                   | Declared state-action evaluations plus an assigned cost for interfaces between local problems.                                                     |
+| Storage                                | Allocated value entries. Under separate arrays per representation block, a block's common state domain determines its allocation across its dates. |
+| Regime count (`clarity` in the report) | Number of representation blocks by default. Explicit `clarity_weights` can assign additional prices to characteristic maps and dispatch clauses.   |
 
 These are estimates of computational work, storage and specification complexity. They do
 not measure hardware runtime, peak live or device memory, or human readability.
+
+The default block, characteristic-map and dispatch prices are 1, 0 and 0. Map and
+dispatch counts remain available for inspection. For raw evaluation curves without
+scalar ranking, see the
+[layout cost reporting contract](../development/regime_layout_costs.md).
 
 The heuristic recommendation uses a positive weighted sum of costs divided by fixed
 reference scales. The report records those weights, scales and the minimum relative

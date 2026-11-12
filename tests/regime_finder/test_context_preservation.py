@@ -24,8 +24,25 @@ def test_local_unused_state_does_not_need_cross_actor_equivalence() -> None:
     report = find_regimes(source)
     changed = [d for d in report["proposal_decisions"][1:] if d["changed_interfaces"]]
     assert changed
-    assert all(d["disposition"] == "adopt" for d in changed), changed
+    cells = {cell["id"]: cell for cell in report["analysis"]["declarations"]["cells"]}
+    candidates = {
+        candidate["id"]: candidate
+        for scenario in report["scenarios"]
+        for candidate in scenario.get("candidates", scenario["frontier"])
+    }
+    source_local = []
+    pooled = []
     for row in changed:
+        plan = candidates[row["graph_id"]]
+        same_original_regime = all(
+            len({cells[cell]["regime"] for cell in block["cells"]}) == 1
+            for block in plan["blocks"]
+        )
+        (source_local if same_original_regime else pooled).append(row)
+    assert source_local
+    assert pooled
+    assert all(row["disposition"] == "adopt" for row in source_local)
+    for row in source_local:
         proof = [
             d
             for d in row["discharged_unchanged_obligations"]
@@ -34,6 +51,12 @@ def test_local_unused_state_does_not_need_cross_actor_equivalence() -> None:
         assert proof
         assert all(
             d["context_preservation"]["original_declaration_sha256"] for d in proof
+        )
+    for row in pooled:
+        assert row["disposition"] != "adopt"
+        assert any(
+            obligation["kind"] == "role_timing_contract"
+            for obligation in row["residual_obligations"]
         )
     assert (
         verify_decisions(

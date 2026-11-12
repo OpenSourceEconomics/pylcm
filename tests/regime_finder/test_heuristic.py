@@ -57,6 +57,7 @@ def fixture(n=3, labels=("a",), *, edges=(), boundary_unit=1):
                 ]
             }
     return {
+        "clarity_weights": {"block": 4, "characteristic": 2, "dispatch": 1},
         "declarations": {
             "cells": cells,
             "domains": {"dx": {"size": 3}, "da": {"size": 2}},
@@ -324,8 +325,14 @@ def test_original_baseline_is_not_the_only_offered_reduced_policy() -> None:
     assert (result["recommendation"]["authority"]) == ("cost_only")
 
 
-def test_incompatible_grids_owners_roles_and_solvers_cannot_merge() -> None:
-    for kind in ("domain", "ownership", "role", "solver_identity"):
+def test_incompatible_grids_and_common_execution_interfaces_cannot_merge() -> None:
+    for kind in (
+        "domain",
+        "stage",
+        "declaration_type",
+        "structural_roles",
+        "solver_identity",
+    ):
         analysis = fixture(1, ("a", "b"))
         cell = analysis["declarations"]["cells"][1]
         if kind == "domain":
@@ -333,7 +340,9 @@ def test_incompatible_grids_owners_roles_and_solvers_cannot_merge() -> None:
             cell["states"]["x"] = "other"
             analysis["interfaces"]["b:0"]["options"][0]["states"]["x"] = "other"
         else:
-            cell[kind] = {"actor": "another"} if kind == "role" else "another"
+            cell[kind] = (
+                {"margin": "another"} if kind == "structural_roles" else "another"
+            )
         result = _check_analysis(analysis)
         assert all(
             len(part["cells"]) == 1
@@ -429,7 +438,7 @@ def test_unpriceable_original_retains_identity_even_with_explicit_scales() -> No
     # The original label crosses protected contexts.  Keeping the original
     # remains an identity action, but the block model cannot compare it as
     # one admissible regime.  No surrogate improvement is then asserted.
-    analysis["declarations"]["cells"][1]["ownership"] = "second-owner"
+    analysis["declarations"]["cells"][1]["stage"] = "second-decision-stage"
     result = _check_analysis(analysis)
     assert (result["original"]["cost"]) is None
     assert (result["objective"]["reference_kind"]) == ("unit_fallback")
