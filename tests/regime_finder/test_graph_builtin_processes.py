@@ -2,6 +2,7 @@
 
 from copy import deepcopy
 from collections.abc import Mapping
+from typing import TYPE_CHECKING
 
 import pytest
 from _lcm_regime_finder.production import analyze_production
@@ -9,6 +10,9 @@ from _lcm_regime_finder.records import JSONValue
 from _lcm_regime_finder import verify_production_result
 from tests.regime_finder.test_model_adapter import snapshot, function
 from tests.regime_finder.test_query_owners import policy_snapshot
+
+if TYPE_CHECKING:
+    from lcm.typing import StateName
 
 
 def process(name):
@@ -783,3 +787,429 @@ def test_independent_replay_rejects_a_process_provider_from_another_owner(
     analysis = MetadataAnalysis(declarations, search_mode="heuristic").run()
     checked = check_semantics(source, declarations, analysis, check_coverage=False)
     assert checked["status"] == "FAIL", checked
+
+
+@pytest.fixture(scope="module")
+def source_only_draw_report() -> dict[str, JSONValue]:
+    from lcm import InitialNodes, LinSpacedGrid, Model, Periods, Regime
+    from lcm.graphs import find_regimes
+    from lcm.processes import RouwenhorstAR1Process
+    from tests.test_graphs import GraphRegimes, _draw_value, _next_x, _zero_utility
+
+    model = Model(
+        n_periods=2,
+        regimes={
+            "alive": Regime(
+                states={"z": RouwenhorstAR1Process(n_points=2, rho=0.5, sigma=1.0)},
+                functions={"utility": _zero_utility},
+                state_transitions={"x": _next_x},
+            ),
+            "final": Regime(
+                states={"x": LinSpacedGrid(start=-2.0, stop=2.0, n_points=3)},
+                functions={"utility": _draw_value},
+            ),
+        },
+        initial_nodes=InitialNodes(by_period={0: "alive"}),
+        edges={"alive": {"final": Periods(values=(0,))}},
+        regime_id_class=GraphRegimes,
+        fixed_params={"discount_factor": 1.0},
+        enable_jit=False,
+    )
+    return find_regimes(model)
+
+
+def _create_source_only_draw_capture(*, axis: StateName) -> dict[str, JSONValue]:
+    original = _target_process_capture(
+        source_condition=None,
+        target_conditions={"target": (None, None)},
+        composed=True,
+        target_carries_process=False,
+    )
+    regimes = _json_object(original["user_regimes"])
+    fields = _json_object(_json_object(regimes["source"])["fields"])
+    states = _json_object(fields["states"])
+    states[axis] = _conditioned_ar1_declaration(conditioning=None)
+    if axis != "z":
+        states.pop("z")
+    fields["functions"] = {"utility": function("def utility():\n    return 0\n", [])}
+    fields["state_transitions"] = {
+        "x": function(
+            f"def next_x(next_{axis}):\n    return next_{axis}\n", [f"next_{axis}"]
+        )
+    }
+    return original
+
+
+def _rebuild_provider_report(
+    *, original: dict[str, JSONValue], analysis: dict[str, JSONValue]
+) -> dict[str, JSONValue]:
+    from _lcm_regime_finder.heuristic import search_heuristic
+    from _lcm_regime_finder.heuristic_check import (
+        check_heuristic_frontier,
+        choose_candidate,
+    )
+    from _lcm_regime_finder.proposal_decision import (
+        build_decisions,
+        prepare_decision_context,
+    )
+
+    declarations = _json_object(analysis["declarations"])
+    context = prepare_decision_context(original, analysis, check_coverage=False)
+    semantic = context.semantic
+    scoped = dict(analysis, allocation_scenario=declarations["allocation"])
+    scenario = search_heuristic(scoped, limits={"seconds": 30})
+    scenario["independent_check"] = check_heuristic_frontier(
+        scoped, scenario, limits={"seconds": 30}
+    )
+    decisions = build_decisions(
+        original, analysis, [scenario], seconds=30, _context=context
+    )
+    allowed = {
+        row["graph_id"]
+        for row in decisions
+        if row.get("scenario_index") == 0 and row["disposition"] == "adopt"
+    }
+    failed = (
+        semantic["status"] == "FAIL"
+        or scenario["independent_check"]["status"] == "FAIL"
+    )
+    if failed or scenario["independent_check"]["status"] != "PASS":
+        allowed = set()
+    chosen = choose_candidate(scoped, scenario, allowed_ids=allowed)
+    chosen.update(
+        scenario_index=0,
+        authority="source_checked"
+        if chosen["operation"] == "representation_specification"
+        else "retain_original",
+    )
+    return {
+        "schema": "regime-production-result/v1",
+        "status": "INVALID" if failed else "HEURISTIC",
+        "search_mode": "heuristic",
+        "analysis_scope": declarations.get("analysis_scope", "full_semantics"),
+        "source_identity": declarations["source_identity"],
+        "analysis": analysis,
+        "semantic_check": semantic,
+        "scenarios": [scenario],
+        "proposal_decisions": decisions,
+        "recommendations": [chosen],
+        "layers": {"frontier": "RETAINED_CANDIDATES_CHECKED"},
+    }
+
+
+@pytest.mark.parametrize("injection", ["surplus_update", "undeclared_joint"])
+@pytest.mark.parametrize("reverse_order", [False, True])
+@pytest.mark.parametrize("full_replay", [False, True])
+def test_source_only_native_draw_rejects_unowned_provider_overrides(
+    *,
+    source_only_draw_report: dict[str, JSONValue],
+    injection: str,
+    reverse_order: bool,
+    full_replay: bool,
+) -> None:
+    from _lcm_regime_finder.production import MetadataAnalysis
+    from _lcm_regime_finder.semantic_check import check_semantics
+
+    honest = _json_object(source_only_draw_report["analysis"])
+    declarations = deepcopy(_json_object(honest["declarations"]))
+    original = _json_object(declarations["original"])
+    source = next(
+        cell for cell in _json_rows(declarations["cells"]) if cell["regime"] == "alive"
+    )
+    relations = _json_rows(declarations["relations"])
+    callbacks = _json_object(declarations["callbacks"])
+    transitions = [
+        row
+        for row in relations
+        if row["kind"] == "transition" and row["source"] == source["id"]
+    ]
+    assert {row["phase"] for row in transitions} == {"solve", "simulation"}
+    for row in transitions:
+        phase = row["phase"]
+        assert isinstance(phase, str)
+        zero = _json_object(_json_object(source["phase_functions"])[phase])["utility"]
+        assert isinstance(zero, str)
+        assert _json_object(callbacks[zero])["arguments"] == []
+        assert "z" not in _json_object(row["state_updates"])
+        if injection == "surplus_update":
+            _json_object(row["state_updates"])["z"] = zero
+        else:
+            relations.append(
+                {
+                    "id": f"extra-joint-{phase}",
+                    "kind": "joint",
+                    "source": source["id"],
+                    "targets": deepcopy(row["targets"]),
+                    "phase": phase,
+                    "source_path": source["source_path"],
+                    "callbacks": [],
+                    "joint_name": "extra",
+                    "state_updates": {"z": zero},
+                    "joint_outputs": {"z": zero},
+                    "produces": ["z"],
+                    "support": [0],
+                    "support_size": 1,
+                    "original": deepcopy(_json_object(callbacks[zero])["original"]),
+                }
+            )
+    if reverse_order:
+        relations.reverse()
+    declarations["relations"] = relations
+    _json_object(declarations["coverage"])["relations"] = len(relations)
+    assert declarations["original"] == _json_object(honest["declarations"])["original"]
+    assert (
+        declarations["callbacks"] == _json_object(honest["declarations"])["callbacks"]
+    )
+    assert declarations["cells"] == _json_object(honest["declarations"])["cells"]
+    analysis = MetadataAnalysis(declarations, search_mode="heuristic").run()
+    checked = check_semantics(original, declarations, analysis, check_coverage=False)
+    assert checked["status"] == "FAIL", checked
+    assert any("producer" in row["kind"] for row in checked["errors"]), checked
+    if full_replay:
+        forged = _rebuild_provider_report(original=original, analysis=analysis)
+        replayed = verify_production_result(original, forged, limits={"seconds": 30})
+        assert replayed["status"] == "FAIL", replayed
+        assert replayed["source_semantics"]["status"] == "FAIL", replayed
+
+
+@pytest.mark.parametrize("axis", ["z", "earnings_draw"])
+@pytest.mark.parametrize("reverse_order", [False, True])
+@pytest.mark.parametrize(
+    "mutation",
+    ["missing_update", "surplus_update", "extra_output", "duplicate_transition"],
+)
+def test_transition_producer_inventory_is_bound_to_original_outputs(
+    *,
+    axis: StateName,
+    reverse_order: bool,
+    mutation: str,
+) -> None:
+    from _lcm_regime_finder.declarations import normalize_declarations
+    from _lcm_regime_finder.production import MetadataAnalysis
+    from _lcm_regime_finder.semantic_check import check_semantics
+
+    original = _create_source_only_draw_capture(axis=axis)
+    declarations = normalize_declarations(original)
+    honest = MetadataAnalysis(declarations, search_mode="heuristic").run()
+    assert (
+        check_semantics(original, declarations, honest, check_coverage=False)["status"]
+        != "FAIL"
+    )
+    changed = deepcopy(declarations)
+    rows = changed["relations"]
+    transition = next(
+        row for row in rows if row["kind"] == "transition" and row["phase"] == "solve"
+    )
+    if mutation == "missing_update":
+        transition["state_updates"].pop("x")
+    elif mutation == "surplus_update":
+        transition["state_updates"][axis] = next(iter(changed["callbacks"]))
+    elif mutation == "extra_output":
+        transition["produces"].append(axis)
+    else:
+        duplicate = deepcopy(transition)
+        duplicate["id"] += "-duplicate"
+        rows.append(duplicate)
+    if reverse_order:
+        rows.reverse()
+    changed["coverage"]["relations"] = len(rows)
+    proposed = deepcopy(honest)
+    proposed["declarations"] = changed
+    checked = check_semantics(original, changed, proposed, check_coverage=False)
+    assert checked["status"] == "FAIL", checked
+    expected = {
+        "missing_update": "original state update consumer changed",
+        "surplus_update": "surplus original state producer update",
+        "extra_output": "original state-producer coverage changed",
+        "duplicate_transition": "original phase transition incidence duplicated/omitted",
+    }
+    assert any(row["kind"] == expected[mutation] for row in checked["errors"]), checked
+
+
+@pytest.mark.parametrize("supply_forged_callback", [False, True])
+def test_missing_original_producer_authority_cannot_be_filled_by_an_unrelated_callback(
+    supply_forged_callback: bool,
+) -> None:
+    from _lcm_regime_finder.declarations import normalize_declarations
+    from _lcm_regime_finder.production import MetadataAnalysis
+    from _lcm_regime_finder.semantic_check import check_semantics
+
+    original = _create_source_only_draw_capture(axis="z")
+    fields = _json_object(
+        _json_object(_json_object(original["user_regimes"])["source"])["fields"]
+    )
+    fields["state_transitions"] = {}
+    declarations = normalize_declarations(original)
+    analysis = MetadataAnalysis(declarations, search_mode="heuristic").run()
+    checked = check_semantics(original, declarations, analysis, check_coverage=False)
+    assert checked["status"] == "UNRESOLVED", checked
+    assert any(
+        row["kind"] == "original state producer is not exposed"
+        for row in checked["unresolved"]
+    )
+    source = next(cell for cell in declarations["cells"] if cell["regime"] == "source")
+    options = analysis["interfaces"][source["id"]]["options"]
+    assert options and all({"x", "z"} <= set(option["states"]) for option in options)
+    assert all(
+        not row["state_updates"]
+        for row in declarations["relations"]
+        if row["kind"] == "transition"
+    )
+    if supply_forged_callback:
+        changed = deepcopy(declarations)
+        transition = next(
+            row for row in changed["relations"] if row["kind"] == "transition"
+        )
+        source = next(
+            cell for cell in changed["cells"] if cell["id"] == transition["source"]
+        )
+        transition["state_updates"]["x"] = source["phase_functions"][
+            transition["phase"]
+        ]["utility"]
+        proposed = deepcopy(analysis)
+        proposed["declarations"] = changed
+        rejected = check_semantics(original, changed, proposed, check_coverage=False)
+        assert rejected["status"] == "FAIL", rejected
+        assert any(
+            row["kind"] == "unauthenticated original state producer update"
+            for row in rejected["errors"]
+        )
+
+
+def _create_joint_draw_capture(*, axis: StateName) -> dict[str, JSONValue]:
+    original = _create_source_only_draw_capture(axis=axis)
+    fields = _json_object(
+        _json_object(_json_object(original["user_regimes"])["source"])["fields"]
+    )
+    fields["joint_transitions"] = {
+        "target": {
+            "lottery": {
+                "kind": "dataclass",
+                "type": "lcm.JointTransition",
+                "fields": {
+                    "support_size": 2,
+                    "support": [0, 1],
+                    "probabilities": function(
+                        "def probabilities():\n    return [0.5, 0.5]\n", []
+                    ),
+                    "outputs": {
+                        axis: function(
+                            "def draw(lottery):\n    return lottery\n", ["lottery"]
+                        )
+                    },
+                },
+            }
+        },
+    }
+    return original
+
+
+@pytest.mark.parametrize("axis", ["z", "earnings_draw"])
+def test_original_joint_draw_can_feed_an_explicit_transition_without_being_a_target_state(
+    axis: StateName,
+) -> None:
+    from _lcm_regime_finder.declarations import normalize_declarations
+    from _lcm_regime_finder.production import MetadataAnalysis
+    from _lcm_regime_finder.semantic_check import check_semantics
+
+    original = _create_joint_draw_capture(axis=axis)
+    declarations = normalize_declarations(original)
+    analysis = MetadataAnalysis(declarations, search_mode="heuristic").run()
+    checked = check_semantics(original, declarations, analysis, check_coverage=False)
+    assert checked["status"] != "FAIL", checked
+    assert not checked["errors"], checked
+    cells = {cell["id"]: cell for cell in declarations["cells"]}
+    joints = [row for row in declarations["relations"] if row["kind"] == "joint"]
+    assert {row["phase"] for row in joints} == {"solve", "simulation"}
+    assert all(axis not in cells[row["targets"][0]]["states"] for row in joints)
+    source = next(cell for cell in cells.values() if cell["regime"] == "source")
+    options = analysis["interfaces"][source["id"]]["options"]
+    assert options and all(axis not in option["states"] for option in options)
+
+
+@pytest.mark.parametrize("axis", ["z", "earnings_draw"])
+@pytest.mark.parametrize("reverse_order", [False, True])
+@pytest.mark.parametrize(
+    "mutation",
+    ["missing_joint", "duplicate_joint", "foreign_joint", "conflicting_output"],
+)
+def test_joint_producer_inventory_is_bound_to_original_incidence(
+    *,
+    axis: StateName,
+    reverse_order: bool,
+    mutation: str,
+) -> None:
+    from _lcm_regime_finder.declarations import normalize_declarations
+    from _lcm_regime_finder.production import MetadataAnalysis
+    from _lcm_regime_finder.semantic_check import check_semantics
+
+    original = _create_joint_draw_capture(axis=axis)
+    declarations = normalize_declarations(original)
+    analysis = MetadataAnalysis(declarations, search_mode="heuristic").run()
+    assert (
+        check_semantics(original, declarations, analysis, check_coverage=False)[
+            "status"
+        ]
+        != "FAIL"
+    )
+    changed = deepcopy(declarations)
+    rows = changed["relations"]
+    joint = next(
+        row for row in rows if row["kind"] == "joint" and row["phase"] == "solve"
+    )
+    if mutation == "missing_joint":
+        rows.remove(joint)
+    elif mutation == "conflicting_output":
+        joint["state_updates"] = dict(
+            joint["state_updates"], **{axis: next(iter(changed["callbacks"]))}
+        )
+    else:
+        duplicate = deepcopy(joint)
+        duplicate["id"] += "-extra"
+        if mutation == "foreign_joint":
+            duplicate["joint_name"] = "undeclared_lottery"
+        rows.append(duplicate)
+    if reverse_order:
+        rows.reverse()
+    changed["coverage"]["relations"] = len(rows)
+    proposed = deepcopy(analysis)
+    proposed["declarations"] = changed
+    checked = check_semantics(original, changed, proposed, check_coverage=False)
+    assert checked["status"] == "FAIL", checked
+    expected = {
+        "missing_joint": "full original joint relation omitted/duplicated",
+        "duplicate_joint": "full original joint relation omitted/duplicated",
+        "foreign_joint": "undeclared original producer incidence",
+        "conflicting_output": "joint output incidence changed",
+    }
+    assert any(row["kind"] == expected[mutation] for row in checked["errors"]), checked
+
+
+@pytest.mark.parametrize("axis", ["z", "earnings_draw"])
+def test_overlapping_original_joint_outputs_have_no_producer_authority(
+    axis: StateName,
+) -> None:
+    from _lcm_regime_finder.declarations import normalize_declarations
+    from _lcm_regime_finder.production import MetadataAnalysis
+    from _lcm_regime_finder.semantic_check import check_semantics
+
+    original = _create_joint_draw_capture(axis=axis)
+    honest_declarations = normalize_declarations(original)
+    analysis = MetadataAnalysis(honest_declarations, search_mode="heuristic").run()
+    fields = _json_object(
+        _json_object(_json_object(original["user_regimes"])["source"])["fields"]
+    )
+    joints = _json_object(_json_object(fields["joint_transitions"])["target"])
+    joints["second_lottery"] = deepcopy(joints["lottery"])
+    declarations = normalize_declarations(original)
+    proposed = deepcopy(analysis)
+    proposed["declarations"] = declarations
+    checked = check_semantics(original, declarations, proposed, check_coverage=False)
+    assert checked["status"] == "FAIL", checked
+    assert any(
+        row["kind"] == "original joint producer output duplicated"
+        for row in checked["errors"]
+    ), checked
+    assert all(
+        row["kind"] != "analysis declaration identity" for row in checked["errors"]
+    )

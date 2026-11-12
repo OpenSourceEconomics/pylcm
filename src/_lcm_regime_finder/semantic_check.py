@@ -768,6 +768,14 @@ def _check_semantics(original: dict, normalized: dict, analysis: dict, *, check_
         _check_capture(original, normalized, fail, unknown)
     else:
         unknown("original source contract is not supported", schema=original.get("schema"))
+    # Invalid original incidences must never become next-state provider overrides.
+    if errors:
+        return {"status": "FAIL", "errors": errors, "unresolved": unresolved,
+                "checks": 0, "source_sha256": _digest(original),
+                "normalized_sha256": _digest(normalized),
+                "guarantee": "Original source authentication failed; no dependency context was admitted",
+                "dense_cartesian_rows_evaluated": 0,
+                "projection_family_complete_verified": False}
     captures = _CallableRecords(normalized.get("callable_records", {}))
     for error in captures.errors:
         fail("compact callable capture identity", detail=error)
@@ -1825,6 +1833,7 @@ def _check_capture(original: dict, normalized: dict, fail, unknown) -> None:
             if len(matches) != 1 or matches[0].get("produces") != [axis] or matches[0]["state_updates"].get(axis) != domain["solve_imputation"]:
                 fail("original carried-state imputation incidence changed", cell=cell["id"], state=axis)
     expected_owners = defaultdict(list)
+    original_producer_rows: set[int] = set()
     for source_id, target_id, phase in sorted(expected_edges):
         cell, target = cells[source_id], cells[target_id]
         declaration = original_regimes[cell["regime"]]
@@ -1833,6 +1842,7 @@ def _check_capture(original: dict, normalized: dict, fail, unknown) -> None:
             fail("original phase transition incidence duplicated/omitted", source=source_id, target=target_id, phase=phase)
             continue
         transition = transitions[0]
+        original_producer_rows.add(id(transition))
         law = (original_schedule[4].get((cell["period"], cell["regime"], phase)) if original_schedule else
                selected(fields(graph.get("laws", {}).get(cell["regime"], {})).get("transition"), phase, cell["period"]))
         if not same_payloads(callback_payloads(transition.get("callbacks", [])), [] if law is None else [law]):
@@ -1840,12 +1850,15 @@ def _check_capture(original: dict, normalized: dict, fail, unknown) -> None:
         produced_by_joint = set()
         for joint_name, raw in declaration.get("joint_transitions", {}).get(target["regime"], {}).items():
             payload = selected(raw, phase, cell["period"])
-            matches = [relation for relation in relations if relation.get("kind") == "joint" and relation.get("source") == source_id and target_id in relation.get("targets", []) and relation.get("phase") == phase and relation.get("joint_name") == joint_name]
+            matches = [relation for relation in relations if relation.get("kind") == "joint" and relation.get("source") == source_id and relation.get("targets") == [target_id] and relation.get("phase") == phase and relation.get("joint_name") == joint_name]
             if len(matches) != 1:
                 fail("full original joint relation omitted/duplicated", source=source_id, target=target_id, phase=phase, joint=joint_name); continue
             relation = matches[0]
+            original_producer_rows.add(id(relation))
             if relation.get("original") != payload: fail("original full joint law/support changed", relation=relation.get("id"))
             outputs = fields(payload).get("outputs", {})
+            if produced_by_joint & set(outputs):
+                fail("original joint producer output duplicated", relation=relation.get("id"))
             produced_by_joint.update(outputs)
             if set(relation.get("joint_outputs", {})) != set(outputs): fail("joint decoded output coverage changed", relation=relation.get("id"))
             if relation.get("produces") != sorted(outputs) or relation.get("state_updates") != relation.get("joint_outputs"):
@@ -1857,7 +1870,9 @@ def _check_capture(original: dict, normalized: dict, fail, unknown) -> None:
             for axis, raw_callback in outputs.items():
                 if callbacks.get(relation.get("joint_outputs", {}).get(axis), {}).get("original") != selected(raw_callback, phase, cell["period"]): fail("joint decoded output callback changed", relation=relation.get("id"), axis=axis)
         target_axes = {axis for axis, did in target["states"].items() if phase != "solve" or domains[did].get("solve_axis", True)} - produced_by_joint
-        if set(transition.get("produces", [])) != target_axes: fail("original state-producer coverage changed", relation=transition.get("id"))
+        if transition.get("produces") != sorted(target_axes): fail("original state-producer coverage changed", relation=transition.get("id"))
+        if set(transition.get("state_updates", {})) - target_axes:
+            fail("surplus original state producer update", relation=transition.get("id"))
         for axis in target_axes:
             intrinsic = False
             raw = declaration.get("state_transitions", {}).get(axis)
@@ -1874,6 +1889,8 @@ def _check_capture(original: dict, normalized: dict, fail, unknown) -> None:
                     raw, intrinsic = arriving, True
             if raw is None:
                 unknown("original state producer is not exposed", source=source_id, target=target_id, state=axis, phase=phase)
+                if axis in transition.get("state_updates", {}):
+                    fail("unauthenticated original state producer update", relation=transition.get("id"), state=axis)
             elif callbacks.get(transition.get("state_updates", {}).get(axis), {}).get("original") != raw:
                 fail("original state update consumer changed", relation=transition.get("id"), state=axis)
             elif intrinsic:
@@ -1891,6 +1908,9 @@ def _check_capture(original: dict, normalized: dict, fail, unknown) -> None:
                                  for items in (arguments, reads))
                     if not finite or set(arguments) != expected or set(reads) != expected:
                         fail('original process dependency owner changed',relation=transition.get('id'),state=axis)
+    for relation in relations:
+        if relation.get("kind") in {"transition", "joint"} and id(relation) not in original_producer_rows:
+            fail("undeclared original producer incidence", relation=relation.get("id"), relation_kind=relation.get("kind"))
     # Independently bind every owned fallback to the leg of the ORIGINAL gate.
     laws = graph.get("laws", {})
     def refs(value, phase=None):
