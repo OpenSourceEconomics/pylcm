@@ -16,6 +16,8 @@ import json
 import math
 import time
 
+from .block_admission_check import checked_context_key, expected_admission
+
 
 METRICS = ("work", "storage", "clarity")
 ENDPOINT_CLARITY_POLICY = (
@@ -176,7 +178,8 @@ class IndependentFamily:
     """
 
     def __init__(self, analysis, *, seconds=900, max_groupings=100_000, max_segments=2_000_000,
-                 max_frontier_points=5000, subset_recurrence=True, bucket_dominance=False, prefix_dominance=False):
+                 max_frontier_points=5000, subset_recurrence=True, bucket_dominance=False, prefix_dominance=False,
+                 legacy_admission=False):
         self.started = time.perf_counter()
         self.analysis = analysis
         self.declaration = analysis["declarations"]
@@ -185,7 +188,10 @@ class IndependentFamily:
         self.options = {cell: {option["id"]: option for option in record["options"]}
                         for cell, record in analysis["interfaces"].items()}
         self.allocation = analysis.get("allocation_scenario", self.declaration["allocation"])
-        self.weights = {"block": 4, "characteristic": 2, "dispatch": 1, **analysis.get("clarity_weights", {})}
+        self.legacy_admission = legacy_admission
+        defaults = {"block": 4, "characteristic": 2, "dispatch": 1} if legacy_admission else {
+            "block": 1, "characteristic": 0, "dispatch": 0}
+        self.weights = defaults | analysis.get("clarity_weights", {})
         self.seconds = seconds
         self.max_groupings = max_groupings
         self.max_segments = max_segments
@@ -250,14 +256,18 @@ class IndependentFamily:
     def role(self, cell):
         if hasattr(self, 'roles') and cell['id'] in self.roles:
             return self.roles[cell['id']]
-        observed = cell.get("role")
-        if observed is None:
-            observed = ({'original_contexts_preserved_by_dispatch': True, 'decision_objective': cell.get('decision_objective')}
-                if self.declaration.get('analysis_scope') == 'pylcm-structural-graph/v1'
-                else {"unresolved_original_role": cell["regime"]})
-        terminal_context=None if self.declaration.get('analysis_scope')=='pylcm-structural-graph/v1' else bool(cell.get('terminal'))
-        return _json([observed, cell.get("ownership"), cell.get("stage"), terminal_context,
-                      cell.get("declaration_type"), cell.get("structural_roles", {}), cell.get("solver_identity")])
+        if self.legacy_admission:
+            observed = cell.get("role")
+            native = self.declaration.get('analysis_scope') == 'pylcm-structural-graph/v1'
+            if observed is None:
+                observed = ({'original_contexts_preserved_by_dispatch': True,
+                             'decision_objective': cell.get('decision_objective')} if native else
+                            {"unresolved_original_role": cell["regime"]})
+            return _json([observed, cell.get("ownership"), cell.get("stage"),
+                          None if native else bool(cell.get('terminal')),
+                          cell.get("declaration_type"), cell.get("structural_roles", {}),
+                          cell.get("solver_identity")])
+        return checked_context_key(cell)
 
     def components(self):
         records = defaultdict(lambda: defaultdict(list))
@@ -321,7 +331,8 @@ class IndependentFamily:
             for projection in option["state_projection"].values():
                 if projection["kind"] == "characteristic": distinct_characteristics.add(_json(projection))
         dispatch = len({cell["regime"] for cell in cells}) - 1
-        return {"cost": {"work": (len(ids) + len(directed) * boundary_unit) * state_rows * action_rows,
+        return {**({} if self.legacy_admission else {"admission": expected_admission(cells)}),
+                "cost": {"work": (len(ids) + len(directed) * boundary_unit) * state_rows * action_rows,
                          "storage": len(ids) * state_rows,
                          "clarity": self.weights["block"] + self.weights["characteristic"] * len(distinct_characteristics) + self.weights["dispatch"] * dispatch},
                 "state_axes": states, "action_axes": actions,
@@ -676,7 +687,8 @@ class IndependentFamily:
             expected = self.block(ids, policy)
             if expected is None:
                 errors.append("inadmissible block"); continue
-            for key in ("cost", "state_axes", "action_axes", "periods", "ages"):
+            fields = ("cost", "state_axes", "action_axes", "periods", "ages")
+            for key in fields + (() if self.legacy_admission else ("admission",)):
                 if block.get(key) != expected[key]: errors.append("incorrect block " + key)
             total = _sum(total, _vector(expected["cost"]))
             labels = [(self.role(self.cells[cell]), self.cells[cell]["regime"]) for cell in ids]
@@ -770,11 +782,12 @@ def check_frontier(analysis, result, *, limits=None):
                                    max_groupings=limits.get("groupings", 100_000),
                                    max_segments=limits.get("segments", 2_000_000),
                                    max_frontier_points=limits.get('frontier_points', 5000),
-                                   subset_recurrence=result.get('schema') in ('regime-frontier/v3','regime-frontier/v4','regime-frontier/v5'),
-                                   bucket_dominance=result.get('schema') in ('regime-frontier/v4','regime-frontier/v5'),
-                                   prefix_dominance=result.get('schema')=='regime-frontier/v5')
+                                   subset_recurrence=result.get('schema') in ('regime-frontier/v3','regime-frontier/v4','regime-frontier/v5','regime-frontier/v6'),
+                                   bucket_dominance=result.get('schema') in ('regime-frontier/v4','regime-frontier/v5','regime-frontier/v6'),
+                                   prefix_dominance=result.get('schema') in ('regime-frontier/v5','regime-frontier/v6'),
+                                   legacy_admission=result.get('schema') != 'regime-frontier/v6')
         certificate = result.get("certificate", {})
-        if result.get('schema') not in ('regime-frontier/v2','regime-frontier/v3','regime-frontier/v4','regime-frontier/v5'): errors.append('frontier format version')
+        if result.get('schema') not in ('regime-frontier/v2','regime-frontier/v3','regime-frontier/v4','regime-frontier/v5','regime-frontier/v6'): errors.append('frontier format version')
         expected_encoding = PREFIX_ENCODING if family.prefix_dominance else BUCKET_ENCODING if family.bucket_dominance else SUBSET_ENCODING if family.subset_recurrence else FAMILY_ENCODING
         if certificate.get('family_encoding') != expected_encoding: errors.append('candidate-family encoding')
         expected_digest = hashlib.sha256(_json(analysis).encode()).hexdigest()
@@ -820,7 +833,12 @@ def check_frontier(analysis, result, *, limits=None):
             if not result.get("exhaustion_reason"): errors.append("incomplete search lacks exhaustion reason")
             unresolved.append("Global frontier completeness is not claimed: only supplied complete plans, Pareto antichain and the zero lower bound were checked")
         recommendation = result.get("recommendation")
-        if not points:
+        if result.get('reporting_mode') == 'curve':
+            if 'recommendation' in result:
+                errors.append('raw curve contains a recommendation')
+            if family.boundary_unit != 0:
+                errors.append('raw grid-evaluation curve prices directed links')
+        elif not points:
             if recommendation is not None: errors.append("recommendation without an incumbent")
         elif not isinstance(recommendation, dict):
             errors.append("missing configurable recommendation")
@@ -848,6 +866,7 @@ def check_frontier(analysis, result, *, limits=None):
         return {"status": "FAIL" if errors else "PASS", "errors": errors, "unresolved": unresolved,
                 "checking_complete": True, "exhaustion_reason": None,
                 "frontier_complete_verified": complete and not errors,
+                "admission_contract": "legacy-frontier" if family.legacy_admission else "lcm-regime-block-admission/v1",
                 "projection_family_discovery_complete": analysis.get("discovery_complete") is True,
                 "frontier_scope": "the explicitly offered coherent projection-policy family; source/projection discovery is checked separately",
                 "checked_complete_plans": checked, "independent_counts": family.counts,

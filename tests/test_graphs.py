@@ -1,6 +1,7 @@
 """Editable temporal graph views preserve canonical declaration metadata."""
 
 import inspect
+from collections.abc import Mapping, Sequence
 from fractions import Fraction
 from importlib import import_module
 from importlib.util import find_spec
@@ -12,9 +13,12 @@ import networkx as nx
 import pytest
 
 from _lcm.reachability import EdgeStatus
+from _lcm.typing import JSONValue
 from lcm import (
     AgeGrid,
+    DiscreteGrid,
     InitialNodes,
+    LinSpacedGrid,
     Model,
     Periods,
     Phased,
@@ -24,7 +28,14 @@ from lcm import (
     categorical,
 )
 from lcm.graphs import find_regimes
-from lcm.typing import FloatND, Phase, ScalarInt
+from lcm.processes import (
+    RouwenhorstAR1Process,
+    StateConditioned,
+    TauchenAR1Process,
+    UniformIIDProcess,
+)
+from lcm.typing import ContinuousState, DiscreteState, FloatND, Phase, ScalarInt
+from lcm_examples.stochastic_volatility import get_model as stochastic_volatility_model
 
 
 @categorical(ordered=False)
@@ -357,3 +368,353 @@ def test_digraph_reads_cached_age_factories_without_rebuilding() -> None:
         graph.graph["declarations"].phases[1, "alive", "solve"].functions["utility"]
         is _sentinel
     )
+
+
+def _draw_value(x: FloatND) -> FloatND:
+    return x
+
+
+def _next_x(next_z: ContinuousState) -> ContinuousState:
+    return next_z
+
+
+def _zero_utility() -> float:
+    return 0.0
+
+
+def _record(value: JSONValue) -> Mapping[str, JSONValue]:
+    assert isinstance(value, Mapping)
+    return value
+
+
+def _records(value: JSONValue) -> tuple[Mapping[str, JSONValue], ...]:
+    assert isinstance(value, Sequence)
+    assert not isinstance(value, str)
+    return tuple(_record(item) for item in value)
+
+
+@pytest.mark.parametrize("persistent", [True, False])
+def test_analysis_preserves_source_only_conditional_draw(*, persistent: bool) -> None:
+    """A source-only process law determines whether its current state is needed."""
+    process = (
+        RouwenhorstAR1Process(n_points=2, rho=0.5, sigma=1.0)
+        if persistent
+        else UniformIIDProcess(n_points=2, start=-1.0, stop=1.0)
+    )
+    model = Model(
+        n_periods=2,
+        regimes={
+            "alive": Regime(
+                states={"z": process},
+                functions={"utility": _zero_utility},
+                state_transitions={"x": _next_x},
+            ),
+            "final": Regime(
+                states={"x": LinSpacedGrid(start=-2.0, stop=2.0, n_points=3)},
+                functions={"utility": _draw_value},
+            ),
+        },
+        initial_nodes=InitialNodes(by_period={0: "alive"}),
+        edges={"alive": {"final": Periods(values=(0,))}},
+        regime_id_class=GraphRegimes,
+        fixed_params={"discount_factor": 1.0},
+        enable_jit=False,
+    )
+    report = find_regimes(model)
+    analysis = report["analysis"]
+    assert isinstance(analysis, dict)
+    declarations = analysis["declarations"]
+    assert isinstance(declarations, dict)
+    cells = declarations["cells"]
+    assert isinstance(cells, list)
+    source = next(cell for cell in _records(cells) if cell["regime"] == "alive")
+    interfaces = analysis["interfaces"]
+    assert isinstance(interfaces, dict)
+    identifier = source["id"]
+    assert isinstance(identifier, str)
+    options = _records(_record(interfaces[identifier])["options"])
+    assert options
+    assert all(("z" in _record(option["states"])) is persistent for option in options)
+
+
+def test_analysis_preserves_conditioned_current_shock() -> None:
+    """Income-risk conditioning remains in the alive value domain."""
+    report = find_regimes(
+        stochastic_volatility_model(
+            n_periods=3,
+            wealth_n_points=8,
+            consumption_n_points=8,
+            income_n_points=3,
+        )
+    )
+    analysis = report["analysis"]
+    assert isinstance(analysis, dict)
+    declarations = analysis["declarations"]
+    assert isinstance(declarations, dict)
+    cells = declarations["cells"]
+    assert isinstance(cells, list)
+    interfaces = analysis["interfaces"]
+    assert isinstance(interfaces, dict)
+    alive = [cell for cell in _records(cells) if cell["regime"] == "alive"]
+    assert alive
+    for cell in alive:
+        options = _records(_record(interfaces[str(cell["id"])])["options"])
+        assert options
+        assert all(
+            "lagged_uncertainty" in _record(option["states"]) for option in options
+        )
+
+
+def test_analyze_regime_structure_returns_typed_recommendations(
+    period_model: Model,
+) -> None:
+    """Recommendations link directly to immutable candidates and original costs."""
+    module = import_module("lcm.graphs")
+    assert hasattr(module, "analyze_regime_structure")
+    result = module.analyze_regime_structure(period_model)
+    assert isinstance(result, module.RegimeAnalysisResult)
+    assert result.original.cost is not None
+    assert result.recommendations
+    assert all(
+        candidate is result.original or candidate in result.candidates
+        for candidate in result.recommendations
+    )
+    assert result.checks
+    with pytest.raises(AttributeError):
+        result.status = "invented"  # ty: ignore[invalid-assignment]
+    with pytest.raises(TypeError):
+        result.data["status"] = "invented"  # ty: ignore[invalid-assignment]
+    copied = result.to_dict()
+    copied["status"] = "invented"
+    assert result.status != "invented"
+
+
+def test_analyze_regime_structure_writes_an_explicit_report(
+    *, period_model: Model, tmp_path: Path
+) -> None:
+    """Report writing accepts a string and protects an existing directory."""
+    module = import_module("lcm.graphs")
+    assert hasattr(module, "analyze_regime_structure")
+    result = module.analyze_regime_structure(period_model)
+    output = tmp_path / "typed-report"
+    result.write_report(str(output))
+    text = (output / "report.html").read_text()
+    assert "Original representation" in text
+    assert "Recommendation" in text
+    assert "parent run wrapper" not in text
+    assert 'href="resource.json"' not in text
+    assert "dates Not supplied" not in text
+    with pytest.raises(FileExistsError):
+        result.write_report(output)
+
+
+def test_model_to_networkx_matches_temporal_view(period_model: Model) -> None:
+    """The model method exposes the same independent temporal graph."""
+    assert hasattr(period_model, "to_networkx")
+    actual = period_model.to_networkx()
+    expected = _view(model=period_model)
+    assert nx.utils.graphs_equal(actual, expected)
+
+
+def test_analysis_custom_cost_is_used_during_search(period_model: Model) -> None:
+    """A declared linear objective is recorded by the actual candidate search."""
+    module = import_module("lcm.graphs")
+    assert hasattr(module, "LinearRegimeCostModel")
+    model = module.LinearRegimeCostModel(
+        work_weight=7.0,
+        storage_weight=3.0,
+        complexity_weight=2.0,
+        reference_scales=(1, 1, 1),
+        minimum_improvement=0.25,
+    )
+    result = module.analyze_regime_structure(period_model, cost_model=model)
+    assert result.cost_model is model
+    scenario = _records(result.to_dict()["scenarios"])[0]
+    objective = _record(scenario["objective"])
+    assert objective["weights"] == {"work": "7", "storage": "3", "clarity": "2"}
+    assert objective["reference_scales"] == {"work": 1, "storage": 1, "clarity": 1}
+    assert objective["minimum_improvement"] == "1/4"
+
+
+@pytest.mark.parametrize("weight", [0.0, -1.0, float("nan"), float("inf")])
+def test_analysis_cost_rejects_invalid_weights(weight: float) -> None:
+    """The supported positive linear class rejects ambiguous objective weights."""
+    module = import_module("lcm.graphs")
+    assert hasattr(module, "LinearRegimeCostModel")
+    with pytest.raises(ValueError, match="work_weight"):
+        module.LinearRegimeCostModel(work_weight=weight)
+
+
+@categorical(ordered=True)
+class ProcessConditionHistory:
+    low: ScalarInt
+    high: ScalarInt
+
+
+def _conditional_process_utility(
+    *, z: ContinuousState, history: DiscreteState
+) -> ContinuousState:
+    return z + history
+
+
+def _carry_process_history(*, history: DiscreteState) -> DiscreteState:
+    return history
+
+
+def _conditional_persistent_process(*, conditioned: bool) -> TauchenAR1Process:
+    return TauchenAR1Process(
+        n_points=3,
+        gauss_hermite=False,
+        mu=0.0,
+        rho=0.5,
+        n_std=2.0,
+        sigma=StateConditioned(on="history", by={"low": 0.5, "high": 1.0})
+        if conditioned
+        else 1.0,
+    )
+
+
+@pytest.mark.parametrize(
+    "conditioning_phase", ["both", "solve", "simulation", "neither"]
+)
+def test_conditioned_persistent_process_preserves_original_phase_inputs(
+    conditioning_phase: str,
+) -> None:
+    """An intrinsic transition reads its owner and its original conditioning state."""
+    process: TauchenAR1Process | Phased[TauchenAR1Process, TauchenAR1Process]
+    if conditioning_phase in {"both", "neither"}:
+        process = _conditional_persistent_process(
+            conditioned=conditioning_phase == "both"
+        )
+    else:
+        process = Phased(
+            solve=_conditional_persistent_process(
+                conditioned=conditioning_phase == "solve"
+            ),
+            simulate=_conditional_persistent_process(
+                conditioned=conditioning_phase == "simulation"
+            ),
+        )
+    model = Model(
+        n_periods=2,
+        regime_id_class=GraphRegimes,
+        regimes={
+            "alive": Regime(
+                states={"z": process, "history": DiscreteGrid(ProcessConditionHistory)},
+                functions={"utility": _conditional_process_utility},
+                state_transitions={"history": _carry_process_history},
+            ),
+            "final": Regime(
+                states={"z": process, "history": DiscreteGrid(ProcessConditionHistory)},
+                functions={"utility": _conditional_process_utility},
+            ),
+        },
+        initial_nodes=InitialNodes(by_period={0: "alive"}),
+        edges={"alive": {"final": Periods(values=(0,))}},
+        fixed_params={"discount_factor": 1.0},
+        enable_jit=False,
+    )
+    module = import_module("lcm.graphs")
+    report = module.analyze_regime_structure(model).to_dict()
+    declaration = _record(_record(report["analysis"])["declarations"])
+    cells = {str(cell["id"]): cell for cell in _records(declaration["cells"])}
+    transitions = [
+        row
+        for row in _records(declaration["relations"])
+        if row["kind"] == "transition"
+        and cells[str(row["source"])]["regime"] == "alive"
+    ]
+    assert {row["phase"] for row in transitions} == {"solve", "simulation"}
+    callbacks = _record(declaration["callbacks"])
+    for row in transitions:
+        expected = {"z"}
+        if conditioning_phase in {"both", row["phase"]}:
+            expected.add("history")
+        callback = _record(callbacks[str(_record(row["state_updates"])["z"])])
+        for field in ("arguments", "reads"):
+            names = callback[field]
+            assert isinstance(names, list)
+            assert all(isinstance(name, str) for name in names)
+            assert set(names) == expected
+    semantic_check = _record(report["semantic_check"])
+    assert semantic_check["status"] in {"PASS", "UNRESOLVED"}, semantic_check
+    assert report["status"] != "INVALID", semantic_check
+
+
+def _current_process_payoff(*, z: ContinuousState) -> ContinuousState:
+    return z
+
+
+def _terminal_process_payoff(*, z: ContinuousState) -> ContinuousState:
+    return z * z
+
+
+def _reset_process_history() -> int:
+    return 0
+
+
+def test_target_conditioned_process_preserves_needed_source_history() -> None:
+    """A target's transition law consumes the source's current conditioning state."""
+    # Use the accepted normal-process boundary; changing its table leaves the
+    # three grid nodes fixed but changes the target transition distribution.
+    from lcm.processes import NormalIIDProcess  # noqa: PLC0415
+
+    source_process = NormalIIDProcess(
+        n_points=3, gauss_hermite=False, mu=0.0, n_std=2.0, sigma=1.0
+    )
+    target_process = NormalIIDProcess(
+        n_points=3,
+        gauss_hermite=False,
+        mu=0.0,
+        n_std=2.0,
+        sigma=StateConditioned(on="history", by={"low": 0.5, "high": 1.0}),
+    )
+    model = Model(
+        n_periods=2,
+        regime_id_class=GraphRegimes,
+        regimes={
+            "alive": Regime(
+                states={
+                    "z": source_process,
+                    "history": DiscreteGrid(ProcessConditionHistory),
+                },
+                functions={"utility": _current_process_payoff},
+                state_transitions={"history": _reset_process_history},
+            ),
+            "final": Regime(
+                states={
+                    "z": target_process,
+                    "history": DiscreteGrid(ProcessConditionHistory),
+                },
+                functions={"utility": _terminal_process_payoff},
+            ),
+        },
+        initial_nodes=InitialNodes(by_period={0: "alive"}),
+        edges={"alive": {"final": Periods(values=(0,))}},
+        fixed_params={"discount_factor": 1.0},
+        enable_jit=False,
+    )
+    report = import_module("lcm.graphs").analyze_regime_structure(model).to_dict()
+    analysis = _record(report["analysis"])
+    declaration = _record(analysis["declarations"])
+    cells = {str(cell["id"]): cell for cell in _records(declaration["cells"])}
+    source = next(cell for cell in cells.values() if cell["regime"] == "alive")
+    options = _records(
+        _record(_record(analysis["interfaces"])[str(source["id"])])["options"]
+    )
+    assert options
+    assert all("history" in _record(option["states"]) for option in options)
+    callbacks = _record(declaration["callbacks"])
+    transitions = [
+        relation
+        for relation in _records(declaration["relations"])
+        if relation["kind"] == "transition" and relation["source"] == source["id"]
+    ]
+    assert {relation["phase"] for relation in transitions} == {"solve", "simulation"}
+    for relation in transitions:
+        callback = _record(callbacks[str(_record(relation["state_updates"])["z"])])
+        assert str(callback["source_path"]).startswith(
+            "/user_regimes/final/fields/states/z"
+        )
+        assert callback["arguments"] == ["history"]
+        assert callback["reads"] == ["history"]

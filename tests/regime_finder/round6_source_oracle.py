@@ -1,13 +1,14 @@
 """Literal scalar call oracle for captured-source dependencies."""
+
 import inspect
 
 
 class WrappedUnary:
     """Same effective/raw-signature distinction as an array-library wrapper."""
 
-    __signature__ = inspect.Signature([
-        inspect.Parameter("x", inspect.Parameter.POSITIONAL_OR_KEYWORD)
-    ])
+    __signature__ = inspect.Signature(
+        [inspect.Parameter("x", inspect.Parameter.POSITIONAL_OR_KEYWORD)]
+    )
 
     def __call__(self, *args, **kwargs):
         value = args[0] if args else kwargs["x"]

@@ -1024,22 +1024,9 @@ def test_an_imputation_reading_a_value_grid_matches_its_twin_on_codes(
         for category_control in (False, True)
     )
     np.testing.assert_array_equal(got, expected)
-
-
-@pytest.mark.parametrize("nodes", _NODE_PAIRS)
-@pytest.mark.parametrize("enable_jit", [False, True])
-def test_an_age_specialized_imputation_of_category_codes_still_solves(
-    *, nodes, enable_jit
-):
-    """A model without value grids keeps its age-specialized imputations."""
-    model = _one_period_model(
-        working=_imputation_regime(nodes=nodes, marked=True, category_control=True),
-        enable_jit=enable_jit,
-    )
-    np.testing.assert_array_equal(
-        _first_values(model=model, params={"discount_factor": 1.0}),
-        np.asarray(nodes, dtype=float),
-    )
+    if marked:
+        # A model without value grids keeps its age-specialized imputations.
+        np.testing.assert_array_equal(expected, np.asarray(nodes, dtype=float))
 
 
 @pytest.mark.parametrize("nodes", _NODE_PAIRS)

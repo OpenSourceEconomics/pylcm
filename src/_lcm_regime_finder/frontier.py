@@ -12,6 +12,8 @@ import hashlib
 import json
 import time
 
+from .block_admission import admission_record, context_key
+
 METRICS = ('work', 'storage', 'clarity')
 FAMILY_ENCODING = 'canonical JSON group/date buckets once; newline [group,start,stop,cost], reverse start order; unique groups'
 SUBSET_ENCODING = 'canonical unique date buckets; interval records sorted by group_id; memoized label-subset recurrence records and singleton signature models sorted by canonical JSON'
@@ -302,7 +304,7 @@ class Search:
             self.global_axes = tuple(self.allocation.get(axis_kind) if self.allocation.get(axis_kind) is not None
                 else self.union_axes(c[axis_kind] for c in self.cells.values())
                 for axis_kind in ('states', 'actions'))
-        self.rules = {'block': 4, 'characteristic': 2, 'dispatch': 1} | analysis.get('clarity_weights', {})
+        self.rules = {'block': 1, 'characteristic': 0, 'dispatch': 0} | analysis.get('clarity_weights', {})
         if any(type(v) is not int or v < 0 for v in self.rules.values()) or self.rules['block'] == 0:
             raise ValueError('Clarity costs must be nonnegative integers with positive block cost')
 
@@ -332,14 +334,7 @@ class Search:
     def protected_key(self, cell):
         if hasattr(self, 'roles') and cell['id'] in self.roles:
             return self.roles[cell['id']]
-        # Unknown information contracts cannot become guessed common labels.
-        role = cell.get('role')
-        role_key = role if role is not None else ({'original_contexts_preserved_by_dispatch': True, 'decision_objective': cell.get('decision_objective')}
-            if self.decl.get('analysis_scope') == 'pylcm-structural-graph/v1'
-            else {'unresolved_original_role': cell['regime']})
-        terminal_context = None if self.decl.get('analysis_scope') == 'pylcm-structural-graph/v1' else bool(cell.get('terminal'))
-        return canonical([role_key, cell.get('ownership'), cell.get('stage'), terminal_context,
-                          cell.get('declaration_type'), cell.get('structural_roles', {}), cell.get('solver_identity')])
+        return context_key(cell)
 
     def components(self):
         groups = defaultdict(lambda: defaultdict(list))
@@ -421,6 +416,7 @@ class Search:
         dispatch = max(0, len({c['regime'] for c in cells}) - 1)
         clarity = self.rules['block'] + self.rules['characteristic'] * len(characteristics) + self.rules['dispatch'] * dispatch
         return {'cells': sorted(ids), 'option_by_cell': {c: policy[c] for c in sorted(ids)},
+                'admission': admission_record(cells),
                 'periods': sorted({c['period'] for c in cells}),
                 'ages': [self.cells[c]['age'] for c in sorted(ids, key=lambda c: (self.cells[c]['period'], c))],
                 'original_regimes': sorted({c['regime'] for c in cells}),
@@ -768,7 +764,7 @@ class Search:
         records = sorted(self.records, key=lambda row:row['group_id'])
         grouping_records = sorted(self.grouping_records, key=canonical)
         signature_records = sorted(self.signature_records,key=canonical)
-        return {'schema': 'regime-frontier/v5', 'status': 'COMPLETE' if complete else 'INCOMPLETE',
+        return {'schema': 'regime-frontier/v6', 'status': 'COMPLETE' if complete else 'INCOMPLETE',
                 'frontier': frontier,
                 'certificate': {'analysis_sha256': digest(self.analysis),
                     'family_sha256': digest([records,grouping_records,signature_records]), 'family_encoding': PREFIX_ENCODING, 'complete': complete,
@@ -869,9 +865,19 @@ def recommend(result, reference=None, weights=None, *, deferred_graph_ids=(), al
             'rule': 'minimum positive weighted reference-normalized cost among preference-eligible frontier points; exact rational score; deterministic cost/layout ties; retain the original if none is eligible'}
 
 
-def search_frontier(analysis, *, limits=None, recommendation=None, checkpoint=None):
+def search_frontier(analysis, *, limits=None, recommendation=None, checkpoint=None,
+                    reporting_mode='recommendation'):
+    if reporting_mode not in ('recommendation', 'curve'):
+        raise ValueError('Unknown frontier reporting mode')
+    if reporting_mode == 'curve' and recommendation is not None:
+        raise ValueError('A raw curve has no ranking weights or recommendation')
     search = Search(analysis, limits, checkpoint)
+    if reporting_mode == 'curve' and search.boundary_unit != 0:
+        raise ValueError('A grid-evaluation curve requires boundary_unit=0 before searching')
     result = search.run()
+    if reporting_mode == 'curve':
+        result['reporting_mode'] = 'curve'
+        return result
     recommendation = recommendation or {}
     deferred = [point['id'] for point in result['frontier'] if _final_only_cleanup(search, point)]
     result['recommendation'] = recommend(result, recommendation.get('reference'), recommendation.get('weights'),

@@ -299,9 +299,7 @@ def test_two_configurations_with_equal_per_regime_widths_are_equal() -> None:
 
 def test_per_regime_widths_reject_a_non_positive_width() -> None:
     """A width of zero is refused at construction, naming axis and regime."""
-    with pytest.raises(
-        ValueError, match=r"axis_widths\['cell'\]\['per_regime'\]\['retire'\]: .* 0"
-    ):
+    with pytest.raises(ValueError, match=r"axis_widths\['cell'\]\['retire'\]: .* 0"):
         ExecutionConfig(axis_widths={_CELL_AXIS: {"retire": 0}})
 
 
@@ -313,7 +311,9 @@ def test_per_regime_widths_reject_an_empty_mapping() -> None:
 
 def test_per_regime_widths_reject_an_empty_regime_name() -> None:
     """Regime keys are non-empty strings."""
-    with pytest.raises(ValueError, match=r"axis_widths\['cell'\].*\['\[key\]'\]"):
+    with pytest.raises(
+        ValueError, match=r"axis_widths\['cell'\]\[''\]: .* at least 1 character"
+    ):
         ExecutionConfig(axis_widths={_CELL_AXIS: {"": 2}})
 
 

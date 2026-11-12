@@ -115,7 +115,7 @@ def check_cost_frontier(original, result, *, seconds=900, limits=None):
         elif backend == 'ordered-domain-separator':
             from .separator_frontier import Problem, check
             guard = result['proof']['separator']
-            problem = Problem(analysis, bridge=guard['bridge'], axis=guard['axis'])
+            problem = Problem(analysis, bridge=guard['bridge'], axis=guard['axis'], checking=True)
             checked = check(problem, result['proof'], seconds=seconds, max_points=counts['separator_points'])
         elif backend == 'protected-components':
             from .frontier_check import IndependentFamily, check_frontier

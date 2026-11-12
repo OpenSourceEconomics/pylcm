@@ -33,15 +33,8 @@ jobs:
       # takes it before any waiting pull-request benchmark.
       - name: Hold the benchmark GPU for this whole job
         run: bash .github/scripts/hold-benchmark-gpu.sh main
-      - name: Wait for GPU to be free
-        run: |
-          echo "Waiting for GPU to be free..."
-          while nvidia-smi --query-compute-apps=process_name --format=csv,noheader \
-                | grep -qi python; do
-            echo "$(date): GPU in use by Python process, retrying in 60s..."
-            sleep 60
-          done
-          echo "GPU is free."
+      - name: Wait for the GPU and CPU to be free
+        run: bash .github/scripts/wait-for-quiet-host.sh
       - name: Regenerate version.py
         run: >-
           echo "__version__ = '$(git describe --tags --always)'"
