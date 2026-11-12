@@ -65,9 +65,17 @@ def _solve(
     ).values
 
 
+@pytest.fixture(scope="module")
+def brute() -> Mapping[int, Mapping[str, FloatND]]:
+    """The grid-search twin's values, the reference for both DC-EGM backends."""
+    return _solve(variant="brute", envelope="rfc")
+
+
 @pytest.mark.parametrize("envelope", ["rfc", "fues"])
 def test_ds2024_housing_dcegm_matches_brute_in_bulk(
+    *,
     envelope: Literal["fues", "ltm", "rfc"],
+    brute: Mapping[int, Mapping[str, FloatND]],
 ):
     """Each discrete-housing DC-EGM backend bulk-agrees with its grid-search twin.
 
@@ -79,7 +87,6 @@ def test_ds2024_housing_dcegm_matches_brute_in_bulk(
     the oracle is the robust check; the two backends' policies can diverge by the
     envelope-internal tie-breaking on the durable-corner cells.
     """
-    brute = _solve(variant="brute", envelope="rfc")
     dcegm = _solve(variant="dcegm", envelope=envelope)
     differences = []
     for period in sorted(brute):
