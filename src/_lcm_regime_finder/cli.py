@@ -173,6 +173,15 @@ def main(argv=None):
     sub = parser.add_subparsers(dest='command', required=True)
     _analysis_options(sub.add_parser('find-regimes'))
     _analysis_options(sub.add_parser('analyze-model'))
+    curve = sub.add_parser('evaluation-curve', help='Raw grid-evaluation curve from a saved metadata analysis; no native model execution')
+    curve.add_argument('problem'); curve.add_argument('--output', required=True)
+    curve.add_argument('--seconds', type=float, default=900)
+    curve.add_argument('--host-gib', type=float, default=8)
+    curve.add_argument('--max-segments', type=int, default=2_000_000)
+    curve.add_argument('--max-groupings', type=int, default=100_000)
+    curve.add_argument('--max-frontier', type=int, default=5000)
+    curve.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)
+    curve.set_defaults(cost_limits=None)
     for name in ('check-result', 'check-model-result'):
         check = sub.add_parser(name); check.add_argument('problem'); check.add_argument('report')
         check.add_argument('--output'); check.add_argument('--seconds', type=float, default=900)
@@ -206,6 +215,27 @@ def main(argv=None):
         problem = load_problem(args.problem, reads=reads)
         if args.cost_limits is not None and problem.get('schema') != 'exact-graph-cost-instance/v1':
             raise ValueError('--cost-limits applies only to an exact cost-family input')
+        if args.command == 'evaluation-curve':
+            from .curve import build_curve_report
+            from .frontier import search_frontier
+            if delivery is None:
+                raise ValueError('Curve analysis requires an output delivery plan')
+            analysis = problem.get('analysis', problem)
+            if analysis.get('schema') != 'regime-semantic-analysis/v1':
+                raise ValueError('evaluation-curve requires a saved metadata analysis or a report containing one')
+            allocation = analysis.get('allocation_scenario', analysis['declarations']['allocation'])
+            analysis = dict(analysis, allocation_scenario=dict(allocation, boundary_unit=0))
+            limits = {'seconds': args.seconds, 'segments': args.max_segments,
+                      'groupings': args.max_groupings, 'frontier_points': args.max_frontier}
+            frontier = search_frontier(analysis, reporting_mode='curve', limits=limits)
+            result = build_curve_report(analysis, frontier, checking_limits=limits)
+            result['input_artifact'] = input_artifact_identity(args.problem, reads=reads)
+            from .structural_store import final_input_check
+            final_input_check(problem)
+            delivery.publish(result)
+            print(json.dumps({'status': result['status'], 'output': str(delivery.destination)}, sort_keys=True))
+            # A checked partial curve is a successful delivery, not complete coverage.
+            return 0
         if args.command in ('check-result', 'check-model-result'):
             report = reads.document(args.report)
             recorded_input = report.get('input_artifact')

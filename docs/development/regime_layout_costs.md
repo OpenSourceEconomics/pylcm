@@ -39,7 +39,20 @@ price overrides remain supported by the search. A regime-count curve requires th
 default prices; it rejects other prices rather than relabelling a weighted complexity
 score as a regime count.
 
-The internal reporting functions can be used on an existing analysis export:
+The installed checker command produces a raw curve from an existing `analysis.json`
+export (or a report containing that analysis):
+
+```console
+pixi run python -m _lcm_regime_finder evaluation-curve analysis.json --output curve
+```
+
+It writes `curve/report.json`, sets the unpriced-link objective before searching, and
+independently checks retained witnesses. The JSON status is `COMPLETE` or `PARTIAL`; a
+successful command does not promote a partial curve to full coverage. The command uses
+the existing worker resource and input-protection boundary. It does not construct a
+model or run numerical solution code.
+
+The internal reporting functions can also be used on an existing analysis export:
 
 ```python
 from _lcm_regime_finder.curve import build_curve_report

@@ -1,6 +1,7 @@
 """Public metadata round trips, bounded failure, and full-relation views."""
 
 from copy import deepcopy
+import pytest
 import hashlib
 import json
 from pathlib import Path
@@ -213,3 +214,119 @@ def test_boundary_maps_cover_every_original_relation() -> None:
         [r["id"] for r in original["relations"]]
     )
     assert all(r["native_execution"] == "NOT_RUN" for r in maps)
+
+
+def _write_evaluation_analysis(
+    *,
+    path: Path,
+    wrapped: bool,
+    complete: bool,
+) -> bytes:
+    from tests.regime_finder.existing_family_oracle import _mapping
+    from tests.regime_finder.test_existing_layout_contract import _create_case
+
+    analysis = _create_case("policies")
+    analysis["schema"] = "regime-semantic-analysis/v1"
+    analysis["discovery_complete"] = complete
+    analysis.pop("clarity_weights")
+    allocation = _mapping(_mapping(analysis["declarations"])["allocation"])
+    analysis["allocation_scenario"] = {**allocation, "boundary_unit": 17}
+    source = (
+        {"schema": "regime-production-result/v1", "analysis": analysis}
+        if wrapped
+        else analysis
+    )
+    path.write_text(json.dumps(source))
+    return path.read_bytes()
+
+
+@pytest.mark.parametrize("wrapped", [False, True])
+def test_evaluation_curve_uses_raw_grid_counts_without_scalar_recommendation(
+    *,
+    tmp_path: Path,
+    wrapped: bool,
+) -> None:
+    from _lcm_regime_finder import cli, frontier
+    from tests.regime_finder.existing_family_oracle import _mapping, _rows
+
+    source = tmp_path / "analysis.json"
+    before = _write_evaluation_analysis(path=source, wrapped=wrapped, complete=True)
+    output = tmp_path / "result"
+
+    with patch.object(
+        frontier,
+        "recommend",
+        side_effect=AssertionError(
+            "An evaluation curve must not call scalar recommendation"
+        ),
+    ):
+        exit_code = cli.main(
+            ["evaluation-curve", str(source), "--output", str(output), "--worker"]
+        )
+    assert exit_code == 0
+    result = _mapping(json.loads((output / "report.json").read_text()))
+    assert result["schema"] == "regime-evaluation-curve/v1"
+    assert result["status"] == "COMPLETE"
+    assert _mapping(result["independent_check"])["status"] == "PASS"
+    assert "recommendation" not in result and "score" not in result
+    points = _rows(result["frontier"])
+    assert points
+    assert all(point["link_charge_evaluations"] == 0 for point in points)
+    assert all(point["evaluations"] == point["grid_evaluations"] for point in points)
+    assert source.read_bytes() == before
+
+
+def test_evaluation_curve_parent_preserves_a_partial_discovery_result(
+    tmp_path: Path,
+) -> None:
+    from tests.regime_finder.existing_family_oracle import _mapping
+
+    source = tmp_path / "analysis.json"
+    before = _write_evaluation_analysis(path=source, wrapped=False, complete=False)
+    output = tmp_path / "result"
+    run = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "_lcm_regime_finder",
+            "evaluation-curve",
+            str(source),
+            "--output",
+            str(output),
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert run.returncode == 0, run.stdout + run.stderr
+    result = _mapping(json.loads((output / "report.json").read_text()))
+    assert result["schema"] == "regime-evaluation-curve/v1"
+    assert result["status"] == "PARTIAL"
+    assert result["discovery_complete"] is False
+    assert result["source_semantics"] == "NOT_ESTABLISHED_BY_COST_SEARCH"
+    assert source.read_bytes() == before
+
+
+@pytest.mark.parametrize("worker", [False, True])
+def test_evaluation_curve_cannot_replace_its_saved_analysis(
+    *,
+    tmp_path: Path,
+    worker: bool,
+) -> None:
+    source = tmp_path / "report.json"
+    before = _write_evaluation_analysis(path=source, wrapped=False, complete=True)
+    command = [
+        sys.executable,
+        "-m",
+        "_lcm_regime_finder",
+        "evaluation-curve",
+        str(source),
+        "--output",
+        str(tmp_path),
+    ]
+    if worker:
+        command.append("--worker")
+    run = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, check=False)
+    assert run.returncode == 1, run.stdout + run.stderr
+    assert source.read_bytes() == before
