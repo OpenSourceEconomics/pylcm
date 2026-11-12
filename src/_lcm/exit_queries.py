@@ -772,6 +772,11 @@ class _QueryGraphBuilder:
                 for offset, name in enumerate(exits)
             },
             sample=None if rule is None else (rule, ()),
+            exit_availability=(
+                tuple(reducer.availability.values())
+                if reducer.exits and reducer.availability.keys() == reducer.exits.keys()
+                else ()
+            ),
         )
         return key
 
@@ -1019,9 +1024,11 @@ def _bind_sample(*, nodes: dict[str, QueryNode], root: str) -> None:
     """Keep the root's stay-read groups as a product; every other axis is drawn.
 
     A stay problem whose shock reads are not attributable keeps every own group.
-    A root with nothing left to draw integrates over its full product.
+    A root with nothing left to draw integrates over its full product. When the
+    root's exits are available only on some nodes of one drawn group, that group
+    is drawn among those nodes (`QueryNode.draw_condition`).
     """
-    from _lcm.query_information import stay_read_shocks  # noqa: PLC0415
+    from _lcm.query_information import _frame_shocks, stay_read_shocks  # noqa: PLC0415
 
     node = nodes[root]
     if node.sample is None:
@@ -1056,7 +1063,45 @@ def _bind_sample(*, nodes: dict[str, QueryNode], root: str) -> None:
                 {node.read.period: replace(plan, indices=indices)}
             ),
         )
-    nodes[root] = replace(node, context=context, sample=(node.sample[0], kept))
+    nodes[root] = replace(
+        node,
+        context=context,
+        sample=(node.sample[0], kept),
+        draw_condition=_draw_condition(
+            predicates=node.exit_availability,
+            frame_shocks=_frame_shocks(key=root, definitions=nodes),
+            groups=tuple(
+                frozenset(binding.group.shocks) if position not in kept else None
+                for position, (_, binding, _) in enumerate(bindings)
+            ),
+        ),
+    )
+
+
+def _draw_condition(
+    *,
+    predicates: tuple[Callable[..., PytreeValue], ...],
+    frame_shocks: frozenset[ShockName],
+    groups: tuple[frozenset[ShockName] | None, ...],
+) -> int | None:
+    """The drawn plan position whose shocks alone decide every exit's availability.
+
+    `groups` holds each drawn position's shocks and `None` for a kept one. None
+    when an exit is always available, when no predicate reads a shock, or when
+    the shocks they read are not all in one drawn group.
+    """
+    reads = frozenset(
+        name
+        for predicate in predicates
+        for name in inspect.signature(predicate).parameters
+        if name in frame_shocks
+    )
+    owners = [
+        position
+        for position, shocks in enumerate(groups)
+        if shocks is not None and reads <= shocks
+    ]
+    return owners[0] if predicates and reads and len(owners) == 1 else None
 
 
 def _bind_observation_sources(*, nodes: dict[str, QueryNode], period: int) -> None:
