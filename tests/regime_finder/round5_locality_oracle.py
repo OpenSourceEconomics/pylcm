@@ -5,6 +5,7 @@ represented by its bound function token and complete ordered argument tuple.
 Universal equality for an uninterpreted deterministic function follows from
 equality of these applications; changing a tuple is deliberately not certified.
 """
+
 from itertools import product
 
 

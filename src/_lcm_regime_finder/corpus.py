@@ -86,7 +86,8 @@ def run_corpus(manifest_path, output, *, seconds=900, host_gib=8, reuse_verified
 def _implementation_identity():
     base = Path(__file__).resolve().parent
     return hashlib.sha256(b''.join(path.name.encode() + b'\0' + path.read_bytes()
-                                  for path in sorted(base.glob('*.py')))).hexdigest()
+                                  for path in sorted(base.iterdir())
+                                  if path.suffix in ('.py', '.json'))).hexdigest()
 
 
 def _render(result, output):

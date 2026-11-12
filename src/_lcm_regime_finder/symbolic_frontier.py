@@ -18,6 +18,7 @@ from pathlib import Path
 import time
 
 
+
 def canonical(value):
     return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
 
@@ -230,7 +231,7 @@ def merge_axes(items):
 
 class Instance:
     """Cost-only compilation, with an explicit native semantic boundary."""
-    def __init__(self, *, packet, chains):
+    def __init__(self, *, packet, chains, checking=False):
         self.packet = packet
         self.decl = packet["declarations"]
         if self.decl.get("analysis_scope") != "pylcm-structural-graph/v1":
@@ -338,7 +339,7 @@ class Instance:
             selections.append([row["id"], {c: o["id"] for c, o in chosen.items()}])
         if digest(selections) != packet["original_policy_selection_sha256"]:
             raise ValueError("Offered policy-selection digest mismatch")
-        self.rules = {"block": 4, "dispatch": 1, "characteristic": 2} | packet.get("clarity_weights", {})
+        self.rules = {"block": 1, "dispatch": 0, "characteristic": 0} | packet.get("clarity_weights", {})
         self.boundary = self.allocation.get("boundary_unit", 1)
         if (any(type(v) is not int or v < 0 for v in self.rules.values())
                 or self.rules["block"] == 0 or type(self.boundary) is not int
@@ -346,22 +347,17 @@ class Instance:
             raise ValueError("Invalid cost coefficients")
         self.pairs = {(r["source"], t) for r in self.decl["relations"]
                       if r.get("support") != "zero" for t in r.get("targets", [])}
-        self.roles = {c: self.role(cell) for c, cell in self.cells.items()}
+        if checking:
+            from .block_admission_check import checked_context_key
+            self.roles = {c: checked_context_key(cell) for c, cell in self.cells.items()}
+        else:
+            from .block_admission import context_key
+            self.roles = {c: context_key(cell) for c, cell in self.cells.items()}
         groups = defaultdict(lambda: defaultdict(list))
         for c, cell in self.cells.items():
             groups[self.roles[c]][cell["regime"]].append(c)
         self.components = [{k: tuple(sorted(v[k])) for k in sorted(v)}
                            for _, v in sorted(groups.items())]
-
-    @staticmethod
-    def role(cell):
-        role = cell.get("role")
-        if role is None:
-            role = {"original_contexts_preserved_by_dispatch": True,
-                    "decision_objective": cell.get("decision_objective")}
-        return canonical([role, cell.get("ownership"), cell.get("stage"), None,
-                          cell.get("declaration_type"), cell.get("structural_roles", {}),
-                          cell.get("solver_identity")])
 
     def rows(self, axes):
         product = 1
@@ -913,7 +909,7 @@ class ProofChecker:
 
 def check(*, packet, certificate, max_seconds=900, max_equations=50_000_000,
           max_leaf_candidates=2_000_000, max_frontier_points=5000):
-    instance = Instance(packet=packet, chains=certificate["chains"])
+    instance = Instance(packet=packet, chains=certificate["chains"], checking=True)
     if certificate.get("status") == "INCOMPLETE":
         if (certificate.get("packet_sha256") != digest(packet)
                 or certificate.get("candidate_sha256") != digest(instance.candidate)
