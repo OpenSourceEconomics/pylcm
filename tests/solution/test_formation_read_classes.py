@@ -956,18 +956,18 @@ def test_a_query_weights_one_term_per_representative_of_its_rows(
 def test_a_drawn_formation_crosses_its_stay_rows_with_the_draws(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """With 4 draws on the exit a single has 24 rows, not 144.
+    """With 4 draws on the exit a single has 30 rows, not 144.
 
     Its stay problem reads its wage and taste, whose 6 node combinations stay
-    exact. The offer group and the observed couple shocks are drawn 4 times, and
-    every stay row meets the same draws.
+    exact. Every stay row meets the same 4 draws among offers, with the observed
+    couple shocks, and one row that carries the mass without an offer.
     """
     rows = _evaluated_rows(
         model=_model(nodes=QuasiMonteCarlo(n=4, seed=0)), monkeypatch=monkeypatch
     )
     assert {root: rows[(root, "FULL", root)] for root in ("single_f", "single_m")} == {
-        "single_f": 24,
-        "single_m": 24,
+        "single_f": 30,
+        "single_m": 30,
     }
 
 
@@ -987,14 +987,35 @@ def test_a_drawn_formation_keeps_one_stay_problem_per_stay_row(
 def test_a_drawn_formation_equals_the_product_when_the_draws_are_exact() -> None:
     """A drawn formation value equals the product value under dyadic laws.
 
-    Each drawn group has node masses that are multiples of 1/8 (the offer group)
-    or 1/2 (each observed couple shock). 64 scrambled Sobol points in those three
+    Among offers the offered partner has masses 1/4, 1/2 and 1/4, and each observed
+    couple shock has masses 1/2. 64 scrambled Sobol points in those three
     dimensions put exactly 64 times its mass on every node combination, so the
-    equal-weight average over the draws is the product expectation.
+    equal-weight average over the draws is the expectation given an offer.
     """
     dyadic = partial(_model, offer_probs=(0.5, 0.5), offered_probs=(0.25, 0.5, 0.25))
     got = _solve(dyadic(nodes=QuasiMonteCarlo(n=64, seed=0)))
     expected = _solve(dyadic())
+    np.testing.assert_allclose(
+        np.concatenate([got[name].ravel() for name in sorted(expected)]),
+        np.concatenate([expected[name].ravel() for name in sorted(expected)]),
+        rtol=1e-12,
+    )
+
+
+@pytest.mark.parametrize("offer", [1 / 64, 0.0])
+def test_a_drawn_formation_draws_only_offers(offer: float) -> None:
+    """A rare or impossible offer still integrates exactly.
+
+    Draws fall only where the exit is available, so all 64 integrate the offered
+    partner and the couple shocks exactly as in the dyadic case, while the mass
+    without an offer enters once at the stay value. Without an offer at all the
+    value is the stay value.
+    """
+    rare = partial(
+        _model, offer_probs=(1 - offer, offer), offered_probs=(0.25, 0.5, 0.25)
+    )
+    got = _solve(rare(nodes=QuasiMonteCarlo(n=64, seed=0)))
+    expected = _solve(rare())
     np.testing.assert_allclose(
         np.concatenate([got[name].ravel() for name in sorted(expected)]),
         np.concatenate([expected[name].ravel() for name in sorted(expected)]),

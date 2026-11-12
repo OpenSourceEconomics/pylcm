@@ -43,6 +43,7 @@ from _lcm.simulation.random_address import inverse_cdf_index
 from _lcm.typing import PytreeValue, QAndFKwargs
 from _lcm.utils.counts import sum_counts
 from _lcm.utils.dispatchers import vary_carry_like_body
+from _lcm.utils.functools import call_with_declared_arguments
 from _lcm.zero_safe import factored_weighted_term
 from lcm.exceptions import RegimeInitializationError
 from lcm.shocks import (
@@ -71,8 +72,16 @@ def support_size(*, node: QueryNode, period: int) -> int:
     plan = node.context.current_iid_plans.get(period)
     size = 1 if plan is None else plan.indices.shape[0]
     if node.sample is not None:
-        return size * node.sample[0].n
+        return size * draw_rows(node=node)
     return size * math.prod(node.observation_counts)
+
+
+def draw_rows(*, node: QueryNode) -> int:
+    """Rows a drawn query gives each kept row: its samples, and one more that
+    carries the mass where no exit is available when its draws avoid that mass.
+    """
+    rule = cast("tuple[MonteCarlo | QuasiMonteCarlo, tuple[int, ...]]", node.sample)[0]
+    return rule.n + (node.draw_condition is not None)
 
 
 def default_chunk_size(*, definitions: Mapping[str, QueryNode]) -> int:
@@ -117,19 +126,26 @@ def _uniforms(
 
 
 def sample_uniforms(*, node: QueryNode) -> np.ndarray:
-    """A drawn query's points: one column per drawn group, then per observation."""
+    """A drawn query's points: one column per drawn group, then per observation.
+
+    The row that carries the mass without an available exit gets the cube's
+    centre; its value is the stay value, which reads no drawn axis.
+    """
     rule, kept = cast(
         "tuple[MonteCarlo | QuasiMonteCarlo, tuple[int, ...]]", node.sample
     )
     plan = node.context.current_iid_plans.get(node.read.period)
     groups = 0 if plan is None else len(plan.bindings)
-    return _uniforms(
+    uniforms = _uniforms(
         rule=rule,
         period=node.read.period,
         owner=node.read.target,
         dimension=sum(column not in kept for column in range(groups))
         + len(node.observation_sources),
     )
+    if node.draw_condition is None:
+        return uniforms
+    return np.concatenate([uniforms, np.full((1, uniforms.shape[1]), 0.5)])
 
 
 def _draw(*, weights: FloatND, uniform: FloatND) -> tuple[IntND, FloatND]:
@@ -153,6 +169,59 @@ def _draw(*, weights: FloatND, uniform: FloatND) -> tuple[IntND, FloatND]:
     )
     drawn = mass[row]
     return row, jnp.where(drawn > 0, total / jnp.where(drawn > 0, drawn, 1.0), 0.0)
+
+
+def _draw_available(
+    *, weights: FloatND, available: BoolND, uniform: FloatND
+) -> tuple[IntND, FloatND]:
+    """Draw among a group's available nodes, then add one node for the rest.
+
+    Args:
+        weights: The group's factors, one row per factor, over its nodes.
+        available: Whether an exit is available at each node.
+        uniform: Points of the unit interval, one per draw.
+
+    Returns:
+        The drawn nodes followed by the unavailable node of largest mass, and
+        the factors that scale each one's own mass to the available total and,
+        for the last, to the unavailable total; zero where that total is zero.
+    """
+    row, scale = _draw(
+        weights=jnp.concatenate([weights, available[None].astype(weights.dtype)]),
+        uniform=uniform,
+    )
+    rest = exact_product(weights) * ~available
+    node = jnp.argmax(rest).astype(row.dtype)
+    mass = rest[node]
+    rest_scale = jnp.where(
+        mass > 0, jnp.sum(rest) / jnp.where(mass > 0, mass, 1.0), 0.0
+    )
+    return jnp.append(row, node), jnp.append(scale, rest_scale)
+
+
+def _exit_available(
+    *,
+    predicates: tuple[Callable[..., PytreeValue], ...],
+    arguments: QAndFKwargs,
+    physical: Mapping[ShockName, FloatND | IntND],
+) -> BoolND:
+    """Whether any exit is available at each node of one group's realisation."""
+
+    def at_node(shocks: Mapping[ShockName, FloatND | IntND]) -> BoolND:
+        return jnp.any(
+            jnp.stack(
+                [
+                    jnp.asarray(
+                        call_with_declared_arguments(
+                            function=predicate, operands={**arguments, **shocks}
+                        )
+                    ).astype(bool)
+                    for predicate in predicates
+                ]
+            )
+        )
+
+    return jax.vmap(at_node)(dict(physical))
 
 
 def _has_local_information(*, node: QueryNode, period: int) -> bool:
@@ -991,12 +1060,11 @@ def _drawn_codes(
     its sample and an observed shock by its row.
     """
     node = definitions[key]
-    rule, kept = cast(
-        "tuple[MonteCarlo | QuasiMonteCarlo, tuple[int, ...]]", node.sample
-    )
+    _, kept = cast("tuple[MonteCarlo | QuasiMonteCarlo, tuple[int, ...]]", node.sample)
     plan = _plan(node=node)
     own = () if plan is None else plan.bindings
     size = 1 if plan is None else plan.indices.shape[0]
+    draws = draw_rows(node=node)
     bindings = _bindings(node=node, definitions=definitions, period=node.read.period)
     columns = []
     for shock in shocks:
@@ -1012,21 +1080,21 @@ def _drawn_codes(
             _, binding, nodes = own[position]
             codes = _shock_codes(binding=binding, nodes=nodes, shock=shock)
             rows = np.asarray(cast("CurrentIIDPlan", plan).indices)[:, position]
-            columns.append(np.repeat(codes[rows], rule.n))
+            columns.append(np.repeat(codes[rows], draws))
         elif position is not None:
             # ponytail: two samples that draw one node stay apart; merge them
             # if draws ever coincide often enough to matter.
-            columns.append(np.tile(np.arange(rule.n), size))
+            columns.append(np.tile(np.arange(draws), size))
         elif any(
             shock in bindings[group].group.shocks for group in node.observation_sources
         ):
             # ponytail: name an observation by its sample where its law reads
             # no kept group; its rows then repeat across the kept rows.
-            columns.append(np.arange(size * rule.n))
+            columns.append(np.arange(size * draws))
         else:
             raise ValueError(f"Shock {shock!r} is not in query {key!r}'s frame.")
     if not columns:
-        return np.zeros((size * rule.n, 0), dtype=np.int64)
+        return np.zeros((size * draws, 0), dtype=np.int64)
     return np.stack(columns, axis=1)
 
 
@@ -1529,6 +1597,10 @@ class InformationQueryCell:
         kept row sees the same draws. Each drawn group adds the factor that
         scales its node's mass to the group total, and one more factor holds
         the sample weight. Also returns one uniform per observation axis and row.
+
+        Under a draw condition (`QueryNode.draw_condition`) that group is drawn
+        among the nodes where an exit is available, and a last sample per kept
+        row stands for the rest of its mass at full sample weight.
         """
         rule, kept = cast(
             "tuple[MonteCarlo | QuasiMonteCarlo, tuple[int, ...]]", node.sample
@@ -1537,13 +1609,18 @@ class InformationQueryCell:
         drawn = tuple(column for column in range(len(bindings)) if column not in kept)
         uniforms = cast("FloatND", fixed[_DRAWS])
         size = 1 if plan is None else plan.indices.shape[0]
-        scales = [jnp.full(rule.n, 1 / rule.n, uniforms.dtype)]
+        draws = draw_rows(node=node)
+        scales = [
+            jnp.ones(draws, uniforms.dtype)
+            .at[: rule.n]
+            .set(jnp.full(rule.n, 1 / rule.n, uniforms.dtype))
+        ]
         if plan is None:
             frame, factors = _empty_frame(), jnp.stack(scales)
         else:
             params = cast("AdmittedGroupParams", fixed[CURRENT_IID_ARGUMENT])
             operands = cast("NodeOperands", fixed[CURRENT_IID_NODES_ARGUMENT])
-            indices = jnp.repeat(plan.indices, rule.n, axis=0)
+            indices = jnp.repeat(plan.indices, draws, axis=0)
             for position, column in enumerate(drawn):
                 group, _, nodes = bindings[column]
                 site = CurrentIIDPlan(
@@ -1552,13 +1629,25 @@ class InformationQueryCell:
                 )
                 # ponytail: the group's law runs here and again below at the
                 # drawn rows; share one realisation if it ever shows in a trace.
-                _, weights = site.realise_information_nodes(
+                site_frame, weights = site.realise_information_nodes(
                     arguments=arguments,
                     group_params={group: params[group]},
                     node_operands={group: operands[group]},
                     indices=site.indices,
                 )
-                row, scale = _draw(weights=weights, uniform=uniforms[:, position])
+                row, scale = (
+                    _draw(weights=weights, uniform=uniforms[:, position])
+                    if column != node.draw_condition
+                    else _draw_available(
+                        weights=weights,
+                        available=_exit_available(
+                            predicates=node.exit_availability,
+                            arguments=arguments,
+                            physical=site_frame.physical,
+                        ),
+                        uniform=uniforms[: rule.n, position],
+                    )
+                )
                 indices = indices.at[:, column].set(jnp.tile(row, size))
                 scales.append(scale)
             frame, factors = plan.realise_information_nodes(
