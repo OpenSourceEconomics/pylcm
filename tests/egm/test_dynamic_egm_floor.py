@@ -178,28 +178,20 @@ def dynamic_egm_params(*, floor: float, literal: bool = False) -> UserParams:
     }
 
 
-@pytest.mark.parametrize(
-    ("floor", "expected"), [(0.0, np.log(4.0)), (0.5, np.log(2.75))]
-)
-def test_dynamic_egm_binding_corner_has_analytic_value(
-    *, floor: float, expected: float
-) -> None:
-    """Strict concavity and negative saving slope make the declared floor binding."""
-    model = build_dynamic_egm_model()
-    solution = model.solve(params=dynamic_egm_params(floor=floor), log_level="off")
-    np.testing.assert_array_almost_equal(
-        solution.values[0]["saving"][1],
-        expected,
-        decimal=DECIMAL_PRECISION,
-    )
-
-
 @pytest.mark.parametrize("floor", [0.0, 0.5])
 def test_dynamic_egm_constant_callable_matches_literal(*, floor: float) -> None:
-    """Equivalent scalar floors use the same translated saving nodes and values."""
+    """Equivalent scalar floors use the same translated saving nodes and values.
+
+    Strict concavity and negative saving slope make the declared floor binding,
+    so the dynamic corner value is analytic.
+    """
     dynamic = build_dynamic_egm_model().solve(
         params=dynamic_egm_params(floor=floor),
         log_level="off",
+    )
+    expected = {0.0: np.log(4.0), 0.5: np.log(2.75)}[floor]
+    np.testing.assert_array_almost_equal(
+        dynamic.values[0]["saving"][1], expected, decimal=DECIMAL_PRECISION
     )
     literal = build_dynamic_egm_model(literal=floor).solve(
         params=dynamic_egm_params(floor=floor, literal=True),
@@ -239,7 +231,11 @@ def scalar_context_output(
 def test_dynamic_egm_corner_publishes_analytic_marginal(
     *, floor: float, marginal: float
 ) -> None:
-    """A binding corner carries the marginal of its actual consumption."""
+    """A binding corner carries the marginal of its actual consumption.
+
+    The carried policy retains the selected original saving candidate, and the
+    compact corner stores its continuation separately from current utility.
+    """
     _, _, _, output = scalar_context_output(floor=floor)
     carry = output.continuations[EGM_CONTINUATION]
     assert isinstance(carry, EGMCarry)
@@ -248,23 +244,7 @@ def test_dynamic_egm_corner_publishes_analytic_marginal(
         marginal,
         decimal=DECIMAL_PRECISION,
     )
-
-
-@pytest.mark.parametrize("floor", [0.0, 0.5])
-def test_dynamic_egm_corner_keeps_original_saving(*, floor: float) -> None:
-    """The carried policy retains the selected original saving candidate."""
-    _, _, _, output = scalar_context_output(floor=floor)
-    carry = output.continuations[EGM_CONTINUATION]
-    assert isinstance(carry, EGMCarry)
     np.testing.assert_array_equal(carry.leaves()[("query_data", "savings")][1], floor)
-
-
-@pytest.mark.parametrize("floor", [0.0, 0.5])
-def test_dynamic_egm_corner_continuation_survives_current_mask(*, floor: float) -> None:
-    """The compact corner stores continuation separately from current utility."""
-    _, _, _, output = scalar_context_output(floor=floor)
-    carry = output.continuations[EGM_CONTINUATION]
-    assert isinstance(carry, EGMCarry)
     np.testing.assert_array_almost_equal(
         carry.leaves()[("query_data", "corner_continuation")],
         [np.log(3 * floor + 4)],
