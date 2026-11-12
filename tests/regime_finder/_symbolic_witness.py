@@ -3,22 +3,36 @@
 Tests use it to read one feasible representative back out of a checked Pareto
 vector; no production path recovers witnesses.
 """
+
 from collections import defaultdict
 
 from _lcm_regime_finder.symbolic_frontier import Instance, ProofChecker, digest
 
 
-def recover_witness(*, packet, certificate, cost, max_seconds=900, max_equations=50_000_000,
-                    max_leaf_candidates=2_000_000, max_frontier_points=5000):
+def recover_witness(
+    *,
+    packet,
+    certificate,
+    cost,
+    max_seconds=900,
+    max_equations=50_000_000,
+    max_leaf_candidates=2_000_000,
+    max_frontier_points=5000,
+):
     """Recover and directly validate one feasible representative of a Pareto vector.
 
     Equal-cost layout ties use ascending threshold/cut choices here. This does not
     claim identity with the older UI's hashed-policy tie representative.
     """
     instance = Instance(packet=packet, chains=certificate["chains"])
-    verifier = ProofChecker(instance=instance, certificate=certificate,
-                            max_seconds=max_seconds, max_equations=max_equations,
-                            max_leaf_candidates=max_leaf_candidates, max_frontier_points=max_frontier_points)
+    verifier = ProofChecker(
+        instance=instance,
+        certificate=certificate,
+        max_seconds=max_seconds,
+        max_equations=max_equations,
+        max_leaf_candidates=max_leaf_candidates,
+        max_frontier_points=max_frontier_points,
+    )
     verifier.check()
     target = tuple(cost)
     if target not in {tuple(v) for v in certificate["frontier"]}:
@@ -28,8 +42,11 @@ def recover_witness(*, packet, certificate, cost, max_seconds=900, max_equations
     def has(node):
         if node not in contains:
             value = verifier.nodes[node]
-            contains[node] = (target in value[1] if value[0] == "leaf"
-                              else any(has(c) for c in value[2]))
+            contains[node] = (
+                target in value[1]
+                if value[0] == "leaf"
+                else any(has(c) for c in value[2])
+            )
         return contains[node]
 
     thresholds = [0] * len(instance.chains)
@@ -69,8 +86,9 @@ def recover_witness(*, packet, certificate, cost, max_seconds=900, max_equations
     component_costs = decompose(0, target)
     if component_costs is None:
         raise ValueError("No component-cost decomposition")
-    interval_records = {(r["component"], r["mask"]): r["suffix"]
-                        for r in certificate["intervals"]}
+    interval_records = {
+        (r["component"], r["mask"]): r["suffix"] for r in certificate["intervals"]
+    }
     blocks = []
 
     def interval_witness(ci, group, target_cost):
@@ -92,8 +110,14 @@ def recover_witness(*, packet, certificate, cost, max_seconds=900, max_equations
                 local = possible[0]
                 rest = tuple(target_cost[i] - local[i] for i in range(3))
                 if rest in values(suffix[stop]):
-                    blocks.append({"component": ci, "label_group_mask": group,
-                                   "cells": sorted(ids), "cost": local})
+                    blocks.append(
+                        {
+                            "component": ci,
+                            "label_group_mask": group,
+                            "cells": sorted(ids),
+                            "cost": local,
+                        }
+                    )
                     start, target_cost = stop, rest
                     break
             else:
@@ -101,7 +125,9 @@ def recover_witness(*, packet, certificate, cost, max_seconds=900, max_equations
         if target_cost != (0, 0, 0):
             raise ValueError("Date witness did not consume its cost")
 
-    for ci, (component, target_cost) in enumerate(zip(instance.components, component_costs)):
+    for ci, (component, target_cost) in enumerate(
+        zip(instance.components, component_costs)
+    ):
         states = {int(k): v for k, v in certificate["components"][ci]["states"].items()}
         mask = (1 << len(component)) - 1
         while mask:
@@ -135,13 +161,24 @@ def recover_witness(*, packet, certificate, cost, max_seconds=900, max_equations
     if total != target:
         raise ValueError("Recovered witness cost is wrong")
     for block in blocks:
-        if instance.literal_block(ids=block["cells"], thresholds=thresholds) != (tuple(block["cost"]),):
+        if instance.literal_block(ids=block["cells"], thresholds=thresholds) != (
+            tuple(block["cost"]),
+        ):
             raise ValueError("Recovered block failed direct cost validation")
         block["option_by_cell"] = {
             c: (instance.coarsened[c] if c in selected else instance.baseline[c])["id"]
-            for c in block["cells"]}
-    return {"cost": target, "thresholds": thresholds, "blocks": blocks,
-            "selected_cells": sorted(selected), "packet_sha256": digest(packet),
-            "candidate_sha256": digest(instance.candidate),
-            "synthesized_cost_variants_used": sorted(selected & set(instance.synthesized_cost_variants)),
-            "status": "VALID_COST_FAMILY_WITNESS", "native_source_semantics": "NOT_ESTABLISHED"}
+            for c in block["cells"]
+        }
+    return {
+        "cost": target,
+        "thresholds": thresholds,
+        "blocks": blocks,
+        "selected_cells": sorted(selected),
+        "packet_sha256": digest(packet),
+        "candidate_sha256": digest(instance.candidate),
+        "synthesized_cost_variants_used": sorted(
+            selected & set(instance.synthesized_cost_variants)
+        ),
+        "status": "VALID_COST_FAMILY_WITNESS",
+        "native_source_semantics": "NOT_ESTABLISHED",
+    }
