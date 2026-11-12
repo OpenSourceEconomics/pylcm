@@ -72,6 +72,13 @@ Failure to certify a reduction does not prove that no further reduction exists. 
 checks preserve the separate solve and simulate declarations and their information and
 decision order; they do not require subjective and realized laws to agree.
 
+Several decisions can belong to the same economic interval. A commitment made before an
+observation cannot use the information revealed by that observation, while later choices
+can. Changing the representation must preserve that order and the model's declared
+payoffs and discounting. An additional decision stage does not itself imply an
+additional economic discount period. See
+[economic time and computational periods](period_time.md).
+
 ### Is it an attractive representation?
 
 The search compares structural costs using the original grid sizes and the stated
@@ -124,6 +131,28 @@ Worker completion or a successful command exit is not a completeness certificate
 The public model-analysis functions do not expose an exact-search option. The exact
 machinery does not strengthen the guarantee of their default heuristic result. The
 snapshot runner exposes exact search explicitly, as described below.
+
+### What must a complete transformation family include?
+
+An optimum over all representations permitted by a stated rule set requires complete
+generation of that family as well as complete cost coverage. A constructive exact method
+can enumerate the finite local choices for coordinate removal, declared categorical
+characteristics and reconstructible forced actions, test their global coherence, and
+then enumerate compatible regime groupings and contiguous date intervals. Conditional
+observation and joint transition laws remain part of the admission tests. Completeness
+is relative to those explicit rules and correct primitive dependency and factorization
+declarations; it does not require discovering arbitrary identities between callbacks.
+
+A cost certificate over supplied projection policies alone does not establish that every
+rule-permitted policy was supplied. Check generation coverage separately from the
+cost-frontier and preservation checks. The resulting theoretical minimum concerns the
+declared structural objective and allocation contract, even if exact enumeration is
+exponential. It is not a minimum over all economically equivalent descriptions.
+
+This mathematical construction also differs from certifying an implementation's model
+capture and family generator. A supplied-family proof or passing finite examples cannot
+establish those implementation properties. The public heuristic retains its stated
+preservation and improvement checks with an unknown global optimality gap.
 
 ## Compare alternative linear cost models
 
