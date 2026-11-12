@@ -27,13 +27,19 @@ def demanded_owners(physical, reads):
     A read is ((period, owner, phase), (period, owner, phase)). An owner that is
     already physical is available without manufacturing a query-only cell.
     """
-    available = {(period, owner, phase) for period, owner in physical
-                 for phase in ("solve", "simulation")}
+    available = {
+        (period, owner, phase)
+        for period, owner in physical
+        for phase in ("solve", "simulation")
+    }
     demanded = set()
     changed = True
     while changed:
-        additions = {target for source, target in reads
-                     if source in available or source in demanded}
+        additions = {
+            target
+            for source, target in reads
+            if source in available or source in demanded
+        }
         additions.difference_update(available)
         changed = not additions <= demanded
         demanded.update(additions)
@@ -42,8 +48,13 @@ def demanded_owners(physical, reads):
 
 if __name__ == "__main__":
     physical = physical_closure({(0, "A")}, [((0, "A"), (1, "B"))])
-    queries = demanded_owners(physical, [((0, "A", "solve"), (0, "Q", "solve")),
-                                        ((0, "Q", "solve"), (0, "R", "solve"))])
+    queries = demanded_owners(
+        physical,
+        [
+            ((0, "A", "solve"), (0, "Q", "solve")),
+            ((0, "Q", "solve"), (0, "R", "solve")),
+        ],
+    )
     assert physical == {(0, "A"), (1, "B")}
     assert queries == {(0, "Q", "solve"), (0, "R", "solve")}
     print("Physical visits and recursive query demands remain distinct.")

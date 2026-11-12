@@ -6,7 +6,47 @@ from networkx import DiGraph
 
 from _lcm.typing import JSONValue
 from lcm.model import Model
+from lcm.regime_analysis import (
+    LinearRegimeCostModel,
+    RegimeAnalysisResult,
+    RegimeBlock,
+    RegimeCandidate,
+    RegimeCheck,
+    RegimeCost,
+)
+from lcm.regime_analysis import result_from_report as _result_from_report
 from lcm.typing import Phase
+
+__all__ = [
+    "LinearRegimeCostModel",
+    "RegimeAnalysisResult",
+    "RegimeBlock",
+    "RegimeCandidate",
+    "RegimeCheck",
+    "RegimeCost",
+    "analyze_regime_structure",
+    "digraph",
+    "find_regimes",
+]
+
+
+# keyword-only-exempt: primary-argument=model
+def analyze_regime_structure(
+    model: Model, *, cost_model: LinearRegimeCostModel | None = None
+) -> RegimeAnalysisResult:
+    """Analyze candidate regime structures using a declared linear cost model.
+
+    Return immutable recommendations, computational blocks, original costs and
+    scoped checks. No report is written. Call result.write_report(directory)
+    explicitly to save one. The heuristic search receives the objective before
+    candidate generation and pruning; it does not establish a global optimum.
+    """
+    from _lcm_regime_finder import find_regimes as analyze  # noqa: PLC0415
+
+    selected_cost = LinearRegimeCostModel() if cost_model is None else cost_model
+    report = analyze(model, recommendation=selected_cost.as_recommendation())
+    report["cost_model"] = selected_cost.as_recommendation()
+    return _result_from_report(report, cost_model=selected_cost)
 
 
 # keyword-only-exempt: primary-argument=model

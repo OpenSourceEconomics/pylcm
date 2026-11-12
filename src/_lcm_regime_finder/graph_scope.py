@@ -1,5 +1,7 @@
 """The constructed pylcm graph is the input contract, with symbolic runtime slots."""
 
+from .records import JSONValue
+
 SCOPE = 'pylcm-structural-graph/v1'
 SIGNATURE = 'pylcm-declared-inputs/v1'
 ALLOCATION = {'kind': 'per_block', 'status': 'declared',
@@ -14,9 +16,21 @@ AR1_TYPES = {'lcm.processes.' + name for name in (
 AR1_TYPES.add('_lcm.processes.ar1_on_nodes._TauchenOnNodesProcess')
 
 
+def _has_conditioned_law(value: JSONValue) -> bool:
+    if isinstance(value, dict):
+        if value.get('type') in {'lcm.state_conditioned.StateConditioned',
+                                  '_lcm.processes.base.StateConditioned'}:
+            return True
+        return any(_has_conditioned_law(item) for item in value.values())
+    if isinstance(value, list):
+        return any(_has_conditioned_law(item) for item in value)
+    return False
+
+
 def unconditioned_iid(value):
     return (isinstance(value, dict) and value.get('type') in IID_TYPES
-            and value.get('fields', {}).get('state_conditioned') is None)
+            and value.get('fields', {}).get('state_conditioned') is None
+            and not _has_conditioned_law(value))
 
 
 def native_graph(original):
@@ -81,7 +95,8 @@ def apply_scope(original, declarations):
         raw = callback.get('original', {})
         if not isinstance(raw,dict):continue
         if (raw.get('type') in IID_TYPES | AR1_TYPES
-                and raw.get('fields', {}).get('state_conditioned') is None):
+                and raw.get('fields', {}).get('state_conditioned') is None
+                and not _has_conditioned_law(raw)):
             path = callback.get('source_path', '')
             if '/states/' in path:
                 axis = path.split('/states/',1)[1].split('/',1)[0].replace('~1', '/').replace('~0', '~')
