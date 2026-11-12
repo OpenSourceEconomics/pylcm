@@ -19,7 +19,7 @@ def test_axis_widths_rejects_a_non_positive_width() -> None:
     """A width of zero is refused at construction, naming the axis."""
     with pytest.raises(
         ValueError,
-        match=r"axis_widths\['action_product'\]\['width'\]: .* greater than 0",
+        match=r"axis_widths\['action_product'\]: .* greater than 0",
     ):
         ExecutionConfig(axis_widths={"action_product": 0})
 

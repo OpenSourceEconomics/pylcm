@@ -38,6 +38,7 @@ from _lcm.grids import ContinuousGrid
 from _lcm.input_validation import (
     CONFIG_FLOAT,
     EXACT_INT,
+    FINITE,
     STRICT_CONFIG,
     translate_validation_errors,
 )
@@ -66,8 +67,12 @@ class FiniteOuterGrid(OuterSearch):
     """Exogenous candidate grid for the outer post-decision margin."""
 
 
-# A positive tolerance or bound; positive infinity is admitted.
+# A positive bound; positive infinity is admitted.
 type _PositiveFloat = Annotated[float, CONFIG_FLOAT, Gt(0.0)]
+
+# A positive finite tolerance: an infinite one would accept every interpolant
+# and so switch refinement off.
+type _PositiveTolerance = Annotated[float, CONFIG_FLOAT, FINITE, Gt(0.0)]
 
 
 @translate_validation_errors(RegimeInitializationError)
@@ -101,11 +106,11 @@ class AdaptiveOuterMesh(OuterSearch):
     """Hard cap on midpoint-insertion rounds."""
 
     # Actual-vs-interpolated candidate refinement.
-    value_atol: _PositiveFloat = 1e-10
+    value_atol: _PositiveTolerance = 1e-10
     """Absolute tolerance for the exact-vs-interpolated value at proposed
     midpoints."""
 
-    value_rtol: _PositiveFloat = 1e-8
+    value_rtol: _PositiveTolerance = 1e-8
     """Relative tolerance for the exact-vs-interpolated value at proposed
     midpoints."""
 

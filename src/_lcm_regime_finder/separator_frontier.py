@@ -24,6 +24,7 @@ import json
 import time
 
 
+
 METRICS = ("work", "storage", "clarity")
 ZERO = (0, 0, 0)
 RULE = "ordered-incompatible-domains-one-bridge/v1"
@@ -133,7 +134,7 @@ def load_analysis(path):
 
 
 class Problem:
-    def __init__(self, analysis, *, bridge="dead", axis="health"):
+    def __init__(self, analysis, *, bridge="dead", axis="health", checking=False):
         self.analysis, self.bridge, self.axis = analysis, bridge, axis
         decl = analysis["declarations"]
         if decl.get("analysis_scope") != "pylcm-structural-graph/v1":
@@ -142,7 +143,7 @@ class Problem:
         if allocation.get("kind") != "per_block":
             raise ValueError("Per-block allocation is required")
         self.boundary = allocation.get("boundary_unit", 1)
-        self.weights = {"block": 4, "dispatch": 1, "characteristic": 2} | analysis.get("clarity_weights", {})
+        self.weights = {"block": 1, "dispatch": 0, "characteristic": 0} | analysis.get("clarity_weights", {})
         if type(self.boundary) is not int or self.boundary < 0:
             raise ValueError("Nonnegative integer boundary coefficient required")
         if any(type(v) is not int or v < 0 for v in self.weights.values()) or self.weights["block"] <= 0:
@@ -166,15 +167,14 @@ class Problem:
         self.domains = decl["domains"] | analysis.get("derived_domains", {})
         self.roles = {}
         self.bylabel = defaultdict(list)
+        if checking:
+            from .block_admission_check import checked_context_key as admission_key
+        else:
+            from .block_admission import context_key as admission_key
         for cid, c in self.cells.items():
             if type(c["period"]) is not int:
                 raise ValueError("Integer dates required")
-            role = c.get("role")
-            if role is None:
-                role = {"original_contexts_preserved_by_dispatch": True,
-                        "decision_objective": c.get("decision_objective")}
-            self.roles[cid] = canonical([role, c.get("ownership"), c.get("stage"), None,
-                c.get("declaration_type"), c.get("structural_roles", {}), c.get("solver_identity")])
+            self.roles[cid] = admission_key(c)
             self.bylabel[c["regime"]].append(cid)
         self.bylabel = {k: tuple(sorted(v)) for k, v in self.bylabel.items()}
         if len(set(self.roles.values())) != 1 or bridge not in self.bylabel:
@@ -567,6 +567,7 @@ def validate_point(problem, point):
 
 def check(problem, result, *, seconds=900, max_points=50000):
     try:
+        problem = Problem(problem.analysis, bridge=problem.bridge, axis=problem.axis, checking=True)
         if result.get("schema") != "aca-ordered-separator/v1":
             raise ValueError("Wrong result schema")
         if result.get("analysis_sha256") != digest(problem.analysis) or result.get("policy_sha256") != digest(problem.policy_record):

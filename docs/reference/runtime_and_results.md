@@ -48,6 +48,8 @@ from lcm.graphs import digraph
 graph = digraph(model)
 solve_graph = digraph(model, phase="solve")
 simulation_graph = digraph(model, phase="simulate")
+# Equivalent discoverable Model method:
+solve_graph = model.to_networkx(phase="solve")
 ```
 
 `digraph` returns an independent NetworkX `DiGraph` of the constructed model's effective
@@ -81,6 +83,11 @@ solve or simulate. Graph and attribute containers are independent and editable. 
 grid, callable and declaration leaves are shared original objects and must obey the
 model's existing stability contract. This graph is an inspection view; modifying its
 topology does not modify the model or establish that a changed model is equivalent.
+
+`model.to_networkx(phase=...)` delegates to this conversion. It returns the temporal
+inspection graph, distinct from the immutable declaration object at `model.graph`. Model
+construction does not import NetworkX for this method; conversion loads the graph
+namespace on demand.
 
 For example, a graph-tool consumer can inspect the temporal layers without evaluating
 the model:

@@ -1178,8 +1178,41 @@ def _function_annotations(
         )
 
 
+@dataclasses.dataclass(kw_only=True)
+class _OpenVisit:
+    """A function visit in progress: where its events start, and what it saw."""
+
+    start: int
+    replayable: bool = True
+    entered: set[int] = dataclasses.field(default_factory=set)
+    entered_bound_methods: set[tuple[int, int]] = dataclasses.field(default_factory=set)
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class _FunctionVisit:
+    """The exact output of one completed, site-independent visit of a function.
+
+    `events` holds, in order, each digest frame as `(label, payload)`, each
+    reported `SealedBinding` and each reported array. `entered` holds the
+    identities the visit walked, so a replay is refused where one of them is
+    active and a full walk would emit a back-reference instead.
+    """
+
+    function: types.FunctionType
+    events: tuple[tuple[str, bytes] | SealedBinding | Array, ...]
+    entered: frozenset[int]
+    entered_bound_methods: frozenset[tuple[int, int]]
+
+
 class _SemanticHasher:
-    """Length-framed serializer feeding a SHA-256 digest."""
+    """Length-framed serializer feeding a SHA-256 digest.
+
+    A function reached many times in one model (an output adapter wraps every
+    user function, for example) is walked once: later visits replay the frames
+    and recorder calls of the first, so the digest is the one a full walk gives.
+    A visit that emitted a back-reference depends on where it was reached and
+    is never replayed.
+    """
 
     def __init__(
         self,
@@ -1192,6 +1225,11 @@ class _SemanticHasher:
         self._active_bound_methods: dict[tuple[int, int], int] = {}
         self._binding_recorder = binding_recorder
         self._array_recorder = array_recorder
+        # Events of the function visits in progress, those visits, and the
+        # completed replayable visits by function identity and guard mode.
+        self._log: list[tuple[str, bytes] | SealedBinding | Array] = []
+        self._open_visits: list[_OpenVisit] = []
+        self._function_visits: dict[tuple[int, bool], _FunctionVisit] = {}
 
     def hexdigest(self) -> str:
         return self._digest.hexdigest()
@@ -1208,22 +1246,111 @@ class _SemanticHasher:
         """Report one read binding to the recorder, when one listens."""
         if self._binding_recorder is None:
             return
-        self._binding_recorder(
-            SealedBinding(
-                owner=f"{owner.__module__}.{owner.__qualname__}",
-                name=name,
-                namespace=namespace,
-                cell=cell,
-                value=value,
-            )
+        binding = SealedBinding(
+            owner=f"{owner.__module__}.{owner.__qualname__}",
+            name=name,
+            namespace=namespace,
+            cell=cell,
+            value=value,
         )
+        if self._open_visits:
+            self._log.append(binding)
+        self._binding_recorder(binding)
 
     def frame(self, *, label: str, payload: bytes = b"") -> None:
+        if self._open_visits:
+            self._log.append((label, payload))
         for part in (label.encode(), payload):
             self._digest.update(len(part).to_bytes(8, byteorder="big"))
             self._digest.update(part)
 
-    def visit(  # noqa: C901, PLR0911, PLR0912, PLR0915
+    def _back_reference(self, *, label: str, payload: bytes) -> None:
+        """Emit a back-reference; the visits in progress depend on their site."""
+        for open_visit in self._open_visits:
+            open_visit.replayable = False
+        self.frame(label=label, payload=payload)
+
+    def _enter(self, identity: int) -> None:
+        self._active[identity] = len(self._active)
+        if self._open_visits:
+            self._open_visits[-1].entered.add(identity)
+
+    def _enter_bound_method(self, identity: tuple[int, int]) -> None:
+        self._active_bound_methods[identity] = len(self._active_bound_methods)
+        if self._open_visits:
+            self._open_visits[-1].entered_bound_methods.add(identity)
+
+    def _record_array(self, value: Array) -> None:
+        if self._array_recorder is None:
+            return
+        if self._open_visits:
+            self._log.append(value)
+        self._array_recorder(value)
+
+    def visit(
+        self, *, value: _Reachable, _ignore_beartype_guards: bool = False
+    ) -> None:
+        if not isinstance(value, types.FunctionType) or id(value) in self._active:
+            self._visit_value(
+                value=value, _ignore_beartype_guards=_ignore_beartype_guards
+            )
+            return
+        key = (id(value), _ignore_beartype_guards)
+        done = self._function_visits.get(key)
+        if (
+            done is not None
+            and done.function is value
+            and done.entered.isdisjoint(self._active)
+            and done.entered_bound_methods.isdisjoint(self._active_bound_methods)
+        ):
+            self._replay(done)
+            return
+        self._open_visits.append(_OpenVisit(start=len(self._log)))
+        try:
+            self._visit_value(
+                value=value, _ignore_beartype_guards=_ignore_beartype_guards
+            )
+        finally:
+            open_visit = self._close_visit()
+        if open_visit.replayable:
+            self._function_visits[key] = _FunctionVisit(
+                function=value,
+                events=tuple(self._log[open_visit.start :]),
+                entered=frozenset(open_visit.entered),
+                entered_bound_methods=frozenset(open_visit.entered_bound_methods),
+            )
+        if not self._open_visits:
+            self._log.clear()
+
+    def _close_visit(self) -> _OpenVisit:
+        """Finish the innermost visit; its enclosing visit saw all it saw."""
+        open_visit = self._open_visits.pop()
+        if self._open_visits:
+            enclosing = self._open_visits[-1]
+            enclosing.replayable &= open_visit.replayable
+            enclosing.entered |= open_visit.entered
+            enclosing.entered_bound_methods |= open_visit.entered_bound_methods
+        return open_visit
+
+    def _replay(self, done: _FunctionVisit) -> None:
+        """Repeat a completed visit's frames and recorder calls, in order."""
+        if self._open_visits:
+            enclosing = self._open_visits[-1]
+            enclosing.entered |= done.entered
+            enclosing.entered_bound_methods |= done.entered_bound_methods
+        for event in done.events:
+            if isinstance(event, tuple):
+                label, payload = event
+                self.frame(label=label, payload=payload)
+            elif isinstance(event, SealedBinding):
+                if self._open_visits:
+                    self._log.append(event)
+                if self._binding_recorder is not None:
+                    self._binding_recorder(event)
+            else:
+                self._record_array(event)
+
+    def _visit_value(  # noqa: C901, PLR0911, PLR0912, PLR0915
         self, *, value: _Reachable, _ignore_beartype_guards: bool = False
     ) -> None:
         if value is Ellipsis:
@@ -1291,8 +1418,8 @@ class _SemanticHasher:
             value=value, candidates=_NUMPY_SCALAR_TYPES
         )
         if isinstance(value, Array) or is_exact_numpy_value:
-            if isinstance(value, Array) and self._array_recorder is not None:
-                self._array_recorder(value)
+            if isinstance(value, Array):
+                self._record_array(value)
             # The shape frame records the rank and shape the declaration actually
             # holds: a 0-d array is a different mathematical object from a
             # length-one vector even though their bytes agree. Memory order is
@@ -1332,7 +1459,7 @@ class _SemanticHasher:
 
         identity = id(value)
         if identity in self._active:
-            self.frame(
+            self._back_reference(
                 label="cycle-backreference",
                 payload=(
                     f"{self._active[identity]}:"
@@ -1344,7 +1471,7 @@ class _SemanticHasher:
         # the process-local object id. Tracking functions and classes as well as
         # containers is necessary because a helper method may refer back to the
         # class attribute through which it was reached.
-        self._active[identity] = len(self._active)
+        self._enter(identity)
         try:
             if isinstance(value, types.ModuleType):
                 msg = (
@@ -1661,7 +1788,7 @@ class _SemanticHasher:
         """Hash an exact JAX custom-JVP wrapper through its semantic callables."""
         identity = id(value)
         if identity in self._active:
-            self.frame(
+            self._back_reference(
                 label="cycle-backreference",
                 payload=(
                     f"{self._active[identity]}:"
@@ -1669,7 +1796,7 @@ class _SemanticHasher:
                 ).encode(),
             )
             return
-        self._active[identity] = len(self._active)
+        self._enter(identity)
         try:
             state = vars(value)
             metadata_fields = {
@@ -2090,7 +2217,7 @@ class _SemanticHasher:
         identity = (id(function), id(receiver))
         if identity in self._active_bound_methods:
             receiver_type = receiver if isinstance(receiver, type) else type(receiver)
-            self.frame(
+            self._back_reference(
                 label="bound-method-cycle-backreference",
                 payload=(
                     f"{self._active_bound_methods[identity]}:"
@@ -2100,7 +2227,7 @@ class _SemanticHasher:
             )
             return
 
-        self._active_bound_methods[identity] = len(self._active_bound_methods)
+        self._enter_bound_method(identity)
         try:
             self.frame(
                 label="referenced-bound-method-start",

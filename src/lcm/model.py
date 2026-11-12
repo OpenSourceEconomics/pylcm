@@ -468,9 +468,14 @@ from lcm.typing import (
 _PARAM_NAME_SIMILARITY_THRESHOLD = 0.8
 
 if TYPE_CHECKING:
+    from networkx import DiGraph
+
+    type _TemporalGraphBoundary = DiGraph
     type _SolutionResultBoundary = SolutionResult
     type _ArtifactStoreBoundary = ArtifactStore
 else:
+    # NetworkX is loaded only by explicit graph conversion, not Model imports.
+    type _TemporalGraphBoundary = object
     # Caller-visible result containers are validated and snapshotted explicitly;
     # runtime annotation traversal must not inspect hostile or lazy contents first.
     type _SolutionResultBoundary = object
@@ -1999,6 +2004,18 @@ class Model:
     def edges(self) -> ModelEdges:
         """The edges exactly as declared in `Model(edges=...)`, laws included."""
         return self._edges
+
+    def to_networkx(self, *, phase: Phase | None = None) -> _TemporalGraphBoundary:
+        """Return an independent temporal regime graph as a NetworkX DiGraph.
+
+        Nodes use exact age/regime or period/regime keys. Select solve or
+        simulate when their temporal graphs differ. This view is distinct from
+        the immutable model.graph declaration and contains no same-period edges.
+        Conversion does not solve the model or prepare execution.
+        """
+        from lcm.graphs import digraph  # noqa: PLC0415
+
+        return digraph(self, phase=phase)
 
     def get_declarations(self) -> ModelDeclarations:
         """Return resolved graph declarations and their declared function inputs.
