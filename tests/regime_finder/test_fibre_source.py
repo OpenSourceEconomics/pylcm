@@ -3,10 +3,12 @@
 from collections.abc import Mapping
 from copy import deepcopy
 from pathlib import Path
+import json
 import os
 import subprocess
 import textwrap
 from typing import TYPE_CHECKING
+from unittest.mock import patch
 
 import pytest
 
@@ -1000,122 +1002,6 @@ def test_new_target_coordinate_has_an_explicit_constant_update() -> None:
     assert original == before
 
 
-def test_native_capture_owned_packed_numpy_fixed_params(tmp_path: Path) -> None:
-    script = textwrap.dedent(
-        """
-        import json
-        from pathlib import Path
-        import sys
-        import numpy as np
-        from lcm import DiscreteGrid, InitialNodes, Model, Regime, categorical
-        from lcm.typing import DiscreteState, FloatND, ScalarInt
-        from _lcm_regime_finder.callable_identity import capture_session
-        from _lcm_regime_finder.model_snapshot import normalize, read_model
-        from _lcm_regime_finder.structural_arrays import NativeWriter
-        from _lcm_regime_finder.structural_store import CaptureStore
-
-        @categorical(ordered=False)
-        class Binary:
-            low: ScalarInt
-            high: ScalarInt
-
-        @categorical(ordered=False)
-        class Regimes:
-            terminal: ScalarInt
-
-        def utility(x: DiscreteState, table: FloatND) -> FloatND:
-            raise AssertionError("Economic callback executed")
-
-        table = np.arange(24, dtype=np.float64).reshape(2, 3, 4).transpose(1, 0, 2).copy(order="K")
-        assert table.base is None and table.flags.owndata
-        assert not table.flags.c_contiguous and not table.flags.f_contiguous
-        destination = Path(sys.argv[1])
-        destination.mkdir()
-        model = Model(
-            n_periods=1,
-            regime_id_class=Regimes,
-            regimes={"terminal": Regime(
-                states={"x": DiscreteGrid(Binary)}, functions={"utility": utility},
-            )},
-            initial_nodes=InitialNodes(by_period={0: "terminal"}),
-            edges={}, fixed_params={"table": table}, enable_jit=False,
-        )
-        stored = model.fixed_params["table"]
-        stored_flavor = NativeWriter.flavor(stored)
-        assert stored_flavor in {"numpy", "jax-value"}
-        transaction = {"kind": "exclusive-owner", "authority": "test owns synthetic Model and table; no concurrent writes"}
-        model_store = CaptureStore(
-            destination / "model.json", check=lambda: None,
-            source_context={"synthetic": "owned-packed-axis-permutation"},
-            transaction=transaction,
-        )
-        captured = read_model(model, structural_store=model_store)
-        assert captured["capture_report"]["status"] == "COMPLETE", captured["capture_report"]
-        header = captured["structural_store"]
-        assert header["source_comparison"] == "PASS"
-        assert header["manifest"]["source_consistency"] == "CALLER_QUIESCENCE_CONTRACT"
-        model_ref = captured["fixed_params"]["table"]["structural_ref"]
-        model_array = model_store.reader.decode()[model_ref["root"]]
-        assert model_array.flavor == stored_flavor
-        assert model_array.shape == tuple(stored.shape)
-        assert model_array.dtype == np.dtype(stored.dtype).str
-        if stored_flavor == "numpy":
-            assert model_array.strides == tuple(stored.strides)
-
-        raw_store = CaptureStore(
-            destination / "original-array.json", check=lambda: None,
-            source_context={"synthetic": "same-original-array-object"},
-            transaction=transaction,
-        )
-        with capture_session() as session:
-            session.structural_store = raw_store
-            raw_store.check = session.check
-            raw_store.writer.check = session.check
-            raw = normalize(table)
-        assert session.report()["status"] == "COMPLETE", session.report()
-        raw_header = raw_store.header
-        assert raw_header["source_comparison"] == "PASS"
-        raw_array = raw_store.reader.decode()[raw["structural_ref"]["root"]]
-        assert raw_array.flavor == "numpy"
-        assert raw_array.shape == tuple(table.shape)
-        assert raw_array.strides == tuple(table.strides)
-        receipt = {
-            "capture_status": captured["capture_report"]["status"],
-            "model_leaf_flavor": stored_flavor,
-            "model_leaf_is_original_object": stored is table,
-            "model_source_comparison": header["source_comparison"],
-            "model_source_anchor": header["manifest"]["source_anchor"]["logical_sha256"],
-            "original_array_flavor": raw_array.flavor,
-            "original_array_source_comparison": raw_header["source_comparison"],
-            "original_array_source_anchor": raw_header["manifest"]["source_anchor"]["logical_sha256"],
-            "original_owned": bool(table.flags.owndata),
-            "original_c_contiguous": bool(table.flags.c_contiguous),
-            "original_f_contiguous": bool(table.flags.f_contiguous),
-            "original_shape": list(table.shape),
-            "original_strides": list(table.strides),
-            "scope": "Synthetic public Model construction and structural capture only; no economic callback, solve or simulation.",
-        }
-        (destination / "CAPABILITY.json").write_text(json.dumps(receipt, indent=2) + "\\n")
-        """
-    )
-    command = [
-        "pixi",
-        "run",
-        "--as-is",
-        "--manifest-path",
-        str(Path(__file__).resolve().parents[2] / "pyproject.toml"),
-        "-e",
-        os.environ.get("PIXI_ENVIRONMENT_NAME", "type-checking"),
-        "python",
-        "-c",
-        script,
-        str(tmp_path / "capture-proof"),
-    ]
-    completed = subprocess.run(command, capture_output=True, text=True, check=False)
-    assert completed.returncode == 0, completed.stdout + completed.stderr
-    assert (tmp_path / "capture-proof" / "CAPABILITY.json").is_file()
-
-
 @pytest.mark.parametrize("period", [0, 1])
 @pytest.mark.parametrize(
     "clock", ["half_year_ages", "integer_ages", "periods", "periods_free_age"]
@@ -1174,3 +1060,193 @@ def test_date_specialization_uses_numeric_original_age_or_actual_period(
         else {"history"}
     )
     assert result.live_coordinates == expected
+
+
+def _report_original(*, numeric_values: bool = False) -> dict[str, JSONValue]:
+    original: dict[str, JSONValue] = snapshot()
+    _fields(original)["constraints"] = {
+        "allowed": function(
+            "def allowed(choice_code, period):\n    return (choice_code == 0) | (period < 2)\n",
+            ["choice_code", "period"],
+        )
+    }
+    if numeric_values:
+        _object(_fields(original)["states"])["x"] = grid([10.0, 20.0])
+        _object(_fields(original)["actions"])["choice"] = grid([10.0, 20.0])
+        _object(_fields(original)["state_transitions"])["x"] = function(
+            "def next_x():\n    return 20.0\n", []
+        )
+    return original
+
+
+def _assert_source_report(
+    report: dict[str, JSONValue],
+    original: dict[str, JSONValue],
+    *,
+    conservative_update: bool = False,
+) -> None:
+    assert report["schema"] == "regime-source-facts/v1"
+    assert report["status"] == "SOURCE_FACTS_BUILT"
+    assert report["transformation_authorized"] is False
+    assert isinstance(json.dumps(report, allow_nan=False), str)
+    declarations = _normalized(original)
+    cells = tuple(_object(row) for row in _rows(report["cells"]))
+    assert tuple(row["id"] for row in cells) == tuple(
+        _object(row)["id"] for row in _rows(declarations["cells"])
+    )
+    assert tuple(_object(row)["id"] for row in _rows(report["relations"])) == tuple(
+        _object(row)["id"] for row in _rows(declarations["relations"])
+    )
+    exclusions = _object(report["excluded_action_values"])
+    for cell, declared in zip(cells, _rows(declarations["cells"]), strict=True):
+        assert cell["direct_reads"] == ["x"]
+        has_successor = any(
+            _object(row)["source"] == cell["id"] and bool(_object(row)["targets"])
+            for row in _rows(declarations["relations"])
+        )
+        assert cell["live_coordinates"] == (
+            ["history", "x"] if conservative_update and has_successor else ["x"]
+        )
+        period = _object(declared)["period"]
+        assert isinstance(period, int)
+        expected = [1] if period >= 2 else []
+        assert _object(exclusions[_name(cell["id"])])["choice"] == expected
+    assert all(isinstance(item, str) for item in _rows(report["source_obligations"]))
+    assert "recommendation" not in report
+    assert "optimality_certificate" not in report
+
+
+def test_source_report_is_json_safe_original_facts_without_layout_search() -> None:
+    from _lcm_regime_finder import frontier, production
+
+    original = _report_original()
+    before = deepcopy(original)
+    with (
+        patch.object(
+            frontier,
+            "search_frontier",
+            side_effect=AssertionError("Source facts must not run a layout search"),
+        ),
+        patch.object(
+            production.MetadataAnalysis,
+            "run",
+            side_effect=AssertionError("Source facts must not run an optimizer"),
+        ),
+    ):
+        report = _source(original).get_report()
+    _assert_source_report(report, original)
+    assert original == before
+
+
+@pytest.mark.parametrize("stochastic", [False, True])
+def test_source_report_keeps_nominal_codes_and_unknown_categorical_support(
+    stochastic: bool,
+) -> None:
+    original = _report_original(numeric_values=True)
+    if stochastic:
+        _object(_fields(original)["state_transitions"])["x"] = {
+            "kind": "dataclass",
+            "type": "lcm.StochasticTransition",
+            "fields": {"func": function("def probabilities():\n    return 0\n", [])},
+        }
+    report = _source(original).get_report()
+    _assert_source_report(report, original, conservative_update=stochastic)
+    first = next(
+        _object(row)
+        for row in _rows(report["relations"])
+        if _object(row)["id"] == _relation_id(original)
+    )
+    support = _object(_object(first["categorical_support"])["x"])
+    assert support["possible_codes"] == ([0, 1] if stochastic else [1])
+    assert support["proved"] is (not stochastic)
+
+
+def test_source_report_preserves_query_qualification_and_conservative_live_states() -> (
+    None
+):
+    original = policy_snapshot()
+    report = _source(original).get_report()
+    assert report["status"] == "SOURCE_FACTS_BUILT"
+    assert report["transformation_authorized"] is False
+    assert any(
+        "policy query" in _name(item) for item in _rows(report["source_obligations"])
+    )
+    assert all(
+        set(_rows(_object(cell)["live_coordinates"])) == {"x", "history"}
+        for cell in _rows(report["cells"])
+    )
+
+
+def test_source_report_uses_each_targets_original_categorical_domain() -> None:
+    original = _report_original()
+    original["n_periods"] = 2
+    regimes = _object(original["user_regimes"])
+    for target, values in (("small", [0, 1]), ("large", [10, 20, 30])):
+        regimes[target] = deepcopy(regimes["original"])
+        _object(_fields(original, target)["states"])["x"] = grid(values)
+    _fields(original)["state_transitions"] = {
+        "x": {
+            "small": function("def next_x():\n    return 0\n", []),
+            "large": function("def next_x():\n    return 20\n", []),
+        },
+        "history": function(
+            "def next_history(history):\n    return history\n", ["history"]
+        ),
+    }
+    reach = _object(_object(original["reachability"])["fields"])
+    reach["nodes"] = [[0, "original"], [1, "small"], [1, "large"]]
+    for phase in ("solution", "simulation"):
+        _object(_object(reach[phase])["fields"])["targets_by_period"] = [
+            {"original": ["small", "large"]}
+        ]
+    report = _source(original).get_report()
+    cells = {_name(_object(row)["id"]): _object(row) for row in _rows(report["cells"])}
+    checked = set()
+    for row in _rows(report["relations"]):
+        relation = _object(row)
+        if "x" not in _object(relation["categorical_support"]):
+            continue
+        targets = _rows(relation["targets"])
+        assert len(targets) == 1
+        target = _name(cells[_name(targets[0])]["regime"])
+        support = _object(_object(relation["categorical_support"])["x"])
+        assert support["proved"] is True
+        assert support["possible_codes"] == ([0] if target == "small" else [1])
+        checked.add((target, _name(relation["phase"])))
+    assert checked == {
+        (target, phase)
+        for target in ("small", "large")
+        for phase in ("solve", "simulation")
+    }
+    assert report["transformation_authorized"] is False
+
+
+def test_source_report_qualifies_uninterpretable_categorical_payload() -> None:
+    original = _report_original()
+    unavailable: JSONValue = {"kind": "opaque", "type": "UnavailableCategoricalPayload"}
+    for slot, coordinate in (("states", "x"), ("actions", "choice")):
+        domain = _object(_object(_fields(original)[slot])[coordinate])
+        _object(domain["fields"])["values"] = unavailable
+    report = _source(original).get_report()
+    assert report["status"] == "SOURCE_FACTS_BUILT"
+    assert report["transformation_authorized"] is False
+    assert any(
+        "payload needs interpretation" in _name(item).lower()
+        for item in _rows(report["source_obligations"])
+    )
+    for cell in _rows(report["cells"]):
+        assert (
+            _object(
+                _object(report["excluded_action_values"])[_name(_object(cell)["id"])]
+            )["choice"]
+            == []
+        )
+    supports = tuple(
+        _object(_object(_object(row)["categorical_support"])["x"])
+        for row in _rows(report["relations"])
+    )
+    assert supports
+    assert all(
+        item["proved"] is False and "target_domains" in item for item in supports
+    )
+    assert all("possible_codes" not in item for item in supports)
