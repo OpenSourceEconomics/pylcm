@@ -59,7 +59,7 @@ def target_role(grid: Grid) -> OutputRole:
 
 
 @dataclass(frozen=True, eq=False, kw_only=True)
-class _InRole(_WrappedCallable[RawOutput]):
+class InRole(_WrappedCallable[RawOutput]):
     """A user function whose output is converted to its role's kind.
 
     A frozen callable instance rather than a nested function: the beartype claw
@@ -100,7 +100,7 @@ def in_role[F: Callable[..., RawOutput]](*, func: F, role: OutputRole, kind: str
         TypeError: If `func` is already wrapped in another role.
 
     """
-    if isinstance(func, _InRole):
+    if isinstance(func, InRole):
         if func.role is not role:
             msg = f"{func.source} is already in role {func.role}, not {role}."
             raise TypeError(msg)
@@ -109,7 +109,7 @@ def in_role[F: Callable[..., RawOutput]](*, func: F, role: OutputRole, kind: str
     # reads only its free arguments, so the wrapper publishes only those.
     signature = inspect.signature(func)
     free = set(get_free_arguments(func))
-    return _InRole(  # ty: ignore[invalid-return-type]
+    return InRole(  # ty: ignore[invalid-return-type]
         func=func,
         signature=signature.replace(
             parameters=[p for p in signature.parameters.values() if p.name in free]

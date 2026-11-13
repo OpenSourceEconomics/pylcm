@@ -49,6 +49,7 @@ from _lcm.engine import NNBEGMPolicyRead, Regime
 from _lcm.execution.value_transfer import ValueArtifactAddress
 from _lcm.grids import Grid
 from _lcm.optimization.golden_section import GoldenSectionResult
+from _lcm.output_roles import InRole, OutputRole
 from _lcm.params.edges import EDGES, flat_namespaces, regime_kernel_params
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.regime_building.value_adapter import AdaptedBuild, ValueAdapter
@@ -138,6 +139,7 @@ _TRUSTED_DECLARATIVE_ENUM_TYPES = frozenset(
         WidthSearch,
         _Independence,
         QueryNodeKind,
+        OutputRole,
         type(annotationlib.Format.VALUE),
         type(inspect.Parameter.POSITIONAL_ONLY),
     }
@@ -220,8 +222,9 @@ _TRUSTED_TERMINAL_OBJECT_TYPES = (
     | _TRUSTED_CERTAINTY_EQUIVALENT_TYPE_OBJECTS
     | _TRUSTED_CASE_DECLARATION_TYPES
     # A value-grid adapter, and the build of an age-specialized marker whose
-    # functions it adapts, mean their user function and grids, their fields.
-    | frozenset({ValueAdapter, AdaptedBuild})
+    # functions it adapts, mean their user function and grids, their fields;
+    # an output-role wrapper means its user function and role.
+    | frozenset({ValueAdapter, AdaptedBuild, InRole})
 )
 
 

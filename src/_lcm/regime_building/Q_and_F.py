@@ -30,7 +30,6 @@ from dags.tree import qname_from_tree_path
 
 from _lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
 from _lcm.dtypes import (
-    as_bool,
     canonical_float_dtype,
 )
 from _lcm.grids import ContinuousGrid
@@ -6031,40 +6030,18 @@ def _get_feasibility(
         return _BoundFeasibility(flow=flow, periods=bound_periods)
     if not constraints:
         return cast("ConstraintFunction", _AlwaysFeasible(value=jnp.asarray(a=True)))
+    # Each constraint returns a JAX Boolean: it is put in role where it is
+    # materialized, so their conjunction is one as well.
     return cast(
         "ConstraintFunction",
-        _CanonicalFeasibility(
-            function=concatenate_functions(
-                functions=dict(constraints) | dict(functions),
-                targets=list(constraints),
-                aggregator=jnp.logical_and,
-                aggregator_return_type="Feasibility",
-                set_annotations=True,
-            )
+        concatenate_functions(
+            functions=dict(constraints) | dict(functions),
+            targets=list(constraints),
+            aggregator=jnp.logical_and,
+            aggregator_return_type="Feasibility",
+            set_annotations=True,
         ),
     )
-
-
-@dataclass(frozen=True, kw_only=True, eq=False)
-class _CanonicalFeasibility:
-    """The combined constraint DAG, returning a JAX Boolean mask.
-
-    Each user constraint is already checked to return a Boolean where it is
-    materialized; this pins the combined mask's kind. A frozen callable instance
-    rather than a nested function, for the reason `_CanonicalUtilitiesAndF` gives.
-    """
-
-    function: Callable[..., BoolND | bool]
-    """The concatenated constraint DAG."""
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "__signature__", inspect.signature(self.function))
-        object.__setattr__(self, "__annotations__", get_annotations(self.function))
-        object.__setattr__(self, "__name__", "feasibility")
-
-    @no_type_check
-    def __call__(self, **kwargs: QAndFArg) -> BoolND:
-        return as_bool(value=self.function(**kwargs), source="The combined constraints")
 
 
 @dataclass(frozen=True, eq=False, kw_only=True)

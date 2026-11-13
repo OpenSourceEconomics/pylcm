@@ -730,7 +730,8 @@ def test_numeric_exit_availability_is_refused(*, form: str) -> None:
 
     model = _exit_model(adjustment=_no_adjustment, available=availability)
     with pytest.raises(
-        InvalidFunctionOutputError, match=r"^Exit availability returned dtype"
+        InvalidFunctionOutputError,
+        match=r"^Exit availability 'availability' returned dtype",
     ):
         model.solve(params={}, log_level="off")
 

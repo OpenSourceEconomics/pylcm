@@ -57,7 +57,7 @@ from _lcm.constraints.dispositions import CompileBoundary
 from _lcm.constraints.ir import Compare, Const
 from _lcm.constraints.routes import ConstraintPlan, ConstraintRoute
 from _lcm.continuation import EGMContinuationLayout, EGMContinuationSpec
-from _lcm.dtypes import as_bool, canonical_float_dtype, name_of
+from _lcm.dtypes import canonical_float_dtype
 from _lcm.egm.carry import (
     EGMCarry,
     build_template_egm_carry,
@@ -1956,10 +1956,7 @@ def _resolve_nbegm_feasibility(
             )
             for name in inspect.signature(constraint.predicate).parameters
         }
-        feasible = feasible & as_bool(
-            value=constraint.predicate(**arguments),
-            source=f"Constraint '{name_of(constraint.predicate)}'",
-        )
+        feasible = feasible & constraint.predicate(**arguments)
 
     if feasibility_sources:
         unsorted_values = jnp.stack(

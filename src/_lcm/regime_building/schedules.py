@@ -43,8 +43,8 @@ from typing import TYPE_CHECKING, Literal, NoReturn, cast, no_type_check
 
 import jax.numpy as jnp
 
-from _lcm.dtypes import Code, UserOutput, as_canonical_float, as_code, name_of
 from _lcm.gated_edge import GatedEdge
+from _lcm.output_roles import OutputRole, in_role
 from _lcm.reachability import PhaseName
 from _lcm.regime_building.transition_support import (
     _SupportedDeterministicTransition,
@@ -1271,7 +1271,13 @@ def _indicator(
 ) -> Callable[..., FloatND]:
     """Probability one where a deterministic selector returns `code`."""
     return _with_signature(
-        _Indicator(selector=selector, code=code, names=names),
+        _Indicator(
+            selector=in_role(
+                func=selector, role=OutputRole.CODE, kind="Regime selector"
+            ),
+            code=code,
+            names=names,
+        ),
         names=names,
         sources=(selector,),
     )
@@ -1296,10 +1302,7 @@ class _Indicator:
                 "A declaration view is for construction-time checks only and is "
                 "never evaluated."
             )
-        selected = _as_regime_code(
-            function=self.selector,
-            value=self.selector(**_read(kwargs=kwargs, names=self.names)),
-        )
+        selected = self.selector(**_read(kwargs=kwargs, names=self.names))
         return jnp.asarray(selected == self.code, dtype=float)
 
 
@@ -1308,7 +1311,15 @@ def _period_masked(
 ) -> Callable[..., FloatND]:
     """A probability cell that is exactly zero outside `periods`."""
     return _with_signature(
-        _PeriodMasked(cell=cell, periods=periods, names=names),
+        _PeriodMasked(
+            cell=in_role(
+                func=cell,
+                role=OutputRole.FLOAT,
+                kind="Regime transition probability",
+            ),
+            periods=periods,
+            names=names,
+        ),
         names=_with_period(names),
         sources=(cell,),
     )
@@ -1327,10 +1338,7 @@ class _PeriodMasked:
 
     @no_type_check
     def __call__(self, **kwargs: EconFunctionArg) -> FloatND:
-        value = _as_probability(
-            function=self.cell,
-            value=self.cell(**_read(kwargs=kwargs, names=self.names)),
-        )
+        value = self.cell(**_read(kwargs=kwargs, names=self.names))
         selected = jnp.isin(kwargs["period"], jnp.asarray(self.periods))
         return jnp.where(selected, value, jnp.zeros_like(value))
 
@@ -1341,25 +1349,11 @@ def _read(
     return {name: kwargs[name] for name in names}
 
 
-def _as_regime_code(*, function: UserFunction, value: UserOutput) -> Code:
-    return as_code(value=value, source=f"Regime selector '{name_of(function)}'")
-
-
-def _as_probability(*, function: UserFunction, value: UserOutput) -> FloatND:
-    return as_canonical_float(
-        value=value, source=f"Regime transition probability '{name_of(function)}'"
-    )
-
-
-type _CaseAdapter = Callable[..., FloatND | Code]
-
-
 def _period_dispatch(
     *,
     cases: tuple[UserFunction, ...],
     case_names: tuple[tuple[str, ...], ...],
     case_by_period: tuple[int, ...],
-    adapt: _CaseAdapter,
 ) -> Callable[..., FloatND | IntND]:
     """Evaluate the case callable selected for the current period."""
     names = tuple(sorted({name for names in case_names for name in names}))
@@ -1368,7 +1362,6 @@ def _period_dispatch(
             cases=cases,
             case_names=case_names,
             case_by_period=case_by_period,
-            adapt=adapt,
         ),
         names=_with_period(names),
         sources=cases,
@@ -1385,8 +1378,6 @@ class _PeriodDispatch:
     """The arguments each case reads."""
     case_by_period: tuple[int, ...]
     """The position in `cases` selected at each period."""
-    adapt: _CaseAdapter
-    """The role every case's result has: a regime code or a probability."""
 
     @no_type_check
     def __call__(self, **kwargs: EconFunctionArg) -> FloatND | IntND:
@@ -1394,10 +1385,11 @@ class _PeriodDispatch:
         # declared law of this regime evaluated on the same arguments, so an
         # unselected case can at worst produce a value that is discarded. The
         # regime law is never differentiated, so a discarded non-finite value
-        # cannot reach a gradient. Each result is checked in its own role first:
-        # selecting among them would promote a wrong kind onto a right one.
+        # cannot reach a gradient. Each case returns its role's kind (`_dispatch`
+        # wraps it): selecting among them would promote a wrong kind onto a right
+        # one.
         values = [
-            self.adapt(function=case, value=case(**_read(kwargs=kwargs, names=names)))
+            case(**_read(kwargs=kwargs, names=names))
             for case, names in zip(self.cases, self.case_names, strict=True)
         ]
         index = jnp.asarray(self.case_by_period)[kwargs["period"]]
@@ -1568,7 +1560,8 @@ def _deterministic_dispatch(
         cases=cast("tuple[UserFunction, ...]", cases),
         laws=laws,
         law_by_period=law_by_period,
-        adapt=_as_regime_code,
+        role=OutputRole.CODE,
+        kind="Regime selector",
     )
 
 
@@ -1577,10 +1570,12 @@ def _dispatch(
     cases: tuple[UserFunction, ...],
     laws: tuple[PhaseLaw, ...],
     law_by_period: Mapping[int, PhaseLaw],
-    adapt: _CaseAdapter,
+    role: OutputRole,
+    kind: str,
 ) -> Callable[..., FloatND | IntND]:
     n_periods = max(law_by_period) + 2
     position = {id(law): index for index, law in enumerate(laws)}
+    cases = tuple(in_role(func=case, role=role, kind=kind) for case in cases)
     return _period_dispatch(
         cases=cases,
         case_names=tuple(_argument_names(case) for case in cases),
@@ -1588,7 +1583,6 @@ def _dispatch(
             position[id(law_by_period[period])] if period in law_by_period else 0
             for period in range(n_periods)
         ),
-        adapt=adapt,
     )
 
 
@@ -1620,7 +1614,8 @@ def _vector_union(
             cases=cases,
             laws=laws,
             law_by_period=law_by_period,
-            adapt=_as_probability,
+            role=OutputRole.FLOAT,
+            kind="Regime transition probability",
         ),
         targets=targets,
     )

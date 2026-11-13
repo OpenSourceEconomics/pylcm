@@ -19,7 +19,6 @@ from _lcm.current_iid import (
     _law_inputs,
     source_law_params,
 )
-from _lcm.dtypes import as_canonical_float
 from _lcm.execution.core_program import (
     CoreExecutionDisposition,
     CoreExecutionRequirements,
@@ -551,16 +550,11 @@ class OriginalExitDecision:
                     if helper is None
                     else jax.lax.cond(
                         selected,
-                        lambda helper=helper, operands=operands, member=member: (
-                            as_canonical_float(
-                                value=helper(
-                                    **{
-                                        name: operands[name]
-                                        for name in signature(helper).parameters
-                                    }
-                                ),
-                                source=f"Exit utility adjustment of '{member}'",
-                            )
+                        lambda helper=helper, operands=operands: helper(
+                            **{
+                                name: operands[name]
+                                for name in signature(helper).parameters
+                            }
                         ),
                         lambda: jnp.asarray(0.0),
                     )
