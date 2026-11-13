@@ -892,15 +892,15 @@ def test_a_continuation_reading_an_observed_shock_runs_once_per_class(
     }
 
 
-def _weighted_rows(
+def _weighted_shapes(
     *, model: Model, monkeypatch: pytest.MonkeyPatch
-) -> dict[tuple[str, str, str], int]:
-    """Rows each (root, kind, target) query weights by its own shock factors.
+) -> dict[tuple[str, str, str], tuple[tuple[int, ...], tuple[int, ...]]]:
+    """Shapes of the shock factors and values each (root, kind, target) query weights.
 
     A query forms one weighted term per row it passes to the weighting, in every
-    lane it runs in.
+    lane it runs in. Factors lead with the factor axis and values with the row axis.
     """
-    rows: dict[tuple[str, str, str], int] = {}
+    shapes: dict[tuple[str, str, str], tuple[tuple[int, ...], tuple[int, ...]]] = {}
     keys: list[tuple[str, str, str]] = []
     call_cell = query_information.InformationQueryCell.__call__
     weighted_term = query_information.factored_weighted_term
@@ -923,13 +923,13 @@ def _weighted_rows(
             keys.pop()
 
     def counted_term(*, factors: FloatND, values: FloatND) -> FloatND:
-        rows[keys[-1]] = values.shape[0]
+        shapes[keys[-1]] = (factors.shape, values.shape)
         return weighted_term(factors=factors, values=values)
 
     monkeypatch.setattr(query_information.InformationQueryCell, "__call__", cell)
     monkeypatch.setattr(query_information, "factored_weighted_term", counted_term)
     _solve(model)
-    return rows
+    return shapes
 
 
 @pytest.mark.parametrize("n_match", [2, 3])
@@ -944,12 +944,30 @@ def test_a_query_weights_one_term_per_representative_of_its_rows(
     observed and its taste is not, so it keeps its 3 taste rows. The single's own
     stay benchmark repeats the caller's row.
     """
-    rows = _weighted_rows(model=_model(n_match=n_match), monkeypatch=monkeypatch)
-    assert {key[1:]: count for key, count in rows.items() if key[0] == "single_f"} == {
+    shapes = _weighted_shapes(model=_model(n_match=n_match), monkeypatch=monkeypatch)
+    assert {
+        key[1:]: values[0]
+        for key, (_, values) in shapes.items()
+        if key[0] == "single_f"
+    } == {
         ("FULL", "single_f"): 144 * n_match // 2,
         ("PARTICIPATING", "couple"): 1,
         ("RAW", "single_f"): 1,
         ("RAW", "single_m"): 3,
+    }
+
+
+def test_a_query_holds_one_shock_factor_per_row_whatever_it_answers_with(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A query's shock factors hold one entry per factor and row.
+
+    The mass of a row is the same for every value the row answers with, so a
+    couple's factors are not repeated for each of its two members' values.
+    """
+    shapes = _weighted_shapes(model=_model(), monkeypatch=monkeypatch)
+    assert {key: math.prod(factors) for key, (factors, _) in shapes.items()} == {
+        key: factors[0] * values[0] for key, (factors, values) in shapes.items()
     }
 
 

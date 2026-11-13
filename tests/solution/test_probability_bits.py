@@ -16,6 +16,7 @@ operands the dtype can use.
 """
 
 import re
+from collections.abc import Callable
 
 import jax
 import jax.numpy as jnp
@@ -213,6 +214,8 @@ def _interior_subnormal() -> np.float32 | np.float64:
     return value
 
 
+type _Subnormal = Callable[[], np.float32 | np.float64]
+
 _SUBNORMALS = [
     pytest.param(_smallest_subnormal, id="smallest"),
     pytest.param(_interior_subnormal, id="interior"),
@@ -221,7 +224,7 @@ _SUBNORMALS = [
 
 
 @pytest.mark.parametrize("magnitude", _SUBNORMALS)
-def test_a_positive_subnormal_is_live(magnitude) -> None:
+def test_a_positive_subnormal_is_live(magnitude: _Subnormal) -> None:
     """A probability the dtype cannot multiply is still an event that occurs."""
     weight = jnp.asarray(magnitude(), dtype=_dtype())
 
@@ -231,7 +234,9 @@ def test_a_positive_subnormal_is_live(magnitude) -> None:
 
 
 @pytest.mark.parametrize("magnitude", _SUBNORMALS)
-def test_a_negative_subnormal_is_negative_and_not_live(magnitude) -> None:
+def test_a_negative_subnormal_is_negative_and_not_live(
+    magnitude: _Subnormal,
+) -> None:
     """Negative mass is a misspecification, at any size the format can hold."""
     weight = jnp.asarray(np.negative(magnitude()), dtype=_dtype())
 
@@ -263,7 +268,7 @@ def test_liveness_of_an_ordinary_weight(*, value: float, live: bool) -> None:
 @pytest.mark.parametrize("magnitude", _SUBNORMALS)
 @pytest.mark.parametrize("compile_it", [False, True], ids=["eager", "jit"])
 def test_rescaling_preserves_every_ratio_exactly(
-    *, magnitude, compile_it: bool
+    *, magnitude: _Subnormal, compile_it: bool
 ) -> None:
     """The rescaled lottery has the ratios it was given, bit for bit."""
     dtype = _dtype()
@@ -280,7 +285,9 @@ def test_rescaling_preserves_every_ratio_exactly(
 
 
 @pytest.mark.parametrize("magnitude", _SUBNORMALS)
-def test_rescaling_lifts_every_live_weight_into_the_normal_range(magnitude) -> None:
+def test_rescaling_lifts_every_live_weight_into_the_normal_range(
+    magnitude: _Subnormal,
+) -> None:
     """No live weight is left where the arithmetic would flush it."""
     weights = jnp.asarray([1.0, magnitude()], dtype=_dtype())
 
@@ -454,3 +461,42 @@ def test_probability_predicates_preserve_ieee_classification(
         axis=-1,
     )
     np.testing.assert_array_equal(evaluate(values), expected)
+
+
+@pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
+def test_a_weighted_product_equals_the_product_of_the_repeated_factors(
+    *, compiled: bool
+) -> None:
+    """Factors held once per row weight each value as factors repeated per value do.
+
+    The rows' probability products land in the normal range, among the subnormals
+    and below the format; three more rows hold a null, an infinite and an
+    undefined factor. Every row weights a large and a small value of either
+    sign, so the weighted products include subnormal ones.
+    """
+    dtype = _dtype()
+    rng = np.random.default_rng(seed=0)
+    tiny = float(np.finfo(dtype).tiny)
+    scales = np.repeat([1.0, tiny ** (1 / 3), tiny ** (1 / 2)], 40)
+    factors = rng.uniform(0.5, 1.0, size=(3, scales.size)) * scales
+    factors = np.concatenate(
+        (factors, [[0.0, np.inf, np.nan], [0.5, 0.5, 0.5], [0.5, 0.5, 0.5]]), axis=1
+    ).astype(dtype)[..., None]
+    values = jnp.asarray(
+        rng.normal(size=(factors.shape[1], 2)) * [1e3, 1e-3], dtype=dtype
+    )
+
+    def repeated(*, factors: FloatND, values: FloatND) -> FloatND:
+        stack = jnp.broadcast_to(factors, (factors.shape[0], *values.shape))
+        return probability.exact_product(jnp.concatenate((stack, values[None])))
+
+    def once(*, factors: FloatND, values: FloatND) -> FloatND:
+        return probability.weighted_exact_product(factors=factors, values=values)
+
+    expected, got = (
+        (jax.jit(function) if compiled else function)(
+            factors=jnp.asarray(factors), values=values
+        )
+        for function in (repeated, once)
+    )
+    np.testing.assert_array_equal(got, expected)

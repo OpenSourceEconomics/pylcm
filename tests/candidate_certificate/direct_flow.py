@@ -713,9 +713,9 @@ _SOURCE_SEALS = {
     DISPATCHERS_SOURCE: "a78d5271fcfc7437b68bd755ce7c2b8b0b78d5f26ed00a3fb4424133725da8b2",
     FUNCTOOLS_SOURCE: "f0bac3bd822f157e43b08b2f677aca8142fa0e60e101cfd6af5a2e69327132dd",
     CONTAINERS_SOURCE: "f6b3f4590d382b2a501daebc615da5937340edcc2b390ee13c705570c57ebf9a",
-    ZERO_SAFE_SOURCE: "d158f151e047d82ea039c370f47092d7c7ff5f8e7715c098e82dd59da5c5c6e8",
+    ZERO_SAFE_SOURCE: "750c6ace61e08dd0f7ed7f9b872cacf77ee53f34e6dbd13a31019c41ab68f761",
     LOGSUMEXP_ACTION_REDUCTION_SOURCE: "4799ad9bfbc02ae1e5d5270a18ed81fe682f1004d63ae6cf796ff48ac5699445",
-    PROBABILITY_SOURCE: "2e0b3a7edad96b1de50c4a815ca6022994f08f0ca72b19173f2da921f86025a1",
+    PROBABILITY_SOURCE: "520eb5eaf1349a1eb40d927834168429c6830e61e17f5d2308cfe6a089f893d7",
     ENGINE_SOURCE: "147b5b7b1d0fb25fdb01fa5a4c4aed2c7af8106faf8ada6e7e84d314560b67bf",
     STATE_ACTION_SPACE_SOURCE: "fbde26f323f91ace90251be29911bbccdd4560e0768fa3422d23cfa5bea4418d",
     SIMULATION_SOURCE: "6f9c311aadd3f5ea347e464650761192072f5b43506fed09661295f4089e734d",
@@ -964,7 +964,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     "src/_lcm/zero_safe.py": (
-        "ec355fbfe3ef0ac8de4f49240f54e7514830956958d6037a65050fe613891b3c",
+        "47ceaae591be8904681f9a611e2b39646fb0a8fd9730ec059496537855365dfb",
         {
             "zero_safe_weighted_term": "1f9682a923d63877e5ec668bb404bf92911278ee806e99b5ef60c098a9c82dd1",
         },
@@ -2894,7 +2894,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     "src/_lcm/probability.py": (
-        "29e31db3213dd06b53db1d4b6e19eb130309043507636dba34ebd12ac708f51c",
+        "540221f5c11258eff50eb0b794d65da4f7073f875117ca6a4fa1663cfa58c438",
         {
             "_encoded": "58d2dd01903a637adc4af5d18dcf3767eae9b16f685a0652e24c156164511bdd",
             "_exponent_bias": "c3a992302c901ac4ff4bb7c25cb2dc54965e8d08c9b8dd18fe98832431c469fe",
