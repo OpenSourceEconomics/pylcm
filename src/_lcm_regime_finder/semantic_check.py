@@ -1664,6 +1664,7 @@ def _check_capture(original: dict, normalized: dict, fail, unknown) -> None:
                             or specialization.get('identity_scope')!='original-shape-invariant-program'
                             or specialization.get('factory')!=raw_fields.get('build')):
                         fail('specialized grid program identity changed',domain=domain_id)
+        inherited_grid = None
         if short(raw) == "Phased":
             imputed = isinstance(raw_fields.get("solve"), dict) and raw_fields["solve"].get("kind") == "callable"
             if domain.get("solve_axis") != (not imputed): fail("original carried/solve domain distinction changed", domain=domain_id)
@@ -1673,6 +1674,19 @@ def _check_capture(original: dict, normalized: dict, fail, unknown) -> None:
                     if phase_id is not None or callbacks.get(domain.get("solve_imputation"), {}).get("original") != raw_fields["solve"]:
                         fail("original carried-state imputation changed", domain=domain_id)
                 elif domains.get(phase_id, {}).get("original") != raw_fields.get(original_field): fail("original phase grid changed", domain=domain_id, phase=phase)
+            inherited_grid = domains.get(domain.get('phase_domains', {}).get('simulation' if imputed else 'solve'))
+        elif short(raw) == 'ConditionalAction':
+            bases = [candidate for candidate in domains.values() if candidate.get('original') == raw_fields.get('grid')]
+            if len(bases) != 1:
+                fail('original conditional action grid is not unique', domain=domain_id)
+            else:
+                inherited_grid = bases[0]
+            if domain.get('conditional_declaration') != raw_fields:
+                fail('original conditional action declaration changed', domain=domain_id)
+        if inherited_grid is not None:
+            for field in ('kind', 'size', 'values', 'codes', 'category_labels', 'structural_values', 'structural_codes'):
+                if domain.get(field) != inherited_grid.get(field):
+                    fail('original inherited grid payload changed', domain=domain_id, field=field)
     for callback_id, callback in normalized.get("callbacks", {}).items():
         path = callback.get("source_path")
         try: callback_source = _pointer(original, path) if isinstance(path, str) else _UNKNOWN
