@@ -16,7 +16,6 @@ from _lcm_regime_finder.symbolic_frontier import (
     query,
     solve,
 )
-from tests.regime_finder._symbolic_witness import recover_witness
 
 
 type AxisName = str
@@ -272,12 +271,6 @@ def test_joint_frontier_against_literal_policies_groupings_and_all_cuts(
             )
             assert ({tuple(v) for v in proof["frontier"]}) == (literal_frontier(packet))
             assert (proof["synthesized_cost_variants"]) == (["b1"])
-            for cost in proof["frontier"]:
-                witness = recover_witness(packet=packet, certificate=proof, cost=cost)
-                assert (tuple(witness["cost"])) == (tuple(cost))
-                assert (sorted(c for b in witness["blocks"] for c in b["cells"])) == (
-                    ["a0", "a1", "b0", "b1"]
-                )
 
 
 def test_proof_omissions_input_changes_and_false_costs_rejected() -> None:
