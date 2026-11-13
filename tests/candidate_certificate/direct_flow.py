@@ -613,7 +613,7 @@ _SOURCE_SEALS = {
     S03_INTERP_SOURCE: "5342395107f83af0473fcab69b8e73c5aae2f4024b67c0d0c00d33d543132159",
     S03_NUMERIC_INVERSE_SOURCE: "57b4d9983131c5b4ce102c96372c21517b7d8932e0e5d576a4e95e585a7597ea",
     S03_ONE_ASSET_STEP_SOURCE: "c63df7e9a681def81e2fcf6b578f3f817af7d402b819e674f441989abce403ff",
-    S03_PREFERENCES_SOURCE: "f7544ac0edd8cf548890921d0674e67b7e9c4c14e81a3341239e45c7e2ffafbf",
+    S03_PREFERENCES_SOURCE: "d7372dc905c0508a1e6a905cb2a028133e4cf867645d4dfb432e9fa95e11fc52",
     S03_SCALAR_QUERY_SOURCE: "e4365fb100910aad02e29c9d5896c027beab88ba92c06a7bc6ab188b29e43564",
     S02__LCM_EGM_OUTER_ENVELOPE_SOURCE: "26b883d7706f6fe545d6153457ac99131a286ee8d605201e66edc79d9a74920b",
     S02_LANDING_COUNTS_SOURCE: "6c26aa29647db96c0ad3ec0f3fe6a80879904a35842ae027d5f1671b5ec9cbed",
@@ -621,7 +621,7 @@ _SOURCE_SEALS = {
     S02__LCM_EGM_BUDGET_SOURCE: "1c8fb0cbc8f9156950bea34c71c9ccce2c58ac17ec6b9f1221f8c8966f1031d2",
     S02__LCM_EGM_CARRY_SOURCE: "17c85a9146e68a8b57487754bcb89b879e62bcd391699d82ac4116ec7e4c4691",
     S02__LCM_EGM_QUERY_DATA_SOURCE: "5ca53117248f9009d4d9b696fdb46a361fa47c5b082757ccc9beb6ccd967bde3",
-    S02__LCM_REGIME_BUILDING_Q_AND_F_SOURCE: "5b3986f96c19e5c2af5b729a8ae4952d7ab366bdef42a1584276cefaa158920c",
+    S02__LCM_REGIME_BUILDING_Q_AND_F_SOURCE: "a1e929e9860a4a2f4100fe4e36a1a683ba0746643cf121d4c3defe5f8f667e05",
     S02__LCM_SIMULATION_SUBJECT_PARALLEL_SOURCE: "66d70a81a7ec535d92933bc8841c6bbe7472e227509f88fc6d3bdd00b6c95e76",
     S02__LCM_SOLUTION_EGM_SOURCE: "b112fda2bcafe0f139203df84628385ac2d65e47c2f04379e0a780f67857b7c2",
     S02__LCM_SOLUTION_KERNEL_OUTPUT_SOURCE: "4b814b0aecacb22cc1f5b47d6bb9006f3f0f5eb08dc0eb18f1345fcd4becb770",
@@ -700,7 +700,7 @@ _SOURCE_SEALS = {
     ARGMAX_SOURCE: "4f90ea10ea15558701da18fcfdf0d56e0e7e999afcf576f3d2d6c4d1bfeba916",
     COLLECTIVE_SOURCE: "4cc0683d493f597684f5801909d297145d8bade0aa752c3e35cf8af2cb55edd9",
     MAX_Q_SOURCE: "62e5010e5f535ed3731218a5549167d6f5ea332b145d2dcece88d492949fd78c",
-    PROCESSING_SOURCE: "da69cc20543e732f77ec384403a38567b1f668bbe2a0068f7c6d73d1ae94652a",
+    PROCESSING_SOURCE: "a8bd2a85c996e981a6a0e3b681e90a2f04cc04af66d1904e87c77469e71748b6",
     GRID_SEARCH_SOURCE: "335ee0157e553577fbf0534e6667e81d3099b07ba5b1c6b2aec62ed6c5db33ec",
     CORE_PROGRAM_SOURCE: "7d8197a3d2607a3380be63408ae4cf2b8d8ebbe68b043cc3aff76bf1f5c6b78a",
     OUTPUT_LAYOUT_SOURCE: "c7da1256b36b3b6d89200bbae5267936d84e27746ff2c776dced4ea612ec3eb9",
@@ -928,7 +928,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     S03_PREFERENCES_SOURCE: (
-        "a2347334620c5159abe1a44fb0c0b41e31c4ac7bb5c12b5b82ecc7807e265be8",
+        "04ae9a96759e43b3d37eec853b66d4a903a6b688a039d99b5fb4a07b0ed4cfef",
         {
             "newton_action_ceiling": "e34e9f8c2814162ef9ecda6a7d1d773defae93ef425c1e7bb5e2188e4c266b4e",
             "get_numeric_inverse_marginal_utility": "97f1ae553a5e0b0b629e24ea9b4e0abdcc4aef760e4c88d37a09e3ad100acb16",
@@ -2456,7 +2456,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     PROCESSING_SOURCE: (
-        "cc218fb1b3f08f5a8fef9a6cb5af0862d8152c65da133e7b4df6ee8bdd3321d9",
+        "5ebf3032eedeaedb7965e2c93678468097f1a68cd70ae11601c80208a8f82287",
         {
             "_build_per_subject_decisions_per_period": "b04fb50baadb61f7a5301b2ec1af99a6c53e10355574f1bddf3da94f606ac67a",
             "process_regimes": "288b4375dff6c1f924dc3e646f38e3c4471887ce440c6b99f9528bf26129c67f",
@@ -2660,14 +2660,14 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     "src/_lcm/regime_building/Q_and_F.py": (
-        "6b40ca2386a9fc0bfeb363941d0cd510870b792ace0a838ff792a9043a6e1b64",
+        "0e3ff81117b6eeeccfbba9532567963ff26a916304b93ace428c33ac9cb11f21",
         {
             "runtime_bound_specs": "84f9e94e2f2fa9cf0f27f8900a244cf80b64681bf23b2973e5c08875c76155a0",
             "BoundedQAndF.__post_init__": "ba409022a0b51498849a82498a8c53e3cd74adbab150de8880eaebdb81b58d75",
             "BoundedQAndF.__call__": "35a9314e536c40abb69fcb19db02eada75b716576b03a046e3c6ce32c881f3f4",
             "_BoundUtilitiesAndF.__post_init__": "c1910d1df00ea9332bdc2e2f62a8fa205da5e2acafaf9c1a6cd17bb4845cc3b2",
-            "_BoundUtilitiesAndF.evaluated": "493bc73cb20763d98926750f3a38a5fdf6fbc958678b94a2462061360cccc4d0",
-            "_get_U_and_F": "6d85019509ced38ac91274478c77dfdd5f53c2eb9ccd27b2c07864b57f0fa29f",
+            "_BoundUtilitiesAndF.evaluated": "b0328b23db1920d3396323688e198570861af372edaeb49ae571c337fe0a653a",
+            "_get_U_and_F": "e4998b4def8219a2b86bb19ea66ee17eed69c3610e04be087a5b7451c55c796d",
             "_BoundFeasibility.__call__": "990d971d7cfd42eb27f41be5a2393460bee167f5150727e91fa0a9ce58701e71",
             "_get_feasibility": "cd9d8623dbb7122b2f23fac37098f1b8224f9a4cc7fa30e2f0e77fc981b640ad",
             "_QAndF.evaluated": "bc56c7283a7e3f0e31b41e0d9a4c9fae176bcb691c52ebf81ba2fcae7a6ce4fa",

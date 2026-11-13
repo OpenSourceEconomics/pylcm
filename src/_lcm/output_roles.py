@@ -11,9 +11,9 @@ import inspect
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
-from typing import no_type_check
+from typing import cast, no_type_check
 
-from dags import get_annotations
+from dags import get_annotations, get_free_arguments
 
 from _lcm.dtypes import (
     OutputSource,
@@ -28,6 +28,10 @@ from _lcm.typing import PytreeValue
 from _lcm.utils.functools import _WrappedCallable
 from lcm.grids import DiscreteGrid
 from lcm.typing import ValueND
+
+# What a registered user function returns before it is put in role: a user
+# output, or any pytree value a composed DAG node passes through.
+type RawOutput = UserOutput | PytreeValue
 
 
 class OutputRole(Enum):
@@ -55,7 +59,7 @@ def target_role(grid: Grid) -> OutputRole:
 
 
 @dataclass(frozen=True, eq=False, kw_only=True)
-class _InRole(_WrappedCallable[UserOutput]):
+class _InRole(_WrappedCallable[RawOutput]):
     """A user function whose output is converted to its role's kind.
 
     A frozen callable instance rather than a nested function: the beartype claw
@@ -76,11 +80,11 @@ class _InRole(_WrappedCallable[UserOutput]):
 
     @no_type_check
     def __call__(self, *args: PytreeValue, **kwargs: PytreeValue) -> ValueND:
-        value: UserOutput = self.func(*args, **kwargs)
+        value = cast("UserOutput", self.func(*args, **kwargs))
         return _ADAPTERS[self.role](value=value, source=self.source)
 
 
-def in_role[F: Callable[..., UserOutput]](*, func: F, role: OutputRole, kind: str) -> F:
+def in_role[F: Callable[..., RawOutput]](*, func: F, role: OutputRole, kind: str) -> F:
     """Return `func` with its output converted to `role`'s kind.
 
     Args:
@@ -101,9 +105,15 @@ def in_role[F: Callable[..., UserOutput]](*, func: F, role: OutputRole, kind: st
             msg = f"{func.source} is already in role {func.role}, not {role}."
             raise TypeError(msg)
         return func
+    # A `partial`'s bound keywords stay in its signature with defaults; the DAG
+    # reads only its free arguments, so the wrapper publishes only those.
+    signature = inspect.signature(func)
+    free = set(get_free_arguments(func))
     return _InRole(  # ty: ignore[invalid-return-type]
         func=func,
-        signature=inspect.signature(func),
+        signature=signature.replace(
+            parameters=[p for p in signature.parameters.values() if p.name in free]
+        ),
         role=role,
         source=f"{kind} '{name_of(func)}'",
     )

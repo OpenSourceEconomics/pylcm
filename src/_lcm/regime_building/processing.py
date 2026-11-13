@@ -45,7 +45,7 @@ from _lcm.continuation import (
     FiniteOuterQuerySpec,
 )
 from _lcm.current_iid import CurrentIIDDrawPlan, CurrentIIDPlan
-from _lcm.dtypes import as_code, canonical_float_dtype, name_of
+from _lcm.dtypes import canonical_float_dtype
 from _lcm.egm.budget import (
     DCEGM_BUDGET_CONSTRAINT_NAME,
     INTRINSIC_BUDGET_SOLVERS,
@@ -9948,11 +9948,7 @@ class _OneHotRegimeTransition:
 
     @no_type_check
     def __call__(self, *args: EconFunctionArg, **kwargs: EconFunctionArg) -> FloatND:
-        code = as_code(
-            value=self.func(*args, **kwargs),
-            source=f"Regime selector '{name_of(self.func)}'",
-        )
-        return jax.nn.one_hot(code, self.n_regimes)
+        return jax.nn.one_hot(self.func(*args, **kwargs), self.n_regimes)
 
 
 def _wrap_deterministic_regime_transition(
@@ -9978,7 +9974,10 @@ def _wrap_deterministic_regime_transition(
     annotations = {k: v for k, v in get_annotations(func).items() if k != "return"}
 
     wrapped = with_signature(args=annotations, return_annotation="FloatND")(
-        _OneHotRegimeTransition(func=func, n_regimes=len(regime_names_to_ids))
+        _OneHotRegimeTransition(
+            func=in_role(func=func, role=OutputRole.CODE, kind="Regime selector"),
+            n_regimes=len(regime_names_to_ids),
+        )
     )
 
     # Pin `__annotations__` on the final wrapper: `concatenate_functions`
