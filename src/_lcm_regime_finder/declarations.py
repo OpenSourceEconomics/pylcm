@@ -731,6 +731,7 @@ class Normalizer:
                 if isinstance(values,list):record['values']=values
                 elif value_info is not None: record['structural_values']=value_ref
                 elif values is None and isinstance(codes,list):record.update(values=codes,value_semantics='declared_categorical_codes')
+                elif values is None and code_info is not None:record.update(structural_values=code_ref,value_semantics='declared_categorical_codes')
                 record['category_labels']=attrs.get('categories')
                 record['size']=len(values) if isinstance(values,list) else len(codes) if isinstance(codes,list) else None
                 if value_info is not None or code_info is not None:
