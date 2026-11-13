@@ -182,6 +182,12 @@ def main(argv=None):
     curve.add_argument('--max-frontier', type=int, default=5000)
     curve.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)
     curve.set_defaults(cost_limits=None)
+    source_facts = sub.add_parser('source-facts', help='Original-cell dependency, support and exclusion facts; no layout search')
+    source_facts.add_argument('problem'); source_facts.add_argument('--output', required=True)
+    source_facts.add_argument('--seconds', type=float)
+    source_facts.add_argument('--host-gib', type=float)
+    source_facts.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)
+    source_facts.set_defaults(cost_limits=None)
     for name in ('check-result', 'check-model-result'):
         check = sub.add_parser(name); check.add_argument('problem'); check.add_argument('report')
         check.add_argument('--output'); check.add_argument('--seconds', type=float, default=900)
@@ -215,6 +221,17 @@ def main(argv=None):
         problem = load_problem(args.problem, reads=reads)
         if args.cost_limits is not None and problem.get('schema') != 'exact-graph-cost-instance/v1':
             raise ValueError('--cost-limits applies only to an exact cost-family input')
+        if args.command == 'source-facts':
+            from .fibre_source import FibreSource
+            from .structural_store import final_input_check
+            if delivery is None:
+                raise ValueError('Source facts require an output delivery plan')
+            result = FibreSource(problem).get_report()
+            result['input_artifact'] = input_artifact_identity(args.problem, reads=reads)
+            final_input_check(problem)
+            delivery.publish(result)
+            print(json.dumps({'status': result['status'], 'output': str(delivery.destination)}, sort_keys=True))
+            return 0
         if args.command == 'evaluation-curve':
             from .curve import build_curve_report
             from .frontier import search_frontier
