@@ -144,7 +144,7 @@ def test_process_params_casts_int64_array_to_int32() -> None:
 
 
 def test_process_params_int_array_overflow_raises_with_qualified_name() -> None:
-    """An out-of-int32-range int array surfaces the param's qualified name."""
+    """An out-of-int32-range int array names the param and the float annotation."""
     template = as_template({"regime_a": {"fun": {"big_param": "Array"}}})
     # Numpy here: under `jax_enable_x64=False`, `jnp.asarray(..., dtype=int64)`
     # of an out-of-int32 value raises before our helper sees it.
@@ -152,7 +152,10 @@ def test_process_params_int_array_overflow_raises_with_qualified_name() -> None:
         "regime_a": {"fun": {"big_param": np.asarray([0, 2**40], dtype=np.int64)}}
     }
 
-    with pytest.raises(ValueError, match="big_param"):
+    with pytest.raises(
+        ValueError,
+        match=r"big_param: int32 overflow.*annotate the argument .* `FloatND`",
+    ):
         process_params(
             params=user_params,
             params_template=template,

@@ -58,6 +58,7 @@ from _lcm.utils.namespace import ParamsQnameDepth, flatten_regime_namespace
 from lcm.exceptions import InvalidNameError, InvalidParamsError
 from lcm.typing import (
     FunctionName,
+    IntND,
     ParameterName,
     ReferenceName,
     UserParams,
@@ -369,6 +370,28 @@ def _holds_integers(value: LeafEntry) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
 
 
+def _cast_integer(
+    *,
+    value: int | Array | np.ndarray,
+    name: str,
+    array_writer: CanonicalArrayWriter | None,
+) -> IntND:
+    """Cast an integer param to `int32`; an overflow says how to make it a float.
+
+    A slot keeps its value's integer kind unless the argument reading it is
+    annotated as a float, so an out-of-range integer meant as a float is refused
+    here, and the message names the annotation that would convert it.
+    """
+    try:
+        return safe_to_int_dtype(value=value, name=name, array_writer=array_writer)
+    except ValueError as error:
+        msg = (
+            f"{error} If `{name}` is meant to be a float, annotate the argument "
+            "that reads it `float` or `FloatND`."
+        )
+        raise ValueError(msg) from error
+
+
 def _cast_leaves_to_canonical_dtype(  # noqa: C901, PLR0911
     *,
     value: LeafEntry,
@@ -450,7 +473,7 @@ def _cast_leaves_to_canonical_dtype(  # noqa: C901, PLR0911
             value=float(value), name=name, array_writer=array_writer
         )
     if isinstance(value, int):
-        return safe_to_int_dtype(value=value, name=name, array_writer=array_writer)
+        return _cast_integer(value=value, name=name, array_writer=array_writer)
     if isinstance(value, (Array, np.ndarray)):
         kind = value.dtype.kind
         if kind == "b":
@@ -458,7 +481,7 @@ def _cast_leaves_to_canonical_dtype(  # noqa: C901, PLR0911
                 return array_writer(value=value, dtype=np.dtype(np.bool_), name=name)
             return jnp.asarray(value, dtype=jnp.bool_)
         if kind in ("i", "u") and not to_float:
-            return safe_to_int_dtype(value=value, name=name, array_writer=array_writer)
+            return _cast_integer(value=value, name=name, array_writer=array_writer)
         if kind in ("i", "u", "f"):
             return safe_to_float_dtype(
                 value=value, name=name, array_writer=array_writer
