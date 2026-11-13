@@ -5,17 +5,24 @@ from copy import deepcopy
 from pathlib import Path
 import json
 import os
+import gc
 import subprocess
 import textwrap
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
+import numpy as np
+from numpy.typing import NDArray
 
 from _lcm_regime_finder.declarations import normalize_declarations
 from _lcm_regime_finder.fibre_source import FibreSource, TargetSupport
 from _lcm_regime_finder.fibre_facts import FibreLiveness, calculate_fibre_liveness
 from _lcm_regime_finder.records import JSONValue
+from _lcm_regime_finder.structural_arrays import NativeWriter
+from _lcm_regime_finder.structural_check import Reader
+from _lcm_regime_finder.structural_context import descriptor, named_roots, register
+from _lcm_regime_finder.structural_events import compare_source, source_anchor
 from tests.regime_finder.test_model_adapter import function, grid, snapshot
 from tests.regime_finder.test_query_owners import policy_snapshot
 from tests.regime_finder.test_round4_semantic import captured_gate_graph
@@ -537,6 +544,211 @@ def test_numeric_discrete_action_values_are_distinct_from_excluded_codes() -> No
         cell_id=_cell_id(original), action="choice", status_values={}
     )
     assert result == frozenset({0})
+
+
+def _stored_category_source(
+    *, storage: str, duplicate_values: bool = False
+) -> tuple[dict[str, JSONValue], Reader]:
+    codes = [7, 11, 19]
+    values = [2.5, 2.5 if duplicate_values else 5.5, 9.5]
+    roots: dict[
+        str,
+        list[int]
+        | list[float]
+        | NDArray[np.int64 | np.uint64 | np.float32 | np.float64],
+    ] = {"codes": codes, "values": values}
+    if storage != "sequence":
+        array_codes = np.array(codes, dtype=">i8")
+        array_values = np.array(values, dtype=">f8")
+        if storage == "reversed":
+            array_codes = np.array(codes[::-1], dtype=">i8")[::-1]
+            array_values = np.array(values[::-1], dtype=">f8")[::-1]
+        elif storage == "strided":
+            array_codes = np.array([7, 0, 11, 0, 19, 0], dtype="<u8")[::2]
+            array_values = np.repeat(np.array(values, dtype="<f4"), 2)[::2]
+        roots = {"codes": array_codes, "values": array_values}
+    anchor = source_anchor(
+        roots,
+        source_context={"fixture": "categorical-code-value-payload"},
+        transaction={"kind": "exclusive-owner", "authority": "test-owned roots"},
+    )
+    reader = Reader(NativeWriter().finish(roots, anchor))
+    reader.decode()
+    compare_source(reader, anchor)
+    register(reader)
+    references = {
+        name: {
+            "kind": "structural-reference",
+            "store_root": reader.doc["root_digest"],
+            "root": name,
+            **descriptor(reader, token),
+        }
+        for name, token in named_roots(reader).items()
+    }
+    original = _original()
+    original["structural_store"] = {
+        "schema": "regime-structural-capture/v1",
+        "manifest": reader.doc,
+        "source_comparison": "PASS",
+        "complete_roots": list(roots),
+    }
+    _object(_fields(original)["states"])["history"] = {
+        "kind": "object",
+        "type": "lcm.DiscreteGrid",
+        "fields": {**references, "categories": ["low", "middle", "high"]},
+    }
+    return original, reader
+
+
+@pytest.mark.parametrize("storage", ["sequence", "native", "strided", "reversed"])
+def test_checked_category_payload_binds_original_values_and_target_codes(
+    storage: str,
+) -> None:
+    original, reader = _stored_category_source(storage=storage)
+    _object(_fields(original)["functions"])["utility"] = function(
+        "def utility(history, x):\n    return 0 if history == 5.5 else x\n",
+        ["history", "x"],
+    )
+    source = _source(original)
+    cell = _cell_id(original)
+    assert source.get_direct_reads(
+        cell_id=cell, statuses={"history": 11}, removal_order=("history",)
+    ).live_coordinates == frozenset({"history"})
+    assert source.get_target_support(
+        relation_id=_relation_id(original),
+        target_coordinate="history",
+        statuses={"history": 11},
+    ) == TargetSupport(frozenset({11}), True)
+    report = source.get_report()
+    assert not any(
+        "payload" in str(item).lower() for item in _rows(report["source_obligations"])
+    )
+    assert report["transformation_authorized"] is False
+    assert reader.doc["status"] == "COMPLETE"
+
+
+@pytest.mark.parametrize("stored", [False, True])
+def test_fixed_nominal_code_is_not_recovered_from_ambiguous_numeric_value(
+    stored: bool,
+) -> None:
+    original = _original()
+    reader = None
+    if stored:
+        original, reader = _stored_category_source(
+            storage="native", duplicate_values=True
+        )
+    else:
+        _object(_fields(original)["states"])["history"] = grid(
+            [2.5, 2.5, 9.5], codes=[7, 11, 19]
+        )
+    _object(_fields(original)["functions"])["utility"] = function(
+        "def utility(history_code, x):\n    return 0 if history_code == 11 else x\n",
+        ["history_code", "x"],
+    )
+    assert _source(original).get_direct_reads(
+        cell_id=_cell_id(original),
+        statuses={"history": 11},
+        removal_order=("history",),
+    ).live_coordinates == frozenset({"history"})
+    assert reader is None or reader.doc["status"] == "COMPLETE"
+
+
+def test_action_exclusion_keeps_codes_when_numeric_action_values_repeat() -> None:
+    original = _original()
+    _object(_fields(original)["actions"])["choice"] = grid(
+        [2.5, 2.5, 9.5], codes=[7, 11, 19]
+    )
+    _fields(original)["constraints"] = {
+        "allowed": function(
+            "def allowed(choice_code):\n    return choice_code != 11\n", ["choice_code"]
+        )
+    }
+    assert _source(original).get_excluded_action_values(
+        cell_id=_cell_id(original), action="choice", status_values={}
+    ) == frozenset({11})
+
+
+def test_decoded_category_values_survive_the_capture_reader_lifetime() -> None:
+    original, reader = _stored_category_source(storage="reversed")
+    source = _source(original)
+    relation = _relation_id(original)
+    del original, reader
+    gc.collect()
+    assert source.get_target_support(
+        relation_id=relation,
+        target_coordinate="history",
+        statuses={"history": 11},
+    ) == TargetSupport(frozenset({11}), True)
+
+
+def test_stored_category_descriptor_stays_bound_to_its_verified_payload() -> None:
+    original, reader = _stored_category_source(storage="native")
+    states = _object(_fields(original)["states"])
+    fields = _object(_object(states["history"])["fields"])
+    _object(fields["values"])["dtype"] = "<i8"
+    with pytest.raises(ValueError, match="descriptor differs"):
+        _source(original)
+    assert reader.doc["status"] == "COMPLETE"
+
+
+@pytest.mark.parametrize("phased", [False, True])
+def test_stored_category_class_without_numeric_values_uses_its_original_codes(
+    phased: bool,
+) -> None:
+    original, reader = _stored_category_source(storage="native")
+    states = _object(_fields(original)["states"])
+    category = _object(states["history"])
+    _object(category["fields"])["values"] = None
+    if phased:
+        states["history"] = {
+            "kind": "dataclass",
+            "type": "lcm.Phased",
+            "fields": {"solve": category, "simulate": category},
+        }
+    _object(_fields(original)["functions"])["utility"] = function(
+        "def utility(history_code, x):\n    return 0 if history_code == 11 else x\n",
+        ["history_code", "x"],
+    )
+    source = _source(original)
+    assert source.get_direct_reads(
+        cell_id=_cell_id(original),
+        statuses={"history": 11},
+        removal_order=("history",),
+    ).live_coordinates == frozenset({"history"})
+    assert source.get_target_support(
+        relation_id=_relation_id(original),
+        target_coordinate="history",
+        statuses={"history": 11},
+    ) == TargetSupport(frozenset({11}), True)
+    assert reader.doc["status"] == "COMPLETE"
+
+
+@pytest.mark.parametrize("mutation", ["payload", "semantics"])
+def test_stored_code_as_value_replay_rejects_forged_normalized_semantics(
+    mutation: str,
+) -> None:
+    original, reader = _stored_category_source(storage="native")
+    category = _object(_object(_fields(original)["states"])["history"])
+    fields = _object(category["fields"])
+    wrong_values = fields["values"]
+    fields["values"] = None
+    normalized = _normalized(original)
+    cell = _object(_rows(normalized["cells"])[0])
+    identity = _name(_object(cell["states"])["history"])
+    domain = _object(_object(normalized["domains"])[identity])
+    if mutation == "payload":
+        domain["structural_values"] = wrong_values
+    else:
+        domain["value_semantics"] = "invented_numeric_values"
+    with (
+        patch(
+            "_lcm_regime_finder.fibre_source.normalize_declarations",
+            return_value=normalized,
+        ),
+        pytest.raises(ValueError, match="Original capture authentication failed"),
+    ):
+        FibreSource(original)
+    assert reader.doc["status"] == "COMPLETE"
 
 
 def test_native_capture_identity_and_raising_callbacks_are_metadata_only() -> None:
