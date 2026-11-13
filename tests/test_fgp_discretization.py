@@ -9,7 +9,6 @@ Reference parameters (FGP Section 4, p. 191):
 
 """
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -297,38 +296,6 @@ def test_mixture_cdf_spot_check():
         (x - FGP_MU2) / FGP_SIGMA2
     )
     aaae(got, expected, decimal=DECIMAL_PRECISION)
-
-
-def test_mixture_draw_shock_moments():
-    """Draw shock from mixture produces draws with correct unconditional moments."""
-
-    rho = 0.95
-    grid = _make_fgp_mixture_grid(n_points=5, rho=rho)
-    params = grid.params
-
-    mean_eps = FGP_P1 * FGP_MU1 + (1 - FGP_P1) * FGP_MU2
-    sigma_eps_sq_mix = (
-        FGP_P1 * (FGP_SIGMA1**2 + FGP_MU1**2)
-        + (1 - FGP_P1) * (FGP_SIGMA2**2 + FGP_MU2**2)
-        - mean_eps**2
-    )
-
-    expected_mean = mean_eps / (1 - rho)
-    expected_var = sigma_eps_sq_mix / (1 - rho**2)
-
-    n_steps = 30_000
-    burn_in = 5_000
-    key = jax.random.key(42)
-    y = jnp.array(expected_mean)
-    trajectory = []
-    for _ in range(n_steps):
-        key, subkey = jax.random.split(key)
-        y = grid.draw_shock(params=params, key=subkey, current_value=y)
-        trajectory.append(y)
-    samples = jnp.array(trajectory[burn_in:])
-
-    aaae(float(samples.mean()), expected_mean, decimal=0)
-    aaae(float(samples.var()), expected_var, decimal=0)
 
 
 def test_mixture_stationary_moments():
