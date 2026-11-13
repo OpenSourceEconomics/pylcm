@@ -16,6 +16,7 @@ from .fibre_facts import (
     FibreLink,
     FibreReadFacts,
     JointReadSet,
+    RegimeId,
     calculate_fibre_liveness,
     get_joint_read_set,
 )
@@ -281,7 +282,11 @@ class FibreSource:
         """Return all original dependency incidences, including value reads."""
         return tuple(self._relations)
 
-    def get_report(self) -> Wire:
+    def get_report(
+        self,
+        *,
+        status_axes: Mapping[RegimeId, tuple[CoordinateName, ...]] | None = None,
+    ) -> Wire:
         """Report original-cell facts without choosing or authorizing a layout."""
         facts = self.get_cell_facts()
         closures = {
@@ -379,7 +384,7 @@ class FibreSource:
                     "categorical_support": supports,
                 }
             )
-        return {
+        report: Wire = {
             "schema": "regime-source-facts/v1",
             "status": "SOURCE_FACTS_BUILT",
             "transformation_authorized": False,
@@ -389,6 +394,13 @@ class FibreSource:
             "excluded_action_values": exclusions,
             "source_obligations": list(dict.fromkeys(obligations)),
         }
+        if status_axes is not None:
+            from .fibre_screen import build_source_screen
+
+            report["status_screen"] = build_source_screen(
+                source=self, status_axes=status_axes
+            )
+        return report
 
     def get_cell_facts(self) -> tuple[FibreReadFacts, ...]:
         """Build unspecialised dependency facts for the original admitted cells.
@@ -750,13 +762,15 @@ class FibreSource:
                 continue
             code = fixed_codes.get(name)
             if code is None:
-                matching = categories.by_value.get(_value_key(static[name]), frozenset())
+                matching = categories.by_value.get(
+                    _value_key(static[name]), frozenset()
+                )
                 if len(matching) != 1:
                     continue
                 code = next(iter(matching))
-            argument = _mapping(_mapping(cell.get("category_codes", {})).get(name, {})).get(
-                "argument", name + "_code"
-            )
+            argument = _mapping(
+                _mapping(cell.get("category_codes", {})).get(name, {})
+            ).get("argument", name + "_code")
             static[_text(argument)] = code
         callback = self._callbacks[primitive.callback]
         raw = self._captures.resolve(callback.get("original", {}))
@@ -847,7 +861,9 @@ def _category_values(
     if isinstance(payload, (list, tuple)):
         return tuple(payload)
     if not isinstance(payload, NativeArrayView):
-        raise NotImplementedError("Categorical payload must be a scalar sequence or array")
+        raise NotImplementedError(
+            "Categorical payload must be a scalar sequence or array"
+        )
     if len(payload.shape) != 1:
         raise ValueError("Categorical array must be one-dimensional")
     match = fullmatch(r"([<>=|])([biuf])(1|2|4|8)", payload.dtype)
