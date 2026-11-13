@@ -1369,6 +1369,69 @@ def _report_original(*, numeric_values: bool = False) -> dict[str, JSONValue]:
     return original
 
 
+def test_source_report_binds_joint_status_screen_to_original_primitives() -> None:
+    original = _original()
+    before = deepcopy(original)
+    report = _source(original).get_report(status_axes={"original": ("history",)})
+    screen = _object(report["status_screen"])
+    assert screen["conditions_pass"] is True
+    assert screen["raw_lanes"] == 2
+    assert screen["projected_lanes"] == 1
+    assert screen["forcing"] == "no forced-action facts"
+    assert screen["transformation_authorized"] is False
+    assert original == before
+
+
+def test_source_report_keeps_full_grid_action_exclusion_counterexample() -> None:
+    original = _original()
+    _fields(original)["constraints"] = {
+        "allowed": function(
+            "def allowed(history, choice):\n    return choice == history\n",
+            ["history", "choice"],
+        )
+    }
+    screen = _object(
+        _source(original).get_report(status_axes={"original": ("history",)})[
+            "status_screen"
+        ]
+    )
+    assert screen["conditions_pass"] is False
+    assert _object(_object(screen["premises"])["I2"])["status"] == "refuted"
+    assert screen["projected_lanes"] is None
+
+
+def test_status_projection_requires_every_original_part_reachable() -> None:
+    original = _original()
+    _object(_fields(original)["state_transitions"])["history"] = function(
+        "def next_history():\n    return 0\n", []
+    )
+    screen = _object(
+        _source(original).get_report(status_axes={"original": ("history",)})[
+            "status_screen"
+        ]
+    )
+    premises = _object(screen["premises"])
+    assert _object(premises["I1"])["status"] == "refuted"
+    assert _object(premises["I3"])["status"] == "proved"
+    assert screen["conditions_pass"] is False
+    assert screen["projected_lanes"] is None
+
+
+@pytest.mark.parametrize(
+    "axes",
+    (
+        {"missing": ("history",)},
+        {"original": ("missing",)},
+        {"original": ("history", "history")},
+    ),
+)
+def test_source_report_rejects_unknown_or_repeated_status_axes(
+    axes: dict[str, tuple[str, ...]],
+) -> None:
+    with pytest.raises(ValueError):
+        _source(_original()).get_report(status_axes=axes)
+
+
 def _assert_source_report(
     report: dict[str, JSONValue],
     original: dict[str, JSONValue],
