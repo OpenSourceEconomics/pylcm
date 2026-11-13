@@ -1627,6 +1627,12 @@ def _check_capture(original: dict, normalized: dict, fail, unknown) -> None:
         raw_values, raw_codes = _decode(raw_fields.get("values")), _decode(raw_fields.get("codes"))
         from .structural_context import reference_info
         for label, value in (('values', raw_values), ('codes', raw_codes)):
+            if label == 'values' and value is None:
+                code_ref = raw_codes.get('structural_ref', raw_codes) if isinstance(raw_codes, dict) else raw_codes
+                if reference_info(code_ref) is not None:
+                    value = raw_codes
+                    if domain.get('value_semantics') != 'declared_categorical_codes':
+                        fail('original category-class value semantics changed', domain=domain_id)
             ref = value.get('structural_ref', value) if isinstance(value, dict) else value
             info = reference_info(ref)
             if info is not None and domain.get('kind') == 'categorical':
