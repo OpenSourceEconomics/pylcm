@@ -18,7 +18,7 @@ from _lcm.current_iid import (
     CURRENT_IID_ROWS_ARGUMENT,
     CurrentIIDPlan,
 )
-from _lcm.dtypes import as_bool, canonical_float_dtype
+from _lcm.dtypes import canonical_float_dtype
 from _lcm.engine import Regime
 from _lcm.execution.core_program import CoreArgumentBuilder, CoreBuildContext, ValueRead
 from _lcm.execution.value_transfer import (
@@ -34,6 +34,7 @@ from _lcm.exit_queries import (
     _validate_query_projection_bindings,
 )
 from _lcm.grids.continuous import ContinuousGrid
+from _lcm.output_roles import OutputRole, in_role
 from _lcm.params.edges import regime_kernel_params
 from _lcm.participation_continuation import (
     PARTICIPATION_CONTINUATION,
@@ -1246,11 +1247,8 @@ class _ParticipationReducer:
                 else answer[0][index]
             )
             valid &= answer[3]
-        accepted = as_bool(
-            value=jnp.asarray(
-                call_with_declared_arguments(function=self.predicate, operands=values)
-            ),
-            source="A participation predicate",
+        accepted = jnp.asarray(
+            call_with_declared_arguments(function=self.predicate, operands=values)
         )
         if accepted.shape != ():
             raise ValueError("A participation predicate must return a scalar Boolean.")
@@ -1836,14 +1834,18 @@ def _bind_participation(
                 ),
             )
         )
-    predicate = _bound_edge_function(
-        builder=builder,
-        source=source,
-        target=target,
-        path=(target, "predicate"),
-        function=declaration.predicate,
-        information=information,
-        read_names=read_names,
+    predicate = in_role(
+        func=_bound_edge_function(
+            builder=builder,
+            source=source,
+            target=target,
+            path=(target, "predicate"),
+            function=declaration.predicate,
+            information=information,
+            read_names=read_names,
+        ),
+        role=OutputRole.BOOL,
+        kind="A participation predicate",
     )
     reducer = _ParticipationReducer(
         predicate=predicate,
