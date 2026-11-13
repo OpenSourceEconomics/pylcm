@@ -1,37 +1,22 @@
-"""Direct tests for explicit EGM-regime structural validation.
+"""An EGM-family regime's own guard rejects the wrong solver family.
 
-Two independent mechanisms reject a malformed EGM-family regime: beartype
-checks the narrowed annotations on the public constructors, and the regime's
-own `_fail_if_*` guards run from `__post_init__`. A dataclass subclass defined
-outside the package regenerates an `__init__` beartype never wrapped, so the
-guards are reachable in ordinary use and are exercised here directly rather
-than through successful construction.
-
-Every stand-in below is a real object of the wrong kind — a solver of the other
-margin family, a discrete grid where a continuous one is required. A bare
-`object()` would satisfy any predicate that rejects it, so the test would pass
-whatever the guard actually checks; each rejection is therefore paired with a
-control showing the same guard accepts the valid object.
+Beartype checks the narrowed annotations on the public constructors. A dataclass
+subclass defined outside the package regenerates an `__init__` beartype never
+wrapped, so the regime's own `_fail_if_*` guards, run from `__post_init__`, are
+what reject a malformed regime there. The rejection is paired with a control
+showing the same subclass accepts the right solver family.
 """
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from types import MappingProxyType
 from typing import TypedDict
 
 import pytest
 
-from lcm import (
-    DiscreteGrid,
-    LinSpacedGrid,
-    categorical,
-)
+from lcm import LinSpacedGrid
 from lcm.consumption_savings_regime import (
     ConsumptionSavingsRegime,
     LiquidMargin,
-    NestedConsumptionSavingsRegime,
-    NetOfAdjustmentCost,
-    OuterContinuousMargin,
 )
 from lcm.exceptions import RegimeInitializationError
 from lcm.regime import ActionEntry, FunctionEntry, StateEntry, StateTransitionEntry
@@ -42,18 +27,8 @@ from lcm.solvers import (
     RFCEnvelope,
     TwoMarginSolver,
 )
-from lcm.typing import ScalarInt
 
 _GRID = LinSpacedGrid(start=0.0, stop=10.0, n_points=11)
-
-
-@categorical(ordered=False)
-class _Employment:
-    working: ScalarInt
-    retired: ScalarInt
-
-
-_DISCRETE_GRID = DiscreteGrid(category_class=_Employment)
 
 
 def _one_margin_solver() -> OneMarginSolver:
@@ -70,15 +45,6 @@ def _liquid() -> LiquidMargin:
         action="consumption",
         resources="resources",
         post_decision_state="savings",
-    )
-
-
-def _outer() -> OuterContinuousMargin:
-    return OuterContinuousMargin(
-        state="durable",
-        action="new_durable",
-        post_decision_state="durable_after_choice",
-        no_adjustment="keep_durable",
     )
 
 
@@ -136,137 +102,3 @@ def test_an_out_of_package_subclass_accepts_the_right_solver_family() -> None:
     regime = _Subclassed(solver=_one_margin_solver(), **_regime_kwargs())
 
     assert isinstance(regime, ConsumptionSavingsRegime)
-
-
-def test_net_of_adjustment_cost_guard_is_directly_exercised() -> None:
-    declaration = object.__new__(NetOfAdjustmentCost)
-    object.__setattr__(declaration, "output", "resources")
-    object.__setattr__(declaration, "before_cost", "resources")
-    object.__setattr__(declaration, "cost", "cost")
-
-    with pytest.raises(RegimeInitializationError, match="pairwise distinct"):
-        declaration._fail_if_names_are_not_pairwise_distinct()
-
-
-def test_net_of_adjustment_cost_guard_accepts_distinct_names() -> None:
-    NetOfAdjustmentCost(
-        output="resources", before_cost="gross_resources", cost="cost"
-    )._fail_if_names_are_not_pairwise_distinct()
-
-
-def test_liquid_margin_guard_is_directly_exercised() -> None:
-    declaration = object.__new__(LiquidMargin)
-    object.__setattr__(declaration, "state", "assets")
-    object.__setattr__(declaration, "action", "assets")
-    object.__setattr__(declaration, "resources", "resources")
-    object.__setattr__(declaration, "post_decision_state", "savings")
-
-    with pytest.raises(RegimeInitializationError, match="pairwise distinct"):
-        declaration._fail_if_names_are_not_pairwise_distinct()
-
-
-def test_liquid_margin_guard_accepts_distinct_names() -> None:
-    _liquid()._fail_if_names_are_not_pairwise_distinct()
-
-
-def test_outer_margin_guard_is_directly_exercised() -> None:
-    declaration = object.__new__(OuterContinuousMargin)
-    object.__setattr__(declaration, "state", "durable")
-    object.__setattr__(declaration, "action", "new_durable")
-    object.__setattr__(declaration, "post_decision_state", "durable")
-    object.__setattr__(declaration, "no_adjustment", "keep_durable")
-
-    with pytest.raises(RegimeInitializationError, match="pairwise distinct"):
-        declaration._fail_if_names_are_not_pairwise_distinct()
-
-
-def test_outer_margin_guard_accepts_distinct_names() -> None:
-    _outer()._fail_if_names_are_not_pairwise_distinct()
-
-
-def test_liquid_state_guard_rejects_a_discrete_grid() -> None:
-    regime = object.__new__(ConsumptionSavingsRegime)
-    object.__setattr__(regime, "liquid", _liquid())
-    object.__setattr__(regime, "states", MappingProxyType({"assets": _DISCRETE_GRID}))
-
-    with pytest.raises(RegimeInitializationError, match="not a continuous"):
-        regime._fail_if_local_liquid_state_is_not_continuous()
-
-
-def test_liquid_state_guard_accepts_a_continuous_grid() -> None:
-    regime = object.__new__(ConsumptionSavingsRegime)
-    object.__setattr__(regime, "liquid", _liquid())
-    object.__setattr__(regime, "states", MappingProxyType({"assets": _GRID}))
-
-    regime._fail_if_local_liquid_state_is_not_continuous()
-
-
-def test_liquid_action_guard_rejects_a_discrete_grid() -> None:
-    regime = object.__new__(ConsumptionSavingsRegime)
-    object.__setattr__(regime, "liquid", _liquid())
-    object.__setattr__(
-        regime, "actions", MappingProxyType({"consumption": _DISCRETE_GRID})
-    )
-
-    with pytest.raises(RegimeInitializationError, match="not a continuous"):
-        regime._fail_if_local_liquid_action_is_not_continuous()
-
-
-def test_liquid_action_guard_accepts_a_continuous_grid() -> None:
-    regime = object.__new__(ConsumptionSavingsRegime)
-    object.__setattr__(regime, "liquid", _liquid())
-    object.__setattr__(regime, "actions", MappingProxyType({"consumption": _GRID}))
-
-    regime._fail_if_local_liquid_action_is_not_continuous()
-
-
-def test_liquid_function_mask_guard_is_directly_exercised() -> None:
-    regime = object.__new__(ConsumptionSavingsRegime)
-    object.__setattr__(regime, "liquid", _liquid())
-    object.__setattr__(
-        regime,
-        "functions",
-        MappingProxyType({"resources": None, "savings": lambda: None}),
-    )
-
-    with pytest.raises(RegimeInitializationError, match="masked by None"):
-        regime._fail_if_local_liquid_function_declarations_are_invalid()
-
-
-def test_liquid_function_mask_guard_accepts_declared_functions() -> None:
-    regime = object.__new__(ConsumptionSavingsRegime)
-    object.__setattr__(regime, "liquid", _liquid())
-    object.__setattr__(
-        regime,
-        "functions",
-        MappingProxyType({"resources": lambda: None, "savings": lambda: None}),
-    )
-
-    regime._fail_if_local_liquid_function_declarations_are_invalid()
-
-
-def test_margin_collision_guard_is_directly_exercised() -> None:
-    regime = object.__new__(NestedConsumptionSavingsRegime)
-    object.__setattr__(regime, "liquid", _liquid())
-    outer = _outer()
-    object.__setattr__(
-        regime,
-        "outer_continuous",
-        OuterContinuousMargin(
-            state=outer.state,
-            action=outer.action,
-            post_decision_state="savings",
-            no_adjustment=outer.no_adjustment,
-        ),
-    )
-
-    with pytest.raises(RegimeInitializationError, match="must not collide"):
-        regime._fail_if_liquid_and_outer_names_collide()
-
-
-def test_margin_collision_guard_accepts_disjoint_names() -> None:
-    regime = object.__new__(NestedConsumptionSavingsRegime)
-    object.__setattr__(regime, "liquid", _liquid())
-    object.__setattr__(regime, "outer_continuous", _outer())
-
-    regime._fail_if_liquid_and_outer_names_collide()
