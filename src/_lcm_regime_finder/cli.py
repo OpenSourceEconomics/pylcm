@@ -186,6 +186,7 @@ def main(argv=None):
     source_facts.add_argument('problem'); source_facts.add_argument('--output', required=True)
     source_facts.add_argument('--seconds', type=float)
     source_facts.add_argument('--host-gib', type=float)
+    source_facts.add_argument('--status-axes', help='JSON mapping from original regimes to categorical state names; check their joint status-to-ordinary projection')
     source_facts.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)
     source_facts.set_defaults(cost_limits=None)
     for name in ('check-result', 'check-model-result'):
@@ -222,11 +223,13 @@ def main(argv=None):
         if args.cost_limits is not None and problem.get('schema') != 'exact-graph-cost-instance/v1':
             raise ValueError('--cost-limits applies only to an exact cost-family input')
         if args.command == 'source-facts':
-            from .fibre_source import FibreSource
+            from .fibre_source import FibreSource, _mapping, _strings
             from .structural_store import final_input_check
             if delivery is None:
                 raise ValueError('Source facts require an output delivery plan')
-            result = FibreSource(problem).get_report()
+            status_axes = ({name: _strings(axes) for name, axes in _mapping(json.loads(args.status_axes)).items()}
+                           if args.status_axes is not None else None)
+            result = FibreSource(problem).get_report(status_axes=status_axes)
             result['input_artifact'] = input_artifact_identity(args.problem, reads=reads)
             final_input_check(problem)
             delivery.publish(result)

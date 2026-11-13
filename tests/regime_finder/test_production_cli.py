@@ -378,6 +378,38 @@ def test_source_facts_cli_delivers_report_and_monitor_only_resources(
     assert path.read_bytes() == before
 
 
+def test_source_facts_cli_accepts_explicit_status_projection_axes(
+    tmp_path: Path,
+) -> None:
+    from _lcm_regime_finder.cli import main
+
+    original = _report_original()
+    path = tmp_path / "original.json"
+    path.write_text(json.dumps(original))
+    before = path.read_bytes()
+    output = tmp_path / "facts"
+    assert (
+        main(
+            [
+                "source-facts",
+                str(path),
+                "--output",
+                str(output),
+                "--worker",
+                "--status-axes",
+                '{"original": ["history"]}',
+            ]
+        )
+        == 0
+    )
+    report = _object(json.loads((output / "report.json").read_text()))
+    screen = _object(report["status_screen"])
+    assert screen["conditions_pass"] is True
+    assert screen["projected_lanes"] == 1
+    assert screen["transformation_authorized"] is False
+    assert path.read_bytes() == before
+
+
 def test_source_facts_cli_refuses_output_covering_original_input(
     tmp_path: Path,
 ) -> None:
