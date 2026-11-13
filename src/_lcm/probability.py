@@ -473,6 +473,34 @@ def exact_product(factors: FloatND) -> FloatND:
     )
 
 
+def weighted_exact_product(*, factors: FloatND, values: FloatND) -> FloatND:
+    """Return `exact_product` of the factors and one further factor, `values`.
+
+    The factors' share of the product is formed once per entry the factors
+    hold and then meets every value that entry broadcasts to, so factors with
+    singleton trailing axes are not multiplied anew for each value they weight.
+
+    Args:
+        factors: The factors stacked along the leading axis. Their trailing
+            axes broadcast against `values`.
+        values: The further factor.
+
+    Returns:
+        The encoded product, with the broadcast shape of both.
+    """
+    joint, value = _product_parts(factors), _product_parts(jnp.asarray(values)[None])
+    raw = joint.significand * value.significand
+    return jnp.where(
+        joint.ordinary | value.ordinary,
+        joint.plain * value.plain,
+        _encoded(
+            significand=_significand_in_unit_range(raw),
+            exponent=joint.exponent + value.exponent + _unbiased_exponent(raw),
+            negative=joint.negative ^ value.negative,
+        ),
+    )
+
+
 def balanced_product(*, weight: FloatND, value: FloatND) -> FloatND:
     """Return `weight * value` with the exponent moved onto the smaller operand.
 

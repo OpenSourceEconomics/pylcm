@@ -2164,14 +2164,9 @@ class InformationQueryCell:
                     factors=factors, columns=columns, representatives=pinned[0]
                 )
                 actions = actions[pinned[1]]
-            expanded = jnp.broadcast_to(
-                factors.reshape((*factors.shape, *((1,) * (values.ndim - 1)))),
-                (factors.shape[0], *values.shape),
-            )
+            per_row = factors.reshape((*factors.shape, *((1,) * (values.ndim - 1))))
             return (
-                jnp.sum(
-                    factored_weighted_term(factors=expanded, values=values), axis=0
-                ),
+                jnp.sum(factored_weighted_term(factors=per_row, values=values), axis=0),
                 actions,
                 jnp.all((copies == 0) | support),
                 jnp.all(frame.valid) & jnp.all(valid),

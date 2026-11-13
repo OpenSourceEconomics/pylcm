@@ -454,3 +454,42 @@ def test_probability_predicates_preserve_ieee_classification(
         axis=-1,
     )
     np.testing.assert_array_equal(evaluate(values), expected)
+
+
+@pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
+def test_a_weighted_product_equals_the_product_of_the_repeated_factors(
+    *, compiled: bool
+) -> None:
+    """Factors held once per row weight each value as factors repeated per value do.
+
+    The rows' probability products land in the normal range, among the subnormals
+    and below the format; three more rows hold a null, an infinite and an
+    undefined factor. Every row weights a large and a small value of either
+    sign, so the weighted products include subnormal ones.
+    """
+    dtype = _dtype()
+    rng = np.random.default_rng(seed=0)
+    tiny = float(np.finfo(dtype).tiny)
+    scales = np.repeat([1.0, tiny ** (1 / 3), tiny ** (1 / 2)], 40)
+    factors = rng.uniform(0.5, 1.0, size=(3, scales.size)) * scales
+    factors = np.concatenate(
+        (factors, [[0.0, np.inf, np.nan], [0.5, 0.5, 0.5], [0.5, 0.5, 0.5]]), axis=1
+    ).astype(dtype)[..., None]
+    values = jnp.asarray(
+        rng.normal(size=(factors.shape[1], 2)) * [1e3, 1e-3], dtype=dtype
+    )
+
+    def repeated(*, factors: FloatND, values: FloatND) -> FloatND:
+        stack = jnp.broadcast_to(factors, (factors.shape[0], *values.shape))
+        return probability.exact_product(jnp.concatenate((stack, values[None])))
+
+    def once(*, factors: FloatND, values: FloatND) -> FloatND:
+        return probability.weighted_exact_product(factors=factors, values=values)
+
+    expected, got = (
+        (jax.jit(function) if compiled else function)(
+            factors=jnp.asarray(factors), values=values
+        )
+        for function in (repeated, once)
+    )
+    np.testing.assert_array_equal(got, expected)
