@@ -1,7 +1,6 @@
 """Integer dtypes are pinned to int32 across pylcm regardless of x64 mode."""
 
 from types import MappingProxyType
-from typing import cast
 
 import jax.numpy as jnp
 import numpy as np
@@ -15,12 +14,10 @@ from _lcm.simulation.initial_conditions import (
     build_initial_states,
 )
 from _lcm.simulation.transitions import _advance_states_for_subjects
-from _lcm.typing import ParamsTemplate
-from _lcm.utils.containers import ensure_containers_are_immutable
 from lcm import Model
 from lcm.ages import AgeGrid
 from lcm.params import MappingLeaf
-from tests.params._process_params import process_params
+from tests.params._process_params import as_template, process_params
 from tests.test_models.deterministic.regression import (
     RegimeId,
     dead,
@@ -29,12 +26,6 @@ from tests.test_models.deterministic.regression import (
     working_life,
     working_life_edges,
 )
-
-
-def _as_template(plain: dict[str, dict[str, dict[str, str]]]) -> ParamsTemplate:
-    """Deep-freeze a plain nested dict into a `ParamsTemplate` for tests."""
-    return cast("ParamsTemplate", ensure_containers_are_immutable(plain))
-
 
 # These tests deliberately pass `int64` inputs to verify the cast at
 # the barrier. Re-allow the JAX truncation warning that the
@@ -118,7 +109,7 @@ def test_advance_states_for_subjects_keeps_same_dtype_round_trip() -> None:
 
 def test_process_params_casts_python_int_to_int32() -> None:
     """A Python `int` param leaf is cast to `jnp.int32`."""
-    template = _as_template({"regime_a": {"fun": {"final_age": "int"}}})
+    template = as_template({"regime_a": {"fun": {"final_age": "int"}}})
     user_params = {"regime_a": {"fun": {"final_age": 65}}}
 
     out = process_params(
@@ -138,7 +129,7 @@ def test_process_params_casts_int64_array_to_int32() -> None:
     boundary (`ParamsLeaf` pins JAX integer leaves to `int32`), so the
     realistic raw-data path for a wider-dtype input is a numpy array.
     """
-    template = _as_template({"regime_a": {"fun": {"schedule": "Array"}}})
+    template = as_template({"regime_a": {"fun": {"schedule": "Array"}}})
     user_params = {
         "regime_a": {"fun": {"schedule": np.asarray([0, 1, 2], dtype=np.int64)}}
     }
@@ -153,15 +144,18 @@ def test_process_params_casts_int64_array_to_int32() -> None:
 
 
 def test_process_params_int_array_overflow_raises_with_qualified_name() -> None:
-    """An out-of-int32-range int array surfaces the param's qualified name."""
-    template = _as_template({"regime_a": {"fun": {"big_param": "Array"}}})
+    """An out-of-int32-range int array names the param and the float annotation."""
+    template = as_template({"regime_a": {"fun": {"big_param": "Array"}}})
     # Numpy here: under `jax_enable_x64=False`, `jnp.asarray(..., dtype=int64)`
     # of an out-of-int32 value raises before our helper sees it.
     user_params = {
         "regime_a": {"fun": {"big_param": np.asarray([0, 2**40], dtype=np.int64)}}
     }
 
-    with pytest.raises(ValueError, match="big_param"):
+    with pytest.raises(
+        ValueError,
+        match=r"big_param: int32 overflow.*annotate the argument .* `FloatND`",
+    ):
         process_params(
             params=user_params,
             params_template=template,
@@ -171,7 +165,7 @@ def test_process_params_int_array_overflow_raises_with_qualified_name() -> None:
 @pytest.mark.parametrize("key", ["low", "high"])
 def test_process_params_casts_int_array_inside_mapping_leaf_to_int32(key: str) -> None:
     """`MappingLeaf` int arrays land at `jnp.int32` after params processing."""
-    template = _as_template({"regime_a": {"fun": {"sched": "MappingLeaf"}}})
+    template = as_template({"regime_a": {"fun": {"sched": "MappingLeaf"}}})
     user_params = {
         "regime_a": {
             "fun": {
@@ -201,7 +195,7 @@ def test_process_params_casts_int_array_inside_sequence_leaf_to_int32(
     index: int,
 ) -> None:
     """`SequenceLeaf` int arrays land at `jnp.int32` after params processing."""
-    template = _as_template({"regime_a": {"fun": {"sched": "SequenceLeaf"}}})
+    template = as_template({"regime_a": {"fun": {"sched": "SequenceLeaf"}}})
     user_params = {
         "regime_a": {
             "fun": {

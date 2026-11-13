@@ -2,15 +2,51 @@
 
 Production (`Model._process_params`) runs the same steps with
 `convert_series_in_params` in between; tests whose params hold no `pd.Series`
-take them in one call.
+take them in one call. Each slot is cast in the numeric role its template leaf
+declares, as in production.
 """
 
+from collections.abc import Mapping
+from types import MappingProxyType
+from typing import cast
+
+from _lcm.params.numeric_roles import NumericRole, TemplateAnnotation, template_roles
 from _lcm.params.processing import (
     broadcast_to_template,
     cast_params_to_canonical_dtypes,
 )
 from _lcm.typing import FlatParams, ParamsTemplate
+from _lcm.utils.containers import ensure_containers_are_immutable
 from lcm.typing import UserParams
+
+type TemplateNode = str | Mapping[str, TemplateNode]
+type RoledNode = TemplateAnnotation | dict[str, RoledNode]
+
+# The role production reads off these annotation spellings; any other keeps the
+# kind of the value it receives.
+_ROLE_OF_TEXT = MappingProxyType({"float": NumericRole.FLOAT, "int": NumericRole.INT})
+
+
+def as_template(plain: Mapping[str, TemplateNode]) -> ParamsTemplate:
+    """Freeze a plain nested dict into a `ParamsTemplate` whose leaves carry roles.
+
+    A leaf `"float"` or `"int"` takes that role, as an argument annotated so does;
+    any other leaf keeps the kind of the value it receives.
+    """
+    return cast(
+        "ParamsTemplate",
+        ensure_containers_are_immutable(
+            {key: _with_roles(child) for key, child in plain.items()}
+        ),
+    )
+
+
+def _with_roles(node: TemplateNode) -> RoledNode:
+    if isinstance(node, str):
+        return TemplateAnnotation(
+            node, role=_ROLE_OF_TEXT.get(node, NumericRole.AS_GIVEN)
+        )
+    return {key: _with_roles(child) for key, child in node.items()}
 
 
 def process_params(
@@ -67,4 +103,6 @@ def process_params(
     internal = broadcast_to_template(
         params=params, template=params_template, required=True
     )
-    return cast_params_to_canonical_dtypes(internal)
+    return cast_params_to_canonical_dtypes(
+        internal, roles=template_roles(params_template)
+    )

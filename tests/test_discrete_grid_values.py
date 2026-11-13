@@ -68,7 +68,11 @@ from lcm.consumption_savings_regime import (
     LiquidMargin,
     post_decision_lower_bound,
 )
-from lcm.exceptions import InvalidStateTransitionError, RegimeInitializationError
+from lcm.exceptions import (
+    InvalidFunctionOutputError,
+    InvalidStateTransitionError,
+    RegimeInitializationError,
+)
 from lcm.regime import Regime as UserRegime
 from lcm.regime import StochasticTransition
 from lcm.solver_api import ResultRetention, SolutionResult
@@ -303,6 +307,21 @@ def test_adapted_law_returns_the_code_of_its_value(*, step, expected):
     )
     code = adapted(wealth=jnp.int32(1), step=jnp.int32(step))
     assert jnp.asarray(code).tolist() == expected
+
+
+def _next_wealth_half(*, wealth: DiscreteState) -> DiscreteState:
+    return wealth + 0.5
+
+
+def test_adapted_law_returning_a_float_for_an_integer_grid_names_the_law():
+    """A float for an integer value grid is refused naming the law that returned it."""
+    adapted = adapt_user_function(
+        func=_next_wealth_half, value_grids=_VALUE_GRIDS, encode=_WEALTH
+    )
+    with pytest.raises(
+        InvalidFunctionOutputError, match=r"_next_wealth_half returned .*integer"
+    ):
+        adapted(wealth=jnp.int32(1))
 
 
 def test_adapted_function_publishes_code_annotations():

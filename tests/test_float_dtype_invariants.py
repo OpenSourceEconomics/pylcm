@@ -1,7 +1,6 @@
 """Float dtypes follow `canonical_float_dtype()` across pylcm boundaries."""
 
 from collections.abc import Callable
-from typing import cast
 
 import jax.numpy as jnp
 import numpy as np
@@ -13,23 +12,15 @@ from _lcm.simulation.initial_conditions import (
     build_initial_states,
     canonicalize_initial_conditions,
 )
-from _lcm.typing import ParamsTemplate
-from _lcm.utils.containers import ensure_containers_are_immutable
 from lcm.grids import IrregSpacedGrid, LinSpacedGrid, LogSpacedGrid
 from lcm.params import MappingLeaf
 from lcm.typing import StateName
-from tests.params._process_params import process_params
+from tests.params._process_params import as_template, process_params
 from tests.test_models.deterministic.regression import (
     RegimeId,
     get_model,
     get_params,
 )
-
-
-def _as_template(plain: dict[str, dict[str, dict[str, str]]]) -> ParamsTemplate:
-    """Deep-freeze a plain nested dict into a `ParamsTemplate` for tests."""
-    return cast("ParamsTemplate", ensure_containers_are_immutable(plain))
-
 
 # These tests deliberately pass `float64` inputs to verify the cast at
 # the barrier. Re-allow the JAX truncation warning that the
@@ -113,7 +104,7 @@ def test_process_params_casts_float64_array_to_canonical_under_no_x64(
     silently truncates to `float32` under no-x64 at construction time, so a
     JAX-built input would never reach the helper as `float64`.
     """
-    template = _as_template({"regime_a": {"fun": {"schedule": "Array"}}})
+    template = as_template({"regime_a": {"fun": {"schedule": "Array"}}})
     user_params = {
         "regime_a": {"fun": {"schedule": np.asarray([0.1, 0.2, 0.3], dtype=np.float64)}}
     }
@@ -129,7 +120,7 @@ def test_process_params_casts_float64_array_to_canonical_under_no_x64(
 
 def test_process_params_casts_python_float_to_canonical(x64_disabled: None):
     """A Python `float` param leaf is cast to `canonical_float_dtype()`."""
-    template = _as_template({"regime_a": {"fun": {"discount_factor": "float"}}})
+    template = as_template({"regime_a": {"fun": {"discount_factor": "float"}}})
     user_params = {"regime_a": {"fun": {"discount_factor": 0.95}}}
 
     out = process_params(
@@ -142,11 +133,23 @@ def test_process_params_casts_python_float_to_canonical(x64_disabled: None):
     assert discount_factor.dtype == canonical_float_dtype()  # ty: ignore[unresolved-attribute]
 
 
+def test_process_params_casts_an_int_to_the_role_of_its_slot() -> None:
+    """A Python `int` becomes a float in a float slot and stays an int elsewhere."""
+    template = as_template({"regime_a": {"fun": {"rate": "float", "shift": "Array"}}})
+    out = process_params(
+        params={"regime_a": {"fun": {"rate": 2**31, "shift": 1}}},
+        params_template=template,
+    )
+    assert out["regime_a"]["fun__rate"].dtype == canonical_float_dtype()  # ty: ignore[unresolved-attribute]
+    assert float(out["regime_a"]["fun__rate"]) == 2.0**31  # ty: ignore[invalid-argument-type]
+    assert out["regime_a"]["fun__shift"].dtype == np.int32  # ty: ignore[unresolved-attribute]
+
+
 def test_process_params_float_array_overflow_raises_with_qualified_name(
     x64_disabled: None,
 ):
     """An out-of-float32 float64 array raises naming the qualified leaf."""
-    template = _as_template({"regime_a": {"fun": {"schedule": "Array"}}})
+    template = as_template({"regime_a": {"fun": {"schedule": "Array"}}})
     user_params = {
         "regime_a": {"fun": {"schedule": np.asarray([0.0, 1e40], dtype=np.float64)}}
     }
@@ -269,7 +272,7 @@ def test_process_params_casts_float_array_inside_mapping_leaf_to_canonical(
     *, key: str, x64_disabled: None
 ):
     """`MappingLeaf` float arrays land at `canonical_float_dtype()`."""
-    template = _as_template({"regime_a": {"fun": {"sched": "MappingLeaf"}}})
+    template = as_template({"regime_a": {"fun": {"sched": "MappingLeaf"}}})
     user_params = {
         "regime_a": {
             "fun": {
@@ -299,7 +302,7 @@ def test_process_params_casts_float_array_inside_sequence_leaf_to_canonical(
     *, index: int, x64_disabled: None
 ):
     """`SequenceLeaf` float arrays land at `canonical_float_dtype()`."""
-    template = _as_template({"regime_a": {"fun": {"sched": "SequenceLeaf"}}})
+    template = as_template({"regime_a": {"fun": {"sched": "SequenceLeaf"}}})
     user_params = {
         "regime_a": {
             "fun": {
