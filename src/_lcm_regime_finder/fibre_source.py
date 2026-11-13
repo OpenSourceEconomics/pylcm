@@ -1,9 +1,11 @@
 """Read fibre facts from authenticated original declaration metadata."""
 
-from collections.abc import Mapping
+from collections.abc import Hashable, Mapping
 from dataclasses import dataclass
 from fractions import Fraction
 from itertools import product
+from re import fullmatch
+from struct import unpack_from
 from types import MappingProxyType
 from typing import Literal
 
@@ -25,7 +27,6 @@ from .semantic_check import (
     _CallableRecords,
     _UNKNOWN,
     _check_capture,
-    _codes,
     _constant,
     _original_transition_contexts,
     _pointer,
@@ -33,6 +34,8 @@ from .semantic_check import (
     _static,
     _value_key,
 )
+from .structural_check import NativeArrayView
+from .structural_context import resolve_reference
 
 type CellId = str
 type RelationId = str
@@ -61,6 +64,14 @@ class TargetSupport:
     """Whether an original deterministic update fixes the complete support."""
 
 
+@dataclass(frozen=True)
+class _Categories:
+    """Keep nominal identity separate from each scalar value's full code preimage."""
+
+    by_code: Mapping[int, JSONValue]
+    by_value: Mapping[Hashable, frozenset[int]]
+
+
 @dataclass(frozen=True, init=False)
 class FibreSource:
     """Inspect original metadata without executing any economic callback.
@@ -76,6 +87,10 @@ class FibreSource:
     """Original transitions and within-period computations with source pointers."""
     _domains: Mapping[str, Wire]
     """Unchanged original grid declarations indexed by their identities."""
+    _categories: Mapping[str, _Categories]
+    """Immutable original code/value indices, decoded from checked payloads once."""
+    _category_limits: Mapping[str, str]
+    """Unsupported scalar payloads that cannot authorize domain reductions."""
     _callbacks: Mapping[CallbackId, Wire]
     """Original callback records; arbitrary producer read sets are not authority."""
     _roots: Mapping[CellId, tuple[_Primitive, ...]]
@@ -119,6 +134,26 @@ class FibreSource:
             name: _mapping(value)
             for name, value in _mapping(declarations["domains"]).items()
         }
+        categories: dict[str, _Categories] = {}
+        category_limits: dict[str, str] = {}
+        for domain in domains.values():
+            if domain.get("kind") != "categorical":
+                continue
+            identity = _text(domain["identity"])
+            try:
+                pairs = _code_values(domain)
+            except NotImplementedError as error:
+                category_limits[identity] = str(error)
+                continue
+            by_value: dict[Hashable, set[int]] = {}
+            for code, value in pairs:
+                by_value.setdefault(_value_key(value), set()).add(code)
+            categories[identity] = _Categories(
+                MappingProxyType(dict(pairs)),
+                MappingProxyType(
+                    {value: frozenset(codes) for value, codes in by_value.items()}
+                ),
+            )
         callbacks = {
             name: _mapping(value)
             for name, value in _mapping(declarations["callbacks"]).items()
@@ -227,6 +262,8 @@ class FibreSource:
             ("_cells", cells),
             ("_relations", relations),
             ("_domains", domains),
+            ("_categories", categories),
+            ("_category_limits", category_limits),
             ("_callbacks", callbacks),
             ("_roots", roots),
             ("_constraints", constraints),
@@ -271,10 +308,7 @@ class FibreSource:
                 domain = self._domains[_text(domain_id)]
                 if domain.get("kind") != "categorical":
                     continue
-                if not all(
-                    isinstance(domain.get(key), (list, tuple))
-                    for key in ("codes", "values")
-                ):
+                if _text(domain["identity"]) not in self._categories:
                     obligations.append(
                         f"Categorical payload needs interpretation: {cell_id}.{action}"
                     )
@@ -318,10 +352,7 @@ class FibreSource:
                     )
                     continue
                 domain = self._domains[next(iter(categorical.values()))]
-                if not all(
-                    isinstance(domain.get(key), (list, tuple))
-                    for key in ("codes", "values")
-                ):
+                if _text(domain["identity"]) not in self._categories:
                     supports[coordinate] = {
                         "proved": False,
                         "target_domains": categorical,
@@ -502,8 +533,8 @@ class FibreSource:
             relation=relation, target_coordinate=target_coordinate
         )
         self._validate_statuses(cell=cell, statuses=statuses)
-        pairs = _code_values(domain)
-        full = frozenset(code for code, _ in pairs)
+        categories = self._category(domain)
+        full = frozenset(categories.by_code)
         callback_id = _mapping(relation.get("state_updates", {})).get(target_coordinate)
         if callback_id is None:
             return TargetSupport(full, False)
@@ -527,11 +558,7 @@ class FibreSource:
             )
             if not answer.proved or answer.value is _UNKNOWN:
                 return TargetSupport(full, False)
-            matching = {
-                code
-                for code, value in pairs
-                if _value_key(value) == _value_key(answer.value)
-            }
+            matching = categories.by_value.get(_value_key(answer.value), frozenset())
             if not matching:
                 raise ValueError(
                     f"Original deterministic update leaves target grid: {target_coordinate}"
@@ -561,7 +588,7 @@ class FibreSource:
                 self._validate_statuses(cell=cell, statuses={name: code})
         names = tuple(status_values)
         excluded = []
-        for code, value in _code_values(domain):
+        for code in self._category(domain).by_code:
             everywhere = True
             for assignment in product(*(status_values[name] for name in names)):
                 statuses = dict(zip(names, assignment, strict=True))
@@ -577,7 +604,7 @@ class FibreSource:
                                 cell=cell,
                                 primitive=primitive,
                                 fixed_statuses=statuses,
-                                fixed_actions={action: value},
+                                fixed_actions={action: code},
                             )
                         ).proved
                         and answer.value is False
@@ -629,10 +656,17 @@ class FibreSource:
         for name, code in statuses.items():
             if name not in states or type(code) is not int:
                 raise ValueError(f"Unknown status or noninteger code: {name}")
-            if code not in {
-                item[0] for item in _code_values(self._domains[_text(states[name])])
-            }:
+            if code not in self._category(self._domains[_text(states[name])]).by_code:
                 raise ValueError(f"Unknown status code: {name}={code}")
+
+    def _category(self, domain: Wire) -> _Categories:
+        identity = _text(domain["identity"])
+        try:
+            return self._categories[identity]
+        except KeyError:
+            raise ValueError(
+                self._category_limits.get(identity, "Requested grid is not categorical")
+            ) from None
 
     def _joint_reads(
         self,
@@ -644,9 +678,16 @@ class FibreSource:
     ) -> JointReadSet:
         coordinates = frozenset(_mapping(cell["states"]))
         aliases = {
-            _text(_mapping(value)["argument"]): name
-            for name, value in _mapping(cell.get("category_codes", {})).items()
+            name + "_code": name
+            for name, domain in _mapping(cell["states"]).items()
+            if self._domains[_text(domain)].get("kind") == "categorical"
         }
+        aliases.update(
+            {
+                _text(_mapping(value)["argument"]): name
+                for name, value in _mapping(cell.get("category_codes", {})).items()
+            }
+        )
 
         def read(
             *, fixed_statuses: Mapping[CoordinateName, int]
@@ -674,7 +715,7 @@ class FibreSource:
         cell: Wire,
         primitive: _Primitive,
         fixed_statuses: Mapping[CoordinateName, int],
-        fixed_actions: Mapping[CoordinateName, JSONValue] | None = None,
+        fixed_actions: Mapping[CoordinateName, int] | None = None,
     ) -> _Abstract:
         if primitive.callback is None:
             return _Abstract(proved=False)
@@ -683,19 +724,40 @@ class FibreSource:
         if isinstance(cell.get("age"), str):
             static["age"] = Fraction(_text(cell["age"]))
         providers = _providers(cell, domains, primitive.phase)
-        for name, code in fixed_statuses.items():
-            domain = domains[_text(_mapping(cell["states"])[name])]
-            static[name] = dict(_code_values(domain))[code]
-        static.update(fixed_actions or {})
+        axes = {**_mapping(cell["states"]), **_mapping(cell["actions"])}
+        fixed_codes = {**fixed_statuses, **(fixed_actions or {})}
+        for name, code in fixed_codes.items():
+            static[name] = self._category(domains[_text(axes[name])]).by_code[code]
         if primitive.phase == "solve":
             for name, identity in _mapping(cell["states"]).items():
                 domain = domains[_text(identity)]
                 if domain.get("solve_axis") is False:
                     static.pop(name, None)
+                    fixed_codes.pop(name, None)
                     imputation = domain.get("solve_imputation")
                     if isinstance(imputation, str):
                         providers[name] = imputation
-        static = _codes(cell, domains, static)
+        for name, domain_id in axes.items():
+            domain = domains[_text(domain_id)]
+            categories = self._categories.get(_text(domain["identity"]))
+            if categories is None or (
+                primitive.phase == "solve" and domain.get("solve_axis") is False
+            ):
+                continue
+            if name not in static and len(categories.by_code) == 1:
+                static[name] = next(iter(categories.by_code.values()))
+            if name not in static:
+                continue
+            code = fixed_codes.get(name)
+            if code is None:
+                matching = categories.by_value.get(_value_key(static[name]), frozenset())
+                if len(matching) != 1:
+                    continue
+                code = next(iter(matching))
+            argument = _mapping(_mapping(cell.get("category_codes", {})).get(name, {})).get(
+                "argument", name + "_code"
+            )
+            static[_text(argument)] = code
         callback = self._callbacks[primitive.callback]
         raw = self._captures.resolve(callback.get("original", {}))
         identity = _identity_name(raw) if isinstance(raw, Mapping) else None
@@ -750,7 +812,8 @@ def _phases(value: JSONValue) -> tuple[Phase, ...]:
 def _code_values(domain: Wire) -> tuple[tuple[int, JSONValue], ...]:
     if domain.get("kind") != "categorical":
         raise ValueError("Requested status or action must have a categorical grid")
-    codes, values = domain.get("codes"), domain.get("values")
+    codes = _category_values(domain=domain, field="codes")
+    values = _category_values(domain=domain, field="values")
     if (
         not isinstance(codes, (list, tuple))
         or not isinstance(values, (list, tuple))
@@ -766,6 +829,52 @@ def _code_values(domain: Wire) -> tuple[tuple[int, JSONValue], ...]:
     if len(set(integer_codes)) != len(integer_codes):
         raise ValueError("Original categorical codes must be distinct integers")
     return tuple(zip(integer_codes, values, strict=True))
+
+
+def _category_values(
+    *, domain: Wire, field: Literal["codes", "values"]
+) -> tuple[JSONValue, ...]:
+    inline = domain.get(field)
+    if isinstance(inline, (list, tuple)):
+        return tuple(inline)
+    resolved = resolve_reference(domain.get("structural_" + field))
+    if resolved is None:
+        raise NotImplementedError(
+            "Original categorical codes and values must be available"
+        )
+    reader, token = resolved
+    payload = reader.read(token)
+    if isinstance(payload, (list, tuple)):
+        return tuple(payload)
+    if not isinstance(payload, NativeArrayView):
+        raise NotImplementedError("Categorical payload must be a scalar sequence or array")
+    if len(payload.shape) != 1:
+        raise ValueError("Categorical array must be one-dimensional")
+    match = fullmatch(r"([<>=|])([biuf])(1|2|4|8)", payload.dtype)
+    formats = {
+        "b1": "?",
+        "i1": "b",
+        "i2": "h",
+        "i4": "i",
+        "i8": "q",
+        "u1": "B",
+        "u2": "H",
+        "u4": "I",
+        "u8": "Q",
+        "f2": "e",
+        "f4": "f",
+        "f8": "d",
+    }
+    if match is None or match[2] + match[3] not in formats:
+        raise NotImplementedError("Categorical array has an unsupported scalar dtype")
+    endian = "=" if match[1] == "|" else match[1]
+    format_ = endian + formats[match[2] + match[3]]
+    data = b"".join(payload.buffer.iter_bytes())
+    # The checked view retains the original offset and stride, including reversal.
+    return tuple(
+        unpack_from(format_, data, payload.offset + index * payload.strides[0])[0]
+        for index in range(payload.shape[0])
+    )
 
 
 def _identity_name(value: Mapping[str, JSONValue]) -> CoordinateName | None:

@@ -78,6 +78,14 @@ parameter remains free. An unknown constraint retains the action value. Excluded
 are category codes, with their original numerical values kept distinct. A scalar zero
 returned by a stochastic probability function is not a deterministic target-state code.
 
+Categorical codes and values may be inline or stored in a checked structural payload.
+The adapter reads the original scalar sequence or one-dimensional array, including its
+byte order, offset and stride. It does not rebuild a grid or execute array callbacks.
+The resulting code/value indices are immutable. A fixed category keeps its supplied
+nominal code even when other categories have the same numeric value; an update known
+only by value retains every matching code. Unsupported scalar storage remains an
+explicit qualification and cannot justify removing values.
+
 ## Dependency closure and its boundary
 
 `calculate_fibre_liveness` computes the least fixed point **for the supplied read
