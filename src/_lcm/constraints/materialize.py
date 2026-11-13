@@ -18,7 +18,7 @@ from dags import concatenate_functions, get_annotations
 from dags.annotations import ensure_annotations_are_strings
 
 from _lcm.constraints.processed import ProcessedConstraint
-from _lcm.dtypes import as_bool, name_of
+from _lcm.output_roles import OutputRole, in_role
 from _lcm.typing import ConstraintFunction, FunctionName
 from _lcm.utils.functools import get_union_of_args
 from lcm.typing import BoolND, UserFunction, ValueND
@@ -63,12 +63,10 @@ def as_constraint_function(
                 "ConstraintFunction",
                 replace(
                     declaration,
-                    representative=_BooleanPredicate(
-                        function=declaration.representative
-                    ),
+                    representative=_as_boolean(declaration.representative),
                     concrete_by_period=MappingProxyType(
                         {
-                            period: _BooleanPredicate(function=function)
+                            period: _as_boolean(function)
                             for period, function in (
                                 declaration.concrete_by_period.items()
                             )
@@ -76,7 +74,10 @@ def as_constraint_function(
                     ),
                 ),
             )
-        return cast("ConstraintFunction", _BooleanPredicate(function=declaration))
+        return cast(
+            "ConstraintFunction",
+            _as_boolean(declaration),
+        )
 
     return cast(
         "ConstraintFunction",
@@ -90,32 +91,9 @@ def as_constraint_function(
     )
 
 
-@dataclass(frozen=True, kw_only=True, eq=False)
-class _BooleanPredicate:
-    """An opaque constraint, as its author wrote it, returning a Boolean.
-
-    A frozen callable instance rather than a nested function: the beartype claw
-    memoizes every function it decorates, so a function defined per model build
-    would pin that build's constraint after the model is dropped.
-    """
-
-    function: UserFunction
-    """The constraint as declared."""
-
-    def __post_init__(self) -> None:
-        for name in ("__module__", "__name__", "__qualname__", "__doc__"):
-            value = getattr(self.function, name, None)
-            if value is not None:
-                object.__setattr__(self, name, value)
-        object.__setattr__(self, "__signature__", inspect.signature(self.function))
-        object.__setattr__(self, "__annotations__", get_annotations(self.function))
-
-    @no_type_check
-    def __call__(self, *args: ValueND, **kwargs: ValueND) -> BoolND:
-        return as_bool(
-            value=self.function(*args, **kwargs),
-            source=f"Constraint '{name_of(self.function)}'",
-        )
+def _as_boolean(function: UserFunction) -> UserFunction:
+    """Return an opaque constraint whose output is converted to a Boolean."""
+    return in_role(func=function, role=OutputRole.BOOL, kind="Constraint")
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)

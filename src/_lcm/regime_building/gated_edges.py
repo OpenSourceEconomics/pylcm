@@ -49,7 +49,7 @@ from dags.exceptions import InvalidFunctionArgumentsError
 from dags.tree import qname_from_tree_path
 from jaxtyping import Int, Scalar
 
-from _lcm.dtypes import as_bool
+from _lcm.output_roles import OutputRole, in_role
 from _lcm.params.edges import (
     FALLBACK,
     PREDICATE,
@@ -75,7 +75,6 @@ from _lcm.typing import (
     EconFunctionsMapping,
     FlatParams,
     FunctionName,
-    HostArray,
     ParamsLeaf,
     QAndFArg,
     QAndFKwargs,
@@ -93,7 +92,6 @@ from lcm.typing import (
     ReferenceName,
     ScalarFloat,
     UserFunction,
-    ValueND,
 )
 
 # The two parameter namespaces a
@@ -848,35 +846,6 @@ class _CompiledEdgeGate:
     `period` / `age`, and its own free params under their qualified names."""
 
 
-def _as_boolean_gate(
-    *, value: ValueND | HostArray | bool | int | float, target: RegimeName, phase: str
-) -> BoolND:
-    """Return the gate output as a Boolean array, or reject its dtype.
-
-    A gate selects a branch with a strict `jnp.where`, where every nonzero
-    value counts as true, so an integer or floating gate would open the edge
-    wherever it is nonzero instead of failing. The return annotation cannot
-    constrain what a user function returns, so the realized dtype is checked
-    here, at each of the two places a gate is evaluated.
-
-    Args:
-        value: Whatever the compiled gate evaluator returned.
-        target: Name of the edge's target regime, for the error message.
-        phase: `"solve"` or `"simulate"`, naming the evaluator that ran.
-
-    Returns:
-        The gate output as a Boolean array.
-
-    Raises:
-        InvalidFunctionOutputError: The output dtype is not Boolean.
-
-    """
-    return as_bool(
-        value=value,
-        source=f"The gate of the gated edge into regime '{target}' ({phase} phase)",
-    )
-
-
 def _compile_edge_gate(
     *,
     edge: ResolvedGatedEdge,
@@ -955,7 +924,14 @@ def _compile_edge_gate(
     )
 
     gate_evaluator = concatenate_functions(
-        functions={**dag_pool, "__gate__": qualified_gate},
+        functions={
+            **dag_pool,
+            "__gate__": in_role(
+                func=qualified_gate,
+                role=OutputRole.BOOL,
+                kind=f"The gate of the edge into regime '{edge.target}', function",
+            ),
+        },
         targets="__gate__",
         enforce_signature=False,
         set_annotations=True,
@@ -1584,12 +1560,8 @@ class _EdgeBranchCombine:
     @no_type_check
     def gate(self, **kwargs: ParamsLeaf) -> BoolND:
         """Evaluate the gate at the realized point: `True` opens onto the target."""
-        return _as_boolean_gate(
-            value=self.gate_evaluator(
-                **{name: kwargs[name] for name in self.gate_arg_names}
-            ),
-            target=self.edge_target,
-            phase="solve",
+        return self.gate_evaluator(
+            **{name: kwargs[name] for name in self.gate_arg_names}
         )
 
     @no_type_check
@@ -1661,15 +1633,11 @@ class _SimulateGateEvaluator:
         # The predicate declares its params under their OWN qnames; map the
         # qualified leaves back before handing them over, so it sees the names
         # the solve side passes it.
-        return _as_boolean_gate(
-            value=self.gate_evaluator(
-                **{
-                    arg: jnp.asarray(kwargs[exposed])
-                    for arg, exposed in self.gate_extra_exposed.items()
-                }
-            ),
-            target=self.edge_target,
-            phase="simulate",
+        return self.gate_evaluator(
+            **{
+                arg: jnp.asarray(kwargs[exposed])
+                for arg, exposed in self.gate_extra_exposed.items()
+            }
         )
 
 

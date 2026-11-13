@@ -45,7 +45,7 @@ from _lcm.continuation import (
     FiniteOuterQuerySpec,
 )
 from _lcm.current_iid import CurrentIIDDrawPlan, CurrentIIDPlan
-from _lcm.dtypes import as_canonical_float, as_code, canonical_float_dtype, name_of
+from _lcm.dtypes import canonical_float_dtype
 from _lcm.egm.budget import (
     DCEGM_BUDGET_CONSTRAINT_NAME,
     INTRINSIC_BUDGET_SOLVERS,
@@ -100,6 +100,7 @@ from _lcm.exits import ExitFunctionDemand
 from _lcm.grids import ContinuousGrid, Grid
 from _lcm.grids.coordinates import get_irreg_coordinate
 from _lcm.identity_transition import _IdentityTransition
+from _lcm.output_roles import OutputRole, in_role, target_role
 from _lcm.params.edges import (
     is_gated_cell_slot,
     regime_kernel_params,
@@ -358,7 +359,6 @@ from lcm.typing import (
     ParameterName,
     ReferenceName,
     UserFunction,
-    ValueND,
 )
 
 type _TransitionBundles = MappingProxyType[
@@ -7686,7 +7686,7 @@ def _process_joint_transitions(
                 regime_params_template=regime_params_template,
                 param_key=qname_from_tree_path((target, kernel_name, "support")),
             )
-            processed_functions[f"weight_{axis_name}"] = _OutputInRole(
+            processed_functions[f"weight_{axis_name}"] = in_role(
                 func=_rename_params_to_qnames(
                     func=kernel.probabilities,
                     regime_params_template=regime_params_template,
@@ -7694,7 +7694,8 @@ def _process_joint_transitions(
                         (target, kernel_name, "probabilities")
                     ),
                 ),
-                code=False,
+                role=OutputRole.FLOAT,
+                kind="Law",
             )
             transition_keys.update(dict.fromkeys((axis_name, support_name)))
 
@@ -9921,41 +9922,7 @@ def _as_next_state_role(*, func: EconFunction, grid: Grid | None) -> EconFunctio
     """
     if grid is None or isinstance(func, _IdentityTransition | AdditiveShockTransition):
         return func
-    return cast(
-        "EconFunction",
-        _OutputInRole(func=func, code=isinstance(grid, DiscreteGrid)),
-    )
-
-
-@dataclass(frozen=True, eq=False, kw_only=True)
-class _OutputInRole:
-    """A user law returning its role's canonical kind: a code or a float.
-
-    A frozen callable instance rather than a nested function: the beartype claw
-    memoizes every function it decorates, so a function defined per model build
-    would pin that build's law after the model is dropped.
-    """
-
-    func: EconFunction
-    """The law, with qualified parameter names."""
-    code: bool
-    """Whether the law returns a discrete state's code rather than a float."""
-
-    def __post_init__(self) -> None:
-        for name in ("__module__", "__name__", "__qualname__", "__doc__"):
-            value = getattr(self.func, name, None)
-            if value is not None:
-                object.__setattr__(self, name, value)
-        object.__setattr__(self, "__signature__", inspect.signature(self.func))
-        object.__setattr__(self, "__annotations__", get_annotations(self.func))
-
-    @no_type_check
-    def __call__(self, *args: EconFunctionArg, **kwargs: EconFunctionArg) -> ValueND:
-        value = self.func(*args, **kwargs)
-        source = f"Law '{name_of(self.func)}'"
-        if self.code:
-            return as_code(value=value, source=source)
-        return as_canonical_float(value=value, source=source)
+    return in_role(func=func, role=target_role(grid), kind="Law")
 
 
 @dataclass(frozen=True, eq=False, kw_only=True)
@@ -9981,11 +9948,7 @@ class _OneHotRegimeTransition:
 
     @no_type_check
     def __call__(self, *args: EconFunctionArg, **kwargs: EconFunctionArg) -> FloatND:
-        code = as_code(
-            value=self.func(*args, **kwargs),
-            source=f"Regime selector '{name_of(self.func)}'",
-        )
-        return jax.nn.one_hot(code, self.n_regimes)
+        return jax.nn.one_hot(self.func(*args, **kwargs), self.n_regimes)
 
 
 def _wrap_deterministic_regime_transition(
@@ -10011,7 +9974,10 @@ def _wrap_deterministic_regime_transition(
     annotations = {k: v for k, v in get_annotations(func).items() if k != "return"}
 
     wrapped = with_signature(args=annotations, return_annotation="FloatND")(
-        _OneHotRegimeTransition(func=func, n_regimes=len(regime_names_to_ids))
+        _OneHotRegimeTransition(
+            func=in_role(func=func, role=OutputRole.CODE, kind="Regime selector"),
+            n_regimes=len(regime_names_to_ids),
+        )
     )
 
     # Pin `__annotations__` on the final wrapper: `concatenate_functions`

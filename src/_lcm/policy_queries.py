@@ -31,6 +31,8 @@ from _lcm.execution.core_program import (
 )
 from _lcm.execution.output_layout import VALUE, StateAxesLeading
 from _lcm.execution.pending_work import PendingSolveWork
+from _lcm.grids import Grid
+from _lcm.output_roles import OutputRole, target_role
 from _lcm.params.edges import EDGES, flat_namespaces, regime_kernel_params
 from _lcm.regime_building.argmax import argmax_and_max
 from _lcm.regime_building.collective import ParetoWeights, collective_argmax_and_readout
@@ -2148,6 +2150,7 @@ def _mapped_query_states(
     target reads its first grid point instead: a point its own solve evaluates.
     """
     grid = node.context.state_action_space.states
+    state_grids = {name: node.context.grids[name] for name in grid}
     # Where the engine receives a projected state: it takes the target state's
     # kind, so a projection may return `1` for a continuous state or a Python
     # integer for a code.
@@ -2157,7 +2160,7 @@ def _mapped_query_states(
                 **{key: available[key] for key in inspect.signature(helper).parameters}
             ),
             name=name,
-            grid=grid,
+            grids=state_grids,
         )
         for name, helper in node.read.projection.items()
         if names is None or name in names
@@ -2173,15 +2176,15 @@ def _mapped_query_states(
 
 
 def _as_target_state(
-    *, value: PytreeValue, name: str, grid: Mapping[str, FloatND | Code]
+    *, value: PytreeValue, name: str, grids: Mapping[str, Grid]
 ) -> FloatND | Code:
     """Adapt one projection's output to the role of the target state it lands on."""
     # A projection returns one array-like; the adapters refuse any other kind.
     output = cast("FloatND | IntND | BoolND", value)
-    if name not in grid:
+    if name not in grids:
         return jnp.asarray(output)
     source = f"The projection of state '{name}'"
-    if grid[name].dtype.kind == "f":
+    if target_role(grids[name]) is OutputRole.FLOAT:
         return as_canonical_float(value=output, source=source)
     return as_code(value=output, source=source)
 
