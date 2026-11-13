@@ -14,6 +14,7 @@ from .fibre_facts import (
     FibreLink,
     FibreReadFacts,
     JointReadSet,
+    calculate_fibre_liveness,
     get_joint_read_set,
 )
 from .graph_scope import AR1_TYPES, IID_TYPES
@@ -242,6 +243,121 @@ class FibreSource:
     def get_relation_ids(self) -> tuple[RelationId, ...]:
         """Return all original dependency incidences, including value reads."""
         return tuple(self._relations)
+
+    def get_report(self) -> Wire:
+        """Report original-cell facts without choosing or authorizing a layout."""
+        facts = self.get_cell_facts()
+        closures = {
+            item.identifier: item.live_coordinates
+            for item in calculate_fibre_liveness(facts)
+        }
+        direct = {item.identifier: item.direct.live_coordinates for item in facts}
+        obligations = list(self.source_obligations)
+        cells: list[JSONValue] = []
+        exclusions: Wire = {}
+        for cell_id in self.get_cell_ids():
+            cell = self._cell(cell_id)
+            cells.append(
+                {
+                    "id": cell_id,
+                    "regime": cell["regime"],
+                    "period": cell["period"],
+                    "direct_reads": sorted(direct[cell_id]),
+                    "live_coordinates": sorted(closures[cell_id]),
+                }
+            )
+            excluded: Wire = {}
+            for action, domain_id in _mapping(cell["actions"]).items():
+                domain = self._domains[_text(domain_id)]
+                if domain.get("kind") != "categorical":
+                    continue
+                if not all(
+                    isinstance(domain.get(key), (list, tuple))
+                    for key in ("codes", "values")
+                ):
+                    obligations.append(
+                        f"Categorical payload needs interpretation: {cell_id}.{action}"
+                    )
+                    excluded[action] = []
+                    continue
+                excluded[action] = sorted(
+                    self.get_excluded_action_values(
+                        cell_id=cell_id, action=action, status_values={}
+                    )
+                )
+            exclusions[cell_id] = excluded
+        relations: list[JSONValue] = []
+        for relation_id in self.get_relation_ids():
+            relation = self._relations[relation_id]
+            supports: Wire = {}
+            targets = _strings(relation.get("targets", []))
+            for coordinate in _mapping(relation.get("state_updates", {})):
+                target_domains = {
+                    target: _text(_mapping(self._cell(target)["states"])[coordinate])
+                    for target in targets
+                    if coordinate in _mapping(self._cell(target)["states"])
+                }
+                categorical = {
+                    target: identity
+                    for target, identity in target_domains.items()
+                    if self._domains[identity].get("kind") == "categorical"
+                }
+                if not categorical:
+                    continue
+                if (
+                    len(categorical) != len(targets)
+                    or len(set(categorical.values())) != 1
+                ):
+                    supports[coordinate] = {
+                        "proved": False,
+                        "target_domains": categorical,
+                        "reason": "Original targets do not share one categorical domain",
+                    }
+                    obligations.append(
+                        f"Categorical support has different target domains: {relation_id}.{coordinate}"
+                    )
+                    continue
+                domain = self._domains[next(iter(categorical.values()))]
+                if not all(
+                    isinstance(domain.get(key), (list, tuple))
+                    for key in ("codes", "values")
+                ):
+                    supports[coordinate] = {
+                        "proved": False,
+                        "target_domains": categorical,
+                        "reason": "Categorical payload needs interpretation",
+                    }
+                    obligations.append(
+                        f"Categorical support payload needs interpretation: {relation_id}.{coordinate}"
+                    )
+                    continue
+                support = self.get_target_support(
+                    relation_id=relation_id, target_coordinate=coordinate, statuses={}
+                )
+                supports[coordinate] = {
+                    "possible_codes": sorted(support.possible_codes),
+                    "proved": support.proved,
+                }
+            relations.append(
+                {
+                    "id": relation_id,
+                    "source": relation["source"],
+                    "targets": list(targets),
+                    "phase": relation.get("phase", "both"),
+                    "kind": relation["kind"],
+                    "categorical_support": supports,
+                }
+            )
+        return {
+            "schema": "regime-source-facts/v1",
+            "status": "SOURCE_FACTS_BUILT",
+            "transformation_authorized": False,
+            "scope": "Original-cell facts before status refinement; no layout search or optimum certificate",
+            "cells": cells,
+            "relations": relations,
+            "excluded_action_values": exclusions,
+            "source_obligations": list(dict.fromkeys(obligations)),
+        }
 
     def get_cell_facts(self) -> tuple[FibreReadFacts, ...]:
         """Build unspecialised dependency facts for the original admitted cells.

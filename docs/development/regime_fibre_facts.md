@@ -26,6 +26,20 @@ live = calculate_fibre_liveness(facts)
 These are internal interfaces. The public model-analysis interface is documented in
 [Check a regime graph](../user_guide/regime_checker.md).
 
+On Linux, an installed checker can export these facts without running a layout search:
+
+```console
+pixi run python -m _lcm_regime_finder source-facts model-capture.json --output source-facts
+```
+
+The output directory contains `report.json` and the worker's `resource.json`. Inputs and
+their stored companions retain the normal protected-delivery checks. Resource monitoring
+has no default time or memory cutoff; `--seconds` and `--host-gib` set optional limits.
+The report includes joint dependencies, least cell liveness, proved categorical support,
+whole-domain action exclusions and unresolved source obligations. Unknown payloads keep
+their original domains. `SOURCE_FACTS_BUILT` does not authorize a model change or
+certify that a layout is optimal.
+
 ## Joint read certificates
 
 A primitive's read set must be sufficient when **all** state coordinates outside that
