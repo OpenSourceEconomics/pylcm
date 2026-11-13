@@ -38,6 +38,7 @@ from _lcm.dtypes import (
 )
 from _lcm.grids import ContinuousGrid
 from _lcm.grids.discrete import read_at_codes
+from _lcm.output_roles import OutputRole, target_role
 from _lcm.post_decision_bound import PostDecisionBoundSpec
 from _lcm.probability import (
     is_live,
@@ -106,7 +107,7 @@ from _lcm.zero_safe import (
     zero_safe_weighted_term,
 )
 from lcm.exceptions import ModelInitializationError
-from lcm.grids import DiscreteGrid, IrregSpacedGrid
+from lcm.grids import IrregSpacedGrid
 from lcm.typing import (
     ActionName,
     BoolND,
@@ -1854,11 +1855,12 @@ class _SamePeriodReferenceReader:
         a continuous state or a Python integer for a code. A process axis is read
         by value, not by node code.
         """
-        discrete = self.v_interpolation_info.discrete_states
+        info = self.v_interpolation_info
+        grids = {**info.discrete_states, **info.continuous_states}
         return {
             state: (
                 as_code
-                if isinstance(discrete.get(state), DiscreteGrid)
+                if target_role(grids[state]) is OutputRole.CODE
                 else as_canonical_float
             )(
                 value=self.projection_funcs[state](
