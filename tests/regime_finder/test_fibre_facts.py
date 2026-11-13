@@ -19,6 +19,7 @@ from _lcm_regime_finder.fibre_facts import (
     get_joint_read_set,
 )
 from _lcm_regime_finder.records import JSONValue
+import _lcm_regime_finder.fibre_facts as fibre_facts
 
 
 type Assignment = tuple[int, ...]
@@ -560,3 +561,167 @@ def test_invalid_fibre_or_update_inventory_is_rejected(defect: str) -> None:
         )
     with pytest.raises(ValueError):
         calculate_fibre_liveness((source, target))
+
+
+def _screen_identity_fibres() -> tuple[fibre_facts.ScreenFibre, ...]:
+    return tuple(
+        fibre_facts.ScreenFibre(
+            identifier=f"{regime}_{code}",
+            cell_id=regime,
+            regime=regime,
+            status_domains=(("i", (0, 1)),),
+            statuses=(("i", code),),
+            reads=(("direct", _fixed_reads()),),
+            forced=frozenset(),
+            excluded=(),
+            links=(fibre_facts.ScreenLink(f"target_{code}", "solve", False, ("law",)),)
+            if regime == "source"
+            else (),
+        )
+        for regime, code in product(("source", "target"), (0, 1))
+    )
+
+
+def test_inert_joint_projection_compares_the_same_source_and_target_map() -> None:
+    fibres = _screen_identity_fibres()
+    result = fibre_facts.check_inert_projection(
+        fibres=fibres,
+        kept=frozenset(row.identifier for row in fibres),
+        removed=frozenset({("source", "i"), ("target", "i")}),
+    )
+    assert result.scope == "inert-literal"
+    assert result.conditions_pass
+    assert len(set(result.projection.values())) == 2
+    unilateral = fibre_facts.check_inert_projection(
+        fibres=fibres,
+        kept=frozenset(row.identifier for row in fibres),
+        removed=frozenset({("source", "i")}),
+    )
+    assert unilateral.premises["I3"].status == "refuted"
+    assert not unilateral.conditions_pass
+
+
+def test_inert_projection_checks_exclusions_on_unkept_parts() -> None:
+    fibres = _screen_identity_fibres()
+    altered = tuple(
+        replace(row, excluded=(("choice", frozenset({1})),))
+        if row.identifier == "target_1"
+        else row
+        for row in fibres
+    )
+    result = fibre_facts.check_inert_projection(
+        fibres=altered,
+        kept=frozenset({"source_0", "source_1"}),
+        removed=frozenset({("source", "i"), ("target", "i")}),
+    )
+    assert result.premises["I2"].status == "refuted"
+    assert {"target_0", "target_1"} <= set(result.premises["I2"].witness)
+
+
+def test_inert_projection_retains_phase_and_original_incidence_identity() -> None:
+    fibres = _screen_identity_fibres()
+    altered = tuple(
+        replace(
+            row,
+            links=(
+                fibre_facts.ScreenLink("target_1", "simulation", False, ("other-law",)),
+            ),
+        )
+        if row.identifier == "source_1"
+        else row
+        for row in fibres
+    )
+    result = fibre_facts.check_inert_projection(
+        fibres=altered,
+        kept=frozenset(row.identifier for row in fibres),
+        removed=frozenset({("source", "i"), ("target", "i")}),
+    )
+    assert result.premises["I3"].status == "refuted"
+
+
+def test_inert_projection_does_not_assume_marked_slice_admission() -> None:
+    fibres = tuple(
+        replace(
+            row,
+            cell_id="earlier" if row.regime == "source" else "later",
+            regime="same",
+            links=(
+                fibre_facts.ScreenLink(
+                    "target_" + str(1 - dict(row.statuses)["i"]),
+                    "solve",
+                    True,
+                    ("query",),
+                ),
+            )
+            if row.regime == "source"
+            else (),
+        )
+        for row in _screen_identity_fibres()
+    )
+    result = fibre_facts.check_inert_projection(
+        fibres=fibres,
+        kept=frozenset(row.identifier for row in fibres),
+        removed=frozenset({("same", "i")}),
+    )
+    assert result.premises["I3"].status == "proved"
+    assert result.premises["I4"].status == "refuted"
+
+
+def test_inert_projection_requires_explicit_admission_and_complete_original_grid() -> (
+    None
+):
+    fibres = _screen_identity_fibres()
+    result = fibre_facts.check_inert_projection(
+        fibres=tuple(replace(row, forced=frozenset({"choice"})) for row in fibres),
+        kept=frozenset(row.identifier for row in fibres),
+        removed=frozenset({("source", "i"), ("target", "i")}),
+    )
+    assert result.premises["I5"].status == "unknown"
+    assert not result.conditions_pass
+    with pytest.raises(ValueError, match="rectangle"):
+        fibre_facts.check_inert_projection(
+            fibres=tuple(replace(row, links=()) for row in fibres[:-1]),
+            kept=frozenset(row.identifier for row in fibres[:-1]),
+            removed=frozenset({("source", "i"), ("target", "i")}),
+        )
+
+
+def test_inert_projection_compares_slice_values_by_name_not_record_order() -> None:
+    fibres = tuple(
+        fibre_facts.ScreenFibre(
+            identifier=f"{cell}_{i}_{j}",
+            cell_id=cell,
+            regime="same",
+            status_domains=(("i", (0, 1)), ("j", (0, 1)))
+            if cell == "earlier"
+            else (("j", (0, 1)), ("i", (0, 1))),
+            statuses=(("i", i), ("j", j))
+            if cell == "earlier"
+            else (("j", j), ("i", i)),
+            reads=(("direct", _fixed_reads()),),
+            forced=frozenset(),
+            excluded=(),
+            links=(fibre_facts.ScreenLink(f"later_{j}_{i}", "solve", True, ("query",)),)
+            if cell == "earlier"
+            else (),
+        )
+        for cell, i, j in product(("earlier", "later"), (0, 1), (0, 1))
+    )
+    result = fibre_facts.check_inert_projection(
+        fibres=fibres,
+        kept=frozenset(row.identifier for row in fibres),
+        removed=frozenset({("same", "i"), ("same", "j")}),
+    )
+    assert result.premises["I3"].status == "proved"
+    assert result.premises["I4"].status == "refuted"
+
+
+def test_inert_projection_missing_premises_cannot_claim_success() -> None:
+    fibres = _screen_identity_fibres()
+    result = fibre_facts.check_inert_projection(
+        fibres=fibres,
+        kept=frozenset(row.identifier for row in fibres),
+        removed=frozenset({("source", "i"), ("target", "i")}),
+    )
+    assert result.conditions_pass
+    assert not replace(result, premises={}).conditions_pass

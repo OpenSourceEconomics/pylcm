@@ -105,3 +105,45 @@ emission rule, or optimality. The API does not replace existing source, preserva
 adoption checks. Fibre reachability, block admissibility, complete action-domain facts
 and layout costs require their own checks; the unspecialized cell baseline alone does
 not establish those results.
+
+## Joint status pre-screen
+
+To check a joint status projection from the original capture, supply the categorical
+state names by original regime:
+
+```console
+pixi run python -m _lcm_regime_finder source-facts model-capture.json --output source-facts --status-axes '{"working": ["employment"]}'
+```
+
+This adds `status_screen` to the report. `FibreSource.get_report(status_axes=...)`
+provides the same operation in Python. It builds the full original status rectangle,
+replays original primitive and exclusion facts, and retains unproved support links. The
+supplied names define this check's classification; omitted categorical states are not
+silently classified as statuses. A passing joint proposal has a projected lane count. A
+rejected proposal has counterexamples and no accepted projected count. The default
+report without this argument still supplies the original-cell baseline.
+
+`check_inert_projection` checks one proposed status projection against fixed
+`ScreenFibre` records. An axis removed from the status set becomes an ordinary state
+coordinate. It remains on its full original grid wherever the live-coordinate closure
+requires it. This operation never deletes a Model state or pools original regimes.
+
+Each original cell must supply its complete Cartesian status rectangle. The checker
+compares read and forced-action facts on kept parts, and categorical exclusions on all
+parts, including unkept parts. It projects sources and targets with the same map and
+retains primitive phases, marks and incidence IDs. A marked edge between projected
+fibres must also occur inside every fixed-value slice; equal unmarked successor sets
+alone do not establish this admission condition.
+
+With no forced-action facts, every block retains all original action coordinates. Its
+taste-shock law can be the original joint law restricted to the alternatives that remain
+after full-hull exclusions. This satisfies the shock-law admission condition without
+independence or a degenerate-law assumption. Reports using these facts must state that
+forced-action savings were not measured. Nonempty forcing needs separate admission
+evidence and remains unresolved in this finite checker.
+
+The result separates each premise's status and counterexample from its proof scope: the
+shared-single-status case is tagged `inert-literal`, and local or multiple-axis
+projections are tagged `inert-joint`. Passing finite checks does not authenticate their
+source, prove the applicable theorem or identify the largest removable set. It does not
+establish exact economic reachability, a preferred layout or global optimality.
