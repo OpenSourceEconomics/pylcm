@@ -28,6 +28,7 @@ import jax.numpy as jnp
 from dags import get_annotations, get_free_arguments
 from dags.signature import rename_arguments
 
+from _lcm.dtypes import name_of
 from _lcm.gated_edge import GatedEdge
 from _lcm.grids import Grid
 from _lcm.identity_transition import _IdentityTransition
@@ -45,6 +46,7 @@ from lcm.collective import (
 from lcm.condition import Condition
 from lcm.decoupled import Decoupled
 from lcm.exceptions import (
+    InvalidFunctionOutputError,
     ModelInitializationError,
     RegimeInitializationError,
 )
@@ -1252,7 +1254,14 @@ class ValueAdapter:
                 for name in self._reads
             }
         )
-        return result if self.encode is None else self.encode.encode(result)
+        if self.encode is None:
+            return result
+        try:
+            return self.encode.encode(result)
+        except TypeError as error:
+            # An integer value grid refuses a non-integer dtype, which is static.
+            msg = f"{name_of(self.func)} returned a value of the wrong kind: {error}"
+            raise InvalidFunctionOutputError(msg) from error
 
 
 def _node_position(*, process: _ContinuousStochasticProcess, value: ValueND) -> ValueND:

@@ -749,7 +749,7 @@ _SOURCE_SEALS = {
     LCM_STATE_CONDITIONED_SOURCE: "367bb5d6fbd1ae20974c8905cf7277f7d4e6ea1d18d8d3e59df716a377bdcfbe",
     VARIABLES_SOURCE: "8445fd5d92144d013955027460ee204debfdcedf8bb5ef5d10092538cd18de8c",
     PARAMS_REGIME_TEMPLATE_SOURCE: "18fc14281bd078d6ea04d214b9cd6eab071f991d5a7001afe8558876a920e926",
-    PARAMS_PROCESSING_SOURCE: "abb1d02308e94b7b4d52e32c9ef99f5783028e7812405673de3ddd710f21278c",
+    PARAMS_PROCESSING_SOURCE: "3e18b85e9004a8b4b9ab48d16dd312bbe3622b93c81af21b873232a7a100edc1",
     DTYPES_SOURCE: "ad663c3461f511b64bdbad3fc9741d1ee54e18c2c3df52555cbb6c1a2cace29e",
     LCM_TYPING_SOURCE: "92bd61b989e1259c67723f8d98e55f8e6b2a5fd4e4f42c9e017a63f80cd1c248",
     NAMESPACE_SOURCE: "9a33080663f01a6d65501663e8436b132176be51c8223c28b2e749d8dbf8b570",
@@ -1097,11 +1097,11 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     PARAMS_PROCESSING_SOURCE: (
-        "5d69b157aacc91f13613baa918c29ddee8880c68efe379378c52b23b9cd4aeb7",
+        "370384526cecdb768ffac9cde63b1e7eadab9649b21871845ac5eabd403d78e1",
         {
             "cast_params_to_canonical_dtypes": "f7505aa5944a86781bee872ac0be58ee38d3d7a9237146438918118a8bd3e614",
             "_cast_shared": "4ac70e316e5666b03db83170f10bc1acdd25bbe0c7a4ffc3fb4782b7ab1cbbe5",
-            "_cast_leaves_to_canonical_dtype": "32e2415eca4ae8e07db5e56a169d8e9836f6e5cba804bdcbc28c27489dfddcdc",
+            "_cast_leaves_to_canonical_dtype": "5e5738b43938b35ab9c13974cd7eac3ed5a00812c6393ba61d520f5cac4a98a9",
         },
     ),
     SIMULATION_ENTRY_ALLOCATIONS_SOURCE: (
