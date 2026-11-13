@@ -751,6 +751,84 @@ def test_stored_code_as_value_replay_rejects_forged_normalized_semantics(
     assert reader.doc["status"] == "COMPLETE"
 
 
+@pytest.mark.parametrize("field", ["structural_values", "structural_codes", "size"])
+def test_phased_grid_replay_rejects_a_forged_copy_of_the_verified_child(
+    field: str,
+) -> None:
+    original, reader = _stored_category_source(storage="native")
+    states = _object(_fields(original)["states"])
+    category = states["history"]
+    states["history"] = {
+        "kind": "dataclass",
+        "type": "lcm.Phased",
+        "fields": {"solve": category, "simulate": category},
+    }
+    normalized = _normalized(original)
+    cell = _object(_rows(normalized["cells"])[0])
+    domain = _object(
+        _object(normalized["domains"])[_name(_object(cell["states"])["history"])]
+    )
+    domain[field] = (
+        4
+        if field == "size"
+        else _object(_object(category)["fields"])[
+            "values" if field == "structural_codes" else "codes"
+        ]
+    )
+    with (
+        patch(
+            "_lcm_regime_finder.fibre_source.normalize_declarations",
+            return_value=normalized,
+        ),
+        pytest.raises(ValueError, match="original inherited grid payload changed"),
+    ):
+        FibreSource(original)
+    assert reader.doc["status"] == "COMPLETE"
+
+
+@pytest.mark.parametrize("field", ["size", "conditional_declaration"])
+def test_conditional_action_replay_rejects_changed_grid_or_activation_metadata(
+    field: str,
+) -> None:
+    original = _original()
+    _object(_fields(original)["actions"])["savings"] = {
+        "kind": "object",
+        "type": "lcm.ConditionalAction",
+        "fields": {
+            "grid": {
+                "kind": "object",
+                "type": "lcm.LinSpacedGrid",
+                "fields": {
+                    "start": 0.0,
+                    "stop": 1.0,
+                    "n_points": 3,
+                },
+            },
+            "active_when": {"choice": [0]},
+            "inactive_value": 0.0,
+            "inactive_index": 0,
+        },
+    }
+    FibreSource(original)
+    normalized = _normalized(original)
+    cell = _object(_rows(normalized["cells"])[0])
+    domain = _object(
+        _object(normalized["domains"])[_name(_object(cell["actions"])["savings"])]
+    )
+    domain[field] = 2 if field == "size" else {}
+    with (
+        patch(
+            "_lcm_regime_finder.fibre_source.normalize_declarations",
+            return_value=normalized,
+        ),
+        pytest.raises(
+            ValueError,
+            match="original (inherited grid payload|conditional action declaration) changed",
+        ),
+    ):
+        FibreSource(original)
+
+
 def test_native_capture_identity_and_raising_callbacks_are_metadata_only() -> None:
     script = textwrap.dedent(
         """

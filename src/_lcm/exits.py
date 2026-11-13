@@ -5,6 +5,7 @@ from dataclasses import replace
 from types import MappingProxyType
 from typing import cast
 
+from _lcm.output_roles import OutputRole, in_role
 from lcm.exits import Consent, Exit
 from lcm.phased import Phased
 from lcm.typing import Phase, RegimeName, UserFunction
@@ -66,14 +67,20 @@ def exit_functions(
     for name, declaration in exits_for_phase(exits=exits, phase=phase).items():
         prefix = ("exits", name)
         if declaration.available is not None:
-            functions[*prefix, "available"] = declaration.available
+            functions[*prefix, "available"] = in_role(
+                func=declaration.available,
+                role=OutputRole.BOOL,
+                kind="Exit availability",
+            )
         if callable(declaration.rule):
             functions[*prefix, "rule"] = cast("UserFunction", declaration.rule)
         for role, target in declaration.targets.items():
             target_path = (*prefix, "targets", role)
             if target.utility_adjustment is not None:
-                functions[*target_path, "utility_adjustment"] = (
-                    target.utility_adjustment
+                functions[*target_path, "utility_adjustment"] = in_role(
+                    func=target.utility_adjustment,
+                    role=OutputRole.FLOAT,
+                    kind=f"Exit utility adjustment of '{role}', function",
                 )
             functions.update(
                 {

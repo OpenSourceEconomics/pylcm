@@ -730,7 +730,8 @@ def test_numeric_exit_availability_is_refused(*, form: str) -> None:
 
     model = _exit_model(adjustment=_no_adjustment, available=availability)
     with pytest.raises(
-        InvalidFunctionOutputError, match=r"^Exit availability returned dtype"
+        InvalidFunctionOutputError,
+        match=r"^Exit availability 'availability' returned dtype",
     ):
         model.solve(params={}, log_level="off")
 
@@ -1227,3 +1228,92 @@ def test_boolean_discrete_next_state_names_codes_zero_and_one() -> None:
         params=_PARAMS, log_level="off"
     )
     np.testing.assert_array_equal(values.values[0]["alive"], [1.0, 1.0])
+
+
+def test_boolean_exit_utility_adjustment_is_refused() -> None:
+    """An exit's utility adjustment is a number, not a comparison."""
+
+    def adjustment() -> FloatND:
+        return True  # ty: ignore[invalid-return-type]
+
+    model = _exit_model(adjustment=adjustment)
+    with pytest.raises(
+        InvalidFunctionOutputError, match="returned dtype 'bool', but must return a"
+    ):
+        model.solve(params={}, log_level="off")
+
+
+def test_boolean_stochastic_state_weights_are_refused() -> None:
+    """Weights over next codes are probabilities, never Booleans."""
+
+    def next_health() -> FloatND:
+        return jnp.asarray([False, True])
+
+    model = _health_model(health_law=StochasticTransition(func=next_health))
+    with pytest.raises(
+        InvalidFunctionOutputError, match="returned dtype 'bool', but must return a"
+    ):
+        model.solve(params=_PARAMS, log_level="off")
+
+
+def test_boolean_joint_transition_probabilities_are_refused() -> None:
+    """A joint kernel's probabilities are numbers, never Booleans."""
+
+    def probabilities() -> FloatND:
+        return jnp.asarray([False, True])
+
+    model = _joint_model(wealth=_stay_wealth, probabilities=probabilities)
+    with pytest.raises(
+        InvalidFunctionOutputError, match="returned dtype 'bool', but must return a"
+    ):
+        model.solve(params=_JOINT_PARAMS, log_level="off")
+
+
+def test_numeric_constraint_under_endogenous_grids_is_refused() -> None:
+    """An NBEGM predicate `1` is a number, not a Boolean."""
+
+    def allowed(*, liquid: ContinuousState) -> BoolND:  # noqa: ARG001
+        return jnp.asarray(1)
+
+    with pytest.raises(InvalidFunctionOutputError, match="must return a Boolean"):
+        _constrained_nbegm_values(allowed)
+
+
+def test_numeric_value_dependent_constraint_is_refused() -> None:
+    """A value-dependent predicate `1` is a number, not a Boolean."""
+
+    def participation(*, Q_f: FloatND) -> BoolND:  # noqa: ARG001
+        return jnp.asarray(1)
+
+    base, params = make_stateless_collective_target_model()
+    couple = base.user_regimes["couple"]
+    model = Model(
+        regimes={
+            "couple": couple.replace(
+                constraints={
+                    **dict(couple.constraints),
+                    "participation": ValueDependentConstraint(predicate=participation),
+                }
+            ),
+            "couple_terminal": base.user_regimes["couple_terminal"],
+        },
+        ages=AGES,
+        regime_id_class=CoupleRegimeId,
+        initial_nodes={0: "couple"},
+        edges={"couple": {"couple_terminal": 0}},
+    )
+    with pytest.raises(InvalidFunctionOutputError, match="must return a Boolean"):
+        model.solve(params=params, log_level="off")
+
+
+@pytest.mark.parametrize(
+    "solved", [_egm_solved, _nbegm_solved, _dcegm_solved], ids=["egm", "nbegm", "dcegm"]
+)
+def test_boolean_terminal_utility_under_endogenous_grids_is_refused(
+    *, solved, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A Boolean felicity is refused in every EGM family."""
+    with pytest.raises(
+        InvalidFunctionOutputError, match="returned dtype 'bool', but must return a"
+    ):
+        solved(raw=_constant(form="bool_array", value=0), monkeypatch=monkeypatch)
