@@ -5,6 +5,15 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
+### Discrete limited commitment
+
+- `Unilateral(renegotiate=Renegotiate(state="mu"))` adjusts an ordered discrete
+  bargaining state toward a refusing member, choosing the first mutually willing
+  Raw policy or separating at the first opposing refusal or grid edge. The selected
+  state, action and spouse values travel together through solve and simulation.
+  Continuing state laws use `fixed_transition`; continuous indifference and unrouted
+  policy lookup are outside this feature's supported boundary.
+
 ### Validated configuration records
 
 - The envelope configurations, `DCEGM`'s `refined_grid_factor` and

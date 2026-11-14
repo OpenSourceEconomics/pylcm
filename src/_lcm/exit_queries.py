@@ -32,6 +32,7 @@ from _lcm.policy_queries import (
     build_policy_query_kernel,
 )
 from _lcm.query_information import default_chunk_size
+from _lcm.renegotiation import FixedNode, RenegotiationQueries
 from _lcm.solution.contract import SolverBuildContext
 from _lcm.typing import PytreeValue, QualifiedName
 from _lcm.utils.functools import (
@@ -48,6 +49,7 @@ from lcm.shocks import Discrete, ShockGroupName, ShockName, _fingerprint
 from lcm.typing import (
     BoolND,
     FloatND,
+    IntND,
     Phase,
     ReferenceName,
     RegimeName,
@@ -96,6 +98,8 @@ class _ExitReducer:
     """Flattened canonical stay product; the exit takes the next ID."""
     n_discrete_action_axes: int = 0
     """A source EV1 component belongs to a discrete combination, not a continuous ID."""
+    renegotiation: RenegotiationQueries | None = None
+    """Raw policies across a declared discrete state, before applying participation."""
 
     def __post_init__(self) -> None:
         """Keep declaration containers immutable and IDs inside their native width."""
@@ -147,6 +151,8 @@ class _ExitReducer:
         or equal to it when the rule's `tie` is `"stay"`.
         """
         rule = None if self.declaration is None else self.declaration.rule
+        if self.renegotiation is not None:
+            return jnp.asarray(a=True)
         if not isinstance(rule, Unilateral | MutualConsent):
             return jnp.asarray(a=True)
         q = cast("FloatND", operands["q"])
@@ -168,6 +174,10 @@ class _ExitReducer:
         stay = cast("PolicyAnswer", operands["answer"])
         payoffs, active, valid = self._payoffs(operands=operands)
         valid &= stay[3]
+        if self.renegotiation is not None:
+            return self._renegotiated(
+                operands=operands, payoffs=payoffs, active=active, valid=valid
+            )
         if _TASTE in operands and self.kind is QueryKind.FULL:
             return self._full_taste(
                 operands=operands, payoffs=payoffs, active=active, valid=valid
@@ -188,6 +198,49 @@ class _ExitReducer:
             valid & integrity,
             stay[4],
         )
+
+    def _renegotiated(
+        self,
+        *,
+        operands: Mapping[ReferenceName, PytreeValue],
+        payoffs: Mapping[str, FloatND],
+        active: BoolND,
+        valid: BoolND,
+    ) -> PolicyAnswer:
+        adjustment = cast("RenegotiationQueries", self.renegotiation)
+        outside = jnp.stack(tuple(payoffs[member] for member in self.members))
+        index, kept = adjustment.select(
+            arguments=operands, outside=outside, active=active
+        )
+        raw = tuple(
+            cast("PolicyAnswer", operands[name]) for name in adjustment.operands
+        )
+        value = jnp.stack(tuple(answer[0] for answer in raw))[index]
+        action = jnp.stack(tuple(answer[1] for answer in raw))[index]
+        eligible, integrity = self._eligible(
+            operands=operands, payoffs=payoffs, active=active
+        )
+        move = eligible & ~kept & (self.kind is QueryKind.FULL)
+        return (
+            jnp.where(move, outside, jnp.where(kept, value, -jnp.inf)),
+            jnp.where(move, self.n_actions, jnp.where(kept, action, -1)).astype(
+                jnp.int32
+            ),
+            kept | move,
+            valid & integrity & jnp.all(jnp.stack(tuple(answer[3] for answer in raw))),
+            cast("PolicyAnswer", operands["answer"])[4],
+        )
+
+    def updated_state(self, **operands: PytreeValue) -> FloatND | IntND:
+        """Carry the selected stay coordinate alongside its action and value."""
+        adjustment = cast("RenegotiationQueries", self.renegotiation)
+        payoffs, active, _ = self._payoffs(operands=operands)
+        index, kept = adjustment.select(
+            arguments=operands,
+            outside=jnp.stack(tuple(payoffs[member] for member in self.members)),
+            active=active,
+        )
+        return jnp.where(kept, index, cast("IntND", operands[adjustment.state]))
 
     def _eligible(
         self,
@@ -593,6 +646,13 @@ class _QueryGraphBuilder:
             ),
             participation=None if declaration is None else keep,
             decision=None if declaration is None else decide,
+            state_updates={}
+            if reducer.renegotiation is None
+            else {
+                reducer.renegotiation.state: with_signature(
+                    reducer.updated_state, args=list(names), enforce=False
+                )
+            },
             available=_guard(guards),
             ancestors=ancestors,
             source_projection=cast(
@@ -642,6 +702,7 @@ class _QueryGraphBuilder:
         adjustments = {}
         consent_read = None
         predicate = None
+        renegotiation = None
         if declaration is not None:
             predicate = functions.get(("exit", "available"))
             child_guards = guards + (
@@ -673,6 +734,34 @@ class _QueryGraphBuilder:
                     policy_information=policy_information,
                     physical_names=physical_names,
                 )
+                if (
+                    isinstance(declaration.rule, Unilateral)
+                    and declaration.rule.renegotiate is not None
+                ):
+                    state = declaration.rule.renegotiate.state
+                    nodes = context.state_action_space.states[state]
+                    names = []
+                    for index in range(nodes.size):
+                        operand = f"_lcm_renegotiate_{index}"
+                        names.append(operand)
+                        inputs[operand] = self.make(
+                            kind=QueryKind.RAW,
+                            owner=owner,
+                            projection={
+                                **projection,
+                                state: FixedNode(value=index),
+                            },
+                            guards=guards,
+                            ancestry=ancestry,
+                            ancestors=ancestors,
+                            price_information=policy_information,
+                        )
+                    renegotiation = RenegotiationQueries(
+                        state=state,
+                        n_nodes=nodes.size,
+                        operands=tuple(names),
+                        tie=declaration.rule.tie,
+                    )
         members = context.stakeholders or ("self",)
         reducer = _ExitReducer(
             kind=kind,
@@ -682,6 +771,7 @@ class _QueryGraphBuilder:
             adjustments=adjustments,
             available=predicate,
             consent_read=consent_read,
+            renegotiation=renegotiation,
             weights=None
             if context.pareto_weights is None
             else context.pareto_weights.compute,

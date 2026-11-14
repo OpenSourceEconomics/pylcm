@@ -226,6 +226,10 @@ class QueryNode:
     """Canonical kept-set extension; never replaces ordinary feasibility."""
     decision: Callable[..., PolicyAnswer] | None = None
     """Shared scalar Full/Participating rule after canonical stay selection."""
+    state_updates: Mapping[StateName, Callable[..., IntND | FloatND]] = (
+        MappingProxyType({})
+    )
+    """Current coordinates selected together with the root's retained policy."""
     available: Callable[..., BoolND] | None = None
     """Caller-context guard evaluated before a demanded benchmark."""
     exit_targets: Mapping[int, Mapping[str, str]] = MappingProxyType({})
@@ -270,6 +274,9 @@ class QueryNode:
     def __post_init__(self) -> None:
         """Freeze edges and require the actual canonical target authority."""
         object.__setattr__(self, "inputs", MappingProxyType(dict(self.inputs)))
+        object.__setattr__(
+            self, "state_updates", MappingProxyType(dict(self.state_updates))
+        )
         object.__setattr__(self, "ancestors", tuple(self.ancestors))
         object.__setattr__(
             self, "source_projection", MappingProxyType(dict(self.source_projection))
@@ -651,6 +658,17 @@ class ScalarPolicyQueries:
         arguments: Mapping[str, Mapping[str, PytreeValue]],
         frame: CurrentIIDDrawFrame | None = None,
     ) -> PolicyAnswer:
+        """Return the same canonical answer without retaining current coordinates."""
+        answer, _ = self.evaluate(states=states, arguments=arguments, frame=frame)
+        return answer
+
+    def evaluate(
+        self,
+        *,
+        states: Mapping[str, FloatND | IntND],
+        arguments: Mapping[str, Mapping[str, PytreeValue]],
+        frame: CurrentIIDDrawFrame | None = None,
+    ) -> tuple[PolicyAnswer, Mapping[StateName, FloatND | IntND]]:
         """Resolve only demanded typed reads and invoke their shared scalar rule."""
         order = demanded_query_order(
             reads={name: node.read for name, node in self.definitions.items()},
@@ -726,12 +744,41 @@ class ScalarPolicyQueries:
                 ),
             )
         answer = answers[self.root]
+        root = self.definitions[self.root]
+        updates = {}
+        if root.state_updates:
+            fixed = arguments[self.root]
+            physical = {} if frame is None else frame.physical
+            operands, _ = query_arguments(
+                guard=jnp.asarray(a=True),
+                source=states,
+                node=root,
+                fixed={**fixed, **physical, _PHYSICAL_CONTEXTS: {self.root: physical}},
+                projection_operands=cast(
+                    "Mapping[str, PytreeValue]", fixed[_PROJECTION]
+                ),
+            )
+            operands.update(
+                {name: answers[producer] for name, producer in root.inputs.items()}
+            )
+            updates = {
+                name: helper(
+                    **{
+                        key: operands[key]
+                        for key in inspect.signature(helper).parameters
+                    }
+                )
+                for name, helper in root.state_updates.items()
+            }
         return (
-            answer[0],
-            answer[1][0] if answer[1].ndim else answer[1],
-            answer[2],
-            answer[3],
-            jnp.concatenate(tuple(answers[name][4] for name in order)),
+            (
+                answer[0],
+                answer[1][0] if answer[1].ndim else answer[1],
+                answer[2],
+                answer[3],
+                jnp.concatenate(tuple(answers[name][4] for name in order)),
+            ),
+            updates,
         )
 
 

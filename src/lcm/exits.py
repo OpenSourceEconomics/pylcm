@@ -1,7 +1,7 @@
 """Current-period exits and the mapped policy problems they read."""
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 from beartype import beartype
@@ -61,11 +61,32 @@ class Consent:
 
 @beartype(conf=REGIME_CONF)
 @dataclass(frozen=True, kw_only=True)
+class Renegotiate:
+    """Move a discrete state toward the refusing member before separation.
+
+    Increasing node order favors the first stakeholder; decreasing order favors
+    the second. Stop at the first mutually willing node, or separate when the
+    other member refuses or the path reaches the edge of the declared grid.
+    """
+
+    state: StateName
+    """Declared discrete grid state whose selected node carries forward."""
+
+    def __post_init__(self) -> None:
+        _validate_names(kind="Renegotiated state", names=(self.state,))
+
+
+@beartype(conf=REGIME_CONF)
+@dataclass(frozen=True, kw_only=True)
 class Unilateral:
     """Any member can end the match: it continues only if every member is willing."""
 
     tie: Literal["stay", "leave"] = "stay"
     """What a member exactly indifferent between staying and the exit does."""
+    renegotiate: Renegotiate | None = field(
+        default=None, metadata={"fingerprint_omit_if_default": True}
+    )
+    """Discrete adjustment attempted before the current-period exit."""
 
 
 @beartype(conf=REGIME_CONF)

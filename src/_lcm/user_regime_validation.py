@@ -44,7 +44,7 @@ from _lcm.utils.functools import is_user_function
 from lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
 from lcm.decoupled import Decoupled
 from lcm.exceptions import RegimeInitializationError
-from lcm.exits import Consent, Exit
+from lcm.exits import Consent, Exit, Unilateral
 from lcm.grids import DiscreteGrid
 from lcm.koopmans_aggregation import CESAggregator, LinearAggregator
 from lcm.phased import Phased
@@ -159,6 +159,9 @@ def validate_exit_targets(
             declaration = exit_for_phase(declaration=regime.exit, phase=phase)
             if declaration is None:
                 continue
+            _validate_renegotiation(
+                declaration=declaration, regime=regime, law=laws[source], phase=phase
+            )
             for target in declaration.targets.values():
                 context = f"Exit of {source}"
                 if target.regime not in regimes:
@@ -184,6 +187,52 @@ def validate_exit_targets(
                 laws=laws,
                 phase=phase,
             )
+
+
+def _validate_renegotiation(
+    *, declaration: Exit, regime: Regime, law: RegimeLaw, phase: Phase
+) -> None:
+    """Require the ordered two-member domain before native queries are built."""
+    if (
+        not isinstance(declaration.rule, Unilateral)
+        or declaration.rule.renegotiate is None
+    ):
+        return
+    if len(regime.stakeholders or ()) != 2:  # noqa: PLR2004 - directional two-member rule
+        raise RegimeInitializationError(
+            "Renegotiate requires two collective stakeholders."
+        )
+    spec = normalize_regime_phases(regime, law=law)
+    grid = getattr(
+        spec, "solution" if phase == "solve" else "simulation"
+    ).grid_states.get(declaration.rule.renegotiate.state)
+    if not isinstance(grid, DiscreteGrid):
+        raise RegimeInitializationError(
+            "Renegotiate must name a declared discrete grid state."
+        )
+    if not grid.ordered:
+        raise RegimeInitializationError("Renegotiate needs an ordered discrete state.")
+    state = declaration.rule.renegotiate.state
+    phase_spec = getattr(spec, "solution" if phase == "solve" else "simulation")
+    transition = phase_spec.state_transitions.get(state)
+    laws = transition.values() if isinstance(transition, Mapping) else (transition,)
+    if any(
+        value is not None and not isinstance(value, _IdentityTransition)
+        for value in laws
+    ):
+        raise RegimeInitializationError(
+            "Renegotiate carries its selected node: declare "
+            f"fixed_transition('{state}') for its state law."
+        )
+    if any(
+        state in kernel.outputs
+        for kernels in phase_spec.joint_transitions.values()
+        for kernel in kernels.values()
+    ):
+        raise RegimeInitializationError(
+            "Renegotiate carries its selected node through fixed_transition, "
+            "not through a joint state update."
+        )
 
 
 def _validate_counterparty(

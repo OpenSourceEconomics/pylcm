@@ -136,6 +136,7 @@ from lcm.exits import (  # noqa: E402
     Exit,
     ExitTarget,
     MutualConsent,
+    Renegotiate,
     Unilateral,
 )
 from lcm.fixed_forms import (  # noqa: E402
@@ -310,6 +311,7 @@ __all__ = [
     "ProjectedRegimeValue",
     "QuasiArithmeticMean",
     "Regime",
+    "Renegotiate",
     "RouwenhorstAR1Process",
     "SimulateSnapshot",
     "SimulationResult",

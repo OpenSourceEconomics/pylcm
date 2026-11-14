@@ -5363,6 +5363,8 @@ class Model:
                 taste shocks has no feasible action, as `simulate` refuses it. A
                 regime without actions returns the value negative infinity there
                 instead.
+            UnsupportedOperationError: An active renegotiating exit needs changed
+                current states and routed destinations; use `simulate` instead.
 
         """
         self._check_identity_runtime()
@@ -5378,6 +5380,7 @@ class Model:
         _fail_if_policy_lookup_unsupported(
             regime=regime,
             regime_name=regime_name,
+            period=period,
             solver=self._user_regimes[regime_name].solver,
             keep_intermediates=keep_intermediates,
         )
@@ -6675,10 +6678,20 @@ def _fail_if_policy_lookup_unsupported(
     *,
     regime: Regime,
     regime_name: RegimeName,
+    period: int,
     solver: Solver,
     keep_intermediates: tuple[Intermediate, ...],
 ) -> None:
     """Raise when policy lookup cannot reproduce the regime's simulated decision."""
+    exit_plan = regime.simulation.exit_queries.get(period)
+    if exit_plan is not None and exit_plan.full is not None:
+        queries = exit_plan.full
+        if queries.definitions[queries.root].state_updates:
+            raise UnsupportedOperationError(
+                "Renegotiating exits require the routed simulate decision; "
+                "policy lookup cannot return changed states and "
+                "separation destinations."
+            )
     if regime.simulation.current_iid_draw_plan is not None:
         raise UnsupportedOperationError(
             "Current IID policy queries require an explicit observation or "

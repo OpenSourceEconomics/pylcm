@@ -39,7 +39,7 @@ from lcm.shocks import (
     ShockName,
     Uniform,
 )
-from lcm.typing import BoolND, FloatND, IntND, ReferenceName, RegimeName
+from lcm.typing import BoolND, FloatND, IntND, ReferenceName, RegimeName, StateName
 
 if TYPE_CHECKING:
     from _lcm.engine import Regime
@@ -68,7 +68,9 @@ type OriginalExitOutput = tuple[
     Mapping[str, FloatND],
 ]
 type ParticipatingExitOutput = tuple[
-    tuple[FloatND, IntND, BoolND, BoolND, IntND], ExitFramePayload
+    tuple[FloatND, IntND, BoolND, BoolND, IntND],
+    ExitFramePayload,
+    Mapping[str, FloatND | IntND],
 ]
 
 
@@ -496,8 +498,10 @@ class OriginalExitDecision:
             group_params=group_params,
             overrides=overrides,
         )
-        answer = self.queries(states=states, arguments=query_arguments, frame=frame)
-        projections = {}
+        answer, updates = self.queries.evaluate(
+            states=states, arguments=query_arguments, frame=frame
+        )
+        projections = {self.queries.root: updates} if root.state_updates else {}
         adjustments = {}
         for identifier, targets in root.exit_targets.items():
             for member, query in targets.items():
@@ -623,10 +627,10 @@ class RevealedExitDecision:
             overrides=overrides,
             produced=produced,
         )
-        return (
-            self.queries(states=states, arguments=query_arguments, frame=frame),
-            _frame_output(frame=frame),
+        answer, updates = self.queries.evaluate(
+            states=states, arguments=query_arguments, frame=frame
         )
+        return answer, _frame_output(frame=frame), updates
 
 
 def _observe_query_frame(
@@ -954,16 +958,31 @@ def exit_policy_program(
             answer_roles,
             frame_roles,
             {
-                query: dict.fromkeys(
-                    queries.definitions[query].read.projection,
-                    "projected_current_state",
-                )
-                for query in targets
+                **(
+                    {
+                        queries.root: dict.fromkeys(
+                            root.state_updates, "projected_current_state"
+                        )
+                    }
+                    if root.state_updates
+                    else {}
+                ),
+                **{
+                    query: dict.fromkeys(
+                        queries.definitions[query].read.projection,
+                        "projected_current_state",
+                    )
+                    for query in targets
+                },
             },
             dict.fromkeys(targets, "source_utility_adjustment"),
         )
         if original
-        else (answer_roles, frame_roles)
+        else (
+            answer_roles,
+            frame_roles,
+            dict.fromkeys(root.state_updates, "projected_current_state"),
+        )
     )
     return CoreProgram(
         name=name,
@@ -1069,6 +1088,7 @@ def route_original_subjects(
     adjustments: Mapping[str, FloatND],
     routes: tuple[ExitRouteFields, ...],
     regime_ids: Mapping[RegimeName, IntND | int],
+    state_updates: tuple[tuple[RegimeName, str], ...] = (),
 ) -> tuple[
     IntND,
     IntND,
@@ -1099,4 +1119,21 @@ def route_original_subjects(
         paid = jnp.where(selected, adjustments[projection], paid)
         for name, value in projections[projection].items():
             states[target][name] = jnp.where(selected, value, states[target][name])
+    for source, projection in state_updates:
+        retained = (original_regime_ids == regime_ids[source]) & ~moved
+        for name, value in projections[projection].items():
+            states[source][name] = jnp.where(retained, value, states[source][name])
     return final_ids, final_roles, states, moved, paid
+
+
+def apply_retained_state_updates(
+    *,
+    states: Mapping[StateName, FloatND | IntND],
+    updates: Mapping[StateName, FloatND | IntND],
+    holders: BoolND,
+) -> dict[StateName, FloatND | IntND]:
+    """Apply a final actor's selected coordinates only to its moving rows."""
+    return {
+        name: jnp.where(holders, updates[name], value) if name in updates else value
+        for name, value in states.items()
+    }

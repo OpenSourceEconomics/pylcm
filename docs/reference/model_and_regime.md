@@ -295,6 +295,23 @@ remain in `Model(edges=...)`.
   actions the household takes its Pareto-weighted argmax; with none kept, the exit is
   taken.
 
+`Unilateral(renegotiate=Renegotiate(state="mu"))` first optimizes the Raw stay policy at
+every node of the ordered discrete state. It supports a collective pair: increasing node
+order favors the first stakeholder in the utility mapping, decreasing order the second.
+If both accept the incumbent, it stays. If one refuses, walk one node toward that member
+and stop at the first node both accept. Simultaneous refusal, reaching the grid edge or
+encountering the other member's refusal separates the pair; a later feasible island does
+not reopen the path. Equality follows the rule's `tie`. Outside payoffs use the original
+source's settlement, without moving that benchmark along the candidate grid.
+
+The selected node supplies the action and spouse values and becomes the current state
+used by forward transitions. Declare `fixed_transition("mu")` when the state continues,
+so its selected node is also next period's node. A conflicting state law or joint update
+is refused. The feature uses the declared finite grid; it does not solve for continuous
+indifference. Other same-period Full recursion remains forbidden. Use `Model.simulate`
+for the routed decision: `lookup_policy` refuses an active renegotiating exit because it
+cannot return changed state and separation destinations.
+
 `available` reads states, parameters and observed shocks, and precedes unsafe benchmark
 evaluation. `observes` adds target information available at the exit choice. Hidden
 target shocks are priced before the source choice and revealed when a mover executes the
