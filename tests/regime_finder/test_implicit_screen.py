@@ -34,6 +34,9 @@ from _lcm_regime_finder.implicit.factored_bridge import (
     as_box_package,
     build_factored_table,
 )
+from _lcm_regime_finder.implicit.source_versions import resolve_source_candidate
+
+REFERENCE_VERSION = resolve_source_candidate(source_version="source587")
 
 
 def fixture_record(value: JSONValue) -> Wire:
@@ -605,7 +608,9 @@ class CompactScreenControls(unittest.TestCase):
 
     def test_factor_bridge_preserves_identity_support_and_table_read_keys(self) -> None:
         source, record, axes = factor_fixture()
-        table = build_factored_table(source=source, record=record, status_axes=axes)
+        table = build_factored_table(
+            source=source, record=record, status_axes=axes, version=REFERENCE_VERSION
+        )
         self.assertEqual(len(table.relation_factors), 1)
         self.assertEqual(
             table.relation_factors[0].support_roots, (("i", "support:law::i"),)
@@ -619,11 +624,21 @@ class CompactScreenControls(unittest.TestCase):
     def test_factor_bridge_native_tuple_and_json_list_metadata_agree(self) -> None:
         source, record, axes = factor_fixture()
         native = as_box_package(
-            build_factored_table(source=source, record=record, status_axes=axes)
+            build_factored_table(
+                source=source,
+                record=record,
+                status_axes=axes,
+                version=REFERENCE_VERSION,
+            )
         )
         json_record = json.loads(json.dumps(record))
         decoded = as_box_package(
-            build_factored_table(source=source, record=json_record, status_axes=axes)
+            build_factored_table(
+                source=source,
+                record=json_record,
+                status_axes=axes,
+                version=REFERENCE_VERSION,
+            )
         )
         self.assertEqual(native, decoded)
 
@@ -664,7 +679,10 @@ class CompactScreenControls(unittest.TestCase):
             with self.subTest(mutation=mutation):
                 with self.assertRaises(ValueError):
                     build_factored_table(
-                        source=source, record=altered, status_axes=axes
+                        source=source,
+                        record=altered,
+                        status_axes=axes,
+                        version=REFERENCE_VERSION,
                     )
 
     def test_exclusion_code_types_are_nominal_in_memory_and_on_wire(self) -> None:
@@ -699,7 +717,9 @@ class CompactScreenControls(unittest.TestCase):
         fixture_list(diagram["nodes"]).append(
             {"leaf": ["frozenset", [["bool", False]]]}
         )
-        table = build_factored_table(source=source, record=record, status_axes=axes)
+        table = build_factored_table(
+            source=source, record=record, status_axes=axes, version=REFERENCE_VERSION
+        )
         with self.assertRaises(ValueError):
             as_box_package(table)
 

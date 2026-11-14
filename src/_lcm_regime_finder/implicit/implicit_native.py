@@ -25,6 +25,13 @@ from .implicit_core import (
     joint_reads,
 )
 from .binding_purity import certify_binding_cache
+from .source_versions import (
+    SourceVersion,
+    assert_runtime_source,
+    check_capture_admission,
+    packet_identity,
+    resolve_source_version,
+)
 
 
 class LazyStatic(Mapping[str, object]):
@@ -556,33 +563,19 @@ def sha(path: Path) -> str:
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
-def compile_table(*, snapshot: Path, axes_file: Path) -> Wire:
-    """Produce separate fact diagrams; independent replay is still required."""
+def _produce(*, snapshot: Path, axes_file: Path, version: SourceVersion) -> Wire:
+    """Produce unverified data under the same source guards used in qualification."""
     from _lcm_regime_finder.cli import load_problem
     from _lcm_regime_finder.fibre_source import FibreSource
     from _lcm_regime_finder.structural_store import final_input_check
     import _lcm_regime_finder
 
     package = Path(_lcm_regime_finder.__file__).parent
-    guards = {path.name: sha(path) for path in sorted(package.glob("*.py"))}
-    here = Path(__file__).resolve().parent
-    pinned_sources = json.loads((here / "reference_sources.json").read_text())
-    if any(guards.get(name) != digest for name, digest in pinned_sources.items()):
-        raise ValueError(
-            "Authoritative baseline source bytes changed; requalify instead of silently rebinding"
-        )
-    algorithm = {
-        name: sha(here / name)
-        for name in (
-            "implicit_core.py",
-            "implicit_native.py",
-            "binding_purity.py",
-            "reference_sources.json",
-        )
-    }
+    identity = assert_runtime_source(package=package, version=version)
     snapshot_sha = sha(snapshot)
     axes_sha = sha(axes_file)
     original = load_problem(snapshot)
+    check_capture_admission(original=original, version=version)
     source = FibreSource(original)
     status_axes = {
         name: _strings(value)
@@ -602,21 +595,17 @@ def compile_table(*, snapshot: Path, axes_file: Path) -> Wire:
         for cell_id in source.get_cell_ids()
     ]
     final_input_check(original)
-    if (
-        sha(snapshot) != snapshot_sha
-        or sha(axes_file) != axes_sha
-        or any(sha(package / name) != digest for name, digest in guards.items())
-        or any(sha(here / name) != digest for name, digest in algorithm.items())
-    ):
+    if sha(snapshot) != snapshot_sha or sha(axes_file) != axes_sha:
         raise ValueError("Source transaction changed")
+    identity.check()
     result = {
-        "schema": "exact-implicit-fibre-table/v1",
-        "reference_contract": "compile_primitive_fibres.py@587478274ff55f1d873ae9d056bb9bf3e222b873",
+        "schema": "exact-implicit-fibre-table/v2",
+        **packet_identity(version),
         "status": "PRODUCED_UNVERIFIED",
         "snapshot_sha256": snapshot_sha,
         "classification_sha256": axes_sha,
-        "reference_sources": guards,
-        "algorithm_sources": algorithm,
+        "reference_sources": dict(identity.source_files),
+        "algorithm_sources": dict(identity.algorithm_sources),
         "metadata_by_reference": {
             "snapshot_sha256": snapshot_sha,
             "cells": list(source._cells),
@@ -631,6 +620,16 @@ def compile_table(*, snapshot: Path, axes_file: Path) -> Wire:
     return result
 
 
+def compile_table(
+    *, snapshot: Path, axes_file: Path, source_version: str = "source587"
+) -> Wire:
+    """Produce diagrams only for a qualified evaluator; replay is still required."""
+    version = resolve_source_version(source_version=source_version)
+    result = _produce(snapshot=snapshot, axes_file=axes_file, version=version)
+    resolve_source_version(source_version=source_version)
+    return result
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("snapshot", type=Path)
@@ -640,8 +639,11 @@ def main() -> None:
         help="JSON mapping original regimes to status coordinate arrays",
     )
     parser.add_argument("output", type=Path)
+    parser.add_argument("--source-version", default="source587")
     args = parser.parse_args()
-    result = compile_table(snapshot=args.snapshot, axes_file=args.axes)
+    result = compile_table(
+        snapshot=args.snapshot, axes_file=args.axes, source_version=args.source_version
+    )
     args.output.write_text(json.dumps(result, indent=2) + "\n")
 
 
