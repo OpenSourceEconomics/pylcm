@@ -14,6 +14,7 @@ from _lcm_regime_finder.implicit.implicit_native import compile_table
 from _lcm_regime_finder.records import JSONValue
 from tests.regime_finder.test_fibre_source import _fields, _original
 from tests.regime_finder.test_model_adapter import function
+from tests.regime_finder.test_implicit_version_candidate import installed_candidate
 
 
 def inputs(tmp_path: Path, *, exclude_zero: bool = False) -> tuple[Path, Path, Path]:
@@ -29,7 +30,11 @@ def inputs(tmp_path: Path, *, exclude_zero: bool = False) -> tuple[Path, Path, P
         }
     snapshot.write_text(json.dumps(original))
     axes.write_text(json.dumps({"original": ["x", "history"]}))
-    packet = compile_table(snapshot=snapshot, axes_file=axes)
+    packet = compile_table(
+        snapshot=snapshot,
+        axes_file=axes,
+        source_version=installed_candidate().version_id,
+    )
     assert packet["status"] == "PRODUCED_UNVERIFIED"
     artifact.write_text(json.dumps(packet))
     return snapshot, axes, artifact
@@ -42,7 +47,11 @@ def test_original_fact_replay_and_supplied_projection(
 ) -> None:
     snapshot, axes, artifact = inputs(tmp_path)
     result = transaction.check_projection(
-        snapshot=snapshot, axes_file=axes, artifact=artifact, removed=removed
+        snapshot=snapshot,
+        axes_file=axes,
+        artifact=artifact,
+        removed=removed,
+        source_version=installed_candidate().version_id,
     )
     assert result["status"] == "FINITE_PREMISES_PROVED"
     receipt = _mapping(result["fact_verification"])
@@ -68,7 +77,11 @@ def test_forged_fact_packet_cannot_get_a_projection_receipt(tmp_path: Path) -> N
     artifact.write_text(json.dumps(packet))
     with pytest.raises(ValueError, match="Missing or invented fact roots"):
         transaction.check_projection(
-            snapshot=snapshot, axes_file=axes, artifact=artifact, removed=frozenset()
+            snapshot=snapshot,
+            axes_file=axes,
+            artifact=artifact,
+            removed=frozenset(),
+            source_version=installed_candidate().version_id,
         )
 
 
@@ -89,7 +102,11 @@ def test_changed_input_after_replay_cannot_get_a_projection_receipt(
     monkeypatch.setattr(transaction, "check_screen", change_input)
     with pytest.raises(ValueError, match="Source/certificate transaction changed"):
         transaction.check_projection(
-            snapshot=snapshot, axes_file=axes, artifact=artifact, removed=frozenset()
+            snapshot=snapshot,
+            axes_file=axes,
+            artifact=artifact,
+            removed=frozenset(),
+            source_version=installed_candidate().version_id,
         )
 
 
@@ -133,7 +150,11 @@ def test_duplicate_nominal_alias_cannot_get_fact_equality(tmp_path: Path) -> Non
     artifact.write_text(json.dumps(packet))
     with pytest.raises(ValueError, match="Duplicate set terminal member"):
         transaction.check_projection(
-            snapshot=snapshot, axes_file=axes, artifact=artifact, removed=frozenset()
+            snapshot=snapshot,
+            axes_file=axes,
+            artifact=artifact,
+            removed=frozenset(),
+            source_version=installed_candidate().version_id,
         )
 
 

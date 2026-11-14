@@ -17,6 +17,14 @@ import hashlib
 import json
 import sys
 from .binding_purity import certify_binding_cache
+from .source_versions import (
+    SourceVersion,
+    assert_runtime_source,
+    check_capture_admission,
+    check_packet_identity,
+    packet_identity,
+    resolve_source_version,
+)
 
 
 def sha(path: Path) -> str:
@@ -166,7 +174,10 @@ def native_read(
     return ("read", value.live_coordinates, value.removal_order, value.removed_statuses)
 
 
-def verify(*, snapshot: Path, axes_file: Path, artifact: Path) -> Wire:
+def _replay(
+    *, snapshot: Path, axes_file: Path, artifact: Path, version: SourceVersion
+) -> Wire:
+    """Return neutral all-point replay evidence, without granting an admission."""
     from _lcm_regime_finder.cli import load_problem
     from _lcm_regime_finder.fibre_source import FibreSource, _mapping, _text, _strings
     from _lcm_regime_finder.structural_store import final_input_check
@@ -174,29 +185,11 @@ def verify(*, snapshot: Path, axes_file: Path, artifact: Path) -> Wire:
 
     package = Path(_lcm_regime_finder.__file__).parent
     packet = _mapping(json.loads(artifact.read_text()))
-    if (
-        packet.get("schema") != "exact-implicit-fibre-table/v1"
-        or packet.get("reference_contract")
-        != "compile_primitive_fibres.py@587478274ff55f1d873ae9d056bb9bf3e222b873"
-    ):
-        raise ValueError("Wrong schema or pointwise reference contract")
-    guards = {path.name: sha(path) for path in sorted(package.glob("*.py"))}
-    here = Path(__file__).resolve().parent
-    pinned = json.loads((here / "reference_sources.json").read_text())
-    if any(guards.get(name) != digest for name, digest in pinned.items()):
-        raise ValueError("Independently pinned authoritative source bytes changed")
-    if packet["reference_sources"] != guards:
+    check_packet_identity(record=packet, version=version)
+    identity = assert_runtime_source(package=package, version=version)
+    if packet["reference_sources"] != dict(identity.source_files):
         raise ValueError("Pointwise source bytes differ from producer")
-    algorithm = {
-        name: sha(here / name)
-        for name in (
-            "implicit_core.py",
-            "implicit_native.py",
-            "binding_purity.py",
-            "reference_sources.json",
-        )
-    }
-    if packet["algorithm_sources"] != algorithm:
+    if packet["algorithm_sources"] != dict(identity.algorithm_sources):
         raise ValueError("Producer implementation bytes changed")
     snapshot_sha, axes_sha, artifact_sha = sha(snapshot), sha(axes_file), sha(artifact)
     if (
@@ -205,6 +198,7 @@ def verify(*, snapshot: Path, axes_file: Path, artifact: Path) -> Wire:
     ):
         raise ValueError("Input identity mismatch")
     original = load_problem(snapshot)
+    check_capture_admission(original=original, version=version)
     source = FibreSource(original)
     by_reference = {
         "snapshot_sha256": snapshot_sha,
@@ -362,19 +356,39 @@ def verify(*, snapshot: Path, axes_file: Path, artifact: Path) -> Wire:
         sha(snapshot) != snapshot_sha
         or sha(axes_file) != axes_sha
         or sha(artifact) != artifact_sha
-        or any(sha(package / name) != digest for name, digest in guards.items())
-        or any(sha(here / name) != digest for name, digest in algorithm.items())
     ):
         raise ValueError("Source/certificate transaction changed")
+    identity.check()
     return {
-        "schema": "exact-implicit-fibre-verification/v1",
-        "status": "COMPLETE_FACT_EQUALITY",
+        "schema": "exact-implicit-fibre-replay-evidence/v2",
+        **packet_identity(version),
+        "status": "FACT_REPLAY_COMPLETE",
         "source_obligations": list(source.source_obligations),
         "all_point_counts": counts,
         "artifact_sha256": artifact_sha,
         "snapshot_sha256": snapshot_sha,
-        "reference_sources": guards,
+        "reference_sources": dict(identity.source_files),
         "qualification": "All original point facts compared. Support factor expansion, closure, finite projection premises and native adoption remain separate checks.",
+    }
+
+
+def verify(
+    *,
+    snapshot: Path,
+    axes_file: Path,
+    artifact: Path,
+    source_version: str = "source587",
+) -> Wire:
+    """Independently check every point under a qualified caller-selected evaluator."""
+    version = resolve_source_version(source_version=source_version)
+    result = _replay(
+        snapshot=snapshot, axes_file=axes_file, artifact=artifact, version=version
+    )
+    resolve_source_version(source_version=source_version)
+    return {
+        **result,
+        "schema": "exact-implicit-fibre-verification/v2",
+        "status": "COMPLETE_FACT_EQUALITY",
     }
 
 
@@ -384,12 +398,16 @@ def main() -> None:
     parser.add_argument("axes", type=Path)
     parser.add_argument("artifact", type=Path)
     parser.add_argument("receipt", type=Path)
+    parser.add_argument("--source-version", default="source587")
     args = parser.parse_args()
     if sys.version_info < (3, 14):
         raise SystemExit("Native verifier requires declared Python >=3.14; no shim")
     # A receipt is written only after full-domain replay and final guards finish.
     receipt = verify(
-        snapshot=args.snapshot, axes_file=args.axes, artifact=args.artifact
+        snapshot=args.snapshot,
+        axes_file=args.axes,
+        artifact=args.artifact,
+        source_version=args.source_version,
     )
     args.receipt.write_text(json.dumps(receipt, indent=2) + "\n")
 

@@ -15,6 +15,7 @@ from typing import cast
 from ..records import JSONValue
 from ..fibre_source import FibreSource, Wire, _mapping, _rows, _strings, _text
 from .verify_native import _integer, _object, _sequence
+from .source_versions import SourceVersion, check_packet_identity
 
 from .compact_screen import (
     Box,
@@ -196,20 +197,26 @@ class FactoredTable:
 
 
 def build_factored_table(
-    *, source: FibreSource, record: Wire, status_axes: Mapping[str, Sequence[str]]
+    *,
+    source: FibreSource,
+    record: Wire,
+    status_axes: Mapping[str, Sequence[str]],
+    version: SourceVersion,
 ) -> FactoredTable:
     """Bind the representation inventory to an already authenticated FibreSource.
 
     This inventory check is not a substitute for full-domain leaf verification.
     Neither the source guard nor a qualification is cleared here.
     """
-    if record.get("schema") != "exact-implicit-fibre-table/v1":
-        raise ValueError("Unknown fact table contract")
-    if (
-        record.get("reference_contract")
-        != "compile_primitive_fibres.py@587478274ff55f1d873ae9d056bb9bf3e222b873"
-    ):
-        raise ValueError("Wrong reference program contract")
+    if record.get("schema") == "exact-implicit-fibre-table/v1":
+        if (
+            version.version_id != "source587"
+            or record.get("reference_contract")
+            != "compile_primitive_fibres.py@587478274ff55f1d873ae9d056bb9bf3e222b873"
+        ):
+            raise ValueError("Historical fact tables are source587-only")
+    else:
+        check_packet_identity(record=record, version=version)
     original_cells = source._cells
     original_relations = source._relations
     records = {_text(row["cell_id"]): row for row in _rows(record["cells"])}

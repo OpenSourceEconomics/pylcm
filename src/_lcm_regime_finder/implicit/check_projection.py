@@ -16,15 +16,23 @@ from ..records import JSONValue
 from ..structural_store import final_input_check
 from .compact_screen import check_screen, least_liveness, possible_closure
 from .factored_bridge import as_box_package, build_factored_table
-from .verify_native import sha, verify
+from .verify_native import _replay, sha
+from .source_versions import (
+    SourceVersion,
+    assert_runtime_source,
+    check_capture_admission,
+    packet_identity,
+    resolve_source_version,
+)
 
 
-def check_projection(
+def _project(
     *,
     snapshot: Path,
     axes_file: Path,
     artifact: Path,
     removed: frozenset[tuple[str, str]],
+    version: SourceVersion,
 ) -> Wire:
     """Verify original facts, then check a proposal using the explicit box adapter.
 
@@ -32,19 +40,29 @@ def check_projection(
     check, not native adoption, economic equivalence or a best-graph certificate.
     No result is returned after an interrupted replay or a changed input.
     """
+    import _lcm_regime_finder
+
     here = Path(__file__).parent
+    identity = assert_runtime_source(
+        package=Path(_lcm_regime_finder.__file__).parent, version=version
+    )
     guarded = {path: sha(path) for path in (snapshot, axes_file, artifact)}
     guarded.update({path: sha(path) for path in here.glob("*.py")})
     guarded[here / "reference_sources.json"] = sha(here / "reference_sources.json")
-    fact_receipt = verify(snapshot=snapshot, axes_file=axes_file, artifact=artifact)
+    fact_receipt = _replay(
+        snapshot=snapshot, axes_file=axes_file, artifact=artifact, version=version
+    )
     original = load_problem(snapshot)
+    check_capture_admission(original=original, version=version)
     source = FibreSource(original)
     record = _mapping(json.loads(artifact.read_text()))
     axes = {
         name: _strings(value)
         for name, value in _mapping(json.loads(axes_file.read_text())).items()
     }
-    table = build_factored_table(source=source, record=record, status_axes=axes)
+    table = build_factored_table(
+        source=source, record=record, status_axes=axes, version=version
+    )
     package = as_box_package(table)
     kept = possible_closure(package)
     live = least_liveness(package)
@@ -61,11 +79,11 @@ def check_projection(
         for name, digest in _mapping(fact_receipt["reference_sources"]).items()
     ):
         raise ValueError("Authoritative source changed after fact replay")
+    identity.check()
     return {
-        "schema": "source-bound-implicit-projection/v1",
-        "status": "FINITE_PREMISES_PROVED"
-        if screen["conditions_pass"]
-        else "FINITE_PREMISES_REFUTED",
+        "schema": "source-bound-implicit-projection-evidence/v2",
+        **packet_identity(version),
+        "status": "PROJECTION_REPLAY_COMPLETE",
         "removed": [list(axis) for axis in sorted(removed)],
         "forced_actions": [],
         "forced_action_savings": "not measured",
@@ -82,6 +100,38 @@ def check_projection(
     }
 
 
+def check_projection(
+    *,
+    snapshot: Path,
+    axes_file: Path,
+    artifact: Path,
+    removed: frozenset[tuple[str, str]],
+    source_version: str = "source587",
+) -> Wire:
+    """Replay original facts and supplied finite premises for a qualified version."""
+    version = resolve_source_version(source_version=source_version)
+    result = _project(
+        snapshot=snapshot,
+        axes_file=axes_file,
+        artifact=artifact,
+        removed=removed,
+        version=version,
+    )
+    resolve_source_version(source_version=source_version)
+    return {
+        **result,
+        "schema": "source-bound-implicit-projection/v2",
+        "status": "FINITE_PREMISES_PROVED"
+        if _mapping(result["screen"])["conditions_pass"]
+        else "FINITE_PREMISES_REFUTED",
+        "fact_verification": {
+            **_mapping(result["fact_verification"]),
+            "schema": "exact-implicit-fibre-verification/v2",
+            "status": "COMPLETE_FACT_EQUALITY",
+        },
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("snapshot", type=Path)
@@ -93,6 +143,7 @@ def main() -> None:
         help="JSON array of [original regime, status coordinate] pairs",
     )
     parser.add_argument("receipt", type=Path)
+    parser.add_argument("--source-version", default="source587")
     parser.add_argument(
         "--expand-boxes",
         action="store_true",
@@ -110,6 +161,7 @@ def main() -> None:
         axes_file=args.axes,
         artifact=args.artifact,
         removed=removed,
+        source_version=args.source_version,
     )
     if sha(args.removed) != proposal_sha:
         raise ValueError("Removal proposal changed during verification")
