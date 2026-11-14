@@ -68,7 +68,7 @@ repos:
       - id: ruff-format
         # Keep the imported checker source stable for comparison with its reviewed
         # implementation. Its directory has a separate Ruff lint configuration.
-        exclude: ^src/_lcm_regime_finder/
+        exclude: ^src/_lcm_regime_finder/(?!implicit/)
         types_or:
           - jupyter
           - pyi
@@ -170,6 +170,12 @@ repos:
         files: ^(pyproject\.toml|pixi\.toml|pixi\.lock)$
         stages:
           - pre-push
+      - id: ci-workload-manifest-format
+        name: CI workload manifest has canonical bytes
+        entry: pixi run -e tests-cpu python -m tests.ci.ci_workloads canonicalize
+        language: system
+        pass_filenames: false
+        files: ^tests/ci/ci-workloads\.json$
       # Shard weights come only from CI. On every commit this fills in the
       # weights the `workload-weights` CI gate names as missing in
       # tests/ci/ci-workloads.json, from the latest completed CPU run of the
