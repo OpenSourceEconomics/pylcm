@@ -27,7 +27,7 @@ if TYPE_CHECKING:
                 "track_peak_gpu_mem_automatic_solve_simulate"
             ),
             2_500_000_000.0,
-            "2.50 GB",
+            "2.5 GB",
         ),
         (
             (
@@ -43,12 +43,14 @@ if TYPE_CHECKING:
                 "track_peak_gpu_mem_load_supplied_solution_simulate"
             ),
             1_000_000_000.0,
-            "1.00 GB",
+            "1 GB",
         ),
         ("bench_example.Example.peakmem_execution", 32_000_000.0, "32 MB"),
-        ("bench_example.Example.track_gpu_peak_mem", 2_500_000_000.0, "2.50 GB"),
-        ("bench_example.Example.track_compilation_time", 2.5, "2.50 s"),
-        ("bench_mahler_yum.MahlerYumBudgetedGpu.time_execution", 0.125, "125.0 ms"),
+        ("bench_example.Example.track_gpu_peak_mem", 2_500_000_000.0, "2.5 GB"),
+        ("bench_example.Example.track_gpu_peak_mem", 1_234_567_890.0, "1.23 GB"),
+        ("bench_example.Example.peakmem_execution", 32_830_000.0, "32.8 MB"),
+        ("bench_example.Example.track_compilation_time", 2.5, "2.5 s"),
+        ("bench_mahler_yum.MahlerYumBudgetedGpu.time_execution", 0.125, "125 ms"),
     ],
 )
 def test_format_value_uses_memory_and_timing_units(
@@ -56,6 +58,65 @@ def test_format_value_uses_memory_and_timing_units(
 ) -> None:
     """GPU memory phases display bytes in MB or GB; timing metrics keep time units."""
     assert pr_comment._format_value(bench_name=bench_name, value=value) == expected
+
+
+@pytest.mark.parametrize("bench_name", ["time_execution", "track_compilation_time"])
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (107.993, "1:48 min"),
+        (1320.83, "22:01 min"),
+        (8.239, "8.24 s"),
+        (59.999, "1:00 min"),
+        (3599.9, "60:00 min"),
+        (0.99999, "1 s"),
+        (0.008239, "8.24 ms"),
+        (0.00099999, "1 ms"),
+        (0.000008239, "8.24 µs"),
+        (0, "0 s"),
+        (-107.993, "-1:48 min"),
+        (-8.239, "-8.24 s"),
+        (float("inf"), "inf s"),
+        (float("-inf"), "-inf s"),
+        (float("nan"), "nan s"),
+    ],
+)
+def test_format_duration(*, bench_name: str, value: float, expected: str) -> None:
+    """Display durations with compact units and rounded minutes and seconds."""
+    assert pr_comment._format_value(bench_name=bench_name, value=value) == expected
+
+
+def test_duration_tables_preserve_raw_results_and_ratios(tmp_path: Path) -> None:
+    """Comparison and raw tables round their display without rounding the data."""
+    method = "bench_example.Example.time_execution"
+    base_file, head_file = tmp_path / "base.json", tmp_path / "head.json"
+    for path, value in ((base_file, 107.993), (head_file, 1320.83)):
+        path.write_text(
+            json.dumps(
+                {
+                    "results": {
+                        method: [[value], []],
+                        "bench_example.Example.track_compilation_time": [[None], []],
+                    }
+                }
+            )
+        )
+    before = (base_file.read_bytes(), head_file.read_bytes())
+
+    rows = pr_comment._build_comparison_rows(base_file=base_file, head_file=head_file)
+
+    (row,) = rows
+    assert (row.before_value, row.after_value) == ("1:48 min", "22:01 min")
+    assert row.ratio == pytest.approx(1320.83 / 107.993)
+    assert "| 1:48 min | 22:01 min | 12.23 | ❌ |" in (
+        pr_comment._build_grouped_table(rows)
+    )
+    raw_table = pr_comment._format_raw_results(result_file=head_file, head_sha="head")
+    assert "| 22:01 min |" in raw_table
+    assert pr_comment._parse_raw_values(head_file) == {
+        ("Example", "time_execution", ""): 1320.83
+    }
+    assert (base_file.read_bytes(), head_file.read_bytes()) == before
 
 
 def test_grouped_table_uses_canonical_family_and_numeric_parameter_order():
@@ -355,8 +416,8 @@ def test_comparison_omits_benchmarks_that_head_did_not_run(tmp_path: Path):
             class_name="AcaBaseline",
             method_name="time_execution",
             params="",
-            before_value="2.000 s",
-            after_value="3.000 s",
+            before_value="2 s",
+            after_value="3 s",
             ratio=1.5,
         )
     ]
@@ -572,11 +633,12 @@ def test_mahler_configured_identity_has_no_ratio_against_legacy_default(
 @pytest.mark.parametrize(
     ("method", "value", "expected"),
     [
-        ("track_host_ms_per_period_regime", 2.5, "2.50 ms"),
-        ("track_host_ms_per_period_regime", 0, "0.00 ms"),
+        ("track_host_ms_per_period_regime", 2.5, "2.5 ms"),
+        ("track_host_ms_per_period_regime", 0, "0 ms"),
+        ("track_host_ms_per_period_regime", 8.239, "8.24 ms"),
         ("track_second_call_compiles", 0, "0"),
         ("track_second_call_compiles", 12, "12"),
-        ("track_compilation_time", 2.5, "2.50 s"),
+        ("track_compilation_time", 2.5, "2.5 s"),
     ],
 )
 def test_simulation_dispatch_metric_units(
@@ -609,8 +671,8 @@ def test_simulation_dispatch_units_preserve_raw_values_and_ratios(
     by_method = {row.method_name: row for row in rows}
     timing, count = (by_method[method] for method in methods)
     assert (timing.before_value, timing.after_value, timing.ratio) == (
-        "5.00 ms",
-        "2.50 ms",
+        "5 ms",
+        "2.5 ms",
         0.5,
     )
     assert (count.before_value, count.after_value, count.ratio) == ("", "0", None)
@@ -620,10 +682,10 @@ def test_simulation_dispatch_units_preserve_raw_values_and_ratios(
         ("SimulationDispatch", methods[1], ""): 0,
     }
     table = pr_comment._format_raw_results(result_file=head_file, head_sha="head")
-    assert "| 2.50 ms |" in table
+    assert "| 2.5 ms |" in table
     assert "| 0 |" in table
-    assert "2.50 s" not in table
-    assert "0.00 s" not in table
+    assert "2.5 s" not in table
+    assert "0 s" not in table
     assert head_file.read_bytes() == before
 
 
