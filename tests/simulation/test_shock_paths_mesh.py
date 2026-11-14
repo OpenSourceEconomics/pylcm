@@ -34,6 +34,7 @@ from lcm import (
     Regime,
 )
 from lcm.exceptions import ExecutionPlanningError
+from lcm.exits import Unilateral
 from lcm.shocks import (
     BaseInnovations,
     GaussHermite,
@@ -224,7 +225,7 @@ def _exit_mesh_model(*, execution: ExecutionConfig) -> Model:
                                 utility_adjustment=_adjustment,
                             )
                         },
-                        rule="unilateral",
+                        rule=Unilateral(),
                     )
                 },
             ),

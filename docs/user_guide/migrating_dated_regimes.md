@@ -268,7 +268,7 @@ problem at the declared projection. This singleton fragment prices a target with
 observing its offer:
 
 ```python
-from lcm import Exit, ExitTarget
+from lcm import Exit, ExitTarget, Unilateral
 
 exits = {
     "leave": Exit(
@@ -279,7 +279,7 @@ exits = {
                 utility_adjustment=adjustment,
             )
         },
-        rule="unilateral",
+        rule=Unilateral(),
     )
 }
 ```

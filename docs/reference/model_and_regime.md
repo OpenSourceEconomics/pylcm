@@ -287,8 +287,11 @@ next-period transitions remain in `Model(edges=...)`.
 - `Consent(counterparty=Counterparty(regime=..., role=..., projection=...))` compares
   each party's payoff at the destination's common Participating policy strictly against
   that party's Raw stay value. Equality keeps the original state.
-- Built-in `rule="unilateral"` or `"mutual"` declares dissolution participation. A
-  callable rule explicitly declares Boolean `reads_outside_values` metadata and returns
+- Built-in `rule=Unilateral()` keeps the match only if every member is willing to stay;
+  `rule=MutualConsent()` ends it only if every member is unwilling. A member is willing
+  when its stay value is above its exit payoff, or equal to it under the default
+  `tie="stay"`; `tie="leave"` makes an indifferent member leave. A callable rule
+  explicitly declares Boolean `reads_outside_values` metadata and returns
   `RuleResult(action=...)`, a scalar integer global alternative ID.
 
 A custom rule can request `Q_<stakeholder>` (`Q_self` for a singleton), `exit_payoffs`

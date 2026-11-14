@@ -5,6 +5,7 @@ import pytest
 
 import jax.numpy as jnp
 
+from lcm.exits import Unilateral
 from lcm import DiscreteGrid, Exit, ExitTarget, InitialNodes, Model, Regime, categorical
 from lcm.shocks import Discrete, GaussHermite, Normal, Product, ShockGroup
 from lcm.typing import DiscreteState, FloatND, ScalarInt
@@ -65,7 +66,7 @@ def model(*, shock_group=None):
                                 projection={"lagged_school": same_history},
                             )
                         },
-                        rule="unilateral",
+                        rule=Unilateral(),
                         observes=("offer",),
                     )
                 },

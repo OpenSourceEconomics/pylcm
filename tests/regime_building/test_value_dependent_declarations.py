@@ -39,7 +39,7 @@ from lcm import (
     fixed_transition,
 )
 from lcm.exceptions import RegimeInitializationError
-from lcm.exits import Exit, ExitRule, ExitTarget
+from lcm.exits import Exit, ExitTarget
 from lcm.regime import RegimeReplacement
 from lcm.transition import PhaseTransitionLaw, StochasticTransition
 from lcm.typing import (
@@ -82,7 +82,7 @@ class _Snapshot(TypedDict):
             dict[str, ParticipationRead],
         ],
     ]
-    exits: dict[str, tuple[type[ExitRule], dict[str, ExitTarget]]]
+    exits: dict[str, tuple[str, dict[str, ExitTarget]]]
 
 
 _AGES = AgeGrid(start=0, inclusive_stop=3, step="Y")
@@ -470,7 +470,7 @@ def _derived_snapshot(*, regime: Regime, law: RegimeLaw) -> _Snapshot:
             for target, decision in law.participation.items()
         },
         "exits": {
-            name: (type(declaration.rule), dict(declaration.targets))
+            name: (type(declaration.rule).__name__, dict(declaration.targets))
             for name, declaration in regime.exits.items()
         },
     }
@@ -517,7 +517,7 @@ def _expected_snapshots() -> dict[RegimeName, _Snapshot]:
             "stakeholders": ("f", "m"),
             "exits": {
                 "dissolve": (
-                    _ParticipationRule,
+                    "_ParticipationRule",
                     {
                         "f": ExitTarget(
                             regime="single_f", projection={"wage": _identity_wage}

@@ -1114,7 +1114,11 @@ def test_current_value_and_exit_targets_keep_explicit_projector_links(
                 "type": "lcm.Exit",
                 "fields": {
                     "targets": {"self": target},
-                    "rule": "unilateral",
+                    "rule": {
+                        "kind": "dataclass",
+                        "type": "lcm.Unilateral",
+                        "fields": {"tie": "stay"},
+                    },
                     "observes": [],
                 },
             }

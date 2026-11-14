@@ -72,7 +72,25 @@ class RuleResult:
     """Integer ID; native consumption checks scalar shape and declared support."""
 
 
-type ExitRule = Literal["unilateral", "mutual"] | Consent | Callable[..., RuleResult]
+@beartype(conf=REGIME_CONF)
+@dataclass(frozen=True, kw_only=True)
+class Unilateral:
+    """Any member can end the match: it continues only if every member is willing."""
+
+    tie: Literal["stay", "leave"] = "stay"
+    """What a member exactly indifferent between staying and the exit does."""
+
+
+@beartype(conf=REGIME_CONF)
+@dataclass(frozen=True, kw_only=True)
+class MutualConsent:
+    """The match ends only if every member is unwilling to stay."""
+
+    tie: Literal["stay", "leave"] = "stay"
+    """What a member exactly indifferent between staying and the exit does."""
+
+
+type ExitRule = Unilateral | MutualConsent | Consent | Callable[..., RuleResult]
 
 
 @beartype(conf=REGIME_CONF)

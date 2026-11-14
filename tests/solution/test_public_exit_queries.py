@@ -53,7 +53,7 @@ from lcm.exceptions import (
     ShockDeclarationError,
     UnsupportedOperationError,
 )
-from lcm.exits import ExitRule
+from lcm.exits import ExitRule, Unilateral
 from lcm.shocks import Discrete, Normal, PhysicalValues, ShockGroup, UserNodes
 from lcm.taste_shocks import ExtremeValueTasteShocks
 from lcm.transition import fixed_transition
@@ -187,7 +187,7 @@ def _household(
                                 utility_adjustment=_cost,
                             ),
                         },
-                        rule="unilateral",
+                        rule=Unilateral(),
                     )
                 },
             ),
@@ -492,7 +492,7 @@ def _offer_model(
                                 utility_adjustment=_fee,
                             )
                         },
-                        rule="unilateral",
+                        rule=Unilateral(),
                         observes=("offer",) if observed else (),
                     )
                 },
@@ -642,7 +642,7 @@ def test_hidden_target_taste_is_priced_at_logsum_then_drawn_when_acting() -> Non
                                 regime="single_m", projection={"wealth": _wealth}
                             )
                         },
-                        rule="unilateral",
+                        rule=Unilateral(),
                     )
                 },
             ),
@@ -739,7 +739,7 @@ def test_source_full_taste_preserves_dissolution_fallback(*, fallback: bool) -> 
                                 regime="single_m", projection={"wealth": _wealth}
                             )
                         },
-                        rule="unilateral",
+                        rule=Unilateral(),
                     )
                 },
             ),
@@ -827,7 +827,7 @@ def _joint_information_model(
                                 regime="single_m", projection={"wealth": _wealth}
                             )
                         },
-                        rule="unilateral",
+                        rule=Unilateral(),
                         observes=("x", "y") if complete else ("x",) if observed else (),
                     )
                 },
@@ -1034,7 +1034,7 @@ def test_query_only_target_retains_its_genuine_next_period_value_read() -> None:
                 exits={
                     "move": Exit(
                         targets={"self": ExitTarget(regime="single_m", projection={})},
-                        rule="unilateral",
+                        rule=Unilateral(),
                     )
                 },
             ),
@@ -1333,12 +1333,12 @@ def test_public_availability_accepts_python_scalar_but_refuses_vector_reduction(
     None
 ):
     """False is a scalar guard; a vector cannot silently become all(vector)."""
-    result = _rule_model(rule="unilateral", available=_never_available).solve(
+    result = _rule_model(rule=Unilateral(), available=_never_available).solve(
         params={}, log_level="off", runtime_checks=False
     )
     np.testing.assert_allclose(result.values[0]["single_f"], 1.0)
     with pytest.raises(ValueError, match="must be a scalar Boolean"):
-        _rule_model(rule="unilateral", available=_vector_available).solve(
+        _rule_model(rule=Unilateral(), available=_vector_available).solve(
             params={}, log_level="off", runtime_checks=False
         )
 
@@ -1424,7 +1424,7 @@ def test_statically_false_exit_does_not_require_an_inactive_target_context() -> 
                 exits={
                     "move": Exit(
                         targets={"self": ExitTarget(regime="single_m", projection={})},
-                        rule="unilateral",
+                        rule=Unilateral(),
                         available=_never_available,
                     )
                 },
@@ -1810,7 +1810,7 @@ def test_nested_information_uses_each_ancestors_settlement_operands(
                         )
                     },
                     available=_ancestor_available,
-                    rule="unilateral",
+                    rule=Unilateral(),
                 )
             },
         ),
@@ -1826,7 +1826,7 @@ def test_nested_information_uses_each_ancestors_settlement_operands(
                             projection={"wealth": _descendant_settlement},
                         )
                     },
-                    rule="unilateral",
+                    rule=Unilateral(),
                 )
             },
         ),

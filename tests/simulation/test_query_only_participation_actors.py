@@ -24,6 +24,7 @@ from lcm import (
     Transition,
     categorical,
 )
+from lcm.exits import Unilateral
 from lcm.typing import BoolND, FloatND, RegimeName, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
 
@@ -234,7 +235,7 @@ def physical_model(*, incoming: bool, target_payoff: int, budget: int | None) ->
                         targets={
                             "self": ExitTarget(regime="counterparty", projection={})
                         },
-                        rule="unilateral",
+                        rule=Unilateral(),
                     )
                 },
             ),

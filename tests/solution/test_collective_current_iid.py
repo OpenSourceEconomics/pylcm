@@ -34,6 +34,7 @@ from lcm import (
     categorical,
 )
 from lcm.exceptions import ExecutionPlanningError, RegimeInitializationError
+from lcm.exits import Unilateral
 from lcm.shocks import Discrete, Normal, ShockGroup, UserNodes
 from lcm.solver_api import SolutionResult
 from lcm.typing import FloatND, IntND, ScalarInt
@@ -125,7 +126,7 @@ def _model(
                         "f": ExitTarget(regime="single_f", projection={}),
                         "m": ExitTarget(regime="single_m", projection={}),
                     },
-                    rule="unilateral",
+                    rule=Unilateral(),
                     available=None if available else _unavailable,
                 )
             }
@@ -311,7 +312,7 @@ def _household_model() -> Model:
                             projection={"experience": _experience_m},
                         ),
                     },
-                    rule="unilateral",
+                    rule=Unilateral(),
                 )
             },
         ),
@@ -558,7 +559,7 @@ def test_collective_prices_hidden_target_policy_with_original_joint_law(
                             member: ExitTarget(regime=f"single_{member}", projection={})
                             for member in ("f", "m")
                         },
-                        rule="unilateral",
+                        rule=Unilateral(),
                     )
                 },
             ),

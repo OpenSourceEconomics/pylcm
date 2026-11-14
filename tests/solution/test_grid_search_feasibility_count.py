@@ -36,6 +36,7 @@ from lcm import (
     fixed_transition,
 )
 from lcm.exceptions import ExecutionPlanningError
+from lcm.exits import Unilateral
 from lcm.typing import BoolND, FloatND
 from tests.simulation.test_no_feasible_action import (
     DecisionId,
@@ -336,7 +337,7 @@ def _query_counter_domain_model(
                 exits={
                     "leave": Exit(
                         targets={"self": ExitTarget(regime="dead", projection={})},
-                        rule="unilateral",
+                        rule=Unilateral(),
                     )
                 },
             ),

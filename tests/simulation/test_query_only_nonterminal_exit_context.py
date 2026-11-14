@@ -19,6 +19,7 @@ from lcm import (
     Regime,
     categorical,
 )
+from lcm.exits import Unilateral
 from lcm.typing import FloatND, IntND, ScalarInt
 
 
@@ -97,7 +98,7 @@ def test_query_only_nonterminal_raw_and_nested_participating_keep_continuation()
                             "f": ExitTarget(regime="incoming_f", projection={}),
                             "m": ExitTarget(regime="incoming_m", projection={}),
                         },
-                        rule="unilateral",
+                        rule=Unilateral(),
                     )
                 },
             ),

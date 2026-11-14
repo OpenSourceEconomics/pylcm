@@ -17,6 +17,7 @@ from lcm import (
     Regime,
     categorical,
 )
+from lcm.exits import Unilateral
 from lcm.shocks import GaussHermite, Normal, PhysicalValues, Product, ShockGroup
 from lcm.typing import FloatND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
@@ -92,7 +93,7 @@ def test_phase_specific_shared_offer_frame_reaches_participating_final_actor(
                             "f": ExitTarget(regime="outside_f", projection={}),
                             "m": ExitTarget(regime="outside_m", projection={}),
                         },
-                        rule="unilateral",
+                        rule=Unilateral(),
                         observes=("offer",),
                     )
                 },

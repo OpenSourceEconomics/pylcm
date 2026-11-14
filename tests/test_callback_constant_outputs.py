@@ -42,6 +42,7 @@ from lcm import (
 )
 from lcm.collective import CollectiveUtility, ValueDependentConstraint
 from lcm.exceptions import InvalidFunctionOutputError, InvalidValueFunctionError
+from lcm.exits import Unilateral
 from lcm.regime import StateTransitionEntry
 from lcm.shocks import Discrete, GaussHermite, Normal, Product, ShockGroup
 from lcm.transition import TransitionLaw
@@ -522,7 +523,7 @@ def _exit_model(
                                 utility_adjustment=adjustment,
                             )
                         },
-                        rule="unilateral",
+                        rule=Unilateral(),
                         available=available,
                     )
                 },
