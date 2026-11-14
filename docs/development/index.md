@@ -15,6 +15,7 @@ here.
 - [Continuous integration](continuous_integration.md)
 - [Certification and preflight](certification.md)
 - [Joint dependency facts for regime analysis](regime_fibre_facts.md)
+- [Exact implicit fibre facts](implicit_fibre_facts.md)
 - [Package benchmarks](benchmarking.md)
 - [Resource contract for collective and gated models](collective_resource_contract.md)
 - [Compiler allocation and admission](compiler_allocation_admission.md)

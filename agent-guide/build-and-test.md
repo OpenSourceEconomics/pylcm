@@ -44,12 +44,18 @@ cannot truthfully execute. The four markers a test declares (`requires`, `covera
 `isolation`, `ci`) and the policy tiers are in
 [Continuous integration](../docs/development/continuous_integration.md).
 
-Two obligations fire on ordinary work and have no local warning:
+These obligations apply to ordinary work:
 
 - **A new test file must be registered** in `tests/ci/ci-workloads.json`, or
   `tests/ci/test_ci_workloads_manifest.py` fails in CI and the file runs on no lane.
   Register it with `pixi run -e tests-cpu python -m tests.ci.generate_ci_workloads`, and
   check a manifest you did not write with the same command plus `--check`.
+- **Manifest writers use `tests.ci.ci_workloads.dump_manifest()`** for sorted keys,
+  indent 1 and UTF-8/LF. The formatting hook fixes staged files; CI checks the bytes.
+  After a merge conflict, reconcile real content changes separately and preserve both
+  sides' genuine measurement evidence. Choose the reviewed semantic base, remove only
+  references to deleted test paths, then regenerate with the command above. Sorting
+  does not reconcile measurements; never hand-merge the JSON.
 - **Editing a certified source under `src/` stales the certificate seals.** Reseal byte
   seals with `pixi run python tests/candidate_certificate/check_seals.py --fix`; when
   that exits 2, the drift is an AST corridor pin and

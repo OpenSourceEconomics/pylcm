@@ -147,3 +147,10 @@ shared-single-status case is tagged `inert-literal`, and local or multiple-axis
 projections are tagged `inert-joint`. Passing finite checks does not authenticate their
 source, prove the applicable theorem or identify the largest removable set. It does not
 establish exact economic reachability, a preferred layout or global optimality.
+
+## Compact representation of the point-table contract
+
+[Exact implicit fibre facts](implicit_fibre_facts.md) describes the separate internal
+compiler, independent all-point verifier and supplied-projection check. It preserves the
+original point-table results and source qualifications. It does not replace the public
+source-screen contract or the existing witness-dependent search.

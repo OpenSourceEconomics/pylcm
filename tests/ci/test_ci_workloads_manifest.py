@@ -7,6 +7,7 @@ matches what `cpu.yml` actually runs and what `tests/` actually contains.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from pathlib import Path
 
@@ -43,6 +44,51 @@ def test_manifest_file_exists_and_parses():
     manifest = ci_workloads.load_manifest()
     assert manifest["schema_version"] == 2
     assert manifest["invocations"]
+
+
+def test_manifest_has_canonical_bytes() -> None:
+    text = ci_workloads.MANIFEST_PATH.read_bytes().decode("utf-8")
+    assert text == ci_workloads.dump_manifest(json.loads(text))
+
+
+def test_dump_manifest_sorts_nested_keys_and_preserves_array_order() -> None:
+    assert ci_workloads.dump_manifest({"z": [2, 1], "a": {"z": "é", "a": 1}}) == (
+        '{\n "a": {\n  "a": 1,\n  "z": "é"\n },\n "z": [\n  2,\n  1\n ]\n}\n'
+    )
+
+
+@pytest.mark.parametrize(
+    "original",
+    [b'{"z": [2, 1], "a": 1}', b'{\r\n "a": 1,\r\n "z": [2, 1]\r\n}\r\n'],
+)
+def test_canonicalize_fixes_then_passes_without_changing_values(
+    *, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, original: bytes
+) -> None:
+    path = tmp_path / "ci-workloads.json"
+    path.write_bytes(original)
+    monkeypatch.setattr(ci_workloads, "MANIFEST_PATH", path)
+    assert ci_workloads.main(["canonicalize"]) == 1
+    expected = b'{\n "a": 1,\n "z": [\n  2,\n  1\n ]\n}\n'
+    assert path.read_bytes() == expected
+    assert json.loads(path.read_bytes()) == json.loads(original)
+    assert ci_workloads.main(["canonicalize"]) == 0
+    assert path.read_bytes() == expected
+
+
+def test_canonicalize_refuses_invalid_json_without_rewriting_it(
+    *, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "ci-workloads.json"
+    original = b'{"unfinished":'
+    path.write_bytes(original)
+    monkeypatch.setattr(ci_workloads, "MANIFEST_PATH", path)
+    with pytest.raises(json.JSONDecodeError):
+        ci_workloads.main(["canonicalize"])
+    assert path.read_bytes() == original
+
+
+def test_canonicalize_rejects_unknown_commands() -> None:
+    assert ci_workloads.main(["refresh"]) == 2
 
 
 def test_every_invocation_has_a_nonempty_selection():
