@@ -68,7 +68,7 @@ repos:
       - id: ruff-format
         # Keep the imported checker source stable for comparison with its reviewed
         # implementation. Its directory has a separate Ruff lint configuration.
-        exclude: ^src/_lcm_regime_finder/
+        exclude: ^src/_lcm_regime_finder/(?!implicit/)
         types_or:
           - jupyter
           - pyi
