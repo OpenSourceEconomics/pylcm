@@ -371,6 +371,7 @@ from lcm._solver_api.entries import _LazyEntry
 from lcm.ages import AgeGrid
 from lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
 from lcm.composite_state import CompositeState
+from lcm.declarations import ModelDeclarations, _get_model_declarations
 from lcm.decoupled import Decoupled
 from lcm.exceptions import (
     ExecutionPlanningError,
@@ -464,9 +465,14 @@ from lcm.typing import (
 _PARAM_NAME_SIMILARITY_THRESHOLD = 0.8
 
 if TYPE_CHECKING:
+    from networkx import DiGraph
+
+    type _TemporalGraphBoundary = DiGraph
     type _SolutionResultBoundary = SolutionResult
     type _ArtifactStoreBoundary = ArtifactStore
 else:
+    # NetworkX is loaded only by explicit graph conversion, not Model imports.
+    type _TemporalGraphBoundary = object
     # Caller-visible result containers are validated and snapshotted explicitly;
     # runtime annotation traversal must not inspect hostile or lazy contents first.
     type _SolutionResultBoundary = object
@@ -1991,6 +1997,41 @@ class Model:
     def edges(self) -> ModelEdges:
         """The edges exactly as declared in `Model(edges=...)`, laws included."""
         return self._edges
+
+    def to_networkx(self, *, phase: Phase | None = None) -> _TemporalGraphBoundary:
+        """Return an independent temporal regime graph as a NetworkX DiGraph.
+
+        Nodes use exact age/regime or period/regime keys. Select solve or
+        simulate when their temporal graphs differ. This view is distinct from
+        the immutable model.graph declaration and contains no same-period edges.
+        Conversion does not solve the model or prepare execution.
+        """
+        from lcm.graphs import digraph  # noqa: PLC0415
+
+        return digraph(self, phase=phase)
+
+    def get_declarations(self) -> ModelDeclarations:
+        """Return resolved graph declarations and their declared function inputs.
+
+        Read the model's construction metadata without evaluating callbacks,
+        rebuilding factories, compiling programs, solving or simulating. This
+        view needs no runtime parameters. Each phase retains its own full domains.
+
+        Returns:
+            A read-only declaration view with schema version 1.
+
+        Raises:
+            ValueError: If a legacy restored model lacks construction metadata.
+        """
+        if self._declaration_preparation is None:
+            msg = "This restored model has no construction declaration metadata."
+            raise ValueError(msg)
+        return _get_model_declarations(
+            structure=self._declaration_preparation.prepared_structure,
+            graph=self.graph,
+            n_periods=self.n_periods,
+            declared_regimes=self.user_regimes,
+        )
 
     @property
     def declared_transitions(

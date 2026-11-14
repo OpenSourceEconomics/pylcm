@@ -4,6 +4,9 @@ title: Age-indexed regime graphs
 
 # Age-indexed regime graphs
 
+To look for simpler representations of a constructed model, use the
+[regime checker](regime_checker.md).
+
 The examples on this page use `Model(ages=...)`. For `Model(n_periods=...)`, declare
 starts with `InitialNodes(by_period={0: "working"})`, source selectors with
 `PeriodRange` or `Periods`, and transition schedules with `ByPeriod`. Their edges still

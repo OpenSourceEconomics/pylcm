@@ -1,0 +1,101 @@
+{
+  "actions": {
+    "work": {
+      "values": [
+        0,
+        1
+      ]
+    }
+  },
+  "ages": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8
+  ],
+  "name": "retirement-lagged-bill-and-redundant-late-cut",
+  "parameters": {},
+  "programs": [
+    {
+      "discount": "1",
+      "feasible": "work == 0 if age >= 2 else True",
+      "id": "working_block",
+      "reward": "(wage * work if age < 2 else 0) - (coverage_lag if age < 5 else 0)",
+      "role": {
+        "actor": "household",
+        "commitments": [],
+        "discount_boundary": "annual",
+        "observations": []
+      },
+      "terminal": false,
+      "transitions": [
+        {
+          "probability": "1",
+          "updates": {
+            "coverage_lag": "coverage_lag",
+            "wage": "wage"
+          }
+        }
+      ],
+      "when": "age < 6"
+    },
+    {
+      "discount": "1",
+      "feasible": "work == 0 if age >= 2 else True",
+      "id": "unnecessary_late_block",
+      "reward": "(wage * work if age < 2 else 0) - (coverage_lag if age < 5 else 0)",
+      "role": {
+        "actor": "household",
+        "commitments": [],
+        "discount_boundary": "annual",
+        "observations": []
+      },
+      "terminal": false,
+      "transitions": [
+        {
+          "probability": "1",
+          "updates": {
+            "coverage_lag": "coverage_lag",
+            "wage": "wage"
+          }
+        }
+      ],
+      "when": "6 <= age < 8"
+    },
+    {
+      "declared_actions": [],
+      "declared_states": [],
+      "id": "terminal",
+      "role": {
+        "actor": "household",
+        "commitments": [],
+        "discount_boundary": "annual",
+        "observations": []
+      },
+      "terminal": true,
+      "terminal_payoff": "0",
+      "transitions": [],
+      "when": "age == 8"
+    }
+  ],
+  "schema_version": 1,
+  "states": {
+    "coverage_lag": {
+      "values": [
+        0,
+        1
+      ]
+    },
+    "wage": {
+      "values": [
+        1,
+        2
+      ]
+    }
+  }
+}

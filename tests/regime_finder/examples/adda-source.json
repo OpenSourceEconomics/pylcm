@@ -1,0 +1,25 @@
+{
+  "adapter": "pylcm_ast",
+  "source": "source_inputs/adda/model.py",
+  "constructor": "create_model",
+  "name": "Original Adda working block",
+  "discount_factor": "0.97",
+  "symbols": {
+    "cal.grid.n_assets": 3,
+    "cal.grid.assets_max": 100000.0,
+    "cal.grid.n_consumption": 4,
+    "cal.grid.consumption_max": 100000.0,
+    "cal.grid.n_last_earnings": 3,
+    "cal.grid.last_earnings_max": 100000.0,
+    "cal.grid.skills_nodes": [
+      0,
+      5,
+      7,
+      30
+    ],
+    "cal.grid.n_wage_nodes": 3,
+    "cal.grid.n_husband_nodes": 3,
+    "cal.sigma_wage": 0.2,
+    "cal.sigma_husband": 0.2
+  }
+}

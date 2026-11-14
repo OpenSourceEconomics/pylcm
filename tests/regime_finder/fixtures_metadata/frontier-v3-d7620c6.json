@@ -1,0 +1,632 @@
+{
+  "analysis": {
+    "declarations": {
+      "cells": [
+        {
+          "id": "a:0",
+          "period": 0,
+          "age": 20,
+          "regime": "a",
+          "role": {
+            "actor": "same"
+          },
+          "ownership": "owner",
+          "stage": "decision",
+          "states": {
+            "wealth": "wealth"
+          },
+          "actions": {
+            "choice": "choice"
+          }
+        },
+        {
+          "id": "a:1",
+          "period": 1,
+          "age": 23,
+          "regime": "a",
+          "role": {
+            "actor": "same"
+          },
+          "ownership": "owner",
+          "stage": "decision",
+          "states": {
+            "wealth": "wealth"
+          },
+          "actions": {
+            "choice": "choice"
+          }
+        },
+        {
+          "id": "a:2",
+          "period": 2,
+          "age": 26,
+          "regime": "a",
+          "role": {
+            "actor": "same"
+          },
+          "ownership": "owner",
+          "stage": "decision",
+          "states": {
+            "wealth": "wealth"
+          },
+          "actions": {
+            "choice": "choice"
+          }
+        },
+        {
+          "id": "b:0",
+          "period": 0,
+          "age": 20,
+          "regime": "b",
+          "role": {
+            "actor": "same"
+          },
+          "ownership": "owner",
+          "stage": "decision",
+          "states": {
+            "wealth": "wealth"
+          },
+          "actions": {
+            "choice": "choice"
+          }
+        },
+        {
+          "id": "b:1",
+          "period": 1,
+          "age": 23,
+          "regime": "b",
+          "role": {
+            "actor": "same"
+          },
+          "ownership": "owner",
+          "stage": "decision",
+          "states": {
+            "wealth": "wealth"
+          },
+          "actions": {
+            "choice": "choice"
+          }
+        },
+        {
+          "id": "b:2",
+          "period": 2,
+          "age": 26,
+          "regime": "b",
+          "role": {
+            "actor": "same"
+          },
+          "ownership": "owner",
+          "stage": "decision",
+          "states": {
+            "wealth": "wealth"
+          },
+          "actions": {
+            "choice": "choice"
+          }
+        }
+      ],
+      "domains": {
+        "wealth": {
+          "size": 1000000000000
+        },
+        "choice": {
+          "size": 3
+        }
+      },
+      "relations": [
+        {
+          "source": "a:0",
+          "targets": [
+            "b:1"
+          ],
+          "support": "positive"
+        }
+      ],
+      "allocation": {
+        "kind": "per_block",
+        "boundary_unit": 2
+      }
+    },
+    "interfaces": {
+      "a:0": {
+        "options": [
+          {
+            "id": "keep",
+            "states": {
+              "wealth": "wealth"
+            },
+            "actions": {
+              "choice": "choice"
+            },
+            "state_projection": {
+              "wealth": {
+                "kind": "identity"
+              }
+            },
+            "action_reconstruction": {
+              "choice": {
+                "kind": "identity"
+              }
+            }
+          }
+        ]
+      },
+      "a:1": {
+        "options": [
+          {
+            "id": "keep",
+            "states": {
+              "wealth": "wealth"
+            },
+            "actions": {
+              "choice": "choice"
+            },
+            "state_projection": {
+              "wealth": {
+                "kind": "identity"
+              }
+            },
+            "action_reconstruction": {
+              "choice": {
+                "kind": "identity"
+              }
+            }
+          }
+        ]
+      },
+      "a:2": {
+        "options": [
+          {
+            "id": "keep",
+            "states": {
+              "wealth": "wealth"
+            },
+            "actions": {
+              "choice": "choice"
+            },
+            "state_projection": {
+              "wealth": {
+                "kind": "identity"
+              }
+            },
+            "action_reconstruction": {
+              "choice": {
+                "kind": "identity"
+              }
+            }
+          }
+        ]
+      },
+      "b:0": {
+        "options": [
+          {
+            "id": "keep",
+            "states": {
+              "wealth": "wealth"
+            },
+            "actions": {
+              "choice": "choice"
+            },
+            "state_projection": {
+              "wealth": {
+                "kind": "identity"
+              }
+            },
+            "action_reconstruction": {
+              "choice": {
+                "kind": "identity"
+              }
+            }
+          }
+        ]
+      },
+      "b:1": {
+        "options": [
+          {
+            "id": "keep",
+            "states": {
+              "wealth": "wealth"
+            },
+            "actions": {
+              "choice": "choice"
+            },
+            "state_projection": {
+              "wealth": {
+                "kind": "identity"
+              }
+            },
+            "action_reconstruction": {
+              "choice": {
+                "kind": "identity"
+              }
+            }
+          }
+        ]
+      },
+      "b:2": {
+        "options": [
+          {
+            "id": "keep",
+            "states": {
+              "wealth": "wealth"
+            },
+            "actions": {
+              "choice": "choice"
+            },
+            "state_projection": {
+              "wealth": {
+                "kind": "identity"
+              }
+            },
+            "action_reconstruction": {
+              "choice": {
+                "kind": "identity"
+              }
+            }
+          }
+        ]
+      }
+    },
+    "projection_policies": [
+      {
+        "id": "P0",
+        "option_by_cell": {
+          "a:0": "keep",
+          "a:1": "keep",
+          "a:2": "keep",
+          "b:0": "keep",
+          "b:1": "keep",
+          "b:2": "keep"
+        }
+      }
+    ],
+    "discovery_complete": true
+  },
+  "result": {
+    "schema": "regime-frontier/v3",
+    "status": "COMPLETE",
+    "frontier": [
+      {
+        "cost": {
+          "work": 18000000000000,
+          "storage": 6000000000000,
+          "clarity": 5
+        },
+        "projection_policy": "P0",
+        "blocks": [
+          {
+            "cells": [
+              "a:0",
+              "a:1",
+              "a:2",
+              "b:0",
+              "b:1",
+              "b:2"
+            ],
+            "option_by_cell": {
+              "a:0": "keep",
+              "a:1": "keep",
+              "a:2": "keep",
+              "b:0": "keep",
+              "b:1": "keep",
+              "b:2": "keep"
+            },
+            "periods": [
+              0,
+              1,
+              2
+            ],
+            "ages": [
+              20,
+              20,
+              23,
+              23,
+              26,
+              26
+            ],
+            "original_regimes": [
+              "a",
+              "b"
+            ],
+            "state_axes": {
+              "wealth": "wealth"
+            },
+            "action_axes": {
+              "choice": "choice"
+            },
+            "cost": {
+              "work": 18000000000000,
+              "storage": 6000000000000,
+              "clarity": 5
+            },
+            "cost_detail": {
+              "enumeration": 18000000000000,
+              "boundary": 0,
+              "boundary_incidences": 0,
+              "state_rows_per_atom": 1000000000000,
+              "action_rows_per_atom": 3,
+              "dispatch_clauses": 1,
+              "characteristic_count": 0
+            },
+            "allocation_kind": "per_block",
+            "peak_live_storage": null
+          }
+        ],
+        "id": "G0000"
+      }
+    ],
+    "certificate": {
+      "analysis_sha256": "1b23c133f118a9ba7926b2f612794e4d90e01898af4a10985c114cfb413dd26f",
+      "family_sha256": "e3693f98b205a1bf6c657ba713c4ad1953a88f8d346b034731922874163c9f56",
+      "family_encoding": "canonical unique date buckets; interval records sorted by group_id; memoized label-subset recurrence records and singleton signature models sorted by canonical JSON",
+      "complete": true,
+      "family": "all protected-role-compatible original-regime groupings; every interval of exact date buckets; every offered coherent categorical policy; source certification checked separately",
+      "component_regimes": [
+        [
+          "a",
+          "b"
+        ]
+      ],
+      "component_reductions": [],
+      "projection_policies": [
+        "P0"
+      ],
+      "search_counts": {
+        "segments": 18,
+        "groupings": 3
+      },
+      "interval_records": [
+        {
+          "group_id": "355ff71fecec4bd41b2af9b406b44da886cc2fe15a002d9a011be5986b1452c2",
+          "buckets": [
+            [
+              "a:0",
+              "b:0"
+            ],
+            [
+              "a:1",
+              "b:1"
+            ],
+            [
+              "a:2",
+              "b:2"
+            ]
+          ],
+          "option_by_cell": {
+            "a:0": "keep",
+            "a:1": "keep",
+            "a:2": "keep",
+            "b:0": "keep",
+            "b:1": "keep",
+            "b:2": "keep"
+          },
+          "suffix_frontiers": [
+            [
+              {
+                "work": 18000000000000,
+                "storage": 6000000000000,
+                "clarity": 5
+              }
+            ],
+            [
+              {
+                "work": 12000000000000,
+                "storage": 4000000000000,
+                "clarity": 5
+              }
+            ],
+            [
+              {
+                "work": 6000000000000,
+                "storage": 2000000000000,
+                "clarity": 5
+              }
+            ],
+            [
+              {
+                "work": 0,
+                "storage": 0,
+                "clarity": 0
+              }
+            ]
+          ]
+        },
+        {
+          "group_id": "82e8db5861057282ed23f2c173923bd7c30688983a55ac11d07443728cb4bd08",
+          "buckets": [
+            [
+              "b:0"
+            ],
+            [
+              "b:1"
+            ],
+            [
+              "b:2"
+            ]
+          ],
+          "option_by_cell": {
+            "b:0": "keep",
+            "b:1": "keep",
+            "b:2": "keep"
+          },
+          "suffix_frontiers": [
+            [
+              {
+                "work": 9000000000000,
+                "storage": 3000000000000,
+                "clarity": 4
+              }
+            ],
+            [
+              {
+                "work": 6000000000000,
+                "storage": 2000000000000,
+                "clarity": 4
+              }
+            ],
+            [
+              {
+                "work": 3000000000000,
+                "storage": 1000000000000,
+                "clarity": 4
+              }
+            ],
+            [
+              {
+                "work": 0,
+                "storage": 0,
+                "clarity": 0
+              }
+            ]
+          ]
+        },
+        {
+          "group_id": "cdcc381a3fc818df48e26b0ab6d5ae108bcc790c9603dbc0419a40c62c2bb8e9",
+          "buckets": [
+            [
+              "a:0"
+            ],
+            [
+              "a:1"
+            ],
+            [
+              "a:2"
+            ]
+          ],
+          "option_by_cell": {
+            "a:0": "keep",
+            "a:1": "keep",
+            "a:2": "keep"
+          },
+          "suffix_frontiers": [
+            [
+              {
+                "work": 15000000000000,
+                "storage": 3000000000000,
+                "clarity": 4
+              }
+            ],
+            [
+              {
+                "work": 6000000000000,
+                "storage": 2000000000000,
+                "clarity": 4
+              }
+            ],
+            [
+              {
+                "work": 3000000000000,
+                "storage": 1000000000000,
+                "clarity": 4
+              }
+            ],
+            [
+              {
+                "work": 0,
+                "storage": 0,
+                "clarity": 0
+              }
+            ]
+          ]
+        }
+      ],
+      "grouping_records": [
+        {
+          "rule": "label-subset-recurrence/v1",
+          "cells_by_label": {
+            "a": [
+              "a:0",
+              "a:1",
+              "a:2"
+            ],
+            "b": [
+              "b:0",
+              "b:1",
+              "b:2"
+            ]
+          },
+          "option_by_cell": {
+            "a:0": "keep",
+            "a:1": "keep",
+            "a:2": "keep",
+            "b:0": "keep",
+            "b:1": "keep",
+            "b:2": "keep"
+          },
+          "states": [
+            {
+              "remaining": [],
+              "frontier": [
+                {
+                  "work": 0,
+                  "storage": 0,
+                  "clarity": 0
+                }
+              ]
+            },
+            {
+              "remaining": [
+                "b"
+              ],
+              "frontier": [
+                {
+                  "work": 9000000000000,
+                  "storage": 3000000000000,
+                  "clarity": 4
+                }
+              ]
+            },
+            {
+              "remaining": [
+                "a",
+                "b"
+              ],
+              "frontier": [
+                {
+                  "work": 18000000000000,
+                  "storage": 6000000000000,
+                  "clarity": 5
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "signature_records": [],
+      "lower_bound": null,
+      "frontier_scope": "all candidates in the declared finite family"
+    },
+    "elapsed_seconds": 0.0007877819589339197,
+    "exhaustion_reason": null,
+    "allocation_contract": {
+      "kind": "per_block",
+      "boundary_unit": 2
+    },
+    "clarity_weights": {
+      "block": 4,
+      "characteristic": 2,
+      "dispatch": 1
+    },
+    "endpoint_clarity_policy": "All semantically admissible final-date intervals are searched. By default the recommendation defers extra final-decision-date regimes used only to omit newly inactive coordinates; allow_final_only_split explicitly overrides this preference. The admissible family and Pareto frontier are unchanged.",
+    "recommendation": {
+      "graph_id": "G0000",
+      "score": "3",
+      "weights": {
+        "work": "1",
+        "storage": "1",
+        "clarity": "1"
+      },
+      "reference_scales": {
+        "work": 18000000000000,
+        "storage": 6000000000000,
+        "clarity": 5
+      },
+      "endpoint_preference": {
+        "allow_final_only_split": false,
+        "deferred_graph_ids": [],
+        "reason": "All semantically admissible final-date intervals are searched. By default the recommendation defers extra final-decision-date regimes used only to omit newly inactive coordinates; allow_final_only_split explicitly overrides this preference. The admissible family and Pareto frontier are unchanged."
+      },
+      "rule": "minimum positive weighted reference-normalized cost among preference-eligible frontier points; exact rational score; deterministic cost/layout ties; retain the original if none is eligible"
+    }
+  }
+}

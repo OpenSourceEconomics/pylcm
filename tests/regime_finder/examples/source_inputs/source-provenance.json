@@ -1,0 +1,47 @@
+{
+  "sources": [
+    {
+      "path": "fetter/model.py",
+      "original_bundle_path": "project/examples/fetterGovernmentOldAgeSupport2018/original/src/lcm_zoo/fetterGovernmentOldAgeSupport2018/model.py",
+      "sha256": "962cd222a615f20522405289d0e44cdb6dada951238af41123e1c38c34bdbf81",
+      "bytes": 27845,
+      "copy": "BYTE_IDENTICAL"
+    },
+    {
+      "path": "fetter/calibration.py",
+      "original_bundle_path": "project/examples/fetterGovernmentOldAgeSupport2018/original/src/lcm_zoo/fetterGovernmentOldAgeSupport2018/calibration.py",
+      "sha256": "f9b044a7ebece017498a3748294dfbeae049dd92ef58f8b841f9f7949e07b80b",
+      "bytes": 6007,
+      "copy": "BYTE_IDENTICAL"
+    },
+    {
+      "path": "adda/model.py",
+      "original_bundle_path": "project/examples/addaCareerCostsChildren2017/original/src/lcm_zoo/addaCareerCostsChildren2017/model.py",
+      "sha256": "e2f3bae49059abf9913ccac086a772005e1616b52c4b1b83cbcfc9352566a0f6",
+      "bytes": 33340,
+      "copy": "BYTE_IDENTICAL"
+    },
+    {
+      "path": "adda/calibration.py",
+      "original_bundle_path": "project/examples/addaCareerCostsChildren2017/original/src/lcm_zoo/addaCareerCostsChildren2017/calibration.py",
+      "sha256": "f332929abd997d6cfc97573d48670df7746d94e8177f31610703e2bcee12480f",
+      "bytes": 15121,
+      "copy": "BYTE_IDENTICAL"
+    },
+    {
+      "path": "foerster/model.py",
+      "original_bundle_path": "project/examples/foersterUntyingKnotHow2024/current/src/lcm_zoo/foersterUntyingKnotHow2024/model.py",
+      "sha256": "050a1be629e7275d16bf110d10ccfffeef0d27c4859d7d5c54934fd9b40a302d",
+      "bytes": 69514,
+      "copy": "BYTE_IDENTICAL"
+    },
+    {
+      "path": "pylcm_api/processing.py",
+      "original_bundle_path": "project/pylcm-api/_lcm/regime_building/processing.py",
+      "sha256": "7ca2cd36b305e1e4d9d36f069a3b56fd4ef30bf806eb850bde20f2a641eaf012",
+      "bytes": 473565,
+      "copy": "BYTE_IDENTICAL"
+    }
+  ],
+  "native_source_execution": "NOT_RUN"
+}

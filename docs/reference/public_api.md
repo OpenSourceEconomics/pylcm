@@ -15,6 +15,8 @@ documentation and tests.
 | Public name                                                                                          | Canonical documentation                           |
 | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
 | [`lcm.Model`](model_and_regime.md#api-model)                                                         | Model assembly and execution                      |
+| [`lcm.ModelDeclarations`](runtime_and_results.md#api-model-declarations)                             | Resolved model declarations                       |
+| [`lcm.FunctionDeclaration`](runtime_and_results.md#api-model-declarations)                           | Declared function signature and inputs            |
 | [`lcm.InitialNodes`](model_and_regime.md#api-initial-nodes)                                          | Explicit coordinates of admissible starts         |
 | [`lcm.CompositeState`](model_and_regime.md#api-composite-state)                                      | Reachable tuples of discrete member states        |
 | [`lcm.PeriodCandidate`](model_and_regime.md#api-period-candidate-lowering)                           | Exact primary ranked-width request                |
@@ -39,6 +41,18 @@ documentation and tests.
 | [`lcm.liquid_law_from_savings`](consumption_savings.md)                                              | Conventional savings-written liquid law           |
 | [`lcm.ExtremeValueTasteShocks`](model_and_regime.md#api-extreme-value-taste-shocks)                  | EV1 discrete-choice shocks                        |
 | [`lcm.EULER_GAMMA`](model_and_regime.md#api-euler-gamma)                                             | Mean of a standard Gumbel draw                    |
+
+## Graph inspection and regime analysis
+
+| Public name                                            | Canonical documentation                                                                                  |
+| ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------- |
+| `lcm.graphs.digraph`, `Model.to_networkx`              | [Temporal regime graph](runtime_and_results.md#inspecting-the-temporal-regime-graph)                     |
+| `lcm.graphs.analyze_regime_structure`                  | [Typed regime-structure analysis](../user_guide/regime_checker.md#check-your-model)                      |
+| `lcm.graphs.LinearRegimeCostModel`                     | [Alternative linear objectives](../user_guide/regime_checker.md#compare-alternative-linear-cost-models)  |
+| `lcm.graphs.RegimeAnalysisResult`                      | [Immutable result, recommendations and report writing](../user_guide/regime_checker.md#check-your-model) |
+| `lcm.graphs.RegimeCandidate`, `lcm.graphs.RegimeBlock` | [Direct candidate and computational-block inspection](../user_guide/regime_checker.md#check-your-model)  |
+| `lcm.graphs.RegimeCheck`, `lcm.graphs.RegimeCost`      | [Scoped checks and structural costs](../user_guide/regime_checker.md#read-the-result)                    |
+| `lcm.graphs.find_regimes`                              | [Dictionary compatibility helper](../user_guide/regime_checker.md#check-your-model)                      |
 
 ## Grids, categories, and processes
 

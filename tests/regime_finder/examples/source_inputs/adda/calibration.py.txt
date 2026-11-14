@@ -1,0 +1,373 @@
+"""Caller-supplied calibration and pure transformations for the Adda model.
+
+Pure NumPy.
+
+Chosen values live in the task-owned values module. Historical source notes below
+describe those inputs. Each chosen number is either
+
+* **published** — read off the paper's tables, with the table cited in a comment; or
+* **a gap** — named `G<n>` per `model.md` §12, given a documented starting value
+  and calibrated against the paper's own goodness-of-fit tables.
+
+Nothing is read from the replication package: the model is fully specified by the
+printed tables plus the gap list (see `specs/addaCareerCostsChildren2017/model.md`).
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+import numpy as np
+
+from .taxes import (
+    DAYS_PER_PERIOD,
+    TaxTransferParams,
+)
+
+# Fixed decodings. Order fixes the categorical codes.
+OCCUPATIONS = ("routine", "abstract", "manual")
+LABOR_STATES = ("ft", "pt", "u", "olf")
+TYPES = ("la_hc", "la_lc", "ha_hc", "ha_lc")  # Table 5 column order
+
+# The 8 `opportunity` levels: what the labour market offers her at the start of a
+# period, drawn at the end of the previous one from (occupation, l_prev). Order fixes
+# the categorical codes and the transition-probability vector.
+OPPORTUNITIES = (
+    "laid_off",
+    "no_offer",
+    "offer_routine_ft",
+    "offer_routine_pt",
+    "offer_abstract_ft",
+    "offer_abstract_pt",
+    "offer_manual_ft",
+    "offer_manual_pt",
+)
+# (occupation index, labor index) of each offer level; -1 for the two non-offers.
+OFFER_OCC = np.array([-1, -1, 0, 0, 1, 1, 2, 2], dtype=np.int32)
+OFFER_LAB = np.array([-1, -1, 0, 1, 0, 1, 0, 1], dtype=np.int32)
+
+# The 4 `move` actions. `stay` keeps (l_prev, occupation) — for a non-worker that means
+# staying in U or OLF; `accept` takes the offer carried by `opportunity`.
+MOVES = ("stay", "unemp", "olf", "accept")
+
+AGE_START = 18.0  # DP begins after the 3-year apprenticeship [D16]
+AGE_RETIRE = 60.0  # Sec. III.A
+AGE_END = 80.0  # Sec. III.A / online app. B.1
+AGE_INFERTILE = 46.0  # online app. B.1: conception "very low" after 45
+PERIOD_YEARS = 0.5  # "a period lasts for 6 months"
+
+
+# Grid resolution.
+@dataclass(frozen=True)
+class GridConfig:
+    """Grid sizes. The DP cost is (states x actions x stochastic-nodes) per period and
+    the stochastic nodes multiply out (offer 8 x marriage 2 x conception 3 x wage x
+    husband), so these knobs move the run time by orders of magnitude and require
+    measured runtime evidence.
+
+    Online appendix B.1 uses 14 asset points, **4** skill nodes (0, 3, 6, 30), 4
+    child-age nodes (0, 3, 6, 9), and 5-point quadrature for the normal shocks.
+    """
+
+    n_assets: int
+    assets_max: float
+    """~6x total household earnings, per online app. B.1 (gap G14)."""
+
+    skills_nodes: tuple[float, ...]
+    """Must contain the atrophy knots 5 and 7 (eq. 2) and the wage cap x-bar = 15."""
+
+    age_youngest_nodes: tuple[float, ...]
+    """**Must contain 0 and 0.5 exactly**: maternity leave is the implied state
+    `n>0 and age_youngest < 1` (model.md §7). Beyond 9 the paper holds the child's
+    effect constant (online app. B.1), hence the cap at 10."""
+
+    n_consumption: int
+    consumption_max: float
+    """Own-consumption action cap. It spans the largest cash-on-hand value on the
+    asset and income grids; it is not tied to the asset-grid cardinality. @pro:"""
+
+    n_last_earnings: int
+    last_earnings_max: float
+    """Support for carried realized half-year earnings used by earnings-linked
+    benefits and pensions. A current-wage proxy would be wrong after non-employment.
+    @pro:"""
+
+    n_wage_nodes: int
+    n_husband_nodes: int
+
+    @property
+    def n_skills(self) -> int:
+        return len(self.skills_nodes)
+
+    @property
+    def n_age_youngest(self) -> int:
+        return len(self.age_youngest_nodes)
+
+
+# Published structural parameters.
+def _atrophy_retention_per_period(annual_depreciation: np.ndarray) -> np.ndarray:
+    """Compute skill-retention factors from Table 3A.
+
+    Table 3A reports the **annual** depreciation "resulting from a 1-year work
+    interruption" at 3, 6 and 10 years of uninterrupted experience — which fall in
+    eq. (2)'s three intervals [0,5), [5,7), [7,inf) exactly. A year is two periods, so
+    the per-period retention factor is sqrt(1 - d).  **[D1]**
+    """
+    return np.sqrt(1.0 - annual_depreciation)
+
+
+def _offer_composition(p_same_occ: float, p_same_hours: float) -> np.ndarray:
+    """Compute phi_1(o~, l~ | o, l): composition of an offer, given one arrives.
+
+    Online-appendix Table A3, **reported**. The appendix states the product structure
+    ("the offer concerning hours of work depends only on prior hours of work, whereas
+    occupation offers depend on prior occupation") and the reported cells factor
+    exactly: 0.989 x 0.9605 = 0.95, 0.989 x 0.0395 = 0.039, 0.0055 x 0.9605 = 0.0053,
+    0.0055 x 0.0395 = 0.00022. (The printed column order is scrambled by the PDF
+    conversion; the product structure recovers it unambiguously.)
+
+    Returns:
+        `probs[o, l, offer_level]` over the 8 `OPPORTUNITIES`, with the two non-offer
+        slots left at zero — `offer_probabilities()` fills them.
+    """
+    n_occ, n_lab_hours = 3, 2
+    p_occ = np.full((n_occ, n_occ), (1.0 - p_same_occ) / 2.0)
+    np.fill_diagonal(p_occ, p_same_occ)
+    p_hrs = np.full((n_lab_hours, n_lab_hours), 1.0 - p_same_hours)
+    np.fill_diagonal(p_hrs, p_same_hours)
+
+    out = np.zeros((n_occ, n_lab_hours, len(OPPORTUNITIES)))
+    for o in range(n_occ):
+        for lh in range(n_lab_hours):
+            for level in range(2, len(OPPORTUNITIES)):
+                out[o, lh, level] = (
+                    p_occ[o, OFFER_OCC[level]] * p_hrs[lh, OFFER_LAB[level]]
+                )
+    return out
+
+
+@dataclass(frozen=True)
+class Calibration:
+    """Caller-supplied parameters and the explicit completion of documented gaps."""
+
+    grid: GridConfig
+    tax: TaxTransferParams
+
+    # Preferences (Tables 4, 5, A2).
+    discount_factor: float
+    crra: float
+    child_equiv_weight: float
+    adult_equiv_weight: float
+
+    childcare_young: float
+    childcare_old: float
+
+    # u1: consumption-leisure interaction (Table A2)
+    gamma1_pt: float
+    gamma1_u: float
+    gamma1_olf: float
+
+    # u2: utility of children, by labour status / occupation / child age (Table A2)
+    gamma_u_children: float
+    gamma_occ_ft: tuple[float, ...]
+    # if Children" (Table 3C reports the same, normalised to routine)
+    gamma_occ_pt: tuple[float, ...]
+    # children" (Table 3C reports the differences: 0, -0.42, -0.08)
+    gamma_agek_pt: tuple[float, ...]
+    # NB the third value is an order of magnitude above the first two — flagged as G16.
+
+    # Gaps in the utility function (G13, G10).
+    gamma_nc: float
+    """Marginal utility of consumption when children are present (eq. A3). NOT
+    REPORTED. 0 = no shift."""
+    gamma_nh: float
+    """Utility of children when a husband is present (eq. A3). NOT REPORTED."""
+    gamma_olf_children: float
+    """OLF constant inside the children block (eq. A3). NOT REPORTED."""
+    gamma_agek_olf: tuple[float, ...]
+    """gamma^{1..3}_{A,OLF} (eq. A3). NOT REPORTED."""
+
+    # Wages (Table 3B).
+    alpha_o: tuple[float, ...]
+    alpha_x: tuple[float, ...]
+    alpha_xx: tuple[float, ...]
+    skill_cap: float
+    """x-bar, fn. 14: "wage profiles are flat after 15 years". Estimated but NOT
+    reported (G12). **[D5]**"""
+    sigma_wage: float
+    """sd of the iid log-wage shock (eq. 3). NOT REPORTED (G11); disciplined by the
+    "variance of residual of log wage" moment."""
+    pt_earnings_share: float
+    """**[D4]** Part-time earnings as a share of the full-time daily wage. The paper
+    defines w as the FULL-TIME daily wage and gives no part-time wage; skills likewise
+    accrue at exactly half rate in PT (Sec. 5.1)."""
+
+    # Husband (Table A1).
+    husband_const: float
+    husband_age: float
+    husband_age2: float
+    husband_occ: tuple[float, ...]
+    husband_high_ability: float
+    sigma_husband: float
+    """sd of the iid husband-earnings shock, EUR/day (eq. 4). NOT REPORTED (G11)."""
+
+    # Marriage and divorce (Table A1).
+    marriage_age_brackets: tuple[float, ...]
+    marriage_by_age: tuple[float, ...]
+    marriage_skills: float
+    marriage_high_fertility: float
+
+    divorce_age_brackets: tuple[float, ...]
+    divorce_by_age: tuple[float, ...]
+    divorce_const: float
+    divorce_n_children: float
+    divorce_occ: tuple[float, ...]
+
+    # Types (Table 5).
+    type_probs: tuple[float, ...]
+    type_ability: tuple[float, ...]
+    type_leisure: tuple[float, ...]
+    type_child1: tuple[float, ...]
+    type_child2: tuple[float, ...]
+
+    # Fertility (fn. 7, fn. 17; G8).
+    infertile_share: float
+    conception_max: float
+    conception_age_mid: float
+    conception_age_slope: float
+    """**[D6]** pi(age) = conception_max / (1 + exp((age - mid)/slope)), fitted to the
+    paper's own medical anchors (fn. 17): a 90% chance of conceiving within a year at
+    20, 70% at 30, 6% at 45. Converting an annual p to a per-period one via
+    pi = 1 - sqrt(1-p) gives 0.684 / 0.452 / 0.031; this logistic returns 0.704 / 0.441
+    / 0.029."""
+
+    # Offers and layoffs (Table A3 for phi_1; phi_0 and delta are G6/G7).
+    p_same_occupation: float
+    p_same_hours: float
+    layoff: float
+    """delta (eq. A6). NOT REPORTED (G6). Start value from the annual FT->U rate in the
+    goodness-of-fit Table A3 (~8%)."""
+    offer_rate: tuple[float, ...]
+    """phi_0(l) by labour status (ft, pt, u, olf). NOT REPORTED (G7). Start values back
+    out of the goodness-of-fit Table A3 annual transitions: from OLF ~4.6%/yr into work,
+    from U ~42%/yr into work."""
+    offer_rate_occ_mult: tuple[float, ...]
+    """"arrival rates of offers when out of work differ across occupations" (Sec.
+    III.A) — the differences are never reported. Calibrated to Table A3."""
+    nonworker_pt_share: float
+    """**[D8]** A non-worker has no current hours, so the hours component of phi_1
+    cannot condition on them; this is the unconditional PT share of offers to
+    non-workers. Calibrated."""
+
+    # Initial conditions.
+    initial_occupation_shares: tuple[float, ...]
+    """Table A11, simulated shares at age 15 (observed: 25.8 / 45.8 / 28.4). Matched
+    by the initial-occupation companion layer (eq. 7)."""
+
+    interest_rate: float
+    annual_depreciation: tuple[tuple[float, ...], ...]
+
+    @property
+    def atrophy(self) -> np.ndarray:
+        """Compute rho[bracket, occupation], per period."""
+        return _atrophy_retention_per_period(np.asarray(self.annual_depreciation))
+
+    @property
+    def offer_composition(self) -> np.ndarray:
+        """Compute phi_1[occupation, hours, opportunity_level]."""
+        return _offer_composition(self.p_same_occupation, self.p_same_hours)
+
+    @property
+    def n_periods(self) -> int:
+        return round((AGE_END - AGE_START) / PERIOD_YEARS)
+
+    @property
+    def days_per_period(self) -> float:
+        return DAYS_PER_PERIOD
+
+    def conception_probability(self, age: np.ndarray | float) -> np.ndarray | float:
+        """Compute per-period conception probabilities for a fecund woman.
+
+        Return zero from `AGE_INFERTILE` onward.
+        """
+        logistic = self.conception_max / (
+            1.0
+            + np.exp(
+                (np.asarray(age) - self.conception_age_mid) / self.conception_age_slope
+            )
+        )
+        return np.where(np.asarray(age) >= AGE_INFERTILE, 0.0, logistic)
+
+    def offer_probabilities(self) -> np.ndarray:
+        """Compute the full `opportunity` transition: probs[occupation, l_prev, level].
+
+        Reads the paper's decomposition (eq. A6) directly:
+
+            P(laid off)          = delta                     if working, else 0
+            P(no offer)          = (1 - delta) * (1 - phi_0(o, l))
+            P(offer o~, l~)      = (1 - delta) * phi_0(o, l) * phi_1(o~, l~ | o, l)
+
+        For a non-worker the hours component of phi_1 has no "current hours" to
+        condition on, so it falls back to the unconditional split **[D8]**.
+
+        NB: the layoff must be **switched off while on maternity leave** — the paper's
+        pregnant women "cannot be fired" and eq. (A6) multiplies the layoff branch by
+        (1 - pi). The gate lives in `model.py`'s transition (it needs `age_youngest`),
+        not here.
+        """
+        n_occ, n_lab = len(OCCUPATIONS), len(LABOR_STATES)
+        composition = self.offer_composition
+        probs = np.zeros((n_occ, n_lab, len(OPPORTUNITIES)))
+
+        for o in range(n_occ):
+            for lab, lab_name in enumerate(LABOR_STATES):
+                working = lab_name in ("ft", "pt")
+                delta = self.layoff if working else 0.0
+                phi0 = min(self.offer_rate[lab] * self.offer_rate_occ_mult[o], 1.0)
+                if working:
+                    hours_row = composition[o, lab]  # lab 0=ft, 1=pt line up with phi_1
+                else:
+                    # No current hours: blend the two hours rows by the unconditional
+                    # PT share of offers to non-workers.
+                    hours_row = (1.0 - self.nonworker_pt_share) * composition[
+                        o, 0
+                    ] + self.nonworker_pt_share * composition[o, 1]
+
+                probs[o, lab, 0] = delta
+                probs[o, lab, 1] = (1.0 - delta) * (1.0 - phi0)
+                probs[o, lab, 2:] = (1.0 - delta) * phi0 * hours_row[2:]
+
+        np.testing.assert_allclose(probs.sum(axis=-1), 1.0, atol=1e-10)
+        return probs
+
+    def type_table(self) -> np.ndarray:
+        """Build the ability and preference table for the four ex ante types."""
+        return np.column_stack(
+            [
+                np.asarray(self.type_ability),
+                np.asarray(self.type_leisure),
+                np.asarray(self.type_child1),
+                np.asarray(self.type_child2),
+            ]
+        )
+
+    def validate(self) -> None:
+        """Validate invariants for published and calibrated parameters."""
+        assert abs(sum(self.type_probs) - 1.0) < 1e-2, "type shares must sum to 1"
+        assert 0.0 in self.grid.age_youngest_nodes, (
+            "age_youngest grid must contain 0 — maternity leave is the implied state "
+            "n>0 & age_youngest<1 (model.md §7)"
+        )
+        assert 0.5 in self.grid.age_youngest_nodes, (
+            "age_youngest grid must contain 0.5 exactly, or the SECOND leave period is "
+            "interpolated away and the job guarantee (A14) breaks"
+        )
+        assert 5.0 in self.grid.skills_nodes, "skills grid must contain knot 5 (eq. 2)"
+        assert 7.0 in self.grid.skills_nodes, "skills grid must contain knot 7 (eq. 2)"
+        assert self.crra > 1.0, "eq. (A3) is written for gamma_C != 1"
+        assert self.grid.consumption_max >= self.grid.assets_max, (
+            "the consumption action grid must span cash on hand rather than inherit "
+            "the asset-grid cardinality/range"
+        )
+        assert self.grid.last_earnings_max > 0.0
+        self.offer_probabilities()  # asserts the rows sum to 1

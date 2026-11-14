@@ -1,0 +1,300 @@
+{
+  "regimes": {
+    "working": {
+      "kind": "dataclass",
+      "type": "lcm.Regime",
+      "fields": {
+        "states": {
+          "x": {
+            "kind": "object",
+            "type": "lcm.DiscreteGrid",
+            "fields": {
+              "values": [
+                0,
+                1
+              ],
+              "codes": [
+                0,
+                1
+              ],
+              "categories": [
+                "0",
+                "1"
+              ]
+            }
+          },
+          "history": {
+            "kind": "object",
+            "type": "lcm.DiscreteGrid",
+            "fields": {
+              "values": [
+                0,
+                1
+              ],
+              "codes": [
+                0,
+                1
+              ],
+              "categories": [
+                "0",
+                "1"
+              ]
+            }
+          }
+        },
+        "actions": {
+          "choice": {
+            "kind": "object",
+            "type": "lcm.DiscreteGrid",
+            "fields": {
+              "values": [
+                0,
+                1
+              ],
+              "codes": [
+                0,
+                1
+              ],
+              "categories": [
+                "0",
+                "1"
+              ]
+            }
+          }
+        },
+        "functions": {
+          "utility": {
+            "kind": "callable",
+            "source": "def utility(x, history):\n    return x\n",
+            "arguments": [
+              "x",
+              "history"
+            ],
+            "bindings": {},
+            "source_file": "original.py",
+            "source_sha256": "original-fixture",
+            "source_line": 1
+          }
+        },
+        "constraints": {
+          "allowed": {
+            "kind": "callable",
+            "source": "def allowed(choice, age):\n    return (choice == 0) | (age < CUTOFF)\n",
+            "arguments": [
+              "choice",
+              "age"
+            ],
+            "bindings": {
+              "CUTOFF": 2
+            },
+            "source_file": "original.py",
+            "source_sha256": "original-fixture",
+            "source_line": 1
+          }
+        },
+        "state_transitions": {
+          "x": {
+            "kind": "callable",
+            "source": "def next_x(x):\n    return x\n",
+            "arguments": [
+              "x"
+            ],
+            "bindings": {},
+            "source_file": "original.py",
+            "source_sha256": "original-fixture",
+            "source_line": 1
+          },
+          "history": {
+            "kind": "callable",
+            "source": "def next_history(history):\n    return history\n",
+            "arguments": [
+              "history"
+            ],
+            "bindings": {},
+            "source_file": "original.py",
+            "source_sha256": "original-fixture",
+            "source_line": 1
+          }
+        }
+      }
+    },
+    "retired": {
+      "kind": "dataclass",
+      "type": "lcm.Regime",
+      "fields": {
+        "states": {
+          "x": {
+            "kind": "object",
+            "type": "lcm.DiscreteGrid",
+            "fields": {
+              "values": [
+                0,
+                1
+              ],
+              "codes": [
+                0,
+                1
+              ],
+              "categories": [
+                "0",
+                "1"
+              ]
+            }
+          },
+          "history": {
+            "kind": "object",
+            "type": "lcm.DiscreteGrid",
+            "fields": {
+              "values": [
+                0,
+                1
+              ],
+              "codes": [
+                0,
+                1
+              ],
+              "categories": [
+                "0",
+                "1"
+              ]
+            }
+          }
+        },
+        "actions": {
+          "choice": {
+            "kind": "object",
+            "type": "lcm.DiscreteGrid",
+            "fields": {
+              "values": [
+                0,
+                1
+              ],
+              "codes": [
+                0,
+                1
+              ],
+              "categories": [
+                "0",
+                "1"
+              ]
+            }
+          }
+        },
+        "functions": {
+          "utility": {
+            "kind": "callable",
+            "source": "def utility(x, history):\n    return x\n",
+            "arguments": [
+              "x",
+              "history"
+            ],
+            "bindings": {},
+            "source_file": "original.py",
+            "source_sha256": "original-fixture",
+            "source_line": 1
+          }
+        },
+        "constraints": {
+          "allowed": {
+            "kind": "callable",
+            "source": "def allowed(choice, age):\n    return (choice == 0) | (age < CUTOFF)\n",
+            "arguments": [
+              "choice",
+              "age"
+            ],
+            "bindings": {
+              "CUTOFF": 2
+            },
+            "source_file": "original.py",
+            "source_sha256": "original-fixture",
+            "source_line": 1
+          }
+        },
+        "state_transitions": {
+          "x": {
+            "kind": "callable",
+            "source": "def next_x(x):\n    return x\n",
+            "arguments": [
+              "x"
+            ],
+            "bindings": {},
+            "source_file": "original.py",
+            "source_sha256": "original-fixture",
+            "source_line": 1
+          },
+          "history": {
+            "kind": "callable",
+            "source": "def next_history(history):\n    return history\n",
+            "arguments": [
+              "history"
+            ],
+            "bindings": {},
+            "source_file": "original.py",
+            "source_sha256": "original-fixture",
+            "source_line": 1
+          }
+        }
+      }
+    }
+  },
+  "ages": {
+    "kind": "object",
+    "fields": {
+      "exact_values": [
+        20,
+        20.5,
+        21,
+        21.5
+      ]
+    }
+  },
+  "initial_nodes": {
+    "kind": "dataclass",
+    "type": "lcm.InitialNodes",
+    "fields": {
+      "by_age": {
+        "kind": "mapping",
+        "items": [
+          [
+            20,
+            [
+              "working"
+            ]
+          ]
+        ]
+      }
+    }
+  },
+  "edges": {
+    "working": {
+      "kind": "dataclass",
+      "type": "lcm.Transition",
+      "fields": {
+        "law": {
+          "kind": "object",
+          "type": "lcm.ByAge",
+          "fields": {
+            "cases": [
+              [
+                {
+                  "kind": "dataclass",
+                  "type": "lcm.AgeRange",
+                  "fields": {
+                    "exclusive_stop": 21
+                  }
+                },
+                "working"
+              ],
+              [
+                21,
+                "retired"
+              ]
+            ],
+            "default": null,
+            "until": null
+          }
+        }
+      }
+    }
+  }
+}

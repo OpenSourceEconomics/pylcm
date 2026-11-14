@@ -1,0 +1,29 @@
+{
+  "adapter": "pylcm_ast",
+  "source": "source_inputs/fetter/model.py",
+  "constructor": "create_model",
+  "name": "Original Fetter retirement structure",
+  "discount_factor": "0.97",
+  "external_report_tags": [
+    "disutility"
+  ],
+  "symbols": {
+    "cal.entry_age": 21,
+    "cal.terminal_age": 75,
+    "cal.n_life": 55,
+    "cal.replacement_rates": [
+      0,
+      0.5,
+      1.2
+    ],
+    "cal.disutility.d": [
+      0.1,
+      0.5,
+      1.0
+    ],
+    "n_assets": 5,
+    "n_consumption": 5,
+    "assets_max": 15.0,
+    "consumption_grid_buffer": 1.0
+  }
+}
