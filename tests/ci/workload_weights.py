@@ -43,7 +43,6 @@ from tests.ci import ci_workloads
 from tests.ci.generate_ci_workloads import (
     leg_weights_from_junit,
     regenerate,
-    render,
     unaccounted_test_files,
 )
 
@@ -206,7 +205,7 @@ def refresh_manifest(
     )
     still = [f"  still missing, {leg}: {f}" for leg, fs in missing.items() for f in fs]
     return Refresh(
-        text=render(manifest),
+        text=ci_workloads.dump_manifest(manifest),
         message="\n".join(("filled workload weights:", *filled, *still, *notes)),
     )
 
@@ -305,7 +304,7 @@ def _refresh(*, repo_root: Path) -> int:
         run_manifest=_run_manifest,
     )
     if refreshed.text != text:
-        path.write_text(refreshed.text, encoding="utf-8")
+        path.write_text(refreshed.text, encoding="utf-8", newline="\n")
         _run_text("git", "add", MANIFEST.as_posix())
     sys.stdout.write(refreshed.message + "\n")
     return 0

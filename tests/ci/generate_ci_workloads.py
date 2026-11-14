@@ -61,17 +61,6 @@ from tests.ci.shard_test_files import (
 )
 
 MANIFEST_PATH = Path(__file__).with_name("ci-workloads.json")
-_INDENT = 1
-
-
-def render[ManifestValue](manifest: Mapping[str, ManifestValue]) -> str:
-    """Render the manifest exactly as the committed file is written.
-
-    The committed file round-trips through `indent=1, ensure_ascii=False`, so a
-    regeneration that changes nothing produces a byte-identical file and
-    `--check` reports drift only when the content really moved.
-    """
-    return json.dumps(dict(manifest), indent=_INDENT, ensure_ascii=False) + "\n"
 
 
 def unaccounted_test_files(
@@ -284,7 +273,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         sys.stdout.write(f"no such test file under {repo_root}: {missing}\n")
         return 1
 
-    updated_text = render(
+    updated_text = ci_workloads.dump_manifest(
         regenerate(repo_root=repo_root, manifest=manifest, additions=additions)
     )
     if updated_text == committed_text:
@@ -300,7 +289,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         return 1
 
-    manifest_path.write_text(updated_text, encoding="utf-8")
+    manifest_path.write_text(updated_text, encoding="utf-8", newline="\n")
     sys.stdout.write(f"rewrote {manifest_path.relative_to(repo_root)}\n")
     _fail_if_sharder_disagrees(manifest_path=manifest_path)
     return 0
