@@ -15,7 +15,6 @@ import jax.numpy as jnp
 import numpy as np
 import pandas as pd
 import pytest
-from beartype.roar import BeartypeCallHintViolation
 
 import _lcm.simulation.runtime as simulation_runtime
 from _lcm.execution.workspace_planning import (
@@ -85,7 +84,7 @@ def test_bootstrap_widths_respects_the_ceiling() -> None:
 
 
 def test_execution_config_rejects_a_non_int_ceiling() -> None:
-    with pytest.raises((BeartypeCallHintViolation, TypeError)):
+    with pytest.raises(ValueError, match=r"axis_width_ceilings\['cell'\]"):
         ExecutionConfig(axis_width_ceilings={"cell": 2.0})  # ty: ignore[invalid-argument-type]
 
 
@@ -96,7 +95,7 @@ def test_execution_config_rejects_a_non_positive_ceiling() -> None:
 
 def test_execution_config_rejects_a_per_regime_ceiling() -> None:
     """Only the bare-integer form exists; a per-regime mapping is not a width."""
-    with pytest.raises((BeartypeCallHintViolation, TypeError)):
+    with pytest.raises(ValueError, match=r"axis_width_ceilings\['cell'\]"):
         ExecutionConfig(axis_width_ceilings={"cell": {"working_life": 2}})  # ty: ignore[invalid-argument-type]
 
 

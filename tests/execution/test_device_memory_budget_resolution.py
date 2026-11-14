@@ -10,7 +10,6 @@ import logging
 import math
 
 import pytest
-from beartype.roar import BeartypeCallHintViolation
 
 from _lcm.execution.execution_plan import (
     ResolvedExecution,
@@ -219,13 +218,22 @@ def test_execution_config_rejects_an_unusable_headroom_fraction(
         ExecutionConfig(device_memory_headroom_fraction=fraction)
 
 
-@pytest.mark.parametrize("fraction", [True, 0, 1])
-def test_execution_config_rejects_a_non_float_headroom_fraction(
-    *, fraction: int
-) -> None:
-    """An exact float keeps `0` from reading as "no margin" by accident."""
-    with pytest.raises((TypeError, BeartypeCallHintViolation)):
-        ExecutionConfig(device_memory_headroom_fraction=fraction)
+def test_execution_config_rejects_a_boolean_headroom_fraction() -> None:
+    """A flag is not a share of the pool."""
+    with pytest.raises(ValueError, match="device_memory_headroom_fraction"):
+        ExecutionConfig(device_memory_headroom_fraction=True)
+
+
+def test_execution_config_stores_an_integer_headroom_fraction_as_a_float() -> None:
+    """`0` plans against the whole pool, stored as the float `0.0`."""
+    fraction = ExecutionConfig(device_memory_headroom_fraction=0)
+    assert type(fraction.device_memory_headroom_fraction) is float
+
+
+def test_execution_config_rejects_an_integer_headroom_fraction_of_one() -> None:
+    """An integer share is held to the same `[0, 1)` range as a float."""
+    with pytest.raises(ValueError, match="device_memory_headroom_fraction"):
+        ExecutionConfig(device_memory_headroom_fraction=1)
 
 
 def test_the_budget_summary_names_the_request_and_the_effective_ceiling() -> None:

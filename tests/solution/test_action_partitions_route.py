@@ -14,7 +14,6 @@ from typing import TypedDict, Unpack
 
 import numpy as np
 import pytest
-from beartype.roar import BeartypeCallHintParamViolation
 from jax.sharding import Sharding
 
 from _lcm.execution.core_program import core_program_graph
@@ -61,9 +60,9 @@ def test_execution_config_action_partitions_are_frozen() -> None:
     [
         ({"working": 0}, ValueError),
         ({"working": -2}, ValueError),
-        ({"working": True}, TypeError),
-        ({"working": 2.0}, BeartypeCallHintParamViolation),
-        ({"": 2}, TypeError),
+        ({"working": True}, ValueError),
+        ({"working": 2.0}, ValueError),
+        ({"": 2}, ValueError),
     ],
 )
 def test_execution_config_refuses_an_unusable_partition_count(

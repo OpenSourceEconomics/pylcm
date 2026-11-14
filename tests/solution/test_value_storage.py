@@ -34,7 +34,6 @@ import jax.numpy as jnp
 import numpy as np
 import pandas as pd
 import pytest
-from beartype.roar import BeartypeCallHintParamViolation
 
 import lcm.model as model_module
 from _lcm.engine import Regime
@@ -127,7 +126,7 @@ def test_value_storage_defaults_to_the_device() -> None:
 
 def test_value_storage_refuses_an_unknown_target() -> None:
     """Only the device and the host are storage targets."""
-    with pytest.raises(BeartypeCallHintParamViolation, match="value_storage"):
+    with pytest.raises(ValueError, match="value_storage"):
         ExecutionConfig(value_storage="disk")  # ty: ignore[invalid-argument-type]
 
 

@@ -478,8 +478,9 @@ workspaces such as cuBLAS, the driver context, allocator fragmentation. The effe
 ceiling is the smaller of your request and every selected device's pool limit less that
 fraction. The fraction is a policy awaiting workload validation, not a measured
 requirement: if you have measured your own envelope, set it to `0.0` and plan against
-the whole pool. It must be an exact float in `[0, 1)`, and it moves only the ceiling ---
-every reservation and residency figure compared against that ceiling is unchanged.
+the whole pool. It must be a Python `int` or `float` in `[0, 1)`, stored as a float, and
+it moves only the ceiling --- every reservation and residency figure compared against
+that ceiling is unchanged.
 
 ```python
 execution_config = ExecutionConfig(
