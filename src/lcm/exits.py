@@ -1,13 +1,10 @@
 """Current-period exits and the mapped policy problems they read."""
 
-from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
-from typing import Literal, cast
+from collections.abc import Mapping
+from dataclasses import dataclass
+from typing import Literal
 
-import jax
 from beartype import beartype
-from jax import Array
-from jaxtyping import Int
 
 from _lcm.beartype_conf import REGIME_CONF
 from _lcm.utils.containers import ensure_containers_are_immutable
@@ -18,7 +15,6 @@ from lcm.shocks import MonteCarlo, QuasiMonteCarlo
 from lcm.typing import RegimeName, StateName, UserFunction
 
 type ExitRole = str
-type _RuleAction = Int[Array, "..."] | int
 
 
 @beartype(conf=REGIME_CONF)
@@ -63,15 +59,6 @@ class Consent:
     counterparty: Counterparty
 
 
-@jax.tree_util.register_dataclass
-@dataclass(frozen=True, kw_only=True)
-class RuleResult:
-    """A custom rule's selected stable global alternative identifier."""
-
-    action: _RuleAction
-    """Integer ID; native consumption checks scalar shape and declared support."""
-
-
 @beartype(conf=REGIME_CONF)
 @dataclass(frozen=True, kw_only=True)
 class Unilateral:
@@ -90,18 +77,18 @@ class MutualConsent:
     """What a member exactly indifferent between staying and the exit does."""
 
 
-type ExitRule = Unilateral | MutualConsent | Consent | Callable[..., RuleResult]
+type ExitRule = Unilateral | MutualConsent | Consent
 
 
 @beartype(conf=REGIME_CONF)
 @dataclass(frozen=True, kw_only=True)
 class Exit:
-    """One named current-period move, separate from scheduled next-period edges."""
+    """The regime's current-period move, separate from scheduled next-period edges."""
 
     targets: Mapping[ExitRole, ExitTarget]
     """One destination per source stakeholder, or self for a singleton."""
     rule: ExitRule
-    """Dissolution rule, strict consent, or a traceable declared callable."""
+    """Built-in dissolution rule or strict formation consent."""
     available: UserFunction | None = None
     """State/parameter/observed-shock predicate, evaluated before benchmarks."""
     observes: tuple[str, ...] = ()
@@ -114,11 +101,8 @@ class Exit:
     included, is drawn `n` times from its law at the current state, and the
     same draws serve every kept row. `None` integrates over the full product.
 
-    The rule serves the regime's whole exit choice when it is solved, so a
-    regime's exits name at most one rule.
+    The rule serves the regime's whole exit choice when it is solved.
     """
-    _reads_outside_values: bool | None = field(init=False, repr=False)
-    """Snapshot the custom rule's explicit DAG declaration into model identity."""
 
     def __post_init__(self) -> None:
         if not self.targets:
@@ -127,13 +111,6 @@ class Exit:
         _validate_names(kind="Observed shock", names=self.observes)
         if len(set(self.observes)) != len(self.observes):
             raise RegimeInitializationError("Exit observes must name each shock once.")
-        object.__setattr__(
-            self,
-            "_reads_outside_values",
-            _rule_reads_outside_values(cast("Callable[..., RuleResult]", self.rule))
-            if callable(self.rule)
-            else None,
-        )
         object.__setattr__(
             self, "targets", ensure_containers_are_immutable(self.targets)
         )
@@ -170,17 +147,3 @@ def _validate_names(*, kind: str, names: tuple[str, ...]) -> None:
         raise RegimeInitializationError(
             "; ".join(errors) or f"{kind} names must be ordinary identifiers."
         )
-
-
-def _rule_reads_outside_values(rule: Callable[..., RuleResult]) -> bool:
-    """Read authored metadata through only the engine's categorical adapters."""
-    from _lcm.regime_building.value_adapter import ValueAdapter  # noqa: PLC0415
-
-    while isinstance(rule, ValueAdapter):
-        rule = cast("Callable[..., RuleResult]", rule.func)
-    declared = getattr(rule, "reads_outside_values", None)
-    if type(declared) is not bool:
-        raise RegimeInitializationError(
-            "A callable exit rule must declare Boolean reads_outside_values."
-        )
-    return declared

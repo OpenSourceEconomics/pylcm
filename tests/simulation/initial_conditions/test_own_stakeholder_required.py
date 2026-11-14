@@ -563,7 +563,7 @@ def test_current_exit_requires_an_actual_source_member_role(
 
 @pytest.mark.parametrize(
     ("role", "destination", "payoff"),
-    [("f", "single_f", 5.5), ("m", "single_m", 1.0)],
+    [("f", "single_f", 5.0), ("m", "single_m", 0.8)],
     ids=["wife", "husband"],
 )
 def test_current_exit_settles_the_named_original_source_member(

@@ -317,7 +317,7 @@ class Gate:
     different stakeholder structure stays rejected.
 
     A gate never reads a value. A move decided by comparing values is an `Exit`
-    declared in the source regime's `exits=`, or a `ParticipationCheck` in the
+    declared as the source regime's `exit=`, or a `ParticipationCheck` in the
     `Transition`'s `participation` when the comparison is made on landing.
     """
 
@@ -364,7 +364,7 @@ class Gate:
                 "target regime. A gate routes on the target's states and "
                 "parameters only. Declare a move decided by comparing values "
                 "in the current period as an `Exit` in the source regime's "
-                "`exits=`, priced at the target's participating policy. Keep "
+                "`exit=`, priced at the target's participating policy. Keep "
                 "a comparison made on landing in the next period at that "
                 "landing date with a `ParticipationCheck` in the `Transition`'s "
                 "`participation`, which reads values through explicit "

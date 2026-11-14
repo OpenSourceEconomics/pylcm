@@ -112,7 +112,7 @@ def test_projected_reads_and_native_exit_shapes_preserve_owner_kind(
                         target["fields"].update(role="f", utility_adjustment=None)
                         counterparty = reference(names[3], "Counterparty")
                         counterparty["fields"]["role"] = "m"
-                        declaration["exits"] = {
+                        declaration["exit"] = {
                             "marry": record(
                                 "Exit",
                                 available=None,

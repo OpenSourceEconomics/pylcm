@@ -65,19 +65,17 @@ def test_phase_specific_shared_offer_frame_reaches_participating_final_actor(
         regimes={
             "source": Regime(
                 functions={"utility": _single_flow},
-                exits={
-                    "marry": Exit(
-                        targets={
-                            "self": ExitTarget(regime="couple", role="f", projection={})
-                        },
-                        rule=Consent(
-                            counterparty=Counterparty(
-                                regime="outside_m", role="m", projection={}
-                            )
-                        ),
-                        observes=("offer",),
-                    )
-                },
+                exit=Exit(
+                    targets={
+                        "self": ExitTarget(regime="couple", role="f", projection={})
+                    },
+                    rule=Consent(
+                        counterparty=Counterparty(
+                            regime="outside_m", role="m", projection={}
+                        )
+                    ),
+                    observes=("offer",),
+                ),
             ),
             "couple": Regime(
                 functions={
@@ -87,16 +85,14 @@ def test_phase_specific_shared_offer_frame_reaches_participating_final_actor(
                     "offer_mean": Phased(solve=_solve_mean, simulate=_simulate_mean),
                 },
                 shocks=("offers",),
-                exits={
-                    "divorce": Exit(
-                        targets={
-                            "f": ExitTarget(regime="outside_f", projection={}),
-                            "m": ExitTarget(regime="outside_m", projection={}),
-                        },
-                        rule=Unilateral(),
-                        observes=("offer",),
-                    )
-                },
+                exit=Exit(
+                    targets={
+                        "f": ExitTarget(regime="outside_f", projection={}),
+                        "m": ExitTarget(regime="outside_m", projection={}),
+                    },
+                    rule=Unilateral(),
+                    observes=("offer",),
+                ),
             ),
             "outside_f": Regime(functions={"utility": _single_flow}),
             "outside_m": Regime(functions={"utility": _single_flow}),

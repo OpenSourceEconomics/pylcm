@@ -44,7 +44,7 @@ from _lcm.utils.functools import is_user_function
 from lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
 from lcm.decoupled import Decoupled
 from lcm.exceptions import RegimeInitializationError
-from lcm.exits import Consent, Exit, MutualConsent, Unilateral
+from lcm.exits import Consent, Exit
 from lcm.grids import DiscreteGrid
 from lcm.koopmans_aggregation import CESAggregator, LinearAggregator
 from lcm.phased import Phased
@@ -152,38 +152,38 @@ def validate_exit_targets(
     *, regimes: Mapping[RegimeName, Regime], laws: RegimeLaws
 ) -> None:
     """Bind declared destinations to real policy roles and complete phase states."""
-    from _lcm.exits import exits_for_phase  # noqa: PLC0415 - phase validator cycle
+    from _lcm.exits import exit_for_phase  # noqa: PLC0415 - phase validator cycle
 
     for source, regime in regimes.items():
         for phase in ("solve", "simulate"):
-            for name, declaration in exits_for_phase(
-                exits=regime.exits, phase=phase
-            ).items():
-                for target in declaration.targets.values():
-                    context = f"Exit {source}.{name}"
-                    if target.regime not in regimes:
-                        raise RegimeInitializationError(
-                            f"{context} names unknown destination {target.regime!r}."
-                        )
-                    destination = regimes[target.regime]
-                    if target.role not in (destination.stakeholders or (None,)):
-                        raise RegimeInitializationError(
-                            f"{context} has invalid destination role {target.role!r}."
-                        )
-                    _validate_exit_projection(
-                        context=context,
-                        projection=target.projection,
-                        destination=destination,
-                        law=laws[target.regime],
-                        phase=phase,
+            declaration = exit_for_phase(declaration=regime.exit, phase=phase)
+            if declaration is None:
+                continue
+            for target in declaration.targets.values():
+                context = f"Exit of {source}"
+                if target.regime not in regimes:
+                    raise RegimeInitializationError(
+                        f"{context} names unknown destination {target.regime!r}."
                     )
-                _validate_counterparty(
-                    declaration=declaration,
-                    context=f"Exit {source}.{name} counterparty",
-                    regimes=regimes,
-                    laws=laws,
+                destination = regimes[target.regime]
+                if target.role not in (destination.stakeholders or (None,)):
+                    raise RegimeInitializationError(
+                        f"{context} has invalid destination role {target.role!r}."
+                    )
+                _validate_exit_projection(
+                    context=context,
+                    projection=target.projection,
+                    destination=destination,
+                    law=laws[target.regime],
                     phase=phase,
                 )
+            _validate_counterparty(
+                declaration=declaration,
+                context=f"Exit of {source}, counterparty",
+                regimes=regimes,
+                laws=laws,
+                phase=phase,
+            )
 
 
 def _validate_counterparty(
@@ -285,37 +285,12 @@ def validate_regime(regime: Regime) -> None:
 
 
 def _validate_exits(regime: Regime) -> None:
-    """Require a complete benchmark for the source's actual stakeholder layout."""
-    if not regime.exits:
+    """Require a destination for each of the source's stakeholders."""
+    if regime.exit is None:
         return
-    from lcm.exits import Consent, Exit  # noqa: PLC0415 - Regime imports this validator
-
     expected = set(regime.stakeholders or ("self",))
-    if errors := path_segment_name_errors(kind="Exit", names=regime.exits):
-        raise RegimeInitializationError(errors[0])
-    for name, declaration in regime.exits.items():
-        if not isinstance(declaration, Exit):
-            raise RegimeInitializationError(
-                f"Exit {name!r} must be an Exit declaration."
-            )
-        if set(declaration.targets) != expected:
-            raise RegimeInitializationError(
-                f"Exit {name!r} targets must name {sorted(expected)!r}."
-            )
-    if len({declaration.nodes for declaration in regime.exits.values()} - {None}) > 1:
-        raise RegimeInitializationError(
-            "The exits of a regime share one draw rule; these name different ones."
-        )
-    if (
-        sum(
-            isinstance(declaration.rule, Unilateral | MutualConsent | Consent)
-            for declaration in regime.exits.values()
-        )
-        > 1
-    ):
-        raise RegimeInitializationError(
-            "More than one built-in exit requires an explicit custom multi-exit rule."
-        )
+    if set(regime.exit.targets) != expected:
+        raise RegimeInitializationError(f"Exit targets must name {sorted(expected)!r}.")
 
 
 # keyword-only-exempt: primary-argument=regime

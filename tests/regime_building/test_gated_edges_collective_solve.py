@@ -52,7 +52,7 @@ from lcm import (
 )
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
-from lcm.exits import Exit, ExitTarget
+from lcm.exits import Exit, ExitTarget, Unilateral
 from lcm.koopmans_aggregation import LinearAggregator
 from lcm.transition import AgeSelector, StochasticTransition
 from lcm.typing import (
@@ -64,7 +64,10 @@ from lcm.typing import (
     ScalarInt,
 )
 from tests.conftest import bind_laws, build_prepared_structure
-from tests.regime_building.test_collective_regime_simulate import _ParticipationRule
+from tests.regime_building.test_collective_regime_simulate import (
+    _dissolution_cost_f,
+    _dissolution_cost_m,
+)
 
 
 @categorical(ordered=True)
@@ -662,19 +665,21 @@ def _participation_topology_regimes() -> dict[str, Regime]:
     regimes = _make_full_topology_regimes()
     regimes["married"] = regimes["married"].replace(
         constraints={},
-        exits={
-            "dissolve": Exit(
-                targets={
-                    "f": ExitTarget(
-                        regime="single_f_p1", projection={"wage": _identity_wage}
-                    ),
-                    "m": ExitTarget(
-                        regime="single_m_p1", projection={"wage": _identity_wage}
-                    ),
-                },
-                rule=_ParticipationRule(),
-            )
-        },
+        exit=Exit(
+            targets={
+                "f": ExitTarget(
+                    regime="single_f_p1",
+                    projection={"wage": _identity_wage},
+                    utility_adjustment=_dissolution_cost_f,
+                ),
+                "m": ExitTarget(
+                    regime="single_m_p1",
+                    projection={"wage": _identity_wage},
+                    utility_adjustment=_dissolution_cost_m,
+                ),
+            },
+            rule=Unilateral(),
+        ),
     )
     return regimes
 
@@ -770,7 +775,7 @@ def test_full_ekl_topology_via_public_model_api():
     # cell paid by the dissolution exit).
     np.testing.assert_allclose(
         np.asarray(solution[1]["married"]),
-        np.array([[2.0, 1.0], [5.5, 1.0], [6.0, 3.0]]),
+        np.array([[2.0, 1.0], [5.0, 0.8], [6.0, 3.0]]),
         rtol=1e-6,
     )
     # single_f period-0: mutual-consent continuation.

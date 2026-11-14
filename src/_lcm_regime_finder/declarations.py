@@ -933,7 +933,7 @@ def normalize_declarations(snapshot,production_contract=None):
             cell['consumers'].append({'kind':'structural_margin','callback':cid,'phase':'solve'})
         known_slots={'states','actions','functions','constraints','state_transitions','joint_transitions','derived_categoricals',
                      'output_only_functions','koopmans_aggregator','certainty_equivalent','pareto_objective','value_constraints',
-                     'same_period_refs','exits','description','solver','taste_shocks','shocks','stakeholders','liquid','outer_continuous',
+                     'same_period_refs','exit','description','solver','taste_shocks','shocks','stakeholders','liquid','outer_continuous',
                      'semantic_role','stage'}
         for slot,value in declaration.items():
             if slot not in known_slots and value is not None and value!={} and value!=[]:
@@ -990,10 +990,10 @@ def normalize_declarations(snapshot,production_contract=None):
                 'admission':'policy_query_only','storage':'not_asserted','dependencies':[]}
         query_owners[qid]=record
         fp=pointer(path,'fields') if raw.get('kind') in {'dataclass','object'} else path
-        keys=['same_period_refs','value_constraints','exits']
+        keys=['same_period_refs','value_constraints','exit']
         if not declaration.get('same_period_refs'):keys.append('constraints')
         for key in keys:
-            for reference,reference_path in query_references(declaration.get(key,{}),pointer(fp,key),phase):
+            for reference,reference_path in query_references(declaration.get(key) or {},pointer(fp,key),phase):
                 name=fields(reference).get('regime')
                 if (period,name) in by_pair:
                     destination={'cell':by_pair[(period,name)]}
@@ -1103,13 +1103,13 @@ def normalize_declarations(snapshot,production_contract=None):
                 for k,v in value.items():references(v,pointer(path,k),kind,ownership,phase,offset,origin,incoming_source)
             elif isinstance(value,list):
                 for i,v in enumerate(value):references(v,pointer(path,i),kind,ownership,phase,offset,origin,incoming_source)
-        reference_keys=['same_period_refs','value_constraints','exits']
+        reference_keys=['same_period_refs','value_constraints','exit']
         if not declaration.get('same_period_refs'):reference_keys.append('constraints')
         for key in reference_keys:
-            references(declaration.get(key,{}),pointer(fp,key),'exit' if key=='exits' else 'value_read')
-            if key=='exits':
-                for label,value in declaration.get(key,{}).items():
-                    normal.relation('exit',cell['id'],[],pointer(pointer(fp,key),label),callbacks=[normal.callback(value,pointer(pointer(fp,key),label))],original=copy.deepcopy(value))
+            references(declaration.get(key) or {},pointer(fp,key),'exit' if key=='exit' else 'value_read')
+            if key=='exit' and declaration.get(key) is not None:
+                value=declaration[key]
+                normal.relation('exit',cell['id'],[],pointer(fp,key),callbacks=[normal.callback(value,pointer(fp,key))],original=copy.deepcopy(value))
         declared_source_law=fields(laws.get(name,{})) or {}
         gate_rows=[(phase,_transition_gates(declared_source_law,'gated_edges','arrivals','participation')) for phase in ('solve','simulation')] if not declaration_gates else [(phase,declaration_gates.get((phase,period,name),{})) for phase in ('solve','simulation')]
         for gate_phase,target,gate in ((phase,target,gate) for phase,mapping in gate_rows for target,gate in mapping.items()):

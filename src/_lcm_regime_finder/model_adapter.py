@@ -470,9 +470,9 @@ def adapt_snapshot(snapshot: dict[str, Any], *, name: str = "Constructed pylcm m
                 return fields(value).get('regime') not in nodes
             return any(query_only_reference(child) for child in value.values())
         return isinstance(value, list) and any(query_only_reference(child) for child in value)
-    if any(query_only_reference(fields(raw).get(key, {}))
+    if any(query_only_reference(fields(raw).get(key) or {})
            for raw in snapshot['user_regimes'].values()
-           for key in ('same_period_refs', 'value_constraints', 'exits', 'constraints')):
+           for key in ('same_period_refs', 'value_constraints', 'exit', 'constraints')):
         raise ModelAdapterError('Legacy scalar adapter cannot represent policy-query owners; use find_regimes(native_snapshot) production normalization')
     ages = sorted({a for aa in nodes.values() for a in aa})
     lanes = _lanes(nodes)
@@ -564,7 +564,7 @@ def adapt_snapshot(snapshot: dict[str, Any], *, name: str = "Constructed pylcm m
                 outputs[operator + "_dependencies"] = expression(value)
         if snapshot.get("shocks"):
             outputs["shock_distribution_dependencies"] = expression(snapshot["shocks"])
-        special = {key: declaration.get(key) for key in ("stakeholders", "same_period_refs", "value_constraints", "joint_transitions", "exits")
+        special = {key: declaration.get(key) for key in ("stakeholders", "same_period_refs", "value_constraints", "joint_transitions", "exit")
                    if declaration.get(key)}
         if special or regime in protected_value_routes:
             # Until each value/read/joint route is lowered, retaining all local

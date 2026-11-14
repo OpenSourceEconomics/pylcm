@@ -334,12 +334,10 @@ def _query_counter_domain_model(
                     "ability": fixed_transition("ability"),
                 },
                 functions={"utility": _two_state_utility},
-                exits={
-                    "leave": Exit(
-                        targets={"self": ExitTarget(regime="dead", projection={})},
-                        rule=Unilateral(),
-                    )
-                },
+                exit=Exit(
+                    targets={"self": ExitTarget(regime="dead", projection={})},
+                    rule=Unilateral(),
+                ),
             ),
             "dead": Regime(functions={"utility": _zero}),
         },

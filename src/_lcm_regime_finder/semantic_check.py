@@ -1813,7 +1813,7 @@ def _check_capture(original: dict, normalized: dict, fail, unknown) -> None:
         for value in structural_roles.values(): expected_roots.append(("structural_margin", "solve", value))
         supported_slots = {"states", "actions", "functions", "constraints", "state_transitions", "joint_transitions", "derived_categoricals",
                            "output_only_functions", "koopmans_aggregator", "certainty_equivalent", "pareto_objective", "value_constraints",
-                           "same_period_refs", "exits", "description", "solver", "taste_shocks", "shocks", "stakeholders", "liquid", "outer_continuous", "semantic_role", "stage"}
+                           "same_period_refs", "exit", "description", "solver", "taste_shocks", "shocks", "stakeholders", "liquid", "outer_continuous", "semantic_role", "stage"}
         for slot, value in declaration.items():
             if slot not in supported_slots and value is not None and value != {} and value != []:
                 expected_roots.append(("unresolved_declaration_slot", "both", value))
@@ -1971,11 +1971,11 @@ def _check_capture(original: dict, normalized: dict, fail, unknown) -> None:
         declaration = original_regimes[name]
         root = ptr(ptr(base, regime_key), name)
         root_fields = ptr(root, "fields") if raw.get("kind") in {"object", "dataclass"} else root
-        keys = ["same_period_refs", "value_constraints", "exits"]
+        keys = ["same_period_refs", "value_constraints", "exit"]
         if not declaration.get("same_period_refs"): keys.append("constraints")
         for key in keys:
             location = ptr(root_fields, key) if key in fields(raw) else ptr(base, key)
-            yield from reference_locations(declaration.get(key, {}), location, phase)
+            yield from reference_locations(declaration.get(key) or {}, location, phase)
     def demand(name, period, phase):
         if name not in original_regimes or not 0 <= period < len(time): return None
         if (period, name) in by_pair: return None
@@ -2047,12 +2047,12 @@ def _check_capture(original: dict, normalized: dict, fail, unknown) -> None:
             if relation.get("read_type") != read_type or relation.get("read_field") != data.get("field", "value") or relation.get("stakeholder") != data.get("stakeholder", data.get("role")) or relation.get("observes") != data.get("observes", []): fail("original reference information/read contract changed", relation=relation.get("id"))
     for cell in cells.values():
         declaration = original_regimes[cell["regime"]]
-        keys = ["same_period_refs", "value_constraints", "exits"]
+        keys = ["same_period_refs", "value_constraints", "exit"]
         if not declaration.get("same_period_refs"): keys.append("constraints")
         for key in keys:
             for phase in ("solve", "simulation"):
-                for raw in refs(declaration.get(key, {}), phase):
-                    check_reference(raw, cell["id"], phase, "exit" if key == "exits" else "value_read")
+                for raw in refs(declaration.get(key) or {}, phase):
+                    check_reference(raw, cell["id"], phase, "exit" if key == "exit" else "value_read")
     for cell in cells.values():
         native_law = fields(laws.get(cell["regime"]))
         declared_gates = _independent_gate_map(native_law, "gated_edges", "arrivals", "participation")

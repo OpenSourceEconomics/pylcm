@@ -639,7 +639,7 @@ def create_params_template(  # noqa: C901, PLR0912 - validate ordinary and exit 
                     f"Parameter {key!r} in regime {name!r} must be nested under "
                     f"a function name, e.g., {{'function_name': {{'{key}': type}}}}"
                 )
-            if key == "exits":
+            if key == "exit":
                 for path in _leaf_paths(val):
                     if errors := path_segment_name_errors(
                         kind="Exit parameter", names=path

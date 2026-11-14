@@ -211,19 +211,17 @@ def get_model(*, n_periods: int, n_points: int = 4) -> Model:
                 }
             ),
         },
-        exits={
-            "dissolve": Exit(
-                targets={
-                    member: ExitTarget(
-                        regime=f"single_{member}",
-                        projection={"wealth": half},
-                        utility_adjustment=household._divorce_cost,
-                    )
-                    for member in ("f", "m")
-                },
-                rule=Unilateral(tie="leave"),
-            )
-        },
+        exit=Exit(
+            targets={
+                member: ExitTarget(
+                    regime=f"single_{member}",
+                    projection={"wealth": half},
+                    utility_adjustment=household._divorce_cost,
+                )
+                for member in ("f", "m")
+            },
+            rule=Unilateral(tie="leave"),
+        ),
     )
     couple_terminal = Regime(
         states={"wealth": couple_wealth},

@@ -71,20 +71,16 @@ def test_query_only_nonterminal_raw_and_nested_participating_keep_continuation()
         regimes={
             "source": Regime(
                 functions={"utility": _source_flow},
-                exits={
-                    "marry": Exit(
-                        targets={
-                            "self": ExitTarget(
-                                regime="formation", role="f", projection={}
-                            )
-                        },
-                        rule=Consent(
-                            counterparty=Counterparty(
-                                regime="incoming_m", role="m", projection={}
-                            )
-                        ),
-                    )
-                },
+                exit=Exit(
+                    targets={
+                        "self": ExitTarget(regime="formation", role="f", projection={})
+                    },
+                    rule=Consent(
+                        counterparty=Counterparty(
+                            regime="incoming_m", role="m", projection={}
+                        )
+                    ),
+                ),
             ),
             "formation": Regime(
                 functions={
@@ -92,15 +88,13 @@ def test_query_only_nonterminal_raw_and_nested_participating_keep_continuation()
                         utilities={"f": _female_flow, "m": _male_flow}
                     )
                 },
-                exits={
-                    "divorce": Exit(
-                        targets={
-                            "f": ExitTarget(regime="incoming_f", projection={}),
-                            "m": ExitTarget(regime="incoming_m", projection={}),
-                        },
-                        rule=Unilateral(),
-                    )
-                },
+                exit=Exit(
+                    targets={
+                        "f": ExitTarget(regime="incoming_f", projection={}),
+                        "m": ExitTarget(regime="incoming_m", projection={}),
+                    },
+                    rule=Unilateral(),
+                ),
             ),
             "incoming_f": Regime(
                 actions={"work": work}, functions={"utility": _incoming_flow}

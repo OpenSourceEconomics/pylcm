@@ -136,7 +136,6 @@ from lcm.exits import (  # noqa: E402
     Exit,
     ExitTarget,
     MutualConsent,
-    RuleResult,
     Unilateral,
 )
 from lcm.fixed_forms import (  # noqa: E402
@@ -312,7 +311,6 @@ __all__ = [
     "QuasiArithmeticMean",
     "Regime",
     "RouwenhorstAR1Process",
-    "RuleResult",
     "SimulateSnapshot",
     "SimulationResult",
     "SolveSnapshot",

@@ -216,18 +216,16 @@ def _exit_mesh_model(*, execution: ExecutionConfig) -> Model:
                 states={"location": source_grid},
                 state_transitions={"location": _exit_mesh_source_next},
                 shocks=("shared",),
-                exits={
-                    "leave": Exit(
-                        targets={
-                            "self": ExitTarget(
-                                regime="target",
-                                projection={"location": _mapped_location},
-                                utility_adjustment=_adjustment,
-                            )
-                        },
-                        rule=Unilateral(),
-                    )
-                },
+                exit=Exit(
+                    targets={
+                        "self": ExitTarget(
+                            regime="target",
+                            projection={"location": _mapped_location},
+                            utility_adjustment=_adjustment,
+                        )
+                    },
+                    rule=Unilateral(),
+                ),
             ),
             "target": Regime(
                 functions={"utility": _exit_mesh_target_flow},

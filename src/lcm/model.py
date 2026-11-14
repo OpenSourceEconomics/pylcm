@@ -4416,7 +4416,7 @@ class Model:
             period not in self._regimes[name].simulation.exit_queries
             or self._regimes[name].simulation.exit_queries[period].full is None
             for name, declaration in self._user_regimes.items()
-            if declaration.exits
+            if declaration.exit is not None
             for period in self._regimes[name].simulation.programs.decision
             if (self._time.exact_values[period], name) in self._graph.visited_nodes
         ):

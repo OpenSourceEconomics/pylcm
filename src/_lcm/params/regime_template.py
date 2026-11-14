@@ -21,7 +21,7 @@ from typing import Literal, cast
 import dags.tree as dt
 from dags.tree import qname_from_tree_path, tree_path_from_qname
 
-from _lcm.exits import ExitFunctionPath, exit_functions, rule_operands
+from _lcm.exits import ExitFunctionPath, exit_functions
 from _lcm.params.edges import (
     EDGES,
     FALLBACK,
@@ -359,7 +359,11 @@ def _undemanded_exit_helpers(
     ordinary_roots: Mapping[Phase, tuple[UserFunction, ...]] | None,
 ) -> frozenset[FunctionName]:
     """Drop slots exclusive to ignored callbacks, preserving independent readers."""
-    if not user_regime.exits or exit_function_paths is None or ordinary_roots is None:
+    if (
+        user_regime.exit is None
+        or exit_function_paths is None
+        or ordinary_roots is None
+    ):
         return frozenset()
     from _lcm.regime_building.broadcast import (  # noqa: PLC0415 - shared solver root vocabulary
         engine_function_names,
@@ -396,7 +400,7 @@ def _undemanded_exit_helpers(
                         pending.append(pool[name])
             return found
 
-        callbacks = exit_functions(exits=user_regime.exits, phase=phase)
+        callbacks = exit_functions(declaration=user_regime.exit, phase=phase)
         demanded = exit_function_paths.get(phase, frozenset())
         local_ignored = reads(
             functions=[
@@ -425,14 +429,14 @@ def _exit_params_template(
     reserved: frozenset[str],
     demanded_paths: Mapping[Phase, frozenset[ExitFunctionPath]] | None,
 ) -> dict[str, dict[str, _TemplateBranch]]:
-    """Union both settlement phases under each declaration's exact public path."""
-    if not user_regime.exits:
+    """Union both settlement phases under the exit's exact public path."""
+    if user_regime.exit is None:
         return {}
-    if "exits" in reserved:
-        raise InvalidNameError("Exit parameters conflict with the regime name 'exits'.")
-    exit_params: dict[str, _TemplateBranch] = {}
+    if "exit" in reserved:
+        raise InvalidNameError("Exit parameters conflict with the regime name 'exit'.")
+    exit_params: _TemplateBranch = {}
     for phase in ("solve", "simulate"):
-        functions = exit_functions(exits=user_regime.exits, phase=phase)
+        functions = exit_functions(declaration=user_regime.exit, phase=phase)
         for path, function in functions.items():
             if demanded_paths is not None and path not in demanded_paths.get(
                 phase, frozenset()
@@ -441,16 +445,18 @@ def _exit_params_template(
             params = _discovered_params(
                 name=qname_from_tree_path(path),
                 func=function,
-                non_params=variables
-                | rule_operands(stakeholders=user_regime.stakeholders)
-                if path[-1] == "rule"
-                else variables,
+                non_params=variables,
             )
-            branch = exit_params.setdefault(path[1], {})
-            for segment in path[2:]:
+            branch = exit_params
+            for segment in path[1:]:
                 branch = cast("_TemplateBranch", branch.setdefault(segment, {}))
             branch.update(merge_template_params(left=branch, right=params))
-    return {} if not exit_params else {"exits": exit_params}
+    # Every top-level exit slot (`available`, `targets`, `counterparty`) is a branch.
+    return (
+        {}
+        if not exit_params
+        else {"exit": cast("dict[str, _TemplateBranch]", exit_params)}
+    )
 
 
 @dataclass(frozen=True)

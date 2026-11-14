@@ -1108,20 +1108,18 @@ def test_current_value_and_exit_targets_keep_explicit_projector_links(
         },
     }
     if kind == "exit":
-        _fields(original)["exits"] = {
-            "leave": {
-                "kind": "dataclass",
-                "type": "lcm.Exit",
-                "fields": {
-                    "targets": {"self": target},
-                    "rule": {
-                        "kind": "dataclass",
-                        "type": "lcm.Unilateral",
-                        "fields": {"tie": "stay"},
-                    },
-                    "observes": [],
+        _fields(original)["exit"] = {
+            "kind": "dataclass",
+            "type": "lcm.Exit",
+            "fields": {
+                "targets": {"self": target},
+                "rule": {
+                    "kind": "dataclass",
+                    "type": "lcm.Unilateral",
+                    "fields": {"tie": "stay"},
                 },
-            }
+                "observes": [],
+            },
         }
     else:
         _fields(original)["same_period_refs"] = {"current": target}

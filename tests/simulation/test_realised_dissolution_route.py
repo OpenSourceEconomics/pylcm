@@ -18,8 +18,7 @@ enumerating both actions directly.
 """
 
 import logging
-from collections.abc import Callable, Mapping
-from typing import ClassVar
+from collections.abc import Callable
 
 import jax.numpy as jnp
 import numpy as np
@@ -44,14 +43,13 @@ from lcm import (
     categorical,
 )
 from lcm.exceptions import OffGridStateError
-from lcm.exits import Exit, ExitTarget, RuleResult
+from lcm.exits import Exit, ExitTarget, Unilateral
 from lcm.transition import StochasticTransition
 from lcm.typing import (
     BoolND,
     ContinuousState,
     DiscreteAction,
     FloatND,
-    IntND,
     ScalarInt,
 )
 
@@ -124,35 +122,6 @@ def _identity(wage: ContinuousState) -> ContinuousState:
     return wage
 
 
-class _StrictParticipation:
-    """Keep the household's best action among those the wife strictly prefers."""
-
-    reads_outside_values: ClassVar[bool] = True
-
-    def __call__(
-        self,
-        *,
-        Q_f: FloatND,
-        Q_m: FloatND,
-        exit_payoffs: Mapping[str, Mapping[str, FloatND]],
-        alternative_ids: IntND,
-        pareto_weights: Mapping[str, FloatND],
-    ) -> RuleResult:
-        q_f, q_m = Q_f.reshape(-1), Q_m.reshape(-1)
-        kept = (
-            jnp.isfinite(q_f)
-            & jnp.isfinite(q_m)
-            & (q_f > exit_payoffs["dissolve"]["f"])
-        )
-        objective = pareto_weights["f"] * jnp.where(
-            pareto_weights["f"] == 0, 0.0, q_f
-        ) + pareto_weights["m"] * jnp.where(pareto_weights["m"] == 0, 0.0, q_m)
-        stay = jnp.argmax(jnp.where(kept, objective, -jnp.inf))
-        return RuleResult(
-            action=alternative_ids[jnp.where(jnp.any(kept), stay, q_f.size)]
-        )
-
-
 def _has_policy_support(pair_support: BoolND) -> BoolND:
     return pair_support
 
@@ -214,19 +183,17 @@ def _build_model(
                         utilities={"f": _PAIR_F[payoff_name], "m": _pair_m}
                     )
                 },
-                exits={
-                    "dissolve": Exit(
-                        targets={
-                            "f": ExitTarget(
-                                regime="alone_f", projection={"wage": _identity}
-                            ),
-                            "m": ExitTarget(
-                                regime="alone_m", projection={"wage": _identity}
-                            ),
-                        },
-                        rule=_StrictParticipation(),
-                    )
-                },
+                exit=Exit(
+                    targets={
+                        "f": ExitTarget(
+                            regime="alone_f", projection={"wage": _identity}
+                        ),
+                        "m": ExitTarget(
+                            regime="alone_m", projection={"wage": _identity}
+                        ),
+                    },
+                    rule=Unilateral(tie="leave"),
+                ),
             ),
             "alone_f": Regime(
                 states={"wage": wage_grid}, functions={"utility": _outside_f}

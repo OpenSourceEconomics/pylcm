@@ -2,7 +2,7 @@
 
 A predicate naming a target value component or the dissolution flag is refused
 when the gate is declared, with a message pointing to the two declarations that
-express a value-driven move: a source `Exit` in `Regime(exits=...)` for a move
+express a value-driven move: a source `Exit` in `Regime(exit=...)` for a move
 decided in the current period, and a `ParticipationCheck` for a comparison made on
 landing.
 """
@@ -53,7 +53,7 @@ def test_a_value_reading_gate_predicate_is_refused(
 
     message = str(excinfo.value)
     assert operand in message
-    assert "exits=" in message
+    assert "exit=" in message
     assert "ParticipationCheck" in message
 
 

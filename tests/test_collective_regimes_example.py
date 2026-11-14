@@ -118,5 +118,5 @@ def test_participation_support_routes_without_retained_dissolution_artifacts():
 def test_dissolution_follows_the_eckstein_keane_lifshitz_rule():
     """Either partner can leave, and a partner exactly indifferent leaves."""
     model = get_dissolution_model()
-    rule = model.user_regimes["married_with_participation"].exits["dissolve"].rule
-    assert rule == Unilateral(tie="leave")
+    declaration = model.user_regimes["married_with_participation"].exit
+    assert getattr(declaration, "rule", None) == Unilateral(tie="leave")

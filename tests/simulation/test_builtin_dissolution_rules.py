@@ -61,18 +61,16 @@ def _model(
                         utilities={"f": wife, "m": husband}, objective=objective
                     )
                 },
-                exits={
-                    "divorce": Exit(
-                        rule=rule,
-                        targets={
-                            member: ExitTarget(
-                                regime=f"single_{member}",
-                                projection={"wealth": fixed_transition("wealth")},
-                            )
-                            for member in ("f", "m")
-                        },
-                    )
-                },
+                exit=Exit(
+                    rule=rule,
+                    targets={
+                        member: ExitTarget(
+                            regime=f"single_{member}",
+                            projection={"wealth": fixed_transition("wealth")},
+                        )
+                        for member in ("f", "m")
+                    },
+                ),
             ),
             "single_f": Regime(
                 states={"wealth": wealth}, functions={"utility": _outside}

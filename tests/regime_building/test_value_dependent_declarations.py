@@ -39,7 +39,7 @@ from lcm import (
     fixed_transition,
 )
 from lcm.exceptions import RegimeInitializationError
-from lcm.exits import Exit, ExitTarget
+from lcm.exits import Exit, ExitTarget, Unilateral
 from lcm.regime import RegimeReplacement
 from lcm.transition import PhaseTransitionLaw, StochasticTransition
 from lcm.typing import (
@@ -54,11 +54,12 @@ from tests.conftest import DECIMAL_PRECISION, bind_laws
 from tests.regime_building.test_collective_regime_simulate import (
     _BETA,
     _WAGE_3,
+    _dissolution_cost_f,
+    _dissolution_cost_m,
     _identity_wage,
     _make_dissolution_regimes,
     _married_dissolution_transition,
     _participation_support,
-    _ParticipationRule,
     _prob_one,
     _u_married_ir_f,
     _u_married_ir_m,
@@ -82,7 +83,7 @@ class _Snapshot(TypedDict):
             dict[str, ParticipationRead],
         ],
     ]
-    exits: dict[str, tuple[str, dict[str, ExitTarget]]]
+    exit: tuple[str, dict[str, ExitTarget]] | None
 
 
 _AGES = AgeGrid(start=0, inclusive_stop=3, step="Y")
@@ -91,7 +92,12 @@ _PARAMS = {
     "married": {"koopmans_aggregator": {"discount_factor": _BETA}},
     "married_ir": {
         "koopmans_aggregator": {"discount_factor": _BETA},
-        "exits": {"dissolve": {"rule": {"delta_f": 0.5, "delta_m": 0.2}}},
+        "exit": {
+            "targets": {
+                "f": {"utility_adjustment": {"delta_f": 0.5}},
+                "m": {"utility_adjustment": {"delta_m": 0.2}},
+            }
+        },
     },
     "married_terminal": {},
     "single_f": {"koopmans_aggregator": {"discount_factor": _BETA}},
@@ -144,7 +150,7 @@ def _reference_cap(*, V_single_f_ref: FloatND) -> BoolND:
 def test_value_dependent_constraint_keeps_its_references_local() -> None:
     """A non-exit value cap keeps its projected reference local to its constraint."""
     regime = _new_vocabulary_regimes()["married_ir"].replace(
-        exits={},
+        exit=None,
         constraints={
             "reference_cap": ValueDependentConstraint(
                 predicate=_reference_cap,
@@ -280,19 +286,21 @@ def _new_vocabulary_regimes() -> dict[str, Regime]:
                 utilities={"f": _u_married_ir_f, "m": _u_married_ir_m}
             )
         },
-        exits={
-            "dissolve": Exit(
-                targets={
-                    "f": ExitTarget(
-                        regime="single_f", projection={"wage": _identity_wage}
-                    ),
-                    "m": ExitTarget(
-                        regime="single_m", projection={"wage": _identity_wage}
-                    ),
-                },
-                rule=_ParticipationRule(),
-            )
-        },
+        exit=Exit(
+            targets={
+                "f": ExitTarget(
+                    regime="single_f",
+                    projection={"wage": _identity_wage},
+                    utility_adjustment=_dissolution_cost_f,
+                ),
+                "m": ExitTarget(
+                    regime="single_m",
+                    projection={"wage": _identity_wage},
+                    utility_adjustment=_dissolution_cost_m,
+                ),
+            },
+            rule=Unilateral(),
+        ),
     )
     married_terminal = Regime(
         states={"wage": _WAGE_3},
@@ -469,10 +477,9 @@ def _derived_snapshot(*, regime: Regime, law: RegimeLaw) -> _Snapshot:
             )
             for target, decision in law.participation.items()
         },
-        "exits": {
-            name: (type(declaration.rule).__name__, dict(declaration.targets))
-            for name, declaration in regime.exits.items()
-        },
+        "exit": None
+        if regime.exit is None
+        else (type(regime.exit.rule).__name__, dict(regime.exit.targets)),
     }
 
 
@@ -490,7 +497,7 @@ def _expected_snapshots() -> dict[RegimeName, _Snapshot]:
         "value_constraints": {},
         "same_period_refs": {},
         "participation": {},
-        "exits": {},
+        "exit": None,
     }
     return {
         "married": {
@@ -515,19 +522,21 @@ def _expected_snapshots() -> dict[RegimeName, _Snapshot]:
         "married_ir": {
             **plain,
             "stakeholders": ("f", "m"),
-            "exits": {
-                "dissolve": (
-                    "_ParticipationRule",
-                    {
-                        "f": ExitTarget(
-                            regime="single_f", projection={"wage": _identity_wage}
-                        ),
-                        "m": ExitTarget(
-                            regime="single_m", projection={"wage": _identity_wage}
-                        ),
-                    },
-                )
-            },
+            "exit": (
+                "Unilateral",
+                {
+                    "f": ExitTarget(
+                        regime="single_f",
+                        projection={"wage": _identity_wage},
+                        utility_adjustment=_dissolution_cost_f,
+                    ),
+                    "m": ExitTarget(
+                        regime="single_m",
+                        projection={"wage": _identity_wage},
+                        utility_adjustment=_dissolution_cost_m,
+                    ),
+                },
+            ),
         },
         "married_terminal": {**plain, "stakeholders": ("f", "m")},
         "single_f": plain,

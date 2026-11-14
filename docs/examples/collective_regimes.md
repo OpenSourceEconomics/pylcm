@@ -65,30 +65,31 @@ The second model runs three ages. `married` decides at age 0;
 outside options, terminal from age 1 on. The wage is fixed at 1, 2, or 3 and never
 moves, so the wage node alone decides the outcome. `f` alone is worth 5.5 at the middle
 node and 1.5 elsewhere; `m` alone is worth 1 everywhere. At age 1 each partner compares
-their own action value against that same-period outside option. The comparison is the
-rule of a participation `Exit`, which also says where each partner goes when no common
-action passes it:
+their own action value against that same-period outside option, net of a divorce cost of
+0.5 for `f` and 0.2 for `m`. The regime's `Exit` names where each partner goes and the
+rule that decides:
 
 ```python
-def participation_f(*, Q_f, V_single_f_ref):
-    return Q_f >= V_single_f_ref - 0.5
-
-
-exits = {
-    "dissolve": Exit(
-        targets={
-            "f": ExitTarget(regime="single_f", projection={"wage": identity_wage}),
-            "m": ExitTarget(regime="single_m", projection={"wage": identity_wage}),
-        },
-        rule=ParticipationRule(),  # keeps actions passing both partners' thresholds
-    )
-}
+exit = Exit(
+    targets={
+        "f": ExitTarget(
+            regime="single_f",
+            projection={"wage": identity_wage},
+            utility_adjustment=divorce_cost_f,  # -0.5
+        ),
+        "m": ExitTarget(
+            regime="single_m",
+            projection={"wage": identity_wage},
+            utility_adjustment=divorce_cost_m,  # -0.2
+        ),
+    },
+    rule=Unilateral(tie="leave"),  # stay only if both strictly prefer it
+)
 ```
 
-At wages 1 and 3 some action clears both thresholds. At the middle node `f`'s outside
-option jumps to 5.5, so her threshold demands 5.0 and the best the household can offer
-her is 4 — no action clears both, the household dissolves, and each partner is paid
-their single value:
+At wages 1 and 3 some action beats both outside options. At the middle node `f`'s
+outside option jumps to 5.5 - 0.5 = 5.0, and the best the household can offer her is 4,
+so the household dissolves and each partner gets their single value net of the cost:
 
 ```python
 from lcm_examples.collective_regimes import get_dissolution_model
@@ -104,7 +105,7 @@ solution.values[1]["married_with_participation"]
 
 ```text
 [[2.  1. ]
- [5.5 1. ]
+ [5.  0.8]
  [6.  3. ]]
 ```
 

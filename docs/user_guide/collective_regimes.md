@@ -228,7 +228,7 @@ whether this target edge is attempted at all, like any other per-target cell. Th
 decision, having arrived at the target's coordinates, says whether the row keeps that
 target or takes its route's fallback. A move decided in the current period instead — the
 household dissolving because a partner walks out now — is a participation `Exit` in the
-source's `Regime(exits=...)`; see the [migration guide](migrating_dated_regimes.md).
+source's `Regime(exit=...)`; see the [migration guide](migrating_dated_regimes.md).
 
 ### A gate routes on states
 

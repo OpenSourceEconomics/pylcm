@@ -199,8 +199,8 @@ def test_participation_checks_replay_from_values_without_dissolution_artifacts()
 def test_couple_dissolves_under_the_eckstein_keane_lifshitz_rule():
     """Either partner can leave, and a partner exactly indifferent leaves."""
     model = household.get_model(n_periods=2, wealth_n_points=2, consumption_n_points=2)
-    rule = model.user_regimes["couple"].exits["dissolve"].rule
-    assert rule == Unilateral(tie="leave")
+    declaration = model.user_regimes["couple"].exit
+    assert getattr(declaration, "rule", None) == Unilateral(tie="leave")
 
 
 def test_a_missing_declared_participation_payload_fails_before_the_period_roll(

@@ -222,23 +222,21 @@ def get_dissolution_model(
                 utilities={"f": _participation_utility_f, "m": _participation_utility_m}
             )
         },
-        exits={
-            "dissolve": Exit(
-                targets={
-                    "f": ExitTarget(
-                        regime="single_f",
-                        projection={"wage": _identity_wage},
-                        utility_adjustment=_divorce_cost_f,
-                    ),
-                    "m": ExitTarget(
-                        regime="single_m",
-                        projection={"wage": _identity_wage},
-                        utility_adjustment=_divorce_cost_m,
-                    ),
-                },
-                rule=Unilateral(tie="leave"),
-            )
-        },
+        exit=Exit(
+            targets={
+                "f": ExitTarget(
+                    regime="single_f",
+                    projection={"wage": _identity_wage},
+                    utility_adjustment=_divorce_cost_f,
+                ),
+                "m": ExitTarget(
+                    regime="single_m",
+                    projection={"wage": _identity_wage},
+                    utility_adjustment=_divorce_cost_m,
+                ),
+            },
+            rule=Unilateral(tie="leave"),
+        ),
     )
     # The scheduled target is the continuing couple; support is queried only
     # after landing there, before the household or its fallback acts.
