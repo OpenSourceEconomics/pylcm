@@ -14,7 +14,7 @@ claim about a captured input.
 from dataclasses import dataclass
 from math import prod
 from collections.abc import Iterable, Mapping, Sequence
-from typing import TypedDict, cast
+from typing import TypedDict
 from ..records import JSONValue
 
 
@@ -378,19 +378,6 @@ def possible_closure(package: Package) -> dict[str, Region]:
         kept = updated
 
 
-def _member_facts(
-    package: Package, cells: Mapping[str, Cell], key: str, coordinate: str
-) -> dict[str, Region]:
-    answer = {name: Region.make(cell.domains) for name, cell in cells.items()}
-    for fact in package.facts:
-        read = dict(fact.reads).get(key)
-        if read is not None and coordinate in read.live:
-            answer[fact.cell] = answer[fact.cell].union(
-                Region.make(cells[fact.cell].domains, (fact.box,))
-            )
-    return answer
-
-
 def least_liveness(package: Package) -> dict[tuple[str, str], Region]:
     """Close the fixed pointwise certificates; never choose certificates anew."""
     cells = validate(package)
@@ -681,120 +668,3 @@ def verdict_passes(premises: Mapping[str, JSONValue]) -> bool:
         isinstance(value, Mapping) and value.get("status") == "proved"
         for value in premises.values()
     )
-
-
-def package_from_wire(data: Mapping[str, JSONValue]) -> Package:
-    """Normalize explicit representation records, never callable constants."""
-    if data.get("schema") != "compact-original-fibres/v1":
-        raise ValueError("Unknown compact representation schema")
-
-    def sequence(value: JSONValue) -> tuple[JSONValue, ...]:
-        if not isinstance(value, (list, tuple)):
-            raise ValueError("Expected a representation list or tuple")
-        return tuple(value)
-
-    def record(value: JSONValue) -> Mapping[str, JSONValue]:
-        if not isinstance(value, Mapping):
-            raise ValueError("Expected a representation record")
-        return value
-
-    def text(value: JSONValue) -> str:
-        if not isinstance(value, str):
-            raise ValueError("Expected a named original coordinate")
-        return value
-
-    def boolean(value: JSONValue) -> bool:
-        if type(value) is not bool:
-            raise ValueError("Expected a Boolean flag")
-        return value
-
-    def strings(value: JSONValue) -> tuple[str, ...]:
-        return tuple(text(item) for item in sequence(value))
-
-    def nominal_codes(value: JSONValue) -> tuple[int, ...]:
-        codes = sequence(value)
-        if any(type(code) is not int for code in codes) or len(set(codes)) != len(
-            codes
-        ):
-            raise ValueError("Code lists must contain distinct nominal integer codes")
-        return cast(tuple[int, ...], codes)
-
-    def names_and_codes(value: JSONValue) -> tuple[tuple[str, tuple[int, ...]], ...]:
-        rows = []
-        for item in sequence(value):
-            name, codes = sequence(item)
-            rows.append((text(name), nominal_codes(codes)))
-        return tuple(rows)
-
-    def box(value: JSONValue) -> Box:
-        return tuple(frozenset(nominal_codes(codes)) for codes in sequence(value))
-
-    cells = []
-    for item in sequence(data["cells"]):
-        row = record(item)
-        cells.append(
-            Cell(
-                text(row["identifier"]),
-                text(row["regime"]),
-                names_and_codes(row["status_domains"]),
-                frozenset(strings(row["coordinates"])),
-                strings(row["read_keys"]),
-                names_and_codes(row["action_domains"]),
-                boolean(row["admissible_start"]),
-            )
-        )
-    facts = []
-    for item in sequence(data["facts"]):
-        row = record(item)
-        reads = []
-        for pair in sequence(row["reads"]):
-            key, raw = sequence(pair)
-            value = record(raw)
-            reads.append(
-                (
-                    text(key),
-                    ReadCertificate(
-                        frozenset(strings(value["live"])),
-                        strings(value["removal_order"]),
-                        strings(value["removed_statuses"]),
-                    ),
-                )
-            )
-        excluded = tuple(
-            (name, frozenset(codes)) for name, codes in names_and_codes(row["excluded"])
-        )
-        facts.append(
-            FactRegion(
-                text(row["cell"]),
-                box(row["box"]),
-                tuple(reads),
-                frozenset(strings(row["forced"])),
-                excluded,
-            )
-        )
-    supports = []
-    for item in sequence(data["supports"]):
-        row = record(item)
-        updates = []
-        for pair in sequence(row.get("update_keys", ())):
-            coordinate, key = sequence(pair)
-            updates.append((text(coordinate), text(key) if key is not None else None))
-        supports.append(
-            SupportRegion(
-                text(row["source"]),
-                text(row["target"]),
-                box(row["box"]),
-                text(row["phase"]),
-                boolean(row["marked"]),
-                strings(row["incidences"]),
-                tuple(updates),
-            )
-        )
-    package = Package(
-        tuple(cells),
-        tuple(facts),
-        tuple(supports),
-        sequence(data.get("source_obligations", ())),
-    )
-    validate(package)
-    return package

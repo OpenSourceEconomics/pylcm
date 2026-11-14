@@ -99,7 +99,7 @@ def original_finite_rows(
     return tuple(rows), kept
 
 
-class NativeFiniteDifferential(unittest.TestCase):
+class TestNativeFiniteDifferential(unittest.TestCase):
     def compare(self, package: Package, removed: frozenset[tuple[str, str]]) -> None:
         fibres, kept = original_finite_rows(package)
         original = check_inert_projection(fibres=fibres, kept=kept, removed=removed)
