@@ -8,6 +8,7 @@ mutation remain explicit obligations. Neither model callbacks nor wrappers run.
 from __future__ import annotations
 
 import ast
+import builtins
 from collections import deque
 from collections.abc import Mapping
 from contextlib import contextmanager
@@ -397,6 +398,8 @@ class CaptureSession:
         return ref
 
     def binding_value(self, value, normalize):
+        if value is (0).__class__:
+            return self.reference(value, normalize)
         if callable(value) and not isinstance(value, type):
             return self.reference(value, normalize)
         if not self.structured_binding(value):
@@ -565,6 +568,13 @@ def _file_digest(path):
 
 
 def _primitive(value):
+    if value is (0).__class__:
+        return {'kind': 'primitive', 'operation': 'builtin_int_type',
+                'canonical': 'builtins.int', 'resolution': 'actual_object_identity'}
+    if (value is builtins.isinstance and inspect.isbuiltin(value)
+            and value.__module__ == 'builtins' and value.__name__ == 'isinstance'):
+        return {'kind': 'primitive', 'operation': 'builtin_isinstance',
+                'canonical': 'builtins.isinstance', 'resolution': 'actual_object_identity'}
     for module_name in ('numpy', 'jax.numpy'):
         module = sys.modules.get(module_name)
         if module is None:

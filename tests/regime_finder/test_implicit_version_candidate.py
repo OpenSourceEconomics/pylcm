@@ -33,7 +33,7 @@ def installed_candidate() -> SourceVersion:
     }
     matches = [
         resolve_source_candidate(source_version=name)
-        for name in ("source587", "source645")
+        for name in ("source587", "source645", "source639-builtin-int-v1")
         if resolve_source_candidate(source_version=name).source_files == actual
     ]
     assert len(matches) == 1, "The installed evaluator needs an explicit descriptor"

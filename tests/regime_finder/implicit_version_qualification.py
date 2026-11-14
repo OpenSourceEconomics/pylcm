@@ -44,6 +44,7 @@ CONTROL_TARGETS = MappingProxyType(
             "tests/regime_finder/test_implicit_source.py::test_pinned_cache_order_boundary_and_exact_streaming_fallback",
         ),
         "native-namespace-and-immutable-capture": (
+            "tests/regime_finder/test_round5_bindings.py",
             "tests/test_graphs.py::test_analysis_preserves_source_only_conditional_draw",
             "tests/test_graphs.py::test_analysis_preserves_conditioned_current_shock",
             "tests/test_graphs.py::test_conditioned_persistent_process_preserves_original_phase_inputs",
