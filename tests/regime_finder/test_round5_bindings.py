@@ -9,7 +9,15 @@ import pytest
 from dataclasses import dataclass
 import functools
 import inspect
+import builtins
+from abc import ABCMeta
+from collections.abc import Callable
+from unittest.mock import patch
 
+import numpy as np
+from numpy.typing import NDArray
+
+from _lcm_regime_finder.callable_identity import resolve_callable
 from _lcm_regime_finder.declarations import (
     DeclarationError,
     ScalarSource,
@@ -18,7 +26,7 @@ from _lcm_regime_finder.declarations import (
 from _lcm_regime_finder.expressions import partial as evaluate_expression
 from _lcm_regime_finder.model_snapshot import read_declarations, source_function
 from _lcm_regime_finder.production import analyze_production
-from _lcm_regime_finder.semantic_check import SourceProof
+from _lcm_regime_finder.semantic_check import SourceProof, _UNKNOWN
 from tests.regime_finder.test_model_adapter import snapshot
 
 
@@ -259,3 +267,276 @@ def test_variadic_input_is_still_an_obligation() -> None:
     assert captured["variadic"]
     checked = SourceProof({}, static={"history": 1}).callback(captured)
     assert not (checked.proved)
+
+
+def _builtin_int_check(x: int) -> bool:
+    return isinstance(x, int)
+
+
+_INT_CHECK_ALIAS = builtins.isinstance
+_INT_TYPE_ALIAS = int
+
+
+def _aliased_builtin_int_check(x: int) -> bool:
+    return _INT_CHECK_ALIAS(x, _INT_TYPE_ALIAS)
+
+
+def _type_guard_dispatch(regime: int, x: int, y: int) -> int | NDArray[np.int64]:
+    if _builtin_int_check(regime):
+        if regime == 0:
+            return x + 2
+        return y * 3
+    else:
+        return np.where(regime == 0, x + 2, y * 3)
+
+
+def _unsupported_float_type_check(x: int) -> bool:
+    return isinstance(x, float)
+
+
+def _unsupported_bool_type_check(x: int) -> bool:
+    return isinstance(x, bool)
+
+
+def _unsupported_tuple_type_check(x: int) -> bool:
+    return isinstance(x, (int, float))
+
+
+class _TypeGuardMeta(ABCMeta):
+    def __instancecheck__(cls, instance: int) -> bool:
+        raise AssertionError("Source capture must not execute a metaclass hook")
+
+
+class _TypeGuardCustom(metaclass=_TypeGuardMeta):
+    pass
+
+
+def _custom_metaclass_type_check(x: int) -> bool:
+    return isinstance(x, _TypeGuardCustom)
+
+
+class _TypeGuardLookalike:
+    pass
+
+
+_TypeGuardLookalike.__module__ = "builtins"
+_TypeGuardLookalike.__name__ = "int"
+_TypeGuardLookalike.__qualname__ = "int"
+
+
+def _qualified_name_spoof_type_check(x: int) -> bool:
+    return isinstance(x, _TypeGuardLookalike)
+
+
+def _shadowed_type_check(x: int, isinstance: Callable[[int, type[int]], bool]) -> bool:
+    return isinstance(x, int)
+
+
+def _lookalike_builtin_call(x: int, classinfo: type[int]) -> bool:
+    raise AssertionError("A name-spoofed callback must remain unexecuted")
+
+
+_lookalike_builtin_call.__module__ = "builtins"
+_lookalike_builtin_call.__name__ = "isinstance"
+_lookalike_builtin_call.__qualname__ = "isinstance"
+
+
+def _rebound_type_check(x: int) -> bool:
+    return _lookalike_builtin_call(x, int)
+
+
+@pytest.mark.parametrize("callback", (_builtin_int_check, _aliased_builtin_int_check))
+def test_builtin_int_guard_proves_only_its_input_read(
+    callback: Callable[[int], bool],
+) -> None:
+    captured = source_function(callback)
+    answer = SourceProof({}).callback(captured)
+    assert answer.proved
+    assert answer.reads == frozenset({"x"})
+    assert answer.value is _UNKNOWN
+
+
+@pytest.mark.parametrize("value", (0, 1, -2, 0.5, False))
+def test_builtin_int_guard_never_fixes_a_boolean_from_numeric_metadata(
+    value: int | float,
+) -> None:
+    answer = SourceProof({}, static={"x": value}).callback(
+        source_function(_builtin_int_check)
+    )
+    assert answer.proved
+    assert answer.reads == frozenset()
+    assert answer.value is _UNKNOWN
+
+
+def test_builtin_int_type_capture_requires_actual_object_identity() -> None:
+    actual = source_function(_builtin_int_check)
+    spoofed = source_function(_qualified_name_spoof_type_check)
+    real_type = resolve_callable(actual["bindings"]["int"], actual["callable_records"])
+    fake_type = resolve_callable(
+        spoofed["bindings"]["_TypeGuardLookalike"], spoofed["callable_records"]
+    )
+    assert real_type["kind"] == "primitive"
+    assert real_type["canonical"] == "builtins.int"
+    assert real_type["resolution"] == "actual_object_identity"
+    assert fake_type != real_type
+    assert not SourceProof({}).callback(spoofed).proved
+
+
+@pytest.mark.parametrize(("regime", "coordinate"), ((0, "x"), (1, "y")))
+def test_builtin_int_guard_dispatch_has_only_the_selected_branch_read(
+    regime: int, coordinate: str
+) -> None:
+    answer = SourceProof({}, static={"regime": regime}).callback(
+        source_function(_type_guard_dispatch)
+    )
+    assert answer.proved
+    assert answer.reads == frozenset({coordinate})
+
+
+def test_builtin_int_guard_dispatch_keeps_a_free_selector() -> None:
+    answer = SourceProof({}).callback(source_function(_type_guard_dispatch))
+    assert answer.proved
+    assert answer.reads == frozenset({"regime", "x", "y"})
+
+
+def _guard_assignment_fallthrough(flag: bool, x: int, y: int) -> int:
+    if flag:
+        selected = x + 2
+    else:
+        selected = y * 3
+    return selected
+
+
+def _guard_unsupported_branch(flag: bool, x: int) -> int:
+    if flag:
+        raise RuntimeError("Unsupported selected branch must not become fallthrough")
+    return x
+
+
+def test_builtin_int_guard_unknown_if_preserves_assignments_into_continuation() -> None:
+    answer = SourceProof({}).callback(source_function(_guard_assignment_fallthrough))
+    assert answer.proved
+    assert answer.reads == frozenset({"flag", "x", "y"})
+
+
+@pytest.mark.parametrize("static", ({}, {"flag": True}))
+def test_builtin_int_guard_unsupported_branch_cannot_become_fallthrough(
+    static: dict[str, bool],
+) -> None:
+    answer = SourceProof({}, static=static).callback(
+        source_function(_guard_unsupported_branch)
+    )
+    assert not answer.proved
+
+
+@pytest.mark.parametrize(
+    "callback",
+    (
+        _unsupported_float_type_check,
+        _unsupported_bool_type_check,
+        _unsupported_tuple_type_check,
+        _custom_metaclass_type_check,
+        _qualified_name_spoof_type_check,
+        _shadowed_type_check,
+        _rebound_type_check,
+    ),
+)
+def test_unsupported_type_guards_remain_conservative(
+    callback: Callable[[int], bool]
+    | Callable[[int, Callable[[int, type[int]], bool]], bool],
+) -> None:
+    answer = SourceProof({}).callback(source_function(callback))
+    assert not answer.proved
+    assert "x" in answer.reads
+
+
+class _OpaqueTypeGuardOperand:
+    @property
+    def payload(self) -> int:
+        raise AssertionError("A source proof must not execute an opaque property")
+
+
+_OPAQUE_TYPE_GUARD_OPERAND = _OpaqueTypeGuardOperand()
+
+
+def _opaque_operand_type_check() -> bool:
+    return isinstance(_OPAQUE_TYPE_GUARD_OPERAND.payload, int)
+
+
+def test_builtin_int_guard_does_not_certify_an_unproved_operand() -> None:
+    answer = SourceProof({}).callback(source_function(_opaque_operand_type_check))
+    assert not answer.proved
+
+
+def test_builtin_int_guard_rejects_a_marker_dictionary_as_a_type() -> None:
+    original = source_function(_builtin_int_check)
+    marker = dict(
+        resolve_callable(original["bindings"]["int"], original["callable_records"])
+    )
+    with patch.dict(
+        _aliased_builtin_int_check.__globals__, {"_INT_TYPE_ALIAS": marker}
+    ):
+        captured = source_function(_aliased_builtin_int_check)
+    reference = captured["bindings"]["_INT_TYPE_ALIAS"]
+    assert (
+        captured["callable_records"][reference["capture_ref"]]["kind"]
+        == "binding-record"
+    )
+    answer = SourceProof({}).callback(captured)
+    assert not answer.proved
+    assert "x" in answer.reads
+
+
+def _builtin_int_type_as_value() -> type[int]:
+    return int
+
+
+def _builtin_int_cast(x: int) -> int:
+    return int(x)
+
+
+def test_builtin_int_guard_does_not_admit_type_values_or_casts() -> None:
+    assert (
+        not SourceProof({}).callback(source_function(_builtin_int_type_as_value)).proved
+    )
+    assert not SourceProof({}).callback(source_function(_builtin_int_cast)).proved
+
+
+def _formal_class_type_check(x: int, int: type[int]) -> bool:
+    return isinstance(x, int)
+
+
+def _default_class_type_check(x: int, int: type[int] = int) -> bool:
+    return isinstance(x, int)
+
+
+def _inline_complex_type_check(x: int, flag: bool) -> bool:
+    if flag:
+        return isinstance(x, int)
+    return False
+
+
+def _local_class_type_check(x: int, flag: bool) -> bool:
+    if flag:
+        int = _INT_TYPE_ALIAS
+    return isinstance(x, int)
+
+
+def test_unsupported_type_guards_reject_class_formals_defaults_and_partials() -> None:
+    for callback in (
+        _formal_class_type_check,
+        _default_class_type_check,
+        functools.partial(_formal_class_type_check, int=int),
+    ):
+        answer = SourceProof({}).callback(source_function(callback))
+        assert not answer.proved
+        assert "x" in answer.reads
+
+
+def test_unsupported_type_guards_reject_inline_and_local_binding_bodies() -> None:
+    for callback in (_inline_complex_type_check, _local_class_type_check):
+        answer = SourceProof({}, static={"flag": True}).callback(
+            source_function(callback)
+        )
+        assert not answer.proved
+        assert "x" in answer.reads

@@ -54,6 +54,15 @@ removal order and removed statuses. The source adapter resolves category-code ar
 through the original state and function DAG. Unsupported source retains the full
 source-state set.
 
+The reader supports a simple predicate helper whose body returns
+`isinstance(code, int)`, including aliases of those actual built-in objects. It checks
+their captured identities and excludes shadowed names and more complex helper bodies.
+The predicate reads only its operand, but its Boolean value remains unknown: a numeric
+metadata value does not establish whether the runtime object is a Python integer or a
+JAX scalar. Casts and arbitrary class or metaclass tests remain unsupported. Conditional
+branches include their following statements, so early returns and assignments retain the
+correct dependencies; an unsupported statement on a selected path stays unproved.
+
 Read certificates are chosen once, before dependency closure or grouping. Different
 sufficient read sets can be incomparable. Reselecting them while successor dependencies
 change would not define the same monotone closure.
