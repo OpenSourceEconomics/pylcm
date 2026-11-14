@@ -181,7 +181,7 @@ def test_lookup_refuses_unknown_or_repeated_intermediates(
 
 # The public type check samples one entry per call, so each input is refused
 # many times to catch a call that reports a different error.
-@pytest.mark.parametrize("keep_intermediates", [("Q", ["U"]), ("Q", 1)])
+@pytest.mark.parametrize("keep_intermediates", [("Q", 1)])
 def test_lookup_refuses_non_string_intermediates_on_every_call(
     *, solved, keep_intermediates
 ):

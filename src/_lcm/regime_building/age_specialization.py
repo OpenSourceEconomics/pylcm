@@ -1,10 +1,11 @@
 """Per-age-specialized node resolution and grid-shape validation helpers.
 
 `AgeSpecializedFunction` marks a function whose closure is bound per age at build time.
-`resolve_node` returns a marked node's concrete function for a given age, and
-`node_signature` / `tree_signature` fingerprint the closure so nodes that resolve to
-the same program can share a compiled `Q_and_F`. These are used by the model-level
-dependency analysis, which runs on the raw (un-normalized) user regimes.
+`resolve_node` returns a marked node's concrete function for a given age; the
+model-level dependency analysis, which runs on the raw (un-normalized) user regimes,
+uses it. `_tree_signature` is the recursion the period fingerprints
+(`age_normalization.periodized_tree_signature`) share, and `INVARIANT` is the
+signature of a node that does not change across periods.
 
 The model-processing pipeline itself normalizes age specialization early
 (`age_normalization.normalize_age_specialization`) and no longer resolves markers
@@ -19,6 +20,7 @@ from typing import Final, cast
 import numpy as np
 
 from _lcm.grids.continuous import ContinuousGrid
+from _lcm.typing import AgeValue
 from lcm.transition import AgeSpecializedFunction
 from lcm.typing import Float1D, UserFunction
 
@@ -40,24 +42,12 @@ INVARIANT: Final[Hashable] = _Invariant()
 
 
 def resolve_node(
-    *, node: UserFunction | AgeSpecializedFunction, age: float
+    *, node: UserFunction | AgeSpecializedFunction, age: AgeValue
 ) -> UserFunction:
     """Return the concrete function for `age`, or the node if age-invariant."""
     if isinstance(node, AgeSpecializedFunction):
         return node.build(age)
     return node
-
-
-def node_signature(
-    *, node: UserFunction | AgeSpecializedFunction, age: float
-) -> Hashable:
-    """Fingerprint `node`'s closure at `age`.
-
-    `INVARIANT` for a plain callable; `node.signature(age)` for a specialized node.
-    """
-    if isinstance(node, AgeSpecializedFunction):
-        return node.signature(age)
-    return INVARIANT
 
 
 def _tree_signature[L](
@@ -80,26 +70,6 @@ def _tree_signature[L](
         )
         pairs.append((key, signature))
     return tuple(pairs)
-
-
-def tree_signature(*, tree: NodeTree[UserFunction], age: float) -> Hashable:
-    """Fingerprint a (possibly nested) mapping of nodes at `age`.
-
-    Recurse into `Mapping` values and emit sorted `(path, signature)` pairs, so a
-    marked node nested under one key cannot collide with one under another.
-    """
-    return _tree_signature(tree=tree, leaf_signature=_NodeSignatureAtAge(age=age))
-
-
-@dataclass(frozen=True)
-class _NodeSignatureAtAge:
-    """Leaf-signature callback fingerprinting a node at one fixed age."""
-
-    age: int | float
-    """The age every node is fingerprinted at."""
-
-    def __call__(self, node: UserFunction | AgeSpecializedFunction) -> Hashable:
-        return node_signature(node=node, age=self.age)
 
 
 class _GridTraitsError(Exception):

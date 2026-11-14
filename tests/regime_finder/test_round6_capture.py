@@ -1,5 +1,7 @@
 """Compact-capture regressions: metadata only, never Model or Bellman execution."""
 
+from tests.regime_finder._callable_records import validate_callable_records
+
 import pytest
 from copy import deepcopy
 from dataclasses import dataclass
@@ -20,7 +22,6 @@ from _lcm_regime_finder.callable_identity import (
     capture_session,
     resolve_callable,
     resolve_binding,
-    validate_callable_records,
 )
 from _lcm_regime_finder.model_snapshot import (
     read_declarations,

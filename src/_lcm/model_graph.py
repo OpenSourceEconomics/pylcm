@@ -20,9 +20,10 @@ from _lcm.regime_building.schedules import (
     RegimeSchedules,
     RegimeTransitionLaw,
     Side,
-    _Constant,
     _edge_support,
     _phase_side,
+    _ProbabilityConstant,
+    _RegimeCodeConstant,
     resolve_demand,
     resolve_regime_schedules,
 )
@@ -946,7 +947,9 @@ def _lottery_if_paired(*, law: PhaseLaw, other: PhaseLaw) -> PhaseLaw:
     other phase's per-target probability mapping so the two sides match.
     """
     if isinstance(law, str) and isinstance(other, Mapping):
-        return MappingProxyType({law: StochasticTransition(func=_Constant(value=1.0))})
+        return MappingProxyType(
+            {law: StochasticTransition(func=_ProbabilityConstant(value=1.0))}
+        )
     return law
 
 
@@ -1070,7 +1073,7 @@ def bind_graph_support(
             schedule_type(cases=cast("dict[AgeSelector, AgeCaseLaw]", dict(cases)))
             if cases
             else _SupportedStochasticTransition(
-                func=_Constant(value=(0.0,) * len(regime_names)),
+                func=_ProbabilityConstant(value=(0.0,) * len(regime_names)),
                 targets=(),
             )
         )
@@ -1274,9 +1277,11 @@ def _absent_law(*, law: PhaseLaw, n_regimes: int) -> PhaseLaw:
         return law
     if isinstance(law, StochasticTransition):
         return _SupportedStochasticTransition(
-            func=_Constant(value=(0.0,) * n_regimes), targets=()
+            func=_ProbabilityConstant(value=(0.0,) * n_regimes), targets=()
         )
-    return _SupportedDeterministicTransition(func=_Constant(value=0), targets=())
+    return _SupportedDeterministicTransition(
+        func=_RegimeCodeConstant(value=0), targets=()
+    )
 
 
 def _bind_cells(
@@ -1300,7 +1305,7 @@ def _bind_cells(
     cells = {target: law[target] for target in targets if target in law}
     cells.update(
         {
-            target: StochasticTransition(func=_Constant(value=0.0))
+            target: StochasticTransition(func=_ProbabilityConstant(value=0.0))
             for target in targets
             if target not in cells and target not in fallbacks
         }

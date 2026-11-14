@@ -3,22 +3,22 @@
 The `get_*_coordinate` helpers take JAX arrays of any rank: a `Grid`
 method passes a 0-d value, while a piecewise dispatch selects segments
 via `searchsorted` and passes `start` / `stop` / `n_points` indexed by
-an N-d `segment_idx`. `linspace` / `logspace` build a grid and take JAX
-scalars.
+an N-d `segment_idx`. `linspace` / `logspace` build a grid from JAX scalar
+bounds and a host node count.
 """
 
 import jax.numpy as jnp
 import numpy as np
 from jax.core import Tracer
 
-from lcm.typing import Float1D, FloatND, IntND, ScalarFloat, ScalarInt
+from lcm.typing import Float1D, FloatND, IntND, ScalarFloat
 
 
 def linspace(
     *,
     start: ScalarFloat,
     stop: ScalarFloat,
-    n_points: ScalarInt,
+    n_points: int,
 ) -> Float1D:
     """Wrapper around jnp.linspace.
 
@@ -26,7 +26,7 @@ def linspace(
     endpoints.
 
     """
-    return jnp.linspace(start, stop, n_points)  # ty: ignore[no-matching-overload]
+    return jnp.linspace(start, stop, n_points)
 
 
 def get_linspace_coordinate(
@@ -65,7 +65,7 @@ def logspace(
     *,
     start: ScalarFloat,
     stop: ScalarFloat,
-    n_points: ScalarInt,
+    n_points: int,
 ) -> Float1D:
     """Wrapper around jnp.logspace.
 
@@ -83,7 +83,7 @@ def logspace(
     """
     start_linear = jnp.log(start)
     stop_linear = jnp.log(stop)
-    grid = jnp.logspace(start_linear, stop_linear, n_points, base=jnp.e)  # ty: ignore[invalid-argument-type]
+    grid = jnp.logspace(start_linear, stop_linear, n_points, base=jnp.e)
     return grid.at[0].set(start).at[-1].set(stop)
 
 

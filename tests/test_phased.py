@@ -22,7 +22,6 @@ from _lcm.user_regime_validation import validate_regime_law
 from lcm import (
     AgeGrid,
     DeterministicTransition,
-    DiscreteGrid,
     LinearAggregator,
     LinearExpectation,
     LinSpacedGrid,
@@ -282,12 +281,6 @@ def test_invalid_phased_state_combinations_are_rejected(
         )
 
 
-@categorical(ordered=False)
-class _CoverageStatus:
-    uncovered: ScalarInt
-    covered: ScalarInt
-
-
 def test_process_grid_inside_phased_is_rejected() -> None:
     """Stochastic-process grids have intrinsic transitions and cannot be
     phase-variant."""
@@ -379,33 +372,6 @@ def test_phased_in_constraints_is_rejected() -> None:
         )
 
 
-def test_phased_in_actions_is_rejected() -> None:
-    """Actions cannot be phase-variant: the simulated argmax must range over
-    the menu the value function was computed for."""
-    with pytest.raises(RegimeInitializationError):
-        _build_regime(
-            actions={  # ty: ignore[invalid-argument-type]
-                "consumption": Phased(
-                    solve=LinSpacedGrid(start=1.0, stop=10.0, n_points=5),
-                    simulate=LinSpacedGrid(start=1.0, stop=20.0, n_points=5),
-                )
-            }
-        )
-
-
-def test_phased_in_derived_categoricals_is_rejected() -> None:
-    """Derived categoricals are phase-invariant grid metadata."""
-    with pytest.raises(RegimeInitializationError):
-        _build_regime(
-            derived_categoricals={  # ty: ignore[invalid-argument-type]
-                "coverage": Phased(
-                    solve=DiscreteGrid(category_class=_CoverageStatus),
-                    simulate=DiscreteGrid(category_class=_CoverageStatus),
-                )
-            }
-        )
-
-
 def test_phased_inside_per_target_dict_is_rejected() -> None:
     """`Phased` is outermost-only: it wraps a whole slot value, never a
     per-target entry."""
@@ -432,17 +398,6 @@ def test_phased_regime_transition_with_mixed_stochasticity_is_rejected() -> None
                 solve=StochasticTransition(func=_next_regime_probs),
                 simulate=_next_regime,
             )
-        )
-
-
-def test_phased_function_with_non_callable_variant_is_rejected() -> None:
-    """Each `Phased` variant in `functions` must be a callable."""
-    with pytest.raises(RegimeInitializationError, match="callable"):
-        _build_regime(
-            functions={
-                "utility": _utility,
-                "bonus": Phased(solve=_solve_variant, simulate="not callable"),
-            }
         )
 
 

@@ -41,8 +41,8 @@ jobs:
       # same GPU machine, so they can start together. A machine-wide lock, taken
       # here and held until the job ends, runs them one after another, and a
       # waiting main-branch run takes it before any waiting pull request (see
-      # the script). The `nvidia-smi` poll below only guards against GPU work
-      # started outside these jobs: it cannot see a job that is still installing
+      # the script). The quiet-host wait below only guards against GPU and CPU
+      # work started outside these jobs: it cannot see a job that is still installing
       # its environment.
       - uses: actions/checkout@v7.0.1
         with:
@@ -51,15 +51,8 @@ jobs:
           persist-credentials: false
       - name: Hold the benchmark GPU for this whole job
         run: bash .github/scripts/hold-benchmark-gpu.sh pr
-      - name: Wait for GPU to be free
-        run: |
-          echo "Waiting for GPU to be free..."
-          while nvidia-smi --query-compute-apps=process_name --format=csv,noheader \
-                | grep -qi python; do
-            echo "$(date): GPU in use by Python process, retrying in 60s..."
-            sleep 60
-          done
-          echo "GPU is free."
+      - name: Wait for the GPU and CPU to be free
+        run: bash .github/scripts/wait-for-quiet-host.sh
       - name: Ensure main ref exists
         run: git branch --force main origin/main
       - name: Regenerate version.py

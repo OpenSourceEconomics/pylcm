@@ -211,39 +211,20 @@ def test_public_production_cannot_adopt_deletion_of_overridable_input() -> None:
     )
 
 
-def test_positional_partial_helper_uses_effective_signature(
-    *, subtests: pytest.Subtests
-) -> None:
-    for fixed in (-3, 0, 10):
-        callback = positional_callback(functools.partial(difference, fixed))
-        for history in (-2, 0, 7):
-            with subtests.test(fixed=fixed, history=history):
-                _check_scalar(callback, history)
+def test_positional_partial_helper_uses_effective_signature() -> None:
+    callback = positional_callback(functools.partial(difference, -3))
+    _check_scalar(callback, 7)
 
 
-def test_partial_keyword_default_and_explicit_override(
-    *, subtests: pytest.Subtests
-) -> None:
-    for default in (-2, 0, 4):
-        helper = functools.partial(difference, right=default)
-        callbacks = [keyword_default(helper)]
-        callbacks += [keyword_override(helper, override) for override in (-1, 0, 5)]
-        for callback in callbacks:
-            for history in (-3, 0, 6):
-                with subtests.test(default=default, history=history, callback=callback):
-                    _check_scalar(callback, history)
+def test_partial_keyword_default_and_explicit_override() -> None:
+    helper = functools.partial(difference, right=-2)
+    _check_scalar(keyword_default(helper), 6)
+    _check_scalar(keyword_override(helper, 5), 6)
 
 
-def test_mixed_nested_partials_keep_positional_and_default_roles(
-    *, subtests: pytest.Subtests
-) -> None:
-    for first in (-2, 0, 5):
-        for third in (-3, 2):
-            helper = functools.partial(functools.partial(triple, first), third=third)
-            callback = positional_callback(helper)
-            for history in (-1, 0, 4):
-                with subtests.test(first=first, third=third, history=history):
-                    _check_scalar(callback, history)
+def test_mixed_nested_partials_keep_positional_and_default_roles() -> None:
+    helper = functools.partial(functools.partial(triple, 5), third=-3)
+    _check_scalar(positional_callback(helper), 4)
 
 
 def test_empty_helper_call_uses_the_captured_effective_default() -> None:

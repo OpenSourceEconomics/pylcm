@@ -236,19 +236,6 @@ def test_columnar_peak_refuses_the_peak_reader() -> None:
         compiler_peak_bytes(compiled=executable, widths={})
 
 
-def test_cached_lookup_requires_complete_reservation() -> None:
-    def insufficient[Compiled](_: Compiled) -> int:
-        return 1
-
-    with pytest.raises(ExecutionPlanningError, match="complete reservation"):
-        plan_workspace(
-            axes=(),
-            compile_candidate=lambda _: object(),
-            budget_bytes=100,
-            memory_for=insufficient,  # ty: ignore[invalid-argument-type]
-        )
-
-
 def test_unbudgeted_execution_does_not_read_a_report() -> None:
     executable = object()
 

@@ -24,13 +24,13 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
-from beartype.roar import BeartypeCallHintParamViolation
 from jax._src import compilation_cache as jax_compilation_cache
 from jaxlib import (
     _hlo,  # ty: ignore[unresolved-import] - installed native API has no stub
     xla_client,
 )
 
+from _lcm.engine import Regime
 from _lcm.execution.output_layout import PlannedCore
 from _lcm.execution.workspace_planning import _tiled_bootstrap_cap, bootstrap_width
 from _lcm.solution import backward_induction, period_replay, public_period_capture
@@ -44,7 +44,6 @@ from tests.regime_building.test_gated_edges_collective_solve import (
     _with_full_topology_laws,
 )
 from tests.solution._callback_types import CompileFunctionsKwargs
-from tests.solution.test_period_core_memory import _StandInRegime
 from tests.test_models.deterministic import base as retirement_model
 from tests.test_models.deterministic.discrete import (
     RegimeId,
@@ -57,6 +56,14 @@ from tests.test_sharded_state_across_gated_edge import (
 )
 
 type CaptureSelection = str
+
+
+class _StandInRegime(Regime):
+    """An engine `Regime` with no fields, for payloads whose regime is never read."""
+
+    def __init__(self) -> None:
+        """Leave every field unset; the code under test only passes it through."""
+
 
 type CaptureFixtureValue = _StandInRegime | int | dict[str, dict[str, int]]
 type CacheReadResult = tuple[xla_client.LoadedExecutable | None, int | None]
@@ -342,15 +349,6 @@ def test_is_period_capture_payload_names_a_missing_key(key: str) -> None:
         period_replay._is_period_capture_payload(payload)
 
 
-@pytest.mark.parametrize("key", _REQUIRED_PAYLOAD_KEYS)
-def test_is_period_capture_payload_names_a_wrong_typed_key(key: str) -> None:
-    """A payload holding a required entry at the wrong type is refused, naming it."""
-    payload = {**_well_formed_payload(), key: "not the declared type"}
-
-    with pytest.raises(TypeError, match=re.escape(repr(key))):
-        period_replay._is_period_capture_payload(payload)
-
-
 def _rewrite_capture(*, directory, mutate):
     """Load, mutate, and rewrite one capture payload."""
     path = directory / period_replay._PAYLOAD_NAME
@@ -409,10 +407,9 @@ def test_a_capture_without_tile_widths_is_refused(*, monkeypatch, tmp_path):
     ("widths", "error"),
     [
         ({"main": {"action_product": 0}}, ValueError),
-        ({"main": {"action_product": 2.0}}, BeartypeCallHintParamViolation),
         ({"other": {"action_product": 2}}, ValueError),
     ],
-    ids=["nonpositive-width", "noninteger-width", "wrong-core-names"],
+    ids=["nonpositive-width", "wrong-core-names"],
 )
 def test_malformed_captured_tile_widths_are_refused(
     *, monkeypatch, tmp_path, widths, error

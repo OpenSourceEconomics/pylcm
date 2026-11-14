@@ -1,9 +1,10 @@
 """`BeartypeConf` instances for pylcm's perimeter and internal claws.
 
-`INTERNAL_CONF` is the default conf for the package-wide claw on `lcm`
-and `_lcm`, registered in `lcm/__init__.py`. Violations under that claw
-surface as beartype's own `BeartypeCallHintViolation`, marking them as
-internal pylcm bugs rather than user error.
+`INTERNAL_CONF` is the conf for the package claw on `_lcm` and `PUBLIC_CONF`
+the one on `lcm`, both registered in `lcm/__init__.py`. Violations under
+either claw surface as beartype's own `BeartypeCallHintViolation`, marking
+them as internal pylcm bugs rather than user error. Only `PUBLIC_CONF` keeps
+the numeric tower, so `int` satisfies `float` in public signatures only.
 
 The remaining confs (`MODEL_CONF`, `REGIME_CONF`, `GRID_CONF`,
 `PARAMS_CONF`, `CATEGORICAL_CONF`, `SIMULATION_INPUT_CONF`) are used by explicit
@@ -60,11 +61,15 @@ PARAMS_CONF = _conf(InvalidParamsError)
 # Used on `Model.state_grid`.
 SIMULATION_INPUT_CONF = _conf(InvalidSimulationInputError)
 
-# Default conf for the package-wide claw on `lcm` and `_lcm` registered
-# in `lcm/__init__.py`. A type violation in any internal helper surfaces as
-# beartype's own `BeartypeCallHintViolation` rather than a project
-# exception. User-facing constructors layer their own
-# `@beartype(conf=...)` decorators on top to map violations to project
-# exceptions; those decorators take precedence at the call sites they
-# cover.
-INTERNAL_CONF = BeartypeConf(is_pep484_tower=True)
+# Conf for the package claw on the public `lcm` package, registered in
+# `lcm/__init__.py`. It keeps the numeric tower, so a Python `int` satisfies a
+# `float` parameter of a public function. User-facing constructors layer their
+# own `@beartype(conf=...)` decorators on top to map violations to project
+# exceptions; those decorators take precedence at the call sites they cover.
+PUBLIC_CONF = BeartypeConf(is_pep484_tower=True)
+
+# Conf for the package claw on the private `_lcm` package. Internal code
+# receives values the public boundary has already normalized, so the numeric
+# tower is off: a `float` parameter refuses an `int`. A violation surfaces as
+# beartype's own `BeartypeCallHintViolation`, marking an internal pylcm bug.
+INTERNAL_CONF = BeartypeConf()

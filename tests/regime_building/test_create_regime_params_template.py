@@ -1,12 +1,12 @@
 import inspect
 
-from _lcm.grids import DiscreteGrid
 from _lcm.params.regime_template import (
     create_regime_params_template,
 )
 from _lcm.regime_law import bind_regime_law
 from _lcm.utils.containers import ensure_containers_are_immutable
 from lcm import Phased, fixed_transition
+from lcm.grids import DiscreteGrid
 from tests.mock_regime import MockRegime
 
 

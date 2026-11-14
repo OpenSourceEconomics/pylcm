@@ -214,54 +214,6 @@ ffi::Error QueryWinnerF64Impl(
 
 
 template <typename T, ffi::DataType DType>
-ffi::Error HandoverImpl(ffi::Buffer<DType> ax0, ffi::Buffer<DType> ax1,
-                        ffi::Buffer<DType> av0, ffi::Buffer<DType> av1,
-                        ffi::Buffer<DType> bx0, ffi::Buffer<DType> bx1,
-                        ffi::Buffer<DType> bv0, ffi::Buffer<DType> bv1,
-                        ffi::Buffer<DType> left, ffi::Buffer<DType> right,
-                        ffi::ResultBuffer<DType> output,
-                        ffi::ResultBuffer<ffi::S32> status) {
-  const size_t n = ax0.element_count();
-  const size_t sizes[] = {ax1.element_count(), av0.element_count(),
-                          av1.element_count(), bx0.element_count(),
-                          bx1.element_count(), bv0.element_count(),
-                          bv1.element_count(), left.element_count(),
-                          right.element_count(), (*output).element_count(),
-                          (*status).element_count()};
-  for (size_t size : sizes) {
-    if (size != n) {
-      return ffi::Error::InvalidArgument(
-          "all exact handover buffers must match");
-    }
-  }
-  const T* p_ax0 = ax0.typed_data();
-  const T* p_ax1 = ax1.typed_data();
-  const T* p_av0 = av0.typed_data();
-  const T* p_av1 = av1.typed_data();
-  const T* p_bx0 = bx0.typed_data();
-  const T* p_bx1 = bx1.typed_data();
-  const T* p_bv0 = bv0.typed_data();
-  const T* p_bv1 = bv1.typed_data();
-  const T* p_left = left.typed_data();
-  const T* p_right = right.typed_data();
-  T* out = (*output).typed_data();
-  int32_t* flags = (*status).typed_data();
-  for (size_t i = 0; i < n; ++i) {
-    T state;
-    if (core::ExactHandoverState(
-            p_ax0[i], p_ax1[i], p_av0[i], p_av1[i], p_bx0[i], p_bx1[i],
-            p_bv0[i], p_bv1[i], p_left[i], p_right[i], &state)) {
-      out[i] = state;
-      flags[i] = 0;
-    } else {
-      out[i] = core::QuietNaN<T>();
-      flags[i] = core::kUnresolved;
-    }
-  }
-  return ffi::Error::Success();
-}
-
-template <typename T, ffi::DataType DType>
 ffi::Error CellHullImpl(
                         ffi::Buffer<DType> left,
                         ffi::Buffer<DType> right,
@@ -344,30 +296,6 @@ ffi::Error CellHullImpl(
   resolve_worker(0);
   for (std::thread& worker : workers) worker.join();
   return ffi::Error::Success();
-}
-
-ffi::Error HandoverF32Impl(
-    ffi::Buffer<ffi::F32> ax0, ffi::Buffer<ffi::F32> ax1,
-    ffi::Buffer<ffi::F32> av0, ffi::Buffer<ffi::F32> av1,
-    ffi::Buffer<ffi::F32> bx0, ffi::Buffer<ffi::F32> bx1,
-    ffi::Buffer<ffi::F32> bv0, ffi::Buffer<ffi::F32> bv1,
-    ffi::Buffer<ffi::F32> left, ffi::Buffer<ffi::F32> right,
-    ffi::ResultBuffer<ffi::F32> output,
-    ffi::ResultBuffer<ffi::S32> status) {
-  return HandoverImpl<float, ffi::F32>(ax0, ax1, av0, av1, bx0, bx1, bv0,
-                                       bv1, left, right, output, status);
-}
-
-ffi::Error HandoverF64Impl(
-    ffi::Buffer<ffi::F64> ax0, ffi::Buffer<ffi::F64> ax1,
-    ffi::Buffer<ffi::F64> av0, ffi::Buffer<ffi::F64> av1,
-    ffi::Buffer<ffi::F64> bx0, ffi::Buffer<ffi::F64> bx1,
-    ffi::Buffer<ffi::F64> bv0, ffi::Buffer<ffi::F64> bv1,
-    ffi::Buffer<ffi::F64> left, ffi::Buffer<ffi::F64> right,
-    ffi::ResultBuffer<ffi::F64> output,
-    ffi::ResultBuffer<ffi::S32> status) {
-  return HandoverImpl<double, ffi::F64>(ax0, ax1, av0, av1, bx0, bx1, bv0,
-                                        bv1, left, right, output, status);
 }
 
 ffi::Error CellHullF32Impl(
@@ -592,38 +520,6 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
         .Ret<ffi::Buffer<ffi::S32>>()
         .Ret<ffi::Buffer<ffi::S32>>());
 
-
-XLA_FFI_DEFINE_HANDLER_SYMBOL(
-    ExactAffineHandoverF32, HandoverF32Impl,
-    ffi::Ffi::Bind()
-        .Arg<ffi::Buffer<ffi::F32>>()
-        .Arg<ffi::Buffer<ffi::F32>>()
-        .Arg<ffi::Buffer<ffi::F32>>()
-        .Arg<ffi::Buffer<ffi::F32>>()
-        .Arg<ffi::Buffer<ffi::F32>>()
-        .Arg<ffi::Buffer<ffi::F32>>()
-        .Arg<ffi::Buffer<ffi::F32>>()
-        .Arg<ffi::Buffer<ffi::F32>>()
-        .Arg<ffi::Buffer<ffi::F32>>()
-        .Arg<ffi::Buffer<ffi::F32>>()
-        .Ret<ffi::Buffer<ffi::F32>>()
-        .Ret<ffi::Buffer<ffi::S32>>());
-
-XLA_FFI_DEFINE_HANDLER_SYMBOL(
-    ExactAffineHandoverF64, HandoverF64Impl,
-    ffi::Ffi::Bind()
-        .Arg<ffi::Buffer<ffi::F64>>()
-        .Arg<ffi::Buffer<ffi::F64>>()
-        .Arg<ffi::Buffer<ffi::F64>>()
-        .Arg<ffi::Buffer<ffi::F64>>()
-        .Arg<ffi::Buffer<ffi::F64>>()
-        .Arg<ffi::Buffer<ffi::F64>>()
-        .Arg<ffi::Buffer<ffi::F64>>()
-        .Arg<ffi::Buffer<ffi::F64>>()
-        .Arg<ffi::Buffer<ffi::F64>>()
-        .Arg<ffi::Buffer<ffi::F64>>()
-        .Ret<ffi::Buffer<ffi::F64>>()
-        .Ret<ffi::Buffer<ffi::S32>>());
 
 XLA_FFI_DEFINE_HANDLER_SYMBOL(
     ExactCellHullF32, CellHullF32Impl,

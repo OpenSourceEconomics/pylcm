@@ -35,6 +35,7 @@ from dags.signature import rename_arguments
 from dags.tree import qname_from_tree_path, tree_path_from_qname
 from jax import numpy as jnp
 
+from _lcm.additive_shock_transition import AdditiveShockTransition
 from _lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
 from _lcm.coarse_transition import _CoarseTransitionCell
 from _lcm.constraints.dynamic_bound import validate_declared_bounds
@@ -96,14 +97,10 @@ from _lcm.execution.placement import (
     plan_submesh_placement,
 )
 from _lcm.exits import ExitFunctionDemand
-from _lcm.grids import (
-    ContinuousGrid,
-    DiscreteGrid,
-    Grid,
-    IrregSpacedGrid,
-)
+from _lcm.grids import ContinuousGrid, Grid
 from _lcm.grids.coordinates import get_irreg_coordinate
 from _lcm.identity_transition import _IdentityTransition
+from _lcm.output_roles import OutputRole, in_role, target_role
 from _lcm.params.edges import (
     is_gated_cell_slot,
     regime_kernel_params,
@@ -119,15 +116,9 @@ from _lcm.params.regime_template import (
 )
 from _lcm.post_decision_bound import PostDecisionBoundSpec
 from _lcm.processes import _ContinuousStochasticProcess, _IIDProcess
-from _lcm.processes.ar1 import (
-    RouwenhorstAR1Process,
-    TauchenAR1Process,
-    _TauchenOnNodesProcess,
-)
-from _lcm.processes.iid import NormalIIDProcess
+from _lcm.processes.ar1_on_nodes import _TauchenOnNodesProcess
 from _lcm.processes.state_conditioned import (
     Family,
-    StateConditioned,
     conditioned_row,
     gather_sigma,
     sigma_array_by_code,
@@ -200,7 +191,10 @@ from _lcm.simulation.programs import (
     attach_gated_simulation_programs,
     build_simulation_programs,
 )
+from lcm.grids import DiscreteGrid, IrregSpacedGrid
+from lcm.processes import NormalIIDProcess, RouwenhorstAR1Process, TauchenAR1Process
 from lcm.shocks import ShockGroupName
+from lcm.state_conditioned import StateConditioned
 from lcm.typing import Phase
 
 if TYPE_CHECKING:
@@ -244,6 +238,7 @@ from _lcm.regime_building.Q_and_F import (
     has_objective_profile,
     partition_continuation_targets,
 )
+from _lcm.regime_building.schedules import PhaseLaw
 from _lcm.regime_building.stochastic_state_transitions import (
     collect_stochastic_state_transitions,
 )
@@ -427,6 +422,10 @@ class PreparedModelStructure:
     """Per source regime, its `Transition` declarations in `Model(edges=...)`,
     which the `edges` parameter template is read off."""
 
+    demanded_edge_laws: MappingProxyType[RegimeName, tuple[PhaseLaw, ...]]
+    """Per nonterminal source regime, its declared laws at the demanded periods,
+    which decide each `edges` parameter's numeric role."""
+
     declared_edge_vocabulary: MappingProxyType[RegimeName, EdgeVocabulary]
     """Per regime, the names it declares before demand prunes any, which the
     declared laws read as variables rather than parameters."""
@@ -466,6 +465,7 @@ def prepare_model_structure(
         tuple[RegimeName, RegimeName], tuple[int, ...]
     ],
     declared_transitions: Mapping[RegimeName, tuple[Transition, ...]],
+    demanded_edge_laws: Mapping[RegimeName, tuple[PhaseLaw, ...]],
     declared_edge_vocabulary: Mapping[RegimeName, EdgeVocabulary],
     visited_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
     value_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
@@ -545,6 +545,7 @@ def prepare_model_structure(
         active_periods_by_regime=active_periods_by_regime,
         gated_source_periods=gated_source_periods,
         declared_transitions=MappingProxyType(dict(declared_transitions)),
+        demanded_edge_laws=MappingProxyType(dict(demanded_edge_laws)),
         declared_edge_vocabulary=MappingProxyType(dict(declared_edge_vocabulary)),
         post_decision_shocks=MappingProxyType(
             {
@@ -927,6 +928,9 @@ def prepare_regime_builder(
             regime_name: create_edge_params_template(
                 source=regime_name,
                 declared_transitions=prepared_structure.declared_transitions.get(
+                    regime_name, ()
+                ),
+                demanded_laws=prepared_structure.demanded_edge_laws.get(
                     regime_name, ()
                 ),
                 vocabulary_by_regime=edge_vocabulary,
@@ -2384,8 +2388,8 @@ def _nbegm_query_evaluator_targets(
     jump_read: str,
 ) -> tuple[tuple[FunctionName, ...], tuple[FunctionName, ...], list[FunctionName], int]:
     """Resolve source, case and threshold targets from the original declarations."""
-    from _lcm.constraints.ir import Ref  # noqa: PLC0415
     from _lcm.solution.nbegm import _normalize_case_boundary  # noqa: PLC0415
+    from lcm.condition import Ref  # noqa: PLC0415
 
     source_variables = tuple(
         dict.fromkeys(
@@ -7299,11 +7303,14 @@ def _process_regime_core(
         names_key = _extract_template_names_key(
             func_name=func_name, regime_params_template=regime_params_template
         )
-        processed_functions[func_name] = _rename_params_to_qnames(
-            func=func,
-            regime_params_template=regime_params_template,
-            param_key=func_name,
-            names_key=names_key,
+        processed_functions[func_name] = _as_next_state_role(
+            func=_rename_params_to_qnames(
+                func=func,
+                regime_params_template=regime_params_template,
+                param_key=func_name,
+                names_key=names_key,
+            ),
+            grid=flat_grids.get(func_name.replace("next_", "")),
         )
 
     original_lottery_layouts: dict[str, OriginalLotteryLayout] = {}
@@ -7385,6 +7392,7 @@ def _process_regime_core(
         joint_transitions=joint_transitions,
         processed_functions=processed_functions,
         regime_params_template=regime_params_template,
+        flat_grids=flat_grids,
     )
     # A joint output is a declared law whether or not the source carries the
     # process: it names the physical value the correlated draw lands on, which
@@ -7647,8 +7655,13 @@ def _process_joint_transitions(
     joint_transitions: Mapping[RegimeName, Mapping[str, JointTransition]],
     processed_functions: dict[str, EconFunction],
     regime_params_template: RegimeParamsTemplate,
+    flat_grids: Mapping[str, Grid],
 ) -> tuple[str, ...]:
-    """Compile joint kernels into target-local DAG nodes and output laws."""
+    """Compile joint kernels into target-local DAG nodes and output laws.
+
+    The probabilities and each output take their role's kind where the engine
+    receives them, so a kernel may return integer weights or a constant `1`.
+    """
     transition_keys: dict[str, None] = {}
     for target, kernels in joint_transitions.items():
         for kernel_name, kernel in kernels.items():
@@ -7673,19 +7686,28 @@ def _process_joint_transitions(
                 regime_params_template=regime_params_template,
                 param_key=qname_from_tree_path((target, kernel_name, "support")),
             )
-            processed_functions[f"weight_{axis_name}"] = _rename_params_to_qnames(
-                func=kernel.probabilities,
-                regime_params_template=regime_params_template,
-                param_key=qname_from_tree_path((target, kernel_name, "probabilities")),
+            processed_functions[f"weight_{axis_name}"] = in_role(
+                func=_rename_params_to_qnames(
+                    func=kernel.probabilities,
+                    regime_params_template=regime_params_template,
+                    param_key=qname_from_tree_path(
+                        (target, kernel_name, "probabilities")
+                    ),
+                ),
+                role=OutputRole.FLOAT,
+                kind="Law",
             )
             transition_keys.update(dict.fromkeys((axis_name, support_name)))
 
             for state_name, output in kernel.outputs.items():
                 output_name = qname_from_tree_path((target, f"next_{state_name}"))
-                processed_functions[output_name] = _rename_params_to_qnames(
-                    func=output,
-                    regime_params_template=regime_params_template,
-                    param_key=output_name,
+                processed_functions[output_name] = _as_next_state_role(
+                    func=_rename_params_to_qnames(
+                        func=output,
+                        regime_params_template=regime_params_template,
+                        param_key=output_name,
+                    ),
+                    grid=flat_grids.get(qname_from_tree_path((target, state_name))),
                 )
                 transition_keys[output_name] = None
     return tuple(transition_keys)
@@ -8304,7 +8326,7 @@ def _extract_phase_transitions(*, phase_slice: RegimePhaseSpec) -> _TransitionBu
     """Transpose one canonical phase slice into per-target transition bundles.
 
     The slice's `state_transitions` values and its regime transition are
-    canonical per-target mappings (`canonicalize_regimes` resolved
+    canonical per-target mappings (`canonicalize_phased_regimes` resolved
     reachability and desugared identities), so the extraction is a pure
     transpose: bundle each target regime's `next_<state>` laws plus its
     regime-transition cell under `"next_regime"`. A target reachable through
@@ -9889,6 +9911,20 @@ def _fail_if_not_one_entry_per_regime(*, result: FloatND, n_regimes: int) -> Non
         )
 
 
+def _as_next_state_role(*, func: EconFunction, grid: Grid | None) -> EconFunction:
+    """Convert a deterministic law's output to its target state's kind.
+
+    This is where the engine receives a user's next state: a continuous target
+    reads the canonical float dtype and a discrete target an integer code, so a
+    law may return `1`, `True` or an integer array. An identity law already
+    returns the state's own kind, and an additive shock law converts its own sum:
+    the shock average recognizes it by its type.
+    """
+    if grid is None or isinstance(func, _IdentityTransition | AdditiveShockTransition):
+        return func
+    return in_role(func=func, role=target_role(grid), kind="Law")
+
+
 @dataclass(frozen=True, eq=False, kw_only=True)
 class _OneHotRegimeTransition:
     """A deterministic regime selector's code as a one-hot probability vector.
@@ -9938,7 +9974,10 @@ def _wrap_deterministic_regime_transition(
     annotations = {k: v for k, v in get_annotations(func).items() if k != "return"}
 
     wrapped = with_signature(args=annotations, return_annotation="FloatND")(
-        _OneHotRegimeTransition(func=func, n_regimes=len(regime_names_to_ids))
+        _OneHotRegimeTransition(
+            func=in_role(func=func, role=OutputRole.CODE, kind="Regime selector"),
+            n_regimes=len(regime_names_to_ids),
+        )
     )
 
     # Pin `__annotations__` on the final wrapper: `concatenate_functions`

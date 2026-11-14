@@ -28,10 +28,8 @@ import pytest
 
 from _lcm.egm.carry import EGMCarry
 from _lcm.egm.interp import interp_on_padded_grid
-from _lcm.egm.outer_envelope import (
-    build_stacked_outer_carry,
-    outer_envelope_at_query,
-)
+from _lcm.egm.outer_envelope import build_stacked_outer_carry
+from tests.solution._outer_envelope_reference import outer_envelope_at_query
 
 
 def _host_envelope(

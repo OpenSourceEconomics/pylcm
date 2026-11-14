@@ -187,7 +187,7 @@ def test_dispatched_law_fingerprint_survives_fresh_adaptation() -> None:
                         "cases": [
                             {
                                 "kind": "dataclass",
-                                "type": "engine._Constant",
+                                "type": "engine._RegimeCodeConstant",
                                 "fields": {"value": 0},
                             }
                         ],

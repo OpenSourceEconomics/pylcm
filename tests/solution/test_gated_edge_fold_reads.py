@@ -132,7 +132,7 @@ def test_a_folded_value_has_the_fold_among_its_planned_consumers() -> None:
 
     # Two consent edges fold onto `married` at this period and no core reads
     # its raw value, so the folds are its two planned consumers.
-    assert ledger.remaining_consumers(artifact=folded) == 2
+    assert ledger.remaining_counts[folded] == 2
 
 
 def test_a_fold_dispatch_is_a_planned_dispatch_of_its_own() -> None:

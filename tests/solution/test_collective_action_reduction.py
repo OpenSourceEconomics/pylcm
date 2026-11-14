@@ -1,4 +1,3 @@
-import inspect
 from collections.abc import Iterable
 
 import jax
@@ -10,7 +9,6 @@ from numpy.testing import assert_allclose, assert_array_equal
 from _lcm.solution.action_reduction import (
     COLLECTIVE_HARD_MAX_REDUCTION,
     CollectiveHardMaxAccumulator,
-    CollectiveHardMaxReduction,
     CollectiveHardMaxResult,
 )
 from tests.solution._reduced_maximum_probe import (
@@ -340,23 +338,6 @@ def test_collective_hard_max_supports_jit_vmap_and_int32_global_ids():
     assert_array_equal(result.best_global_action_id, jnp.array([2, 17]))
     assert result.best_global_action_id.dtype == jnp.dtype(jnp.int32)
     assert_array_equal(result.any_feasible, jnp.array([True, True]))
-
-
-def test_collective_hard_max_rejects_non_int32_global_action_ids():
-    accumulator = COLLECTIVE_HARD_MAX_REDUCTION.initialize(
-        stakeholder_template=jnp.zeros((2,))
-    )
-    unwrapped_add = inspect.unwrap(CollectiveHardMaxReduction.add)
-
-    with pytest.raises(TypeError, match=r"action_ids.*int32"):
-        unwrapped_add(
-            COLLECTIVE_HARD_MAX_REDUCTION,
-            accumulator=accumulator,
-            objectives=jnp.array([1.0, 2.0]),
-            stakeholder_values=jnp.array([[3.0, 4.0], [5.0, 6.0]]),
-            feasible=jnp.array([True, True]),
-            action_ids=jnp.array([0.0, 1.0]),
-        )
 
 
 def test_collective_hard_max_identity_is_not_matched_against_a_reduced_maximum():

@@ -54,6 +54,7 @@ from _lcm.solution.solver_diagnostics import diagnostics_template_snapshot
 from _lcm.typing import (
     ArtifactPayload,
     HostArray,
+    JSONScalar,
     JSONValue,
     SimulationPolicy,
     ValueND,
@@ -189,15 +190,13 @@ def _require_exact_bool(*, value: JSONValue, label: str) -> bool:
     return value
 
 
-def _require_exact_json_scalar(
-    *, value: JSONValue, label: str
-) -> bool | int | float | str:
+def _require_exact_json_scalar(*, value: JSONValue, label: str) -> JSONScalar:
     """Return one finite exact JSON scalar without truthy-type coercion."""
     if not any(type(value) is allowed for allowed in (bool, int, float, str)):
         raise SolutionIntegrityError(f"Persisted {label} is not an exact JSON scalar.")
     if type(value) is float and not math.isfinite(value):
         raise SolutionIntegrityError(f"Persisted {label} is not finite.")
-    return cast("bool | int | float | str", value)
+    return cast("JSONScalar", value)
 
 
 def _require_exact_dict(*, value: JSONValue, label: str) -> dict[str, JSONValue]:

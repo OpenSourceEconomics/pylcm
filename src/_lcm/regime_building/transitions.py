@@ -16,7 +16,6 @@ from typing import Literal, TypeAliasType, cast
 
 from dags.tree import QNAME_DELIMITER
 
-from _lcm.grids import DiscreteGrid
 from _lcm.identity_transition import _IdentityTransition
 from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.processes.joint_normal_lowering import JointStateEntry
@@ -24,6 +23,7 @@ from _lcm.typing import RegimeName, StateName, TransitionFunctionName
 from lcm.exceptions import (
     RegimeInitializationError,
 )
+from lcm.grids import DiscreteGrid
 from lcm.phased import Phased
 from lcm.typing import ContinuousState, DiscreteState, UserFunction
 

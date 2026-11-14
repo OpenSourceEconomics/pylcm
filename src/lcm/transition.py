@@ -24,6 +24,7 @@ from beartype import beartype
 from jax.tree_util import PyTreeDef
 
 from _lcm.beartype_conf import REGIME_CONF
+from _lcm.dtypes import as_canonical_float, name_of
 from _lcm.grids.continuous import ContinuousGrid
 from _lcm.identity_transition import _IdentityTransition
 from _lcm.time import ModelTime, TimeAxis, coordinate_kind
@@ -358,7 +359,11 @@ class StochasticTransition:
     """
 
     func: Callable[..., FloatND]
-    """The transition function returning a probability distribution."""
+    """The transition function returning a probability distribution.
+
+    It may return integer or Python-scalar probabilities, such as `1` for a
+    certain target; the engine reads them at the active float precision.
+    """
 
     fixed_component: tuple[int, ...] | None = field(
         default=None, metadata={"fingerprint_omit_if_default": True}
@@ -381,7 +386,12 @@ class StochasticTransition:
         )
 
     def __call__(self, *args: EconFunctionArg, **kwargs: EconFunctionArg) -> FloatND:
-        return self.func(*args, **kwargs)
+        # Where the engine receives the user's probabilities: every stochastic
+        # state weight and regime probability is evaluated through this call.
+        return as_canonical_float(
+            value=self.func(*args, **kwargs),
+            source=f"Stochastic transition '{name_of(self.func)}'",
+        )
 
 
 @beartype(conf=REGIME_CONF)
@@ -591,7 +601,7 @@ class JointTransition:
 
 
 @dataclass(frozen=True)
-class _AgeSpecialized[Coordinate: int | float = float]:
+class _AgeSpecialized[Coordinate: (int, float) = float]:
     """Base for the age-specialized build-time markers.
 
     An age-specialized marker binds a per-age object (a function or a grid) at model
@@ -641,7 +651,7 @@ class _AgeSpecialized[Coordinate: int | float = float]:
 
 @beartype(conf=REGIME_CONF)
 @dataclass(frozen=True)
-class AgeSpecializedFunction[Coordinate: int | float = float](
+class AgeSpecializedFunction[Coordinate: (int, float) = float](
     _AgeSpecialized[Coordinate]
 ):
     """Wrapper marking a function whose closure is bound per age at build time.
@@ -688,7 +698,7 @@ class AgeSpecializedFunction[Coordinate: int | float = float](
 
 @beartype(conf=REGIME_CONF)
 @dataclass(frozen=True)
-class AgeSpecializedGrid[Coordinate: int | float = float](_AgeSpecialized[Coordinate]):
+class AgeSpecializedGrid[Coordinate: (int, float) = float](_AgeSpecialized[Coordinate]):
     """Wrapper marking a continuous-state grid whose bounds vary per age.
 
     Wrap a grid *factory* to indicate that the grid's bounds/nodes depend on the

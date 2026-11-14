@@ -6,9 +6,17 @@ producer-swap map per (predicate, side) case — the specialized smooth DAG NBEG
 runs EGM on.
 """
 
+from types import MappingProxyType, MethodType
+from typing import cast
+
 import pytest
 
 from _lcm.egm.nbegm import PieceSet, collect_nbegm_metadata
+from _lcm.solution.nbegm import (
+    _NBEGMCaseIntervalEvaluators,
+    build_nbegm_interval_recipe,
+)
+from _lcm.typing import EconFunctionsMapping
 from lcm import ref
 from lcm.case_piece import case_boundary, piece
 from lcm.exceptions import NBEGMCaseError
@@ -83,3 +91,37 @@ def test_collect_rejects_a_piece_referencing_an_undeclared_boundary():
     pool = {"oop_a": oop_a, "oop_b": oop_b}
     with pytest.raises(NBEGMCaseError, match="not present"):
         collect_nbegm_metadata(functions=pool)
+
+
+def test_a_literal_case_threshold_is_bound_once_when_the_recipe_is_built():
+    """Resolving a literal boundary returns the one JAX scalar bound at build.
+
+    The compiled body that resolves the threshold performs no conversion: every
+    call reads back the same array the recipe bound in the working float format.
+    """
+    literal_boundary = case_boundary(condition=ref("assets") < 5.0, kind="jump")
+
+    @piece(output="oop", when=literal_boundary)
+    def oop_low(medical_expense):
+        return 0.1 * medical_expense
+
+    @piece(output="oop", otherwise=literal_boundary)
+    def oop_high(medical_expense):
+        return 0.9 * medical_expense
+
+    pool = MappingProxyType(
+        {"eligible": literal_boundary, "oop_low": oop_low, "oop_high": oop_high}
+    )
+    recipe = build_nbegm_interval_recipe(
+        declarations=pool,
+        functions=cast("EconFunctionsMapping", pool),
+        liquid_name="assets",
+        state_names=("assets",),
+        action_names=(),
+    )
+    evaluators = cast(
+        "_NBEGMCaseIntervalEvaluators",
+        cast("MethodType", recipe.evaluate_preimages).__self__,
+    )
+    resolve = evaluators.threshold
+    assert resolve({}) is resolve({})

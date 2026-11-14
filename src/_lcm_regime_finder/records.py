@@ -1,5 +1,4 @@
 """Typed records for serialized analysis and mutable construction buffers."""
-from fractions import Fraction
 from collections.abc import Mapping, Sequence
 from typing import NotRequired, TypedDict
 
@@ -115,26 +114,8 @@ class IntervalCandidate(TypedDict):
     segment: Mapping[str, JSONValue]
 
 
-class NumericalRow(TypedDict):
-    reward: Fraction
-    discount: Fraction
-    terminal: Fraction | None
-    kernel: dict[str, Fraction]
 
 
-class NumericalReport(TypedDict, total=False):
-    format_version: str
-    status: str
-    guarantee: str
-    layers: dict[str, str]
-    comparisons: list[dict[str, JSONValue]]
-    mass_errors: dict[str, dict[str, str]]
-    witnesses: list[dict[str, JSONValue]]
-    positive_edges: list[dict[str, str]]
-    trust_boundary: str
-    contract: dict[str, JSONValue]
-    maxima: dict[str, str]
-    max_errors: dict[str, str]
 
 
 class CandidateCheck(TypedDict, total=False):

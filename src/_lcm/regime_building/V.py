@@ -19,7 +19,7 @@ import jax.numpy as jnp
 from dags import concatenate_functions
 from dags.tree import qname_from_tree_path
 
-from _lcm.grids import ContinuousGrid, DiscreteGrid, IrregSpacedGrid
+from _lcm.grids import ContinuousGrid
 from _lcm.grids.continuous import _clip_grid_value
 from _lcm.grids.coordinates import get_irreg_coordinate
 from _lcm.grids.discrete import read_at_codes
@@ -28,6 +28,7 @@ from _lcm.regime_building.ndimage import map_coordinates
 from _lcm.typing import ArrayTree, StateName
 from _lcm.utils.functools import all_as_kwargs
 from _lcm.variables import from_regime, get_grids
+from lcm.grids import DiscreteGrid, IrregSpacedGrid
 from lcm.regime import Regime as UserRegime
 from lcm.typing import (
     BoolND,

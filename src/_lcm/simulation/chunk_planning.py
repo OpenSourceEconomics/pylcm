@@ -9,12 +9,10 @@ selection means widest fitting this bound, not a measured allocator optimum.
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Protocol, runtime_checkable
 
 import jax
 
 from _lcm.execution.workspace_planning import CompilerMemoryReservation
-from _lcm.simulation.residency import DeviceBufferFootprint, resident_bytes_by_device
 from lcm.exceptions import ExecutionPlanningError
 
 
@@ -176,11 +174,6 @@ class IndependentChunkReceipt:
     lowering_seconds: float | None = None
     backend_seconds: float | None = None
 
-    @property
-    def profile_count(self) -> int:
-        """Count complete profile attempts, including rejected candidates."""
-        return len(self.attempts)
-
 
 @dataclass(frozen=True, kw_only=True)
 class SimulationChunkPlan:
@@ -189,63 +182,6 @@ class SimulationChunkPlan:
     profile: SimulationChunkProfile
     required_bytes: MappingProxyType[jax.Device, int]
     receipt: IndependentChunkReceipt | None = None
-
-
-@runtime_checkable
-class ChunkProfiler(Protocol):
-    """Prepare an extent using the actual numerical bodies without dispatch."""
-
-    def __call__(self, *, n_subjects: int) -> SimulationChunkProfile:
-        """Return real compiled stages and their complete future owner inventory."""
-        ...
-
-
-def plan_simulation_chunks(
-    *,
-    candidates: tuple[int, ...],
-    profile_candidate: ChunkProfiler,
-    live: DeviceBufferFootprint,
-    budget_bytes: int,
-    devices: tuple[jax.Device, ...],
-) -> SimulationChunkPlan:
-    """Choose the first fitting declared extent using fresh actual residency.
-
-    No input spans are subtracted here: abstract profiles cannot establish identity
-    with future runtime buffers. Each actual dispatch performs its own more precise
-    compiler-input overlap accounting against the still-current owners.
-    """
-    _validate_devices(devices=devices)
-    if type(budget_bytes) is not int or budget_bytes <= 0:
-        raise ExecutionPlanningError("A simulation chunk budget must be positive.")
-    if (
-        not candidates
-        or any(type(width) is not int or width <= 0 for width in candidates)
-        or tuple(sorted(set(candidates), reverse=True)) != candidates
-    ):
-        raise ExecutionPlanningError(
-            "Simulation chunk candidates must be distinct positive decreasing extents."
-        )
-    resident = resident_bytes_by_device(
-        live=live,
-        arguments=DeviceBufferFootprint(spans=MappingProxyType({})),
-        devices=devices,
-    )
-    if max(resident.values()) > budget_bytes:
-        raise ExecutionPlanningError(
-            "Simulation chunk admission fails on existing retained storage."
-        )
-    for width in candidates:
-        profile = profile_candidate(n_subjects=width)
-        if profile.n_subjects != width:
-            raise ExecutionPlanningError(
-                "The simulation chunk profile does not match its requested extent."
-            )
-        required = _required_bytes(profile=profile, resident=resident, devices=devices)
-        if all(value <= budget_bytes for value in required.values()):
-            return SimulationChunkPlan(profile=profile, required_bytes=required)
-    raise ExecutionPlanningError(
-        f"No declared simulation chunk fits the {budget_bytes}-byte device budget."
-    )
 
 
 def _required_bytes(

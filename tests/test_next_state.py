@@ -3,7 +3,7 @@ from types import MappingProxyType
 import jax
 import jax.numpy as jnp
 
-from _lcm.grids import DiscreteGrid, categorical
+from _lcm.grids import categorical
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.next_state import (
     _create_discrete_stochastic_next_func,
@@ -16,6 +16,7 @@ from _lcm.regime_building.processing import (
 )
 from lcm import LinearAggregator, LinearExpectation
 from lcm.ages import AgeGrid
+from lcm.grids import DiscreteGrid
 from lcm.typing import ContinuousState, ScalarInt
 from tests.conftest import bind_laws, build_prepared_structure
 from tests.test_models.deterministic.regression import (

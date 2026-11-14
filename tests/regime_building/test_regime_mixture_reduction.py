@@ -271,42 +271,6 @@ def test_two_target_value_order_is_invariant_across_separate_compilations(
         assert bool((got_forward > competitor) == (got_reverse > competitor))
 
 
-def test_two_target_compare_swap_preserves_duplicate_contribution_gradients():
-    """The one-comparison K=2 path preserves the derivative of the full sum."""
-    weights = jnp.asarray([0.5, 0.25])
-    values = jnp.asarray([2.0, 4.0])
-
-    # keyword-only-exempt: library-callback=jax.grad
-    def mixture(w: FloatND, v: FloatND) -> FloatND:
-        return _sum_regime_mixture(
-            mixture_terms=[("r0", w[0], v[0]), ("r1", w[1], v[1])], like=v[0]
-        )
-
-    grad_weights, grad_values = jax.jit(jax.grad(mixture, argnums=(0, 1)))(
-        weights, values
-    )
-    np.testing.assert_array_equal(np.asarray(grad_weights), np.asarray(values))
-    np.testing.assert_array_equal(np.asarray(grad_values), np.asarray(weights))
-
-
-def test_value_ordering_preserves_gradients_at_duplicate_contributions():
-    """The compare keys are nondifferentiable; the selected values are not."""
-    weights = jnp.asarray([0.5, 0.25, 0.25])
-    values = jnp.asarray([2.0, 4.0, 4.0])  # every contribution equals one
-
-    # keyword-only-exempt: library-callback=jax.grad
-    def mixture(w: FloatND, v: FloatND) -> FloatND:
-        return _sum_regime_mixture(
-            mixture_terms=[(f"r{i}", w[i], v[i]) for i in range(3)], like=v[0]
-        )
-
-    grad_weights, grad_values = jax.jit(jax.grad(mixture, argnums=(0, 1)))(
-        weights, values
-    )
-    np.testing.assert_array_equal(np.asarray(grad_weights), np.asarray(values))
-    np.testing.assert_array_equal(np.asarray(grad_values), np.asarray(weights))
-
-
 def test_invalid_nan_and_negative_probability_fail_visibly():
     live_nan = _sum_regime_mixture(
         mixture_terms=[

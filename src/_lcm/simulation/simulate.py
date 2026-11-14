@@ -54,7 +54,7 @@ from _lcm.engine import (
     StateActionSpace,
     placed_devices_for_ids,
 )
-from _lcm.grids import ContinuousGrid, DiscreteGrid
+from _lcm.grids import ContinuousGrid
 from _lcm.off_grid import count_off_grid
 from _lcm.params.edges import regime_kernel_params
 from _lcm.processes import _ContinuousStochasticProcess
@@ -206,9 +206,10 @@ from _lcm.solution.host_values import (
 )
 from _lcm.solution.solve_phase_records import CallId, solve_phase
 from _lcm.solution.validate_V import validate_V, value_function_nan_error
-from _lcm.time import TimeAxis, coordinate_at, coordinate_kind
+from _lcm.time import TimeAxis, coordinate_at, coordinate_kind, display_age_at
 from _lcm.typing import (
     ActionName,
+    AgeValue,
     ArrayTree,
     EconFunctionArg,
     FlatParams,
@@ -246,6 +247,7 @@ from lcm.exceptions import (
     OffGridStateError,
     ShockDeclarationError,
 )
+from lcm.grids import DiscreteGrid
 from lcm.result import SimulationResult
 from lcm.solver_api import SIMULATION_POLICY, ActionOutput, ReplayReader
 from lcm.typing import (
@@ -1290,9 +1292,10 @@ def _subject_chunk_periods(  # noqa: PLR0915
             subject_outputs=True,
         )
 
+        age_label = display_age_at(ages=ages, period=period)
         log_period_header(
             logger=logger,
-            age=age,
+            age_label=age_label,
             n_active_regimes=len(active_regimes),
             time_kind=coordinate_kind(ages),
         )
@@ -1510,6 +1513,7 @@ def _subject_chunk_periods(  # noqa: PLR0915
         _validate_period_values(
             logger=logger,
             age=age,
+            age_label=age_label,
             time_kind=coordinate_kind(ages),
             memory=memory,
             period_results=tuple(
@@ -1909,6 +1913,7 @@ def _validate_period_values(
     *,
     logger: logging.Logger,
     age: ScalarInt | ScalarFloat,
+    age_label: str,
     period_results: tuple[tuple[RegimeName, PeriodRegimeSimulationData], ...],
     memory: SimulationMemory | None = None,
     time_kind: Literal["age", "period"] = "age",
@@ -1931,6 +1936,7 @@ def _validate_period_values(
     Args:
         logger: Logger carrying the runtime-validation policy.
         age: Age corresponding to the current period.
+        age_label: The same coordinate, formatted on the host for log lines.
         period_results: Tuple of (regime name, that regime's simulated data for
             this period) pairs, in the order the period simulated them.
         memory: Optional current-period owner for profiled diagnostic admission.
@@ -1955,7 +1961,7 @@ def _validate_period_values(
     has_nan, has_non_finite = flags.tolist()
     log_non_finite_values(
         logger=logger,
-        age=age,
+        age_label=age_label,
         regime_names=regime_names,
         flags=tuple(has_non_finite),
         time_kind=time_kind,
@@ -2051,7 +2057,7 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
     original_n_subjects: int | None = None,
     own_stakeholder: Int1D,
     new_own_stakeholder: Int1D,
-    gated_edge_fold_age: float | None = None,
+    gated_edge_fold_age: AgeValue | None = None,
     sim_policy: (
         EGMSimPolicy | NBEGMGridPolicy | NNBEGMSimPolicy | NestedEGMSimPolicy | None
     ) = None,
@@ -4886,8 +4892,9 @@ def _score_nnbegm_winner(
         next_regime_to_V_arr=next_regime_to_V_arr,
         flat_params=flat_params,
         referenced_value_kwargs=referenced_value_kwargs,
-        period=period,
+        period=jnp.asarray(period, dtype=jnp.int32),
         age=age,
+        Q_and_F=cast("QAndFFunction", regime.simulation.Q_and_F[period]),
     )
     if type(scored) is not BoundedResult or bound_summary:
         return scored
@@ -5448,8 +5455,9 @@ def _canonical_Q_at_actions(
         action_names=action_names,
         next_regime_to_V_arr=next_regime_to_V_arr,
         flat_params=flat_params,
-        period=period,
+        period=jnp.asarray(period, dtype=jnp.int32),
         age=age,
+        Q_and_F=cast("QAndFFunction", regime.simulation.Q_and_F[period]),
         referenced_value_kwargs=referenced_value_kwargs,
         active_subjects=active_subjects,
     )
@@ -5486,24 +5494,22 @@ def _evaluate_canonical_Q_at_actions(
     action_names: tuple[ActionName, ...],
     next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
     flat_params: FlatRegimeParams,
-    period: int | IntND,
+    period: ScalarInt,
     age: ScalarFloat | ScalarInt,
+    Q_and_F: QAndFFunction,
     referenced_value_kwargs: QAndFKwargs = MappingProxyType({}),
     active_subjects: BoolND | None = None,
-    Q_and_F: QAndFFunction | None = None,
 ) -> tuple[FloatND, BoolND] | BoundedResult[tuple[FloatND, BoolND]]:
     """Evaluate canonical actions once, retaining integrity through transformations.
 
-    `Q_and_F` is the period's `regime.simulation.Q_and_F` entry; a caller that
-    traces `period` passes it, since a traced period cannot index the mapping.
+    `Q_and_F` is the period's `regime.simulation.Q_and_F` entry, looked up by the
+    caller with the host period; `period` is the `int32` value it receives.
     """
     from _lcm.regime_building.processing import (  # noqa: PLC0415 - completed model's pointwise owner
         _SubjectPointwiseQAndF,
     )
 
-    function = (
-        regime.simulation.Q_and_F[cast("int", period)] if Q_and_F is None else Q_and_F
-    )
+    function = Q_and_F
     owner = function
     while isinstance(owner, functools.partial):
         if owner.args:
@@ -5517,7 +5523,7 @@ def _evaluate_canonical_Q_at_actions(
         next_regime_to_V_arr=next_regime_to_V_arr,
         **referenced_value_kwargs,
         **flat_params,
-        period=jnp.asarray(period, dtype=jnp.int32),
+        period=period,
         age=age,
         **(
             {ACTIVE_SUBJECTS_ARGUMENT: active_subjects}
@@ -5542,7 +5548,7 @@ def _evaluate_canonical_Q_at_actions(
         raise TypeError(
             "Canonical actual-action evaluation must produce mandatory integrity."
         )
-    values, feasible = cast("tuple[FloatND, BoolND]", evaluated)
+    values, feasible = evaluated
     return jnp.asarray(values), jnp.asarray(feasible).astype(bool)
 
 

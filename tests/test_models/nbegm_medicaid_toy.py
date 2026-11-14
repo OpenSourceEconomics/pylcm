@@ -25,17 +25,14 @@ from lcm import LinSpacedGrid, Model, cash_on_hand_with_subsidy
 from lcm.transition import AgeSpecializedFunction
 from lcm.typing import BoolND, FloatND, UserFunction, UserParamsNode
 
-# RegimeId, bequest, and the survival probabilities are re-exported: the
-# medicaid agreement test assembles its own validation models from these
-# toy internals.
+# RegimeId and bequest are re-exported: the medicaid agreement test assembles
+# its own validation models from these toy internals.
 from tests.test_models.nbegm_common import (
     RegimeId,  # noqa: F401
     bequest,  # noqa: F401
     feasible,
     make_alive_dead_model,
     next_liquid_from_savings,
-    prob_die,  # noqa: F401
-    prob_stay_alive,  # noqa: F401
     resolve_solver,
     savings,
     utility,

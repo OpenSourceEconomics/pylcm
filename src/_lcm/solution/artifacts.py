@@ -11,7 +11,6 @@ import numpy as np
 
 from _lcm.engine import Regime
 from _lcm.execution.core_program import ProgramScope, core_program_graph
-from _lcm.grids import DiscreteGrid
 from _lcm.params.edges import flat_namespaces, regime_kernel_params
 from _lcm.params.mapping_leaf import MappingLeaf
 from _lcm.params.sequence_leaf import SequenceLeaf
@@ -38,6 +37,7 @@ from _lcm.typing import (
 )
 from lcm._solver_api.authority import _ArrayCopier
 from lcm._solver_api.entries import _LazyEntry
+from lcm.grids import DiscreteGrid
 from lcm.solver_api import (
     EGM_CONTINUATION,
     SIMULATION_POLICY,

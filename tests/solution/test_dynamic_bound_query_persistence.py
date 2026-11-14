@@ -19,13 +19,13 @@ from _lcm.egm.carry import (
     build_template_egm_query_data,
 )
 from _lcm.engine import EGMPolicyRead
-from _lcm.grids import LinSpacedGrid
 from _lcm.solution.continuation_reads import continuation_leaf_reads
 from _lcm.solution.egm import _EGMCore
 from _lcm.solution.fingerprint import fingerprint_model_structure
 from _lcm.solution.model_authority import SolutionAuthority, build_solution_authority
 from lcm import AgeGrid, Model, post_decision_lower_bound
 from lcm.exceptions import UnsupportedOperationError
+from lcm.grids import LinSpacedGrid
 from lcm.persistence import load_solution, save_solution
 from lcm.solver_api import (
     EGM_CONTINUATION,

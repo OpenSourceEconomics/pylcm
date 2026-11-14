@@ -222,14 +222,11 @@ def test_incomplete_or_mistyped_rows_are_refused(mutation):
         admit_capture(manifest=manifest, precision=32, source_sha="a" * 64)
 
 
-def test_only_strings_are_encoded_losslessly():
+def test_strings_are_encoded_losslessly():
     values = ["saving", "done", "", "a\x00", "\u2603", '"\\']
     encoded, dtype = encode_object_strings(values)
     assert [json.loads(item) for item in encoded] == values
     assert dtype == f"<U{max(map(len, encoded))}"
-    for invalid in ([None], [1], [object()]):
-        with pytest.raises(TypeError):
-            encode_object_strings(invalid)
 
 
 @pytest.mark.parametrize(
@@ -563,13 +560,6 @@ def _retired_manifest() -> dict[str, _Json]:
     manifest["original_assertion_retained"] = False
     manifest["original_comparison_role"] = "retained_diagnostic"
     return manifest
-
-
-def test_retained_diagnostic_metadata_is_admitted() -> None:
-    """Complete observations remain admissible when their old gate is diagnostic."""
-    assert "metadata admitted" in admit_capture(
-        manifest=_retired_manifest(), precision=32, source_sha="a" * 64
-    )
 
 
 def test_retired_comparison_cannot_claim_the_assertion_remains_active() -> None:

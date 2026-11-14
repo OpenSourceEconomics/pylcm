@@ -16,7 +16,7 @@ import numpy as np
 import pytest
 
 from _lcm.utils.logging import LogLevel
-from _lcm.zero_safe import joint_weight, zero_safe_weighted_term
+from _lcm.zero_safe import zero_safe_weighted_term
 from lcm import (
     AgeGrid,
     Model,
@@ -354,26 +354,3 @@ def test_a_negative_smallest_subnormal_does_not_bypass_the_distribution_guard() 
     value = _source_value(model=model, runtime_checks=False)
 
     assert bool(jnp.all(jnp.isnan(value)))
-
-
-def test_a_subnormal_joint_product_is_never_larger_than_its_true_size() -> None:
-    """A product the backend cannot form stays nonzero and never overstates the node.
-
-    Retaining the product's own mantissa would need subnormal arithmetic the
-    backend does not perform: it flushes a subnormal result to zero, so the true
-    value is unavailable at the point the product is formed. The substitute is
-    the smallest representable magnitude, which no underflowed product can fall
-    below — the error is one-sided by construction.
-    """
-    dtype = _active_dtype()
-    if dtype == np.dtype("float32"):
-        factor, n_factors = np.asarray(2.0**-22, dtype=dtype), 6
-    else:
-        factor, n_factors = np.asarray(2.0**-52, dtype=dtype), 20
-    factors = jnp.full((n_factors,), factor, dtype=jnp.asarray(0.0).dtype)
-    exact = np.longdouble(factor) ** n_factors
-
-    got = np.longdouble(np.asarray(joint_weight(factors), dtype=dtype))
-
-    assert got > 0.0
-    assert got <= exact

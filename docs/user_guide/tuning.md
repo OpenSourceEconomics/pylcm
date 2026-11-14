@@ -576,7 +576,7 @@ interchangeable executables. Selection is largest-first feasibility, not a measu
 speed optimum.
 
 Receipts use frontier_version=3. Their candidates remain in ascending geometric order;
-attempts record actual profile order, including refusals and map fallback. profile_count
+attempts record actual profile order, including refusals and map fallback. Their number
 counts complete profiles, not backend compilations. Current inputs and resident owners
 are checked on each call, and live admission is still checked before chunk execution.
 

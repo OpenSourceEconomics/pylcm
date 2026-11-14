@@ -34,13 +34,12 @@ import pytest
 
 from _lcm.egm.carry import EGMCarry
 from _lcm.egm.continuation import _aggregate_child_choices
-from _lcm.egm.interp import (
-    interp_on_padded_grid,
-    interp_right_germ_on_padded_grid,
-    prepare_padded_grid,
-)
-from _lcm.egm.outer_envelope import outer_envelope_at_query
+from _lcm.egm.interp import interp_on_padded_grid, prepare_padded_grid
 from _lcm.solution.feasibility import BoundedResult
+from tests.solution._outer_envelope_reference import (
+    interp_right_germ_on_padded_grid,
+    outer_envelope_at_query,
+)
 
 
 def test_exact_node_continuation_gradient_matches_carry_marginal():

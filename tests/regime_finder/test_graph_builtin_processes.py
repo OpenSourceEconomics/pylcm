@@ -16,10 +16,9 @@ if TYPE_CHECKING:
 
 
 def process(name):
-    module = "ar1" if "AR1" in name else "iid"
     return {
         "kind": "dataclass",
-        "type": f"_lcm.processes.{module}.{name}",
+        "type": f"lcm.processes.{name}",
         "fields": {
             "n_points": 3,
             "state_conditioned": None,
@@ -95,7 +94,7 @@ def test_lowered_joint_normal_coordinate_is_an_iid_latent_axis() -> None:
     coordinate["fields"]["group"] = "income"
     coordinate["fields"]["joint"] = {
         "kind": "dataclass",
-        "type": "_lcm.processes.joint_normal.JointNormalIIDProcess",
+        "type": "lcm.processes.JointNormalIIDProcess",
         "fields": {
             "states": ["income", "return"],
             "cov": [[1, 0.5], [0.5, 1]],
@@ -185,12 +184,16 @@ def test_phased_process_owner_is_the_axis_not_the_phase_slot() -> None:
     fields["states"]["x"] = process_grid
     del fields["state_transitions"]["x"]
     result = _check_analysis(source)
+    expected = {
+        "lcm.processes.RouwenhorstAR1Process",
+        "lcm.processes.TauchenAR1Process",
+    }
     callbacks = [
         cb
         for cb in result["analysis"]["declarations"]["callbacks"].values()
-        if cb.get("original", {}).get("type", "").startswith("_lcm.processes.ar1.")
+        if cb.get("original", {}).get("type") in expected
     ]
-    assert callbacks
+    assert {cb["original"]["type"] for cb in callbacks} == expected
     assert all(cb["arguments"] == ["x"] for cb in callbacks)
 
 
@@ -331,7 +334,7 @@ def _conditioned_ar1_declaration(
 ) -> dict[str, JSONValue]:
     return {
         "kind": "dataclass",
-        "type": "_lcm.processes.ar1.TauchenAR1Process",
+        "type": "lcm.processes.TauchenAR1Process",
         "fields": {
             "n_points": 3,
             "gauss_hermite": False,
@@ -449,7 +452,7 @@ def test_conditioned_process_rejects_missing_or_extra_declared_inputs(
         original = callback.get("original")
         if (
             not isinstance(original, dict)
-            or original.get("type") != "_lcm.processes.ar1.TauchenAR1Process"
+            or original.get("type") != "lcm.processes.TauchenAR1Process"
         ):
             continue
         for selected_field in ("arguments", "reads") if field == "both" else (field,):
@@ -541,7 +544,7 @@ def test_original_process_without_a_conditioning_name_has_no_source_authority(
 
 def _conditioned_iid_declaration(conditioning: str | None) -> dict[str, JSONValue]:
     declaration = _conditioned_ar1_declaration(conditioning=conditioning)
-    declaration["type"] = "_lcm.processes.iid.NormalIIDProcess"
+    declaration["type"] = "lcm.processes.NormalIIDProcess"
     _json_object(declaration["fields"]).pop("rho")
     return declaration
 
@@ -1213,3 +1216,65 @@ def test_overlapping_original_joint_outputs_have_no_producer_authority(
     assert all(
         row["kind"] != "analysis declaration identity" for row in checked["errors"]
     )
+
+
+def _state_conditioning_record(identity: str) -> dict[str, JSONValue]:
+    from lcm.processes import StateConditioned
+
+    current = f"{StateConditioned.__module__}.{StateConditioned.__qualname__}"
+    assert current == "lcm.state_conditioned.StateConditioned"
+    tag = {
+        "current": current,
+        "legacy": "_lcm.processes.base.StateConditioned",
+        "foreign": "foreign.StateConditioned",
+    }[identity]
+    return {
+        "kind": "dataclass",
+        "type": tag,
+        "fields": {"on": "history", "by": {"low": 0.5, "high": 1.0}},
+    }
+
+
+@pytest.mark.parametrize("identity", ["current", "legacy", "foreign"])
+def test_nested_conditioned_iid_scope_uses_exact_library_class_identities(
+    identity: str,
+) -> None:
+    from _lcm_regime_finder.graph_scope import _has_conditioned_law, unconditioned_iid
+
+    declaration = process("NormalIIDProcess")
+    declaration["fields"]["sigma"] = _state_conditioning_record(identity)
+    expected = identity != "foreign"
+    assert _has_conditioned_law({"nested": [declaration]}) is expected
+    assert unconditioned_iid(declaration) is not expected
+
+
+@pytest.mark.parametrize("identity", ["current", "legacy", "foreign"])
+def test_original_conditioning_reader_uses_exact_library_class_identities(
+    identity: str,
+) -> None:
+    from _lcm_regime_finder.semantic_check import _original_process_conditioning_inputs
+
+    original = {"nested": [_state_conditioning_record(identity)]}
+    expected = frozenset({"history"}) if identity != "foreign" else frozenset()
+    assert _original_process_conditioning_inputs(original) == expected
+
+
+def test_public_conditioned_law_keeps_its_parameter_only_history() -> None:
+    from lcm_examples.stochastic_volatility import get_model
+    from _lcm_regime_finder.model_snapshot import read_model
+
+    model = get_model(
+        n_periods=3, wealth_n_points=8, consumption_n_points=8, income_n_points=3
+    )
+    original = read_model(model)
+    report = analyze_production(original, search_mode="heuristic")
+    analysis = report["analysis"]
+    cells = [
+        cell for cell in analysis["declarations"]["cells"] if cell["regime"] == "alive"
+    ]
+    assert cells
+    for cell in cells:
+        options = analysis["interfaces"][cell["id"]]["options"]
+        assert options
+        assert all("lagged_uncertainty" in option["states"] for option in options)
+    assert report["semantic_check"]["status"] != "FAIL", report["semantic_check"]

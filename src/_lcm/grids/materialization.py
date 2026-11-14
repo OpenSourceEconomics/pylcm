@@ -12,17 +12,17 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from _lcm.grids import (
+from _lcm.grids import Grid
+from _lcm.processes.base import _ContinuousStochasticProcess
+from lcm.exceptions import ExecutionPlanningError
+from lcm.grids import (
     DiscreteGrid,
-    Grid,
     IrregSpacedGrid,
     LinSpacedGrid,
     LogSpacedGrid,
     PiecewiseLinSpacedGrid,
     PiecewiseLogSpacedGrid,
 )
-from _lcm.processes.base import _ContinuousStochasticProcess
-from lcm.exceptions import ExecutionPlanningError
 from lcm.typing import Float1D, Int1D
 
 if TYPE_CHECKING:
@@ -39,8 +39,7 @@ def admitted_grid_extent(*, spec: Grid) -> int:
     if isinstance(spec, PiecewiseLinSpacedGrid | PiecewiseLogSpacedGrid) and type(
         spec
     ) in (PiecewiseLinSpacedGrid, PiecewiseLogSpacedGrid):
-        counts = tuple(int(np.asarray(n)) for n in spec.points_per_segment)
-        count = sum(counts)
+        count = spec.n_points
         if count > np.iinfo(np.int32).max:
             raise ExecutionPlanningError(
                 "Admitted piecewise grid extent exceeds the original int32 axis."
@@ -49,7 +48,7 @@ def admitted_grid_extent(*, spec: Grid) -> int:
     if isinstance(spec, LinSpacedGrid | LogSpacedGrid | IrregSpacedGrid) and type(
         spec
     ) in (LinSpacedGrid, LogSpacedGrid, IrregSpacedGrid):
-        return int(np.asarray(spec.n_points))
+        return spec.n_points
     if isinstance(spec, _ContinuousStochasticProcess):
         # Process dimensions are plain declaration metadata; .params is not.
         return int(spec.n_points)
@@ -154,8 +153,8 @@ def materialize_original_grid(
     ):
         return _uniform_points(
             owner=owner,
-            start=spec.start,
-            stop=spec.stop,
+            start=spec._start,  # noqa: SLF001 - the bound canonical operand
+            stop=spec._stop,  # noqa: SLF001 - the bound canonical operand
             n_points=count,
             logarithmic=type(spec) is LogSpacedGrid,
         )
@@ -177,7 +176,7 @@ def materialize_original_grid(
                     owner=owner,
                     start=start,
                     stop=stop,
-                    n_points=int(np.asarray(n)),
+                    n_points=n,
                     logarithmic=type(spec) is PiecewiseLogSpacedGrid,
                 )
             )

@@ -3,7 +3,7 @@
 A regime with `solver=NEGM(...)` must satisfy the nesting contract on top of the
 inner DC-EGM contract. Every violation raises `ModelInitializationError` at model
 build, naming the offending feature **and** the correct alternative solver. The
-checks run on the user regimes directly (`validate_negm_regimes`), so each case
+checks run on the user regime directly (`validate_negm_regime`), so each case
 constructs regimes and asserts the rejection without building kernels or solving.
 
 The cases mutate the valid kinked-toy NEGM regime one rule at a time:
@@ -26,7 +26,7 @@ import pytest
 
 from _lcm.egm.negm_validation import (
     _fail_if_margins_not_distinct,
-    validate_negm_regimes,
+    validate_negm_regime,
 )
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_law import bind_regime_law
@@ -70,8 +70,8 @@ _LAWS = MappingProxyType({"alive": _NON_TERMINAL_LAW})
 
 
 def _validate(regime: UserRegime) -> None:
-    """Run the NEGM contract check on a single-regime mapping."""
-    validate_negm_regimes(user_regimes={"alive": regime}, laws=_LAWS)
+    """Run the NEGM contract check on the single regime."""
+    validate_negm_regime(regime_name="alive", user_regime=regime, law=_LAWS["alive"])
 
 
 def test_valid_kinked_toy_negm_regime_passes_validation():

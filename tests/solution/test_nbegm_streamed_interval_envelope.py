@@ -40,10 +40,7 @@ from _lcm.egm import nbegm_step
 from _lcm.egm.nbegm_step import nbegm_per_interval_continuation_step_savings
 from _lcm.egm.preferences import Preferences
 from _lcm.egm.upper_envelope import query as envelope_query
-from _lcm.egm.upper_envelope._exact_affine.ffi import (
-    exact_affine_read,
-    kernel_built_for_current_backend,
-)
+from _lcm.egm.upper_envelope._exact_affine.ffi import exact_affine_read
 from _lcm.egm.upper_envelope.query import (
     NO_OWNER,
     ComparisonArithmetic,
@@ -53,6 +50,7 @@ from _lcm.egm.upper_envelope.query import (
     merge_envelope_winner,
 )
 from lcm.typing import Float1D, FloatND, IntND, ScalarFloat
+from tests.ci._capability import kernel_built_for_current_backend
 from tests.conftest import assert_agrees_to_ulp
 from tests.solution._crra_preferences import crra_preferences
 

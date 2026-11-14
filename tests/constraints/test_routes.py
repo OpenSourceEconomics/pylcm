@@ -30,7 +30,7 @@ from _lcm.constraints.dispositions import (
     ProvedByConstruction,
     Reject,
 )
-from _lcm.constraints.ir import Compare, Condition, Const
+from _lcm.constraints.ir import Compare, Const
 from _lcm.constraints.materialize import transitive_arg_names
 from _lcm.constraints.processed import ProcessedConstraint, normalize_constraints
 from _lcm.constraints.routes import (
@@ -45,6 +45,7 @@ from _lcm.constraints.routes import (
 )
 from _lcm.egm.nbegm_constraint_boundaries import NBEGMFeasibilityBoundaryProgram
 from lcm import ref
+from lcm.condition import Condition
 from lcm.typing import FloatND, FunctionName
 
 _PAYLOAD = NBEGMFeasibilityBoundaryProgram(
@@ -295,22 +296,6 @@ def test_a_boundary_compiler_at_a_site_compiles_the_constraint() -> None:
     plan = _plan(route)
 
     assert isinstance(plan.entries[0].disposition, CompileBoundary)
-
-
-def test_a_capability_answering_outside_its_contract_is_refused() -> None:
-    """Deciding *where* a constraint is evaluated belongs to the planner."""
-
-    def rogue(
-        *,
-        bound: BoundConstraint,
-        context: ConstraintContext,  # noqa: ARG001
-    ) -> Evaluate:
-        return Evaluate(constraint=bound.constraint, stage="state_action")
-
-    route = _route(_site(structural_proofs=(rogue,)))  # ty: ignore[invalid-argument-type]
-
-    with pytest.raises(TypeError, match="may only"):
-        plan_constraints(constraints=_borrowing(), routes=(route,), context=_context())
 
 
 def test_a_route_from_another_phase_is_refused() -> None:

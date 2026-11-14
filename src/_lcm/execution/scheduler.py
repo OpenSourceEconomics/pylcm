@@ -118,8 +118,7 @@ class BufferRegistry:
     them goes; nothing here keeps an array, or the buffer behind it, alive.
     The rule is what makes an identity trustworthy: identities are device
     pointers, so one that outlived every array that declared it would name
-    whatever allocation lands on that pointer next. `declared_shards` is the
-    live declared set, pruned as it is read.
+    whatever allocation lands on that pointer next.
 
     The registry and the per-period transfer cache (`PeriodTransferCache`) are
     the two mutable engine-internal objects: every other execution-side
@@ -182,12 +181,6 @@ class BufferRegistry:
                     _add_declaring_array(declaring=declaring, array=leaf)
                     for holder in holders[shard]:
                         _add_declaring_array(declaring=declaring, array=holder)
-
-    @property
-    def declared_shards(self) -> frozenset[ShardIdentity]:
-        """Return every shard identity a live declaring array still declares."""
-        self._prune_dead_declarations()
-        return frozenset(self._unproduced_shards)
 
     def is_not_produced(self, *, array: jax.Array) -> bool:
         """Report whether any shard of this array is a buffer no dispatch produced.

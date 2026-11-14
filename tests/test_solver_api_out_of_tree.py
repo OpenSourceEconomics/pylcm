@@ -52,7 +52,6 @@ from lcm.solver_api import (
     SolverExecutionCapabilities,
 )
 from lcm.solvers import (
-    NBEGM,
     ContinuationSpec,
     CoreBuildContext,
     CoreExecutionDisposition,
@@ -444,10 +443,6 @@ def _nnbegm_model() -> Model:
         variant="n_nbegm",
         outer_search=FiniteOuterGrid(grid=n_nbegm_toy.OUTER_GRID),
     )
-
-
-def _nnbegm_inner() -> NBEGM:
-    return NBEGM(savings_grid=n_nbegm_toy.SAVINGS_GRID, envelope_arithmetic="ordinary")
 
 
 @pytest.mark.parametrize(

@@ -1,5 +1,7 @@
 """Candidate banks retain numeric metadata beside their conditional value rows."""
 
+import operator
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -76,7 +78,7 @@ def test_candidate_bank_preserves_each_nodes_typed_channels(
     np.testing.assert_array_equal(bank.sim_policy.policy, [[1.0, 2.0], [11.0, 12.0]])
     np.testing.assert_array_equal(bank.candidate_valid, [True, True])
     for index, result in enumerate(results):
-        restored = bank.candidate_carry(index)
+        restored = jax.tree.map(operator.itemgetter(index), bank.carry)
         assert jax.tree.structure(restored) == jax.tree.structure(result.carry)
         for actual, expected in zip(
             jax.tree.leaves(restored),

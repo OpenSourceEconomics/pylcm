@@ -6,9 +6,10 @@ from typing import Literal
 
 import jax.numpy as jnp
 
+from _lcm.typing import AgeValue
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError
-from lcm.typing import Float1D, Int1D, UserAge
+from lcm.typing import Float1D, Int1D, ScalarFloat, ScalarInt, UserAge
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -67,7 +68,7 @@ def coordinate_kind(ages: TimeAxis) -> Literal["age", "period"]:
     return ages.kind if isinstance(ages, ModelTime) else "age"
 
 
-def coordinate_at(*, ages: TimeAxis, period: int) -> int | float:
+def coordinate_at(*, ages: TimeAxis, period: int) -> AgeValue:
     """Read a scalar time label for an internal execution context."""
     if period < 0 or period >= ages.n_periods:
         raise IndexError(f"Period {period} is outside the model horizon.")
@@ -76,7 +77,7 @@ def coordinate_at(*, ages: TimeAxis, period: int) -> int | float:
     return ages.period_to_age(period)
 
 
-def specialization_coordinate_at(*, ages: TimeAxis, period: int) -> int | float:
+def specialization_coordinate_at(*, ages: TimeAxis, period: int) -> AgeValue:
     """Preserve float age factories and integer period factories."""
     coordinate = coordinate_at(ages=ages, period=period)
     return coordinate if coordinate_kind(ages) == "period" else float(coordinate)
@@ -85,3 +86,21 @@ def specialization_coordinate_at(*, ages: TimeAxis, period: int) -> int | float:
 def age_at(*, ages: TimeAxis, period: int) -> float | None:
     """Report an age only when the model declares one."""
     return None if coordinate_kind(ages) == "period" else float(ages.values[period])
+
+
+def display_age_at(*, ages: TimeAxis, period: int) -> str:
+    """Return a period's coordinate for a log line, read from the exact host values.
+
+    The exact coordinates are Python `int` or `Fraction`, so formatting them
+    never reads the device-held `values`.
+    """
+    return format_age(float(ages.exact_values[period]))
+
+
+def format_age(age: AgeValue | ScalarInt | ScalarFloat) -> str:
+    """Return an age for a message: an integer when whole, otherwise two decimals.
+
+    A device-held age is read on the host, so pass only a concrete value.
+    """
+    value = float(age)
+    return str(int(value)) if value.is_integer() else f"{value:.2f}"

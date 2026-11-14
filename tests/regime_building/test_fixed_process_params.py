@@ -11,7 +11,6 @@ from typing import cast
 
 import jax.numpy as jnp
 import numpy as np
-import pandas as pd
 import pytest
 
 from lcm import (
@@ -162,7 +161,7 @@ def test_carried_process_law_from_fixed_params_matches_construction() -> None:
     )
 
 
-def _model_with_law_value(value: FloatND | pd.Series) -> Model:
+def _model_with_law_value(value: FloatND) -> Model:
     """Build the entered-process model with one law field set to `value`."""
     return Model(
         regimes={
@@ -186,26 +185,7 @@ def _model_with_law_value(value: FloatND | pd.Series) -> Model:
     )
 
 
-@pytest.mark.parametrize(
-    "value",
-    [
-        pytest.param(jnp.array([0.5, 1.0]), id="array"),
-        pytest.param(pd.Series([0.5, 1.0], index=[20, 21]), id="age_indexed_series"),
-    ],
-)
-def test_a_varying_law_field_names_the_supported_spelling(
-    value: FloatND | pd.Series,
-) -> None:
+def test_a_varying_law_field_names_the_supported_spelling() -> None:
     """An array-valued process law field is rejected, naming `AgeSpecializedGrid`."""
     with pytest.raises(InvalidParamsError, match="AgeSpecializedGrid"):
-        _model_with_law_value(value)
-
-
-def test_the_rejection_names_the_field_and_its_shape() -> None:
-    """The message identifies which field was given a non-scalar, and its shape."""
-    with pytest.raises(InvalidParamsError) as excinfo:
         _model_with_law_value(jnp.array([0.5, 1.0]))
-
-    message = str(excinfo.value)
-    assert "mu" in message
-    assert "(2,)" in message

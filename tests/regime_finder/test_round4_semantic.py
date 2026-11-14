@@ -187,7 +187,7 @@ def captured_gate_graph(*, dormant_admitted=False, simulation_edge=True):
 def native_constant():
     return {
         "kind": "dataclass",
-        "type": "_lcm.regime_building.schedules._Constant",
+        "type": "_lcm.regime_building.schedules._RegimeCodeConstant",
         "fields": {"value": 1},
         "callable": {
             "kind": "callable",
@@ -197,7 +197,7 @@ def native_constant():
             "capture_contract": "inspection-only-frozen-bindings-1",
             "bindings": {"jnp": {"kind": "module", "name": "jax.numpy"}},
             "bound_self": {
-                "type": "_lcm.regime_building.schedules._Constant",
+                "type": "_lcm.regime_building.schedules._RegimeCodeConstant",
                 "fields": {"value": 1},
             },
             "source": "def __call__(self):\n    return jnp.asarray(self.value)\n",

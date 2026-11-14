@@ -19,7 +19,6 @@ from jax.core import Tracer
 from _lcm.current_iid import CurrentIIDPlan
 from _lcm.engine import Regime
 from _lcm.exits import exit_functions, exits_for_phase
-from _lcm.grids import DiscreteGrid
 from _lcm.policy_queries import (
     _PHYSICAL_CONTEXTS,
     _TASTE,
@@ -42,6 +41,7 @@ from _lcm.utils.functools import (
 )
 from lcm.exceptions import RegimeInitializationError, UnsupportedOperationError
 from lcm.exits import Consent, Exit, ExitRole, RuleResult
+from lcm.grids import DiscreteGrid
 from lcm.shocks import Discrete, ShockGroupName, ShockName, _fingerprint
 from lcm.typing import (
     BoolND,
@@ -59,10 +59,10 @@ def _predicate(
     function: Callable[..., PytreeValue],
     operands: Mapping[ReferenceName, PytreeValue],
 ) -> BoolND:
-    """Normalize scalar Python booleans without reducing undeclared axes."""
+    """Return a scalar Boolean, without reducing undeclared axes."""
     value = jnp.asarray(_call(function=function, operands=operands))
-    if value.shape != () or value.dtype != jnp.bool_:
-        raise ValueError("Exit availability must be a scalar boolean.")
+    if value.shape != ():
+        raise ValueError("Exit availability must be a scalar Boolean.")
     return value
 
 
@@ -127,12 +127,8 @@ class _ExitReducer:
             active = (
                 jnp.asarray(a=True)
                 if name not in self.availability
-                else jnp.asarray(
-                    _call(function=self.availability[name], operands=operands)
-                )
+                else _predicate(function=self.availability[name], operands=operands)
             )
-            if active.shape != () or active.dtype != jnp.bool_:
-                raise ValueError("Exit availability must be a scalar boolean.")
             availability[name] = active
             member_values = {}
             for member in declaration.targets:
@@ -145,8 +141,8 @@ class _ExitReducer:
                 if member in self.adjustments.get(name, {}):
                     adjustment = jax.lax.cond(
                         active,
-                        lambda helper=self.adjustments[name][member]: jnp.asarray(
-                            _call(function=helper, operands=operands)
+                        lambda helper=self.adjustments[name][member]: _call(
+                            function=helper, operands=operands
                         ),
                         lambda: jnp.asarray(0.0),
                     )

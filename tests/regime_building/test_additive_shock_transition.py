@@ -29,7 +29,6 @@ import pytest
 from _lcm.grids.coordinates import get_irreg_coordinate
 from _lcm.regime_building import Q_and_F
 from _lcm.regime_building.ndimage import map_coordinates
-from _lcm.regime_building.shock_average import average_over_shock
 from lcm import (
     AdditiveShockTransition,
     AgeGrid,
@@ -64,6 +63,7 @@ from lcm.typing import (
     ScalarInt,
 )
 from tests.conftest import DECIMAL_PRECISION, X64_ENABLED
+from tests.regime_building._shock_average import average_over_shock
 
 DISCOUNT_FACTOR = 0.9
 LAST_ALIVE_AGE = 2

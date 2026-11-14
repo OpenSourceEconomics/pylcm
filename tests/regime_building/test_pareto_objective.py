@@ -262,6 +262,14 @@ def test_a_zero_weight_annihilates_an_admissible_minus_infinity() -> None:
     assert np.asarray(solution[0]["couple"]).tolist() == [-np.inf, 5.0]
 
 
+def test_integer_constant_weights_are_stored_as_floats() -> None:
+    objective = ParetoObjective(weights={"f": 1, "m": 3})
+    assert {name: (type(w), w) for name, w in objective.weights.items()} == {
+        "f": (float, 1.0),
+        "m": (float, 3.0),
+    }
+
+
 def test_a_missing_stakeholder_weight_is_rejected() -> None:
     """The error names the stakeholder the objective does not weight."""
     with pytest.raises(RegimeInitializationError) as excinfo:

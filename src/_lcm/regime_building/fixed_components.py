@@ -19,7 +19,6 @@ import numpy as np
 import pandas as pd
 from dags import concatenate_functions
 
-from _lcm.grids import DiscreteGrid
 from _lcm.grids.categorical import categorical
 from _lcm.identity_transition import _IdentityTransition
 from _lcm.regime_building.broadcast import merge_model_slots
@@ -29,6 +28,7 @@ from _lcm.transition_plans import OriginalLotteryLayout, signature_with_state
 from _lcm.typing import DataclassInstance, EconFunctionArg, RegimeNamesToIds
 from lcm.collective import CollectiveUtility
 from lcm.exceptions import RegimeInitializationError
+from lcm.grids import DiscreteGrid
 from lcm.phased import Phased
 from lcm.regime import (
     ActionEntry,

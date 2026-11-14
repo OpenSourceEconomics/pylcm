@@ -10,10 +10,8 @@ from _lcm_regime_finder.separator_frontier import (
     METRICS,
     Problem,
     check,
-    cost_query,
     dominates,
     produce,
-    strictly_dominates_cost,
     validate_point,
 )
 
@@ -286,17 +284,3 @@ def test_checker_rejects_cost_coverage_witness_and_binding_mutations() -> None:
         else:
             bad["policy_sha256"] = "0" * 64
         assert (check(problem, bad)["status"]) == ("FAIL"), mutation
-
-
-def test_exact_cost_queries_do_not_apply_legacy_endpoint_filter() -> None:
-    problem = Problem(fixture(2, left_count=1, right_count=1))
-    result = produce(problem)
-    assert (check(problem, result)["status"]) == ("PASS")
-    winner = cost_query(
-        result, positive_weights={"work": "1/100", "storage": 1, "clarity": 10}
-    )
-    assert (winner) in (result["frontier"])
-    assert (cost_query(result, upper_bounds={"work": -1})) == ([])
-    assert not (strictly_dominates_cost(result, winner["cost"]))
-    above = {k: max(p["cost"][k] for p in result["frontier"]) + 1 for k in METRICS}
-    assert strictly_dominates_cost(result, above)

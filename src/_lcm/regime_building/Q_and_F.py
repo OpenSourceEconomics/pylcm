@@ -16,7 +16,7 @@ import inspect
 import operator
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from types import FunctionType, MappingProxyType
+from types import MappingProxyType
 from typing import Literal, NamedTuple, cast, no_type_check
 
 import jax
@@ -29,9 +29,12 @@ from dags import (
 from dags.tree import qname_from_tree_path
 
 from _lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
-from _lcm.dtypes import canonical_float_dtype
-from _lcm.grids import ContinuousGrid, IrregSpacedGrid
+from _lcm.dtypes import (
+    canonical_float_dtype,
+)
+from _lcm.grids import ContinuousGrid
 from _lcm.grids.discrete import read_at_codes
+from _lcm.output_roles import OutputRole, in_role, target_role
 from _lcm.post_decision_bound import PostDecisionBoundSpec
 from _lcm.probability import (
     is_live,
@@ -100,6 +103,7 @@ from _lcm.zero_safe import (
     zero_safe_weighted_term,
 )
 from lcm.exceptions import ModelInitializationError
+from lcm.grids import IrregSpacedGrid
 from lcm.typing import (
     ActionName,
     BoolND,
@@ -116,15 +120,15 @@ from lcm.typing import (
 )
 
 # What a diagnostic intermediates closure returns at a cell: utility,
-# feasibility (a Python `bool` for a regime without constraints), the
-# continuation `CE`, `Q`, and the active regimes' transition probabilities.
+# feasibility, the continuation `CE`, `Q`, and the active regimes' transition
+# probabilities.
 type Intermediates = tuple[
-    FloatND, BoolND | bool, FloatND, FloatND, MappingProxyType[RegimeName, FloatND]
+    FloatND, BoolND, FloatND, FloatND, MappingProxyType[RegimeName, FloatND]
 ]
 
-# What the utilities-and-feasibility DAG returns at a cell: each felicity, then
-# the feasibility mask (a Python `bool` for a regime without constraints).
-type UtilitiesAndF = tuple[FloatND | IntND | BoolND | int | float | bool, ...]
+# What the utilities-and-feasibility evaluation returns at a cell: each felicity
+# at the canonical float dtype, then the feasibility mask as a JAX Boolean.
+type UtilitiesAndF = tuple[FloatND | BoolND, ...]
 
 _PROCESS_EDGE_CORNER = "_lcm_process_edge__corner"
 
@@ -136,6 +140,30 @@ class EvaluatedUtilitiesAndF(NamedTuple):
     """Ordinary felicities followed by the economic predicate."""
     bound_status: tuple[BoundInputStatus, ...]
     """One scalar record per model-owned declaration, independently of F."""
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _CanonicalUtilitiesAndF:
+    """The ordinary utilities-and-feasibility DAG, its felicities already in role.
+
+    A frozen callable instance rather than a nested function: the beartype claw
+    memoizes every function it decorates, so a function defined per model build
+    would pin that build's DAG after the model is dropped.
+    """
+
+    function: Callable[..., UtilitiesAndF]
+    """The concatenated felicity and feasibility DAG."""
+    utility_names: tuple[str, ...]
+    """The felicity targets, in output order."""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "__signature__", inspect.signature(self.function))
+        object.__setattr__(self, "__annotations__", get_annotations(self.function))
+        object.__setattr__(self, "__name__", "U_and_F")
+
+    @no_type_check
+    def __call__(self, **kwargs: QAndFArg) -> UtilitiesAndF:
+        return self.function(**kwargs)
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)
@@ -188,7 +216,10 @@ class _BoundUtilitiesAndF:
                 )
             )
         return EvaluatedUtilitiesAndF(
-            utilities_and_F=(*tuple(values[name] for name in self.utility_names), F),
+            utilities_and_F=(
+                *tuple(values[name] for name in self.utility_names),
+                F,
+            ),
             bound_status=tuple(statuses),
         )
 
@@ -362,7 +393,7 @@ def _evaluated_action_utilities_and_F(
     *, function: Callable[..., UtilitiesAndF], states_actions_params: QAndFKwargs
 ) -> EvaluatedUtilitiesAndF:
     """Evaluate the admitted ordinary DAG or original bound flow exactly once."""
-    if type(function) is FunctionType:
+    if type(function) is _CanonicalUtilitiesAndF:
         return EvaluatedUtilitiesAndF(
             utilities_and_F=function(**states_actions_params), bound_status=()
         )
@@ -1678,12 +1709,22 @@ def _build_same_period_ref_reader(
     }
     projection_funcs: dict[StateName, Callable[..., FloatND]] = {}
     projection_args: dict[StateName, tuple[str, ...]] = {}
+    grids = {
+        **v_interpolation_info.discrete_states,
+        **v_interpolation_info.continuous_states,
+    }
     for state_name in v_interpolation_info.state_names:
         target = f"{_REF_STATE_PREFIX}{state_name}"
+        # Each coordinate takes its state's role, so a projection may return `2`
+        # for a continuous state or a Python integer for a code.
         projection_funcs[state_name] = concatenate_functions(
             functions={
                 **dag_pool,
-                target: projection_func_or_fail(ref=ref, state_name=state_name),
+                target: in_role(
+                    func=projection_func_or_fail(ref=ref, state_name=state_name),
+                    role=target_role(grids[state_name]),
+                    kind=f"The projection onto '{ref.regime}' state '{state_name}',",
+                ),
             },
             targets=target,
             enforce_signature=False,
@@ -1780,8 +1821,12 @@ class _SamePeriodReferenceReader:
         )
 
     @no_type_check
-    def coordinates(self, **kwargs: ParamsLeaf) -> dict[StateName, FloatND]:
-        """Project the cell onto the reference regime's states, unclipped."""
+    def coordinates(self, **kwargs: ParamsLeaf) -> dict[StateName, FloatND | IntND]:
+        """Project the cell onto the reference regime's states, unclipped.
+
+        Each coordinate is already in its state's role. A process axis is read by
+        value, not by node code.
+        """
         return {
             state: self.projection_funcs[state](
                 **{arg: kwargs[arg] for arg in self.projection_args[state]}
@@ -2329,7 +2374,14 @@ def _build_value_constraint_machinery(
     evaluators: dict[str, Callable[..., BoolND]] = {}
     evaluator_args: dict[ReferenceName, tuple[str, ...]] = {}
     for constraint_name, predicate in value_constraints.items():
-        combined = {**dag_pool, constraint_name: predicate}
+        combined = {
+            **dag_pool,
+            constraint_name: in_role(
+                func=predicate,
+                role=OutputRole.BOOL,
+                kind="Value-dependent constraint",
+            ),
+        }
         evaluator = concatenate_functions(
             functions=combined,
             targets=constraint_name,
@@ -2384,7 +2436,10 @@ def _apply_value_constraints(
                 predicate_kwargs[arg] = reference_values[arg]
             else:
                 predicate_kwargs[arg] = states_actions_params[arg]
-        F_arr = jnp.logical_and(F_arr, evaluate(**predicate_kwargs))
+        F_arr = jnp.logical_and(
+            F_arr,
+            evaluate(**predicate_kwargs),
+        )
     return F_arr
 
 
@@ -5857,6 +5912,20 @@ def _get_U_and_F(
         order, followed by the feasibility mask.
 
     """
+    # Where the engine receives the user's felicities: each is converted to the
+    # canonical float, so a felicity may return `0` or an integer array.
+    functions = MappingProxyType(
+        {
+            **functions,
+            **{
+                name: in_role(
+                    func=functions[name], role=OutputRole.FLOAT, kind="Utility"
+                )
+                for name in utility_names
+                if name in functions
+            },
+        }
+    )
     runtime_bounds = tuple(bound for bound in bound_specs if bound.kind == "dag")
     if runtime_bounds:
         target_names = tuple(
@@ -5880,16 +5949,19 @@ def _get_U_and_F(
             constraint_names=tuple(constraints),
             bound_specs=runtime_bounds,
         )
-    return concatenate_functions(
-        functions={
-            "feasibility": _get_feasibility(
-                functions=functions, constraints=constraints
-            ),
-            **dict(functions),
-        },
-        targets=[*utility_names, "feasibility"],
-        enforce_signature=False,
-        set_annotations=True,
+    return _CanonicalUtilitiesAndF(
+        function=concatenate_functions(
+            functions={
+                "feasibility": _get_feasibility(
+                    functions=functions, constraints=constraints
+                ),
+                **dict(functions),
+            },
+            targets=[*utility_names, "feasibility"],
+            enforce_signature=False,
+            set_annotations=True,
+        ),
+        utility_names=tuple(utility_names),
     )
 
 
@@ -5917,7 +5989,7 @@ class _BoundFeasibility:
     def __call__(self, **kwargs: QAndFArg) -> BoundedResult[BoolND]:
         evaluated = cast("_BoundUtilitiesAndF", self.flow).evaluated(**kwargs)
         return BoundedResult(
-            output=cast("BoolND", evaluated.utilities_and_F[-1]),
+            output=evaluated.utilities_and_F[-1],
             bound_status=tuple(
                 BoundInputStatus(
                     nonfinite_floor=status.nonfinite_floor
@@ -5956,24 +6028,31 @@ def _get_feasibility(
             bound_specs=bound_specs,
         )
         return _BoundFeasibility(flow=flow, periods=bound_periods)
-    if constraints:
-        combined_constraint = concatenate_functions(
+    if not constraints:
+        return cast("ConstraintFunction", _AlwaysFeasible(value=jnp.asarray(a=True)))
+    # Each constraint returns a JAX Boolean: it is put in role where it is
+    # materialized, so their conjunction is one as well.
+    return cast(
+        "ConstraintFunction",
+        concatenate_functions(
             functions=dict(constraints) | dict(functions),
             targets=list(constraints),
             aggregator=jnp.logical_and,
             aggregator_return_type="Feasibility",
             set_annotations=True,
-        )
-
-    else:
-        combined_constraint = _always_feasible
-
-    return cast("ConstraintFunction", combined_constraint)
+        ),
+    )
 
 
-def _always_feasible() -> bool:
+@dataclass(frozen=True, eq=False, kw_only=True)
+class _AlwaysFeasible:
     """Feasibility of a regime without constraints: every cell is feasible."""
-    return True
+
+    value: BoolND
+    """The constant, built once with the kernel rather than at each evaluation."""
+
+    def __call__(self) -> BoolND:
+        return self.value
 
 
 def _aggregate_joint_lottery(

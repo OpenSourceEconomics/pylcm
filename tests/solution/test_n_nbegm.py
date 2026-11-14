@@ -9,7 +9,6 @@ to outer batching — before any breakpoint machinery enters.
 
 import numpy as np
 import pytest
-from beartype.roar import BeartypeCallHintParamViolation
 
 import _lcm.solution.nnbegm as nnbegm_module
 from _lcm.egm.published_policy import NNBEGMSimPolicy
@@ -67,20 +66,6 @@ def test_rejects_stochastic_outer_grid() -> None:
             outer_search=FiniteOuterGrid(
                 grid=NormalIIDProcess(n_points=5, gauss_hermite=True, mu=0.0, sigma=1.0)
             ),
-        )
-
-
-def test_constructing_nnbegm_with_a_non_nbegm_inner_is_refused() -> None:
-    """`NNBEGM` cannot be built around an inner it does not support.
-
-    Two mechanisms refuse it and which one fires depends on whether runtime
-    type checking is active, so both are accepted here; that the explicit
-    structural guard exists is asserted separately against the guard itself.
-    """
-    with pytest.raises((RegimeInitializationError, BeartypeCallHintParamViolation)):
-        NNBEGM(
-            inner=object(),  # ty: ignore[invalid-argument-type]
-            outer_search=FiniteOuterGrid(grid=toy.OUTER_GRID),
         )
 
 

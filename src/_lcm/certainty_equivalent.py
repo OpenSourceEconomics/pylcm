@@ -10,7 +10,6 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 
-import jax
 import jax.numpy as jnp
 from beartype import beartype
 
@@ -25,12 +24,12 @@ from _lcm.probability import (
     is_negative,
     is_represented_zero,
     rescaled_lottery_weights,
+    without_derivative,
 )
 from _lcm.utils.functools import get_union_of_args
 from _lcm.zero_safe import scaled_lottery_mean, zero_safe_weighted_term
 from lcm.exceptions import (
     RegimeInitializationError,
-    ScaledLotteryDifferentiationError,
 )
 from lcm.typing import FloatND, IntND
 
@@ -594,28 +593,7 @@ def _identity(value: FloatND) -> FloatND:
     return value
 
 
-# keyword-only-exempt: library-callback=jax.custom_jvp.defjvp
-def _scaled_reduction_jvp(
-    primals: tuple[FloatND, ...],
-    tangents: tuple[FloatND, ...],
-) -> tuple[FloatND, FloatND]:
-    """Raise rather than report a derivative the scale was needed to state."""
-    del primals, tangents
-    msg = (
-        "`aggregate_scaled` states no derivative: its lottery carries weights "
-        "as `(coefficient, shift)` pairs precisely because no ordinary float "
-        "states the probability, and the same holds of a derivative with "
-        "respect to one. Differentiate the model through a route whose weights "
-        "are ordinary numbers, or reduce the lottery with `aggregate`."
-    )
-    raise ScaledLotteryDifferentiationError(msg)
-
-
-# Built by call rather than by decorator: `@jax.custom_jvp` produces a callable
-# instance, which the package claw rebinds to a bound method of its `__call__`,
-# losing `defjvp` along with everything else the object knows.
-_states_no_derivative = jax.custom_jvp(_identity)
-_states_no_derivative.defjvp(_scaled_reduction_jvp)
+_states_no_derivative = without_derivative(_identity)
 
 
 def _args_for(

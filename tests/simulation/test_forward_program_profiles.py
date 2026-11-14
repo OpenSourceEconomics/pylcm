@@ -1,18 +1,28 @@
 """All real forward core families profile their actual output schemas abstractly."""
 
-import importlib
+from collections.abc import Mapping
 from types import MappingProxyType
 from typing import Unpack
 
 import jax
 import jax._src.core
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
+from _lcm.dtypes import canonical_float_dtype
+from _lcm.engine import Regime, StateActionSpace
 from _lcm.params.edges import regime_kernel_params
-from _lcm.simulation.forward_program_profiles import profile_forward_programs
+from _lcm.simulation.forward_program_profiles import (
+    ForwardProgramProfile,
+    profile_forward_unit,
+)
+from _lcm.simulation.operand_placement import subject_operand_sharding
 from _lcm.simulation.runtime import SimulationRuntime
-from _lcm.typing import PytreeValue, ShapeDtypePytree
+from _lcm.time import TimeAxis
+from _lcm.typing import FlatParams, PytreeValue, ShapeDtypePytree, SimulationPolicy
+from lcm.grids import DiscreteGrid
+from lcm.typing import RegimeName
 from tests.simulation._callback_types import RuntimeDispatch
 from tests.simulation.test_abstract_simulation_profiles import (
     _ConcreteAllocationError,
@@ -30,6 +40,65 @@ type _ArraySchema = (
     | list[_ArraySchema]
     | dict[str, _ArraySchema]
 )
+
+
+def _profile_forward_programs(
+    *,
+    runtime: SimulationRuntime,
+    regimes: Mapping[str, Regime],
+    flat_params: FlatParams,
+    base_spaces: Mapping[str, StateActionSpace],
+    values: Mapping[int, Mapping[str, jax.Array | jax.ShapeDtypeStruct]],
+    ages: TimeAxis,
+    n_subjects: int,
+    widths: Mapping[str, int],
+    ordinary_key: jax.ShapeDtypeStruct,
+    taste_key: jax.ShapeDtypeStruct | None,
+    policies: Mapping[int, Mapping[RegimeName, SimulationPolicy]] | None = None,
+) -> Mapping[tuple[int, str, str], ForwardProgramProfile]:
+    """Profile every decision program of every regime from its entry descriptors.
+
+    Complete chunks call `profile_forward_unit` with their evolving carrier
+    instead: this entry-only form does not model state updates between programs.
+    """
+    subject = subject_operand_sharding(devices=runtime.subject_devices)
+    profiles = {}
+    for name, regime in regimes.items():
+        columns = {
+            state: jax.ShapeDtypeStruct(
+                (n_subjects,),
+                np.dtype(
+                    jnp.int32
+                    if isinstance(regime.simulation.grids[state], DiscreteGrid)
+                    else canonical_float_dtype()
+                ),
+                sharding=subject,
+            )
+            for state in regime.simulation.state_names
+        }
+        for period in regime.simulation.programs.decision:
+            unit = profile_forward_unit(
+                runtime=runtime,
+                regimes=regimes,
+                regime=regime,
+                name=name,
+                period=period,
+                flat_params=flat_params,
+                base=base_spaces[name],
+                base_spaces=base_spaces,
+                values=values,
+                ages=ages,
+                n_subjects=n_subjects,
+                widths=widths,
+                columns=columns,
+                ordinary_key=ordinary_key,
+                taste_key=taste_key,
+                policy=(policies or {}).get(period, {}).get(name),
+            )
+            profiles.update(
+                {(period, name, family): profile for family, profile in unit.items()}
+            )
+    return MappingProxyType(profiles)
 
 
 def _schema(tree: PytreeValue | ShapeDtypePytree) -> _ArraySchema:
@@ -89,9 +158,6 @@ def test_all_core_families_profile_actual_output_schemas_without_allocation(
             for name, regime in result._regimes.items()
         }
     )
-    profiles_module = importlib.import_module(
-        "_lcm.simulation.forward_program_profiles"
-    )
     ordinary_key = _key_descriptor(impl=jax.config.jax_default_prng_impl)
     assert model.ages is not None
     with monkeypatch.context() as guard:
@@ -99,7 +165,7 @@ def test_all_core_families_profile_actual_output_schemas_without_allocation(
         guard.setattr(jax._src.core.EvalTrace, "process_primitive", _forbid_allocation)
         with pytest.raises(_ConcreteAllocationError):
             jnp.zeros(3)
-        profiles = profiles_module.profile_forward_programs(
+        profiles = _profile_forward_programs(
             runtime=runtimes[0],
             regimes=result._regimes,
             flat_params=result.flat_params,
@@ -170,7 +236,7 @@ def test_independent_taste_profile_keeps_its_actual_key_dtype_under_rbg(
                 for name, regime in model._regimes.items()
             }
         )
-        profiles = profile_forward_programs(
+        profiles = _profile_forward_programs(
             runtime=captured[0][0],
             regimes=model._regimes,
             flat_params=result.flat_params,

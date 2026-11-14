@@ -20,7 +20,7 @@ from jax import vmap
 from jaxtyping import Array, Int
 
 from _lcm.engine import Regime, StateActionSpace
-from _lcm.grids import ContinuousGrid, DiscreteGrid
+from _lcm.grids import ContinuousGrid
 from _lcm.grids.continuous import _clip_grid_value
 from _lcm.off_grid import count_off_grid, off_grid_message, report_off_grid
 from _lcm.processes import _ContinuousStochasticProcess
@@ -52,6 +52,7 @@ from lcm.exceptions import (
     InvalidStateTransitionError,
     OffGridStateError,
 )
+from lcm.grids import DiscreteGrid
 from lcm.typing import (
     Bool1D,
     Float1D,
@@ -250,10 +251,7 @@ def _count_drawn_off_grid_codes(
 ) -> Int1D:
     """Count, per check, the subjects drawn to its target with a code off its grid.
 
-    The codes keep their signed storage dtype, which a law may widen to int64 under
-    x64; comparing with an int32 bound promotes them to that width, so no wide code
-    can alias a valid one. Unsigned and float codes are refused at the boundary: an
-    unsigned code past the int32 range would wrap when promoted without x64.
+    A code is off its grid when it lies outside `0..n-1`.
     """
     return jnp.stack(
         [

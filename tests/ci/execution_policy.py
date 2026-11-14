@@ -170,11 +170,6 @@ class Disposition:
         return self.kind is DispositionKind.SELECTED
 
     @property
-    def policy_deselected(self) -> bool:
-        """Return whether the node belongs to a broader policy tier."""
-        return self.kind is DispositionKind.POLICY_DESELECTED
-
-    @property
     def matrix_deselected(self) -> bool:
         """Return whether routine coverage belongs to another backend."""
         return self.kind is DispositionKind.MATRIX_DESELECTED

@@ -80,21 +80,6 @@ def test_terminal_source_has_no_edge() -> None:
     assert not graph.has_edge(period=0, source="dead", target="alive")
 
 
-def test_forward_closure_is_derived_from_the_static_graph() -> None:
-    """Initial support propagates only through retained static edges."""
-    graph = build_phase_reachability(
-        n_periods=3,
-        active_periods_by_regime={"a": {0}, "b": {1}, "c": {2}, "x": {1}},
-        support_by_period={"a": {0: ("b",)}, "b": {1: ("c",)}, "x": {1: ("c",)}},
-    )
-
-    assert graph.reachable_from({"a"}) == (
-        frozenset({"a"}),
-        frozenset({"b"}),
-        frozenset({"c"}),
-    )
-
-
 def test_unknown_target_is_rejected() -> None:
     """Every declared target belongs to the graph's regime universe."""
     with pytest.raises(ValueError, match="unknown regimes"):

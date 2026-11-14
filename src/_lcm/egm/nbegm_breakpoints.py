@@ -41,31 +41,6 @@ def affine_coefficients(
     return slope, intercept
 
 
-def linear_asset_preimage(
-    *, z_of_liquid: Callable[[ScalarFloat], ScalarFloat], threshold: ScalarFloat
-) -> ScalarFloat:
-    """Map a threshold in a monotone-affine boundary variable to its asset value.
-
-    A boundary `z(assets) == threshold` on a derived quantity becomes a breakpoint
-    on the liquid axis at `assets = (threshold - intercept) / slope`, the exact
-    inverse for an affine `z`. The monotonicity gate guarantees a nonzero,
-    single-signed slope, so the preimage is unique. The piecewise-affine inversion
-    needed once `z` bends (post-claiming SS-taxation tiers) is a later step.
-
-    Args:
-        z_of_liquid: The boundary variable as a function of the scalar liquid
-            state, with every other argument bound.
-        threshold: Threshold value in the boundary variable's units.
-
-    Returns:
-        The asset breakpoint — the liquid-state value where `z` equals the
-        threshold.
-
-    """
-    slope, intercept = affine_coefficients(z_of_liquid=z_of_liquid)
-    return (threshold - intercept) / slope
-
-
 def linear_asset_selection_preimage(
     *,
     z_of_liquid: Callable[[ScalarFloat], ScalarFloat],
@@ -90,14 +65,14 @@ def clamp_breakpoints_to_grid(*, breakpoints: Float1D, liquid_grid: Float1D) -> 
     """Clamp asset breakpoints to a margin just outside the liquid grid.
 
     A boundary whose derived variable has (near-)zero slope in the liquid state has no
-    finite asset preimage: `linear_asset_preimage` sends it to `±inf` (the threshold is
-    never crossed within reach) or `NaN` (the whole cell sits on the boundary). A
-    non-finite breakpoint would make the adjacent interval's midpoint non-finite and
-    poison that interval's recovered affine segment — including the live interval that
-    holds the query grid. Clamping every breakpoint into a margin one grid-width outside
-    `[grid_min, grid_max]` collapses such a boundary to an empty edge interval whose
-    midpoint stays finite, while leaving every genuine in-grid breakpoint untouched. A
-    `NaN` breakpoint is sent to the upper margin.
+    finite asset preimage: `linear_asset_selection_preimage` sends it to `±inf` (the
+    threshold is never crossed within reach) or `NaN` (the whole cell sits on the
+    boundary). A non-finite breakpoint would make the adjacent interval's midpoint
+    non-finite and poison that interval's recovered affine segment — including the live
+    interval that holds the query grid. Clamping every breakpoint into a margin one
+    grid-width outside `[grid_min, grid_max]` collapses such a boundary to an empty edge
+    interval whose midpoint stays finite, while leaving every genuine in-grid breakpoint
+    untouched. A `NaN` breakpoint is sent to the upper margin.
 
     Args:
         breakpoints: Asset breakpoints on the liquid axis, in any order.

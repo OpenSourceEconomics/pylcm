@@ -118,8 +118,6 @@ _BODY_OWNERS = {
         "build_outer_candidate_bank",
         "_stack_leaves",
         "OuterCandidateBank.n_candidates",
-        "OuterCandidateBank.candidate_v_arr",
-        "OuterCandidateBank.candidate_carry",
     ),
 }
 
@@ -148,7 +146,7 @@ def test_final_nested_selection_names_each_body_and_surface() -> None:
         for source, (_surface, callables) in direct_flow._FINAL_NESTED_CONTRACTS.items()
     }
     assert actual == _BODY_OWNERS
-    assert sum(map(len, actual.values())) == 81
+    assert sum(map(len, actual.values())) == 79
     assert all("_three_jets" not in names for names in actual.values())
     assert direct_flow._unselected_pins() == ()
     assert all(source in direct_flow._CERTIFIED_CORRIDOR_SOURCES for source in actual)

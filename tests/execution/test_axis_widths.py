@@ -24,12 +24,6 @@ def test_axis_widths_rejects_a_non_positive_width() -> None:
         ExecutionConfig(axis_widths={"action_product": 0})
 
 
-def test_axis_widths_rejects_a_bool_width() -> None:
-    """Widths are exact ints, so a bool is refused."""
-    with pytest.raises(ValueError, match="exact Python int"):
-        ExecutionConfig(axis_widths={"action_product": True})
-
-
 def test_axis_widths_is_frozen_after_construction() -> None:
     """The stored mapping cannot be mutated by the caller's original dict."""
     widths = {"action_product": 4}

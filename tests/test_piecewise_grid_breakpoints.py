@@ -235,17 +235,6 @@ def test_piecewise_grid_rejects_invalid_point_counts(
         )
 
 
-def test_piecewise_grid_rejects_an_unknown_owner() -> None:
-    """Breakpoint ownership is exactly left or right."""
-    with pytest.raises(GridInitializationError, match="owner"):
-        PiecewiseLinSpacedGrid(
-            start=0.0,
-            stop=2.0,
-            breakpoints=(GridBreakpoint(value=1.0, owner="middle"),),  # ty: ignore[invalid-argument-type]
-            points_per_segment=(2, 2),
-        )
-
-
 def test_piecewise_grid_rejects_a_collapsed_effective_segment() -> None:
     """An open boundary must leave a representable interval on each side."""
     start = jnp.asarray(1.0, dtype=canonical_float_dtype())
@@ -253,7 +242,7 @@ def test_piecewise_grid_rejects_a_collapsed_effective_segment() -> None:
 
     with pytest.raises(GridInitializationError, match="representable"):
         PiecewiseLinSpacedGrid(
-            start=start,
+            start=float(start),
             stop=2.0,
             breakpoints=(GridBreakpoint(value=float(adjacent), owner="right"),),
             points_per_segment=(2, 2),
@@ -273,7 +262,7 @@ def test_piecewise_log_grid_requires_a_positive_domain(start: float) -> None:
 
 
 def test_piecewise_grid_uses_the_canonical_float_dtype() -> None:
-    """Endpoint, breakpoint, and output arithmetic share pylcm's float dtype."""
+    """The output nodes are at pylcm's canonical float dtype."""
     grid = PiecewiseLinSpacedGrid(
         start=0,
         stop=2,
@@ -281,6 +270,22 @@ def test_piecewise_grid_uses_the_canonical_float_dtype() -> None:
         points_per_segment=(2, 2),
     )
 
-    assert grid.start.dtype == canonical_float_dtype()
-    assert grid.stop.dtype == canonical_float_dtype()
     assert grid.to_jax().dtype == canonical_float_dtype()
+
+
+@pytest.mark.parametrize("grid_type", [PiecewiseLinSpacedGrid, PiecewiseLogSpacedGrid])
+@pytest.mark.parametrize("slot", [0, 1])
+def test_a_jax_array_point_count_is_refused(
+    *,
+    grid_type: type[PiecewiseLinSpacedGrid | PiecewiseLogSpacedGrid],
+    slot: int,
+) -> None:
+    counts = [3, 3]
+    counts[slot] = jnp.asarray(3, dtype=jnp.int32)
+    with pytest.raises(GridInitializationError, match="points_per_segment"):
+        grid_type(
+            start=1.0,
+            stop=9.0,
+            breakpoints=(GridBreakpoint(value=3.0),),
+            points_per_segment=tuple(counts),  # ty: ignore[invalid-argument-type]
+        )

@@ -28,7 +28,6 @@ from _lcm.execution.output_layout import OutputRoleTree
 from _lcm.execution.scheduler import buffer_identity
 from _lcm.execution.value_transfer import ValueArtifactAddress, ValueArtifactKind
 from _lcm.grids import categorical
-from _lcm.grids.discrete import DiscreteGrid
 from _lcm.solution import backward_induction
 from _lcm.solution.backward_induction import _CompiledPrograms
 from _lcm.solution.continuation_reads import continuation_leaf_reads
@@ -42,6 +41,7 @@ from lcm import (
     Regime,
     fixed_transition,
 )
+from lcm.grids import DiscreteGrid
 from lcm.solver_api import (
     ArtifactKey,
     ContinuationCapabilities,

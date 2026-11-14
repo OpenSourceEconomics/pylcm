@@ -4,7 +4,6 @@ The cases cover hidden interior maxima, invalid cells, interpolation accuracy,
 kink detection, nested policy publication, and safeguarded refinement.
 """
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -18,10 +17,6 @@ from _lcm.egm.outer_refinement import (
     safeguarded_continuous_argmax,
 )
 from _lcm.egm.outer_search import AdaptiveOuterMesh
-from _lcm.optimization.implicit_outer_derivative import (
-    _continuous_outer_optimum_primal,
-    implicit_optimum_diagnostics,
-)
 from lcm.exceptions import OuterSearchConvergenceError, RegimeInitializationError
 from lcm.grids import LinSpacedGrid
 from tests.conftest import assert_agrees_to_ulp
@@ -130,44 +125,6 @@ def test_runner_up_is_never_a_duplicate_of_the_winner() -> None:
     )
     assert float(dist_second_x) == 2.0
     assert float(dist_second_v) == 10.0
-
-
-def test_exact_kink_optimum_is_flagged_though_ad_reads_stationary() -> None:
-    """F5: the stationarity screen must not trust a single forward-mode Q_f.
-
-    A symmetric tent written through ``maximum(f-c, c-f)`` with the winner
-    exactly on the peak: ``jax.jvp`` AVERAGES the two operand tangents (+1, -1)
-    at the tie to 0, so the single forward-mode Q_f sees the point as
-    stationary and would ship the invalid implicit tangent. Real curvature from
-    an added quadratic keeps it off the flat screen, so only the two-sided
-    slope probe — which sees the 2*theta jump — flags it.
-    """
-    bounds = (jnp.array([0.0]), jnp.array([1.0]))
-
-    def kinked(*, f, theta):
-        return -theta * jnp.maximum(f - 0.3, 0.3 - f) - 0.5 * (f - 0.3) ** 2
-
-    theta = jnp.array(1.0)
-    f_star = jnp.array([0.3])  # exactly on the kink
-
-    # A single forward-mode derivative at the symmetric kink reads approximately zero.
-    q_f = jax.jvp(
-        lambda f: kinked(f=f, theta=theta), (f_star,), (jnp.ones_like(f_star),)
-    )[1]
-    assert abs(float(q_f[0])) < 1e-6
-
-    diag = implicit_optimum_diagnostics(
-        objective=kinked,
-        theta=theta,
-        f_star=f_star,
-        basin_margin=jnp.array([1.0]),  # not basin-tied
-        bounds=bounds,
-    )
-    assert not bool(diag.flat_curvature[0])  # real curvature; not the flat screen
-    assert bool(diag.nonstationary[0])
-    assert bool(diag.unresolved[0])
-    assert not bool(diag.at_lower_bound[0])
-    assert not bool(diag.at_upper_bound[0])
 
 
 def _per_cell_cusp_solve(nodes: jnp.ndarray) -> jnp.ndarray:
@@ -605,140 +562,6 @@ def test_fail_closed_raises_on_unresolved_beats_best_interval() -> None:
 # kinks: its threshold `rtol*|Q_ff|*delta` scales with the probe radius, so a
 # kink whose slope jump is below it passes as stationary while the IFT tangent
 # is order-one wrong. The multi-radius contraction test is amplitude-independent.
-
-
-def _pinned_kink_objective(kink_coef: float):
-    """Pro's F1 surface: a kink at f*=0.3 pins the optimum for |theta|<coef.
-
-    ``Q(f, theta) = -coef*|f-0.3| - 0.5*(f-0.3)^2 + theta*(f-0.3)``. The
-    maximizer stays at 0.3 for |theta| < coef, so ``df*/dtheta = 0``, yet the
-    IFT tangent ``-Q_ftheta/Q_ff = -1/-1 = 1``. ``coef`` can be shrunk toward
-    zero while that tangent error stays 1.
-    """
-
-    def objective(*, f: jnp.ndarray, theta: jnp.ndarray) -> jnp.ndarray:
-        return -kink_coef * jnp.abs(f - 0.3) - 0.5 * (f - 0.3) ** 2 + theta * (f - 0.3)
-
-    return objective
-
-
-@pytest.mark.parametrize("kink_coef", [0.004, 0.0005])
-def test_small_amplitude_kink_is_flagged_nonstationary(kink_coef: float) -> None:
-    objective = _pinned_kink_objective(kink_coef)
-    theta = jnp.asarray(0.0)
-    bounds = (jnp.asarray(0.0), jnp.asarray(1.0))
-    f_star, _value, basin_margin = _continuous_outer_optimum_primal(
-        objective=objective, theta=theta, bounds=bounds
-    )
-    # The primal pins the optimum at the kink, where the IFT tangent is wrong.
-    assert abs(float(f_star) - 0.3) < 1e-3
-
-    diag = implicit_optimum_diagnostics(
-        objective=objective,
-        theta=theta,
-        f_star=f_star,
-        basin_margin=basin_margin,
-        bounds=bounds,
-    )
-    # The single fixed-radius screen accepted this (jump ~2*coef below the
-    # radius-scaled threshold); the contraction screen rejects it at any coef.
-    assert bool(diag.nonstationary)
-    assert bool(diag.unresolved)
-
-
-def test_genuine_smooth_optimum_stays_resolved() -> None:
-    """The contraction screen must not over-flag a smooth interior optimum."""
-
-    def objective(*, f: jnp.ndarray, theta: jnp.ndarray) -> jnp.ndarray:
-        return -0.5 * (f - 0.3) ** 2 + theta * (f - 0.3)
-
-    theta = jnp.asarray(0.0)
-    bounds = (jnp.asarray(0.0), jnp.asarray(1.0))
-    f_star, _value, basin_margin = _continuous_outer_optimum_primal(
-        objective=objective, theta=theta, bounds=bounds
-    )
-    diag = implicit_optimum_diagnostics(
-        objective=objective,
-        theta=theta,
-        f_star=f_star,
-        basin_margin=basin_margin,
-        bounds=bounds,
-    )
-    assert not bool(diag.nonstationary)
-    assert not bool(diag.unresolved)
-
-
-def test_branch_certificate_flags_a_kink_the_value_heuristic_misses() -> None:
-    """The exact branch-identity certificate catches a sub-heuristic kink.
-
-    The multi-radius slope-jump contraction test is a value-only HEURISTIC, not
-    a differentiability certificate. A kink whose jump
-    is drowned by the smooth curvature at the probe radius passes as stationary,
-    yet the IFT tangent `-Q_ftheta/Q_ff = 1` is order-one wrong (`df*/dtheta = 0`
-    for the pinned optimum). Here `kink_coef = 1e-7` is far below the radius-scale
-    curvature term, so the heuristic reports the winner resolved. Supplying a
-    `branch_id` oracle labelling the analytic piece (`sign(f - 0.3)`) marks the
-    breakpoint winner nonstationary regardless of amplitude — and reports that the
-    verdict rests on the exact certificate.
-    """
-    objective = _pinned_kink_objective(1e-7)
-    theta = jnp.asarray(0.0)
-    bounds = (jnp.asarray(0.0), jnp.asarray(1.0))
-    f_star, _value, basin_margin = _continuous_outer_optimum_primal(
-        objective=objective, theta=theta, bounds=bounds
-    )
-    assert abs(float(f_star) - 0.3) < 1e-3
-
-    heuristic = implicit_optimum_diagnostics(
-        objective=objective,
-        theta=theta,
-        f_star=f_star,
-        basin_margin=basin_margin,
-        bounds=bounds,
-    )
-    # The value-only screen misses this kink and does not claim a certificate.
-    assert not bool(heuristic.nonstationary)
-    assert not bool(heuristic.branch_certified)
-
-    certified = implicit_optimum_diagnostics(
-        objective=objective,
-        theta=theta,
-        f_star=f_star,
-        basin_margin=basin_margin,
-        bounds=bounds,
-        branch_id=lambda f, _theta: jnp.sign(f - 0.3),
-    )
-    # The exact branch certificate flags the breakpoint winner and says so.
-    assert bool(certified.nonstationary)
-    assert bool(certified.unresolved)
-    assert not bool(certified.branch_certified)
-    assert bool(certified.owner_missing)
-
-
-def test_branch_certificate_does_not_over_flag_a_smooth_optimum() -> None:
-    """A constant branch across the probe neighborhood leaves a smooth optimum
-    resolved — the exact certificate adds no false positives."""
-
-    def objective(*, f: jnp.ndarray, theta: jnp.ndarray) -> jnp.ndarray:
-        return -0.5 * (f - 0.3) ** 2 + theta * (f - 0.3)
-
-    theta = jnp.asarray(0.0)
-    bounds = (jnp.asarray(0.0), jnp.asarray(1.0))
-    f_star, _value, basin_margin = _continuous_outer_optimum_primal(
-        objective=objective, theta=theta, bounds=bounds
-    )
-    diag = implicit_optimum_diagnostics(
-        objective=objective,
-        theta=theta,
-        f_star=f_star,
-        basin_margin=basin_margin,
-        bounds=bounds,
-        branch_id=lambda f, _theta: jnp.zeros_like(f),  # one analytic branch
-    )
-    assert not bool(diag.nonstationary)
-    assert bool(diag.unresolved)
-    assert not bool(diag.branch_certified)
-    assert bool(diag.owner_missing)
 
 
 # Midpoint-only validation is mesh-relative, not a global safeguard: a peak

@@ -358,12 +358,6 @@ def test_a_streamed_decision_is_refused_where_the_hard_max_is_not_the_reduction(
         build_model()
 
 
-def test_a_streamed_decision_is_admitted_for_a_plain_hard_max_regime() -> None:
-    """The guard admits the streamed decision of a public singleton model."""
-    program = _program(witness=_STREAMED[0], regime=_STREAMED[1], family="decision")
-    assert program.requirements.axis_names == (ACTION_PRODUCT_AXIS, SUBJECT_AXIS)
-
-
 def _tiled_cell(*, position: FloatND, offset: FloatND) -> dict[str, FloatND | IntND]:
     """Return one subject's shifted position and the bucket it falls in."""
     return {

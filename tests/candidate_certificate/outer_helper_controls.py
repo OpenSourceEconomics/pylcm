@@ -22,7 +22,6 @@ BODY_OWNERS = {
     INTERPOLATION: (
         "LocalCubicOuterInterpolant.evaluate",
         "LocalCubicOuterInterpolant.evaluate_with_derivative",
-        "LocalCubicOuterInterpolant.evaluate_validity",
         "LocalCubicOuterInterpolant._evaluate",
         "_pad_state_axes",
         "_validate_nodes",
@@ -49,11 +48,6 @@ _BODY_CASES = (
         "interpolation:evaluate_derivative",
         INTERPOLATION,
         "LocalCubicOuterInterpolant.evaluate_with_derivative",
-    ),
-    (
-        "interpolation:evaluate_validity",
-        INTERPOLATION,
-        "LocalCubicOuterInterpolant.evaluate_validity",
     ),
     (
         "interpolation:evaluate_core",

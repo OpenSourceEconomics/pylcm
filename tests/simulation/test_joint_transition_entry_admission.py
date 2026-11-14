@@ -114,10 +114,6 @@ def _target_utility(*, wealth: ScalarFloat, income: ScalarFloat) -> ScalarFloat:
     return wealth + income
 
 
-def _active_target(age: float) -> bool:
-    return age == 1
-
-
 def _joint_probabilities() -> FloatND:
     return jnp.asarray([0.5, 0.5], dtype=_FLOAT_DTYPE)
 

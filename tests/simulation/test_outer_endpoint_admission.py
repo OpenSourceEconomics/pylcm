@@ -91,17 +91,6 @@ _ENDPOINT_CASES = [_LOWER_CASE, _UPPER_CASE]
 # The direct-law control domain: recovering the action never crosses zero.
 _NONNEGATIVE_DOMAIN = (0.0, 20.0)
 
-# A published policy no subject at `_ALL_MISSED_APPROACH_FROM` can be given.
-# Every node of the mesh is a declared endpoint, and the domain lies wholly on
-# the far side of zero from the subject, close enough that the action recovered
-# for either node lands in a coarser binade than the node itself. The keeper's
-# target is the subject's own stock, which is outside the domain. No branch of
-# the published policy survives, so the fallback has nothing left to emit.
-_ALL_MISSED_DOMAIN: tuple[float, float] = (-1.5, -1.0)
-_ALL_MISSED_NODES: tuple[float, ...] = (-1.5, -1.0)
-_ALL_MISSED_APPROACH_FROM = 1.0
-_ALL_MISSED_INVESTMENT = -20.0
-
 # Consumption published by the keeper branch and by every bank node, so a
 # published inner action says which branch the fallback settled on.
 _KEEPER_CONSUMPTION = 0.5
@@ -162,27 +151,6 @@ def _walk_away_from_zero(*, base: float, target: float, want_miss: bool) -> floa
     wanted = "misses" if want_miss else "reaches"
     raise AssertionError(
         f"no representable stock near {base} {wanted} {target} at {dtype.name}"
-    )
-
-
-def _all_missed_stock() -> float:
-    """A stock whose recovered action reproduces no published node.
-
-    Walks representable neighbours away from zero until one stock misses every
-    node of the mesh, so the witness is genuine in whichever format the suite
-    is running rather than a constant that only holds at one.
-    """
-    dtype = _working_dtype()
-    scalar = dtype.type
-    stock = np.asarray(_ALL_MISSED_APPROACH_FROM, dtype=dtype)
-    away = np.asarray(np.inf, dtype=dtype)
-    for _ in range(4096):
-        if all(stock + (scalar(n) - stock) != scalar(n) for n in _ALL_MISSED_NODES):
-            return float(stock)
-        stock = np.nextafter(stock, away)
-    raise AssertionError(
-        f"no representable stock near {_ALL_MISSED_APPROACH_FROM} misses every "
-        f"node of {_ALL_MISSED_NODES} at {dtype.name}"
     )
 
 

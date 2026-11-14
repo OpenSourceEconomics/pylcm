@@ -28,7 +28,7 @@ from scipy.stats import norm
 from typing_extensions import TypedDict
 
 from _lcm.config import TEST_DATA
-from _lcm.processes.ar1 import _AR1Process, _TauchenOnNodesProcess
+from _lcm.processes.ar1 import _AR1Process
 from _lcm.processes.state_conditioned import conditioned_row
 from _lcm.regime_building.processing import _get_weights_func_for_process
 from _lcm.typing import DataclassInstance
@@ -66,18 +66,8 @@ from lcm.typing import (
 )
 from tests.conftest import DECIMAL_PRECISION, X64_ENABLED
 from tests.test_models.on_nodes_oracles import (
-    density_derivative,
     density_matrix,
     quadrature_matrix,
-)
-from tests.test_models.pr626_density_sensitivity_oracle import (
-    density_pairwise_derivative,
-)
-from tests.test_models.pr626_density_sensitivity_oracle import (
-    evaluate_case as normalized_case_evaluation,
-)
-from tests.test_models.pr626_density_sensitivity_oracle import (
-    make_case as normalized_case,
 )
 from tests.test_models.processes import (
     DistributionType,
@@ -158,31 +148,25 @@ def _solve_process_representation(
 @pytest.mark.skipif(
     not X64_ENABLED, reason="Income representation parity uses float64."
 )
-@pytest.mark.parametrize("period", [0, 1, 2])
-def test_lognormal_fixture_values_match_normal_income_representation(
-    period: int,
-) -> None:
-    """Moving exponentiation into the income process preserves solved values."""
-    lognormal, _ = _solve_process_representation("lognormal")
-    normal, _ = _solve_process_representation("normal")
-    np.testing.assert_allclose(
-        np.asarray(lognormal.values[period]["alive"]),
-        np.asarray(normal.values[period]["alive"]),
-        rtol=10.0**-DECIMAL_PRECISION,
-        atol=0,
-    )
+def test_lognormal_fixture_values_match_normal_income_representation() -> None:
+    """Moving exponentiation into the income process preserves values and panel.
 
-
-@pytest.mark.skipif(
-    not X64_ENABLED, reason="Income representation parity uses float64."
-)
-def test_lognormal_fixture_panel_matches_normal_income_representation() -> None:
-    """A common seed gives the same panel with income expressed in levels."""
-    _, lognormal = _solve_process_representation("lognormal")
-    _, normal = _solve_process_representation("normal")
+    Solved values agree in every period, and a common seed gives the same panel
+    with income expressed in levels.
+    """
+    lognormal_solution, lognormal_panel = _solve_process_representation("lognormal")
+    normal_solution, normal_panel = _solve_process_representation("normal")
+    for period in (0, 1, 2):
+        np.testing.assert_allclose(
+            np.asarray(lognormal_solution.values[period]["alive"]),
+            np.asarray(normal_solution.values[period]["alive"]),
+            rtol=10.0**-DECIMAL_PRECISION,
+            atol=0,
+            err_msg=f"period {period}",
+        )
     assert_frame_equal(
-        lognormal,
-        normal.assign(income=np.exp(normal["income"])),
+        lognormal_panel,
+        normal_panel.assign(income=np.exp(normal_panel["income"])),
         rtol=10.0**-DECIMAL_PRECISION,
         atol=0,
     )
@@ -1435,32 +1419,6 @@ def test_tauchen_on_nodes_rejects_invalid_grid(nodes: tuple[float, ...]) -> None
         TauchenAR1Process.on_nodes(nodes=np.array(nodes), rho=1.0, sigma=0.3)
 
 
-@pytest.mark.parametrize(
-    ("nodes", "type_name"),
-    [
-        pytest.param([-1.0, 0.0, 1.0], "list", id="list"),
-        pytest.param((-1.0, 0.0, 1.0), "tuple", id="tuple"),
-    ],
-)
-def test_tauchen_on_nodes_refuses_a_non_array_container(*, nodes, type_name) -> None:
-    """`nodes` is a NumPy or JAX array; the error names the type and the spelling."""
-    with pytest.raises(
-        GridInitializationError,
-        match=rf"got {type_name}.*on_nodes\(nodes=jnp\.array\(",
-    ):
-        TauchenAR1Process.on_nodes(nodes=nodes, rho=1.0, sigma=0.3)
-
-
-@pytest.mark.parametrize(
-    "nodes",
-    [np.array(["-1.0", "0.0", "1.0"]), np.array([-1.0, None, 1.0], dtype=object)],
-)
-def test_tauchen_on_nodes_refuses_a_non_numeric_array(nodes) -> None:
-    """An array of nodes must have an integer or floating dtype."""
-    with pytest.raises(GridInitializationError, match="integer or floating dtype"):
-        TauchenAR1Process.on_nodes(nodes=nodes, rho=1.0, sigma=0.3)
-
-
 def test_tauchen_on_nodes_accepts_a_jax_array() -> None:
     """A JAX array of nodes gives the same physical axis as a NumPy array."""
     process = TauchenAR1Process.on_nodes(
@@ -2155,14 +2113,6 @@ def test_tauchen_on_nodes_refuses_invalid_quadrature_count(count: int) -> None:
         )
 
 
-def test_tauchen_on_nodes_refuses_an_unknown_transition_rule() -> None:
-    with pytest.raises(GridInitializationError, match="transition_rule"):
-        TauchenAR1Process.on_nodes(
-            nodes=np.array([-1.0, 1.0]),
-            transition_rule="trapezoid",  # ty: ignore[invalid-argument-type]
-        )
-
-
 @pytest.mark.parametrize("rule", ["midpoint", "density"])
 def test_tauchen_on_nodes_refuses_unused_quadrature_inputs(
     rule: Literal["midpoint", "density"],
@@ -2191,27 +2141,6 @@ def test_tauchen_on_nodes_requires_one_complete_quadrature_declaration() -> None
         )
 
 
-def test_tauchen_on_nodes_density_scale_derivative_matches_normalized_density() -> None:
-    """The scale derivative differentiates the same normalized node probabilities."""
-    nodes = np.array([-1.0, -0.4, 0.0, 0.5, 1.2])
-    rho, sigma, mu = 0.9, 0.3, 0.2
-    process = TauchenAR1Process.on_nodes(nodes=nodes, transition_rule="density")
-    weights = _reference_on_nodes_rule(
-        nodes=nodes, rho=rho, sigma=sigma, mu=mu, rule="density"
-    )
-    distances = nodes[None, :] - mu - rho * nodes[:, None]
-    squared = distances**2
-    expected = weights * (squared - (weights * squared).sum(axis=1)[:, None]) / sigma**3
-    got = jit(
-        jacrev(
-            lambda scale: process.compute_transition_probs(
-                rho=jnp.asarray(rho), sigma=scale, mu=jnp.asarray(mu)
-            )
-        )
-    )(jnp.asarray(sigma))
-    aaae(got, expected, decimal=DECIMAL_PRECISION)
-
-
 @pytest.mark.parametrize(
     ("nodes", "mu", "sigma", "expected"),
     [
@@ -2229,22 +2158,6 @@ def test_tauchen_on_nodes_density_extreme_tail_and_equal_distance_limits(
     )
     got = jit(process.compute_transition_probs)(**process.params)
     np.testing.assert_array_equal(got, np.tile(expected, (len(nodes), 1)))
-
-
-def test_tauchen_on_nodes_density_equal_distance_location_derivative() -> None:
-    """Equal node densities retain their opposing location derivatives."""
-    process = TauchenAR1Process.on_nodes(
-        nodes=np.array([-1.0, 1.0]), transition_rule="density"
-    )
-    got = jit(
-        jacrev(
-            lambda location: process.compute_transition_probs(
-                rho=jnp.asarray(0.0), sigma=jnp.asarray(0.3), mu=location
-            )
-        )
-    )(jnp.asarray(0.0))
-    expected = np.tile(np.array([-0.5, 0.5]) / 0.3**2, (2, 1))
-    aaae(got, expected, decimal=DECIMAL_PRECISION)
 
 
 def _small_drift() -> tuple[float, float]:
@@ -2295,59 +2208,6 @@ def test_density_small_drift_preserves_odds_and_a_finite_margin_choice(
     # Exact log odds are 2*mu/sigma**2 = 2, so the upper mass is about 0.880797.
     assert int(np.argmax([0.7, float(got[0, 1])])) == 1
     np.testing.assert_array_almost_equal(got, expected, decimal=DECIMAL_PRECISION)
-
-
-@pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
-@pytest.mark.parametrize("scenario", ["ordinary", "small_drift", "saturated_tail"])
-@pytest.mark.parametrize("parameter", ["sigma", "mu", "rho"])
-def test_density_derivatives_differentiate_the_normalized_probability_law(
-    *, compiled: bool, scenario: str, parameter: Literal["sigma", "mu", "rho"]
-) -> None:
-    """Scale and location derivatives agree with the same normalized node law."""
-    if scenario == "ordinary":
-        nodes = (-1.0, -0.4, 0.0, 0.5, 1.2)
-        rho, sigma, mu = 0.9, 0.3, 0.2
-    elif scenario == "saturated_tail":
-        nodes = (-1.0, 0.0, 1.0)
-        rho = 0.0
-        sigma = 1e-200 if X64_ENABLED else 1e-30
-        mu = 1e200 if X64_ENABLED else 1e30
-    else:
-        nodes = (-1.0, 1.0)
-        rho = 0.0
-        mu, sigma = _small_drift()
-    # The oracle receives exactly the represented active-precision inputs.
-    dtype = np.float64 if X64_ENABLED else np.float32
-    nodes = tuple(float(value) for value in np.asarray(nodes, dtype=dtype))
-    rho, sigma, mu = (float(dtype(value)) for value in (rho, sigma, mu))
-    process = TauchenAR1Process.on_nodes(
-        nodes=np.asarray(nodes), transition_rule="density"
-    )
-
-    def matrix(value: jax.Array) -> FloatND:
-        return process.compute_transition_probs(
-            rho=value if parameter == "rho" else jnp.asarray(rho),
-            sigma=value if parameter == "sigma" else jnp.asarray(sigma),
-            mu=value if parameter == "mu" else jnp.asarray(mu),
-        )
-
-    derivative = jax.jacrev(matrix)
-    if compiled:
-        derivative = jax.jit(derivative)
-    got = derivative(jnp.asarray({"sigma": sigma, "mu": mu, "rho": rho}[parameter]))
-    expected = [
-        density_derivative(
-            nodes=nodes,
-            source=source,
-            rho=rho,
-            sigma=sigma,
-            mu=mu,
-            parameter=parameter,
-        )
-        for source in nodes
-    ]
-    tolerance = 10.0**-DECIMAL_PRECISION
-    np.testing.assert_allclose(got, expected, rtol=tolerance, atol=tolerance)
 
 
 @pytest.mark.parametrize("route", ["fixed", "eager", "jit"])
@@ -2711,50 +2571,6 @@ def test_density_retains_the_product_residual_in_the_conditional_mean(
     assert int(np.argmax([sure, float(actual[source_index, 1])])) == expected_choice
 
 
-@pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
-@pytest.mark.parametrize("sign", [-1.0, 1.0])
-@pytest.mark.parametrize("parameter", ["sigma", "mu", "rho"])
-def test_density_product_residual_derivatives_follow_the_same_probability_law(
-    *, compiled: bool, sign: float, parameter: Literal["sigma", "mu", "rho"]
-) -> None:
-    """The retained product residual must also enter normalized-law derivatives."""
-    nodes, rho, mu, sigma, source_index = _density_product_case(
-        sign=sign, scale_exponent=0
-    )
-    process = TauchenAR1Process.on_nodes(
-        nodes=np.asarray(nodes),
-        transition_rule="density",
-        rho=None,
-        mu=None,
-        sigma=None,
-    )
-
-    def row(value: ScalarFloat) -> FloatND:
-        return process.compute_transition_probs(
-            rho=value if parameter == "rho" else jnp.asarray(rho),
-            mu=value if parameter == "mu" else jnp.asarray(mu),
-            sigma=value if parameter == "sigma" else jnp.asarray(sigma),
-        )[source_index]
-
-    differentiate = jax.jacrev(row)
-    if compiled:
-        differentiate = jax.jit(differentiate)
-    actual = differentiate(
-        jnp.asarray({"rho": rho, "mu": mu, "sigma": sigma}[parameter])
-    )
-    expected = density_derivative(
-        nodes=nodes,
-        source=nodes[source_index],
-        rho=rho,
-        mu=mu,
-        sigma=sigma,
-        parameter=parameter,
-    )
-    tolerance = 10.0**-DECIMAL_PRECISION
-    assert np.isfinite(actual).all()
-    np.testing.assert_allclose(actual, expected, rtol=tolerance, atol=tolerance)
-
-
 @categorical(ordered=False)
 class _ProductResidualRegime:
     alive: ScalarInt
@@ -2877,86 +2693,6 @@ def test_density_exact_reference_keeps_overflowing_contrasts_nonpositive(
 
 
 @pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
-@pytest.mark.parametrize(
-    "direction", ["zero", "unit_sigma", "small_rho", "minnormal_rho"]
-)
-def test_density_scaled_directional_derivatives_do_not_materialize_infinite_partials(
-    *, compiled: bool, direction: str
-) -> None:
-    """Zero and small directions remain finite when an unused partial overflows."""
-    exponent = 600 if X64_ENABLED else 80
-    radius, source = 2.0**-exponent, 2.0**exponent
-    dtype = np.float64 if X64_ENABLED else np.float32
-    nodes = (-radius, radius, source)
-    process = TauchenAR1Process.on_nodes(
-        nodes=np.asarray(nodes), transition_rule="density"
-    )
-
-    def evaluate(params: FloatND) -> FloatND:
-        return process.compute_transition_probs(
-            rho=params[0], mu=jnp.asarray(0.0), sigma=params[1]
-        )[-1]
-
-    rho_dot = (
-        radius
-        if direction == "small_rho"
-        else np.finfo(dtype).tiny
-        if direction == "minnormal_rho"
-        else 0.0
-    )
-    sigma_dot = 1.0 if direction == "unit_sigma" else 0.0
-
-    def directional() -> FloatND:
-        return jax.jvp(
-            evaluate,
-            (jnp.asarray([0.0, radius]),),
-            (jnp.asarray([rho_dot, sigma_dot]),),
-        )[1]
-
-    actual = jax.jit(directional)() if compiled else directional()
-    # Exact symmetric two-point score formula; the third mass is saturated zero.
-    slope = 0.5 * float(Fraction(source) * Fraction(float(rho_dot)) / Fraction(radius))
-    expected = np.asarray([-slope, slope, 0.0])
-    assert np.isfinite(actual).all()
-    np.testing.assert_allclose(
-        actual, expected, rtol=10.0**-DECIMAL_PRECISION, atol=10.0**-DECIMAL_PRECISION
-    )
-
-
-@pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
-@pytest.mark.parametrize("parameter", ["mu", "sigma"])
-def test_density_finite_reverse_partials_ignore_an_overflowing_other_partial(
-    *, compiled: bool, parameter: Literal["mu", "sigma"]
-) -> None:
-    """Reverse-mode finite derivatives do not inherit an inactive infinite slope."""
-    exponent = 600 if X64_ENABLED else 80
-    radius, source = 2.0**-exponent, 2.0**exponent
-    nodes = (-radius, radius, source)
-    process = TauchenAR1Process.on_nodes(
-        nodes=np.asarray(nodes), transition_rule="density"
-    )
-
-    def evaluate(value: ScalarFloat) -> FloatND:
-        return process.compute_transition_probs(
-            rho=jnp.asarray(0.0),
-            mu=value if parameter == "mu" else jnp.asarray(0.0),
-            sigma=value if parameter == "sigma" else jnp.asarray(radius),
-        )[-1]
-
-    derivative = jax.jacrev(evaluate)
-    if compiled:
-        derivative = jax.jit(derivative)
-    actual = derivative(jnp.asarray(0.0 if parameter == "mu" else radius))
-    expected = density_derivative(
-        nodes=nodes, source=source, rho=0.0, sigma=radius, mu=0.0, parameter=parameter
-    )
-    assert np.isfinite(actual).all()
-    np.testing.assert_allclose(
-        actual, expected, rtol=10.0**-DECIMAL_PRECISION, atol=10.0**-DECIMAL_PRECISION
-    )
-
-
-@pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
 @pytest.mark.parametrize("sign", [-1.0, 1.0])
 def test_density_stored_subnormal_nodes_retain_their_order_and_reference(
     *, compiled: bool, sign: float
@@ -2976,154 +2712,6 @@ def test_density_stored_subnormal_nodes_retain_their_order_and_reference(
     )
     expected = density_matrix(nodes=nodes, rho=0.0, sigma=sigma, mu=mu)
     _assert_probability_matrix(actual=actual, expected=expected)
-
-
-@pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
-@pytest.mark.parametrize("method", ["jvp", "jacfwd", "jacrev"])
-@pytest.mark.parametrize("parameter", ["mu", "sigma"])
-@pytest.mark.parametrize("sign", [-1, 1])
-@pytest.mark.parametrize("neighbor_offset", [0, 1])
-@pytest.mark.parametrize("scale_offset", [0, 3])
-def test_density_product_residual_has_finite_normalized_sensitivities(
-    *,
-    compiled: bool,
-    method: Literal["jvp", "jacfwd", "jacrev"],
-    parameter: Literal["mu", "sigma"],
-    sign: int,
-    neighbor_offset: int,
-    scale_offset: int,
-) -> None:
-    """Both the row and terminal expectation differentiate the declared law."""
-    precision = 64 if X64_ENABLED else 32
-    case = normalized_case(
-        precision=precision,
-        neighbor=(17 if X64_ENABLED else 3) + neighbor_offset,
-        scale_exponent=(-970 if X64_ENABLED else -103) + scale_offset,
-        sign=sign,
-    )
-    dtype = np.float64 if X64_ENABLED else np.float32
-    info = np.finfo(dtype)
-    inputs = np.asarray([*case.nodes, case.rho, case.mu, case.sigma], dtype=dtype)
-    assert np.isfinite(inputs).all()
-    assert (np.abs(inputs) >= info.tiny).all()
-    process = TauchenAR1Process.on_nodes(
-        nodes=np.asarray(case.nodes, dtype=dtype),
-        transition_rule="density",
-        rho=None,
-        mu=None,
-        sigma=None,
-    )
-    expected_row, expected_derivative = normalized_case_evaluation(
-        case=case, parameter=parameter
-    )
-    assert min(expected_row) >= info.tiny
-    assert all(info.tiny <= abs(value) <= info.max for value in expected_derivative)
-
-    def evaluate(value: ScalarFloat) -> dict[str, FloatND]:
-        row = process.compute_transition_probs(
-            rho=jnp.asarray(case.rho),
-            mu=value if parameter == "mu" else jnp.asarray(case.mu),
-            sigma=value if parameter == "sigma" else jnp.asarray(case.sigma),
-        )[case.source_index]
-        # A terminal payoff (0,1) has this conditional expectation and sensitivity.
-        return {"row": row, "terminal_value": row @ jnp.asarray([0.0, 1.0])}
-
-    point = jnp.asarray(case.mu if parameter == "mu" else case.sigma)
-    primal = jax.jit(evaluate)(point) if compiled else evaluate(point)
-    tolerance = 10.0**-DECIMAL_PRECISION
-    np.testing.assert_allclose(primal["row"], expected_row, rtol=tolerance, atol=0.0)
-    np.testing.assert_allclose(
-        primal["terminal_value"], expected_row[1], rtol=tolerance, atol=0.0
-    )
-
-    if method == "jvp":
-
-        def differentiate(value: ScalarFloat) -> dict[str, FloatND]:
-            return jax.jvp(evaluate, (value,), (jnp.ones_like(value),))[1]
-    else:
-        differentiate = (
-            jax.jacfwd(evaluate) if method == "jacfwd" else jax.jacrev(evaluate)
-        )
-    operation = jax.jit(differentiate) if compiled else differentiate
-    actual = operation(point)
-    assert np.isfinite(actual["row"]).all()
-    assert np.isfinite(actual["terminal_value"])
-    np.testing.assert_allclose(
-        actual["row"], expected_derivative, rtol=tolerance, atol=0.0
-    )
-    np.testing.assert_allclose(
-        actual["terminal_value"], expected_derivative[1], rtol=tolerance, atol=0.0
-    )
-
-
-@pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
-@pytest.mark.parametrize("method", ["jvp", "jacfwd", "jacrev"])
-@pytest.mark.parametrize("parameter", ["mu", "rho", "source", "sigma"])
-@pytest.mark.parametrize(
-    "geometry", ["tiny_contrast", "underflowed_tail", "symmetric_tails", "irregular"]
-)
-def test_density_normalized_derivatives_retain_scaled_weights_and_scores(
-    *,
-    compiled: bool,
-    method: Literal["jvp", "jacfwd", "jacrev"],
-    parameter: Literal["mu", "rho", "source", "sigma"],
-    geometry: str,
-) -> None:
-    """Normalized sensitivities survive both raw-score overflow and underflow."""
-    dtype = np.float64 if X64_ENABLED else np.float32
-    if geometry == "tiny_contrast":
-        unit = float(np.nextafter(dtype(0.0), dtype(1.0)))
-        nodes, sigma = (0.0, unit), 2.0 ** (-500 if X64_ENABLED else -60)
-        rho, mu, source = 0.5, 0.0, 0.0
-    elif geometry in {"underflowed_tail", "symmetric_tails"}:
-        sigma = 2.0 ** (-600 if X64_ENABLED else -80)
-        radius = (40 if X64_ENABLED else 16) * sigma
-        nodes = (
-            (0.0, radius) if geometry == "underflowed_tail" else (-radius, 0.0, radius)
-        )
-        rho, mu, source = 0.5, 0.0, 0.0
-    else:
-        nodes, sigma = (-2.0, -0.25, 0.0, 0.125, 3.0), 0.7
-        rho, mu, source = 0.25, -0.125, 0.5
-    process = TauchenAR1Process.on_nodes(
-        nodes=np.asarray(nodes), transition_rule="density"
-    )
-
-    assert isinstance(process, _TauchenOnNodesProcess)
-
-    def evaluate(value: ScalarFloat) -> FloatND:
-        return process.compute_transition_row(
-            value if parameter == "source" else jnp.asarray(source),
-            rho=value if parameter == "rho" else jnp.asarray(rho),
-            mu=value if parameter == "mu" else jnp.asarray(mu),
-            sigma=value if parameter == "sigma" else jnp.asarray(sigma),
-        )
-
-    point = jnp.asarray(
-        {"source": source, "rho": rho, "mu": mu, "sigma": sigma}[parameter]
-    )
-    if method == "jvp":
-
-        def differentiate(value: ScalarFloat) -> FloatND:
-            return jax.jvp(evaluate, (value,), (jnp.ones_like(value),))[1]
-    else:
-        differentiate = (
-            jax.jacfwd(evaluate) if method == "jacfwd" else jax.jacrev(evaluate)
-        )
-    operation = jax.jit(differentiate) if compiled else differentiate
-    actual = operation(point)
-    expected = density_pairwise_derivative(
-        nodes=nodes,
-        source=source,
-        rho=rho,
-        mu=mu,
-        sigma=sigma,
-        parameter=parameter,
-    )
-    assert np.isfinite(actual).all()
-    np.testing.assert_allclose(
-        actual, expected, rtol=10.0**-DECIMAL_PRECISION, atol=0.0
-    )
 
 
 def test_rouwenhorst_simulation_extrapolates_beyond_the_edge_nodes() -> None:

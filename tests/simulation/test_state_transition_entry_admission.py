@@ -71,10 +71,6 @@ def _utility(*, health: ScalarInt) -> ScalarFloat:
     return health.astype(_FLOAT_DTYPE)
 
 
-def _done(age: float) -> bool:
-    return age == 1
-
-
 def _costly_probability(*, health: ScalarInt) -> ScalarFloat:
     """Require visible sorting workspace without changing the probabilities."""
     sample = jnp.sin(jnp.arange(4096, dtype=_FLOAT_DTYPE) + health)

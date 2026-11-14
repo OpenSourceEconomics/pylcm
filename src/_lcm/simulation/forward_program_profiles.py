@@ -16,7 +16,6 @@ from _lcm.egm.published_policy import NNBEGMSimPolicy
 from _lcm.engine import Regime, StateActionSpace
 from _lcm.execution.core_program import CoreProgram
 from _lcm.execution.workspace_planning import CompilerMemoryReservation
-from _lcm.grids import DiscreteGrid
 from _lcm.params.edges import regime_kernel_params
 from _lcm.regime_building.Q_and_F import (
     EDGE_REF_PARAMS_ARG,
@@ -102,65 +101,6 @@ class ForwardProgramProfile(AbstractSimulationProfile):
     """A declared core and its separately profiled action decoder when present."""
 
     action_decoder: AbstractSimulationProfile | None = None
-
-
-def profile_forward_programs(
-    *,
-    runtime: SimulationRuntime,
-    regimes: Mapping[str, Regime],
-    flat_params: FlatParams,
-    base_spaces: Mapping[str, StateActionSpace],
-    values: Mapping[int, Mapping[str, jax.Array | jax.ShapeDtypeStruct]],
-    ages: TimeAxis,
-    n_subjects: int,
-    widths: Mapping[str, int],
-    ordinary_key: jax.ShapeDtypeStruct,
-    taste_key: jax.ShapeDtypeStruct | None,
-    policies: Mapping[int, Mapping[RegimeName, SimulationPolicy]] | None = None,
-) -> Mapping[tuple[int, str, str], ForwardProgramProfile]:
-    """Prepare canonical entry descriptors for focused core-level profiling.
-
-    Complete chunks call profile_forward_unit with their evolving carrier instead:
-    this entry-only convenience does not model state updates between programs.
-    """
-    subject = subject_operand_sharding(devices=runtime.subject_devices)
-    profiles = {}
-    for name, regime in regimes.items():
-        columns = {
-            state: jax.ShapeDtypeStruct(
-                (n_subjects,),
-                np.dtype(
-                    jnp.int32
-                    if isinstance(regime.simulation.grids[state], DiscreteGrid)
-                    else canonical_float_dtype()
-                ),
-                sharding=subject,
-            )
-            for state in regime.simulation.state_names
-        }
-        for period in regime.simulation.programs.decision:
-            unit = profile_forward_unit(
-                runtime=runtime,
-                regimes=regimes,
-                regime=regime,
-                name=name,
-                period=period,
-                flat_params=flat_params,
-                base=base_spaces[name],
-                base_spaces=base_spaces,
-                values=values,
-                ages=ages,
-                n_subjects=n_subjects,
-                widths=widths,
-                columns=columns,
-                ordinary_key=ordinary_key,
-                taste_key=taste_key,
-                policy=(policies or {}).get(period, {}).get(name),
-            )
-            profiles.update(
-                {(period, name, family): profile for family, profile in unit.items()}
-            )
-    return MappingProxyType(profiles)
 
 
 def profile_forward_unit(  # noqa: C901, PLR0912, PLR0915

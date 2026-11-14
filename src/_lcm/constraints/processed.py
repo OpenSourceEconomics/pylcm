@@ -18,16 +18,10 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 
-from _lcm.constraints.ir import (
-    Compare,
-    Condition,
-    Const,
-    Ref,
-    conjuncts,
-    dependencies_of,
-)
+from _lcm.constraints.ir import Compare, Const, conjuncts, dependencies_of
 from _lcm.post_decision_bound import _PostDecisionLowerBound
 from _lcm.typing import ConstraintFunction, FunctionName
+from lcm.condition import Condition, Ref
 from lcm.typing import BoolND, UserFunction, ValueND
 
 # What a regime's `constraints` slot accepts, before normalization.

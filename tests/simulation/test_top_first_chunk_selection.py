@@ -179,7 +179,7 @@ def _check_receipt(*, plan: SimulationChunkPlan, profiler: _Profiler) -> None:
     receipt = plan.receipt
     assert receipt is not None
     assert receipt.frontier_version == 3
-    assert receipt.profile_count == len(profiler.calls)
+    assert len(receipt.attempts) == len(profiler.calls)
     assert len(profiler.calls) == len(set(profiler.calls))
     assert receipt.candidates == tuple(sorted(set(receipt.candidates)))
     assert receipt.selected_subjects == plan.profile.n_subjects

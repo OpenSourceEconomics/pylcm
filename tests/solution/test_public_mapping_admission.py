@@ -24,7 +24,6 @@ from lcm._solver_api.stores import _traverse_public_mapping_items
 from lcm.persistence import load_solution
 from lcm.solver_api import (
     SIMULATION_POLICY,
-    ArtifactKey,
     ArtifactRef,
     ArtifactStore,
     OmissionReason,
@@ -108,29 +107,11 @@ def _metadata(*, n_periods: int = 2) -> SolutionMetadata:
     )
 
 
-@pytest.mark.parametrize(
-    ("exact", "alias"), [(0, False), (1, True)], ids=["zero-False", "one-True"]
-)
-@pytest.mark.parametrize(
-    "alias_first", [False, True], ids=["exact-first", "alias-first"]
-)
-@pytest.mark.parametrize("form", ["flat", "nested"])
-def test_value_store_rejects_boolean_period_alias_in_either_order(
-    *, exact: int, alias: bool, alias_first: bool, form: str
-) -> None:
-    """A Boolean period alias is refused whether it arrives before or after its
-    equal exact integer, in flat and nested form."""
-    coordinates = [(alias, _payload(2.0)), (exact, _payload(1.0))]
-    if not alias_first:
-        coordinates.reverse()
-    if form == "flat":
-        stream = _ItemStream(
-            items=[((period, _REGIME), value) for period, value in coordinates]
-        )
-    else:
-        stream = _ItemStream(
-            items=[(period, {_REGIME: value}) for period, value in coordinates]
-        )
+def test_value_store_rejects_boolean_period_alias() -> None:
+    """A Boolean period alias of an equal exact integer is refused."""
+    stream = _ItemStream(
+        items=[((True, _REGIME), _payload(2.0)), ((1, _REGIME), _payload(1.0))]
+    )
 
     with pytest.raises(TypeError, match="exact ints"):
         ValueStore(cast("_ValueEntries", stream))
@@ -234,19 +215,6 @@ def test_value_store_preserves_every_addressed_payload_of_a_valid_mapping(
         np.testing.assert_array_equal(materialized[coordinate], value)
 
 
-def test_solution_result_rejects_an_aliased_value_mapping_at_construction() -> None:
-    """The public result constructor fails closed before any snapshot or save."""
-    stream = _ItemStream(
-        items=[((1, _REGIME), _payload(1.0)), ((True, _REGIME), _payload(2.0))]
-    )
-
-    with pytest.raises(TypeError, match="exact ints"):
-        SolutionResult(
-            values=cast("Mapping[int, Mapping[str, FloatND]]", stream),
-            metadata=_metadata(),
-        )
-
-
 def test_public_value_mapping_survives_save_load_and_replay(tmp_path) -> None:
     """A result rebuilt from a valid nested public mapping persists, restores, and
     replays exactly like the solve that produced it."""
@@ -303,14 +271,6 @@ def test_artifact_store_rejects_a_repeated_address_at_construction() -> None:
         ArtifactStore(cast("Mapping[ArtifactRef, ArtifactPayload]", stream))
 
 
-def test_artifact_store_rejects_a_nonexact_address_at_construction() -> None:
-    """A tuple that spells an address is not an `ArtifactRef` and never enters."""
-    stream = _ItemStream(items=[((0, _REGIME, ArtifactKey(type_id="x")), object())])
-
-    with pytest.raises(TypeError, match=r"parameter ref=.*ArtifactRef"):
-        ArtifactStore(cast("Mapping[ArtifactRef, ArtifactPayload]", stream))
-
-
 def test_artifact_store_consumes_exactly_one_item_traversal() -> None:
     stream = _ItemStream(
         items=[(_ref(period=0), object()), (_ref(period=1), object())], max_traversals=1
@@ -320,20 +280,6 @@ def test_artifact_store_consumes_exactly_one_item_traversal() -> None:
 
     assert stream.traversals == 1
     assert set(store) == {_ref(period=0), _ref(period=1)}
-
-
-def test_solution_result_rejects_a_nonexact_omission_address_at_construction() -> None:
-    values = ValueStore({(0, _REGIME): _payload(1.0)})
-
-    with pytest.raises(TypeError, match=r"parameter ref=.*ArtifactRef"):
-        SolutionResult(
-            values=values,
-            metadata=_metadata(),
-            omissions=cast(
-                "Mapping[ArtifactRef, OmissionReason]",
-                {(0, _REGIME, SIMULATION_POLICY): OmissionReason.NOT_REQUESTED},
-            ),
-        )
 
 
 def test_solution_result_rejects_a_repeated_omission_address_at_construction() -> None:

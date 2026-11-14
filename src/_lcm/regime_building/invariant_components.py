@@ -31,7 +31,7 @@ from types import MappingProxyType
 from typing import Literal
 
 from _lcm.engine import GridRecomputationRoute, Regime
-from _lcm.grids import DiscreteGrid, Grid
+from _lcm.grids import Grid
 from _lcm.identity_transition import _IdentityTransition
 from _lcm.reachability import ModelReachability, PhaseReachability
 from _lcm.regime_building.finalize import FinalizedUserRegime
@@ -45,6 +45,7 @@ from _lcm.regime_law import RegimeLaws
 from _lcm.time import TimeAxis
 from _lcm.typing import RegimeName, StateName
 from lcm.exceptions import ExecutionPlanningError
+from lcm.grids import DiscreteGrid
 from lcm.transition import AgeSpecializedGrid, StochasticTransition
 from lcm.typing import UserAge, UserFunction
 

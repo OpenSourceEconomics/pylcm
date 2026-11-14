@@ -124,22 +124,6 @@ class PhaseReachability:
             )
         )
 
-    def reachable_from(
-        self, initial_regime_names: Collection[RegimeName]
-    ) -> tuple[frozenset[RegimeName], ...]:
-        """Return the forward closure over the already-built static graph."""
-        reachable = [frozenset(initial_regime_names) & self.active_regimes_by_period[0]]
-        for period in range(self.n_periods - 1):
-            targets = {
-                target
-                for source in reachable[-1]
-                for target in self.targets(period=period, source=source)
-            }
-            reachable.append(
-                frozenset(targets) & self.active_regimes_by_period[period + 1]
-            )
-        return tuple(reachable)
-
 
 @dataclass(frozen=True, kw_only=True)
 class ModelReachability:

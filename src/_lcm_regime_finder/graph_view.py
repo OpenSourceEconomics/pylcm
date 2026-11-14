@@ -85,21 +85,3 @@ def typed_incidence_graph(declarations):
             'domains': deepcopy(declarations['domains']),
             'callbacks': deepcopy(declarations['callbacks']),
             'scope': 'lossless view of the typed declaration records; incidence edges are not transition probability marginals'}
-
-
-def to_networkx(declarations):
-    """Return MultiDiGraph when NetworkX is installed by the caller.
-
-    NetworkX is not needed by source analysis, cost search or independent checks.
-    No package installation is attempted by this function.
-    """
-    import networkx as nx
-    view = typed_incidence_graph(declarations)
-    graph = nx.MultiDiGraph(schema=view['schema'], source_identity=view['source_identity'],
-                            domains=view['domains'], callbacks=view['callbacks'])
-    for node in view['nodes']:
-        graph.add_node(node['id'], **{k: v for k, v in node.items() if k != 'id'})
-    for edge in view['edges']:
-        graph.add_edge(edge['source'], edge['target'], key=edge['key'],
-                       **{k: v for k, v in edge.items() if k not in ('source', 'target', 'key')})
-    return graph

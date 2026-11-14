@@ -29,7 +29,6 @@ from _lcm.probability import (
     is_negative,
     is_represented_zero,
     rescaled_lottery_weights,
-    rescaled_weight_group,
     rescaled_weight_pair,
     scaled_by_power_of_two,
     scaled_exact_product,
@@ -350,23 +349,6 @@ def test_a_pair_is_rescaled_by_one_common_factor() -> None:
     assert np.longdouble(np.asarray(second)) / np.longdouble(
         np.asarray(first)
     ) == np.longdouble(_smallest_subnormal())
-
-
-def test_a_group_of_branches_is_rescaled_by_one_common_factor() -> None:
-    """Branches held one array per target share the factor their lottery needs."""
-    dtype = _dtype()
-    scaled = rescaled_weight_group(
-        weights=[
-            jnp.asarray(1.0, dtype=dtype),
-            jnp.asarray(_smallest_subnormal(), dtype=dtype),
-            jnp.asarray(0.0, dtype=dtype),
-        ]
-    )
-
-    assert np.longdouble(np.asarray(scaled[1])) / np.longdouble(
-        np.asarray(scaled[0])
-    ) == np.longdouble(_smallest_subnormal())
-    assert bool(is_represented_zero(scaled[2]))
 
 
 def test_scaling_a_lottery_never_manufactures_an_infinity() -> None:

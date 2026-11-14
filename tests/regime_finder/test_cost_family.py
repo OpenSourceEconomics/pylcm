@@ -9,7 +9,6 @@ import tempfile
 from _lcm_regime_finder import (
     find_cost_frontier,
     check_cost_frontier,
-    query_cost_frontier,
     find_regimes,
     verify_certificate,
 )
@@ -195,11 +194,6 @@ def test_no_time_or_count_limits_across_all_cost_backends(
             assert check_cost_frontier(
                 analysis, result, seconds=None, limits=unlimited
             )["cost_family_complete_verified"]
-            query = query_cost_frontier(
-                analysis, result, seconds=None, limits=unlimited, weights=(1, 1, 1)
-            )
-            assert (query["status"]) == ("PASS")
-            assert query["witness"]
 
 
 def test_chain_coordinates_keep_layout_continuity_without_dropping_policies() -> None:
@@ -406,16 +400,6 @@ def test_forest_public_route_covers_unsupported_points() -> None:
     ]
     assert (check_cost_frontier(analysis, omitted)["status"]) == ("FAIL")
     assert (result["legacy_endpoint_preference"]) == ("NOT_APPLIED")
-    queried = query_cost_frontier(analysis, result, upper_bounds=(20, 20, 9))
-    assert (queried["witness_cost"]) == ((20, 20, 9))
-    assert queried["witness"]
-    assert not (query_cost_frontier(analysis, result, upper_bounds=(0, 0, 0))["answer"])
-    assert not (
-        query_cost_frontier(analysis, result, dominated_vector=(20, 20, 9))["answer"]
-    )
-    assert query_cost_frontier(analysis, result, dominated_vector=(21, 21, 10))[
-        "answer"
-    ]
 
 
 def test_exact_component_omission_and_source_promotion_fail() -> None:
@@ -448,7 +432,6 @@ def test_separator_discovered_without_axis_or_label_names() -> None:
     result = find_cost_frontier(analysis, seconds=30)
     assert (result["backend"]) == ("ordered-domain-separator")
     assert (check_cost_frontier(analysis, result)["status"]) == ("PASS")
-    assert query_cost_frontier(analysis, result, weights=(1, 1, 1))["witness"]
 
 
 def test_symbolic_complete_closure_and_source_boundary() -> None:
@@ -457,7 +440,6 @@ def test_symbolic_complete_closure_and_source_boundary() -> None:
     assert (result["backend"]) == ("symbolic-policy")
     assert (result["status"]) == ("COMPLETE_COST_FAMILY")
     assert (verify_certificate(packet, result)["status"]) == ("PASS")
-    assert query_cost_frontier(packet, result, weights=(1, 1, 1))["witness"]
     cover = chain_cover(packet["characteristic_candidates"][0])
     assert (set(c for row in cover for c in row)) == (
         set(c for row in chains for c in row)

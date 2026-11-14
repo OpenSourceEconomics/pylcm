@@ -11,11 +11,6 @@ than its true share, down to nothing at all, and the omission is at most
 `tiny * |V|` — below every declared tolerance for any value function a model can
 also add utility to.
 
-A joint product that underflows is the one case that can err upward, because the
-format has nothing smaller than its smallest magnitude to stand in with. That
-overstatement is bounded by `smallest_subnormal * |V|`, tighter than the omission
-bound by `2**23` in single precision and `2**52` in double.
-
 The one place magnitude stops mattering is an infinite continuation, where any
 strictly positive weight yields that infinity. Only there is such a weight raised.
 """
@@ -28,7 +23,7 @@ import numpy as np
 import pytest
 
 from _lcm.power_mean import weighted_power_mean
-from _lcm.zero_safe import joint_weight, zero_safe_weighted_term
+from _lcm.zero_safe import zero_safe_weighted_term
 from lcm.typing import FloatND, ScalarFloat
 
 
@@ -147,8 +142,7 @@ def test_a_subnormal_weight_does_not_distort_a_nonlinear_aggregation() -> None:
     here are ordinary, so the node is negligible on any backend.
     """
     dtype = _active_dtype()
-    root = np.sqrt(float(_smallest_normal())) / 2.0
-    underflowed = joint_weight(jnp.asarray([root, root], dtype=dtype))
+    underflowed = _smallest_subnormal()
 
     got = float(
         weighted_power_mean(
@@ -162,25 +156,7 @@ def test_a_subnormal_weight_does_not_distort_a_nonlinear_aggregation() -> None:
     np.testing.assert_allclose(got, 1.0, rtol=_tolerance())
 
 
-def test_an_underflowed_joint_product_is_never_inflated() -> None:
-    """A product that underflows stays below the normal range and below its truth.
-
-    How far below is a backend fact — a flushing backend receives the smallest
-    representable magnitude, one that represents subnormals keeps the product's
-    own value — so what is asserted is the contract both satisfy.
-    """
-    dtype = _active_dtype()
-    root = np.sqrt(float(_smallest_normal())) / 2.0
-    factors = jnp.asarray([root, root], dtype=dtype)
-
-    weight = float(joint_weight(factors))
-
-    assert weight != 0.0
-    assert weight <= root * root
-    assert weight < float(_smallest_normal())
-
-
-def test_an_underflowed_joint_product_contributes_nothing_to_a_finite_value() -> None:
+def test_the_smallest_subnormal_weight_contributes_nothing_to_a_finite_value() -> None:
     """The node exists, and prices an ordinary finite continuation at ~nothing.
 
     The continuation is ordinary on purpose. Against a value near the top of the
@@ -189,8 +165,7 @@ def test_an_underflowed_joint_product_contributes_nothing_to_a_finite_value() ->
     the one that holds everywhere.
     """
     dtype = _active_dtype()
-    root = np.sqrt(float(_smallest_normal())) / 2.0
-    weight = joint_weight(jnp.asarray([root, root], dtype=dtype))
+    weight = _smallest_subnormal()
 
     term = float(
         zero_safe_weighted_term(
@@ -203,11 +178,10 @@ def test_an_underflowed_joint_product_contributes_nothing_to_a_finite_value() ->
     assert abs(term) <= _tolerance()
 
 
-def test_an_underflowed_joint_product_still_keeps_an_infinity() -> None:
+def test_the_smallest_subnormal_weight_still_keeps_an_infinity() -> None:
     """A node that can occur makes an infeasible continuation infinite."""
     dtype = _active_dtype()
-    root = np.sqrt(float(_smallest_normal())) / 2.0
-    weight = joint_weight(jnp.asarray([root, root], dtype=dtype))
+    weight = _smallest_subnormal()
 
     term = zero_safe_weighted_term(
         weight=weight,

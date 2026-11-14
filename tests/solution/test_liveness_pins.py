@@ -170,7 +170,7 @@ def _declared_read_consumer_counts(
         persistable_artifact_refs=frozenset(),
     )
     return {
-        ledger.remaining_consumers(artifact=read.target)
+        ledger.remaining_counts[read.target]
         for entry in metadata.values()
         if entry.disposition is disposition
         for read in entry.requirements.value_reads

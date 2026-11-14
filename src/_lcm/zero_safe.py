@@ -64,23 +64,21 @@ not interchangeable and one of them carries a claim about what the caller has
 already established, so the call site says which is which.
 """
 
-import jax
 import jax.numpy as jnp
 
 from _lcm.probability import (
     _significand_in_unit_range,
     _unbiased_exponent,
     balanced_product,
-    binades_above_smallest_normal,
     exact_product,
     is_below_smallest_normal,
     is_live,
     is_negative,
     is_represented_zero,
-    nonzero_exact_product,
     scaled_by_power_of_two,
     scaled_down_by_power_of_two,
     scaled_exact_product,
+    without_derivative,
 )
 from lcm.typing import BoolND, FloatND, IntND
 
@@ -91,15 +89,11 @@ def factored_weighted_term(*, factors: FloatND, values: FloatND) -> FloatND:
     Leading-axis factors retain their represented support. Including the finite
     value in the exponent arithmetic lets a large value rescue a contribution
     whose probability alone is below the format. No mass normalization occurs.
-    The product rule keeps finite ``dweight * value`` at zero primal factors.
 
-    The value-channel derivative is carried in the active dtype. A probability
-    product below its cotangent range can underflow before an upstream large
-    payoff multiplier, even when the primal term is rescued. This does not
-    qualify extreme-scale automatic sensitivities for certified accuracy; an
-    economic marginal must instead be weighted as its explicit value channel.
+    Differentiating through the term raises `UnsupportedDifferentiationError`;
+    an economic marginal is weighted as its own explicit value channel.
     """
-    return _factored_with_tangent(factors, values)
+    return _factored_no_derivative(factors, values)
 
 
 # keyword-only-exempt: library-callback=jax.custom_jvp
@@ -113,82 +107,11 @@ def _factored_primal(factors: FloatND, values: FloatND) -> FloatND:
     return jnp.where(support & ~jnp.isfinite(values), nonfinite, product)
 
 
-# keyword-only-exempt: library-callback=jax.custom_jvp.defjvp
-def _factored_jvp(
-    primals: tuple[FloatND, FloatND], tangents: tuple[FloatND, FloatND]
-) -> tuple[FloatND, FloatND]:
-    factors, values = primals
-    factors_dot, values_dot = tangents
-    # Slopes depend only on primals. Ordinary tangent multiplication is linear
-    # and transposable; applying bit operations to tangents would break reverse AD.
-    # shortcut: active-dtype value cotangents; extending their exponent range
-    # would require a different AD representation, beyond this weighted kernel.
-    tangent = _factored_with_tangent(factors, jnp.ones_like(values)) * values_dot
-    for column in range(factors.shape[0]):
-        others = jnp.concatenate((factors[:column], factors[column + 1 :]), axis=0)
-        slope = _factored_with_tangent(others, values)
-        slope = jnp.where(
-            is_represented_zero(factors[column]) & ~jnp.isfinite(values), 0.0, slope
-        )
-        tangent = tangent + slope * factors_dot[column]
-    return _factored_with_tangent(factors, values), tangent
-
-
-_factored_with_tangent = jax.custom_jvp(_factored_primal)
-_factored_with_tangent.defjvp(_factored_jvp)
-
-
-def joint_weight(factors: FloatND) -> FloatND:
-    """Return the product of a node's probability factors, never rounded to zero.
-
-    A joint node carries one factor per stochastic axis, and the product is its
-    probability. Each factor can sit inside the dtype's normal range while the
-    product falls below it — in float32, `sqrt(tiny)/2` squared is subnormal —
-    at which point the hardware delivers exactly zero. That would make an event
-    which can occur indistinguishable from one which cannot, and downstream
-    nothing could tell them apart, because the two arrive as the same zero.
-
-    A product that vanishes this way leaves here as the **smallest representable
-    magnitude** instead, carrying the sign of the product. It is the smallest
-    value that is still nonzero, so a node that can occur keeps an infinity
-    standing at it, and it is as close to the discarded product as the format
-    allows. `zero_safe_weighted_term` decides which of those two properties is
-    the operative one, because that depends on the value.
-
-    The substitution is not one-sided. A product may underflow *below* the
-    smallest representable magnitude — in float32, `sqrt(tiny)/2` squared does —
-    and the substitute then overstates it. The overstatement is bounded by that
-    magnitude itself, so the node contributes at most
-    `smallest_subnormal * |value|`, which is smaller than the `tiny * |value|`
-    omission bound by a factor of `2**23` in single precision and `2**52` in
-    double. What is one-sided is the treatment of a weight that arrives
-    representable: `zero_safe_weighted_term` never enlarges one.
-
-    A product which is merely subnormal — the backend represented it rather than
-    flushing it — keeps its own magnitude, which is more informative than the
-    substitute.
-
-    A factor of exactly zero is the genuine null event, so the product keeps its
-    zero and the node contributes nothing whatever value stands at it. A NaN
-    factor stays poison.
-
-    Args:
-        factors: The factors stacked along the leading axis, one entry per
-            stochastic axis of the node. Trailing axes broadcast, so a scalar
-            regime probability stacked against a vector of node weights
-            reduces to one weight per node.
-
-    Returns:
-        Their product over the leading axis, with a product that vanished
-        despite every factor being able to occur replaced by the smallest
-        representable magnitude of the same sign.
-
-    """
-    return nonzero_exact_product(jnp.asarray(factors))
+_factored_no_derivative = without_derivative(_factored_primal)
 
 
 def scaled_joint_weight(factors: FloatND) -> tuple[FloatND, IntND]:
-    """Return `joint_weight`'s product with its scale carried alongside it.
+    """Return a node's joint probability with its scale carried alongside it.
 
     The node's probability is `weights * 2**-shift`. A joint product that lands
     below the dtype's normal range cannot be carried as a plain float on this
@@ -204,9 +127,9 @@ def scaled_joint_weight(factors: FloatND) -> tuple[FloatND, IntND]:
     bring them onto a common scale first, which is what the shift is for.
 
     The shift is whatever the smallest product in the array needs, so nothing
-    that can occur is left below the format and none of `joint_weight`'s
-    substitution applies. A node that can occur therefore keeps its exact
-    probability, not an approximation of it.
+    that can occur is left below the format and no substitute magnitude stands in
+    for it. A node that can occur therefore keeps its exact probability, not an
+    approximation of it.
 
     Args:
         factors: The factors stacked along the leading axis, one entry per
@@ -477,132 +400,3 @@ def _largest_selected(
     largest = jnp.max(jnp.where(selected, exponents, absent), axis=-1, keepdims=True)
     has_selected = jnp.any(selected, axis=-1, keepdims=True)
     return jnp.where(has_selected, largest, 0 if fallback is None else fallback)
-
-
-def scaled_lottery_terms_with_scale(
-    *, values: FloatND, coefficients: FloatND, shifts: IntND
-) -> tuple[FloatND, FloatND, IntND]:
-    """Return a lottery's value terms and weight terms on one shared scale.
-
-    A node's contribution to a mean is `c * 2**-s * v`, and the order those
-    three are combined in decides whether the node survives. Two orders each
-    lose it at one end of the range:
-
-    - forming the weight `c * 2**-s` first loses a rare node, because the
-      weight of a node many binades below the likeliest one is not
-      representable and becomes zero, taking its value with it — although the
-      *product* it was heading for may be an ordinary number, which is
-      precisely the case where the node changes the answer;
-    - forming `c * v` first loses a node whose coefficient has been normalized
-      above one and whose value sits near the top of the range, because that
-      intermediate overflows to infinity before any scale is applied to bring
-      it back.
-
-    Splitting the scale covers both. The coefficient absorbs as much of the
-    downward shift as it can while staying normal, the product absorbs the
-    remainder. Neither an unrepresentable weight nor an overflowing product is
-    ever materialized, and a rare node earns its place in the mean exactly when
-    its value is large enough to offset its probability.
-
-    Normalize each positive finite coefficient into a normal significand
-    before any product; its exact binary exponent moves into its shift.
-    Both returned terms carry the same shift, so their scale cancels in the
-    ratio. The common shift is selected from those normalized encodings, per
-    lottery rather than per batch. No unrelated lottery or dead node selects it.
-
-    The values are not normalized, so a value near the bottom of the normal
-    range can lose its product. The caller is the scaled mean's centered
-    residual, whose values are normal significands; a mean reduces through
-    `scaled_lottery_mean` instead.
-
-    This physical-scale helper requires all relative shift and derived exponent
-    arithmetic, including the returned exponent, to fit int32. Its caller uses
-    bounded IEEE-exponent-derived shifts. This is not an arbitrary private-int32
-    endpoint-span interface, and no live exponent is silently saturated.
-
-    Headroom bounds each actual scaled contribution, as well as the weight
-    total. An extremely rare large value must not force an unrelated normal
-    small contribution below the arithmetic range. A cardinality bound keeps
-    both sums below the top binade without materializing an overflowing product.
-
-    A coefficient that is not a probability at all — negative, infinite, or
-    NaN — is not a dead node and is not silently dropped. It poisons its whole
-    row, so a malformed lottery is visible in the result rather than reduced to
-    a plausible number.
-
-    Args:
-        values: Continuation values of the lottery along the last axis.
-        coefficients: The weights' significands, over the same axis.
-        shifts: Each weight's own base-two scale, broadcast against them.
-
-    Returns:
-        Tuple of the value terms and the weight terms, both over the last axis
-        and both carrying the row's shared scale, followed by that binary exponent. This
-        exponent multiplies the unscaled terms; subtract it to recover their scale.
-
-    """
-    coefficients = jnp.asarray(coefficients)
-    values = jnp.asarray(values)
-    shifts = jnp.broadcast_to(jnp.asarray(shifts), jnp.shape(coefficients))
-
-    live = is_live(coefficients) & jnp.isfinite(coefficients)
-    invalid = is_negative(coefficients) | (
-        ~jnp.isfinite(coefficients) & ~is_represented_zero(coefficients)
-    )
-    # Normalize each coefficient before multiplying by a small value. Its
-    # exact power of two moves into the accompanying shift, not into a float
-    # product that may underflow even when the normalized mean is normal.
-    coefficient_exponent = jnp.where(live, _unbiased_exponent(coefficients), 0)
-    normalization = -coefficient_exponent
-    coefficients = scaled_down_by_power_of_two(
-        values=coefficients, shift=jnp.minimum(normalization, 0)
-    )
-    coefficients = scaled_by_power_of_two(
-        values=coefficients, shift=jnp.maximum(normalization, 0)
-    )
-    shifts = shifts - coefficient_exponent
-    unusable = jnp.max(shifts, axis=-1, keepdims=True)
-    common = jnp.min(jnp.where(live, shifts, unusable), axis=-1, keepdims=True)
-    scale = (common - shifts).astype(jnp.int32)
-
-    contribution_exponent = (
-        _unbiased_exponent(coefficients)
-        + scale
-        + jnp.maximum(_unbiased_exponent(jnp.abs(values)), 0)
-    )
-    largest_exponent = jnp.max(
-        jnp.where(live, contribution_exponent, jnp.iinfo(jnp.int32).min // 2),
-        axis=-1,
-        keepdims=True,
-    )
-    # Each product's two significands are below two; n terms add ceil(log2(n))
-    # binades. Keeping the bound below 2**(maxexp-1) leaves rounding headroom.
-    sum_binades = (values.shape[-1] - 1).bit_length()
-    headroom = jnp.maximum(
-        largest_exponent + 2 + sum_binades - (jnp.finfo(values.dtype).maxexp - 1),
-        0,
-    )
-    full = scale - headroom
-
-    room = binades_above_smallest_normal(coefficients)
-    on_weight = jnp.maximum(full, -room)
-    scaled_coefficients = scaled_down_by_power_of_two(
-        values=coefficients, shift=on_weight
-    )
-    products = zero_safe_weighted_term(
-        weight=scaled_coefficients,
-        value=values,
-        subnormal_is_accounted_for=False,
-    )
-    value_terms = scaled_down_by_power_of_two(values=products, shift=full - on_weight)
-    weight_terms = scaled_down_by_power_of_two(values=coefficients, shift=full)
-
-    # Zero coefficients already annihilate their values; masking the terms
-    # again would erase a finite node's derivative with respect to its weight.
-    invalid_row = jnp.any(invalid, axis=-1, keepdims=True)
-    nan = jnp.asarray(jnp.nan, dtype=coefficients.dtype)
-    return (
-        jnp.where(invalid_row, nan, value_terms),
-        jnp.where(invalid_row, nan, weight_terms),
-        common - headroom,
-    )

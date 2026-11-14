@@ -12,7 +12,6 @@ import pandas as pd
 
 from _lcm.engine import PeriodRegimeSimulationData, Regime
 from _lcm.params.edges import regime_kernel_params
-from _lcm.processes.joint_normal import JointNormalIIDProcess
 from _lcm.processes.joint_normal_lowering import (
     coordinate_names,
 )
@@ -31,6 +30,7 @@ from _lcm.typing import (
     StateName,
 )
 from lcm.exceptions import PyLCMError
+from lcm.processes import JointNormalIIDProcess
 from lcm.typing import BoolND, FloatND, FunctionName, IntND
 
 

@@ -1,5 +1,7 @@
 """Metadata/source identity regressions; no native Model or solver required."""
 
+from tests.regime_finder._callable_records import validate_callable_records
+
 import pytest
 from copy import deepcopy
 import ast
@@ -11,7 +13,6 @@ from pathlib import Path
 
 from _lcm_regime_finder.callable_identity import (
     resolve_callable,
-    validate_callable_records,
 )
 from _lcm_regime_finder.model_snapshot import (
     source_function,

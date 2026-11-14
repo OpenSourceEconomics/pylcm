@@ -15,9 +15,9 @@ import dataclasses
 
 import pytest
 
-from _lcm.grids import IrregSpacedGrid
 from lcm import Model
 from lcm.exceptions import ModelInitializationError
+from lcm.grids import IrregSpacedGrid
 from tests.test_models import n_nbegm_toy, nbegm_common, nbegm_tax_toy
 from tests.test_models.initial_nodes import initial_nodes_of
 

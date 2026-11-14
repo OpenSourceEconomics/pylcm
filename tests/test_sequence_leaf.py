@@ -7,7 +7,6 @@ import jax.numpy as jnp
 from _lcm.params.sequence_leaf import SequenceLeaf
 from _lcm.utils.containers import (
     ensure_containers_are_immutable,
-    ensure_containers_are_mutable,
 )
 from _lcm.utils.namespace import flatten_regime_namespace
 
@@ -116,24 +115,6 @@ def test_immutable_sequence_leaf_nested_inside_larger_dict():
     inner = result["regime"]["param"]
     assert isinstance(inner, SequenceLeaf)
     assert isinstance(inner.data, tuple)
-
-
-def test_mutable_unwraps_sequence_leaf_to_list():
-    leaf = SequenceLeaf([1, 2])
-    result = ensure_containers_are_mutable({"leaf": leaf})
-    assert isinstance(result["leaf"], list)
-    assert result["leaf"] == [1, 2]
-
-
-def test_roundtrip_immutable_to_mutable():
-    original = {"leaf": SequenceLeaf([1, {"a": 2}])}
-    immutable = ensure_containers_are_immutable(original)
-    mutable = ensure_containers_are_mutable(immutable)
-    inner = mutable["leaf"]
-    assert isinstance(inner, list)
-    assert inner[0] == 1
-    assert isinstance(inner[1], dict)
-    assert inner[1] == {"a": 2}
 
 
 def test_not_a_sequence():

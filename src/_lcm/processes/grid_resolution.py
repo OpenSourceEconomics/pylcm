@@ -6,7 +6,7 @@ from typing import Protocol, runtime_checkable
 from jax.sharding import Sharding
 
 from _lcm.processes.base import _ContinuousStochasticProcess
-from lcm.typing import Float1D, ScalarFloat, ScalarInt
+from lcm.typing import Float1D, ScalarFloat
 
 
 @runtime_checkable
@@ -19,6 +19,6 @@ class ProcessGridResolver(Protocol):
         self,
         *,
         spec: _ContinuousStochasticProcess,
-        parameters: Mapping[str, ScalarFloat | ScalarInt],
+        parameters: Mapping[str, ScalarFloat],
         required: Sharding,
     ) -> Float1D: ...

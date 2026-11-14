@@ -20,7 +20,6 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
-from beartype.roar import BeartypeCallHintParamViolation
 from jaxtyping import Float
 
 from _lcm.continuation import EGMContinuationSpec
@@ -36,7 +35,7 @@ from _lcm.solution.contract import (
 )
 from _lcm.solution.kernel_output import ConsumedKernelOutput, consume_kernel_output
 from _lcm.solution.solver_diagnostics import SolverDiagnostics
-from _lcm.typing import ArtifactPayload, HostArray, RegimeName
+from _lcm.typing import ArtifactPayload, RegimeName
 from lcm import (
     AgeGrid,
     AgeRange,
@@ -127,22 +126,6 @@ def _consume(
     )
 
 
-def _run_unwrapped_kernel_output_post_init(
-    *, value: list[float] | HostArray | jax.Array
-) -> None:
-    """Exercise pylcm's own guard without the package-claw type wrapper."""
-    output = object.__new__(KernelOutput)
-    object.__setattr__(output, "value", value)
-    for field_name in (
-        "continuations",
-        "solve_time_artifacts",
-        "replay",
-        "auxiliary",
-    ):
-        object.__setattr__(output, field_name, {})
-    inspect.unwrap(KernelOutput.__post_init__)(output)
-
-
 def test_kernel_output_is_public_dependency_safe_and_defensively_immutable() -> None:
     """An installed solver can publish artifacts without importing engine code."""
     module = inspect.getmodule(KernelOutput)
@@ -184,24 +167,6 @@ def test_kernel_output_value_annotation_matches_runtime_float_contract() -> None
 
 
 @pytest.mark.parametrize(
-    "value",
-    [
-        [1.0, 2.0],
-        np.asarray([1, 2], dtype=np.int32),
-        jnp.asarray([True, False]),
-        np.asarray([1 + 2j], dtype=np.complex64),
-    ],
-    ids=["python-sequence", "integer", "boolean", "complex"],
-)
-def test_kernel_output_rejects_non_float_array_values(
-    value: list[float] | HostArray | jax.Array,
-) -> None:
-    """A kernel value is one floating NumPy/JAX array leaf, not an implicit cast."""
-    with pytest.raises(TypeError, match=r"KernelOutput\.value.*floating.*array"):
-        _run_unwrapped_kernel_output_post_init(value=value)
-
-
-@pytest.mark.parametrize(
     ("left_channel", "right_channel"),
     tuple(
         itertools.combinations(
@@ -228,25 +193,6 @@ def test_kernel_output_rejects_one_artifact_identity_in_multiple_channels(
                 right_channel: {key: cast("ArtifactPayload", "right")},
             },
         )
-
-
-@pytest.mark.parametrize(
-    ("kwargs", "match"),
-    [
-        ({"type_id": 7}, "type_id.*str"),
-        ({"type_id": "example", "schema_version": True}, "schema_version.*int"),
-        ({"type_id": "example", "schema_version": "1"}, "schema_version.*int"),
-    ],
-)
-def test_artifact_key_rejects_runtime_types_that_cannot_name_a_schema(
-    *, kwargs: dict[str, str | int], match: str
-) -> None:
-    key = object.__new__(ArtifactKey)
-    object.__setattr__(key, "type_id", kwargs["type_id"])
-    object.__setattr__(key, "schema_version", kwargs.get("schema_version", 1))
-
-    with pytest.raises(TypeError, match=match):
-        inspect.unwrap(ArtifactKey.__post_init__)(key)
 
 
 def test_egm_continuation_spec_declares_the_public_artifact_identity() -> None:
@@ -440,11 +386,6 @@ def test_the_consumer_refuses_a_known_key_with_the_wrong_payload_type(
         _consume(output=output, continuation_key=None)
 
 
-def test_the_consumer_refuses_anything_but_a_kernel_output() -> None:
-    with pytest.raises(BeartypeCallHintParamViolation, match="output"):
-        _consume(output=cast("KernelOutput", object()), continuation_key=None)
-
-
 def test_a_period_kernel_returns_a_kernel_output_and_replay_carries_it() -> None:
     """The producer contract is `KernelOutput`, and replay holds one on `output`."""
     assert get_type_hints(PeriodKernel.__call__)["return"] is KernelOutput
@@ -618,15 +559,6 @@ def test_a_kernel_output_survives_a_dataclass_replace_of_its_value() -> None:
 
     assert replaced.continuations[EGM_CONTINUATION] is carry
     assert isinstance(replaced.continuations, Mapping)
-
-
-@pytest.mark.parametrize(
-    "field_name", ["continuation_artifacts", "replay_artifacts", "auxiliary_artifacts"]
-)
-def test_consumed_artifact_channels_are_read_only_mappings(field_name: str) -> None:
-    """Each artifact channel of a consumed kernel output is a read-only mapping."""
-    consumed = _consume(output=KernelOutput(value=jnp.zeros(2)), continuation_key=None)
-    assert type(getattr(consumed, field_name)) is MappingProxyType
 
 
 # A collective model whose target's participation mask empties at one cell, so

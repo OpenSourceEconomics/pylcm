@@ -718,7 +718,10 @@ def _closed_native_constant(original: Mapping[str, Any], captures=None) -> bool:
     advertised empty signature alone is insufficient. It does not authenticate
     the capture process or prove arbitrary Python source equivalence.
     """
-    if original.get("type") != "_lcm.regime_building.schedules._Constant":
+    if original.get("type") not in {
+        "_lcm.regime_building.schedules._RegimeCodeConstant",
+        "_lcm.regime_building.schedules._ProbabilityConstant",
+    }:
         return False
     declaration = original.get("fields", {})
     meta = original.get("callable", {})
@@ -848,7 +851,8 @@ def _check_semantics(original: dict, normalized: dict, analysis: dict, *, check_
                                 return set().union(*(declared_inputs(v) for v in value.get('fields',{}).values()))
                             side='solve' if callback.get('selected_phase')=='solve' else 'simulate'
                             return declared_inputs(value.get('fields',{}).get(side))
-                        if value.get('type')=='_lcm.processes.base.StateConditioned':
+                        if value.get('type') in {'lcm.state_conditioned.StateConditioned',
+                                                '_lcm.processes.base.StateConditioned'}:
                             on=value.get('fields',{}).get('on')
                             if not isinstance(on,str):
                                 unknown('conditional law input is not captured',callback=key)
@@ -866,9 +870,9 @@ def _check_semantics(original: dict, normalized: dict, analysis: dict, *, check_
                         fail('declared '+kind+' inputs changed',callback=key)
             if isinstance(raw_callback, dict) and '/states/' in callback.get('source_path',''):
                 typ=raw_callback.get('type')
-                iid={'_lcm.processes.iid.'+n for n in ('NormalIIDProcess','UniformIIDProcess','LogNormalIIDProcess','NormalMixtureIIDProcess')}
+                iid={'lcm.processes.'+n for n in ('NormalIIDProcess','UniformIIDProcess','LogNormalIIDProcess','NormalMixtureIIDProcess')}
                 iid.add('_lcm.processes.joint_normal_lowering._JointNormalCoordinate')
-                ar1={'_lcm.processes.ar1.'+n for n in ('TauchenAR1Process','RouwenhorstAR1Process','TauchenNormalMixtureAR1Process','_TauchenOnNodesProcess')}
+                ar1={'lcm.processes.'+n for n in ('TauchenAR1Process','RouwenhorstAR1Process','TauchenNormalMixtureAR1Process')}|{'_lcm.processes.ar1_on_nodes._TauchenOnNodesProcess'}
                 if typ in iid|ar1:
                     axis=callback['source_path'].split('/states/',1)[1].split('/',1)[0].replace('~1','/').replace('~0','~')
                     expected=declared_inputs(raw_callback) | (set() if typ in iid else {axis})
@@ -1574,7 +1578,8 @@ def _original_process_conditioning_inputs(value: JSONValue) -> frozenset[str] | 
     while pending:
         item = pending.pop()
         if isinstance(item, dict):
-            if item.get("type") == "_lcm.processes.base.StateConditioned":
+            if item.get("type") in {"lcm.state_conditioned.StateConditioned",
+                                     "_lcm.processes.base.StateConditioned"}:
                 fields = item.get("fields")
                 on = fields.get("on") if isinstance(fields, dict) else None
                 if not isinstance(on, str):
@@ -1808,9 +1813,9 @@ def _check_capture(original: dict, normalized: dict, fail, unknown) -> None:
                 if isinstance(value,dict) and not value:continue
                 record = callbacks.get(providers.get("next_" + axis), {})
                 if record.get("original") != selected(value, phase, period): fail("original next-state provider changed", cell=cell["id"], phase=phase, state=axis)
-            iid={'_lcm.processes.iid.'+name for name in ('NormalIIDProcess','UniformIIDProcess','LogNormalIIDProcess','NormalMixtureIIDProcess')}
+            iid={'lcm.processes.'+name for name in ('NormalIIDProcess','UniformIIDProcess','LogNormalIIDProcess','NormalMixtureIIDProcess')}
             iid.add('_lcm.processes.joint_normal_lowering._JointNormalCoordinate')
-            persistent={'_lcm.processes.ar1.'+name for name in ('TauchenAR1Process','RouwenhorstAR1Process','TauchenNormalMixtureAR1Process','_TauchenOnNodesProcess')}
+            persistent={'lcm.processes.'+name for name in ('TauchenAR1Process','RouwenhorstAR1Process','TauchenNormalMixtureAR1Process')}|{'_lcm.processes.ar1_on_nodes._TauchenOnNodesProcess'}
             for axis,value in declaration.get('states',{}).items():
                 value=selected(value,phase,period)
                 if isinstance(value,dict) and value.get('type') in iid|persistent:
@@ -1933,8 +1938,8 @@ def _check_capture(original: dict, normalized: dict, fail, unknown) -> None:
             if raw is not None: raw = selected(raw, phase, cell["period"])
             else:
                 latent='_lcm.processes.joint_normal_lowering._JointNormalCoordinate'
-                iid={'_lcm.processes.iid.'+n for n in ('NormalIIDProcess','UniformIIDProcess','LogNormalIIDProcess','NormalMixtureIIDProcess')} | {latent}
-                persistent={'_lcm.processes.ar1.'+n for n in ('TauchenAR1Process','RouwenhorstAR1Process','TauchenNormalMixtureAR1Process','_TauchenOnNodesProcess')}
+                iid={'lcm.processes.'+n for n in ('NormalIIDProcess','UniformIIDProcess','LogNormalIIDProcess','NormalMixtureIIDProcess')} | {latent}
+                persistent={'lcm.processes.'+n for n in ('TauchenAR1Process','RouwenhorstAR1Process','TauchenNormalMixtureAR1Process')}|{'_lcm.processes.ar1_on_nodes._TauchenOnNodesProcess'}
                 arriving=selected(original_regimes[target['regime']].get('states',{}).get(axis),phase,target['period'])
                 conditioning=_original_process_conditioning_inputs(arriving)
                 if (isinstance(arriving,dict) and arriving.get('type') in iid|persistent

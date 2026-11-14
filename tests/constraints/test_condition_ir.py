@@ -11,7 +11,6 @@ runs it unchanged, and a solver that needs structure refuses it rather than
 accepting and ignoring it.
 """
 
-import inspect
 from collections.abc import Callable
 from typing import Annotated, Literal
 
@@ -19,7 +18,6 @@ import jax.numpy as jnp
 import pytest
 from numpy.testing import assert_array_equal
 
-from _lcm.typing import AnnotationForm
 from lcm import ref
 from lcm.condition import Condition, implies
 from lcm.typing import BoolND, FloatND
@@ -155,20 +153,6 @@ def test_an_opaque_callable_keeps_any_parameter_annotation(
     got = condition.evaluate(wealth=jnp.array([-1.0, 0.0, 1.0]))
 
     assert_array_equal(got, jnp.array([False, False, True]))
-
-
-@pytest.mark.parametrize(
-    "predicate",
-    [_predicate_with_annotated_wealth, _predicate_with_literal_wealth],
-    ids=["annotated", "literal"],
-)
-def test_annotation_form_admits_metadata_and_literal_annotations(
-    predicate: Callable[[FloatND], BoolND],
-) -> None:
-    """The declared annotation carrier admits every annotation a condition copies."""
-    annotation = inspect.signature(predicate).parameters["wealth"].annotation
-
-    assert isinstance(annotation, AnnotationForm.__value__)
 
 
 def test_an_opaque_callable_reports_its_signature_as_dependencies() -> None:

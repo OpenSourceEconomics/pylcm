@@ -9,7 +9,6 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
-from beartype.roar import BeartypeCallHintParamViolation
 
 from _lcm.egm.carry import EGMCarry
 from _lcm.execution.core_program import (
@@ -166,14 +165,6 @@ def test_terminal_carry_decorator_delegates_grid_search_program_roles():
     object.__setattr__(wrapper, "base", _GraphKernel(program=program))
 
     assert wrapper.core_programs()["main"] is program
-
-
-def test_terminal_carry_decorator_rejects_unaware_base():
-    wrapper = object.__new__(_TerminalCarryPeriodKernel)
-    object.__setattr__(wrapper, "base", object())
-
-    with pytest.raises(TypeError, match="native core-program graph"):
-        wrapper.core_programs()
 
 
 @pytest.mark.parametrize(
@@ -408,17 +399,6 @@ def test_published_value_placement_is_asserted_not_repaired():
         _publish_kernel_value(value=replicated, compiled_cores={"main": core})
 
 
-def test_the_loop_publishes_values_only_through_planned_cores():
-    """A compiled core without a resolved layout cannot publish a value."""
-    template = _template()
-
-    with pytest.raises(BeartypeCallHintParamViolation, match="PlannedCore"):
-        _publish_kernel_value(
-            value=template,
-            compiled_cores={"main": lambda **_kwargs: template},  # ty: ignore[invalid-argument-type]
-        )
-
-
 def _state_axes_roles():
     return (
         VALUE,
@@ -608,27 +588,3 @@ def test_assert_value_leaf_layout_checks_only_the_value_leaf():
     )
     with pytest.raises(AssertionError, match="output sharding"):
         assert_value_leaf_layout(value=replicated, layout=resolved)
-
-
-@pytest.mark.parametrize("field_name", ["tile_widths", "internal_input_templates"])
-def test_planned_core_refuses_a_plain_dict_for_its_mappings(field_name: str) -> None:
-    """A planned core holds read-only mappings; a plain dict is refused."""
-    template = _template()
-    layout = resolve_output_layout(
-        core_key="main",
-        value_template=template,
-        state_order=("kind", "wealth"),
-        output_roles=VALUE,
-    )
-    arguments = {
-        "tile_widths": MappingProxyType({}),
-        "internal_input_templates": MappingProxyType({}),
-        field_name: {},
-    }
-    with pytest.raises(BeartypeCallHintParamViolation, match=field_name):
-        PlannedCore(
-            compiled=lambda **_kwargs: template,
-            layout=layout,
-            name="main",
-            **arguments,  # ty: ignore[invalid-argument-type]
-        )

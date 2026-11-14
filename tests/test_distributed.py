@@ -42,8 +42,6 @@ from _lcm.execution.value_transfer import (
     apply_value_transfer_plan,
 )
 from _lcm.grids import categorical
-from _lcm.grids.continuous import LinSpacedGrid
-from _lcm.grids.discrete import DiscreteGrid
 from _lcm.params.edges import regime_kernel_params
 from _lcm.solution import backward_induction
 from _lcm.solution.v_topology import (
@@ -62,6 +60,7 @@ from lcm import (
 )
 from lcm.ages import AgeGrid
 from lcm.exceptions import ExecutionPlanningError, PyLCMError
+from lcm.grids import DiscreteGrid, LinSpacedGrid
 from lcm.model import Model
 from lcm.regime import Regime as UserRegime
 from lcm.result import SimulationResult

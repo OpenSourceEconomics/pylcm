@@ -23,6 +23,125 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   raises `RegimeInitializationError`. Positional, missing and unexpected arguments
   still raise `TypeError`.
 
+### Process laws are floats
+
+- Every process-law value is a float, however it is written: a stochastic process's
+  `mu`, `sigma`, `rho`, `n_std`, `start`/`stop` and mixture parameters,
+  `JointNormalIIDProcess`'s `mean`, `cov` and `n_std`, and the values of
+  `StateConditioned.by`. An `int` is accepted and stored as a Python `float`, so
+  `NormalIIDProcess(mu=1, ...)` and `NormalIIDProcess(mu=1.0, ...)` declare one law,
+  with one set of nodes and transition rows. A Boolean is refused with
+  `GridInitializationError`.
+- The same holds for a law fixed through `Model(fixed_params=...)` and for a
+  shock-group coefficient or correlation, fixed or supplied at runtime: an integer
+  becomes a float before any integer range check, so `mu=2**31` is a valid law.
+- A model whose law was written with integers has the semantic fingerprint of its
+  float twin. Solutions saved with an earlier version from such a model do not load;
+  solve again.
+- `StateConditioned.by` is stored as a read-only mapping of floats; a later change to
+  the caller's mapping does not reach it. It pickles through its constructor.
+
+### A parameter's kind follows the slot that reads it
+
+- A params slot read as a float takes an integer value as a float: a library
+  coefficient (`discount_factor`, a Koopmans or certainty-equivalent coefficient, a
+  taste-shock `scale`, a runtime process law or grid point) and a callback argument
+  annotated `float` or with a float array alias such as `ScalarFloat`. This holds for
+  ordinary, edge, exit and shock-callback parameters, fixed or supplied at runtime, and
+  for each entry of a `TimeVarying` series. A slot read as an integer, or not
+  annotated, keeps the value's kind, and a Boolean always stays Boolean.
+- A model that fixes such a slot to an integer has the fingerprint of its float twin,
+  which differs from the one an earlier version gave it; solve again.
+- One parameter read as a float by one function and as an integer by another raises
+  `ModelInitializationError`; give the two readings distinct names. The same Python
+  object may feed a float slot and an integer slot; each slot gets its own cast.
+
+### What a user function returns
+
+- A user function may return a Python scalar where an array is read, and an integer
+  where a float is read: a utility `return 0`, a transition probability `return 1`, a
+  constraint `return True`. The value is converted where the engine receives it, at the
+  model's precision.
+- Each role's returned dtype is checked when the function is first evaluated in
+  `solve()`, and a mismatch raises the new `InvalidFunctionOutputError`, naming the
+  function:
+  - constraints, `ValueDependentConstraint` predicates, gates, participation predicates
+    and exit availability return a Boolean. An integer `0`/`1`, which gates,
+    participation predicates and exit availability accepted before, is refused; write
+    the comparison, e.g. `work == 1`;
+  - laws of discrete states, deterministic regime selectors and projections onto a
+    discrete state return an integer code, or a Boolean for the codes 0 and 1. A float
+    is refused rather than truncated onto a code;
+  - utilities, laws of continuous states, transition probabilities, joint-transition
+    weights and outputs, exit utility adjustments and borrowing bounds return a number.
+    A Boolean is refused.
+- An integer code of any width or signedness, and an integer a law returns for an
+  integer value grid, is converted to `int32` where the engine receives it, at both
+  precisions. Values outside the `int32` range are outside the contract and wrap;
+  declared codes and grid values are already confined to it.
+- A `ByAge` or per-period law is checked case by case, each by the role of the function
+  that wrote it, before the cases are combined.
+- A parameter read by an edge law takes its numeric role from the laws that are live at
+  some age; a declaration no age uses does not change it.
+- See [What a function returns](docs/reference/model_and_regime.md#api-function-returns).
+
+### Grid bounds and counts are host numbers
+
+- A continuous grid stores `start` and `stop` as Python `float`s and `n_points` and
+  `points_per_segment` as Python `int`s. An `int` bound is converted. A JAX scalar
+  bound, and a JAX array as a count, are refused with `GridInitializationError`.
+  `dataclasses.replace`, equality and pickling work on the stored values.
+- The semantic fingerprint of every model with a linearly, log- or piecewise-spaced grid
+  changes, as do those of models with a constant regime law, a deterministic regime
+  selector or a stochastic transition. Solutions saved with an
+  earlier version do not load; solve again.
+- An error or log message prints an age as an integer when it is whole and with two
+  decimals otherwise, e.g. `age 25` and `age 25.33`.
+- A `ConditionalAction` condition is stored in one numeric kind: as floats if any listed
+  value is a float, otherwise as integers.
+
+### Derivatives with respect to model parameters are no longer supported
+
+Gradients of simulated statistics are not meaningful in models with discrete choices,
+so the custom derivative rules that existed only for them are removed. Values are
+unchanged. The solvers keep the derivative rules they use themselves.
+
+- `TauchenAR1Process.on_nodes(transition_rule="density")` rows, the mixture quantile,
+  the certainty-equivalent power means and the Epstein–Zin continuation mean no longer
+  carry a custom derivative rule.
+- The zero-safe weighted reductions, the balanced and scaled-down products and the hard
+  maximum work on the bit pattern of their operands, where plain automatic
+  differentiation would return zero. Differentiating through them raises the new
+  `lcm.exceptions.UnsupportedDifferentiationError`.
+- The native exact-affine reads and query winners carry no derivative rule;
+  differentiating through them raises.
+- The implicit derivative of a continuous outer optimum
+  (`_lcm.optimization.implicit_outer_derivative`) and its Mahler–Yum pilot
+  (`lcm_examples.mahler_yum_2024.implicit_pilot`) are removed.
+- Semantic fingerprints change for every model; solutions saved with an earlier version
+  do not load.
+
+### Public grid, process and condition classes live in `lcm`
+
+- The grids (`LinSpacedGrid`, `LogSpacedGrid`, `IrregSpacedGrid`,
+  `PiecewiseLinSpacedGrid`, `PiecewiseLogSpacedGrid`, `GridBreakpoint`, `DiscreteGrid`,
+  `ConditionalAction`) are defined in `lcm.grids`, the stochastic processes in
+  `lcm.processes`, and `Ref` and `Condition` in `lcm.condition`. `StateConditioned` is
+  defined in `lcm.state_conditioned` and re-exported from `lcm.processes`. The engine
+  modules under `_lcm` no longer export these classes; import them from `lcm`.
+- A class's module path enters the fingerprint of every solution whose model uses it,
+  so a solution saved with an earlier version cannot be loaded against a model built
+  with this one. Solve again.
+- A grid's `start`, `stop` and breakpoint values are converted to `float` at
+  construction.
+- A number compared with a `ref(...)` is stored as a `float` and a flag as a `bool`, so
+  `ref("x") <= 1` and `ref("x") <= 1.0` declare the same condition and both render as
+  `x <= 1.0`. An integer literal now works as a case threshold.
+- The engine's internal functions check their annotations without the numeric tower: an
+  `int` reaching a parameter the engine declares as `float` is an internal error. The
+  public `lcm` package keeps the tower, so a public `float` parameter still admits an
+  `int`.
+
 ### Value storage
 
 - `ExecutionConfig(value_storage=...)` says where a solve keeps solved values once no

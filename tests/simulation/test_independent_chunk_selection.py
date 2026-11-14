@@ -131,7 +131,7 @@ def test_independent_admits_a_fitting_largest_candidate_with_one_profile(
     ]
     receipt = selected.receipt
     assert receipt is not None
-    assert receipt.profile_count == 1
+    assert len(receipt.attempts) == 1
     assert receipt.anchor_map_reason == (
         "preferred anchor-derived map admitted at largest candidate"
     )
@@ -157,7 +157,7 @@ def test_independent_freezes_full_map_and_descends_after_top_refusal(
     ] * 3
     receipt = selected.receipt
     assert receipt is not None
-    assert receipt.profile_count == 3
+    assert len(receipt.attempts) == 3
     assert receipt.anchor_map_reason == "bootstrap skipped after full anchor admitted"
     assert [attempt.admitted for attempt in receipt.attempts] == [
         False,
@@ -191,7 +191,7 @@ def test_independent_bootstrap_anchor_is_frozen_for_larger_candidate(
     ]
     assert selected.profile is profiles[4]
     assert selected.receipt is not None
-    assert selected.receipt.profile_count == 5
+    assert len(selected.receipt.attempts) == 5
 
 
 @pytest.mark.parametrize("population", [2, 4, 6])
@@ -264,7 +264,7 @@ def test_selected_plan_does_not_retain_transient_profiler(
     gc.collect()
     assert transient() is None
     assert selected.receipt is not None
-    assert selected.receipt.profile_count == 1
+    assert len(selected.receipt.attempts) == 1
 
 
 def test_singleton_anchor_retains_subject_pin_without_manufacturing_axis() -> None:
@@ -438,7 +438,7 @@ def test_independent_retains_the_last_admitted_extent_before_a_rejection(
     selected = admission._plan_independent_chunks(profiler=profiler, alignment=1)
     assert selected.profile is profiles[2]
     assert selected.receipt is not None
-    assert selected.receipt.profile_count == 3
+    assert len(selected.receipt.attempts) == 3
     assert selected.receipt.selected_subjects == 4
     assert selected.receipt.stopping_reason == (
         "first fitting descending candidate admitted"

@@ -3,14 +3,11 @@ from types import MappingProxyType
 
 import jax
 import jax.numpy as jnp
-import pytest
 
 from _lcm.utils.containers import (
     ensure_containers_are_immutable,
-    ensure_containers_are_mutable,
 )
 from _lcm.utils.namespace import flatten_regime_namespace
-from lcm.exceptions import InvalidParamsError
 from lcm.params import (
     MappingLeaf,
     SequenceLeaf,
@@ -111,40 +108,6 @@ def test_immutable_mapping_leaf_nested_inside_larger_dict():
     assert isinstance(inner.data, MappingProxyType)
 
 
-def test_mutable_unwraps_mapping_leaf_to_dict():
-    leaf = MappingLeaf({"a": 1})
-    result = ensure_containers_are_mutable({"leaf": leaf})
-    assert isinstance(result["leaf"], dict)
-    assert result["leaf"] == {"a": 1}
-
-
-def test_mutable_mapping_leaf_nested_inside_mapping_proxy():
-    data = MappingProxyType(
-        {
-            "regime": MappingProxyType(
-                {
-                    "param": MappingLeaf({"x": 1}),
-                }
-            ),
-        }
-    )
-    result = ensure_containers_are_mutable(data)
-    assert isinstance(result["regime"], dict)
-    assert isinstance(result["regime"]["param"], dict)
-    assert result["regime"]["param"] == {"x": 1}
-
-
-def test_roundtrip_immutable_to_mutable():
-    original = {"leaf": MappingLeaf({"a": 1, "b": {"c": 2}})}
-    immutable = ensure_containers_are_immutable(original)
-    mutable = ensure_containers_are_mutable(immutable)
-    inner = mutable["leaf"]
-    assert isinstance(inner, dict)
-    assert isinstance(inner["b"], dict)
-    assert inner["a"] == 1
-    assert inner["b"]["c"] == 2
-
-
 def test_not_a_mapping():
     leaf = MappingLeaf({"a": 1})
     assert not isinstance(leaf, Mapping)
@@ -187,8 +150,3 @@ def test_as_leaf_tuple():
     assert isinstance(result, UserSequenceLeaf)
     assert not isinstance(result, SequenceLeaf)
     assert result.data == (1, 2)
-
-
-def test_as_leaf_rejects_int():
-    with pytest.raises(InvalidParamsError, match="as_leaf"):
-        as_leaf(42)  # ty: ignore[no-matching-overload]

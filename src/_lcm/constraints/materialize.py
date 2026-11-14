@@ -10,13 +10,15 @@ condition over a discrete state can compose at all.
 
 import inspect
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from types import MappingProxyType
 from typing import cast, no_type_check
 
 from dags import concatenate_functions, get_annotations
 from dags.annotations import ensure_annotations_are_strings
 
 from _lcm.constraints.processed import ProcessedConstraint
+from _lcm.output_roles import OutputRole, in_role
 from _lcm.typing import ConstraintFunction, FunctionName
 from _lcm.utils.functools import get_union_of_args
 from lcm.typing import BoolND, UserFunction, ValueND
@@ -48,8 +50,34 @@ def as_constraint_function(
         # and the DAG requires every consumer of a name to annotate it as its
         # producer does — so a rewrite turns a composable predicate into an
         # annotation conflict. Only a condition built from references needs
-        # annotations supplied, because it has none of its own.
-        return cast("ConstraintFunction", constraint.declaration)
+        # annotations supplied, because it has none of its own. Its output is
+        # converted where the engine receives it, so it may return `1` or `0`.
+        from _lcm.regime_building.age_normalization import (  # noqa: PLC0415
+            PeriodizedUserFunction,
+        )
+
+        declaration = constraint.declaration
+        if isinstance(declaration, PeriodizedUserFunction):
+            # Age-specialized: convert each period's concrete constraint.
+            return cast(
+                "ConstraintFunction",
+                replace(
+                    declaration,
+                    representative=_as_boolean(declaration.representative),
+                    concrete_by_period=MappingProxyType(
+                        {
+                            period: _as_boolean(function)
+                            for period, function in (
+                                declaration.concrete_by_period.items()
+                            )
+                        }
+                    ),
+                ),
+            )
+        return cast(
+            "ConstraintFunction",
+            _as_boolean(declaration),
+        )
 
     return cast(
         "ConstraintFunction",
@@ -61,6 +89,11 @@ def as_constraint_function(
             },
         ),
     )
+
+
+def _as_boolean(function: UserFunction) -> UserFunction:
+    """Return an opaque constraint whose output is converted to a Boolean."""
+    return in_role(func=function, role=OutputRole.BOOL, kind="Constraint")
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)

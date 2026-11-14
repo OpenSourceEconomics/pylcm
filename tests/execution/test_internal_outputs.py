@@ -13,7 +13,6 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
-from beartype.roar import BeartypeCallHintParamViolation
 
 from _lcm.execution.core_program import (
     CoreBuildContext,
@@ -479,16 +478,6 @@ def test_a_template_for_an_unreachable_path_names_the_path() -> None:
         )
 
 
-def test_a_non_array_internal_input_leaf_is_refused_by_name() -> None:
-    """A handed-over leaf without a shape and a dtype is refused, naming the leaf."""
-    with pytest.raises(ValueError, match="shape and a dtype"):
-        assert_internal_inputs(
-            arguments={"upstream_value": 3},
-            templates={"upstream_value": jax.ShapeDtypeStruct((), jnp.int32)},
-            label="consumer",
-        )
-
-
 def _scoped_graph():
     """A producer kept only for replay feeding a consumer kept only without it."""
     programs = _graph()
@@ -809,23 +798,3 @@ def test_dispatching_an_internal_input_of_the_declared_weak_typing_is_admitted(
         )
         is None
     )
-
-
-@pytest.mark.parametrize("field_name", ["internal_input_templates", "static_kwargs"])
-def test_resolved_producer_refuses_a_plain_dict_for_its_mappings(
-    field_name: str,
-) -> None:
-    """A resolved producer holds read-only mappings; a plain dict is refused."""
-    arguments = {
-        "internal_input_templates": MappingProxyType({}),
-        "static_kwargs": MappingProxyType({}),
-        field_name: {},
-    }
-    with pytest.raises(BeartypeCallHintParamViolation, match=field_name):
-        ResolvedProducer(
-            name="producer",
-            function=lambda: jnp.zeros(1),
-            internal_outputs=(),
-            abstract_output=jax.ShapeDtypeStruct((1,), jnp.float32),
-            **arguments,
-        )

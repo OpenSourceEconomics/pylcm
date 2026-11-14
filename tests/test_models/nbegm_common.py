@@ -6,7 +6,6 @@ that are identical across the toys live here:
 
 - `RegimeId` — the alive/dead regime categorical.
 - `crra_utility` / `utility` / `bequest` — the CRRA utility trio.
-- `prob_stay_alive` / `prob_die` — the deterministic (0/1) survival transition.
 - `feasible` — the borrowing constraint `consumption <= resources`.
 - `next_liquid` / `savings` / `next_liquid_from_savings` — the liquid law of
   motion in cash-on-hand form (brute) and post-decision savings form (NBEGM).
@@ -111,16 +110,6 @@ next_liquid_from_savings = liquid_law_from_savings
 def savings(*, resources: FloatND, consumption: ContinuousAction) -> FloatND:
     """Post-decision savings: cash-on-hand net of consumption."""
     return resources - consumption
-
-
-def prob_stay_alive(*, age: int, final_age_alive: float) -> FloatND:
-    """Deterministic (0/1) probability of staying alive next period."""
-    return jnp.where(age + 1 < final_age_alive, 1.0, 0.0)
-
-
-def prob_die(*, age: int, final_age_alive: float) -> FloatND:
-    """Deterministic (0/1) probability of dying next period."""
-    return jnp.where(age + 1 >= final_age_alive, 1.0, 0.0)
 
 
 def resolve_solver(

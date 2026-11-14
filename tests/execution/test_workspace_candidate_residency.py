@@ -84,10 +84,7 @@ def test_unbudgeted_plan_does_not_request_candidate_residency() -> None:
     assert compiler.calls == [candidate]
 
 
-@pytest.mark.parametrize("invalid", [True, -1, 1.5, None])
-def test_candidate_residency_requires_nonnegative_integer_bytes(
-    invalid: float | None,
-) -> None:
+def test_candidate_residency_requires_nonnegative_bytes() -> None:
     candidate = _Candidate(width=8, raw_peak=1, resident=0)
     compiler = _Compiler(candidates={8: candidate})
     with pytest.raises(ExecutionPlanningError, match="residen"):
@@ -95,7 +92,7 @@ def test_candidate_residency_requires_nonnegative_integer_bytes(
             axes=(_axis(),),
             compile_candidate=compiler,
             budget_bytes=100,
-            resident_bytes_for=lambda _candidate: invalid,  # ty: ignore[invalid-argument-type]
+            resident_bytes_for=lambda _candidate: -1,
         )
     assert compiler.calls == [candidate]
 

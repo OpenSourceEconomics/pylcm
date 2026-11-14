@@ -9,7 +9,6 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
-from beartype.roar import BeartypeCallHintParamViolation
 
 from _lcm.execution.value_transfer import (
     ResolvedValueTransfer,
@@ -28,7 +27,7 @@ from lcm.typing import RegimeName
 
 
 class _ArtifactAddressInputs(TypedDict):
-    kind: ValueArtifactKind | str
+    kind: ValueArtifactKind
     period: int
     regime: RegimeName
     target_regime: RegimeName | None
@@ -38,8 +37,8 @@ class _ConsumerAddressInputs(TypedDict):
     source_period: int
     source_regime: RegimeName
     core_key: str
-    channel: ValueInputChannel | str
-    path: tuple[str | int, ...] | list[str | int]
+    channel: ValueInputChannel
+    path: tuple[str | int, ...]
 
 
 def _mesh() -> jax.sharding.Mesh:
@@ -183,15 +182,14 @@ def test_addresses_are_immutable_and_same_artifact_can_feed_multiple_paths() -> 
 
 
 @pytest.mark.parametrize(
-    ("kwargs", "error", "message"),
+    ("kwargs", "message"),
     [
-        ({"kind": "regime_value"}, BeartypeCallHintParamViolation, "parameter kind"),
-        ({"period": -1}, ValueError, "artifact period"),
-        ({"regime": ""}, ValueError, "artifact regime"),
-        ({"target_regime": "working"}, ValueError, "cannot name"),
+        ({"period": -1}, "artifact period"),
+        ({"regime": ""}, "artifact regime"),
+        ({"target_regime": "working"}, "cannot name"),
     ],
 )
-def test_regime_value_address_fails_closed(*, kwargs, error, message) -> None:
+def test_regime_value_address_fails_closed(*, kwargs, message) -> None:
     values: _ArtifactAddressInputs = {
         "kind": ValueArtifactKind.REGIME_VALUE,
         "period": 3,
@@ -200,8 +198,8 @@ def test_regime_value_address_fails_closed(*, kwargs, error, message) -> None:
     }
     values.update(kwargs)
 
-    with pytest.raises(error, match=message):
-        ValueArtifactAddress(**values)  # ty: ignore[invalid-argument-type]
+    with pytest.raises(ValueError, match=message):
+        ValueArtifactAddress(**values)
 
 
 def test_gated_continuation_requires_an_edge_target() -> None:
@@ -216,17 +214,9 @@ def test_gated_continuation_requires_an_edge_target() -> None:
 @pytest.mark.parametrize(
     ("replacement", "error", "message"),
     [
-        (
-            {"channel": "next_regime_to_V_arr"},
-            BeartypeCallHintParamViolation,
-            "parameter channel",
-        ),
-        ({"path": []}, BeartypeCallHintParamViolation, "parameter path"),
         ({"path": ()}, TypeError, "non-empty tuple"),
         ({"path": ("",)}, ValueError, "empty string"),
         ({"path": (-1,)}, ValueError, "negative index"),
-        ({"path": (True,)}, TypeError, "Unsupported"),
-        ({"source_period": True}, ValueError, "source period"),
     ],
 )
 def test_consumer_address_fails_closed(*, replacement, error, message) -> None:
@@ -240,7 +230,7 @@ def test_consumer_address_fails_closed(*, replacement, error, message) -> None:
     kwargs.update(replacement)
 
     with pytest.raises(error, match=message):
-        ValueConsumerAddress(**kwargs)  # ty: ignore[invalid-argument-type]
+        ValueConsumerAddress(**kwargs)
 
 
 def test_resolver_rejects_path_that_does_not_address_artifact() -> None:
@@ -256,15 +246,7 @@ def test_resolver_rejects_path_that_does_not_address_artifact() -> None:
         )
 
 
-def test_resolver_requires_concrete_shape_dtype_and_sharding() -> None:
-    with pytest.raises(BeartypeCallHintParamViolation, match="stored_template"):
-        resolve_value_transfer(
-            target=_target(),
-            source=_source(),
-            kind=ValueTransferKind.ALIGNED_LOCAL,
-            stored_template=object(),  # ty: ignore[invalid-argument-type]
-            source_sharding=_named_sharding(),
-        )
+def test_resolver_requires_a_concrete_sharding() -> None:
     with pytest.raises(TypeError, match="concrete JAX sharding"):
         resolve_value_transfer(
             target=_target(),
@@ -317,7 +299,6 @@ def test_resolver_rejects_misclassified_or_incompatible_layouts() -> None:
     [
         (jnp.zeros((5,), dtype=jnp.float32), ValueError, "shape"),
         (jnp.zeros((4,), dtype=jnp.int32), TypeError, "dtype"),
-        (jax.ShapeDtypeStruct((4,), jnp.float32), TypeError, "concrete JAX array"),
     ],
 )
 def test_apply_rejects_wrong_stored_metadata(*, value, error, message) -> None:
@@ -337,20 +318,6 @@ def test_apply_rejects_wrong_stored_sharding() -> None:
 
     with pytest.raises(ValueError, match="stored transfer value has sharding"):
         apply_value_transfer(value=wrong, transfer=transfer)
-
-
-def test_resolved_transfer_rejects_untyped_transfer_kind() -> None:
-    stored = _stored_value()
-    with pytest.raises(BeartypeCallHintParamViolation, match="parameter kind"):
-        ResolvedValueTransfer(
-            target=_target(),
-            source=_source(),
-            kind="aligned_local",  # ty: ignore[invalid-argument-type]
-            stored_sharding=stored.sharding,
-            source_sharding=stored.sharding,
-            expected_shape=stored.shape,
-            expected_dtype=stored.dtype,
-        )
 
 
 @pytest.mark.parametrize(

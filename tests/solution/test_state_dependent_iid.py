@@ -368,59 +368,6 @@ def test_categorical_law_uses_current_date_and_original_uniform(width: int) -> N
         np.testing.assert_array_equal(rows["state"], state)
 
 
-def _param_probabilities(p: FloatND) -> FloatND:
-    return jnp.stack((1 - p, p))
-
-
-@pytest.mark.parametrize("probability", [0.0, 0.375, 1.0])
-def test_categorical_probability_derivative_keeps_finite_null_payload(
-    probability: float,
-) -> None:
-    """Retain dp times a finite null payoff in native forward and reverse AD."""
-    import jax  # noqa: PLC0415
-
-    from _lcm.current_iid import CURRENT_IID_ARGUMENT  # noqa: PLC0415
-    from tests.solution.test_current_iid_grid_search import (  # noqa: PLC0415
-        _scalar_core,
-    )
-
-    model = Model(
-        regimes={
-            "alive": Regime(
-                functions={"utility": _shock_payoff}, shocks=("innovation",)
-            )
-        },
-        n_periods=1,
-        regime_id_class=_RegimeId,
-        initial_nodes=InitialNodes(by_period={0: "alive"}),
-        edges={},
-        shocks={
-            "innovation": ShockGroup(
-                shocks={
-                    "eps": Discrete(categories=_Outcome, probs=_param_probabilities)
-                },
-                nodes=Product(),
-            )
-        },
-    )
-    core = _scalar_core(model=model, params={"innovation": {"p": probability}})
-
-    def value(p: FloatND) -> FloatND:
-        return core.function(
-            **{
-                **core.arguments,
-                CURRENT_IID_ARGUMENT: {"innovation": {"p": p}},
-            }
-        )[0]
-
-    p = jnp.asarray(probability)
-    actual, tangent = jax.jit(lambda x: jax.jvp(value, (x,), (jnp.ones_like(x),)))(p)
-    reverse = jax.jit(jax.grad(value))(p)
-    assert_array_almost_equal(actual, probability, decimal=DECIMAL_PRECISION)
-    assert_array_almost_equal(tangent, 1.0, decimal=DECIMAL_PRECISION)
-    assert_array_almost_equal(reverse, 1.0, decimal=DECIMAL_PRECISION)
-
-
 def _impute_invalid_status(wealth: FloatND) -> FloatND:
     return wealth * 0 + 15.0
 

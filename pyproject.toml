@@ -210,6 +210,7 @@ psutil = "*"
 pytest-timeout = "*"
 pytest-xdist = "*"
 py-spy = ">=0.4.2"
+vulture = ">=2.16"
 [tool.pixi.feature.tests.pypi-dependencies]
 quantecon = "*"
 [tool.pixi.feature.tests.tasks]
@@ -252,14 +253,12 @@ unsafe-fixes = false
 [tool.ruff.lint.flake8-bugbear]
 extend-immutable-calls = [
   "_lcm.certainty_equivalent.LinearExpectation",
-  "_lcm.utils.containers.Unset",
   "lcm.certainty_equivalent.LinearExpectation",
   "lcm.koopmans_aggregation.LinearAggregator",
   "lcm.LinearAggregator",
   "lcm.LinearExpectation",
   "LinearAggregator",
   "LinearExpectation",
-  "Unset",
 ]
 [tool.ruff.lint.isort]
 known-first-party = [ "_lcm", "lcm", "lcm_examples", "tests" ]
@@ -326,6 +325,9 @@ per-file-ignores."explanations/*" = [
   "INP001", # Implicit namespace package
   "T201",   # print found
   "T203",   # pprint found
+]
+per-file-ignores."src/_lcm/**/*.py" = [
+  "PYI041", # `_lcm` is checked without the numeric tower, so `float | int` is not redundant
 ]
 per-file-ignores."src/_lcm/**/*[A-Z]*.py" = [
   "N999", # Module name mixing uppercase and lowercase (Q_and_F.py, V.py, max_Q_over_a.py)

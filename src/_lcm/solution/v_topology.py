@@ -42,8 +42,7 @@ class _RegimeVTopology:
 def expected_V_rank(*, regime: Regime) -> int:
     """Return the number of axes this regime's stored value function has.
 
-    Single source of truth for the rank: the topology below builds V to it, and
-    the boundary that accepts a caller-supplied solution checks against it.
+    Single source of truth for the rank: the topology below builds V to it.
 
     - One axis per solve state.
     - One trailing stakeholder axis when the regime is collective.

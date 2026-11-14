@@ -10,7 +10,6 @@ import numpy as np
 import pytest
 
 from _lcm.processes.state_conditioned import (
-    StateConditioned,
     conditioned_row,
     gather_sigma,
     iid_normal_row,
@@ -19,6 +18,7 @@ from _lcm.processes.state_conditioned import (
 )
 from lcm import DiscreteGrid, NormalIIDProcess, TauchenAR1Process, categorical
 from lcm.exceptions import GridInitializationError
+from lcm.processes import StateConditioned
 from lcm.typing import ScalarInt
 from tests.conftest import X64_ENABLED
 

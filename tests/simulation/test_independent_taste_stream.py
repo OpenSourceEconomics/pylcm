@@ -2,7 +2,6 @@
 
 import importlib
 from collections.abc import Mapping
-from functools import partial
 from typing import Literal, cast
 
 import jax
@@ -197,26 +196,6 @@ def test_explicit_none_preserves_default_seeded_result() -> None:
     pd.testing.assert_frame_equal(ordinary, explicit, check_exact=True)
 
 
-@pytest.mark.parametrize("stream", ["seed", "taste_shock_seed"])
-@pytest.mark.parametrize("seed", [False, True])
-def test_boolean_seed_is_rejected_before_solving(
-    *, stream: Literal["seed", "taste_shock_seed"], seed: bool
-) -> None:
-    """Boolean configuration is refused before incomplete parameters are processed."""
-    model = taste_shocks_toy.get_model()
-    simulate = (
-        partial(model.simulate, seed=seed)
-        if stream == "seed"
-        else partial(model.simulate, taste_shock_seed=seed)
-    )
-    with pytest.raises(InvalidSimulationInputError, match=stream):
-        simulate(
-            params={},
-            initial_conditions=_initial_conditions(),
-            log_level="debug",
-        )
-
-
 class _IntegerSeed(int):
     """An integer subtype accepted by the ordinary random stream."""
 
@@ -339,8 +318,7 @@ def test_folded_seed_children_change_dispatched_draws(
     np.testing.assert_array_equal(captured[0], captured[2])
 
 
-@pytest.mark.parametrize("role", ["seed", "taste_shock_seed"])
-def test_legacy_seed_names_typed_key_constructor_before_solving(role: str) -> None:
+def test_legacy_seed_names_typed_key_constructor_before_solving() -> None:
     """Raw uint32 keys are refused with the typed constructor in the message."""
     model = taste_shocks_toy.get_model()
     with pytest.raises(InvalidSimulationInputError, match=r"jax.random.key"):
@@ -348,10 +326,7 @@ def test_legacy_seed_names_typed_key_constructor_before_solving(role: str) -> No
             params={},
             initial_conditions=_initial_conditions(),
             log_level="off",
-            seed=jax.random.PRNGKey(17) if role == "seed" else None,
-            taste_shock_seed=jax.random.PRNGKey(17)
-            if role == "taste_shock_seed"
-            else None,
+            seed=jax.random.PRNGKey(17),
         )
 
 

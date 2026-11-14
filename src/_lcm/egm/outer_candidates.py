@@ -17,7 +17,6 @@ definition, with `None` subtrees (e.g. `breakpoints`, which NNBEGM validation
 already forbids) dropping out naturally.
 """
 
-import operator
 from collections.abc import Sequence
 from dataclasses import dataclass
 
@@ -94,14 +93,6 @@ class OuterCandidateBank:
     def n_candidates(self) -> int:
         """Number of stacked candidates `C` (static)."""
         return int(self.outer_nodes.shape[0])
-
-    def candidate_v_arr(self, index: int) -> FloatND:
-        """The `index`-th candidate's conditional value array."""
-        return self.V_arr[index]
-
-    def candidate_carry(self, index: int) -> EGMCarry:
-        """The `index`-th candidate's conditional carry, leading axis removed."""
-        return jax.tree.map(operator.itemgetter(index), self.carry)
 
 
 def build_outer_candidate_bank(

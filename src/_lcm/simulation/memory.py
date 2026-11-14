@@ -147,7 +147,7 @@ class SimulationMemory:
     ) -> DeviceBufferFootprint:
         """Drain known transfers and inventory the current explicit live roots."""
         period = self._period_snapshot()
-        key = (self.ledger.epoch, self._period_generation)
+        key = self.residency_epoch
         cached = self._snapshots.get(devices)
         if self._period_stable and cached is not None and cached[0] == key:
             combined = cached[1]

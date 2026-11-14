@@ -65,9 +65,10 @@ from dags import concatenate_functions, get_ancestors
 
 from _lcm.constraints.bounds import lower_bound_declaration
 from _lcm.constraints.processed import ConstraintLike, normalize_constraints
+from _lcm.dtypes import canonical_float_dtype
 from _lcm.egm.outer_search import FiniteOuterGrid
-from _lcm.egm.preferences import BoundUtilityOfAction
-from _lcm.grids import ContinuousGrid, Grid, IrregSpacedGrid
+from _lcm.egm.preferences import BoundUtilityOfAction, concatenate_felicity
+from _lcm.grids import ContinuousGrid, Grid
 from _lcm.post_decision_bound import _PostDecisionLowerBound
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.reachability import PhaseReachability
@@ -89,6 +90,7 @@ from lcm.exceptions import (
     GridInitializationError,
     ModelInitializationError,
 )
+from lcm.grids import IrregSpacedGrid
 from lcm.koopmans_aggregation import LinearAggregator
 from lcm.phased import Phased
 from lcm.regime import ActionEntry, StateEntry, StateTransitionEntry
@@ -125,37 +127,6 @@ type _TransitionDeclaration = StateTransitionEntry | DecomposedTransition | AgeC
 # between the two regimes; the criterion is scale-invariant (ratios of the
 # function's own increments, with only a float-noise floor).
 _CONTINUITY_SHRINK_FACTOR = 0.4
-
-
-def validate_dcegm_regimes(
-    *,
-    user_regimes: Mapping[RegimeName, UserRegime],
-    laws: RegimeLaws,
-    solution_reachability: PhaseReachability | None = None,
-) -> None:
-    """Validate the DC-EGM contract for every regime with a `DCEGM` solver.
-
-    Args:
-        user_regimes: Mapping of regime names to user-provided `Regime`
-            instances.
-        laws: Each regime's law, bound from `Model(edges=...)`, by regime name.
-        solution_reachability: Static solution graph. When omitted, run only
-            regime-local checks.
-
-    Raises:
-        ModelInitializationError: If any regime with `solver=DCEGM(...)`
-            violates the DC-EGM model contract.
-
-    """
-    for regime_name, user_regime in user_regimes.items():
-        if isinstance(user_regime.solver, DCEGM):
-            validate_dcegm_regime(
-                regime_name=regime_name,
-                user_regime=user_regime,
-                user_regimes=user_regimes,
-                laws=laws,
-                solution_reachability=solution_reachability,
-            )
 
 
 def savings_stage_reads_euler_state(
@@ -526,7 +497,11 @@ def fail_if_declared_lower_bound_disagrees_with_the_grid(
             solver_name=solver_name,
         )
         declared_start = getattr(grid, "start", None)
-        grid_low = declared_start if declared_start is not None else grid.to_jax()[0]
+        grid_low = (
+            jnp.asarray(declared_start, dtype=canonical_float_dtype())
+            if declared_start is not None
+            else grid.to_jax()[0]
+        )
         # Put the declaration through the grid's own dtype before comparing.
         # Both numbers are decimals the user wrote, but the grid holds its
         # lowest node at the active precision, so widening that node to a
@@ -1313,7 +1288,7 @@ def _fail_if_inverse_marginal_utility_inconsistent(
         )
         raise ModelInitializationError(msg)
 
-    utility_func = concatenate_functions(functions, targets="utility")
+    utility_func = concatenate_felicity(functions=functions)
     if solver.continuous_action not in inspect.signature(utility_func).parameters:
         return
     # Run the concavity and round-trip checks at a few discrete-combo contexts,

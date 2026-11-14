@@ -97,15 +97,6 @@ def test_record_validator_names_a_missing_key(*, validator: str, key: str) -> No
         getattr(public_period_replay, validator)(record)
 
 
-@pytest.mark.parametrize(("validator", "key"), _KEY_CASES)
-def test_record_validator_names_a_wrong_typed_key(*, validator: str, key: str) -> None:
-    """A record holding an entry at the wrong type is refused, naming that entry."""
-    record = {**_RECORDS[validator], key: 0.5}
-
-    with pytest.raises(TypeError, match=re.escape(repr(key))):
-        getattr(public_period_replay, validator)(record)
-
-
 def test_layouts_validator_names_a_key_missing_from_a_nested_leaf() -> None:
     """A layout block is refused when one of its leaves lacks an entry."""
     leaf = {name: value for name, value in _LEAF.items() if name != "dtype"}

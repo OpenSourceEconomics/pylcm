@@ -750,15 +750,19 @@ def _append_chunk(
     ), None
 
 
-def _place_in_row(
+def _place_in_row[R: (FloatND, IntND)](
     *,
-    row: FloatND | IntND,
-    source: FloatND | IntND,
-    empty: float,
+    row: R,
+    source: R,
+    empty: float | int,
     slot: IntND,
     keep: BoolND,
-) -> FloatND | IntND:
-    """Scatter the kept sub-cell entries of `source` into their row slots."""
+) -> R:
+    """Scatter the kept sub-cell entries of `source` into their row slots.
+
+    `empty` fills a dropped entry in the row's own kind: NaN in a float row, `0` in
+    an integer owner row.
+    """
     return row.at[slot].set(jnp.where(keep, source.reshape(-1), empty), mode="drop")
 
 

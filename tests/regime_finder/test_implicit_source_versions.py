@@ -12,7 +12,7 @@ import pytest
 
 from _lcm_regime_finder.implicit.implicit_native import compile_table
 
-NEW_SOURCE_IDS = ("source639-builtin-int-v1",)
+NEW_SOURCE_IDS = ("source639-builtin-int-v1", "source645-builtin-int-v1")
 
 
 def registry() -> ModuleType:

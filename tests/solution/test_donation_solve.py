@@ -46,6 +46,7 @@ from lcm.solvers import (
     StateAxesLeading,
 )
 from lcm.typing import Float1D, FloatND, ReferenceName, StateName
+from tests.execution._buffer_registry import declared_shards
 from tests.solution._callback_types import ConsumeOutputKwargs
 from tests.solution.test_compilation_identity import _lowering_key
 from tests.test_solver_api_out_of_tree import (
@@ -378,7 +379,7 @@ class _SnapshottingRegistry(BufferRegistry):
     def declare_not_produced(self, *, tree: FootprintTree) -> None:
         """Declare, then record the shards declared at that moment."""
         super().declare_not_produced(tree=tree)
-        self.snapshots.append(self.declared_shards)
+        self.snapshots.append(declared_shards(registry=self))
 
 
 _REGISTRIES: list[_SnapshottingRegistry] = []

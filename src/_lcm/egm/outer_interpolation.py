@@ -26,37 +26,11 @@ under JIT).
 """
 
 from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
 
 import jax.errors
 import jax.numpy as jnp
 
 from lcm.typing import BoolND, FloatND, ScalarInt
-
-
-@runtime_checkable
-class OuterInterpolant(Protocol):
-    """Evaluates a stacked candidate surface between shared outer nodes."""
-
-    def evaluate(
-        self,
-        *,
-        nodes: FloatND,
-        values: FloatND,
-        query: FloatND,
-    ) -> FloatND:
-        """Interpolated surface at `query`; `-inf` where invalid."""
-        ...
-
-    def evaluate_with_derivative(
-        self,
-        *,
-        nodes: FloatND,
-        values: FloatND,
-        query: FloatND,
-    ) -> tuple[FloatND, FloatND]:
-        """Interpolated surface and its outer derivative at `query`."""
-        ...
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -141,25 +115,6 @@ class LocalCubicOuterInterpolant:
             jnp.where(valid, value, -jnp.inf),
             jnp.where(valid, derivative, 0.0),
         )
-
-    def evaluate_validity(
-        self,
-        *,
-        nodes: FloatND,
-        values: FloatND,
-        query: FloatND,
-        interval_valid: BoolND | None = None,
-        valid_count: ScalarInt | None = None,
-    ) -> BoolND:
-        """Where a read at `query` would be trustworthy (see `evaluate`)."""
-        _, _, valid = self._evaluate(
-            nodes=nodes,
-            values=values,
-            query=query,
-            interval_valid=interval_valid,
-            valid_count=valid_count,
-        )
-        return valid
 
     def _evaluate(
         self,

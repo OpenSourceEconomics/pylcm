@@ -16,7 +16,6 @@ import pytest
 from _lcm.egm.ez_kernel import (
     ez_blend_partials,
     ez_consumption_from_euler,
-    ez_continuation,
     ez_invert_partials,
     ez_marginal_of_resource,
     ez_period_value,
@@ -26,6 +25,7 @@ from _lcm.egm.ez_kernel import (
 from _lcm.egm.nbegm_step import _ez_flow_power_structure
 from _lcm.egm.preferences import Preferences
 from lcm import CESAggregator, PowerMean
+from tests.solution._ez_continuation import ez_continuation
 
 # These are float64 specs of the kernel algebra (closed-form identities,
 # finite-difference checks, and float32-versus-float64 comparisons), so the

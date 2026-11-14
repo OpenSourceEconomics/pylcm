@@ -2,9 +2,9 @@
 
 Two contracts, promoted from the Pro-review counterexample RT1:
 
-- the signature/resolution helpers key on every policy-consuming node class and
-  recurse into pylcm's nested transition tree, so ages with different policy
-  closures never false-share a compiled program; and
+- the shared signature recursion keys on every node and recurses into pylcm's
+  nested transition tree, so periods with different policy closures never
+  false-share a compiled program; and
 - the `Regime` validator rejects — loudly, before any program is built — the two
   specialized-transition compositions v1 does not support.
 """
@@ -14,13 +14,8 @@ from types import MappingProxyType
 import jax.numpy as jnp
 import pytest
 
-from _lcm.grids import DiscreteGrid
-from _lcm.regime_building.age_normalization import periodized_tree_signature
 from _lcm.regime_building.age_specialization import (
-    INVARIANT,
     _tree_signature,
-    node_signature,
-    tree_signature,
 )
 from _lcm.regime_building.processing import _fail_if_phase_state_nodes_disagree
 from _lcm.regime_law import bind_regime_law
@@ -29,66 +24,10 @@ from _lcm.user_regime_validation import (
     _validate_logical_consistency,
 )
 from lcm.exceptions import RegimeInitializationError
+from lcm.grids import DiscreteGrid
 from lcm.transition import AgeSpecializedFunction, StochasticTransition
 from lcm.typing import Float1D
 from tests.mock_regime import MockRegime
-
-
-def _feasible_below_age(age: float):
-    """Return a feasibility constraint whose threshold is the calendar-policy age."""
-    return lambda action: action <= age
-
-
-def test_node_signature_of_a_plain_callable_is_invariant():
-    """A bare callable carries no age-varying closure, so its signature is constant."""
-    assert node_signature(node=lambda x: x, age=60.0) is INVARIANT
-
-
-def test_node_signature_of_age_specialized_varies_with_age():
-    """An `AgeSpecializedFunction` node's signature separates ages by closure."""
-    node = AgeSpecializedFunction(
-        build=_feasible_below_age, signature=lambda age: ("limit", age)
-    )
-
-    assert node_signature(node=node, age=60.0) != node_signature(node=node, age=61.0)
-
-
-def test_tree_signature_separates_a_constraint_that_changes_by_age():
-    """Constraints feed feasibility (F), so a per-age constraint must split the key.
-
-    Two ages whose only difference is a policy-dependent constraint must not
-    false-share a compiled `Q_and_F`.
-    """
-    constraints = {
-        "eligibility": AgeSpecializedFunction(
-            build=_feasible_below_age, signature=lambda age: ("limit", age)
-        )
-    }
-
-    assert tree_signature(tree=constraints, age=60.0) != tree_signature(
-        tree=constraints, age=61.0
-    )
-
-
-def test_tree_signature_recurses_into_the_nested_transition_mapping():
-    """Processed transitions are nested `{target_regime: {name: fn}}`.
-
-    A signature taken over top-level values sees the inner mapping and misses the
-    `AgeSpecializedFunction` node inside; the tree signature must descend and
-    separate ages.
-    """
-    transitions = {
-        "retired": {
-            "next_points": AgeSpecializedFunction(
-                build=lambda age: lambda points: points + age,
-                signature=lambda age: ("policy", age),
-            )
-        }
-    }
-
-    assert tree_signature(tree=transitions, age=60.0) != tree_signature(
-        tree=transitions, age=61.0
-    )
 
 
 def test_tree_signature_helper_is_invariant_to_key_insertion_order():
@@ -107,21 +46,6 @@ def test_tree_signature_helper_recurses_regardless_of_leaf_signature():
 
     assert _tree_signature(tree=nested, leaf_signature=lambda leaf: len(str(leaf))) == (
         ("outer", (("inner", len("value")),)),
-    )
-
-
-def test_tree_signature_wrappers_share_recursive_semantics():
-    """`tree_signature` (age) and `periodized_tree_signature` (period) agree.
-
-    Both are thin wrappers over the same recursive helper, so an
-    age-invariant tree and a period-invariant tree with identical structure
-    (only the leaf-signature source differs) recurse and sort keys the same
-    way.
-    """
-    tree = {"b": lambda x: x, "a": {"nested": lambda x: x}}
-
-    assert tree_signature(tree=tree, age=60.0) == periodized_tree_signature(
-        tree=tree, period=3
     )
 
 
@@ -317,36 +241,6 @@ def test_regime_transition_with_transitive_age_specialized_ancestor_is_rejected(
                 signature=lambda age: ("threshold", age),
             ),
         },
-    )
-
-    with pytest.raises(RegimeInitializationError):
-        _validate_law_consistency(
-            regime, transition=law.decomposed_transition, terminal=law.terminal
-        )
-
-
-def test_regime_transition_markov_wrapping_age_specialized_is_rejected(
-    binary_category_class,
-):
-    """A Markov regime transition wrapping an `AgeSpecializedFunction` must raise.
-
-    Regime-transition probabilities are built once, not per period, so a
-    policy-specialized probability law as the regime transition is just as
-    unsound as a bare `AgeSpecializedFunction` transition and must be rejected at
-    the moment the law is bound to the regime.
-    """
-    law = bind_regime_law(
-        StochasticTransition(
-            func=AgeSpecializedFunction(
-                build=lambda age: lambda b: b,  # noqa: ARG005
-                signature=lambda age: ("regime", age),
-            )
-        )
-    )
-    regime = MockRegime(
-        actions={"a": DiscreteGrid(category_class=binary_category_class)},
-        states={"b": DiscreteGrid(category_class=binary_category_class)},
-        functions={"utility": lambda a, b: None},  # noqa: ARG005
     )
 
     with pytest.raises(RegimeInitializationError):

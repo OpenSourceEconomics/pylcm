@@ -5,26 +5,24 @@ separately. Every claim about a genuine mesh runs in a subprocess with forced
 host devices, so the per-device numbers are measured rather than assumed.
 """
 
-import dataclasses
 import os
 import subprocess
 import sys
 import textwrap
-from collections.abc import Hashable
+from collections.abc import Hashable, Mapping
 from pathlib import Path
 from types import MappingProxyType
 
 import jax
 import jax.numpy as jnp
 import pytest
-from beartype.roar import BeartypeCallHintParamViolation
 
 from _lcm.execution.footprint import (
     ArtifactFootprint,
     ResidentInventory,
     ScheduledUnit,
     per_device_footprint,
-    plan_resident_bytes,
+    plan_resident_inventory,
     sharding_device_ids,
 )
 from _lcm.execution.liveness import PlannedInputLiveness
@@ -268,6 +266,29 @@ def test_an_invalid_scheduled_unit_is_refused(
         )
 
 
+def _plan_resident_bytes(
+    *,
+    waves_by_period: Mapping[int, tuple[tuple[ScheduledUnit, ...], ...]],
+    fold_dispatches: Mapping[tuple[int, RegimeName, RegimeName], Hashable],
+    ledger: PlannedInputLiveness,
+    footprints: Mapping[Hashable, ArtifactFootprint],
+) -> MappingProxyType[tuple[int, RegimeName], int]:
+    """Return the declared-read residency lower bound at each scheduled position.
+
+    Each cell's inventory from `plan_resident_inventory`, asked without a
+    candidate's compiler-live reads.
+    """
+    inventory = plan_resident_inventory(
+        waves_by_period=waves_by_period,
+        fold_dispatches=fold_dispatches,
+        ledger=ledger,
+        footprints=footprints,
+    )
+    return MappingProxyType(
+        {cell: position.resident_bytes() for cell, position in inventory.items()}
+    )
+
+
 def test_a_retained_value_stays_resident_for_every_earlier_period() -> None:
     """Retained outputs accumulate backward, so period 0 sees every later value."""
     ledger = PlannedInputLiveness(
@@ -278,7 +299,7 @@ def test_a_retained_value_stays_resident_for_every_earlier_period() -> None:
         },
         retained_artifacts=("V2", "V1", "V0"),
     )
-    resident = plan_resident_bytes(
+    resident = _plan_resident_bytes(
         waves_by_period=MappingProxyType(
             {
                 2: ((_unit(period=2, regime="a", produces=("V2",)),),),
@@ -305,7 +326,7 @@ def test_a_released_artifact_leaves_the_footprint_after_its_last_consumer() -> N
     ledger = PlannedInputLiveness(
         dispatch_accesses={(2, "a"): (), (1, "a"): ("leaf2",), (0, "a"): ()}
     )
-    resident = plan_resident_bytes(
+    resident = _plan_resident_bytes(
         waves_by_period=MappingProxyType(
             {
                 2: ((_unit(period=2, regime="a", produces=("leaf2",)),),),
@@ -327,7 +348,7 @@ def test_a_pinned_artifact_stays_resident_after_its_last_consumer() -> None:
         dispatch_accesses={(1, "a"): ("leaf1",), (0, "a"): ()},
         pinned_artifacts=("leaf1",),
     )
-    resident = plan_resident_bytes(
+    resident = _plan_resident_bytes(
         waves_by_period=MappingProxyType(
             {
                 1: ((_unit(period=1, regime="a", produces=("leaf1",)),),),
@@ -348,7 +369,7 @@ def test_an_alias_group_is_resident_until_its_last_member_closes() -> None:
         dispatch_accesses={(1, "a"): ("rolled",), (0, "a"): ("root",)},
         aliases=MappingProxyType({"rolled": "root"}),
     )
-    resident = plan_resident_bytes(
+    resident = _plan_resident_bytes(
         waves_by_period=MappingProxyType(
             {
                 1: ((_unit(period=1, regime="a", produces=("rolled",)),),),
@@ -369,7 +390,7 @@ def test_two_keys_of_one_alias_group_are_sized_as_one_buffer() -> None:
         dispatch_accesses={(1, "a"): (), (0, "a"): ("rolled", "root")},
         aliases=MappingProxyType({"rolled": "root"}),
     )
-    resident = plan_resident_bytes(
+    resident = _plan_resident_bytes(
         waves_by_period=MappingProxyType(
             {
                 1: ((_unit(period=1, regime="a", produces=("rolled", "root")),),),
@@ -392,7 +413,7 @@ def test_a_shared_buffer_is_sized_once_and_gone_after_its_last_consumer() -> Non
         dispatch_accesses={(2, "a"): (), (1, "a"): ("rolled", "root"), (0, "a"): ()},
         aliases=MappingProxyType({"rolled": "root"}),
     )
-    resident = plan_resident_bytes(
+    resident = _plan_resident_bytes(
         waves_by_period=MappingProxyType(
             {
                 2: ((_unit(period=2, regime="a", produces=("rolled", "root")),),),
@@ -420,7 +441,7 @@ def test_a_shared_buffer_is_sized_per_device_by_the_key_present_there() -> None:
         },
         aliases=MappingProxyType({"rolled": "root"}),
     )
-    resident = plan_resident_bytes(
+    resident = _plan_resident_bytes(
         waves_by_period=MappingProxyType(
             {
                 1: (
@@ -459,7 +480,7 @@ def test_a_concurrent_unit_on_the_same_device_counts_its_outputs() -> None:
     ledger = PlannedInputLiveness(
         dispatch_accesses={(0, "a"): (), (0, "b"): ()}, retained_artifacts=("Va", "Vb")
     )
-    resident = plan_resident_bytes(
+    resident = _plan_resident_bytes(
         waves_by_period=MappingProxyType(
             {
                 0: (
@@ -485,7 +506,7 @@ def test_a_concurrent_unit_on_another_device_counts_nothing() -> None:
     ledger = PlannedInputLiveness(
         dispatch_accesses={(0, "a"): (), (0, "b"): ()}, retained_artifacts=("Va", "Vb")
     )
-    resident = plan_resident_bytes(
+    resident = _plan_resident_bytes(
         waves_by_period=MappingProxyType(
             {
                 0: (
@@ -527,7 +548,7 @@ def test_a_sharded_unit_reports_the_busiest_of_its_devices() -> None:
         dispatch_accesses={(1, "single"): (), (0, "sharded"): ()},
         retained_artifacts=("V1", "S"),
     )
-    resident = plan_resident_bytes(
+    resident = _plan_resident_bytes(
         waves_by_period=MappingProxyType(
             {
                 1: (
@@ -568,7 +589,7 @@ def test_a_fold_output_enters_the_footprint_at_its_period_end() -> None:
         },
         retained_artifacts=("Vt1",),
     )
-    resident = plan_resident_bytes(
+    resident = _plan_resident_bytes(
         waves_by_period=MappingProxyType(
             {
                 1: ((_unit(period=1, regime="tgt", produces=("Vt1",)),),),
@@ -590,7 +611,7 @@ def test_an_artifact_without_a_footprint_occupies_nothing() -> None:
     ledger = PlannedInputLiveness(
         dispatch_accesses={(1, "a"): (), (0, "a"): ()}, retained_artifacts=("scalar",)
     )
-    resident = plan_resident_bytes(
+    resident = _plan_resident_bytes(
         waves_by_period=MappingProxyType(
             {
                 1: ((_unit(period=1, regime="a", produces=("scalar",)),),),
@@ -608,7 +629,7 @@ def test_an_artifact_without_a_footprint_occupies_nothing() -> None:
 def test_a_unit_of_an_unknown_period_is_refused() -> None:
     """Every wave's units must carry the period their mapping key names."""
     with pytest.raises(ValueError, match="period"):
-        plan_resident_bytes(
+        _plan_resident_bytes(
             waves_by_period=MappingProxyType({1: ((_unit(period=0, regime="a"),),)}),
             fold_dispatches=MappingProxyType({}),
             ledger=PlannedInputLiveness(dispatch_accesses={}),
@@ -619,7 +640,7 @@ def test_a_unit_of_an_unknown_period_is_refused() -> None:
 def test_a_footprint_the_ledger_does_not_know_is_refused() -> None:
     """Only artifacts of the immutable plan have a lifetime the walk can read."""
     with pytest.raises(ExecutionPlanningError, match="'stray'"):
-        plan_resident_bytes(
+        _plan_resident_bytes(
             waves_by_period=MappingProxyType({0: ((_unit(period=0, regime="a"),),)}),
             fold_dispatches=MappingProxyType({}),
             ledger=PlannedInputLiveness(dispatch_accesses={(0, "a"): ()}),
@@ -630,7 +651,7 @@ def test_a_footprint_the_ledger_does_not_know_is_refused() -> None:
 def test_a_unit_whose_dispatch_the_ledger_does_not_plan_is_refused() -> None:
     """Every unit of the schedule commits, so the ledger must plan its dispatch."""
     with pytest.raises(ExecutionPlanningError, match="unplanned"):
-        plan_resident_bytes(
+        _plan_resident_bytes(
             waves_by_period=MappingProxyType(
                 {0: ((_unit(period=0, regime="unplanned"),),)}
             ),
@@ -646,7 +667,7 @@ def test_a_buffer_the_unit_is_handed_as_an_argument_is_not_charged() -> None:
         dispatch_accesses={(1, "a"): (), (0, "a"): ("V1",)},
         retained_artifacts=("V1",),
     )
-    resident = plan_resident_bytes(
+    resident = _plan_resident_bytes(
         waves_by_period=MappingProxyType(
             {
                 1: ((_unit(period=1, regime="a", produces=("V1",)),),),
@@ -667,7 +688,7 @@ def test_a_buffer_another_unit_is_handed_stays_charged() -> None:
         dispatch_accesses={(1, "a"): (), (0, "a"): ("V1",), (0, "b"): ()},
         retained_artifacts=("V1",),
     )
-    resident = plan_resident_bytes(
+    resident = _plan_resident_bytes(
         waves_by_period=MappingProxyType(
             {
                 1: ((_unit(period=1, regime="a", produces=("V1",)),),),
@@ -692,7 +713,7 @@ def test_an_argument_on_another_device_leaves_that_devices_charge_standing() -> 
         aliases={"rolled": "root"},
         retained_artifacts=("root",),
     )
-    resident = plan_resident_bytes(
+    resident = _plan_resident_bytes(
         waves_by_period=MappingProxyType(
             {
                 1: ((_unit(period=1, regime="a", produces=("rolled", "root")),),),
@@ -752,21 +773,6 @@ def test_transfer_scratch_default_preserves_existing_reservation() -> None:
     )
     assert dict(inventory.transfer_scratch_bytes) == {}
     assert inventory.resident_bytes() == 11
-
-
-@pytest.mark.parametrize(
-    "field", ["fixed_bytes", "shared_copies", "transfer_scratch_bytes"]
-)
-def test_resident_inventory_refuses_plain_dict_reservations(*, field: str) -> None:
-    """Reservation metadata arrives frozen; a plain dict is refused."""
-    inventory = ResidentInventory(
-        device_ids=(0,),
-        live=MappingProxyType({}),
-        peer_bytes=MappingProxyType({0: 0}),
-        declared_inputs=(),
-    )
-    with pytest.raises(BeartypeCallHintParamViolation, match=field):
-        dataclasses.replace(inventory, **{field: {}})
 
 
 def test_resident_breakdown_splits_the_busiest_device_into_its_total() -> None:

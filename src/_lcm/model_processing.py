@@ -18,7 +18,6 @@ from jax import Array
 
 from _lcm.constraints.processed import ConstraintLike, normalize_constraints
 from _lcm.execution.execution_plan import ResolvedExecution
-from _lcm.grids import DiscreteGrid
 from _lcm.grids.categorical import get_category_codes
 from _lcm.pandas_utils import convert_series_in_params
 from _lcm.params.edges import (
@@ -27,6 +26,7 @@ from _lcm.params.edges import (
     flat_namespaces,
     regime_kernel_params,
 )
+from _lcm.params.numeric_roles import template_roles
 from _lcm.params.processing import (
     broadcast_to_template,
     cast_params_to_canonical_dtypes,
@@ -88,6 +88,7 @@ from lcm.exceptions import (
     ModelInitializationError,
     RegimeInitializationError,
 )
+from lcm.grids import DiscreteGrid
 from lcm.params import MappingLeaf
 from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
@@ -303,7 +304,9 @@ def _normalize_fixed_parameters(
             name: regime.required_periods for name, regime in metadata.items()
         },
     )
-    fixed_flat_params = cast_params_to_canonical_dtypes(fixed_flat_params)
+    fixed_flat_params = cast_params_to_canonical_dtypes(
+        fixed_flat_params, roles=template_roles(raw_params_template)
+    )
     _validate_param_types(fixed_flat_params)
 
     # The template trim works on the template-shaped (user-coarse) form;
@@ -1269,7 +1272,7 @@ def _resolve_fixed_params(
 ) -> FlatParams:
     """Resolve fixed_params against the params template.
 
-    Like `process_params`, support model/regime/function level specification, but
+    Like `broadcast_to_template`, support model/regime/function level specification, but
     do NOT require all template keys to be present — only match what's provided.
 
     Args:

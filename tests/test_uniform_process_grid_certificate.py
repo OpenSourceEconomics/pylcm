@@ -40,20 +40,26 @@ def test_uniform_controls_preserve_both_historical_mutation_populations() -> Non
     historical = {
         name: spec
         for name, spec in registered.items()
-        if not name.startswith("simulation_adapter:initial_physical_")
+        # `public_shell:` controls arrived when the public grid and process
+        # classes moved to `lcm`; the earlier population stays pinned without them.
+        if not name.startswith(
+            ("simulation_adapter:initial_physical_", "public_shell:")
+        )
     }
     # The dissolution-flag removal deleted streaming_collective:published_dissolution_
     # inverted and native_graph:collective_output_role_dropped with their targets;
     # the fold-machinery removal deleted ten streaming fold controls and two
-    # supplemental s02_status:fold_weight_* controls with theirs.
-    assert len(historical) == 398
+    # supplemental s02_status:fold_weight_* controls with theirs; the dead-code
+    # removal deleted the three streaming_ev1 semantic-key controls with
+    # GridSearchEV1ActionReduction.
+    assert len(historical) == 395
     assert (
         _name_digest(historical)
-        == "a00c2dd641b34fdfa7f618fb19d3e79648c1082583727f15fafbb004d62faf6d"
+        == "2f1f0e0a6ce13bc16159eb8f154cb230e9912ccae149cef245c1b531c8ec03e9"
     )
-    assert len(registered) == 410
+    assert len(registered) == 412
     assert _name_digest(registered) == (
-        "c94857b93f5a6254cbda1aa14b3658232da1df482f907578db49540ac23aeb6c"
+        "39b2e6f7ea82047c1b09c454bbe353fb2cc1a89d81a588b5bd8a91f3ee02bb76"
     )
     assert len(supplemental) == 94
     assert _name_digest(supplemental) == (

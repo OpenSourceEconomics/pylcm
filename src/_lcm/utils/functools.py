@@ -325,26 +325,6 @@ def all_as_kwargs[T](
     )
 
 
-def all_as_args[T](
-    *,
-    args: tuple[T, ...],
-    kwargs: dict[ReferenceName, T],
-    arg_names: list[ReferenceName],
-) -> tuple[T, ...]:
-    """Return args tuple containing all arguments.
-
-    Args:
-        args: Positional arguments.
-        kwargs: Keyword arguments.
-        arg_names: Names of arguments.
-
-    Returns:
-        A tuple of all arguments.
-
-    """
-    return args + tuple(convert_kwargs_to_args(kwargs=kwargs, arg_names=arg_names))
-
-
 def convert_kwargs_to_args[T](
     *, kwargs: dict[ReferenceName, T], arg_names: list[ReferenceName]
 ) -> tuple[T, ...]:

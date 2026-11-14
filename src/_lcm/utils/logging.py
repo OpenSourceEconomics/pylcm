@@ -14,8 +14,6 @@ from lcm.typing import (
     FloatND,
     Int1D,
     ScalarBool,
-    ScalarFloat,
-    ScalarInt,
 )
 
 
@@ -218,7 +216,7 @@ def format_duration(*, seconds: float) -> str:
 def log_non_finite_values(
     *,
     logger: logging.Logger,
-    age: float | ScalarInt | ScalarFloat,
+    age_label: str,
     regime_names: tuple[RegimeName, ...],
     flags: tuple[bool, ...],
     time_kind: Literal["age", "period"] = "age",
@@ -227,7 +225,7 @@ def log_non_finite_values(
 
     Args:
         logger: Logger instance.
-        age: Age corresponding to the current period.
+        age_label: Coordinate of the current period, formatted on the host.
         regime_names: Names of the regimes the flags belong to, in flag order.
         flags: Whether each regime owns a non-finite value, already on the host
             so that reporting a whole period costs no further device transfer.
@@ -237,14 +235,17 @@ def log_non_finite_values(
     for regime_name, flag in zip(regime_names, flags, strict=True):
         if flag:
             logger.warning(
-                "NaN/Inf in V_arr for regime '%s' at %s %s", regime_name, time_kind, age
+                "NaN/Inf in V_arr for regime '%s' at %s %s",
+                regime_name,
+                time_kind,
+                age_label,
             )
 
 
 def log_period_header(
     *,
     logger: logging.Logger,
-    age: float | ScalarInt | ScalarFloat,
+    age_label: str,
     n_active_regimes: int,
     time_kind: Literal["age", "period"] = "age",
 ) -> None:
@@ -252,12 +253,14 @@ def log_period_header(
 
     Args:
         logger: Logger instance.
-        age: Age corresponding to the current period.
+        age_label: Coordinate of the current period, formatted on the host.
         n_active_regimes: Number of active regimes in the period.
         time_kind: Whether the coordinate is an age or a computational period.
 
     """
-    logger.info("%s %s (%d regimes):", time_kind.capitalize(), age, n_active_regimes)
+    logger.info(
+        "%s %s (%d regimes):", time_kind.capitalize(), age_label, n_active_regimes
+    )
 
 
 def log_period_timing(
