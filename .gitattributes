@@ -1,2 +1,6 @@
 # SCM syntax highlighting & preventing 3-way merges
 pixi.lock merge=binary linguist-language=YAML linguist-generated=true
+
+# Exact checker source and normative wire data must match pinned bytes.
+/src/_lcm_regime_finder/**/*.py text eol=lf
+/src/_lcm_regime_finder/**/*.json text eol=lf
