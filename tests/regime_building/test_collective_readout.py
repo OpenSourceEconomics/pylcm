@@ -18,9 +18,10 @@ from _lcm.regime_building.collective import (
     _weighted_sum,
     collective_readout,
 )
+from lcm.typing import ScalarFloat
 
 
-def test_readout_reads_own_Q_at_household_argmax_single_state():
+def test_readout_reads_own_Q_at_household_argmax_single_state() -> None:
     # Two stakeholders, three actions, one state cell. Household weights 1/2 each.
     # Q^f favours action 0; Q^m favours action 2; the joint objective picks the
     # action maximizing 1/2 (Q^f + Q^m).
@@ -44,7 +45,7 @@ def test_readout_reads_own_Q_at_household_argmax_single_state():
     assert bool(dissolution) is False
 
 
-def test_feasibility_mask_changes_the_joint_choice():
+def test_feasibility_mask_changes_the_joint_choice() -> None:
     # Same Q as above but action 0 is infeasible -> objective over {1,2} = [3.5, 4.5]
     # -> a* = action 2 -> V^f = 0.0, V^m = 9.0.
     q_f = jnp.array([10.0, 4.0, 0.0])
@@ -62,7 +63,7 @@ def test_feasibility_mask_changes_the_joint_choice():
     assert bool(dissolution) is False
 
 
-def test_empty_feasible_set_sets_dissolution_flag():
+def test_empty_feasible_set_sets_dissolution_flag() -> None:
     q_f = jnp.array([10.0, 4.0, 0.0])
     q_m = jnp.array([0.0, 3.0, 9.0])
     feas = jnp.array([False, False, False])
@@ -77,7 +78,7 @@ def test_empty_feasible_set_sets_dissolution_flag():
     assert bool(dissolution) is True
 
 
-def test_batched_over_states():
+def test_batched_over_states() -> None:
     # Two state cells x three actions. Distinct argmax per cell.
     # cell 0: O = 1/2([1,0,0]+[0,0,3]) = [0.5,0,1.5] -> a*=2 -> Vf=0, Vm=3
     # cell 1: O = 1/2([5,0,0]+[0,0,1]) = [2.5,0,0.5] -> a*=0 -> Vf=5, Vm=0
@@ -96,7 +97,7 @@ def test_batched_over_states():
     np.testing.assert_array_equal(np.asarray(dissolution), [False, False])
 
 
-def test_unequal_weights_shift_the_choice():
+def test_unequal_weights_shift_the_choice() -> None:
     # With weight 0.9 on m, the objective tilts to m's preferred action.
     q_f = jnp.array([10.0, 0.0])
     q_m = jnp.array([0.0, 10.0])
@@ -112,7 +113,7 @@ def test_unequal_weights_shift_the_choice():
     assert values["m"] == pytest.approx(10.0)
 
 
-def test_two_action_axes_are_flattened_consistently():
+def test_two_action_axes_are_flattened_consistently() -> None:
     # Actions on a 2x2 grid; verify the gather uses the same flatten order as argmax.
     # O = 1/2(q_f+q_m); pick the joint (i,j) maximizing O, read each Q there.
     q_f = jnp.array([[1.0, 2.0], [3.0, 0.0]])
@@ -129,7 +130,7 @@ def test_two_action_axes_are_flattened_consistently():
     assert values["m"] == pytest.approx(8.0)
 
 
-def test_terminal_e1_end_to_end_with_real_utilities():
+def test_terminal_e1_end_to_end_with_real_utilities() -> None:
     """Real per-stakeholder utilities read out to the correct per-stakeholder V^s.
 
     Mirrors what the terminal collective kernel does: build one Q^s per stakeholder
@@ -145,13 +146,15 @@ def test_terminal_e1_end_to_end_with_real_utilities():
 
     # Consumption (public good): earnings from whoever works. Wife's utility values
     # her own leisure highly; husband's values consumption. Both see the same C.
-    def consumption(*, w, a):  # (state, action) -> C
+    def consumption(
+        *, w: ScalarFloat, a: ScalarFloat
+    ) -> ScalarFloat:  # (state, action) -> C
         return w * a
 
-    def u_wife(*, w, a):
+    def u_wife(*, w: ScalarFloat, a: ScalarFloat) -> ScalarFloat:
         return consumption(w=w, a=a) + 30.0 * (1.0 - a)  # strong leisure taste
 
-    def u_husband(*, w, a):
+    def u_husband(*, w: ScalarFloat, a: ScalarFloat) -> ScalarFloat:
         return 2.0 * consumption(w=w, a=a)  # values consumption, indifferent to leisure
 
     # Evaluate each stakeholder's utility over the action product, per state:
@@ -179,7 +182,7 @@ def test_terminal_e1_end_to_end_with_real_utilities():
     # taste dominates the joint objective); at the high wage her work wins jointly.
 
 
-def test_mismatched_keys_raise():
+def test_mismatched_keys_raise() -> None:
     with pytest.raises(ValueError, match="identical keys"):
         collective_readout(
             stakeholder_Q={"f": jnp.array([1.0]), "m": jnp.array([1.0])},
@@ -189,7 +192,7 @@ def test_mismatched_keys_raise():
         )
 
 
-def test_multi_party_household_choice_is_invariant_to_stakeholder_order():
+def test_multi_party_household_choice_is_invariant_to_stakeholder_order() -> None:
     """A relabeling of three stakeholders cannot select a summation order.
 
     The exact objectives are ``[1, 1/2]``. A declaration-order left fold yields
@@ -225,3 +228,39 @@ def test_multi_party_household_choice_is_invariant_to_stakeholder_order():
 
     assert policies == {0}
     assert len(patterns) == 1
+
+
+@pytest.mark.parametrize("stakeholder", ["f", "m"])
+def test_nan_household_objective_at_a_feasible_action_publishes_nan(
+    stakeholder: str,
+) -> None:
+    """A feasible action whose objective is undefined makes every readout NaN.
+
+    `+inf` for one member and `-inf` for the other, both weighted, has no
+    household value; reading off the members' values at some other action would
+    hide that from the solve's NaN check.
+    """
+    values, _ = collective_readout(
+        stakeholder_Q={
+            "f": jnp.array([1.0, jnp.inf]),
+            "m": jnp.array([1.0, -jnp.inf]),
+        },
+        feasibility=jnp.array([True, True]),
+        weights={"f": 0.5, "m": 0.5},
+        action_axes=(0,),
+    )
+    assert jnp.isnan(values[stakeholder])
+
+
+def test_nan_household_objective_at_an_infeasible_action_is_not_read() -> None:
+    """An undefined objective outside the feasible set leaves the readout alone."""
+    values, _ = collective_readout(
+        stakeholder_Q={
+            "f": jnp.array([1.0, jnp.inf]),
+            "m": jnp.array([2.0, -jnp.inf]),
+        },
+        feasibility=jnp.array([True, False]),
+        weights={"f": 0.5, "m": 0.5},
+        action_axes=(0,),
+    )
+    assert values["m"] == pytest.approx(2.0)
