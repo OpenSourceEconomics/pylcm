@@ -11,6 +11,12 @@
       "qualification_receipt_sha256": "47efdce4c38fbeeacdeb5b9cd534b1453ea18c4fd44198b7e5c134e7bf3cebd6",
       "qualification_status": "QUALIFIED",
       "semantic_descriptor_sha256": "b8eaa436123a9d8d70fde3f67559df2155c228014f83b41ba47e81e6a299a7e0"
+    },
+    {
+      "algorithm_map_sha256": "104c1ad9d188532b65fbfd345aac5be88625a58cab637e6a6e95c258e61b9d61",
+      "qualification_receipt_sha256": "d1395ba95c45ac094b9b414ac8818955201c7a19bec62973f3cf161ccdc7bc6a",
+      "qualification_status": "QUALIFIED",
+      "semantic_descriptor_sha256": "bbff24d2fcdf1aedb4244334790f45a0c1cc8cd05964e8e1fd89d2310507d14b"
     }
   ],
   "schema": "implicit-source-admissions/v1"

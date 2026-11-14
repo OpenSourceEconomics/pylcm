@@ -16,13 +16,15 @@ agreement with that evaluator's pointwise program, not equivalence between diffe
 evaluator versions. This contract differs from the public `source-facts` path; their
 read inventories must not be interchanged.
 
-`source587` identifies the evaluator at `587478274ff55f1d873ae9d056bb9bf3e222b873`.
-`source645` identifies the evaluator at `65d5b40a5898090c0eb8fbd1ce9bba006e95b5fe`,
-including its native declaration spellings. The selector does not swap imported modules.
-The installed evaluator must match the selected source inventory and module origins
-exactly. Only a bundled version with a separately reviewed qualification receipt for the
-installed algorithm bytes can run an ordinary producer or verifier. Candidates and
-unknown IDs fail before loading the model capture.
+`source639-builtin-int-v1` identifies the evaluator with bounded builtin-int predicate
+reads and early-return continuation analysis. Its descriptor binds the complete source
+at `596ceb54b347b918b60cd3dcc284f1f975ee011b`. The historical `source587` and
+`source645` descriptors retain their original programs and native declaration dialects;
+they do not acquire the new evaluator semantics. The selector does not swap imported
+modules. The installed evaluator must match the selected source inventory and module
+origins exactly. Only a bundled version with a separately reviewed qualification receipt
+for the installed algorithm bytes can run an ordinary producer or verifier. Candidates
+and unknown IDs fail before loading the model capture.
 
 ## Produce and independently check facts
 
@@ -37,8 +39,8 @@ certificate selection, even if the names in this file use a different order.
 From a public checkout with its Pixi environment:
 
 ```console
-pixi run -e tests-cpu python -m _lcm_regime_finder.implicit.implicit_native model.json axes.json facts.json --source-version source587
-pixi run -e tests-cpu python -m _lcm_regime_finder.implicit.verify_native model.json axes.json facts.json fact-receipt.json --source-version source587
+pixi run -e tests-cpu python -m _lcm_regime_finder.implicit.implicit_native model.json axes.json facts.json --source-version source639-builtin-int-v1
+pixi run -e tests-cpu python -m _lcm_regime_finder.implicit.verify_native model.json axes.json facts.json fact-receipt.json --source-version source639-builtin-int-v1
 ```
 
 On local Linux development hosts, apply the documented `cap` launcher around each
@@ -66,7 +68,7 @@ variable an ordinary coordinate; it does not delete it from the Model.
 ```
 
 ```console
-pixi run -e tests-cpu python -m _lcm_regime_finder.implicit.check_projection model.json axes.json facts.json removed.json projection-receipt.json --source-version source587 --expand-boxes
+pixi run -e tests-cpu python -m _lcm_regime_finder.implicit.check_projection model.json axes.json facts.json removed.json projection-receipt.json --source-version source639-builtin-int-v1 --expand-boxes
 ```
 
 This command repeats independent full-domain fact verification, reconstructs original
@@ -99,7 +101,7 @@ descriptor, admission table and receipt bytes.
 The metadata-only qualification tool belongs to the checkout's test suite:
 
 ```console
-pixi run -e tests-cpu python -m tests.regime_finder.implicit_version_qualification --source-version source645 --cases cases.json --evidence qualification
+pixi run -e tests-cpu python -m tests.regime_finder.implicit_version_qualification --source-version source639-builtin-int-v1 --cases cases.json --evidence qualification
 ```
 
 Run it in a fresh process of the actual merged checkout. The new evidence directory must
