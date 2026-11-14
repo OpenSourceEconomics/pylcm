@@ -17,7 +17,7 @@ import pytest
 from _lcm.regime_building import Q_and_F
 from _lcm.regime_building.collective import NO_ROLE
 from _lcm.solution import backward_induction
-from lcm.exits import RuleResult
+from lcm.exits import Unilateral
 from lcm.solver_api import KernelOutput, ResultRetention
 from lcm_examples import collective_household as household
 from tests.solution.test_solution_result import _KernelKwargs
@@ -196,30 +196,11 @@ def test_participation_checks_replay_from_values_without_dissolution_artifacts()
     assert terminal["regime_name"].str.endswith("terminal").all()
 
 
-def test_participation_rule_keeps_one_common_action_with_threshold_only_slack():
-    """A zero Pareto weight keeps its veto; exact ties keep the first action."""
+def test_couple_dissolves_under_the_eckstein_keane_lifshitz_rule():
+    """Either partner can leave, and a partner exactly indifferent leaves."""
     model = household.get_model(n_periods=2, wealth_n_points=2, consumption_n_points=2)
     rule = model.user_regimes["couple"].exits["dissolve"].rule
-    assert callable(rule)
-    cases = [
-        ([2.0, 2.0], [1.0, 1.0], {"f": 0.5, "m": 0.5}, 0),
-        ([0.5, 2.0], [100.0, 1.0], {"f": 0.0, "m": 1.0}, 1),
-        ([-np.inf, 2.0], [-np.inf, 1.0], {"f": 0.0, "m": 1.0}, 1),
-        ([0.0, 0.0], [1.0, 1.0], {"f": 0.5, "m": 0.5}, 2),
-    ]
-    for q_f, q_m, weights, expected in cases:
-        selected = rule(
-            Q_f=jnp.asarray(q_f),
-            Q_m=jnp.asarray(q_m),
-            exit_payoffs={"dissolve": {"f": jnp.asarray(1.5), "m": jnp.asarray(1.0)}},
-            alternative_ids=jnp.arange(3, dtype=jnp.int32),
-            pareto_weights={
-                name: jnp.asarray(value) for name, value in weights.items()
-            },
-            slack=jnp.asarray(0.5),
-        )
-        assert isinstance(selected, RuleResult)
-        assert int(selected.action) == expected
+    assert rule == Unilateral(tie="leave")
 
 
 def test_a_missing_declared_participation_payload_fails_before_the_period_roll(

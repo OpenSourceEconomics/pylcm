@@ -4,7 +4,7 @@ import jax.numpy as jnp
 import numpy as np
 from numpy.testing import assert_array_almost_equal as aaae
 
-from lcm.exits import RuleResult
+from lcm.exits import Unilateral
 from lcm.solver_api import ResultRetention
 from lcm_examples.collective_regimes import (
     get_dissolution_model,
@@ -115,26 +115,8 @@ def test_participation_support_routes_without_retained_dissolution_artifacts():
     )
 
 
-def test_participation_rule_preserves_a_zero_weight_members_veto():
-    """An infeasible or unwilling partner cannot be ignored in a shared choice."""
+def test_dissolution_follows_the_eckstein_keane_lifshitz_rule():
+    """Either partner can leave, and a partner exactly indifferent leaves."""
     model = get_dissolution_model()
     rule = model.user_regimes["married_with_participation"].exits["dissolve"].rule
-    assert callable(rule)
-    cases = [
-        ([2.0, 2.0], [1.0, 1.0], {"f": 0.5, "m": 0.5}, 0),
-        ([0.5, 2.0], [100.0, 1.0], {"f": 0.0, "m": 1.0}, 1),
-        ([-np.inf, 2.0], [-np.inf, 1.0], {"f": 0.0, "m": 1.0}, 1),
-        ([0.0, 0.0], [1.0, 1.0], {"f": 0.5, "m": 0.5}, 2),
-    ]
-    for q_f, q_m, weights, expected in cases:
-        selected = rule(
-            Q_f=jnp.asarray(q_f),
-            Q_m=jnp.asarray(q_m),
-            exit_payoffs={"dissolve": {"f": jnp.asarray(1.5), "m": jnp.asarray(1.0)}},
-            alternative_ids=jnp.arange(3, dtype=jnp.int32),
-            pareto_weights={
-                name: jnp.asarray(value) for name, value in weights.items()
-            },
-        )
-        assert isinstance(selected, RuleResult)
-        assert int(selected.action) == expected
+    assert rule == Unilateral(tie="leave")

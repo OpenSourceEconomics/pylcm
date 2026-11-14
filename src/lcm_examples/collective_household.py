@@ -5,8 +5,8 @@ declaration:
 
 - a household of two takes ONE consumption decision, and each partner's own
   value at that common choice is published — `CollectiveUtility`;
-- the household stays only where each partner meets their same-period outside
-  option, with the declared participation slack — a current `Exit` rule;
+- the household stays only where each partner strictly prefers it to their
+  same-period outside option net of a divorce cost — a current `Exit` rule;
 - a single marries only under mutual consent, and a couple whose feasible set
   is empty dissolves back to two singles — a `ParticipationCheck` after the
   scheduled landing and before its action.
@@ -14,9 +14,10 @@ declaration:
 Dissolution reads the continuing couple's actual participating-policy support;
 each partner's fallback is her or his own single regime. Formation compares
 the target's common participating policy with each single's Raw policy at the
-landing. The participation slack changes willingness to stay, while a partner
-who leaves receives the full single payoff. Initial households obey the same
-current dissolution rule as later participation checks.
+landing. The rule follows the Eckstein-Keane-Lifshitz model: either partner can
+leave, a partner exactly indifferent leaves, and a partner who leaves pays the
+divorce cost. Initial households obey the same current dissolution rule as later
+participation checks.
 
 The partners differ only in income. Alone, each keeps their own; married, the
 household pools both and splits consumption evenly. Her income is the higher
@@ -35,7 +36,7 @@ it usable as a benchmark workload as well as a worked example.
 """
 
 from collections.abc import Callable, Mapping
-from typing import ClassVar, Literal
+from typing import Literal
 
 import jax.numpy as jnp
 
@@ -53,7 +54,7 @@ from lcm import (
     StakeholderRoute,
     categorical,
 )
-from lcm.exits import Exit, ExitTarget, RuleResult
+from lcm.exits import Exit, ExitTarget, Unilateral
 from lcm.transition import StochasticTransition, Transition
 from lcm.typing import (
     BoolND,
@@ -188,13 +189,15 @@ def get_model(
                     "f": ExitTarget(
                         regime="single_f",
                         projection={"wealth": _half_of_couple_wealth},
+                        utility_adjustment=_divorce_cost,
                     ),
                     "m": ExitTarget(
                         regime="single_m",
                         projection={"wealth": _half_of_couple_wealth},
+                        utility_adjustment=_divorce_cost,
                     ),
                 },
-                rule=_ParticipationRule(),
+                rule=Unilateral(tie="leave"),
             )
         },
     )
@@ -382,7 +385,7 @@ def get_params(
     discount_factor: float = 0.95,
     marriage_premium: float = 0.3,
     interest_rate: float = 0.03,
-    participation_slack: float = 0.0,
+    divorce_cost: float = 0.0,
 ) -> dict[str, UserParamsNode]:
     """Return the params dict `get_model()`'s model takes.
 
@@ -391,8 +394,8 @@ def get_params(
         marriage_premium: Additive flow gain from being in the household, in
             utils, identical for both partners.
         interest_rate: Return on wealth carried forward.
-        participation_slack: How far below the outside option a partner will
-            still stay. Zero is the strict participation constraint.
+        divorce_cost: Utils a partner gives up on leaving the household, which
+            also lowers the outside option the partner compares with staying.
 
     Returns:
         Dict of per-regime parameter mappings.
@@ -404,7 +407,14 @@ def get_params(
             "utility_f": {"marriage_premium": marriage_premium},
             "utility_m": {"marriage_premium": marriage_premium},
             "next_wealth": {"interest_rate": interest_rate},
-            "exits": {"dissolve": {"rule": {"slack": participation_slack}}},
+            "exits": {
+                "dissolve": {
+                    "targets": {
+                        member: {"utility_adjustment": {"divorce_cost": divorce_cost}}
+                        for member in ("f", "m")
+                    }
+                }
+            },
         },
         "couple_terminal": {},
         "single_f": {
@@ -521,16 +531,6 @@ def _half_of_couple_wealth(wealth: ContinuousState) -> ContinuousState:
     return 0.5 * wealth
 
 
-def _participation_f(*, Q_f: FloatND, V_alone_f: FloatND, slack: float) -> BoolND:
-    """She stays where the household is worth at least her outside option."""
-    return Q_f >= V_alone_f - slack
-
-
-def _participation_m(*, Q_m: FloatND, V_alone_m: FloatND, slack: float) -> BoolND:
-    """He stays on the same terms."""
-    return Q_m >= V_alone_m - slack
-
-
 def _mutual_consent(
     *,
     V_target_f: FloatND,
@@ -542,37 +542,9 @@ def _mutual_consent(
     return (V_target_f > V_alone_f) & (V_target_m > V_alone_m)
 
 
-class _ParticipationRule:
-    """Choose one common action satisfying both participation thresholds."""
-
-    reads_outside_values: ClassVar[bool] = True
-
-    def __call__(
-        self,
-        *,
-        Q_f: FloatND,
-        Q_m: FloatND,
-        exit_payoffs: Mapping[str, Mapping[str, FloatND]],
-        alternative_ids: IntND,
-        pareto_weights: Mapping[str, FloatND],
-        slack: float,
-    ) -> RuleResult:
-        q_f, q_m = Q_f.reshape(-1), Q_m.reshape(-1)
-        outside = exit_payoffs["dissolve"]
-        kept = (
-            jnp.isfinite(q_f)
-            & jnp.isfinite(q_m)
-            & _participation_f(Q_f=q_f, V_alone_f=outside["f"], slack=slack)
-            & _participation_m(Q_m=q_m, V_alone_m=outside["m"], slack=slack)
-        )
-        # Mask zero-weight members before multiplying ordinary-infeasible -inf.
-        objective = pareto_weights["f"] * jnp.where(
-            pareto_weights["f"] == 0, 0.0, q_f
-        ) + pareto_weights["m"] * jnp.where(pareto_weights["m"] == 0, 0.0, q_m)
-        stay = jnp.argmax(jnp.where(kept, objective, -jnp.inf))
-        return RuleResult(
-            action=alternative_ids[jnp.where(jnp.any(kept), stay, q_f.size)]
-        )
+def _divorce_cost(divorce_cost: float) -> FloatND:
+    """A partner who leaves gives up `divorce_cost` utils of the single payoff."""
+    return jnp.asarray(-divorce_cost)
 
 
 def _has_policy_support(target_support: BoolND) -> BoolND:

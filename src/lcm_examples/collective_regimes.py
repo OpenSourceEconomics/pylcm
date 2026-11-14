@@ -3,17 +3,15 @@
 The first model isolates the household's shared argmax with stakeholder-specific
 values, declared as a single `CollectiveUtility`. The second adds same-period outside
 options through a current `Exit` participation rule, and a `ParticipationCheck`
-that reads actual participating-policy support. The participation thresholds
-allow slack without deducting it from the single payoff on dissolution. The
-state and action spaces remain hand-checkable.
+that reads actual participating-policy support. Either partner can leave, a
+partner exactly indifferent leaves, and a partner who leaves pays a divorce cost,
+as in the Eckstein-Keane-Lifshitz model. The state and action spaces remain
+hand-checkable.
 
 The participation check belongs to the incoming married edge. Its admitted branch
 is the continuing collective regime; each stakeholder's fallback is that
 stakeholder's own singleton regime.
 """
-
-from collections.abc import Mapping
-from typing import ClassVar
 
 import jax.numpy as jnp
 
@@ -36,13 +34,12 @@ from lcm import (
     fixed_transition,
 )
 from lcm.execution import ExecutionConfig
-from lcm.exits import Exit, ExitTarget, RuleResult
+from lcm.exits import Exit, ExitTarget, Unilateral
 from lcm.typing import (
     BoolND,
     ContinuousState,
     DiscreteAction,
     FloatND,
-    IntND,
     ScalarInt,
 )
 
@@ -185,52 +182,12 @@ def _single_m_value(wage: ContinuousState) -> FloatND:
     return 1.0 + 0.0 * wage
 
 
-def _participation_f(
-    *,
-    Q_f: FloatND,
-    V_single_f_ref: FloatND,
-) -> BoolND:
-    return Q_f >= V_single_f_ref - 0.5
+def _divorce_cost_f(wage: ContinuousState) -> FloatND:
+    return -0.5 + 0.0 * wage
 
 
-def _participation_m(
-    *,
-    Q_m: FloatND,
-    V_single_m_ref: FloatND,
-) -> BoolND:
-    return Q_m >= V_single_m_ref - 0.2
-
-
-class _ParticipationRule:
-    """Choose one common action satisfying both participation thresholds."""
-
-    reads_outside_values: ClassVar[bool] = True
-
-    def __call__(
-        self,
-        *,
-        Q_f: FloatND,
-        Q_m: FloatND,
-        exit_payoffs: Mapping[str, Mapping[str, FloatND]],
-        alternative_ids: IntND,
-        pareto_weights: Mapping[str, FloatND],
-    ) -> RuleResult:
-        q_f, q_m = Q_f.reshape(-1), Q_m.reshape(-1)
-        outside = exit_payoffs["dissolve"]
-        kept = (
-            jnp.isfinite(q_f)
-            & jnp.isfinite(q_m)
-            & _participation_f(Q_f=q_f, V_single_f_ref=outside["f"])
-            & _participation_m(Q_m=q_m, V_single_m_ref=outside["m"])
-        )
-        # Mask zero-weight members before multiplying ordinary-infeasible -inf.
-        objective = pareto_weights["f"] * jnp.where(
-            pareto_weights["f"] == 0, 0.0, q_f
-        ) + pareto_weights["m"] * jnp.where(pareto_weights["m"] == 0, 0.0, q_m)
-        stay = jnp.argmax(jnp.where(kept, objective, -jnp.inf))
-        return RuleResult(
-            action=alternative_ids[jnp.where(jnp.any(kept), stay, q_f.size)]
-        )
+def _divorce_cost_m(wage: ContinuousState) -> FloatND:
+    return -0.2 + 0.0 * wage
 
 
 def _has_policy_support(target_support: BoolND) -> BoolND:
@@ -269,13 +226,17 @@ def get_dissolution_model(
             "dissolve": Exit(
                 targets={
                     "f": ExitTarget(
-                        regime="single_f", projection={"wage": _identity_wage}
+                        regime="single_f",
+                        projection={"wage": _identity_wage},
+                        utility_adjustment=_divorce_cost_f,
                     ),
                     "m": ExitTarget(
-                        regime="single_m", projection={"wage": _identity_wage}
+                        regime="single_m",
+                        projection={"wage": _identity_wage},
+                        utility_adjustment=_divorce_cost_m,
                     ),
                 },
-                rule=_ParticipationRule(),
+                rule=Unilateral(tie="leave"),
             )
         },
     )
