@@ -44,7 +44,7 @@ from _lcm.utils.functools import is_user_function
 from lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
 from lcm.decoupled import Decoupled
 from lcm.exceptions import RegimeInitializationError
-from lcm.exits import Consent, Exit
+from lcm.exits import Consent, Exit, MutualConsent, Unilateral
 from lcm.grids import DiscreteGrid
 from lcm.koopmans_aggregation import CESAggregator, LinearAggregator
 from lcm.phased import Phased
@@ -308,7 +308,7 @@ def _validate_exits(regime: Regime) -> None:
         )
     if (
         sum(
-            isinstance(declaration.rule, str | Consent)
+            isinstance(declaration.rule, Unilateral | MutualConsent | Consent)
             for declaration in regime.exits.values()
         )
         > 1

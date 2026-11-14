@@ -30,6 +30,7 @@ from lcm.exceptions import (
     ShockDeclarationError,
     UnsupportedOperationError,
 )
+from lcm.exits import Unilateral
 from lcm.shocks import PhysicalValues, ShockGroup, Uniform, UserNodes
 from lcm.typing import BoolND, FloatND, IntND, ScalarInt
 from tests.simulation.test_current_exits import _hidden_offer_model
@@ -83,7 +84,7 @@ def _model(
                                 regime="target", projection={"y": _mapped_y}
                             )
                         },
-                        rule="unilateral",
+                        rule=Unilateral(),
                         observes=("signal",),
                         available=_available,
                     )

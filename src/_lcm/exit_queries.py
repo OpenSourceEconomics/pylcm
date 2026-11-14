@@ -43,7 +43,7 @@ from _lcm.utils.functools import (
     call_with_declared_arguments as _call,
 )
 from lcm.exceptions import RegimeInitializationError, UnsupportedOperationError
-from lcm.exits import Consent, Exit, ExitRole, RuleResult
+from lcm.exits import Consent, Exit, ExitRole, MutualConsent, RuleResult, Unilateral
 from lcm.grids import DiscreteGrid
 from lcm.shocks import Discrete, ShockGroupName, ShockName, _fingerprint
 from lcm.typing import (
@@ -158,21 +158,28 @@ class _ExitReducer:
         return payoffs, availability, valid
 
     def keep(self, **operands: PytreeValue) -> BoolND:
-        """Apply weak dissolution thresholds before the common stay argmax."""
+        """Apply built-in dissolution thresholds before the common stay argmax.
+
+        A member is willing to stay when its stay value is above its exit payoff,
+        or equal to it when the rule's `tie` is `"stay"`.
+        """
         q = cast("FloatND", operands["q"])
         payoffs, availability, _ = self._payoffs(operands=operands)
         keep = jnp.asarray(a=True)
         for name, declaration in self.exits.items():
-            if declaration.rule not in ("unilateral", "mutual"):
+            rule = declaration.rule
+            if not isinstance(rule, Unilateral | MutualConsent):
                 continue
             threshold = jnp.stack(
                 tuple(payoffs[name][member] for member in self.members)
             )
             member_q = q[None] if self.members == ("self",) else q
-            comparisons = member_q >= threshold
+            comparisons = (
+                member_q >= threshold if rule.tie == "stay" else member_q > threshold
+            )
             willing = (
                 jnp.all(comparisons)
-                if declaration.rule == "unilateral"
+                if isinstance(rule, Unilateral)
                 else jnp.any(comparisons)
             )
             keep &= ~availability[name] | willing

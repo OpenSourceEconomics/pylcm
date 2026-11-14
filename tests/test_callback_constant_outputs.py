@@ -10,7 +10,7 @@ twin, at the active precision.
 """
 
 from collections.abc import Callable, Mapping
-from typing import cast
+from typing import Protocol, cast
 
 import jax.numpy as jnp
 import numpy as np
@@ -42,6 +42,7 @@ from lcm import (
 )
 from lcm.collective import CollectiveUtility, ValueDependentConstraint
 from lcm.exceptions import InvalidFunctionOutputError, InvalidValueFunctionError
+from lcm.exits import Unilateral
 from lcm.regime import StateTransitionEntry
 from lcm.shocks import Discrete, GaussHermite, Normal, Product, ShockGroup
 from lcm.transition import TransitionLaw
@@ -522,7 +523,7 @@ def _exit_model(
                                 utility_adjustment=adjustment,
                             )
                         },
-                        rule="unilateral",
+                        rule=Unilateral(),
                         available=available,
                     )
                 },
@@ -639,6 +640,14 @@ def test_boolean_exit_projection_is_refused() -> None:
         model.solve(params={}, log_level="off")
 
 
+class _Solved(Protocol):
+    """Solve one endogenous-grid twin at a terminal utility returning `raw`."""
+
+    def __call__(
+        self, *, raw: UserFunctionResult, monkeypatch: pytest.MonkeyPatch
+    ) -> FloatND: ...
+
+
 def _egm_solved(*, raw: UserFunctionResult, monkeypatch: pytest.MonkeyPatch) -> FloatND:
     def terminal(*, wealth: ContinuousState) -> FloatND:  # noqa: ARG001
         return raw  # ty: ignore[invalid-return-type]
@@ -683,7 +692,7 @@ def _dcegm_solved(
     "solved", [_egm_solved, _nbegm_solved, _dcegm_solved], ids=["egm", "nbegm", "dcegm"]
 )
 def test_constant_terminal_utility_under_endogenous_grids(
-    *, form: str, solved, monkeypatch: pytest.MonkeyPatch
+    *, form: str, solved: _Solved, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A terminal felicity `0` solves like the floating `0.0` in every EGM family."""
     got = solved(raw=_constant(form=form, value=0), monkeypatch=monkeypatch)
@@ -1310,7 +1319,7 @@ def test_numeric_value_dependent_constraint_is_refused() -> None:
     "solved", [_egm_solved, _nbegm_solved, _dcegm_solved], ids=["egm", "nbegm", "dcegm"]
 )
 def test_boolean_terminal_utility_under_endogenous_grids_is_refused(
-    *, solved, monkeypatch: pytest.MonkeyPatch
+    *, solved: _Solved, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A Boolean felicity is refused in every EGM family."""
     with pytest.raises(

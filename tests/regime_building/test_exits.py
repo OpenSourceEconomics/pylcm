@@ -11,8 +11,10 @@ import lcm
 from _lcm.grids import Grid
 from lcm import Consent, Counterparty, Exit, ExitTarget, Model, RuleResult
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
-from lcm.exits import ExitRule
+from lcm.exits import ExitRule, MutualConsent, Unilateral
 from lcm.typing import BoolND, FloatND, IntND, UserParams
+
+_UNILATERAL = Unilateral()
 
 
 def _half(wealth: FloatND) -> FloatND:
@@ -24,7 +26,7 @@ def test_exit_targets_snapshot_the_authored_projection() -> None:
     projection = {"wealth": _half}
     target = ExitTarget(regime="single", projection=projection)
     targets = {"self": target}
-    declaration = Exit(targets=targets, rule="unilateral")
+    declaration = Exit(targets=targets, rule=Unilateral())
     projection.clear()
     targets.clear()
     actual_projection = declaration.targets["self"].projection
@@ -42,7 +44,7 @@ def test_regime_replacement_preserves_its_named_exits() -> None:
     """Replacing an economic helper retains its authored exit declaration."""
     declaration = Exit(
         targets={"self": ExitTarget(regime="single", projection={})},
-        rule="unilateral",
+        rule=Unilateral(),
     )
     regime = lcm.Regime(functions={"utility": _utility}, exits={"leave": declaration})
     assert regime.replace(description="another label").exits["leave"] is declaration
@@ -78,11 +80,11 @@ def test_malformed_exit_declarations_fail_at_construction(kind: str) -> None:
     declaration = Exit
     with pytest.raises(RegimeInitializationError):  # noqa: PT012 - malformed constructor variants
         if kind == "empty":
-            declaration(targets={}, rule="unilateral")
+            declaration(targets={}, rule=Unilateral())
         elif kind == "observes":
             declaration(
                 targets={"self": target(regime="single", projection={})},
-                rule="unilateral",
+                rule=Unilateral(),
                 observes=("offer", "offer"),
             )
         else:
@@ -101,7 +103,7 @@ def test_collective_exit_names_every_source_member() -> None:
             exits={
                 "divorce": Exit(
                     targets={"f": ExitTarget(regime="single", projection={})},
-                    rule="unilateral",
+                    rule=Unilateral(),
                 )
             },
         )
@@ -111,7 +113,7 @@ def test_multiple_builtin_exits_need_an_explicit_custom_rule() -> None:
     """An implicit built-in rule cannot choose which outside benchmark to apply."""
     declaration = Exit(
         targets={"self": ExitTarget(regime="single", projection={})},
-        rule="unilateral",
+        rule=Unilateral(),
     )
     with pytest.raises(RegimeInitializationError, match="built-in"):
         lcm.Regime(
@@ -143,7 +145,7 @@ def _wealth_utility(wealth: FloatND) -> FloatND:
 def _declared_model(
     *,
     fixed_params: UserParams | None = None,
-    rule: ExitRule = "unilateral",
+    rule: ExitRule = _UNILATERAL,
     grid: Grid | None = None,
 ) -> Model:
     from lcm import InitialNodes, LinSpacedGrid, Model, Phased, Regime  # noqa: PLC0415
@@ -247,7 +249,7 @@ def test_exit_settlement_reads_physical_grid_values_and_returns_target_codes() -
                                 regime="target", projection={"wealth": _switch_wealth}
                             )
                         },
-                        rule="unilateral",
+                        rule=Unilateral(),
                     )
                 },
             ),
@@ -285,7 +287,7 @@ def test_exit_destination_must_be_a_complete_declared_policy_context(kind: str) 
             regimes={
                 "source": Regime(
                     functions={"utility": _wealth_utility},
-                    exits={"leave": Exit(targets={"self": target}, rule="unilateral")},
+                    exits={"leave": Exit(targets={"self": target}, rule=Unilateral())},
                 ),
                 "target": Regime(
                     functions={
@@ -372,7 +374,7 @@ def test_consent_snapshots_its_counterparty_projection() -> None:
 def test_exit_name_is_a_single_parameter_path_segment() -> None:
     """Exit keys cannot be confused with nested parameter namespaces."""
     declaration = Exit(
-        targets={"self": ExitTarget(regime="single", projection={})}, rule="unilateral"
+        targets={"self": ExitTarget(regime="single", projection={})}, rule=Unilateral()
     )
     with pytest.raises(RegimeInitializationError, match=r"[Ee]xit"):
         lcm.Regime(functions={"utility": _utility}, exits={"bad__name": declaration})
@@ -568,7 +570,7 @@ def test_exit_observed_shock_and_helper_reads_are_not_parameters() -> None:
                                 utility_adjustment=_signal_adjustment,
                             )
                         },
-                        rule="unilateral",
+                        rule=Unilateral(),
                         available=_signal_available,
                     )
                 },
@@ -619,7 +621,7 @@ def test_exit_declarations_enter_durable_model_identity(change: str) -> None:
 
     base = Exit(
         targets={"self": ExitTarget(regime="single", projection={"wealth": _half})},
-        rule="unilateral",
+        rule=Unilateral(),
     )
     if change == "settlement":
         changed = replace(
@@ -631,7 +633,7 @@ def test_exit_declarations_enter_durable_model_identity(change: str) -> None:
     elif change == "information":
         changed = replace(base, observes=("offer",))
     else:
-        changed = replace(base, rule="mutual")
+        changed = replace(base, rule=MutualConsent())
     regime = lcm.Regime(functions={"utility": _utility}, exits={"leave": base})
     law = bind_regime_law(None)
     assert _semantic_fingerprint(
@@ -670,7 +672,7 @@ def test_exit_time_only_availability_can_exclude_inactive_contexts(
                 exits={
                     "leave": Exit(
                         targets={"self": ExitTarget(regime="later", projection={})},
-                        rule="unilateral",
+                        rule=Unilateral(),
                         available=available,
                     )
                 },

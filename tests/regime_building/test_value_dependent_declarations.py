@@ -39,7 +39,7 @@ from lcm import (
     fixed_transition,
 )
 from lcm.exceptions import RegimeInitializationError
-from lcm.exits import Exit, ExitRule, ExitTarget
+from lcm.exits import Exit, ExitTarget
 from lcm.regime import RegimeReplacement
 from lcm.transition import PhaseTransitionLaw, StochasticTransition
 from lcm.typing import (
@@ -82,7 +82,7 @@ class _Snapshot(TypedDict):
             dict[str, ParticipationRead],
         ],
     ]
-    exits: dict[str, tuple[type[ExitRule], dict[str, ExitTarget]]]
+    exits: dict[str, tuple[str, dict[str, ExitTarget]]]
 
 
 _AGES = AgeGrid(start=0, inclusive_stop=3, step="Y")
@@ -122,14 +122,14 @@ class RegimeId:
     single_m_terminal: ScalarInt
 
 
-def test_collective_utility_declares_the_regimes_stakeholders():
+def test_collective_utility_declares_the_regimes_stakeholders() -> None:
     """The `utilities` keys are the stakeholders, in the order they are written."""
     regime = _new_vocabulary_regimes()["married_ir"]
 
     assert regime.stakeholders == ("f", "m")
 
 
-def test_collective_utility_becomes_one_utility_function_per_stakeholder():
+def test_collective_utility_becomes_one_utility_function_per_stakeholder() -> None:
     """Each stakeholder's flow utility lands under the name the engine reads."""
     regime = _new_vocabulary_regimes()["married_ir"]
 
@@ -161,7 +161,7 @@ def test_value_dependent_constraint_keeps_its_references_local() -> None:
     assert regime.same_period_refs["V_single_f_ref"].regime == "single_f"
 
 
-def test_value_dependent_transition_keeps_the_ordinary_transition_entry():
+def test_value_dependent_transition_keeps_the_ordinary_transition_entry() -> None:
     """The target still carries its selection probability, gate or no gate."""
     transition = _bound_laws()["married"].decomposed_transition
     assert isinstance(transition, Mapping)
@@ -169,7 +169,9 @@ def test_value_dependent_transition_keeps_the_ordinary_transition_entry():
     assert isinstance(transition["married_ir"], StochasticTransition)
 
 
-def test_value_dependent_transition_routes_each_stakeholder_to_her_own_fallback():
+def test_value_dependent_transition_routes_each_stakeholder_to_her_own_fallback() -> (
+    None
+):
     """Each source stakeholder's route keeps all four of its destinations."""
     edge = _bound_laws()["married"].participation["married_ir"]
 
@@ -179,7 +181,7 @@ def test_value_dependent_transition_routes_each_stakeholder_to_her_own_fallback(
     assert edge.routes["m"].solve_fallback.regime == "single_m"
 
 
-def test_the_two_vocabularies_solve_to_the_same_values():
+def test_the_two_vocabularies_solve_to_the_same_values() -> None:
     """The same dissolution model, written both ways, has one solution.
 
     The new declarations are a consolidation of the old ones, so every regime's
@@ -203,7 +205,7 @@ def test_the_two_vocabularies_solve_to_the_same_values():
             )
 
 
-def test_an_edge_inside_a_phased_transition_solves_to_the_unphased_values():
+def test_an_edge_inside_a_phased_transition_solves_to_the_unphased_values() -> None:
     """Declaring one edge per phase, identically, changes no number.
 
     `Phased` is a wedge between what a household is solved against and what
@@ -234,7 +236,9 @@ def test_an_edge_inside_a_phased_transition_solves_to_the_unphased_values():
             )
 
 
-def _solve(*, regimes, married: Transition):
+def _solve(
+    *, regimes: Mapping[RegimeName, Regime], married: Transition
+) -> Mapping[int, Mapping[RegimeName, FloatND]]:
     """Solve the dissolution miniature built from `regimes` and `married`'s law."""
     model = Model(
         regimes=regimes,
@@ -425,7 +429,7 @@ def _phased_edge_law() -> RegimeLaw:
     )["married"]
 
 
-def test_a_gate_beside_a_phased_law_is_one_edge():
+def test_a_gate_beside_a_phased_law_is_one_edge() -> None:
     """A law may differ by phase, and the gate beside it is one edge.
 
     The perceived meeting probability and the realized one are a legitimate
@@ -470,7 +474,7 @@ def _derived_snapshot(*, regime: Regime, law: RegimeLaw) -> _Snapshot:
             for target, decision in law.participation.items()
         },
         "exits": {
-            name: (type(declaration.rule), dict(declaration.targets))
+            name: (type(declaration.rule).__name__, dict(declaration.targets))
             for name, declaration in regime.exits.items()
         },
     }
@@ -517,7 +521,7 @@ def _expected_snapshots() -> dict[RegimeName, _Snapshot]:
             "stakeholders": ("f", "m"),
             "exits": {
                 "dissolve": (
-                    _ParticipationRule,
+                    "_ParticipationRule",
                     {
                         "f": ExitTarget(
                             regime="single_f", projection={"wage": _identity_wage}
@@ -537,7 +541,9 @@ def _expected_snapshots() -> dict[RegimeName, _Snapshot]:
 @pytest.mark.parametrize(
     "regime_name", ["married", "married_ir", "married_terminal", "single_f"]
 )
-def test_the_declarations_determine_every_engine_facing_fact(regime_name):
+def test_the_declarations_determine_every_engine_facing_fact(
+    regime_name: RegimeName,
+) -> None:
     """One regime's declarations fix the canonical facts the engine reads off it.
 
     A gated regime, a value-constrained one, a plain collective one and a
@@ -564,7 +570,7 @@ def test_the_declarations_determine_every_engine_facing_fact(regime_name):
         "gated_edges",
     ],
 )
-def test_a_derived_slot_cannot_be_declared(slot):
+def test_a_derived_slot_cannot_be_declared(slot: str) -> None:
     """The five engine-facing slots are read off a regime, never written to it.
 
     Each is what one of the three declarations decomposes into, so naming one
@@ -591,7 +597,7 @@ def test_a_derived_slot_cannot_be_declared(slot):
         "gated_edges",
     ],
 )
-def test_a_derived_slot_cannot_be_replaced(slot):
+def test_a_derived_slot_cannot_be_replaced(slot: str) -> None:
     """`replace` reaches the declarations, not what they decompose to."""
     regime = Regime(
         states={"wage": _WAGE_3},
@@ -602,7 +608,7 @@ def test_a_derived_slot_cannot_be_replaced(slot):
         regime.replace(**{slot: None})  # ty: ignore[invalid-argument-type]
 
 
-def test_replace_refuses_an_unknown_slot():
+def test_replace_refuses_an_unknown_slot() -> None:
     """A keyword that names no declared slot is refused, naming it."""
     regime = Regime(
         states={"wage": _WAGE_3},
@@ -613,14 +619,14 @@ def test_replace_refuses_an_unknown_slot():
         regime.replace(no_such_slot=None)
 
 
-def test_regime_replacement_names_exactly_the_declared_slots():
+def test_regime_replacement_names_exactly_the_declared_slots() -> None:
     """`replace` takes every slot a regime is constructed from, and no other."""
     declared = {field.name for field in dataclasses.fields(Regime) if field.init}
 
     assert RegimeReplacement.__optional_keys__ == declared
 
 
-def test_decomposed_transition_of_an_age_schedule_is_its_engine_view():
+def test_decomposed_transition_of_an_age_schedule_is_its_engine_view() -> None:
     """A deterministic dated regime decomposes to one engine routing function."""
     law = bind_regime_law(
         ByAge.until(

@@ -47,7 +47,7 @@ from lcm.exceptions import (
     InvalidSimulationInputError,
     ShockDeclarationError,
 )
-from lcm.exits import ExitRule
+from lcm.exits import ExitRule, Unilateral
 from lcm.shocks import (
     BaseInnovations,
     Discrete,
@@ -230,7 +230,7 @@ def test_mover_rows_publish_original_current_shocks(
                                 else {},
                             )
                         },
-                        rule="unilateral",
+                        rule=Unilateral(),
                         available=_first_period,
                     )
                 },
@@ -425,7 +425,7 @@ def _hidden_offer_model(
                                 utility_adjustment=_adjustment,
                             )
                         },
-                        rule="unilateral",
+                        rule=Unilateral(),
                         observes=("offer",) if observed else (),
                     )
                 },
@@ -578,7 +578,7 @@ def _dated_override_model() -> Model:
                                 utility_adjustment=_adjustment,
                             )
                         },
-                        rule="unilateral",
+                        rule=Unilateral(),
                     )
                 },
             ),
@@ -706,7 +706,7 @@ def test_target_only_correlated_physical_frame_uses_mapped_producer(
                 exits={
                     "leave": Exit(
                         targets={"self": ExitTarget(regime="target", projection={})},
-                        rule="unilateral",
+                        rule=Unilateral(),
                     )
                 },
             ),
@@ -805,7 +805,7 @@ def test_shared_physical_override_transports_recovered_base_to_changed_law() -> 
                                 projection={"location": _mapped_location},
                             )
                         },
-                        rule="unilateral",
+                        rule=Unilateral(),
                     )
                 },
             ),
@@ -1187,7 +1187,7 @@ def test_source_taste_keeps_dissolution_as_fallback_in_public_replay(
                 exits={
                     "leave": Exit(
                         targets={"self": ExitTarget(regime="target", projection={})},
-                        rule="unilateral",
+                        rule=Unilateral(),
                     )
                 },
             ),
@@ -1406,7 +1406,7 @@ def _opposing_model(*, rule: ExitRule, reverse: bool = False) -> Model:
 def test_reciprocal_unilateral_exits_refuse_the_public_participating_cycle() -> None:
     """Reciprocal outside pricing cannot recursively price itself."""
     with pytest.raises(ValueError, match="Policy query cycle"):
-        _opposing_model(rule="unilateral")
+        _opposing_model(rule=Unilateral())
 
 
 @pytest.mark.coverage(
@@ -1468,7 +1468,7 @@ def test_incoming_participating_actor_does_not_create_an_original_full_query() -
                 exits={
                     "leave": Exit(
                         targets={"self": ExitTarget(regime="target", projection={})},
-                        rule="unilateral",
+                        rule=Unilateral(),
                     )
                 },
             ),
@@ -1530,7 +1530,7 @@ def test_public_exit_replay_uses_simulation_phase_helper_closure() -> None:
                 exits={
                     "leave": Exit(
                         targets={"self": ExitTarget(regime="target", projection={})},
-                        rule="unilateral",
+                        rule=Unilateral(),
                     )
                 },
             ),

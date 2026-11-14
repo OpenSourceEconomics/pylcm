@@ -130,7 +130,15 @@ from lcm.consumption_savings_regime import (  # noqa: E402
 )
 from lcm.decoupled import Decoupled  # noqa: E402
 from lcm.execution import ExecutionConfig, InvariantBlockSchedule  # noqa: E402
-from lcm.exits import Consent, Counterparty, Exit, ExitTarget, RuleResult  # noqa: E402
+from lcm.exits import (  # noqa: E402
+    Consent,
+    Counterparty,
+    Exit,
+    ExitTarget,
+    MutualConsent,
+    RuleResult,
+    Unilateral,
+)
 from lcm.fixed_forms import (  # noqa: E402
     cash_on_hand_with_subsidy,
     liquid_law_from_resources,
@@ -281,6 +289,7 @@ __all__ = [
     "LoweredPeriodCandidate",
     "Model",
     "ModelDeclarations",
+    "MutualConsent",
     "NestedConsumptionSavingsRegime",
     "NetOfAdjustmentCost",
     "NormalIIDProcess",
@@ -315,6 +324,7 @@ __all__ = [
     "TimeVarying",
     "Transition",
     "UniformIIDProcess",
+    "Unilateral",
     "UnlabelledTimeParameterWarning",
     "ValueDependentConstraint",
     "__version__",
