@@ -1462,6 +1462,8 @@ def _node_structure(*, node: QueryNode) -> _Structure:
       the remaining fields hold.
     - An exit adjustment keeps its exit and member: it is bound per period from
       the declaration and the regime's functions, which the context holds.
+    - The exits' availability predicates keep only their count, for the same
+      reason as an exit adjustment.
     """
     parts: _Structure = ()
     for item in fields(node):
@@ -1480,6 +1482,8 @@ def _node_structure(*, node: QueryNode) -> _Structure:
             value = value is not None
         elif item.name == "source_projection":
             value = tuple(value)
+        elif item.name == "exit_availability":
+            value = len(value)
         elif item.name == "exit_adjustments":
             value = tuple(
                 (exit_id, tuple(members)) for exit_id, members in value.items()
