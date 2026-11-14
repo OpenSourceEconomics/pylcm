@@ -26,6 +26,11 @@ origins exactly. Only a bundled version with a separately reviewed qualification
 for the installed algorithm bytes can run an ordinary producer or verifier. Candidates
 and unknown IDs fail before loading the model capture.
 
+The typed public-process evaluator in this branch is `source645-builtin-int-v1`, bound
+to `39a79831aa573ef23fb08d77da89ee965da6bff8`. Use this version with its public process
+declarations. Its complete source map and qualification are separate from the private
+process evaluator `source639-builtin-int-v1`.
+
 ## Produce and independently check facts
 
 Create `axes.json` with every original regime as a key and its status coordinate names
@@ -39,8 +44,8 @@ certificate selection, even if the names in this file use a different order.
 From a public checkout with its Pixi environment:
 
 ```console
-pixi run -e tests-cpu python -m _lcm_regime_finder.implicit.implicit_native model.json axes.json facts.json --source-version source639-builtin-int-v1
-pixi run -e tests-cpu python -m _lcm_regime_finder.implicit.verify_native model.json axes.json facts.json fact-receipt.json --source-version source639-builtin-int-v1
+pixi run -e tests-cpu python -m _lcm_regime_finder.implicit.implicit_native model.json axes.json facts.json --source-version source645-builtin-int-v1
+pixi run -e tests-cpu python -m _lcm_regime_finder.implicit.verify_native model.json axes.json facts.json fact-receipt.json --source-version source645-builtin-int-v1
 ```
 
 On local Linux development hosts, apply the documented `cap` launcher around each
@@ -68,7 +73,7 @@ variable an ordinary coordinate; it does not delete it from the Model.
 ```
 
 ```console
-pixi run -e tests-cpu python -m _lcm_regime_finder.implicit.check_projection model.json axes.json facts.json removed.json projection-receipt.json --source-version source639-builtin-int-v1 --expand-boxes
+pixi run -e tests-cpu python -m _lcm_regime_finder.implicit.check_projection model.json axes.json facts.json removed.json projection-receipt.json --source-version source645-builtin-int-v1 --expand-boxes
 ```
 
 This command repeats independent full-domain fact verification, reconstructs original
@@ -101,7 +106,7 @@ descriptor, admission table and receipt bytes.
 The metadata-only qualification tool belongs to the checkout's test suite:
 
 ```console
-pixi run -e tests-cpu python -m tests.regime_finder.implicit_version_qualification --source-version source639-builtin-int-v1 --cases cases.json --evidence qualification
+pixi run -e tests-cpu python -m tests.regime_finder.implicit_version_qualification --source-version source645-builtin-int-v1 --cases cases.json --evidence qualification
 ```
 
 Run it in a fresh process of the actual merged checkout. The new evidence directory must
