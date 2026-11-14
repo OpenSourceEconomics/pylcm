@@ -279,6 +279,8 @@ ci:
   # the GitHub Actions run-ty job covers type checking and the keyword-only and
   # precise-annotation conventions, while pixi-lock-check needs a pixi binary
   # that pre-commit.ci does not provide.
+  # CPU manifest contract tests also check canonical bytes; the local fixing
+  # hook requires Pixi and therefore runs only in developer clones.
   #
   # The two script hooks live in the `.ai-instructions` submodule, which
   # pre-commit.ci does not check out, so there they fail as a missing
@@ -293,6 +295,7 @@ ci:
     - precise-annotations
     - ty
     - pixi-lock-check
+    - ci-workload-manifest-format
     - ci-workload-weights
     - pre-push-hooks-installed
     - notebook-cell-source-format
