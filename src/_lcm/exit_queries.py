@@ -30,6 +30,7 @@ from _lcm.policy_queries import (
     _QueryChunks,
     _taste_stay_roster,
     build_policy_query_kernel,
+    gated_query_targets,
 )
 from _lcm.query_information import default_chunk_size
 from _lcm.renegotiation import FixedNode, RenegotiationQueries
@@ -652,6 +653,25 @@ class _QueryGraphBuilder:
                 reducer.renegotiation.state: with_signature(
                     reducer.updated_state, args=list(names), enforce=False
                 )
+            },
+            gated_channels={
+                target: (
+                    (None,)
+                    if self.contexts[target].stakeholders is None
+                    else tuple(
+                        index
+                        for index, member in enumerate(
+                            self.contexts[target].stakeholders or ()
+                        )
+                        if any(
+                            route.target_stakeholder == member
+                            for route in context.laws[owner]
+                            .gated_edges[target]
+                            .legs.values()
+                        )
+                    )
+                )
+                for target in gated_query_targets(context=context, period=self.period)
             },
             available=_guard(guards),
             ancestors=ancestors,

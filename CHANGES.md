@@ -13,6 +13,9 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   state, action and spouse values travel together through solve and simulation.
   Continuing state laws use `fixed_transition`; continuous indifference and unrouted
   policy lookup are outside this feature's supported boundary.
+- An exit's outside policy may carry a future gated continuation, including a
+  target used only by a policy query. Its open value components and projected
+  personal fallbacks retain the gate's pointwise landing convention.
 
 ### Validated configuration records
 

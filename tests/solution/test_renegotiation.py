@@ -14,23 +14,28 @@ import pytest
 import lcm
 import tests.conftest
 from lcm import (
+    ByPeriod,
     CollectiveUtility,
     DiscreteGrid,
     ExecutionConfig,
     Exit,
     ExitTarget,
+    Gate,
     InitialNodes,
     LinSpacedGrid,
     Model,
     Periods,
+    ProjectedRegimeValue,
     Regime,
     SimulationResult,
+    StakeholderRoute,
+    Transition,
     Unilateral,
     categorical,
     fixed_transition,
 )
 from lcm.exceptions import RegimeInitializationError, UnsupportedOperationError
-from lcm.typing import FloatND, IntND, ScalarInt, StateName
+from lcm.typing import BoolND, FloatND, IntND, ScalarInt, StateName
 
 
 @categorical(ordered=False)
@@ -304,8 +309,6 @@ def _separation_simulation(*, execution_config: ExecutionConfig) -> SimulationRe
 
 def check_subject_sharded_renegotiation() -> None:
     """Check independent branch anchors and every native output under partitioning."""
-    import jax  # noqa: PLC0415
-
     expected = _separation_simulation(
         execution_config=ExecutionConfig(devices=(0,), device_memory_bytes=None)
     )
@@ -326,6 +329,35 @@ def check_subject_sharded_renegotiation() -> None:
         )
     )
     assert actual.n_subjects == expected.n_subjects == 7
+    _assert_same_raw_results(actual=actual, expected=expected)
+    expected_gate = _gated_outside_simulation(
+        execution_config=ExecutionConfig(devices=(0,), device_memory_bytes=None)
+    )
+    actual_gate = _gated_outside_simulation(
+        execution_config=ExecutionConfig(
+            devices=(0, 1, 2, 3),
+            simulation_sharding="subjects",
+            device_memory_bytes=None,
+        )
+    )
+    gate_frame = expected_gate.to_dataframe(use_categorical_codes=True)
+    current = gate_frame.loc[gate_frame["period"] == 0].sort_values("subject_id")
+    np.testing.assert_array_equal(
+        current["regime_name"],
+        ["couple", "outside", "couple", "outside", "couple", "outside", "couple"],
+    )
+    np.testing.assert_array_equal(
+        current.loc[current["regime_name"] == "couple", ["mu", "choice"]],
+        [[1, 1], [2, 2], [2, 2], [1, 1]],
+    )
+    _assert_same_raw_results(actual=actual_gate, expected=expected_gate)
+
+
+def _assert_same_raw_results(
+    *, actual: SimulationResult, expected: SimulationResult
+) -> None:
+    import jax  # noqa: PLC0415
+
     # Compare every field and leaf with the same mapping-container representation.
     actual_tree, expected_tree = (
         {
@@ -476,4 +508,218 @@ def test_renegotiation_adjusts_after_the_state_weighted_raw_choice() -> None:
     frame = result.to_dataframe(use_categorical_codes=True)
     np.testing.assert_array_equal(
         frame[["mu", "choice", "value_f", "value_m"]], [[1, 1, 2, 0]]
+    )
+
+
+@categorical(ordered=False)
+class _GatedHousehold:
+    couple: ScalarInt
+    outside: ScalarInt
+    landing: ScalarInt
+    single_f: ScalarInt
+    single_m: ScalarInt
+    done: ScalarInt
+
+
+def _closed_gate() -> BoolND:
+    return jnp.asarray(a=False)
+
+
+def _unreachable_landing() -> float:
+    return 99.0
+
+
+def _female_retirement(*, assets: FloatND) -> FloatND:
+    return assets / 2
+
+
+def _male_retirement(*, assets: FloatND) -> FloatND:
+    return 2 * assets
+
+
+def _low_assets_gate(*, assets: FloatND) -> BoolND:
+    return assets < 3
+
+
+def _open_female(*, assets: FloatND) -> FloatND:
+    return assets / 2 + 1
+
+
+def _open_male(*, assets: FloatND) -> FloatND:
+    return 2 * assets - 1
+
+
+def _gated_outside_model(
+    *, pointwise: bool, execution_config: ExecutionConfig | None = None
+) -> Model:
+    """Build an outside query with separate personal future domains."""
+    assets = LinSpacedGrid(start=2.0, stop=4.0, n_points=2)
+    return Model(
+        regimes={
+            "couple": Regime(
+                states={"assets": assets, "mu": DiscreteGrid(_Weight)},
+                actions={"choice": DiscreteGrid(_Weight)},
+                state_transitions={
+                    "assets": fixed_transition("assets"),
+                    "mu": fixed_transition("mu"),
+                },
+                functions={
+                    "utility": CollectiveUtility(
+                        utilities={
+                            "f": _Payoff(values=(0, 2, 3, 4)),
+                            "m": _Payoff(values=(5, 4, 3, 2)),
+                        }
+                    )
+                },
+                exit=Exit(
+                    rule=Unilateral(renegotiate=lcm.Renegotiate(state="mu")),
+                    targets={
+                        member: ExitTarget(
+                            regime="outside",
+                            role=member,
+                            projection={"assets": fixed_transition("assets")},
+                        )
+                        for member in ("f", "m")
+                    },
+                ),
+            ),
+            "outside": Regime(
+                states={"assets": assets},
+                state_transitions={"assets": fixed_transition("assets")},
+                functions={
+                    "utility": CollectiveUtility(
+                        utilities={"f": _outside, "m": _outside}
+                    )
+                },
+            ),
+            "landing": Regime(
+                states={"assets": assets},
+                functions={
+                    "utility": CollectiveUtility(
+                        utilities=(
+                            {
+                                "aux": _unreachable_landing,
+                                "m": _open_male,
+                                "f": _open_female,
+                            }
+                            if pointwise
+                            else {
+                                "f": _unreachable_landing,
+                                "m": _unreachable_landing,
+                            }
+                        )
+                    ),
+                    "landing_assets": fixed_transition("assets"),
+                },
+                output_only_functions=("landing_assets",),
+            ),
+            "single_f": Regime(
+                states={"assets": assets},
+                functions={"utility": _female_retirement},
+            ),
+            "single_m": Regime(
+                states={"assets": assets},
+                functions={"utility": _male_retirement},
+            ),
+            "done": Regime(
+                functions={
+                    "utility": CollectiveUtility(
+                        utilities={"f": _outside, "m": _outside}
+                    )
+                }
+            ),
+        },
+        edges={
+            "couple": {"done": Periods(values=(0,))},
+            "outside": Transition(
+                law=ByPeriod(cases={0: "landing"}),
+                gates={
+                    "landing": Gate(
+                        predicate=_low_assets_gate if pointwise else _closed_gate,
+                        routes={
+                            member: StakeholderRoute(
+                                target_stakeholder=member,
+                                fallback=ProjectedRegimeValue(
+                                    regime=f"single_{member}",
+                                    projection={"assets": fixed_transition("assets")},
+                                ),
+                            )
+                            for member in ("f", "m")
+                        },
+                    )
+                },
+            ),
+        },
+        initial_nodes=InitialNodes(by_period={0: "couple"}),
+        n_periods=2,
+        regime_id_class=_GatedHousehold,
+        execution_config=execution_config or ExecutionConfig(device_memory_bytes=None),
+    )
+
+
+@pytest.mark.parametrize("pointwise", [False, True])
+def test_renegotiation_outside_option_keeps_future_personal_gate_values(
+    *, pointwise: bool
+) -> None:
+    """The outside benchmark reads future personal domains through its own gate."""
+    model = _gated_outside_model(pointwise=pointwise)
+    params = {"discount_factor": 1.0}
+    solution = model.solve(params=params, log_level="off")
+    couple_values = solution.value_array(period=0, regime="couple")
+    np.testing.assert_array_equal(
+        couple_values.sel(assets=2.0),
+        [[2, 4], [2, 4], [3, 3], [3, 3]] if pointwise else [[2, 4]] * 4,
+    )
+    np.testing.assert_array_equal(couple_values.sel(assets=4.0), [[2, 8]] * 4)
+    result = model.simulate(
+        params=params,
+        solution=solution,
+        initial_conditions={
+            "period": jnp.zeros(2, dtype=jnp.int32),
+            "regime_id": jnp.full(
+                2, model.regime_names_to_ids["couple"], dtype=jnp.int32
+            ),
+            "own_stakeholder": jnp.full(
+                2, model.stakeholder_names_to_ids["f"], dtype=jnp.int32
+            ),
+            "assets": jnp.asarray([2.0, 4.0]),
+            "mu": jnp.zeros(2, dtype=jnp.int32),
+        },
+        seed=659,
+        log_level="off",
+    )
+    frame = result.to_dataframe(use_categorical_codes=True)
+    current = frame.loc[frame["period"] == 0].sort_values("subject_id")
+    np.testing.assert_array_equal(current["regime_name"], ["couple", "outside"])
+    np.testing.assert_array_equal(
+        current.loc[current["regime_name"] == "couple", ["mu", "choice"]],
+        [[1, 1]],
+    )
+    future = frame.loc[frame["regime_name"] == "single_f"]
+    np.testing.assert_array_equal(future["value"], [2.0])
+
+
+def _gated_outside_simulation(*, execution_config: ExecutionConfig) -> SimulationResult:
+    model = _gated_outside_model(pointwise=True, execution_config=execution_config)
+    params = {"discount_factor": 1.0}
+    return model.simulate(
+        params=params,
+        solution=model.solve(params=params, log_level="off"),
+        initial_conditions={
+            "period": jnp.zeros(7, dtype=jnp.int32),
+            "regime_id": jnp.full(
+                7, model.regime_names_to_ids["couple"], dtype=jnp.int32
+            ),
+            "own_stakeholder": jnp.asarray(
+                [
+                    model.stakeholder_names_to_ids[member]
+                    for member in ("f", "m", "f", "m", "f", "m", "f")
+                ],
+                dtype=jnp.int32,
+            ),
+            "assets": jnp.asarray([2.0, 4.0, 2.0, 4.0, 2.0, 4.0, 2.0]),
+            "mu": jnp.asarray([0, 1, 2, 3, 3, 0, 1], dtype=jnp.int32),
+        },
+        seed=659,
+        log_level="off",
     )

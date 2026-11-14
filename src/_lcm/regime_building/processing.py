@@ -1740,6 +1740,13 @@ class _CanonicalRegimeBuilder:
             )
             canonical_regimes[regime_name] = regime
             simulation_builds[regime_name] = simulation_build
+        # Policy reads need the gated combiners built from this first pass.
+        if not gated_continuations_by_source and any(
+            law.gated_edges for law in self.laws.values()
+        ):
+            return _with_declared_continuation_reads(
+                canonical_regimes=canonical_regimes, solution_builds=solution_builds
+            )
         return self._finish_model_reads(
             canonical_regimes=canonical_regimes,
             solution_builds=solution_builds,

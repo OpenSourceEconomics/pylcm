@@ -304,6 +304,11 @@ encountering the other member's refusal separates the pair; a later feasible isl
 not reopen the path. Equality follows the rule's `tie`. Outside payoffs use the original
 source's settlement, without moving that benchmark along the candidate grid.
 
+An outside policy can have a gated transition into the next period. Its nominal target
+components and each projected personal fallback enter as explicit future value reads;
+the gate is applied at the landing point. This also holds when the outside regime is
+only queried and publishes no own Full value bank.
+
 The selected node supplies the action and spouse values and becomes the current state
 used by forward transitions. Declare `fixed_transition("mu")` when the state continues,
 so its selected node is also next period's node. A conflicting state law or joint update

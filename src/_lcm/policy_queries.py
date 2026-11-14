@@ -31,6 +31,7 @@ from _lcm.execution.core_program import (
 )
 from _lcm.execution.output_layout import VALUE, StateAxesLeading
 from _lcm.execution.pending_work import PendingSolveWork
+from _lcm.execution.value_transfer import ValueArtifactAddress, ValueArtifactKind
 from _lcm.grids import Grid
 from _lcm.output_roles import OutputRole, target_role
 from _lcm.params.edges import EDGES, flat_namespaces, regime_kernel_params
@@ -230,6 +231,8 @@ class QueryNode:
         MappingProxyType({})
     )
     """Current coordinates selected together with the root's retained policy."""
+    gated_channels: Mapping[RegimeName, tuple[int | None, ...]] = MappingProxyType({})
+    """Open-branch value components, stacked inside the admitted query core."""
     available: Callable[..., BoolND] | None = None
     """Caller-context guard evaluated before a demanded benchmark."""
     exit_targets: Mapping[int, Mapping[str, str]] = MappingProxyType({})
@@ -276,6 +279,9 @@ class QueryNode:
         object.__setattr__(self, "inputs", MappingProxyType(dict(self.inputs)))
         object.__setattr__(
             self, "state_updates", MappingProxyType(dict(self.state_updates))
+        )
+        object.__setattr__(
+            self, "gated_channels", MappingProxyType(dict(self.gated_channels))
         )
         object.__setattr__(self, "ancestors", tuple(self.ancestors))
         object.__setattr__(
@@ -373,13 +379,43 @@ class QueryNode:
         return () if stakeholders is None else (len(stakeholders),)
 
 
+def gated_query_targets(
+    *, context: SolverBuildContext, period: int
+) -> tuple[RegimeName, ...]:
+    """Select this query's future gates; terminal dates have no continuation."""
+    if period >= context.solution_reachability.n_periods - 1:
+        return ()
+    return tuple(
+        target
+        for target in context.solution_reachability.targets(
+            period=period, source=context.regime_name
+        )
+        if target in context.edge_target_regimes
+    )
+
+
 def _node_inputs(
     *, node: QueryNode, period: int
 ) -> tuple[CoreArgumentBuilder, tuple[ValueRead, ...]]:
     """Keep value-reader operands separate from canonical policy action inputs."""
     if node.operand_builder is not None:
         return node.operand_builder, node.operand_value_reads
-    return grid_search_query_inputs(context=node.context, period=period)
+    builder, reads = grid_search_query_inputs(context=node.context, period=period)
+    if not node.gated_channels:
+        return builder, reads
+    return replace(builder, edge_target_regimes=()), tuple(
+        replace(
+            read,
+            target=ValueArtifactAddress(
+                kind=ValueArtifactKind.REGIME_VALUE,
+                period=read.target.period,
+                regime=cast("RegimeName", read.target.target_regime),
+            ),
+        )
+        if read.target.kind is ValueArtifactKind.GATED_CONTINUATION
+        else read
+        for read in reads
+    )
 
 
 # Values at one common action, stable ID, support, integrity, reached-landing counts.
@@ -1100,11 +1136,14 @@ def _admit_node(
         raise UnsupportedOperationError(
             "This query closure needs an unblocked action problem."
         )
-    if (
-        context.same_period_ref_regimes and not same_period_values
-    ) or context.edge_reference_regimes:
+    if context.same_period_ref_regimes and not same_period_values:
         raise UnsupportedOperationError(
             "A query cannot price another root's stored Full value."
+        )
+    gated_targets = set(gated_query_targets(context=context, period=period))
+    if set(node.gated_channels) != gated_targets:
+        raise UnsupportedOperationError(
+            "A query needs its gated continuation's explicit raw value channels."
         )
     if runtime_bound_specs(function=context.Q_and_F_functions[period]):
         raise UnsupportedOperationError(
@@ -1914,6 +1953,19 @@ def query_arguments(
     }
     mapped = _mapped_query_states(node=node, available=available, guard=guard)
     arguments = {**fixed, **projection_operands, **mapped}
+    if node.gated_channels:
+        values = dict(
+            cast("Mapping[RegimeName, FloatND]", arguments["next_regime_to_V_arr"])
+        )
+        for target, indices in node.gated_channels.items():
+            value = values[target]
+            values[target] = jnp.stack(
+                tuple(
+                    value if index is None else value[..., index] for index in indices
+                ),
+                axis=-1,
+            )
+        arguments["next_regime_to_V_arr"] = MappingProxyType(values)
     arguments.setdefault(_PHYSICAL_CONTEXTS, {})
     return arguments, mapped
 
