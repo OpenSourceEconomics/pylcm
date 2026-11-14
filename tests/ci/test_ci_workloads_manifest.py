@@ -40,6 +40,18 @@ def test_manifest_has_canonical_bytes() -> None:
     assert text == ci_workloads.dump_manifest(json.loads(text))
 
 
+def test_pre_commit_ci_leaves_pixi_hooks_to_actions() -> None:
+    """Run Pixi-dependent checks on runners that provide their environment."""
+    config = yaml.safe_load((_REPO_ROOT / ".pre-commit-config.yaml").read_text())
+    pixi_hooks = {
+        hook["id"]
+        for repo in config["repos"]
+        for hook in repo["hooks"]
+        if hook.get("entry", "").startswith("pixi ")
+    }
+    assert pixi_hooks <= set(config["ci"]["skip"])
+
+
 def test_dump_manifest_sorts_nested_keys_and_preserves_array_order() -> None:
     assert ci_workloads.dump_manifest({"z": [2, 1], "a": {"z": "é", "a": 1}}) == (
         '{\n "a": {\n  "a": 1,\n  "z": "é"\n },\n "z": [\n  2,\n  1\n ]\n}\n'
