@@ -7,27 +7,34 @@ off the published frame.
 """
 
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import replace
+from types import MappingProxyType
 from typing import Unpack
 
 import jax.numpy as jnp
 import numpy as np
+import pandas as pd
 import pytest
 
 from _lcm.regime_building import Q_and_F
 from _lcm.regime_building.collective import NO_ROLE
 from _lcm.solution import backward_induction
-from lcm.exits import RuleResult
-from lcm.solver_api import KernelOutput, ResultRetention
+from lcm import Model
+from lcm.exits import Unilateral
+from lcm.solver_api import KernelOutput, ResultRetention, SolutionResult
+from lcm.typing import FloatND, RegimeName, UserParamsNode
 from lcm_examples import collective_household as household
 from tests.solution.test_solution_result import _KernelKwargs
 
 _N_PERIODS = 3
 _N_SUBJECTS = 200
 
+type _Solved = tuple[Model, dict[str, UserParamsNode], SolutionResult]
+
 
 @pytest.fixture(scope="module")
-def solved():
+def solved() -> _Solved:
     """Solve the example once at a resolution the whole module shares."""
     model = household.get_model(n_periods=_N_PERIODS)
     params = household.get_params()
@@ -36,7 +43,7 @@ def solved():
 
 
 @pytest.fixture(scope="module")
-def simulated(solved):
+def simulated(solved: _Solved) -> pd.DataFrame:
     """Simulate half the cohort starting single and half starting married.
 
     Starting both kinds at age 0 puts a marriage and a dissolution into the one
@@ -80,7 +87,7 @@ def simulated(solved):
     return result.to_dataframe()
 
 
-def test_the_household_publishes_one_value_per_partner(solved):
+def test_the_household_publishes_one_value_per_partner(solved: _Solved) -> None:
     """The couple's value function carries a trailing stakeholder axis."""
     model, _, period_to_regime_to_V_arr = solved
 
@@ -88,7 +95,7 @@ def test_the_household_publishes_one_value_per_partner(solved):
     assert model.user_regimes["couple"].stakeholders == ("f", "m")
 
 
-def test_households_too_poor_to_outweigh_her_income_alone_dissolve():
+def test_households_too_poor_to_outweigh_her_income_alone_dissolve() -> None:
     """Both initial roles dissolve only on the poorest household wealth nodes.
 
     Two periods place the initial cohort in the final nonterminal problem:
@@ -129,7 +136,7 @@ def test_households_too_poor_to_outweigh_her_income_alone_dissolve():
         assert (rows.loc[~leaves, "regime_name"] == "couple").all()
 
 
-def test_some_simulated_couples_dissolve(simulated):
+def test_some_simulated_couples_dissolve(simulated: pd.DataFrame) -> None:
     """A household that participation rules out sends both partners back single."""
     by_subject = simulated.sort_values(["subject_id", "period"])
     previous = by_subject.groupby("subject_id")["regime_name"].shift()
@@ -144,7 +151,9 @@ def test_some_simulated_couples_dissolve(simulated):
     }
 
 
-def test_singles_of_both_sexes_reach_the_household(simulated):
+def test_singles_of_both_sexes_reach_the_household(
+    simulated: pd.DataFrame,
+) -> None:
     """Consent is mutual, so the couple is entered from either single regime."""
     starts_single = simulated.loc[
         (simulated["period"] == 0)
@@ -160,7 +169,9 @@ def test_singles_of_both_sexes_reach_the_household(simulated):
     assert set(entered.dropna().unique()) == {"f", "m"}
 
 
-def test_a_row_in_a_singleton_regime_carries_no_role(simulated):
+def test_a_row_in_a_singleton_regime_carries_no_role(
+    simulated: pd.DataFrame,
+) -> None:
     """`own_stakeholder` is a household role, so a single row has none."""
     single_rows = simulated.loc[
         simulated["regime_name"].isin(["single_f", "single_m"]), "own_stakeholder"
@@ -169,7 +180,9 @@ def test_a_row_in_a_singleton_regime_carries_no_role(simulated):
     assert single_rows.isna().all()
 
 
-def test_every_subject_ends_in_a_terminal_regime(simulated):
+def test_every_subject_ends_in_a_terminal_regime(
+    simulated: pd.DataFrame,
+) -> None:
     """Nobody is lost on the way: the last period accounts for every subject."""
     last = simulated.loc[simulated["period"] == _N_PERIODS - 1]
 
@@ -177,7 +190,9 @@ def test_every_subject_ends_in_a_terminal_regime(simulated):
     assert last["regime_name"].str.endswith("terminal").all()
 
 
-def test_participation_checks_replay_from_values_without_dissolution_artifacts():
+def test_participation_checks_replay_from_values_without_dissolution_artifacts() -> (
+    None
+):
     """Participation support and consent do not require retained dissolution flags."""
     model = household.get_model(n_periods=3, wealth_n_points=6, consumption_n_points=6)
     params = household.get_params()
@@ -196,30 +211,11 @@ def test_participation_checks_replay_from_values_without_dissolution_artifacts()
     assert terminal["regime_name"].str.endswith("terminal").all()
 
 
-def test_participation_rule_keeps_one_common_action_with_threshold_only_slack():
-    """A zero Pareto weight keeps its veto; exact ties keep the first action."""
+def test_couple_dissolves_under_the_eckstein_keane_lifshitz_rule() -> None:
+    """Either partner can leave, and a partner exactly indifferent leaves."""
     model = household.get_model(n_periods=2, wealth_n_points=2, consumption_n_points=2)
     rule = model.user_regimes["couple"].exits["dissolve"].rule
-    assert callable(rule)
-    cases = [
-        ([2.0, 2.0], [1.0, 1.0], {"f": 0.5, "m": 0.5}, 0),
-        ([0.5, 2.0], [100.0, 1.0], {"f": 0.0, "m": 1.0}, 1),
-        ([-np.inf, 2.0], [-np.inf, 1.0], {"f": 0.0, "m": 1.0}, 1),
-        ([0.0, 0.0], [1.0, 1.0], {"f": 0.5, "m": 0.5}, 2),
-    ]
-    for q_f, q_m, weights, expected in cases:
-        selected = rule(
-            Q_f=jnp.asarray(q_f),
-            Q_m=jnp.asarray(q_m),
-            exit_payoffs={"dissolve": {"f": jnp.asarray(1.5), "m": jnp.asarray(1.0)}},
-            alternative_ids=jnp.arange(3, dtype=jnp.int32),
-            pareto_weights={
-                name: jnp.asarray(value) for name, value in weights.items()
-            },
-            slack=jnp.asarray(0.5),
-        )
-        assert isinstance(selected, RuleResult)
-        assert int(selected.action) == expected
+    assert rule == Unilateral(tie="leave")
 
 
 def test_a_missing_declared_participation_payload_fails_before_the_period_roll(
@@ -266,7 +262,12 @@ def test_each_query_action_problem_is_traced_once_per_solve(
         original = kernel_class.evaluated
 
         # keyword-only-exempt: primary-argument=self
-        def counted(self, *args, _original=original, **kwargs):
+        def counted(
+            self: Q_and_F._QAndF | Q_and_F._CollectiveQAndF,
+            *args: MappingProxyType[RegimeName, FloatND],
+            _original: Callable[..., Q_and_F.EvaluatedQAndF] = original,
+            **kwargs: Q_and_F.QAndFArg,
+        ) -> Q_and_F.EvaluatedQAndF:
             traces[id(self)] += 1
             return _original(self, *args, **kwargs)
 

@@ -14,6 +14,7 @@ from lcm import (
     LinSpacedGrid,
     Model,
     MutualConsent,
+    ParetoObjective,
     Regime,
     Unilateral,
     categorical,
@@ -48,6 +49,7 @@ def _model(
     rule: ExitRule,
     wife: Callable[..., FloatND] = _wife,
     husband: Callable[..., FloatND] = _husband,
+    objective: ParetoObjective | None = None,
 ) -> Model:
     wealth = LinSpacedGrid(start=1.0, stop=2.0, n_points=2)
     return Model(
@@ -55,7 +57,9 @@ def _model(
             "couple": Regime(
                 states={"wealth": wealth},
                 functions={
-                    "utility": CollectiveUtility(utilities={"f": wife, "m": husband})
+                    "utility": CollectiveUtility(
+                        utilities={"f": wife, "m": husband}, objective=objective
+                    )
                 },
                 exits={
                     "divorce": Exit(
@@ -118,6 +122,17 @@ def test_tie_setting_decides_a_member_indifferent_to_leaving(
     """With every member exactly indifferent, `tie` alone decides whether they stay."""
     model = _model(rule=rule, wife=_outside, husband=_outside)
     assert _simulated_regimes(model=model) == expected
+
+
+def test_a_member_with_zero_pareto_weight_keeps_the_veto() -> None:
+    """The wife has no weight in the household choice, yet her leaving ends it."""
+    model = _model(
+        rule=Unilateral(),
+        wife=_husband,
+        husband=_wife,
+        objective=ParetoObjective(weights={"f": 0.0, "m": 1.0}),
+    )
+    assert _simulated_regimes(model=model) == ["single_f", "single_f"]
 
 
 @pytest.mark.parametrize("rule", [Unilateral(), MutualConsent()])

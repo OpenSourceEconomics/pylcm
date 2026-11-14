@@ -29,7 +29,7 @@ from lcm import (
     Regime,
     StakeholderRoute,
 )
-from lcm.exits import Exit, ExitTarget
+from lcm.exits import Exit, ExitTarget, Unilateral
 from lcm.transition import StochasticTransition, Transition
 from lcm.typing import DiscreteAction, DiscreteState, FloatND, UserParamsNode
 from lcm_examples import collective_household as household
@@ -215,11 +215,13 @@ def get_model(*, n_periods: int, n_points: int = 4) -> Model:
             "dissolve": Exit(
                 targets={
                     member: ExitTarget(
-                        regime=f"single_{member}", projection={"wealth": half}
+                        regime=f"single_{member}",
+                        projection={"wealth": half},
+                        utility_adjustment=household._divorce_cost,
                     )
                     for member in ("f", "m")
                 },
-                rule=household._ParticipationRule(),
+                rule=Unilateral(tie="leave"),
             )
         },
     )
