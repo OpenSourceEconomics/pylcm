@@ -20,7 +20,7 @@ from ..records import JSONValue
 _HERE = Path(__file__).resolve().parent
 _VERSIONS = _HERE / "source_versions"
 _ADMISSIONS = _VERSIONS / "admissions.json"
-_IDS = frozenset({"source587", "source645"})
+_IDS = frozenset({"source587", "source645", "source639-builtin-int-v1"})
 _PROTOCOL = "original-cell-point-query-order/v1"
 type SourceFile = str
 MANDATORY_CONTROLS = (
@@ -294,20 +294,22 @@ def check_capture_admission(
         "_lcm.regime_building.schedules._ProbabilityConstant",
         "lcm.state_conditioned.StateConditioned",
     }
-    if version.version_id == "source645":
+    if version.capture_dialect_id == "constructed-graph/native-public-processes-v1":
         rejected = {
             name
             for name in types
             if name in old
             or name.startswith(("_lcm.processes.iid.", "_lcm.processes.ar1."))
         }
-    else:
+    elif version.capture_dialect_id == "constructed-graph/native-private-processes-v1":
         rejected = {
             name
             for name in types
             if name in new
             or name.startswith(("lcm.processes.", "_lcm.processes.ar1_on_nodes."))
         }
+    else:
+        raise ValueError(f"Unknown capture dialect: {version.capture_dialect_id!r}")
     if rejected:
         raise ValueError(
             f"Capture dialect is incompatible with {version.version_id}: {sorted(rejected)}"
