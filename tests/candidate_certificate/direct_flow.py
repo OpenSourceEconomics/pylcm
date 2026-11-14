@@ -698,7 +698,7 @@ _SOURCE_SEALS = {
     SIMULATION_RUNTIME_SOURCE: "87865ad0c4cfabca80937c118015ca5b16dcff9af62004144ff5b638b0cecedb",
     LOGSUM_SOURCE: "e12061dd4f0f0176324182a2eb875cb6ebe4b97174091c597d46a622df93ff1b",
     ARGMAX_SOURCE: "4f90ea10ea15558701da18fcfdf0d56e0e7e999afcf576f3d2d6c4d1bfeba916",
-    COLLECTIVE_SOURCE: "4cc0683d493f597684f5801909d297145d8bade0aa752c3e35cf8af2cb55edd9",
+    COLLECTIVE_SOURCE: "21fdbb0f9c9fef7ae8f54a4f9ff57159a4ec74ba462ee0e43c2b3eab5b6b6eae",
     MAX_Q_SOURCE: "62e5010e5f535ed3731218a5549167d6f5ea332b145d2dcece88d492949fd78c",
     PROCESSING_SOURCE: "a8bd2a85c996e981a6a0e3b681e90a2f04cc04af66d1904e87c77469e71748b6",
     GRID_SEARCH_SOURCE: "335ee0157e553577fbf0534e6667e81d3099b07ba5b1c6b2aec62ed6c5db33ec",
@@ -9895,18 +9895,23 @@ if set(stakeholder_Q) != set(weights):
     )
     raise ValueError(msg)
 objective = _weighted_sum(stakeholder_Q=stakeholder_Q, weights=weights)
-argmax_flat, _ = argmax_and_max(
+argmax_flat, best = argmax_and_max(
     a=objective, axis=action_axes, initial=-jnp.inf, where=feasibility
 )
+undefined = jnp.isnan(best)
 dissolution = (
     ~jnp.any(feasibility, axis=action_axes) if action_axes else ~feasibility
 )
 values = {
     name: jnp.where(
-        dissolution,
-        -jnp.inf,
-        _gather_along_actions(
-            q=q, argmax_flat=argmax_flat, action_axes=action_axes
+        undefined,
+        jnp.nan,
+        jnp.where(
+            dissolution,
+            -jnp.inf,
+            _gather_along_actions(
+                q=q, argmax_flat=argmax_flat, action_axes=action_axes
+            ),
         ),
     )
     for name, q in stakeholder_Q.items()

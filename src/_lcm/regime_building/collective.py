@@ -72,9 +72,13 @@ def collective_argmax_and_readout(
         raise ValueError(msg)
 
     objective = _weighted_sum(stakeholder_Q=stakeholder_Q, weights=weights)
-    argmax_flat, _ = argmax_and_max(
+    argmax_flat, best = argmax_and_max(
         a=objective, axis=action_axes, initial=-jnp.inf, where=feasibility
     )
+    # A NaN objective at a feasible action makes `best` NaN; the members' values
+    # then publish NaN so the solve's checks see it, rather than reading them off
+    # at the index `argmax_and_max` reports for that case.
+    undefined = jnp.isnan(best)
     # With no action axis to reduce, a cell dissolves exactly where its own single
     # (state, action) cell is infeasible.
     dissolution = (
@@ -82,10 +86,14 @@ def collective_argmax_and_readout(
     )
     values = {
         name: jnp.where(
-            dissolution,
-            -jnp.inf,
-            _gather_along_actions(
-                q=q, argmax_flat=argmax_flat, action_axes=action_axes
+            undefined,
+            jnp.nan,
+            jnp.where(
+                dissolution,
+                -jnp.inf,
+                _gather_along_actions(
+                    q=q, argmax_flat=argmax_flat, action_axes=action_axes
+                ),
             ),
         )
         for name, q in stakeholder_Q.items()

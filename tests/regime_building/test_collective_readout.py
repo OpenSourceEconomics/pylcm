@@ -225,3 +225,37 @@ def test_multi_party_household_choice_is_invariant_to_stakeholder_order():
 
     assert policies == {0}
     assert len(patterns) == 1
+
+
+@pytest.mark.parametrize("stakeholder", ["f", "m"])
+def test_nan_household_objective_at_a_feasible_action_publishes_nan(stakeholder):
+    """A feasible action whose objective is undefined makes every readout NaN.
+
+    `+inf` for one member and `-inf` for the other, both weighted, has no
+    household value; reading off the members' values at some other action would
+    hide that from the solve's NaN check.
+    """
+    values, _ = collective_readout(
+        stakeholder_Q={
+            "f": jnp.array([1.0, jnp.inf]),
+            "m": jnp.array([1.0, -jnp.inf]),
+        },
+        feasibility=jnp.array([True, True]),
+        weights={"f": 0.5, "m": 0.5},
+        action_axes=(0,),
+    )
+    assert jnp.isnan(values[stakeholder])
+
+
+def test_nan_household_objective_at_an_infeasible_action_is_not_read():
+    """An undefined objective outside the feasible set leaves the readout alone."""
+    values, _ = collective_readout(
+        stakeholder_Q={
+            "f": jnp.array([1.0, jnp.inf]),
+            "m": jnp.array([2.0, -jnp.inf]),
+        },
+        feasibility=jnp.array([True, False]),
+        weights={"f": 0.5, "m": 0.5},
+        action_axes=(0,),
+    )
+    assert values["m"] == pytest.approx(2.0)
