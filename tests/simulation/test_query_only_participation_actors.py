@@ -157,20 +157,16 @@ def household_model(*, target_payoff: int, budget: int | None) -> Model:
         regimes={
             "source": Regime(
                 functions={"utility": one},
-                exits={
-                    "marry": Exit(
-                        targets={
-                            "self": ExitTarget(
-                                regime="formation", role="f", projection={}
-                            )
-                        },
-                        rule=Consent(
-                            counterparty=Counterparty(
-                                regime="counterparty", role="m", projection={}
-                            )
-                        ),
-                    )
-                },
+                exit=Exit(
+                    targets={
+                        "self": ExitTarget(regime="formation", role="f", projection={})
+                    },
+                    rule=Consent(
+                        counterparty=Counterparty(
+                            regime="counterparty", role="m", projection={}
+                        )
+                    ),
+                ),
             ),
             "formation": Regime(
                 functions={
@@ -230,14 +226,10 @@ def physical_model(*, incoming: bool, target_payoff: int, budget: int | None) ->
         regimes={
             "source": Regime(
                 functions={"utility": zero},
-                exits={
-                    "move": Exit(
-                        targets={
-                            "self": ExitTarget(regime="counterparty", projection={})
-                        },
-                        rule=Unilateral(),
-                    )
-                },
+                exit=Exit(
+                    targets={"self": ExitTarget(regime="counterparty", projection={})},
+                    rule=Unilateral(),
+                ),
             ),
             "counterparty": Regime(functions={"utility": three}),
             "target": Regime(functions={"utility": {1: one, 5: five}[target_payoff]}),

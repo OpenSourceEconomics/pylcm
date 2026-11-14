@@ -262,7 +262,7 @@ out. See
 
 ## Preserve the economic date of a value-dependent decision
 
-Use `Regime(exits=...)` when a subject chooses whether to leave **in the current
+Use `Regime(exit=...)` when a subject chooses whether to leave **in the current
 period**, before its final action. The exit target is a same-date Participating policy
 problem at the declared projection. This singleton fragment prices a target without
 observing its offer:
@@ -270,18 +270,16 @@ observing its offer:
 ```python
 from lcm import Exit, ExitTarget, Unilateral
 
-exits = {
-    "leave": Exit(
-        targets={
-            "self": ExitTarget(
-                regime="target",
-                projection={},
-                utility_adjustment=adjustment,
-            )
-        },
-        rule=Unilateral(),
-    )
-}
+exit = Exit(
+    targets={
+        "self": ExitTarget(
+            regime="target",
+            projection={},
+            utility_adjustment=adjustment,
+        )
+    },
+    rule=Unilateral(),
+)
 ```
 
 Declare the target's group on its own `Regime(shocks=...)`. Add `observes=("offer",)` to
@@ -340,11 +338,9 @@ Declare physical information with `ParticipationCheck.observes` or the individua
 information. Preserve the original comparison, including its tie rule, target role,
 projection and fallback, when replacing a value-reading `Gate`.
 
-Custom current exit rules return `RuleResult` with a declared alternative identifier,
-and declare whether they read outside values through `reads_outside_values`. They do not
-return a Boolean verdict, as a participation check does. A custom source rule combined
-with source EV1 tastes is explicitly refused; this does not refuse a custom rule pricing
-a hidden EV1 target.
+A current exit declares one of the built-in rules, `Unilateral` or `MutualConsent`, or
+`Consent` for formation. The rule decides which members are willing to stay; the
+household then takes its Pareto-weighted argmax among the kept actions.
 
 ### Gates route on states only
 

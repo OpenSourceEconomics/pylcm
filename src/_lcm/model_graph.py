@@ -9,7 +9,7 @@ from typing import Literal, cast
 
 import jax.numpy as jnp
 
-from _lcm.exits import ExitFunctionDemand, exit_functions, exits_for_phase
+from _lcm.exits import ExitFunctionDemand, exit_for_phase, exit_functions
 from _lcm.gated_edge import GatedEdge, gated_edge_from_gate
 from _lcm.reachability import ModelReachability, PhaseReachability
 from _lcm.regime_building.fixed_regime_support import prune_fixed_regime_support
@@ -47,7 +47,7 @@ from lcm.exceptions import (
     ModelInitializationError,
     RegimeInitializationError,
 )
-from lcm.exits import Consent
+from lcm.exits import Consent, Exit
 from lcm.participation import ParticipationCheck
 from lcm.phased import Phased
 from lcm.regime import Regime
@@ -287,7 +287,7 @@ def prepare_graph(
     )
 
 
-def _exit_policy_demand(  # noqa: C901 - phase-specific typed reads and actual actor demand
+def _exit_policy_demand(
     *,
     regimes: Mapping[RegimeName, Regime],
     schedules: RegimeSchedules,
@@ -299,53 +299,51 @@ def _exit_policy_demand(  # noqa: C901 - phase-specific typed reads and actual a
     Mapping[tuple[int, RegimeName], tuple[RegimeName, ...]],
 ]:
     """Declare typed reads without pretending a policy query is a Full value."""
-    from _lcm.exits import exits_for_phase  # noqa: PLC0415
-
     reads = {"solution": {}, "simulation": {}}
     actors = {}
-    if not any(regime.exits for regime in regimes.values()):
+    if all(regime.exit is None for regime in regimes.values()):
         return reads, actors
     for phase, side in (("solution", "solve"), ("simulation", "simulate")):
         for source, regime in regimes.items():
-            declarations = exits_for_phase(exits=regime.exits, phase=side)
+            declaration = exit_for_phase(declaration=regime.exit, phase=side)
             for period in schedules.coverage_by_regime[source]:
                 for kind in ("Raw", "Participating", "Full"):
-                    required = []
-                    final = []
-                    for declaration in declarations.values():
-                        if kind == "Raw" or _exit_is_statically_unavailable(
-                            predicate=declaration.available,
-                            period=period,
-                            ages=ages,
-                        ):
-                            continue
-                        if kind == "Participating" and (
-                            isinstance(declaration.rule, Consent)
-                            or (
-                                callable(declaration.rule)
-                                and not declaration._reads_outside_values  # noqa: SLF001 - frozen declaration metadata
-                            )
-                        ):
-                            continue
-                        required.extend(
-                            (target.regime, "Participating")
-                            for target in declaration.targets.values()
-                        )
-                        if isinstance(declaration.rule, Consent):
-                            required.extend(
-                                (
-                                    (source, "Raw"),
-                                    (declaration.rule.counterparty.regime, "Raw"),
-                                )
-                            )
-                        if kind == "Full":
-                            final.extend(
-                                target.regime for target in declaration.targets.values()
-                            )
-                    reads[phase][period, source, kind] = tuple(dict.fromkeys(required))
+                    required, final = _exit_reads(
+                        declaration=declaration,
+                        source=source,
+                        kind=kind,
+                        period=period,
+                        ages=ages,
+                    )
+                    reads[phase][period, source, kind] = required
                     if phase == "simulation" and kind == "Full":
-                        actors[period, source] = tuple(dict.fromkeys(final))
+                        actors[period, source] = final
     return reads, actors
+
+
+def _exit_reads(
+    *,
+    declaration: Exit | None,
+    source: RegimeName,
+    kind: str,
+    period: int,
+    ages: TimeAxis,
+) -> tuple[tuple[tuple[RegimeName, str], ...], tuple[RegimeName, ...]]:
+    """The typed reads one policy kind of the source makes, and where it can land."""
+    if (
+        declaration is None
+        or kind == "Raw"
+        or (kind == "Participating" and isinstance(declaration.rule, Consent))
+        or _exit_is_statically_unavailable(
+            predicate=declaration.available, period=period, ages=ages
+        )
+    ):
+        return (), ()
+    landings = tuple(dict.fromkeys(t.regime for t in declaration.targets.values()))
+    required = tuple((regime, "Participating") for regime in landings)
+    if isinstance(declaration.rule, Consent):
+        required += ((source, "Raw"), (declaration.rule.counterparty.regime, "Raw"))
+    return tuple(dict.fromkeys(required)), landings if kind == "Full" else ()
 
 
 def demanded_exit_function_paths(
@@ -371,29 +369,19 @@ def demanded_exit_function_paths(
             for period, name, kind in contexts:
                 if name != owner or kind == "Raw":
                     continue
-                for exit_name, declaration in exits_for_phase(
-                    exits=regime.exits, phase=side
-                ).items():
-                    if kind == "Participating" and (
-                        isinstance(declaration.rule, Consent)
-                        or (
-                            callable(declaration.rule)
-                            and not declaration._reads_outside_values  # noqa: SLF001 - frozen declaration metadata
-                        )
-                    ):
-                        continue
-                    inactive = _exit_is_statically_unavailable(
-                        predicate=declaration.available,
-                        period=period,
-                        ages=ages,
-                    )
-                    paths.update(
-                        path
-                        for path in exit_functions(
-                            exits={exit_name: declaration}, phase=side
-                        )
-                        if not inactive or path[-1] in {"available", "rule"}
-                    )
+                declaration = regime.exit
+                if declaration is None or (
+                    kind == "Participating" and isinstance(declaration.rule, Consent)
+                ):
+                    continue
+                inactive = _exit_is_statically_unavailable(
+                    predicate=declaration.available, period=period, ages=ages
+                )
+                paths.update(
+                    path
+                    for path in exit_functions(declaration=declaration, phase=side)
+                    if not inactive or path[-1] == "available"
+                )
             result[owner][side] = frozenset(paths)
     return MappingProxyType(
         {name: MappingProxyType(phases) for name, phases in result.items()}
@@ -413,33 +401,31 @@ def _validate_exit_availability(
             ("solution", demanded.coverage_by_regime[source]),
             ("simulation", demanded.visited_periods_by_regime[source]),
         ):
-            for name, declaration in regime.exits.items():
-                contexts = [
-                    ("destination", target.regime)
-                    for target in declaration.targets.values()
-                ]
-                if isinstance(declaration.rule, Consent):
-                    contexts.append(
-                        ("counterparty", declaration.rule.counterparty.regime)
-                    )
-                for kind, target in contexts:
-                    for period in periods:
-                        if period not in available.coverage_by_regime[target] or (
-                            target in available.support_by_phase[phase]
-                            and not available.support_by_phase[phase][target].get(
-                                period
-                            )
+            declaration = regime.exit
+            if declaration is None:
+                continue
+            contexts = [
+                ("destination", target.regime)
+                for target in declaration.targets.values()
+            ]
+            if isinstance(declaration.rule, Consent):
+                contexts.append(("counterparty", declaration.rule.counterparty.regime))
+            for kind, target in contexts:
+                for period in periods:
+                    if period not in available.coverage_by_regime[target] or (
+                        target in available.support_by_phase[phase]
+                        and not available.support_by_phase[phase][target].get(period)
+                    ):
+                        if _exit_is_statically_unavailable(
+                            predicate=declaration.available,
+                            period=period,
+                            ages=ages,
                         ):
-                            if _exit_is_statically_unavailable(
-                                predicate=declaration.available,
-                                period=period,
-                                ages=ages,
-                            ):
-                                continue
-                            raise RegimeInitializationError(
-                                f"Exit {source}.{name} {kind} {target!r} is inactive "
-                                f"at {ages.exact_values[period]} in {phase}."
-                            )
+                            continue
+                        raise RegimeInitializationError(
+                            f"Exit of {source}: {kind} {target!r} is inactive "
+                            f"at {ages.exact_values[period]} in {phase}."
+                        )
 
 
 def _exit_is_statically_unavailable(

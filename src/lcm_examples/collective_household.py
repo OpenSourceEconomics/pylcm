@@ -183,23 +183,21 @@ def get_model(
                 utilities={"f": _couple_utility_f, "m": _couple_utility_m}
             ),
         },
-        exits={
-            "dissolve": Exit(
-                targets={
-                    "f": ExitTarget(
-                        regime="single_f",
-                        projection={"wealth": _half_of_couple_wealth},
-                        utility_adjustment=_divorce_cost,
-                    ),
-                    "m": ExitTarget(
-                        regime="single_m",
-                        projection={"wealth": _half_of_couple_wealth},
-                        utility_adjustment=_divorce_cost,
-                    ),
-                },
-                rule=Unilateral(tie="leave"),
-            )
-        },
+        exit=Exit(
+            targets={
+                "f": ExitTarget(
+                    regime="single_f",
+                    projection={"wealth": _half_of_couple_wealth},
+                    utility_adjustment=_divorce_cost,
+                ),
+                "m": ExitTarget(
+                    regime="single_m",
+                    projection={"wealth": _half_of_couple_wealth},
+                    utility_adjustment=_divorce_cost,
+                ),
+            },
+            rule=Unilateral(tie="leave"),
+        ),
     )
     couple_terminal = Regime(
         states={"wealth": couple_wealth},
@@ -407,12 +405,10 @@ def get_params(
             "utility_f": {"marriage_premium": marriage_premium},
             "utility_m": {"marriage_premium": marriage_premium},
             "next_wealth": {"interest_rate": interest_rate},
-            "exits": {
-                "dissolve": {
-                    "targets": {
-                        member: {"utility_adjustment": {"divorce_cost": divorce_cost}}
-                        for member in ("f", "m")
-                    }
+            "exit": {
+                "targets": {
+                    member: {"utility_adjustment": {"divorce_cost": divorce_cost}}
+                    for member in ("f", "m")
                 }
             },
         },

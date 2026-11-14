@@ -15,7 +15,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import replace
 from functools import partial
 from types import MappingProxyType
-from typing import ClassVar, TypedDict, Unpack
+from typing import TypedDict, Unpack
 
 import jax
 import jax.numpy as jnp
@@ -41,10 +41,9 @@ from lcm import (
     Model,
     Periods,
     Regime,
-    RuleResult,
+    Unilateral,
     categorical,
 )
-from lcm.exceptions import RegimeInitializationError
 from lcm.shocks import (
     Discrete,
     GaussHermite,
@@ -221,30 +220,6 @@ def _next_m(*, experience_m: IntND, work_m: IntND) -> IntND:
     return jnp.minimum(experience_m + work_m, _N_EXP - 1)
 
 
-class _StrictParticipation:
-    """Keep the couple's best action that both spouses prefer to dissolving."""
-
-    reads_outside_values: ClassVar[bool] = True
-
-    def __call__(
-        self,
-        *,
-        Q_f: FloatND,
-        Q_m: FloatND,
-        exit_payoffs: Mapping[str, Mapping[str, FloatND]],
-        alternative_ids: IntND,
-        pareto_weights: Mapping[str, FloatND],
-    ) -> RuleResult:
-        q_f, q_m = Q_f.reshape(-1), Q_m.reshape(-1)
-        outside = exit_payoffs["dissolve"]
-        kept = (q_f > outside["f"]) & (q_m > outside["m"])
-        objective = pareto_weights["f"] * q_f + pareto_weights["m"] * q_m
-        stay = jnp.argmax(jnp.where(kept, objective, -jnp.inf))
-        return RuleResult(
-            action=alternative_ids[jnp.where(jnp.any(kept), stay, q_f.size)]
-        )
-
-
 def _formation(
     *, member: str, nodes: QuasiMonteCarlo | None = None, gift: bool = False
 ) -> Exit:
@@ -286,7 +261,7 @@ def _dissolve() -> Exit:
             )
             for member in ("f", "m")
         },
-        rule=_StrictParticipation(),
+        rule=Unilateral(tie="leave"),
     )
 
 
@@ -328,7 +303,7 @@ def _model(
             | ({"gift": _gift} if gift else {}),
             shocks=(f"wage_{member}", f"taste_{member}", f"marriage_from_{member}"),
             state_transitions={"experience": _next_experience},
-            exits={"marry": _formation(member=member, nodes=nodes, gift=gift)},
+            exit=_formation(member=member, nodes=nodes, gift=gift),
         )
         for member in ("f", "m")
     }
@@ -349,7 +324,7 @@ def _model(
             ),
         },
         shocks=("wage_f", "wage_m", "match"),
-        exits={"dissolve": _dissolve()} if dissolution else {},
+        exit=_dissolve() if dissolution else None,
     )
     if dissolution:
         for member in ("f", "m"):
@@ -372,7 +347,7 @@ def _model(
             shocks=tuple(
                 group for group in regime.shocks if not group.startswith("marriage")
             ),
-            exits={},
+            exit=None,
         )
     if lasting_match:
         regimes["couple_terminal"] = replace(
@@ -1063,24 +1038,6 @@ def test_draw_scales_a_node_s_own_mass_to_the_group_total() -> None:
         np.full(8, 4.0),
         rtol=1e-15,
     )
-
-
-def test_a_regime_rejects_exits_that_name_different_draw_rules() -> None:
-    """A regime's exits share one draw rule."""
-    with pytest.raises(RegimeInitializationError, match="share one draw rule"):
-        Regime(
-            states={"experience": DiscreteGrid(values=jnp.arange(_N_EXP))},
-            actions={"work": DiscreteGrid(values=jnp.arange(2))},
-            functions={"utility": _single_f},
-            shocks=("wage_f", "taste_f", "marriage_from_f"),
-            state_transitions={"experience": _next_experience},
-            exits={
-                f"marry_{seed}": _formation(
-                    member="f", nodes=QuasiMonteCarlo(n=4, seed=seed)
-                )
-                for seed in (0, 1)
-            },
-        )
 
 
 @pytest.mark.parametrize(("query_cell", "expected"), [(None, 7281), (4, 4)])

@@ -234,7 +234,7 @@ A general regime declares:
 | `shocks`                | Model-level IID shock groups; read as `x` or, from transitions, as `next_x`   |
 | `koopmans_aggregator`   | Optional regime-level continuation aggregator, `Phased` or `Decoupled`        |
 | `certainty_equivalent`  | Optional regime-level lottery reduction                                       |
-| `exits`                 | Named current-period moves with mapped policy queries                         |
+| `exit`                  | Current-period move with mapped policy queries                                |
 | `description`           | Human-readable description                                                    |
 
 Use `Regime.replace(...)` to derive a modified immutable declaration.
@@ -274,8 +274,9 @@ required by EGM-family solvers. See
 
 ## Current-period exits
 
-`Regime(exits={name: Exit(...)})` declares a move before the period's action. Scheduled
-next-period transitions remain in `Model(edges=...)`.
+`Regime(exit=Exit(...))` declares a move before the period's action. A regime has at
+most one exit; its parameters live under `exit`. Scheduled next-period transitions
+remain in `Model(edges=...)`.
 
 - `Exit(targets=..., rule=..., available=None, observes=())` names each source
   stakeholder's destination. A singleton uses the key `"self"`.
@@ -290,16 +291,9 @@ next-period transitions remain in `Model(edges=...)`.
 - Built-in `rule=Unilateral()` keeps the match only if every member is willing to stay;
   `rule=MutualConsent()` ends it only if every member is unwilling. A member is willing
   when its stay value is above its exit payoff, or equal to it under the default
-  `tie="stay"`; `tie="leave"` makes an indifferent member leave. A callable rule
-  explicitly declares Boolean `reads_outside_values` metadata and returns
-  `RuleResult(action=...)`, a scalar integer global alternative ID.
-
-A custom rule can request `Q_<stakeholder>` (`Q_self` for a singleton), `exit_payoffs`
-(exit name to member to value), `availability`, `alternative_ids`, `pareto_weights`, and
-ordinary named source states, helpers and parameters. Stay IDs follow the flattened
-C-order action product; exit IDs follow in declaration order. Invalid IDs are errors.
-Custom multi-exit choices use one shared authored rule; competing rules do not define an
-arbitration order.
+  `tie="stay"`; `tie="leave"` makes an indifferent member leave. Among the kept stay
+  actions the household takes its Pareto-weighted argmax; with none kept, the exit is
+  taken.
 
 `available` reads states, parameters and observed shocks, and precedes unsafe benchmark
 evaluation. `observes` adds target information available at the exit choice. Hidden

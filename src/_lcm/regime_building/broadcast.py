@@ -681,7 +681,7 @@ def root_functions(
         | {
             "__".join(path): function
             for path, function in exit_functions(
-                exits=regime.exits, phase=phase
+                declaration=regime.exit, phase=phase
             ).items()
         }
     )

@@ -514,19 +514,17 @@ def _exit_model(
         regimes={
             "source": Regime(
                 functions={"utility": _source_utility},
-                exits={
-                    "leave": Exit(
-                        targets={
-                            "self": ExitTarget(
-                                regime="target",
-                                projection={"wealth": projection},
-                                utility_adjustment=adjustment,
-                            )
-                        },
-                        rule=Unilateral(),
-                        available=available,
-                    )
-                },
+                exit=Exit(
+                    targets={
+                        "self": ExitTarget(
+                            regime="target",
+                            projection={"wealth": projection},
+                            utility_adjustment=adjustment,
+                        )
+                    },
+                    rule=Unilateral(),
+                    available=available,
+                ),
             ),
             "target": Regime(functions={"utility": _stay}),
         },

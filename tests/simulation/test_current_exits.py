@@ -40,7 +40,6 @@ from lcm import (
     Periods,
     Phased,
     Regime,
-    RuleResult,
     categorical,
 )
 from lcm.exceptions import (
@@ -66,7 +65,7 @@ from tests.simulation.test_current_iid_overrides import (
     _participation_initial,
     _participation_model,
 )
-from tests.solution.test_public_exit_queries import _household, _rule_model, _StrictRule
+from tests.solution.test_public_exit_queries import _household, _rule_model
 
 
 @categorical(ordered=False)
@@ -84,13 +83,6 @@ class _Binary:
 @categorical(ordered=False)
 class _OnlySource:
     source: ScalarInt
-
-
-@categorical(ordered=False)
-class _ThreeRegimes:
-    source: ScalarInt
-    target: ScalarInt
-    unread: ScalarInt
 
 
 @categorical(ordered=False)
@@ -220,20 +212,18 @@ def test_mover_rows_publish_original_current_shocks(
                 functions={"utility": _source_shock_flow},
                 shocks=("innovation",),
                 state_transitions={"wealth": _shock_location} if n_periods > 1 else {},
-                exits={
-                    "leave": Exit(
-                        targets={
-                            "self": ExitTarget(
-                                regime="target",
-                                projection={"wealth": _project_shock_wealth}
-                                if target_reads_shock
-                                else {},
-                            )
-                        },
-                        rule=Unilateral(),
-                        available=_first_period,
-                    )
-                },
+                exit=Exit(
+                    targets={
+                        "self": ExitTarget(
+                            regime="target",
+                            projection={"wealth": _project_shock_wealth}
+                            if target_reads_shock
+                            else {},
+                        )
+                    },
+                    rule=Unilateral(),
+                    available=_first_period,
+                ),
             ),
             "target": Regime(
                 states={"wealth": LinSpacedGrid(start=0, stop=20, n_points=3)}
@@ -416,19 +406,17 @@ def _hidden_offer_model(
             "source": Regime(
                 functions={"utility": _stay},
                 shocks=("unused",) if permit_unused else (),
-                exits={
-                    "leave": Exit(
-                        targets={
-                            "self": ExitTarget(
-                                regime="target",
-                                projection={},
-                                utility_adjustment=_adjustment,
-                            )
-                        },
-                        rule=Unilateral(),
-                        observes=("offer",) if observed else (),
-                    )
-                },
+                exit=Exit(
+                    targets={
+                        "self": ExitTarget(
+                            regime="target",
+                            projection={},
+                            utility_adjustment=_adjustment,
+                        )
+                    },
+                    rule=Unilateral(),
+                    observes=("offer",) if observed else (),
+                ),
             ),
             "target": Regime(
                 functions={"utility": _target},
@@ -569,18 +557,16 @@ def _dated_override_model() -> Model:
             ),
             "source": Regime(
                 functions={"utility": _stay},
-                exits={
-                    "leave": Exit(
-                        targets={
-                            "self": ExitTarget(
-                                regime="target",
-                                projection={},
-                                utility_adjustment=_adjustment,
-                            )
-                        },
-                        rule=Unilateral(),
-                    )
-                },
+                exit=Exit(
+                    targets={
+                        "self": ExitTarget(
+                            regime="target",
+                            projection={},
+                            utility_adjustment=_adjustment,
+                        )
+                    },
+                    rule=Unilateral(),
+                ),
             ),
             "target": Regime(
                 functions={"utility": _target},
@@ -703,12 +689,10 @@ def test_target_only_correlated_physical_frame_uses_mapped_producer(
         regimes={
             "source": Regime(
                 functions={"utility": _stay},
-                exits={
-                    "leave": Exit(
-                        targets={"self": ExitTarget(regime="target", projection={})},
-                        rule=Unilateral(),
-                    )
-                },
+                exit=Exit(
+                    targets={"self": ExitTarget(regime="target", projection={})},
+                    rule=Unilateral(),
+                ),
             ),
             "target": Regime(
                 functions={"utility": _correlated_override_utility},
@@ -797,17 +781,15 @@ def test_shared_physical_override_transports_recovered_base_to_changed_law() -> 
                 states={"location": LinSpacedGrid(start=0, stop=1, n_points=2)},
                 functions={"utility": _shared_source_flow},
                 shocks=("shared",),
-                exits={
-                    "leave": Exit(
-                        targets={
-                            "self": ExitTarget(
-                                regime="target",
-                                projection={"location": _mapped_location},
-                            )
-                        },
-                        rule=Unilateral(),
-                    )
-                },
+                exit=Exit(
+                    targets={
+                        "self": ExitTarget(
+                            regime="target",
+                            projection={"location": _mapped_location},
+                        )
+                    },
+                    rule=Unilateral(),
+                ),
             ),
             "target": Regime(
                 states={"location": LinSpacedGrid(start=10, stop=11, n_points=2)},
@@ -1125,9 +1107,9 @@ def test_simulated_formation_keeps_nested_mapped_lagged_outside_states() -> None
 @pytest.mark.coverage(
     backends=("cpu", "gpu-small", "gpu-large"), precisions="representative"
 )
-def test_hidden_destination_taste_acts_after_custom_exit_without_repricing() -> None:
+def test_hidden_destination_taste_acts_after_strict_exit_without_repricing() -> None:
     """Source prices log4, commits, then target draws its own unshocked action."""
-    model = _rule_model(rule=_StrictRule(), target_taste=True)
+    model = _rule_model(rule=Unilateral(tie="leave"), target_taste=True)
     solution = model.solve(params={}, log_level="off", runtime_checks=False)
     assert_array_almost_equal(
         solution.values[0]["single_f"], np.log(4.0), decimal=DECIMAL_PRECISION
@@ -1184,12 +1166,10 @@ def test_source_taste_keeps_dissolution_as_fallback_in_public_replay(
                 actions={"choice": DiscreteGrid(values=jnp.asarray([0, 1]))},
                 functions={"utility": _choice_value},
                 taste_shocks=ExtremeValueTasteShocks(),
-                exits={
-                    "leave": Exit(
-                        targets={"self": ExitTarget(regime="target", projection={})},
-                        rule=Unilateral(),
-                    )
-                },
+                exit=Exit(
+                    targets={"self": ExitTarget(regime="target", projection={})},
+                    rule=Unilateral(),
+                ),
             ),
             "target": Regime(functions={"utility": _two if fallback else _solve_flow}),
         },
@@ -1235,18 +1215,16 @@ def test_source_taste_freezes_one_consent_choice_before_target_action() -> None:
                 actions={"choice": DiscreteGrid(values=jnp.asarray([0, 1]))},
                 functions={"utility": _double_choice},
                 taste_shocks=ExtremeValueTasteShocks(),
-                exits={
-                    "marry": Exit(
-                        targets={
-                            "self": ExitTarget(regime="target", role="f", projection={})
-                        },
-                        rule=Consent(
-                            counterparty=Counterparty(
-                                regime="counterparty", role="m", projection={}
-                            )
-                        ),
-                    )
-                },
+                exit=Exit(
+                    targets={
+                        "self": ExitTarget(regime="target", role="f", projection={})
+                    },
+                    rule=Consent(
+                        counterparty=Counterparty(
+                            regime="counterparty", role="m", projection={}
+                        )
+                    ),
+                ),
             ),
             "counterparty": Regime(functions={"utility": _zero}),
             "target": Regime(
@@ -1338,17 +1316,6 @@ def _return_fee() -> float:
     return -0.5
 
 
-class _RouteOnce:
-    """Choose an available current move without recursive outside-policy pricing."""
-
-    reads_outside_values = False
-
-    def __call__(self, *, period: ScalarInt, alternative_ids: IntND) -> RuleResult:
-        return RuleResult(
-            action=jnp.where(period == 0, alternative_ids[-1], alternative_ids[0])
-        )
-
-
 def _opposing_model(*, rule: ExitRule, reverse: bool = False) -> Model:
     grid = LinSpacedGrid(start=0, stop=100, n_points=3)
     regimes = {
@@ -1356,37 +1323,33 @@ def _opposing_model(*, rule: ExitRule, reverse: bool = False) -> Model:
             functions={"utility": _x_flow},
             states={"x": grid},
             state_transitions={"x": _next_x},
-            exits={
-                "outward": Exit(
-                    targets={
-                        "self": ExitTarget(
-                            regime="target",
-                            projection={"y": _into_target},
-                            utility_adjustment=_adjustment,
-                        )
-                    },
-                    rule=rule,
-                    available=_first_period,
-                )
-            },
+            exit=Exit(
+                targets={
+                    "self": ExitTarget(
+                        regime="target",
+                        projection={"y": _into_target},
+                        utility_adjustment=_adjustment,
+                    )
+                },
+                rule=rule,
+                available=_first_period,
+            ),
         ),
         "target": Regime(
             functions={"utility": _y_flow},
             states={"y": grid},
             state_transitions={"y": _next_y},
-            exits={
-                "inward": Exit(
-                    targets={
-                        "self": ExitTarget(
-                            regime="source",
-                            projection={"x": _into_source},
-                            utility_adjustment=_return_fee,
-                        )
-                    },
-                    rule=rule,
-                    available=_first_period,
-                )
-            },
+            exit=Exit(
+                targets={
+                    "self": ExitTarget(
+                        regime="source",
+                        projection={"x": _into_source},
+                        utility_adjustment=_return_fee,
+                    )
+                },
+                rule=rule,
+                available=_first_period,
+            ),
         ),
         "source_done": Regime(functions={"utility": _x_flow}, states={"x": grid}),
         "target_done": Regime(functions={"utility": _y_flow}, states={"y": grid}),
@@ -1409,101 +1372,8 @@ def test_reciprocal_unilateral_exits_refuse_the_public_participating_cycle() -> 
         _opposing_model(rule=Unilateral())
 
 
-@pytest.mark.coverage(
-    backends=("cpu", "gpu-small", "gpu-large"), precisions="representative"
-)
-@pytest.mark.parametrize("reverse", [False, True])
-def test_opposing_public_exits_advance_only_the_final_actor(*, reverse: bool) -> None:
-    """Original occupants move once, pay once, then use final scheduled laws."""
-    model = _opposing_model(rule=_RouteOnce(), reverse=reverse)
-    params = {"discount_factor": 0.0}
-    solution = model.solve(params=params, log_level="off", runtime_checks=False)
-    frame = model.simulate(
-        params=params,
-        solution=solution,
-        initial_conditions={
-            "period": jnp.zeros(2, dtype=jnp.int32),
-            "regime_id": jnp.asarray([0, 1], dtype=jnp.int32),
-            "x": jnp.asarray([2.0, 0.0]),
-            "y": jnp.asarray([0.0, 6.0]),
-        },
-        seed=17,
-        log_level="off",
-        runtime_checks=False,
-    ).to_dataframe(use_categorical_codes=True)
-    entry = frame.query("period == 0").sort_values("subject_id")
-    final = frame.query("period == 1").sort_values("subject_id")
-    np.testing.assert_array_equal(entry["regime_name"], ["target", "source"])
-    np.testing.assert_array_equal(final["regime_name"], ["target_done", "source_done"])
-    assert_array_almost_equal(entry["y"].iloc[0], 11.0, decimal=DECIMAL_PRECISION)
-    assert_array_almost_equal(entry["x"].iloc[1], 23.0, decimal=DECIMAL_PRECISION)
-    assert_array_almost_equal(final["y"].iloc[0], 13.0, decimal=DECIMAL_PRECISION)
-    assert_array_almost_equal(final["x"].iloc[1], 24.0, decimal=DECIMAL_PRECISION)
-    assert_array_almost_equal(entry["value"], [10.75, 22.5], decimal=DECIMAL_PRECISION)
-    assert_array_almost_equal(final["value"], [13.0, 24.0], decimal=DECIMAL_PRECISION)
-
-
-class _StayWithoutOutside:
-    """The target's custom Full rule does not constrain its Participating policy."""
-
-    reads_outside_values = False
-
-    def __call__(self, *, alternative_ids: jax.Array) -> RuleResult:
-        return RuleResult(action=alternative_ids[0])
-
-
 def _two() -> float:
     return 2.0
-
-
-@pytest.mark.coverage(
-    backends=("cpu", "gpu-small", "gpu-large"), precisions="representative"
-)
-def test_incoming_participating_actor_does_not_create_an_original_full_query() -> None:
-    """A destination's unread custom outside option creates no extra query context."""
-    model = Model(
-        regimes={
-            "source": Regime(
-                functions={"utility": _solve_flow},
-                exits={
-                    "leave": Exit(
-                        targets={"self": ExitTarget(regime="target", projection={})},
-                        rule=Unilateral(),
-                    )
-                },
-            ),
-            "target": Regime(
-                functions={"utility": _two},
-                exits={
-                    "unread": Exit(
-                        targets={"self": ExitTarget(regime="unread", projection={})},
-                        rule=_StayWithoutOutside(),
-                    )
-                },
-            ),
-            "unread": Regime(functions={"utility": _two}),
-        },
-        n_periods=1,
-        regime_id_class=_ThreeRegimes,
-        initial_nodes=InitialNodes(by_period={0: "source"}),
-        edges={},
-    )
-    solution = model.solve(params={}, log_level="off", runtime_checks=False)
-    assert set(solution.values[0]) == {"source"}
-    assert not model._regimes["unread"].simulation.Q_and_F
-    frame = model.simulate(
-        params={},
-        solution=solution,
-        initial_conditions={
-            "period": jnp.zeros(1, dtype=jnp.int32),
-            "regime_id": jnp.zeros(1, dtype=jnp.int32),
-        },
-        seed=17,
-        log_level="off",
-        runtime_checks=False,
-    ).to_dataframe(use_categorical_codes=True)
-    np.testing.assert_array_equal(frame["regime_name"], "target")
-    assert_array_almost_equal(frame["value"], 2.0, decimal=DECIMAL_PRECISION)
 
 
 def _solve_flow() -> float:
@@ -1527,12 +1397,10 @@ def test_public_exit_replay_uses_simulation_phase_helper_closure() -> None:
         regimes={
             "source": Regime(
                 functions={"utility": _solve_flow},
-                exits={
-                    "leave": Exit(
-                        targets={"self": ExitTarget(regime="target", projection={})},
-                        rule=Unilateral(),
-                    )
-                },
+                exit=Exit(
+                    targets={"self": ExitTarget(regime="target", projection={})},
+                    rule=Unilateral(),
+                ),
             ),
             "target": Regime(
                 functions={

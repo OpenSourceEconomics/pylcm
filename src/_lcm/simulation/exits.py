@@ -185,7 +185,7 @@ def install_exit_simulation_queries(
     roots = {
         (owner, period)
         for owner, period in original_actors
-        if contexts[owner].user_regimes_at(period=period)[owner].exits
+        if contexts[owner].user_regimes_at(period=period)[owner].exit is not None
         or contexts[owner].participation_queries.get(period)
     }
     full_queries = {}
@@ -548,15 +548,15 @@ class OriginalExitDecision:
                 adjustments[query] = (
                     jnp.asarray(0.0)
                     if helper is None
-                    else jax.lax.cond(
+                    else jnp.where(
                         selected,
-                        lambda helper=helper, operands=operands: helper(
+                        helper(
                             **{
                                 name: operands[name]
                                 for name in signature(helper).parameters
                             }
                         ),
-                        lambda: jnp.asarray(0.0),
+                        0.0,
                     )
                 )
         return answer, _frame_output(frame=frame), projections, adjustments

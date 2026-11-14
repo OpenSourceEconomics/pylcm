@@ -105,7 +105,7 @@ class _SlotsBesideFunctions(TypedDict, total=False):
     solver: _solvers.Solver
     taste_shocks: ExtremeValueTasteShocks | None
     shocks: tuple[ShockGroupName, ...]
-    exits: Mapping[str, Exit]
+    exit: Exit | None
     koopmans_aggregator: UserFunction | Phased | Decoupled | None
     certainty_equivalent: CertaintyEquivalent | None
     description: str
@@ -329,8 +329,8 @@ class Regime:
     groups carry an axis and which are integrated out.
     """
 
-    exits: Mapping[str, Exit] = field(default_factory=lambda: MappingProxyType({}))
-    """Named current-period choices to mapped destination policies."""
+    exit: Exit | None = None
+    """Current-period move to mapped destination policies, before the action."""
 
     description: str = ""
     """Description of the regime."""
@@ -485,7 +485,6 @@ class Regime:
         self._make_field_immutable(name="derived_categoricals")
         self._make_field_immutable(name="value_constraints")
         self._make_field_immutable(name="same_period_refs")
-        self._make_field_immutable(name="exits")
 
     def _lower_value_dependent_declarations(self) -> None:
         """Derive the engine-facing views of the collective declarations.

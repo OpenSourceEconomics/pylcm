@@ -179,9 +179,12 @@ unchanged. The solvers keep the derivative rules they use themselves.
 - Node rules are `Product`, `MonteCarlo`, `QuasiMonteCarlo` and `UserNodes`; thin a
   group of several shocks with `QuasiMonteCarlo`. `UserNodes` with a negative weight
   raises `ShockDeclarationError` when it is declared.
-- `Regime(exits={name: Exit(...)})` declares a value-dependent move in the current
-  period, before the action, with `ExitTarget` destinations and a `"unilateral"`,
-  `"mutual"`, `Consent` or custom rule; see
+- `Regime(exit=Exit(...))` declares a value-dependent move in the current
+  period, before the action, with `ExitTarget` destinations and a
+  `Unilateral(tie=...)`, `MutualConsent(tie=...)` or `Consent` rule. `tie` says what
+  a member indifferent between staying and leaving does: `"stay"` (default) or
+  `"leave"`. Its parameters live under `exit`. With runtime checks on, a NaN
+  household objective at a feasible action fails the solve; see
   [Current-period exits](docs/reference/model_and_regime.md#current-period-exits).
 - `simulate(shock_paths=...)` and tagged entries in mapping-form `initial_conditions`
   override current shocks: `BaseInnovations(values=...)` supplies innovations
@@ -292,7 +295,7 @@ unchanged. The solvers keep the derivative rules they use themselves.
 - A `Gate` predicate naming `V_target`, `V_target_<s>` or `D_target` raises the new
   `lcm.exceptions.GateReadsValueError` when the gate is declared, and
   `Gate(references=...)` raises `TypeError`. Declare a value comparison made in the
-  current period as an `Exit` in `Regime(exits=...)`, and one made on landing as a
+  current period as an `Exit` in `Regime(exit=...)`, and one made on landing as a
   `ParticipationCheck` with named `ParticipationRead`s in `Transition(participation=...)`; see
   [Gates route on states only](docs/user_guide/migrating_dated_regimes.md#gates-route-on-states-only).
 - `solve()` no longer publishes a `DISSOLUTION_FLAG` replay artifact, and

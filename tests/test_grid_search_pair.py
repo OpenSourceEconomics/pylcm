@@ -714,7 +714,9 @@ assert query_regimes
 assert ("couple", 1) in query_sites
 routes = _route_metadata(model)
 _assert_scenario_identity(spec=spec, routes=routes)
-exit_owners = {name for name, regime in model.user_regimes.items() if regime.exits}
+exit_owners = {
+    name for name, regime in model.user_regimes.items() if regime.exit is not None
+}
 participation_owners = {
     name for name, transition in model.declared_transitions["solve"].items()
     if transition.participation

@@ -321,7 +321,7 @@ Model(
 - A gate predicate reads target states, params, `period` and `age`, never a value: an
   argument named `V_target`, `V_target_<s>` or `D_target` raises `GateReadsValueError`
   when the `Gate` is declared, and `Gate` takes no `references`. A move decided by
-  comparing values is an `Exit` in the source's `Regime(exits=...)` (current period) or
+  comparing values is an `Exit` in the source's `Regime(exit=...)` (current period) or
   a `ParticipationCheck` in `Transition(participation=...)` with named `ParticipationRead`s (on
   landing). The Boolean-dtype requirement is checked **at evaluation**, i.e. on the
   first `solve()`, not at build.

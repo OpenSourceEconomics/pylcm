@@ -9,7 +9,7 @@ whose guard is false reads stand-in inputs and its answer is discarded.
 import re
 from collections.abc import Callable, Mapping
 from dataclasses import replace
-from typing import ClassVar, cast
+from typing import cast
 
 import jax
 import jax.numpy as jnp
@@ -30,7 +30,7 @@ from lcm import (
     Model,
     Periods,
     Regime,
-    RuleResult,
+    Unilateral,
     categorical,
 )
 from lcm.exceptions import RegimeInitializationError
@@ -192,47 +192,45 @@ def _model(
                 "experience": _next_experience,
                 **(keep_level if member == "f" else {}),
             },
-            exits={
-                "marry": Exit(
-                    targets={
-                        "self": ExitTarget(
-                            regime="couple",
-                            role=member,
-                            projection={
-                                "experience_f": couple_projection
-                                if member == "f"
-                                else _experience,
-                                "experience_m": _experience,
-                                **(
-                                    {
-                                        "level": _flipped_level
-                                        if member == "f"
-                                        else _no_level
-                                    }
-                                    if wage_level
-                                    else {}
-                                ),
-                            },
-                        )
-                    },
-                    rule=Consent(
-                        counterparty=Counterparty(
-                            regime="single_m" if member == "f" else "single_f",
-                            role="m" if member == "f" else "f",
-                            projection={
-                                "experience": _experience,
-                                **(
-                                    {"level": _no_level}
-                                    if wage_level and member == "m"
-                                    else {}
-                                ),
-                            },
-                        )
-                    ),
-                    available=marry_available if member == "f" else None,
-                    observes=("wage_f", "wage_m", "match"),
-                )
-            },
+            exit=Exit(
+                targets={
+                    "self": ExitTarget(
+                        regime="couple",
+                        role=member,
+                        projection={
+                            "experience_f": couple_projection
+                            if member == "f"
+                            else _experience,
+                            "experience_m": _experience,
+                            **(
+                                {
+                                    "level": _flipped_level
+                                    if member == "f"
+                                    else _no_level
+                                }
+                                if wage_level
+                                else {}
+                            ),
+                        },
+                    )
+                },
+                rule=Consent(
+                    counterparty=Counterparty(
+                        regime="single_m" if member == "f" else "single_f",
+                        role="m" if member == "f" else "f",
+                        projection={
+                            "experience": _experience,
+                            **(
+                                {"level": _no_level}
+                                if wage_level and member == "m"
+                                else {}
+                            ),
+                        },
+                    )
+                ),
+                available=marry_available if member == "f" else None,
+                observes=("wage_f", "wage_m", "match"),
+            ),
         )
         for member in ("f", "m")
     }
@@ -251,7 +249,7 @@ def _model(
                 **keep_level,
             },
             shocks=("wage_f", "wage_m", "match"),
-            exits={"dissolve": _dissolve()} if dissolution else {},
+            exit=_dissolve() if dissolution else None,
         ),
         **(_alone(experience=experience, work=work) if dissolution else {}),
     }
@@ -259,24 +257,22 @@ def _model(
         regimes[f"{name}_terminal"] = replace(
             regime,
             state_transitions={},
-            exits={
-                key: replace(
-                    declaration,
-                    targets={
-                        member: replace(target, regime=f"{target.regime}_terminal")
-                        for member, target in declaration.targets.items()
-                    },
-                    rule=replace(
-                        declaration.rule,
-                        counterparty=replace(
-                            declaration.rule.counterparty,
-                            regime=f"{declaration.rule.counterparty.regime}_terminal",
-                        ),
+            exit=replace(
+                regime.exit,
+                targets={
+                    member: replace(target, regime=f"{target.regime}_terminal")
+                    for member, target in regime.exit.targets.items()
+                },
+                rule=replace(
+                    regime.exit.rule,
+                    counterparty=replace(
+                        regime.exit.rule.counterparty,
+                        regime=f"{regime.exit.rule.counterparty.regime}_terminal",
                     ),
-                )
-                for key, declaration in regime.exits.items()
-                if isinstance(declaration.rule, Consent)
-            },
+                ),
+            )
+            if regime.exit is not None and isinstance(regime.exit.rule, Consent)
+            else None,
         )
     law = Normal(mu=0.0, sigma=0.3) if match_law is None else match_law
     match = (
@@ -334,30 +330,6 @@ def _experience_m(experience_m: IntND) -> IntND:
     return experience_m
 
 
-class _StrictParticipation:
-    """Keep the couple's best action that both spouses prefer to dissolving."""
-
-    reads_outside_values: ClassVar[bool] = True
-
-    def __call__(
-        self,
-        *,
-        Q_f: FloatND,
-        Q_m: FloatND,
-        exit_payoffs: Mapping[str, Mapping[str, FloatND]],
-        alternative_ids: IntND,
-        pareto_weights: Mapping[str, FloatND],
-    ) -> RuleResult:
-        q_f, q_m = Q_f.reshape(-1), Q_m.reshape(-1)
-        outside = exit_payoffs["dissolve"]
-        kept = (q_f > outside["f"]) & (q_m > outside["m"])
-        objective = pareto_weights["f"] * q_f + pareto_weights["m"] * q_m
-        stay = jnp.argmax(jnp.where(kept, objective, -jnp.inf))
-        return RuleResult(
-            action=alternative_ids[jnp.where(jnp.any(kept), stay, q_f.size)]
-        )
-
-
 def _dissolve() -> Exit:
     return Exit(
         targets={
@@ -369,7 +341,7 @@ def _dissolve() -> Exit:
             )
             for member in ("f", "m")
         },
-        rule=_StrictParticipation(),
+        rule=Unilateral(tie="leave"),
     )
 
 

@@ -3,15 +3,16 @@
 import jax.numpy as jnp
 import numpy as np
 
-from lcm import AgeGrid, Exit, ExitTarget, Model
+from lcm import AgeGrid, Exit, ExitTarget, Model, Unilateral
 from lcm.solver_api import ResultRetention
 from lcm.typing import FloatND
 from tests.regime_building.test_collective_regime_simulate import (
     _DISSOLUTION_PARAMS,
     DissolutionRegimeId,
+    _dissolution_cost_f,
+    _dissolution_cost_m,
     _identity_wage,
     _make_dissolution_regimes,
-    _ParticipationRule,
 )
 
 
@@ -23,17 +24,21 @@ def test_public_current_exit_keeps_the_nonprimary_members_own_projection() -> No
     """The male row lands at wage three while the female row keeps wage two."""
     regimes = _make_dissolution_regimes()
     regimes["married_ir"] = regimes["married_ir"].replace(
-        exits={
-            "dissolve": Exit(
-                targets={
-                    "f": ExitTarget(
-                        regime="single_f", projection={"wage": _identity_wage}
-                    ),
-                    "m": ExitTarget(regime="single_m", projection={"wage": _male_wage}),
-                },
-                rule=_ParticipationRule(),
-            )
-        }
+        exit=Exit(
+            targets={
+                "f": ExitTarget(
+                    regime="single_f",
+                    projection={"wage": _identity_wage},
+                    utility_adjustment=_dissolution_cost_f,
+                ),
+                "m": ExitTarget(
+                    regime="single_m",
+                    projection={"wage": _male_wage},
+                    utility_adjustment=_dissolution_cost_m,
+                ),
+            },
+            rule=Unilateral(),
+        )
     )
     model = Model(
         regimes=regimes,
@@ -76,5 +81,5 @@ def test_public_current_exit_keeps_the_nonprimary_members_own_projection() -> No
     )
     np.testing.assert_array_equal(acting["wage"], [2.0, 3.0])
     # The actual male utility is 1 * work + 0 * wage, with zero terminal value.
-    # The wife's threshold slack is not subtracted from her outside payment.
-    np.testing.assert_array_equal(acting["value"], [5.5, 1.0])
+    # Each member's exit cost is subtracted from the outside payment.
+    np.testing.assert_allclose(acting["value"], [5.0, 0.8], rtol=1e-6)

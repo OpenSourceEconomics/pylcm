@@ -1,18 +1,18 @@
-"""Public exits declare current-period choices and immutable mapped targets."""
+"""A public exit declares a current-period choice and immutable mapped targets."""
 
 from collections.abc import Mapping
-from dataclasses import FrozenInstanceError, dataclass
-from typing import ClassVar
+from dataclasses import FrozenInstanceError
+from typing import cast
 
 import numpy as np
 import pytest
 
 import lcm
 from _lcm.grids import Grid
-from lcm import Consent, Counterparty, Exit, ExitTarget, Model, RuleResult
+from lcm import Consent, Counterparty, Exit, ExitTarget, Model
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.exits import ExitRule, MutualConsent, Unilateral
-from lcm.typing import BoolND, FloatND, IntND, UserParams
+from lcm.typing import BoolND, FloatND, UserParams
 
 _UNILATERAL = Unilateral()
 
@@ -40,14 +40,14 @@ def _utility() -> float:
     return 1.0
 
 
-def test_regime_replacement_preserves_its_named_exits() -> None:
+def test_regime_replacement_preserves_its_exit() -> None:
     """Replacing an economic helper retains its authored exit declaration."""
     declaration = Exit(
         targets={"self": ExitTarget(regime="single", projection={})},
         rule=Unilateral(),
     )
-    regime = lcm.Regime(functions={"utility": _utility}, exits={"leave": declaration})
-    assert regime.replace(description="another label").exits["leave"] is declaration
+    regime = lcm.Regime(functions={"utility": _utility}, exit=declaration)
+    assert regime.replace(description="another label").exit is declaration
 
 
 def test_phased_projection_snapshots_both_settlements() -> None:
@@ -62,15 +62,6 @@ def test_phased_projection_snapshots_both_settlements() -> None:
     assert isinstance(target.projection, lcm.Phased)
     assert target.projection.solve["wealth"] is _half
     assert target.projection.simulate["wealth"] is _half
-
-
-def test_custom_exit_rule_requires_outside_value_declaration() -> None:
-    """A callable cannot hide whether it changes its source participation DAG."""
-    with pytest.raises(RegimeInitializationError, match="reads_outside_values"):
-        Exit(
-            targets={"self": ExitTarget(regime="single", projection={})},
-            rule=lambda: RuleResult(action=0),
-        )
 
 
 @pytest.mark.parametrize("kind", ["empty", "observes", "target_name"])
@@ -100,25 +91,10 @@ def test_collective_exit_names_every_source_member() -> None:
                     utilities={"f": _utility, "m": _utility}
                 )
             },
-            exits={
-                "divorce": Exit(
-                    targets={"f": ExitTarget(regime="single", projection={})},
-                    rule=Unilateral(),
-                )
-            },
-        )
-
-
-def test_multiple_builtin_exits_need_an_explicit_custom_rule() -> None:
-    """An implicit built-in rule cannot choose which outside benchmark to apply."""
-    declaration = Exit(
-        targets={"self": ExitTarget(regime="single", projection={})},
-        rule=Unilateral(),
-    )
-    with pytest.raises(RegimeInitializationError, match="built-in"):
-        lcm.Regime(
-            functions={"utility": _utility},
-            exits={"one": declaration, "two": declaration},
+            exit=Exit(
+                targets={"f": ExitTarget(regime="single", projection={})},
+                rule=Unilateral(),
+            ),
         )
 
 
@@ -161,22 +137,20 @@ def _declared_model(
         regimes={
             "source": Regime(
                 functions={"utility": _utility},
-                exits={
-                    "leave": Exit(
-                        targets={
-                            "self": ExitTarget(
-                                regime="target",
-                                projection=Phased(
-                                    solve={"wealth": _settlement},
-                                    simulate={"wealth": _realized_settlement},
-                                ),
-                                utility_adjustment=_cost,
-                            )
-                        },
-                        rule=rule,
-                        available=_available,
-                    )
-                },
+                exit=Exit(
+                    targets={
+                        "self": ExitTarget(
+                            regime="target",
+                            projection=Phased(
+                                solve={"wealth": _settlement},
+                                simulate={"wealth": _realized_settlement},
+                            ),
+                            utility_adjustment=_cost,
+                        )
+                    },
+                    rule=rule,
+                    available=_available,
+                ),
             ),
             "target": Regime(functions={"utility": _wealth_utility}),
         },
@@ -195,18 +169,16 @@ def _declared_model(
 def test_exit_only_state_and_phase_parameters_remain_declared() -> None:
     """Both settlement phases and their free inputs remain in the template."""
     model = _declared_model()
-    assert model.get_params_template()["source"]["exits"] == {
-        "leave": {
-            "available": {"threshold": "FloatND"},
-            "targets": {
-                "self": {
-                    "projection": {
-                        "wealth": {"share": "FloatND", "realized_share": "FloatND"}
-                    },
-                    "utility_adjustment": {"cost": "FloatND"},
-                }
-            },
-        }
+    assert model.get_params_template()["source"]["exit"] == {
+        "available": {"threshold": "FloatND"},
+        "targets": {
+            "self": {
+                "projection": {
+                    "wealth": {"share": "FloatND", "realized_share": "FloatND"}
+                },
+                "utility_adjustment": {"cost": "FloatND"},
+            }
+        },
     }
     assert "wealth" in model.user_regimes["source"].states
 
@@ -242,16 +214,14 @@ def test_exit_settlement_reads_physical_grid_values_and_returns_target_codes() -
         regimes={
             "source": Regime(
                 functions={"utility": _utility},
-                exits={
-                    "leave": Exit(
-                        targets={
-                            "self": ExitTarget(
-                                regime="target", projection={"wealth": _switch_wealth}
-                            )
-                        },
-                        rule=Unilateral(),
-                    )
-                },
+                exit=Exit(
+                    targets={
+                        "self": ExitTarget(
+                            regime="target", projection={"wealth": _switch_wealth}
+                        )
+                    },
+                    rule=Unilateral(),
+                ),
             ),
             "target": Regime(functions={"utility": _wealth_utility}),
         },
@@ -261,7 +231,9 @@ def test_exit_settlement_reads_physical_grid_values_and_returns_target_codes() -
         initial_nodes=InitialNodes(by_period={0: ("source", "target")}),
         edges={},
     )
-    projection = model.user_regimes["source"].exits["leave"].targets["self"].projection
+    projection = (
+        cast("Exit", model.user_regimes["source"].exit).targets["self"].projection
+    )
     assert isinstance(projection, Mapping)
     assert projection["wealth"](wealth=jnp.int32(1)) == 0
 
@@ -287,7 +259,7 @@ def test_exit_destination_must_be_a_complete_declared_policy_context(kind: str) 
             regimes={
                 "source": Regime(
                     functions={"utility": _wealth_utility},
-                    exits={"leave": Exit(targets={"self": target}, rule=Unilateral())},
+                    exit=Exit(targets={"self": target}, rule=Unilateral()),
                 ),
                 "target": Regime(
                     functions={
@@ -307,57 +279,26 @@ def test_exit_destination_must_be_a_complete_declared_policy_context(kind: str) 
         )
 
 
-def test_phase_normalization_binds_the_corresponding_exit_settlement() -> None:
-    """Canonical solve/simulate specs retain their own explicit settlement helper."""
-    from _lcm.regime_building.phases import normalize_regime_phases  # noqa: PLC0415
-
-    model = _declared_model()
-    phases = normalize_regime_phases(
-        model.user_regimes["source"], law=model.graph.laws["source"]
-    )
-    solve = phases.solution.exits["leave"].targets["self"].projection
-    simulate = phases.simulation.exits["leave"].targets["self"].projection
-    assert isinstance(solve, Mapping)
-    assert isinstance(simulate, Mapping)
-    assert solve["wealth"] is _settlement
-    assert simulate["wealth"] is _realized_settlement
-
-
 def test_fixed_exit_parameter_is_removed_from_the_runtime_template() -> None:
     """A fixed adjustment uses its own exact declaration slot."""
     model = _declared_model(
         fixed_params={
             "source": {
-                "exits": {
-                    "leave": {
-                        "targets": {"self": {"utility_adjustment": {"cost": 0.0}}}
-                    }
-                }
+                "exit": {"targets": {"self": {"utility_adjustment": {"cost": 0.0}}}}
             }
         }
     )
-    template = model.get_params_template()["source"]["exits"]
+    template = model.get_params_template()["source"]["exit"]
     assert template == {
-        "leave": {
-            "available": {"threshold": "FloatND"},
-            "targets": {
-                "self": {
-                    "projection": {
-                        "wealth": {"share": "FloatND", "realized_share": "FloatND"}
-                    },
-                }
-            },
-        }
+        "available": {"threshold": "FloatND"},
+        "targets": {
+            "self": {
+                "projection": {
+                    "wealth": {"share": "FloatND", "realized_share": "FloatND"}
+                },
+            }
+        },
     }
-
-
-def test_rule_result_transports_a_dynamic_id_through_jit() -> None:
-    """A traceable custom rule returns its stable action ID as an ordinary pytree."""
-    import jax  # noqa: PLC0415
-    import jax.numpy as jnp  # noqa: PLC0415
-
-    result = jax.jit(lambda action: RuleResult(action=action))(jnp.int32(7))
-    assert int(result.action) == 7
 
 
 def test_consent_snapshots_its_counterparty_projection() -> None:
@@ -369,69 +310,6 @@ def test_consent_snapshots_its_counterparty_projection() -> None:
     projection.clear()
     assert isinstance(consent.counterparty.projection, Mapping)
     assert consent.counterparty.projection["wealth"] is _half
-
-
-def test_exit_name_is_a_single_parameter_path_segment() -> None:
-    """Exit keys cannot be confused with nested parameter namespaces."""
-    declaration = Exit(
-        targets={"self": ExitTarget(regime="single", projection={})}, rule=Unilateral()
-    )
-    with pytest.raises(RegimeInitializationError, match=r"[Ee]xit"):
-        lcm.Regime(functions={"utility": _utility}, exits={"bad__name": declaration})
-
-
-@dataclass(frozen=True, slots=True)
-class _CustomRule:
-    reads_outside_values: ClassVar[bool] = True
-
-    def __call__(
-        self,
-        *,
-        wealth: FloatND,
-        Q_self: FloatND,  # noqa: ARG002 - exercise internal operand binding
-        exit_payoffs: Mapping[str, Mapping[str, FloatND]],  # noqa: ARG002
-        availability: Mapping[str, BoolND],  # noqa: ARG002
-        alternative_ids: IntND,
-        pareto_weights: Mapping[str, FloatND],  # noqa: ARG002
-        cutoff: FloatND,
-    ) -> RuleResult:
-        import jax.numpy as jnp  # noqa: PLC0415
-
-        return RuleResult(
-            action=jnp.where(wealth > cutoff, alternative_ids[-1], alternative_ids[0])
-        )
-
-
-def test_custom_rule_channels_are_not_runtime_parameters() -> None:
-    """Only authored scalar inputs enter a custom rule's declaration namespace."""
-    template = _declared_model(rule=_CustomRule()).get_params_template()["source"][
-        "exits"
-    ]
-    assert isinstance(template, dict)
-    assert isinstance(template["leave"], dict)
-    assert template["leave"]["rule"] == {"cutoff": "FloatND"}
-
-
-def test_custom_rule_metadata_survives_categorical_adaptation() -> None:
-    """A class-owned outside-value declaration remains valid after code adaptation."""
-    import jax.numpy as jnp  # noqa: PLC0415
-
-    model = _declared_model(
-        rule=_CustomRule(), grid=lcm.DiscreteGrid(values=jnp.asarray([10.0, 20.0]))
-    )
-    rule = model.user_regimes["source"].exits["leave"].rule
-    assert callable(rule)
-    result = rule(
-        wealth=jnp.int32(1),
-        Q_self=jnp.zeros(1),
-        exit_payoffs={},
-        availability={},
-        alternative_ids=jnp.asarray([0, 7]),
-        pareto_weights={"self": jnp.asarray(1.0)},
-        cutoff=jnp.asarray(15.0),
-    )
-    assert isinstance(result, RuleResult)
-    assert int(result.action) == 7
 
 
 @pytest.mark.parametrize(
@@ -470,18 +348,16 @@ def test_consent_counterparty_is_a_coherent_declared_policy_context(kind: str) -
             regimes={
                 "source": lcm.Regime(
                     functions={"utility": _wealth_utility},
-                    exits={
-                        "marry": Exit(
-                            targets={
-                                "self": ExitTarget(
-                                    regime="couple",
-                                    role="f",
-                                    projection={"wealth": _half},
-                                )
-                            },
-                            rule=Consent(counterparty=counterparty),
-                        )
-                    },
+                    exit=Exit(
+                        targets={
+                            "self": ExitTarget(
+                                regime="couple",
+                                role="f",
+                                projection={"wealth": _half},
+                            )
+                        },
+                        rule=Consent(counterparty=counterparty),
+                    ),
                 ),
                 "other": lcm.Regime(
                     functions={"utility": _wealth_utility},
@@ -511,18 +387,6 @@ def test_consent_counterparty_is_a_coherent_declared_policy_context(kind: str) -
         )
 
 
-def test_fixed_custom_rule_input_uses_its_declared_slot() -> None:
-    """A fixed rule cutoff binds independently of internal value channels."""
-    model = _declared_model(
-        rule=_CustomRule(),
-        fixed_params={"source": {"exits": {"leave": {"rule": {"cutoff": 1.0}}}}},
-    )
-    exits = model.get_params_template()["source"]["exits"]
-    assert isinstance(exits, dict)
-    assert isinstance(exits["leave"], dict)
-    assert "rule" not in exits["leave"]
-
-
 def test_exit_settlement_phase_variation_is_reported() -> None:
     """Different solve and realised settlements prohibit invariant replay."""
     from _lcm.regime_building.phases import phase_variation_paths  # noqa: PLC0415
@@ -531,7 +395,7 @@ def test_exit_settlement_phase_variation_is_reported() -> None:
     paths = phase_variation_paths(
         user_regime=model.user_regimes["source"], law=model.graph.laws["source"]
     )
-    assert "exits['leave'].targets['self'].projection" in paths
+    assert "exit.targets['self'].projection" in paths
 
 
 def _exit_signal(*, eps: FloatND, signal_scale: FloatND) -> FloatND:
@@ -561,19 +425,17 @@ def test_exit_observed_shock_and_helper_reads_are_not_parameters() -> None:
             "source": lcm.Regime(
                 functions={"utility": _utility, "exit_signal": _exit_signal},
                 shocks=("innovation",),
-                exits={
-                    "leave": Exit(
-                        targets={
-                            "self": ExitTarget(
-                                regime="target",
-                                projection={},
-                                utility_adjustment=_signal_adjustment,
-                            )
-                        },
-                        rule=Unilateral(),
-                        available=_signal_available,
-                    )
-                },
+                exit=Exit(
+                    targets={
+                        "self": ExitTarget(
+                            regime="target",
+                            projection={},
+                            utility_adjustment=_signal_adjustment,
+                        )
+                    },
+                    rule=Unilateral(),
+                    available=_signal_available,
+                ),
             ),
             "target": lcm.Regime(functions={"utility": _utility}),
         },
@@ -590,11 +452,9 @@ def test_exit_observed_shock_and_helper_reads_are_not_parameters() -> None:
     )
     source = model.get_params_template()["source"]
     assert source["exit_signal"] == {"signal_scale": "FloatND"}
-    assert source["exits"] == {
-        "leave": {
-            "available": {"threshold": "FloatND"},
-            "targets": {"self": {"utility_adjustment": {"fee": "FloatND"}}},
-        }
+    assert source["exit"] == {
+        "available": {"threshold": "FloatND"},
+        "targets": {"self": {"utility_adjustment": {"fee": "FloatND"}}},
     }
 
 
@@ -634,14 +494,12 @@ def test_exit_declarations_enter_durable_model_identity(change: str) -> None:
         changed = replace(base, observes=("offer",))
     else:
         changed = replace(base, rule=MutualConsent())
-    regime = lcm.Regime(functions={"utility": _utility}, exits={"leave": base})
+    regime = lcm.Regime(functions={"utility": _utility}, exit=base)
     law = bind_regime_law(None)
     assert _semantic_fingerprint(
         _project_user_regime_declaration(regime, law=law)
     ) != _semantic_fingerprint(
-        _project_user_regime_declaration(
-            regime.replace(exits={"leave": changed}), law=law
-        )
+        _project_user_regime_declaration(regime.replace(exit=changed), law=law)
     )
 
 
@@ -669,13 +527,11 @@ def test_exit_time_only_availability_can_exclude_inactive_contexts(
         regimes={
             "source": lcm.Regime(
                 functions={"utility": _utility},
-                exits={
-                    "leave": Exit(
-                        targets={"self": ExitTarget(regime="later", projection={})},
-                        rule=Unilateral(),
-                        available=available,
-                    )
-                },
+                exit=Exit(
+                    targets={"self": ExitTarget(regime="later", projection={})},
+                    rule=Unilateral(),
+                    available=available,
+                ),
             ),
             "later": lcm.Regime(functions={"utility": _utility}),
         },
@@ -684,16 +540,4 @@ def test_exit_time_only_availability_can_exclude_inactive_contexts(
         initial_nodes=lcm.InitialNodes(by_period={0: "source", 1: "later"}),
         edges={"later": {"source": lcm.Periods(values=(1,))}},
     )
-    assert model.get_params_template()["source"]["exits"] == {
-        "leave": {"available": {}}
-    }
-
-
-def test_custom_rule_class_metadata_changes_model_identity(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The explicit outside-value declaration binds each model's decision DAG."""
-    first = _declared_model(rule=_CustomRule())
-    monkeypatch.setattr(_CustomRule, "reads_outside_values", False)
-    second = _declared_model(rule=_CustomRule())
-    assert first._model_structure_fingerprint != second._model_structure_fingerprint
+    assert model.get_params_template()["source"]["exit"] == {"available": {}}

@@ -258,8 +258,8 @@ class QueryNode:
     The context's plan indices then span the kept groups alone; every other
     group and every observation axis is drawn once per sample.
     """
-    exit_availability: tuple[Callable[..., PytreeValue], ...] = ()
-    """Availability predicates of the occupant's exits, when every exit has one."""
+    exit_availability: Callable[..., PytreeValue] | None = None
+    """Availability predicate of the occupant's exit, if it declares one."""
     draw_condition: int | None = None
     """Drawn plan position whose draws fall only where an exit is available.
 

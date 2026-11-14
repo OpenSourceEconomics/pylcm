@@ -1160,7 +1160,7 @@ def _ordinary_query_helper_roots(
                 for name, function in root_functions(
                     regime_name=regime_name, regime=user_regime, laws=laws, phase=phase
                 ).items()
-                if not name.startswith("exits__")
+                if not name.startswith("exit__")
             )
             for phase in ("solve", "simulate")
         }
@@ -1769,7 +1769,7 @@ class _CanonicalRegimeBuilder:
                 canonical_regimes=declared, contexts=solution_contexts
             )
         if not any(
-            regime.exits
+            regime.exit is not None
             or (
                 regime.stakeholders is not None
                 and any(solution_builds[name].context.current_iid_plans.values())

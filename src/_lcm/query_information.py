@@ -201,25 +201,18 @@ def _draw_available(
 
 def _exit_available(
     *,
-    predicates: tuple[Callable[..., PytreeValue], ...],
+    predicate: Callable[..., PytreeValue],
     arguments: QAndFKwargs,
     physical: Mapping[ShockName, FloatND | IntND],
 ) -> BoolND:
-    """Whether any exit is available at each node of one group's realisation."""
+    """Whether the exit is available at each node of one group's realisation."""
 
     def at_node(shocks: Mapping[ShockName, FloatND | IntND]) -> BoolND:
-        return jnp.any(
-            jnp.stack(
-                [
-                    jnp.asarray(
-                        call_with_declared_arguments(
-                            function=predicate, operands={**arguments, **shocks}
-                        )
-                    ).astype(bool)
-                    for predicate in predicates
-                ]
+        return jnp.asarray(
+            call_with_declared_arguments(
+                function=predicate, operands={**arguments, **shocks}
             )
-        )
+        ).astype(bool)
 
     return jax.vmap(at_node)(dict(physical))
 
@@ -1641,7 +1634,9 @@ class InformationQueryCell:
                     else _draw_available(
                         weights=weights,
                         available=_exit_available(
-                            predicates=node.exit_availability,
+                            predicate=cast(
+                                "Callable[..., PytreeValue]", node.exit_availability
+                            ),
                             arguments=arguments,
                             physical=site_frame.physical,
                         ),
