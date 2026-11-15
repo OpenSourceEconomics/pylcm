@@ -1,5 +1,6 @@
 """Discrete renegotiation follows a literal directional walk of stay policies."""
 
+import math
 import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass, replace
@@ -10,6 +11,7 @@ from typing import Literal
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from numpy.typing import NDArray
 
 import lcm
 import tests.conftest
@@ -24,9 +26,12 @@ from lcm import (
     InitialNodes,
     LinSpacedGrid,
     Model,
+    ParetoObjective,
     Periods,
+    Phased,
     ProjectedRegimeValue,
     Regime,
+    Renegotiate,
     SimulationResult,
     StakeholderRoute,
     Transition,
@@ -34,7 +39,12 @@ from lcm import (
     categorical,
     fixed_transition,
 )
-from lcm.exceptions import RegimeInitializationError, UnsupportedOperationError
+from lcm.exceptions import (
+    ExecutionPlanningError,
+    RegimeInitializationError,
+    ShockDeclarationError,
+    UnsupportedOperationError,
+)
 from lcm.typing import BoolND, FloatND, IntND, ScalarInt, StateName
 
 
@@ -723,3 +733,509 @@ def _gated_outside_simulation(*, execution_config: ExecutionConfig) -> Simulatio
         seed=659,
         log_level="off",
     )
+
+
+@categorical(ordered=False)
+class Household:
+    couple: ScalarInt
+    single_f: ScalarInt
+    single_m: ScalarInt
+
+
+@categorical(ordered=True)
+class OneNode:
+    only: ScalarInt
+
+
+@categorical(ordered=True)
+class TwoNodes:
+    low: ScalarInt
+    high: ScalarInt
+
+
+@categorical(ordered=True)
+class FourNodes:
+    low: ScalarInt
+    middle_low: ScalarInt
+    middle_high: ScalarInt
+    high: ScalarInt
+
+
+@dataclass(frozen=True, kw_only=True)
+class TableUtility:
+    values: tuple[tuple[float, ...], ...]
+    overflow: bool = False
+
+    def __call__(self, *, mu: IntND, choice: IntND) -> FloatND:
+        value = jnp.asarray(self.values, dtype=float)[mu, choice]
+        return value * jnp.exp(jnp.asarray(1000.0)) if self.overflow else value
+
+
+@dataclass(frozen=True, kw_only=True)
+class Feasibility:
+    values: tuple[tuple[bool, ...], ...]
+
+    def __call__(self, *, mu: IntND, choice: IntND) -> BoolND:
+        return jnp.asarray(self.values, dtype=bool)[mu, choice]
+
+
+@dataclass(frozen=True, kw_only=True)
+class Availability:
+    value: bool
+
+    def __call__(self) -> BoolND:
+        return jnp.asarray(self.value)
+
+
+def outside() -> float:
+    return 0.0
+
+
+@dataclass(frozen=True, kw_only=True)
+class NativeCase:
+    name: str
+    n: int
+    bad: int
+    kind: str
+    placement: str = "incumbent"
+    reflected: bool = False
+    tie: Literal["stay", "leave"] = "stay"
+    active: bool = True
+
+    @property
+    def undefined(self) -> bool:
+        return self.kind in {"undefined", "undefined_alt", "overflow"}
+
+
+CASES = (
+    NativeCase(name="one_finite_expression_weak", n=1, bad=0, kind="overflow"),
+    NativeCase(
+        name="one_finite_expression_strict", n=1, bad=0, kind="overflow", tie="leave"
+    ),
+    NativeCase(name="one_incumbent_weak", n=1, bad=0, kind="undefined"),
+    NativeCase(
+        name="one_roles_strict_inactive",
+        n=1,
+        bad=0,
+        kind="undefined",
+        reflected=True,
+        tie="leave",
+        active=False,
+    ),
+    NativeCase(
+        name="two_incumbent_finite_alternative",
+        n=2,
+        bad=0,
+        kind="undefined_alt",
+        tie="leave",
+    ),
+    NativeCase(
+        name="two_scanned_roles_finite_alternative",
+        n=2,
+        bad=1,
+        kind="undefined_alt",
+        placement="scanned",
+        reflected=True,
+    ),
+    NativeCase(
+        name="four_scanned_last", n=4, bad=3, kind="undefined", placement="scanned"
+    ),
+    NativeCase(
+        name="four_unused_required_raw",
+        n=4,
+        bad=3,
+        kind="undefined",
+        placement="unused",
+        reflected=True,
+    ),
+    NativeCase(
+        name="four_scanned_strict_inactive",
+        n=4,
+        bad=3,
+        kind="undefined",
+        placement="scanned",
+        tie="leave",
+        active=False,
+    ),
+    NativeCase(
+        name="four_incumbent_roles_finite_alternative",
+        n=4,
+        bad=0,
+        kind="undefined_alt",
+        reflected=True,
+        tie="leave",
+    ),
+    NativeCase(name="one_infeasible_poison_control", n=1, bad=0, kind="infeasible_alt"),
+    NativeCase(
+        name="four_infeasible_roles_control",
+        n=4,
+        bad=3,
+        kind="infeasible_alt",
+        placement="scanned",
+        reflected=True,
+        tie="leave",
+    ),
+    NativeCase(name="two_zero_first_weight_control", n=2, bad=0, kind="zero_first"),
+    NativeCase(
+        name="four_zero_second_weight_roles_inactive",
+        n=4,
+        bad=2,
+        kind="zero_second",
+        reflected=True,
+        tie="leave",
+        active=False,
+    ),
+    NativeCase(name="one_finite_weak_tie_control", n=1, bad=0, kind="finite"),
+    NativeCase(
+        name="two_finite_strict_roles_tie_control",
+        n=2,
+        bad=0,
+        kind="finite",
+        reflected=True,
+        tie="leave",
+    ),
+    NativeCase(
+        name="four_finite_inactive_control", n=4, bad=0, kind="finite", active=False
+    ),
+    NativeCase(
+        name="two_empty_raw_node_control",
+        n=2,
+        bad=0,
+        kind="empty",
+        reflected=True,
+        tie="leave",
+    ),
+)
+
+
+type Pair = tuple[float, float]
+type Tables = tuple[tuple[Pair, Pair], ...]
+
+
+def case_inputs(
+    *, case: NativeCase
+) -> tuple[Tables, tuple[tuple[bool, bool], ...], tuple[str, str], Pair | None]:
+    tables = []
+    masks = []
+    for index in range(case.n):
+        first = (
+            (-2.0, 3.0)
+            if case.placement == "scanned" and index < case.bad
+            else (2.0, 2.0)
+        )
+        second = (-20.0, -20.0)
+        feasible = (True, True)
+        if index == case.bad:
+            first = (
+                (0.0, 0.0) if case.kind == "finite" else (float("inf"), -float("inf"))
+            )
+            if case.kind == "overflow":
+                first = (1.0, -1.0)
+            if case.kind in {"undefined_alt", "infeasible_alt"}:
+                second = (5.0, 5.0)
+            if case.kind == "infeasible_alt":
+                feasible = (False, True)
+            if case.kind == "empty":
+                feasible = (False, False)
+            if case.kind == "zero_first":
+                # Both candidates have a defined -inf objective; member
+                # infinities remain visible instead of losing to the finite alt.
+                second = first
+        tables.append((first, second))
+        masks.append(feasible)
+    weights = (
+        (0.0, 1.0)
+        if case.kind == "zero_first"
+        else ((1.0, 0.0) if case.kind == "zero_second" else None)
+    )
+    roles = ("f", "m")
+    if case.reflected:
+        roles = ("m", "f")
+        tables = [
+            ((row[0][1], row[0][0]), (row[1][1], row[1][0])) for row in reversed(tables)
+        ]
+        masks.reverse()
+        weights = None if weights is None else (weights[1], weights[0])
+    return tuple(tables), tuple(masks), roles, weights
+
+
+def build_model(
+    *,
+    case: NativeCase,
+    replay: bool = False,
+    enable_jit: bool = True,
+    execution_config: ExecutionConfig | None = None,
+) -> Model:
+    tables, masks, roles, weights = case_inputs(case=case)
+    utilities = {
+        member: Phased(
+            solve=TableUtility(values=tuple((2.0, 2.0) for _ in tables)),
+            simulate=TableUtility(
+                values=tuple(tuple(pair[i] for pair in row) for row in tables),
+                overflow=case.kind == "overflow",
+            ),
+        )
+        if replay
+        else TableUtility(
+            values=tuple(tuple(pair[i] for pair in row) for row in tables),
+            overflow=case.kind == "overflow",
+        )
+        for i, member in enumerate(roles)
+    }
+    objective = (
+        None
+        if weights is None
+        else ParetoObjective(weights=dict(zip(roles, weights, strict=True)))
+    )
+    collective = (
+        CollectiveUtility(utilities=utilities)
+        if objective is None
+        else (CollectiveUtility(utilities=utilities, objective=objective))
+    )
+    return Model(
+        regimes={
+            "couple": Regime(
+                states={
+                    "mu": DiscreteGrid({1: OneNode, 2: TwoNodes, 4: FourNodes}[case.n])
+                },
+                actions={"choice": DiscreteGrid(values=jnp.asarray([0, 1]))},
+                functions={"utility": collective},
+                constraints={"feasible_choice": Feasibility(values=tuple(masks))},
+                exit=Exit(
+                    rule=Unilateral(tie=case.tie, renegotiate=Renegotiate(state="mu")),
+                    available=Availability(value=case.active),
+                    targets={
+                        member: ExitTarget(regime=f"single_{member}", projection={})
+                        for member in roles
+                    },
+                ),
+            ),
+            "single_f": Regime(functions={"utility": outside}),
+            "single_m": Regime(functions={"utility": outside}),
+        },
+        n_periods=1,
+        edges={},
+        initial_nodes=InitialNodes(by_period={0: "couple"}),
+        regime_id_class=Household,
+        enable_jit=enable_jit,
+        execution_config=execution_config or ExecutionConfig(device_memory_bytes=None),
+    )
+
+
+def reference_stay_values(*, case: NativeCase) -> tuple[tuple[float, ...], ...]:
+    """Enumerate every feasible extended-real scalarization before selection."""
+    tables, masks, _, weights = case_inputs(case=case)
+    weights = (0.5, 0.5) if weights is None else weights
+    raw = []
+    for row, mask in zip(tables, masks, strict=True):
+        feasible = []
+        for pair, admitted in zip(row, mask, strict=True):
+            if not admitted:
+                continue
+            if case.kind == "overflow":
+                assert all(math.isfinite(value) for value in pair)
+                action_pair = tuple(math.copysign(math.inf, value) for value in pair)
+            else:
+                action_pair = pair
+            objective = sum(
+                0.0 if weight == 0 else weight * value
+                for weight, value in zip(weights, action_pair, strict=True)
+            )
+            if math.isnan(objective):
+                raise ValueError("undefined feasible household objective")
+            feasible.append((objective, action_pair))
+        raw.append(
+            max(feasible, key=lambda item: item[0])[1]
+            if feasible
+            else (-math.inf, -math.inf)
+        )
+    return tuple(raw)
+
+
+def expected_values(*, case: NativeCase) -> NDArray[np.float64]:
+    """Walk each incumbent's scalar-reference policies against a fixed outside."""
+    raw = reference_stay_values(case=case)
+    result = []
+    for incumbent, pair in enumerate(raw):
+        if not case.active:
+            result.append(pair)
+            continue
+
+        def willing(value: float) -> bool:
+            return value >= 0 if case.tie == "stay" else value > 0
+
+        direction = 1 if not willing(pair[0]) else -1
+        selected = (0.0, 0.0)
+        candidate = incumbent
+        while 0 <= candidate < len(raw):
+            candidate_pair = raw[candidate]
+            if all(willing(value) for value in candidate_pair):
+                selected = candidate_pair
+                break
+            if not any(willing(value) for value in candidate_pair) or not willing(
+                candidate_pair[1 if direction == 1 else 0]
+            ):
+                break
+            candidate += direction
+        result.append(selected)
+    return np.asarray(result, dtype=np.float64)
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+@pytest.mark.parametrize("case", CASES, ids=lambda case: case.name)
+def test_feasible_objective_integrity_survives_exit_replacement(
+    *, case: NativeCase
+) -> None:
+    """Undefined feasible candidates fail; extended-real controls retain values."""
+    model = build_model(case=case)
+    if case.undefined:
+        with pytest.raises(ValueError, match="undefined feasible"):
+            expected_values(case=case)
+        with pytest.raises(ExecutionPlanningError, match="unresolved numerical status"):
+            model.solve(params={}, log_level="off", runtime_checks=True)
+    else:
+        expected = expected_values(case=case)
+        result = model.solve(params={}, log_level="off", runtime_checks=True)
+        np.testing.assert_array_equal(result.values[0]["couple"], expected)
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+@pytest.mark.parametrize("replay", [False, True])
+@pytest.mark.parametrize("enable_jit", [False, True])
+def test_phase_specific_undefined_objective_fails_before_routing(
+    *, replay: bool, enable_jit: bool
+) -> None:
+    """A valid solve does not excuse an undefined simulate-phase Raw objective."""
+    case = NativeCase(
+        name="phase_integrity", n=2, bad=1, kind="undefined_alt", placement="scanned"
+    )
+    model = build_model(case=case, replay=replay, enable_jit=enable_jit)
+    if not replay:
+        with pytest.raises(ExecutionPlanningError, match="unresolved numerical status"):
+            model.solve(params={}, log_level="off", runtime_checks=True)
+        return
+    solution = model.solve(params={}, log_level="off", runtime_checks=True)
+    np.testing.assert_array_equal(solution.values[0]["couple"], np.full((2, 2), 2.0))
+    with pytest.raises(ShockDeclarationError, match="query is invalid or unresolved"):
+        model.simulate(
+            params={},
+            solution=solution,
+            initial_conditions={
+                "period": jnp.zeros(7, dtype=jnp.int32),
+                "regime_id": jnp.full(
+                    7, model.regime_names_to_ids["couple"], dtype=jnp.int32
+                ),
+                "own_stakeholder": jnp.asarray(
+                    [
+                        model.stakeholder_names_to_ids[member]
+                        for member in ("f", "m", "f", "m", "f", "m", "f")
+                    ],
+                    dtype=jnp.int32,
+                ),
+                "mu": jnp.asarray([0, 1, 0, 1, 0, 1, 0], dtype=jnp.int32),
+            },
+            seed=659,
+            log_level="off",
+            runtime_checks=True,
+        )
+
+
+def check_subject_sharded_objective_integrity() -> None:
+    """Padded personal gate routes preserve values and reject undefined queries."""
+    config = ExecutionConfig(
+        devices=(0, 1, 2, 3), simulation_sharding="subjects", device_memory_bytes=None
+    )
+    base = _gated_outside_model(pointwise=True, execution_config=config)
+    couple = base.user_regimes["couple"]
+    utility = couple.functions["utility"]
+    assert isinstance(utility, CollectiveUtility)
+    model = Model(
+        regimes={
+            **base.user_regimes,
+            "couple": replace(
+                couple,
+                functions={
+                    "utility": CollectiveUtility(
+                        utilities={
+                            member: Phased(
+                                solve=utility.utilities[member],
+                                simulate=TableUtility(
+                                    values=tuple(
+                                        (
+                                            (math.inf if member == "f" else -math.inf),
+                                            2.0,
+                                            2.0,
+                                            2.0,
+                                        )
+                                        for _ in range(4)
+                                    )
+                                ),
+                            )
+                            for member in ("f", "m")
+                        }
+                    )
+                },
+            ),
+        },
+        edges=base.edges,
+        initial_nodes=InitialNodes(by_period={0: "couple"}),
+        n_periods=2,
+        regime_id_class=_GatedHousehold,
+        execution_config=config,
+    )
+    params = {"discount_factor": 1.0}
+    solution = model.solve(params=params, log_level="off", runtime_checks=True)
+    baseline = base.solve(params=params, log_level="off", runtime_checks=True)
+    np.testing.assert_array_equal(
+        solution.values[0]["couple"], baseline.values[0]["couple"]
+    )
+    with pytest.raises(ShockDeclarationError, match="query is invalid or unresolved"):
+        model.simulate(
+            params=params,
+            solution=solution,
+            initial_conditions={
+                "period": jnp.zeros(7, dtype=jnp.int32),
+                "regime_id": jnp.full(
+                    7, model.regime_names_to_ids["couple"], dtype=jnp.int32
+                ),
+                "own_stakeholder": jnp.asarray(
+                    [
+                        model.stakeholder_names_to_ids[member]
+                        for member in ("f", "m", "f", "m", "f", "m", "f")
+                    ],
+                    dtype=jnp.int32,
+                ),
+                "assets": jnp.asarray([2.0, 4.0, 2.0, 4.0, 2.0, 4.0, 2.0]),
+                "mu": jnp.asarray([0, 1, 2, 3, 3, 0, 1], dtype=jnp.int32),
+            },
+            seed=659,
+            log_level="off",
+            runtime_checks=True,
+        )
+    expected = _gated_outside_simulation(
+        execution_config=ExecutionConfig(devices=(0,), device_memory_bytes=None)
+    )
+    actual = _gated_outside_simulation(execution_config=config)
+    _assert_same_raw_results(actual=actual, expected=expected)
+
+
+def test_undefined_objective_cannot_escape_padded_subject_replay() -> None:
+    """Both personal outside routes retain numerical integrity under partitioning."""
+    code = (
+        "import jax; jax.config.update('jax_num_cpu_devices', 4); "
+        "jax.config.update('jax_platform_name', 'cpu'); "
+        f"jax.config.update('jax_enable_x64', {tests.conftest.X64_ENABLED!r}); "
+        "from tests.solution.test_renegotiation import "
+        f"{check_subject_sharded_objective_integrity.__name__}; "
+        f"{check_subject_sharded_objective_integrity.__name__}()"
+    )
+    pixi = which("pixi")
+    assert pixi is not None, "The isolated topology check requires the Pixi runner."
+    result = subprocess.run(  # noqa: S603 - fixed source on the locked project runner
+        [pixi, "run", "--locked", "-e", "tests-cpu", "python", "-c", code],
+        cwd=Path(__file__).parents[2],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr

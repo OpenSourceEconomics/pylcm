@@ -2135,7 +2135,11 @@ def _active_query_cell(
         value = jnp.stack(tuple(values[name] for name in context.stakeholders))
     else:
         action, value = argmax_and_max(a=q, where=feasible, initial=-jnp.inf)
-    valid = jnp.all(valid) & _mapped_query_valid(node=node, mapped=mapped)
+    valid = (
+        jnp.all(valid)
+        & ~jnp.any(jnp.isnan(value))
+        & _mapped_query_valid(node=node, mapped=mapped)
+    )
     answer = (
         value,
         jnp.where(support, action, -1).astype(jnp.int32),
