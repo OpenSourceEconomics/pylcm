@@ -115,6 +115,14 @@ class LotteryContractionSource:
     on, so that continuation must keep every draw as a node axis.
     """
 
+    current_values_on_nodes: bool = True
+    """Whether a process state's current value is always one of its grid's nodes.
+
+    The solve evaluates every cell at the nodes. The simulation evaluates each
+    subject at its own value, which for a process state may lie between them; a
+    process draw whose weights read that value then keeps its axis there.
+    """
+
 
 @dataclass(frozen=True, kw_only=True, eq=False)
 class ContractedLottery:
@@ -153,6 +161,15 @@ class ContractedLottery:
         the same expectation, so one row stands for all of them.
         """
         return self.state_name in self.weight_arg_names
+
+    @property
+    def reads_process_value(self) -> bool:
+        """Whether the weights read a process state's current value.
+
+        The table holds one row per node, so such a row is the subject's own only
+        where the current value is a node.
+        """
+        return self.reads_state and not self.is_discrete
 
     @property
     def source_node_array(self) -> FloatND | IntND:
@@ -431,7 +448,7 @@ def _plan_one_lottery(
         name in cell_inputs or name.startswith("next_") for name in weight_arg_names
     ):
         return None
-    return ContractedLottery(
+    lottery = ContractedLottery(
         state_name=state_name,
         law_name=law_name,
         weight_name=info.weight_name,
@@ -441,6 +458,9 @@ def _plan_one_lottery(
         weights=weights,
         weight_arg_names=weight_arg_names,
     )
+    if lottery.reads_process_value and not source.current_values_on_nodes:
+        return None
+    return lottery
 
 
 def _is_pure_index(
