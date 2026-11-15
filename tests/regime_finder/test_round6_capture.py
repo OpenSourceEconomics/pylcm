@@ -321,7 +321,49 @@ def test_numpy_sqrt_and_clip_are_not_recursive_library_trees(
     for target in (np.sqrt, np.clip):
         with subtests.test(target=target.__name__):
             captured = source_function(target)
-            assert ("opaque_boundary") in (captured)
+            assert captured["capture_status"] == "COMPLETE"
+            assert captured["source_unavailable"] is True
+            assert validate_callable_records(captured["callable_records"])
+            assert all(
+                "source" not in record
+                for record in captured["callable_records"].values()
+            )
+            if target is np.sqrt:
+                assert captured["kind"] == "primitive"
+                assert captured["canonical"] == "numpy." + target.__name__
+                assert captured["operation"] == target.__name__
+                assert captured["resolution"] == "actual_object_identity"
+                assert (
+                    captured["implementation_seal"]
+                    == "captured-native-numeric-object-code/v1"
+                )
+                assert (
+                    captured["primitive_capture_contract"]
+                    == "canonical-object-callsite-1"
+                )
+                numpy_file = np.__file__
+                assert numpy_file is not None
+                assert (
+                    captured["library_module_sha256"]
+                    == hashlib.sha256(Path(numpy_file).read_bytes()).hexdigest()
+                )
+                assert captured["arguments"] == captured["raw_arguments"] == []
+                assert captured["variadic"] is True
+                assert captured["defaults"] == captured["bindings"] == {}
+                assert (
+                    captured["referenced_functions"] == captured["call_targets"] == {}
+                )
+                assert captured["obligations"] == []
+                assert "opaque_boundary" not in captured
+                assert len(captured["callable_records"]) == 1
+            else:
+                assert target is np.clip
+                assert captured["kind"] == "callable"
+                assert captured["opaque_boundary"]
+                assert captured["obligations"]
+                assert "operation" not in captured
+                assert "canonical" not in captured
+                assert "implementation_seal" not in captured
             assert (len(json.dumps(captured))) < (32000)
             assert (len(captured["callable_records"])) <= (4)
 
