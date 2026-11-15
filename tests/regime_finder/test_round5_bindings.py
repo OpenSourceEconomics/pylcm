@@ -1547,3 +1547,85 @@ def test_minimum_rejects_changed_same_object_ufunc_method_code() -> None:
     answer = SourceProof({}).callback(captured)
     assert not answer.proved
     assert {"left", "right"} <= answer.reads
+
+
+@pytest.mark.parametrize("behavior", ["equal", "raise"])
+def test_native_numeric_defaults_reject_hostile_type_without_equality(
+    behavior: typing.Literal["equal", "raise"],
+) -> None:
+    from _lcm.solution.fingerprint import _is_captured_jax_python_function
+    from _lcm_regime_finder.callable_identity import _primitive
+
+    calls: list[str] = []
+
+    class HostileMeta(type):
+        def __eq__(cls, other: object) -> bool:
+            calls.append("equality")
+            if behavior == "raise":
+                raise AssertionError("Opaque numeric-default type equality must not run")
+            return True
+
+        __hash__ = type.__hash__
+
+    class OpaqueDefault(metaclass=HostileMeta):
+        pass
+
+    target = jnp.asarray
+    assert isinstance(target, FunctionType)
+    assert _is_captured_jax_python_function(target)
+    before = _primitive(target)
+    assert before is not None and before["operation"] == "asarray"
+    original_defaults = target.__defaults__
+    original_kwdefaults = target.__kwdefaults__
+    assert original_defaults
+    try:
+        target.__defaults__ = (OpaqueDefault(), *original_defaults[1:])
+        assert _is_captured_jax_python_function(target)
+        assert _primitive(target) is None
+        assert calls == []
+    finally:
+        target.__defaults__ = original_defaults
+        target.__kwdefaults__ = original_kwdefaults
+        assert target.__defaults__ is original_defaults
+        assert target.__kwdefaults__ is original_kwdefaults
+        restored = _primitive(target)
+        assert restored is not None and restored["operation"] == "asarray"
+
+
+@pytest.mark.parametrize("behavior", ["equal", "raise"])
+def test_native_numeric_static_property_rejects_hostile_type_without_equality(
+    behavior: typing.Literal["equal", "raise"],
+) -> None:
+    from _lcm_regime_finder.callable_identity import _primitive
+
+    calls: list[str] = []
+
+    class HostileMeta(type):
+        def __eq__(cls, other: object) -> bool:
+            calls.append("equality")
+            if behavior == "raise":
+                raise AssertionError("Opaque numeric-property type equality must not run")
+            return True
+
+        __hash__ = type.__hash__
+
+    class OpaqueProperty(metaclass=HostileMeta):
+        pass
+
+    target = jnp.minimum
+    before = _primitive(target)
+    assert before is not None and before["operation"] == "minimum"
+    properties = vars(target)["_ufunc__static_props"]
+    assert type(properties) is dict
+    original_identity = properties["identity"]
+    assert original_identity is None
+    try:
+        properties["identity"] = OpaqueProperty()
+        assert _primitive(target) is None
+        assert calls == []
+    finally:
+        properties["identity"] = original_identity
+        assert vars(target)["_ufunc__static_props"] is properties
+        assert properties["identity"] is original_identity
+        restored = _primitive(target)
+        assert restored is not None and restored["operation"] == "minimum"
