@@ -3,15 +3,18 @@
 Its Q reads the solve's continuation, so a contracted draw is summed into the
 next-period value there as well, inside the subject tiles as the solve builds it
 inside the cell and action tiles. A process draw whose weights read the subject's
-own value, which may lie between the process's nodes, keeps its axis. A source with
-a gated edge contracts in neither phase.
+own value, which may lie between the process's nodes, keeps its axis, even for a
+subject exactly on a node. A source with a gated edge contracts in neither phase.
 
 With both contracting, the transposed cancellation of
 `test_lottery_contraction_domain` makes the simulation choose what the solve chose.
+Where the simulation keeps a process draw enumerated, the same cancellation makes it
+choose differently from the solve, even at a node.
 """
 
 from typing import Literal
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -23,15 +26,23 @@ from lcm import (
     Gate,
     LinSpacedGrid,
     Model,
+    PolicyLookup,
     ProjectedRegimeValue,
     Regime,
+    RouwenhorstAR1Process,
     StakeholderRoute,
     StochasticTransition,
     Transition,
     categorical,
 )
 from lcm.solvers import GridSearch
-from lcm.typing import BoolND, FloatND, ScalarInt
+from lcm.typing import (
+    BoolND,
+    ContinuousState,
+    DiscreteAction,
+    FloatND,
+    ScalarInt,
+)
 from tests.conftest import DECIMAL_PRECISION
 from tests.regime_building.test_lottery_contraction import (
     _model,
@@ -171,6 +182,125 @@ def test_simulation_chooses_what_the_solve_chose_under_cancellation(
     _assert_all_equal(values=np.asarray(solution.values[0]["alive"]), expected=value)
     # The simulated value is the solve's maximum, so its choice is the solve's.
     _assert_all_equal(values=first["value"].to_numpy(dtype=float), expected=value)
+    # The public lookup runs the simulation's decision, so it reads the same Q.
+    lookup = model.lookup_policy(
+        params=_TRANSPOSED_PARAMS,
+        solution=solution,
+        period=0,
+        regime_name="alive",
+        states={"wealth": jnp.array([0.0, 1.0, 2.0]), "z": jnp.array([0, 1, 0])},
+    )
+    assert _looked_up_landings(lookup) == [landing] * 3
+    _assert_all_equal(values=np.asarray(lookup.value), expected=value)
+
+
+_LANDINGS = ("low", "high")
+
+
+def _looked_up_landings(lookup: PolicyLookup) -> list[str]:
+    assert lookup.actions is not None
+    return [_LANDINGS[int(code)] for code in lookup.actions["landing"]]
+
+
+# Two nodes at -1 and 1; from either, the process stays with probability 3/4.
+_TWO_NODE_PROCESS = RouwenhorstAR1Process(n_points=2, rho=0.5, sigma=0.75**0.5, mu=0.0)
+
+
+def _process_terminal_utility(
+    *, wealth: ContinuousState, income: ContinuousState
+) -> FloatND:
+    # The lower node holds `(M, -M, 1/4)` and the upper `(2, 2, 1/4)` at wealth 0,
+    # 1 and 2.
+    exponent = 60 if jax.config.jax_enable_x64 else 30
+    magnitude = jnp.asarray(float(2**exponent))
+    large_row = jnp.where(wealth == 0, magnitude, -magnitude)
+    return jnp.where(wealth == 2, 0.25, jnp.where(income < 0, large_row, 2.0))
+
+
+def _process_alive_utility(
+    *, wealth: ContinuousState, income: ContinuousState, landing: DiscreteAction
+) -> FloatND:
+    # Reads every state and the action so none is unused; adds exactly zero.
+    return jnp.zeros_like(wealth * 0.0 + income * 0.0 + landing * 0.0)
+
+
+def _process_cancellation_model(*, contract: bool) -> Model:
+    states = {
+        "wealth": LinSpacedGrid(start=0.0, stop=2.0, n_points=3),
+        "income": _TWO_NODE_PROCESS,
+    }
+    alive = Regime(
+        states=states,
+        actions={"landing": DiscreteGrid(category_class=_Binary)},
+        state_transitions={"wealth": _next_wealth_by_landing},
+        functions={"utility": _process_alive_utility},
+        solver=GridSearch(lottery_contraction=contract),
+    )
+    final = Regime(states=states, functions={"utility": _process_terminal_utility})
+    return Model(
+        regimes={"alive": alive, "final": final},
+        regime_id_class=_Regimes,
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
+        initial_nodes=((0, "alive"),),
+        edges={"alive": {"final": 0}},
+        durable_identity=False,
+    )
+
+
+@pytest.mark.parametrize(
+    ("contract", "solve_value"),
+    [
+        pytest.param(False, 0.5, id="enumerated-solve-agrees"),
+        pytest.param(True, 0.25, id="contracted-solve-differs"),
+    ],
+)
+def test_simulation_enumerates_a_process_draw_reading_its_value_even_at_a_node(
+    *, contract: bool, solve_value: float
+) -> None:
+    """At the lower node the simulation still enumerates, so it picks the midpoint.
+
+    From the lower node the process stays there with probability 3/4. Contracted
+    first, the rows sum to `(3M/4, -3M/4, 1/4)` once the 1/2 is lost against
+    `±3M/4`, so the solve values the midpoint at 0 and chooses the endpoint, 1/4.
+    Interpolated per draw, the midpoint keeps `(1/4) * 2 = 1/2`. Eligibility is
+    fixed when the simulation is built, and a simulated process value may lie
+    between nodes, so the simulation and the public lookup enumerate this draw
+    for every subject, on a node or not.
+    """
+    model = _process_cancellation_model(contract=contract)
+    solution = model.solve(params=_TRANSPOSED_PARAMS, log_level="off")
+    lower = jnp.asarray(_TWO_NODE_PROCESS.get_gridpoints()[0])
+    wealth = jnp.array([0.0, 1.0, 2.0])
+    income = jnp.full(3, lower)
+    frame = model.simulate(
+        params=_TRANSPOSED_PARAMS,
+        solution=solution,
+        initial_conditions={
+            "wealth": wealth,
+            "income": income,
+            "age": jnp.zeros(3),
+            "regime_id": jnp.full(3, _Regimes.alive, dtype=jnp.int32),
+        },
+        seed=0,
+        log_level="off",
+    ).to_dataframe()
+    first = frame.loc[frame["age"] == 0]
+    lookup = model.lookup_policy(
+        params=_TRANSPOSED_PARAMS,
+        solution=solution,
+        period=0,
+        regime_name="alive",
+        states={"wealth": wealth, "income": income},
+    )
+
+    # The solve's values at the lower node, one per wealth node.
+    _assert_all_equal(
+        values=np.asarray(solution.values[0]["alive"])[0], expected=solve_value
+    )
+    assert first["landing"].astype(str).tolist() == ["low"] * 3
+    _assert_all_equal(values=first["value"].to_numpy(dtype=float), expected=0.5)
+    assert _looked_up_landings(lookup) == ["low"] * 3
+    _assert_all_equal(values=np.asarray(lookup.value), expected=0.5)
 
 
 def _half(age: FloatND) -> FloatND:

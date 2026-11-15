@@ -42,17 +42,20 @@ check or to a stochastic process whose nodes come from runtime parameters. A nex
 value of `+inf` is outside the supported domain: where one meets an infeasible `-inf`
 across draws, the contracted read is `-inf`, while per-draw enumeration gives NaN.
 
-The simulation contracts the same draws, so its choices maximize the Q the solve
-maximized, cancelling values included. A regime with a gated edge or a value constraint
-contracts nothing in either phase. Two reads keep every draw enumerated even where the
-simulation contracts:
+The simulation and the public `Model.lookup_policy`, which runs the simulation's
+decision, contract the same draws as the solve, with one exception: a stochastic process
+whose probabilities read the subject's current value. A simulated value may lie between
+the process's nodes, and which draws are contracted is fixed when the simulation is
+built, so this process draw stays enumerated in the simulation for every subject, even
+for one exactly on a node. Other eligible draws in the same continuation are still
+contracted. Where no such process draw is contracted in the solve, the simulation
+maximizes the Q the solve maximized, cancelling values included. Where one is, the
+simulated choice can differ from the solve's by more than a tie with cancelling values,
+even at a node.
 
-- a stochastic process whose probabilities read the subject's current value, since a
-  simulated value may lie between the process's nodes;
-- policy, participation and exit queries, which count their landings on the nodes.
-
-With cancelling values, such a read can therefore differ from the simulated choice by
-more than a tie.
+A regime with a gated edge or a value constraint contracts nothing in either phase. The
+internal participation and exit queries, which count their landings on the nodes, also
+keep every draw enumerated.
 
 The contraction is off by default. Its table is built inside the kernel's tile loops,
 and on GPU the compiler does not hoist it out of them, so it is rebuilt for every cell,

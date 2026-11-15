@@ -204,14 +204,15 @@ class GridSearch(Solver):
     continuation. Values agree with the per-candidate expectation to rounding
     relative to the largest next-period value magnitude across the draws, not
     relative to the expectation itself: with large cancelling values, either
-    summation order can lose a small term. The simulation contracts the same
-    draws, so it reads the Q the solve maximized; a regime with a gated edge or
-    a value constraint contracts in neither phase. Two reads keep every draw
-    enumerated, and can differ from the simulated choice by more than a tie:
-
-    - a process draw whose weights read the subject's own value, which may lie
-      between the process's nodes;
-    - policy, participation and exit queries, which count their landings.
+    summation order can lose a small term. The simulation and
+    `Model.lookup_policy` contract the same draws as the solve, except a process
+    draw whose weights read the subject's own value: a simulated value may lie
+    between the process's nodes, so this draw stays enumerated in the simulation
+    for every subject, even one on a node. With cancelling values, the simulated
+    choice can then differ from the solve's by more than a tie. A regime with a
+    gated edge or a value constraint contracts in neither phase, and the
+    internal participation and exit queries, which count their landings, keep
+    every draw enumerated.
 
     Off by default: the table is built inside the kernel's tile loops, and on GPU
     the compiler does not hoist it, so it is rebuilt for every cell, action and
