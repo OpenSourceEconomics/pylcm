@@ -75,6 +75,7 @@ def test_refresh_manifest_leaves_every_measured_weight_byte_identical(
         run_manifest=lambda _run: _run_manifest(files={_MISSING_FILE, _MEASURED_FILE}),
     )
     after = json.loads(refreshed.text)["leg_weights"]
+    assert refreshed.text == ci_workloads.dump_manifest(json.loads(refreshed.text))
 
     assert {
         leg: {file_: after[leg]["seconds"][file_] for file_ in entry["seconds"]}

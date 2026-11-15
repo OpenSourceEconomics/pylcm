@@ -451,7 +451,7 @@ class SourceProof:
             self.active.pop()
 
     def _body(self, statements: list, env: dict, meta: Mapping) -> _Abstract | None:
-        for stmt in statements:
+        for index, stmt in enumerate(statements):
             self.steps += 1
             if self.steps > 100_000: return None
             if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Constant) and isinstance(stmt.value.value, str): continue
@@ -465,12 +465,13 @@ class SourceProof:
                 for target in stmt.targets: env.pop(target.id, None)
             elif isinstance(stmt, ast.If):
                 test = self._expr(stmt.test, env, meta)
+                remaining = statements[index + 1:]
                 if test.value is not _UNKNOWN:
-                    result = self._body(stmt.body if test.value else stmt.orelse, env, meta)
-                    if result is not None: return result
+                    branch = stmt.body if test.value else stmt.orelse
+                    return self._body(branch + remaining, env, meta)
                 else:
-                    left = self._body(stmt.body, dict(env), meta)
-                    right = self._body(stmt.orelse, dict(env), meta)
+                    left = self._body(stmt.body + remaining, dict(env), meta)
+                    right = self._body(stmt.orelse + remaining, dict(env), meta)
                     if left is None or right is None: return None
                     if left.value is not _UNKNOWN and _value_key(left.value) == _value_key(right.value): return left
                     return _join(test, left, right)
@@ -534,7 +535,39 @@ class SourceProof:
                 return _constant(all(operations[type(op)](a.value, b.value) for op, a, b in zip(node.ops, values, values[1:])))
             return _join(*values)
         if isinstance(node, ast.Call):
-            target = self.callable_records.resolve(meta.get("call_targets", {}).get(ast.unparse(node.func)))
+            target_ref = meta.get("call_targets", {}).get(ast.unparse(node.func))
+            target = self.callable_records.resolve(target_ref)
+            operand_node, class_node = node.args if len(node.args) == 2 else (None, None)
+            callee_node = node.func
+            if (isinstance(target_ref, Mapping) and target_ref.get("kind") == "callable-reference"
+                    and isinstance(target, Mapping) and target.get("kind") == "primitive"
+                    and target.get("resolution") == "actual_object_identity"
+                    and target.get("canonical") == "builtins.isinstance"
+                    and target.get("operation") == "builtin_isinstance"
+                    and isinstance(callee_node, ast.Name) and not node.keywords
+                    and isinstance(operand_node, ast.Name) and isinstance(class_node, ast.Name)):
+                fn = self.callable_records.function(meta.get("source", ""))
+                body = fn.body if fn is not None else []
+                if (body and isinstance(body[0], ast.Expr)
+                        and isinstance(body[0].value, ast.Constant)
+                        and isinstance(body[0].value.value, str)):
+                    body = body[1:]
+                names = set(meta.get("raw_arguments", ())) | set(meta.get("arguments", ()))
+                for field in ("defaults", "partial_bindings", "partial_keywords"):
+                    names.update(meta.get(field, {}))
+                class_name = class_node.id
+                class_ref = meta.get("bindings", {}).get(class_name)
+                class_type = self.callable_records.resolve(class_ref)
+                if (len(body) == 1 and isinstance(body[0], ast.Return) and body[0].value is node
+                        and not {callee_node.id, class_name} & names
+                        and isinstance(class_ref, Mapping) and class_ref.get("kind") == "callable-reference"
+                        and isinstance(class_type, Mapping) and class_type.get("kind") == "primitive"
+                        and class_type.get("resolution") == "actual_object_identity"
+                        and class_type.get("canonical") == "builtins.int"
+                        and class_type.get("operation") == "builtin_int_type"):
+                    operand = e(operand_node)
+                    # Numeric metadata does not establish a native operand's Python type.
+                    return _Abstract(operand.reads, proved=operand.proved)
             args = [e(arg) for arg in node.args]
             kwargs = {kw.arg: e(kw.value) for kw in node.keywords if kw.arg is not None}
             if isinstance(target, dict) and target.get("kind") == "callable":

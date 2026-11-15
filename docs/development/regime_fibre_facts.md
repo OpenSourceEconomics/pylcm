@@ -54,6 +54,15 @@ removal order and removed statuses. The source adapter resolves category-code ar
 through the original state and function DAG. Unsupported source retains the full
 source-state set.
 
+The reader supports a simple predicate helper whose body returns
+`isinstance(code, int)`, including aliases of those actual built-in objects. It checks
+their captured identities and excludes shadowed names and more complex helper bodies.
+The predicate reads only its operand, but its Boolean value remains unknown: a numeric
+metadata value does not establish whether the runtime object is a Python integer or a
+JAX scalar. Casts and arbitrary class or metaclass tests remain unsupported. Conditional
+branches include their following statements, so early returns and assignments retain the
+correct dependencies; an unsupported statement on a selected path stays unproved.
+
 Read certificates are chosen once, before dependency closure or grouping. Different
 sufficient read sets can be incomparable. Reselecting them while successor dependencies
 change would not define the same monotone closure.
@@ -147,3 +156,10 @@ shared-single-status case is tagged `inert-literal`, and local or multiple-axis
 projections are tagged `inert-joint`. Passing finite checks does not authenticate their
 source, prove the applicable theorem or identify the largest removable set. It does not
 establish exact economic reachability, a preferred layout or global optimality.
+
+## Compact representation of the point-table contract
+
+[Exact implicit fibre facts](implicit_fibre_facts.md) describes the separate internal
+compiler, independent all-point verifier and supplied-projection check. It preserves the
+original point-table results and source qualifications. It does not replace the public
+source-screen contract or the existing witness-dependent search.
