@@ -1558,7 +1558,7 @@ def test_native_numeric_defaults_reject_hostile_type_without_equality(
 
     calls: list[str] = []
 
-    class HostileMeta(type[object]):
+    class HostileMeta(ABCMeta):
         def __eq__(cls, other: object) -> bool:
             calls.append("equality")
             if behavior == "raise":
@@ -1602,7 +1602,7 @@ def test_native_numeric_static_property_rejects_hostile_type_without_equality(
 
     calls: list[str] = []
 
-    class HostileMeta(type[object]):
+    class HostileMeta(ABCMeta):
         def __eq__(cls, other: object) -> bool:
             calls.append("equality")
             if behavior == "raise":
