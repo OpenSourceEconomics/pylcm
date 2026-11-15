@@ -6437,7 +6437,16 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
         )
         realized_validation_probs = (
             None
-            if spec.simulation.regime_transition == spec.solution.regime_transition
+            # Equal routing declarations can read different phase-specific DAG
+            # helpers. Reuse validation only when their function pool is shared.
+            if (
+                spec.simulation.regime_transition == spec.solution.regime_transition
+                and spec.simulation.functions.keys() == spec.solution.functions.keys()
+                and all(
+                    spec.simulation.functions[name] is function
+                    for name, function in spec.solution.functions.items()
+                )
+            )
             else build_regime_transition_probs_functions(
                 functions=simulate_functions,
                 compute_regime_transition_probs=core.next_regime_func,
