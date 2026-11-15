@@ -17,6 +17,7 @@ both files gets a filled before/ratio cell; benchmarks present only in HEAD
 """
 
 import json
+import math
 import os
 import re
 import subprocess
@@ -580,10 +581,10 @@ def _expand_params(params: list[list[str]]) -> list[str]:
 
 
 def _format_value(*, bench_name: str, value: float) -> str:
-    """Format a benchmark value with appropriate units."""
+    """Format benchmark values with compact units and rounded durations."""
     method_name = bench_name.rsplit(".", 1)[-1]
     metric_formats = {
-        "track_host_ms_per_period_regime": "{:.2f} ms",
+        "track_host_ms_per_period_regime": "{:.3g} ms",
         "track_second_call_compiles": "{:.0f}",
     }
     if method_name in metric_formats:
@@ -593,14 +594,21 @@ def _format_value(*, bench_name: str, value: float) -> str:
         or "gpu_peak_mem" in bench_name
         or "track_peak_gpu_mem" in bench_name
     ):
-        return f"{value / 1e9:.2f} GB" if value >= 1e9 else f"{value / 1e6:.0f} MB"
-    if "compilation_time" in bench_name or "track" in bench_name:
-        return f"{value:.2f} s"
-    if value >= 1.0:
-        return f"{value:.3f} s"
-    if value >= 0.001:
-        return f"{value * 1000:.1f} ms"
-    return f"{value * 1e6:.1f} \u00b5s"
+        return f"{value / 1e9:.3g} GB" if abs(value) >= 1e9 else f"{value / 1e6:.3g} MB"
+    if not math.isfinite(value) or not value:
+        return f"{value:.3g} s"
+    rounded_magnitude = float(f"{abs(value):.3g}")
+    if rounded_magnitude >= 60:
+        minutes, seconds = divmod(round(abs(value)), 60)
+        sign = "-" if value < 0 else ""
+        return f"{sign}{minutes}:{seconds:02d} min"
+    if rounded_magnitude >= 1:
+        scale, unit = 1, "s"
+    elif rounded_magnitude >= 0.001:
+        scale, unit = 1000, "ms"
+    else:
+        scale, unit = 1e6, "µs"
+    return f"{value * scale:.3g} {unit}"
 
 
 def _format_raw_comment(

@@ -2673,32 +2673,6 @@ def _get_routed_feasibility(
     )
 
 
-@dataclass(frozen=True, kw_only=True, eq=False)
-class _RoutedFeasibility:
-    """Admit a cell that is feasible and gives the target positive probability."""
-
-    feasibility: _NamedArgumentsCall[BoolND]
-    """The conjunction of the phase's ordinary constraints."""
-    regime_law: _NamedArgumentsCall[Mapping[RegimeName, FloatND]]
-    """The phase's regime transition probabilities, by target."""
-    target: RegimeName
-    """The target whose probability must be positive."""
-
-    def __post_init__(self) -> None:
-        _publish_signature(
-            target=self,
-            arg_names=tuple(sorted(self.feasibility.names | self.regime_law.names)),
-            return_annotation="BoolND",
-            name="routed_feasibility",
-        )
-
-    @no_type_check
-    def __call__(self, **kwargs: EconFunctionArg) -> BoolND:
-        return self.feasibility(**kwargs) & is_live(
-            self.regime_law(**kwargs)[self.target]
-        )
-
-
 def _find_discrete_law_off_grid(
     *,
     law: Callable[..., _FeasibleRowsLawOutput],
@@ -4386,6 +4360,32 @@ class _NamedArgumentsCall[R]:
     @no_type_check
     def __call__(self, **kwargs: EconFunctionArg) -> R:
         return self.func(**{k: v for k, v in kwargs.items() if k in self.names})
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _RoutedFeasibility:
+    """Admit a cell that is feasible and gives the target positive probability."""
+
+    feasibility: _NamedArgumentsCall[BoolND]
+    """The conjunction of the phase's ordinary constraints."""
+    regime_law: _NamedArgumentsCall[Mapping[RegimeName, FloatND]]
+    """The phase's regime transition probabilities, by target."""
+    target: RegimeName
+    """The target whose probability must be positive."""
+
+    def __post_init__(self) -> None:
+        _publish_signature(
+            target=self,
+            arg_names=tuple(sorted(self.feasibility.names | self.regime_law.names)),
+            return_annotation="BoolND",
+            name="routed_feasibility",
+        )
+
+    @no_type_check
+    def __call__(self, **kwargs: EconFunctionArg) -> BoolND:
+        return self.feasibility(**kwargs) & is_live(
+            self.regime_law(**kwargs)[self.target]
+        )
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)
