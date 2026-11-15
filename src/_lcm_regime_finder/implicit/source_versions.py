@@ -21,7 +21,14 @@ _HERE = Path(__file__).resolve().parent
 _VERSIONS = _HERE / "source_versions"
 _ADMISSIONS = _VERSIONS / "admissions.json"
 _IDS = frozenset(
-    {"source587", "source645", "source639-builtin-int-v1", "source645-builtin-int-v1"}
+    {
+        "source587",
+        "source645",
+        "source639-builtin-int-v1",
+        "source645-builtin-int-v1",
+        "source639-dense-wrappers-v1",
+        "source645-dense-wrappers-v1",
+    }
 )
 _PROTOCOL = "original-cell-point-query-order/v1"
 type SourceFile = str

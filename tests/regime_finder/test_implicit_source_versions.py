@@ -12,7 +12,12 @@ import pytest
 
 from _lcm_regime_finder.implicit.implicit_native import compile_table
 
-NEW_SOURCE_IDS = ("source639-builtin-int-v1", "source645-builtin-int-v1")
+NEW_SOURCE_IDS = (
+    "source639-builtin-int-v1",
+    "source645-builtin-int-v1",
+    "source639-dense-wrappers-v1",
+    "source645-dense-wrappers-v1",
+)
 
 
 def registry() -> ModuleType:
@@ -111,6 +116,9 @@ def test_historical_packets_are_not_relabelled() -> None:
         ("source587", "lcm.processes.UniformIIDProcess"),
         ("source645", "_lcm.processes.iid.UniformIIDProcess"),
         ("source645", "_lcm.regime_building.schedules._Constant"),
+        ("source639-dense-wrappers-v1", "lcm.processes.UniformIIDProcess"),
+        ("source645-dense-wrappers-v1", "_lcm.processes.iid.UniformIIDProcess"),
+        ("source645-dense-wrappers-v1", "_lcm.regime_building.schedules._Constant"),
     ],
 )
 def test_foreign_native_capture_spellings_are_not_rewritten(

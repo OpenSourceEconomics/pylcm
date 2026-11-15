@@ -29,6 +29,7 @@ from .semantic_check import (
     _UNKNOWN,
     _check_capture,
     _constant,
+    _native_wrapper_inputs,
     _original_transition_contexts,
     _pointer,
     _providers,
@@ -227,12 +228,30 @@ class FibreSource:
             roots[cell_id] = tuple(dict.fromkeys(direct))
             constraints[cell_id] = tuple(dict.fromkeys(feasible))
         callbacks.update(normal.callbacks)
+        captures = _CallableRecords(declarations.get("callable_records", {}))
+        if captures.errors:
+            raise ValueError(
+                "Original callable capture changed: " + "; ".join(captures.errors)
+            )
         # Only typed library declarations have an opaque, authoritative input contract.
         for callback in callbacks.values():
             raw = (
                 _mapping(callback.get("original", {}))
                 if isinstance(callback.get("original"), Mapping)
                 else {}
+            )
+            native_notes: set[str] = set()
+            native_inputs = _native_wrapper_inputs(raw, captures, native_notes)
+            if native_inputs is not None:
+                callback.update(
+                    arguments=list(native_inputs), reads=list(native_inputs),
+                    expression=None, status="structural",
+                    dependency_contract="pylcm-declared-inputs/v1",
+                )
+                continue
+            qualifications.extend(
+                f"{callback.get('source_path', 'native callback')}: {note}"
+                for note in sorted(native_notes)
             )
             tag = raw.get("type")
             typed = isinstance(tag, str) and tag in (
@@ -251,11 +270,6 @@ class FibreSource:
                 callback["dependency_contract"] = "pylcm-declared-inputs/v1"
                 if callback.get("status") != "proved":
                     callback["status"] = "structural"
-        captures = _CallableRecords(declarations.get("callable_records", {}))
-        if captures.errors:
-            raise ValueError(
-                "Original callable capture changed: " + "; ".join(captures.errors)
-            )
         contexts = _original_transition_contexts(
             relations=tuple(relations.values()), callbacks=callbacks
         )
