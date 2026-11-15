@@ -568,7 +568,7 @@ def _closed_numeric_defaults(
 ) -> bool:
     """No opaque/default callback can hide behind a public numerical name."""
     return (isinstance(function, types.FunctionType) and not function.__closure__
-            and all(type(item) in (type(None), bool, int, float, str, bytes)
+            and all(any(type(item) is allowed for allowed in (type(None), bool, int, float, str, bytes))
                     for item in (*(function.__defaults__ or ()), *(function.__kwdefaults__ or {}).values())))
 
 
@@ -616,7 +616,7 @@ def _numeric_implementation_sealed(
                 if (not native._is_captured_jax_pjit(item)
                         or not _closed_numeric_defaults(vars(item).get('_fun'))):
                     return False
-            elif type(item) not in (type(None), bool, int, float, str):
+            elif not any(type(item) is allowed for allowed in (type(None), bool, int, float, str)):
                 return False
         return True
     except (ImportError, AttributeError, TypeError, ValueError):
