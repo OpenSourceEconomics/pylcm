@@ -107,6 +107,33 @@ def test_refresh_manifest_fills_a_missing_file_from_a_run_of_another_layout(
     assert seconds[_MISSING_FILE] == _SECONDS * shards
 
 
+@pytest.mark.parametrize("complete", [True, False])
+def test_refresh_counts_shard_artifacts_and_includes_serial_replay(
+    *, tmp_path: Path, complete: bool
+) -> None:
+    """A replay adds timing, but cannot stand in for a missing shard artifact."""
+    reports = _solution_reports(directory=tmp_path, files=(_MISSING_FILE,))
+    replay = reports[_LEG][0].with_name("junit-replay-64.xml")
+    replay.write_bytes(reports[_LEG][0].read_bytes())
+    if not complete:
+        reports[_LEG].pop()
+    reports[_LEG].append(replay)
+
+    refreshed = refresh_manifest(
+        manifest_text=json.dumps(_manifest_without(file_=_MISSING_FILE)),
+        repo_root=_ROOT,
+        find_runs=lambda: (_RUN,),
+        read_reports=lambda _run: reports,
+        run_manifest=lambda _run: _run_manifest(files={_MISSING_FILE}),
+    )
+    seconds = json.loads(refreshed.text)["leg_weights"][_LEG]["seconds"]
+
+    if complete:
+        assert seconds[_MISSING_FILE] == _SECONDS * (_solution_shards() + 1)
+    else:
+        assert _MISSING_FILE not in seconds
+
+
 def test_refresh_manifest_fills_from_the_latest_run_that_measured_the_file(
     tmp_path: Path,
 ) -> None:
@@ -251,7 +278,9 @@ def _solution_reports(
     )
     paths = []
     for shard in range(1, (_solution_shards() if shards is None else shards) + 1):
-        path = directory / f"junit-64-{shard}.xml"
+        artifact = directory / f"junit-cpu-{_LEG}-{shard}"
+        artifact.mkdir(exist_ok=True)
+        path = artifact / f"junit-64-{shard}.xml"
         path.write_text(
             f"<testsuites><testsuite>{cases}</testsuite></testsuites>",
             encoding="utf-8",

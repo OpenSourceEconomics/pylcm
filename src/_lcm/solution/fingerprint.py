@@ -1385,6 +1385,11 @@ class _SemanticHasher:
             self.frame(label="type-alias")
             self._visit_annotation(value)
             return
+        if type(value) is types.UnionType:
+            # Stored adapter signatures also expose unions as semantic fields.
+            self.frame(label="union-annotation")
+            self._visit_annotation(value)
+            return
         if isinstance(value, Fraction):
             if type(value) is not Fraction:
                 msg = (
