@@ -1539,11 +1539,13 @@ def test_native_numeric_defaults_reject_hostile_type_without_equality(
 
     calls: list[str] = []
 
-    class HostileMeta(type):
+    class HostileMeta(type[object]):
         def __eq__(cls, other: object) -> bool:
             calls.append("equality")
             if behavior == "raise":
-                raise AssertionError("Opaque numeric-default type equality must not run")
+                raise AssertionError(
+                    "Opaque numeric-default type equality must not run"
+                )
             return True
 
         __hash__ = type.__hash__
@@ -1581,11 +1583,13 @@ def test_native_numeric_static_property_rejects_hostile_type_without_equality(
 
     calls: list[str] = []
 
-    class HostileMeta(type):
+    class HostileMeta(type[object]):
         def __eq__(cls, other: object) -> bool:
             calls.append("equality")
             if behavior == "raise":
-                raise AssertionError("Opaque numeric-property type equality must not run")
+                raise AssertionError(
+                    "Opaque numeric-property type equality must not run"
+                )
             return True
 
         __hash__ = type.__hash__
