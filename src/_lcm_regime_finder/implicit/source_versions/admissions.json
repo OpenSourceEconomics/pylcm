@@ -29,6 +29,12 @@
       "qualification_receipt_sha256": "b53d0ba8d716ec534437b74449fe29656ddfacaadd39dec108f1cf812d8f4df2",
       "qualification_status": "QUALIFIED",
       "semantic_descriptor_sha256": "fe4d58cd2a6e0749ce8275590af1373334aac64111b1dadd85d7f8c15b36ef05"
+    },
+    {
+      "algorithm_map_sha256": "e8679bb76b60004895435db948f822d15a9130082bfd2e416031b5a5a906544d",
+      "qualification_receipt_sha256": "f672ae9373750549fd53a18c2da0b5aeb6312759cb4ab2fa6deb1b8ac3a39d17",
+      "qualification_status": "QUALIFIED",
+      "semantic_descriptor_sha256": "895b77efafd68c53968d2021b915f74328ef28deab50eea46be8fc898c9acb2c"
     }
   ],
   "schema": "implicit-source-admissions/v1"
