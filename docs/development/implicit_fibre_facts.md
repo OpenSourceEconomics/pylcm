@@ -17,16 +17,16 @@ evaluator versions. This contract differs from the public `source-facts` path; t
 read inventories must not be interchanged.
 
 `source639-dense-wrappers-v1` identifies the evaluator with the dense-wrapper capture
-and read-proof repairs. Its bundled descriptor names the actual committed evaluator
-root and complete source map. It retains the private native declaration dialect.
-The historical `source587`, `source645` and `source639-builtin-int-v1` descriptors
-retain their original programs and native declaration dialects; they do not acquire
-the new evaluator semantics. The selector does not swap imported modules. The
-installed evaluator must match the selected source inventory and module origins
-exactly. Only a bundled version with a separately reviewed qualification receipt for
-the installed algorithm bytes can run an ordinary producer or verifier. A descriptor
-alone leaves the candidate unqualified; candidates and unknown IDs fail before loading
-the model capture through the ordinary interface.
+and read-proof repairs. Its bundled descriptor names the actual committed evaluator root
+and complete source map. It retains the private native declaration dialect. The
+historical `source587`, `source645` and `source639-builtin-int-v1` descriptors retain
+their original programs and native declaration dialects; they do not acquire the new
+evaluator semantics. The selector does not swap imported modules. The installed
+evaluator must match the selected source inventory and module origins exactly. Only a
+bundled version with a separately reviewed qualification receipt for the installed
+algorithm bytes can run an ordinary producer or verifier. A descriptor alone leaves the
+candidate unqualified; candidates and unknown IDs fail before loading the model capture
+through the ordinary interface.
 
 ## Produce and independently check facts
 
