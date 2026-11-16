@@ -5,6 +5,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 import functools
 import math
+from collections.abc import Callable
 
 from _lcm_regime_finder import find_regimes as _find_regimes
 from functools import partial
@@ -16,39 +17,39 @@ from _lcm_regime_finder.declarations import normalize_declarations
 from tests.regime_finder.test_round5_local_obligations import native_fixture
 
 
-def opaque_conversion(a, dtype=None):
+def opaque_conversion(a: float, dtype: str | None = None) -> float:
     if dtype is None:
         return a
     return a
 
 
-def unused_outer(history):
+def unused_outer(history: float) -> float:
     return opaque_conversion(0.0)
 
 
-def actual_outer(history):
+def actual_outer(history: float) -> float:
     return opaque_conversion(history)
 
 
-def transitive_outer(history):
+def transitive_outer(history: float) -> float:
     derived = history + 2
     return opaque_conversion(derived)
 
 
-def unused_builtin(history):
+def unused_builtin(history: float) -> float:
     return math.sqrt(0.0)
 
 
-def nested_helper(a):
+def nested_helper(a: float) -> float:
     return opaque_conversion(a)
 
 
-def nested_outer(history):
+def nested_outer(history: float) -> float:
     return nested_helper(history)
 
 
-def closed_helper(offset):
-    def convert(a):
+def closed_helper(offset: int) -> Callable[[float], float]:
+    def convert(a: float) -> float:
         if offset:
             return a + offset
         return a
@@ -60,11 +61,11 @@ WITH_CLOSURE = closed_helper(3)
 WITH_PARTIAL_DEFAULT = functools.partial(opaque_conversion, dtype=None)
 
 
-def closure_outer(history):
+def closure_outer(history: float) -> float:
     return WITH_CLOSURE(history)
 
 
-def partial_outer(history):
+def partial_outer(history: float) -> float:
     return WITH_PARTIAL_DEFAULT(history)
 
 
@@ -72,7 +73,7 @@ def partial_outer(history):
 class Receiver:
     offset: int
 
-    def convert(self, a):
+    def convert(self, a: float) -> float:
         if self.offset:
             return a + self.offset
         return a
@@ -81,15 +82,15 @@ class Receiver:
 RECEIVER = Receiver(3)
 
 
-def receiver_outer(history):
+def receiver_outer(history: float) -> float:
     return RECEIVER.convert(history)
 
 
-def variadic_helper(*arguments):
+def variadic_helper(*arguments: float) -> float:
     return arguments[0]
 
 
-def variadic_outer(history):
+def variadic_outer(history: float) -> float:
     return variadic_helper(0)
 
 

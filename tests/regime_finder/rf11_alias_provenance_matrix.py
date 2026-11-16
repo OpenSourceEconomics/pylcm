@@ -13,9 +13,49 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from collections.abc import Iterator
+from types import ModuleType
+from typing import Literal, TypedDict
+
+from _lcm_regime_finder.records import JSONValue
 
 
-def execute(project, arguments):
+class Execution(TypedDict):
+    command: list[str]
+    exit_code: int
+    stdout: str
+    stderr: str
+
+
+type SourceLayout = Literal["direct", "symlink_with_mirror", "symlink_without_mirror"]
+
+
+class Case(TypedDict):
+    kind: str
+    source: SourceLayout
+    command: str
+    output: str
+    slot: str | None
+    alias: str | None
+    worker: bool
+    end_of_options: bool
+
+
+class Observation(TypedDict):
+    case: Case
+    passed: bool
+    violations: list[dict[str, JSONValue]]
+    exit_code: int
+    public_status: JSONValue
+    command: list[str]
+    stdout: str
+    stderr: str
+    preparation: Execution
+    fixture_sha256: str
+    dependency_context: dict[str, JSONValue]
+
+
+def execute(project: Path, arguments: list[str]) -> Execution:
     command = [sys.executable, "-m", *arguments]
     completed = subprocess.run(
         command,
@@ -33,7 +73,7 @@ def execute(project, arguments):
     }
 
 
-def cases():
+def cases() -> Iterator[Case]:
     for source, command, output, slot, alias in itertools.product(
         ("direct", "symlink_with_mirror"),
         ("check-result", "check-model-result"),
@@ -114,7 +154,9 @@ def cases():
         }
 
 
-def one_case(project, case, oracle, fixture):
+def one_case(
+    project: Path, case: Case, oracle: ModuleType, fixture: Path
+) -> Observation:
     with tempfile.TemporaryDirectory(prefix="rf11-provenance-") as temporary:
         root = Path(temporary)
         real = root / "A"
@@ -197,7 +239,9 @@ def one_case(project, case, oracle, fixture):
         mutation_path = None
         if case["kind"] == "supervisor_alias":
             assert result is not None
-            mutation_path = result.parent / "verification-run" / case["slot"]
+            slot = case["slot"]
+            assert slot is not None
+            mutation_path = result.parent / "verification-run" / slot
         elif case["kind"] == "worker_temporary_alias":
             assert result is not None
             mutation_path = result.with_name(result.name + ".writing")

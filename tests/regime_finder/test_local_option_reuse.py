@@ -3,6 +3,7 @@
 from unittest.mock import patch
 from _lcm_regime_finder.declarations import normalize_declarations
 from _lcm_regime_finder.production import MetadataAnalysis
+from _lcm_regime_finder.records import JSONValue
 from _lcm_regime_finder.semantic_check import check_semantics
 from .tiny_metadata_family import original
 
@@ -52,7 +53,9 @@ def test_shared_domain_keeps_original_last_active_cell_registration() -> None:
     )
     right = dict(base, id="right", state="other", target="right_value", cells=["c1"])
 
-    def regions(candidate):
+    def regions(
+        candidate: dict[str, JSONValue],
+    ) -> tuple[list[dict[str, JSONValue]], bool]:
         return [dict(candidate, active_cells=candidate["cells"])], True
 
     with (

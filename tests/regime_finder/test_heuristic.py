@@ -10,10 +10,19 @@ import hashlib
 import json
 import os
 import random
+from collections.abc import Mapping, Sequence
 
 from _lcm_regime_finder.frontier import Search, search_frontier
 from _lcm_regime_finder.frontier_check import IndependentFamily
 from _lcm_regime_finder.heuristic import search_heuristic
+from _lcm_regime_finder.records import JSONValue
+from tests.regime_finder.test_declaration_ingestion import (
+    json_entries,
+    json_list,
+    json_member,
+    json_object,
+    json_rows,
+)
 from _lcm_regime_finder.heuristic_check import (
     check_heuristic_frontier,
     choose_candidate,
@@ -24,7 +33,13 @@ from .round6_frontier_oracle import block as literal_block, brute_family, canoni
 METRICS = ("work", "storage", "clarity")
 
 
-def fixture(n=3, labels=("a",), *, edges=(), boundary_unit=1):
+def fixture(
+    n: int = 3,
+    labels: Sequence[str] = ("a",),
+    *,
+    edges: Sequence[tuple[str, str, str, str, str]] = (),
+    boundary_unit: int = 1,
+) -> dict[str, JSONValue]:
     """Small exact cost input with physical ages deliberately unlike periods."""
     cells, interfaces = [], {}
     for label in labels:
@@ -85,27 +100,61 @@ def fixture(n=3, labels=("a",), *, edges=(), boundary_unit=1):
     }
 
 
-def score(cost, objective):
-    return sum(
-        Fraction(str(objective["weights"][name]))
-        * Fraction(cost[name], objective["reference_scales"][name])
-        for name in METRICS
-    )
+def score(cost: JSONValue, objective: JSONValue) -> Fraction:
+    """Weighted cost relative to the objective's reference scales."""
+    assert isinstance(cost, Mapping)
+    assert isinstance(objective, Mapping)
+    weights, scales = objective["weights"], objective["reference_scales"]
+    assert isinstance(weights, Mapping)
+    assert isinstance(scales, Mapping)
+    total = Fraction(0)
+    for name in METRICS:
+        value, scale = cost[name], scales[name]
+        assert isinstance(value, int)
+        assert isinstance(scale, int)
+        total += Fraction(str(weights[name])) * Fraction(value, scale)
+    return total
 
 
-def expected_cost(analysis, point):
+def _cells(analysis: dict[str, JSONValue]) -> list[dict[str, JSONValue]]:
+    return json_rows(analysis, "declarations", "cells")
+
+
+def _domains(analysis: dict[str, JSONValue]) -> dict[str, JSONValue]:
+    return json_member(analysis, "declarations", "domains")
+
+
+def _first_option(
+    analysis: dict[str, JSONValue], cell_id: JSONValue
+) -> dict[str, JSONValue]:
+    assert isinstance(cell_id, str)
+    return json_rows(analysis, "interfaces", cell_id, "options")[0]
+
+
+def _first_policy(analysis: dict[str, JSONValue]) -> dict[str, JSONValue]:
+    return json_member(json_rows(analysis, "projection_policies")[0], "option_by_cell")
+
+
+def expected_cost(
+    analysis: Mapping[str, JSONValue], point: dict[str, JSONValue]
+) -> dict[str, int]:
+    policies = analysis["projection_policies"]
+    assert isinstance(policies, list)
     policy = next(
         row["option_by_cell"]
-        for row in analysis["projection_policies"]
+        for row in map(json_object, policies)
         if row["id"] == point["projection_policy"]
     )
-    parts = [literal_block(analysis, part["cells"], policy) for part in point["blocks"]]
+    parts = [
+        literal_block(analysis, part["cells"], policy)
+        for part in json_rows(point, "blocks")
+    ]
     if any(part is None for part in parts):
         raise AssertionError("literal oracle rejected heuristic plan")
     return {name: sum(part["cost"][name] for part in parts) for name in METRICS}
 
 
-def pairwise_trap():
+def pairwise_trap() -> dict[str, JSONValue]:
     """Every pair merge is worse; a three-way merge is worthwhile.
 
     Three singleton labels have distinct binary axes and all six directed
@@ -121,11 +170,14 @@ def pairwise_trap():
         if a != b
     ]
     analysis = fixture(1, names, edges=edges, boundary_unit=2)
-    analysis["declarations"]["domains"] = {name: {"size": 2} for name in names}
-    for cell in analysis["declarations"]["cells"]:
+    json_member(analysis, "declarations")["domains"] = {
+        name: {"size": 2} for name in names
+    }
+    for cell in _cells(analysis):
         name = cell["regime"]
+        assert isinstance(name, str)
         cell["states"], cell["actions"] = {name: name}, {}
-        option = analysis["interfaces"][cell["id"]]["options"][0]
+        option = _first_option(analysis, cell["id"])
         option.update(
             states={name: name},
             actions={},
@@ -135,9 +187,9 @@ def pairwise_trap():
     return analysis
 
 
-def declarative_coarsening_fixture():
+def declarative_coarsening_fixture() -> dict[str, JSONValue]:
     """Full source declarations: utility uses floor(x/2), x persists exactly."""
-    declarations = fixture(2)["declarations"]
+    declarations = json_member(fixture(2), "declarations")
     declarations.update(
         schema="regime-declarations/v1",
         obligations=[],
@@ -190,7 +242,7 @@ def declarative_coarsening_fixture():
             }
         ],
     )
-    for cell in declarations["cells"]:
+    for cell in json_rows(declarations, "cells"):
         cell.update(
             actions={},
             functions={"feature": "phi", "utility": "utility"},
@@ -199,7 +251,23 @@ def declarative_coarsening_fixture():
     return declarations
 
 
-def _check_analysis(analysis, **kwargs):
+def _increment(record: dict[str, JSONValue], key: str) -> None:
+    """Add one to the integer stored under `key`."""
+    value = record[key]
+    assert isinstance(value, int)
+    record[key] = value + 1
+
+
+def _increment_first(values: list[JSONValue]) -> None:
+    """Add one to the leading integer of `values`."""
+    value = values[0]
+    assert isinstance(value, int)
+    values[0] = value + 1
+
+
+def _check_analysis(
+    analysis: Mapping[str, JSONValue], **kwargs: Mapping[str, JSONValue]
+) -> dict[str, JSONValue]:
     result = search_heuristic(analysis, **kwargs)
     receipt = check_heuristic_frontier(analysis, result)
     assert (receipt["status"]) == ("PASS"), receipt
@@ -210,6 +278,7 @@ def _check_analysis(analysis, **kwargs):
     assert (result["search"]["optimality_gap"]) == ("unknown")
     for point in result["candidates"]:
         assert (point["cost"]) == (expected_cost(analysis, point))
+    assert isinstance(result, dict)
     return result
 
 
@@ -231,7 +300,7 @@ def test_fixed_group_scalar_interval_optimum_matches_tiny_exhaustive_oracle() ->
         analysis = fixture(4, edges=edges)
         for period in range(4):
             if rng.random() < 0.5:
-                option = analysis["interfaces"][f"a:{period}"]["options"][0]
+                option = _first_option(analysis, f"a:{period}")
                 option["actions"] = {}
                 option["action_reconstruction"] = {
                     "save": {"kind": "constant", "value": 0}
@@ -243,7 +312,7 @@ def test_fixed_group_scalar_interval_optimum_matches_tiny_exhaustive_oracle() ->
         assert (
             min(
                 score(point["cost"], result["objective"])
-                for point in result["candidates"]
+                for point in json_rows(result, "candidates")
             )
         ) == (min(score(point["cost"], result["objective"]) for point in exact))
 
@@ -269,7 +338,7 @@ def test_tiny_multilabel_quality_reference_is_a_lower_bound_not_a_claim() -> Non
         )
         assert all(
             score(point["cost"], result["objective"]) >= optimum
-            for point in result["candidates"]
+            for point in json_rows(result, "candidates")
         )
 
 
@@ -283,7 +352,7 @@ def test_same_period_branching_and_duplicate_incidence_costs() -> None:
         ("b:0", "a:1", "zero", "both", "transition"),
     ]
     analysis = fixture(2, ("a", "b"), edges=edges, boundary_unit=2)
-    policy = analysis["projection_policies"][0]["option_by_cell"]
+    policy = _first_policy(analysis)
     assert (literal_block(analysis, ["a:0"], policy)["cost"]["work"]) == (42)
     before = canonical(analysis)
     _check_analysis(analysis)
@@ -294,35 +363,38 @@ def test_same_period_branching_and_duplicate_incidence_costs() -> None:
 
 def test_per_block_storage_and_original_baseline() -> None:
     analysis = fixture(1, ("a", "b"))
-    analysis["declarations"]["domains"]["dy"] = {"size": 5}
-    cell = analysis["declarations"]["cells"][1]
+    _domains(analysis)["dy"] = {"size": 5}
+    cell = _cells(analysis)[1]
     cell["states"] = {"y": "dy"}
-    option = analysis["interfaces"][cell["id"]]["options"][0]
-    option["states"] = dict(cell["states"])
+    option = _first_option(analysis, cell["id"])
+    option["states"] = {"y": "dy"}
     option["state_projection"] = {"y": {"kind": "identity", "target": "y"}}
     result = _check_analysis(analysis)
-    assert (result["original"]["cost"]["storage"]) == (8)
-    policy = analysis["projection_policies"][0]["option_by_cell"]
+    assert (json_member(result, "original", "cost")["storage"]) == (8)
+    policy = _first_policy(analysis)
     assert (literal_block(analysis, ["a:0", "b:0"], policy)["cost"]["storage"]) == (30)
-    assert (result["objective"]["reference_scales"]["storage"]) == (8)
+    assert (json_member(result, "objective", "reference_scales")["storage"]) == (8)
 
 
 def test_original_baseline_is_not_the_only_offered_reduced_policy() -> None:
     analysis = fixture(2)
-    analysis["declarations"]["domains"]["history"] = {"size": 100}
-    for cell in analysis["declarations"]["cells"]:
-        cell["states"]["history"] = "history"
-        analysis["interfaces"][cell["id"]]["options"][0]["state_projection"][
-            "history"
-        ] = {"kind": "drop"}
+    _domains(analysis)["history"] = {"size": 100}
+    for cell in _cells(analysis):
+        json_member(cell, "states")["history"] = "history"
+        option = _first_option(analysis, cell["id"])
+        json_member(option, "state_projection")["history"] = {"kind": "drop"}
     result = _check_analysis(analysis)
-    assert (result["original"]["cost"]) == (
-        {"work": 1200, "storage": 600, "clarity": 4}
-    )
-    assert (result["objective"]["reference_scales"]) == (result["original"]["cost"])
-    assert (min(point["cost"]["work"] for point in result["candidates"])) == (12)
-    assert (result["recommendation"]["graph_id"]) != ("retain-original")
-    assert (result["recommendation"]["authority"]) == ("cost_only")
+    original_cost = json_member(result, "original")["cost"]
+    assert (original_cost) == ({"work": 1200, "storage": 600, "clarity": 4})
+    assert (json_member(result, "objective")["reference_scales"]) == (original_cost)
+    works = [
+        json_member(point, "cost")["work"] for point in json_rows(result, "candidates")
+    ]
+    assert all(isinstance(work, int) for work in works)
+    assert (min(work for work in works if isinstance(work, int))) == (12)
+    recommendation = json_member(result, "recommendation")
+    assert (recommendation["graph_id"]) != ("retain-original")
+    assert (recommendation["authority"]) == ("cost_only")
 
 
 def test_incompatible_grids_and_common_execution_interfaces_cannot_merge() -> None:
@@ -334,28 +406,29 @@ def test_incompatible_grids_and_common_execution_interfaces_cannot_merge() -> No
         "solver_identity",
     ):
         analysis = fixture(1, ("a", "b"))
-        cell = analysis["declarations"]["cells"][1]
+        cell = _cells(analysis)[1]
         if kind == "domain":
-            analysis["declarations"]["domains"]["other"] = {"size": 3}
-            cell["states"]["x"] = "other"
-            analysis["interfaces"]["b:0"]["options"][0]["states"]["x"] = "other"
+            _domains(analysis)["other"] = {"size": 3}
+            json_member(cell, "states")["x"] = "other"
+            json_member(_first_option(analysis, "b:0"), "states")["x"] = "other"
         else:
             cell[kind] = (
                 {"margin": "another"} if kind == "structural_roles" else "another"
             )
         result = _check_analysis(analysis)
         assert all(
-            len(part["cells"]) == 1
-            for point in result["candidates"]
-            for part in point["blocks"]
+            len(json_list(part, "cells")) == 1
+            for point in json_rows(result, "candidates")
+            for part in json_rows(point, "blocks")
         )
 
 
 def test_coherent_policy_moves_do_not_mix_cell_options() -> None:
     analysis = fixture(2)
-    analysis["declarations"]["domains"]["coarse"] = {"size": 2}
-    for cid, record in analysis["interfaces"].items():
-        reduced = deepcopy(record["options"][0])
+    _domains(analysis)["coarse"] = {"size": 2}
+    for record in json_entries(analysis, "interfaces"):
+        options = json_list(record, "options")
+        reduced = deepcopy(json_object(options[0]))
         reduced.update(
             id="coarse",
             states={"class": "coarse"},
@@ -369,68 +442,70 @@ def test_coherent_policy_moves_do_not_mix_cell_options() -> None:
                 }
             },
         )
-        record["options"].append(reduced)
-    analysis["projection_policies"].append(
+        options.append(reduced)
+    json_list(analysis, "projection_policies").append(
         {
             "id": "P1",
-            "option_by_cell": {
-                cell["id"]: "coarse" for cell in analysis["declarations"]["cells"]
-            },
+            "option_by_cell": {str(cell["id"]): "coarse" for cell in _cells(analysis)},
         }
     )
     result = _check_analysis(analysis)
-    policies = {p["id"]: p["option_by_cell"] for p in analysis["projection_policies"]}
-    for point in result["candidates"]:
+    policies = {
+        p["id"]: p["option_by_cell"] for p in json_rows(analysis, "projection_policies")
+    }
+    for point in json_rows(result, "candidates"):
         actual = {
             cid: option
-            for part in point["blocks"]
-            for cid, option in part["option_by_cell"].items()
+            for part in json_rows(point, "blocks")
+            for cid, option in json_member(part, "option_by_cell").items()
         }
         assert (actual) == (policies[point["projection_policy"]])
     bad = deepcopy(result)
-    part = bad["candidates"][0]["blocks"][0]
-    cid = part["cells"][0]
-    part["option_by_cell"][cid] = (
-        "keep" if part["option_by_cell"][cid] == "coarse" else "coarse"
-    )
+    part = json_rows(json_rows(bad, "candidates")[0], "blocks")[0]
+    cid = json_list(part, "cells")[0]
+    assert isinstance(cid, str)
+    option_by_cell = json_member(part, "option_by_cell")
+    option_by_cell[cid] = "keep" if option_by_cell[cid] == "coarse" else "coarse"
     assert (check_heuristic_frontier(analysis, bad)["status"]) == ("FAIL")
 
 
 def test_terminal_cosmetic_preference_has_explicit_override() -> None:
     analysis = fixture(3)
-    analysis["declarations"]["domains"]["history"] = {"size": 20}
-    for cell in analysis["declarations"]["cells"]:
-        cell["states"]["history"] = "history"
-        analysis["interfaces"][cell["id"]]["options"][0]["state_projection"][
-            "history"
-        ] = {"kind": "drop"}
-    last = analysis["interfaces"]["a:2"]["options"][0]
+    _domains(analysis)["history"] = {"size": 20}
+    for cell in _cells(analysis):
+        json_member(cell, "states")["history"] = "history"
+        option = _first_option(analysis, cell["id"])
+        json_member(option, "state_projection")["history"] = {"kind": "drop"}
+    last = _first_option(analysis, "a:2")
     last.update(
         actions={}, action_reconstruction={"save": {"kind": "constant", "value": 0}}
     )
     configuration = {"weights": {"clarity": "1/1000000"}}
     ordinary = _check_analysis(analysis, recommendation=configuration)
-    selected = ordinary["recommendation"]["graph_id"]
+    selected = json_member(ordinary, "recommendation")["graph_id"]
     assert (selected) not in (
-        ordinary["recommendation"]["endpoint_preference"]["deferred_graph_ids"]
+        json_list(
+            ordinary, "recommendation", "endpoint_preference", "deferred_graph_ids"
+        )
     )
     override = _check_analysis(
         analysis, recommendation=dict(configuration, allow_final_only_split=True)
     )
-    assert (
-        (override["recommendation"]["graph_id"])
-        in (override["recommendation"]["endpoint_preference"]["deferred_graph_ids"])
+    assert (json_member(override, "recommendation")["graph_id"]) in (
+        json_list(
+            override, "recommendation", "endpoint_preference", "deferred_graph_ids"
+        )
     )
 
 
 def test_strict_improvement_and_source_eligible_filter_keep_original() -> None:
     analysis = fixture(2)
     result = _check_analysis(analysis)
-    assert (result["recommendation"]["graph_id"]) == ("retain-original")
+    assert (json_member(result, "recommendation")["graph_id"]) == ("retain-original")
     assert (choose_candidate(analysis, result, allowed_ids=set())["operation"]) == (
         "retain_original"
     )
-    assert (result["objective"]["reference_kind"]) == ("original")
+    assert (json_member(result, "objective")["reference_kind"]) == ("original")
 
 
 def test_unpriceable_original_retains_identity_even_with_explicit_scales() -> None:
@@ -438,44 +513,48 @@ def test_unpriceable_original_retains_identity_even_with_explicit_scales() -> No
     # The original label crosses protected contexts.  Keeping the original
     # remains an identity action, but the block model cannot compare it as
     # one admissible regime.  No surrogate improvement is then asserted.
-    analysis["declarations"]["cells"][1]["stage"] = "second-decision-stage"
+    _cells(analysis)[1]["stage"] = "second-decision-stage"
     result = _check_analysis(analysis)
-    assert (result["original"]["cost"]) is None
-    assert (result["objective"]["reference_kind"]) == ("unit_fallback")
-    assert (result["recommendation"]["operation"]) == ("retain_original")
+    assert (json_member(result, "original")["cost"]) is None
+    assert (json_member(result, "objective")["reference_kind"]) == ("unit_fallback")
+    assert (json_member(result, "recommendation")["operation"]) == ("retain_original")
     explicit = _check_analysis(
         analysis, recommendation={"reference": dict.fromkeys(METRICS, 1)}
     )
-    assert (explicit["recommendation"]["operation"]) == ("retain_original")
+    assert (json_member(explicit, "recommendation")["operation"]) == ("retain_original")
 
 
 def test_per_policy_eligible_candidate_survives_a_cheaper_other_policy() -> None:
     analysis = fixture(2)
-    analysis["declarations"]["domains"]["history"] = {"size": 100}
-    for cell in analysis["declarations"]["cells"]:
-        cell["states"]["history"] = "history"
-        row = analysis["interfaces"][cell["id"]]
-        row["options"][0]["state_projection"]["history"] = {"kind": "drop"}
-        alternative = deepcopy(row["options"][0])
+    _domains(analysis)["history"] = {"size": 100}
+    for cell in _cells(analysis):
+        json_member(cell, "states")["history"] = "history"
+        option = _first_option(analysis, cell["id"])
+        json_member(option, "state_projection")["history"] = {"kind": "drop"}
+        alternative = deepcopy(option)
         alternative.update(
             id="drop-all",
             states={},
             state_projection={"x": {"kind": "drop"}, "history": {"kind": "drop"}},
         )
-        row["options"].append(alternative)
-    analysis["projection_policies"].append(
+        json_list(analysis, "interfaces", str(cell["id"]), "options").append(
+            alternative
+        )
+    json_list(analysis, "projection_policies").append(
         {
             "id": "P1",
             "option_by_cell": {
-                cell["id"]: "drop-all" for cell in analysis["declarations"]["cells"]
+                str(cell["id"]): "drop-all" for cell in _cells(analysis)
             },
         }
     )
     result = _check_analysis(analysis)
-    assert all(point["projection_policy"] == "P1" for point in result["frontier"])
+    assert all(
+        point["projection_policy"] == "P1" for point in json_rows(result, "frontier")
+    )
     safe_policy_candidates = {
         point["id"]
-        for point in result["candidates"]
+        for point in json_rows(result, "candidates")
         if point["projection_policy"] == "P0"
     }
     assert safe_policy_candidates
@@ -488,12 +567,12 @@ def test_per_policy_eligible_candidate_survives_a_cheaper_other_policy() -> None
 
 def test_pair_merge_local_minimum_is_not_global_optimality() -> None:
     analysis = pairwise_trap()
-    policy = analysis["projection_policies"][0]["option_by_cell"]
+    policy = _first_policy(analysis)
     singleton = [
         literal_block(analysis, [f"{name}:0"], policy) for name in ("a", "b", "c")
     ]
     original = {name: sum(part["cost"][name] for part in singleton) for name in METRICS}
-    objective = {
+    objective: dict[str, JSONValue] = {
         "weights": {"work": "1", "storage": "1/100", "clarity": "1/100"},
         "reference_scales": dict.fromkeys(METRICS, 1),
     }
@@ -517,10 +596,10 @@ def test_pair_merge_local_minimum_is_not_global_optimality() -> None:
         },
         effort={"rounds": 2},
     )
-    assert (result["search"]["optimality_gap"]) == ("unknown")
-    assert (result["recommendation"]["graph_id"]) == ("retain-original")
+    assert (json_member(result, "search")["optimality_gap"]) == ("unknown")
+    assert (json_member(result, "recommendation")["graph_id"]) == ("retain-original")
     best_examined = min(
-        score(point["cost"], objective) for point in result["candidates"]
+        score(point["cost"], objective) for point in json_rows(result, "candidates")
     )
     assert (best_examined) > (
         min(score(point["cost"], objective) for point in brute_family(analysis))
@@ -534,18 +613,22 @@ def test_width_one_chain_never_enters_exponential_assignment_or_checker_cover() 
     n = 5
     labels = tuple(f"r{i}" for i in range(n))
     analysis = fixture(1, labels)
-    analysis["declarations"]["analysis_scope"] = "pylcm-structural-graph/v1"
-    analysis["declarations"]["domains"]["dy"] = {"size": 2}
-    for i, cell in enumerate(analysis["declarations"]["cells"]):
+    declarations = json_member(analysis, "declarations")
+    declarations["analysis_scope"] = "pylcm-structural-graph/v1"
+    _domains(analysis)["dy"] = {"size": 2}
+    for i, cell in enumerate(_cells(analysis)):
         cell["period"], cell["age"] = i, 20 + 2 * i
         cell["actions"] = {}
-        option = analysis["interfaces"][cell["id"]]["options"][0]
+        option = _first_option(analysis, cell["id"])
         option.update(actions={}, action_reconstruction={})
         if i == n - 1:
-            cell["states"]["y"] = "dy"
-            option["states"]["y"] = "dy"
-            option["state_projection"]["y"] = {"kind": "identity", "target": "y"}
-    analysis["declarations"]["relations"] = [
+            json_member(cell, "states")["y"] = "dy"
+            json_member(option, "states")["y"] = "dy"
+            json_member(option, "state_projection")["y"] = {
+                "kind": "identity",
+                "target": "y",
+            }
+    declarations["relations"] = [
         {"source": f"r{i}:0", "targets": [f"r{i + 1}:0"], "support": "positive"}
         for i in range(n - 1)
     ]
@@ -578,12 +661,13 @@ def test_input_permutations_keep_costs_and_selection() -> None:
     analysis = fixture(2, ("a", "b", "c"))
     before = _check_analysis(analysis)
     permuted = deepcopy(analysis)
-    permuted["declarations"]["cells"].reverse()
-    permuted["declarations"]["relations"].reverse()
-    permuted["interfaces"] = dict(reversed(list(permuted["interfaces"].items())))
+    json_list(permuted, "declarations", "cells").reverse()
+    json_list(permuted, "declarations", "relations").reverse()
+    interfaces = json_member(permuted, "interfaces")
+    permuted["interfaces"] = dict(reversed(list(interfaces.items())))
     after = _check_analysis(permuted)
-    assert ([point["cost"] for point in before["frontier"]]) == (
-        [point["cost"] for point in after["frontier"]]
+    assert ([point["cost"] for point in json_rows(before, "frontier")]) == (
+        [point["cost"] for point in json_rows(after, "frontier")]
     )
     assert (before["recommendation"]) == (after["recommendation"])
 
@@ -607,26 +691,26 @@ def test_candidate_and_source_binding_negative_controls(
         "reference",
     ):
         bad = deepcopy(result)
-        first = bad["candidates"][0]
-        part = first["blocks"][0]
+        first = json_rows(bad, "candidates")[0]
+        part = json_rows(first, "blocks")[0]
         if mutation == "cost":
-            first["cost"]["work"] += 1
+            _increment(json_member(first, "cost"), "work")
         elif mutation == "date":
-            part["periods"][0] += 1
+            _increment_first(json_list(part, "periods"))
         elif mutation == "age":
-            part["ages"][0] += 1
+            _increment_first(json_list(part, "ages"))
         elif mutation == "coverage":
-            part["cells"].pop()
+            json_list(part, "cells").pop()
         elif mutation == "axes":
             part["state_axes"] = {}
         elif mutation == "detail":
-            part["cost_detail"]["boundary_incidences"] += 1
+            _increment(json_member(part, "cost_detail"), "boundary_incidences")
         elif mutation == "complete":
-            bad["search"]["complete"] = True
+            json_member(bad, "search")["complete"] = True
         elif mutation == "baseline":
-            bad["original"]["cost"]["storage"] += 1
+            _increment(json_member(bad, "original", "cost"), "storage")
         elif mutation == "reference":
-            bad["objective"]["reference_scales"]["work"] += 1
+            _increment(json_member(bad, "objective", "reference_scales"), "work")
         with subtests.test(mutation=mutation):
             assert (check_heuristic_frontier(analysis, bad)["status"]) == ("FAIL")
     for field, value in (
@@ -635,10 +719,10 @@ def test_candidate_and_source_binding_negative_controls(
         ("solver_identity", "another-solver"),
     ):
         altered = deepcopy(analysis)
-        altered["declarations"]["cells"][0][field] = value
+        _cells(altered)[0][field] = value
         assert (check_heuristic_frontier(altered, result)["status"]) == ("FAIL")
     changed = deepcopy(analysis)
-    changed["declarations"]["relations"][0]["phase"] = "simulation"
+    json_rows(changed, "declarations", "relations")[0]["phase"] = "simulation"
     assert (check_heuristic_frontier(changed, result)["status"]) == ("FAIL")
 
 
@@ -646,7 +730,7 @@ def test_recomputed_costs_do_not_authorize_noninterval_or_partial_date_blocks() 
     for same_date in (False, True):
         analysis = fixture(3, ("a", "b") if same_date else ("a",))
         search = Search(analysis)
-        policy = analysis["projection_policies"][0]["option_by_cell"]
+        policy = _first_policy(analysis)
         members = (
             [["a:0", "b:0", "a:1"], ["b:1", "a:2", "b:2"]]
             if same_date
@@ -668,8 +752,8 @@ def test_cooperative_stop_keeps_literal_original_without_claiming_optimum() -> N
     analysis = fixture(4, ("a", "b"))
     result = _check_analysis(analysis, limits={"seconds": 0})
     assert (result["candidates"]) == ([])
-    assert (result["recommendation"]["operation"]) == ("retain_original")
-    assert (result["search"]["evaluated_candidates"]) == (0)
+    assert (json_member(result, "recommendation")["operation"]) == ("retain_original")
+    assert (json_member(result, "search")["evaluated_candidates"]) == (0)
 
 
 def test_exact_api_remains_an_explicit_tiny_oracle() -> None:
@@ -686,7 +770,7 @@ def test_disconnected_coarsening_regions_do_not_enumerate_the_powerset() -> None
     from _lcm_regime_finder.production import MetadataAnalysis
 
     source = declarative_coarsening_fixture()
-    template = source["cells"][0]
+    template = json_rows(source, "cells")[0]
     source["cells"] = [
         dict(deepcopy(template), id=f"a:{i}", period=i, age=21 + i) for i in range(32)
     ]
@@ -712,7 +796,7 @@ def test_heuristic_label_region_is_closed_under_original_identity_links() -> Non
     from _lcm_regime_finder.production import MetadataAnalysis
 
     source = declarative_coarsening_fixture()
-    source["cells"][1]["regime"] = "b"
+    json_rows(source, "cells")[1]["regime"] = "b"
     analysis = MetadataAnalysis(
         source, search_mode="heuristic", facts_backend="metadata"
     ).run()
@@ -736,28 +820,29 @@ def test_heuristic_coarsening_axes_do_not_form_a_cartesian_policy_family() -> No
     source = declarative_coarsening_fixture()
     for axis in ("y", "z"):
         name = "feature_" + axis
-        source["callbacks"][name] = dict(
-            source["callbacks"]["phi"],
+        callbacks = json_member(source, "callbacks")
+        callbacks[name] = dict(
+            json_member(callbacks, "phi"),
             arguments=[axis],
             reads=[axis],
             source=f"def {name}({axis}):\n    return {axis} // 2\n",
             expression=f"{axis} // 2",
             identity=name,
         )
-        source["characteristics"][name] = {
+        json_member(source, "characteristics")[name] = {
             "state": axis,
             "domain": "dx",
             "callback": name,
             "name": name,
         }
-        for cell in source["cells"]:
-            cell["states"][axis] = "dx"
-            cell["functions"][name] = name
-        source["relations"][0]["state_updates"][axis] = {
+        for cell in json_rows(source, "cells"):
+            json_member(cell, "states")[axis] = "dx"
+            json_member(cell, "functions")[name] = name
+        json_member(json_rows(source, "relations")[0], "state_updates")[axis] = {
             "kind": "identity",
             "source": axis,
         }
-    source["callbacks"]["utility"].update(
+    json_member(source, "callbacks", "utility").update(
         arguments=["feature", "feature_y", "feature_z"],
         reads=["feature", "feature_y", "feature_z"],
         expression="feature + feature_y + feature_z",

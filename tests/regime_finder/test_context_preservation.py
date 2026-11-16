@@ -9,13 +9,16 @@ from functools import partial
 # Model-graph contract whose primitives retain their declared dependencies.
 find_regimes = partial(_find_regimes, analysis_scope="full_semantics")
 from _lcm_regime_finder.proposal_decision import build_decisions, verify_decisions
+from _lcm_regime_finder.records import JSONValue
+from tests.regime_finder.test_declaration_ingestion import json_member
 from tests.regime_finder.test_round5_local_obligations import native_fixture
 
 
-def _create_source():
+def _create_source() -> dict[str, JSONValue]:
     source = native_fixture()
-    for regime in source["user_regimes"].values():
-        regime["fields"].pop("semantic_role")
+    for regime in json_member(source, "user_regimes").values():
+        assert isinstance(regime, dict)
+        json_member(regime, "fields").pop("semantic_role")
     return source
 
 

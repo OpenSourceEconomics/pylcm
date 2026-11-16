@@ -3,10 +3,11 @@
 from copy import deepcopy
 
 from _lcm_regime_finder.production import MetadataAnalysis
+from _lcm_regime_finder.records import JSONValue
 from _lcm_regime_finder.semantic_check import check_semantics
 
 
-def original_declarations():
+def original_declarations() -> dict[str, JSONValue]:
     """A literal one-cell finite problem; no capture or numerical model call."""
     return {
         "schema": "regime-declarations/v1",

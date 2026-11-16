@@ -11,10 +11,18 @@ from _lcm_regime_finder.proposal_decision import (
     verify_decisions,
     prepare_decision_context,
 )
+from _lcm_regime_finder.records import JSONValue
+from tests.regime_finder.test_declaration_ingestion import (
+    json_list,
+    json_member,
+    json_rows,
+)
 from .tiny_metadata_family import original
 
 
-def produce(source=None):
+def produce(
+    source: dict[str, JSONValue] | None = None,
+) -> tuple[dict[str, JSONValue], dict[str, JSONValue], list[dict[str, JSONValue]]]:
     source = original() if source is None else source
     normalized = normalize_declarations(source)
     analysis = MetadataAnalysis(
@@ -28,7 +36,7 @@ def test_source_and_candidate_anchors_and_local_adoption() -> None:
     records = build_decisions(source, analysis, scenarios)
     assert (records[0]["operation"]) == ("retain_original")
     assert (records[0]["disposition"]) == ("adopt")
-    assert (len(records)) == (1 + len(scenarios[0]["frontier"]))
+    assert (len(records)) == (1 + len(json_list(scenarios[0], "frontier")))
     for row in records[1:]:
         assert (row["disposition"]) == ("adopt"), row
         assert (row["scenario_index"]) == (0)
@@ -58,11 +66,14 @@ def test_false_saved_adopt_is_not_evidence() -> None:
 def test_altered_source_or_structural_cost_rejects() -> None:
     source, analysis, scenarios = produce()
     changed = deepcopy(source)
-    changed["cells"][0]["role"]["actor"] = "different actor"
+    json_member(json_rows(changed, "cells")[0], "role")["actor"] = "different actor"
     records = build_decisions(changed, analysis, scenarios)
     assert all(row["disposition"] == "reject" for row in records[1:])
     changed_scenarios = deepcopy(scenarios)
-    changed_scenarios[0]["frontier"][0]["cost"]["work"] -= 1
+    cost = json_member(json_rows(changed_scenarios[0], "frontier")[0], "cost")
+    work = cost["work"]
+    assert isinstance(work, int)
+    cost["work"] = work - 1
     records = build_decisions(source, analysis, changed_scenarios)
     assert (records[1]["disposition"]) == ("reject")
     assert records[1]["semantic_checks"]["candidate_admission_errors"]
@@ -82,7 +93,7 @@ def test_partial_frontier_can_have_locally_adoptable_candidate() -> None:
 def test_conditional_allocation_is_investigation_not_measured_speed() -> None:
     source, analysis, scenarios = produce()
     scenario = deepcopy(scenarios[0])
-    scenario["allocation_contract"]["status"] = "conditional_scenario"
+    json_member(scenario, "allocation_contract")["status"] = "conditional_scenario"
     records = build_decisions(source, analysis, [scenario])
     for row in records[1:]:
         assert (row["disposition"]) == ("investigate"), row
@@ -95,7 +106,7 @@ def test_scenario_cannot_promote_its_own_allocation_authority() -> None:
     source["allocation"]["status"] = "unresolved"
     source, analysis, scenarios = produce(source)
     scenarios[0]["allocation_contract"] = dict(
-        scenarios[0]["allocation_contract"], status="known"
+        json_member(scenarios[0], "allocation_contract"), status="known"
     )
     records = build_decisions(source, analysis, scenarios)
     assert all(row["disposition"] == "investigate" for row in records[1:]), records
@@ -139,7 +150,7 @@ def test_opaque_unchanged_use_does_not_block_unrelated_safe_coarsening() -> None
 
 def test_missing_capture_contract_stays_explicit() -> None:
     source, analysis, scenarios = produce()
-    analysis["obligations"].append(
+    json_list(analysis, "obligations").append(
         {"kind": "capture_identity", "detail": "mutable global unresolved"}
     )
     records = build_decisions(source, analysis, scenarios)
@@ -165,7 +176,9 @@ def test_shared_context_matches_fresh_replay_and_rejects_mutations() -> None:
             "status"
         ]
     ) == ("PASS")
-    source["cells"][0]["role"]["actor"] = "changed after checking"
+    json_member(json_rows(source, "cells")[0], "role")["actor"] = (
+        "changed after checking"
+    )
     with pytest.raises(ValueError, match="unchanged source"):
         build_decisions(source, analysis, scenarios, _context=context)
 
@@ -183,7 +196,7 @@ def test_honest_budget_limited_investigation_can_be_strengthened() -> None:
     saved = build_decisions(source, analysis, scenarios, seconds=0)
     replay = verify_decisions(source, analysis, scenarios, saved)
     assert (replay["status"]) == ("PASS"), replay
-    assert (len(replay["strengthened"])) == (len(scenarios[0]["frontier"]))
+    assert (len(replay["strengthened"])) == (len(json_list(scenarios[0], "frontier")))
     assert all(row["replayed_disposition"] == "adopt" for row in replay["strengthened"])
 
 

@@ -6,12 +6,19 @@ that split; the metadata backend, which has no per-status facts, does not.
 """
 
 from copy import deepcopy
+from pathlib import Path
 
 import jax.numpy as jnp
 import pytest
 
 from _lcm_regime_finder.production import analyze_production
+from _lcm_regime_finder.records import JSONValue
 from _lcm_regime_finder.semantic_check import check_semantics
+from tests.regime_finder.test_declaration_ingestion import (
+    json_list,
+    json_member,
+    json_rows,
+)
 from lcm.graphs import StatusLane, analyze_regime_structure
 from lcm import DiscreteGrid, InitialNodes, Model, Periods, Regime, categorical
 from lcm.typing import DiscreteState, FloatND, ScalarInt
@@ -92,7 +99,9 @@ def _carry(experience: DiscreteState, employment: DiscreteState) -> DiscreteStat
     return experience + 0 * employment
 
 
-def _analyze(facts_backend: str, *, status_matters: bool = True):
+def _analyze(
+    facts_backend: str, *, status_matters: bool = True
+) -> dict[str, JSONValue]:
     return analyze_production(
         model(status_matters=status_matters),
         facts_backend=facts_backend,
@@ -102,59 +111,75 @@ def _analyze(facts_backend: str, *, status_matters: bool = True):
 
 
 @pytest.mark.parametrize("facts_backend", ["dense", "implicit"])
-def test_exact_backends_split_by_the_status_that_drops_a_state(facts_backend) -> None:
+def test_exact_backends_split_by_the_status_that_drops_a_state(
+    facts_backend: str,
+) -> None:
     result = _analyze(facts_backend)
-    splits = result["analysis"]["status_splits"]
+    splits = json_member(result, "analysis", "status_splits")
     assert splits["status"] == "OFFERED", splits
-    assert len(splits["cells"]) == 2, "both regimes split"
-    for split in splits["cells"]:
+    cells = json_rows(splits, "cells")
+    assert len(cells) == 2, "both regimes split"
+    for split in cells:
         assert split["axis"] == "employment"
         lanes = {
-            tuple(lane["codes"]["employment"]): set(lane["states"])
-            for lane in split["lanes"]
+            tuple(json_list(lane, "codes", "employment")): set(
+                json_member(lane, "states")
+            )
+            for lane in json_rows(split, "lanes")
         }
         assert lanes == {(0,): set(), (1,): {"experience"}}
         assert (split["state_rows"], split["unsplit_state_rows"]) == (1 + 3, 2 * 3)
-    assert result["semantic_check"]["status"] != "FAIL", result["semantic_check"]
+    semantic_check = json_member(result, "semantic_check")
+    assert semantic_check["status"] != "FAIL", semantic_check
 
 
 def test_metadata_backend_states_why_it_offers_no_split() -> None:
-    splits = _analyze("metadata")["analysis"]["status_splits"]
+    splits = json_member(_analyze("metadata"), "analysis", "status_splits")
     assert splits["status"] == "NOT_OFFERED"
-    assert "per-status facts" in splits["reason"]
+    reason = splits["reason"]
+    assert isinstance(reason, str)
+    assert "per-status facts" in reason
 
 
 def test_a_status_that_changes_nothing_is_not_split() -> None:
-    splits = _analyze("dense", status_matters=False)["analysis"]["status_splits"]
+    splits = json_member(
+        _analyze("dense", status_matters=False), "analysis", "status_splits"
+    )
     assert splits["status"] == "NONE_USEFUL"
     assert not splits["cells"]
 
 
 @pytest.mark.parametrize("forgery", ["drop_needed_state", "understate_rows", "overlap"])
-def test_checker_refutes_a_forged_split(forgery) -> None:
-    result = _analyze("dense")
-    analysis = deepcopy(result["analysis"])
-    cell = result["analysis"]["status_splits"]["cells"][0]["cell"]
-    split = next(o for o in analysis["interfaces"][cell]["options"] if "lanes" in o)
-    domain = analysis["derived_domains"][next(iter(split["states"].values()))]
+def test_checker_refutes_a_forged_split(forgery: str) -> None:
+    produced = json_member(_analyze("dense"), "analysis")
+    analysis = deepcopy(produced)
+    cell = json_rows(produced, "status_splits", "cells")[0]["cell"]
+    assert isinstance(cell, str)
+    split = next(
+        o for o in json_rows(analysis, "interfaces", cell, "options") if "lanes" in o
+    )
+    domain_name = next(iter(json_member(split, "states").values()))
+    assert isinstance(domain_name, str)
+    domain = json_member(analysis, "derived_domains", domain_name)
     if forgery == "drop_needed_state":
-        for lanes in (split["lanes"], domain["lanes"]):
+        for lanes in (json_rows(split, "lanes"), json_rows(domain, "lanes")):
             for lane in lanes:
-                lane["states"].pop("experience", None)
+                json_member(lane, "states").pop("experience", None)
         domain["size"] = 2
         expected = "status lane drops a needed state"
     elif forgery == "understate_rows":
         domain["size"] = 1
         expected = "status split rows differ from its lanes"
     else:
-        for lanes in (split["lanes"], domain["lanes"]):
-            lanes[0]["codes"]["employment"] = [0, 1]
+        for lanes in (json_rows(split, "lanes"), json_rows(domain, "lanes")):
+            json_member(lanes[0], "codes")["employment"] = [0, 1]
         expected = "status lanes do not partition the axis codes"
+    declarations = json_member(analysis, "declarations")
     check = check_semantics(
-        analysis["declarations"]["original"]
-        if "original" in analysis["declarations"]
-        else result["analysis"]["declarations"],
-        analysis["declarations"],
+        json_member(declarations, "original")
+        if "original" in declarations
+        else json_member(produced, "declarations"),
+        declarations,
         analysis,
     )
     assert any(error["kind"] == expected for error in check["errors"]), check["errors"]
@@ -162,17 +187,21 @@ def test_checker_refutes_a_forged_split(forgery) -> None:
 
 def test_the_recommended_graph_shares_one_split_block() -> None:
     result = _analyze("dense")
-    recommendation = result["recommendations"][0]
-    scenario = result["scenarios"][recommendation.get("scenario_index", 0)]
+    recommendation = json_rows(result, "recommendations")[0]
+    scenario_index = recommendation.get("scenario_index", 0)
+    assert isinstance(scenario_index, int)
+    scenario = json_rows(result, "scenarios")[scenario_index]
     graph = next(
-        c for c in scenario["candidates"] if c["id"] == recommendation["graph_id"]
+        c
+        for c in json_rows(scenario, "candidates")
+        if c["id"] == recommendation["graph_id"]
     )
-    (block,) = graph["blocks"]
-    assert list(block["state_axes"]) == ["lanes[employment]"]
-    assert graph["cost"]["work"] == 8, (
+    (block,) = json_rows(graph, "blocks")
+    assert list(json_member(block, "state_axes")) == ["lanes[employment]"]
+    assert json_member(graph, "cost")["work"] == 8, (
         "4 lane rows in each of 2 cells, against 12 unsplit"
     )
-    assert scenario["independent_check"]["status"] == "PASS"
+    assert json_member(scenario, "independent_check")["status"] == "PASS"
 
 
 def test_the_typed_result_lists_the_lanes() -> None:
@@ -187,7 +216,7 @@ def test_the_typed_result_lists_the_lanes() -> None:
     )
 
 
-def test_the_report_names_the_lanes(tmp_path) -> None:
+def test_the_report_names_the_lanes(tmp_path: Path) -> None:
     result = analyze_regime_structure(
         model(), facts_backend="dense", search_mode="heuristic"
     )

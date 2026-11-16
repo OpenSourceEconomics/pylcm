@@ -9,6 +9,7 @@ import pytest
 from copy import deepcopy
 from fractions import Fraction
 import json
+from collections.abc import Callable
 from pathlib import Path
 
 from _lcm_regime_finder.declarations import normalize_declarations
@@ -16,6 +17,14 @@ from _lcm_regime_finder.frontier import Search, search_frontier
 from _lcm_regime_finder.frontier_check import check_frontier
 from _lcm_regime_finder.model_snapshot import source_function
 from _lcm_regime_finder.production import MetadataAnalysis
+from _lcm_regime_finder.records import JSONValue
+from tests.regime_finder.test_declaration_ingestion import (
+    json_entries,
+    json_list,
+    json_member,
+    json_object,
+    json_rows,
+)
 from _lcm_regime_finder.semantic_check import check_semantics
 from .metadata_oracle import (
     ScalarSourceOracle,
@@ -24,13 +33,15 @@ from .metadata_oracle import (
 )
 from .tiny_metadata_family import original, full_family
 
+type PythonSource = str
 
-def custom_where(condition, left, right):
+
+def custom_where(condition: bool, left: int, right: int) -> int:
     del condition, right
     return left
 
 
-def custom_right(condition, left, right):
+def custom_right(condition: bool, left: int, right: int) -> int:
     del condition, left
     return right
 
@@ -38,30 +49,34 @@ def custom_right(condition, left, right):
 _alias_of_custom = custom_where
 
 
-def custom_utility(history, age):
+def custom_utility(history: int, age: int) -> int:
     return 1 + custom_where(age < 22, history, 0)
 
 
-def aliased_utility(history, age):
+def aliased_utility(history: int, age: int) -> int:
     return 1 + _alias_of_custom(age < 22, history, 0)
 
 
-def closure_utility(helper):
-    def utility(history, age):
+def closure_utility(
+    helper: Callable[[bool, int, int], int],
+) -> Callable[[int, int], int]:
+    def utility(history: int, age: int) -> int:
         return 1 + helper(age < 22, history, 0)
 
     return utility
 
 
-def identity_history(history):
+def identity_history(history: int) -> int:
     return history
 
 
-def simple_utility(history):
+def simple_utility(history: int) -> int:
     return history
 
 
-def record(source, arguments, **extra):
+def record(
+    source: PythonSource, arguments: list[str], **extra: JSONValue
+) -> dict[str, JSONValue]:
     return {
         "kind": "callable",
         "source": source,
@@ -74,7 +89,9 @@ def record(source, arguments, **extra):
     }
 
 
-def captured_snapshot(callback=None):
+def captured_snapshot(
+    callback: dict[str, JSONValue] | None = None,
+) -> dict[str, JSONValue]:
     """Explicit original captured declaration, no proposed reduction/cuts."""
     grid = {
         "kind": "object",
@@ -141,7 +158,27 @@ def captured_snapshot(callback=None):
     }
 
 
-def _produce(spec=None):
+def sorted_costs(result: dict[str, JSONValue]) -> list[tuple[int, int, int]]:
+    """The frontier's (work, storage, clarity) costs in sorted order."""
+    costs = []
+    for point in json_rows(result, "frontier"):
+        cost = json_member(point, "cost")
+        work, storage, clarity = cost["work"], cost["storage"], cost["clarity"]
+        assert isinstance(work, int)
+        assert isinstance(storage, int)
+        assert isinstance(clarity, int)
+        costs.append((work, storage, clarity))
+    return sorted(costs)
+
+
+def _produce(
+    spec: dict[str, JSONValue] | None = None,
+) -> tuple[
+    dict[str, JSONValue],
+    dict[str, JSONValue],
+    dict[str, JSONValue],
+    dict[str, JSONValue],
+]:
     source = original() if spec is None else spec
     declarations = normalize_declarations(source)
     analysis = MetadataAnalysis(
@@ -160,30 +197,36 @@ def test_original_only_complete_six_layout_oracle() -> None:
         if candidate["id"] in oracle["frontier_ids"]
     }
     actual = {
-        tuple(point["cost"][key] for key in ("work", "storage", "clarity"))
-        for point in result["frontier"]
+        tuple(json_member(point, "cost")[key] for key in ("work", "storage", "clarity"))
+        for point in json_rows(result, "frontier")
     }
     assert (oracle["candidate_count"]) == (6)
     assert (actual) == (expected)
-    assert (len(analysis["projection_policies"])) == (3)
+    assert (len(json_list(analysis, "projection_policies"))) == (3)
     assert (check_semantics(source, declarations, analysis)["status"]) == ("PASS")
     assert (check_frontier(analysis, result)["status"]) == ("PASS")
 
 
 def test_trillion_point_axis_is_metadata_not_a_dense_tensor() -> None:
     _, _, analysis, result = _produce()
-    assert (analysis["declarations"]["domains"]["assets_large"]["size"]) == (10**12)
-    assert (analysis["production_execution"]["callbacks_called"]) == (0)
-    assert (analysis["production_execution"]["dense_cartesian_cells_enumerated"]) == (0)
+    domains = json_member(analysis, "declarations", "domains")
+    assert (json_member(domains, "assets_large")["size"]) == (10**12)
+    execution = json_member(analysis, "production_execution")
+    assert (execution["callbacks_called"]) == (0)
+    assert (execution["dense_cartesian_cells_enumerated"]) == (0)
     checked = check_frontier(analysis, result)
     assert (checked["dense_cartesian_rows_evaluated"]) == (0)
-    assert (min(point["cost"]["work"] for point in result["frontier"])) > (10**12)
+    works = [
+        json_member(point, "cost")["work"] for point in json_rows(result, "frontier")
+    ]
+    assert works
+    assert all(isinstance(work, int) and work > 10**12 for work in works)
 
 
 def test_missing_valid_late_only_projection_is_rejected() -> None:
     source, declaration, analysis, _ = _produce()
     corrupted = deepcopy(analysis)
-    corrupted["projection_policies"].pop(1)
+    json_list(corrupted, "projection_policies").pop(1)
     checked = check_semantics(source, declaration, corrupted)
     assert (checked["status"]) == ("FAIL"), checked
     assert any("omits coherent" in error["kind"] for error in checked["errors"])
@@ -194,10 +237,10 @@ def test_corrupted_semantic_characteristic_map() -> None:
     corrupted = deepcopy(analysis)
     option = next(
         option
-        for option in corrupted["interfaces"]["c1"]["options"]
-        if option["state_projection"]["family"]["kind"] == "characteristic"
+        for option in json_rows(corrupted, "interfaces", "c1", "options")
+        if json_member(option, "state_projection", "family")["kind"] == "characteristic"
     )
-    option["state_projection"]["family"]["values"][2] = 0
+    json_list(option, "state_projection", "family", "values")[2] = 0
     checked = check_semantics(source, declaration, corrupted)
     assert (checked["status"]) == ("FAIL"), checked
     assert any(
@@ -209,10 +252,10 @@ def test_corrupted_semantic_characteristic_map() -> None:
 def test_reduced_function_signatures_are_checked() -> None:
     source, declaration, analysis, _ = _produce()
     corrupted = deepcopy(analysis)
-    option = corrupted["interfaces"]["c1"]["options"][-1]
-    function = option["function_interfaces"]["simulation"]["utility"]
-    function["arguments"].remove("assets")
-    function["unused_arguments"].append("assets")
+    option = json_rows(corrupted, "interfaces", "c1", "options")[-1]
+    function = json_member(option, "function_interfaces", "simulation", "utility")
+    json_list(function, "arguments").remove("assets")
+    json_list(function, "unused_arguments").append("assets")
     checked = check_semantics(source, declaration, corrupted)
     assert (checked["status"]) == ("FAIL"), checked
     assert any(
@@ -233,11 +276,12 @@ def test_explicit_simultaneous_regimes_can_merge() -> None:
     source["relations"] = []
     source["characteristics"] = {}
     _, _, analysis, result = _produce(source)
-    assert (len(result["frontier"])) == (1)
-    blocks = result["frontier"][0]["blocks"]
+    frontier = json_rows(result, "frontier")
+    assert (len(frontier)) == (1)
+    blocks = json_rows(frontier[0], "blocks")
     assert (len(blocks)) == (1)
-    assert (set(blocks[0]["cells"])) == ({"A0", "B0"})
-    assert (result["frontier"][0]["cost"]["clarity"]) == (5)
+    assert (set(json_list(blocks[0], "cells"))) == ({"A0", "B0"})
+    assert (json_member(frontier[0], "cost")["clarity"]) == (5)
     assert (check_frontier(analysis, result)["status"]) == ("PASS")
 
 
@@ -248,19 +292,25 @@ def test_sparse_biological_dates_and_arbitrary_labels() -> None:
         cell["regime"] = {"life": "zebra", "death": "aardvark"}[cell["regime"]]
     _, _, analysis, result = _produce(source)
     assert (check_frontier(analysis, result)["status"]) == ("PASS")
-    for point in result["frontier"]:
-        assert (sorted(age for block in point["blocks"] for age in block["ages"])) == (
-            [20, 37, 81]
-        )
+    for point in json_rows(result, "frontier"):
+        ages = [
+            age
+            for block in json_rows(point, "blocks")
+            for age in json_list(block, "ages")
+        ]
+        assert all(isinstance(age, int) for age in ages)
+        assert (sorted(age for age in ages if isinstance(age, int))) == ([20, 37, 81])
     expected = full_family()
     expected_costs = {
         tuple(item["cost"].values())
         for item in expected["candidates"]
         if item["id"] in expected["frontier_ids"]
     }
-    assert ({tuple(point["cost"].values()) for point in result["frontier"]}) == (
-        expected_costs
-    )
+    actual_costs = {
+        tuple(json_member(point, "cost").values())
+        for point in json_rows(result, "frontier")
+    }
+    assert (actual_costs) == (expected_costs)
 
 
 def test_common_execution_interfaces_protect_grouping(
@@ -283,7 +333,7 @@ def test_common_execution_interfaces_protect_grouping(
         source["characteristics"] = {}
         _, _, analysis, result = _produce(source)
         with subtests.test(field=field):
-            assert (len(result["frontier"][0]["blocks"])) == (2)
+            assert (len(json_list(json_rows(result, "frontier")[0], "blocks"))) == (2)
             assert (check_frontier(analysis, result)["status"]) == ("PASS")
 
 
@@ -293,9 +343,9 @@ def test_future_detailed_consumer_prevents_earlier_coarsening() -> None:
     source["cells"][2]["consumers"][0]["callback"] = "u_early"
     _, _, analysis, _ = _produce(source)
     assert all(
-        option["state_projection"]["family"]["kind"] == "identity"
-        for record in analysis["interfaces"].values()
-        for option in record["options"]
+        json_member(option, "state_projection", "family")["kind"] == "identity"
+        for record in json_entries(analysis, "interfaces")
+        for option in json_rows(record, "options")
     )
 
 
@@ -305,7 +355,7 @@ def test_reporting_consumer_prevents_removal() -> None:
         {"kind": "reporting", "callback": "u_early", "phase": "simulation"}
     )
     _, _, analysis, _ = _produce(source)
-    assert (len(analysis["projection_policies"])) == (1)
+    assert (len(json_list(analysis, "projection_policies"))) == (1)
 
 
 def test_rare_simulation_law_is_a_real_consumer() -> None:
@@ -318,8 +368,8 @@ def test_rare_simulation_law_is_a_real_consumer() -> None:
     )
     _, _, analysis, _ = _produce(source)
     assert all(
-        option["state_projection"]["family"]["kind"] == "identity"
-        for option in analysis["interfaces"]["c1"]["options"]
+        json_member(option, "state_projection", "family")["kind"] == "identity"
+        for option in json_rows(analysis, "interfaces", "c1", "options")
     )
 
 
@@ -327,28 +377,38 @@ def test_corrupted_frontier_certificate_classes(*, subtests: pytest.Subtests) ->
     _, _, analysis, result = _produce()
     mutations = []
     bad = deepcopy(result)
-    bad["certificate"]["analysis_sha256"] = "0" * 64
+    json_member(bad, "certificate")["analysis_sha256"] = "0" * 64
     mutations.append(bad)
     bad = deepcopy(result)
-    bad["certificate"]["family_sha256"] = "0" * 64
+    json_member(bad, "certificate")["family_sha256"] = "0" * 64
     mutations.append(bad)
     bad = deepcopy(result)
-    bad["certificate"]["interval_records"][0]["suffix_frontiers"][0][0]["work"] += 1
+    interval = json_rows(bad, "certificate", "interval_records")[0]
+    suffix_frontier = json_list(interval, "suffix_frontiers")[0]
+    assert isinstance(suffix_frontier, list)
+    cost = json_object(suffix_frontier[0])
+    work = cost["work"]
+    assert isinstance(work, int)
+    cost["work"] = work + 1
     mutations.append(bad)
     bad = deepcopy(result)
-    bad["frontier"][0]["cost"]["storage"] -= 1
+    cost = json_member(json_rows(bad, "frontier")[0], "cost")
+    storage = cost["storage"]
+    assert isinstance(storage, int)
+    cost["storage"] = storage - 1
     mutations.append(bad)
     bad = deepcopy(result)
-    bad["frontier"].pop()
+    json_list(bad, "frontier").pop()
     mutations.append(bad)
     bad = deepcopy(result)
-    bad["frontier"][0]["blocks"][0]["ages"][0] = 999
+    block = json_rows(json_rows(bad, "frontier")[0], "blocks")[0]
+    json_list(block, "ages")[0] = 999
     mutations.append(bad)
     bad = deepcopy(result)
-    bad["recommendation"]["score"] = "0"
+    json_member(bad, "recommendation")["score"] = "0"
     mutations.append(bad)
     bad = deepcopy(result)
-    bad["certificate"]["complete"] = False
+    json_member(bad, "certificate")["complete"] = False
     mutations.append(bad)
     bad = deepcopy(result)
     bad["endpoint_clarity_policy"] = "saving spelling only"
@@ -384,8 +444,9 @@ def test_allocation_contract_changes_actual_ranking() -> None:
     source["allocation"]["kind"] = "global_union"
     _, _, analysis, result = _produce(source)
     assert (check_frontier(analysis, result)["status"]) == ("PASS")
-    assert (len(result["frontier"])) == (1)
-    assert (result["frontier"][0]["cost"]) == (
+    frontier = json_rows(result, "frontier")
+    assert (len(frontier)) == (1)
+    assert (frontier[0]["cost"]) == (
         {"work": 16 * 10**12, "storage": 12 * 10**12, "clarity": 8}
     )
 
@@ -407,9 +468,9 @@ def test_source_custom_and_aliased_helpers_are_not_primitives() -> None:
         snapshot = captured_snapshot(metadata)
         _, declaration, analysis, _ = _produce(snapshot)
         assert all(
-            "history" in option["states"]
-            for record in analysis["interfaces"].values()
-            for option in record["options"]
+            "history" in json_member(option, "states")
+            for record in json_entries(analysis, "interfaces")
+            for option in json_rows(record, "options")
         )
         assert (check_semantics(snapshot, declaration, analysis)["status"]) != ("FAIL")
 
@@ -472,19 +533,20 @@ def test_native_source_normalization_mutations(*, subtests: pytest.Subtests) -> 
         if change == "phase":
             normalized["relations"] = [
                 relation
-                for relation in normalized["relations"]
+                for relation in json_rows(normalized, "relations")
                 if relation["phase"] != "simulation"
             ]
+        first_cell = json_rows(normalized, "cells")[0]
         if change == "role":
-            normalized["cells"][0]["role"]["actor"] = "different actor"
+            json_member(first_cell, "role")["actor"] = "different actor"
         if change == "age":
-            normalized["cells"][0]["age"] = 19
+            first_cell["age"] = 19
         if change == "domain":
-            next(iter(normalized["domains"].values()))["values"] = [0, 2]
+            json_entries(normalized, "domains")[0]["values"] = [0, 2]
         if change == "consumer":
-            normalized["cells"][0]["consumers"] = []
+            first_cell["consumers"] = []
         if change == "start":
-            normalized["cells"][0]["admissible_start"] = False
+            first_cell["admissible_start"] = False
         altered = deepcopy(analysis)
         altered["declarations"] = normalized
         with subtests.test(change=change):
@@ -497,50 +559,55 @@ def test_original_period_age_provider_forces_correct_decision_dates() -> None:
     snapshot = captured_snapshot()
     dates = list(range(5))
     snapshot["ages"] = None
-    snapshot["graph"]["fields"]["coordinate_kind"] = "period"
+    graph_fields = json_member(snapshot, "graph", "fields")
+    graph_fields["coordinate_kind"] = "period"
     for reach in (
-        snapshot["reachability"],
-        snapshot["graph"]["fields"]["reachability"],
+        json_member(snapshot, "reachability"),
+        json_member(graph_fields, "reachability"),
     ):
-        reach["fields"]["nodes"] = [[period, "life"] for period in dates]
-    snapshot["graph"]["fields"]["initial_nodes"] = [[0, "life"]]
-    declaration = snapshot["user_regimes"]["life"]["fields"]
-    declaration["actions"]["choice"] = {
+        json_member(reach, "fields")["nodes"] = [[period, "life"] for period in dates]
+    graph_fields["initial_nodes"] = [[0, "life"]]
+    declaration = json_member(snapshot, "user_regimes", "life", "fields")
+    json_member(declaration, "actions")["choice"] = {
         "kind": "object",
         "type": "lcm.DiscreteGrid",
         "fields": {"values": [0, 1], "codes": [7, 9]},
     }
-    declaration["functions"]["age"] = record(
+    json_member(declaration, "functions")["age"] = record(
         "def age(period):\n    return 20 + period\n", ["period"]
     )
-    declaration["constraints"]["choice"] = record(
+    json_member(declaration, "constraints")["choice"] = record(
         "def allowed(choice, age):\n    return (choice == 0) | (age < 22)\n",
         ["choice", "age"],
     )
     source, normalized, analysis, _ = _produce(snapshot)
-    for cell in normalized["cells"]:
-        option = analysis["interfaces"][cell["id"]]["options"][0]
+    for cell in json_rows(normalized, "cells"):
+        cell_id, period = cell["id"], cell["period"]
+        assert isinstance(cell_id, str)
+        assert isinstance(period, int)
+        option = json_rows(analysis, "interfaces", cell_id, "options")[0]
         assert (cell["age"]) is None
-        assert (option["action_reconstruction"]["choice"]["kind"]) == (
-            "constant" if cell["period"] >= 2 else "identity"
+        assert (json_member(option, "action_reconstruction", "choice")["kind"]) == (
+            "constant" if period >= 2 else "identity"
         )
     assert (check_semantics(source, normalized, analysis)["status"]) == ("PASS")
 
 
 def test_categorical_action_codes_do_not_replace_decoded_values() -> None:
     snapshot = captured_snapshot()
-    declaration = snapshot["user_regimes"]["life"]["fields"]
-    declaration["actions"]["choice"] = {
+    declaration = json_member(snapshot, "user_regimes", "life", "fields")
+    json_member(declaration, "actions")["choice"] = {
         "kind": "object",
         "type": "lcm.DiscreteGrid",
         "fields": {"values": [10, 20], "codes": [9, 3]},
     }
-    declaration["constraints"]["code"] = record(
+    json_member(declaration, "constraints")["code"] = record(
         "def allowed(choice_code):\n    return choice_code == 3\n", ["choice_code"]
     )
     source, normalized, analysis, _ = _produce(snapshot)
-    for interface in analysis["interfaces"].values():
-        assert (interface["options"][0]["action_reconstruction"]["choice"]) == (
+    for interface in json_entries(analysis, "interfaces"):
+        option = json_rows(interface, "options")[0]
+        assert (json_member(option, "action_reconstruction")["choice"]) == (
             {"kind": "constant", "value": 20}
         )
     assert (check_semantics(source, normalized, analysis)["status"]) == ("PASS")
@@ -575,7 +642,7 @@ def test_endpoint_saving_preference_does_not_remove_admissible_split() -> None:
     assert (check_semantics(source, declaration, analysis)["status"]) == ("PASS")
     assert (check_frontier(analysis, result)["status"]) == ("PASS")
     assert result["frontier"]
-    for policy in analysis["projection_policies"]:
+    for policy in json_rows(analysis, "projection_policies"):
         assert (Search(analysis).block(["c1"], policy["option_by_cell"])) is not None
 
 
@@ -646,15 +713,16 @@ def test_numeric_characteristic_images_do_not_confuse_boolean_labels() -> None:
     _, declaration, analysis, _ = _produce(source)
     assert (check_semantics(source, declaration, analysis)["status"]) == ("PASS")
     modified = deepcopy(analysis)
-    for domain in modified["derived_domains"].values():
+    for domain in json_entries(modified, "derived_domains"):
         domain["values"] = [False]
     assert (check_semantics(source, declaration, modified)["status"]) == ("FAIL")
 
 
 def test_derived_category_codes_retain_original_value_dependencies() -> None:
     snapshot = captured_snapshot()
-    declaration = snapshot["user_regimes"]["life"]["fields"]
-    declaration["functions"]["class_value"] = record(
+    declaration = json_member(snapshot, "user_regimes", "life", "fields")
+    functions = json_member(declaration, "functions")
+    functions["class_value"] = record(
         "def class_value(history):\n    return [10, 20][history]\n", ["history"]
     )
     declaration["derived_categoricals"] = {
@@ -664,16 +732,17 @@ def test_derived_category_codes_retain_original_value_dependencies() -> None:
             "fields": {"values": [10, 20], "codes": [9, 3]},
         }
     }
-    declaration["functions"]["utility"] = record(
+    functions["utility"] = record(
         "def utility(class_value_code):\n    return class_value_code\n",
         ["class_value_code"],
     )
     source, normalized, analysis, _ = _produce(snapshot)
     assert (check_semantics(source, normalized, analysis)["status"]) == ("PASS")
-    for cell in normalized["cells"]:
-        assert ("history") in (analysis["dependency_closure"][cell["id"]])
+    closure = json_member(analysis, "dependency_closure")
+    for cell in json_rows(normalized, "cells"):
+        assert ("history") in (json_list(closure, str(cell["id"])))
     modified = deepcopy(normalized)
-    modified["cells"][0]["derived_code_providers"] = {}
+    json_rows(modified, "cells")[0]["derived_code_providers"] = {}
     altered = deepcopy(analysis)
     altered["declarations"] = modified
     assert (check_semantics(source, modified, altered)["status"]) == ("FAIL")
@@ -709,11 +778,13 @@ def test_legacy_decorator_and_added_evaluated_arguments_stay_opaque() -> None:
         source, normalized, analysis, _ = _produce(snapshot)
         bound = next(
             item
-            for item in normalized["callbacks"].values()
+            for item in json_entries(normalized, "callbacks")
             if item.get("original") == callback
         )
         assert (bound["status"]) == ("opaque")
-        assert (set(bound["reads"])) == (set(callback["arguments"]))
+        arguments = callback["arguments"]
+        assert isinstance(arguments, list)
+        assert (set(json_list(bound, "reads"))) == (set(arguments))
         checked = check_semantics(source, normalized, analysis)
         assert (checked["status"]) != ("FAIL"), checked
 
@@ -749,15 +820,8 @@ def test_endpoint_rule_is_invariant_under_control_renaming() -> None:
         _, declaration, analysis, result = _produce(source)
         assert (check_semantics(source, declaration, analysis)["status"]) == ("PASS")
         assert (check_frontier(analysis, result)["status"]) == ("PASS")
-        observed.append(
-            sorted(
-                tuple(
-                    point["cost"][metric] for metric in ("work", "storage", "clarity")
-                )
-                for point in result["frontier"]
-            )
-        )
-        for policy in analysis["projection_policies"]:
+        observed.append(sorted_costs(result))
+        for policy in json_rows(analysis, "projection_policies"):
             assert (
                 Search(analysis).block(["c1"], policy["option_by_cell"])
             ) is not None
@@ -765,12 +829,5 @@ def test_endpoint_rule_is_invariant_under_control_renaming() -> None:
         analysis["endpoint_saving_actions"] = []
         repeated = search_frontier(analysis)
         assert (check_frontier(analysis, repeated)["status"]) == ("PASS")
-        assert (observed[-1]) == (
-            sorted(
-                tuple(
-                    point["cost"][metric] for metric in ("work", "storage", "clarity")
-                )
-                for point in repeated["frontier"]
-            )
-        )
+        assert (observed[-1]) == (sorted_costs(repeated))
     assert (observed[0]) == (observed[1])

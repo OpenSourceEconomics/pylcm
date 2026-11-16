@@ -3,10 +3,11 @@
 from dataclasses import dataclass
 from collections.abc import Callable
 from types import SimpleNamespace
+from typing import Never
 from _lcm_regime_finder.model_snapshot import read_model
 
 
-def gate(divorce_shock):
+def gate(divorce_shock: float) -> Never:
     raise AssertionError("An exporter must never execute the gate")
 
 
@@ -43,10 +44,12 @@ def test_old_checkpoint_signatures_stay_unresolved_and_cannot_be_forged_complete
 ):
     from copy import deepcopy
     from _lcm_regime_finder import find_regimes, verify_production_result
+    from tests.regime_finder.test_declaration_ingestion import json_member
     from tests.regime_finder.test_metadata_independent import captured_snapshot
 
     source = captured_snapshot()
-    source["user_regimes"]["life"]["fields"]["functions"]["utility"] = {
+    functions = json_member(source, "user_regimes", "life", "fields", "functions")
+    functions["utility"] = {
         "kind": "callable",
         "arguments": [],
         "capture_status": "INCOMPLETE",

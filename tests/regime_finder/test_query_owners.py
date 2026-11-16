@@ -5,13 +5,21 @@ from copy import deepcopy
 
 from _lcm_regime_finder.declarations import normalize_declarations
 from _lcm_regime_finder.production import MetadataAnalysis
+from _lcm_regime_finder.records import SemanticCheck
 from _lcm_regime_finder.semantic_check import check_semantics
 from _lcm_regime_finder.graph_view import typed_incidence_graph
 from _lcm_regime_finder.model_adapter import adapt_snapshot, ModelAdapterError
+from _lcm_regime_finder.records import JSONValue
+from tests.regime_finder.test_declaration_ingestion import (
+    json_entries,
+    json_list,
+    json_member,
+    json_rows,
+)
 from tests.regime_finder.test_model_adapter import snapshot, function, grid
 
 
-def policy_snapshot():
+def policy_snapshot() -> dict[str, JSONValue]:
     raw = snapshot()
     raw["user_regimes"]["query_partner"] = {
         "kind": "dataclass",
@@ -55,7 +63,9 @@ def policy_snapshot():
     return raw
 
 
-def _check_analysis(raw):
+def _check_analysis(
+    raw: dict[str, JSONValue],
+) -> tuple[dict[str, JSONValue], dict[str, JSONValue], SemanticCheck]:
     normalized = normalize_declarations(raw)
     analysis = MetadataAnalysis(
         normalized, facts_backend="metadata", search_mode="exact"
@@ -89,13 +99,13 @@ def test_query_owner_is_not_a_visit_or_stored_bank() -> None:
     raw = policy_snapshot()
     normalized, analysis, checked = _check_analysis(raw)
     physical = normalize_declarations(snapshot())
-    assert ([c["id"] for c in normalized["cells"]]) == (
+    assert ([c["id"] for c in json_rows(normalized, "cells")]) == (
         [c["id"] for c in physical["cells"]]
     )
     assert (
         [
             (r["source"], r["targets"])
-            for r in normalized["relations"]
+            for r in json_rows(normalized, "relations")
             if r["kind"] == "transition"
         ]
     ) == (
@@ -107,12 +117,12 @@ def test_query_owner_is_not_a_visit_or_stored_bank() -> None:
     )
     assert all(
         q["storage"] == "not_asserted" and q["admission"] == "policy_query_only"
-        for q in normalized["query_owners"].values()
+        for q in json_entries(normalized, "query_owners")
     )
     assert (normalized["allocation"]) == ({"status": "unknown"})
     view = typed_incidence_graph(normalized)
     query_nodes = [n for n in view["nodes"] if n["node_kind"] == "policy_query_owner"]
-    assert (len(query_nodes)) == (len(normalized["query_owners"]))
+    assert (len(query_nodes)) == (len(json_member(normalized, "query_owners")))
     assert all(
         e["target"].startswith("query:")
         for e in view["edges"]
@@ -195,14 +205,21 @@ def test_source_bound_projection_and_genuine_dependency_controls() -> None:
     raw = policy_snapshot()
     normalized, analysis, _ = _check_analysis(raw)
     changed = deepcopy(normalized)
-    relation = next(r for r in changed["relations"] if r["kind"] == "policy_query")
-    callback = changed["callbacks"][relation["callbacks"][0]]
-    callback["original"]["fields"]["projection"]["partner_history"]["source"] = (
+    relation = next(
+        r for r in json_rows(changed, "relations") if r["kind"] == "policy_query"
+    )
+    callback = json_list(relation, "callbacks")[0]
+    assert isinstance(callback, str)
+    projection = json_member(
+        changed, "callbacks", callback, "original", "fields", "projection"
+    )
+    json_member(projection, "partner_history")["source"] = (
         "def project(history):\n    return 0\n"
     )
     assert (check_semantics(raw, changed, analysis)["status"]) == ("FAIL")
     changed = deepcopy(analysis)
-    for axes in changed["dependency_closure"].values():
+    for axes in json_member(changed, "dependency_closure").values():
+        assert isinstance(axes, list)
         if "history" in axes:
             axes.remove("history")
     assert (check_semantics(raw, normalized, changed)["status"]) == ("FAIL")
@@ -210,7 +227,7 @@ def test_source_bound_projection_and_genuine_dependency_controls() -> None:
 
 def test_missing_target_stays_an_explicit_obligation() -> None:
     raw = policy_snapshot()
-    del raw["user_regimes"]["query_partner"]
+    del json_member(raw, "user_regimes")["query_partner"]
     normalized, analysis, checked = _check_analysis(raw)
     assert (normalized["query_owners"]) == ({})
     assert any(
@@ -221,22 +238,29 @@ def test_missing_target_stays_an_explicit_obligation() -> None:
 
 def test_nested_query_owners_and_phases_are_separate() -> None:
     raw = policy_snapshot()
-    partner = raw["user_regimes"]["query_partner"]["fields"]
+    partner = json_member(raw, "user_regimes", "query_partner", "fields")
     nested = deepcopy(
-        raw["user_regimes"]["original"]["fields"]["same_period_refs"]["partner_price"]
+        json_member(
+            raw,
+            "user_regimes",
+            "original",
+            "fields",
+            "same_period_refs",
+            "partner_price",
+        )
     )
-    nested["fields"]["regime"] = "unused_owner"
+    json_member(nested, "fields")["regime"] = "unused_owner"
     partner["same_period_refs"] = {"nested": nested}
     normalized, analysis, checked = _check_analysis(raw)
-    assert ({q["regime"] for q in normalized["query_owners"].values()}) == (
+    assert ({q["regime"] for q in json_entries(normalized, "query_owners")}) == (
         {"query_partner", "unused_owner"}
     )
-    assert ({q["phase"] for q in normalized["query_owners"].values()}) == (
+    assert ({q["phase"] for q in json_entries(normalized, "query_owners")}) == (
         {"solve", "simulation"}
     )
     assert all(
         q["dependencies"]
-        for q in normalized["query_owners"].values()
+        for q in json_entries(normalized, "query_owners")
         if q["regime"] == "query_partner"
     )
     assert (checked["status"]) != ("FAIL"), checked

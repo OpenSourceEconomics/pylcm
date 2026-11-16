@@ -5,6 +5,12 @@ from pathlib import Path
 import tempfile
 
 from _lcm_regime_finder import production_render as renderer
+from tests.regime_finder.test_declaration_ingestion import (
+    json_list,
+    json_member,
+    json_object,
+    json_rows,
+)
 from tests.regime_finder.test_production_render import fixture
 
 
@@ -12,8 +18,8 @@ def test_boundary_exports_never_authorize_missing_or_rejected_decisions() -> Non
     from _lcm_regime_finder.cli import candidate_boundary_maps
 
     result = fixture()
-    for interface in result["analysis"]["interfaces"].values():
-        for option in interface["options"]:
+    for interface in json_member(result, "analysis", "interfaces").values():
+        for option in json_rows(json_object(interface), "options"):
             option["constants"] = {}
     assert not (candidate_boundary_maps(result)[0]["transformation_authorized"])
     for disposition in ("reject", "investigate", "adopt"):
@@ -80,7 +86,8 @@ def test_same_graph_id_in_different_scenarios_keeps_own_disposition() -> None:
     from copy import deepcopy
 
     result = fixture()
-    result["scenarios"].append(deepcopy(result["scenarios"][0]))
+    scenarios = json_list(result, "scenarios")
+    scenarios.append(deepcopy(scenarios[0]))
     result["proposal_decisions"] = [
         {
             "scenario_index": 0,

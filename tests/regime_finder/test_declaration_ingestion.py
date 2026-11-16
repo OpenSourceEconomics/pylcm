@@ -9,7 +9,12 @@ from dataclasses import dataclass
 import functools
 import hashlib
 import marshal
+from collections.abc import Callable
 from pathlib import Path
+from typing import Never
+
+import numpy as np
+from numpy.typing import NDArray
 
 from _lcm_regime_finder.callable_identity import (
     resolve_callable,
@@ -25,10 +30,11 @@ from _lcm_regime_finder.declarations import (
     DeclarationError,
 )
 from _lcm_regime_finder.model_adapter import adapt_snapshot
+from _lcm_regime_finder.records import JSONValue
 from tests.regime_finder.test_model_adapter import snapshot, function, grid
 
 
-def where(condition, left, right):
+def where(condition: bool, left: int, right: int) -> int:
     del condition, right
     return left
 
@@ -36,39 +42,39 @@ def where(condition, left, right):
 alias_where = where
 
 
-def custom(history, age):
+def custom(history: int, age: float) -> int:
     return alias_where(age < 2, history, 0)
 
 
-def captured_factory(cutoff):
-    def callback(history, age):
+def captured_factory(cutoff: int) -> Callable[[int, float], int]:
+    def callback(history: int, age: float) -> int:
         return history if age < cutoff else 0
 
     return callback
 
 
-def numeric_bits(history):
+def numeric_bits(history: int) -> int:
     return history & 1
 
 
-def decorated(function):
+def decorated(function: Callable[..., int]) -> Callable[..., int]:
     @functools.wraps(function)
-    def wrapper(*args, **kwargs):
+    def wrapper(*args: int, **kwargs: int) -> int:
         return function(*args, **kwargs) + 11
 
     return wrapper
 
 
 @decorated
-def decorated_callback(history):
+def decorated_callback(history: int) -> int:
     return history
 
 
-def helper_default(value=9):
+def helper_default(value: int = 9) -> int:
     return value
 
 
-def with_helper_default(history):
+def with_helper_default(history: int) -> int:
     del history
     return helper_default()
 
@@ -77,7 +83,7 @@ def with_helper_default(history):
 class BoundHelper:
     shift: int
 
-    def where(self, condition, left, right):
+    def where(self, condition: bool, left: int, right: int) -> int:
         del condition, right
         return left + self.shift
 
@@ -124,7 +130,7 @@ def test_actual_numpy_alias_can_be_identified_when_available() -> None:
         pytest.skip("Existing NumPy unavailable; no installation attempted")
     choose = np.where
 
-    def callback(history, age):
+    def callback(history: int, age: float) -> NDArray[np.int64]:
         return choose(age < 2, history, 0)
 
     meta = source_function(callback)
@@ -162,7 +168,7 @@ def test_large_metadata_array_is_never_materialized() -> None:
         shape = (10**8, 10**8)
         dtype = "float64"
 
-        def __array__(self, *args, **kwargs):
+        def __array__(self, *args: int, **kwargs: int) -> Never:
             raise AssertionError("Dense conversion forbidden")
 
     value = normalize(Huge())
@@ -248,7 +254,7 @@ def test_joint_kernel_remains_single_law_with_decoded_outputs() -> None:
 
 
 def test_spec_export_does_not_call_arbitrary_factories() -> None:
-    def never():
+    def never() -> Never:
         raise AssertionError("Factory executed")
 
     captured = read_declarations({"regimes": {}, "factory": never})
@@ -256,7 +262,40 @@ def test_spec_export_does_not_call_arbitrary_factories() -> None:
     assert (captured["factory"]["kind"]) == ("callable")
 
 
-def _create_raw_spec():
+def json_object(value: JSONValue) -> dict[str, JSONValue]:
+    """Narrow a JSON value that a test reads or edits as an object."""
+    assert isinstance(value, dict)
+    return value
+
+
+def json_member(record: dict[str, JSONValue], *path: str) -> dict[str, JSONValue]:
+    """Follow nested JSON objects along `path`."""
+    for key in path:
+        record = json_object(record[key])
+    return record
+
+
+def json_list(record: dict[str, JSONValue], *path: str) -> list[JSONValue]:
+    """Return the JSON list at the end of `path` itself, so edits reach `record`."""
+    *parents, key = path
+    value = json_member(record, *parents)[key]
+    assert isinstance(value, list)
+    return value
+
+
+def json_rows(record: dict[str, JSONValue], *path: str) -> list[dict[str, JSONValue]]:
+    """Return the JSON objects listed at the end of `path`."""
+    return [json_object(row) for row in json_list(record, *path)]
+
+
+def json_entries(
+    record: dict[str, JSONValue], *path: str
+) -> list[dict[str, JSONValue]]:
+    """Return the JSON objects stored as the values of the mapping at `path`."""
+    return [json_object(value) for value in json_member(record, *path).values()]
+
+
+def _create_raw_spec() -> dict[str, JSONValue]:
     r = deepcopy(snapshot()["user_regimes"]["original"])
     selector = {
         "kind": "dataclass",
@@ -303,7 +342,7 @@ def test_preprogram_spec_resolves_original_schedule_and_exact_dates() -> None:
 
 def test_until_uses_actual_predecessor_and_later_initial_starts() -> None:
     x = _create_raw_spec()
-    x["edges"]["working"]["fields"]["law"]["fields"] = {
+    json_member(x, "edges", "working", "fields", "law")["fields"] = {
         "until": {
             "kind": "dataclass",
             "type": "lcm._Until",
@@ -315,7 +354,9 @@ def test_until_uses_actual_predecessor_and_later_initial_starts() -> None:
             },
         }
     }
-    x["initial_nodes"]["fields"]["by_age"]["items"].append([21.5, ["working"]])
+    items = json_member(x, "initial_nodes", "fields", "by_age")["items"]
+    assert isinstance(items, list)
+    items.append([21.5, ["working"]])
     n = normalize_declarations(x)
     starts = [(c["age"], c["regime"]) for c in n["cells"] if c["admissible_start"]]
     assert (starts) == ([(20, "working"), (21.5, "working")])
@@ -324,7 +365,7 @@ def test_until_uses_actual_predecessor_and_later_initial_starts() -> None:
 
 def test_old_empty_schedule_requires_real_metadata() -> None:
     x = _create_raw_spec()
-    x["edges"]["working"]["fields"]["law"]["fields"] = {}
+    json_member(x, "edges", "working", "fields", "law")["fields"] = {}
     with pytest.raises(DeclarationError, match="omitted its cases"):
         normalize_declarations(x)
 
@@ -431,10 +472,11 @@ def test_current_payoff_uses_truth_variant_and_next_state_provider() -> None:
         assert ("next_x") in (c["phase_functions"]["simulation"])
 
 
-def _create_gated_spec():
+def _create_gated_spec() -> dict[str, JSONValue]:
     x = _create_raw_spec()
-    x["ages"]["fields"]["exact_values"] = [20, 20.5]
-    x["regimes"]["outside"] = deepcopy(x["regimes"]["retired"])
+    json_member(x, "ages", "fields")["exact_values"] = [20, 20.5]
+    regimes = json_member(x, "regimes")
+    regimes["outside"] = deepcopy(regimes["retired"])
     projection = {
         "x": function("def projected(history):\n    return history\n", ["history"]),
         "history": function(
@@ -461,7 +503,10 @@ def _create_gated_spec():
             "routes": {"self": route},
         },
     }
-    x["edges"]["working"]["fields"] = {"law": "retired", "gates": {"retired": gate}}
+    json_member(x, "edges", "working")["fields"] = {
+        "law": "retired",
+        "gates": {"retired": gate},
+    }
     return x
 
 
@@ -483,11 +528,11 @@ def test_gate_and_fallback_use_landing_context_and_incoming_owner() -> None:
 def test_array_class_metadata_does_not_access_shape_descriptor() -> None:
     class ArrayType:
         @property
-        def shape(self):
+        def shape(self) -> Never:
             raise AssertionError("A class must not be instantiated")
 
         @property
-        def dtype(self):
+        def dtype(self) -> Never:
             raise AssertionError("A class must not be instantiated")
 
     value = normalize(ArrayType)

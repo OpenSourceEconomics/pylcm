@@ -1,15 +1,27 @@
 """Independent semantic regressions without native Model evaluation."""
 
+from collections.abc import Mapping, Sequence
 from copy import deepcopy
 import hashlib
 import json
 
 from _lcm_regime_finder.declarations import normalize_declarations
 from _lcm_regime_finder.production import MetadataAnalysis
-from _lcm_regime_finder.semantic_check import check_semantics, _closed_native_constant
+from _lcm_regime_finder.records import JSONValue, SemanticCheck
+from tests.regime_finder.test_declaration_ingestion import (
+    json_list,
+    json_member,
+    json_rows,
+)
+from _lcm_regime_finder.semantic_check import (
+    check_semantics,
+    _closed_native_constant,
+)
 
 
-def callback(name, arguments, expression, *, status="proved"):
+def callback(
+    name: str, arguments: list[str], expression: str, *, status: str = "proved"
+) -> dict[str, JSONValue]:
     source = f"def {name}({', '.join(arguments)}):\n    return {expression}\n"
     original = {
         "kind": "callable",
@@ -33,15 +45,15 @@ def callback(name, arguments, expression, *, status="proved"):
 
 
 def one_cell(
-    callbacks,
-    functions,
-    consumers,
+    callbacks: Mapping[str, JSONValue],
+    functions: Mapping[str, JSONValue],
+    consumers: Sequence[JSONValue],
     *,
-    states=None,
-    actions=None,
-    domains=None,
-    period=0,
-):
+    states: Mapping[str, JSONValue] | None = None,
+    actions: Mapping[str, JSONValue] | None = None,
+    domains: Mapping[str, JSONValue] | None = None,
+    period: int = 0,
+) -> dict[str, JSONValue]:
     return {
         "schema": "regime-declarations/v1",
         "source_identity": "explicit round4 fixture",
@@ -70,7 +82,9 @@ def one_cell(
     }
 
 
-def produce(source):
+def produce(
+    source: dict[str, JSONValue],
+) -> tuple[dict[str, JSONValue], dict[str, JSONValue], SemanticCheck]:
     declarations = normalize_declarations(source)
     analysis = MetadataAnalysis(
         declarations, facts_backend="metadata", search_mode="exact"
@@ -78,7 +92,12 @@ def produce(source):
     return declarations, analysis, check_semantics(source, declarations, analysis)
 
 
-def grid(values):
+def first_option(analysis: dict[str, JSONValue]) -> dict[str, JSONValue]:
+    """The first interface option of the single cell `c`."""
+    return json_rows(analysis, "interfaces", "c", "options")[0]
+
+
+def grid(values: list[int]) -> dict[str, JSONValue]:
     return {
         "kind": "object",
         "type": "lcm.DiscreteGrid",
@@ -86,11 +105,13 @@ def grid(values):
     }
 
 
-def captured_gate_graph(*, dormant_admitted=False, simulation_edge=True):
-    def raw(name, args, body):
-        return callback(name, args, body)["original"]
+def captured_gate_graph(
+    *, dormant_admitted: bool = False, simulation_edge: bool = True
+) -> dict[str, JSONValue]:
+    def raw(name: str, arguments: list[str], body: str) -> JSONValue:
+        return callback(name, arguments, body)["original"]
 
-    def regime():
+    def regime() -> dict[str, JSONValue]:
         return {
             "kind": "dataclass",
             "type": "lcm.Regime",
@@ -186,7 +207,7 @@ def captured_gate_graph(*, dormant_admitted=False, simulation_edge=True):
     }
 
 
-def native_constant():
+def native_constant() -> dict[str, JSONValue]:
     return {
         "kind": "dataclass",
         "type": "_lcm.regime_building.schedules._RegimeCodeConstant",
@@ -221,10 +242,10 @@ def test_integral_float_provider_binding_has_same_exact_numeric_image() -> None:
         )
         _, analysis, check = produce(source)
         assert (check["status"]) == ("PASS"), check
-        record = analysis["interfaces"]["c"]["options"][0]["function_interfaces"][
-            "simulation"
-        ]["utility"]
-        assert (record["bound_arguments"]["experience"]) == (period + 1)
+        record = json_member(
+            first_option(analysis), "function_interfaces", "simulation", "utility"
+        )
+        assert (json_member(record, "bound_arguments")["experience"]) == (period + 1)
 
 
 def test_wrong_numeric_or_boolean_binding_is_rejected_without_tolerance() -> None:
@@ -240,9 +261,13 @@ def test_wrong_numeric_or_boolean_binding_is_rejected_without_tolerance() -> Non
     declarations, analysis, _ = produce(source)
     for replacement in (True, "1", 1.0000000000000002):
         bad = deepcopy(analysis)
-        bad["interfaces"]["c"]["options"][0]["function_interfaces"]["simulation"][
-            "utility"
-        ]["bound_arguments"]["experience"] = replacement
+        json_member(
+            first_option(bad),
+            "function_interfaces",
+            "simulation",
+            "utility",
+            "bound_arguments",
+        )["experience"] = replacement
         check = check_semantics(source, declarations, bad)
         assert any(
             e["kind"] == "unproved bound original argument" for e in check["errors"]
@@ -268,10 +293,12 @@ def test_consumed_opaque_provider_keeps_proved_singleton_binding() -> None:
         },
     )
     _, analysis, check = produce(source)
-    option = analysis["interfaces"]["c"]["options"][0]
-    record = option["function_interfaces"]["simulation"]["report"]
-    assert (option["state_projection"]["alpha"]["kind"]) == ("drop")
-    assert (record["implementation"]["kind"]) == ("source_bound_partial_application")
+    option = first_option(analysis)
+    record = json_member(option, "function_interfaces", "simulation", "report")
+    assert (json_member(option, "state_projection", "alpha")["kind"]) == ("drop")
+    assert (json_member(record, "implementation")["kind"]) == (
+        "source_bound_partial_application"
+    )
     assert (record["bound_arguments"]) == ({"alpha": 0.0})
     assert not (check["errors"]), check
     assert (check["status"]) == ("UNRESOLVED")
@@ -296,11 +323,11 @@ def test_reporting_root_retains_history_and_rejects_provider_omission() -> None:
     )
     declarations, analysis, check = produce(source)
     assert (check["status"]) == ("PASS"), check
-    assert (analysis["dependency_closure"]["c"]) == (["history"])
+    assert (json_member(analysis, "dependency_closure")["c"]) == (["history"])
     bad = deepcopy(analysis)
-    record = bad["interfaces"]["c"]["options"][0]["function_interfaces"]["simulation"][
-        "report"
-    ]
+    record = json_member(
+        first_option(bad), "function_interfaces", "simulation", "report"
+    )
     record["implementation"] = {"kind": "omit_unconsumed_provider"}
     record["arguments"] = []
     errors = check_semantics(source, declarations, bad)["errors"]
@@ -328,9 +355,9 @@ def test_distinct_represented_feasibility_phases_do_not_intersect_actions() -> N
         },
     )
     _, analysis, check = produce(source)
-    assert (
-        analysis["interfaces"]["c"]["options"][0]["action_reconstruction"]["a"]
-    ) == ({"kind": "identity", "source": "a"})
+    assert (json_member(first_option(analysis), "action_reconstruction")["a"]) == (
+        {"kind": "identity", "source": "a"}
+    )
     assert (check["status"]) == ("PASS"), check
 
 
@@ -357,7 +384,7 @@ def test_single_truth_feasibility_channel_still_eliminates_forced_action() -> No
         },
     )
     _, analysis, check = produce(source)
-    assert (analysis["interfaces"]["c"]["options"][0]["actions"]) == ({})
+    assert (first_option(analysis)["actions"]) == ({})
     assert (check["status"]) == ("PASS"), check
 
 
@@ -379,7 +406,7 @@ def test_absent_phase_constraint_does_not_restrict_that_phase() -> None:
         },
     )
     _, analysis, check = produce(source)
-    assert (analysis["interfaces"]["c"]["options"][0]["actions"]) == ({"a": "two"})
+    assert (first_option(analysis)["actions"]) == ({"a": "two"})
     assert (check["status"]) == ("PASS"), check
 
 
@@ -388,16 +415,18 @@ def test_constant_routing_bridge_requires_source_and_receiver_agreement() -> Non
     assert _closed_native_constant(original)
     mutations = []
     bad = deepcopy(original)
-    bad["fields"]["value"] = 2
+    json_member(bad, "fields")["value"] = 2
     mutations.append(bad)
     bad = deepcopy(original)
-    bad["callable"]["arguments"] = ["history"]
+    json_member(bad, "callable")["arguments"] = ["history"]
     mutations.append(bad)
     bad = deepcopy(original)
-    bad["callable"]["source"] = "def __call__(self):\n    return jnp.asarray(history)\n"
+    json_member(bad, "callable")["source"] = (
+        "def __call__(self):\n    return jnp.asarray(history)\n"
+    )
     mutations.append(bad)
     bad = deepcopy(original)
-    bad["callable"]["bindings"]["jnp"]["name"] = "custom.numpy"
+    json_member(bad, "callable", "bindings", "jnp")["name"] = "custom.numpy"
     mutations.append(bad)
     for bad in mutations:
         assert not (_closed_native_constant(bad))
@@ -426,12 +455,16 @@ def test_constant_route_does_not_erase_real_future_dependency() -> None:
             "two": {"kind": "categorical", "size": 2, "values": [0, 1], "codes": [0, 1]}
         },
     )
-    target = deepcopy(source["cells"][0])
+    cells = source["cells"]
+    assert isinstance(cells, list)
+    first = cells[0]
+    assert isinstance(first, dict)
+    target = deepcopy(first)
     target.update(id="future", age=21, period=1)
     target["functions"] = {"utility": "future"}
     target["consumers"] = [{"kind": "reward", "callback": "future", "phase": "both"}]
-    source["cells"][0]["terminal"] = False
-    source["cells"].append(target)
+    first["terminal"] = False
+    cells.append(target)
     source["relations"] = [
         {
             "id": "edge",
@@ -445,7 +478,7 @@ def test_constant_route_does_not_erase_real_future_dependency() -> None:
         }
     ]
     _, analysis, check = produce(source)
-    assert (analysis["dependency_closure"]["c"]) == (["history"])
+    assert (json_member(analysis, "dependency_closure")["c"]) == (["history"])
     assert not (check["errors"]), check
 
 
@@ -456,17 +489,19 @@ def test_native_gate_predicate_and_only_active_owned_routes_are_retained() -> No
                 dormant_admitted=dormant, simulation_edge=simulation
             )
             declarations, analysis, check = produce(source)
-            cells = {c["id"]: c for c in declarations["cells"]}
+            cells = {c["id"]: c for c in json_rows(declarations, "cells")}
+            relations = json_rows(declarations, "relations")
             expected_phases = {"solve", "simulation"} if simulation else {"solve"}
-            gates = [r for r in declarations["relations"] if r["kind"] == "gate"]
+            gates = [r for r in relations if r["kind"] == "gate"]
             assert ({r["phase"] for r in gates}) == (expected_phases)
             assert all(cells[r["source"]]["regime"] == "landing" for r in gates)
-            assert all(len(r["callbacks"]) == 1 for r in gates)
-            fallbacks = [
-                r for r in declarations["relations"] if r["kind"] == "fallback"
-            ]
+            assert all(len(json_list(r, "callbacks")) == 1 for r in gates)
+            fallbacks = [r for r in relations if r["kind"] == "fallback"]
             assert ({r["phase"] for r in fallbacks}) == (expected_phases)
-            assert all(r["ownership"]["target_regime"] == "landing" for r in fallbacks)
+            assert all(
+                json_member(r, "ownership")["target_regime"] == "landing"
+                for r in fallbacks
+            )
             assert not (check["errors"]), check
 
 
@@ -476,15 +511,18 @@ def test_native_gate_callback_or_owned_leg_mutation_is_independently_rejected() 
     for mutation in ("callback", "ownership", "phase"):
         bad = deepcopy(declarations)
         if mutation == "callback":
-            next(r for r in bad["relations"] if r["kind"] == "gate")["callbacks"] = []
+            next(r for r in json_rows(bad, "relations") if r["kind"] == "gate")[
+                "callbacks"
+            ] = []
         elif mutation == "ownership":
-            next(r for r in bad["relations"] if r["kind"] == "fallback")["ownership"][
-                "leg"
-            ] = "other"
+            fallback = next(
+                r for r in json_rows(bad, "relations") if r["kind"] == "fallback"
+            )
+            json_member(fallback, "ownership")["leg"] = "other"
         else:
             bad["relations"] = [
                 r
-                for r in bad["relations"]
+                for r in json_rows(bad, "relations")
                 if not (r["kind"] == "fallback" and r["phase"] == "simulation")
             ]
         check = check_semantics(
@@ -497,17 +535,20 @@ def test_native_gate_callback_or_owned_leg_mutation_is_independently_rejected() 
 
 def test_native_gate_reward_contrast_retains_the_decisive_history() -> None:
     source = captured_gate_graph()
-    source["graph"]["fields"]["laws"]["source"]["fields"]["gated_edges"].pop("dormant")
-    source["user_regimes"]["outside"]["fields"]["functions"]["utility"] = callback(
-        "outside_reward", [], "10"
-    )["original"]
+    json_member(
+        source, "graph", "fields", "laws", "source", "fields", "gated_edges"
+    ).pop("dormant")
+    json_member(source, "user_regimes", "outside", "fields", "functions")["utility"] = (
+        callback("outside_reward", [], "10")["original"]
+    )
     declarations, analysis, check = produce(source)
     # Literal oracle: history 0 fails the gate and receives outside value
     # 10; history 1 passes and receives landing value 0. This difference
     # cannot factor through a state-free source or landing interface.
-    for cell in declarations["cells"]:
+    closure = json_member(analysis, "dependency_closure")
+    for cell in json_rows(declarations, "cells"):
         expected = ["history"] if cell["regime"] in {"source", "landing"} else []
-        assert (analysis["dependency_closure"][cell["id"]]) == (expected)
+        assert (closure[str(cell["id"])]) == (expected)
     assert (check["status"]) == ("PASS"), check
 
 

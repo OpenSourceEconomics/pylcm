@@ -2,6 +2,7 @@
 
 import pytest
 from copy import deepcopy
+from collections.abc import Callable, Sequence
 from itertools import product
 
 from _lcm_regime_finder import find_regimes as _find_regimes
@@ -11,30 +12,40 @@ from functools import partial
 # Model-graph contract whose primitives retain their declared dependencies.
 find_regimes = partial(_find_regimes, analysis_scope="full_semantics")
 from _lcm_regime_finder.model_snapshot import source_function
+from _lcm_regime_finder.records import JSONValue
 from _lcm_regime_finder.proposal_decision import build_decisions, verify_decisions
 from .round5_locality_oracle import unchanged_applications, literal_loop_payoff
+from .test_declaration_ingestion import (
+    json_entries,
+    json_list,
+    json_member,
+    json_object,
+    json_rows,
+)
 from .test_model_adapter import grid
 
 
-def opaque_utility(x, history):
+def opaque_utility(x: int, history: int) -> int:
     result = x
     for weight in (1, 2):
         result = result + weight * history
     return result
 
 
-def safe_utility(x):
+def safe_utility(x: int) -> int:
     return x
 
 
-def variadic_utility(x, history, **extra):
+def variadic_utility(x: int, history: int, **extra: int) -> int:
     result = x
     for weight in (1, 2):
         result = result + weight * history
     return result
 
 
-def native_fixture(*, callback=opaque_utility, values=(0, 1)):
+def native_fixture(
+    *, callback: Callable[..., float] = opaque_utility, values: Sequence[int] = (0, 1)
+) -> dict[str, JSONValue]:
     """Two independently admitted original regimes, no reduced answer supplied."""
     regimes = {}
     for name, function in (("opaque", callback), ("safe", safe_utility)):
@@ -86,7 +97,9 @@ def native_fixture(*, callback=opaque_utility, values=(0, 1)):
     }
 
 
-def _produce(source=None):
+def _produce(
+    source: dict[str, JSONValue] | None = None,
+) -> tuple[dict[str, JSONValue], dict[str, JSONValue]]:
     source = native_fixture() if source is None else source
     report = find_regimes(source, search_mode="exact", facts_backend="metadata")
     assert ("proposal_decisions") in (report), report
@@ -96,17 +109,23 @@ def _produce(source=None):
 
 def test_actual_capture_gap_is_local_on_public_native_path() -> None:
     source, report = _produce()
-    obligations = report["analysis"]["obligations"]
+    obligations = json_rows(report, "analysis", "obligations")
     assert ([o["kind"] for o in obligations]) == (["callback_interpretation"])
     assert (report["status"]) == ("UNRESOLVED")
-    changed = [r for r in report["proposal_decisions"][1:] if r["changed_interfaces"]]
+    changed = [
+        r
+        for r in json_rows(report, "proposal_decisions")[1:]
+        if r["changed_interfaces"]
+    ]
     assert changed
     for row in changed:
         assert (row["disposition"]) == ("adopt"), row
-        assert ({x["original_regime"] for x in row["changed_interfaces"]}) == ({"safe"})
+        assert (
+            {x["original_regime"] for x in json_rows(row, "changed_interfaces")}
+        ) == ({"safe"})
         assert any(
-            d["obligation"]["kind"] == "callback_interpretation"
-            for d in row["discharged_unchanged_obligations"]
+            json_member(d, "obligation")["kind"] == "callback_interpretation"
+            for d in json_rows(row, "discharged_unchanged_obligations")
         )
     assert (
         verify_decisions(
@@ -123,7 +142,8 @@ def test_independent_oracle_and_domain_mutations(*, subtests: pytest.Subtests) -
         with subtests.test(values=values):
             _, report = _produce(native_fixture(values=values))
             assert all(
-                r["disposition"] == "adopt" for r in report["proposal_decisions"][1:]
+                r["disposition"] == "adopt"
+                for r in json_rows(report, "proposal_decisions")[1:]
             )
             for x, history in product(values, repeat=2):
                 actual = {"opaque": ("actual-capture", (x, history))}
@@ -148,15 +168,17 @@ def test_capture_variadic_and_query_premises_are_never_interpretation(
     ):
         with subtests.test(kind=kind):
             source, report = _produce()
-            analysis = deepcopy(report["analysis"])
-            item = dict(analysis["obligations"][0], id="negative-control", kind=kind)
-            analysis["obligations"].append(item)
+            analysis = deepcopy(json_member(report, "analysis"))
+            obligations = json_list(analysis, "obligations")
+            item = dict(json_object(obligations[0]), id="negative-control", kind=kind)
+            obligations.append(item)
             rows = build_decisions(source, analysis, report["scenarios"])[1:]
             assert all(r["disposition"] == "investigate" for r in rows)
             assert all(item in r["residual_obligations"] for r in rows)
     _, report = _produce(native_fixture(callback=variadic_utility))
     assert all(
-        r["disposition"] == "investigate" for r in report["proposal_decisions"][1:]
+        r["disposition"] == "investigate"
+        for r in json_rows(report, "proposal_decisions")[1:]
     )
 
 
@@ -171,10 +193,10 @@ def test_source_binding_and_pointer_mutations_cannot_be_discharged(
         ("arguments", ["x"]),
     ):
         with subtests.test(field=field):
-            analysis = deepcopy(report["analysis"])
+            analysis = deepcopy(json_member(report, "analysis"))
             callback = next(
                 c
-                for c in analysis["declarations"]["callbacks"].values()
+                for c in json_entries(analysis, "declarations", "callbacks")
                 if c.get("status") == "opaque"
             )
             callback[field] = value
@@ -191,11 +213,17 @@ def test_source_binding_and_pointer_mutations_cannot_be_discharged(
 
 def test_altered_opaque_interface_requires_own_factorization() -> None:
     source, report = _produce()
-    analysis = deepcopy(report["analysis"])
-    cell = next(c for c in analysis["declarations"]["cells"] if c["regime"] == "opaque")
-    for option in analysis["interfaces"][cell["id"]]["options"]:
-        option["states"].pop("history")
-        option["state_projection"]["history"] = {"kind": "drop"}
+    analysis = deepcopy(json_member(report, "analysis"))
+    cell = next(
+        c
+        for c in json_rows(analysis, "declarations", "cells")
+        if c["regime"] == "opaque"
+    )
+    cell_id = cell["id"]
+    assert isinstance(cell_id, str)
+    for option in json_rows(analysis, "interfaces", cell_id, "options"):
+        json_member(option, "states").pop("history")
+        json_member(option, "state_projection")["history"] = {"kind": "drop"}
     rows = build_decisions(source, analysis, report["scenarios"])[1:]
     assert all(r["disposition"] != "adopt" for r in rows)
     assert all(
@@ -206,16 +234,20 @@ def test_altered_opaque_interface_requires_own_factorization() -> None:
 
 def test_all_uses_including_second_changed_cell_must_be_unchanged() -> None:
     source = native_fixture()
-    second = source["user_regimes"]["safe"]["fields"]
-    second["functions"]["utility"] = deepcopy(
-        source["user_regimes"]["opaque"]["fields"]["functions"]["utility"]
+    second = json_member(source, "user_regimes", "safe", "fields")
+    json_member(second, "functions")["utility"] = deepcopy(
+        json_member(source, "user_regimes", "opaque", "fields", "functions")["utility"]
     )
-    second["states"]["unused"] = grid([0, 1])
+    json_member(second, "states")["unused"] = grid([0, 1])
     _, report = _produce(source)
     assert all(
-        r["disposition"] == "investigate" for r in report["proposal_decisions"][1:]
+        r["disposition"] == "investigate"
+        for r in json_rows(report, "proposal_decisions")[1:]
     )
     assert all(
-        any(o["kind"] == "callback_interpretation" for o in r["residual_obligations"])
-        for r in report["proposal_decisions"][1:]
+        any(
+            o["kind"] == "callback_interpretation"
+            for o in json_rows(r, "residual_obligations")
+        )
+        for r in json_rows(report, "proposal_decisions")[1:]
     )

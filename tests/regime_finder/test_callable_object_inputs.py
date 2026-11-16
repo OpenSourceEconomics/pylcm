@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from collections.abc import Callable
 from pathlib import Path
 import tempfile
+from typing import Never
 from unittest.mock import patch
 
 from _lcm_regime_finder import find_regimes, verify_production_result
@@ -19,9 +20,10 @@ from _lcm_regime_finder.semantic_check import (
     _original_inputs_unresolved,
 )
 from _lcm_regime_finder.structural_store import final_input_check
+from lcm.typing import ContinuousAction, DiscreteAction, FloatND
 
 
-def variadic_implementation(**actions):
+def variadic_implementation(**actions: int) -> Never:
     raise AssertionError("Metadata inspection must not execute implementation helpers")
 
 
@@ -29,7 +31,7 @@ def variadic_implementation(**actions):
 class FiniteOuter:
     implementation: Callable[..., int]
 
-    def __call__(self, *, hours, labor):
+    def __call__(self, *, hours: float, labor: int) -> Never:
         raise AssertionError("Metadata inspection must not execute outer callbacks")
 
 
@@ -37,7 +39,7 @@ class FiniteOuter:
 class VariadicOuter:
     implementation: Callable[..., int]
 
-    def __call__(self, **actions):
+    def __call__(self, **actions: int) -> Never:
         raise AssertionError("Metadata inspection must not execute outer callbacks")
 
 
@@ -47,19 +49,19 @@ class Composite:
     second: Callable[..., int]
 
 
-def income(earnings):
+def income(earnings: int) -> int:
     return earnings
 
 
-def health(health_status):
+def health(health_status: int) -> int:
     return health_status
 
 
-def utility(*, hours, labor):
+def utility(*, hours: ContinuousAction, labor: DiscreteAction) -> FloatND:
     raise AssertionError("Metadata analysis must not execute economic utility")
 
 
-def terminal():
+def terminal() -> float:
     return 0.0
 
 

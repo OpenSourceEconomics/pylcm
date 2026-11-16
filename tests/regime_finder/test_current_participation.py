@@ -12,12 +12,19 @@ from _lcm_regime_finder.semantic_check import check_semantics
 from tests.regime_finder.test_round5_query_admission import spec, record, reference
 from tests.regime_finder.test_round4_semantic import captured_gate_graph
 from importlib import import_module
+from _lcm_regime_finder.records import JSONValue, SemanticCheck
+from tests.regime_finder.test_declaration_ingestion import (
+    json_entries,
+    json_member,
+    json_rows,
+)
 from _lcm_regime_finder.current_api_contract import inspect_authority
 
 
-def bind_types(raw):
+def bind_types[Value: JSONValue](raw: Value) -> Value:
     if isinstance(raw, dict):
         tag = raw.get("type", "")
+        assert isinstance(tag, str)
         label = tag.split(".")[-1]
         if label in {"ParticipationRead", "ParticipationCheck", "Transition"}:
             canonical = (
@@ -36,12 +43,13 @@ def bind_types(raw):
     return raw
 
 
-def current_spec():
+def current_spec() -> dict[str, JSONValue]:
     raw = spec()
-    for name in raw["regimes"]:
-        raw["regimes"][name]["fields"]["same_period_refs"] = {}
+    regimes = json_member(raw, "regimes")
+    for name in regimes:
+        json_member(regimes, name, "fields")["same_period_refs"] = {}
     read = reference("Q", "ParticipationRead")
-    read["fields"].update(kind="Raw", field="support", observes=["x"])
+    json_member(read, "fields").update(kind="Raw", field="support", observes=["x"])
     gate = record(
         "ParticipationCheck",
         predicate=record("callable"),
@@ -49,11 +57,15 @@ def current_spec():
         observes=["x"],
         routes={"self": record("StakeholderRoute", fallback=reference("R"))},
     )
-    raw["edges"]["A"] = record("Transition", law="B", participation={"B": gate})
+    json_member(raw, "edges")["A"] = record(
+        "Transition", law="B", participation={"B": gate}
+    )
     return raw
 
 
-def analyze(raw):
+def analyze(
+    raw: dict[str, JSONValue],
+) -> tuple[dict[str, JSONValue], dict[str, JSONValue], SemanticCheck]:
     raw = bind_types(raw)
     normalized = normalize_declarations(raw)
     analysis = MetadataAnalysis(
@@ -66,17 +78,23 @@ def analyze(raw):
 def test_canonical_same_period_read_is_query_only() -> None:
     raw = spec(reference_kind="ParticipationRead")
     normalized, _, checked = analyze(raw)
-    assert ({c["regime"] for c in normalized["cells"]}) == ({"A", "B"})
-    assert ({q["regime"] for q in normalized["query_owners"].values()}) == ({"Q", "R"})
+    assert ({c["regime"] for c in json_rows(normalized, "cells")}) == ({"A", "B"})
+    assert ({q["regime"] for q in json_entries(normalized, "query_owners")}) == (
+        {"Q", "R"}
+    )
     assert (checked["status"]) != ("FAIL"), checked
 
 
 def test_canonical_transition_preserves_settlement_and_query() -> None:
     normalized, _, checked = analyze(current_spec())
-    assert ({c["regime"] for c in normalized["cells"]}) == ({"A", "B", "R"})
-    assert ({q["regime"] for q in normalized["query_owners"].values()}) == ({"Q"})
+    assert ({c["regime"] for c in json_rows(normalized, "cells")}) == ({"A", "B", "R"})
+    assert ({q["regime"] for q in json_entries(normalized, "query_owners")}) == ({"Q"})
     assert (checked["status"]) != ("FAIL"), checked
-    gates = [r for r in normalized["relations"] if r["kind"] in {"arrival", "gate"}]
+    gates = [
+        r
+        for r in json_rows(normalized, "relations")
+        if r["kind"] in {"arrival", "gate"}
+    ]
     assert gates
     assert all(r["observes"] == ["x"] for r in gates)
 
@@ -86,7 +104,7 @@ def test_independent_check_rejects_erased_modern_gate() -> None:
     normalized, analysis, _ = analyze(raw)
     bad = deepcopy(normalized)
     bad["relations"] = [
-        r for r in bad["relations"] if r["kind"] not in {"arrival", "gate"}
+        r for r in json_rows(bad, "relations") if r["kind"] not in {"arrival", "gate"}
     ]
     assert (check_semantics(raw, bad, analysis)["status"]) == ("FAIL")
 
@@ -95,27 +113,31 @@ def test_independent_check_rejects_changed_modern_read() -> None:
     raw = current_spec()
     normalized, analysis, _ = analyze(raw)
     bad = deepcopy(normalized)
-    relation = next(r for r in bad["relations"] if r["kind"] == "policy_query")
+    relation = next(
+        r for r in json_rows(bad, "relations") if r["kind"] == "policy_query"
+    )
     relation["read_field"] = "value"
     assert (check_semantics(raw, bad, analysis)["status"]) == ("FAIL")
 
 
 def test_native_graph_canonical_participation_is_not_omitted() -> None:
     raw = captured_gate_graph()
-    law = raw["graph"]["fields"]["laws"]["source"]["fields"]
+    law = json_member(raw, "graph", "fields", "laws", "source", "fields")
     law["participation"] = law.pop("gated_edges")
-    for gate in law["participation"].values():
+    for gate in json_entries(law, "participation"):
         gate["type"] = "lcm.participation.ParticipationCheck"
-        fields = gate["fields"]
+        fields = json_member(gate, "fields")
         fields["predicate"] = fields.pop("gate")
         fields["reads"] = fields.pop("gate_refs")
         fields["routes"] = fields.pop("legs")
     normalized, analysis, checked = analyze(raw)
-    assert any(r["kind"] in {"arrival", "gate"} for r in normalized["relations"])
+    assert any(
+        r["kind"] in {"arrival", "gate"} for r in json_rows(normalized, "relations")
+    )
     assert (checked["status"]) != ("FAIL"), checked
     bad = deepcopy(normalized)
     bad["relations"] = [
-        r for r in bad["relations"] if r["kind"] not in {"arrival", "gate"}
+        r for r in json_rows(bad, "relations") if r["kind"] not in {"arrival", "gate"}
     ]
     assert (check_semantics(raw, bad, analysis)["status"]) == ("FAIL")
 
@@ -134,9 +156,9 @@ def test_changed_class_source_is_refused_by_both_sides() -> None:
     raw = bind_types(current_spec())
     normalized, analysis, _ = analyze(raw)
     bad = deepcopy(raw)
-    bad["edges"]["A"]["fields"]["participation"]["B"]["canonical_type_source"][
-        "source_sha256"
-    ] = "0" * 64
+    json_member(
+        bad, "edges", "A", "fields", "participation", "B", "canonical_type_source"
+    )["source_sha256"] = "0" * 64
     with pytest.raises(DeclarationError, match="canonical class source"):
         normalize_declarations(bad)
     result = check_semantics(bad, normalized, analysis)
@@ -151,9 +173,8 @@ def test_duplicate_gate_and_participation_target_is_refused() -> None:
     from _lcm_regime_finder.declarations import DeclarationError
 
     raw = bind_types(current_spec())
-    raw["edges"]["A"]["fields"]["gates"] = deepcopy(
-        raw["edges"]["A"]["fields"]["participation"]
-    )
+    fields = json_member(raw, "edges", "A", "fields")
+    fields["gates"] = deepcopy(fields["participation"])
     with pytest.raises(DeclarationError, match="conflicting"):
         normalize_declarations(raw)
 

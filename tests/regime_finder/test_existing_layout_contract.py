@@ -14,6 +14,11 @@ from lcm import Model
 
 from _lcm_regime_finder.frontier import Search
 from _lcm_regime_finder.production import analyze_production
+from tests.regime_finder.test_declaration_ingestion import (
+    json_list,
+    json_member,
+    json_rows,
+)
 from tests.regime_finder.test_round5_local_obligations import native_fixture
 from tests.test_graphs import period_model
 from tests.regime_finder.existing_family_oracle import (
@@ -223,8 +228,9 @@ def test_default_third_objective_counts_blocks_without_dispatch_surcharges() -> 
 
 def test_search_and_diagnostic_agree_for_missing_original_roles() -> None:
     original = native_fixture()
-    for declaration in original["user_regimes"].values():
-        declaration["fields"].pop("semantic_role")
+    for declaration in json_member(original, "user_regimes").values():
+        assert isinstance(declaration, dict)
+        json_member(declaration, "fields").pop("semantic_role")
     report = analyze_production(original, search_mode="exact", facts_backend="metadata")
     analysis = report["analysis"]
     search = Search(analysis)
@@ -672,17 +678,21 @@ def test_zero_price_forest_certificates_match_the_same_literal_existing_family(
     analysis["clarity_weights"] = dict(weights)
     instance["clarity_weights"] = dict(weights)
     if version == "v1":
-        instance["cells"] = instance["cells"][:1]
-        analysis["declarations"]["cells"] = analysis["declarations"]["cells"][:1]
-        cid = instance["cells"][0]["id"]
-        analysis["interfaces"] = {cid: analysis["interfaces"][cid]}
-        policy = analysis["projection_policies"][0]["option_by_cell"]
-        analysis["projection_policies"][0]["option_by_cell"] = {cid: policy[cid]}
+        instance["cells"] = json_list(instance, "cells")[:1]
+        declarations = json_member(analysis, "declarations")
+        declarations["cells"] = json_list(declarations, "cells")[:1]
+        cid = json_rows(instance, "cells")[0]["id"]
+        assert isinstance(cid, str)
+        analysis["interfaces"] = {cid: json_member(analysis, "interfaces")[cid]}
+        projection = json_rows(analysis, "projection_policies")[0]
+        policy = json_member(projection, "option_by_cell")
+        projection["option_by_cell"] = {cid: policy[cid]}
     else:
-        instance["pairs"] = [["0", "1"], ["1", "2"]]
-        analysis["declarations"]["relations"] = [
+        pairs = [["0", "1"], ["1", "2"]]
+        instance["pairs"] = pairs
+        json_member(analysis, "declarations")["relations"] = [
             {"source": left, "targets": [right], "support": "unknown"}
-            for left, right in instance["pairs"]
+            for left, right in pairs
         ]
     layouts = enumerate_layouts(analysis=analysis, admission=_read_admission())
     expected = {layout.cost for layout in pareto_layouts(layouts)}

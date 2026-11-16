@@ -22,7 +22,9 @@ def test_hardlink_aliases_use_the_same_independent_oracle(
 ) -> None:
     project = Path(__file__).resolve().parents[2]
 
-    def hardlink(path, target, target_is_directory=False):
+    def hardlink(
+        path: Path, target: Path | str, target_is_directory: bool = False
+    ) -> None:
         os.link(target, path)
 
     with patch.object(Path, "symlink_to", hardlink):

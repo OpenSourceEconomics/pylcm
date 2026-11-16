@@ -7,11 +7,20 @@ import json
 from pathlib import Path
 import sys
 import tempfile
+from collections.abc import Callable
 from unittest.mock import patch
 
 from _lcm_regime_finder import cli, pipeline
 from _lcm_regime_finder.pytask_api import analyse_snapshot
-from _lcm_regime_finder.structural_store import CaptureStore, final_input_check
+from _lcm_regime_finder.owned_mutations import OwnedMutationPlan
+from _lcm_regime_finder.records import JSONValue
+from _lcm_regime_finder.structural_store import (
+    CaptureStore,
+    LoadedCapture,
+    final_input_check,
+)
+
+type PythonSource = str
 
 
 FIXTURE = (
@@ -34,7 +43,7 @@ PUBLIC_DECISION_FILES = (
 )
 
 
-def _create_source(root):
+def _create_source(root: Path) -> tuple[Path, CaptureStore]:
     path = root / "input.json"
     source = json.loads(FIXTURE.read_text())
     store = CaptureStore(
@@ -49,7 +58,7 @@ def _create_source(root):
     return path, store
 
 
-def _assert_revoked(output, status):
+def _assert_revoked(output: Path, status: str) -> None:
     for name in PUBLIC_DECISION_FILES:
         assert not ((output / name).exists()), name
         assert not ((output / (name + ".writing")).exists()), name
@@ -92,7 +101,7 @@ def test_real_cli_late_chunk_failure_revokes_all_derived_exports() -> None:
                 )
             ) == (0)
 
-        def corrupt(snapshot):
+        def corrupt(snapshot: LoadedCapture) -> None:
             reader = snapshot.structure
             chunk = reader.payloads.path(next(iter(reader.payloads)))
             data = bytearray(chunk.read_bytes())
@@ -183,7 +192,7 @@ def test_positive_delivery_keeps_checked_authorizations() -> None:
         assert any(row["transformation_authorized"] for row in rows)
 
 
-def _create_stand_in(output, tail):
+def _create_stand_in(output: Path, tail: PythonSource) -> PythonSource:
     # A supported command_prefix exercises the public parent boundary.
     return (
         "import json,time; from pathlib import Path; "
@@ -244,7 +253,7 @@ def test_pipeline_changed_checker_revokes_existing_success() -> None:
         original = pipeline._digest
         seen = 0
 
-        def changing_digest(path):
+        def changing_digest(path: Path | str) -> str:
             nonlocal seen
             if Path(path).name == "cli.py":
                 seen += 1
@@ -362,7 +371,11 @@ def test_independent_check_cannot_publish_pass_after_late_chunk_change() -> None
         original = cli.verify_production_result
         called = []
 
-        def changed_after_check(problem, report, **kwargs):
+        def changed_after_check(
+            problem: LoadedCapture,
+            report: dict[str, JSONValue],
+            **kwargs: dict[str, float | None],
+        ) -> dict[str, JSONValue]:
             result = original(problem, report, **kwargs)
             assert (result["status"]) == ("PASS")
             called.append(True)
@@ -421,7 +434,9 @@ def test_checker_parent_revokes_pass_when_worker_fails_after_writing_it() -> Non
             ) == (0)
         check_path = root / "check.json"
 
-        def failed_worker(*args, **kwargs):
+        def failed_worker(
+            *args: list[str], **kwargs: Path | float | OwnedMutationPlan | None
+        ) -> int:
             check_path.write_text('{"status":"PASS"}')
             return 2
 
@@ -489,7 +504,10 @@ def test_direct_worker_incomplete_analysis_revokes_exports() -> None:
         output = root / "result"
         from _lcm_regime_finder.production import analyze_production
 
-        def incomplete(*args, **kwargs):
+        def incomplete(
+            *args: LoadedCapture,
+            **kwargs: JSONValue | Callable[[dict[str, JSONValue]], None],
+        ) -> dict[str, JSONValue]:
             result = analyze_production(*args, **kwargs)
             result["status"] = "INCOMPLETE"
             return result
@@ -526,7 +544,10 @@ def test_conditional_delivery_keeps_independently_valid_local_authority() -> Non
         output = root / "result"
         from _lcm_regime_finder.production import analyze_production
 
-        def conditional(*args, **kwargs):
+        def conditional(
+            *args: LoadedCapture,
+            **kwargs: JSONValue | Callable[[dict[str, JSONValue]], None],
+        ) -> dict[str, JSONValue]:
             result = analyze_production(*args, **kwargs)
             result["status"] = "UNRESOLVED"
             return result

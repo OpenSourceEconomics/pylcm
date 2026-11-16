@@ -15,12 +15,12 @@ from _lcm_regime_finder.pytask_api import analyse_snapshot
 
 
 class SignatureWrapper:
-    def __init__(self):
+    def __init__(self) -> None:
         self.default: int | list[int] = 1
         self.annotation = "Array"
 
     @property
-    def __signature__(self):
+    def __signature__(self) -> inspect.Signature:
         return inspect.Signature(
             [
                 inspect.Parameter(
@@ -30,7 +30,7 @@ class SignatureWrapper:
             return_annotation=self.annotation,
         )
 
-    def __call__(self, x=1):
+    def __call__(self, x: int | list[int] = 1) -> int | list[int]:
         return x
 
 

@@ -10,9 +10,16 @@ from unittest.mock import patch
 import zlib
 
 from _lcm_regime_finder import production_render as renderer
+from _lcm_regime_finder.records import JSONValue
+from tests.regime_finder.test_declaration_ingestion import (
+    json_list,
+    json_member,
+    json_object,
+    json_rows,
+)
 
 
-def fixture(count=3):
+def fixture(count: int = 3) -> dict[str, JSONValue]:
     cells = [
         {
             "id": f"c{i}",
@@ -38,7 +45,7 @@ def fixture(count=3):
     blocks = [
         {
             "cells": [c["id"]],
-            "option_by_cell": {c["id"]: "identity"},
+            "option_by_cell": {str(c["id"]): "identity"},
             "original_regimes": [c["regime"]],
             "ages": [c["age"]],
             "periods": [c["period"]],
@@ -101,7 +108,9 @@ def fixture(count=3):
                 ],
                 "production_metadata": {"status": "synthetic renderer fixture"},
             },
-            "interfaces": {c["id"]: {"options": [deepcopy(option)]} for c in cells},
+            "interfaces": {
+                str(c["id"]): {"options": [deepcopy(option)]} for c in cells
+            },
             "obligations": [],
             "production_execution": {
                 "callbacks_called": 0,
@@ -120,7 +129,7 @@ def fixture(count=3):
     }
 
 
-def read_png(path):
+def read_png(path: Path) -> tuple[tuple[int, ...], bytes]:
     raw = Path(path).read_bytes()
     if raw[:8] != b"\x89PNG\r\n\x1a\n":
         raise AssertionError("PNG signature missing")
@@ -137,15 +146,18 @@ def read_png(path):
         if kind == b"IDAT":
             data.append(payload)
         cursor += 12 + length
+    if size is None:
+        raise AssertionError("PNG header missing")
     return size, zlib.decompress(b"".join(data))
 
 
 def test_exact_saved_result_and_all_alternatives() -> None:
     result = fixture()
-    alternate = deepcopy(result["scenarios"][0]["frontier"][0])
+    frontier = json_list(json_rows(result, "scenarios")[0], "frontier")
+    alternate = deepcopy(json_object(frontier[0]))
     alternate["id"] = "G0001"
     alternate["cost"] = {"work": 15, "storage": 5, "clarity": 14}
-    result["scenarios"][0]["frontier"].append(alternate)
+    frontier.append(alternate)
     with tempfile.TemporaryDirectory() as directory:
         manifest = renderer.write_production_report(result, directory)
         assert (json.loads((Path(directory) / "report.json").read_text())) == (result)
@@ -160,8 +172,8 @@ def test_exact_saved_result_and_all_alternatives() -> None:
 def test_html_and_mermaid_injection_are_data() -> None:
     result = fixture()
     attack = '"><script>alert("x")</script>\nclick N0 "javascript:x"'
-    result["source_identity"]["name"] = attack
-    result["analysis"]["declarations"]["cells"][0]["regime"] = attack
+    json_member(result, "source_identity")["name"] = attack
+    json_rows(result, "analysis", "declarations", "cells")[0]["regime"] = attack
     rendered = renderer.render_html(result)
     assert ("<script>") not in (rendered)
     assert ("&lt;script&gt;") in (rendered)
@@ -190,7 +202,7 @@ def test_png_is_real_bounded_rgb_and_deterministic() -> None:
 
 def test_joint_relation_remains_reified_and_phase_labeled() -> None:
     result = fixture()
-    result["analysis"]["declarations"]["relations"] = [
+    json_member(result, "analysis", "declarations")["relations"] = [
         {
             "id": "lottery",
             "kind": "joint",
@@ -239,8 +251,9 @@ def test_incomplete_missing_analysis_and_conditional_scope() -> None:
         assert ("No frontier scenario was supplied") in (text)
         assert ("Resource budget reached") in (text)
     result = fixture()
-    result["scenarios"][0]["allocation_contract"]["status"] = "conditional_scenario"
-    result["semantic_check"]["status"] = "UNRESOLVED"
+    scenario = json_rows(result, "scenarios")[0]
+    json_member(scenario, "allocation_contract")["status"] = "conditional_scenario"
+    json_member(result, "semantic_check")["status"] = "UNRESOLVED"
     text = renderer.render_html(result)
     assert ("actual backend allocation contract is unresolved") in (text)
     assert (
@@ -251,7 +264,7 @@ def test_incomplete_missing_analysis_and_conditional_scope() -> None:
 def test_heuristic_local_discovery_is_not_labeled_graph_family_coverage() -> None:
     result = fixture()
     result["status"] = "HEURISTIC"
-    result["scenarios"][0]["status"] = "HEURISTIC"
+    json_rows(result, "scenarios")[0]["status"] = "HEURISTIC"
     for text in (renderer.render_html(result), renderer.render_markdown(result)):
         assert "Dependency and local-option discovery" in text
         assert "Candidate-family coverage" not in text
@@ -260,7 +273,8 @@ def test_heuristic_local_discovery_is_not_labeled_graph_family_coverage() -> Non
 
 def test_period_only_blocks_list_their_periods_in_both_reports() -> None:
     result = fixture()
-    for block in result["scenarios"][0]["frontier"][0]["blocks"]:
+    plan = json_rows(json_rows(result, "scenarios")[0], "frontier")[0]
+    for block in json_rows(plan, "blocks"):
         block["ages"] = [None]
     with tempfile.TemporaryDirectory() as directory:
         renderer.write_production_report(result, directory)

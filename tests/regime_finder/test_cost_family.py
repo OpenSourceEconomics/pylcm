@@ -13,6 +13,8 @@ from _lcm_regime_finder import (
     verify_certificate,
 )
 from _lcm_regime_finder.cost_family import encode_analysis, chain_cover
+from _lcm_regime_finder.records import JSONValue
+from tests.regime_finder.test_declaration_ingestion import json_member, json_rows
 from tests.regime_finder.test_forest_frontier import example, literal
 from tests.regime_finder.test_aca_separator_reference import fixture
 from tests.regime_finder.test_borella_symbolic import toy
@@ -20,7 +22,7 @@ from tests.regime_finder.test_signature_integration import heterogeneous
 from tests.regime_finder.round6_frontier_oracle import brute_family
 
 
-def forest_analysis():
+def forest_analysis() -> tuple[dict[str, JSONValue], dict[str, JSONValue]]:
     original = example([{"x", "y"}, {"x", "z"}, {"y", "z"}])
     cells, interfaces, policy = [], {}, {}
     for c in original["cells"]:
@@ -183,7 +185,7 @@ def test_no_time_or_count_limits_across_all_cost_backends(
 
     unlimited = dict.fromkeys(DEFAULTS)
     legacy, _ = forest_analysis()
-    for cell in legacy["declarations"]["cells"]:
+    for cell in json_rows(legacy, "declarations", "cells"):
         cell["regime"] = "one-dated-label"
     for analysis in (forest_analysis()[0], legacy, fixture(), toy()[0]):
         with subtests.test(symbolic=bool(analysis.get("characteristic_candidates"))):
@@ -283,7 +285,7 @@ def test_cost_parts_use_the_same_registered_reader_closure() -> None:
     packet = encode_analysis(analysis)
     records = []
 
-    def intern(value):
+    def intern(value: JSONValue) -> JSONValue:
         if not isinstance(value, (dict, list)):
             return value
         row = (
@@ -418,7 +420,10 @@ def test_exact_component_omission_and_source_promotion_fail() -> None:
         changed[field] = value
         assert (check_cost_frontier(analysis, changed)["status"]) == ("FAIL")
     original_changed = deepcopy(analysis)
-    original_changed["declarations"]["domains"]["x"]["size"] += 1
+    domain = json_member(original_changed, "declarations", "domains", "x")
+    size = domain["size"]
+    assert isinstance(size, int)
+    domain["size"] = size + 1
     assert (check_cost_frontier(original_changed, result)["status"]) == ("FAIL")
 
 

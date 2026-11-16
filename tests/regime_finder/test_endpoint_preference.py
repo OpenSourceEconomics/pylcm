@@ -9,13 +9,15 @@ import tempfile
 from _lcm_regime_finder.frontier import search_frontier
 from _lcm_regime_finder.frontier_check import check_frontier
 from _lcm_regime_finder.production_render import render_markdown, render_html
+from _lcm_regime_finder.records import JSONValue
+from tests.regime_finder.test_declaration_ingestion import json_member, json_rows
 from tests.regime_finder.test_round6_frontier import fixture
 
 
 WORK_FIRST = {"weights": {"work": 1000, "storage": 1, "clarity": 1}}
 
 
-def endpoint_fixture(kind: str = "state", dates: int = 2):
+def endpoint_fixture(kind: str = "state", dates: int = 2) -> dict[str, JSONValue]:
     analysis = fixture(dates)
     for cell in analysis["declarations"]["cells"]:
         cell["states"]["history"] = "history"
@@ -33,9 +35,12 @@ def endpoint_fixture(kind: str = "state", dates: int = 2):
     return analysis
 
 
-def selected_plan(result):
-    graph = result["recommendation"]["graph_id"]
-    return next(point for point in result["frontier"] if point["id"] == graph)
+def selected_blocks(result: dict[str, JSONValue]) -> list[dict[str, JSONValue]]:
+    graph = json_member(result, "recommendation")["graph_id"]
+    plan = next(
+        point for point in json_rows(result, "frontier") if point["id"] == graph
+    )
+    return json_rows(plan, "blocks")
 
 
 def test_native_last_decision_keeps_topology_without_forcing_a_regime_split() -> None:
@@ -64,14 +69,14 @@ def test_native_last_decision_keeps_topology_without_forcing_a_regime_split() ->
     assert (
         (default["scenarios"][0]["frontier"]) == (override["scenarios"][0]["frontier"])
     )
-    assert (len(selected_plan(default["scenarios"][0])["blocks"])) == (1)
-    assert (len(selected_plan(override["scenarios"][0])["blocks"])) > (1)
+    assert (len(selected_blocks(default["scenarios"][0]))) == (1)
+    assert (len(selected_blocks(override["scenarios"][0]))) > (1)
 
 
 def test_default_defers_only_final_date_state_cleanup() -> None:
     analysis = endpoint_fixture()
     result = search_frontier(analysis, recommendation=WORK_FIRST)
-    assert (len(selected_plan(result)["blocks"])) == (1)
+    assert (len(selected_blocks(result))) == (1)
     assert any(len(point["blocks"]) == 2 for point in result["frontier"])
     assert (check_frontier(analysis, result)["status"]) == ("PASS")
 
@@ -79,7 +84,7 @@ def test_default_defers_only_final_date_state_cleanup() -> None:
 def test_default_defers_only_final_date_forced_action() -> None:
     analysis = endpoint_fixture("action")
     result = search_frontier(analysis, recommendation=WORK_FIRST)
-    assert (len(selected_plan(result)["blocks"])) == (1)
+    assert (len(selected_blocks(result))) == (1)
     assert any(len(point["blocks"]) == 2 for point in result["frontier"])
     assert (check_frontier(analysis, result)["status"]) == ("PASS")
 
@@ -96,7 +101,7 @@ def test_override_changes_recommendation_not_frontier_or_certificate(
             )
             assert (default["frontier"]) == (override["frontier"])
             assert (default["certificate"]) == (override["certificate"])
-            assert (len(selected_plan(override)["blocks"])) == (2)
+            assert (len(selected_blocks(override))) == (2)
             assert default["recommendation"]["endpoint_preference"][
                 "deferred_graph_ids"
             ]
@@ -105,9 +110,9 @@ def test_override_changes_recommendation_not_frontier_or_certificate(
 
 def test_existing_last_date_node_remains_eligible() -> None:
     analysis = endpoint_fixture()
-    analysis["declarations"]["cells"][-1]["regime"] = "existing_retired"
+    json_rows(analysis, "declarations", "cells")[-1]["regime"] = "existing_retired"
     result = search_frontier(analysis, recommendation=WORK_FIRST)
-    assert (len(selected_plan(result)["blocks"])) == (2)
+    assert (len(selected_blocks(result))) == (2)
     assert (result["recommendation"]["endpoint_preference"]["deferred_graph_ids"]) == (
         []
     )
@@ -116,13 +121,13 @@ def test_existing_last_date_node_remains_eligible() -> None:
 
 def test_all_age_unused_coordinate_cleanup_remains_eligible() -> None:
     analysis = endpoint_fixture()
-    analysis["declarations"]["domains"]["history"]["size"] = 1
-    option = analysis["interfaces"]["a:0"]["options"][0]
-    del option["states"]["history"]
-    option["state_projection"]["history"] = {"kind": "drop"}
+    json_member(analysis, "declarations", "domains", "history")["size"] = 1
+    option = json_rows(analysis, "interfaces", "a:0", "options")[0]
+    del json_member(option, "states")["history"]
+    json_member(option, "state_projection")["history"] = {"kind": "drop"}
     result = search_frontier(analysis, recommendation=WORK_FIRST)
-    assert (len(selected_plan(result)["blocks"])) == (1)
-    assert ("history") not in (selected_plan(result)["blocks"][0]["state_axes"])
+    assert (len(selected_blocks(result))) == (1)
+    assert ("history") not in (json_member(selected_blocks(result)[0], "state_axes"))
     assert (result["recommendation"]["endpoint_preference"]["deferred_graph_ids"]) == (
         []
     )
@@ -131,11 +136,11 @@ def test_all_age_unused_coordinate_cleanup_remains_eligible() -> None:
 
 def test_earlier_multi_date_boundary_remains_eligible() -> None:
     analysis = endpoint_fixture(dates=3)
-    option = analysis["interfaces"]["a:1"]["options"][0]
-    del option["states"]["history"]
-    option["state_projection"]["history"] = {"kind": "drop"}
+    option = json_rows(analysis, "interfaces", "a:1", "options")[0]
+    del json_member(option, "states")["history"]
+    json_member(option, "state_projection")["history"] = {"kind": "drop"}
     result = search_frontier(analysis, recommendation=WORK_FIRST)
-    assert ([block["cells"] for block in selected_plan(result)["blocks"]]) == (
+    assert ([block["cells"] for block in selected_blocks(result)]) == (
         [["a:0"], ["a:1", "a:2"]]
     )
     assert (result["recommendation"]["endpoint_preference"]["deferred_graph_ids"]) == (
@@ -146,12 +151,12 @@ def test_earlier_multi_date_boundary_remains_eligible() -> None:
 
 def test_different_terminal_context_is_not_an_optional_cleanup() -> None:
     analysis = endpoint_fixture()
-    analysis["declarations"]["cells"][-1]["terminal"] = True
+    json_rows(analysis, "declarations", "cells")[-1]["terminal"] = True
     result = search_frontier(analysis, recommendation=WORK_FIRST)
     assert (result["recommendation"]["endpoint_preference"]["deferred_graph_ids"]) == (
         []
     )
-    assert (len(selected_plan(result)["blocks"])) == (2)
+    assert (len(selected_blocks(result))) == (2)
     assert (check_frontier(analysis, result)["status"]) == ("PASS")
 
 
@@ -199,8 +204,11 @@ def test_independent_policy_does_not_call_producer_classifier() -> None:
 
 def test_changed_retained_interface_is_not_only_an_omission() -> None:
     analysis = endpoint_fixture()
-    option = analysis["interfaces"]["a:1"]["options"][0]
-    option["state_projection"]["wealth"] = {"kind": "characteristic", "id": "different"}
+    option = json_rows(analysis, "interfaces", "a:1", "options")[0]
+    json_member(option, "state_projection")["wealth"] = {
+        "kind": "characteristic",
+        "id": "different",
+    }
     result = search_frontier(analysis, recommendation=WORK_FIRST)
     assert (result["recommendation"]["endpoint_preference"]["deferred_graph_ids"]) == (
         []
