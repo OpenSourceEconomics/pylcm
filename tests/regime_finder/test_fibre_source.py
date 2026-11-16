@@ -2,6 +2,7 @@
 
 from collections.abc import Callable, Iterator, Mapping
 from copy import deepcopy
+from fractions import Fraction
 import inspect
 from pathlib import Path
 import json
@@ -14,8 +15,11 @@ from typing import TYPE_CHECKING, Literal, TypeAliasType, cast
 from unittest.mock import patch
 
 import pytest
+import jax.numpy as jnp
+from jax import Array
 from beartype import beartype
-from lcm.typing import FloatND
+from lcm import categorical
+from lcm.typing import FloatND, ScalarInt, UserAge
 import numpy as np
 from numpy.typing import NDArray
 
@@ -3958,3 +3962,639 @@ def test_native_wire_rejects_mutated_categorical_field_keys_without_hashing(
     finally:
         payload["fields"] = fields
         record["value"] = payload
+
+
+def _support_image_dispatch(choice: int) -> Array:
+    destination = jnp.where(choice == 1, 2, 1)
+    return jnp.where(destination == 0, 0, jnp.where(destination == 2, 2, 1))
+
+
+def _support_image_statement(choice: int) -> int:
+    if choice:
+        return 1
+    return 2
+
+
+def _support_image_expression(choice: int) -> int:
+    return 1 if choice else 2
+
+
+def _support_image_age_choice(*, age: UserAge, choice: int) -> Array:
+    return jnp.where(
+        age == 79, jnp.where(choice == 1, 4, 3), jnp.where(choice == 1, 2, 1)
+    )
+
+
+def _support_image_bool(choice: int) -> Array:
+    return jnp.where(choice == 1, True, False)
+
+
+def _support_image_legacy_boolop(choice: int) -> Array:
+    return jnp.where(choice == 1, (0 or 2), False)
+
+
+def _support_image_legacy_same_value(choice: int) -> Array:
+    return jnp.where(choice == 1, True, (0 or 2))
+
+
+def _support_image_legacy_same_nested(*, choice: int, history: int) -> Array:
+    value = True if choice else (0 or 2)
+    return jnp.where(history == 1, value, False)
+
+
+def _support_image_legacy_condition(choice: int) -> Array:
+    return jnp.where(
+        (0 or 2) == 1, jnp.where(choice == 1, 1, 2), jnp.where(choice == 1, 3, 4)
+    )
+
+
+def _support_image_legacy_if(choice: int) -> Array:
+    if (0 or 2) == 1:
+        return jnp.where(choice == 1, 1, 2)
+    return jnp.where(choice == 1, 3, 4)
+
+
+def _support_image_legacy_ifexp(choice: int) -> Array:
+    return (
+        jnp.where(choice == 1, 1, 2) if (0 or 2) == 1 else jnp.where(choice == 1, 3, 4)
+    )
+
+
+def _support_image_float(choice: int) -> Array:
+    return jnp.where(choice == 1, 1.0, 2.0)
+
+
+def _support_image_mixed(choice: int) -> Array:
+    return jnp.where(choice == 1, True, 2)
+
+
+_SUPPORT_ARRAY_0D: NDArray[np.int8] = np.asarray(1, dtype=np.int8)
+
+
+def _support_image_array_binding(choice: int) -> Array:
+    return jnp.where(choice == 1, _SUPPORT_ARRAY_0D, 2)
+
+
+def _support_image_cast(choice: int) -> Array:
+    return jnp.asarray(jnp.where(choice == 1, 1, 2))
+
+
+def _support_image_astype(choice: int) -> Array:
+    return jnp.where(choice == 1, 1, 2).astype(jnp.int32)
+
+
+def _support_image_add(choice: int) -> Array:
+    return jnp.where(choice == 1, 1, 2) + 0
+
+
+def _support_image_negative(choice: int) -> Array:
+    return -jnp.where(choice == 1, 1, 2)
+
+
+def _support_image_invert(choice: int) -> Array:
+    return ~jnp.where(choice == 1, 1, 2)
+
+
+def _support_image_not(choice: int) -> bool:
+    return not jnp.where(choice == 1, 1, 2)
+
+
+def _support_image_unmapped(choice: int) -> Array:
+    return jnp.where(choice == 1, 1, 99)
+
+
+def _support_image_hidden(history: int) -> Array:
+    raise AssertionError("Support analysis must not execute a callback")
+
+
+def _support_image_opaque(*, choice: int, history: int) -> Array:
+    return jnp.where(choice == 1, 1, _support_image_hidden(history))
+
+
+def _support_image_physical(choice: int) -> Array:
+    return jnp.where(choice == 1, 10, 20)
+
+
+def _support_image_code(physical_code: int) -> int:
+    return physical_code
+
+
+_SUPPORT_FRACTION = Fraction(1)
+
+
+def _support_image_fraction_output(choice: int) -> Fraction | int:
+    return _SUPPORT_FRACTION if choice else 2
+
+
+def _support_image_original(
+    *,
+    callback: UserFunction,
+    values: tuple[int | bool, ...] = (0, 1, 2),
+) -> tuple[dict[str, JSONValue], dict[str, JSONValue]]:
+    native, records = _capture_native_wrapper(callback, declared=False)
+    original = _original()
+    original["callable_records"] = records
+    _object(_fields(original)["states"])["x"] = grid(list(values))
+    _object(_fields(original)["state_transitions"])["x"] = native
+    return original, native
+
+
+@pytest.mark.parametrize(
+    "callback",
+    (
+        _support_image_dispatch,
+        _support_image_statement,
+        _support_image_expression,
+    ),
+)
+def test_support_images_prove_complete_control_alternatives_without_scalar_value(
+    callback: UserFunction,
+) -> None:
+    original, native = _support_image_original(callback=callback)
+    assert _source(original).get_target_support(
+        relation_id=_relation_id(original),
+        target_coordinate="x",
+        statuses={},
+    ) == TargetSupport(frozenset({1, 2}), True)
+    answer = SourceProof(
+        {"root": {"original": native}},
+        callable_records=_object(original["callable_records"]),
+    ).callback("root")
+    assert answer.proved
+    assert answer.value is _UNKNOWN
+    assert answer.reads == frozenset({"choice"})
+    assert answer.support_images is not None
+    assert set(answer.support_images) == {1, 2}
+
+
+def test_support_images_optimized_compiler_matches_literal_reference() -> None:
+    from _lcm_regime_finder.implicit.implicit_core import Support
+    from _lcm_regime_finder.implicit.implicit_native import CellCompiler
+
+    original, _ = _support_image_original(callback=_support_image_dispatch)
+    source = _source(original)
+    compiler = CellCompiler(source=source, cell_id=_cell_id(original), status_axes=())
+    assert compiler.cache_purity["proved"] is True
+    relation_id = _relation_id(original)
+    root = compiler.support(relation_id=relation_id, coordinate="x")
+    optimized = compiler.diagram.evaluate(root, {})
+    assert optimized == Support(frozenset({1, 2}), True)
+    reference = source.get_target_support(
+        relation_id=relation_id, target_coordinate="x", statuses={}
+    )
+    assert reference == TargetSupport(frozenset({1, 2}), True)
+    assert isinstance(optimized, Support)
+    assert (optimized.possible_codes, optimized.proved) == (
+        reference.possible_codes,
+        reference.proved,
+    )
+
+
+@pytest.mark.parametrize(
+    "callback",
+    (
+        _support_image_float,
+        _support_image_mixed,
+        _support_image_cast,
+        _support_image_astype,
+        _support_image_add,
+        _support_image_opaque,
+        _support_image_array_binding,
+        _support_image_legacy_same_value,
+        _support_image_legacy_same_nested,
+    ),
+)
+def test_support_images_keep_unsupported_transformations_conservative(
+    callback: UserFunction,
+) -> None:
+    original, _ = _support_image_original(callback=callback)
+    assert _source(original).get_target_support(
+        relation_id=_relation_id(original),
+        target_coordinate="x",
+        statuses={},
+    ) == TargetSupport(frozenset({0, 1, 2}), False)
+
+
+@pytest.mark.parametrize(
+    "callback",
+    (
+        _support_image_negative,
+        _support_image_invert,
+        _support_image_not,
+    ),
+)
+def test_support_images_do_not_forward_through_unknown_unary_operations(
+    callback: UserFunction,
+) -> None:
+    values = (-3, -2, -1, 0, 1, 2)
+    original, native = _support_image_original(callback=callback, values=values)
+    answer = SourceProof(
+        {"root": {"original": native}},
+        callable_records=_object(original["callable_records"]),
+    ).callback("root")
+    assert answer.proved and answer.value is _UNKNOWN
+    assert answer.reads == frozenset({"choice"})
+    assert answer.support_images is None
+    assert _source(original).get_target_support(
+        relation_id=_relation_id(original),
+        target_coordinate="x",
+        statuses={},
+    ) == TargetSupport(frozenset(range(len(values))), False)
+
+
+def test_support_images_unmapped_alternative_is_not_a_model_counterexample() -> None:
+    original, _ = _support_image_original(callback=_support_image_unmapped)
+    assert _source(original).get_target_support(
+        relation_id=_relation_id(original),
+        target_coordinate="x",
+        statuses={},
+    ) == TargetSupport(frozenset({0, 1, 2}), False)
+    _object(_fields(original)["state_transitions"])["x"] = function(
+        "def next_x():\n    return 99\n",
+        [],
+    )
+    with pytest.raises(ValueError, match="deterministic update leaves target grid"):
+        _source(original).get_target_support(
+            relation_id=_relation_id(original),
+            target_coordinate="x",
+            statuses={},
+        )
+
+
+def test_support_images_budget_overflow_keeps_the_entire_original_domain() -> None:
+    original = _original()
+    values = tuple(range(65))
+    _object(_fields(original)["states"])["x"] = grid(list(values))
+    expression = "64"
+    for value in reversed(range(64)):
+        expression = f"{value} if choice == {value} else ({expression})"
+    _object(_fields(original)["state_transitions"])["x"] = function(
+        f"def next_x(choice):\n    return {expression}\n",
+        ["choice"],
+    )
+    assert _source(original).get_target_support(
+        relation_id=_relation_id(original),
+        target_coordinate="x",
+        statuses={},
+    ) == TargetSupport(frozenset(values), False)
+
+
+def test_support_images_are_cleared_by_nonidentity_derived_category_encoding() -> None:
+    # Capture roots must share one graph so unrelated C-identifiers cannot alias.
+    with capture_session() as session:
+        physical = normalize(_support_image_physical)
+        code = normalize(_support_image_code)
+    answer = SourceProof(
+        {"physical": {"original": physical}, "root": {"original": code}},
+        providers={
+            "physical": "physical",
+            "physical_code": {
+                "derived_code_of": "physical",
+                "values": [10, 20],
+                "codes": [0, 1],
+            },
+        },
+        callable_records=session.records,
+    ).callback("root")
+    assert answer.proved and answer.value is _UNKNOWN
+    assert answer.reads == frozenset({"choice"})
+    assert answer.support_images is None
+    original = _original()
+    original["callable_records"] = session.records
+    _object(_fields(original)["states"])["x"] = grid([0, 1, 10, 20])
+    _fields(original)["derived_categoricals"] = {"physical": grid([10, 20])}
+    _object(_fields(original)["functions"])["physical"] = physical
+    _object(_fields(original)["state_transitions"])["x"] = code
+    assert _source(original).get_target_support(
+        relation_id=_relation_id(original),
+        target_coordinate="x",
+        statuses={},
+    ) == TargetSupport(frozenset({0, 1, 2, 3}), False)
+
+
+class _SupportImageEqualityTrap:
+    def __eq__(self, _other: object) -> bool:
+        raise AssertionError("Opaque support image equality must not run")
+
+    def __hash__(self) -> int:
+        raise AssertionError("Opaque support image hashing must not run")
+
+
+def test_support_images_reject_opaque_and_typed_scalar_neighbors_without_equality() -> (
+    None
+):
+    from _lcm_regime_finder.semantic_check import _support_literal, _support_union
+
+    assert _support_literal(_SupportImageEqualityTrap()) is None
+    assert _support_literal(1.0) is None
+    assert _support_literal(2**31) is None
+    assert _support_literal(-(2**31) - 1) is None
+    assert _support_union((True,), (1,)) is None
+    assert _support_union((False,), (True,)) == (False, True)
+    assert _support_union((-(2**31),), (2**31 - 1,)) == (-(2**31), 2**31 - 1)
+    assert _support_literal(Fraction(62)) is None
+    assert _support_literal(Fraction(3, 2)) is None
+
+
+def test_support_images_preserve_the_actual_fraction_clock_outer_select() -> None:
+    native, records = _capture_native_wrapper(_support_image_age_choice, declared=False)
+    answer = SourceProof(
+        {"root": {"original": native}},
+        static={"age": Fraction(62)},
+        callable_records=records,
+    ).callback("root")
+    assert answer.proved and answer.value is _UNKNOWN
+    assert answer.reads == frozenset({"choice"})
+    assert answer.support_images is not None and set(answer.support_images) == {1, 2}
+
+
+def test_support_images_preserve_boolean_element_types() -> None:
+    original, _ = _support_image_original(
+        callback=_support_image_bool, values=(False, True)
+    )
+    assert _source(original).get_target_support(
+        relation_id=_relation_id(original),
+        target_coordinate="x",
+        statuses={},
+    ) == TargetSupport(frozenset({0, 1}), True)
+
+
+def test_support_images_do_not_reinterpret_captured_fraction_outputs_as_ints() -> None:
+    with capture_session() as session:
+        native = normalize(_support_image_fraction_output)
+    answer = SourceProof(
+        {"root": {"original": native}}, callable_records=session.records
+    ).callback("root")
+    assert answer.proved and answer.value is _UNKNOWN
+    assert answer.reads == frozenset({"choice"})
+    assert answer.support_images is None
+    original = _original()
+    original["callable_records"] = session.records
+    _object(_fields(original)["states"])["x"] = grid([0, 1, 2])
+    _object(_fields(original)["state_transitions"])["x"] = native
+    assert _source(original).get_target_support(
+        relation_id=_relation_id(original),
+        target_coordinate="x",
+        statuses={},
+    ) == TargetSupport(frozenset({0, 1, 2}), False)
+
+
+def test_support_images_do_not_seed_computed_legacy_boolean_values() -> None:
+    original, _ = _support_image_original(
+        callback=_support_image_legacy_boolop, values=(False, True, 2)
+    )
+    assert _source(original).get_target_support(
+        relation_id=_relation_id(original),
+        target_coordinate="x",
+        statuses={},
+    ) == TargetSupport(frozenset({0, 1, 2}), False)
+
+
+@pytest.mark.parametrize(
+    "callback", (_support_image_legacy_if, _support_image_legacy_ifexp)
+)
+def test_support_images_do_not_trust_legacy_known_python_conditions(
+    callback: UserFunction,
+) -> None:
+    original, native = _support_image_original(
+        callback=callback, values=(0, 1, 2, 3, 4)
+    )
+    answer = SourceProof(
+        {"root": {"original": native}},
+        callable_records=_object(original["callable_records"]),
+    ).callback("root")
+    assert answer.proved and answer.value is _UNKNOWN
+    assert answer.reads == frozenset({"choice"})
+    assert answer.support_images is None
+    assert _source(original).get_target_support(
+        relation_id=_relation_id(original),
+        target_coordinate="x",
+        statuses={},
+    ) == TargetSupport(frozenset({0, 1, 2, 3, 4}), False)
+
+
+def test_support_images_union_both_select_branches_when_legacy_truth_is_unproved() -> (
+    None
+):
+    original, native = _support_image_original(
+        callback=_support_image_legacy_condition, values=(0, 1, 2, 3, 4)
+    )
+    answer = SourceProof(
+        {"root": {"original": native}},
+        callable_records=_object(original["callable_records"]),
+    ).callback("root")
+    assert answer.proved and answer.value is _UNKNOWN
+    assert answer.reads == frozenset({"choice"})
+    assert answer.support_images is not None and set(answer.support_images) == {
+        1,
+        2,
+        3,
+        4,
+    }
+    assert _source(original).get_target_support(
+        relation_id=_relation_id(original),
+        target_coordinate="x",
+        statuses={},
+    ) == TargetSupport(frozenset({1, 2, 3, 4}), True)
+
+
+@pytest.mark.parametrize(
+    ("expression", "expected"),
+    (
+        ("0 or 2", 2),
+        ("1 or 2", 1),
+        ("0 and 2", 0),
+        ("1 and 2", 2),
+        ("'' or 'kept'", "kept"),
+        ("None or False", False),
+    ),
+)
+def test_support_images_boolop_scalar_semantics_returns_the_actual_operand(
+    *,
+    expression: str,
+    expected: JSONValue,
+) -> None:
+    answer = SourceProof({}).callback(
+        function(f"def root():\n    return {expression}\n", [])
+    )
+    assert answer.proved and not answer.reads
+    assert type(answer.value) is type(expected) and answer.value == expected
+    assert answer.support_images is None
+
+
+class _SupportTruthTrap:
+    def __bool__(self) -> bool:
+        raise AssertionError("Unsupported scalar truth must not execute user code")
+
+
+def test_support_images_boolop_unknown_and_unsupported_truth_remain_conservative() -> (
+    None
+):
+    callback = function(
+        "def root(value, history):\n    return value or history\n", ["value", "history"]
+    )
+    unknown = SourceProof({}).callback(callback)
+    assert unknown.value is _UNKNOWN and unknown.reads == frozenset(
+        {"value", "history"}
+    )
+    assert unknown.support_images is None
+    opaque = SourceProof({}, static={"value": _SupportTruthTrap()}).callback(callback)
+    assert not opaque.proved and opaque.value is _UNKNOWN
+    assert opaque.support_images is None
+
+
+@categorical(ordered=True)
+class _SupportImageNativeChoice:
+    decline: ScalarInt
+    apply: ScalarInt
+
+
+@categorical(ordered=False)
+class _SupportImageNativeRegime:
+    before: ScalarInt
+    unclaimed: ScalarInt
+    claimed: ScalarInt
+    terminal_unclaimed: ScalarInt
+    terminal_claimed: ScalarInt
+
+
+def _support_image_native_destination(*, age: UserAge, choice: int) -> Array:
+    return jnp.where(
+        age == 79,
+        jnp.where(
+            choice == _SupportImageNativeChoice.apply,
+            _SupportImageNativeRegime.terminal_claimed,
+            _SupportImageNativeRegime.terminal_unclaimed,
+        ),
+        jnp.where(
+            choice == _SupportImageNativeChoice.apply,
+            _SupportImageNativeRegime.claimed,
+            _SupportImageNativeRegime.unclaimed,
+        ),
+    )
+
+
+def _support_image_native_member(original_destination: Array) -> Array:
+    return jnp.where(
+        original_destination == 0, 0, jnp.where(original_destination == 2, 2, 1)
+    )
+
+
+def _support_image_native_dispatch(*, age: UserAge, choice: int, x: int) -> Array:
+    destination = _support_image_native_destination(age=age, choice=choice)
+    member = _support_image_native_member(destination)
+    return jnp.where(x == 1, member, 0)
+
+
+def test_support_images_capture_native_categorical_members_through_dispatch() -> None:
+    from _lcm_regime_finder.implicit.implicit_core import Support
+    from _lcm_regime_finder.implicit.implicit_native import CellCompiler
+
+    original, native = _support_image_original(callback=_support_image_native_dispatch)
+    source = _source(original)
+    relation_id = _relation_id(original)
+    expected = TargetSupport(frozenset({1, 2}), True)
+    assert (
+        source.get_target_support(
+            relation_id=relation_id, target_coordinate="x", statuses={"x": 1}
+        )
+        == expected
+    )
+    answer = SourceProof(
+        {"root": {"original": native}},
+        static={"age": Fraction(62), "x": 1},
+        callable_records=_object(original["callable_records"]),
+    ).callback("root")
+    assert answer.proved and answer.value is _UNKNOWN
+    assert answer.reads == frozenset({"choice"})
+    assert answer.support_images is not None and set(answer.support_images) == {1, 2}
+    compiler = CellCompiler(
+        source=source, cell_id=_cell_id(original), status_axes=("x",)
+    )
+    assert compiler.cache_purity["proved"] is True
+    root = compiler.support(relation_id=relation_id, coordinate="x")
+    assert compiler.diagram.evaluate(root, {"x": 1}) == Support(
+        expected.possible_codes, expected.proved
+    )
+
+
+@pytest.mark.parametrize(
+    ("field", "replacement"),
+    (
+        ("kind", "type"),
+        ("dtype", "int8"),
+        ("dtype", "int64"),
+        ("dtype", "float32"),
+        ("shape", [1]),
+        ("shape", None),
+        ("values", True),
+        ("values", 1.0),
+        ("values", [1]),
+        ("values", 0),
+        ("values", 2**31),
+        ("values", -(2**31) - 1),
+        ("sha256", "0" * 64),
+        ("sha256", None),
+        ("extra", 0),
+    ),
+)
+def test_support_images_reject_changed_native_categorical_member_wire(
+    *, field: str, replacement: JSONValue
+) -> None:
+    from _lcm_regime_finder.semantic_check import _support_categorical_int32
+
+    captured = normalize(_SupportImageNativeRegime)
+    member = _object(_object(captured["members"])["unclaimed"])
+    assert _support_categorical_int32(member) == (1,)
+    changed = deepcopy(member)
+    changed[field] = replacement
+    assert _support_categorical_int32(changed) is None
+
+
+def test_support_images_reject_opaque_categorical_payload_without_equality() -> None:
+    from _lcm_regime_finder.semantic_check import _support_categorical_int32
+
+    captured = normalize(_SupportImageNativeRegime)
+    member = _object(_object(captured["members"])["unclaimed"])
+    assert _support_categorical_int32(member) == (1,)
+    assert (
+        _support_categorical_int32(
+            {key: value for key, value in member.items() if key != "sha256"}
+        )
+        is None
+    )
+    malformed: dict[str, object] = dict(member)  # noqa: PAN001 - intentional arbitrary malformed categorical payload boundary
+    malformed["values"] = _SupportImageEqualityTrap()
+    assert _support_categorical_int32(malformed) is None
+    malformed["values"] = 1
+    malformed["sha256"] = _SupportImageEqualityTrap()
+    assert _support_categorical_int32(malformed) is None
+
+
+class _SupportImageIntSubclass(int):
+    def __eq__(self, _other: object) -> bool:
+        raise AssertionError("A categorical int subclass must not enter equality")
+
+
+def test_support_images_reject_categorical_int_subclasses() -> None:
+    from _lcm_regime_finder.semantic_check import _support_categorical_int32
+
+    captured = normalize(_SupportImageNativeRegime)
+    member = _object(_object(captured["members"])["unclaimed"])
+    assert _support_categorical_int32(member) == (1,)
+    member["values"] = _SupportImageIntSubclass(1)
+    assert _support_categorical_int32(member) is None
+
+
+_SUPPORT_ARRAY_INT32: NDArray[np.int32] = np.asarray(1, dtype=np.int32)
+
+
+def _support_image_generic_int32_array(choice: int) -> Array:
+    return jnp.where(choice == 1, _SUPPORT_ARRAY_INT32, 2)
+
+
+def test_support_images_do_not_seed_generic_int32_array_bindings() -> None:
+    original, _ = _support_image_original(callback=_support_image_generic_int32_array)
+    assert _source(original).get_target_support(
+        relation_id=_relation_id(original), target_coordinate="x", statuses={}
+    ) == TargetSupport(frozenset({0, 1, 2}), False)
