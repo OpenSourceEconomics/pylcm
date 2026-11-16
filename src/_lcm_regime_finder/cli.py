@@ -100,8 +100,10 @@ def exit_status(status):
 def _analysis_options(parser):
     parser.add_argument('problem'); parser.add_argument('--output', required=True)
     parser.add_argument('--seconds', type=float, default=900)
-    parser.add_argument('--search-mode', choices=('heuristic', 'exact'), default='heuristic',
-                        help='Default: checked heuristic candidates. Exact explicitly requests complete-family search.')
+    parser.add_argument('--facts-backend', choices=('metadata', 'dense', 'implicit'), required=True,
+                        help='metadata: conservative scalar-language facts; dense or implicit: exact source facts')
+    parser.add_argument('--search-mode', choices=('heuristic', 'exact'), required=True,
+                        help='heuristic: checked heuristic candidates; exact: complete-family search')
     parser.add_argument('--heuristic-rounds', type=int, default=2,
                         help='Optional local grouping sweep effort; no Model-size rejection threshold')
     parser.add_argument('--heuristic-neighbors', type=int, default=2,
@@ -353,7 +355,7 @@ def main(argv=None):
             phase_started = time.perf_counter()
             result = analyze_production(problem, limits=limits, recommendation=recommendation,
                                         production_contract=contract, checkpoint=checkpoint,
-                                        search_mode=args.search_mode,
+                                        facts_backend=args.facts_backend, search_mode=args.search_mode,
                                         heuristic_effort={'rounds': args.heuristic_rounds,
                                                           'neighbor_degree': args.heuristic_neighbors})
             delivery_timings['analysis_call_including_checkpoints_seconds'] = time.perf_counter() - phase_started

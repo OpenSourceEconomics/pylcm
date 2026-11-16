@@ -28,7 +28,9 @@ def test_duplicate_relations_and_policies_preserve_source_dependencies() -> None
     relation["id"] = "duplicate-incidence"
     source["relations"].append(relation)
     declaration = normalize_declarations(source)
-    analysis = MetadataAnalysis(declaration).run()
+    analysis = MetadataAnalysis(
+        declaration, facts_backend="metadata", search_mode="exact"
+    ).run()
     result = check_semantics(source, declaration, analysis)
     assert result["status"] == "PASS", result
     assert {row["id"] for row in declaration["relations"]} == {

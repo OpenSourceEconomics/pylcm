@@ -56,7 +56,9 @@ def current_spec():
 def analyze(raw):
     raw = bind_types(raw)
     normalized = normalize_declarations(raw)
-    analysis = MetadataAnalysis(normalized).run()
+    analysis = MetadataAnalysis(
+        normalized, facts_backend="metadata", search_mode="exact"
+    ).run()
     checked = check_semantics(raw, normalized, analysis)
     return normalized, analysis, checked
 

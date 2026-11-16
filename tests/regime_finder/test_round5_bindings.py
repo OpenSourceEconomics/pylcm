@@ -212,7 +212,9 @@ def test_public_production_cannot_adopt_deletion_of_overridable_input() -> None:
             "scope": "explicit tiny declaration witness",
         },
     }
-    result = analyze_production(original, limits={"seconds": 10}, search_mode="exact")
+    result = analyze_production(
+        original, limits={"seconds": 10}, search_mode="exact", facts_backend="metadata"
+    )
     assert (result["semantic_check"]["status"]) == ("PASS")
     assert all(
         "history" in axes for axes in result["analysis"]["dependency_closure"].values()

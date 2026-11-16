@@ -72,7 +72,9 @@ def one_cell(
 
 def produce(source):
     declarations = normalize_declarations(source)
-    analysis = MetadataAnalysis(declarations).run()
+    analysis = MetadataAnalysis(
+        declarations, facts_backend="metadata", search_mode="exact"
+    ).run()
     return declarations, analysis, check_semantics(source, declarations, analysis)
 
 
@@ -485,7 +487,11 @@ def test_native_gate_callback_or_owned_leg_mutation_is_independently_rejected() 
                 for r in bad["relations"]
                 if not (r["kind"] == "fallback" and r["phase"] == "simulation")
             ]
-        check = check_semantics(source, bad, MetadataAnalysis(bad).run())
+        check = check_semantics(
+            source,
+            bad,
+            MetadataAnalysis(bad, facts_backend="metadata", search_mode="exact").run(),
+        )
         assert (check["status"]) == ("FAIL"), check
 
 

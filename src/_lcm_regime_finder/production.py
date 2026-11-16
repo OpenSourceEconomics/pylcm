@@ -11,15 +11,18 @@ import time
 
 from .records import Scenario
 from .expressions import jsonable
-from .facts import MetadataFacts, characteristic_cells, identity_stops, live_states
+from .facts import (FACTS_BACKENDS, FactsBudgetError, MetadataFacts, characteristic_cells,
+                    identity_stops, live_states, make_facts)
 from .frontier import canonical, digest, search_frontier
 from .block_admission import admission_record, context_key
 
 
 class MetadataAnalysis:
-    def __init__(self, declarations, limits=None, *, search_mode='exact', facts=None):
+    def __init__(self, declarations, limits=None, *, search_mode, facts_backend):
         if search_mode not in {'heuristic', 'exact'}:
             raise ValueError('search_mode must be heuristic or exact')
+        if facts_backend not in FACTS_BACKENDS:
+            raise ValueError('facts_backend must be one of ' + ', '.join(FACTS_BACKENDS))
         self.search_mode = search_mode
         self.decl = declarations
         self.limits = {'seconds': 900, 'metadata_categories': 100000,
@@ -29,8 +32,9 @@ class MetadataAnalysis:
         self._interface_cache = {}
         # The scalar interpreter also renders the reduced function signatures,
         # whichever backend supplies the dependency facts.
-        self.interpreter = MetadataFacts(declarations, self.limits, self.guard)
-        self.facts = self.interpreter if facts is None else facts
+        self.facts = make_facts(facts_backend, declarations, self.limits, self.guard)
+        self.interpreter = (self.facts if isinstance(self.facts, MetadataFacts)
+                            else MetadataFacts(declarations, self.limits, self.guard))
         self.cells = self.facts.cells
         self.callbacks = self.facts.callbacks
         self.domains = self.facts.domains
@@ -257,6 +261,15 @@ class MetadataAnalysis:
         }
 
     def run(self):
+        try:
+            return self._run()
+        except TimeoutError:
+            if self.facts.name == 'metadata':
+                raise
+            raise FactsBudgetError(backend=self.facts.name, limit='time budget',
+                                   unfinished=sorted(set(self.cells) - set(self.live)) or sorted(self.cells)) from None
+
+    def _run(self):
         self.dependencies()
         candidates = self.characteristic_candidates()
         by_axis = {}
@@ -354,11 +367,13 @@ class MetadataAnalysis:
                 'elapsed_seconds': time.perf_counter() - self.started}
 
 
-def analyze_production(original, *, limits=None, recommendation=None, production_contract=None,
-                       checkpoint=None, analysis_scope='graph', search_mode='heuristic',
+def analyze_production(original, *, facts_backend, search_mode, limits=None, recommendation=None,
+                       production_contract=None, checkpoint=None, analysis_scope='graph',
                        heuristic_effort=None):
     if search_mode not in {'heuristic', 'exact'}:
         raise ValueError('search_mode must be heuristic or exact')
+    if facts_backend not in FACTS_BACKENDS:
+        raise ValueError('facts_backend must be one of ' + ', '.join(FACTS_BACKENDS))
     started = time.perf_counter()
     phase_timings = {}
     active_phase = 'normalization'
@@ -383,7 +398,7 @@ def analyze_production(original, *, limits=None, recommendation=None, production
                         'phase_timings': dict(phase_timings)})
         active_phase = 'metadata_analysis'
         phase_started = time.perf_counter()
-        metadata = MetadataAnalysis(declarations, limits, search_mode=search_mode)
+        metadata = MetadataAnalysis(declarations, limits, search_mode=search_mode, facts_backend=facts_backend)
         analysis = metadata.run()
         phase_timings['metadata_analysis_seconds'] = time.perf_counter() - phase_started
         if checkpoint:
@@ -394,7 +409,7 @@ def analyze_production(original, *, limits=None, recommendation=None, production
         incomplete = isinstance(exc, TimeoutError)
         return {'schema': 'regime-production-result/v1',
                 'status': 'INCOMPLETE' if incomplete else 'UNRESOLVED',
-                'search_mode': search_mode,
+                'search_mode': search_mode, 'facts_backend': facts_backend,
                 'recommendations': ([{'scenario_index': None, 'graph_id': 'retain-original',
                     'operation': 'retain_original', 'authority': 'retain_original',
                     'reason': 'Normalization or metadata analysis did not establish a checked proposal'}]
@@ -404,7 +419,7 @@ def analyze_production(original, *, limits=None, recommendation=None, production
                                             'obligations': [{'kind': 'metadata_admission', 'detail': str(exc)}]},
                 'semantic_check': {'status': 'NOT_RUN'},
                 'established_lower_bound': dict.fromkeys(('work', 'storage', 'clarity'), 0),
-                'layers': {'source_semantics': 'NOT_RUN', 'discovery': 'INCOMPLETE',
+                'layers': {'facts': facts_backend, 'source_semantics': 'NOT_RUN', 'discovery': 'INCOMPLETE',
                            'allocation': 'UNRESOLVED', 'frontier': 'NOT_RUN',
                            'native_numerical_execution': 'NOT_RUN'},
                 'elapsed_seconds': time.perf_counter() - started,
@@ -498,14 +513,14 @@ def analyze_production(original, *, limits=None, recommendation=None, production
         # Unresolved candidate premises select retain-original, not a bypass.
         status = 'INVALID' if failed else 'HEURISTIC'
     return {'schema': 'regime-production-result/v1',
-            'status': status, 'search_mode': search_mode,
+            'status': status, 'search_mode': search_mode, 'facts_backend': facts_backend,
             'recommendations': recommendations,
             'analysis_scope': declarations.get('analysis_scope', 'full_semantics'),
             'source_identity': declarations.get('source_identity'), 'analysis': analysis,
             'semantic_check': semantic, 'scenarios': scenarios,
             'proposal_decisions': decisions,
             'production_cost_claim': 'conditional' if not allocation_known else 'declared allocation contract',
-            'layers': {'source_semantics': semantic.get('status'),
+            'layers': {'facts': facts_backend, 'source_semantics': semantic.get('status'),
                        'discovery': 'COMPLETE' if analysis['discovery_complete'] else 'INCOMPLETE',
                        'allocation': 'DECLARED' if allocation_known else 'UNRESOLVED',
                        'frontier': ('RETAINED_CANDIDATES_CHECKED' if search_mode == 'heuristic' else 'VERIFIED')

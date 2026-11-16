@@ -343,6 +343,10 @@ def test_cli_cost_delivery_and_atomic_incomplete_checkpoints() -> None:
         code = main(
             [
                 "find-regimes",
+                "--facts-backend",
+                "metadata",
+                "--search-mode",
+                "heuristic",
                 str(source),
                 "--output",
                 str(output),

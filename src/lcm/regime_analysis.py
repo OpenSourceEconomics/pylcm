@@ -5,9 +5,15 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
+from typing import Literal, cast
 
 from _lcm.typing import JSONValue
 from lcm.typing import ActionName, RegimeName, StateName
+
+# Where an analysis takes its dependency facts from.
+type FactsBackend = Literal["metadata", "dense", "implicit"]
+# How an analysis searches the candidate family.
+type SearchMode = Literal["heuristic", "exact"]
 
 _COST_FEATURES = ("work", "storage", "clarity")
 
@@ -153,6 +159,10 @@ class RegimeAnalysisResult:
     """Global check layers; these do not replace local proposal checks."""
     cost_model: LinearRegimeCostModel
     """The objective supplied to candidate generation and pruning."""
+    facts_backend: FactsBackend
+    """The backend that supplied the dependency facts."""
+    search_mode: SearchMode
+    """How the candidate family was searched."""
     data: Mapping[str, JSONValue] = field(repr=False)
     """Recursively immutable detailed report and source records."""
 
@@ -362,5 +372,7 @@ def result_from_report(
             for key, value in _mapping(report.get("layers", {})).items()
         ),
         cost_model=cost_model,
+        facts_backend=cast("FactsBackend", report["facts_backend"]),
+        search_mode=cast("SearchMode", report["search_mode"]),
         data=report,
     )

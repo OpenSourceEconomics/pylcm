@@ -118,8 +118,8 @@ def export_model(model, destination, *, production_metadata, model_id=None,
     return receipt
 
 
-def analyse_snapshot(snapshot, output, *, seconds=900, host_gib=8, command_prefix=None,
-                     allow_final_only_split=False, search_mode='heuristic',
+def analyse_snapshot(snapshot, output, *, facts_backend, search_mode, seconds=900, host_gib=8,
+                     command_prefix=None, allow_final_only_split=False,
                      heuristic_rounds=2, heuristic_neighbors=2):
     """One failure boundary for receipt, worker and final delivery validation."""
     snapshot, output = Path(snapshot).resolve(), Path(output).resolve()
@@ -129,7 +129,8 @@ def analyse_snapshot(snapshot, output, *, seconds=900, host_gib=8, command_prefi
         return _analyse_snapshot(snapshot, output, seconds=seconds, host_gib=host_gib,
                                  command_prefix=command_prefix,
                                  allow_final_only_split=allow_final_only_split,
-                                 search_mode=search_mode, heuristic_rounds=heuristic_rounds,
+                                 facts_backend=facts_backend, search_mode=search_mode,
+                                 heuristic_rounds=heuristic_rounds,
                                  heuristic_neighbors=heuristic_neighbors)
     except Exception as error:
         from .delivery import invalidate_delivery
@@ -146,10 +147,13 @@ def analyse_snapshot(snapshot, output, *, seconds=900, host_gib=8, command_prefi
 
 
 def _analyse_snapshot(snapshot, output, *, seconds, host_gib, command_prefix,
-                      allow_final_only_split, search_mode, heuristic_rounds, heuristic_neighbors):
+                      allow_final_only_split, facts_backend, search_mode, heuristic_rounds,
+                      heuristic_neighbors):
     from .resources import run_bounded
     if search_mode not in {'heuristic', 'exact'}:
         raise ValueError('search_mode must be heuristic or exact')
+    if facts_backend not in {'metadata', 'dense', 'implicit'}:
+        raise ValueError('facts_backend must be metadata, dense or implicit')
     if type(allow_final_only_split) is not bool:
         raise ValueError('allow_final_only_split must be a boolean')
     if seconds < 0 or host_gib <= 0:
@@ -222,7 +226,8 @@ def _analyse_snapshot(snapshot, output, *, seconds, host_gib, command_prefix,
         raise RuntimeError(f'Metadata capture INCOMPLETE; inspect {capture_path}')
     command = [*prefix, '-m', f'{__package__}.pipeline', str(snapshot), '--output', str(output),
                '--seconds', str(remaining), '--host-gib', str(host_gib), '--worker',
-               '--search-mode', search_mode, '--heuristic-rounds', str(heuristic_rounds),
+               '--facts-backend', facts_backend, '--search-mode', search_mode,
+               '--heuristic-rounds', str(heuristic_rounds),
                '--heuristic-neighbors', str(heuristic_neighbors)]
     if allow_final_only_split:
         command.append('--allow-final-only-split')

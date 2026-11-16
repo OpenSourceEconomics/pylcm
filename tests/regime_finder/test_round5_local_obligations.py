@@ -88,7 +88,7 @@ def native_fixture(*, callback=opaque_utility, values=(0, 1)):
 
 def _produce(source=None):
     source = native_fixture() if source is None else source
-    report = find_regimes(source, search_mode="exact")
+    report = find_regimes(source, search_mode="exact", facts_backend="metadata")
     assert ("proposal_decisions") in (report), report
     assert not (report["semantic_check"]["errors"]), report["semantic_check"]
     return source, report

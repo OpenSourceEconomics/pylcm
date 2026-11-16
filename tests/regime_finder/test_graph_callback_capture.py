@@ -54,7 +54,9 @@ def test_old_checkpoint_signatures_stay_unresolved_and_cannot_be_forged_complete
         "variadic": True,
         "obligations": ["Original graph checkpoint omits optional callback expansion"],
     }
-    result = find_regimes(source, budget={"seconds": 10}, search_mode="exact")
+    result = find_regimes(
+        source, budget={"seconds": 10}, search_mode="exact", facts_backend="metadata"
+    )
     assert (result["status"]) == ("UNRESOLVED")
     assert any(
         o["kind"] == "graph_callback_signature"
