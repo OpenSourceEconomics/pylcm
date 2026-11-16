@@ -88,6 +88,12 @@ such tree. A memoized recursion finds the tree with the fewest rows: at each set
 fixed statuses it keeps the lane unless splitting by one more status saves rows. The
 rectangle may hold at most `limits["status_lanes"]` points, 128 by default.
 
+The tree is built only if some lane can drop a state. A lane needs at least what each of
+its points needs, and it keeps a free status that every fibre inside it needs; a fibre
+fixes all statuses but one. If every point needs the cell's other states and every fibre
+its free status, every tree has as many rows as the unsplit cell. These points and
+fibres are nodes of the tree, so a tree that is built reuses them.
+
 A split is one interface option whose single state axis is a derived `lanes` domain.
 That domain is sized by the summed lane rows, so cost, merging and both searches use it
 unchanged. Cells split the same way share the domain and can share a block. All splits

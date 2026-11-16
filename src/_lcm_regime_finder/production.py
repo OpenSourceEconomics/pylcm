@@ -142,6 +142,8 @@ class MetadataAnalysis:
                 continue
             if prod(len(codes) for codes in axes.values()) > limit:
                 raise FactsBudgetError(backend=self.facts.name, unfinished=[cid], limit=f'status_lanes limit of {limit}')
+            if not self._some_state_drops(cell, option, axes, needs):
+                continue
             unsplit, lanes = self._lane_tree(cell, option, axes, {}, {}, needs)
             if len(lanes) < 2:
                 continue
@@ -172,6 +174,33 @@ class MetadataAnalysis:
         return {'status': 'OFFERED' if chosen else 'NONE_USEFUL',
                 'reason': ('Split cells are offered in one added projection policy.' if chosen else
                            'No status lane drops a state its whole cell keeps.'), 'cells': records}
+
+    def _some_state_drops(self, cell, option, axes, needs_memo):
+        """Tell whether any lane can drop a state the unsplit cell keeps.
+
+        Fixing a status only removes needs. A lane thus needs at least what each of
+        its points needs, and keeps a free status that every fibre (all other
+        statuses fixed) inside it needs. If every point needs the cell's other
+        states and every fibre its free status, every lane's rows are its points
+        times the cell's state rows, and no split saves rows. These lanes are nodes
+        of the split tree, which reuses them through the shared memo.
+        """
+        def needs(fixed):
+            return lane_needs(self.facts, cell, self.live, fixed, needs_memo) & set(option['states'])
+
+        whole = needs({}) - set(axes)
+        if not set(axes) <= needs({}):
+            return True
+        names = list(axes)
+        for codes in product(*axes.values()):
+            self.guard()
+            point = dict(zip(names, codes, strict=True))
+            if not whole <= needs(point):
+                return True
+            for axis in names:
+                if axis not in needs({k: v for k, v in point.items() if k != axis}):
+                    return True
+        return False
 
     def _lane_tree(self, cell, option, axes, fixed, memo, needs_memo):
         """Return the fewest rows, and their lanes, for the points with these statuses fixed."""

@@ -317,3 +317,48 @@ def test_the_split_search_reads_each_cell_and_status_point_once(monkeypatch) -> 
     _analyze("dense", joint_model())
     assert calls, "positive control: the split search reads at fixed statuses"
     assert len(calls) == len(set(calls))
+
+
+def _reads_all(
+    experience: DiscreteState, employment: DiscreteState, health: DiscreteState
+) -> FloatND:
+    return 1.0 + experience + employment + health
+
+
+def _keep_experience(experience: DiscreteState) -> DiscreteState:
+    return experience
+
+
+def test_a_cell_where_no_state_can_drop_builds_no_tree(monkeypatch) -> None:
+    """Fully fixed points and one-status fibres decide that no split saves rows.
+
+    With three statuses the whole tree has 3 * 3 * 4 = 36 nodes; the check reads the
+    unsplit cell, 12 points and 6 + 6 + 4 fibres.
+    """
+    import _lcm_regime_finder.production as production
+
+    original = production.lane_needs
+    nodes = {}
+
+    def counting(facts, cell, live, statuses, *args):
+        nodes.setdefault(cell["id"], set()).add(tuple(sorted(statuses.items())))
+        return original(facts, cell, live, statuses, *args)
+
+    monkeypatch.setattr(production, "lane_needs", counting)
+    fixture = _model(
+        {
+            "employment": DiscreteGrid(Employment),
+            "health": DiscreteGrid(Health),
+            "experience": DiscreteGrid(Experience),
+        },
+        _reads_all,
+        {
+            "experience": _keep_experience,
+            "employment": next_employment,
+            "health": next_health,
+        },
+    )
+    splits = _analyze("dense", fixture)["analysis"]["status_splits"]
+    assert splits["status"] == "NONE_USEFUL"
+    assert nodes, "positive control: the producer reads lane needs"
+    assert {len(visited) for visited in nodes.values()} == {1 + 12 + 6 + 6 + 4}
