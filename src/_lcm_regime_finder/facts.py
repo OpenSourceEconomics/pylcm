@@ -15,7 +15,10 @@ they read and forces at most what they force.
 """
 
 import ast
+import time
 from collections.abc import Callable, Iterable, Mapping
+from concurrent.futures import ProcessPoolExecutor
+import functools
 from itertools import product
 from typing import Literal, Protocol
 
@@ -555,6 +558,7 @@ class FactsBudgetError(RuntimeError):
     """An exact backend ran out of budget before every cell was analysed."""
 
     def __init__(self, *, backend: str, unfinished: Iterable[str], limit: str) -> None:
+        self.backend, self.limit = backend, limit
         self.unfinished = sorted(unfinished)
         shown = ", ".join(self.unfinished[:10]) + (" ..." if len(self.unfinished) > 10 else "")
         super().__init__(
@@ -562,6 +566,10 @@ class FactsBudgetError(RuntimeError):
             f"{len(self.unfinished)} regime-period cell(s): {shown}. Use "
             'facts_backend="metadata" for a conservative analysis of this model.'
         )
+
+    def __reduce__(self):
+        # A worker process's error crosses back to the parent by pickling.
+        return functools.partial(FactsBudgetError, backend=self.backend, unfinished=self.unfinished, limit=self.limit), ()
 
 
 def status_axes(facts: Facts, cell: Record) -> tuple[tuple[str, tuple[int, ...]], ...]:
@@ -598,6 +606,23 @@ class SourceFacts:
     name: FactsBackendName = "dense"
 
     def __init__(self, declarations: Record, limits: Mapping, guard: Callable[[], None]) -> None:
+        self._setup(declarations, limits, guard)
+        # ponytail: serial by default. A 176-cell model took 0.5 s serially and
+        # up to 9 s to start a pool; set limits["facts_workers"] where a cell's
+        # source interpretation is expensive enough to repay the start-up.
+        workers = min(limits.get("facts_workers", 1), len(self.cells))
+        if workers > 1:
+            self._compute_in_parallel(workers)
+            return
+        done: list[str] = []
+        try:
+            for cid in self.cells:
+                self._cell_facts(cid)
+                done.append(cid)
+        except TimeoutError:
+            raise FactsBudgetError(backend="dense", unfinished=set(self.cells) - set(done), limit="time budget") from None
+
+    def _setup(self, declarations: Record, limits: Mapping, guard: Callable[[], None]) -> None:
         self.decl = declarations
         self.limits = limits
         self.guard = guard
@@ -613,16 +638,41 @@ class SourceFacts:
         self.constants: dict[str, dict] = {}
         self.forced: dict[str, dict] = {}
         self._static: dict[str, dict] = {}
-        done: list[str] = []
+
+    def _cell_facts(self, cid: str) -> None:
+        """Compute one cell's forced actions, then the reads the closure will ask for."""
+        cell = self.cells[cid]
+        static = _static(cell, self.domains)
+        self.constants[cid] = {k: v for k, v in static.items() if k in cell["states"]}
+        self.forced[cid] = self._forced_actions(cell, static)
+        self._static[cid] = static | self.forced[cid]
+        current_reads(self, cell)
+        for relation in live_relations(self, cid):
+            for target in relation.get("targets", []):
+                for axis in self.cells[target]["states"]:
+                    update_reads(self, relation, axis)
+
+    def _compute_in_parallel(self, workers: int) -> None:
+        """Compute every cell's facts in a process pool and merge the answers.
+
+        Cells are independent: a cell's facts depend only on its own dates,
+        constants and forced actions. Workers share one absolute deadline.
+        """
+        deadline = time.monotonic() + max(0.0, self.limits.get("seconds", float("inf")) - 1e-3)
+        finished: set[str] = set()
         try:
-            for cid, cell in self.cells.items():
-                static = _static(cell, self.domains)
-                self.constants[cid] = {k: v for k, v in static.items() if k in cell["states"]}
-                self.forced[cid] = self._forced_actions(cell, static)
-                self._static[cid] = static | self.forced[cid]
-                done.append(cid)
-        except TimeoutError:
-            raise FactsBudgetError(backend="dense", unfinished=set(self.cells) - set(done), limit="time budget") from None
+            with ProcessPoolExecutor(
+                max_workers=workers, initializer=_start_worker,
+                initargs=(self.decl, dict(self.limits, facts_workers=1), deadline),
+            ) as pool:
+                for cid, constants, forced, static, answers in pool.map(_cell_task, self.cells):
+                    self.constants[cid], self.forced[cid], self._static[cid] = constants, forced, static
+                    for (callback, cell, phase, stops, relation, fixed), reads in answers:
+                        relation_key = id(self.relations[relation]) if relation is not None else None
+                        self._cache[callback, cell, phase, stops, relation_key, fixed] = reads
+                    finished.add(cid)
+        except (TimeoutError, FactsBudgetError):
+            raise FactsBudgetError(backend="dense", unfinished=set(self.cells) - finished, limit="time budget") from None
 
     def _forced_actions(self, cell: Record, static: dict) -> dict:
         result = {}
@@ -770,6 +820,35 @@ class ImplicitFacts:
             self._diagrams[key] = (diagram, diagram.demand(point))
         diagram, root = self._diagrams[key]
         return diagram.evaluate(root, statuses)
+
+
+_WORKER: "SourceFacts | None" = None
+
+
+def _start_worker(declarations: Record, limits: Mapping, deadline: float) -> None:
+    """Build one serial backend per worker process, sharing the parent's deadline."""
+    global _WORKER
+
+    def guard() -> None:
+        if time.monotonic() >= deadline:
+            raise TimeoutError
+
+    _WORKER = SourceFacts.__new__(SourceFacts)
+    _WORKER._setup(declarations, limits, guard)
+
+
+def _cell_task(cid: str):
+    """Return one cell's facts, with relations named by their position."""
+    assert _WORKER is not None
+    before = set(_WORKER._cache)
+    _WORKER._cell_facts(cid)
+    positions = {id(r): i for i, r in enumerate(_WORKER.relations)}
+    answers = [
+        ((callback, cell, phase, stops, positions[relation] if relation is not None else None, fixed), reads)
+        for (callback, cell, phase, stops, relation, fixed), reads in _WORKER._cache.items()
+        if (callback, cell, phase, stops, relation, fixed) not in before
+    ]
+    return cid, _WORKER.constants[cid], _WORKER.forced[cid], _WORKER._static[cid], answers
 
 
 def make_facts(backend: FactsBackendName, declarations: Record, limits: Mapping, guard: Callable[[], None]) -> Facts:

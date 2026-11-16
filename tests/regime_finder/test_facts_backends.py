@@ -13,6 +13,7 @@ import pytest
 from _lcm_regime_finder.declarations import normalize_declarations
 from _lcm_regime_finder.facts import (
     FactsBudgetError,
+    SourceFacts,
     current_reads,
     live_relations,
     live_states,
@@ -146,9 +147,8 @@ def _expired() -> None:
 
 @pytest.mark.parametrize("backend", ["dense", "implicit"])
 def test_exact_backend_over_budget_names_cells_and_suggests_metadata(backend) -> None:
-    facts = make_facts(backend, _helper(), LIMITS, _expired)
     with pytest.raises(FactsBudgetError, match='facts_backend="metadata"') as error:
-        live_states(facts, _no_budget)
+        make_facts(backend, _helper(), LIMITS, _expired)
     assert error.value.unfinished
 
 
@@ -157,3 +157,29 @@ def test_status_rectangle_over_its_limit_is_a_budget_error() -> None:
     cell = next(iter(dense.cells.values()))
     with pytest.raises(FactsBudgetError, match="status_lanes"):
         status_points(dense, cell, 1)
+
+
+@pytest.mark.parametrize(
+    "model", ["stochastic_volatility", "precautionary_savings_health"]
+)
+def test_parallel_cells_give_the_serial_facts(model) -> None:
+    declarations = MODELS[model]()
+    serial = SourceFacts(declarations, LIMITS | {"facts_workers": 1}, _no_budget)
+    parallel = SourceFacts(declarations, LIMITS | {"facts_workers": 2}, _no_budget)
+    assert parallel.forced == serial.forced
+    assert parallel.constants == serial.constants
+    assert parallel._cache, "the pool returned no facts"
+    for cell in serial.cells.values():
+        assert current_reads(parallel, cell) == current_reads(serial, cell), cell["id"]
+    assert live_states(parallel, _no_budget)[0] == live_states(serial, _no_budget)[0]
+
+
+def test_a_worker_timeout_is_a_budget_error() -> None:
+    with pytest.raises(FactsBudgetError, match="regime-period") as error:
+        make_facts(
+            "dense",
+            MODELS["stochastic_volatility"](),
+            LIMITS | {"facts_workers": 2, "seconds": 0},
+            _no_budget,
+        )
+    assert error.value.unfinished
