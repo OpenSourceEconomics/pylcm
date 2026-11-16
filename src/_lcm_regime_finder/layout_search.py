@@ -140,12 +140,16 @@ class LayoutProblem:
         # The test above takes them over each member's own grid, so a status
         # whose grid differs across members is contracted as a restriction only:
         # a layout of the contracted lanes is a layout of the full family, so its
-        # count is an upper bound there.
-        mixed = {name for name in member_test if self._grid_differs(name)}
-        self.inert = member_test - mixed
+        # count is an upper bound there. limits["contract_unproved"] = False keeps
+        # such statuses as lanes instead, at the cost of a larger search.
+        self.reasons = {name: reason for name in sorted(member_test)
+                        if (reason := self._grid_differs(name)) is not None}
+        self.inert = member_test - set(self.reasons)
+        if not limits.get("contract_unproved", True):
+            self.reasons = {}
         limit = limits.get("lanes_per_regime", 12)
-        self.contracted = set(member_test)
-        self.restricted: list[str] = sorted(mixed)
+        self.contracted = set(self.inert) | set(self.reasons)
+        self.restricted: list[str] = list(self.reasons)
         while True:
             self.lanes = self._lanes(frozenset(self.contracted))
             crowded = [i for i, lanes in enumerate(self.lanes) if len(lanes) > limit]
@@ -155,6 +159,7 @@ class LayoutProblem:
                                 key=lambda n: (-max(len(axes.get(n, ())) for axes in self.axes.values()), n))
             self.contracted.add(candidates[0])
             self.restricted.append(candidates[0])
+            self.reasons[candidates[0]] = f"more than lanes_per_regime = {limit} lanes"
         self.notes: set[str] = set()
         self.fill = self._fill_values()
         self._lane_fibres = [self._fibres_by_lane(i) for i in range(len(self.dense))]
@@ -203,14 +208,16 @@ class LayoutProblem:
         """The least action coordinates: every action that is not forced (:416-417)."""
         return frozenset(self.cells[cid]["actions"]) - set(self.facts.forced.get(cid, {}))
 
-    def _grid_differs(self, name: str) -> bool:
-        """Whether two members of a dense regime give `name` different grids, or one lacks it."""
+    def _grid_differs(self, name: str) -> str | None:
+        """Why (I1) fails over the dense grid of `name`, or None if the members agree."""
         for members in self.dense:
             grids = {repr(self.domains[c["states"][name]].get("values")) if name in c["states"] else None
                      for c in self.cells.values() if c["regime"] in members}
+            if None in grids and len(grids) > 1:
+                return f"a member of {list(members)} lacks it"
             if len(grids) > 1:
-                return True
-        return False
+                return f"its grid differs across the members of {list(members)}"
+        return None
 
     def _inert_statuses(self) -> frozenset[str]:
         """Return the largest status set this test certifies inert (lem:inert).
@@ -536,7 +543,8 @@ def search_layouts(
                 if incumbent is None or _exact_best([incumbent, candidate]) is candidate:
                     merged[left_n + right_n] = candidate
         table = merged
-    floors = [s.floor() for s in searches]
+    # A floor of the contracted lanes bounds nothing in the full family.
+    floors = [None] if problem.restricted else [s.floor() for s in searches]
     floor = None if None in floors else sum(f for f in floors if f is not None)
     exact = [{"blocks": n, "evaluations": c.evaluations, "storage": c.storage, "layout": _layout(problem, searches, c)}
              for n, c in sorted(table.items())]
@@ -544,8 +552,10 @@ def search_layouts(
     for k in range(first, largest + 1):
         best = _at_most_best(c for n, c in table.items() if n <= k)
         if best is not None:
+            # lem:first (:1482-1503): one block per dense regime is exact in any lane family.
             curve.append({"max_blocks": k, "blocks": best.blocks, "evaluations": best.evaluations,
-                          "storage": best.storage, "layout": _layout(problem, searches, best)})
+                          "storage": best.storage, "exact": not problem.restricted or k == first,
+                          "layout": _layout(problem, searches, best)})
     flat = next((p["max_blocks"] for p in curve if floor is not None and p["evaluations"] == floor), None)
     return {
         "schema": "supplement-layout-curve/v1",
@@ -553,6 +563,7 @@ def search_layouts(
         "dense_regimes": [list(members) for members in problem.dense],
         "inert_statuses": sorted(problem.inert),
         "restricted_statuses": problem.restricted,
+        "restriction_reasons": problem.reasons,
         "lanes": [[{"regime": r, "statuses": dict(p)} for r, p in lanes] for lanes in problem.lanes],
         "dense_count": problem.dense_count(), "original_count": problem.original_count(),
         "exact": exact,

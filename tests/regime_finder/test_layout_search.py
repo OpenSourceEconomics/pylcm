@@ -492,3 +492,17 @@ def test_a_status_whose_grid_differs_across_members_is_not_certified_inert() -> 
     assert "cover" not in result["inert_statuses"]
     assert "cover" in result["restricted_statuses"]
     assert result["status"] == "RESTRICTED"
+    assert result["floor"] is None, "a floor of contracted lanes bounds nothing"
+    assert "differs" in result["restriction_reasons"]["cover"]
+    first, *rest = result["curve"]
+    assert first["exact"], "one block per dense regime is exact in any lane family"
+    assert not any(point["exact"] for point in rest)
+    full = analyze_layouts(model, limits={"max_blocks": 6, "contract_unproved": False})
+    assert full["status"] == "COMPLETE"
+    assert {
+        lane["statuses"].get("cover") for lanes in full["lanes"] for lane in lanes
+    } >= {0, 1, 2}
+    assert all(
+        f["evaluations"] <= r["evaluations"]
+        for f, r in zip(full["curve"], result["curve"], strict=True)
+    )
