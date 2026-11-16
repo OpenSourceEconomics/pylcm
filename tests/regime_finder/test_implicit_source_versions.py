@@ -12,7 +12,11 @@ import pytest
 
 from _lcm_regime_finder.implicit.implicit_native import compile_table
 
-NEW_SOURCE_IDS = ("source639-builtin-int-v1", "source639-dense-wrappers-v1")
+NEW_SOURCE_IDS = (
+    "source639-builtin-int-v1",
+    "source639-dense-wrappers-v1",
+    "source639-bounded-support-v1",
+)
 
 
 def registry() -> ModuleType:
@@ -112,6 +116,7 @@ def test_historical_packets_are_not_relabelled() -> None:
         ("source645", "_lcm.processes.iid.UniformIIDProcess"),
         ("source645", "_lcm.regime_building.schedules._Constant"),
         ("source639-dense-wrappers-v1", "lcm.processes.UniformIIDProcess"),
+        ("source639-bounded-support-v1", "lcm.processes.UniformIIDProcess"),
     ],
 )
 def test_foreign_native_capture_spellings_are_not_rewritten(
@@ -382,3 +387,12 @@ def test_qualification_includes_the_predicate_capture_regressions() -> None:
         "tests/regime_finder/test_round5_bindings.py"
         in helper.CONTROL_TARGETS["native-namespace-and-immutable-capture"]
     )
+    for name in (
+        "test_support_images_prove_complete_control_alternatives_without_scalar_value",
+        "test_support_images_optimized_compiler_matches_literal_reference",
+        "test_support_images_boolop_scalar_semantics_returns_the_actual_operand",
+    ):
+        assert (
+            f"tests/regime_finder/test_fibre_source.py::{name}"
+            in helper.CONTROL_TARGETS["typed-terminals-and-differential-facts"]
+        )

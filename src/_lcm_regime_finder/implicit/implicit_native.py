@@ -205,6 +205,7 @@ class CellCompiler:
             answer.reads,
             UNKNOWN if answer.value is _UNKNOWN else answer.value,
             answer.proved,
+            answer.support_images,
         )
 
     def primitive(
@@ -383,8 +384,20 @@ class CellCompiler:
                     return previous
                 if isinstance(value, Failure):
                     return value
-                if not value.proved or value.value == UNKNOWN:
+                if not value.proved:
                     return full
+                if value.value == UNKNOWN:
+                    if not value.support_images:
+                        return full
+                    images: set[int] = set()
+                    for image in value.support_images:
+                        matching = categories.by_value.get(
+                            _value_key(image), frozenset()
+                        )
+                        if not matching:
+                            return full
+                        images.update(matching)
+                    return Support(previous.possible_codes | images, True)
                 matching = categories.by_value.get(_value_key(value.value), frozenset())
                 if not matching:
                     return Failure(
