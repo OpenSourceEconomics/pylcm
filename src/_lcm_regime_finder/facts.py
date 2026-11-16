@@ -16,10 +16,26 @@ they read and forces at most what they force.
 
 import ast
 from collections.abc import Callable, Iterable, Mapping
+from itertools import product
 from typing import Literal, Protocol
 
 from .expressions import AdmissionError, jsonable, partial
 from .frontier import canonical
+from .implicit.implicit_core import MDD
+from .semantic_check import (
+    _UNKNOWN,
+    SourceProof,
+    _CallableRecords,
+    _closed_native_constant,
+    _codes,
+    _feasibility_channels,
+    _identity_callback,
+    _identity_update,
+    _original_inputs_unresolved,
+    _original_transition_contexts,
+    _providers,
+    _static,
+)
 
 type Record = dict
 type FactsBackendName = Literal["metadata", "dense", "implicit"]
@@ -521,3 +537,227 @@ def transition_provider_index(*, relations, callbacks) -> dict[tuple[int, str], 
                     raise ValueError("Conflicting original next-state providers in one edge/phase")
                 context[name] = callback
     return index
+
+
+class FactsBudgetError(RuntimeError):
+    """An exact backend ran out of budget before every cell was analysed."""
+
+    def __init__(self, *, backend: str, unfinished: Iterable[str], limit: str) -> None:
+        self.unfinished = sorted(unfinished)
+        shown = ", ".join(self.unfinished[:10]) + (" ..." if len(self.unfinished) > 10 else "")
+        super().__init__(
+            f"The {backend!r} facts backend exceeded its {limit} before analysing "
+            f"{len(self.unfinished)} regime-period cell(s): {shown}. Use "
+            'facts_backend="metadata" for a conservative analysis of this model.'
+        )
+
+
+def status_axes(facts: Facts, cell: Record) -> tuple[tuple[str, tuple[int, ...]], ...]:
+    """Return the cell's status axes: its categorical states with several codes."""
+    axes = []
+    for name, domain_id in cell["states"].items():
+        domain = facts.domains[domain_id]
+        codes = domain.get("codes", [])
+        if domain.get("kind") == "categorical" and len(codes) > 1 and len(codes) == len(domain.get("values", [])):
+            axes.append((name, tuple(codes)))
+    return tuple(axes)
+
+
+def status_points(facts: Facts, cell: Record, limit: int) -> list[dict[str, int]]:
+    """Return every point of the cell's status rectangle, or raise past `limit`."""
+    axes = status_axes(facts, cell)
+    size = 1
+    for _, codes in axes:
+        size *= len(codes)
+    if size > limit:
+        raise FactsBudgetError(backend="dense", unfinished=[cell["id"]], limit=f"status_lanes limit of {limit}")
+    return [dict(zip([n for n, _ in axes], point, strict=True)) for point in product(*(c for _, c in axes))]
+
+
+class SourceFacts:
+    """Exact facts from the captured callback source, one point at a time.
+
+    Every callback is interpreted with the cell's dates, constant states, forced
+    actions and any fixed status codes bound. An opaque native callback reads
+    every coordinate; a pinned expectation reducer and a closed native constant
+    read none.
+    """
+
+    def __init__(self, declarations: Record, limits: Mapping, guard: Callable[[], None]) -> None:
+        self.decl = declarations
+        self.limits = limits
+        self.guard = guard
+        self.cells = {c["id"]: c for c in declarations["cells"]}
+        self.callbacks = declarations["callbacks"]
+        self.domains = declarations["domains"]
+        self.relations = declarations["relations"]
+        self.captures = _CallableRecords(declarations.get("callable_records", {}))
+        self._contexts = _original_transition_contexts(
+            relations=[r for r in self.relations if r.get("support") != "zero"], callbacks=self.callbacks
+        )
+        self._cache: dict = {}
+        self.constants: dict[str, dict] = {}
+        self.forced: dict[str, dict] = {}
+        self._static: dict[str, dict] = {}
+        done: list[str] = []
+        try:
+            for cid, cell in self.cells.items():
+                static = _static(cell, self.domains)
+                self.constants[cid] = {k: v for k, v in static.items() if k in cell["states"]}
+                self.forced[cid] = self._forced_actions(cell, static)
+                self._static[cid] = static | self.forced[cid]
+                done.append(cid)
+        except TimeoutError:
+            raise FactsBudgetError(backend="dense", unfinished=set(self.cells) - set(done), limit="time budget") from None
+
+    def _forced_actions(self, cell: Record, static: dict) -> dict:
+        result = {}
+        constraints = [c for c in cell.get("consumers", []) if c.get("kind") in {"constraint", "feasible", "feasibility"}]
+        decision_phases = cell.get("decision_phases", ("solve", "simulation"))
+        for axis, domain_id in cell["actions"].items():
+            values = self.domains[domain_id].get("values")
+            if not isinstance(values, list) or not values or len(values) > self.limits["metadata_categories"]:
+                continue
+            possible = []
+            for value in values:
+                self.guard()
+                bound = _codes(cell, self.domains, {**static, axis: value})
+                excluded_by_phase = []
+                for decision_phase in decision_phases:
+                    ruled_out = False
+                    for constraint in constraints:
+                        for phase in _feasibility_channels(constraint, decision_phase):
+                            answer = SourceProof(self.callbacks, _providers(cell, self.domains, phase), bound,
+                                                 callable_records=self.captures).callback(constraint["callback"])
+                            ruled_out |= answer.proved and answer.value is not _UNKNOWN and not answer.value
+                    excluded_by_phase.append(ruled_out)
+                if not all(excluded_by_phase):
+                    possible.append(value)
+            if not possible:
+                raise ValueError(f'{cell["id"]}: no admissible value of action {axis}')
+            if len(possible) == 1:
+                result[axis] = possible[0]
+        return result
+
+    def callback_reads(self, callback, cell, phase, *, stops=frozenset(), relation=None, statuses=None):
+        """Return the coordinates `callback` reads at the given status codes."""
+        fixed = tuple(sorted((statuses or {}).items()))
+        key = (callback, cell["id"], phase, stops, id(relation) if relation is not None else None, fixed)
+        if key not in self._cache:
+            self._cache[key] = self._reads(callback, cell, phase, stops, relation, dict(fixed))
+        return self._cache[key]
+
+    def _reads(self, callback, cell, phase, stops, relation, statuses):
+        if callback in stops:
+            return frozenset()
+        try:
+            self.guard()
+        except TimeoutError:
+            raise FactsBudgetError(backend="dense", unfinished=[cell["id"]], limit="time budget") from None
+        axes = set(cell["states"]) | set(cell["actions"])
+        original = self.callbacks.get(callback, {}).get("original", {})
+        if isinstance(original, Mapping) and (
+            original.get("type") == "_lcm.certainty_equivalent.LinearExpectation"
+            or _closed_native_constant(original, self.captures)
+        ):
+            # The reducer consumes supplied continuation values, and a closed
+            # routing constant receives no current coordinates.
+            return frozenset()
+        providers = _providers(cell, self.domains, phase)
+        if relation is not None:
+            providers.update(self._contexts.get((id(relation), phase), {}))
+        cut = {name: "@retained_characteristic" for name, provider in providers.items()
+               if not isinstance(provider, dict) and provider in stops}
+        static = dict(self._static[cell["id"]])
+        for name, code in statuses.items():
+            domain = self.domains[cell["states"][name]]
+            static[name] = domain["values"][domain["codes"].index(code)]
+        value = SourceProof(self.callbacks, providers, _codes(cell, self.domains, static), cut, self.captures).callback(callback)
+        if isinstance(original, Mapping) and not value.proved and (
+            original.get("kind") not in {"callable", "primitive"}
+            or original.get("variadic")
+            or _original_inputs_unresolved(original, self.captures)
+        ):
+            # An opaque native callback is not evidence of independence.
+            return frozenset(axes)
+        aliases = {record["argument"]: axis for axis, record in cell.get("category_codes", {}).items()}
+        aliases.update({axis + "_code": axis for axis in axes})
+        return frozenset(aliases.get(name, name) for name in value.reads) & axes
+
+    def identity_update(self, update, axis, target_axis):
+        if isinstance(update, dict) and "callback" in update:
+            update = update["callback"]
+        return _identity_update(update, axis) or (
+            isinstance(update, str) and update in self.callbacks
+            and _identity_callback(self.callbacks[update], axis, self.captures)
+        )
+
+    def characteristic_image(self, spec):
+        axis, domain_id = spec["state"], spec["domain"]
+        domain = self.domains.get(domain_id, {})
+        values = domain.get("values")
+        if not isinstance(values, list) or not values or len(values) > self.limits["metadata_categories"]:
+            return None
+        image = []
+        codes = domain.get("codes", [])
+        for index, value in enumerate(values):
+            static = {axis: value}
+            if len(codes) == len(values):
+                static[spec.get("code_argument", axis + "_code")] = codes[index]
+            answer = SourceProof(self.callbacks, static=static, callable_records=self.captures).callback(spec["callback"])
+            if not answer.proved or answer.value is _UNKNOWN or answer.reads:
+                return None
+            image.append(jsonable(answer.value))
+        return image
+
+
+class ImplicitFacts:
+    """The dense backend's point facts, stored lazily as decision diagrams.
+
+    A diagram over a cell's status axes is built on the first point query. It
+    splits on a status axis only where an evaluation with that axis unfixed
+    reads it, so points sharing a fact share one leaf.
+    """
+
+    def __init__(self, dense: SourceFacts) -> None:
+        self.dense = dense
+        self.cells, self.callbacks, self.domains = dense.cells, dense.callbacks, dense.domains
+        self.relations, self.constants, self.forced = dense.relations, dense.constants, dense.forced
+        self._diagrams: dict = {}
+
+    def identity_update(self, update, axis, target_axis):
+        return self.dense.identity_update(update, axis, target_axis)
+
+    def characteristic_image(self, spec):
+        return self.dense.characteristic_image(spec)
+
+    def callback_reads(self, callback, cell, phase, *, stops=frozenset(), relation=None, statuses=None):
+        """Return the coordinates `callback` reads; a point query walks a diagram."""
+        if statuses is None:
+            return self.dense.callback_reads(callback, cell, phase, stops=stops, relation=relation)
+        key = (callback, cell["id"], phase, stops, id(relation) if relation is not None else None)
+        if key not in self._diagrams:
+            axes = status_axes(self.dense, cell)
+            names = [name for name, _ in axes]
+
+            def point(assignment):
+                reads = self.dense.callback_reads(
+                    callback, cell, phase, stops=stops, relation=relation, statuses=dict(assignment.fixed)
+                )
+                for name in names:
+                    if name in reads and name not in assignment.fixed:
+                        assignment.code(name)
+                return reads
+
+            diagram = MDD(axes)
+            self._diagrams[key] = (diagram, diagram.demand(point))
+        diagram, root = self._diagrams[key]
+        return diagram.evaluate(root, statuses)
+
+
+def make_facts(backend: FactsBackendName, declarations: Record, limits: Mapping, guard: Callable[[], None]) -> Facts:
+    """Return the named backend's facts for these declarations."""
+    if backend == "metadata":
+        return MetadataFacts(declarations, limits, guard)
+    dense = SourceFacts(declarations, limits, guard)
+    return dense if backend == "dense" else ImplicitFacts(dense)
