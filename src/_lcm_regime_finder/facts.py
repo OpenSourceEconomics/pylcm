@@ -362,8 +362,11 @@ def fibre_live(
     if key in memo:
         return memo[key]
     successors = []
+    inside = [r for r in live_relations(facts, cell["id"]) if cell["id"] in r.get("targets", [])]
     for relation in live_relations(facts, cell["id"]):
         for target in relation.get("targets", []):
+            if target == cell["id"]:
+                continue
             target_cell = facts.cells[target]
             live: set[str] = set()
             for target_point in linked_points(facts, relation, target_cell, point, ordinary):
@@ -381,7 +384,16 @@ def fibre_live(
                 if "produces" in relation and target_axis not in relation["produces"]:
                     continue
                 reads |= update_reads(facts, relation, target_axis, statuses=fixed)
-        return reads
+        # An in-cell relation, such as a solve imputation, is no link: what it
+        # reads is needed wherever a coordinate it produces is.
+        while True:
+            added = set()
+            for relation in inside:
+                for axis in reads & set(relation.get("produces", relation.get("state_updates", {}))):
+                    added |= update_reads(facts, relation, axis, statuses=fixed)
+            if added <= reads:
+                return reads
+            reads |= added
 
     unbound = needs({})
     fixed = {name: code for name, code in point.items() if name in unbound}

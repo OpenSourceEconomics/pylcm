@@ -148,6 +148,7 @@ class LayoutProblem:
                                 key=lambda n: (-max(len(axes.get(n, ())) for axes in self.axes.values()), n))
             self.contracted.add(candidates[0])
             self.restricted.append(candidates[0])
+        self.notes: set[str] = set()
         self.fill = self._fill_values()
         self._lane_fibres = [self._fibres_by_lane(i) for i in range(len(self.dense))]
         self._prices: dict = {}
@@ -159,7 +160,7 @@ class LayoutProblem:
             source = self.cells[relation["source"]]
             for target in relation.get("targets", []):
                 other = self.cells[target]
-                if other["period"] == source["period"] and home[other["regime"]] == home[source["regime"]]:
+                if target != source["id"] and other["period"] == source["period"] and home[other["regime"]] == home[source["regime"]]:
                     msg = (f"Relation {relation['id']} links two fibres of one date inside one dense regime; "
                            "condition (A1) of the Supplement is not implemented.")
                     raise NotImplementedError(msg)
@@ -178,6 +179,8 @@ class LayoutProblem:
             cid, point = frontier.pop()
             for relation in live_relations(self.facts, cid):
                 for target in relation.get("targets", []):
+                    if target == cid:
+                        continue
                     for target_point in linked_points(self.facts, relation, self.cells[target], dict(point)):
                         key = (target, tuple(sorted(target_point.items())))
                         if key not in kept:
@@ -254,7 +257,11 @@ class LayoutProblem:
                                key=lambda c: (c["regime"], c["period"])):
                 for name, did in cell["states"].items():
                     if self.domains[did].get("kind") == "categorical" and self.domains[did].get("values"):
-                        fill.setdefault((index, name), self.domains[did]["values"][0])
+                        first = self.domains[did]["values"][0]
+                        fill.setdefault((index, name), first)
+                        if fill[index, name] != first:
+                            self.notes.add(f"Members of dense regime {list(members)} start the grid of {name} "
+                                           f"with different labels; the fill value is {fill[index, name]!r}.")
         return fill
 
     def _value(self, index: int, fibre: FibreKey, name: str) -> StatusValue:
@@ -295,7 +302,21 @@ class LayoutProblem:
                         for name in sorted(actions)}
         rows = prod([len(g) if isinstance(g, list) else g for g in grids.values()])
         storage = len(periods) * rows
-        return {"periods": periods, "states": grids, "actions": action_grids,
+        # Infeasible values (Supplement :289-294) under the fill rule: at a member
+        # without action j every value but the first is infeasible. A block in
+        # whose hull no member has j excludes them, so j is not among its actions.
+        present = {c["regime"] for c in cells}
+        excluded = {}
+        for c in sorted(self.cells.values(), key=lambda c: (c["regime"], c["period"])):
+            if c["regime"] in self.dense[index]:
+                for name, did in c["actions"].items():
+                    values = self.domains[did].get("values")
+                    if name not in actions and isinstance(values, list) and len(values) > 1:
+                        excluded.setdefault(name, values[1:])
+        excluded = {n: v for n, v in excluded.items()
+                    if not any(n in c["actions"] for c in self.cells.values()
+                               if c["regime"] in present and c["period"] in periods)}
+        return {"periods": periods, "states": grids, "actions": action_grids, "excluded_actions": excluded,
                 "evaluations": storage * prod(action_grids.values()), "storage": storage}
 
     def select(self, spec: Record) -> tuple[int, list[FibreKey]]:
@@ -501,6 +522,7 @@ def search_layouts(
         "floor": floor,
         "flat_from": flat,
         "deviations": list(DEVIATIONS),
+        "notes": sorted(problem.notes),
         "priced": priced,
     }
 
@@ -520,7 +542,7 @@ def analyze_layouts(
     from .graph_scope import apply_scope
     from .model_snapshot import read_model
 
-    limits = dict(limits or {})
+    limits = {"metadata_categories": 100_000} | dict(limits or {})
     started = monotonic()
     seconds = limits.get("seconds", float("inf"))
 
