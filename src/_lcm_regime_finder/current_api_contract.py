@@ -7,6 +7,7 @@ The independent checker separately validates each original payload authority.
 from __future__ import annotations
 
 from collections.abc import Mapping
+import functools
 from inspect import Signature
 from types import CodeType, FunctionType, MappingProxyType, ModuleType, UnionType
 from typing import TypeAliasType
@@ -395,6 +396,30 @@ def inspect_source_bound_function(
 
 
 
+@functools.cache
+def _alias_template(source: bytes, filename: str, name: str, dtype_name: str, optimize: int) -> CodeType | None:
+    """Parse and compile the alias's source once per process; it is a pure function of the bytes."""
+    import ast
+    aliases = [node for node in ast.parse(source).body if isinstance(node, ast.TypeAlias)
+               and isinstance(node.name, ast.Name) and node.name.id == name]
+    if len(aliases) != 1 or aliases[0].type_params:
+        return None
+    expression = aliases[0].value
+    if (not isinstance(expression, ast.Subscript) or not isinstance(expression.value, ast.Name)
+            or expression.value.id != dtype_name or not isinstance(expression.slice, ast.Tuple)
+            or len(expression.slice.elts) != 2 or not isinstance(expression.slice.elts[0], ast.Name)
+            or expression.slice.elts[0].id != 'Array' or not isinstance(expression.slice.elts[1], ast.Constant)
+            or type(expression.slice.elts[1].value) is not str or expression.slice.elts[1].value != '...'):
+        return None
+    pending, matches = [compile(source, filename, 'exec', dont_inherit=True, optimize=optimize)], []
+    while pending:
+        code = pending.pop()
+        if code.co_name == code.co_qualname == name:
+            matches.append(code)
+        pending.extend(item for item in code.co_consts if type(item) is CodeType)
+    return matches[0] if len(matches) == 1 else None
+
+
 def _native_array_alias_evaluator(
     alias: TypeAliasType,
     native: ModuleType,
@@ -405,7 +430,6 @@ def _native_array_alias_evaluator(
     dtype_name: str,
 ) -> FunctionType | None:
     """Compile the finite native alias template without running an annotation body."""
-    import ast
     import builtins
     import inspect
     import sys
@@ -421,24 +445,8 @@ def _native_array_alias_evaluator(
             or type(evaluator.__defaults__) is not tuple or len(evaluator.__defaults__) != 1
             or type(evaluator.__defaults__[0]) is not int or evaluator.__defaults__[0] != 1):
         return None
-    aliases = [node for node in ast.parse(source).body if isinstance(node, ast.TypeAlias)
-               and isinstance(node.name, ast.Name) and node.name.id == name]
-    if len(aliases) != 1 or aliases[0].type_params:
-        return None
-    expression = aliases[0].value
-    if (not isinstance(expression, ast.Subscript) or not isinstance(expression.value, ast.Name)
-            or expression.value.id != dtype_name or not isinstance(expression.slice, ast.Tuple)
-            or len(expression.slice.elts) != 2 or not isinstance(expression.slice.elts[0], ast.Name)
-            or expression.slice.elts[0].id != 'Array' or not isinstance(expression.slice.elts[1], ast.Constant)
-            or type(expression.slice.elts[1].value) is not str or expression.slice.elts[1].value != '...'):
-        return None
-    pending, matches = [compile(source, filename, 'exec', dont_inherit=True, optimize=sys.flags.optimize)], []
-    while pending:
-        code = pending.pop()
-        if code.co_name == code.co_qualname == name:
-            matches.append(code)
-        pending.extend(item for item in code.co_consts if type(item) is CodeType)
-    return evaluator if len(matches) == 1 and _native_constant_equal(evaluator.__code__, matches[0]) else None
+    template = _alias_template(source, filename, name, dtype_name, sys.flags.optimize)
+    return evaluator if template is not None and _native_constant_equal(evaluator.__code__, template) else None
 
 
 def _native_cached_array_class(
