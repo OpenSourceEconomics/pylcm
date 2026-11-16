@@ -286,3 +286,34 @@ def test_the_report_names_the_lanes(tmp_path) -> None:
         "employment 1, health 0: no other states; employment 1, health 1: experience]"
         in text
     )
+
+
+def test_the_split_search_reads_each_cell_and_status_point_once(monkeypatch) -> None:
+    """Successors' needs are shared across the tree and the cells, not recomputed.
+
+    Only the producer's reads count; the checker re-derives the lanes on its own.
+    """
+    import _lcm_regime_finder.facts as facts_module
+    import _lcm_regime_finder.production as production
+
+    calls = []
+    inside = []
+    original_reads, original_needs = facts_module.current_reads, production.lane_needs
+
+    def counting_reads(facts, cell, stops=frozenset(), statuses=None):
+        if inside:
+            calls.append((cell["id"], tuple(sorted((statuses or {}).items()))))
+        return original_reads(facts, cell, stops, statuses)
+
+    def producer_needs(*args, **kwargs):
+        inside.append(True)
+        try:
+            return original_needs(*args, **kwargs)
+        finally:
+            inside.pop()
+
+    monkeypatch.setattr(facts_module, "current_reads", counting_reads)
+    monkeypatch.setattr(production, "lane_needs", producer_needs)
+    _analyze("dense", joint_model())
+    assert calls, "positive control: the split search reads at fixed statuses"
+    assert len(calls) == len(set(calls))

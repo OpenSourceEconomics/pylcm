@@ -130,6 +130,7 @@ class MetadataAnalysis:
             return {'status': 'NOT_OFFERED', 'reason': 'No identity projection policy', 'cells': []}
         index = {cid: {o['id']: o for o in record['options']} for cid, record in interfaces.items()}
         limit = self.limits.get('status_lanes', 128)
+        needs = {}  # (cell, fixed statuses) -> needs, shared by every tree and its successors
         chosen = {}
         records = []
         for cid, cell in self.cells.items():
@@ -141,7 +142,7 @@ class MetadataAnalysis:
                 continue
             if prod(len(codes) for codes in axes.values()) > limit:
                 raise FactsBudgetError(backend=self.facts.name, unfinished=[cid], limit=f'status_lanes limit of {limit}')
-            unsplit, lanes = self._lane_tree(cell, option, axes, {}, {})
+            unsplit, lanes = self._lane_tree(cell, option, axes, {}, {}, needs)
             if len(lanes) < 2:
                 continue
             rows = lane_rows(lanes, self.domains)
@@ -172,18 +173,19 @@ class MetadataAnalysis:
                 'reason': ('Split cells are offered in one added projection policy.' if chosen else
                            'No status lane drops a state its whole cell keeps.'), 'cells': records}
 
-    def _lane_tree(self, cell, option, axes, fixed, memo):
+    def _lane_tree(self, cell, option, axes, fixed, memo, needs_memo):
         """Return the fewest rows, and their lanes, for the points with these statuses fixed."""
         key = tuple(sorted(fixed.items()))
         if key not in memo:
-            needs = lane_needs(self.facts, cell, self.live, fixed) & set(option['states'])
+            needs = lane_needs(self.facts, cell, self.live, fixed, needs_memo) & set(option['states'])
             lane = {'statuses': dict(fixed), 'states': {s: option['states'][s] for s in sorted(needs)}}
             best = (lane_rows([lane], self.domains), [lane])
             for axis in axes:
                 if axis in fixed:
                     continue
                 self.guard()
-                parts = [self._lane_tree(cell, option, axes, {**fixed, axis: code}, memo) for code in axes[axis]]
+                parts = [self._lane_tree(cell, option, axes, {**fixed, axis: code}, memo, needs_memo)
+                         for code in axes[axis]]
                 rows = sum(part[0] for part in parts)
                 if rows < best[0]:
                     best = (rows, [lane for part in parts for lane in part[1]])

@@ -1711,7 +1711,7 @@ def _check_semantics(original: dict, normalized: dict, analysis: dict, *, check_
         facts = make_facts(analysis.get("facts_backend", "metadata"), dict(normalized, callbacks=authentic_callbacks),
                            {"seconds": float("inf"), "metadata_categories": 100_000}, lambda: None)
     checked_options: dict[str, list[dict]] = {}
-    split_live = None
+    split_live, split_needs = None, {}
     for cell_id, cell in cells.items():
         diagnostic_scope = {"scope": "source", "cell": cell_id}
         options = analysis.get("interfaces", {}).get(cell_id, {}).get("options", [])
@@ -1724,7 +1724,7 @@ def _check_semantics(original: dict, normalized: dict, analysis: dict, *, check_
                 if split_live is None:
                     from .facts import live_states
                     split_live, _ = live_states(facts, lambda: None)
-                _check_lanes(option, cell, domains, facts, split_live, fail)
+                _check_lanes(option, cell, domains, facts, split_live, fail, split_needs)
                 option = _lane_view(option, cell, domains)
             state_projection = option.get("state_projection", {})
             reconstruction = option.get("action_reconstruction", {})
@@ -1909,7 +1909,7 @@ def _lane_view(option: dict, cell: dict, domains: dict) -> dict:
     return {**option, "states": states}
 
 
-def _check_lanes(option: dict, cell: dict, domains: dict, facts, live, fail) -> None:
+def _check_lanes(option: dict, cell: dict, domains: dict, facts, live, fail, needs_memo: dict) -> None:
     """A split's lanes partition the joint status rectangle and keep every needed state."""
     from itertools import product
 
@@ -1931,7 +1931,7 @@ def _check_lanes(option: dict, cell: dict, domains: dict, facts, live, fail) -> 
         for name, state_domain in lane.get("states", {}).items():
             if name in lane["statuses"] or cell["states"].get(name) != state_domain:
                 fail("status lane changes a state domain", cell=cell["id"], state=name)
-        missing = lane_needs(facts, cell, live, lane["statuses"]) - set(lane.get("states", {}))
+        missing = lane_needs(facts, cell, live, lane["statuses"], needs_memo) - set(lane.get("states", {}))
         if missing:
             fail("status lane drops a needed state", cell=cell["id"], statuses=lane["statuses"], states=sorted(missing))
     if domain.get("kind") != "lanes" or domain.get("lanes") != lanes or domain.get("size") != lane_rows(lanes, domains):
