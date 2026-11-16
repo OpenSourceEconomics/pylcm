@@ -31,6 +31,7 @@ class Eval:
     reads: frozenset[str]
     value: object = UNKNOWN
     proved: bool = True
+    support_images: tuple[bool | int, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -46,8 +47,37 @@ class Support:
     proved: bool
 
 
+def _checked_support_images(value: object) -> tuple[bool | int, ...]:  # noqa: PAN001 - closed internal codec rejects arbitrary fourth-field payloads
+    value_type = type(value)
+    if (
+        value_type is not tuple
+        or not isinstance(value, tuple)
+        or not value
+        or len(value) > 64
+    ):
+        raise ValueError("Malformed bounded support images")
+    kind = type(value[0])
+    images: list[bool | int] = []
+    for item in value:
+        if kind is bool and type(item) is bool:
+            image = item
+        elif kind is int and type(item) is int and -(2**31) <= item < 2**31:
+            image = item
+        else:
+            raise ValueError("Malformed bounded support image type")
+        if image in images:
+            raise ValueError("Repeated bounded support image")
+        images.append(image)
+    return tuple(images)
+
+
 def pack(value: object) -> JSONValue:
     """Lossless, closed-format leaf encoding, including tuple/list and bool/int."""
+    if type(value) is Eval:
+        payload = [pack(value.reads), pack(value.value), pack(value.proved)]
+        if value.support_images is not None:
+            payload.append(pack(_checked_support_images(value.support_images)))
+        return ["Eval", payload]
     if value is None or type(value) in (str, bool, int):
         return [type(value).__name__, cast(JSONValue, value)]
     if type(value) is float:
@@ -118,12 +148,20 @@ def unpack(data: JSONValue) -> object:
         exception, message = decoded
         if isinstance(exception, str) and isinstance(message, str):
             return Failure(exception, message)
-    if tag in {"Eval", "ReadCertificate"} and len(decoded) == 3:
+    if tag == "Eval" and len(decoded) in (3, 4):
+        live, second, third = decoded[:3]
+        if (
+            isinstance(live, frozenset)
+            and all(isinstance(name, str) for name in live)
+            and type(third) is bool
+        ):
+            images = None if len(decoded) == 3 else _checked_support_images(decoded[3])
+            names = frozenset(name for name in live if isinstance(name, str))
+            return Eval(names, second, third, images)
+    if tag == "ReadCertificate" and len(decoded) == 3:
         live, second, third = decoded
         if isinstance(live, frozenset) and all(isinstance(name, str) for name in live):
             names = cast(frozenset[str], live)
-            if tag == "Eval" and type(third) is bool:
-                return Eval(names, second, third)
             if (
                 isinstance(second, tuple)
                 and isinstance(third, tuple)
