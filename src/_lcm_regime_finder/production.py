@@ -341,6 +341,7 @@ class MetadataAnalysis:
             policies.append({'id': policy_id, 'option_by_cell': policy,
                              'characteristics': [{'id': c['id'], 'cells': c['active_cells']} for c in selected]})
         return {'schema': 'regime-semantic-analysis/v1', 'declarations': self.decl,
+                'facts_backend': self.facts.name,
                 'interfaces': interfaces, 'derived_domains': derived,
                 'projection_policies': policies, 'characteristic_candidates': candidates,
                 'dependency_closure': {c: sorted(v) for c, v in self.live.items()},
@@ -382,7 +383,8 @@ def analyze_production(original, *, limits=None, recommendation=None, production
                         'phase_timings': dict(phase_timings)})
         active_phase = 'metadata_analysis'
         phase_started = time.perf_counter()
-        analysis = MetadataAnalysis(declarations, limits, search_mode=search_mode).run()
+        metadata = MetadataAnalysis(declarations, limits, search_mode=search_mode)
+        analysis = metadata.run()
         phase_timings['metadata_analysis_seconds'] = time.perf_counter() - phase_started
         if checkpoint:
             checkpoint({'stage': 'metadata_analysis', 'analysis': analysis,
@@ -411,7 +413,8 @@ def analyze_production(original, *, limits=None, recommendation=None, production
     from .proposal_decision import prepare_decision_context, build_decisions
     captured_original = original if isinstance(original, dict) else declarations.get('original', original)
     phase_started = time.perf_counter()
-    decision_context = prepare_decision_context(captured_original, analysis, check_coverage=search_mode == 'exact')
+    decision_context = prepare_decision_context(captured_original, analysis, check_coverage=search_mode == 'exact',
+                                                facts=metadata.facts)
     semantic = decision_context.semantic
     phase_timings['source_check_seconds'] = time.perf_counter() - phase_started
     if checkpoint:

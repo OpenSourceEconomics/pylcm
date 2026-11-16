@@ -97,6 +97,16 @@ class Facts(Protocol):
         """Return the characteristic's value for each original value, or None."""
         ...
 
+    @property
+    def name(self) -> FactsBackendName:
+        """The backend's name."""
+        ...
+
+    @property
+    def decl(self) -> Record:
+        """The declarations the facts describe."""
+        ...
+
 
 def phases(record: Mapping) -> tuple[str, ...]:
     """Return the phases a consumer or relation applies in."""
@@ -268,6 +278,8 @@ class MetadataFacts:
     A callback outside that language reads every argument it is declared with;
     an unresolved callback reads every coordinate of its cell.
     """
+
+    name: FactsBackendName = "metadata"
 
     def __init__(self, declarations: Record, limits: Mapping, guard: Callable[[], None]) -> None:
         self.decl = declarations
@@ -583,6 +595,8 @@ class SourceFacts:
     read none.
     """
 
+    name: FactsBackendName = "dense"
+
     def __init__(self, declarations: Record, limits: Mapping, guard: Callable[[], None]) -> None:
         self.decl = declarations
         self.limits = limits
@@ -719,8 +733,11 @@ class ImplicitFacts:
     reads it, so points sharing a fact share one leaf.
     """
 
+    name: FactsBackendName = "implicit"
+
     def __init__(self, dense: SourceFacts) -> None:
         self.dense = dense
+        self.decl = dense.decl
         self.cells, self.callbacks, self.domains = dense.cells, dense.callbacks, dense.domains
         self.relations, self.constants, self.forced = dense.relations, dense.constants, dense.forced
         self._diagrams: dict = {}
