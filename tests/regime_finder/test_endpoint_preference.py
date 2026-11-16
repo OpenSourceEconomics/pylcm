@@ -49,12 +49,16 @@ def test_native_last_decision_keeps_topology_without_forcing_a_regime_split() ->
     )
     storage_first = {"weights": {"work": 1, "storage": 1000, "clarity": 1}}
     default = analyze_production(
-        source, recommendation=storage_first, search_mode="exact"
+        source,
+        recommendation=storage_first,
+        search_mode="exact",
+        facts_backend="metadata",
     )
     override = analyze_production(
         source,
         recommendation=storage_first | {"allow_final_only_split": True},
         search_mode="exact",
+        facts_backend="metadata",
     )
     assert (default["status"]) == ("COMPLETE"), default.get("semantic_check")
     assert (
@@ -214,7 +218,12 @@ def test_public_api_and_reports_expose_override() -> None:
     with tempfile.TemporaryDirectory() as directory:
         output = Path(directory) / "result"
         summary = analyse_snapshot(
-            source, output, seconds=15, allow_final_only_split=True, search_mode="exact"
+            source,
+            output,
+            seconds=15,
+            allow_final_only_split=True,
+            search_mode="exact",
+            facts_backend="metadata",
         )
         report = json.loads((output / "report.json").read_text())
         assert summary["recommendation_preferences"]
@@ -240,4 +249,5 @@ def test_public_api_refuses_invalid_override_before_execution() -> None:
                 folder / "not-created",
                 allow_final_only_split="false",
                 search_mode="exact",
+                facts_backend="metadata",
             )

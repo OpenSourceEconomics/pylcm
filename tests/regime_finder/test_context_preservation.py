@@ -21,7 +21,7 @@ def _create_source():
 
 def test_local_unused_state_does_not_need_cross_actor_equivalence() -> None:
     source = _create_source()
-    report = find_regimes(source)
+    report = find_regimes(source, facts_backend="metadata", search_mode="heuristic")
     changed = [d for d in report["proposal_decisions"][1:] if d["changed_interfaces"]]
     assert changed
     cells = {cell["id"]: cell for cell in report["analysis"]["declarations"]["cells"]}
@@ -70,7 +70,7 @@ def test_local_unused_state_does_not_need_cross_actor_equivalence() -> None:
 
 def test_forged_context_path_is_not_discharged() -> None:
     source = _create_source()
-    report = find_regimes(source)
+    report = find_regimes(source, facts_backend="metadata", search_mode="heuristic")
     analysis = deepcopy(report["analysis"])
     for obligation in analysis["obligations"]:
         if obligation["kind"] == "role_timing_contract":
@@ -81,7 +81,7 @@ def test_forged_context_path_is_not_discharged() -> None:
 
 def test_changed_context_identity_is_rejected(*, subtests: pytest.Subtests) -> None:
     source = _create_source()
-    report = find_regimes(source)
+    report = find_regimes(source, facts_backend="metadata", search_mode="heuristic")
     for field, value in [
         ("stage", "different-stage"),
         ("role", {"actor": "other"}),
@@ -99,7 +99,7 @@ def test_cross_regime_merge_does_not_get_context_identity_rule() -> None:
     from _lcm_regime_finder.proposal_decision import _preserved_context
 
     source = _create_source()
-    report = find_regimes(source)
+    report = find_regimes(source, facts_backend="metadata", search_mode="heuristic")
     cells = {c["id"]: c for c in report["analysis"]["declarations"]["cells"]}
     obligation = next(
         o
@@ -112,7 +112,7 @@ def test_cross_regime_merge_does_not_get_context_identity_rule() -> None:
 
 def test_saved_context_certificate_mutation_is_rejected() -> None:
     source = _create_source()
-    report = find_regimes(source)
+    report = find_regimes(source, facts_backend="metadata", search_mode="heuristic")
     saved = deepcopy(report["proposal_decisions"])
     proof = next(
         item

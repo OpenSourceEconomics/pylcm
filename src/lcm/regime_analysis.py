@@ -5,9 +5,15 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
+from typing import Literal, cast
 
 from _lcm.typing import JSONValue
 from lcm.typing import ActionName, RegimeName, StateName
+
+# Where an analysis takes its dependency facts from.
+type FactsBackend = Literal["metadata", "dense", "implicit"]
+# How an analysis searches the candidate family.
+type SearchMode = Literal["heuristic", "exact"]
 
 _COST_FEATURES = ("work", "storage", "clarity")
 
@@ -97,6 +103,18 @@ class RegimeCheck:
 
 
 @dataclass(frozen=True)
+class StatusLane:
+    """The codes of one status state that a split block solves on its own grid."""
+
+    status: StateName
+    """The categorical state the block is split by."""
+    codes: tuple[int, ...]
+    """Codes of `status` in this lane."""
+    states: tuple[StateName, ...]
+    """States this lane keeps; the others are not needed at these codes."""
+
+
+@dataclass(frozen=True)
 class RegimeBlock:
     """A proposed computational block retaining economic regime identities."""
 
@@ -112,6 +130,8 @@ class RegimeBlock:
     """Allocated action axes."""
     cells: tuple[str, ...]
     """Original dated-cell identifiers."""
+    lanes: tuple[StatusLane, ...] = ()
+    """Status lanes of a split block; empty if the block is not split."""
 
 
 @dataclass(frozen=True)
@@ -153,6 +173,10 @@ class RegimeAnalysisResult:
     """Global check layers; these do not replace local proposal checks."""
     cost_model: LinearRegimeCostModel
     """The objective supplied to candidate generation and pruning."""
+    facts_backend: FactsBackend
+    """The backend that supplied the dependency facts."""
+    search_mode: SearchMode
+    """How the candidate family was searched."""
     data: Mapping[str, JSONValue] = field(repr=False)
     """Recursively immutable detailed report and source records."""
 
@@ -239,6 +263,32 @@ def result_from_report(
     analysis = _mapping(report.get("analysis", {}))
     declarations = _mapping(analysis.get("declarations", {}))
     cells = {str(cell["id"]): cell for cell in _rows(declarations.get("cells", []))}
+    derived = _mapping(analysis.get("derived_domains", {}))
+
+    def split(
+        axes: Mapping[str, JSONValue],
+    ) -> tuple[tuple[str, ...], tuple[StatusLane, ...]]:
+        states: list[str] = []
+        lanes: list[StatusLane] = []
+        for name, domain_id in axes.items():
+            domain = _mapping(derived.get(str(domain_id), {}))
+            if domain.get("kind") != "lanes":
+                states.append(name)
+                continue
+            status = str(domain["status_axis"])
+            states.append(status)
+            for lane in _rows(domain.get("lanes", [])):
+                kept = _strings(list(_mapping(lane.get("states", {}))))
+                states.extend(kept)
+                codes = _strings(_mapping(lane.get("codes", {}))[status])
+                lanes.append(
+                    StatusLane(
+                        status=status,
+                        codes=tuple(int(code) for code in codes),
+                        states=kept,
+                    )
+                )
+        return tuple(dict.fromkeys(states)), tuple(lanes)
 
     def blocks(records: Sequence[Mapping[str, JSONValue]]) -> tuple[RegimeBlock, ...]:
         result = []
@@ -261,9 +311,10 @@ def result_from_report(
                             for cell in members
                         )
                     ),
-                    states=tuple(_mapping(record.get("state_axes", {}))),
+                    states=split(_mapping(record.get("state_axes", {})))[0],
                     actions=tuple(_mapping(record.get("action_axes", {}))),
                     cells=identifiers,
+                    lanes=split(_mapping(record.get("state_axes", {})))[1],
                 )
             )
         return tuple(result)
@@ -362,5 +413,7 @@ def result_from_report(
             for key, value in _mapping(report.get("layers", {})).items()
         ),
         cost_model=cost_model,
+        facts_backend=cast("FactsBackend", report["facts_backend"]),
+        search_mode=cast("SearchMode", report["search_mode"]),
         data=report,
     )

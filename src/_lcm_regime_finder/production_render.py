@@ -127,11 +127,26 @@ def _dates(values, limit=None):
     return ", ".join(values)
 
 
+def _block_dates(block):
+    """List a block's ages, or its periods when the model declares no ages."""
+    ages = block.get("ages", [])
+    return _dates(ages if any(age is not None for age in ages) else block.get("periods", []))
+
+
 def _axes(axes, domains):
     parts = []
     for axis, domain_id in sorted((axes or {}).items()):
         domain = domains.get(domain_id, {})
         size = domain.get("size")
+        if domain.get("kind") == "lanes":
+            status = domain["status_axis"]
+            lanes = "; ".join(
+                f"{status} {', '.join(map(str, lane['codes'][status]))}: "
+                + (", ".join(lane["states"]) or "no other states")
+                for lane in domain["lanes"]
+            )
+            parts.append(f"split by {status} [{lanes}] ({_number(size)} rows)")
+            continue
         parts.append(f"{axis} ({_number(size)} values)" if type(size) is int else f"{axis} (size not supplied)")
     return "; ".join(parts) or "None"
 
@@ -445,7 +460,7 @@ def render_markdown(result, *, _prepared_view=None):
             lines += ["", "| Block | Original regimes | Declared dates | Allocated states | Allocated actions |", "|---|---|---|---|---|"]
             for i, block in enumerate(p["point"].get("blocks", []), 1):
                 lines.append("| " + " | ".join([str(i), _md(", ".join(block.get("original_regimes", []))),
-                    _md(_dates(block.get("ages", []))), _md(_axes(block.get("state_axes"), view["domains"])),
+                    _md(_block_dates(block)), _md(_axes(block.get("state_axes"), view["domains"])),
                     _md(_axes(block.get("action_axes"), view["domains"]))]) + " |")
             lines += ["", f'[Full typed Mermaid graph](graphs/{p["prefix"]}.mmd). Exact cell admissions, projections, action reconstructions and costs are in report-data.json.', ""]
             note = _preview_note(p["prefix"], p["graph"], view["preview_counts"])
@@ -643,7 +658,7 @@ def render_html(result, *, _prepared_view=None):
                 parts.append('<p class="callout">The local source/semantic check has not passed. These are candidate changes, not an established source-equivalent transformation.</p>')
             parts.append('<h4>Consequences for this model</h4><ul>' + "".join(f'<li>{_h(x)}</li>' for x in p["consequences"]["sentences"]) + '</ul>')
             parts.append(_table(["Block", "Original regimes", "Declared dates", "Allocated states", "Allocated actions", "Work", "Value entries", "Clarity"],
-                [[i, ", ".join(b.get("original_regimes", [])), _dates(b.get("ages", []) if any(age is not None for age in b.get("ages", [])) else b.get("periods", [])), _axes(b.get("state_axes"), view["domains"]), _axes(b.get("action_axes"), view["domains"]),
+                [[i, ", ".join(b.get("original_regimes", [])), _block_dates(b), _axes(b.get("state_axes"), view["domains"]), _axes(b.get("action_axes"), view["domains"]),
                   *[_number(b.get("cost", {}).get(k)) for k in METRICS]] for i, b in enumerate(p["point"].get("blocks", []), 1)], numeric=(5, 6, 7)))
             parts += [_graph_html(p["prefix"], p["graph"], view["preview_counts"]), '<details><summary>Exact cell projections, action reconstruction and source witnesses</summary>',
                       f'<pre>{_h(_json(p["consequences"]["selected_interfaces"]))}</pre></details>',

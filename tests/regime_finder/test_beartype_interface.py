@@ -101,7 +101,12 @@ def test_native_model_export_keeps_beartyped_utility_and_default_aggregator() ->
             },
         )
         original = load_problem(path)
-        result = find_regimes(original, budget={"seconds": 30}, search_mode="exact")
+        result = find_regimes(
+            original,
+            budget={"seconds": 30},
+            search_mode="exact",
+            facts_backend="metadata",
+        )
         assert (result["status"]) == ("COMPLETE"), result["analysis"]["obligations"]
         assert (verify_production_result(original, result)["status"]) == ("PASS")
 
@@ -121,7 +126,9 @@ def test_generated_wrapper_is_reconciled_without_mutating_or_calling_target() ->
     )
     assert ("__beartype_func") in (actual["defaults"])
     source = captured_snapshot(actual)
-    result = find_regimes(source, budget={"seconds": 20}, search_mode="exact")
+    result = find_regimes(
+        source, budget={"seconds": 20}, search_mode="exact", facts_backend="metadata"
+    )
     record = result["analysis"]["declarations"]["callbacks"][
         result["analysis"]["declarations"]["cells"][0]["functions"]["utility"]
     ]
@@ -204,7 +211,9 @@ def test_original_payload_still_controls_independent_signature_authority() -> No
     from tests.regime_finder.test_declaration_ingestion import decorated_callback
 
     source = captured_snapshot(source_function(decorated_callback))
-    result = find_regimes(source, budget={"seconds": 20}, search_mode="exact")
+    result = find_regimes(
+        source, budget={"seconds": 20}, search_mode="exact", facts_backend="metadata"
+    )
     forged = deepcopy(result)
     for record in forged["analysis"]["declarations"]["callbacks"].values():
         record["arguments"] = ["history"]

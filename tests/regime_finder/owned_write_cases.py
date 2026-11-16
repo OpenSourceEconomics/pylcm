@@ -99,6 +99,10 @@ def one_case(project, case, oracle):
             project,
             [
                 "analyze-model",
+                "--facts-backend",
+                "metadata",
+                "--search-mode",
+                "heuristic",
                 str(source),
                 "--output",
                 str(analysis),

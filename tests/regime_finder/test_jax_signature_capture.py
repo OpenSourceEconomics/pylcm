@@ -104,7 +104,13 @@ def test_incomplete_capture_is_not_reported_as_resource_exhaustion() -> None:
         )
         with patch("_lcm_regime_finder.resources.run_bounded") as runner:
             with pytest.raises(RuntimeError, match="capture INCOMPLETE"):
-                analyse_snapshot(snapshot, root / "analysis", seconds=900)
+                analyse_snapshot(
+                    snapshot,
+                    root / "analysis",
+                    seconds=900,
+                    facts_backend="metadata",
+                    search_mode="heuristic",
+                )
             runner.assert_not_called()
         summary = json.loads((root / "analysis/summary.json").read_text())
         assert (summary["status"]) == ("INCOMPLETE")

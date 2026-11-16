@@ -10,7 +10,9 @@ from .tiny_metadata_family import original
 def test_distinct_global_policies_reuse_identical_local_choices() -> None:
     source = original()
     declaration = normalize_declarations(source)
-    metadata = MetadataAnalysis(declaration)
+    metadata = MetadataAnalysis(
+        declaration, facts_backend="metadata", search_mode="exact"
+    )
     analysis = metadata.run()
     emitted = sum(len(row["options"]) for row in analysis["interfaces"].values())
     assert (emitted) < (
@@ -32,7 +34,9 @@ def test_shared_domain_keeps_original_last_active_cell_registration() -> None:
     domain = declaration["cells"][0]["states"]["family"]
     for cell in declaration["cells"]:
         cell["states"]["other"] = domain
-    metadata = MetadataAnalysis(declaration)
+    metadata = MetadataAnalysis(
+        declaration, facts_backend="metadata", search_mode="exact"
+    )
     metadata.live = {cid: set(cell["states"]) for cid, cell in metadata.cells.items()}
     metadata.reasons = {cid: {} for cid in metadata.cells}
     base = {
