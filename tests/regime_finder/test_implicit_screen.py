@@ -35,9 +35,6 @@ from _lcm_regime_finder.implicit.factored_bridge import (
     as_box_package,
     build_factored_table,
 )
-from _lcm_regime_finder.implicit.source_versions import resolve_source_candidate
-
-REFERENCE_VERSION = resolve_source_candidate(source_version="source587")
 
 
 def package_from_wire(data: Mapping[str, JSONValue]) -> Package:
@@ -346,8 +343,7 @@ def factor_fixture() -> tuple[FibreSource, Wire, dict[str, tuple[str, ...]]]:
         "roots": {"direct": 0},
     }
     record = {
-        "schema": "exact-implicit-fibre-table/v1",
-        "reference_contract": "compile_primitive_fibres.py@587478274ff55f1d873ae9d056bb9bf3e222b873",
+        "schema": "exact-implicit-fibre-table/v2",
         "source_obligations": list(source.source_obligations),
         "cells": [
             {
@@ -715,9 +711,7 @@ def test_cycles_have_least_not_arbitrary_fixed_point() -> None:
 
 def test_factor_bridge_preserves_identity_support_and_table_read_keys() -> None:
     source, record, axes = factor_fixture()
-    table = build_factored_table(
-        source=source, record=record, status_axes=axes, version=REFERENCE_VERSION
-    )
+    table = build_factored_table(source=source, record=record, status_axes=axes)
     assert len(table.relation_factors) == 1
     assert table.relation_factors[0].support_roots == (("i", "support:law::i"),)
     package = as_box_package(table)
@@ -734,7 +728,6 @@ def test_factor_bridge_native_tuple_and_json_list_metadata_agree() -> None:
             source=source,
             record=record,
             status_axes=axes,
-            version=REFERENCE_VERSION,
         )
     )
     json_record = json.loads(json.dumps(record))
@@ -743,7 +736,6 @@ def test_factor_bridge_native_tuple_and_json_list_metadata_agree() -> None:
             source=source,
             record=json_record,
             status_axes=axes,
-            version=REFERENCE_VERSION,
         )
     )
     assert native == decoded
@@ -785,7 +777,6 @@ def test_factor_bridge_rejects_incomplete_coverage_and_lost_guards() -> None:
                 source=source,
                 record=altered,
                 status_axes=axes,
-                version=REFERENCE_VERSION,
             )
 
 
@@ -817,8 +808,6 @@ def test_factor_exclusion_terminal_cannot_use_false_as_code_zero() -> None:
         fixture_sequence(diagram["nodes"])
     )
     fixture_list(diagram["nodes"]).append({"leaf": ["frozenset", [["bool", False]]]})
-    table = build_factored_table(
-        source=source, record=record, status_axes=axes, version=REFERENCE_VERSION
-    )
+    table = build_factored_table(source=source, record=record, status_axes=axes)
     with pytest.raises(ValueError):
         as_box_package(table)

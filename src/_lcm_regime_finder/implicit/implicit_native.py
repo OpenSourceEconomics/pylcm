@@ -25,13 +25,6 @@ from .implicit_core import (
     joint_reads,
 )
 from .binding_purity import certify_binding_cache
-from .source_versions import (
-    SourceVersion,
-    assert_runtime_source,
-    check_capture_admission,
-    packet_identity,
-    resolve_source_version,
-)
 
 
 class LazyStatic(Mapping[str, object]):
@@ -576,19 +569,17 @@ def sha(path: Path) -> str:
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
-def _produce(*, snapshot: Path, axes_file: Path, version: SourceVersion) -> Wire:
-    """Produce unverified data under the same source guards used in qualification."""
+def _produce(*, snapshot: Path, axes_file: Path) -> Wire:
+    """Produce unverified diagrams; an independent all-point replay is still required."""
     from _lcm_regime_finder.cli import load_problem
     from _lcm_regime_finder.fibre_source import FibreSource
     from _lcm_regime_finder.structural_store import final_input_check
-    import _lcm_regime_finder
 
-    package = Path(_lcm_regime_finder.__file__).parent
-    identity = assert_runtime_source(package=package, version=version)
     snapshot_sha = sha(snapshot)
     axes_sha = sha(axes_file)
     original = load_problem(snapshot)
-    check_capture_admission(original=original, version=version)
+    if original.get("schema") != "constructed-pylcm-model-graph-1":
+        raise ValueError("Expected an original constructed Model capture")
     source = FibreSource(original)
     status_axes = {
         name: _strings(value)
@@ -610,15 +601,11 @@ def _produce(*, snapshot: Path, axes_file: Path, version: SourceVersion) -> Wire
     final_input_check(original)
     if sha(snapshot) != snapshot_sha or sha(axes_file) != axes_sha:
         raise ValueError("Source transaction changed")
-    identity.check()
     result = {
         "schema": "exact-implicit-fibre-table/v2",
-        **packet_identity(version),
         "status": "PRODUCED_UNVERIFIED",
         "snapshot_sha256": snapshot_sha,
         "classification_sha256": axes_sha,
-        "reference_sources": dict(identity.source_files),
-        "algorithm_sources": dict(identity.algorithm_sources),
         "metadata_by_reference": {
             "snapshot_sha256": snapshot_sha,
             "cells": list(source._cells),
@@ -633,32 +620,6 @@ def _produce(*, snapshot: Path, axes_file: Path, version: SourceVersion) -> Wire
     return result
 
 
-def compile_table(
-    *, snapshot: Path, axes_file: Path, source_version: str = "source587"
-) -> Wire:
-    """Produce diagrams only for a qualified evaluator; replay is still required."""
-    version = resolve_source_version(source_version=source_version)
-    result = _produce(snapshot=snapshot, axes_file=axes_file, version=version)
-    resolve_source_version(source_version=source_version)
-    return result
-
-
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("snapshot", type=Path)
-    parser.add_argument(
-        "axes",
-        type=Path,
-        help="JSON mapping original regimes to status coordinate arrays",
-    )
-    parser.add_argument("output", type=Path)
-    parser.add_argument("--source-version", default="source587")
-    args = parser.parse_args()
-    result = compile_table(
-        snapshot=args.snapshot, axes_file=args.axes, source_version=args.source_version
-    )
-    args.output.write_text(json.dumps(result, indent=2) + "\n")
-
-
-if __name__ == "__main__":
-    main()
+def compile_table(*, snapshot: Path, axes_file: Path) -> Wire:
+    """Produce diagrams; an independent all-point replay is still required."""
+    return _produce(snapshot=snapshot, axes_file=axes_file)

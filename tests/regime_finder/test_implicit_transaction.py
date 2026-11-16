@@ -2,7 +2,6 @@
 
 import json
 from pathlib import Path
-import sys
 
 import pytest
 
@@ -14,7 +13,6 @@ from _lcm_regime_finder.implicit.implicit_native import compile_table
 from _lcm_regime_finder.records import JSONValue
 from tests.regime_finder.test_fibre_source import _fields, _original
 from tests.regime_finder.test_model_adapter import function
-from tests.regime_finder.test_implicit_version_candidate import installed_candidate
 
 
 def inputs(tmp_path: Path, *, exclude_zero: bool = False) -> tuple[Path, Path, Path]:
@@ -33,7 +31,6 @@ def inputs(tmp_path: Path, *, exclude_zero: bool = False) -> tuple[Path, Path, P
     packet = compile_table(
         snapshot=snapshot,
         axes_file=axes,
-        source_version=installed_candidate().version_id,
     )
     assert packet["status"] == "PRODUCED_UNVERIFIED"
     artifact.write_text(json.dumps(packet))
@@ -51,7 +48,6 @@ def test_original_fact_replay_and_supplied_projection(
         axes_file=axes,
         artifact=artifact,
         removed=removed,
-        source_version=installed_candidate().version_id,
     )
     assert result["status"] == "FINITE_PREMISES_PROVED"
     receipt = _mapping(result["fact_verification"])
@@ -81,7 +77,6 @@ def test_forged_fact_packet_cannot_get_a_projection_receipt(tmp_path: Path) -> N
             axes_file=axes,
             artifact=artifact,
             removed=frozenset(),
-            source_version=installed_candidate().version_id,
         )
 
 
@@ -106,23 +101,7 @@ def test_changed_input_after_replay_cannot_get_a_projection_receipt(
             axes_file=axes,
             artifact=artifact,
             removed=frozenset(),
-            source_version=installed_candidate().version_id,
         )
-
-
-def test_box_expansion_is_explicit(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    receipt = tmp_path / "receipt.json"
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        ["check_projection", "model", "axes", "facts", "removed", str(receipt)],
-    )
-    with pytest.raises(SystemExit) as error:
-        transaction.main()
-    assert error.value.code == 2
-    assert not receipt.exists()
 
 
 @pytest.mark.parametrize(
@@ -154,7 +133,6 @@ def test_duplicate_nominal_alias_cannot_get_fact_equality(tmp_path: Path) -> Non
             axes_file=axes,
             artifact=artifact,
             removed=frozenset(),
-            source_version=installed_candidate().version_id,
         )
 
 
