@@ -54,7 +54,9 @@ def original_declarations():
 def test_local_replay_does_not_borrow_complete_family_wording() -> None:
     original = original_declarations()
     declarations = deepcopy(original)
-    analysis = MetadataAnalysis(declarations).run()
+    analysis = MetadataAnalysis(
+        declarations, facts_backend="metadata", search_mode="exact"
+    ).run()
     complete = check_semantics(original, declarations, analysis)
     local = check_semantics(original, declarations, analysis, check_coverage=False)
     assert (complete["status"]) == ("PASS"), complete
@@ -72,7 +74,9 @@ def test_local_replay_does_not_borrow_complete_family_wording() -> None:
 def test_requested_coverage_is_not_equivalent_to_verified_coverage() -> None:
     original = original_declarations()
     declarations = deepcopy(original)
-    analysis = MetadataAnalysis(declarations).run()
+    analysis = MetadataAnalysis(
+        declarations, facts_backend="metadata", search_mode="exact"
+    ).run()
     incomplete = deepcopy(analysis)
     incomplete["discovery_complete"] = False
     checked = check_semantics(original, declarations, incomplete, check_coverage=True)

@@ -17,7 +17,9 @@ After installing PyLCM, construct your `Model` using your usual setup. Call
 ```python
 from lcm.graphs import analyze_regime_structure
 
-result = analyze_regime_structure(model)
+result = analyze_regime_structure(
+    model, facts_backend="metadata", search_mode="heuristic"
+)
 print(result.original.cost)
 for candidate in result.recommendations:
     print(candidate.cost, candidate.blocks, candidate.checks)
@@ -33,8 +35,26 @@ they can contain source and model inputs.
 dataclasses. Recommendations reference candidate objects directly. `result.checks`
 contains global layers; each candidate has its own scoped checks and reasons.
 `result.data` exposes recursively immutable detailed records, and `result.to_dict()`
-returns a detached serializable copy. The existing `find_regimes(model, output=...)`
-helper remains available for callers needing the dictionary interface.
+returns a detached serializable copy. The existing `find_regimes(model, ...)` helper
+takes the same two required arguments and returns the dictionary interface.
+
+Both arguments are required, because each is a tradeoff only you can make.
+
+`facts_backend` decides where the analysis learns what each regime-period depends on:
+
+- `"metadata"` reads the declared scalar expressions. It is fast and conservative: a
+  function outside that language keeps every input it declares.
+- `"dense"` interprets each function's captured source with the period's dates, constant
+  states and forced choices bound. It finds every state the model really needs and no
+  more.
+- `"implicit"` gives the same answers as `"dense"`, and stores facts that differ by a
+  categorical status (such as employed or retired) as decision diagrams.
+
+An exact backend that runs out of time raises `FactsBudgetError`, naming the
+regime-periods it could not finish; `"metadata"` then gives a conservative result.
+
+`search_mode` decides how candidate structures are searched: `"heuristic"` checks a
+bounded set of candidates, `"exact"` searches the complete family (see below).
 
 ## Read the result
 
@@ -104,6 +124,20 @@ improvement required over the unchanged original. It selects an eligible, indepe
 checked candidate only when that improvement is established; otherwise it retains the
 original. Changing the weights and rerunning can change which candidates are examined.
 
+### Status splitting
+
+A categorical state such as employment can change which other states matter. If the
+unemployed neither earn from experience nor carry it forward, a regime that keeps
+experience for everyone stores rows nobody reads. With `facts_backend="dense"` or
+`"implicit"`, the analysis offers a split: each lane is a set of codes of one status
+state, solved on only the states its codes need. In the example, the unemployed lane
+keeps no other state and the employed lane keeps experience, so 2 × 3 rows become 1 + 3.
+The checker confirms that the lanes partition the status codes and that no lane drops a
+state its codes need. `RegimeBlock.lanes` lists the lanes of a split block as
+`lcm.graphs.StatusLane` records, and the report prints them next to the block's states.
+The `metadata` backend has no per-status facts and never offers a split; the report says
+so.
+
 The default recommendation also defers an extra regime used only to omit newly inactive
 coordinates at the final decision date. Such candidates remain visible with their
 checks. This is a recommendation preference, not a claim that the transformation is
@@ -112,10 +146,10 @@ invalid or absent from the admissible family. The snapshot runner below exposes
 
 ### Is it the best representation?
 
-`analyze_regime_structure(model)` uses a heuristic search. Its recommendation is
-selected from the eligible checked candidates it found. Better unexamined
-representations can exist, and the global optimality gap is unknown. A checked
-improvement is useful without being a certified optimum.
+`search_mode="heuristic"` uses a heuristic search. Its recommendation is selected from
+the eligible checked candidates it found. Better unexamined representations can exist,
+and the global optimality gap is unknown. A checked improvement is useful without being
+a certified optimum.
 
 The bundled analysis machinery also includes exact searches and independent coverage
 checkers for specified finite families of state projections, regime groupings and date
@@ -176,7 +210,9 @@ cost = LinearRegimeCostModel(
     reference_scales=(1, 1, 1),
     minimum_improvement=0.05,
 )
-result = analyze_regime_structure(model, cost_model=cost)
+result = analyze_regime_structure(
+    model, facts_backend="metadata", search_mode="heuristic", cost_model=cost
+)
 ```
 
 The coefficients above are illustrative priorities, not fitted runtime predictions.
@@ -205,13 +241,14 @@ From the root of a PyLCM checkout on Linux, run the following with Pixi.
 ```sh
 pixi run -e default python -m _lcm_regime_finder.pipeline \
     tools/regime-finder/examples/declarations/tiny-huge-grid.json \
+    --facts-backend metadata --search-mode heuristic \
     --output regime-snapshot-results
 ```
 
 Open `regime-snapshot-results/next-actions.html` for the recommendation.
 
-This command also defaults to heuristic search. For an explicit exact-family attempt,
-use a new output directory and add `--search-mode exact`. Such searches can be expensive
-on large graph families. Inspect the independent coverage and source-check results
-before making an optimality claim. The input remains the same declared model and grids;
-switching search modes does not justify substituting a smaller model.
+For an exact-family attempt, use a new output directory and pass `--search-mode exact`.
+Such searches can be expensive on large graph families. Inspect the independent coverage
+and source-check results before making an optimality claim. The input remains the same
+declared model and grids; switching search modes does not justify substituting a smaller
+model.

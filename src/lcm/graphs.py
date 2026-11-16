@@ -7,12 +7,15 @@ from networkx import DiGraph
 from _lcm.typing import JSONValue
 from lcm.model import Model
 from lcm.regime_analysis import (
+    FactsBackend,
     LinearRegimeCostModel,
     RegimeAnalysisResult,
     RegimeBlock,
     RegimeCandidate,
     RegimeCheck,
     RegimeCost,
+    SearchMode,
+    StatusLane,
 )
 from lcm.regime_analysis import result_from_report as _result_from_report
 from lcm.typing import Phase
@@ -24,6 +27,7 @@ __all__ = [
     "RegimeCandidate",
     "RegimeCheck",
     "RegimeCost",
+    "StatusLane",
     "analyze_regime_structure",
     "digraph",
     "find_regimes",
@@ -32,19 +36,45 @@ __all__ = [
 
 # keyword-only-exempt: primary-argument=model
 def analyze_regime_structure(
-    model: Model, *, cost_model: LinearRegimeCostModel | None = None
+    model: Model,
+    *,
+    facts_backend: FactsBackend,
+    search_mode: SearchMode,
+    cost_model: LinearRegimeCostModel | None = None,
 ) -> RegimeAnalysisResult:
     """Analyze candidate regime structures using a declared linear cost model.
 
     Return immutable recommendations, computational blocks, original costs and
     scoped checks. No report is written. Call result.write_report(directory)
-    explicitly to save one. The heuristic search receives the objective before
-    candidate generation and pruning; it does not establish a global optimum.
+    explicitly to save one. The search receives the objective before candidate
+    generation and pruning; a heuristic search does not establish a global
+    optimum.
+
+    Args:
+        model: The constructed model to analyze.
+        facts_backend: Where the dependency facts come from. `"metadata"` reads
+            the declared scalar expressions and is conservative; `"dense"` and
+            `"implicit"` interpret the captured source exactly and raise
+            `FactsBudgetError` when they run out of budget. `"implicit"` stores
+            per-status facts as decision diagrams.
+        search_mode: `"heuristic"` checks a bounded set of candidates; `"exact"`
+            searches the complete candidate family.
+        cost_model: The linear objective; the default weighs work, storage and
+            clarity equally.
+
+    Returns:
+        The typed analysis result.
+
     """
     from _lcm_regime_finder import find_regimes as analyze  # noqa: PLC0415
 
     selected_cost = LinearRegimeCostModel() if cost_model is None else cost_model
-    report = analyze(model, recommendation=selected_cost.as_recommendation())
+    report = analyze(
+        model,
+        facts_backend=facts_backend,
+        search_mode=search_mode,
+        recommendation=selected_cost.as_recommendation(),
+    )
     report["cost_model"] = selected_cost.as_recommendation()
     return _result_from_report(report, cost_model=selected_cost)
 
@@ -134,7 +164,13 @@ def digraph(model: Model, *, phase: Phase | None = None) -> DiGraph:
 
 
 # keyword-only-exempt: primary-argument=model
-def find_regimes(model: Model, *, output: Path | None = None) -> dict[str, JSONValue]:
+def find_regimes(
+    model: Model,
+    *,
+    facts_backend: FactsBackend,
+    search_mode: SearchMode,
+    output: Path | None = None,
+) -> dict[str, JSONValue]:
     """Find and check candidate simplifications of a constructed model.
 
     The search uses the original solve and simulate declarations and grid sizes.
@@ -143,6 +179,13 @@ def find_regimes(model: Model, *, output: Path | None = None) -> dict[str, JSONV
 
     Args:
         model: The constructed model to analyze.
+        facts_backend: Where the dependency facts come from. `"metadata"` reads
+            the declared scalar expressions and is conservative; `"dense"` and
+            `"implicit"` interpret the captured source exactly and raise
+            `FactsBudgetError` when they run out of budget. `"implicit"` stores
+            per-status facts as decision diagrams.
+        search_mode: `"heuristic"` checks a bounded set of candidates; `"exact"`
+            searches the complete candidate family.
         output: Optional new directory for the HTML and JSON reports.
 
     Returns:
@@ -155,7 +198,7 @@ def find_regimes(model: Model, *, output: Path | None = None) -> dict[str, JSONV
     # Import the analysis engine only when explicitly requested.
     from _lcm_regime_finder import find_regimes as analyze  # noqa: PLC0415
 
-    report = analyze(model)
+    report = analyze(model, facts_backend=facts_backend, search_mode=search_mode)
     if output is not None:
         from _lcm_regime_finder.production_render import (  # noqa: PLC0415
             write_production_report,

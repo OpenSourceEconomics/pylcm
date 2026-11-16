@@ -8,7 +8,9 @@ from tests.regime_finder.test_model_adapter import snapshot, function
 
 
 def _analyze(source):
-    result = analyze_production(source, limits={"seconds": 10}, search_mode="exact")
+    result = analyze_production(
+        source, limits={"seconds": 10}, search_mode="exact", facts_backend="metadata"
+    )
     assert (result["status"]) == ("COMPLETE"), str(result.get("semantic_check"))[:2500]
     assert (
         verify_production_result(source, result, limits={"seconds": 10})["status"]

@@ -100,8 +100,10 @@ def exit_status(status):
 def _analysis_options(parser):
     parser.add_argument('problem'); parser.add_argument('--output', required=True)
     parser.add_argument('--seconds', type=float, default=900)
-    parser.add_argument('--search-mode', choices=('heuristic', 'exact'), default='heuristic',
-                        help='Default: checked heuristic candidates. Exact explicitly requests complete-family search.')
+    parser.add_argument('--facts-backend', choices=('metadata', 'dense', 'implicit'), required=True,
+                        help='metadata: conservative scalar-language facts; dense or implicit: exact source facts')
+    parser.add_argument('--search-mode', choices=('heuristic', 'exact'), required=True,
+                        help='heuristic: checked heuristic candidates; exact: complete-family search')
     parser.add_argument('--heuristic-rounds', type=int, default=2,
                         help='Optional local grouping sweep effort; no Model-size rejection threshold')
     parser.add_argument('--heuristic-neighbors', type=int, default=2,
@@ -182,13 +184,6 @@ def main(argv=None):
     curve.add_argument('--max-frontier', type=int, default=5000)
     curve.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)
     curve.set_defaults(cost_limits=None)
-    source_facts = sub.add_parser('source-facts', help='Original-cell dependency, support and exclusion facts; no layout search')
-    source_facts.add_argument('problem'); source_facts.add_argument('--output', required=True)
-    source_facts.add_argument('--seconds', type=float)
-    source_facts.add_argument('--host-gib', type=float)
-    source_facts.add_argument('--status-axes', help='JSON mapping from original regimes to categorical state names; check their joint status-to-ordinary projection')
-    source_facts.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)
-    source_facts.set_defaults(cost_limits=None)
     for name in ('check-result', 'check-model-result'):
         check = sub.add_parser(name); check.add_argument('problem'); check.add_argument('report')
         check.add_argument('--output'); check.add_argument('--seconds', type=float, default=900)
@@ -222,19 +217,6 @@ def main(argv=None):
         problem = load_problem(args.problem, reads=reads)
         if args.cost_limits is not None and problem.get('schema') != 'exact-graph-cost-instance/v1':
             raise ValueError('--cost-limits applies only to an exact cost-family input')
-        if args.command == 'source-facts':
-            from .fibre_source import FibreSource, _mapping, _strings
-            from .structural_store import final_input_check
-            if delivery is None:
-                raise ValueError('Source facts require an output delivery plan')
-            status_axes = ({name: _strings(axes) for name, axes in _mapping(json.loads(args.status_axes)).items()}
-                           if args.status_axes is not None else None)
-            result = FibreSource(problem).get_report(status_axes=status_axes)
-            result['input_artifact'] = input_artifact_identity(args.problem, reads=reads)
-            final_input_check(problem)
-            delivery.publish(result)
-            print(json.dumps({'status': result['status'], 'output': str(delivery.destination)}, sort_keys=True))
-            return 0
         if args.command == 'evaluation-curve':
             from .curve import build_curve_report
             from .frontier import search_frontier
@@ -353,7 +335,7 @@ def main(argv=None):
             phase_started = time.perf_counter()
             result = analyze_production(problem, limits=limits, recommendation=recommendation,
                                         production_contract=contract, checkpoint=checkpoint,
-                                        search_mode=args.search_mode,
+                                        facts_backend=args.facts_backend, search_mode=args.search_mode,
                                         heuristic_effort={'rounds': args.heuristic_rounds,
                                                           'neighbor_degree': args.heuristic_neighbors})
             delivery_timings['analysis_call_including_checkpoints_seconds'] = time.perf_counter() - phase_started

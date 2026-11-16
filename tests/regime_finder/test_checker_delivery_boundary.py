@@ -30,7 +30,17 @@ def _prepare_delivery(root, *, source_name="source.json"):
         contextlib.redirect_stderr(io.StringIO()),
     ):
         code = cli.main(
-            ["analyze-model", str(source), "--output", str(output), "--worker"]
+            [
+                "analyze-model",
+                "--facts-backend",
+                "metadata",
+                "--search-mode",
+                "heuristic",
+                str(source),
+                "--output",
+                str(output),
+                "--worker",
+            ]
         )
     assert (code) == (0)
     report = output / "report.json"
@@ -260,7 +270,17 @@ def test_analysis_result_alias_remains_protected() -> None:
             contextlib.redirect_stderr(io.StringIO()),
         ):
             code = cli.main(
-                ["analyze-model", str(source), "--output", str(output), "--worker"]
+                [
+                    "analyze-model",
+                    "--facts-backend",
+                    "metadata",
+                    "--search-mode",
+                    "heuristic",
+                    str(source),
+                    "--output",
+                    str(output),
+                    "--worker",
+                ]
             )
         assert (code) == (1)
         assert alias.is_symlink()

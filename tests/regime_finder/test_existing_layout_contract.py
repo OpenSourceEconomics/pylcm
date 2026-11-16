@@ -225,7 +225,7 @@ def test_search_and_diagnostic_agree_for_missing_original_roles() -> None:
     original = native_fixture()
     for declaration in original["user_regimes"].values():
         declaration["fields"].pop("semantic_role")
-    report = analyze_production(original, search_mode="exact")
+    report = analyze_production(original, search_mode="exact", facts_backend="metadata")
     analysis = report["analysis"]
     search = Search(analysis)
     policy = analysis["projection_policies"][0]["option_by_cell"]
@@ -240,7 +240,7 @@ def test_different_original_actors_can_share_allocation_with_source_contexts_int
 ):
     original = native_fixture()
     preserved = deepcopy(original)
-    report = analyze_production(original, search_mode="exact")
+    report = analyze_production(original, search_mode="exact", facts_backend="metadata")
     analysis = report["analysis"]
     cells = analysis["declarations"]["cells"]
     assert len({cell["role"]["actor"] for cell in cells}) == 2
@@ -915,7 +915,9 @@ def test_constructor_witness_requires_an_unchanged_bound_native_capture(
     from _lcm_regime_finder.curve import build_curve_report
     from _lcm_regime_finder.frontier import search_frontier
 
-    production = analyze_production(period_model, search_mode="exact")
+    production = analyze_production(
+        period_model, search_mode="exact", facts_backend="metadata"
+    )
     analysis = production["analysis"]
     analysis["allocation_scenario"] = dict(
         analysis["declarations"]["allocation"], boundary_unit=0
@@ -1011,7 +1013,19 @@ def test_pipeline_worker_invalidates_a_changed_normative_admission_specification
 
     monkeypatch.setattr(cli, "main", emit_report)
     monkeypatch.setattr(
-        sys, "argv", ["pipeline", str(snapshot), "--output", str(output), "--worker"]
+        sys,
+        "argv",
+        [
+            "pipeline",
+            "--facts-backend",
+            "metadata",
+            "--search-mode",
+            "heuristic",
+            str(snapshot),
+            "--output",
+            str(output),
+            "--worker",
+        ],
     )
     exit_code = pipeline.main()
     assert reached == [True]

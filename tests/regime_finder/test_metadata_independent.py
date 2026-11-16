@@ -144,7 +144,9 @@ def captured_snapshot(callback=None):
 def _produce(spec=None):
     source = original() if spec is None else spec
     declarations = normalize_declarations(source)
-    analysis = MetadataAnalysis(declarations).run()
+    analysis = MetadataAnalysis(
+        declarations, facts_backend="metadata", search_mode="exact"
+    ).run()
     analysis["clarity_weights"] = {"block": 4, "characteristic": 2, "dispatch": 1}
     return source, declarations, analysis, search_frontier(analysis)
 
@@ -590,7 +592,9 @@ def test_native_original_schedule_joint_gate_and_imputation_replay(
     ):
         source = json.loads((directory / (name + ".json")).read_text())
         declaration = normalize_declarations(source)
-        analysis = MetadataAnalysis(declaration).run()
+        analysis = MetadataAnalysis(
+            declaration, facts_backend="metadata", search_mode="exact"
+        ).run()
         with subtests.test(fixture=name):
             report = check_semantics(source, declaration, analysis)
             assert (report["status"]) == ("PASS"), report
@@ -615,7 +619,9 @@ def test_original_relation_payload_and_consumer_wiring_mutations(
     for name, kind, field in attacks:
         source = json.loads((directory / (name + ".json")).read_text())
         declaration = normalize_declarations(source)
-        analysis = MetadataAnalysis(declaration).run()
+        analysis = MetadataAnalysis(
+            declaration, facts_backend="metadata", search_mode="exact"
+        ).run()
         modified = deepcopy(declaration)
         relation = next(item for item in modified["relations"] if item["kind"] == kind)
         if field == "remove":
@@ -676,7 +682,12 @@ def test_derived_category_codes_retain_original_value_dependencies() -> None:
 def test_projection_budget_and_malformed_metadata_never_pass_as_complete() -> None:
     source = original()
     normalized = normalize_declarations(source)
-    analysis = MetadataAnalysis(normalized, limits={"projection_policies": 0}).run()
+    analysis = MetadataAnalysis(
+        normalized,
+        limits={"projection_policies": 0},
+        facts_backend="metadata",
+        search_mode="exact",
+    ).run()
     checked = check_semantics(source, normalized, analysis)
     assert not (analysis["discovery_complete"])
     assert not (checked["projection_family_complete_verified"])

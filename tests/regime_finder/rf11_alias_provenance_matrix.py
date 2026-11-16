@@ -139,6 +139,8 @@ def one_case(project, case, oracle, fixture):
             project,
             [
                 "_lcm_regime_finder.pipeline",
+                "--facts-backend",
+                "metadata",
                 "--search-mode",
                 "exact",
                 str(original),

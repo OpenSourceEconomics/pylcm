@@ -108,7 +108,12 @@ def test_constructor_export_and_public_analysis_retain_original_domain(
             assert (BUILDS) == (after_construction)
             source = load_problem(destination)
             assert (source["capture_report"]["status"]) == ("COMPLETE")
-            resolved = find_regimes(source, budget={"seconds": 30}, search_mode="exact")
+            resolved = find_regimes(
+                source,
+                budget={"seconds": 30},
+                search_mode="exact",
+                facts_backend="metadata",
+            )
             assert (resolved["status"]) == ("COMPLETE"), resolved["analysis"][
                 "obligations"
             ]
@@ -128,7 +133,12 @@ def test_constructor_export_and_public_analysis_retain_original_domain(
 
             source = deepcopy(source)
             without_resolutions(source)
-            report = find_regimes(source, budget={"seconds": 30}, search_mode="exact")
+            report = find_regimes(
+                source,
+                budget={"seconds": 30},
+                search_mode="exact",
+                facts_backend="metadata",
+            )
             assert (report["status"]) == ("UNRESOLVED")
             analysis = report["analysis"]
             assert ({cell["period"] for cell in analysis["declarations"]["cells"]}) == (
