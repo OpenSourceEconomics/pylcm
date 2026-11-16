@@ -32,7 +32,7 @@ backend alike:
 - `live_states` computes the least set of states each cell keeps: its own consumers'
   reads, plus the update reads for every live state of a successor.
 - `characteristic_cells` uses these to decide where a characteristic map is eligible.
-- `status_axes`, `status_points` and `lane_needs` read the facts at fixed status codes.
+- `status_axes` and `lane_needs` read the facts at fixed status codes.
 
 ## Backends
 
