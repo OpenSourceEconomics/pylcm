@@ -19,11 +19,14 @@ import hashlib
 import json
 import math
 import operator
+import sys
 from itertools import product
-from typing import Any, Mapping
+from typing import Any, Mapping, TypedDict
 
 
 _UNKNOWN = object()
+_SUPPORT_IMAGE_LIMIT = 64
+type _SupportElement = bool | int
 
 
 def _digest(value: Any) -> str:
@@ -61,10 +64,130 @@ class _Abstract:
     reads: frozenset[str] = frozenset()
     value: Any = _UNKNOWN
     proved: bool = True
+    # Element images do not assert scalar shape or change the scalar proof.
+    support_images: tuple[_SupportElement, ...] | None = None
+    # Integral Fraction literals may prove scalar comparisons, not select dtype.
+    support_comparison_images: tuple[_SupportElement, ...] | None = None
 
 
 def _constant(value: Any) -> _Abstract:
     return _Abstract(value=value)
+
+
+def _support_constant(value: object) -> _Abstract:  # noqa: PAN001 - only an authenticated literal/static binding enters this boundary
+    comparisons = (value.numerator,) if (
+        type(value) is Fraction and value.denominator == 1 and -(2**31) <= value.numerator < 2**31
+    ) else None
+    return _Abstract(value=value, support_images=_support_literal(value), support_comparison_images=comparisons)
+
+
+def _support_literal(value: object) -> tuple[_SupportElement, ...] | None:  # noqa: PAN001 - an existing scalar proof may carry an arbitrary value
+    if type(value) is bool:
+        return (value,)
+    if type(value) is int and -(2**31) <= value < 2**31:
+        return (value,)
+    return None
+
+
+def _support_static(value: object) -> _Abstract:  # noqa: PAN001 - static categorical/clock values arrive from checked metadata
+    answer = _support_constant(value)
+    images = answer.support_images if answer.support_images is not None else answer.support_comparison_images
+    return _Abstract(value=value, support_comparison_images=images)
+
+
+def _support_literal_wire(value: object) -> bool:  # noqa: PAN001 - reject arrays/objects before a decoded binding can seed an image
+    value_type = type(value)
+    if value_type is bool or value_type is int:
+        return True
+    if value_type is not dict or not isinstance(value, dict):
+        return False
+    return (len(value) == 1 and all(type(key) is str for key in value)
+            and 'fraction' in value and type(value['fraction']) is str)
+
+
+def _support_categorical_int32(value: object) -> tuple[_SupportElement, ...] | None:  # noqa: PAN001 - a captured categorical member is untrusted wire metadata
+    """Read only a canonical 0-D int32 member, never a generic array binding."""
+    value_type = type(value)
+    if value_type is not dict or not isinstance(value, dict):
+        return None
+    if (any(type(key) is not str for key in value)
+            or set(value) != {'kind', 'shape', 'dtype', 'sha256', 'values'}):
+        return None
+    if (type(value['kind']) is not str or value['kind'] != 'array'
+            or type(value['dtype']) is not str or value['dtype'] != 'int32'
+            or type(value['shape']) is not list or value['shape']):
+        return None
+    element, digest = value['values'], value['sha256']
+    if (type(element) is not int or not -(2**31) <= element < 2**31
+            or type(digest) is not str):
+        return None
+    expected = hashlib.sha256(element.to_bytes(4, byteorder=sys.byteorder, signed=True)).hexdigest()
+    return (element,) if digest == expected else None
+
+
+def _support_union(
+    *groups: tuple[_SupportElement, ...] | None,
+) -> tuple[_SupportElement, ...] | None:
+    if not groups or any(group is None or not group for group in groups):
+        return None
+    values = tuple(value for group in groups if group is not None for value in group)
+    first_type = type(values[0])
+    if first_type is not bool and first_type is not int:
+        return None
+    if any(type(value) is not first_type or _support_literal(value) is None for value in values):
+        return None
+    unique: dict[Hashable, _SupportElement] = {}
+    for value in values:
+        unique[_value_key(value)] = value
+        if len(unique) > _SUPPORT_IMAGE_LIMIT:
+            return None
+    return tuple(unique.values())
+
+
+def _support_branch(
+    *, condition: _Abstract, left: _Abstract, right: _Abstract, answer: _Abstract | None = None,
+) -> _Abstract:
+    if answer is None:
+        answer = _join(condition, left, right)
+    images = _support_union(left.support_images, right.support_images)
+    # JAX select must not silently promote a mixed bool/int or floating branch.
+    # Even an unselected branch participates in the select result dtype.
+    if images is not None and condition.support_images:
+        if all(value is True for value in condition.support_images):
+            images = left.support_images
+        elif all(value is False for value in condition.support_images):
+            images = right.support_images
+    return _Abstract(answer.reads, answer.value, answer.proved, images)
+
+
+def _support_comparison(
+    *, left: _Abstract, right: _Abstract, operation: type[ast.cmpop],
+) -> tuple[_SupportElement, ...] | None:
+    if operation is not ast.Eq and operation is not ast.NotEq:
+        return None
+    left_images = left.support_images if left.support_images is not None else left.support_comparison_images
+    right_images = right.support_images if right.support_images is not None else right.support_comparison_images
+    if left_images is None or right_images is None:
+        return None
+    if _support_union(left_images, right_images) is None:
+        return None
+    if ((left.support_comparison_images is not None and right.value is _UNKNOWN)
+            or (right.support_comparison_images is not None and left.value is _UNKNOWN)):
+        return None
+    if len(left_images) * len(right_images) > _SUPPORT_IMAGE_LIMIT:
+        return None
+    images = tuple(
+        (_value_key(a) == _value_key(b)) if operation is ast.Eq else (_value_key(a) != _value_key(b))
+        for a in left_images for b in right_images
+    )
+    return _support_union(images)
+
+
+def _support_known_branch(*, answer: _Abstract, condition: _Abstract, truth: bool) -> _Abstract:
+    images = answer.support_images if condition.support_images and all(
+        type(value) is bool and value is truth for value in condition.support_images
+    ) else None
+    return _Abstract(answer.reads, answer.value, answer.proved, images)
 
 
 def _join(*values: _Abstract, proved: bool = True) -> _Abstract:
@@ -798,6 +921,12 @@ def _wrapped_array_formals(
     return frozenset(accepted)
 
 
+class _DerivedCodeProvider(TypedDict):
+    derived_code_of: str
+    values: Sequence[JSONValue]
+    codes: Sequence[int]
+
+
 class SourceProof:
     """Abstract interpretation of ORIGINAL callbacks, with bounded recursion.
 
@@ -807,7 +936,7 @@ class SourceProof:
     Unknown calls remain conservative and are never interpreted by spelling.
     """
 
-    def __init__(self, callbacks: Mapping[str, dict], providers: Mapping[str, str] | None = None,
+    def __init__(self, callbacks: Mapping[str, dict], providers: Mapping[str, str | _DerivedCodeProvider] | None = None,
                  static: Mapping[str, Any] | None = None, stop: Mapping[str, str] | None = None,
                  callable_records=None):
         self.callbacks = callbacks
@@ -824,21 +953,22 @@ class SourceProof:
 
     def _binding(self, value):
         try:
-            return _constant(self.callable_records.binding_value(value))
+            decoded = self.callable_records.binding_value(value)
+            return _support_constant(decoded) if _support_literal_wire(value) else _constant(decoded)
         except (ValueError, TypeError, KeyError, RecursionError):
             self.notes.add('original binding has no bounded immutable scalar interpretation')
             return _Abstract(proved=False)
 
     def _name(self, name: str) -> _Abstract:
-        if name in self.static: return _constant(_decode(self.static[name]))
+        if name in self.static: return _support_static(_decode(self.static[name]))
         if name in self.stop:
             target = self.stop[name]
-            return _constant(self.static[target]) if target in self.static else _Abstract(frozenset({target}))
+            return _support_static(self.static[target]) if target in self.static else _Abstract(frozenset({target}))
         if name in self.providers:
             target = self.providers[name]
             if isinstance(target, dict) and "derived_code_of" in target:
                 value = self._name(target["derived_code_of"])
-                if value.value is _UNKNOWN: return value
+                if value.value is _UNKNOWN: return _Abstract(value.reads, value.value, value.proved)
                 indexes = [index for index, item in enumerate(target.get("values", []))
                            if _value_key(item) == _value_key(value.value)]
                 if len(indexes) == 1 and len(target.get("codes", [])) == len(target.get("values", [])):
@@ -1013,14 +1143,16 @@ class SourceProof:
                 test = self._expr(stmt.test, env, meta)
                 remaining = statements[index + 1:]
                 if test.value is not _UNKNOWN:
-                    branch = stmt.body if test.value else stmt.orelse
-                    return self._body(branch + remaining, env, meta)
+                    truth = bool(test.value)
+                    branch = stmt.body if truth else stmt.orelse
+                    answer = self._body(branch + remaining, env, meta)
+                    return None if answer is None else _support_known_branch(answer=answer, condition=test, truth=truth)
                 else:
                     left = self._body(stmt.body + remaining, dict(env), meta)
                     right = self._body(stmt.orelse + remaining, dict(env), meta)
                     if left is None or right is None: return None
-                    if left.value is not _UNKNOWN and _value_key(left.value) == _value_key(right.value): return left
-                    return _join(test, left, right)
+                    if left.value is not _UNKNOWN and _value_key(left.value) == _value_key(right.value): return _support_branch(condition=test, left=left, right=right, answer=left)
+                    return _support_branch(condition=test, left=left, right=right)
             else:
                 return None
         return None
@@ -1081,7 +1213,7 @@ class SourceProof:
         self.steps += 1
         if self.steps > 100_000: raise ValueError("source budget")
         e = lambda child: self._expr(child, env, meta)
-        if isinstance(node, ast.Constant): return _constant(node.value)
+        if isinstance(node, ast.Constant): return _support_constant(node.value)
         if isinstance(node, ast.Name): return env[node.id] if node.id in env else self._name(node.id)
         if isinstance(node, (ast.List, ast.Tuple)):
             values = [e(child) for child in node.elts]
@@ -1098,7 +1230,25 @@ class SourceProof:
             if node.attr == "size" and self._size_operand(node.value, meta):
                 return _Abstract(value.reads, proved=value.proved)
             if value.value is not _UNKNOWN and isinstance(value.value, dict) and node.attr in value.value:
-                return _constant(value.value[node.attr])
+                answer = _constant(value.value[node.attr])
+                # A captured immutable global (e.g. a categorical class) is a
+                # literal source; a computed/local mapping is not a new seed.
+                if isinstance(node.value, ast.Name) and node.value.id in meta.get('bindings', {}):
+                    raw = meta['bindings'][node.value.id]
+                    members = raw.get('members') if type(raw) is dict and raw.get('kind') == 'categorical-class' else None
+                    fn = self.callable_records.function(meta.get('source', ''))
+                    local = set(meta.get('raw_arguments', ())) | set(meta.get('arguments', ()))
+                    if (fn is not None and type(members) is dict
+                            and all(type(key) is str for key in members) and node.attr in members):
+                        local.update(item.id for item in ast.walk(fn) if isinstance(item, ast.Name) and isinstance(item.ctx, ast.Store))
+                        if node.value.id not in local:
+                            member = members[node.attr]
+                            if _support_literal_wire(member):
+                                return _support_constant(answer.value)
+                            images = _support_categorical_int32(member)
+                            if images is not None and type(answer.value) is int and answer.value == images[0]:
+                                return _Abstract(answer.reads, answer.value, answer.proved, images)
+                return answer
             return _Abstract(value.reads, proved=False)
         if isinstance(node, ast.Subscript):
             value, index = e(node.value), e(node.slice)
@@ -1110,14 +1260,19 @@ class SourceProof:
             return _join(*(e(value) for value in (node.lower, node.upper, node.step) if value is not None))
         if isinstance(node, ast.IfExp):
             condition = e(node.test)
-            if condition.value is not _UNKNOWN: return e(node.body if condition.value else node.orelse)
+            if condition.value is not _UNKNOWN:
+                truth = bool(condition.value)
+                answer = e(node.body if truth else node.orelse)
+                return _support_known_branch(answer=answer, condition=condition, truth=truth)
             left, right = e(node.body), e(node.orelse)
-            if left.value is not _UNKNOWN and _value_key(left.value) == _value_key(right.value): return left
-            return _join(condition, left, right)
+            if left.value is not _UNKNOWN and _value_key(left.value) == _value_key(right.value): return _support_branch(condition=condition, left=left, right=right, answer=left)
+            return _support_branch(condition=condition, left=left, right=right)
         if isinstance(node, ast.UnaryOp):
             value = e(node.operand)
             operation = {ast.Not: operator.not_, ast.USub: operator.neg, ast.UAdd: operator.pos, ast.Invert: operator.invert}.get(type(node.op))
-            return _constant(operation(value.value)) if operation and value.value is not _UNKNOWN else value
+            if operation and value.value is not _UNKNOWN:
+                return _constant(operation(value.value))
+            return _Abstract(value.reads, value.value, value.proved)
         if isinstance(node, ast.BinOp):
             left, right = e(node.left), e(node.right)
             operation = {ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul,
@@ -1127,17 +1282,30 @@ class SourceProof:
             return _join(left, right)
         if isinstance(node, ast.BoolOp):
             values = [e(child) for child in node.values]
-            if isinstance(node.op, ast.And) and any(value.value is not _UNKNOWN and not value.value for value in values): return _constant(False)
-            if isinstance(node.op, ast.Or) and any(value.value is not _UNKNOWN and value.value for value in values): return _constant(True)
-            if all(value.value is not _UNKNOWN for value in values): return _constant(all(value.value for value in values) if isinstance(node.op, ast.And) else any(value.value for value in values))
+            answer = _join(*values)
+            for value in values:
+                if value.value is _UNKNOWN:
+                    return answer
+                kind = type(value.value)
+                if (kind is not bool and kind is not int and kind is not str and kind is not Fraction
+                        and value.value is not None and (kind is not float or not math.isfinite(value.value))):
+                    return _join(*values, proved=False)
+                truth = bool(value.value)
+                if (isinstance(node.op, ast.And) and not truth) or (isinstance(node.op, ast.Or) and truth):
+                    return _Abstract(answer.reads, value.value, answer.proved)
+            if values:
+                return _Abstract(answer.reads, values[-1].value, answer.proved)
             return _join(*values)
         if isinstance(node, ast.Compare):
             values = [e(node.left)] + [e(child) for child in node.comparators]
             operations: Mapping[type[ast.cmpop], Callable[..., bool]] = {ast.Eq: operator.eq, ast.NotEq: operator.ne, ast.Lt: operator.lt, ast.LtE: operator.le,
                           ast.Gt: operator.gt, ast.GtE: operator.ge, ast.In: lambda a, b: a in b, ast.NotIn: lambda a, b: a not in b}  # codespell:ignore
             if all(value.value is not _UNKNOWN for value in values) and all(type(op) in operations for op in node.ops):
-                return _constant(all(operations[type(op)](a.value, b.value) for op, a, b in zip(node.ops, values, values[1:])))
-            return _join(*values)
+                answer = _constant(all(operations[type(op)](a.value, b.value) for op, a, b in zip(node.ops, values, values[1:])))
+            else:
+                answer = _join(*values)
+            images = _support_comparison(left=values[0], right=values[1], operation=type(node.ops[0])) if len(node.ops) == 1 else None
+            return _Abstract(answer.reads, answer.value, answer.proved, images)
         if isinstance(node, ast.Call):
             target_ref = meta.get("call_targets", {}).get(ast.unparse(node.func))
             target = self.callable_records.resolve(target_ref)
@@ -1224,9 +1392,12 @@ class SourceProof:
                     return _join(*args)
                 if allowed.get(canonical) == operation and not kwargs and not unpacked:
                     if operation == "select" and len(args) == 3:
-                        if args[0].value is not _UNKNOWN: return args[1] if args[0].value else args[2]
-                        if args[1].value is not _UNKNOWN and _value_key(args[1].value) == _value_key(args[2].value): return args[1]
-                        return _join(*args)
+                        if args[0].value is not _UNKNOWN:
+                            chosen = args[1] if args[0].value else args[2]
+                            return _support_branch(condition=args[0], left=args[1], right=args[2], answer=chosen)
+                        if args[1].value is not _UNKNOWN and _value_key(args[1].value) == _value_key(args[2].value):
+                            return _support_branch(condition=args[0], left=args[1], right=args[2], answer=args[1])
+                        return _support_branch(condition=args[0], left=args[1], right=args[2])
                     if operation == "asarray" and len(args) == 1:
                         # Conversion retains the complete operand-read bound,
                         # but never grants a Python scalar value: even Boolean

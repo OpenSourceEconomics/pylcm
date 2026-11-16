@@ -63,7 +63,7 @@ class TargetSupport:
     possible_codes: frozenset[int]
     """Possible or unproved target codes; no probability renormalisation."""
     proved: bool
-    """Whether an original deterministic update fixes the complete support."""
+    """Whether every output is covered; codes need not each be attainable."""
 
 
 @dataclass(frozen=True)
@@ -582,8 +582,17 @@ class FibreSource:
                 primitive=_Primitive(_text(callback_id), phase, relation_id),
                 fixed_statuses=statuses,
             )
-            if not answer.proved or answer.value is _UNKNOWN:
+            if not answer.proved:
                 return TargetSupport(full, False)
+            if answer.value is _UNKNOWN:
+                if not answer.support_images:
+                    return TargetSupport(full, False)
+                for image in answer.support_images:
+                    matching = categories.by_value.get(_value_key(image), frozenset())
+                    if not matching:
+                        return TargetSupport(full, False)
+                    support.update(matching)
+                continue
             matching = categories.by_value.get(_value_key(answer.value), frozenset())
             if not matching:
                 raise ValueError(
