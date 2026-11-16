@@ -1,16 +1,10 @@
-"""NOT RUN: original Python >=3.14 checker versus compact finite predicates.
-
-Run in the original project environment with this directory on PYTHONPATH:
-    python -m unittest -v native_finite_differential
-Do not import this file in the portable reviewer controls.
-"""
+"""The native Python checker agrees with the compact finite predicates."""
 
 from typing import Literal, cast
 from _lcm_regime_finder.fibre_source import _mapping
 from _lcm_regime_finder.implicit.compact_screen import Package
 
 from itertools import product
-import unittest
 
 from _lcm_regime_finder.fibre_facts import (
     JointReadSet,
@@ -99,39 +93,32 @@ def original_finite_rows(
     return tuple(rows), kept
 
 
-class TestNativeFiniteDifferential(unittest.TestCase):
-    def compare(self, package: Package, removed: frozenset[tuple[str, str]]) -> None:
-        fibres, kept = original_finite_rows(package)
-        original = check_inert_projection(fibres=fibres, kept=kept, removed=removed)
-        compact = check_screen(package, removed)
-        self.assertEqual(
-            {name: value.status for name, value in original.premises.items()},
-            {
-                name: _mapping(value)["status"]
-                for name, value in _mapping(compact["premises"]).items()
-            },
+def compare(package: Package, removed: frozenset[tuple[str, str]]) -> None:
+    fibres, kept = original_finite_rows(package)
+    original = check_inert_projection(fibres=fibres, kept=kept, removed=removed)
+    compact = check_screen(package, removed)
+    assert {name: value.status for name, value in original.premises.items()} == {
+        name: _mapping(value)["status"]
+        for name, value in _mapping(compact["premises"]).items()
+    }
+    assert original.conditions_pass == compact["conditions_pass"]
+    assert original.scope == compact["proof_scope"]
+
+
+def test_all_binary_support_relations() -> None:
+    pairs = tuple(product((0, 1), repeat=2))
+    for mask in range(16):
+        package = simple(
+            edges=tuple(pair for i, pair in enumerate(pairs) if mask & (1 << i))
         )
-        self.assertEqual(original.conditions_pass, compact["conditions_pass"])
-        self.assertEqual(original.scope, compact["proof_scope"])
-
-    def test_all_binary_support_relations(self) -> None:
-        pairs = tuple(product((0, 1), repeat=2))
-        for mask in range(16):
-            package = simple(
-                edges=tuple(pair for i, pair in enumerate(pairs) if mask & (1 << i))
+        axes = tuple(sorted(all_removed(package)))
+        for subset in range(4):
+            removed = frozenset(
+                axis for i, axis in enumerate(axes) if subset & (1 << i)
             )
-            axes = tuple(sorted(all_removed(package)))
-            for subset in range(4):
-                removed = frozenset(
-                    axis for i, axis in enumerate(axes) if subset & (1 << i)
-                )
-                with self.subTest(mask=mask, subset=subset):
-                    self.compare(package, removed)
-
-    def test_marked_cross_slice_negative_control(self) -> None:
-        package = simple(edges=((0, 1), (1, 0)), same_regime=True, marked=True)
-        self.compare(package, all_removed(package))
+            compare(package, removed)
 
 
-if __name__ == "__main__":
-    unittest.main(verbosity=2)
+def test_marked_cross_slice_negative_control() -> None:
+    package = simple(edges=((0, 1), (1, 0)), same_regime=True, marked=True)
+    compare(package, all_removed(package))

@@ -1035,10 +1035,11 @@ def normalize_declarations(snapshot,production_contract=None):
                 target_axes=[axis for axis,did in target_states.items() if phase!='solve' or normal.domains[did].get('solve_axis',True)]
                 for axis in target_axes:
                     if axis in produced:continue
-                    value=declaration.get('state_transitions',{}).get(axis)
+                    value=_select(declaration.get('state_transitions',{}).get(axis),phase,period,date)
                     if isinstance(value,dict) and 'kind' not in value:value=value.get(target)
+                    value=_select(value,phase,period,date)
                     if value is not None:
-                        relation['state_updates'][axis]=normal.callback(_select(value,phase,period,date),pointer(pointer(fp,'state_transitions'),axis))
+                        relation['state_updates'][axis]=normal.callback(value,pointer(pointer(fp,'state_transitions'),axis))
                     else:
                         from .graph_scope import IID_TYPES, AR1_TYPES, unconditioned_iid
                         domain_value=_select(functions_by_cell[target_id].get('states',{}).get(axis),phase,period+1,time[period+1])

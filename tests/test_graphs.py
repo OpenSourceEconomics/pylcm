@@ -131,6 +131,7 @@ def test_regime_checker_binds_transition_authority(*, tampered: bool) -> None:
     """The checker recognizes the native class and rejects altered sources."""
     contract = import_module("_lcm_regime_finder.current_api_contract")
     authority = contract.inspect_authority(Transition)
+    assert authority is not None
     if tampered:
         authority["file_sha256"] = "0" * 64
     assert contract.matches_authority(
