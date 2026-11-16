@@ -10,7 +10,7 @@ state/action products and Bellman rows are never enumerated here.
 from __future__ import annotations
 
 import ast
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Hashable, Mapping, Sequence, Set
 from collections import defaultdict
 from dataclasses import dataclass
 from fractions import Fraction
@@ -19,11 +19,14 @@ import hashlib
 import json
 import math
 import operator
+import sys
 from itertools import product
-from typing import Any, Mapping
+from typing import Any, Mapping, TypedDict
 
 
 _UNKNOWN = object()
+_SUPPORT_IMAGE_LIMIT = 64
+type _SupportElement = bool | int
 
 
 def _digest(value: Any) -> str:
@@ -61,10 +64,130 @@ class _Abstract:
     reads: frozenset[str] = frozenset()
     value: Any = _UNKNOWN
     proved: bool = True
+    # Element images do not assert scalar shape or change the scalar proof.
+    support_images: tuple[_SupportElement, ...] | None = None
+    # Integral Fraction literals may prove scalar comparisons, not select dtype.
+    support_comparison_images: tuple[_SupportElement, ...] | None = None
 
 
 def _constant(value: Any) -> _Abstract:
     return _Abstract(value=value)
+
+
+def _support_constant(value: object) -> _Abstract:  # noqa: PAN001 - only an authenticated literal/static binding enters this boundary
+    comparisons = (value.numerator,) if (
+        type(value) is Fraction and value.denominator == 1 and -(2**31) <= value.numerator < 2**31
+    ) else None
+    return _Abstract(value=value, support_images=_support_literal(value), support_comparison_images=comparisons)
+
+
+def _support_literal(value: object) -> tuple[_SupportElement, ...] | None:  # noqa: PAN001 - an existing scalar proof may carry an arbitrary value
+    if type(value) is bool:
+        return (value,)
+    if type(value) is int and -(2**31) <= value < 2**31:
+        return (value,)
+    return None
+
+
+def _support_static(value: object) -> _Abstract:  # noqa: PAN001 - static categorical/clock values arrive from checked metadata
+    answer = _support_constant(value)
+    images = answer.support_images if answer.support_images is not None else answer.support_comparison_images
+    return _Abstract(value=value, support_comparison_images=images)
+
+
+def _support_literal_wire(value: object) -> bool:  # noqa: PAN001 - reject arrays/objects before a decoded binding can seed an image
+    value_type = type(value)
+    if value_type is bool or value_type is int:
+        return True
+    if value_type is not dict or not isinstance(value, dict):
+        return False
+    return (len(value) == 1 and all(type(key) is str for key in value)
+            and 'fraction' in value and type(value['fraction']) is str)
+
+
+def _support_categorical_int32(value: object) -> tuple[_SupportElement, ...] | None:  # noqa: PAN001 - a captured categorical member is untrusted wire metadata
+    """Read only a canonical 0-D int32 member, never a generic array binding."""
+    value_type = type(value)
+    if value_type is not dict or not isinstance(value, dict):
+        return None
+    if (any(type(key) is not str for key in value)
+            or set(value) != {'kind', 'shape', 'dtype', 'sha256', 'values'}):
+        return None
+    if (type(value['kind']) is not str or value['kind'] != 'array'
+            or type(value['dtype']) is not str or value['dtype'] != 'int32'
+            or type(value['shape']) is not list or value['shape']):
+        return None
+    element, digest = value['values'], value['sha256']
+    if (type(element) is not int or not -(2**31) <= element < 2**31
+            or type(digest) is not str):
+        return None
+    expected = hashlib.sha256(element.to_bytes(4, byteorder=sys.byteorder, signed=True)).hexdigest()
+    return (element,) if digest == expected else None
+
+
+def _support_union(
+    *groups: tuple[_SupportElement, ...] | None,
+) -> tuple[_SupportElement, ...] | None:
+    if not groups or any(group is None or not group for group in groups):
+        return None
+    values = tuple(value for group in groups if group is not None for value in group)
+    first_type = type(values[0])
+    if first_type is not bool and first_type is not int:
+        return None
+    if any(type(value) is not first_type or _support_literal(value) is None for value in values):
+        return None
+    unique: dict[Hashable, _SupportElement] = {}
+    for value in values:
+        unique[_value_key(value)] = value
+        if len(unique) > _SUPPORT_IMAGE_LIMIT:
+            return None
+    return tuple(unique.values())
+
+
+def _support_branch(
+    *, condition: _Abstract, left: _Abstract, right: _Abstract, answer: _Abstract | None = None,
+) -> _Abstract:
+    if answer is None:
+        answer = _join(condition, left, right)
+    images = _support_union(left.support_images, right.support_images)
+    # JAX select must not silently promote a mixed bool/int or floating branch.
+    # Even an unselected branch participates in the select result dtype.
+    if images is not None and condition.support_images:
+        if all(value is True for value in condition.support_images):
+            images = left.support_images
+        elif all(value is False for value in condition.support_images):
+            images = right.support_images
+    return _Abstract(answer.reads, answer.value, answer.proved, images)
+
+
+def _support_comparison(
+    *, left: _Abstract, right: _Abstract, operation: type[ast.cmpop],
+) -> tuple[_SupportElement, ...] | None:
+    if operation is not ast.Eq and operation is not ast.NotEq:
+        return None
+    left_images = left.support_images if left.support_images is not None else left.support_comparison_images
+    right_images = right.support_images if right.support_images is not None else right.support_comparison_images
+    if left_images is None or right_images is None:
+        return None
+    if _support_union(left_images, right_images) is None:
+        return None
+    if ((left.support_comparison_images is not None and right.value is _UNKNOWN)
+            or (right.support_comparison_images is not None and left.value is _UNKNOWN)):
+        return None
+    if len(left_images) * len(right_images) > _SUPPORT_IMAGE_LIMIT:
+        return None
+    images = tuple(
+        (_value_key(a) == _value_key(b)) if operation is ast.Eq else (_value_key(a) != _value_key(b))
+        for a in left_images for b in right_images
+    )
+    return _support_union(images)
+
+
+def _support_known_branch(*, answer: _Abstract, condition: _Abstract, truth: bool) -> _Abstract:
+    images = answer.support_images if condition.support_images and all(
+        type(value) is bool and value is truth for value in condition.support_images
+    ) else None
+    return _Abstract(answer.reads, answer.value, answer.proved, images)
 
 
 def _join(*values: _Abstract, proved: bool = True) -> _Abstract:
@@ -298,6 +421,512 @@ class _CallableRecords:
         return visit(value, set(), 0)[0]
 
 
+def _same_native_wire(
+    left: object,  # noqa: PAN001 - reject arbitrary inline or captured wire metadata
+    right: object,  # noqa: PAN001 - reject arbitrary inline or captured wire metadata
+    captures: _CallableRecords,
+) -> bool:
+    """Reconcile inline declaration data with authenticated capture references.
+
+    This is equality of frozen wire descriptions, not callback/body equivalence
+    or an output value proof. Native field/type/input guards remain separate.
+    """
+    from .current_api_contract import matches_authority
+    import struct
+
+    public_fields = {
+        '_lcm.regime_building.schedules._PeriodDispatch': frozenset({'cases', 'case_names', 'case_by_period'}),
+        '_lcm.regime_building.schedules._Constant': frozenset({'value'}),
+        '_lcm.regime_building.schedules._ProbabilityConstant': frozenset({'value'}),
+        '_lcm.regime_building.transition_support._SupportedStochasticTransition': frozenset({'func', 'targets', 'fixed_component'}),
+        'lcm.transition.StochasticTransition': frozenset({'func', 'fixed_component'}),
+        '_lcm.output_roles.InRole': frozenset({'func', 'signature', 'role', 'source'}),
+        '_lcm.regime_building.value_adapter.ValueAdapter': frozenset({'func', 'decoded', 'codes', 'positions', 'encode'}),
+    }
+    remaining = 8192
+
+    def project(
+        value: object,  # noqa: PAN001 - authenticate arbitrary inline and captured native wire values
+        refs: frozenset[str] = frozenset(),
+        objects: frozenset[int] = frozenset(),
+        depth: int = 0,
+    ) -> Hashable:
+        nonlocal remaining
+        remaining -= 1
+        if remaining < 0 or depth > 64:
+            raise ValueError('native wire comparison exceeds metadata bound')
+        if value is None:
+            return ('none',)
+        if type(value) is bool or type(value) is int or type(value) is str:
+            return (type(value).__name__, value)
+        if type(value) is float and math.isfinite(value):
+            return ('float', struct.pack('!d', value))
+        container_type = type(value)
+        if (
+            container_type is not dict and container_type is not list and container_type is not tuple
+        ) or id(value) in objects:
+            raise ValueError('opaque or cyclic native wire data')
+        children = objects | {id(value)}
+        if isinstance(value, (list, tuple)):
+            return ('sequence', tuple(project(item, refs, children, depth + 1) for item in value))
+        # Exact builtin rejection above precedes this safe dictionary narrowing.
+        if not isinstance(value, dict):
+            raise ValueError('native wire mapping is not a dictionary')
+        keys: list[str] = []
+        for key in value:
+            if type(key) is not str:
+                raise ValueError('native wire mapping has a non-JSON key')
+            keys.append(key)
+        kind = value.get('kind') if type(value.get('kind')) is str else None
+        if kind == 'callable-reference' or 'capture_ref' in value:
+            if any(type(value.get(key)) is not str for key in ('capture_ref', 'identity_sha256', 'capture_graph_sha256')):
+                raise ValueError('native wire reference has untyped identity fields')
+            record = captures.resolve(value)
+            if (not isinstance(record, Mapping) or record.get('capture_status') != 'COMPLETE'
+                    or type(record.get('capture_ref')) is not str
+                    or type(record.get('identity_sha256')) is not str
+                    or type(record.get('capture_graph_sha256')) is not str):
+                raise ValueError('native wire reference is not authenticated and complete')
+            ref = record['capture_ref']
+            if ref in refs:
+                raise ValueError('native wire binding reference cycle')
+            if record.get('kind') == 'binding-record':
+                binding_type, payload = record.get('binding_type'), record.get('value')
+                if (type(binding_type) is not str
+                        or (type(payload) is dict and any(type(key) is not str for key in payload))):
+                    raise ValueError('native wire binding type or payload keys are not JSON strings')
+                if binding_type == 'builtins.tuple':
+                    valid = type(payload) is list
+                elif binding_type in {'builtins.dict', 'builtins.mappingproxy'}:
+                    valid = type(payload) is dict
+                    if valid:
+                        payload_kind = payload.get('kind') if type(payload.get('kind')) is str else None
+                        if payload_kind == 'mapping':
+                            valid = (set(payload) == {'kind', 'items'} and type(payload.get('items')) is list
+                                     and all(type(row) is list and len(row) == 2 for row in payload['items']))
+                        elif payload_kind in {'object', 'dataclass', 'array', 'callable', 'primitive', 'binding-record', 'callable-reference'}:
+                            valid = False
+                elif binding_type in {'inspect.Signature', '_lcm.output_roles.OutputRole'}:
+                    valid = (type(payload) is dict and set(payload) == {'kind', 'type', 'fields'}
+                             and payload.get('kind') == 'object' and payload.get('type') == binding_type
+                             and type(payload.get('fields')) is dict and not payload['fields'])
+                elif binding_type in {'lcm.grids.DiscreteGrid', '_lcm.grids.discrete.DiscreteGrid'}:
+                    fields = payload.get('fields') if type(payload) is dict else None
+                    valid = (type(payload) is dict and set(payload) == {'kind', 'type', 'fields'}
+                             and payload.get('kind') == 'object' and payload.get('type') == binding_type
+                             and type(fields) is dict
+                             and all(type(key) is str for key in fields)
+                             and set(fields) == {'categories', 'codes', 'ordered', 'tolerance', 'values'}
+                             and type(fields.get('ordered')) is bool
+                             and (type(fields.get('tolerance')) is int
+                                  or type(fields.get('tolerance')) is float))
+                else:
+                    valid = False
+                if not valid:
+                    raise ValueError('native wire binding type and payload form are unsupported or differ')
+                return project(payload, refs | {ref}, children, depth + 1)
+            if record.get('kind') not in {'callable', 'primitive'}:
+                raise ValueError('unsupported native wire reference kind')
+            return ('callable', ref, record.get('identity_sha256'), record.get('capture_graph_sha256'))
+        if kind in {'dataclass', 'object'} and 'callable' in value:
+            meta = captures.resolve(value['callable'])
+            receiver = meta.get('bound_self') if isinstance(meta, Mapping) else None
+            tag = value.get('type')
+            authority = meta.get('native_input_source', {}) if isinstance(meta, Mapping) else {}
+            source = authority.get('class_source') if isinstance(authority, Mapping) else None
+            fields = value.get('fields')
+            actual = receiver.get('fields') if isinstance(receiver, Mapping) else None
+            fields_type, actual_type = type(fields), type(actual)
+            if (type(tag) is not str or tag not in public_fields or not isinstance(receiver, Mapping) or receiver.get('type') != tag
+                    or value.get('canonical_type_source') != source or not matches_authority(name=tag, observed=source)
+                    or fields_type is not dict or actual_type is not dict):
+                raise ValueError('native callable envelope lacks matching class or complete fields')
+            if not isinstance(fields, dict) or not isinstance(actual, dict):
+                raise ValueError('native callable envelope fields are not dictionaries')
+            field_names: list[str] = []
+            for name in fields:
+                if type(name) is not str:
+                    raise ValueError('native callable envelope field is not a JSON key')
+                field_names.append(name)
+            if (set(field_names) != public_fields[tag]
+                    or any(type(name) is not str for name in actual)):
+                raise ValueError('native callable envelope fields are incomplete or untyped')
+            for name in field_names:
+                if name not in actual or project(fields[name], refs, children, depth + 1) != project(actual[name], refs, children, depth + 1):
+                    raise ValueError('nested native declaration and receiver fields differ')
+            return project(value['callable'], refs, children, depth + 1)
+        if (kind in {'unresolved', 'recursive-reference', 'module', 'callable', 'primitive', 'binding-record'}
+                or value.get('identity_status') or any(type(key) is not str for key in value)):
+            raise ValueError('unresolved native wire data')
+        return ('mapping', tuple((key, project(value[key], refs, children, depth + 1)) for key in sorted(keys)))
+
+    if captures.errors:
+        return False
+    try:
+        return project(left) == project(right)
+    except (TypeError, ValueError, RecursionError):
+        return False
+
+
+def _native_wrapper_inputs(original: Mapping[str, JSONValue], captures: _CallableRecords,
+                           notes: set[str] | None = None, *,
+                           _active: frozenset[int] = frozenset()) -> tuple[str, ...] | None:
+    """Check a native forwarder's complete input bound, never its output value."""
+    from .current_api_contract import (
+        NATIVE_INPUT_TYPES, matches_authority, matches_native_call, matches_output_converter,
+        matches_temporal_source, matches_native_code,
+        NATIVE_SCHEDULE_TYPES, matches_schedule_call,
+    )
+
+    def unknown(reason: str) -> None:
+        if notes is not None:
+            notes.add('native forwarder: ' + reason)
+        return None
+
+    def complete(value: JSONValue, kind: str) -> Mapping[str, Any] | None:
+        record = captures.resolve(value)
+        return record if (isinstance(record, Mapping) and record.get('kind') == kind
+                          and record.get('capture_status', 'COMPLETE') == 'COMPLETE') else None
+
+    def binding(value: JSONValue, types: Set[str]) -> JSONValue:
+        record = complete(value, 'binding-record')
+        return (record.get('value') if record is not None
+                and record.get('binding_type') in types else None)
+
+    def bare_leaf(value: JSONValue) -> Mapping[str, Any] | None:
+        record = complete(value, 'callable')
+        seen: set[str] = set()
+        while record is not None and record.get('wrapped_target_contract') == 'regenerated-beartype-wrapper/v1':
+            ref = record.get('capture_ref')
+            target_ref = record.get('wrapped_target')
+            target = complete(target_ref, 'callable')
+            if (not isinstance(ref, str) or ref in seen or target_ref != record.get('defaults', {}).get('__beartype_func')
+                    or target is None
+                    or set(target.get('arguments', ())) != set(record.get('arguments', ()))
+                    or set(target.get('raw_arguments', ())) != set(record.get('arguments', ()))):
+                return None
+            seen.add(ref)
+            record = target
+        if (record is None or record.get('bound_self') or record.get('variadic')
+                or record.get('physical_variadic')
+                or record.get('partial_target') is not None
+                or _original_inputs_unresolved(record, captures)
+                or set(record.get('raw_arguments', ())) != set(record.get('arguments', ()))
+                or set(record.get('defaults', {})) & set(record.get('arguments', ()))):
+            return None
+        return record
+
+    def temporal_inputs(record: Mapping[str, Any]) -> tuple[str, ...] | None:
+        authority = record.get('native_temporal_source')
+        if (not isinstance(authority, Mapping)
+                or not matches_temporal_source(authority=authority, source=record.get('source'),
+                                        file_sha256=record.get('source_sha256'))
+                or record.get('advertised_signature_origin') not in {
+                    'pylcm-model-declarations/v1', 'source-bound-native-temporal/v1'}
+                or record.get('variadic') or _original_inputs_unresolved(record, captures)):
+            return unknown('temporal consume source/code or finite interface is unauthenticated')
+        bindings = record.get('bindings')
+        if not isinstance(bindings, Mapping) or set(bindings) != {
+                'defaults', 'dict', 'func', 'len', 'names', 'np', 'parameter_names', 'passes_period', 'zip'}:
+            return unknown('temporal consume closure/global inventory differs')
+        defaults = binding(bindings.get('defaults'), {'builtins.tuple'})
+        names = binding(bindings.get('names'), {'builtins.tuple'})
+        parameters = binding(bindings.get('parameter_names'), {'builtins.tuple'})
+        target_ref = bindings.get('func')
+        target = bare_leaf(target_ref)
+        passes_period = bindings.get('passes_period')
+        numpy = bindings.get('np')
+        length = complete(bindings.get('len'), 'callable')
+        if (not isinstance(defaults, (list, tuple)) or defaults
+                or not isinstance(names, (list, tuple)) or not names
+                or any(type(name) is not str for name in names) or len(set(names)) != len(names)
+                or not isinstance(parameters, (list, tuple)) or any(type(name) is not str for name in parameters)
+                or type(passes_period) is not bool or target is None
+                or target_ref != record.get('temporal_target')
+                or list(names) != authority.get('temporal_names')
+                or bindings.get('dict') != {'kind': 'type', 'type': 'builtins.dict'}
+                or bindings.get('zip') != {'kind': 'type', 'type': 'builtins.zip'}
+                or length is None or length.get('module') != 'builtins' or length.get('qualname') != 'len'
+                or not isinstance(numpy, Mapping) or numpy.get('kind') != 'module' or numpy.get('name') != 'numpy'):
+            return unknown('temporal closure/default/target/time metadata or fixed globals differ')
+        free = tuple(target.get('arguments', ()))
+        expected = (*free, 'period') if 'period' not in free else free
+        if (tuple(parameters) != expected or tuple(record.get('arguments', ())) != expected
+                or passes_period != ('period' in free)
+                or not set(names) <= set(free) or set(names) & {'age', 'period'}
+                or any(kind != 'KEYWORD_ONLY' for kind in record.get('parameter_kinds', {}).values())):
+            return unknown('temporal complete target/period/schedule interface differs')
+        return expected
+
+    def leaf(value: JSONValue) -> Mapping[str, Any] | None:
+        record = complete(value, 'callable')
+        if record is not None and record.get('native_temporal_source') is not None:
+            return record if temporal_inputs(record) is not None else None
+        return bare_leaf(value)
+
+    if captures.errors:
+        return None
+    meta = complete(original.get('callable', original), 'callable')
+    if meta is None:
+        return None
+    if id(meta) in _active or len(_active) >= 32:
+        return unknown('native forwarding cycle or depth bound')
+    active = _active | {id(meta)}
+    if meta.get('native_temporal_source') is not None:
+        return temporal_inputs(meta)
+    receiver = meta.get('bound_self', {})
+    if not isinstance(receiver, Mapping):
+        return None
+    name = receiver.get('type')
+    if name not in NATIVE_INPUT_TYPES:
+        return None
+    authority = meta.get('native_input_source', {})
+    class_source = authority.get('class_source') if isinstance(authority, Mapping) else None
+    call_matches = (matches_schedule_call(name=name, authority=authority, code_sha256=meta.get('code_sha256'))
+                    if name in NATIVE_SCHEDULE_TYPES else
+                    matches_native_code(authority=authority, code_sha256=meta.get('code_sha256'))
+                    and matches_native_call(name=name, authority=class_source,
+                                            source=meta.get('source'), file_sha256=meta.get('source_sha256')))
+    if (not isinstance(receiver.get('fields'), Mapping)
+            or not call_matches
+            or meta.get('advertised_signature_origin') not in {
+                'pylcm-model-declarations/v1', 'source-bound-native-wrapper/v1'}
+            or _original_inputs_unresolved(meta, captures) or meta.get('variadic')):
+        return unknown('native receiver/call source or finite advertised interface is unauthenticated')
+    if (original.get('kind') in {'object', 'dataclass'}
+            and (original.get('type') != name or original.get('canonical_type_source') != class_source)):
+        return unknown('outer native declaration and actual receiver authority differ')
+    fields = receiver['fields']
+    inputs = tuple(meta.get('arguments', ()))
+    if name in NATIVE_SCHEDULE_TYPES and original.get('kind') in {'object', 'dataclass'}:
+        operative = (('func', 'targets', 'fixed_component') if name.endswith('._SupportedStochasticTransition')
+                     else ('func', 'fixed_component') if name == 'lcm.transition.StochasticTransition'
+                     else ('cases', 'case_names', 'case_by_period') if name.endswith('._PeriodDispatch')
+                     else ('value',))
+        outer = original.get('fields')
+        if not isinstance(outer, Mapping) or any(key not in outer or not _same_native_wire(outer[key], fields.get(key), captures) for key in operative):
+            return unknown('outer native schedule and captured receiver operative fields differ')
+
+    def forwarded(value: JSONValue) -> tuple[str, ...] | None:
+        function = leaf(value)
+        if function is not None:
+            return tuple(function.get('arguments', ()))
+        child = complete(value, 'callable')
+        return (_native_wrapper_inputs(child, captures, notes, _active=active)
+                if child is not None else None)
+
+    def immutable(value: JSONValue) -> object:
+        try:
+            return captures.binding_value(value)
+        except (TypeError, ValueError):
+            return None
+
+    if name.endswith('._PeriodDispatch'):
+        cases = binding(fields.get('cases'), {'builtins.tuple'})
+        names = immutable(fields.get('case_names'))
+        dates = immutable(fields.get('case_by_period'))
+        if (not isinstance(cases, (list, tuple)) or not cases
+                or type(names) is not tuple or len(cases) != len(names)
+                or type(dates) is not tuple or not dates
+                or any(type(index) is not int or not 0 <= index < len(cases) for index in dates)
+                or ('__lcm_sources__' in fields and fields['__lcm_sources__'] != fields.get('cases'))):
+            return unknown('native period dispatch case/table inventory differs')
+        union: set[str] = set()
+        for case, case_names in zip(cases, names, strict=True):
+            free = forwarded(case)
+            if (free is None or type(case_names) is not tuple
+                    or any(type(item) is not str for item in case_names)
+                    or len(set(case_names)) != len(case_names) or tuple(case_names) != free):
+                return unknown('native period dispatch omits or changes a case input')
+            union.update(free)
+        expected = ('period', *(item for item in sorted(union) if item != 'period'))
+        return inputs if inputs == expected else unknown('native period dispatch advertised input union differs')
+
+    if name.endswith(('._Constant', '._ProbabilityConstant')):
+        import math
+        value = immutable(fields.get('value'))
+        scalars = value if type(value) is tuple else (value,)
+        if (inputs or not scalars or any(type(item) not in (bool, int, float)
+                or (type(item) is float and not math.isfinite(item)) for item in scalars)):
+            return unknown('native probability constant lacks immutable numeric data or an empty interface')
+        return ()
+
+    if name == 'lcm.transition.StochasticTransition' or name.endswith('._SupportedStochasticTransition'):
+        if fields.get('__wrapped__') != fields.get('func'):
+            return unknown('native probability law forwarding metadata differs')
+        if name.endswith('._SupportedStochasticTransition'):
+            targets = immutable(fields.get('targets'))
+            if (type(targets) is not tuple or not targets
+                    or any(type(item) is not str for item in targets)
+                    or len(set(targets)) != len(targets) or fields.get('fixed_component') is not None):
+                return unknown('native supported probability law target/forwarding metadata differs')
+        if original.get('kind') in {'object', 'dataclass'}:
+            outer = original.get('fields')
+            operative = (('func', 'targets', 'fixed_component') if name.endswith('._SupportedStochasticTransition')
+                         else ('func', 'fixed_component'))
+            if not isinstance(outer, Mapping) or any(not _same_native_wire(outer.get(key), fields.get(key), captures)
+                    for key in operative):
+                return unknown('outer native probability law and captured receiver differ')
+        free = forwarded(fields.get('func'))
+        return inputs if free is not None and inputs == free else unknown('native probability law input interface differs')
+
+    function = leaf(fields.get('func'))
+    free = (tuple(function.get('arguments', ())) if function is not None
+            else forwarded(fields.get('func')))
+    if free is None:
+        return unknown('forwarded func has a bound, partial/default, variadic or unauthenticated free interface')
+    if name == '_lcm.regime_building.value_adapter.ValueAdapter':
+        reads = binding(fields.get('_reads'), {'builtins.tuple'})
+        codes = binding(fields.get('codes'), {'builtins.mappingproxy'})
+        decoded = binding(fields.get('decoded'), {'builtins.mappingproxy'})
+        positions = binding(fields.get('positions'), {'builtins.mappingproxy'})
+        if (not isinstance(reads, (list, tuple)) or tuple(reads) != free
+                or not all(isinstance(item, str) for item in reads)
+                or len(set(reads)) != len(reads)
+                or not isinstance(codes, Mapping) or not isinstance(decoded, Mapping)
+                or not isinstance(positions, Mapping)
+                or not set(codes) <= set(reads) or not set(decoded) <= set(reads)
+                or not set(positions) <= set(codes)
+                or not all(isinstance(key, str) and isinstance(value, str) for key, value in codes.items())):
+            return unknown('captured _reads/codes/decoded/positions do not match the complete forwarded func interface')
+        code_names = {key: value for key, value in codes.items()
+                      if isinstance(key, str) and isinstance(value, str)}
+        forwarded_reads = tuple(dict.fromkeys(code_names.get(item, item) for item in reads
+                                             if isinstance(item, str)))
+        return inputs if inputs == forwarded_reads else unknown('advertised Model names omit or change a forwarded operand')
+    if inputs != free:
+        return unknown('role wrapper advertised inputs differ from the complete forwarded func interface')
+    if (not matches_authority(name='_lcm.utils.functools._WrappedCallable', observed=authority.get('base_source'))
+            or not matches_authority(name='_lcm.output_roles.OutputRole', observed=authority.get('role_source'))):
+        return unknown('role wrapper base or role-enum source is unauthenticated')
+    bindings = meta.get('bindings', {})
+    if not isinstance(bindings, Mapping):
+        return unknown('role conversion bindings are unavailable')
+    table = binding(bindings.get('_ADAPTERS'), {'builtins.dict'})
+    entries = table.get('items') if isinstance(table, Mapping) else None
+    if not isinstance(table, Mapping) or table.get('kind') != 'mapping' or not isinstance(entries, list):
+        return unknown('role conversion table is not a complete captured mapping')
+    role_refs: list[JSONValue] = []
+    converters: set[str] = set()
+    for row in entries:
+        if not isinstance(row, list) or len(row) != 2:
+            return unknown('role conversion table has an unsupported entry')
+        role, target_ref = row
+        role_record = complete(role, 'binding-record')
+        target = leaf(target_ref)
+        converter = target.get('qualname') if target is not None else None
+        role_value = role_record.get('value') if role_record is not None else None
+        if (role_record is None or role_record.get('binding_type') != '_lcm.output_roles.OutputRole'
+                or not isinstance(role_value, Mapping)
+                or role_value.get('type') != '_lcm.output_roles.OutputRole'
+                or target is None or tuple(target.get('arguments', ())) != ('value', 'source')
+                or not isinstance(converter, str)
+                or target.get('module') != '_lcm.dtypes'
+                or not matches_output_converter(name=converter, source=target.get('source'),
+                                                file_sha256=target.get('source_sha256'))):
+            return unknown('a possible role conversion lacks its exact native source/free interface')
+        role_refs.append(role)
+        converters.add(converter)
+    if (len(role_refs) != 3 or len({_digest(ref) for ref in role_refs}) != 3
+            or fields.get('role') not in role_refs
+            or converters != {'as_bool', 'as_code', 'as_canonical_float'}):
+        return unknown('role conversion keys or possible native converters differ')
+    return inputs
+
+
+
+
+def _wrapped_array_formals(
+    meta: object,  # noqa: PAN001 - reject arbitrary malformed captured wrapper records
+    target: object,  # noqa: PAN001 - reject arbitrary malformed captured target records
+    captures: _CallableRecords,
+) -> frozenset[str]:
+    """Reconcile wrapper/signature/source-binding/alias observations, fail closed."""
+    from .current_api_contract import matches_native_floatnd_alias
+    if not isinstance(meta, Mapping) or not isinstance(target, Mapping):
+        return frozenset()
+    defaults, target_ref = meta.get('defaults'), meta.get('wrapped_target')
+    configuration = meta.get('wrapped_input_config')
+    if (meta.get('wrapped_target_contract') != 'regenerated-beartype-wrapper/v1'
+            or not isinstance(defaults, Mapping) or not isinstance(target_ref, Mapping)
+            or target_ref.get('kind') != 'callable-reference' or captures.resolve(target_ref) is not target
+            or not isinstance(configuration, Mapping) or configuration.get('kind') != 'callable-reference'
+            or configuration != defaults.get('__beartype_conf')):
+        return frozenset()
+    config = captures.resolve(configuration)
+    if (not isinstance(config, Mapping) or config.get('kind') != 'binding-record'
+            or config.get('binding_type') != 'beartype._conf.confmain.BeartypeConf'):
+        return frozenset()
+    settings = config.get('beartype_input_configuration')
+    if (type(settings) is not dict or any(type(key) is not str for key in settings)
+            or set(settings) != {'strategy', 'hint_overrides', 'numeric_tower', 'tower_source_sha256', 'violation_param_type', 'is_parameter_warning'}
+            or type(settings.get('strategy')) is not str or settings.get('strategy') not in {'O1', 'On'}
+            or settings.get('is_parameter_warning') is not False
+            or type(settings.get('violation_param_type')) is not str
+            or settings.get('violation_param_type') != 'beartype.roar.BeartypeCallHintParamViolation'
+            or type(settings.get('numeric_tower')) is not bool):
+        return frozenset()
+    overrides = settings['hint_overrides']
+    if settings['numeric_tower'] is False:
+        if type(overrides) is not list or overrides or settings['tower_source_sha256'] is not None:
+            return frozenset()
+    else:
+        if (type(overrides) is not list or len(overrides) != 2
+                or any(type(row) is not list or len(row) != 2 or type(row[0]) is not str
+                       or type(row[1]) is not list or any(type(name) is not str for name in row[1]) for row in overrides)
+                or overrides != [['builtins.float', ['builtins.float', 'builtins.int']],
+                                 ['builtins.complex', ['builtins.complex', 'builtins.float', 'builtins.int']]]
+                or type(settings['tower_source_sha256']) is not str
+                or settings['tower_source_sha256'] != 'f203b27517f63c7b3185d4a721cf94635cb163d823675afb7c96acf644063520'):
+            return frozenset()
+        import sys
+        from pathlib import Path
+        from types import ModuleType
+        tower_module = sys.modules.get('beartype._conf._confoverrides')
+        tower_file = vars(tower_module).get('__file__') if type(tower_module) is ModuleType else None
+        try:
+            if (not isinstance(tower_file, str)
+                    or any(part.casefold() in {"econ_data", "hrs"} for part in Path(tower_file).parts)
+                    or Path(tower_file).is_symlink()
+                    or hashlib.sha256(Path(tower_file).read_bytes()).hexdigest() != settings['tower_source_sha256']):
+                return frozenset()
+        except OSError:
+            return frozenset()
+    signature_refs = meta.get('wrapped_parameter_annotation_refs', {})
+    target_refs, bindings = target.get('parameter_annotation_refs', {}), target.get('annotation_bindings', {})
+    arguments, target_arguments = meta.get('arguments'), target.get('arguments')
+    source = target.get('source')
+    target_defaults = target.get('defaults', {})
+    if (not all(isinstance(value, Mapping) for value in (signature_refs, target_refs, bindings))
+            or not isinstance(arguments, list) or not isinstance(target_arguments, list)
+            or not isinstance(source, str) or not isinstance(target_defaults, Mapping)):
+        return frozenset()
+    fn = captures.function(source)
+    if fn is None:
+        return frozenset()
+    annotations = {arg.arg: arg.annotation for arg in (*fn.args.posonlyargs, *fn.args.args, *fn.args.kwonlyargs)}
+    accepted = set()
+    for name, reference in signature_refs.items():
+        annotation = annotations.get(name)
+        if (not isinstance(name, str) or name in target_defaults or name not in arguments or name not in target_arguments
+                or not isinstance(reference, Mapping) or reference.get('kind') != 'callable-reference'
+                or reference != target_refs.get(name) or not isinstance(annotation, ast.Name)
+                or reference != bindings.get(annotation.id)):
+            continue
+        raw = captures.resolve(reference)
+        if (isinstance(raw, Mapping) and raw.get('kind') == 'binding-record'
+                and raw.get('binding_type') == 'typing.TypeAliasType'
+                and matches_native_floatnd_alias(raw.get('native_array_annotation'))):
+            accepted.add(name)
+    return frozenset(accepted)
+
+
+class _DerivedCodeProvider(TypedDict):
+    derived_code_of: str
+    values: Sequence[JSONValue]
+    codes: Sequence[int]
+
+
 class SourceProof:
     """Abstract interpretation of ORIGINAL callbacks, with bounded recursion.
 
@@ -307,7 +936,7 @@ class SourceProof:
     Unknown calls remain conservative and are never interpreted by spelling.
     """
 
-    def __init__(self, callbacks: Mapping[str, dict], providers: Mapping[str, str] | None = None,
+    def __init__(self, callbacks: Mapping[str, dict], providers: Mapping[str, str | _DerivedCodeProvider] | None = None,
                  static: Mapping[str, Any] | None = None, stop: Mapping[str, str] | None = None,
                  callable_records=None):
         self.callbacks = callbacks
@@ -320,24 +949,26 @@ class SourceProof:
         self.steps = 0
         self.active: list[str] = []
         self.resolving_inputs: set[str] = set()
+        self._array_context: list[tuple[Mapping, frozenset[str]]] = []
 
     def _binding(self, value):
         try:
-            return _constant(self.callable_records.binding_value(value))
+            decoded = self.callable_records.binding_value(value)
+            return _support_constant(decoded) if _support_literal_wire(value) else _constant(decoded)
         except (ValueError, TypeError, KeyError, RecursionError):
             self.notes.add('original binding has no bounded immutable scalar interpretation')
             return _Abstract(proved=False)
 
     def _name(self, name: str) -> _Abstract:
-        if name in self.static: return _constant(_decode(self.static[name]))
+        if name in self.static: return _support_static(_decode(self.static[name]))
         if name in self.stop:
             target = self.stop[name]
-            return _constant(self.static[target]) if target in self.static else _Abstract(frozenset({target}))
+            return _support_static(self.static[target]) if target in self.static else _Abstract(frozenset({target}))
         if name in self.providers:
             target = self.providers[name]
             if isinstance(target, dict) and "derived_code_of" in target:
                 value = self._name(target["derived_code_of"])
-                if value.value is _UNKNOWN: return value
+                if value.value is _UNKNOWN: return _Abstract(value.reads, value.value, value.proved)
                 indexes = [index for index, item in enumerate(target.get("values", []))
                            if _value_key(item) == _value_key(value.value)]
                 if len(indexes) == 1 and len(target.get("codes", [])) == len(target.get("values", [])):
@@ -350,7 +981,8 @@ class SourceProof:
             return self.callback(target)
         return _Abstract(frozenset({name}))
 
-    def callback(self, callback: str | Mapping[str, Any], supplied: Mapping[str, _Abstract] | None = None) -> _Abstract:
+    def callback(self, callback: str | Mapping[str, Any], supplied: Mapping[str, _Abstract] | None = None,
+                 *, _checked_array_formals: frozenset[str] = frozenset()) -> _Abstract:
         if self.steps > 100_000 or len(self.active) > 32:
             self.notes.add("source proof budget exhausted")
             return _join(_Abstract(frozenset(self.providers)),
@@ -377,10 +1009,17 @@ class SourceProof:
             self.notes.add("shared original callback reference is unavailable or changed")
         else:
             meta = resolved
+        if any(not isinstance(meta.get(field, {}), Mapping) for field in ("bindings", "defaults", "partial_bindings", "partial_keywords")):
+            self.notes.add("original callable has malformed binding or default metadata")
+            return _join(_Abstract(frozenset(self.providers)), *(supplied or {}).values(), proved=False)
+        native_inputs = _native_wrapper_inputs(meta, self.callable_records, self.notes)
         formals = list(meta.get("raw_arguments", meta.get("arguments", record.get("arguments", []))))
         provided = supplied or {}
         env = {key: self._binding(value) for key, value in meta.get("bindings", {}).items()}
         effective = list(meta.get("arguments", formals))
+        if native_inputs is not None:
+            formals = list(native_inputs)
+            effective = list(native_inputs)
         exposed = set(effective)
         input_names = list(dict.fromkeys([*formals, *effective]))
         # Keyword partials supply defaults, not immutable application values.
@@ -419,6 +1058,41 @@ class SourceProof:
         if unresolved_inputs:
             self.notes.add('finite effective original input signature is unavailable')
             return _join(fallback, proved=False)
+        if native_inputs is not None:
+            # The checked forwarder retains every operand and proves no value.
+            return _join(*(env[name] for name in native_inputs), *provided.values())
+        if meta.get('native_temporal_source') is not None:
+            self.notes.add('native temporal input or source agreement is unavailable')
+            return _join(fallback, proved=False)
+        from .current_api_contract import NATIVE_INPUT_TYPES
+        native_kind = meta.get('type', meta.get('bound_self', {}).get('type'))
+        if native_kind in NATIVE_INPUT_TYPES:
+            self.notes.add('native forwarder input or source agreement is unavailable')
+            return _join(fallback, proved=False)
+        if meta.get('wrapped_target_contract') == 'regenerated-beartype-wrapper/v1':
+            # A generic __wrapped__ reference does not authenticate forwarding.
+            target_ref = meta.get('wrapped_target')
+            default_ref = meta.get('defaults', {}).get('__beartype_func')
+            target = self.callable_records.resolve(target_ref)
+            if (not isinstance(target_ref, Mapping)
+                    or target_ref.get('kind') != 'callable-reference'
+                    or target_ref != default_ref
+                    or not isinstance(target, Mapping)
+                    or target.get('kind') != 'callable'
+                    or target.get('capture_status', 'COMPLETE') != 'COMPLETE'
+                    or target.get('variadic', False)
+                    or set(target.get('raw_arguments', ())) != set(effective)
+                    or set(target.get('arguments', ())) != set(effective)
+                    or ident in self.active):
+                self.notes.add('authenticated wrapper has no finite matching forwarding target')
+                return _join(fallback, proved=False)
+            self.active.append(ident)
+            try:
+                answer = self.callback(target, {name: env[name] for name in effective},
+                    _checked_array_formals=_wrapped_array_formals(meta, target, self.callable_records))
+                return fallback if structural and not answer.proved else answer
+            finally:
+                self.active.pop()
         if structural:
             from .graph_scope import identity_state
             state = identity_state(meta)
@@ -441,6 +1115,7 @@ class SourceProof:
             self.notes.add("captured signature/source mismatch " + ident)
             return fallback
         self.active.append(ident)
+        self._array_context.append((meta, _checked_array_formals))
         try:
             answer = self._body(fn.body, env, meta)
             return fallback if answer is None or (structural and not answer.proved) else answer
@@ -448,6 +1123,7 @@ class SourceProof:
             self.notes.add("unsupported original scalar operation " + ident)
             return fallback
         finally:
+            self._array_context.pop()
             self.active.pop()
 
     def _body(self, statements: list, env: dict, meta: Mapping) -> _Abstract | None:
@@ -467,23 +1143,77 @@ class SourceProof:
                 test = self._expr(stmt.test, env, meta)
                 remaining = statements[index + 1:]
                 if test.value is not _UNKNOWN:
-                    branch = stmt.body if test.value else stmt.orelse
-                    return self._body(branch + remaining, env, meta)
+                    truth = bool(test.value)
+                    branch = stmt.body if truth else stmt.orelse
+                    answer = self._body(branch + remaining, env, meta)
+                    return None if answer is None else _support_known_branch(answer=answer, condition=test, truth=truth)
                 else:
                     left = self._body(stmt.body + remaining, dict(env), meta)
                     right = self._body(stmt.orelse + remaining, dict(env), meta)
                     if left is None or right is None: return None
-                    if left.value is not _UNKNOWN and _value_key(left.value) == _value_key(right.value): return left
-                    return _join(test, left, right)
+                    if left.value is not _UNKNOWN and _value_key(left.value) == _value_key(right.value): return _support_branch(condition=test, left=left, right=right, answer=left)
+                    return _support_branch(condition=test, left=left, right=right)
             else:
                 return None
         return None
+
+    def _size_operand(self, node: ast.AST, meta: Mapping) -> bool:
+        """Recognize only a checked unchanged formal/subscript or array producer."""
+        if isinstance(node, ast.Subscript):
+            return self._size_operand(node.value, meta)
+        if self._native_array_chain(node, meta):
+            return True
+        if not isinstance(node, ast.Name) or not self._array_context:
+            return False
+        context, names = self._array_context[-1]
+        fn = self.callable_records.function(meta.get('source', ''))
+        if context is not meta or node.id not in names or fn is None:
+            return False
+        return not any(isinstance(item, ast.Name) and item.id == node.id
+                       and isinstance(item.ctx, (ast.Store, ast.Del)) for item in ast.walk(fn))
+
+    def _dtype_operand(self, node: ast.AST, env: Mapping[str, _Abstract], meta: Mapping) -> _Abstract:
+        reference = meta.get('dtype_references', {}).get(ast.unparse(node))
+        target = self.callable_records.resolve(reference)
+        fn = self.callable_records.function(meta.get('source', ''))
+        base = node
+        while isinstance(base, ast.Attribute):
+            base = base.value
+        locals_ = set(meta.get('raw_arguments', ())) | set(meta.get('arguments', ()))
+        if fn is not None:
+            locals_.update(item.id for item in ast.walk(fn) if isinstance(item, ast.Name) and isinstance(item.ctx, ast.Store))
+        if (isinstance(base, ast.Name) and base.id not in locals_ and isinstance(target, Mapping)
+                and target.get('kind') == 'primitive' and target.get('resolution') == 'actual_object_identity'
+                and target.get('operation') == 'array_dtype'
+                and target.get('implementation_seal') == 'captured-native-numeric-object-code/v1'
+                and target.get('canonical') in {module + '.' + name for module in ('numpy', 'jax.numpy')
+                    for name in ('bool_', 'int32', 'int64', 'float32', 'float64')}):
+            return _Abstract()
+        operand = self._expr(node, env, meta)
+        return _Abstract(operand.reads, proved=False)
+
+    def _native_array_chain(self, node: ast.AST, meta: Mapping) -> bool:
+        """Type authority comes from captured actual array producers, not names."""
+        if not isinstance(node, ast.Call):
+            return False
+        if isinstance(node.func, ast.Attribute) and node.func.attr == 'astype':
+            return self._native_array_chain(node.func.value, meta)
+        target = self.callable_records.resolve(meta.get('call_targets', {}).get(ast.unparse(node.func)))
+        if (not isinstance(target, Mapping) or target.get('kind') != 'primitive'
+                or target.get('resolution') != 'actual_object_identity'
+                or target.get('implementation_seal') != 'captured-native-numeric-object-code/v1'):
+            return False
+        canonical, operation = target.get('canonical'), target.get('operation')
+        allowed = {'numpy.asarray': 'asarray', 'jax.numpy.asarray': 'asarray',
+                   'jax.numpy.where': 'select', **{'jax.numpy.' + name: name
+                   for name in ('maximum', 'minimum', 'exp', 'clip', 'stack', 'sum', 'log', 'sqrt')}}
+        return canonical in allowed and allowed[canonical] == operation
 
     def _expr(self, node: ast.AST, env: Mapping[str, _Abstract], meta: Mapping) -> _Abstract:
         self.steps += 1
         if self.steps > 100_000: raise ValueError("source budget")
         e = lambda child: self._expr(child, env, meta)
-        if isinstance(node, ast.Constant): return _constant(node.value)
+        if isinstance(node, ast.Constant): return _support_constant(node.value)
         if isinstance(node, ast.Name): return env[node.id] if node.id in env else self._name(node.id)
         if isinstance(node, (ast.List, ast.Tuple)):
             values = [e(child) for child in node.elts]
@@ -497,23 +1227,52 @@ class SourceProof:
             return _join(*(item for pair in pairs for item in pair))
         if isinstance(node, ast.Attribute):
             value = e(node.value)
+            if node.attr == "size" and self._size_operand(node.value, meta):
+                return _Abstract(value.reads, proved=value.proved)
             if value.value is not _UNKNOWN and isinstance(value.value, dict) and node.attr in value.value:
-                return _constant(value.value[node.attr])
+                answer = _constant(value.value[node.attr])
+                # A captured immutable global (e.g. a categorical class) is a
+                # literal source; a computed/local mapping is not a new seed.
+                if isinstance(node.value, ast.Name) and node.value.id in meta.get('bindings', {}):
+                    raw = meta['bindings'][node.value.id]
+                    members = raw.get('members') if type(raw) is dict and raw.get('kind') == 'categorical-class' else None
+                    fn = self.callable_records.function(meta.get('source', ''))
+                    local = set(meta.get('raw_arguments', ())) | set(meta.get('arguments', ()))
+                    if (fn is not None and type(members) is dict
+                            and all(type(key) is str for key in members) and node.attr in members):
+                        local.update(item.id for item in ast.walk(fn) if isinstance(item, ast.Name) and isinstance(item.ctx, ast.Store))
+                        if node.value.id not in local:
+                            member = members[node.attr]
+                            if _support_literal_wire(member):
+                                return _support_constant(answer.value)
+                            images = _support_categorical_int32(member)
+                            if images is not None and type(answer.value) is int and answer.value == images[0]:
+                                return _Abstract(answer.reads, answer.value, answer.proved, images)
+                return answer
             return _Abstract(value.reads, proved=False)
         if isinstance(node, ast.Subscript):
             value, index = e(node.value), e(node.slice)
             if value.value is not _UNKNOWN and index.value is not _UNKNOWN: return _constant(value.value[index.value])
             return _join(value, index)
+        if isinstance(node, ast.Slice):
+            # The slice is structural indexing metadata; retaining its reads
+            # requires no exact Python/array index or numeric-value assertion.
+            return _join(*(e(value) for value in (node.lower, node.upper, node.step) if value is not None))
         if isinstance(node, ast.IfExp):
             condition = e(node.test)
-            if condition.value is not _UNKNOWN: return e(node.body if condition.value else node.orelse)
+            if condition.value is not _UNKNOWN:
+                truth = bool(condition.value)
+                answer = e(node.body if truth else node.orelse)
+                return _support_known_branch(answer=answer, condition=condition, truth=truth)
             left, right = e(node.body), e(node.orelse)
-            if left.value is not _UNKNOWN and _value_key(left.value) == _value_key(right.value): return left
-            return _join(condition, left, right)
+            if left.value is not _UNKNOWN and _value_key(left.value) == _value_key(right.value): return _support_branch(condition=condition, left=left, right=right, answer=left)
+            return _support_branch(condition=condition, left=left, right=right)
         if isinstance(node, ast.UnaryOp):
             value = e(node.operand)
             operation = {ast.Not: operator.not_, ast.USub: operator.neg, ast.UAdd: operator.pos, ast.Invert: operator.invert}.get(type(node.op))
-            return _constant(operation(value.value)) if operation and value.value is not _UNKNOWN else value
+            if operation and value.value is not _UNKNOWN:
+                return _constant(operation(value.value))
+            return _Abstract(value.reads, value.value, value.proved)
         if isinstance(node, ast.BinOp):
             left, right = e(node.left), e(node.right)
             operation = {ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul,
@@ -523,20 +1282,40 @@ class SourceProof:
             return _join(left, right)
         if isinstance(node, ast.BoolOp):
             values = [e(child) for child in node.values]
-            if isinstance(node.op, ast.And) and any(value.value is not _UNKNOWN and not value.value for value in values): return _constant(False)
-            if isinstance(node.op, ast.Or) and any(value.value is not _UNKNOWN and value.value for value in values): return _constant(True)
-            if all(value.value is not _UNKNOWN for value in values): return _constant(all(value.value for value in values) if isinstance(node.op, ast.And) else any(value.value for value in values))
+            answer = _join(*values)
+            for value in values:
+                if value.value is _UNKNOWN:
+                    return answer
+                kind = type(value.value)
+                if (kind is not bool and kind is not int and kind is not str and kind is not Fraction
+                        and value.value is not None and (kind is not float or not math.isfinite(value.value))):
+                    return _join(*values, proved=False)
+                truth = bool(value.value)
+                if (isinstance(node.op, ast.And) and not truth) or (isinstance(node.op, ast.Or) and truth):
+                    return _Abstract(answer.reads, value.value, answer.proved)
+            if values:
+                return _Abstract(answer.reads, values[-1].value, answer.proved)
             return _join(*values)
         if isinstance(node, ast.Compare):
             values = [e(node.left)] + [e(child) for child in node.comparators]
             operations: Mapping[type[ast.cmpop], Callable[..., bool]] = {ast.Eq: operator.eq, ast.NotEq: operator.ne, ast.Lt: operator.lt, ast.LtE: operator.le,
                           ast.Gt: operator.gt, ast.GtE: operator.ge, ast.In: lambda a, b: a in b, ast.NotIn: lambda a, b: a not in b}  # codespell:ignore
             if all(value.value is not _UNKNOWN for value in values) and all(type(op) in operations for op in node.ops):
-                return _constant(all(operations[type(op)](a.value, b.value) for op, a, b in zip(node.ops, values, values[1:])))
-            return _join(*values)
+                answer = _constant(all(operations[type(op)](a.value, b.value) for op, a, b in zip(node.ops, values, values[1:])))
+            else:
+                answer = _join(*values)
+            images = _support_comparison(left=values[0], right=values[1], operation=type(node.ops[0])) if len(node.ops) == 1 else None
+            return _Abstract(answer.reads, answer.value, answer.proved, images)
         if isinstance(node, ast.Call):
             target_ref = meta.get("call_targets", {}).get(ast.unparse(node.func))
             target = self.callable_records.resolve(target_ref)
+            if (isinstance(node.func, ast.Attribute) and node.func.attr == 'astype'
+                    and self._native_array_chain(node.func.value, meta)
+                    and ((len(node.args) == 1 and not node.keywords)
+                         or (not node.args and len(node.keywords) == 1 and node.keywords[0].arg == 'dtype'))):
+                receiver = e(node.func.value)
+                dtype = self._dtype_operand(node.args[0] if node.args else node.keywords[0].value, env, meta)
+                return _join(receiver, dtype)
             operand_node, class_node = node.args if len(node.args) == 2 else (None, None)
             callee_node = node.func
             if (isinstance(target_ref, Mapping) and target_ref.get("kind") == "callable-reference"
@@ -569,7 +1348,10 @@ class SourceProof:
                     # Numeric metadata does not establish a native operand's Python type.
                     return _Abstract(operand.reads, proved=operand.proved)
             args = [e(arg) for arg in node.args]
-            kwargs = {kw.arg: e(kw.value) for kw in node.keywords if kw.arg is not None}
+            kwargs = {kw.arg: (self._dtype_operand(kw.value, env, meta)
+                        if isinstance(target, Mapping) and target.get('operation') == 'asarray' and kw.arg == 'dtype'
+                        else e(kw.value)) for kw in node.keywords if kw.arg is not None}
+            unpacked = [e(kw.value) for kw in node.keywords if kw.arg is None]
             if isinstance(target, dict) and target.get("kind") == "callable":
                 names = target.get("arguments", target.get("raw_arguments", []))
                 kinds = target.get("parameter_kinds", {})
@@ -591,19 +1373,44 @@ class SourceProof:
                            "numpy.logical_and": "logical_and", "jax.numpy.logical_and": "logical_and",
                            "numpy.logical_or": "logical_or", "jax.numpy.logical_or": "logical_or",
                            "numpy.asarray": "asarray", "jax.numpy.asarray": "asarray"}
-                if allowed.get(canonical) == operation and not kwargs:
+                sealed = target.get('implementation_seal') == 'captured-native-numeric-object-code/v1'
+                if (allowed.get(canonical) == operation == 'asarray' and sealed
+                        and len(args) == 1 and set(kwargs) <= {'dtype'}
+                        and all(kw.arg is not None for kw in node.keywords)):
+                    return _join(*args, *kwargs.values())
+                numeric = {module + '.' + name: name for module in ('numpy', 'jax.numpy')
+                           for name in ('maximum', 'minimum', 'exp', 'clip', 'stack', 'sum', 'log', 'sqrt')}
+                arity = {'maximum': 2, 'minimum': 2, 'exp': 1, 'clip': 3, 'stack': 1, 'sum': 1, 'log': 1, 'sqrt': 1}
+                if (sealed and canonical in {'numpy.sum', 'jax.numpy.sum'} and operation == 'sum'
+                        and len(args) == 1 and set(kwargs) == {'axis'} and not unpacked):
+                    axis = kwargs['axis'].value
+                    if (axis is None or type(axis) is int
+                            or (isinstance(axis, tuple) and all(type(item) is int for item in axis))):
+                        return _join(*args, *kwargs.values())
+                if (sealed and numeric.get(canonical) == operation and not kwargs and not unpacked
+                        and len(args) == arity.get(operation)):
+                    return _join(*args)
+                if allowed.get(canonical) == operation and not kwargs and not unpacked:
                     if operation == "select" and len(args) == 3:
-                        if args[0].value is not _UNKNOWN: return args[1] if args[0].value else args[2]
-                        if args[1].value is not _UNKNOWN and _value_key(args[1].value) == _value_key(args[2].value): return args[1]
-                        return _join(*args)
-                    if operation == "asarray" and len(args) == 1: return args[0]
+                        if args[0].value is not _UNKNOWN:
+                            chosen = args[1] if args[0].value else args[2]
+                            return _support_branch(condition=args[0], left=args[1], right=args[2], answer=chosen)
+                        if args[1].value is not _UNKNOWN and _value_key(args[1].value) == _value_key(args[2].value):
+                            return _support_branch(condition=args[0], left=args[1], right=args[2], answer=args[1])
+                        return _support_branch(condition=args[0], left=args[1], right=args[2])
+                    if operation == "asarray" and len(args) == 1:
+                        # Conversion retains the complete operand-read bound,
+                        # but never grants a Python scalar value: even Boolean
+                        # array arithmetic differs from Python Boolean math.
+                        operand = args[0]
+                        return _Abstract(operand.reads, proved=operand.proved)
                     if operation in {"logical_and", "logical_or"} and len(args) == 2:
                         if all(arg.value is not _UNKNOWN for arg in args): return _constant(bool(args[0].value and args[1].value) if operation == "logical_and" else bool(args[0].value or args[1].value))
                         return _join(*args)
             self.notes.add("opaque call target " + ast.unparse(node.func))
             # Unknown helper may have captured dependencies. Its signature and
             # every original formal remain a conservative proof obligation.
-            return _join(*args, *kwargs.values(), *env.values(), proved=False)
+            return _join(*args, *kwargs.values(), *unpacked, *env.values(), proved=False)
         return _join(*env.values(), proved=False)
 
 
@@ -1933,10 +2740,10 @@ def _check_capture(original: dict, normalized: dict, fail, unknown) -> None:
             fail("surplus original state producer update", relation=transition.get("id"))
         for axis in target_axes:
             intrinsic = False
-            raw = declaration.get("state_transitions", {}).get(axis)
+            raw = selected(declaration.get("state_transitions", {}).get(axis), phase, cell["period"])
             if isinstance(raw, dict) and "kind" not in raw: raw = raw.get(target["regime"])
-            if raw is not None: raw = selected(raw, phase, cell["period"])
-            else:
+            raw = selected(raw, phase, cell["period"])
+            if raw is None:
                 latent='_lcm.processes.joint_normal_lowering._JointNormalCoordinate'
                 iid={'lcm.processes.'+n for n in ('NormalIIDProcess','UniformIIDProcess','LogNormalIIDProcess','NormalMixtureIIDProcess')} | {latent}
                 persistent={'lcm.processes.'+n for n in ('TauchenAR1Process','RouwenhorstAR1Process','TauchenNormalMixtureAR1Process')}|{'_lcm.processes.ar1_on_nodes._TauchenOnNodesProcess'}

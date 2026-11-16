@@ -366,5 +366,65 @@ class DiagramTests(unittest.TestCase):
         self.assertFalse(result["proved"])
 
 
+class SupportImageCodecTests(unittest.TestCase):
+    def test_historical_eval_three_fields_remain_byte_exact(self) -> None:
+        from _lcm_regime_finder.implicit.implicit_core import Eval, UNKNOWN
+
+        old = ["Eval", [["frozenset", []], ["Unknown", []], ["bool", True]]]
+        self.assertEqual(pack(Eval(frozenset())), old)
+        self.assertEqual(unpack(old), Eval(frozenset(), UNKNOWN, True))
+
+    def test_eval_image_roundtrip_and_leaf_identity(self) -> None:
+        from _lcm_regime_finder.implicit.implicit_core import Eval, UNKNOWN
+
+        left = Eval(frozenset({"choice"}), UNKNOWN, True, (1, 2))
+        right = Eval(frozenset({"choice"}), UNKNOWN, True, (3, 4))
+        boolean = Eval(frozenset(), UNKNOWN, True, (False, True))
+        for value in (left, right, boolean):
+            self.assertEqual(unpack(pack(value)), value)
+        self.assertNotEqual(pack(left), pack(right))
+        diagram = MDD(())
+        self.assertNotEqual(diagram.leaf(left), diagram.leaf(right))
+        self.assertNotEqual(
+            diagram.leaf(boolean),
+            diagram.leaf(Eval(frozenset(), UNKNOWN, True, (0, 1))),
+        )
+
+    def test_malformed_fourth_fields_are_rejected(self) -> None:
+        from _lcm_regime_finder.records import JSONValue
+
+        malformed: tuple[JSONValue, ...] = (
+            ["NoneType", None],
+            ["tuple", []],
+            ["list", [["int", 1]]],
+            ["tuple", [["bool", True], ["int", 1]]],
+            ["tuple", [["int", 1], ["int", 1]]],
+            ["tuple", [["int", 2**31]]],
+            ["tuple", [["float", "0x1.0000000000000p+0"]]],
+            ["tuple", [["dict", []]]],
+            ["tuple", [["int", value] for value in range(65)]],
+        )
+        for image in malformed:
+            wire: JSONValue = [
+                "Eval",
+                [["frozenset", []], ["Unknown", []], ["bool", True], image],
+            ]
+            with self.assertRaises((TypeError, ValueError)):
+                unpack(wire)
+
+    def test_fake_int_is_rejected_before_its_equality_or_hash(self) -> None:
+        from _lcm_regime_finder.implicit.implicit_core import Eval, UNKNOWN
+
+        class FakeInt(int):
+            def __eq__(self, _other: object) -> bool:
+                raise AssertionError("Support codec must not call fake-int equality")
+
+            def __hash__(self) -> int:
+                raise AssertionError("Support codec must not call fake-int hashing")
+
+        with self.assertRaises(ValueError):
+            pack(Eval(frozenset(), UNKNOWN, True, (FakeInt(1),)))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -38,6 +38,10 @@ def installed_candidate() -> SourceVersion:
             "source645",
             "source639-builtin-int-v1",
             "source645-builtin-int-v1",
+            "source639-dense-wrappers-v1",
+            "source645-dense-wrappers-v1",
+            "source639-bounded-support-v1",
+            "source645-bounded-support-v1",
         )
         if resolve_source_candidate(source_version=name).source_files == actual
     ]

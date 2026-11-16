@@ -2,13 +2,25 @@
 
 from copy import deepcopy
 import functools
+import inspect
 from pathlib import Path
 import tempfile
+from types import MappingProxyType
+from typing import Literal, cast
 
 from beartype import beartype, BeartypeConf, BeartypeStrategy
+import pytest
+from lcm.declarations import FunctionDeclaration
+from lcm.typing import UserFunction
 from _lcm_regime_finder import find_regimes, verify_production_result
-from _lcm_regime_finder.callable_identity import _beartype_interface
+from _lcm_regime_finder.callable_identity import (
+    _beartype_interface,
+    capture_session,
+    resolve_callable,
+)
 from _lcm_regime_finder.model_snapshot import source_function
+from _lcm_regime_finder.records import JSONValue
+from _lcm_regime_finder.semantic_check import SourceProof
 from tests.regime_finder.test_metadata_independent import captured_snapshot
 
 
@@ -16,7 +28,26 @@ def typed_history(history: int) -> int:
     raise AssertionError("Export must never evaluate an economic callback")
 
 
+def typed_history_value(*, history: int) -> int:
+    return history + 1
+
+
 CONF = BeartypeConf(strategy=BeartypeStrategy.On, is_pep484_tower=True)
+
+
+def _declared_capture(
+    function: UserFunction,
+) -> tuple[dict[str, JSONValue], dict[str, JSONValue]]:
+    with capture_session() as session:
+        session.declaration_interfaces = MappingProxyType(
+            {
+                id(function): FunctionDeclaration(
+                    function=function, signature=inspect.signature(function)
+                )
+            }
+        )
+        record = source_function(function)
+    return record, session.records
 
 
 def test_native_model_export_keeps_beartyped_utility_and_default_aggregator() -> None:
@@ -101,6 +132,21 @@ def test_generated_wrapper_is_reconciled_without_mutating_or_calling_target() ->
         for option in item["options"]
     )
     assert (verify_production_result(source, result)["status"]) == ("PASS")
+    declared, records = _declared_capture(wrapper)
+    target = resolve_callable(declared.get("wrapped_target", {}), records)
+    assert (
+        declared["arguments"],
+        declared["parameter_kinds"],
+        declared["advertised_signature_origin"],
+        declared.get("wrapped_target_contract"),
+        target.get("qualname"),
+    ) == (
+        ["history"],
+        {"history": "POSITIONAL_OR_KEYWORD"},
+        "pylcm-model-declarations/v1",
+        "regenerated-beartype-wrapper/v1",
+        typed_history.__qualname__,
+    )
 
 
 def test_marker_alone_and_changed_wrapper_cannot_claim_a_finite_interface() -> None:
@@ -120,6 +166,38 @@ def test_marker_alone_and_changed_wrapper_cannot_claim_a_finite_interface() -> N
     defaults["__beartype_func"] = lambda history: 42
     setattr(altered, "__kwdefaults__", defaults)
     assert (_beartype_interface(altered)) is None
+    for untrusted in (forged, changed, altered):
+        declared, _ = _declared_capture(untrusted)
+        assert "wrapped_target_contract" not in declared
+
+
+def test_declared_generated_wrapper_preserves_verified_body_reads() -> None:
+    """Authenticate a finite typed body without evaluating its wrapped function."""
+    wrapper = beartype(conf=CONF)(typed_history_value)
+    original, records = _declared_capture(wrapper)
+    answer = SourceProof(
+        {"utility": {"original": original}}, callable_records=records
+    ).callback("utility")
+    assert (answer.proved, answer.reads) == (True, frozenset({"history"}))
+
+
+@pytest.mark.parametrize("field", ("contract", "default"))
+def test_declared_generated_wrapper_rejects_changed_transport(
+    field: Literal["contract", "default"],
+) -> None:
+    """A changed transport marker or target default cannot prove fewer reads."""
+    wrapper = beartype(conf=CONF)(typed_history_value)
+    original, records = _declared_capture(wrapper)
+    changed = deepcopy(original)
+    if field == "contract":
+        changed["wrapped_target_contract"] = "unverified"
+    else:
+        defaults = cast("dict[str, JSONValue]", changed["defaults"])
+        defaults["__beartype_func"] = {}
+    answer = SourceProof(
+        {"utility": {"original": changed}}, callable_records=records
+    ).callback("utility")
+    assert not answer.proved
 
 
 def test_original_payload_still_controls_independent_signature_authority() -> None:
