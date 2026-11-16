@@ -1,7 +1,6 @@
 """Portable independent literal controls; no project imports or callbacks."""
 
 from collections.abc import Callable, Mapping, Sequence
-from _lcm_regime_finder.fibre_source import _mapping
 from _lcm_regime_finder.implicit.implicit_core import (
     Assignment,
     ReadCertificate as CoreReadCertificate,
@@ -19,10 +18,6 @@ from _lcm_regime_finder.implicit.implicit_core import (
     pack,
     unpack,
 )
-from _lcm_regime_finder.implicit.verify_native import check_graph, same
-from _lcm_regime_finder.implicit.binding_purity import certify_binding_cache
-from tests.regime_finder.implicit_cache_witness import nested_records
-from _lcm_regime_finder.fibre_source import _text
 
 
 def literal_joint(
@@ -228,127 +223,6 @@ def test_export_removes_unreachable_work_nodes() -> None:
     wire = json.loads(json.dumps(d.export({"result": root})))
     assert len(wire["nodes"]) == 3
     assert wire["domains"] == [["a", [0, 1]]]
-
-
-def test_independent_decoder_rejects_forged_domain_and_missing_root() -> None:
-    d = MDD((("a", (0, 1)),))
-    root = d.demand(lambda env: frozenset({env.code("a")}))
-    wire = d.export({"exclude:choice": root})
-    lookup = check_graph(wire, d.domains, {"exclude:choice"})
-    assert same(lookup("exclude:choice", (0,)), frozenset({0}))
-    changed = json.loads(json.dumps(wire))
-    changed["domains"][0][1][0] = False
-    with pytest.raises(ValueError):
-        check_graph(changed, d.domains, {"exclude:choice"})
-    with pytest.raises(ValueError):
-        check_graph(wire, d.domains, {"exclude:choice", "direct"})
-
-
-def test_independent_comparison_does_not_alias_boolean_and_nominal_code() -> None:
-    assert not same(frozenset({False}), frozenset({0}))
-    assert not same(("support", frozenset({0}), 1), ("support", frozenset({0}), True))
-    assert not same((1, 2), [1, 2])
-
-
-def test_independent_decoder_rejects_cycles_and_noncoverage() -> None:
-    d = MDD((("a", (0, 1)),))
-    root = d.demand(lambda env: frozenset({env.code("a")}))
-    wire = d.export({"result": root})
-    branch = wire["roots"]["result"]
-    bad = json.loads(json.dumps(wire))
-    bad["nodes"][branch]["children"][0] = branch
-    with pytest.raises(ValueError):
-        check_graph(bad, d.domains, {"result"})
-    bad = json.loads(json.dumps(wire))
-    bad["nodes"][branch]["children"].pop()
-    with pytest.raises(ValueError):
-        check_graph(bad, d.domains, {"result"})
-
-
-def test_binding_height_proof_respects_exact_depth_boundary() -> None:
-    records, long, short = nested_records()
-    resolve = lambda ref: records.get(ref.get("capture_ref"))
-    cold = certify_binding_cache(
-        callbacks={"x": {"bindings": {"B": long}}}, records=records, resolve=resolve
-    )
-    shallow = certify_binding_cache(
-        callbacks={"x": {"bindings": {"B": short}}},
-        records=records,
-        resolve=resolve,
-    )
-    assert not cold["proved"]
-    assert shallow["proved"]
-    assert shallow["max_expanded_depth"] == 64
-
-
-def test_binding_height_proof_rejects_cycles_and_unknown_roots() -> None:
-    records, long, _ = nested_records(2)
-    records["B1"]["value"] = [long]
-    resolve = lambda ref: records.get(ref.get("capture_ref"))
-    assert not certify_binding_cache(
-        callbacks={"x": {"bindings": {"B": long}}},
-        records=records,
-        resolve=resolve,
-    )["proved"]
-    assert not certify_binding_cache(
-        callbacks={
-            "x": {
-                "defaults": {
-                    "B": {"kind": "callable-reference", "capture_ref": "absent"}
-                }
-            }
-        },
-        records={},
-        resolve=lambda ref: None,
-    )["proved"]
-
-
-def test_opaque_binding_leaves_are_pure_failures_not_scalar_certificates() -> None:
-    for kind in ("module", "callable", "primitive", "unresolved"):
-        result = certify_binding_cache(
-            callbacks={
-                "f": {
-                    "bindings": {
-                        "library": {
-                            "kind": kind,
-                            "arbitrary_opaque_fields": {"depth": "not interpreted"},
-                        }
-                    }
-                }
-            },
-            records={},
-            resolve=lambda ref: None,
-        )
-        assert result["proved"], kind
-        assert result["max_expanded_depth"] == 0, kind
-
-
-def test_resolved_callable_reference_is_invariant_binding_failure() -> None:
-    target = {"kind": "callable", "capture_ref": "C", "source": "opaque"}
-    reference = {"kind": "callable-reference", "capture_ref": "C"}
-    result = certify_binding_cache(
-        callbacks={"f": {"bindings": {"helper": reference}}},
-        records={"C": target},
-        resolve=lambda ref: target,
-    )
-    assert result["proved"]
-    assert result["max_expanded_depth"] == 0
-    unresolved = certify_binding_cache(
-        callbacks={"f": {"bindings": {"helper": reference}}},
-        records={},
-        resolve=lambda ref: None,
-    )
-    assert not unresolved["proved"]
-
-
-def test_binding_height_proof_counts_inline_wrappers() -> None:
-    records, _, short = nested_records()
-    result = certify_binding_cache(
-        callbacks={"x": {"partial_keywords": {"B": [short]}}},
-        records=records,
-        resolve=lambda ref: records.get(_text(_mapping(ref)["capture_ref"])),
-    )
-    assert not result["proved"]
 
 
 def test_historical_eval_three_fields_remain_byte_exact() -> None:

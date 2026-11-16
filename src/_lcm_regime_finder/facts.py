@@ -34,7 +34,6 @@ from .semantic_check import (
     _feasibility_channels,
     _identity_callback,
     _identity_update,
-    _original_inputs_unresolved,
     _original_transition_contexts,
     _providers,
     _static,
@@ -343,10 +342,7 @@ class MetadataFacts:
                 for name, domain in c[kind].items():
                     if domain not in self.domains:
                         raise ValueError(f"Unknown domain {name}/{domain}")
-            self.constants[c["id"]] = {
-                name: self.domains[domain]["values"][0] for name, domain in c["states"].items()
-                if self.domains[domain].get("size") == 1
-                and len(self.domains[domain].get("values", [])) == 1}
+            self.constants[c["id"]] = {k: v for k, v in _static(c, self.domains).items() if k in c["states"]}
             self.forced[c["id"]] = self.forced_actions(c)
             self._env_cache.clear()
         for relation in self.relations:
@@ -770,16 +766,21 @@ class SourceFacts:
         cut = {name: "@retained_characteristic" for name, provider in providers.items()
                if not isinstance(provider, dict) and provider in stops}
         static = dict(self._static[cell["id"]])
+        values = dict(static)
         for name, code in statuses.items():
             domain = self.domains[cell["states"][name]]
-            static[name] = domain["values"][domain["codes"].index(code)]
-        value = SourceProof(self.callbacks, providers, _codes(cell, self.domains, static), cut, self.captures).callback(callback)
-        if isinstance(original, Mapping) and not value.proved and (
-            original.get("kind") not in {"callable", "primitive"}
-            or original.get("variadic")
-            or _original_inputs_unresolved(original, self.captures)
-        ):
-            # An opaque native callback is not evidence of independence.
+            if isinstance(domain.get("values"), list):
+                values[name] = domain["values"][domain["codes"].index(code)]
+        bound = _codes(cell, self.domains, values)
+        for name, code in statuses.items():
+            # The fixed code itself, not one recovered from a value that
+            # several codes may share.
+            argument = cell.get("category_codes", {}).get(name, {}).get("argument", name + "_code")
+            bound[argument] = code
+        value = SourceProof(self.callbacks, providers, bound, cut, self.captures).callback(callback)
+        if not value.proved:
+            # A callback the interpreter cannot follow is not evidence of
+            # independence: it reads every coordinate.
             return frozenset(axes)
         aliases = {record["argument"]: axis for axis, record in cell.get("category_codes", {}).items()}
         aliases.update({axis + "_code": axis for axis in axes})

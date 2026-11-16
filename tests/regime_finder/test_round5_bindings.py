@@ -1090,7 +1090,7 @@ def _array_input_resealed(captured, mutation: str):
     """Reuse the existing genuine-wire rehasher after a scoped metadata mutation."""
     from copy import deepcopy
     from _lcm_regime_finder.semantic_check import _CallableRecords
-    from tests.regime_finder.test_fibre_source import _native_wire_retyped_reference
+    from tests.regime_finder.test_source_proof import _native_wire_retyped_reference
 
     table = deepcopy(captured["callable_records"])
     wrapper = table[captured["capture_ref"]]

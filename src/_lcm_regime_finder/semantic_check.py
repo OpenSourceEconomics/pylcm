@@ -1429,14 +1429,20 @@ def _identity_update(update: Any, state: str) -> bool:
 
 
 def _dated(cell: dict) -> dict:
-    return {key: cell[key] for key in ("age", "period") if cell.get(key) is not None}
+    """Bind the cell's dates; a rational age label is the exact age it names."""
+    result = {key: cell[key] for key in ("age", "period") if cell.get(key) is not None}
+    if isinstance(result.get("age"), str):
+        result["age"] = Fraction(result["age"])
+    return result
 
 
 def _static(cell: dict, domains: dict) -> dict:
     result = _dated(cell)
     for axis, did in cell.get("states", {}).items():
         domain = domains.get(did, {})
-        if domain.get("size") == 1 and len(domain.get("values", [])) == 1:
+        # A carried-only state is imputed in the solve, so a single simulated
+        # value does not make it constant.
+        if domain.get("size") == 1 and len(domain.get("values", [])) == 1 and not domain.get("solve_imputation"):
             result[axis] = domain["values"][0]
     return result
 
