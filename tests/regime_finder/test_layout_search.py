@@ -9,7 +9,8 @@ import pytest
 
 from _lcm_regime_finder.declarations import normalize_declarations
 from _lcm_regime_finder.graph_scope import apply_scope
-from _lcm_regime_finder.layout_search import dense_regimes, regime_kinds
+from _lcm_regime_finder.facts import Record
+from _lcm_regime_finder.layout_search import LayoutProblem, dense_regimes, regime_kinds
 from _lcm_regime_finder.model_snapshot import read_model
 from _lcm_regime_finder.records import JSONValue
 from lcm import DiscreteGrid, InitialNodes, Model, Periods, Regime, categorical
@@ -156,3 +157,55 @@ def test_a_fibre_keeps_what_its_status_point_needs_statuses_included() -> None:
                 "experience": experience,
             }
             assert fibre_live(facts, cell, point, memo) == live, point
+
+
+def _search(model: Model, **limits: int) -> tuple[Record, LayoutProblem]:
+    from _lcm_regime_finder.facts import make_facts
+    from _lcm_regime_finder.layout_search import search_layouts
+
+    declarations = _declarations(model)
+    facts = make_facts("dense", declarations, {"seconds": 120}, lambda: None)
+    budget = {"max_blocks": 64, **limits}
+    return (
+        search_layouts(declarations, facts, budget, lambda: None),
+        LayoutProblem(declarations, facts, budget, lambda: None),
+    )
+
+
+@pytest.mark.parametrize("fixture", ["joint", "life"])
+def test_the_recurrence_matches_literal_enumeration(fixture) -> None:
+    """w(n) and ev*(k) equal the literal minimum over every partition and cut."""
+    from .layout_oracle import literal_tables
+    from .test_status_splitting import joint_model
+
+    result, problem = _search(joint_model() if fixture == "joint" else life_model())
+    exact, at_most = literal_tables(problem)
+    assert {e["blocks"]: (e["evaluations"], e["storage"]) for e in result["exact"]} == {
+        n: v for n, v in exact.items() if n >= len(problem.dense)
+    }
+    curve = {
+        p["max_blocks"]: (p["evaluations"], p["blocks"], p["storage"])
+        for p in result["curve"]
+    }
+    assert {k: curve[k] for k in at_most} == at_most
+    assert all(curve[k] == at_most[max(at_most)] for k in curve if k > max(at_most))
+
+
+def test_a_given_layout_is_priced_from_its_fibres() -> None:
+    """Pooling young and old pays both regimes' labels in both periods."""
+    from _lcm_regime_finder.layout_search import analyze_layouts
+
+    result = analyze_layouts(
+        life_model(),
+        limits={"max_blocks": 8},
+        price=[
+            {"regimes": ["young", "old"], "periods": [0, 1]},
+            {"regimes": ["dead"], "periods": [2]},
+        ],
+    )
+    pooled, dead = result["priced"]
+    assert (pooled["evaluations"], pooled["storage"]) == (2 * 2 * 2, 2 * 2 * 2)
+    assert pooled["states"] == {"regime": ["old", "young"], "health": [0, 1]}
+    assert dead["evaluations"] == 2
+    assert result["dense_count"] == 3 * 2
+    assert set(result["phase_timings"]) == {"facts", "search"}

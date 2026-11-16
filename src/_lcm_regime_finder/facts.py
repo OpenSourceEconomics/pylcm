@@ -315,17 +315,25 @@ def lane_needs(
 
 
 
-def linked_points(facts: Facts, relation: Record, target_cell: Record, point: Mapping[str, int]) -> list[dict[str, int]]:
+def linked_points(
+    facts: Facts,
+    relation: Record,
+    target_cell: Record,
+    point: Mapping[str, int],
+    ordinary: frozenset[str] = frozenset(),
+) -> list[dict[str, int]]:
     """Return the target status points a link from `point` may reach.
 
     A status that an identity update carries unchanged keeps its code; every
     other target status may take any code. Leaving a link in needs no proof
-    (Supplement :214-216).
+    (Supplement :214-216). Statuses in `ordinary` are coordinates, not statuses.
     """
     source = facts.cells[relation["source"]]
     updates = relation.get("state_updates", {})
     choices = []
     for name, codes in status_axes(facts, target_cell):
+        if name in ordinary:
+            continue
         carried = (name in point and target_cell["states"][name] == source["states"].get(name)
                    and name in updates and facts.identity_update(updates[name], name, name))
         choices.append((name, (point[name],) if carried else codes))
@@ -337,6 +345,7 @@ def fibre_live(
     cell: Record,
     point: Mapping[str, int],
     memo: dict,
+    ordinary: frozenset[str] = frozenset(),
     _active: frozenset = frozenset(),
 ) -> set[str]:
     """Return the live state coordinates of the fibre at `point`, statuses included.
@@ -347,8 +356,9 @@ def fibre_live(
     with the released statuses free at once (Remark "Reads must be joint"): the
     statuses start fixed at the point and are released in name order whenever
     the release adds no read of the released status. A status left fixed is live.
+    Statuses in `ordinary` are never fixed: the fibre is their union.
     """
-    key = (cell["id"], tuple(sorted(point.items())))
+    key = (cell["id"], tuple(sorted(point.items())), ordinary)
     if key in memo:
         return memo[key]
     successors = []
@@ -356,12 +366,12 @@ def fibre_live(
         for target in relation.get("targets", []):
             target_cell = facts.cells[target]
             live: set[str] = set()
-            for target_point in linked_points(facts, relation, target_cell, point):
-                target_key = (target, tuple(sorted(target_point.items())))
+            for target_point in linked_points(facts, relation, target_cell, point, ordinary):
+                target_key = (target, tuple(sorted(target_point.items())), ordinary)
                 if target_key in _active:
                     live |= set(target_cell["states"])
                 else:
-                    live |= fibre_live(facts, target_cell, target_point, memo, _active | {key})
+                    live |= fibre_live(facts, target_cell, target_point, memo, ordinary, _active | {key})
             successors.append((relation, live))
 
     def needs(fixed: Mapping[str, int]) -> set[str]:
