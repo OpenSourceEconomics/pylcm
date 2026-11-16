@@ -124,6 +124,20 @@ improvement required over the unchanged original. It selects an eligible, indepe
 checked candidate only when that improvement is established; otherwise it retains the
 original. Changing the weights and rerunning can change which candidates are examined.
 
+### Status splitting
+
+A categorical state such as employment can change which other states matter. If the
+unemployed neither earn from experience nor carry it forward, a regime that keeps
+experience for everyone stores rows nobody reads. With `facts_backend="dense"` or
+`"implicit"`, the analysis offers a split: each lane is a set of codes of one status
+state, solved on only the states its codes need. In the example, the unemployed lane
+keeps no other state and the employed lane keeps experience, so 2 × 3 rows become 1 + 3.
+The checker confirms that the lanes partition the status codes and that no lane drops a
+state its codes need. `RegimeBlock.lanes` lists the lanes of a split block as
+`lcm.graphs.StatusLane` records, and the report prints them next to the block's states.
+The `metadata` backend has no per-status facts and never offers a split; the report says
+so.
+
 The default recommendation also defers an extra regime used only to omit newly inactive
 coordinates at the final decision date. Such candidates remain visible with their
 checks. This is a recommendation preference, not a claim that the transformation is

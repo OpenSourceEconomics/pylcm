@@ -275,6 +275,43 @@ def characteristic_cells(
     return eligible, requires
 
 
+def lane_needs(
+    facts: Facts, cell: Record, live: Mapping[str, set[str]], statuses: Mapping[str, int]
+) -> set[str]:
+    """Return the states a cell needs at the points with these status codes.
+
+    That is what the cell's consumers read there, plus what its updates read
+    for every live state of a possible successor. The fixed statuses and the
+    constant states are not needed as coordinates.
+    """
+    needs = current_reads(facts, cell, statuses=statuses)
+    for relation in live_relations(facts, cell["id"]):
+        for target in relation.get("targets", []):
+            for target_axis in live[target]:
+                if "produces" in relation and target_axis not in relation["produces"]:
+                    continue
+                needs |= update_reads(facts, relation, target_axis, statuses=statuses)
+    return needs & set(cell["states"]) - set(facts.constants[cell["id"]]) - set(statuses)
+
+
+def lane_rows(lanes: list[Record], axis_domain: Record, domains: Mapping[str, Record]) -> int:
+    """Return the state rows of a split: each lane's own grid, summed.
+
+    A lane with several status codes keeps the status as a coordinate.
+    """
+    total = 0
+    for lane in lanes:
+        rows = 1
+        for domain_id in lane["states"].values():
+            if domains[domain_id].get("solve_axis") is not False:
+                rows *= domains[domain_id]["size"]
+        codes = next(iter(lane["codes"].values()))
+        if len(codes) > 1 and axis_domain.get("solve_axis") is not False:
+            rows *= len(codes)
+        total += rows
+    return total
+
+
 class MetadataFacts:
     """Facts from the admitted scalar expression language of the declarations.
 
@@ -800,11 +837,14 @@ class ImplicitFacts:
 
     def callback_reads(self, callback, cell, phase, *, stops=frozenset(), relation=None, statuses=None):
         """Return the coordinates `callback` reads; a point query walks a diagram."""
-        if statuses is None:
-            return self.dense.callback_reads(callback, cell, phase, stops=stops, relation=relation)
+        axes = status_axes(self.dense, cell)
+        if statuses is None or set(statuses) != {name for name, _ in axes}:
+            # A diagram addresses complete status points only.
+            return self.dense.callback_reads(
+                callback, cell, phase, stops=stops, relation=relation, statuses=statuses
+            )
         key = (callback, cell["id"], phase, stops, id(relation) if relation is not None else None)
         if key not in self._diagrams:
-            axes = status_axes(self.dense, cell)
             names = [name for name, _ in axes]
 
             def point(assignment):

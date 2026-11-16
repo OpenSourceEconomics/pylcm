@@ -138,6 +138,15 @@ def _axes(axes, domains):
     for axis, domain_id in sorted((axes or {}).items()):
         domain = domains.get(domain_id, {})
         size = domain.get("size")
+        if domain.get("kind") == "lanes":
+            status = domain["status_axis"]
+            lanes = "; ".join(
+                f"{status} {', '.join(map(str, lane['codes'][status]))}: "
+                + (", ".join(lane["states"]) or "no other states")
+                for lane in domain["lanes"]
+            )
+            parts.append(f"split by {status} [{lanes}] ({_number(size)} rows)")
+            continue
         parts.append(f"{axis} ({_number(size)} values)" if type(size) is int else f"{axis} (size not supplied)")
     return "; ".join(parts) or "None"
 

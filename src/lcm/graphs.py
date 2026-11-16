@@ -15,6 +15,7 @@ from lcm.regime_analysis import (
     RegimeCheck,
     RegimeCost,
     SearchMode,
+    StatusLane,
 )
 from lcm.regime_analysis import result_from_report as _result_from_report
 from lcm.typing import Phase
@@ -26,6 +27,7 @@ __all__ = [
     "RegimeCandidate",
     "RegimeCheck",
     "RegimeCost",
+    "StatusLane",
     "analyze_regime_structure",
     "digraph",
     "find_regimes",

@@ -1705,6 +1705,7 @@ def _check_semantics(original: dict, normalized: dict, analysis: dict, *, check_
         facts = make_facts(analysis.get("facts_backend", "metadata"), dict(normalized, callbacks=authentic_callbacks),
                            {"seconds": float("inf"), "metadata_categories": 100_000}, lambda: None)
     checked_options: dict[str, list[dict]] = {}
+    split_live = None
     for cell_id, cell in cells.items():
         diagnostic_scope = {"scope": "source", "cell": cell_id}
         options = analysis.get("interfaces", {}).get(cell_id, {}).get("options", [])
@@ -1713,6 +1714,12 @@ def _check_semantics(original: dict, normalized: dict, analysis: dict, *, check_
         if len({option.get("id") for option in options}) != len(options): fail("duplicate option IDs", cell=cell_id)
         for option in options:
             diagnostic_scope = {"scope": "option", "cell": cell_id, "option": option.get("id")}
+            if "lanes" in option:
+                if split_live is None:
+                    from .facts import live_states
+                    split_live, _ = live_states(facts, lambda: None)
+                _check_lanes(option, cell, domains, facts, split_live, fail)
+                option = _lane_view(option, cell)
             state_projection = option.get("state_projection", {})
             reconstruction = option.get("action_reconstruction", {})
             if set(state_projection) != set(cell.get("states", {})): fail("state projection coverage", cell=cell_id, option=option.get("id"))
@@ -1823,7 +1830,7 @@ def _check_semantics(original: dict, normalized: dict, analysis: dict, *, check_
             stops = identity_stops(callbacks, [p["callback"] for p in source_option.get("state_projection", {}).values() if p.get("kind") == "characteristic"])
             static = _static(source_cell, domains)
             static.update(source_option.get("constants", {}))
-            available = set(source_option.get("states", {})) | set(source_option.get("actions", {}))
+            available = set(_lane_view(source_option, source_cell).get("states", {})) | set(source_option.get("actions", {}))
             for action, embedding in source_option.get("action_reconstruction", {}).items():
                 if embedding.get("kind") == "constant": static[action] = embedding.get("value")
             phases = ("solve", "simulation") if relation.get("phase", "both") == "both" else (relation["phase"],)
@@ -1881,6 +1888,45 @@ def _check_semantics(original: dict, normalized: dict, analysis: dict, *, check_
             "dense_cartesian_rows_evaluated": 0,
             "projection_family_complete_verified": policy_coverage,
             "trusted_boundary": ["supplied original declaration/capture", "captured actual-object primitive identity", "pure deterministic scalar callback contract", "original joint law retained as one relation"]}
+
+
+def _lane_view(option: dict, cell: dict) -> dict:
+    """See a status split through the states its lanes keep, and its axis."""
+    lanes = option.get("lanes")
+    if not lanes:
+        return option
+    axis = next(iter(lanes[0].get("codes", {})), None)
+    states = {name: domain for lane in lanes for name, domain in lane.get("states", {}).items()}
+    if axis in cell.get("states", {}):
+        states[axis] = cell["states"][axis]
+    return {**option, "states": states}
+
+
+def _check_lanes(option: dict, cell: dict, domains: dict, facts, live, fail) -> None:
+    """A split's lanes partition one status axis and keep every needed state."""
+    from .facts import lane_needs, lane_rows, status_axes
+    lanes = option["lanes"]
+    axes = {name for lane in lanes for name in lane.get("codes", {})}
+    if len(axes) != 1 or any(len(lane.get("codes", {})) != 1 for lane in lanes):
+        fail("status split must use exactly one axis", cell=cell["id"]); return
+    axis = axes.pop()
+    codes = dict(status_axes(facts, cell)).get(axis)
+    split_codes = [code for lane in lanes for code in lane["codes"][axis]]
+    if codes is None or sorted(split_codes) != sorted(codes):
+        fail("status lanes do not partition the axis codes", cell=cell["id"], axis=axis); return
+    for lane in lanes:
+        for name, domain in lane.get("states", {}).items():
+            if name == axis or cell["states"].get(name) != domain:
+                fail("status lane changes a state domain", cell=cell["id"], state=name)
+        for code in lane["codes"][axis]:
+            missing = lane_needs(facts, cell, live, {axis: code}) - set(lane.get("states", {}))
+            if missing:
+                fail("status lane drops a needed state", cell=cell["id"], axis=axis, code=code, states=sorted(missing))
+    records = list(option.get("states", {}).values())
+    domain = domains.get(records[0], {}) if len(records) == 1 else {}
+    if (domain.get("kind") != "lanes" or domain.get("lanes") != lanes or domain.get("status_axis") != axis
+            or domain.get("size") != lane_rows(lanes, domains[cell["states"][axis]], domains)):
+        fail("status split rows differ from its lanes", cell=cell["id"])
 
 
 def _policy_coverage(declaration: dict, analysis: dict, fail, unknown, facts) -> bool:

@@ -12,7 +12,7 @@ import time
 from .records import Scenario
 from .expressions import jsonable
 from .facts import (FACTS_BACKENDS, FactsBudgetError, MetadataFacts, characteristic_cells,
-                    identity_stops, live_states, make_facts)
+                    identity_stops, lane_needs, lane_rows, live_states, make_facts, status_axes)
 from .frontier import canonical, digest, search_frontier
 from .block_admission import admission_record, context_key
 
@@ -109,6 +109,73 @@ class MetadataAnalysis:
             if not any(row['active_cells'] == active for row in regions):
                 regions.append(dict(candidate, active_cells=active))
         return regions, False
+
+    def status_splits(self, interfaces, policies, derived):
+        """Offer each cell split by the status axis whose lanes need the fewest rows.
+
+        A lane is the set of codes of one status axis whose points need the same
+        states. Splitting pays when some lane drops a state the whole cell keeps.
+        One added policy replaces every splittable cell of the identity policy
+        by its split. The metadata backend has no per-status facts.
+        """
+        if self.facts.name == 'metadata':
+            return {'status': 'NOT_OFFERED', 'reason': 'The metadata backend has no per-status facts; '
+                    'use facts_backend="dense" or "implicit" to consider status splits.', 'cells': []}
+        base = next((p for p in policies if not p['characteristics']), None)
+        if base is None:
+            return {'status': 'NOT_OFFERED', 'reason': 'No identity projection policy', 'cells': []}
+        index = {cid: {o['id']: o for o in record['options']} for cid, record in interfaces.items()}
+        chosen = {}
+        records = []
+        for cid, cell in self.cells.items():
+            self.guard()
+            option = index[cid][base['option_by_cell'][cid]]
+            unsplit = 1
+            for domain_id in option['states'].values():
+                if self.domains[domain_id].get('solve_axis') is not False:
+                    unsplit *= self.domains[domain_id]['size']
+            best = None
+            for axis, codes in status_axes(self.facts, cell):
+                if axis not in option['states']:
+                    continue
+                kept = set(option['states']) - {axis}
+                groups = {}
+                for code in codes:
+                    needs = frozenset(lane_needs(self.facts, cell, self.live, {axis: code}) & kept)
+                    groups.setdefault(needs, []).append(code)
+                if len(groups) < 2:
+                    continue
+                lanes = [{'codes': {axis: sorted(group)}, 'states': {s: option['states'][s] for s in sorted(needs)}}
+                         for needs, group in sorted(groups.items(), key=lambda item: sorted(item[1]))]
+                rows = lane_rows(lanes, self.domains[cell['states'][axis]], self.domains)
+                if rows < unsplit and (best is None or rows < best[0]):
+                    best = (rows, axis, lanes)
+            if best is None:
+                continue
+            rows, axis, lanes = best
+            domain_id = 'lanes:' + digest([axis, lanes])[:24]
+            derived[domain_id] = {'kind': 'lanes', 'size': rows, 'status_axis': axis, 'lanes': lanes,
+                                  'identity': domain_id, 'source_path': f'/cells/{cid}'}
+            split = deepcopy(option)
+            kept = {axis} | {name for lane in lanes for name in lane['states']}
+            for name, projection in split['state_projection'].items():
+                if projection['kind'] == 'identity' and name not in kept:
+                    split['state_projection'][name] = {'kind': 'drop'}
+            split['states'] = {f'lanes[{axis}]': domain_id}
+            split['lanes'] = deepcopy(lanes)
+            split['witnesses'] = [*split['witnesses'], {'kind': 'status_split', 'axis': axis,
+                                                        'unsplit_state_rows': unsplit, 'state_rows': rows}]
+            split['id'] = 'interface:' + digest(split)[:20]
+            interfaces[cid]['options'].append(split)
+            chosen[cid] = split['id']
+            records.append({'cell': cid, 'axis': axis, 'lanes': lanes, 'unsplit_state_rows': unsplit, 'state_rows': rows})
+        if chosen:
+            policy = {**base['option_by_cell'], **chosen}
+            policies.append({'id': 'projection:' + digest([base['id'], sorted(chosen.items())])[:16],
+                             'option_by_cell': policy, 'characteristics': [], 'status_splits': sorted(chosen)})
+        return {'status': 'OFFERED' if chosen else 'NONE_USEFUL',
+                'reason': ('Split cells are offered in one added projection policy.' if chosen else
+                           'No status lane drops a state its whole cell keeps.'), 'cells': records}
 
     def function_interfaces(self, cell, projection, constants):
         """A source-bound DAG rewrite plan, with actual reduced signatures.
@@ -353,7 +420,9 @@ class MetadataAnalysis:
                 policy[cid] = option['id']
             policies.append({'id': policy_id, 'option_by_cell': policy,
                              'characteristics': [{'id': c['id'], 'cells': c['active_cells']} for c in selected]})
+        status_splits = self.status_splits(interfaces, policies, derived)
         return {'schema': 'regime-semantic-analysis/v1', 'declarations': self.decl,
+                'status_splits': status_splits,
                 'facts_backend': self.facts.name,
                 'interfaces': interfaces, 'derived_domains': derived,
                 'projection_policies': policies, 'characteristic_candidates': candidates,
