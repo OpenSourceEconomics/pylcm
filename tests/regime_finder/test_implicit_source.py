@@ -1,7 +1,6 @@
-"""Native metadata differential tests: delivered, deliberately NOT RUN in audit.
+"""Compressed native metadata agrees with its literal expansion.
 
-These add a new compressed-versus-literal guard. Keep existing fibre-source,
-fibre-facts and source-authentication tests unchanged. No Model is constructed.
+No Model is constructed.
 """
 
 from collections.abc import Mapping, Sequence
