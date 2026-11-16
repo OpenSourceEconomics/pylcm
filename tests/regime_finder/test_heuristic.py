@@ -696,7 +696,9 @@ def test_disconnected_coarsening_regions_do_not_enumerate_the_powerset() -> None
         "closed_regions",
         side_effect=AssertionError("exact region powerset invoked"),
     ):
-        result = analyze_production(source)
+        result = analyze_production(
+            source, facts_backend="metadata", search_mode="heuristic"
+        )
         checked = verify_production_result(source, result)
     assert (checked["status"]) == ("PASS"), checked
     assert not (result["analysis"]["discovery_complete"])
@@ -711,11 +713,13 @@ def test_heuristic_label_region_is_closed_under_original_identity_links() -> Non
 
     source = declarative_coarsening_fixture()
     source["cells"][1]["regime"] = "b"
-    analysis = MetadataAnalysis(source, search_mode="heuristic").run()
+    analysis = MetadataAnalysis(
+        source, search_mode="heuristic", facts_backend="metadata"
+    ).run()
     candidate = analysis["characteristic_candidates"][0]
-    regions = MetadataAnalysis(source, search_mode="heuristic").heuristic_regions(
-        candidate
-    )[0]
+    regions = MetadataAnalysis(
+        source, search_mode="heuristic", facts_backend="metadata"
+    ).heuristic_regions(candidate)[0]
     assert ({tuple(row["active_cells"]) for row in regions}) == (
         {("a:0", "a:1"), ("a:1",)}
     )
@@ -763,7 +767,9 @@ def test_heuristic_coarsening_axes_do_not_form_a_cartesian_policy_family() -> No
         "_lcm_regime_finder.production.product",
         side_effect=AssertionError("Cartesian policies invoked"),
     ):
-        analysis = MetadataAnalysis(source, search_mode="heuristic").run()
+        analysis = MetadataAnalysis(
+            source, search_mode="heuristic", facts_backend="metadata"
+        ).run()
     assert (len(analysis["projection_policies"])) == (5)
     assert not (analysis["discovery_complete"])
     assert not (
@@ -781,7 +787,10 @@ def test_useful_change_is_source_checked_before_public_delivery() -> None:
     )
     source = json.loads(path.read_text())
     result = analyze_production(
-        source, recommendation={"weights": {"work": 1, "storage": 1, "clarity": "1/10"}}
+        source,
+        recommendation={"weights": {"work": 1, "storage": 1, "clarity": "1/10"}},
+        facts_backend="metadata",
+        search_mode="heuristic",
     )
     selected = result["recommendations"][0]
     assert (selected["authority"]) == ("source_checked")
@@ -801,7 +810,9 @@ def test_cost_admission_never_substitutes_for_global_policy_semantics() -> None:
     from _lcm_regime_finder.semantic_check import check_semantics
 
     original = declarative_coarsening_fixture()
-    analysis = MetadataAnalysis(original).run()
+    analysis = MetadataAnalysis(
+        original, facts_backend="metadata", search_mode="exact"
+    ).run()
     source_receipt = check_semantics(original, original, analysis, check_coverage=False)
     assert not (source_receipt["errors"]), source_receipt
     assert all(item["scope"] == "family" for item in source_receipt["unresolved"])
@@ -841,7 +852,9 @@ def test_actual_entry_points_keep_exact_optional_and_replay_source_guards() -> N
     from .test_model_adapter import snapshot
 
     source = snapshot()
-    result = analyze_production(source)
+    result = analyze_production(
+        source, facts_backend="metadata", search_mode="heuristic"
+    )
     assert result["scenarios"]
     assert all(
         row["schema"] == "regime-heuristic-frontier/v1" for row in result["scenarios"]
@@ -851,7 +864,7 @@ def test_actual_entry_points_keep_exact_optional_and_replay_source_guards() -> N
     assert (checked["status"]) == ("PASS"), checked
     for row in result["recommendations"]:
         assert (row["authority"]) in (("source_checked", "retain_original"))
-    exact = analyze_production(source, search_mode="exact")
+    exact = analyze_production(source, search_mode="exact", facts_backend="metadata")
     assert (exact["status"]) == ("COMPLETE")
     assert exact["scenarios"][0]["certificate"]["complete"]
     corrupted = deepcopy(result)

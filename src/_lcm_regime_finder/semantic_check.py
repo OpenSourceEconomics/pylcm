@@ -1429,14 +1429,20 @@ def _identity_update(update: Any, state: str) -> bool:
 
 
 def _dated(cell: dict) -> dict:
-    return {key: cell[key] for key in ("age", "period") if cell.get(key) is not None}
+    """Bind the cell's dates; a rational age label is the exact age it names."""
+    result = {key: cell[key] for key in ("age", "period") if cell.get(key) is not None}
+    if isinstance(result.get("age"), str):
+        result["age"] = Fraction(result["age"])
+    return result
 
 
 def _static(cell: dict, domains: dict) -> dict:
     result = _dated(cell)
     for axis, did in cell.get("states", {}).items():
         domain = domains.get(did, {})
-        if domain.get("size") == 1 and len(domain.get("values", [])) == 1:
+        # A carried-only state is imputed in the solve, so a single simulated
+        # value does not make it constant.
+        if domain.get("size") == 1 and len(domain.get("values", [])) == 1 and not domain.get("solve_imputation"):
             result[axis] = domain["values"][0]
     return result
 
@@ -1572,17 +1578,21 @@ def _feasibility_channels(consumer: Mapping[str, Any], decision_phase: str) -> t
     return channels if decision_phase in applicability else ()
 
 
-def check_semantics(original: dict, normalized: dict, analysis: dict, *, check_coverage: bool = True) -> SemanticCheck:
-    """Reject malformed certificates as data; never promote unchecked input."""
+def check_semantics(original: dict, normalized: dict, analysis: dict, *, check_coverage: bool = True, facts=None) -> SemanticCheck:
+    """Reject malformed certificates as data; never promote unchecked input.
+
+    Dependencies are read from `facts`, the backend that produced the analysis,
+    rebuilt from the declarations when it is not supplied for them.
+    """
     try:
-        return _check_semantics(original, normalized, analysis, check_coverage=check_coverage)
+        return _check_semantics(original, normalized, analysis, check_coverage=check_coverage, facts=facts)
     except (KeyError, IndexError, TypeError, ValueError, AttributeError, RecursionError) as exc:
         return {"status": "FAIL", "errors": [{"kind": "malformed semantic certificate", "detail": str(exc)}],
                 "unresolved": [], "checks": 0, "dense_cartesian_rows_evaluated": 0,
                 "projection_family_complete_verified": False}
 
 
-def _check_semantics(original: dict, normalized: dict, analysis: dict, *, check_coverage: bool = True) -> SemanticCheck:
+def _check_semantics(original: dict, normalized: dict, analysis: dict, *, check_coverage: bool = True, facts=None) -> SemanticCheck:
     """Verify source retention, dependencies, projections and future closure.
 
     PASS is relative to the supplied original declaration/capture contract.
@@ -1620,7 +1630,6 @@ def _check_semantics(original: dict, normalized: dict, analysis: dict, *, check_
     for error in captures.errors:
         fail("compact callable capture identity", detail=error)
     callbacks = normalized.get("callbacks", {})
-    transition_contexts = _original_transition_contexts(relations=normalized.get('relations',[]), callbacks=callbacks)
     domains = {**normalized.get("domains", {}), **analysis.get("derived_domains", {})}
     cells = {cell["id"]: cell for cell in normalized.get("cells", [])}
     if len(cells) != len(normalized.get("cells", [])): fail("duplicate original cell IDs")
@@ -1684,7 +1693,25 @@ def _check_semantics(original: dict, normalized: dict, analysis: dict, *, check_
         if dependency.reads & formals - declared: fail("omitted original callback dependency", callback=key, missing=sorted(dependency.reads & formals - declared))
         if callback.get("status") == "proved" and not dependency.proved: unknown("callback proof unavailable", callback=key, reasons=sorted(proof.notes))
         checks += 1
+    from .facts import identity_stops, make_facts
+    if facts is None or facts.decl is not normalized:
+        # Stored declarations are data: rebuild the callback records from the
+        # original capture before any fact is derived from them.
+        authentic_callbacks = callbacks
+        if original.get("schema") != "regime-declarations/v1":
+            from .declarations import normalize_declarations
+            from .graph_scope import SCOPE, apply_scope
+            authentic = normalize_declarations(original)
+            if normalized.get("analysis_scope") == SCOPE:
+                authentic = apply_scope(original, authentic)
+            authentic_callbacks = authentic["callbacks"]
+            for key in sorted(set(callbacks) | set(authentic_callbacks)):
+                if _digest(callbacks.get(key)) != _digest(authentic_callbacks.get(key)):
+                    fail("callback declaration differs from the original capture", callback=key)
+        facts = make_facts(analysis.get("facts_backend", "metadata"), dict(normalized, callbacks=authentic_callbacks),
+                           {"seconds": float("inf"), "metadata_categories": 100_000}, lambda: None)
     checked_options: dict[str, list[dict]] = {}
+    split_live = None
     for cell_id, cell in cells.items():
         diagnostic_scope = {"scope": "source", "cell": cell_id}
         options = analysis.get("interfaces", {}).get(cell_id, {}).get("options", [])
@@ -1693,12 +1720,17 @@ def _check_semantics(original: dict, normalized: dict, analysis: dict, *, check_
         if len({option.get("id") for option in options}) != len(options): fail("duplicate option IDs", cell=cell_id)
         for option in options:
             diagnostic_scope = {"scope": "option", "cell": cell_id, "option": option.get("id")}
+            if "lanes" in option:
+                if split_live is None:
+                    from .facts import live_states
+                    split_live, _ = live_states(facts, lambda: None)
+                _check_lanes(option, cell, domains, facts, split_live, fail)
+                option = _lane_view(option, cell)
             state_projection = option.get("state_projection", {})
             reconstruction = option.get("action_reconstruction", {})
             if set(state_projection) != set(cell.get("states", {})): fail("state projection coverage", cell=cell_id, option=option.get("id"))
             if set(reconstruction) != set(cell.get("actions", {})): fail("action reconstruction coverage", cell=cell_id, option=option.get("id"))
             retained: set[str] = set()
-            stop: dict[str, str] = {}
             static = _static(cell, domains)
             for state, projection in state_projection.items():
                 if state not in cell.get("states", {}): continue
@@ -1717,20 +1749,10 @@ def _check_semantics(original: dict, normalized: dict, analysis: dict, *, check_
                     if characteristic is None:
                         fail("projection is not an existing characteristic", cell=cell_id, state=state)
                         continue
-                    original_domain = domains.get(cell["states"][state], {})
-                    values = original_domain.get("values")
-                    if not isinstance(values, list) or not values or len(values) > 100_000:
-                        unknown("characteristic construction domain unavailable", cell=cell_id, state=state)
-                        continue
-                    projected = []
-                    for value in values:
-                        proof = SourceProof(callbacks, _providers(cell, domains), _codes(cell, domains, {**static, state: value}), callable_records=captures)
-                        answer = proof.callback(callback_id)
-                        if not answer.proved or answer.value is _UNKNOWN or answer.reads:
-                            unknown("characteristic is outside pure construction language", callback=callback_id)
-                            break
-                        projected.append(answer.value)
-                    if len(projected) == len(values):
+                    projected = facts.characteristic_image(characteristic)
+                    if projected is None:
+                        unknown("characteristic is outside pure construction language", callback=callback_id)
+                    else:
                         if [_value_key(value) for value in projection.get("values", [])] != [_value_key(value) for value in projected]: fail("characteristic map differs from original function", cell=cell_id, state=state)
                         derived_id = projection.get("domain", option.get("states", {}).get(target))
                         derived = domains.get(derived_id, {})
@@ -1745,8 +1767,6 @@ def _check_semantics(original: dict, normalized: dict, analysis: dict, *, check_
                             static[target] = constant_values[0]
                         if target in option.get("states", {}): fail("constant characteristic retained as placeholder", cell=cell_id, state=state)
                     elif option.get("states", {}).get(target) != projection.get("domain", option.get("states", {}).get(target)): fail("characteristic target domain mismatch", cell=cell_id, state=state)
-                    for name, provider in cell.get("functions", {}).items():
-                        if provider == callback_id: stop[name] = target
                     retained.add(target)
                 else:
                     fail("unknown state projection", cell=cell_id, state=state)
@@ -1760,28 +1780,25 @@ def _check_semantics(original: dict, normalized: dict, analysis: dict, *, check_
                     if embedding.get("value") not in domain.get("values", []): fail("forced action is not a decoded original value", cell=cell_id, action=action)
                     if action in option.get("actions", {}): fail("forced action placeholder remains", cell=cell_id, action=action)
                     static[action] = embedding.get("value")
-                    _check_forced(action, embedding.get("value"), cell, callbacks, domains, fail, unknown, captures)
+                    forced = facts.forced[cell_id]
+                    if action not in forced or _digest(forced[action]) != _digest(embedding.get("value")):
+                        fail("forced action is not proved", cell=cell_id, action=action, value=embedding.get("value"))
                 else: fail("unknown action embedding", cell=cell_id, action=action)
             for constant, value in option.get("constants", {}).items():
                 if constant not in static or _digest(static[constant]) != _digest(value):
                     fail("unproved reconstruction constant", cell=cell_id, name=constant)
             _check_function_interfaces(cell, option, callbacks, domains, static, fail, unknown, captures)
-            original_axes = set(cell.get("states", {})) | set(cell.get("actions", {}))
+            stops = identity_stops(callbacks, [p["callback"] for p in state_projection.values() if p.get("kind") == "characteristic"])
             for consumer in cell.get("consumers", []):
                 for phase in (("solve", "simulation") if consumer.get("phase", "both") == "both" else (consumer["phase"],)):
-                    providers = _providers(cell, domains, phase)
-                    phase_stop = dict(stop)
-                    for name, provider in providers.items():
-                        if isinstance(provider, dict): continue
-                        for projection in state_projection.values():
-                            if projection.get("kind") == "characteristic" and callbacks.get(provider, {}).get("identity") == callbacks.get(projection.get("callback"), {}).get("identity"):
-                                phase_stop[name] = projection["target"]
-                    proof = SourceProof(callbacks, providers, _codes(cell, domains, static), phase_stop, captures)
-                    dependency = proof.callback(consumer.get("callback", ""))
-                    required = {name[:-5] if name.endswith("_code") and name[:-5] in original_axes else name for name in dependency.reads}
-                    missing = (required & original_axes) - retained - set(static)
+                    required = facts.callback_reads(consumer.get("callback", ""), cell, phase, stops=stops)
+                    missing = set(required) - retained - set(static)
                     if missing: fail("consumer does not factor through representation", cell=cell_id, option=option.get("id"), consumer=consumer.get("kind"), callback=consumer.get("callback"), phase=phase, states=sorted(missing))
-                    if not dependency.proved: unknown("opaque consumer factorization", cell=cell_id, callback=consumer.get("callback"), phase=phase, reasons=sorted(proof.notes))
+                    # Conservative reads keep an opaque consumer sound; its
+                    # source semantics stay an explicit obligation.
+                    proof = SourceProof(callbacks, _providers(cell, domains, phase), _codes(cell, domains, static), callable_records=captures)
+                    if not proof.callback(consumer.get("callback", "")).proved:
+                        unknown("opaque consumer factorization", cell=cell_id, callback=consumer.get("callback"), phase=phase, reasons=sorted(proof.notes))
                     checks += 1
             option_axes = set(option.get("states", {})) | set(option.get("actions", {}))
             justified = retained | {state for state, projection in state_projection.items() if projection.get("kind") == "identity"}
@@ -1816,12 +1833,10 @@ def _check_semantics(original: dict, normalized: dict, analysis: dict, *, check_
             source_option = option_index.get(source, {}).get(choices.get(source))
             if source_option is None: continue
             source_cell = cells[source]
-            stops = {name: projection.get("target", state)
-                     for state, projection in source_option.get("state_projection", {}).items() if projection.get("kind") == "characteristic"
-                     for name, provider in source_cell.get("functions", {}).items() if provider == projection.get("callback")}
+            stops = identity_stops(callbacks, [p["callback"] for p in source_option.get("state_projection", {}).values() if p.get("kind") == "characteristic"])
             static = _static(source_cell, domains)
             static.update(source_option.get("constants", {}))
-            available = set(source_option.get("states", {})) | set(source_option.get("actions", {}))
+            available = set(_lane_view(source_option, source_cell).get("states", {})) | set(source_option.get("actions", {}))
             for action, embedding in source_option.get("action_reconstruction", {}).items():
                 if embedding.get("kind") == "constant": static[action] = embedding.get("value")
             phases = ("solve", "simulation") if relation.get("phase", "both") == "both" else (relation["phase"],)
@@ -1830,18 +1845,8 @@ def _check_semantics(original: dict, normalized: dict, analysis: dict, *, check_
                 key = (source_cell['id'], id(source_option), callback, phase, id(relation))
                 if key in relation_dependencies:
                     return relation_dependencies[key]
-                providers = _providers(source_cell, domains, phase)
-                providers.update(transition_contexts.get((id(relation),phase),{}))
-                phase_stops = dict(stops)
-                for name, provider in providers.items():
-                    if isinstance(provider, dict): continue
-                    for projection in source_option.get("state_projection", {}).values():
-                        if projection.get("kind") == "characteristic" and (provider == projection.get("callback") or callbacks.get(provider, {}).get("identity") == callbacks.get(projection.get("callback"), {}).get("identity")):
-                            phase_stops[name] = projection["target"]
-                answer = SourceProof(callbacks, providers, _codes(source_cell, domains, static), phase_stops, captures).callback(callback)
-                axes = set(source_cell.get("states", {})) | set(source_cell.get("actions", {}))
-                required = {name[:-5] if name.endswith("_code") and name[:-5] in axes else name for name in answer.reads}
-                missing = required & axes - available - set(static)
+                required = facts.callback_reads(callback, source_cell, phase, stops=stops, relation=relation)
+                missing = set(required) - available - set(static)
                 relation_dependencies[key] = missing
                 return missing
             for callback in relation.get("callbacks", []):
@@ -1856,7 +1861,7 @@ def _check_semantics(original: dict, normalized: dict, analysis: dict, *, check_
                         if target_projection.get("kind") == "drop": continue
                         update = relation.get("state_updates", {}).get(state)
                         source_projection = source_option.get("state_projection", {}).get(state, {})
-                        if _identity_update(update, state) or (isinstance(update, str) and update in callbacks and _identity_callback(callbacks[update], state, captures)):
+                        if facts.identity_update(update, state, state):
                             compatible = source_projection.get("kind") == "identity" or (
                                 source_projection.get("kind") == target_projection.get("kind") == "characteristic"
                                 and source_projection.get("callback") == target_projection.get("callback")
@@ -1874,7 +1879,7 @@ def _check_semantics(original: dict, normalized: dict, analysis: dict, *, check_
                         checks += 1
     diagnostic_scope = {"scope": "family"}
     if check_coverage:
-        policy_coverage = _policy_coverage(normalized, analysis, fail, unknown, captures)
+        policy_coverage = _policy_coverage(normalized, analysis, fail, unknown, facts)
     else:
         policy_coverage = False
         unknown("projection-family completeness was not checked in this local safety pass")
@@ -1891,169 +1896,77 @@ def _check_semantics(original: dict, normalized: dict, analysis: dict, *, check_
             "trusted_boundary": ["supplied original declaration/capture", "captured actual-object primitive identity", "pure deterministic scalar callback contract", "original joint law retained as one relation"]}
 
 
-def _policy_coverage(declaration: dict, analysis: dict, fail, unknown, captures=None) -> bool:
-    """Independent closure/CSP replay of categorical policy completeness.
+def _lane_view(option: dict, cell: dict) -> dict:
+    """See a status split through the states its lanes keep, and its axis."""
+    lanes = option.get("lanes")
+    if not lanes:
+        return option
+    axis = next(iter(lanes[0].get("codes", {})), None)
+    states = {name: domain for lane in lanes for name, domain in lane.get("states", {}).items()}
+    if axis in cell.get("states", {}):
+        states[axis] = cell["states"][axis]
+    return {**option, "states": states}
 
-    This derives live dependencies and eligible maps from original callback AST,
-    not the producer's candidate list. A Boolean constraint search propagates
-    implications in both directions, so a 100-date chain needs 101 policies,
-    rather than materializing 2**100 assignments. Different existing maps of the
-    same original axis are alternatives in this declared finite family.
+
+def _check_lanes(option: dict, cell: dict, domains: dict, facts, live, fail) -> None:
+    """A split's lanes partition one status axis and keep every needed state."""
+    from .facts import lane_needs, lane_rows, status_axes
+    lanes = option["lanes"]
+    axes = {name for lane in lanes for name in lane.get("codes", {})}
+    if len(axes) != 1 or any(len(lane.get("codes", {})) != 1 for lane in lanes):
+        fail("status split must use exactly one axis", cell=cell["id"]); return
+    axis = axes.pop()
+    codes = dict(status_axes(facts, cell)).get(axis)
+    split_codes = [code for lane in lanes for code in lane["codes"][axis]]
+    if codes is None or sorted(split_codes) != sorted(codes):
+        fail("status lanes do not partition the axis codes", cell=cell["id"], axis=axis); return
+    for lane in lanes:
+        for name, domain in lane.get("states", {}).items():
+            if name == axis or cell["states"].get(name) != domain:
+                fail("status lane changes a state domain", cell=cell["id"], state=name)
+        for code in lane["codes"][axis]:
+            missing = lane_needs(facts, cell, live, {axis: code}) - set(lane.get("states", {}))
+            if missing:
+                fail("status lane drops a needed state", cell=cell["id"], axis=axis, code=code, states=sorted(missing))
+    records = list(option.get("states", {}).values())
+    domain = domains.get(records[0], {}) if len(records) == 1 else {}
+    if (domain.get("kind") != "lanes" or domain.get("lanes") != lanes or domain.get("status_axis") != axis
+            or domain.get("size") != lane_rows(lanes, domains[cell["states"][axis]], domains)):
+        fail("status split rows differ from its lanes", cell=cell["id"])
+
+
+def _policy_coverage(declaration: dict, analysis: dict, fail, unknown, facts) -> bool:
+    """Closure/CSP replay of categorical policy completeness from the facts.
+
+    The live closure and characteristic eligibility come from the backend's
+    facts, not the producer's candidate list. A Boolean constraint search
+    propagates implications in both directions, so a 100-date chain needs 101
+    policies, rather than materializing 2**100 assignments. Different existing
+    maps of the same original axis are alternatives in this declared family.
     """
-    captures = captures or _CallableRecords(declaration.get("callable_records", {}))
+    from .facts import characteristic_cells, live_states
     cells = {cell["id"]: cell for cell in declaration["cells"]}
-    callbacks, domains = declaration["callbacks"], declaration["domains"]
-    relations = [relation for relation in declaration["relations"] if relation.get("support") != "zero"]
-    transition_contexts = _original_transition_contexts(relations=relations, callbacks=callbacks)
-    def phases(record): return ("solve", "simulation") if record.get("phase", "both") == "both" else (record["phase"],)
-    static_by_cell = {cell_id: _static(cell, domains) for cell_id, cell in cells.items()}
-    expected_forced = {}
-    for cell_id, cell in cells.items():
-        expected_forced[cell_id] = {}
-        constraints = [consumer for consumer in cell.get("consumers", []) if consumer.get("kind") in {"constraint", "feasible", "feasibility"}]
-        decision_phases = cell.get("decision_phases", ("solve", "simulation"))
-        for axis, domain_id in cell["actions"].items():
-            values = domains[domain_id].get("values")
-            if not isinstance(values, list) or not values or len(values) > 100_000: continue
-            possible = []
-            for value in values:
-                static = _codes(cell, domains, {**static_by_cell[cell_id], axis: value})
-                excluded_by_phase = []
-                for decision_phase in decision_phases:
-                    ruled_out = False
-                    for constraint in constraints:
-                        for phase in _feasibility_channels(constraint, decision_phase):
-                            providers = _providers(cell, domains, phase)
-                            answer = SourceProof(callbacks, providers, static, callable_records=captures).callback(constraint["callback"])
-                            ruled_out |= answer.proved and answer.value is not _UNKNOWN and not answer.value
-                    excluded_by_phase.append(ruled_out)
-                if not all(excluded_by_phase): possible.append(value)
-            if len(possible) == 1:
-                expected_forced[cell_id][axis] = possible[0]
-        static_by_cell[cell_id].update(expected_forced[cell_id])
-        if analysis.get("discovery_complete"):
-            for axis, value in expected_forced[cell_id].items():
+    if analysis.get("discovery_complete"):
+        for cell_id, forced in facts.forced.items():
+            for axis, value in forced.items():
                 for option in analysis.get("interfaces", {}).get(cell_id, {}).get("options", []):
                     reconstruction = option.get("action_reconstruction", {}).get(axis, {})
                     if reconstruction.get("kind") != "constant" or _digest(reconstruction.get("value")) != _digest(value):
                         fail("complete discovery omitted a provably forced original choice", cell=cell_id, action=axis, value=value)
-    def original_dependency(callback, cell, phase, stop_id=None, relation=None):
-        providers = _providers(cell, domains, phase)
-        if relation is not None:
-            providers.update(transition_contexts.get((id(relation),phase),{}))
-        stops = {name: "@retained_characteristic" for name, provider in providers.items()
-                 if not isinstance(provider, dict) and stop_id is not None and (provider == stop_id or callbacks.get(provider, {}).get("identity") == callbacks.get(stop_id, {}).get("identity"))}
-        proof = SourceProof(callbacks, providers, _codes(cell, domains, static_by_cell[cell["id"]]), stops, captures)
-        value = proof.callback(callback)
-        axes = set(cell["states"]) | set(cell["actions"])
-        original_callback = callbacks.get(callback, {}).get('original', {})
-        if not isinstance(original_callback, Mapping):
-            return {name[:-5] if name.endswith('_code') and name[:-5] in axes else name for name in value.reads}
-        if original_callback.get('type') == '_lcm.certainty_equivalent.LinearExpectation':
-            # This pinned built-in reduces supplied continuation values. State
-            # dependence enters through the separately checked transition law,
-            # not through a hidden current-state argument of the reducer.
-            return set()
-        if _closed_native_constant(original_callback, captures):
-            # The route's ORIGINAL bound value is immutable and the callback
-            # receives no current coordinates. In particular, a last-decision
-            # constant route into a state-free terminal does not keep an
-            # otherwise irrelevant history/rate coordinate alive.
-            return set()
-        if not value.proved and (original_callback.get('kind') not in {'callable', 'primitive'}
-                                or original_callback.get('variadic')
-                                or _original_inputs_unresolved(original_callback, captures)):
-            # An opaque native callback is not evidence of independence. The
-            # admitted conservative family retains its complete local domain;
-            # its unresolved source obligation remains in the check result.
-            return axes
-        return {name[:-5] if name.endswith("_code") and name[:-5] in axes else name for name in value.reads}
-    dependency_cache = {}
-    current_cache = {}
-    relations_by_source = defaultdict(list)
-    for relation in relations: relations_by_source[relation['source']].append(relation)
-    def dependency(callback, cell, phase, stop_id=None, relation=None):
-        # Static bindings are finalized above, and the supplied source DAG is
-        # frozen for this check. Cache only this checker's own source result.
-        key = (callback, cell['id'], phase, stop_id, id(relation) if relation is not None else None)
-        if key not in dependency_cache:
-            dependency_cache[key] = frozenset(original_dependency(callback, cell, phase, stop_id, relation))
-        return dependency_cache[key]
-    def current(cell, stop_id=None):
-        key = (cell['id'], stop_id)
-        if key in current_cache: return set(current_cache[key])
-        names = set()
-        for consumer in cell.get("consumers", []):
-            for phase in phases(consumer): names.update(dependency(consumer["callback"], cell, phase, stop_id))
-        for relation in relations_by_source[cell['id']]:
-            for callback in relation.get("callbacks", []):
-                for phase in phases(relation): names.update(dependency(callback, cell, phase, stop_id, relation))
-        current_cache[key] = frozenset(names)
-        return names
-    def is_identity(update, axis):
-        return _identity_update(update, axis) or (isinstance(update, str) and update in callbacks and _identity_callback(callbacks[update], axis, captures))
-    def update_reads(relation, axis, stop_id=None):
-        cell = cells[relation["source"]]
-        update = relation.get("state_updates", {}).get(axis)
-        if isinstance(update, str) and update in cell["states"]: return {update}
-        if isinstance(update, dict) and update.get("kind") == "identity": return {update.get("source", update.get("state", axis))}
-        if isinstance(update, dict) and update.get("kind") == "constant": return set()
-        if isinstance(update, dict): update = update.get("callback")
-        if isinstance(update, str) and update in callbacks:
-            return set().union(*(dependency(update, cell, phase, stop_id, relation) for phase in phases(relation)))
-        return set(cell["states"])
-    live = {cell_id: (current(cell) & set(cell["states"])) - set(static_by_cell[cell_id]) for cell_id, cell in cells.items()}
-    changed = True
-    while changed:
-        changed = False
-        for relation in relations:
-            source = relation["source"]
-            for target in relation.get("targets", []):
-                for axis in tuple(live[target]):
-                    if "produces" in relation and axis not in relation["produces"]: continue
-                    needed = (update_reads(relation, axis) & set(cells[source]["states"])) - set(static_by_cell[source])
-                    if needed - live[source]: live[source].update(needed); changed = True
+    live, _ = live_states(facts, lambda: None)
     for cell_id, expected in live.items():
         claimed = set(analysis.get("dependency_closure", {}).get(cell_id, []))
         if not expected <= claimed: fail("original future dependency closure omitted", cell=cell_id, missing=sorted(expected - claimed))
     choices_by_axis = defaultdict(list)
     proof_limited = False
     for characteristic_id, characteristic in sorted(declaration.get("characteristics", {}).items()):
-        axis, did, callback = characteristic["state"], characteristic["domain"], characteristic["callback"]
-        values = domains.get(did, {}).get("values")
-        if not isinstance(values, list) or not values or len(values) > 100_000: continue
-        image = []
-        for index, value in enumerate(values):
-            static = {axis: value}
-            codes = domains[did].get("codes", [])
-            if len(codes) == len(values):
-                static[characteristic.get("code_argument", axis + "_code")] = codes[index]
-            answer = SourceProof(callbacks, static=static, callable_records=captures).callback(callback)
-            if not answer.proved or answer.value is _UNKNOWN or answer.reads: break
-            image.append(answer.value)
-        if len(image) != len(values) or len({_value_key(value) for value in image}) >= len(values): continue
-        eligible = {cell_id for cell_id, cell in cells.items() if cell["states"].get(axis) == did and axis in live[cell_id] and axis not in current(cell, callback)}
-        changed = True
-        while changed:
-            changed = False
-            for relation in relations:
-                source = relation["source"]
-                if source not in eligible: continue
-                for target in relation.get("targets", []):
-                    for target_axis in live[target]:
-                        if "produces" in relation and target_axis not in relation["produces"]: continue
-                        update = relation.get("state_updates", {}).get(target_axis)
-                        safe = (target in eligible) if target_axis == axis and is_identity(update, axis) else axis not in update_reads(relation, target_axis, callback)
-                        if not safe: eligible.remove(source); changed = True; break
-                    if source not in eligible: break
+        axis, callback = characteristic["state"], characteristic["callback"]
+        image = facts.characteristic_image(characteristic)
+        if image is None or len({_value_key(value) for value in image}) >= len(image): continue
+        eligible, successors = characteristic_cells(facts, live, characteristic)
         if not eligible: continue
         if len(eligible) > 750:
             unknown("independent projection-family recursion budget exhausted", eligible_cells=len(eligible)); return False
-        successors = {cell: set() for cell in eligible}
-        for relation in relations:
-            source = relation["source"]
-            if source in eligible and ("produces" not in relation or axis in relation["produces"]) and is_identity(relation.get("state_updates", {}).get(axis), axis):
-                successors[source].update(target for target in relation.get("targets", []) if target in eligible and axis in live[target])
         predecessors = {cell: {source for source, targets in successors.items() if cell in targets} for cell in eligible}
         regions = []
         def assign(selected, rejected):
@@ -2121,29 +2034,6 @@ def _policy_coverage(declaration: dict, analysis: dict, fail, unknown, captures=
         return True
     unknown("categorical projection discovery is explicitly incomplete", proved_policies=len(actual), full_family_policies=len(expected))
     return False
-
-
-def _check_forced(action: str, selected: Any, cell: dict, callbacks: dict, domains: dict, fail, unknown, captures=None) -> None:
-    constraints = [consumer for consumer in cell.get("consumers", []) if consumer.get("kind") in {"feasible", "constraint", "feasibility"}]
-    domain = domains.get(cell.get("actions", {}).get(action), {})
-    values = domain.get("values")
-    if not isinstance(values, list) or len(values) > 100_000:
-        unknown("forced-action categorical domain unavailable", cell=cell["id"], action=action); return
-    if not constraints:
-        if len(values) != 1: fail("non-singleton action removed without feasibility proof", cell=cell["id"], action=action)
-        return
-    decision_phases = cell.get("decision_phases", ("solve", "simulation"))
-    for index, value in enumerate(values):
-        static = _codes(cell, domains, {**_static(cell, domains), action: value})
-        exclusions = []
-        for decision_phase in decision_phases:
-            results = [SourceProof(callbacks, _providers(cell, domains, phase), static, callable_records=captures).callback(constraint["callback"])
-                       for constraint in constraints for phase in _feasibility_channels(constraint, decision_phase)]
-            exclusions.append(any(result.proved and result.value is not _UNKNOWN and not result.value for result in results))
-        if value != selected and not all(exclusions):
-            fail("alternative action was not proved infeasible", cell=cell["id"], action=action, value=value)
-        if value == selected and any(exclusions):
-            fail("selected forced action is infeasible", cell=cell["id"], action=action, value=value)
 
 
 def _check_function_interfaces(cell, option, callbacks, domains, static, fail, unknown, captures=None):

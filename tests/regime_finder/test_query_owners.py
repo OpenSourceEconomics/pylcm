@@ -57,7 +57,9 @@ def policy_snapshot():
 
 def _check_analysis(raw):
     normalized = normalize_declarations(raw)
-    analysis = MetadataAnalysis(normalized).run()
+    analysis = MetadataAnalysis(
+        normalized, facts_backend="metadata", search_mode="exact"
+    ).run()
     return normalized, analysis, check_semantics(raw, normalized, analysis)
 
 
@@ -70,7 +72,9 @@ def test_current_read_owner_is_registered_without_physical_admission() -> None:
         item.get("regime") != "unused_owner"
         for item in normalized["query_owners"].values()
     )
-    analysis = MetadataAnalysis(normalized).run()
+    analysis = MetadataAnalysis(
+        normalized, facts_backend="metadata", search_mode="exact"
+    ).run()
     checked = check_semantics(raw, normalized, analysis)
     assert not (
         any(

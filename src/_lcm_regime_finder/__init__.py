@@ -12,19 +12,24 @@ def is_production_input(problem):
     return not (problem.get('schema_version') == 1 and isinstance(problem.get('programs'), list))
 
 
-def find_regimes(problem, budget=None, *, recommendation=None, production_contract=None, analysis_scope='graph',
-                 search_mode='heuristic', heuristic_effort=None):
+def find_regimes(problem, budget=None, *, facts_backend=None, search_mode=None, recommendation=None,
+                 production_contract=None, analysis_scope='graph', heuristic_effort=None):
+    """Analyze a problem; a production analysis needs `facts_backend` and `search_mode`."""
     if isinstance(problem, dict) and problem.get('schema') == 'exact-graph-cost-instance/v1':
         return find_cost_frontier(problem, seconds=(budget or {}).get('seconds', 900),
                                   limits=(budget or {}).get('cost_limits'))
     if is_production_input(problem):
         from .production import analyze_production
+        if facts_backend is None or search_mode is None:
+            raise TypeError("find_regimes() needs the keyword arguments 'facts_backend' and "
+                            "'search_mode' for a production analysis")
         limits = dict(budget or {})
         if 'candidate_segments' in limits:
             limits['segments'] = limits.pop('candidate_segments')
         return analyze_production(problem, limits=limits, recommendation=recommendation,
                                   production_contract=production_contract, analysis_scope=analysis_scope,
-                                  search_mode=search_mode, heuristic_effort=heuristic_effort)
+                                  facts_backend=facts_backend, search_mode=search_mode,
+                                  heuristic_effort=heuristic_effort)
     from .core import find_regimes as finite_find
     return finite_find(problem, budget)
 

@@ -52,7 +52,7 @@ class _DecisionContext:
             raise ValueError("decision context does not match unchanged source and analysis")
 
 
-def prepare_decision_context(original, analysis, *, check_coverage=True):
+def prepare_decision_context(original, analysis, *, check_coverage=True, facts=None):
     """Run the independent semantic checker once for analysis and decisions.
 
     Pass the returned context directly in memory. Its semantic property supplies
@@ -60,7 +60,7 @@ def prepare_decision_context(original, analysis, *, check_coverage=True):
     different or mutated source/analysis requires a fresh independent replay.
     """
     semantic = check_semantics(original, analysis["declarations"], analysis,
-                               check_coverage=check_coverage)
+                               check_coverage=check_coverage, facts=facts)
     return _DecisionContext(original, analysis, semantic)
 
 

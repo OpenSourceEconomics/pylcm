@@ -151,7 +151,7 @@ def test_unbound_textual_jnp_where_is_not_a_primitive() -> None:
     p = adapt_snapshot(x)
     from _lcm_regime_finder import find_regimes
 
-    result = find_regimes(p)
+    result = find_regimes(p, facts_backend="metadata", search_mode="heuristic")
     assert (result["status"]) == ("OPTIMAL")
     assert all("history" in atom["live_states"] for atom in result["analysis"]["atoms"])
 
@@ -518,7 +518,12 @@ def test_opaque_native_callback_retains_domain_in_independent_family() -> None:
         "type": "native.UnknownPayoff",
         "fields": {},
     }
-    result = analyze_production(original, limits={"seconds": 15})
+    result = analyze_production(
+        original,
+        limits={"seconds": 15},
+        facts_backend="metadata",
+        search_mode="heuristic",
+    )
     errors = result.get("semantic_check", {}).get("errors", [])
     assert not (
         any("projection policy is outside" in e.get("kind", "") for e in errors)
@@ -560,7 +565,12 @@ def test_native_linear_expectation_does_not_read_unrelated_current_state() -> No
         "type": "_lcm.certainty_equivalent.LinearExpectation",
         "fields": {},
     }
-    result = analyze_production(original, limits={"seconds": 15})
+    result = analyze_production(
+        original,
+        limits={"seconds": 15},
+        facts_backend="metadata",
+        search_mode="heuristic",
+    )
     errors = result.get("semantic_check", {}).get("errors", [])
     assert not (
         any(

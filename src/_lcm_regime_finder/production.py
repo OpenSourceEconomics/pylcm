@@ -6,382 +6,67 @@ one explicitly finite original coordinate, under a small pure language.
 """
 from __future__ import annotations
 from copy import deepcopy
-from collections.abc import Mapping, Sequence
 from itertools import product, combinations
-import ast
 import time
 
-from .records import Scenario, JSONValue
-from .expressions import partial, jsonable, AdmissionError
+from .records import Scenario
+from .expressions import jsonable
+from .facts import (FACTS_BACKENDS, FactsBudgetError, MetadataFacts, characteristic_cells,
+                    identity_stops, lane_needs, lane_rows, live_states, make_facts, status_axes)
 from .frontier import canonical, digest, search_frontier
 from .block_admission import admission_record, context_key
 
 
 class MetadataAnalysis:
-    def __init__(self, declarations, limits=None, *, search_mode='exact'):
+    def __init__(self, declarations, limits=None, *, search_mode, facts_backend):
         if search_mode not in {'heuristic', 'exact'}:
             raise ValueError('search_mode must be heuristic or exact')
+        if facts_backend not in FACTS_BACKENDS:
+            raise ValueError('facts_backend must be one of ' + ', '.join(FACTS_BACKENDS))
         self.search_mode = search_mode
         self.decl = declarations
-        self.cells = {c['id']: c for c in declarations['cells']}
-        if len(self.cells) != len(declarations['cells']):
-            raise ValueError('Duplicate exact admission cell')
-        self.callbacks = declarations['callbacks']
-        self._transition_contexts = _transition_provider_index(relations=declarations['relations'], callbacks=self.callbacks)
-        self.domains = declarations['domains']
         self.limits = {'seconds': 900, 'metadata_categories': 100000,
                        'projection_policies': 4096} | (limits or {})
         self.started = time.perf_counter()
         self.obligations = deepcopy(declarations.get('obligations', []))
-        self._cache = {}
-        self._env_cache = {}
         self._interface_cache = {}
-        self.forced = {}
-        self.constants = {}
+        # The scalar interpreter also renders the reduced function signatures,
+        # whichever backend supplies the dependency facts.
+        self.facts = make_facts(facts_backend, declarations, self.limits, self.guard)
+        self.interpreter = (self.facts if isinstance(self.facts, MetadataFacts)
+                            else MetadataFacts(declarations, self.limits, self.guard))
+        self.cells = self.facts.cells
+        self.callbacks = self.facts.callbacks
+        self.domains = self.facts.domains
+        self.constants = self.facts.constants
+        self.forced = self.facts.forced
         self.live = {}
         self.reasons = {}
-        for c in self.cells.values():
-            for kind in ('states', 'actions'):
-                if not isinstance(c[kind], dict):
-                    raise ValueError(f'{c["id"]}: {kind} must map axis names to domains')
-                for name, domain in c[kind].items():
-                    if domain not in self.domains:
-                        raise ValueError(f'Unknown domain {name}/{domain}')
-            self.constants[c['id']] = {
-                name: self.domains[domain]['values'][0] for name, domain in c['states'].items()
-                if self.domains[domain].get('size') == 1
-                and len(self.domains[domain].get('values', [])) == 1}
-            self.forced[c['id']] = self.forced_actions(c)
-            self._env_cache.clear()
-        for relation in declarations['relations']:
-            if relation['source'] not in self.cells or any(t not in self.cells for t in relation.get('targets', [])):
-                raise ValueError('Relation names an undeclared exact admission')
 
     def guard(self):
         if time.perf_counter() - self.started >= self.limits['seconds']:
             raise TimeoutError('Metadata dependency analysis budget exhausted')
 
-    @staticmethod
-    def scalar_bindings(callback):
-        return {k: v for k, v in callback.get('bindings', {}).items()
-                if isinstance(v, (bool, int, float, str, list)) or v is None}
-
-    def environment(self, cell, callback=None, phase='solve', overrides=None):
-        """Bind provably known date/parameter DAG values, never native functions.
-
-        A declaration may represent age as ``age(period)``. Treating that value
-        as unknown would miss a sustained feasibility restriction. This finite
-        fixed point evaluates only the admitted scalar expression language.
-        """
-        key = (cell['id'], phase)
-        cached = self._env_cache.get(key) if not overrides else None
-        if cached is not None:
-            env = dict(cached)
-        else:
-            env = {k: cell[k] for k in ('age', 'period') if cell.get(k) is not None}
-            env.update(self.decl.get('parameters', {}))
-            env.update(self.constants.get(cell['id'], {}))
-            env.update(self.forced.get(cell['id'], {}))
-            env.update(overrides or {})
-            env = self.bind_codes(cell, env)
-            providers = cell.get('phase_functions', {}).get(phase, cell.get('functions', {}))
-            pending = dict(providers)
-            for _ in range(len(pending) + 1):
-                changed = False
-                for name, cbid in list(pending.items()):
-                    cb = self.callbacks[cbid]
-                    if name in env:
-                        pending.pop(name)
-                        continue
-                    if cb.get('status') != 'proved' or cb.get('expression') is None:
-                        continue
-                    try:
-                        value = partial(cb['expression'], self.scalar_bindings(cb) | env)
-                    except (AdmissionError, TypeError, ValueError, ArithmeticError):
-                        continue
-                    if value.known:
-                        env[name] = value.value
-                        pending.pop(name)
-                        changed = True
-                for alias, name in cell.get('derived_code_providers', {}).items():
-                    if name in env and alias not in env:
-                        domain = self.domains[cell['derived_categoricals'][name]]
-                        values, codes = domain.get('values', []), domain.get('codes', [])
-                        matches = [i for i, v in enumerate(values) if v == env[name]]
-                        if len(matches) == 1 and len(values) == len(codes):
-                            env[alias] = codes[matches[0]]
-                            changed = True
-                if not changed:
-                    break
-            if not overrides and cell['id'] in self.forced:
-                self._env_cache[key] = dict(env)
-        return self.bind_codes(cell, (self.scalar_bindings(callback) if callback else {}) | env)
-
-    @staticmethod
-    def bind_codes(cell, env):
-        env = dict(env)
-        for axis, record in cell.get('category_codes', {}).items():
-            if axis not in env:
-                continue
-            values, codes = record.get('values', []), record.get('codes', [])
-            matches = [i for i, value in enumerate(values) if canonical(value) == canonical(env[axis])]
-            if len(matches) == 1 and len(codes) == len(values):
-                env[record['argument']] = codes[matches[0]]
-        return env
-
-    def direct_reads(self, callback_id, cell, overrides=None, phase='solve'):
-        cb = self.callbacks[callback_id]
-        env = self.environment(cell, cb, phase, overrides)
-        expression = cb.get('expression')
-        if expression is not None:
-            try:
-                return set(partial(expression, env).reads)
-            except (AdmissionError, TypeError, ValueError):
-                pass
-        return set(cb.get('reads', cb.get('arguments', []))) - set(env)
-
-    def expanded_reads(self, callback_id, cell, phase='solve', stops=frozenset(), trail=frozenset(), *, provider_overrides=None):
-        provider_overrides = provider_overrides or {}
-        key = (callback_id, cell['id'], phase, tuple(sorted(stops)), tuple(sorted(provider_overrides.items())))
-        if key in self._cache:
-            return set(self._cache[key])
-        if callback_id in stops:
-            return set()
-        if callback_id in trail:
-            raise ValueError(f'Cyclic derived function DAG at {callback_id}')
-        cb = self.callbacks[callback_id]
-        if cb.get('status') == 'unresolved':
-            return set(cell['states']) | set(cell['actions'])
-        providers = cell.get('phase_functions', {}).get(phase, cell.get('functions', {})) | provider_overrides
-        result = set()
-        code_axes = {v['argument']: k for k, v in cell.get('category_codes', {}).items()}
-        for name in self.direct_reads(callback_id, cell, phase=phase):
-            name = code_axes.get(name, name)
-            name = cell.get('derived_code_providers', {}).get(name, name)
-            if name in cell['states'] or name in cell['actions']:
-                result.add(name)
-            elif name in providers:
-                result.update(self.expanded_reads(providers[name], cell, phase, stops, trail | {callback_id}, provider_overrides=provider_overrides))
-        self._cache[key] = frozenset(result)
-        return result
-
-    @staticmethod
-    def phases(record):
-        phase = record.get('phase', 'both')
-        return ('solve', 'simulation') if phase == 'both' else (phase,)
-
-    def consumer_reads(self, cell, stops=frozenset()):
-        reads = set()
-        for consumer in cell.get('consumers', []):
-            cb = consumer.get('callback')
-            if cb:
-                for phase in self.phases(consumer):
-                    reads.update(self.expanded_reads(cb, cell, phase, stops))
-        # Probability, gate, exit and read weights are always consumers. Updates
-        # are propagated separately only when the destination coordinate is live.
-        for relation in self.decl['relations']:
-            if relation['source'] != cell['id'] or relation.get('support') == 'zero':
-                continue
-            for cb in relation.get('callbacks', []):
-                for phase in self.phases(relation):
-                    reads.update(self.expanded_reads(cb, cell, phase, stops, provider_overrides=self._transition_contexts.get((id(relation),phase),{})))
-        return reads
-
-    def update_reads(self, relation, target_axis, stops=frozenset()):
-        source = self.cells[relation['source']]
-        update = relation.get('state_updates', {}).get(target_axis)
-        if update is None:
-            # Unknown reconstruction cannot justify removal of any source input.
-            return set(source['states']) | set(source['actions'])
-        if isinstance(update, str) and update in source['states']:
-            return {update}
-        if isinstance(update, str) and update in self.callbacks:
-            result = set()
-            for phase in self.phases(relation):
-                result.update(self.expanded_reads(update, source, phase, stops, provider_overrides=self._transition_contexts.get((id(relation),phase),{})))
-            return result
-        if isinstance(update, dict):
-            if update.get('kind') == 'identity':
-                return {update.get('source', target_axis)}
-            if update.get('kind') == 'constant':
-                return set()
-            if update.get('callback') in self.callbacks:
-                result = set()
-                for phase in self.phases(relation):
-                    result.update(self.expanded_reads(update['callback'], source, phase, stops, provider_overrides=self._transition_contexts.get((id(relation),phase),{})))
-                return result
-        return set(source['states']) | set(source['actions'])
-
-    def identity_update(self, update, axis, target_axis):
-        if update == axis:
-            return True
-        if isinstance(update, dict):
-            if update.get('kind') == 'identity':
-                return update.get('source', target_axis) == axis
-            update = update.get('callback')
-        if isinstance(update, str) and update in self.callbacks:
-            cb = self.callbacks[update]
-            if cb.get('status') == 'proved' and isinstance(cb.get('expression'), str):
-                try:
-                    node = ast.parse(cb['expression'], mode='eval').body
-                    return isinstance(node, ast.Name) and node.id == axis
-                except SyntaxError:
-                    pass
-        return False
-
-    def forced_actions(self, cell):
-        result = {}
-        constraints = [x for x in cell.get('consumers', [])
-                       if x.get('kind') in ('constraint', 'feasibility', 'feasible') and x.get('callback')]
-        decision_phases = cell.get('decision_phases', ('solve', 'simulation'))
-        for name, domain_id in cell['actions'].items():
-            self.guard()
-            domain = self.domains[domain_id]
-            values = domain.get('values')
-            if not isinstance(values, list) or len(values) != domain.get('size') or len(values) > self.limits['metadata_categories']:
-                continue
-            possible = []
-            for value in values:
-                self.guard()
-                # A shared action interface must cover the UNION of the
-                # phase-specific feasible sets. Rejection by the simulation
-                # constraints does not remove a choice available to solve.
-                phase_allowed = []
-                for decision_phase in decision_phases:
-                    allowed = True
-                    for constraint in constraints:
-                        applies = constraint.get('decision_phases')
-                        if applies is None:
-                            evaluation_phases = (decision_phase,) if decision_phase in self.phases(constraint) else ()
-                        else:
-                            evaluation_phases = self.phases(constraint) if decision_phase in applies else ()
-                        if not evaluation_phases:
-                            continue
-                        cb = self.callbacks[constraint['callback']]
-                        if cb.get('expression') is None or cb.get('status') != 'proved':
-                            continue
-                        for phase in evaluation_phases:
-                            try:
-                                v = partial(cb['expression'], self.environment(cell, cb, phase, {name: value}))
-                            except (AdmissionError, TypeError, ValueError, ArithmeticError):
-                                continue
-                            if v.known and v.value is False:
-                                allowed = False
-                                break
-                        if not allowed:
-                            break
-                    phase_allowed.append(allowed)
-                if any(phase_allowed):
-                    possible.append(value)
-            if not possible:
-                raise ValueError(f'{cell["id"]}: no admissible value of action {name}')
-            if len(possible) == 1:
-                result[name] = possible[0]
-        return result
-
     def dependencies(self):
-        for cell in self.cells.values():
-            reads = self.consumer_reads(cell)
-            self.live[cell['id']] = set(cell['states']) & reads - set(self.constants[cell['id']])
-            self.reasons[cell['id']] = {name: ['current/phase/required-output consumer'] for name in self.live[cell['id']]}
-        changed = True
-        while changed:
-            self.guard()
-            changed = False
-            for relation in self.decl['relations']:
-                if relation.get('support') == 'zero':
-                    continue
-                sid = relation['source'];source = self.cells[sid]
-                for tid in relation.get('targets', []):
-                    for target_axis in tuple(self.live[tid]):
-                        if 'produces' in relation and target_axis not in relation['produces']:
-                            continue
-                        needed = self.update_reads(relation, target_axis) & set(source['states']) - set(self.constants[sid])
-                        new = needed - self.live[sid]
-                        if new:
-                            changed = True;self.live[sid].update(new)
-                            for name in new:
-                                self.reasons[sid][name] = [f'{relation["id"]} -> {tid}/{target_axis}']
+        self.live, self.reasons = live_states(self.facts, self.guard)
 
     def characteristic_candidates(self):
         result = []
         for name, spec in sorted(self.decl.get('characteristics', {}).items()):
             self.guard()
-            axis, domain_id, cb_id = spec['state'], spec['domain'], spec['callback']
-            domain = self.domains[domain_id];cb = self.callbacks[cb_id]
-            values = domain.get('values')
-            if domain.get('kind') != 'categorical' or cb.get('status') != 'proved' or cb.get('expression') is None:
-                continue
-            if not isinstance(values, list) or len(values) != domain.get('size') or len(values) > self.limits['metadata_categories']:
-                continue
-            mapping = []
-            try:
-                for index, value in enumerate(values):
-                    self.guard()
-                    env = {k: v for k, v in cb.get('bindings', {}).items()
-                           if isinstance(v, (bool, int, float, str, list)) or v is None}
-                    env[axis] = value
-                    code_arguments = {c.get('category_codes', {}).get(axis, {}).get('argument')
-                                      for c in self.cells.values() if c['states'].get(axis) == domain_id}
-                    code_arguments.discard(None)
-                    if spec.get('code_argument'):
-                        code_arguments.add(spec['code_argument'])
-                    for argument in code_arguments:
-                        if len(domain.get('codes', [])) == len(values):
-                            env[argument] = domain['codes'][index]
-                    observed = partial(cb['expression'], env)
-                    if not observed.known:
-                        raise ValueError('Characteristic has unresolved original arguments')
-                    mapping.append(jsonable(observed.value))
-            except (AdmissionError, TypeError, ValueError):
+            mapping = self.facts.characteristic_image(spec)
+            if mapping is None:
                 continue
             unique = {canonical(v): v for v in mapping}
-            if len(unique) >= len(values):
+            if len(unique) >= len(mapping):
                 continue
-            # Aliases of the exact original characteristic retain their identity.
-            stops = frozenset(k for k, value in self.callbacks.items()
-                              if value.get('identity') == cb.get('identity'))
-            eligible = {cid for cid, cell in self.cells.items()
-                        if cell['states'].get(axis) == domain_id and axis in self.live[cid]
-                        and axis not in self.consumer_reads(cell, stops)}
-            changed = True
-            while changed:
-                changed = False
-                for relation in self.decl['relations']:
-                    sid = relation['source']
-                    if sid not in eligible or relation.get('support') == 'zero':
-                        continue
-                    for tid in relation.get('targets', []):
-                        for target_axis in self.live[tid]:
-                            if 'produces' in relation and target_axis not in relation['produces']:
-                                continue
-                            update = relation.get('state_updates', {}).get(target_axis)
-                            identity = self.identity_update(update, axis, target_axis)
-                            if target_axis == axis and identity:
-                                safe = tid in eligible
-                            else:
-                                safe = axis not in self.update_reads(relation, target_axis, stops)
-                            if not safe:
-                                eligible.discard(sid);changed = True;break
-                        if sid not in eligible:
-                            break
+            eligible, requires = characteristic_cells(self.facts, self.live, spec)
             if eligible:
-                target_name = spec.get('name', name)
-                domain_key = 'characteristic:' + digest([cb.get('identity'), domain_id, mapping])[:24]
-                requires = {cid: set() for cid in eligible}
-                for relation in self.decl['relations']:
-                    sid = relation['source']
-                    if sid not in eligible or relation.get('support') == 'zero':
-                        continue
-                    if 'produces' in relation and axis not in relation['produces']:
-                        continue
-                    update = relation.get('state_updates', {}).get(axis)
-                    identity = self.identity_update(update, axis, axis)
-                    if identity:
-                        requires[sid].update(tid for tid in relation.get('targets', []) if tid in eligible and axis in self.live[tid])
-                result.append({'id': name, 'state': axis, 'domain': domain_id, 'callback': cb_id,
-                               'target': target_name, 'values': mapping,
-                               'target_values': [unique[k] for k in sorted(unique)],
+                cb = self.callbacks[spec['callback']]
+                domain_key = 'characteristic:' + digest([cb.get('identity'), spec['domain'], mapping])[:24]
+                result.append({'id': name, 'state': spec['state'], 'domain': spec['domain'],
+                               'callback': spec['callback'], 'target': spec.get('name', name),
+                               'values': mapping, 'target_values': [unique[k] for k in sorted(unique)],
                                'target_domain': domain_key, 'cells': sorted(eligible),
                                'requires': {k: sorted(v) for k, v in requires.items()}})
         return result
@@ -425,6 +110,73 @@ class MetadataAnalysis:
                 regions.append(dict(candidate, active_cells=active))
         return regions, False
 
+    def status_splits(self, interfaces, policies, derived):
+        """Offer each cell split by the status axis whose lanes need the fewest rows.
+
+        A lane is the set of codes of one status axis whose points need the same
+        states. Splitting pays when some lane drops a state the whole cell keeps.
+        One added policy replaces every splittable cell of the identity policy
+        by its split. The metadata backend has no per-status facts.
+        """
+        if self.facts.name == 'metadata':
+            return {'status': 'NOT_OFFERED', 'reason': 'The metadata backend has no per-status facts; '
+                    'use facts_backend="dense" or "implicit" to consider status splits.', 'cells': []}
+        base = next((p for p in policies if not p['characteristics']), None)
+        if base is None:
+            return {'status': 'NOT_OFFERED', 'reason': 'No identity projection policy', 'cells': []}
+        index = {cid: {o['id']: o for o in record['options']} for cid, record in interfaces.items()}
+        chosen = {}
+        records = []
+        for cid, cell in self.cells.items():
+            self.guard()
+            option = index[cid][base['option_by_cell'][cid]]
+            unsplit = 1
+            for domain_id in option['states'].values():
+                if self.domains[domain_id].get('solve_axis') is not False:
+                    unsplit *= self.domains[domain_id]['size']
+            best = None
+            for axis, codes in status_axes(self.facts, cell):
+                if axis not in option['states']:
+                    continue
+                kept = set(option['states']) - {axis}
+                groups = {}
+                for code in codes:
+                    needs = frozenset(lane_needs(self.facts, cell, self.live, {axis: code}) & kept)
+                    groups.setdefault(needs, []).append(code)
+                if len(groups) < 2:
+                    continue
+                lanes = [{'codes': {axis: sorted(group)}, 'states': {s: option['states'][s] for s in sorted(needs)}}
+                         for needs, group in sorted(groups.items(), key=lambda item: sorted(item[1]))]
+                rows = lane_rows(lanes, self.domains[cell['states'][axis]], self.domains)
+                if rows < unsplit and (best is None or rows < best[0]):
+                    best = (rows, axis, lanes)
+            if best is None:
+                continue
+            rows, axis, lanes = best
+            domain_id = 'lanes:' + digest([axis, lanes])[:24]
+            derived[domain_id] = {'kind': 'lanes', 'size': rows, 'status_axis': axis, 'lanes': lanes,
+                                  'identity': domain_id, 'source_path': f'/cells/{cid}'}
+            split = deepcopy(option)
+            kept = {axis} | {name for lane in lanes for name in lane['states']}
+            for name, projection in split['state_projection'].items():
+                if projection['kind'] == 'identity' and name not in kept:
+                    split['state_projection'][name] = {'kind': 'drop'}
+            split['states'] = {f'lanes[{axis}]': domain_id}
+            split['lanes'] = deepcopy(lanes)
+            split['witnesses'] = [*split['witnesses'], {'kind': 'status_split', 'axis': axis,
+                                                        'unsplit_state_rows': unsplit, 'state_rows': rows}]
+            split['id'] = 'interface:' + digest(split)[:20]
+            interfaces[cid]['options'].append(split)
+            chosen[cid] = split['id']
+            records.append({'cell': cid, 'axis': axis, 'lanes': lanes, 'unsplit_state_rows': unsplit, 'state_rows': rows})
+        if chosen:
+            policy = {**base['option_by_cell'], **chosen}
+            policies.append({'id': 'projection:' + digest([base['id'], sorted(chosen.items())])[:16],
+                             'option_by_cell': policy, 'characteristics': [], 'status_splits': sorted(chosen)})
+        return {'status': 'OFFERED' if chosen else 'NONE_USEFUL',
+                'reason': ('Split cells are offered in one added projection policy.' if chosen else
+                           'No status lane drops a state its whole cell keeps.'), 'cells': records}
+
     def function_interfaces(self, cell, projection, constants):
         """A source-bound DAG rewrite plan, with actual reduced signatures.
 
@@ -435,15 +187,13 @@ class MetadataAnalysis:
         if key in self._interface_cache:
             return deepcopy(self._interface_cache[key])
         rewritten = {}
-        identities = {self.callbacks[v['callback']].get('identity') for v in projection.values()
-                      if v['kind'] == 'characteristic'}
-        stops = frozenset(k for k, cb in self.callbacks.items() if cb.get('identity') in identities)
+        stops = identity_stops(self.callbacks, [v['callback'] for v in projection.values() if v['kind'] == 'characteristic'])
         for phase in ('solve', 'simulation'):
             providers = cell.get('phase_functions', {}).get(phase, cell.get('functions', {}))
             records = {}
             for name, cbid in providers.items():
                 cb = self.callbacks[cbid]
-                environment = self.environment(cell, cb, phase) | constants
+                environment = self.interpreter.environment(cell, cb, phase) | constants
                 replacement = next((v for v in projection.values()
                                     if v['kind'] == 'characteristic'
                                     and self.callbacks[v['callback']].get('identity') == cb.get('identity')), None)
@@ -457,8 +207,8 @@ class MetadataAnalysis:
                             if target in constants else {'kind': 'read_reduced_coordinate', 'coordinate': target},
                         'witness': 'existing characteristic map, checked over its complete original categorical domain'}
                     continue
-                reads = self.direct_reads(cbid, cell, overrides=constants, phase=phase)
-                state_reads = self.expanded_reads(cbid, cell, phase, stops)
+                reads = self.interpreter.direct_reads(cbid, cell, overrides=constants, phase=phase)
+                state_reads = self.facts.callback_reads(cbid, cell, phase, stops=stops)
                 unavailable = {axis for axis in state_reads if axis in projection
                                and projection[axis]['kind'] != 'identity'
                                and axis not in constants}
@@ -578,6 +328,15 @@ class MetadataAnalysis:
         }
 
     def run(self):
+        try:
+            return self._run()
+        except TimeoutError:
+            if self.facts.name == 'metadata':
+                raise
+            raise FactsBudgetError(backend=self.facts.name, limit='time budget',
+                                   unfinished=sorted(set(self.cells) - set(self.live)) or sorted(self.cells)) from None
+
+    def _run(self):
         self.dependencies()
         candidates = self.characteristic_candidates()
         by_axis = {}
@@ -661,7 +420,10 @@ class MetadataAnalysis:
                 policy[cid] = option['id']
             policies.append({'id': policy_id, 'option_by_cell': policy,
                              'characteristics': [{'id': c['id'], 'cells': c['active_cells']} for c in selected]})
+        status_splits = self.status_splits(interfaces, policies, derived)
         return {'schema': 'regime-semantic-analysis/v1', 'declarations': self.decl,
+                'status_splits': status_splits,
+                'facts_backend': self.facts.name,
                 'interfaces': interfaces, 'derived_domains': derived,
                 'projection_policies': policies, 'characteristic_candidates': candidates,
                 'dependency_closure': {c: sorted(v) for c, v in self.live.items()},
@@ -674,41 +436,13 @@ class MetadataAnalysis:
                 'elapsed_seconds': time.perf_counter() - self.started}
 
 
-def _transition_provider_index(*, relations: Sequence[Mapping[str, JSONValue]], callbacks: Mapping[str, JSONValue]) -> dict[tuple[int, str], dict[str, str]]:
-    """Bind next-state providers separately for every original edge and phase."""
-    contexts: dict[tuple[str, tuple[str, ...], str], dict[str, str]] = {}
-    index: dict[tuple[int, str], dict[str, str]] = {}
-    for relation in relations:
-        if relation.get('kind') not in {'transition','joint'}:
-            continue
-        source, targets = relation.get('source'), relation.get('targets', [])
-        if not isinstance(source,str) or not isinstance(targets,list) or any(not isinstance(target,str) for target in targets):
-            raise ValueError('Transition context lacks original source/target identifiers')
-        target_names = tuple(target for target in targets if isinstance(target,str))
-        updates = relation.get('state_updates', {})
-        if not isinstance(updates,Mapping):
-            raise ValueError('Transition context lacks a state-update mapping')
-        selected = relation.get('phase','both')
-        if not isinstance(selected,str) or selected not in ('both','solve','simulation'):
-            raise ValueError('Transition context has an unsupported phase')
-        for phase in ('solve','simulation') if selected=='both' else (selected,):
-            context = contexts.setdefault((source,target_names,phase),{})
-            index[id(relation),phase] = context
-            for axis, callback in updates.items():
-                if not isinstance(callback,str) or callback not in callbacks:
-                    continue
-                name = 'next_' + axis
-                if name in context and context[name] != callback:
-                    raise ValueError('Conflicting original next-state providers in one edge/phase')
-                context[name] = callback
-    return index
-
-
-def analyze_production(original, *, limits=None, recommendation=None, production_contract=None,
-                       checkpoint=None, analysis_scope='graph', search_mode='heuristic',
+def analyze_production(original, *, facts_backend, search_mode, limits=None, recommendation=None,
+                       production_contract=None, checkpoint=None, analysis_scope='graph',
                        heuristic_effort=None):
     if search_mode not in {'heuristic', 'exact'}:
         raise ValueError('search_mode must be heuristic or exact')
+    if facts_backend not in FACTS_BACKENDS:
+        raise ValueError('facts_backend must be one of ' + ', '.join(FACTS_BACKENDS))
     started = time.perf_counter()
     phase_timings = {}
     active_phase = 'normalization'
@@ -733,7 +467,8 @@ def analyze_production(original, *, limits=None, recommendation=None, production
                         'phase_timings': dict(phase_timings)})
         active_phase = 'metadata_analysis'
         phase_started = time.perf_counter()
-        analysis = MetadataAnalysis(declarations, limits, search_mode=search_mode).run()
+        metadata = MetadataAnalysis(declarations, limits, search_mode=search_mode, facts_backend=facts_backend)
+        analysis = metadata.run()
         phase_timings['metadata_analysis_seconds'] = time.perf_counter() - phase_started
         if checkpoint:
             checkpoint({'stage': 'metadata_analysis', 'analysis': analysis,
@@ -743,7 +478,7 @@ def analyze_production(original, *, limits=None, recommendation=None, production
         incomplete = isinstance(exc, TimeoutError)
         return {'schema': 'regime-production-result/v1',
                 'status': 'INCOMPLETE' if incomplete else 'UNRESOLVED',
-                'search_mode': search_mode,
+                'search_mode': search_mode, 'facts_backend': facts_backend,
                 'recommendations': ([{'scenario_index': None, 'graph_id': 'retain-original',
                     'operation': 'retain_original', 'authority': 'retain_original',
                     'reason': 'Normalization or metadata analysis did not establish a checked proposal'}]
@@ -753,7 +488,7 @@ def analyze_production(original, *, limits=None, recommendation=None, production
                                             'obligations': [{'kind': 'metadata_admission', 'detail': str(exc)}]},
                 'semantic_check': {'status': 'NOT_RUN'},
                 'established_lower_bound': dict.fromkeys(('work', 'storage', 'clarity'), 0),
-                'layers': {'source_semantics': 'NOT_RUN', 'discovery': 'INCOMPLETE',
+                'layers': {'facts': facts_backend, 'source_semantics': 'NOT_RUN', 'discovery': 'INCOMPLETE',
                            'allocation': 'UNRESOLVED', 'frontier': 'NOT_RUN',
                            'native_numerical_execution': 'NOT_RUN'},
                 'elapsed_seconds': time.perf_counter() - started,
@@ -762,7 +497,8 @@ def analyze_production(original, *, limits=None, recommendation=None, production
     from .proposal_decision import prepare_decision_context, build_decisions
     captured_original = original if isinstance(original, dict) else declarations.get('original', original)
     phase_started = time.perf_counter()
-    decision_context = prepare_decision_context(captured_original, analysis, check_coverage=search_mode == 'exact')
+    decision_context = prepare_decision_context(captured_original, analysis, check_coverage=search_mode == 'exact',
+                                                facts=metadata.facts)
     semantic = decision_context.semantic
     phase_timings['source_check_seconds'] = time.perf_counter() - phase_started
     if checkpoint:
@@ -846,14 +582,14 @@ def analyze_production(original, *, limits=None, recommendation=None, production
         # Unresolved candidate premises select retain-original, not a bypass.
         status = 'INVALID' if failed else 'HEURISTIC'
     return {'schema': 'regime-production-result/v1',
-            'status': status, 'search_mode': search_mode,
+            'status': status, 'search_mode': search_mode, 'facts_backend': facts_backend,
             'recommendations': recommendations,
             'analysis_scope': declarations.get('analysis_scope', 'full_semantics'),
             'source_identity': declarations.get('source_identity'), 'analysis': analysis,
             'semantic_check': semantic, 'scenarios': scenarios,
             'proposal_decisions': decisions,
             'production_cost_claim': 'conditional' if not allocation_known else 'declared allocation contract',
-            'layers': {'source_semantics': semantic.get('status'),
+            'layers': {'facts': facts_backend, 'source_semantics': semantic.get('status'),
                        'discovery': 'COMPLETE' if analysis['discovery_complete'] else 'INCOMPLETE',
                        'allocation': 'DECLARED' if allocation_known else 'UNRESOLVED',
                        'frontier': ('RETAINED_CANDIDATES_CHECKED' if search_mode == 'heuristic' else 'VERIFIED')

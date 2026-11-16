@@ -17,7 +17,9 @@ from .tiny_metadata_family import original
 def produce(source=None):
     source = original() if source is None else source
     normalized = normalize_declarations(source)
-    analysis = MetadataAnalysis(normalized).run()
+    analysis = MetadataAnalysis(
+        normalized, facts_backend="metadata", search_mode="exact"
+    ).run()
     return source, analysis, [search_frontier(analysis)]
 
 

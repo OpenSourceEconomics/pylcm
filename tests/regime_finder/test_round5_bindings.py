@@ -212,7 +212,9 @@ def test_public_production_cannot_adopt_deletion_of_overridable_input() -> None:
             "scope": "explicit tiny declaration witness",
         },
     }
-    result = analyze_production(original, limits={"seconds": 10}, search_mode="exact")
+    result = analyze_production(
+        original, limits={"seconds": 10}, search_mode="exact", facts_backend="metadata"
+    )
     assert (result["semantic_check"]["status"]) == ("PASS")
     assert all(
         "history" in axes for axes in result["analysis"]["dependency_closure"].values()
@@ -1088,7 +1090,7 @@ def _array_input_resealed(captured, mutation: str):
     """Reuse the existing genuine-wire rehasher after a scoped metadata mutation."""
     from copy import deepcopy
     from _lcm_regime_finder.semantic_check import _CallableRecords
-    from tests.regime_finder.test_fibre_source import _native_wire_retyped_reference
+    from tests.regime_finder.test_source_proof import _native_wire_retyped_reference
 
     table = deepcopy(captured["callable_records"])
     wrapper = table[captured["capture_ref"]]

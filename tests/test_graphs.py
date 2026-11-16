@@ -27,13 +27,14 @@ from lcm import (
     Transition,
     categorical,
 )
-from lcm.graphs import find_regimes
+from lcm.graphs import analyze_regime_structure, find_regimes
 from lcm.processes import (
     RouwenhorstAR1Process,
     StateConditioned,
     TauchenAR1Process,
     UniformIIDProcess,
 )
+from lcm.regime_analysis import FactsBackend, SearchMode
 from lcm.typing import ContinuousState, DiscreteState, FloatND, Phase, ScalarInt
 from lcm_examples.stochastic_volatility import get_model as stochastic_volatility_model
 
@@ -105,7 +106,9 @@ def test_digraph_preserves_period_nodes_terminal_and_isolated_starts(
 
 def test_find_regimes_checks_a_native_model(period_model: Model) -> None:
     """The public checker accepts a Model without evaluating its utility."""
-    report = find_regimes(period_model)
+    report = find_regimes(
+        period_model, facts_backend="metadata", search_mode="heuristic"
+    )
     layers = report["layers"]
     assert isinstance(layers, dict)
     assert layers["frontier"] == "RETAINED_CANDIDATES_CHECKED"
@@ -114,7 +117,9 @@ def test_find_regimes_checks_a_native_model(period_model: Model) -> None:
 def test_find_regimes_writes_html(*, period_model: Model, tmp_path: Path) -> None:
     """Users can read the result without running another command."""
     output = tmp_path / "report"
-    find_regimes(period_model, output=output)
+    find_regimes(
+        period_model, output=output, facts_backend="metadata", search_mode="heuristic"
+    )
     assert (output / "report.html").is_file()
 
 
@@ -123,7 +128,12 @@ def test_find_regimes_refuses_existing_output(
 ) -> None:
     """An existing report directory is protected from replacement."""
     with pytest.raises(FileExistsError):
-        find_regimes(period_model, output=tmp_path)
+        find_regimes(
+            period_model,
+            output=tmp_path,
+            facts_backend="metadata",
+            search_mode="heuristic",
+        )
 
 
 @pytest.mark.parametrize("tampered", [False, True])
@@ -394,8 +404,14 @@ def _records(value: JSONValue) -> tuple[Mapping[str, JSONValue], ...]:
     return tuple(_record(item) for item in value)
 
 
+BACKENDS = ("metadata", "dense", "implicit")
+
+
+@pytest.mark.parametrize("facts_backend", BACKENDS)
 @pytest.mark.parametrize("persistent", [True, False])
-def test_analysis_preserves_source_only_conditional_draw(*, persistent: bool) -> None:
+def test_analysis_preserves_source_only_conditional_draw(
+    *, persistent: bool, facts_backend: FactsBackend
+) -> None:
     """A source-only process law determines whether its current state is needed."""
     process = (
         RouwenhorstAR1Process(n_points=2, rho=0.5, sigma=1.0)
@@ -421,7 +437,7 @@ def test_analysis_preserves_source_only_conditional_draw(*, persistent: bool) ->
         fixed_params={"discount_factor": 1.0},
         enable_jit=False,
     )
-    report = find_regimes(model)
+    report = find_regimes(model, facts_backend=facts_backend, search_mode="heuristic")
     analysis = report["analysis"]
     assert isinstance(analysis, dict)
     declarations = analysis["declarations"]
@@ -438,7 +454,10 @@ def test_analysis_preserves_source_only_conditional_draw(*, persistent: bool) ->
     assert all(("z" in _record(option["states"])) is persistent for option in options)
 
 
-def test_analysis_preserves_conditioned_current_shock() -> None:
+@pytest.mark.parametrize("facts_backend", BACKENDS)
+def test_analysis_preserves_conditioned_current_shock(
+    facts_backend: FactsBackend,
+) -> None:
     """Income-risk conditioning remains in the alive value domain."""
     report = find_regimes(
         stochastic_volatility_model(
@@ -446,7 +465,9 @@ def test_analysis_preserves_conditioned_current_shock() -> None:
             wealth_n_points=8,
             consumption_n_points=8,
             income_n_points=3,
-        )
+        ),
+        facts_backend=facts_backend,
+        search_mode="heuristic",
     )
     analysis = report["analysis"]
     assert isinstance(analysis, dict)
@@ -466,13 +487,35 @@ def test_analysis_preserves_conditioned_current_shock() -> None:
         )
 
 
+@pytest.mark.parametrize("search_mode", ["heuristic", "exact"])
+@pytest.mark.parametrize("facts_backend", BACKENDS)
+def test_every_backend_and_search_mode_records_its_choice(
+    *, period_model: Model, facts_backend: FactsBackend, search_mode: SearchMode
+) -> None:
+    result = analyze_regime_structure(
+        period_model, facts_backend=facts_backend, search_mode=search_mode
+    )
+    assert (result.facts_backend, result.search_mode) == (facts_backend, search_mode)
+    assert _record(result.to_dict()["layers"])["facts"] == facts_backend
+    assert result.recommendations
+
+
+def test_analysis_requires_a_backend_and_a_search_mode(period_model: Model) -> None:
+    with pytest.raises(TypeError, match="facts_backend"):
+        analyze_regime_structure(period_model)  # ty: ignore[missing-argument]
+    with pytest.raises(TypeError, match="search_mode"):
+        find_regimes(period_model, facts_backend="metadata")  # ty: ignore[missing-argument]
+
+
 def test_analyze_regime_structure_returns_typed_recommendations(
     period_model: Model,
 ) -> None:
     """Recommendations link directly to immutable candidates and original costs."""
     module = import_module("lcm.graphs")
     assert hasattr(module, "analyze_regime_structure")
-    result = module.analyze_regime_structure(period_model)
+    result = module.analyze_regime_structure(
+        period_model, facts_backend="metadata", search_mode="heuristic"
+    )
     assert isinstance(result, module.RegimeAnalysisResult)
     assert result.original.cost is not None
     assert result.recommendations
@@ -496,7 +539,9 @@ def test_analyze_regime_structure_writes_an_explicit_report(
     """Report writing accepts a string and protects an existing directory."""
     module = import_module("lcm.graphs")
     assert hasattr(module, "analyze_regime_structure")
-    result = module.analyze_regime_structure(period_model)
+    result = module.analyze_regime_structure(
+        period_model, facts_backend="metadata", search_mode="heuristic"
+    )
     output = tmp_path / "typed-report"
     result.write_report(str(output))
     text = (output / "report.html").read_text()
@@ -528,7 +573,12 @@ def test_analysis_custom_cost_is_used_during_search(period_model: Model) -> None
         reference_scales=(1, 1, 1),
         minimum_improvement=0.25,
     )
-    result = module.analyze_regime_structure(period_model, cost_model=model)
+    result = module.analyze_regime_structure(
+        period_model,
+        cost_model=model,
+        facts_backend="metadata",
+        search_mode="heuristic",
+    )
     assert result.cost_model is model
     scenario = _records(result.to_dict()["scenarios"])[0]
     objective = _record(scenario["objective"])
@@ -616,7 +666,9 @@ def test_conditioned_persistent_process_preserves_original_phase_inputs(
         enable_jit=False,
     )
     module = import_module("lcm.graphs")
-    report = module.analyze_regime_structure(model).to_dict()
+    report = module.analyze_regime_structure(
+        model, facts_backend="metadata", search_mode="heuristic"
+    ).to_dict()
     declaration = _record(_record(report["analysis"])["declarations"])
     cells = {str(cell["id"]): cell for cell in _records(declaration["cells"])}
     transitions = [
@@ -695,7 +747,13 @@ def test_target_conditioned_process_preserves_needed_source_history() -> None:
         fixed_params={"discount_factor": 1.0},
         enable_jit=False,
     )
-    report = import_module("lcm.graphs").analyze_regime_structure(model).to_dict()
+    report = (
+        import_module("lcm.graphs")
+        .analyze_regime_structure(
+            model, facts_backend="metadata", search_mode="heuristic"
+        )
+        .to_dict()
+    )
     analysis = _record(report["analysis"])
     declaration = _record(analysis["declarations"])
     cells = {str(cell["id"]): cell for cell in _records(declaration["cells"])}
