@@ -17,7 +17,8 @@ from copy import deepcopy
 from itertools import product
 import json
 from types import SimpleNamespace
-import unittest
+
+import pytest
 
 from _lcm_regime_finder.implicit.compact_screen import (
     Cell,
@@ -370,476 +371,454 @@ def factor_fixture() -> tuple[FibreSource, Wire, dict[str, tuple[str, ...]]]:
     return cast(FibreSource, source), record, {"source": ("i",), "target": ("i",)}
 
 
-class TestCompactScreenControls(unittest.TestCase):
-    def assert_matches_literal(
-        self,
-        package: Package,
-        removed: frozenset[tuple[str, str]],
-        *,
-        kept_override: Mapping[str, Region] | None = None,
-    ) -> ScreenResult:
-        ordinary_kept = None
-        if kept_override is not None:
-            ordinary_kept = {
-                c.identifier: {
-                    point
-                    for point in product(*(codes for _, codes in c.status_domains))
-                    if kept_override[c.identifier].contains(point)
-                }
-                for c in package.cells
-            }
-        expected = literal(package, removed, kept_override=ordinary_kept)
-        observed = check_screen(package, removed, kept_override=kept_override)
-        self.assertEqual(
-            {
-                key: _mapping(value)["status"]
-                for key, value in _mapping(observed["premises"]).items()
-            },
-            expected["premises"],
-        )
-        if kept_override is None:
-            closure = possible_closure(package)
-            actual_kept = {
-                (c.identifier, point)
-                for c in package.cells
+def assert_matches_literal(
+    package: Package,
+    removed: frozenset[tuple[str, str]],
+    *,
+    kept_override: Mapping[str, Region] | None = None,
+) -> ScreenResult:
+    ordinary_kept = None
+    if kept_override is not None:
+        ordinary_kept = {
+            c.identifier: {
+                point
                 for point in product(*(codes for _, codes in c.status_domains))
-                if closure[c.identifier].contains(point)
+                if kept_override[c.identifier].contains(point)
             }
-            self.assertEqual(actual_kept, expected["kept"])
-        live = least_liveness(package)
-        actual_live = {
-            ((c.identifier, point), coordinate)
+            for c in package.cells
+        }
+    expected = literal(package, removed, kept_override=ordinary_kept)
+    observed = check_screen(package, removed, kept_override=kept_override)
+    assert {
+        key: _mapping(value)["status"]
+        for key, value in _mapping(observed["premises"]).items()
+    } == expected["premises"]
+    if kept_override is None:
+        closure = possible_closure(package)
+        actual_kept = {
+            (c.identifier, point)
             for c in package.cells
             for point in product(*(codes for _, codes in c.status_domains))
-            for coordinate in c.coordinates
-            if live[c.identifier, coordinate].contains(point)
+            if closure[c.identifier].contains(point)
         }
-        self.assertEqual(actual_live, expected["liveness"])
-        self.assertEqual(
-            observed["source_obligations"], list(package.source_obligations)
+        assert actual_kept == expected["kept"]
+    live = least_liveness(package)
+    actual_live = {
+        ((c.identifier, point), coordinate)
+        for c in package.cells
+        for point in product(*(codes for _, codes in c.status_domains))
+        for coordinate in c.coordinates
+        if live[c.identifier, coordinate].contains(point)
+    }
+    assert actual_live == expected["liveness"]
+    assert observed["source_obligations"] == list(package.source_obligations)
+    assert not observed["transformation_authorized"]
+    return observed
+
+
+def test_box_algebra_exhaustive_two_binary_axes() -> None:
+    domain = (frozenset({0, 1}), frozenset({0, 1}))
+    points = tuple(product((0, 1), repeat=2))
+    subsets = [
+        {p for i, p in enumerate(points) if mask & (1 << i)} for mask in range(16)
+    ]
+    for left in subsets:
+        a = Region.make(domain, (tuple(frozenset({v}) for v in p) for p in left))
+        for right in subsets:
+            b = Region.make(domain, (tuple(frozenset({v}) for v in p) for p in right))
+            for actual, expected in (
+                (a.union(b), left | right),
+                (a.intersection(b), left & right),
+                (a.difference(b), left - right),
+            ):
+                case = (sorted(left), sorted(right))
+                assert {p for p in points if actual.contains(p)} == expected, case
+                assert actual.cardinality == len(expected), case
+
+
+def test_zero_dimensional_full_and_empty() -> None:
+    empty = Region.make(())
+    full = Region.full(())
+    assert full.cardinality == 1
+    assert empty.cardinality == 0
+    assert full.contains(())
+    assert not full.difference(full).boxes
+    assert empty.union(full).equal(full)
+
+
+def test_generated_all_binary_relations_and_removal_sets() -> None:
+    pairs = tuple(product((0, 1), repeat=2))
+    for mask in range(16):
+        package = simple(
+            edges=tuple(pair for i, pair in enumerate(pairs) if mask & (1 << i))
         )
-        self.assertFalse(observed["transformation_authorized"])
-        return observed
-
-    def test_box_algebra_exhaustive_two_binary_axes(self) -> None:
-        domain = (frozenset({0, 1}), frozenset({0, 1}))
-        points = tuple(product((0, 1), repeat=2))
-        subsets = [
-            {p for i, p in enumerate(points) if mask & (1 << i)} for mask in range(16)
-        ]
-        for left in subsets:
-            a = Region.make(domain, (tuple(frozenset({v}) for v in p) for p in left))
-            for right in subsets:
-                b = Region.make(
-                    domain, (tuple(frozenset({v}) for v in p) for p in right)
-                )
-                with self.subTest(left=sorted(left), right=sorted(right)):
-                    for actual, expected in (
-                        (a.union(b), left | right),
-                        (a.intersection(b), left & right),
-                        (a.difference(b), left - right),
-                    ):
-                        self.assertEqual(
-                            {p for p in points if actual.contains(p)}, expected
-                        )
-                        self.assertEqual(actual.cardinality, len(expected))
-
-    def test_zero_dimensional_full_and_empty(self) -> None:
-        empty = Region.make(())
-        full = Region.full(())
-        self.assertEqual(full.cardinality, 1)
-        self.assertEqual(empty.cardinality, 0)
-        self.assertTrue(full.contains(()))
-        self.assertFalse(full.difference(full).boxes)
-        self.assertTrue(empty.union(full).equal(full))
-
-    def test_generated_all_binary_relations_and_removal_sets(self) -> None:
-        pairs = tuple(product((0, 1), repeat=2))
-        for mask in range(16):
-            package = simple(
-                edges=tuple(pair for i, pair in enumerate(pairs) if mask & (1 << i))
+        axes = tuple(sorted(all_removed(package)))
+        for removed_mask in range(4):
+            removed = frozenset(
+                axis for i, axis in enumerate(axes) if removed_mask & (1 << i)
             )
-            axes = tuple(sorted(all_removed(package)))
-            for removed_mask in range(4):
-                removed = frozenset(
-                    axis for i, axis in enumerate(axes) if removed_mask & (1 << i)
-                )
-                with self.subTest(mask=mask, removed_mask=removed_mask):
-                    self.assert_matches_literal(package, removed)
+            assert_matches_literal(package, removed)
 
-    def test_simultaneous_source_and_target_projection(self) -> None:
-        package = simple()
-        joint = self.assert_matches_literal(package, all_removed(package))
-        unilateral = self.assert_matches_literal(package, frozenset({("source", "i")}))
-        self.assertTrue(joint["conditions_pass"])
-        self.assertEqual(unilateral["premises"]["I3"]["status"], "refuted")
 
-    def test_I1_requires_every_original_part(self) -> None:
-        package = simple(edges=((0, 0), (1, 0)))
-        result = self.assert_matches_literal(package, all_removed(package))
-        self.assertEqual(result["premises"]["I1"]["status"], "refuted")
-        self.assertFalse(result["conditions_pass"])
+def test_simultaneous_source_and_target_projection() -> None:
+    package = simple()
+    joint = assert_matches_literal(package, all_removed(package))
+    unilateral = assert_matches_literal(package, frozenset({("source", "i")}))
+    assert joint["conditions_pass"]
+    assert unilateral["premises"]["I3"]["status"] == "refuted"
 
-    def test_unkept_full_hull_exclusion_is_checked(self) -> None:
-        package = simple(edges=())
-        source, target = package.cells
-        target = replace(target, action_domains=(("choice", (0, 1)),))
-        facts = (
-            package.facts[0],
-            FactRegion(
-                "target",
-                (frozenset({0}),),
-                (("direct", fixed()),),
-                excluded=(("choice", frozenset()),),
-            ),
-            FactRegion(
-                "target",
-                (frozenset({1}),),
-                (("direct", fixed()),),
-                excluded=(("choice", frozenset({1})),),
-            ),
-        )
-        package = replace(package, cells=(source, target), facts=facts)
-        result = self.assert_matches_literal(package, all_removed(package))
-        self.assertEqual(result["premises"]["I2"]["status"], "refuted")
 
-    def test_marked_cross_slice_edges_fail(self) -> None:
-        package = simple(edges=((0, 1), (1, 0)), same_regime=True, marked=True)
-        result = self.assert_matches_literal(package, all_removed(package))
-        self.assertEqual(result["premises"]["I3"]["status"], "proved")
-        self.assertEqual(result["premises"]["I4"]["status"], "refuted")
+def test_I1_requires_every_original_part() -> None:
+    package = simple(edges=((0, 0), (1, 0)))
+    result = assert_matches_literal(package, all_removed(package))
+    assert result["premises"]["I1"]["status"] == "refuted"
+    assert not result["conditions_pass"]
 
-    def test_named_slice_alignment_with_reversed_axis_order(self) -> None:
-        for transpose in (False, True):
-            source = Cell(
-                "a",
-                "r",
-                (("i", (0, 1)), ("j", (0, 1))),
-                frozenset({"i", "j"}),
-                ("direct", "u_i", "u_j"),
-                (),
-                True,
-            )
-            target = Cell(
-                "b", "r", (("j", (0, 1)), ("i", (0, 1))), frozenset({"i", "j"})
-            )
-            facts = (
-                FactRegion(
-                    "a",
-                    source.domains,
-                    (("direct", fixed()), ("u_i", fixed()), ("u_j", fixed())),
-                ),
-                FactRegion("b", target.domains, (("direct", fixed()),)),
-            )
-            edges = tuple(
-                SupportRegion(
-                    "a",
-                    "b",
-                    tuple(
-                        frozenset({v})
-                        for v in ((i, j) + ((i, j) if transpose else (j, i)))
-                    ),
-                    "solve",
-                    True,
-                    ("law",),
-                    (("i", "u_i"), ("j", "u_j")),
-                )
-                for i, j in product((0, 1), repeat=2)
-            )
-            package = Package((source, target), facts, edges)
-            with self.subTest(transpose=transpose):
-                result = self.assert_matches_literal(package, all_removed(package))
-                self.assertEqual(
-                    result["premises"]["I4"]["status"],
-                    "refuted" if transpose else "proved",
-                )
 
-    def test_phase_and_incidence_identity_survive(self) -> None:
-        for change in ("phase", "incidences"):
-            package = simple()
-            altered = replace(
-                package.supports[1],
-                **(
-                    {"phase": "simulation"}
-                    if change == "phase"
-                    else {"incidences": ("other",)}
-                ),
-            )
-            if change == "incidences":
-                altered = replace(altered, update_keys=(("i", "update:law:i"),))
-            package = replace(package, supports=(package.supports[0], altered))
-            with self.subTest(change=change):
-                result = self.assert_matches_literal(package, all_removed(package))
-                self.assertEqual(result["premises"]["I3"]["status"], "refuted")
+def test_unkept_full_hull_exclusion_is_checked() -> None:
+    package = simple(edges=())
+    source, target = package.cells
+    target = replace(target, action_domains=(("choice", (0, 1)),))
+    facts = (
+        package.facts[0],
+        FactRegion(
+            "target",
+            (frozenset({0}),),
+            (("direct", fixed()),),
+            excluded=(("choice", frozenset()),),
+        ),
+        FactRegion(
+            "target",
+            (frozenset({1}),),
+            (("direct", fixed()),),
+            excluded=(("choice", frozenset({1})),),
+        ),
+    )
+    package = replace(package, cells=(source, target), facts=facts)
+    result = assert_matches_literal(package, all_removed(package))
+    assert result["premises"]["I2"]["status"] == "refuted"
 
-    def test_omitted_and_unknown_premises_cannot_pass(self) -> None:
-        result = check_screen(simple(), all_removed(simple()))
-        self.assertTrue(verdict_passes(result["premises"]))
-        for name in tuple(result["premises"]):
-            missing = dict(result["premises"])
-            missing.pop(name)
-            self.assertFalse(verdict_passes(missing))
-            unknown = dict(result["premises"])
-            unknown[name] = {"status": "unknown"}
-            self.assertFalse(verdict_passes(unknown))
 
-    def test_nonempty_forcing_remains_unknown(self) -> None:
-        package = simple()
-        package = replace(
-            package,
-            facts=(
-                replace(package.facts[0], forced=frozenset({"choice"})),
-                package.facts[1],
-            ),
-        )
-        result = self.assert_matches_literal(package, all_removed(package))
-        self.assertEqual(result["premises"]["I5"]["status"], "unknown")
+def test_marked_cross_slice_edges_fail() -> None:
+    package = simple(edges=((0, 1), (1, 0)), same_regime=True, marked=True)
+    result = assert_matches_literal(package, all_removed(package))
+    assert result["premises"]["I3"]["status"] == "proved"
+    assert result["premises"]["I4"]["status"] == "refuted"
 
-    def test_coverage_overlap_and_unrecognised_facts_are_rejected(self) -> None:
-        package = simple()
-        for facts in (
-            package.facts[:1],
-            package.facts + (package.facts[0],),
-            (replace(package.facts[0], reads=(("direct", fixed()),)), package.facts[1]),
-        ):
-            with self.subTest(facts=repr(facts)):
-                with self.assertRaises(ValueError):
-                    validate(replace(package, facts=facts))
 
-    def test_tuple_and_json_list_records_have_identical_meaning(self) -> None:
-        original = simple()
-        tuple_package = package_from_wire(wire(original))
-        json_package = package_from_wire(json.loads(json.dumps(wire(original))))
-        self.assertEqual(tuple_package, json_package)
-        self.assertEqual(tuple_package, original)
-        self.assertEqual(
-            check_screen(tuple_package, all_removed(tuple_package)),
-            check_screen(json_package, all_removed(json_package)),
-        )
-
-    def test_noninteger_or_duplicate_wire_codes_rejected(self) -> None:
-        for invalid in ([0, False], [0, 0], [0.0], [True]):
-            data = json.loads(json.dumps(wire(simple())))
-            data["facts"][0]["box"][0] = invalid
-            with self.subTest(invalid=invalid):
-                with self.assertRaises(ValueError):
-                    package_from_wire(data)
-
-    def test_nominal_codes_remain_distinct_addresses(self) -> None:
-        # An external categorical payload may assign 7.0 to both codes.  Addresses
-        # and support still use the original 11 and 27; values are never consulted.
-        cell = Cell(
-            "c", "r", (("i", (11, 27)),), frozenset({"i"}), admissible_start=True
-        )
-        package = Package(
-            (cell,), (FactRegion("c", cell.domains, (("direct", fixed()),)),), ()
-        )
-        self.assertEqual(cell.address((11,)), "c:0")
-        self.assertEqual(cell.address((27,)), "c:1")
-        self.assertEqual(possible_closure(package)["c"].cardinality, 2)
-        self.assert_matches_literal(package, all_removed(package))
-
-    def test_full_rectangle_uses_one_box_without_point_expansion(self) -> None:
-        domains = tuple(
-            (f"s{i}", tuple(range(n))) for i, n in enumerate((2, 3, 5, 7, 11, 13, 17))
-        )
-        cell = Cell(
-            "large",
+def test_named_slice_alignment_with_reversed_axis_order() -> None:
+    for transpose in (False, True):
+        source = Cell(
+            "a",
             "r",
-            domains,
-            frozenset(name for name, _ in domains),
-            admissible_start=True,
+            (("i", (0, 1)), ("j", (0, 1))),
+            frozenset({"i", "j"}),
+            ("direct", "u_i", "u_j"),
+            (),
+            True,
         )
-        package = Package(
-            (cell,), (FactRegion("large", cell.domains, (("direct", fixed()),)),), ()
-        )
-        closure = possible_closure(package)
-        self.assertEqual(closure["large"].cardinality, 510510)
-        self.assertEqual(len(closure["large"].boxes), 1)
-        self.assertTrue(check_screen(package, all_removed(package))["conditions_pass"])
-
-    def test_fixed_liveness_updates_and_named_explicit_bindings(self) -> None:
-        a = Cell(
-            "a", "a", (), frozenset({"x", "unused"}), ("direct", "law_a::b"), (), True
-        )
-        b = Cell("b", "b", (), frozenset({"b"}), ("direct", "law_b::z"))
-        c = Cell("c", "c", (), frozenset({"z"}))
+        target = Cell("b", "r", (("j", (0, 1)), ("i", (0, 1))), frozenset({"i", "j"}))
         facts = (
-            FactRegion("a", (), (("direct", fixed()), ("law_a::b", fixed("x")))),
-            FactRegion("b", (), (("direct", fixed()), ("law_b::z", fixed("b")))),
-            FactRegion("c", (), (("direct", fixed("z")),)),
-        )
-        edges = (
-            SupportRegion(
-                "a", "b", (), "solve", False, ("law_a",), (("b", "law_a::b"),)
+            FactRegion(
+                "a",
+                source.domains,
+                (("direct", fixed()), ("u_i", fixed()), ("u_j", fixed())),
             ),
+            FactRegion("b", target.domains, (("direct", fixed()),)),
+        )
+        edges = tuple(
             SupportRegion(
-                "b", "c", (), "simulation", True, ("law_b",), (("z", "law_b::z"),)
+                "a",
+                "b",
+                tuple(
+                    frozenset({v}) for v in ((i, j) + ((i, j) if transpose else (j, i)))
+                ),
+                "solve",
+                True,
+                ("law",),
+                (("i", "u_i"), ("j", "u_j")),
+            )
+            for i, j in product((0, 1), repeat=2)
+        )
+        package = Package((source, target), facts, edges)
+        result = assert_matches_literal(package, all_removed(package))
+        assert result["premises"]["I4"]["status"] == (
+            "refuted" if transpose else "proved"
+        ), transpose
+
+
+def test_phase_and_incidence_identity_survive() -> None:
+    for change in ("phase", "incidences"):
+        package = simple()
+        altered = replace(
+            package.supports[1],
+            **(
+                {"phase": "simulation"}
+                if change == "phase"
+                else {"incidences": ("other",)}
             ),
         )
-        package = Package((a, b, c), facts, edges)
-        self.assert_matches_literal(package, frozenset())
-        live = least_liveness(package)
-        self.assertEqual(live["a", "x"].cardinality, 1)
-        self.assertEqual(live["a", "unused"].cardinality, 0)
+        if change == "incidences":
+            altered = replace(altered, update_keys=(("i", "update:law:i"),))
+        package = replace(package, supports=(package.supports[0], altered))
+        result = assert_matches_literal(package, all_removed(package))
+        assert result["premises"]["I3"]["status"] == "refuted", change
 
-    def test_competing_update_bindings_fail_loudly(self) -> None:
-        package = simple()
-        extra = replace(package.supports[0], update_keys=(("i", "direct"),))
-        with self.assertRaises(ValueError):
-            least_liveness(replace(package, supports=package.supports + (extra,)))
 
-    def test_explicit_missing_producer_keeps_every_source_coordinate(self) -> None:
-        source = Cell("a", "a", (), frozenset({"x", "y"}), admissible_start=True)
-        target = Cell("b", "b", (), frozenset({"z"}))
-        facts = (
-            FactRegion("a", (), (("direct", fixed()),)),
-            FactRegion("b", (), (("direct", fixed("z")),)),
+def test_omitted_and_unknown_premises_cannot_pass() -> None:
+    result = check_screen(simple(), all_removed(simple()))
+    assert verdict_passes(result["premises"])
+    for name in tuple(result["premises"]):
+        missing = dict(result["premises"])
+        missing.pop(name)
+        assert not verdict_passes(missing)
+        unknown = dict(result["premises"])
+        unknown[name] = {"status": "unknown"}
+        assert not verdict_passes(unknown)
+
+
+def test_nonempty_forcing_remains_unknown() -> None:
+    package = simple()
+    package = replace(
+        package,
+        facts=(
+            replace(package.facts[0], forced=frozenset({"choice"})),
+            package.facts[1],
+        ),
+    )
+    result = assert_matches_literal(package, all_removed(package))
+    assert result["premises"]["I5"]["status"] == "unknown"
+
+
+def test_coverage_overlap_and_unrecognised_facts_are_rejected() -> None:
+    package = simple()
+    for facts in (
+        package.facts[:1],
+        package.facts + (package.facts[0],),
+        (replace(package.facts[0], reads=(("direct", fixed()),)), package.facts[1]),
+    ):
+        with pytest.raises(ValueError):
+            validate(replace(package, facts=facts))
+
+
+def test_tuple_and_json_list_records_have_identical_meaning() -> None:
+    original = simple()
+    tuple_package = package_from_wire(wire(original))
+    json_package = package_from_wire(json.loads(json.dumps(wire(original))))
+    assert tuple_package == json_package
+    assert tuple_package == original
+    assert check_screen(tuple_package, all_removed(tuple_package)) == check_screen(
+        json_package, all_removed(json_package)
+    )
+
+
+def test_noninteger_or_duplicate_wire_codes_rejected() -> None:
+    for invalid in ([0, False], [0, 0], [0.0], [True]):
+        data = json.loads(json.dumps(wire(simple())))
+        data["facts"][0]["box"][0] = invalid
+        with pytest.raises(ValueError):
+            package_from_wire(data)
+
+
+def test_nominal_codes_remain_distinct_addresses() -> None:
+    # An external categorical payload may assign 7.0 to both codes.  Addresses
+    # and support still use the original 11 and 27; values are never consulted.
+    cell = Cell("c", "r", (("i", (11, 27)),), frozenset({"i"}), admissible_start=True)
+    package = Package(
+        (cell,), (FactRegion("c", cell.domains, (("direct", fixed()),)),), ()
+    )
+    assert cell.address((11,)) == "c:0"
+    assert cell.address((27,)) == "c:1"
+    assert possible_closure(package)["c"].cardinality == 2
+    assert_matches_literal(package, all_removed(package))
+
+
+def test_full_rectangle_uses_one_box_without_point_expansion() -> None:
+    domains = tuple(
+        (f"s{i}", tuple(range(n))) for i, n in enumerate((2, 3, 5, 7, 11, 13, 17))
+    )
+    cell = Cell(
+        "large",
+        "r",
+        domains,
+        frozenset(name for name, _ in domains),
+        admissible_start=True,
+    )
+    package = Package(
+        (cell,), (FactRegion("large", cell.domains, (("direct", fixed()),)),), ()
+    )
+    closure = possible_closure(package)
+    assert closure["large"].cardinality == 510510
+    assert len(closure["large"].boxes) == 1
+    assert check_screen(package, all_removed(package))["conditions_pass"]
+
+
+def test_fixed_liveness_updates_and_named_explicit_bindings() -> None:
+    a = Cell("a", "a", (), frozenset({"x", "unused"}), ("direct", "law_a::b"), (), True)
+    b = Cell("b", "b", (), frozenset({"b"}), ("direct", "law_b::z"))
+    c = Cell("c", "c", (), frozenset({"z"}))
+    facts = (
+        FactRegion("a", (), (("direct", fixed()), ("law_a::b", fixed("x")))),
+        FactRegion("b", (), (("direct", fixed()), ("law_b::z", fixed("b")))),
+        FactRegion("c", (), (("direct", fixed("z")),)),
+    )
+    edges = (
+        SupportRegion("a", "b", (), "solve", False, ("law_a",), (("b", "law_a::b"),)),
+        SupportRegion(
+            "b", "c", (), "simulation", True, ("law_b",), (("z", "law_b::z"),)
+        ),
+    )
+    package = Package((a, b, c), facts, edges)
+    assert_matches_literal(package, frozenset())
+    live = least_liveness(package)
+    assert live["a", "x"].cardinality == 1
+    assert live["a", "unused"].cardinality == 0
+
+
+def test_competing_update_bindings_fail_loudly() -> None:
+    package = simple()
+    extra = replace(package.supports[0], update_keys=(("i", "direct"),))
+    with pytest.raises(ValueError):
+        least_liveness(replace(package, supports=package.supports + (extra,)))
+
+
+def test_explicit_missing_producer_keeps_every_source_coordinate() -> None:
+    source = Cell("a", "a", (), frozenset({"x", "y"}), admissible_start=True)
+    target = Cell("b", "b", (), frozenset({"z"}))
+    facts = (
+        FactRegion("a", (), (("direct", fixed()),)),
+        FactRegion("b", (), (("direct", fixed("z")),)),
+    )
+    edge = SupportRegion("a", "b", (), "solve", False, ("law",), (("z", None),))
+    package = Package((source, target), facts, (edge,))
+    assert_matches_literal(package, frozenset())
+    assert least_liveness(package)["a", "x"].cardinality == 1
+    assert least_liveness(package)["a", "y"].cardinality == 1
+    assert set(dict(facts[0].reads)) == {"direct"}
+
+
+def test_cycles_have_least_not_arbitrary_fixed_point() -> None:
+    cell = Cell("c", "r", (("i", (0, 1)),), frozenset({"i"}), ("direct", "u"), (), True)
+    edge = SupportRegion(
+        "c", "c", cell.domains + cell.domains, "both", True, ("law",), (("i", "u"),)
+    )
+    for seed in (False, True):
+        fact = FactRegion(
+            "c",
+            cell.domains,
+            (("direct", fixed("i") if seed else fixed()), ("u", fixed("i"))),
         )
-        edge = SupportRegion("a", "b", (), "solve", False, ("law",), (("z", None),))
-        package = Package((source, target), facts, (edge,))
-        self.assert_matches_literal(package, frozenset())
-        self.assertEqual(least_liveness(package)["a", "x"].cardinality, 1)
-        self.assertEqual(least_liveness(package)["a", "y"].cardinality, 1)
-        self.assertEqual(set(dict(facts[0].reads)), {"direct"})
+        package = Package((cell,), (fact,), (edge,))
+        assert_matches_literal(package, all_removed(package))
+        assert least_liveness(package)["c", "i"].cardinality == (2 if seed else 0), seed
 
-    def test_cycles_have_least_not_arbitrary_fixed_point(self) -> None:
-        cell = Cell(
-            "c", "r", (("i", (0, 1)),), frozenset({"i"}), ("direct", "u"), (), True
-        )
-        edge = SupportRegion(
-            "c", "c", cell.domains + cell.domains, "both", True, ("law",), (("i", "u"),)
-        )
-        for seed in (False, True):
-            fact = FactRegion(
-                "c",
-                cell.domains,
-                (("direct", fixed("i") if seed else fixed()), ("u", fixed("i"))),
-            )
-            package = Package((cell,), (fact,), (edge,))
-            with self.subTest(seed=seed):
-                self.assert_matches_literal(package, all_removed(package))
-                self.assertEqual(
-                    least_liveness(package)["c", "i"].cardinality, 2 if seed else 0
-                )
 
-    def test_factor_bridge_preserves_identity_support_and_table_read_keys(self) -> None:
+def test_factor_bridge_preserves_identity_support_and_table_read_keys() -> None:
+    source, record, axes = factor_fixture()
+    table = build_factored_table(
+        source=source, record=record, status_axes=axes, version=REFERENCE_VERSION
+    )
+    assert len(table.relation_factors) == 1
+    assert table.relation_factors[0].support_roots == (("i", "support:law::i"),)
+    package = as_box_package(table)
+    assert package.cells[0].read_keys == ("direct", "law::i")
+    assert package.supports[0].update_keys == (("i", "law::i"),)
+    result = assert_matches_literal(package, all_removed(package))
+    assert result["conditions_pass"]
+
+
+def test_factor_bridge_native_tuple_and_json_list_metadata_agree() -> None:
+    source, record, axes = factor_fixture()
+    native = as_box_package(
+        build_factored_table(
+            source=source,
+            record=record,
+            status_axes=axes,
+            version=REFERENCE_VERSION,
+        )
+    )
+    json_record = json.loads(json.dumps(record))
+    decoded = as_box_package(
+        build_factored_table(
+            source=source,
+            record=json_record,
+            status_axes=axes,
+            version=REFERENCE_VERSION,
+        )
+    )
+    assert native == decoded
+
+
+def test_factor_bridge_rejects_incomplete_coverage_and_lost_guards() -> None:
+    for mutation in (
+        "missing_root",
+        "missing_child",
+        "cycle",
+        "missing_qualification",
+        "wrong_incidence",
+    ):
         source, record, axes = factor_fixture()
-        table = build_factored_table(
-            source=source, record=record, status_axes=axes, version=REFERENCE_VERSION
-        )
-        self.assertEqual(len(table.relation_factors), 1)
-        self.assertEqual(
-            table.relation_factors[0].support_roots, (("i", "support:law::i"),)
-        )
-        package = as_box_package(table)
-        self.assertEqual(package.cells[0].read_keys, ("direct", "law::i"))
-        self.assertEqual(package.supports[0].update_keys, (("i", "law::i"),))
-        result = self.assert_matches_literal(package, all_removed(package))
-        self.assertTrue(result["conditions_pass"])
-
-    def test_factor_bridge_native_tuple_and_json_list_metadata_agree(self) -> None:
-        source, record, axes = factor_fixture()
-        native = as_box_package(
-            build_factored_table(
-                source=source,
-                record=record,
-                status_axes=axes,
-                version=REFERENCE_VERSION,
-            )
-        )
-        json_record = json.loads(json.dumps(record))
-        decoded = as_box_package(
-            build_factored_table(
-                source=source,
-                record=json_record,
-                status_axes=axes,
-                version=REFERENCE_VERSION,
-            )
-        )
-        self.assertEqual(native, decoded)
-
-    def test_factor_bridge_rejects_incomplete_coverage_and_lost_guards(self) -> None:
-        for mutation in (
-            "missing_root",
-            "missing_child",
-            "cycle",
-            "missing_qualification",
-            "wrong_incidence",
-        ):
-            source, record, axes = factor_fixture()
-            altered = deepcopy(record)
-            diagram = fixture_record(
-                fixture_record(fixture_sequence(altered["cells"])[0])["diagram"]
-            )
-            if mutation == "missing_root":
-                fixture_record(diagram["roots"]).pop("support:law::i")
-            elif mutation == "missing_child":
-                fixture_record(fixture_sequence(diagram["nodes"])[4])["children"] = [2]
-            elif mutation == "cycle":
-                fixture_record(fixture_sequence(diagram["nodes"])[4])["children"] = [
-                    4,
-                    3,
-                ]
-            elif mutation == "missing_qualification":
-                altered["source_obligations"] = []
-            elif mutation == "wrong_incidence":
-                fixture_record(
-                    fixture_record(
-                        fixture_sequence(
-                            fixture_record(fixture_sequence(altered["cells"])[0])[
-                                "relations"
-                            ]
-                        )[0]
-                    )["state_updates"]
-                )["i"] = "invented_identity"
-            with self.subTest(mutation=mutation):
-                with self.assertRaises(ValueError):
-                    build_factored_table(
-                        source=source,
-                        record=altered,
-                        status_axes=axes,
-                        version=REFERENCE_VERSION,
-                    )
-
-    def test_exclusion_code_types_are_nominal_in_memory_and_on_wire(self) -> None:
-        package = simple()
-        cell = replace(package.cells[0], action_domains=(("choice", (0, 1)),))
-        fact = replace(package.facts[0], excluded=(("choice", frozenset()),))
-        package = replace(
-            package, cells=(cell, package.cells[1]), facts=(fact, package.facts[1])
-        )
-        for invalid in ([False], [0.0], [0, False], [0, 0]):
-            with self.subTest(invalid=invalid):
-                if len(invalid) == 1:
-                    malformed = replace(
-                        fact, excluded=(("choice", frozenset(invalid)),)
-                    )
-                    with self.assertRaises(ValueError):
-                        validate(replace(package, facts=(malformed, package.facts[1])))
-                data = json.loads(json.dumps(wire(package)))
-                data["facts"][0]["excluded"][0][1] = invalid
-                with self.assertRaises(ValueError):
-                    package_from_wire(data)
-
-    def test_factor_exclusion_terminal_cannot_use_false_as_code_zero(self) -> None:
-        source, record, axes = factor_fixture()
-        source._cells["source"]["actions"] = {"choice": "binary"}
+        altered = deepcopy(record)
         diagram = fixture_record(
-            fixture_record(fixture_sequence(record["cells"])[0])["diagram"]
+            fixture_record(fixture_sequence(altered["cells"])[0])["diagram"]
         )
-        fixture_record(diagram["roots"])["exclude:choice"] = len(
-            fixture_sequence(diagram["nodes"])
-        )
-        fixture_list(diagram["nodes"]).append(
-            {"leaf": ["frozenset", [["bool", False]]]}
-        )
-        table = build_factored_table(
-            source=source, record=record, status_axes=axes, version=REFERENCE_VERSION
-        )
-        with self.assertRaises(ValueError):
-            as_box_package(table)
+        if mutation == "missing_root":
+            fixture_record(diagram["roots"]).pop("support:law::i")
+        elif mutation == "missing_child":
+            fixture_record(fixture_sequence(diagram["nodes"])[4])["children"] = [2]
+        elif mutation == "cycle":
+            fixture_record(fixture_sequence(diagram["nodes"])[4])["children"] = [4, 3]
+        elif mutation == "missing_qualification":
+            altered["source_obligations"] = []
+        elif mutation == "wrong_incidence":
+            fixture_record(
+                fixture_record(
+                    fixture_sequence(
+                        fixture_record(fixture_sequence(altered["cells"])[0])[
+                            "relations"
+                        ]
+                    )[0]
+                )["state_updates"]
+            )["i"] = "invented_identity"
+        with pytest.raises(ValueError):
+            build_factored_table(
+                source=source,
+                record=altered,
+                status_axes=axes,
+                version=REFERENCE_VERSION,
+            )
 
 
-if __name__ == "__main__":
-    unittest.main(verbosity=2)
+def test_exclusion_code_types_are_nominal_in_memory_and_on_wire() -> None:
+    package = simple()
+    cell = replace(package.cells[0], action_domains=(("choice", (0, 1)),))
+    fact = replace(package.facts[0], excluded=(("choice", frozenset()),))
+    package = replace(
+        package, cells=(cell, package.cells[1]), facts=(fact, package.facts[1])
+    )
+    for invalid in ([False], [0.0], [0, False], [0, 0]):
+        if len(invalid) == 1:
+            malformed = replace(fact, excluded=(("choice", frozenset(invalid)),))
+            with pytest.raises(ValueError):
+                validate(replace(package, facts=(malformed, package.facts[1])))
+        data = json.loads(json.dumps(wire(package)))
+        data["facts"][0]["excluded"][0][1] = invalid
+        with pytest.raises(ValueError):
+            package_from_wire(data)
+
+
+def test_factor_exclusion_terminal_cannot_use_false_as_code_zero() -> None:
+    source, record, axes = factor_fixture()
+    source._cells["source"]["actions"] = {"choice": "binary"}
+    diagram = fixture_record(
+        fixture_record(fixture_sequence(record["cells"])[0])["diagram"]
+    )
+    fixture_record(diagram["roots"])["exclude:choice"] = len(
+        fixture_sequence(diagram["nodes"])
+    )
+    fixture_list(diagram["nodes"]).append({"leaf": ["frozenset", [["bool", False]]]})
+    table = build_factored_table(
+        source=source, record=record, status_axes=axes, version=REFERENCE_VERSION
+    )
+    with pytest.raises(ValueError):
+        as_box_package(table)
