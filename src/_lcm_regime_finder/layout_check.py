@@ -135,6 +135,12 @@ def check_layouts(declarations: Record, facts: Facts, result: Record, guard: Cal
     kept = model.kept()
     inert = frozenset(result["inert_statuses"])
     errors += _inert_errors(model, kept, inert)
+    for members in dense:
+        for name in sorted(inert):
+            seen = {repr(model.domains[c["states"][name]].get("values")) if name in c["states"] else None
+                    for c in model.cells.values() if c["regime"] in members}
+            if len(seen) > 1:
+                errors.append(f"I1: {name} has different grids across the members of {list(members)}")
     contracted = inert | set(result["restricted_statuses"])
     if (result["status"] == "RESTRICTED") != bool(result["restricted_statuses"]):
         errors.append("status does not say whether the family is restricted")
@@ -143,9 +149,29 @@ def check_layouts(declarations: Record, facts: Facts, result: Record, guard: Cal
     for cid, point in sorted(kept):
         regime = model.cells[cid]["regime"]
         lanes[home[regime]][(regime, tuple((n, c) for n, c in point if n not in contracted))].append((cid, point))
-    total = sum(prod(model.size(d) for d in c["states"].values()) * prod(model.size(d) for d in c["actions"].values())
-                for c in model.cells.values())
-    if result["dense_count"] != total:
+    if result["original_count"] != sum(prod(model.size(d) for d in c["states"].values())
+                                       * prod(model.size(d) for d in c["actions"].values())
+                                       for c in model.cells.values()):
+        errors.append("original count differs from the model as written")
+    ev0 = 0
+    for members in dense:
+        member_cells = [c for c in model.cells.values() if c["regime"] in members]
+        values: dict[str, set[str]] = {}
+        sizes: dict[tuple[str, str], int] = {}
+        for c in member_cells:
+            for kind in ("states", "actions"):
+                for name, did in c[kind].items():
+                    domain = model.domains[did]
+                    if domain.get("solve_axis") is False:
+                        continue
+                    if kind == "states" and isinstance(domain.get("values"), list):
+                        values.setdefault(name, set()).update(map(repr, domain["values"]))
+                    else:
+                        sizes[kind, name] = max(sizes.get((kind, name), 0), model.size(did))
+        label = len(members) if len(members) > 1 else 1
+        periods = len({c["period"] for c in member_cells})
+        ev0 += periods * label * prod(len(v) for v in values.values()) * prod(sizes.values())
+    if result["dense_count"] != ev0:
         errors.append("dense count differs from ev^0")
 
     def layout_cost(layout: list[Record], where: str) -> tuple[int, int, int]:

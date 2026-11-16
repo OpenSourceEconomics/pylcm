@@ -23,7 +23,7 @@ from itertools import product
 from typing import Literal, Protocol
 
 from .expressions import AdmissionError, jsonable, partial
-from .frontier import canonical
+from .records import canonical
 from .implicit.implicit_core import MDD
 from .semantic_check import (
     _UNKNOWN,

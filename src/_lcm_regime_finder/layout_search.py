@@ -10,7 +10,7 @@ from itertools import product
 from math import prod
 
 from .facts import Facts, FactsBackendName, Record, fibre_live, linked_points, live_relations, status_axes
-from .frontier import canonical
+from .records import canonical
 
 
 def regime_kinds(declarations: Record) -> dict[str, Record]:
@@ -135,10 +135,17 @@ class LayoutProblem:
         self._check_marked_links()
         self.kept = self._kept_fibres()
         self.memo: dict = {}
-        self.inert = self._inert_statuses()
+        member_test = self._inert_statuses()
+        # (I1) takes the parts of a fibre over the dense regime's grid (:1743-1747).
+        # The test above takes them over each member's own grid, so a status
+        # whose grid differs across members is contracted as a restriction only:
+        # a layout of the contracted lanes is a layout of the full family, so its
+        # count is an upper bound there.
+        mixed = {name for name in member_test if self._grid_differs(name)}
+        self.inert = member_test - mixed
         limit = limits.get("lanes_per_regime", 12)
-        self.contracted = set(self.inert)
-        self.restricted: list[str] = []
+        self.contracted = set(member_test)
+        self.restricted: list[str] = sorted(mixed)
         while True:
             self.lanes = self._lanes(frozenset(self.contracted))
             crowded = [i for i, lanes in enumerate(self.lanes) if len(lanes) > limit]
@@ -195,6 +202,15 @@ class LayoutProblem:
     def kept_actions(self, cid: str) -> frozenset[str]:
         """The least action coordinates: every action that is not forced (:416-417)."""
         return frozenset(self.cells[cid]["actions"]) - set(self.facts.forced.get(cid, {}))
+
+    def _grid_differs(self, name: str) -> bool:
+        """Whether two members of a dense regime give `name` different grids, or one lacks it."""
+        for members in self.dense:
+            grids = {repr(self.domains[c["states"][name]].get("values")) if name in c["states"] else None
+                     for c in self.cells.values() if c["regime"] in members}
+            if len(grids) > 1:
+                return True
+        return False
 
     def _inert_statuses(self) -> frozenset[str]:
         """Return the largest status set this test certifies inert (lem:inert).
@@ -338,10 +354,32 @@ class LayoutProblem:
         domain = self.domains[domain_id]
         return 1 if domain.get("solve_axis") is False else domain["size"]
 
-    def dense_count(self) -> int:
-        """The count of the starting model, ev^0 (:851-853)."""
+    def original_count(self) -> int:
+        """The count of the model as written: each original regime on its own grids."""
         return sum(prod(self._size(d) for d in c["states"].values()) * prod(self._size(d) for d in c["actions"].values())
                    for c in self.cells.values())
+
+    def dense_count(self) -> int:
+        """ev^0 (:851-859): each dense regime charges its whole grid in every active period.
+
+        The grid is the regime label over all members, each state's union of
+        values (statuses) or largest grid (ordinary), and each action's largest grid.
+        """
+        total = 0
+        for members in self.dense:
+            cells = [c for c in self.cells.values() if c["regime"] in members]
+            rows = len(members) if len(members) > 1 else 1
+            for kind in ("states", "actions"):
+                for name in sorted({n for c in cells for n in c[kind]}):
+                    domains = [self.domains[c[kind][name]] for c in cells if name in c[kind]]
+                    if all(d.get("solve_axis") is False for d in domains):
+                        continue
+                    if kind == "states" and all(isinstance(d.get("values"), list) for d in domains):
+                        rows *= len({repr(v) for d in domains for v in d["values"]})
+                    else:
+                        rows *= max(self._size(c[kind][name]) for c in cells if name in c[kind])
+            total += len({c["period"] for c in cells}) * rows
+        return total
 
 
 class _RegimeSearch:
@@ -516,7 +554,7 @@ def search_layouts(
         "inert_statuses": sorted(problem.inert),
         "restricted_statuses": problem.restricted,
         "lanes": [[{"regime": r, "statuses": dict(p)} for r, p in lanes] for lanes in problem.lanes],
-        "dense_count": problem.dense_count(),
+        "dense_count": problem.dense_count(), "original_count": problem.original_count(),
         "exact": exact,
         "curve": curve,
         "floor": floor,

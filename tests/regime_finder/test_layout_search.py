@@ -207,7 +207,10 @@ def test_a_given_layout_is_priced_from_its_fibres() -> None:
     assert (pooled["evaluations"], pooled["storage"]) == (2 * 2 * 2, 2 * 2 * 2)
     assert pooled["states"] == {"regime": ["old", "young"], "health": [0, 1]}
     assert dead["evaluations"] == 2
-    assert result["dense_count"] == 3 * 2
+    assert result["original_count"] == 3 * 2
+    assert result["dense_count"] == 2 * 2 * 2 + 2, (
+        "ev^0 charges both labels in both periods"
+    )
     assert set(result["phase_timings"]) == {"facts", "search"}
 
 
@@ -422,3 +425,70 @@ def test_a_block_records_the_values_it_excludes_for_an_action_its_members_lack()
     alone, pooled = result["priced"]
     assert alone["actions"] == {} and alone["excluded_actions"] == {"work": [1]}
     assert pooled["actions"] == {"work": 2} and pooled["excluded_actions"] == {}
+
+
+@categorical(ordered=False)
+class WideCover:
+    none: ScalarInt
+    some: ScalarInt
+    full: ScalarInt
+
+
+@categorical(ordered=False)
+class NarrowCover:
+    none: ScalarInt
+    some: ScalarInt
+
+
+def _no_cover() -> DiscreteState:
+    return jnp.asarray(0)
+
+
+def _covered_utility(health: DiscreteState, cover: DiscreteState) -> FloatND:
+    return jnp.where(health == Health.good, 1.0, 0.0) + cover
+
+
+def test_a_status_whose_grid_differs_across_members_is_not_certified_inert() -> None:
+    """(I1) takes parts over the dense regime's grid (:1743-1747).
+
+    Old has no `full` cover, so the part (old, full) of a kept fibre is not kept.
+    Contracting cover is then a restriction, and the curve an upper bound.
+    """
+    from _lcm_regime_finder.layout_search import analyze_layouts
+
+    model = Model(
+        n_periods=3,
+        regime_id_class=Stages,
+        regimes={
+            "young": Regime(
+                states={
+                    "health": DiscreteGrid(Health),
+                    "cover": DiscreteGrid(WideCover),
+                },
+                functions={"utility": _covered_utility},
+                state_transitions={"health": _stay, "cover": {"old": _no_cover}},
+            ),
+            "old": Regime(
+                states={
+                    "health": DiscreteGrid(Health),
+                    "cover": DiscreteGrid(NarrowCover),
+                },
+                functions={"utility": _covered_utility},
+                state_transitions={"health": _stay, "cover": _no_cover},
+            ),
+            "dead": Regime(
+                states={"health": DiscreteGrid(Health)}, functions={"utility": _utility}
+            ),
+        },
+        initial_nodes=InitialNodes(by_period={0: "young"}),
+        edges={
+            "young": {"old": Periods(values=(0,))},
+            "old": {"dead": Periods(values=(1,))},
+        },
+        fixed_params={"discount_factor": 1.0},
+        enable_jit=False,
+    )
+    result = analyze_layouts(model, limits={"max_blocks": 6})
+    assert "cover" not in result["inert_statuses"]
+    assert "cover" in result["restricted_statuses"]
+    assert result["status"] == "RESTRICTED"
