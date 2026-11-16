@@ -275,38 +275,53 @@ def characteristic_cells(
 
 
 def lane_needs(
-    facts: Facts, cell: Record, live: Mapping[str, set[str]], statuses: Mapping[str, int]
+    facts: Facts,
+    cell: Record,
+    live: Mapping[str, set[str]],
+    statuses: Mapping[str, int],
+    _memo: dict | None = None,
+    _active: frozenset = frozenset(),
 ) -> set[str]:
     """Return the states a cell needs at the points with these status codes.
 
-    That is what the cell's consumers read there, plus what its updates read
-    for every live state of a possible successor. The fixed statuses and the
-    constant states are not needed as coordinates.
+    That is what the cell's consumers read there, plus what its updates read for
+    every state a successor needs. A status an update carries unchanged stays
+    fixed in the successor, which then needs only what its own points with that
+    code need; otherwise the successor's whole-cell `live` states count. The fixed
+    statuses and the constant states are not needed as coordinates.
     """
+    memo = {} if _memo is None else _memo
+    key = (cell["id"], tuple(sorted(statuses.items())))
+    if key in memo:
+        return memo[key]
     needs = current_reads(facts, cell, statuses=statuses)
     for relation in live_relations(facts, cell["id"]):
+        updates = relation.get("state_updates", {})
         for target in relation.get("targets", []):
-            for target_axis in live[target]:
+            target_cell = facts.cells[target]
+            carried = {name: code for name, code in statuses.items()
+                       if target_cell["states"].get(name) == cell["states"][name]
+                       and name in updates and facts.identity_update(updates[name], name, name)}
+            if carried and (target, tuple(sorted(carried.items()))) not in _active:
+                target_live = lane_needs(facts, target_cell, live, carried, memo, _active | {key})
+            else:
+                target_live = live[target]
+            for target_axis in target_live:
                 if "produces" in relation and target_axis not in relation["produces"]:
                     continue
                 needs |= update_reads(facts, relation, target_axis, statuses=statuses)
-    return needs & set(cell["states"]) - set(facts.constants[cell["id"]]) - set(statuses)
+    memo[key] = needs & set(cell["states"]) - set(facts.constants[cell["id"]]) - set(statuses)
+    return memo[key]
 
 
-def lane_rows(lanes: list[Record], axis_domain: Record, domains: Mapping[str, Record]) -> int:
-    """Return the state rows of a split: each lane's own grid, summed.
-
-    A lane with several status codes keeps the status as a coordinate.
-    """
+def lane_rows(lanes: list[Record], domains: Mapping[str, Record]) -> int:
+    """Return the state rows of a split: each lane's own grid, summed."""
     total = 0
     for lane in lanes:
         rows = 1
         for domain_id in lane["states"].values():
             if domains[domain_id].get("solve_axis") is not False:
                 rows *= domains[domain_id]["size"]
-        codes = next(iter(lane["codes"].values()))
-        if len(codes) > 1 and axis_domain.get("solve_axis") is not False:
-            rows *= len(codes)
         total += rows
     return total
 

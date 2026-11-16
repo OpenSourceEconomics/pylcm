@@ -104,14 +104,16 @@ class RegimeCheck:
 
 @dataclass(frozen=True)
 class StatusLane:
-    """The codes of one status state that a split block solves on its own grid."""
+    """Status points that a split block solves on one grid of their own.
 
-    status: StateName
-    """The categorical state the block is split by."""
-    codes: tuple[int, ...]
-    """Codes of `status` in this lane."""
+    The lane fixes some status states and leaves the others free; a free status it
+    needs is among its `states`.
+    """
+
+    statuses: tuple[tuple[StateName, int], ...]
+    """The fixed (state, code) pairs that select the lane's points."""
     states: tuple[StateName, ...]
-    """States this lane keeps; the others are not needed at these codes."""
+    """States this lane keeps; the others are not needed at its points."""
 
 
 @dataclass(frozen=True)
@@ -275,19 +277,15 @@ def result_from_report(
             if domain.get("kind") != "lanes":
                 states.append(name)
                 continue
-            status = str(domain["status_axis"])
-            states.append(status)
+            states.extend(_strings(domain["status_axes"]))
             for lane in _rows(domain.get("lanes", [])):
                 kept = _strings(list(_mapping(lane.get("states", {}))))
                 states.extend(kept)
-                codes = _strings(_mapping(lane.get("codes", {}))[status])
-                lanes.append(
-                    StatusLane(
-                        status=status,
-                        codes=tuple(int(code) for code in codes),
-                        states=kept,
-                    )
+                statuses = tuple(
+                    (str(name), int(str(code)))
+                    for name, code in _mapping(lane.get("statuses", {})).items()
                 )
+                lanes.append(StatusLane(statuses=statuses, states=kept))
         return tuple(dict.fromkeys(states)), tuple(lanes)
 
     def blocks(records: Sequence[Mapping[str, JSONValue]]) -> tuple[RegimeBlock, ...]:

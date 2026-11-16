@@ -129,11 +129,13 @@ original. Changing the weights and rerunning can change which candidates are exa
 A categorical state such as employment can change which other states matter. If the
 unemployed neither earn from experience nor carry it forward, a regime that keeps
 experience for everyone stores rows nobody reads. With `facts_backend="dense"` or
-`"implicit"`, the analysis offers a split: each lane is a set of codes of one status
-state, solved on only the states its codes need. In the example, the unemployed lane
+`"implicit"`, the analysis offers a split into lanes. Each lane fixes some status states
+and is solved on only the states its points need. In the example, the unemployed lane
 keeps no other state and the employed lane keeps experience, so 2 × 3 rows become 1 + 3.
-The checker confirms that the lanes partition the status codes and that no lane drops a
-state its codes need. `RegimeBlock.lanes` lists the lanes of a split block as
+With several status states the lanes can combine them: if health also matters only to
+the employed, the employed are split again by health. The checker confirms that every
+combination of status codes lies in exactly one lane and that no lane drops a state its
+points need. `RegimeBlock.lanes` lists the lanes of a split block as
 `lcm.graphs.StatusLane` records, and the report prints them next to the block's states.
 The `metadata` backend has no per-status facts and never offers a split; the report says
 so.

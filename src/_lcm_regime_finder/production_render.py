@@ -139,13 +139,12 @@ def _axes(axes, domains):
         domain = domains.get(domain_id, {})
         size = domain.get("size")
         if domain.get("kind") == "lanes":
-            status = domain["status_axis"]
             lanes = "; ".join(
-                f"{status} {', '.join(map(str, lane['codes'][status]))}: "
-                + (", ".join(lane["states"]) or "no other states")
+                ", ".join(f"{name} {code}" for name, code in lane["statuses"].items())
+                + ": " + (", ".join(lane["states"]) or "no other states")
                 for lane in domain["lanes"]
             )
-            parts.append(f"split by {status} [{lanes}] ({_number(size)} rows)")
+            parts.append(f"split by {', '.join(domain['status_axes'])} [{lanes}] ({_number(size)} rows)")
             continue
         parts.append(f"{axis} ({_number(size)} values)" if type(size) is int else f"{axis} (size not supplied)")
     return "; ".join(parts) or "None"

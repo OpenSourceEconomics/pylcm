@@ -73,11 +73,20 @@ statuses bound, and every other state, action, shock and parameter free.
 
 ## Status splitting
 
-A status state is a categorical state with several codes. For each such axis of a cell,
-`lane_needs` returns the states its points need with that axis fixed: the consumers'
-reads plus the update reads for every live successor state. The analysis groups codes
-with equal needs into lanes. It offers each cell split by the axis whose lanes have the
-fewest rows in total. A lane with several codes keeps the status as a coordinate.
+A status state is a categorical state with several codes. `lane_needs` returns the
+states a cell needs at the points where some statuses are fixed: what its consumers read
+there, plus what its updates read for every state a successor needs. A status that an
+update carries unchanged stays fixed in the successor, so only the successor's points
+with that code count. For any other update, the successor's whole-cell live states
+count.
+
+A lane fixes some status states and leaves the others free. It keeps the states its
+points need, including any free status it reads. The lanes are the leaves of a tree that
+splits by one status at a time, so together they partition the cell's joint status
+rectangle. Splitting by employment and then, among the employed only, by health is one
+such tree. A memoized recursion finds the tree with the fewest rows: at each set of
+fixed statuses it keeps the lane unless splitting by one more status saves rows. The
+rectangle may hold at most `limits["status_lanes"]` points, 128 by default.
 
 A split is one interface option whose single state axis is a derived `lanes` domain.
 That domain is sized by the summed lane rows, so cost, merging and both searches use it
@@ -87,12 +96,12 @@ reports `NOT_OFFERED`.
 
 The checker re-derives each split from the analysis's facts. It confirms that:
 
-- the lanes partition the axis codes;
-- every lane keeps each state its codes need;
+- every point of the status rectangle lies in exactly one lane;
+- every lane keeps each state its points need;
 - the domain's rows equal the lanes' grids.
 
-Transitions need no separate check: a lane's needs already include what every live
-successor state's update reads.
+Transitions need no separate check: a lane's needs already include what every state a
+successor needs reads in the update.
 
 ## What the checker reads
 

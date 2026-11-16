@@ -7,6 +7,7 @@ one explicitly finite original coordinate, under a small pure language.
 from __future__ import annotations
 from copy import deepcopy
 from itertools import product, combinations
+from math import prod
 import time
 
 from .records import Scenario
@@ -111,12 +112,15 @@ class MetadataAnalysis:
         return regions, False
 
     def status_splits(self, interfaces, policies, derived):
-        """Offer each cell split by the status axis whose lanes need the fewest rows.
+        """Offer each cell split into status lanes with the fewest state rows.
 
-        A lane is the set of codes of one status axis whose points need the same
-        states. Splitting pays when some lane drops a state the whole cell keeps.
-        One added policy replaces every splittable cell of the identity policy
-        by its split. The metadata backend has no per-status facts.
+        A lane fixes some status states of the cell and leaves the others free; it
+        keeps the states, free statuses included, that its points need. The lanes
+        are the leaves of a tree that splits by one status at a time, so together
+        they partition the joint status rectangle. A memoized recursion finds the
+        tree with the fewest rows; a split that saves no rows is not taken. One
+        added policy replaces every splittable cell of the identity policy by its
+        split. The metadata backend has no per-status facts.
         """
         if self.facts.name == 'metadata':
             return {'status': 'NOT_OFFERED', 'reason': 'The metadata backend has no per-status facts; '
@@ -125,50 +129,41 @@ class MetadataAnalysis:
         if base is None:
             return {'status': 'NOT_OFFERED', 'reason': 'No identity projection policy', 'cells': []}
         index = {cid: {o['id']: o for o in record['options']} for cid, record in interfaces.items()}
+        limit = self.limits.get('status_lanes', 128)
         chosen = {}
         records = []
         for cid, cell in self.cells.items():
             self.guard()
             option = index[cid][base['option_by_cell'][cid]]
-            unsplit = 1
-            for domain_id in option['states'].values():
-                if self.domains[domain_id].get('solve_axis') is not False:
-                    unsplit *= self.domains[domain_id]['size']
-            best = None
-            for axis, codes in status_axes(self.facts, cell):
-                if axis not in option['states']:
-                    continue
-                kept = set(option['states']) - {axis}
-                groups = {}
-                for code in codes:
-                    needs = frozenset(lane_needs(self.facts, cell, self.live, {axis: code}) & kept)
-                    groups.setdefault(needs, []).append(code)
-                if len(groups) < 2:
-                    continue
-                lanes = [{'codes': {axis: sorted(group)}, 'states': {s: option['states'][s] for s in sorted(needs)}}
-                         for needs, group in sorted(groups.items(), key=lambda item: sorted(item[1]))]
-                rows = lane_rows(lanes, self.domains[cell['states'][axis]], self.domains)
-                if rows < unsplit and (best is None or rows < best[0]):
-                    best = (rows, axis, lanes)
-            if best is None:
+            axes = dict(sorted((axis, codes) for axis, codes in status_axes(self.facts, cell)
+                               if axis in option['states']))
+            if not axes:
                 continue
-            rows, axis, lanes = best
-            domain_id = 'lanes:' + digest([axis, lanes])[:24]
-            derived[domain_id] = {'kind': 'lanes', 'size': rows, 'status_axis': axis, 'lanes': lanes,
+            if prod(len(codes) for codes in axes.values()) > limit:
+                raise FactsBudgetError(backend=self.facts.name, unfinished=[cid], limit=f'status_lanes limit of {limit}')
+            unsplit, lanes = self._lane_tree(cell, option, axes, {}, {})
+            if len(lanes) < 2:
+                continue
+            rows = lane_rows(lanes, self.domains)
+            names = sorted({axis for lane in lanes for axis in lane['statuses']})
+            domain_id = 'lanes:' + digest([names, lanes])[:24]
+            derived[domain_id] = {'kind': 'lanes', 'size': rows, 'status_axes': names, 'lanes': lanes,
                                   'identity': domain_id, 'source_path': f'/cells/{cid}'}
             split = deepcopy(option)
-            kept = {axis} | {name for lane in lanes for name in lane['states']}
+            keep = set(names) | {name for lane in lanes for name in lane['states']}
             for name, projection in split['state_projection'].items():
-                if projection['kind'] == 'identity' and name not in kept:
+                if projection['kind'] == 'identity' and name not in keep:
                     split['state_projection'][name] = {'kind': 'drop'}
-            split['states'] = {f'lanes[{axis}]': domain_id}
+            split['states'] = {f"lanes[{','.join(names)}]": domain_id}
             split['lanes'] = deepcopy(lanes)
-            split['witnesses'] = [*split['witnesses'], {'kind': 'status_split', 'axis': axis,
-                                                        'unsplit_state_rows': unsplit, 'state_rows': rows}]
+            full = lane_rows([{'states': option['states']}], self.domains)
+            split['witnesses'] = [*split['witnesses'], {'kind': 'status_split', 'axes': names,
+                                                        'unsplit_state_rows': full, 'state_rows': rows}]
             split['id'] = 'interface:' + digest(split)[:20]
             interfaces[cid]['options'].append(split)
             chosen[cid] = split['id']
-            records.append({'cell': cid, 'axis': axis, 'lanes': lanes, 'unsplit_state_rows': unsplit, 'state_rows': rows})
+            records.append({'cell': cid, 'axes': names, 'lanes': lanes, 'unsplit_state_rows': full,
+                            'state_rows': rows})
         if chosen:
             policy = {**base['option_by_cell'], **chosen}
             policies.append({'id': 'projection:' + digest([base['id'], sorted(chosen.items())])[:16],
@@ -176,6 +171,24 @@ class MetadataAnalysis:
         return {'status': 'OFFERED' if chosen else 'NONE_USEFUL',
                 'reason': ('Split cells are offered in one added projection policy.' if chosen else
                            'No status lane drops a state its whole cell keeps.'), 'cells': records}
+
+    def _lane_tree(self, cell, option, axes, fixed, memo):
+        """Return the fewest rows, and their lanes, for the points with these statuses fixed."""
+        key = tuple(sorted(fixed.items()))
+        if key not in memo:
+            needs = lane_needs(self.facts, cell, self.live, fixed) & set(option['states'])
+            lane = {'statuses': dict(fixed), 'states': {s: option['states'][s] for s in sorted(needs)}}
+            best = (lane_rows([lane], self.domains), [lane])
+            for axis in axes:
+                if axis in fixed:
+                    continue
+                self.guard()
+                parts = [self._lane_tree(cell, option, axes, {**fixed, axis: code}, memo) for code in axes[axis]]
+                rows = sum(part[0] for part in parts)
+                if rows < best[0]:
+                    best = (rows, [lane for part in parts for lane in part[1]])
+            memo[key] = best
+        return memo[key]
 
     def function_interfaces(self, cell, projection, constants):
         """A source-bound DAG rewrite plan, with actual reduced signatures.
