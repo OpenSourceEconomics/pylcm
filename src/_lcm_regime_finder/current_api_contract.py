@@ -397,6 +397,24 @@ def inspect_source_bound_function(
 
 
 
+def _source_file(path: str) -> tuple[bytes, str]:
+    """Return a file's newline-normalized bytes and their sha256.
+
+    The file is read again only when its modification time, size or inode changes.
+    """
+    import os
+    stat = os.stat(path)
+    return _read_source_file(path, stat.st_mtime_ns, stat.st_size, stat.st_ino)
+
+
+@functools.cache
+def _read_source_file(path: str, mtime_ns: int, size: int, inode: int) -> tuple[bytes, str]:
+    import hashlib
+    from pathlib import Path
+    data = Path(path).read_bytes().replace(b'\r\n', b'\n')
+    return data, hashlib.sha256(data).hexdigest()
+
+
 @functools.cache
 def _alias_template(source: bytes, filename: str, name: str, dtype_name: str, optimize: int) -> CodeType | None:
     """Parse and compile the alias's source once per process; it is a pure function of the bytes."""
@@ -798,8 +816,6 @@ def gate_maps(data, *names):
 
 def inspect_native_floatnd_alias(value: object) -> dict[str, JSONValue] | None:
     """Authenticate only the actual native FloatND alias and its cached array class."""
-    import hashlib
-    from pathlib import Path
     import sys
     from typing import TypeAliasType
 
@@ -813,9 +829,8 @@ def inspect_native_floatnd_alias(value: object) -> dict[str, JSONValue] | None:
     if not isinstance(filename, str) or not isinstance(array_filename, str):
         return None
     try:
-        source = Path(filename).read_bytes().replace(b'\r\n', b'\n')
-        file_hash = hashlib.sha256(source).hexdigest()
-        array_hash = hashlib.sha256(Path(array_filename).read_bytes().replace(b'\r\n', b'\n')).hexdigest()
+        source, file_hash = _source_file(filename)
+        _, array_hash = _source_file(array_filename)
         if (file_hash not in {'92bd61b989e1259c67723f8d98e55f8e6b2a5fd4e4f42c9e017a63f80cd1c248',
                              '5335c3c4cdfdcc48c231bd7ba3e44285d93be331242d77404d7778f977fe6c99'}
                 or array_hash != 'e63908f56c995f24cbed97d9ba820c8b5fd98bc0301dfb4095cde3ab7d5dd1e4'):
@@ -840,7 +855,7 @@ def inspect_native_floatnd_alias(value: object) -> dict[str, JSONValue] | None:
                 or evaluator.__kwdefaults__ is not None or evaluator.__closure__ is not None
                 or vars(native).get('FloatND') is not value or vars(native).get('Float') is not dtype
                 or vars(jaxtyping).get('Float') is not dtype or vars(native).get('Array') is not numerical.Array
-                or Path(filename).read_bytes().replace(b'\r\n', b'\n') != source):
+                or _source_file(filename)[0] != source):
             return None
         return {'contract': 'source-bound-native-floatnd-alias/v1', 'alias': 'lcm.typing.FloatND',
                 'typing_file_sha256': file_hash, 'array_module_sha256': array_hash,

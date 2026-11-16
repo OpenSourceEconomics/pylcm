@@ -752,7 +752,15 @@ class SourceFacts:
         return result
 
     def callback_reads(self, callback, cell, phase, *, stops=frozenset(), relation=None, statuses=None):
-        """Return the coordinates `callback` reads at the given status codes."""
+        """Return the coordinates `callback` reads at the given status codes.
+
+        Only the fixed statuses the callback reads with every status free are
+        bound. Fixing a status only removes reads, so the answer is never smaller
+        than the exact one, and it is shared by every code of the ignored statuses.
+        """
+        if statuses:
+            free = self.callback_reads(callback, cell, phase, stops=stops, relation=relation)
+            statuses = {name: code for name, code in statuses.items() if name in free}
         fixed = tuple(sorted((statuses or {}).items()))
         key = (callback, cell["id"], phase, stops, id(relation) if relation is not None else None, fixed)
         if key not in self._cache:

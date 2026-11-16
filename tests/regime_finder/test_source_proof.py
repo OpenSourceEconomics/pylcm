@@ -2969,3 +2969,25 @@ def test_a_repeated_alias_check_compiles_nothing(
 
     monkeypatch.setattr(builtins, "compile", forbidden)
     assert matches_native_floatnd_alias(expected)
+
+
+def test_a_repeated_alias_check_reads_no_file(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unchanged files are read and hashed once; every live-object check still runs."""
+    from pathlib import Path as _Path
+
+    from _lcm_regime_finder.current_api_contract import (
+        inspect_native_floatnd_alias,
+        matches_native_floatnd_alias,
+    )
+    from lcm import typing as lcm_typing
+
+    expected = inspect_native_floatnd_alias(lcm_typing.FloatND)
+    assert expected is not None, "positive control: the native alias authenticates"
+
+    def forbidden(self: _Path) -> bytes:
+        raise AssertionError(f"re-read {self}")
+
+    monkeypatch.setattr(_Path, "read_bytes", forbidden)
+    assert matches_native_floatnd_alias(expected)
