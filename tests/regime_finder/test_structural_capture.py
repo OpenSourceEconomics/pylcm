@@ -191,7 +191,13 @@ def test_public_pipeline_retains_source_bound_store_with_a_generated_declaration
         source["additional_fixture_metadata"] = ref
         path = root / "input.json"
         path.write_text(json.dumps(source))
-        result = analyse_snapshot(path, root / "analysis", seconds=30)
+        result = analyse_snapshot(
+            path,
+            root / "analysis",
+            seconds=30,
+            facts_backend="metadata",
+            search_mode="heuristic",
+        )
         assert (result["status"]) not in (("INVALID", "FAILED", "INCOMPLETE"))
         normalized = load_problem(root / "analysis/normalized.json")
         assert (

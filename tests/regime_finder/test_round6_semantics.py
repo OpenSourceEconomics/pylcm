@@ -319,7 +319,7 @@ def test_unknown_context_has_structural_admission_and_separate_semantic_obligati
     source = native_fixture()
     for regime in source["user_regimes"].values():
         regime["fields"].pop("semantic_role")
-    report = find_regimes(source)
+    report = find_regimes(source, facts_backend="metadata", search_mode="heuristic")
     boundary = report["analysis"]["family_boundary"]
     assert not (boundary["unrestricted_model_representation_optimum_claimed"])
     assert not (boundary["endpoint_preference_is_admissibility_rule"])
@@ -344,7 +344,10 @@ def test_conditional_display_budget_does_not_silently_exhaust_search_family() ->
     for regime in source["user_regimes"].values():
         regime["fields"].pop("semantic_role")
     analysis = MetadataAnalysis(
-        normalize_declarations(source), {"conditional_merge_pair_checks": 0}
+        normalize_declarations(source),
+        {"conditional_merge_pair_checks": 0},
+        facts_backend="metadata",
+        search_mode="exact",
     ).run()
     assert analysis["discovery_complete"]
     assert (analysis["family_boundary"]["conditional_merge_pairs_unexamined"]) == (1)

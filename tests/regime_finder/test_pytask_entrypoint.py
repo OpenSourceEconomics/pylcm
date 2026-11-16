@@ -15,7 +15,9 @@ def test_actual_bounded_runner_produces_readable_source_bound_decisions() -> Non
     before = hashlib.sha256(SOURCE.read_bytes()).hexdigest()
     with tempfile.TemporaryDirectory() as temporary:
         output = Path(temporary) / "result"
-        summary = analyse_snapshot(SOURCE, output, search_mode="exact")
+        summary = analyse_snapshot(
+            SOURCE, output, search_mode="exact", facts_backend="metadata"
+        )
         assert (summary["status"]) == ("COMPLETE")
         assert summary["checker_modules_unchanged"]
         assert (summary["source_snapshot_sha256"]) == (before)
@@ -37,7 +39,9 @@ def test_exhaustion_has_no_adoption_and_preserves_original() -> None:
     with tempfile.TemporaryDirectory() as temporary:
         output = Path(temporary) / "result"
         with pytest.raises(RuntimeError, match="INCOMPLETE"):
-            analyse_snapshot(SOURCE, output, seconds=0, search_mode="exact")
+            analyse_snapshot(
+                SOURCE, output, seconds=0, search_mode="exact", facts_backend="metadata"
+            )
         summary = json.loads((output / "summary.json").read_text())
         assert (summary["status"]) == ("INCOMPLETE")
         assert ("decisions") not in (summary)
@@ -51,5 +55,7 @@ def test_output_namespace_cannot_overwrite_original_summary_named_input() -> Non
         source.write_bytes(SOURCE.read_bytes())
         before = source.read_bytes()
         with pytest.raises(ValueError, match="original input"):
-            analyse_snapshot(source, folder, search_mode="exact")
+            analyse_snapshot(
+                source, folder, search_mode="exact", facts_backend="metadata"
+            )
         assert (source.read_bytes()) == (before)

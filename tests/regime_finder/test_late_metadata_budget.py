@@ -24,7 +24,12 @@ def test_interface_expansion_observes_the_metadata_deadline() -> None:
         ),
         patch.object(MetadataAnalysis, "function_interfaces", overrun),
     ):
-        result = analyze_production(original(), limits={"seconds": 1})
+        result = analyze_production(
+            original(),
+            limits={"seconds": 1},
+            facts_backend="metadata",
+            search_mode="heuristic",
+        )
     assert (result["status"]) == ("INCOMPLETE")
     assert (result["semantic_check"]["status"]) == ("NOT_RUN")
     assert ("Metadata dependency analysis budget exhausted") in (result["error"])

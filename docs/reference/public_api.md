@@ -51,6 +51,7 @@ documentation and tests.
 | `lcm.graphs.LinearRegimeCostModel`                     | [Alternative linear objectives](../user_guide/regime_checker.md#compare-alternative-linear-cost-models)  |
 | `lcm.graphs.RegimeAnalysisResult`                      | [Immutable result, recommendations and report writing](../user_guide/regime_checker.md#check-your-model) |
 | `lcm.graphs.RegimeCandidate`, `lcm.graphs.RegimeBlock` | [Direct candidate and computational-block inspection](../user_guide/regime_checker.md#check-your-model)  |
+| `lcm.graphs.StatusLane`                                | [Status splitting](../user_guide/regime_checker.md#status-splitting)                                     |
 | `lcm.graphs.RegimeCheck`, `lcm.graphs.RegimeCost`      | [Scoped checks and structural costs](../user_guide/regime_checker.md#read-the-result)                    |
 | `lcm.graphs.find_regimes`                              | [Dictionary compatibility helper](../user_guide/regime_checker.md#check-your-model)                      |
 

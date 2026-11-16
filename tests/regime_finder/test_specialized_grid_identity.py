@@ -20,7 +20,9 @@ def test_same_native_program_is_not_split_merely_by_its_period_argument() -> Non
         "resolved_cardinality_source": "native canonical phase grid; native specialization shape-invariance contract",
     }
     source["user_regimes"]["original"]["fields"]["states"]["x"] = grid
-    result = analyze_production(source, limits={"seconds": 10}, search_mode="exact")
+    result = analyze_production(
+        source, limits={"seconds": 10}, search_mode="exact", facts_backend="metadata"
+    )
     assert (result["status"]) == ("COMPLETE"), result.get("semantic_check")
     ids = {c["states"]["x"] for c in result["analysis"]["declarations"]["cells"]}
     assert (len(ids)) == (1)

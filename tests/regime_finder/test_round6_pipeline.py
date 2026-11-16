@@ -24,7 +24,13 @@ SOURCE = (
 def test_separate_phase_receipt_includes_checks_and_delivery() -> None:
     with tempfile.TemporaryDirectory() as folder:
         output = Path(folder) / "result"
-        analyse_snapshot(SOURCE, output, seconds=10)
+        analyse_snapshot(
+            SOURCE,
+            output,
+            seconds=10,
+            facts_backend="metadata",
+            search_mode="heuristic",
+        )
         receipt = json.loads((output / "delivery-timings.json").read_text())
         assert all(
             receipt["phase_timings"][name] >= 0
@@ -64,7 +70,13 @@ def test_existing_capture_consumes_the_same_budget() -> None:
         }
         (root / "snapshot.metadata-capture.json").write_text(json.dumps(receipt))
         with pytest.raises(RuntimeError, match="INCOMPLETE"):
-            analyse_snapshot(source, root / "result", seconds=1)
+            analyse_snapshot(
+                source,
+                root / "result",
+                seconds=1,
+                facts_backend="metadata",
+                search_mode="heuristic",
+            )
         summary = json.loads((root / "result/summary.json").read_text())
         assert (summary["metadata_budget"]["capture_seconds_charged"]) == (2.0)
         assert (summary["metadata_budget"]["remaining_worker_seconds"]) == (0)
@@ -84,7 +96,13 @@ def test_stale_success_is_replaced_on_early_exhaustion() -> None:
         (output / "family-boundary.json").write_text('{"old_family":true}')
         (output / "semantic-check.json.writing").write_text("incomplete old check")
         with pytest.raises(RuntimeError, match="INCOMPLETE"):
-            analyse_snapshot(SOURCE, output, seconds=0)
+            analyse_snapshot(
+                SOURCE,
+                output,
+                seconds=0,
+                facts_backend="metadata",
+                search_mode="heuristic",
+            )
         summary = json.loads((output / "summary.json").read_text())
         assert (summary["status"]) == ("INCOMPLETE")
         assert ("decisions") not in (summary)
@@ -113,7 +131,12 @@ def test_capture_receipt_is_bound_to_exact_snapshot() -> None:
             )
         )
         with pytest.raises(ValueError, match="original snapshot bytes"):
-            analyse_snapshot(source, root / "result")
+            analyse_snapshot(
+                source,
+                root / "result",
+                facts_backend="metadata",
+                search_mode="heuristic",
+            )
 
 
 def test_outer_supervisor_references_the_workers_checkpoint() -> None:
@@ -165,7 +188,13 @@ def test_late_budget_exit_cannot_publish_worker_success(
                 "_lcm_regime_finder.resources.run_bounded", side_effect=exhausted_worker
             ):
                 with pytest.raises(RuntimeError, match="INCOMPLETE"):
-                    analyse_snapshot(SOURCE, output, seconds=10)
+                    analyse_snapshot(
+                        SOURCE,
+                        output,
+                        seconds=10,
+                        facts_backend="metadata",
+                        search_mode="heuristic",
+                    )
             summary = json.loads((output / "summary.json").read_text())
             report = json.loads((output / "report.json").read_text())
             assert (summary["status"]) == ("INCOMPLETE")
@@ -194,7 +223,18 @@ def test_direct_cli_guards_the_entire_output_namespace(
             original.write_bytes(SOURCE.read_bytes())
             before = original.read_bytes()
             with contextlib.redirect_stderr(io.StringIO()):
-                code = main(["analyze-model", str(original), "--output", str(output)])
+                code = main(
+                    [
+                        "analyze-model",
+                        "--facts-backend",
+                        "metadata",
+                        "--search-mode",
+                        "heuristic",
+                        str(original),
+                        "--output",
+                        str(output),
+                    ]
+                )
             assert (code) == (1)
             assert (original.read_bytes()) == (before)
 

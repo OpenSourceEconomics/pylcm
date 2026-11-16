@@ -135,7 +135,8 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('snapshot',type=Path);parser.add_argument('--output',type=Path,required=True)
     parser.add_argument('--seconds',type=float,default=900);parser.add_argument('--host-gib',type=float,default=8)
-    parser.add_argument('--search-mode', choices=('heuristic', 'exact'), default='heuristic')
+    parser.add_argument('--facts-backend', choices=('metadata', 'dense', 'implicit'), required=True)
+    parser.add_argument('--search-mode', choices=('heuristic', 'exact'), required=True)
     parser.add_argument('--heuristic-rounds', type=int, default=2)
     parser.add_argument('--heuristic-neighbors', type=int, default=2)
     parser.add_argument('--worker',action='store_true',help=argparse.SUPPRESS)
@@ -149,7 +150,7 @@ def main():
         from .pytask_api import analyse_snapshot
         result=analyse_snapshot(args.snapshot,args.output,seconds=args.seconds,host_gib=args.host_gib,
                                 allow_final_only_split=args.allow_final_only_split,
-                                search_mode=args.search_mode,
+                                facts_backend=args.facts_backend, search_mode=args.search_mode,
                                 heuristic_rounds=args.heuristic_rounds,
                                 heuristic_neighbors=args.heuristic_neighbors)
         print(json.dumps({'status':result['status'],'readable_report':str(args.output/'next-actions.html')}))
@@ -160,7 +161,8 @@ def main():
                            if p.suffix in ('.py', '.json')}
         arguments=['analyze-model',str(args.snapshot),'--output',str(args.output),
                    '--seconds',str(args.seconds),'--host-gib',str(args.host_gib),'--worker',
-                   '--search-mode', args.search_mode, '--heuristic-rounds', str(args.heuristic_rounds),
+                   '--facts-backend', args.facts_backend, '--search-mode', args.search_mode,
+                   '--heuristic-rounds', str(args.heuristic_rounds),
                    '--heuristic-neighbors', str(args.heuristic_neighbors)]
         if args.allow_final_only_split:
             arguments.append('--allow-final-only-split')

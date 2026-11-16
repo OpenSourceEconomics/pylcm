@@ -256,3 +256,17 @@ def test_heuristic_local_discovery_is_not_labeled_graph_family_coverage() -> Non
         assert "Dependency and local-option discovery" in text
         assert "Candidate-family coverage" not in text
         assert "unknown optimality gap" in text
+
+
+def test_period_only_blocks_list_their_periods_in_both_reports() -> None:
+    result = fixture()
+    for block in result["scenarios"][0]["frontier"][0]["blocks"]:
+        block["ages"] = [None]
+    with tempfile.TemporaryDirectory() as directory:
+        renderer.write_production_report(result, directory)
+        markdown = (Path(directory) / "report.md").read_text()
+        page = (Path(directory) / "report.html").read_text()
+    header = "| Block | Original regimes | Declared dates |"
+    table = markdown.split(header, 1)[1].splitlines()[2:5]
+    assert [row.split(" | ")[2] for row in table] == ["0", "1", "2"]
+    assert "<td>Not supplied</td>" not in page

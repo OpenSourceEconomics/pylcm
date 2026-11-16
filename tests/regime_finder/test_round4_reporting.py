@@ -35,7 +35,7 @@ def test_public_recheck_distinguishes_budget_exhaustion() -> None:
     from tests.regime_finder.tiny_metadata_family import original
 
     source = original()
-    result = find_regimes(source, search_mode="exact")
+    result = find_regimes(source, search_mode="exact", facts_backend="metadata")
     assert (result["status"]) == ("COMPLETE")
     checked = verify_production_result(source, result, limits={"seconds": 0})
     assert (checked["status"]) == ("INCOMPLETE")
