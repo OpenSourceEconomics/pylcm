@@ -314,6 +314,75 @@ def lane_needs(
     return memo[key]
 
 
+
+def linked_points(facts: Facts, relation: Record, target_cell: Record, point: Mapping[str, int]) -> list[dict[str, int]]:
+    """Return the target status points a link from `point` may reach.
+
+    A status that an identity update carries unchanged keeps its code; every
+    other target status may take any code. Leaving a link in needs no proof
+    (Supplement :214-216).
+    """
+    source = facts.cells[relation["source"]]
+    updates = relation.get("state_updates", {})
+    choices = []
+    for name, codes in status_axes(facts, target_cell):
+        carried = (name in point and target_cell["states"][name] == source["states"].get(name)
+                   and name in updates and facts.identity_update(updates[name], name, name))
+        choices.append((name, (point[name],) if carried else codes))
+    return [dict(zip([n for n, _ in choices], combo, strict=True)) for combo in product(*(c for _, c in choices))]
+
+
+def fibre_live(
+    facts: Facts,
+    cell: Record,
+    point: Mapping[str, int],
+    memo: dict,
+    _active: frozenset = frozenset(),
+) -> set[str]:
+    """Return the live state coordinates of the fibre at `point`, statuses included.
+
+    This is K of the least profile (Supplement, Def. "Profiles from the facts",
+    :403-428): what the cell's consumers read, plus what the updates read for
+    every coordinate live at a linked successor fibre. A read set is certified
+    with the released statuses free at once (Remark "Reads must be joint"): the
+    statuses start fixed at the point and are released in name order whenever
+    the release adds no read of the released status. A status left fixed is live.
+    """
+    key = (cell["id"], tuple(sorted(point.items())))
+    if key in memo:
+        return memo[key]
+    successors = []
+    for relation in live_relations(facts, cell["id"]):
+        for target in relation.get("targets", []):
+            target_cell = facts.cells[target]
+            live: set[str] = set()
+            for target_point in linked_points(facts, relation, target_cell, point):
+                target_key = (target, tuple(sorted(target_point.items())))
+                if target_key in _active:
+                    live |= set(target_cell["states"])
+                else:
+                    live |= fibre_live(facts, target_cell, target_point, memo, _active | {key})
+            successors.append((relation, live))
+
+    def needs(fixed: Mapping[str, int]) -> set[str]:
+        reads = current_reads(facts, cell, statuses=fixed)
+        for relation, live in successors:
+            for target_axis in live:
+                if "produces" in relation and target_axis not in relation["produces"]:
+                    continue
+                reads |= update_reads(facts, relation, target_axis, statuses=fixed)
+        return reads
+
+    unbound = needs({})
+    fixed = {name: code for name, code in point.items() if name in unbound}
+    for name in sorted(fixed):
+        trial = {k: v for k, v in fixed.items() if k != name}
+        if name not in needs(trial):
+            fixed = trial
+    memo[key] = (needs(fixed) | set(fixed)) & set(cell["states"]) - set(facts.constants[cell["id"]])
+    return memo[key]
+
+
 def lane_rows(lanes: list[Record], domains: Mapping[str, Record]) -> int:
     """Return the state rows of a split: each lane's own grid, summed."""
     total = 0
