@@ -11,6 +11,7 @@ import functools
 from inspect import Signature
 from types import CodeType, FunctionType, MappingProxyType, ModuleType, UnionType
 from typing import TypeAliasType
+from .callable_identity import _code_digest
 from .records import JSONValue
 
 NATIVE_INPUT_TYPES = frozenset({
@@ -246,7 +247,7 @@ def inspect_native_input_authority(value: object, raw: object) -> dict[str, JSON
     import marshal
     result: dict[str, JSONValue] = {
         'class_source': authority, 'call_code_contract': 'compiled-native-source-code/v1',
-        'call_code_sha256': hashlib.sha256(marshal.dumps(raw.__code__)).hexdigest(),
+        'call_code_sha256': _code_digest(raw),
     }
     if name == '_lcm.output_roles.InRole':
         base_module = sys.modules.get('_lcm.utils.functools')
@@ -667,7 +668,7 @@ def inspect_native_schedule_authority(value: object, raw: object) -> dict[str, J
         'authored_call_source': source,
         'authored_file_sha256': file_sha256,
         'call_code_contract': 'compiled-native-source-code/v1',
-        'call_code_sha256': hashlib.sha256(marshal.dumps(raw.__code__)).hexdigest(),
+        'call_code_sha256': _code_digest(raw),
     }
     return result if matches_schedule_call(name=name, authority=result, code_sha256=result['call_code_sha256']) else None
 

@@ -221,3 +221,28 @@ def test_original_payload_still_controls_independent_signature_authority() -> No
         record.pop("unresolved_input_signature", None)
         record["status"] = "structural"
     assert (verify_production_result(source, forged)["status"]) != ("PASS")
+
+
+def test_a_beartype_wrapper_identity_holds_no_memory_address() -> None:
+    """beartype names a parameter and the wrapper's code file by memory address.
+
+    Those differ between processes, so recording them changed every derived id.
+    """
+    import json
+    import re
+
+    from lcm.koopmans_aggregation import LinearAggregator
+
+    wrapper = type(LinearAggregator()).__call__
+    addresses = [
+        name.removeprefix("__beartype_object_")
+        for name in wrapper.__kwdefaults__ or {}
+        if name.startswith("__beartype_object_")
+    ]
+    match = re.search(r" at 0x([0-9a-f]+)>$", wrapper.__code__.co_filename)
+    assert addresses and match, "positive control: the wrapper carries addresses"
+    with capture_session() as session:
+        source_function(wrapper)
+    text = json.dumps(session.records, default=str)
+    for address in (*addresses, match.group(1)):
+        assert address not in text
