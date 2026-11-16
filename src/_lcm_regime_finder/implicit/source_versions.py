@@ -29,6 +29,7 @@ _IDS = frozenset(
         "source639-dense-wrappers-v1",
         "source645-dense-wrappers-v1",
         "source639-bounded-support-v1",
+        "source645-bounded-support-v1",
     }
 )
 _PROTOCOL = "original-cell-point-query-order/v1"

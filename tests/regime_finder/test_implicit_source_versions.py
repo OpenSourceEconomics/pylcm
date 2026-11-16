@@ -18,6 +18,7 @@ NEW_SOURCE_IDS = (
     "source639-dense-wrappers-v1",
     "source645-dense-wrappers-v1",
     "source639-bounded-support-v1",
+    "source645-bounded-support-v1",
 )
 
 
@@ -121,6 +122,8 @@ def test_historical_packets_are_not_relabelled() -> None:
         ("source645-dense-wrappers-v1", "_lcm.processes.iid.UniformIIDProcess"),
         ("source645-dense-wrappers-v1", "_lcm.regime_building.schedules._Constant"),
         ("source639-bounded-support-v1", "lcm.processes.UniformIIDProcess"),
+        ("source645-bounded-support-v1", "_lcm.processes.iid.UniformIIDProcess"),
+        ("source645-bounded-support-v1", "_lcm.regime_building.schedules._Constant"),
     ],
 )
 def test_foreign_native_capture_spellings_are_not_rewritten(
