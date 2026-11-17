@@ -10,7 +10,6 @@ from collections.abc import Hashable, Mapping
 from typing import Literal, cast
 
 import pytest
-from beartype.roar import BeartypeCallHintViolation
 
 from _lcm.execution.core_program import ReducedAxis
 from _lcm.execution.reductions import ReductionDeclaration
@@ -157,10 +156,14 @@ def test_bounded_width_selector_does_not_refine_back_toward_a_refused_cover() ->
 @pytest.mark.parametrize(
     ("covered_axes", "error", "match"),
     [
-        (["cell"], BeartypeCallHintViolation, "covered_axes"),
-        ((1,), BeartypeCallHintViolation, "covered_axes"),
-        (("",), ValueError, r"ExecutionConfig\.covered_axes entries"),
-        (("cell", "cell"), ValueError, r"ExecutionConfig\.covered_axes names"),
+        (["cell"], ValueError, r"ExecutionConfig\.covered_axes: .* tuple"),
+        ((1,), ValueError, r"ExecutionConfig\.covered_axes\[0\]: .* string"),
+        (("",), ValueError, r"ExecutionConfig\.covered_axes\[0\]: .* 1 character"),
+        (
+            ("cell", "cell"),
+            ValueError,
+            r"ExecutionConfig\.covered_axes must be distinct",
+        ),
     ],
 )
 def test_execution_config_refuses_malformed_covered_axes(

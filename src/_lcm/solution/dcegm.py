@@ -19,11 +19,14 @@ import math
 from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
-from typing import cast
+from typing import Annotated, cast
 
 import jax
 import jax.numpy as jnp
+from annotated_types import Ge, Gt
 from beartype import beartype
+from pydantic import TypeAdapter
+from pydantic.dataclasses import dataclass as pydantic_dataclass
 
 from _lcm.beartype_conf import REGIME_CONF
 from _lcm.constraints.bounds import proves_the_savings_grids_lower_bound
@@ -50,6 +53,14 @@ from _lcm.execution.core_program import (
 from _lcm.execution.output_layout import VALUE, OutputRoleTree, StateAxesLeading
 from _lcm.execution.reductions import WEIGHTED_EXPECTATION_REDUCTION
 from _lcm.grids import ContinuousGrid
+from _lcm.input_validation import (
+    CONFIG_FLOAT,
+    EXACT_INT,
+    FINITE,
+    STRICT_CONFIG,
+    translate_validation_errors,
+    validate_field,
+)
 from _lcm.post_decision_bound import PostDecisionBoundSpec, grid_origin_bound_spec
 from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.solution.continuation_reads import (
@@ -147,8 +158,8 @@ def _fail_if_exact_affine_kernel_unavailable(
     raise ExactAffineKernelUnavailableError(msg)
 
 
-@beartype(conf=REGIME_CONF)
-@dataclass(frozen=True, kw_only=True)
+@translate_validation_errors(RegimeInitializationError)
+@pydantic_dataclass(frozen=True, kw_only=True, config=STRICT_CONFIG)
 class ExactEnvelope:
     """Certified segment-envelope backend configuration.
 
@@ -158,43 +169,34 @@ class ExactEnvelope:
     `DCEGM.n_constrained_points`.
     """
 
-    max_runs: int = 24
+    # A non-concave candidate chain folds into at least two resource-increasing
+    # runs, so a smaller fold capacity could never publish one.
+    max_runs: Annotated[int, EXACT_INT, Ge(2)] = 24
     """Maximum resource-increasing runs folded into one node cell."""
 
-    def __post_init__(self) -> None:
-        _fail_if_envelope_max_runs_too_few(self.max_runs)
 
-
-@beartype(conf=REGIME_CONF)
-@dataclass(frozen=True, kw_only=True)
+@translate_validation_errors(RegimeInitializationError)
+@pydantic_dataclass(frozen=True, kw_only=True, config=STRICT_CONFIG)
 class FUESEnvelope:
     """Fast Upper-Envelope Scan configuration."""
 
-    jump_thresh: float = 2.0
-    """Segment-switch threshold on `|ΔA / ΔR|`."""
+    jump_thresh: Annotated[float, CONFIG_FLOAT, FINITE, Gt(0.0)] = 2.0
+    """Segment-switch threshold on `|ΔA / ΔR|`; finite and positive."""
 
-    n_points_to_scan: int | None = None
+    n_points_to_scan: Annotated[int, EXACT_INT, Ge(1)] | None = None
     """Forward-scan width; `None` performs the exhaustive scan."""
 
-    def __post_init__(self) -> None:
-        _fail_if_fues_jump_thresh_non_positive(self.jump_thresh)
-        _fail_if_fues_n_points_to_scan_too_few(self.n_points_to_scan)
 
-
-@beartype(conf=REGIME_CONF)
-@dataclass(frozen=True, kw_only=True)
+@translate_validation_errors(RegimeInitializationError)
+@pydantic_dataclass(frozen=True, kw_only=True, config=STRICT_CONFIG)
 class RFCEnvelope:
     """Rooftop-Cut upper-envelope configuration."""
 
-    jump_thresh: float = 2.0
-    """Segment-switch threshold on `|Δc / ΔR|`."""
+    jump_thresh: Annotated[float, CONFIG_FLOAT, FINITE, Gt(0.0)] = 2.0
+    """Segment-switch threshold on `|Δc / ΔR|`; finite and positive."""
 
-    search_radius: int = 10
+    search_radius: Annotated[int, EXACT_INT, Ge(1)] = 10
     """Neighbors inspected on each side of a candidate."""
-
-    def __post_init__(self) -> None:
-        _fail_if_rfc_jump_thresh_non_positive(self.jump_thresh)
-        _fail_if_rfc_search_radius_too_few(self.search_radius)
 
 
 @beartype(conf=REGIME_CONF)
@@ -205,10 +207,15 @@ class LTMEnvelope:
 
 type EnvelopeConfig = ExactEnvelope | FUESEnvelope | RFCEnvelope | LTMEnvelope
 
-
-# A non-concave candidate chain folds into at least two resource-increasing runs,
-# so a smaller fold capacity could never publish one.
-_MIN_ENVELOPE_MAX_RUNS: int = 2
+# A refined factor at or below 1.0 leaves no room for the constrained points and
+# overflows the scatter; a non-finite one corrupts it.
+_REFINED_GRID_FACTOR = TypeAdapter(
+    Annotated[float, CONFIG_FLOAT, FINITE, Gt(1.0)], config=STRICT_CONFIG
+)
+# The credit-constrained segment needs two closed-form points to interpolate.
+_N_CONSTRAINED_POINTS = TypeAdapter(
+    Annotated[int, EXACT_INT, Ge(2)], config=STRICT_CONFIG
+)
 
 
 @beartype(conf=REGIME_CONF)
@@ -359,8 +366,21 @@ class DCEGM(OneMarginSolver):
                 "The certified EGM profile refuses grid replay."
             )
         _fail_if_savings_grid_is_stochastic(self.savings_grid)
-        _fail_if_refined_grid_factor_too_small(self.refined_grid_factor)
-        _fail_if_n_constrained_points_too_few(self.n_constrained_points)
+        for field_name, adapter in (
+            ("refined_grid_factor", _REFINED_GRID_FACTOR),
+            ("n_constrained_points", _N_CONSTRAINED_POINTS),
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                validate_field(
+                    validate=adapter.validate_python,
+                    value=getattr(self, field_name),
+                    owner="DCEGM",
+                    field_name=field_name,
+                    error_type=RegimeInitializationError,
+                ),
+            )
 
     def _with_liquid_margin(self, margin: _BoundLiquidMargin) -> _BoundDCEGM:
         """Bind regime-owned DAG names without exposing them on public `DCEGM`."""
@@ -1606,86 +1626,6 @@ def _fail_if_savings_grid_is_stochastic(savings_grid: ContinuousGrid) -> None:
             "DCEGM.savings_grid must be a deterministic continuous grid, not a "
             f"stochastic process ({type(savings_grid).__name__}). The savings "
             "grid is the exogenous end-of-period grid; it carries no transition."
-        )
-        raise RegimeInitializationError(msg)
-
-
-def _fail_if_refined_grid_factor_too_small(refined_grid_factor: float) -> None:
-    # `not (x > 1.0)` rejects NaN too — `nan <= 1.0` is False, so a bare
-    # `<= 1.0` guard would admit a non-finite factor that later sizes the
-    # refined envelope arrays and corrupts the scatter.
-    if not (math.isfinite(refined_grid_factor) and refined_grid_factor > 1.0):
-        msg = (
-            f"DCEGM.refined_grid_factor must be a finite value greater than 1.0, "
-            f"got {refined_grid_factor}. It is the headroom factor sizing the "
-            "refined envelope arrays; a value at or below 1.0 leaves no room "
-            "for the constrained points and overflows the scatter."
-        )
-        raise RegimeInitializationError(msg)
-
-
-def _fail_if_fues_jump_thresh_non_positive(fues_jump_thresh: float) -> None:
-    # `not (x > 0.0)` rejects NaN too: `nan <= 0.0` is False, so the segment-
-    # switch comparison would silently misbehave on a non-finite threshold.
-    if not (math.isfinite(fues_jump_thresh) and fues_jump_thresh > 0.0):
-        msg = (
-            f"FUESEnvelope.jump_thresh must be a finite positive value, got "
-            f"{fues_jump_thresh}. It is the segment-switch threshold on "
-            "`|ΔA / ΔR|` in the FUES scan."
-        )
-        raise RegimeInitializationError(msg)
-
-
-def _fail_if_rfc_jump_thresh_non_positive(rfc_jump_thresh: float) -> None:
-    # `not (x > 0.0)` rejects NaN too: `nan <= 0.0` is False, so the segment-
-    # switch comparison would silently misbehave on a non-finite threshold.
-    if not (math.isfinite(rfc_jump_thresh) and rfc_jump_thresh > 0.0):
-        msg = (
-            f"RFCEnvelope.jump_thresh must be a finite positive value, got "
-            f"{rfc_jump_thresh}. It is the segment-switch threshold on "
-            "`|Δc / ΔR|` in the rooftop cut."
-        )
-        raise RegimeInitializationError(msg)
-
-
-def _fail_if_rfc_search_radius_too_few(rfc_search_radius: int) -> None:
-    if rfc_search_radius < 1:
-        msg = (
-            f"RFCEnvelope.search_radius must be at least 1, got "
-            f"{rfc_search_radius}. The rooftop-cut dominance test must inspect "
-            "at least one neighbor on each side of a candidate."
-        )
-        raise RegimeInitializationError(msg)
-
-
-def _fail_if_n_constrained_points_too_few(n_constrained_points: int) -> None:
-    if n_constrained_points < 2:  # noqa: PLR2004
-        msg = (
-            f"DCEGM.n_constrained_points must be at least 2, got "
-            f"{n_constrained_points}. The credit-constrained segment needs at "
-            "least two closed-form points to interpolate between."
-        )
-        raise RegimeInitializationError(msg)
-
-
-def _fail_if_fues_n_points_to_scan_too_few(fues_n_points_to_scan: int | None) -> None:
-    # `None` requests the exhaustive scan; only an explicit finite width is bounded.
-    if fues_n_points_to_scan is not None and fues_n_points_to_scan < 1:
-        msg = (
-            f"FUESEnvelope.n_points_to_scan must be at least 1, got "
-            f"{fues_n_points_to_scan}. The FUES forward scan must inspect at "
-            "least one point after each candidate."
-        )
-        raise RegimeInitializationError(msg)
-
-
-def _fail_if_envelope_max_runs_too_few(envelope_max_runs: int) -> None:
-    if envelope_max_runs < _MIN_ENVELOPE_MAX_RUNS:
-        msg = (
-            f"ExactEnvelope.max_runs must be at least {_MIN_ENVELOPE_MAX_RUNS}, "
-            f"got {envelope_max_runs}. It is the fold capacity of the exact "
-            "upper envelope; a non-concave candidate chain folds into at "
-            "least two resource-increasing runs."
         )
         raise RegimeInitializationError(msg)
 

@@ -7,7 +7,6 @@ from typing import Unpack
 import jax
 import numpy as np
 import pytest
-from beartype.roar import BeartypeCallHintParamViolation
 
 from _lcm.egm.carry import EGMCarry
 from _lcm.execution.output_layout import PlannedCore
@@ -170,7 +169,5 @@ def test_donation_off_preserves_values_and_the_model_fingerprint(
 def test_donation_switch_requires_an_exact_bool(
     value: int | str | np.bool_ | None,
 ) -> None:
-    with pytest.raises(
-        (TypeError, BeartypeCallHintParamViolation), match=r"donate_buffers.*bool"
-    ):
+    with pytest.raises(ValueError, match=r"donate_buffers.*bool"):
         ExecutionConfig(donate_buffers=value)  # ty: ignore[invalid-argument-type]

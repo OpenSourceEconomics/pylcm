@@ -299,27 +299,27 @@ def test_two_configurations_with_equal_per_regime_widths_are_equal() -> None:
 
 def test_per_regime_widths_reject_a_non_positive_width() -> None:
     """A width of zero is refused at construction, naming axis and regime."""
-    with pytest.raises(
-        ValueError, match=r"axis_widths\['cell'\]\['retire'\] must be positive"
-    ):
+    with pytest.raises(ValueError, match=r"axis_widths\['cell'\]\['retire'\]: .* 0"):
         ExecutionConfig(axis_widths={_CELL_AXIS: {"retire": 0}})
 
 
 def test_per_regime_widths_reject_a_bool_width() -> None:
     """Widths are exact ints, so a bool is refused."""
-    with pytest.raises(TypeError, match=r"axis_widths\['cell'\]\['retire'\]"):
+    with pytest.raises(ValueError, match=r"axis_widths\['cell'\]\['retire'\]: .* int"):
         ExecutionConfig(axis_widths={_CELL_AXIS: {"retire": True}})
 
 
 def test_per_regime_widths_reject_an_empty_mapping() -> None:
     """An empty mapping names no regime, so it cannot be what the caller meant."""
-    with pytest.raises(ValueError, match=r"axis_widths\['cell'\] names no regime"):
+    with pytest.raises(ValueError, match=r"axis_widths\['cell'\].*at least 1 item"):
         ExecutionConfig(axis_widths={_CELL_AXIS: {}})
 
 
 def test_per_regime_widths_reject_an_empty_regime_name() -> None:
     """Regime keys are non-empty strings."""
-    with pytest.raises(TypeError, match=r"axis_widths\['cell'\] keys"):
+    with pytest.raises(
+        ValueError, match=r"axis_widths\['cell'\]\[''\]: .* at least 1 character"
+    ):
         ExecutionConfig(axis_widths={_CELL_AXIS: {"": 2}})
 
 
