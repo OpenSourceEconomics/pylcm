@@ -1689,7 +1689,9 @@ def test_information_mesh_neutral_branch_keeps_axes_and_runtime_guard(
     assert not any(events.values()), "Abstract type alignment must not run callbacks."
     answer = jax.block_until_ready(compiled(inputs))
     jax.effects_barrier()
-    dimensions = (2,) if ancestor else ()
+    # The target reads none of the parent's shocks, so the parent's two rows form
+    # one class and the answer keeps one entry for it.
+    dimensions = (1,) if ancestor else ()
     assert tuple(leaf.shape for leaf in answer) == (
         (2, *dimensions),
         (2, *dimensions, 2),
@@ -1704,7 +1706,8 @@ def test_information_mesh_neutral_branch_keeps_axes_and_runtime_guard(
         jnp.bool_,
         jnp.int32,
     )
-    assert all(leaf.sharding.spec == jax.P("X") for leaf in answer)
+    # JAX places an output without elements replicated, whatever its out spec.
+    assert all(leaf.sharding.spec == jax.P("X") for leaf in answer if leaf.size)
     np.testing.assert_array_equal(answer[0][1], np.full(dimensions, 2.0))
     np.testing.assert_array_equal(answer[1][1], np.zeros((*dimensions, 2), np.int32))
     np.testing.assert_array_equal(answer[2][1], np.ones(dimensions, bool))

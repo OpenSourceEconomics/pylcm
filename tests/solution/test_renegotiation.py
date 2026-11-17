@@ -412,6 +412,17 @@ def test_renegotiation_subject_sharding_preserves_state_actions_and_separation()
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+def test_budgeted_exit_replay_reports_the_unbudgeted_raw_results() -> None:
+    """A device budget leaves every raw result and its state order unchanged."""
+    expected = _gated_outside_simulation(
+        execution_config=ExecutionConfig(devices=(0,), device_memory_bytes=None)
+    )
+    actual = _gated_outside_simulation(
+        execution_config=ExecutionConfig(devices=(0,), device_memory_bytes=2**30)
+    )
+    _assert_same_raw_results(actual=actual, expected=expected)
+
+
 def _reset_weight(*, mu: IntND) -> IntND:
     return jnp.zeros_like(mu)
 

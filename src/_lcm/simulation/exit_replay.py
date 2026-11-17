@@ -696,9 +696,16 @@ def prepare_exit_period(  # noqa: C901, PLR0912, PLR0915 - retain replay's order
             subject_outputs=True,
         )
         prepared[name] = PreparedExitDecision(*selected)
+    # The operations above may hand back their mappings with sorted keys, as a
+    # compiled or mesh-placed call does, so the carrier keeps its incoming order.
     return (
         MappingProxyType(
-            {name: MappingProxyType(columns) for name, columns in final_states.items()}
+            {
+                name: MappingProxyType(
+                    {state: final_states[name][state] for state in columns}
+                )
+                for name, columns in states.items()
+            }
         ),
         final_ids,
         final_roles,
