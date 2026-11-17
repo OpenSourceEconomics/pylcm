@@ -1733,8 +1733,11 @@ def test_callable_exit_projection_keeps_fingerprint_admission() -> None:
 def test_own_raw_and_full_evaluate_canonical_problem_once(  # noqa: PLR0915 - keep one graph and runtime population proof together
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Identical conditional single work is shared while both callers still decide."""
+    """Identical conditional single work is shared while both callers still decide.
 
+    The couple reads the single's outside value at its point.
+    """
+    monkeypatch.setattr(exit_queries, "_READ_STORED_OUTSIDE_VALUES", False)
     model = _household(
         newlywed=True, enable_jit=True, source_only=True, outside_lag=True
     )
@@ -1938,10 +1941,18 @@ def _sharing_chunk_arguments(
 @pytest.mark.parametrize("compiled", [False, True])
 @pytest.mark.parametrize("constrained", [False, True])
 def test_static_single_sharing_preserves_uninstrumented_chunks(
-    *, state_count: int, chunk_size: int, compiled: bool, constrained: bool
+    *,
+    state_count: int,
+    chunk_size: int,
+    compiled: bool,
+    constrained: bool,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Raw sharing preserves bytes, statuses and count slots across padded chunks."""
+    """Raw sharing preserves bytes, statuses and count slots across padded chunks.
 
+    The couple reads the single's outside value at its point.
+    """
+    monkeypatch.setattr(exit_queries, "_READ_STORED_OUTSIDE_VALUES", False)
     model = _sharing_control_model(state_count=state_count, constrained=constrained)
     source = model._regimes["single_f"].solution.period_kernels[0]
     assert isinstance(source, _PolicyQueryKernel)
@@ -2038,9 +2049,13 @@ def test_static_single_sharing_requires_exact_provenance(changed: str) -> None:
 def test_static_single_sharing_retains_guard_and_projection_fallback(
     *,
     guarded: bool,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A guarded or remapped outside option keeps its own support and mapped value."""
+    """A guarded or remapped outside option keeps its own support and mapped value.
 
+    The couple reads the single's outside value at its point.
+    """
+    monkeypatch.setattr(exit_queries, "_READ_STORED_OUTSIDE_VALUES", False)
     model = _sharing_control_model(guarded=guarded)
     source = model._regimes["single_f"].solution.period_kernels[0]
     assert isinstance(source, _PolicyQueryKernel)
@@ -2087,9 +2102,13 @@ def test_static_single_sharing_retains_guard_and_projection_fallback(
 )
 @pytest.mark.parametrize(("state_count", "chunk_size"), [(2, 1), (3, 2)])
 def test_static_single_sharing_reads_changed_params_and_preserves_jvp(
-    *, state_count: int, chunk_size: int
+    *, state_count: int, chunk_size: int, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Full and padded loops retain fresh parameters and forward/reverse directions."""
+    """Full and padded loops retain fresh parameters and forward/reverse directions.
+
+    The couple reads the single's outside value at its point.
+    """
+    monkeypatch.setattr(exit_queries, "_READ_STORED_OUTSIDE_VALUES", False)
     model = _sharing_control_model(state_count=state_count, parameterized=True)
     source = model._regimes["single_f"].solution.period_kernels[0]
     assert isinstance(source, _PolicyQueryKernel)

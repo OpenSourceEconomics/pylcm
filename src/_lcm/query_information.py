@@ -32,6 +32,7 @@ from _lcm.policy_queries import (
     _DRAWS,
     _ROW_BATCH,
     _STEP_LANES,
+    OutsideTable,
     PolicyAnswer,
     QueryKind,
     QueryNode,
@@ -94,11 +95,13 @@ def default_chunk_size(*, definitions: Mapping[str, QueryNode]) -> int:
     A step holds chunk-times-row-batch lanes. A graph whose widest query has few
     rows fills that step only with more cells, so its chunk grows until the
     widest query's rows times the chunk reach the lane target. A chunk is never
-    narrower than the row batch floor.
+    narrower than the row batch floor. A stored outside read gathers its value
+    instead of evaluating its rows, so its rows do not count.
     """
     rows = max(
         support_size(node=node, period=node.read.period)
         for node in definitions.values()
+        if node.outside_value is None
     )
     # ponytail: the padded last position of a wider chunk can pass int32 where a
     # 64-cell chunk's would not; cap the chunk by the source count if that bites.
@@ -1228,6 +1231,9 @@ class InformationQueryCell:
     the kept groups reduced to their mass. Only a query without ancestors, draws or
     observation axes keeps groups.
     """
+    outside: OutsideTable | None = None
+    """The table a stored outside read gathers its value from, instead of
+    evaluating its destination's problem; None for every other query."""
 
     def __post_init__(self) -> None:
         """Refuse kept groups on a query whose rows are not its plan's product."""
@@ -1411,9 +1417,10 @@ class InformationQueryCell:
             )[0]
         )
         rows = rows if classes is None else rows[classes[0]]
+        # A stored read computes nothing per entry that a group could share.
         split = (
             None
-            if name == self.realised_root
+            if name == self.realised_root or self.outside is not None
             else continuation_members(
                 name=self.name, ancestor=name, rows=rows, definitions=self.definitions
             )
@@ -2142,7 +2149,7 @@ class InformationQueryCell:
         self,
         *,
         frames: Frames,
-        codes: FrameCodes,  # noqa: ARG002 - names each ancestor row's nodes
+        codes: FrameCodes,
         indices: tuple[IntND, ...],
         live: BoolND,
         source: SourceStates,
@@ -2151,10 +2158,36 @@ class InformationQueryCell:
         """Price this query's own rows below the ancestor rows `frames` selects.
 
         `codes` names, for each ancestor, the node of every group its selected
-        row realises.
+        row realises. A stored outside read gathers its value from its table at
+        those nodes and realises no rows of its own.
         """
         from _lcm.policy_queries import _PHYSICAL_CONTEXTS, _query_cell  # noqa: PLC0415
 
+        if self.outside is not None:
+            from _lcm.outside_values import read_outside_value  # noqa: PLC0415
+
+            answer = read_outside_value(
+                node=self.node,
+                table=self.outside,
+                live=live,
+                available={
+                    **self.projection_operands,
+                    **source,
+                    "period": self.fixed["period"],
+                    "age": self.fixed["age"],
+                    _PHYSICAL_CONTEXTS: {
+                        name: frame.physical for name, frame in frames.items()
+                    },
+                },
+                codes=codes,
+            )
+            return (
+                answer[0],
+                jnp.full((self._size(name=self.name, node=self.node),), -1, jnp.int32),
+                answer[2],
+                answer[3],
+                answer[4],
+            )
         guard = live & self._available(
             node=self.node, fixed=self.fixed, source=source, frames=frames
         )

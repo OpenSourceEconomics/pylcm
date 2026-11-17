@@ -27,6 +27,7 @@ from _lcm.execution.core_program import (
     CoreExecutionRequirements,
     CoreProgram,
     InternalDispatch,
+    InternalInputRef,
     ValueRead,
 )
 from _lcm.execution.output_layout import VALUE, StateAxesLeading
@@ -91,6 +92,9 @@ _ACTING = "_lcm_query_acting"
 _TASTE = "_lcm_query_taste"
 _QUERY_ARGUMENTS = "query_arguments"
 _EVALUATED = "_lcm_query_evaluated"
+_OUTSIDE = "_lcm_query_outside"
+# Prefix of the program that tabulates a destination for the reader's stored reads.
+OUTSIDE_PROGRAM = "_outside:"
 # Support rows evaluated together per step, inside every lane of the cell batch.
 # A step evaluates chunk-times-row-batch lanes. Holding that product at
 # `_STEP_LANES` lets a narrowed chunk widen its rows: the per-step workspace stays
@@ -427,9 +431,19 @@ def gated_query_targets(
 def _node_inputs(
     *, node: QueryNode, period: int
 ) -> tuple[CoreArgumentBuilder, tuple[ValueRead, ...]]:
-    """Keep value-reader operands separate from canonical policy action inputs."""
+    """Keep value-reader operands separate from canonical policy action inputs.
+
+    A stored outside read takes its value from its destination's table, so it
+    reads only the clock and its law's operands, and no continuation.
+    """
     if node.operand_builder is not None:
         return node.operand_builder, node.operand_value_reads
+    if node.outside_value is not None:
+        from _lcm.participation_queries import _ParticipationArguments  # noqa: PLC0415
+
+        return _ParticipationArguments(
+            period=period, plan=node.context.current_iid_plans.get(period)
+        ), ()
     builder, reads = grid_search_query_inputs(context=node.context, period=period)
     if not node.gated_channels:
         return builder, reads
@@ -450,6 +464,9 @@ def _node_inputs(
 
 # Values at one common action, stable ID, support, integrity, reached-landing counts.
 type PolicyAnswer = tuple[FloatND, IntND, BoolND, BoolND, IntND]
+
+# A destination's tabulated values and support, read by its stored outside reads.
+type OutsideTable = tuple[FloatND, BoolND]
 
 # Q, feasibility, integrity and landing counts over the action grid.
 type StayTable = tuple[FloatND, BoolND, BoolND, IntND]
@@ -860,8 +877,17 @@ def build_policy_query_kernel(
     definitions: Mapping[str, QueryNode],
     root: str,
     chunk_size: int,
+    outside_tables: Mapping[str, tuple[Mapping[str, QueryNode], str]] = (
+        MappingProxyType({})
+    ),
 ) -> _PolicyQueryKernel:
-    """Expand one genuine occupant root into a common-chunk native query loop."""
+    """Expand one genuine occupant root into a common-chunk native query loop.
+
+    `outside_tables` maps the label of each stored outside read to its
+    destination's bound Raw graph and that graph's root. The kernel tabulates each
+    destination its stored reads take, once, before the chunk loop that gathers
+    from the tables.
+    """
     if isinstance(chunk_size, bool) or chunk_size < 1:
         raise ValueError("A native query chunk must be positive.")
     _admit_query_solver(context=root_context, period=period)
@@ -945,7 +971,24 @@ def build_policy_query_kernel(
         regime=root_context.regime_name, shape=bank_shape, dtype=dtype
     )
     schedule = _query_schedule(definitions={name: definitions[name] for name in order})
+    stored = {
+        name: read
+        for name in order
+        if (read := definitions[name].outside_value) is not None
+    }
+    tables = _outside_programs(
+        reads=stored,
+        outside_tables=outside_tables,
+        reader=root_context.regime_name,
+        width=chunk_size,
+    )
+    # The chunk loop takes each table's values and support under these names.
+    table_arguments = {
+        name: (f"_lcm_outside_value_{index}", f"_lcm_outside_support_{index}")
+        for index, name in enumerate(tables)
+    }
     programs = {
+        **tables,
         "_initialize": CoreProgram(
             name="_initialize",
             function=_initialize_bank(shape=bank_shape, dtype=dtype),
@@ -968,10 +1011,25 @@ def build_policy_query_kernel(
                     root=root, definitions=definitions, period=period
                 ),
                 chunks=bank_shape[0] // chunk_size,
+                outside=MappingProxyType(
+                    {
+                        name: table_arguments[OUTSIDE_PROGRAM + read.label]
+                        for name, read in stored.items()
+                    }
+                ),
             ),
             argument_builder=_ChunkArguments(bank=bank_arguments, builders=builders),
             requirements=CoreExecutionRequirements(
                 value_reads=tuple(reads),
+                internal_inputs=MappingProxyType(
+                    {
+                        argument: InternalInputRef(producer=name, label=label)
+                        for name, arguments in table_arguments.items()
+                        for argument, label in zip(
+                            arguments, ("value", "support"), strict=True
+                        )
+                    }
+                ),
                 host_buffers=host_buffers,
                 host_axis_names=("query_cell",),
             ),
@@ -1013,7 +1071,36 @@ def build_policy_query_kernel(
         chunk_size=chunk_size,
         root_context=root_context,
         period=period,
+        outside_tables=outside_tables,
     )
+
+
+def _outside_programs(
+    *,
+    reads: Mapping[str, OutsideValueRead],
+    outside_tables: Mapping[str, tuple[Mapping[str, QueryNode], str]],
+    reader: RegimeName,
+    width: int,
+) -> Mapping[str, CoreProgram]:
+    """One program per destination table the stored reads take, by program name.
+
+    Reads with the same label take one table.
+    """
+    from _lcm.outside_values import outside_value_program  # noqa: PLC0415
+
+    programs: dict[str, CoreProgram] = {}
+    for read in reads.values():
+        name = OUTSIDE_PROGRAM + read.label
+        if name in programs:
+            continue
+        if read.label not in outside_tables:
+            raise ValueError(f"Stored outside read {read.label!r} has no table.")
+        definitions, key = outside_tables[read.label]
+        _admit_node(node=definitions[key], period=definitions[key].read.period)
+        programs[name] = outside_value_program(
+            read=read, definitions=definitions, key=key, reader=reader, width=width
+        )
+    return MappingProxyType(programs)
 
 
 def query_value_reads(
@@ -1294,6 +1381,8 @@ class _QueryChunks:
     chunks: int
     raw_sources: Mapping[str, str] = MappingProxyType({})  # noqa: PAN003 - internal query keys, not regime/state names
     """Consumer to proven own-RAW producer, confined to one source chunk."""
+    outside: Mapping[str, tuple[str, str]] = MappingProxyType({})
+    """Stored outside read to the arguments holding its table's values and support."""
 
     def __call__(
         self,
@@ -1301,7 +1390,9 @@ class _QueryChunks:
         states: Mapping[str, FloatND | IntND],
         bank: FloatND,
         query_arguments: Mapping[str, Mapping[str, PytreeValue]],
+        **tables: FloatND | BoolND,
     ) -> _ChunkOutput:
+        """Run every chunk; `tables` holds the tables the stored reads take."""
         source_size = math.prod(value.size for value in states.values())
         full_chunks = (
             0 < source_size <= jnp.iinfo(jnp.int32).max
@@ -1329,6 +1420,10 @@ class _QueryChunks:
                         for operand, producer in step.inputs.items()
                     }
                 )
+                if step.name in self.outside:
+                    arguments[_OUTSIDE] = tuple(
+                        tables[name] for name in self.outside[step.name]
+                    )
                 if step.name in self.raw_sources.values():
                     evaluations[step.name] = self.cores[step.name].evaluate(**arguments)
                 producer = self.raw_sources.get(step.name, step.name)
@@ -1678,9 +1773,18 @@ class _QueryCore:
         fixed = {
             name: value
             for name, value in arguments.items()
-            if name not in {*self.node.inputs, _SOURCE, _LIVE, _PROJECTION, _EVALUATED}
+            if name
+            not in {
+                *self.node.inputs,
+                _SOURCE,
+                _LIVE,
+                _PROJECTION,
+                _EVALUATED,
+                _OUTSIDE,
+            }
         }
         projection_operands = cast("Mapping[str, PytreeValue]", arguments[_PROJECTION])
+        table = cast("OutsideTable | None", arguments.get(_OUTSIDE))
         from _lcm.query_information import (  # noqa: PLC0415
             InformationQueryCell,
             has_information,
@@ -1702,6 +1806,15 @@ class _QueryCore:
                     arguments.get(_INFORMATION, {}),
                 ),
                 row_batch=self.row_batch,
+                outside=table,
+            )
+        elif table is not None:
+            cell = functools.partial(
+                _stored_cell,
+                node=self.node,
+                table=table,
+                fixed=fixed,
+                projection_operands=projection_operands,
             )
         else:
             cell = functools.partial(
@@ -1897,6 +2010,38 @@ def _query_cell(
         projection_operands=projection_operands,
         stay=stay,
         evaluated=evaluated,
+    )
+
+
+def _stored_cell(
+    *,
+    live: BoolND,
+    source: Mapping[str, FloatND | IntND],
+    dependencies: Mapping[str, PolicyAnswer],
+    node: QueryNode,
+    table: OutsideTable,
+    fixed: Mapping[str, PytreeValue],
+    projection_operands: Mapping[str, PytreeValue],
+) -> PolicyAnswer:
+    """Gather a stored outside read whose callers realise no shocks.
+
+    A stored read is a Raw read, which depends on no other query.
+    """
+    del dependencies
+    from _lcm.outside_values import read_outside_value  # noqa: PLC0415
+
+    return read_outside_value(
+        node=node,
+        table=table,
+        live=live,
+        available={
+            **projection_operands,
+            **source,
+            "period": fixed["period"],
+            "age": fixed["age"],
+            _PHYSICAL_CONTEXTS: fixed.get(_PHYSICAL_CONTEXTS, {}),
+        },
+        codes=MappingProxyType({}),
     )
 
 
@@ -2544,6 +2689,11 @@ class _PolicyQueryKernel:
     root_context: SolverBuildContext
     period: int
     fixed_flat_params: FlatParams = MappingProxyType({})
+    outside_tables: Mapping[str, tuple[Mapping[str, QueryNode], str]] = (
+        MappingProxyType({})
+    )
+    """Label of each stored outside read to its destination's bound Raw graph and
+    that graph's root."""
     shared_functions: dict[tuple[str, int], Callable[..., PytreeValue]] | None = None
     """Program functions by name and chunk width, one dict per group of periods.
 
@@ -2586,6 +2736,7 @@ class _PolicyQueryKernel:
             definitions=self.definitions,
             root=self.root,
             chunk_size=max(1, self.chunk_size >> halvings),
+            outside_tables=self.outside_tables,
         )
         candidate = candidate.with_fixed_params(
             fixed_flat_params=self.fixed_flat_params
@@ -2595,7 +2746,12 @@ class _PolicyQueryKernel:
         return candidate.sharing(functions=self.shared_functions)
 
     def with_fixed_params(self, *, fixed_flat_params: FlatParams) -> Self:
-        """Expose each target's fixed operands through its canonical argument pool."""
+        """Expose each target's fixed operands through its canonical argument pool.
+
+        A table binds them into its destination's arguments as the chunk loop does.
+        """
+        from _lcm.outside_values import _TableArguments  # noqa: PLC0415
+
         frozen = MappingProxyType(
             {
                 name: MappingProxyType(dict(values))
@@ -2608,24 +2764,28 @@ class _PolicyQueryKernel:
                 for name, builder in self.builders.items()
             }
         )
+        programs = dict(self.programs)
+        programs["_chunks"] = replace(
+            programs["_chunks"],
+            argument_builder=replace(
+                cast("_ChunkArguments", programs["_chunks"].argument_builder),
+                builders=builders,
+            ),
+        )
+        for name, program in self.programs.items():
+            if isinstance(builder := program.argument_builder, _TableArguments):
+                programs[name] = replace(
+                    program,
+                    argument_builder=replace(
+                        builder,
+                        builder=replace(builder.builder, fixed_flat_params=frozen),
+                    ),
+                )
         return replace(
             self,
             fixed_flat_params=frozen,
             builders=builders,
-            programs=MappingProxyType(
-                {
-                    name: replace(
-                        program,
-                        argument_builder=replace(
-                            cast("_ChunkArguments", program.argument_builder),
-                            builders=builders,
-                        ),
-                    )
-                    if name == "_chunks"
-                    else program
-                    for name, program in self.programs.items()
-                }
-            ),
+            programs=MappingProxyType(programs),
         )
 
     def __call__(
@@ -2642,7 +2802,13 @@ class _PolicyQueryKernel:
         same_period_regime_to_V_arr: Mapping[RegimeName, FloatND] | None = None,
         edge_regime_to_V_arr: Mapping[RegimeName, FloatND] | None = None,
     ) -> KernelOutput:
-        """Run every chunk in one dispatch, check statuses, then publish the bank."""
+        """Tabulate the destinations of stored reads, run every chunk in one
+        dispatch, check statuses, then publish the bank.
+
+        A table's landing counts are checked when it is built; its failed cells
+        fail only the reads that take them. The tables are released once the
+        chunks have run.
+        """
         del logger
         context = CoreBuildContext(
             state_action_space=state_action_space,
@@ -2659,16 +2825,21 @@ class _PolicyQueryKernel:
         try:
             bank = cast("FloatND", compiled_cores["_initialize"]())
             owner.record(outputs=bank, devices=frozenset(bank.devices()))
+            tables = self._tables(
+                compiled_cores=compiled_cores, context=context, owner=owner
+            )
             arguments = {
                 **cast("_ChunkArguments", program.argument_builder).operands(context),
                 "bank": bank,
+                **{
+                    argument: tables[reference.producer][reference.label]
+                    for argument, reference in (
+                        program.requirements.internal_inputs.items()
+                    )
+                },
             }
-            devices = frozenset(
-                device
-                for value in jax.tree.leaves(arguments)
-                if isinstance(value, jax.Array)
-                for device in value.devices()
-            )
+            del tables
+            devices = _devices(tree=arguments)
             owner.before(devices=devices)
             bank, statuses, totals = cast(
                 "_ChunkOutput", compiled_cores["_chunks"](**arguments)
@@ -2693,6 +2864,48 @@ class _PolicyQueryKernel:
             return KernelOutput(value=value)
         finally:
             owner.close()
+
+    def _tables(
+        self,
+        *,
+        compiled_cores: Mapping[str, Callable[..., PytreeValue]],
+        context: CoreBuildContext,
+        owner: PendingSolveWork,
+    ) -> Mapping[str, Mapping[str, FloatND | BoolND]]:
+        """Build each table and check its landing counts, by program and output."""
+        tables = {}
+        for label, (definitions, key) in self.outside_tables.items():
+            name = OUTSIDE_PROGRAM + label
+            if name not in self.programs:
+                continue
+            program = self.programs[name]
+            arguments = program.argument_builder(context)
+            devices = _devices(tree=arguments)
+            owner.before(devices=devices)
+            output = cast(
+                "tuple[FloatND, BoolND, IntND]", compiled_cores[name](**arguments)
+            )
+            owner.record(outputs=output, devices=devices)
+            _check_query_answer(
+                name=name, node=definitions[key], status=True, totals=output[2]
+            )
+            tables[name] = {
+                spec.label: output[cast("int", spec.path[0])]
+                for spec in program.internal_outputs
+            }
+        return tables
+
+
+def _devices(
+    *, tree: Mapping[str, PytreeValue | ShapeDtypePytree]
+) -> frozenset[jax.Device]:
+    """The devices holding the arrays of an argument tree."""
+    return frozenset(
+        device
+        for value in jax.tree.leaves(tree)
+        if isinstance(value, jax.Array)
+        for device in value.devices()
+    )
 
 
 def _query_schedule(

@@ -819,9 +819,10 @@ def _continuation_values(
     return dict(seen)
 
 
+@pytest.mark.parametrize("stored", [False, True], ids=["point", "stored"])
 @pytest.mark.parametrize("n_match", [2, 3])
 def test_a_query_computes_its_continuation_once_per_class_that_fixes_it(
-    *, n_match: int, monkeypatch: pytest.MonkeyPatch
+    *, n_match: int, stored: bool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A continuation runs once per combination of the caller shocks that fix it.
 
@@ -830,23 +831,27 @@ def test_a_query_computes_its_continuation_once_per_class_that_fixes_it(
     match supports. Each of its lanes holds 4 actions for 2 spouses, and it runs
     in 3 x 6 lanes below each single and in 12 lanes of its own.
 
-    A single's continuation holds 2 actions. It runs once per own state (3),
-    per offer flag as the own stay benchmark (3 x 2), and per offer flag and
-    offered partner as the counterparty (3 x 6).
+    A single's continuation holds 2 actions. It runs once per own state (3) and
+    per offer flag as the own stay benchmark (3 x 2). As the counterparty it runs
+    per offer flag and offered partner (3 x 6) when read at its point, and once
+    per state of the table the read takes from (3) when stored.
     """
+    monkeypatch.setattr(exit_queries, "_READ_STORED_OUTSIDE_VALUES", stored)
     values = _continuation_values(
         model=_model(n_match=n_match), monkeypatch=monkeypatch
     )
+    counterparty = 3 if stored else 18
     assert values == {
         "couple": (18 + 18 + 12) * 8,
-        "single_f": (3 + 6 + 18) * 2,
-        "single_m": (3 + 6 + 18) * 2,
+        "single_f": (3 + 6 + counterparty) * 2,
+        "single_m": (3 + 6 + counterparty) * 2,
     }
 
 
+@pytest.mark.parametrize("stored", [False, True], ids=["point", "stored"])
 @pytest.mark.parametrize("n_match", [2, 3])
 def test_a_continuation_reading_an_observed_shock_runs_once_per_class(
-    *, n_match: int, monkeypatch: pytest.MonkeyPatch
+    *, n_match: int, stored: bool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A continuation that reads a shock its caller observes runs once per class.
 
@@ -855,15 +860,19 @@ def test_a_continuation_reading_an_observed_shock_runs_once_per_class(
     offered partner realise the observation, so the continuation has
     6 x `n_match` classes per single state. Each of the couple's own 12 lanes maps
     its shocks one group at a time, so the continuation runs once per node of the
-    match shock it reads (`n_match`), not at every joint row (4 x `n_match`).
+    match shock it reads (`n_match`), not at every joint row (4 x `n_match`). A
+    single's counterparty continuation runs as in the model without the lasting
+    match.
     """
+    monkeypatch.setattr(exit_queries, "_READ_STORED_OUTSIDE_VALUES", stored)
     values = _continuation_values(
         model=_model(n_match=n_match, lasting_match=True), monkeypatch=monkeypatch
     )
+    counterparty = 3 if stored else 18
     assert values == {
         "couple": (18 * n_match + 18 * n_match + 12 * n_match) * 8,
-        "single_f": (3 + 6 + 18) * 2,
-        "single_m": (3 + 6 + 18) * 2,
+        "single_f": (3 + 6 + counterparty) * 2,
+        "single_m": (3 + 6 + counterparty) * 2,
     }
 
 
@@ -907,18 +916,21 @@ def _weighted_shapes(
     return shapes
 
 
+@pytest.mark.parametrize("stored", [False, True], ids=["point", "stored"])
 @pytest.mark.parametrize("n_match", [2, 3])
 def test_a_query_weights_one_term_per_representative_of_its_rows(
-    *, n_match: int, monkeypatch: pytest.MonkeyPatch
+    *, n_match: int, stored: bool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A query's rows that differ only in shocks its caller observes hold one answer.
 
     Each single observes all three couple shocks, so the couple below it has one
     representative row whatever the wage and match supports; it weights that one
     answer by the mass of the rows it stands for. The counterparty's wage is
-    observed and its taste is not, so it keeps its 3 taste rows. The single's own
-    stay benchmark repeats the caller's row.
+    observed and its taste is not, so read at its point it keeps its 3 taste rows;
+    stored, it gathers one value and weights nothing. The single's own stay
+    benchmark repeats the caller's row.
     """
+    monkeypatch.setattr(exit_queries, "_READ_STORED_OUTSIDE_VALUES", stored)
     shapes = _weighted_shapes(model=_model(n_match=n_match), monkeypatch=monkeypatch)
     assert {
         key[1:]: values[0]
@@ -928,7 +940,7 @@ def test_a_query_weights_one_term_per_representative_of_its_rows(
         ("FULL", "single_f"): 144 * n_match // 2,
         ("PARTICIPATING", "couple"): 1,
         ("RAW", "single_f"): 1,
-        ("RAW", "single_m"): 3,
+        **({} if stored else {("RAW", "single_m"): 3}),
     }
 
 
@@ -1059,6 +1071,7 @@ def test_an_unset_chunk_width_fills_one_step_with_the_widest_query(
         definitions: Mapping[str, QueryNode],
         root: str,
         chunk_size: int,
+        outside_tables: Mapping[str, tuple[Mapping[str, QueryNode], str]],
     ) -> policy_queries._PolicyQueryKernel:
         requested[definitions[root].read.target] = chunk_size
         return build(
@@ -1067,6 +1080,7 @@ def test_an_unset_chunk_width_fills_one_step_with_the_widest_query(
             definitions=definitions,
             root=root,
             chunk_size=chunk_size,
+            outside_tables=outside_tables,
         )
 
     monkeypatch.setattr(exit_queries, "build_policy_query_kernel", record)

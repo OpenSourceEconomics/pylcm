@@ -16,7 +16,8 @@ exact point.
 
 An aligned read's destination is tabulated by a program of its own: the problem's
 value at every grid cell of the destination and every node of the groups the read
-keeps, with the other groups integrated.
+keeps, with the other groups integrated. The read then gathers its value from that
+table at its projected cell and at the nodes its caller's rows name.
 """
 
 import inspect
@@ -43,11 +44,17 @@ from _lcm.policy_queries import (
     _PHYSICAL_CONTEXTS,
     _PROJECTION,
     _QUERY_ARGUMENTS,
+    OUTSIDE_PROGRAM,
+    OutsideTable,
     OutsideValueRead,
+    PolicyAnswer,
     QueryKind,
     QueryNode,
     _as_target_state,
+    _mapped_query_states,
+    _mapped_query_valid,
     _node_inputs,
+    _query_availability,
     _query_cell,
     _query_landing_checks,
     _query_landing_totals,
@@ -57,6 +64,7 @@ from _lcm.policy_queries import (
     query_value_reads,
 )
 from _lcm.query_information import (
+    FrameCodes,
     InformationQueryCell,
     _bindings,
     _callable_reads,
@@ -205,7 +213,7 @@ def outside_value_program(
         )
     kept = tuple(groups.index(group) for group in read.groups)
     base, value_reads = _node_inputs(node=node, period=node.read.period)
-    name = f"_outside:{read.label}"
+    name = OUTSIDE_PROGRAM + read.label
     table = OutsideValueTable(key=key, definitions=definitions, kept=kept, width=width)
     values, support = table.shapes()
     dtype = jnp.asarray(0.0).dtype
@@ -220,6 +228,9 @@ def outside_value_program(
                 key=key, reads=value_reads, regime=reader, core_key=name
             )
         ),
+        # The width is bound by the function, not its arguments: a narrowed table
+        # takes the same arguments and must not share one executable.
+        compiler_options=(("query_chunk", width),),
         output_roles=(
             StateAxesLeading(state_names=(), shape=values, dtype=dtype),
             StateAxesLeading(state_names=(), shape=support, dtype=jnp.bool_),
@@ -234,6 +245,64 @@ def outside_value_program(
             InternalOutputSpec(label="support", path=(1,)),
         ),
         disposition=CoreExecutionDisposition.PLANNED,
+    )
+
+
+def read_outside_value(
+    *,
+    node: QueryNode,
+    table: OutsideTable,
+    live: BoolND,
+    available: Mapping[str, PytreeValue],
+    codes: FrameCodes,
+) -> PolicyAnswer:
+    """Gather an aligned read's value and support from its destination's table.
+
+    The read takes the table at its projected grid cell and, for each kept group,
+    at the node the group's origin frame names. The build proved the projected
+    states to be grid points, so the nearest point is the cell; it absorbs only
+    the rounding between the build's eager evaluation and the compiled one.
+
+    Args:
+        node: The aligned outside read.
+        table: The destination's tabulated values and support.
+        live: Whether the source cell is genuine rather than padding.
+        available: Mapping of the names the read's projection and guard take to
+            their values: projection operands, source states, period, age and the
+            physical frames of the read's ancestors.
+        codes: Mapping of each ancestor's query key to the node its selected row
+            realises, per shock group.
+
+    Returns:
+        The read's answer, shaped as a point read's: the value, no action of its
+        own, its support, its integrity and no reached landings. A NaN value, a
+        cell whose problem failed its integrity check, fails the read's integrity.
+
+    """
+    read = cast("OutsideValueRead", node.outside_value)
+    guard = live & _query_availability(node=node, available=available)
+    mapped = _mapped_query_states(node=node, available=available, guard=guard)
+    cell = (
+        *(
+            jnp.argmin(jnp.abs(jnp.asarray(points) - mapped[state]))
+            for state, points in node.context.state_action_space.states.items()
+        ),
+        *(
+            codes[origin][group]
+            for group, origin in zip(read.groups, read.origins, strict=True)
+        ),
+    )
+    values, support = table
+    value = values[cell]
+    integrity = ~jnp.any(jnp.isnan(value)) & _mapped_query_valid(
+        node=node, mapped=mapped
+    )
+    return (
+        jnp.where(guard, value, -jnp.inf),
+        jnp.asarray(-1, dtype=jnp.int32),
+        guard & support[cell],
+        ~guard | integrity,
+        jnp.zeros((len(_query_landing_checks(node=node)),), dtype=jnp.int32),
     )
 
 

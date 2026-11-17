@@ -346,14 +346,37 @@ fully observed group of the caller's own shocks whose continuous law (`Normal`,
 example a spread read from a state that the exit changes, naming what would have to be
 implemented to support it.
 
+When solving, an outside value is read from a table rather than evaluated again, where
+the model build can prove that the read lands on the table's nodes:
+
+- the destination is solved in that period, with `GridSearch`, on a grid that is fixed
+  when the model is built and not specialized to the period's age;
+- every projected state is provably a point of the destination's grid: the projection
+  returns a source state unchanged between identical grids, or each of its finitely many
+  inputs (grid points of the source's states, the period, its age, codes of a discrete
+  shock) lands on a grid point;
+- each shock group of the destination is either observed whole by the exit, on the
+  destination's own nodes, or not observed at all.
+
+The source regime tabulates the destination's problem value at every point of its grid
+and every node of the observed groups, integrating the others, once per period; each
+read gathers from that table. A cell whose problem fails its numerical checks fails only
+the reads that take it. A read the build cannot prove aligned, for example a projection
+that reads a parameter or a continuous shock, or lands between grid points, is evaluated
+at its exact point; no stored value is interpolated. An outside read of a destination
+solved with an endogenous-grid method is refused when the model is built. Simulation
+always evaluates the destination at each subject's realized state and shocks.
+
 The cells of a query chunk and the rows of an information support run as batched lanes.
 Unless `ExecutionConfig(axis_widths={"query_cell": ...})` fixes the chunk, it holds as
-many cells as fill one step with the rows of the widest query, and at least 64. A lane
-whose exit is unavailable is still computed and then discarded; its target reads its
-first grid point instead of the projected state, so a projection that is meaningless
-when the exit is unavailable cannot reach user functions there.
+many cells as fill one step with the rows of the widest query it evaluates rather than
+reads from a table, and at least 64. A lane whose exit is unavailable is still computed
+and then discarded; its target reads its first grid point instead of the projected
+state, so a projection that is meaningless when the exit is unavailable cannot reach
+user functions there.
 
-Native current-period exits use each queried regime's declared `GridSearch` solver.
+Native current-period exits use each queried regime's declared `GridSearch` solver,
+whether the regime is evaluated at a point or tabulated for stored reads.
 Endogenous-grid query reconstruction is not implemented. Query admission also refuses
 invariant or co-mapped state layouts, action partitioning, stored Full-value references
 and runtime-bound query status adapters.

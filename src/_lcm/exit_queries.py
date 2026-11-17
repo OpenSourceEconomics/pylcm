@@ -1430,7 +1430,11 @@ def lower_exit_queries(
     period: int,
     value_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
 ) -> _PolicyQueryKernel:
-    """Lower a bound Full graph into the existing native publication schedule."""
+    """Lower a bound Full graph into the existing native publication schedule.
+
+    Each destination a stored outside read takes is bound once more, as the root
+    of its own Raw graph, which the kernel tabulates.
+    """
     nodes, root_key = bind_exit_query_graph(
         contexts=contexts,
         canonical_regimes=canonical_regimes,
@@ -1439,6 +1443,17 @@ def lower_exit_queries(
         stored_outside_reads=_READ_STORED_OUTSIDE_VALUES,
         value_periods_by_regime=value_periods_by_regime,
     )
+    tables = {}
+    for node in nodes.values():
+        read = node.outside_value
+        if read is not None and read.label not in tables:
+            tables[read.label] = bind_exit_query_graph(
+                contexts=contexts,
+                canonical_regimes=canonical_regimes,
+                root=node.read.target,
+                period=period,
+                kind=QueryKind.RAW,
+            )
     root_context = contexts[root]
     kernel = build_policy_query_kernel(
         root_context=root_context,
@@ -1448,6 +1463,7 @@ def lower_exit_queries(
         chunk_size=root_context.axis_widths.get(
             "query_cell", default_chunk_size(definitions=nodes)
         ),
+        outside_tables=MappingProxyType(tables),
     )
     return kernel.with_fixed_params(
         fixed_flat_params=MappingProxyType(

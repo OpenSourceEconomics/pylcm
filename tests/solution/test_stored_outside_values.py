@@ -7,12 +7,15 @@ give back the row's physical shocks.
 
 The stored array holds the destination's problem value at every grid cell and at
 every node of the groups its readers observe, integrating the other groups.
+
+A solve that reads stored values gives the values of one that evaluates every outside
+read at its point, to a few units in the last place.
 """
 
 import logging
 from collections import defaultdict
 from collections.abc import Callable, Mapping
-from dataclasses import replace
+from dataclasses import dataclass, field, replace
 from functools import partial
 from typing import cast
 
@@ -35,6 +38,7 @@ from _lcm.execution.core_program import CoreBuildContext
 from _lcm.outside_values import outside_value_program
 from _lcm.policy_queries import PolicyAnswer, QueryKind
 from _lcm.query_information import InformationQueryCell, QueryArguments
+from _lcm.regime_building.Q_and_F import EvaluatedQAndF
 from _lcm.solution.contract import ContinuationPayload
 from _lcm.time import TimeAxis
 from _lcm.typing import FlatParams, PytreeValue, QAndFKwargs
@@ -51,6 +55,7 @@ from lcm import (
     Unilateral,
     categorical,
 )
+from lcm.exceptions import ExecutionPlanningError
 from lcm.shocks import (
     GaussHermite,
     Normal,
@@ -65,6 +70,8 @@ from lcm.typing import BoolND, FloatND, IntND, RegimeName, ScalarInt
 from tests.conftest import DECIMAL_PRECISION, assert_agrees_to_ulp
 from tests.solution.test_formation_read_classes import _model as _formation_model
 from tests.solution.test_formation_read_classes import _solve
+from tests.solution.test_outside_value_alignment import _marriage_model
+from tests.solution.test_outside_value_truncation import _Chain, _chain_model
 
 type _Label = tuple[str, str, str]
 type _Tally = dict[_Label, np.ndarray]
@@ -361,6 +368,7 @@ def _terminal_pair(
     destination_shocks: tuple[str, ...] = ("unseen",),
     projection: Callable[..., FloatND] = _wealth,
     observes: tuple[str, ...] = (),
+    destination_constraints: Mapping[str, Callable[..., BoolND]] | None = None,
 ) -> Model:
     """A source leaves unilaterally for a destination; one period, both solved."""
     return Model(
@@ -375,6 +383,7 @@ def _terminal_pair(
                 states={"wealth": _wealth_grid()},
                 actions={"work": _work()},
                 functions={"utility": destination_utility},
+                constraints=destination_constraints or {},
                 shocks=destination_shocks,
             ),
         },
@@ -620,3 +629,320 @@ def test_a_table_marks_a_failed_cell_nan_and_keeps_its_neighbours(
     np.testing.assert_array_almost_equal(
         np.where(support, values, -np.inf), expected, decimal=DECIMAL_PRECISION
     )
+
+
+@dataclass(frozen=True, kw_only=True)
+class _Arm:
+    """What one solve computed and how it read its outside values."""
+
+    values: dict[str, np.ndarray] = field(default_factory=dict)
+    """Solved values by `period/regime`."""
+    tables: set[str] = field(default_factory=set)
+    """Names of the programs that tabulate a destination, over every kernel."""
+    gathers: list[RegimeName] = field(default_factory=list)
+    """The destination of every stored read the solve traced."""
+    evaluated: set[RegimeName] = field(default_factory=set)
+    """Every regime whose action problem the solve's queries evaluated."""
+    rebuilt: set[RegimeName] = field(default_factory=set)
+    """Destinations of stored reads whose node evaluated their action problem."""
+    failure: str = ""
+    """The message of the solve's `ExecutionPlanningError`, if it raised one."""
+
+
+def _solve_arm(
+    *,
+    model: Callable[[], Model],
+    stored: bool,
+    monkeypatch: pytest.MonkeyPatch,
+    params: Mapping[str, float] | None = None,
+    scale: float = 1.0,
+    fails: bool = False,
+    chunk: int | None = None,
+) -> _Arm:
+    """Build and solve `model` with stored or point outside reads.
+
+    `scale` multiplies every stored value as it is read, `fails` expects the solve
+    to raise `ExecutionPlanningError`, and `chunk` fixes the source cells per chunk
+    of every query kernel whose model leaves that width to the engine.
+    """
+    arm = _Arm()
+    read = outside_values.read_outside_value
+    evaluate = policy_queries._evaluate_query_action
+
+    def gathered(
+        *,
+        node: policy_queries.QueryNode,
+        table: tuple[FloatND, BoolND],
+        live: BoolND,
+        available: Mapping[str, PytreeValue],
+        codes: query_information.FrameCodes,
+    ) -> PolicyAnswer:
+        arm.gathers.append(node.read.target)
+        return read(
+            node=node,
+            table=(table[0] * scale, table[1]),
+            live=live,
+            available=available,
+            codes=codes,
+        )
+
+    def evaluated(
+        *,
+        node: policy_queries.QueryNode,
+        period: int,
+        arguments: Mapping[str, PytreeValue],
+    ) -> EvaluatedQAndF:
+        arm.evaluated.add(node.read.target)
+        if node.outside_value is not None:
+            arm.rebuilt.add(node.read.target)
+        return evaluate(node=node, period=period, arguments=arguments)
+
+    def chunk_size(*, definitions: Mapping[str, policy_queries.QueryNode]) -> int:
+        del definitions
+        return cast("int", chunk)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(exit_queries, "_READ_STORED_OUTSIDE_VALUES", stored)
+        patch.setattr(outside_values, "read_outside_value", gathered)
+        patch.setattr(policy_queries, "_evaluate_query_action", evaluated)
+        if chunk is not None:
+            patch.setattr(exit_queries, "default_chunk_size", chunk_size)
+        built = model()
+        arm.tables.update(
+            name
+            for regime in built._regimes.values()
+            for kernel in regime.solution.period_kernels.values()
+            if isinstance(kernel, policy_queries._PolicyQueryKernel)
+            for name in kernel.programs
+            if name.startswith("_outside:")
+        )
+        if fails:
+            with pytest.raises(ExecutionPlanningError) as raised:
+                built.solve(params=params or {}, log_level="off", runtime_checks=False)
+            return replace(arm, failure=str(raised.value))
+        solution = built.solve(
+            params=params or {}, log_level="off", runtime_checks=False
+        )
+    arm.values.update(
+        {
+            f"{period}/{regime}": np.asarray(value)
+            for period, by_regime in solution.values.items()
+            for regime, value in by_regime.items()
+        }
+    )
+    return arm
+
+
+def _assert_agree(
+    *, got: Mapping[str, np.ndarray], expected: Mapping[str, np.ndarray]
+) -> None:
+    """Every array agrees to 16 units in the last place at its own largest magnitude."""
+    assert got.keys() == expected.keys()
+    for key, value in expected.items():
+        finite = np.abs(value[np.isfinite(value)])
+        assert_agrees_to_ulp(
+            got=got[key],
+            expected=value,
+            n_ulp=16,
+            operand_magnitude=float(np.max(finite, initial=0.0)),
+            err_msg=key,
+        )
+
+
+def _observed_pair() -> Model:
+    """The source observes `seen`, which the destination keeps as an axis; the
+    destination integrates `unseen` and chooses whether to work.
+    """
+    return _terminal_pair(
+        destination_utility=_seen_earnings,
+        source_utility=_source_utility,
+        source_shocks=("seen",),
+        destination_shocks=("seen", "unseen"),
+        observes=("seen",),
+    )
+
+
+def _solved_chain() -> Model:
+    """Source -> destination -> onward, each occupied and solved in the one period,
+    so the source's read of the destination and the destination's read of onward
+    are both stored.
+    """
+    return Model(
+        regimes=_chain_model().user_regimes,
+        regime_id_class=_Chain,
+        n_periods=1,
+        edges={},
+        initial_nodes=InitialNodes(by_period={0: ("source", "destination", "onward")}),
+        execution_config=ExecutionConfig(device_memory_bytes=None),
+    )
+
+
+_AGREEMENT_CASES: dict[str, tuple[Callable[[], Model], Mapping[str, float]]] = {
+    "irregular knots, aligned and unaligned reads": (_marriage_model, {}),
+    "chain": (_solved_chain, {}),
+    "observed group kept": (_observed_pair, {}),
+    "continuation": (_pair_over_two_periods, {"discount_factor": 0.9}),
+    "formation with dissolution": (
+        lambda: _formation_model(dissolution=True, query_cell=None),
+        {"discount_factor": 0.9},
+    ),
+}
+
+
+@pytest.mark.parametrize(
+    ("model", "params"), list(_AGREEMENT_CASES.values()), ids=list(_AGREEMENT_CASES)
+)
+def test_stored_reads_agree_with_point_reads(
+    *,
+    model: Callable[[], Model],
+    params: Mapping[str, float],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reading stored outside values gives the values of reading every outside value
+    at its point, to 16 units in the last place.
+
+    The stored solve tabulates a destination and gathers from the table, and no
+    stored read evaluates its destination's action problem, which only the table
+    evaluates; the point solve does neither.
+    """
+    point = _solve_arm(
+        model=model, stored=False, params=params, monkeypatch=monkeypatch
+    )
+    stored = _solve_arm(
+        model=model, stored=True, params=params, monkeypatch=monkeypatch
+    )
+    assert (bool(stored.tables), bool(stored.gathers), stored.rebuilt) == (
+        True,
+        True,
+        set(),
+    )
+    assert set(stored.gathers) <= stored.evaluated
+    assert (point.tables, point.gathers) == (set(), [])
+    _assert_agree(got=stored.values, expected=point.values)
+
+
+@pytest.mark.parametrize(
+    ("model", "params"), list(_AGREEMENT_CASES.values()), ids=list(_AGREEMENT_CASES)
+)
+def test_point_reads_agree_with_themselves_across_chunk_widths(
+    *,
+    model: Callable[[], Model],
+    params: Mapping[str, float],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The control: point reads in one-cell chunks agree with point reads in the
+    engine's chunks under the comparison stored reads are held to.
+    """
+    wide = _solve_arm(model=model, stored=False, params=params, monkeypatch=monkeypatch)
+    narrow = _solve_arm(
+        model=model, stored=False, params=params, monkeypatch=monkeypatch, chunk=1
+    )
+    _assert_agree(got=narrow.values, expected=wide.values)
+
+
+def test_a_perturbed_stored_value_fails_the_comparison(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The source leaves for the destination's stored value 3, so stored values
+    moved by 64 units in the last place move the source's value as far.
+    """
+    point = _solve_arm(model=_solved_chain, stored=False, monkeypatch=monkeypatch)
+    eps = float(jnp.finfo(jnp.asarray(0.0).dtype).eps)
+    perturbed = _solve_arm(
+        model=_solved_chain, stored=True, monkeypatch=monkeypatch, scale=1 + 64 * eps
+    )
+    assert perturbed.gathers
+    with pytest.raises(AssertionError):
+        _assert_agree(got=perturbed.values, expected=point.values)
+
+
+def test_a_failed_stored_cell_fails_only_the_read_that_takes_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The destination's value is NaN at wealth 0.
+
+    A source that reads wealth 0 fails as the point read does, with the same
+    message. A source that reads only wealth 0.5 solves, from a table that holds
+    the NaN.
+    """
+
+    def taken() -> Model:
+        return _terminal_pair(destination_utility=_fragile_earnings)
+
+    def avoided() -> Model:
+        return _terminal_pair(destination_utility=_fragile_earnings, projection=_half)
+
+    failed = {
+        stored: _solve_arm(
+            model=taken, stored=stored, monkeypatch=monkeypatch, fails=True
+        )
+        for stored in (False, True)
+    }
+    point = _solve_arm(model=avoided, stored=False, monkeypatch=monkeypatch)
+    stored = _solve_arm(model=avoided, stored=True, monkeypatch=monkeypatch)
+    assert (bool(failed[True].gathers), bool(stored.gathers)) == (True, True)
+    assert failed[True].failure == failed[False].failure
+    assert "unresolved numerical status" in failed[True].failure
+    _assert_agree(got=stored.values, expected=point.values)
+
+
+def _positive_wealth(wealth: FloatND) -> BoolND:
+    return wealth > 0
+
+
+def _read_supports(
+    *, stored: bool, monkeypatch: pytest.MonkeyPatch
+) -> dict[float, bool]:
+    """The support of the source's read of the destination at each live source cell."""
+    records: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
+    original = policy_queries._QueryCore.__call__
+
+    # keyword-only-exempt: library-callback=jax.debug.callback
+    def record(wealth: FloatND, live: BoolND, support: BoolND) -> None:
+        records.append((np.asarray(wealth), np.asarray(live), np.asarray(support)))
+
+    def recorded(
+        self: policy_queries._QueryCore, **arguments: PytreeValue
+    ) -> PolicyAnswer:
+        answer = original(self, **arguments)
+        if (
+            self.node.read.kind is QueryKind.RAW
+            and self.node.read.target == "destination"
+        ):
+            source = cast("Mapping[str, FloatND]", arguments[policy_queries._SOURCE])
+            jax.debug.callback(
+                record, source["wealth"], arguments[policy_queries._LIVE], answer[2]
+            )
+        return answer
+
+    with monkeypatch.context() as patch:
+        patch.setattr(policy_queries._QueryCore, "__call__", recorded)
+        arm = _solve_arm(
+            model=lambda: _terminal_pair(
+                destination_utility=_earnings,
+                destination_constraints={"positive_wealth": _positive_wealth},
+            ),
+            stored=stored,
+            monkeypatch=monkeypatch,
+        )
+    assert bool(arm.gathers) == stored
+    return {
+        float(wealth): bool(support)
+        for wealths, lives, supports in records
+        for wealth, live, support in zip(
+            np.ravel(wealths), np.ravel(lives), np.ravel(supports), strict=True
+        )
+        if live
+    }
+
+
+def test_a_stored_read_has_the_point_read_s_support(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No action of the destination is feasible at wealth 0, so neither read of it
+    has support there; both have support at wealth 0.5 and 1.
+    """
+    point = _read_supports(stored=False, monkeypatch=monkeypatch)
+    stored = _read_supports(stored=True, monkeypatch=monkeypatch)
+    assert point == {0.0: False, 0.5: True, 1.0: True}
+    assert stored == point
