@@ -29,12 +29,18 @@ NATIVE_SCHEDULE_TYPES = frozenset(name for name in NATIVE_INPUT_TYPES
     or name == 'lcm.transition.StochasticTransition')
 
 _PARTICIPATION_FILE = "19cc45ca193a562403f57f5d96525cf1e68641bef68abc3d4f4f6ea352d8301a"
+# Schedule files whose `_PeriodDispatch` and `_ProbabilityConstant` are identical.
+# The second counts every period a gated source reads in `gated_source_periods`.
+_SCHEDULES_FILES = (
+    'b9b26eacf800b5be94f84ba493e4f4686b9ac5b81610303a2ac38b8a1bee8d27',
+    '17fa0aa33334177df6e8a390ccc26637867e99ff48172cf6293980297162475b',
+)
 _AUTHORITIES = {
     '_lcm.regime_building.schedules._PeriodDispatch': (
         ('e20e034a51b1280119819b4215d3e19cbae960e7f1baba2c10ea731e1b94b4f7',
          ('a6d5b3e9a861607d4e77f1b686e54ef817811db3b30dc8dbe474fd433ca6c64e',)),
         ('7342ffcf01253290e261e7b4e19cd1dab5194b70b526ab28f08f47159a62dc71',
-         ('b9b26eacf800b5be94f84ba493e4f4686b9ac5b81610303a2ac38b8a1bee8d27',)),
+         _SCHEDULES_FILES),
     ),
     '_lcm.regime_building.schedules._Constant': (
         'fe6981c389240bef8b46ba9708461d971ccae11c7196c488181ae7327eeb09f3',
@@ -42,7 +48,7 @@ _AUTHORITIES = {
     ),
     '_lcm.regime_building.schedules._ProbabilityConstant': (
         '6fa244c9f417ab0ad7bdf9b4d8c9d93f7dadeef8a4eb61c3f3dbe8baa36bb38d',
-        ('b9b26eacf800b5be94f84ba493e4f4686b9ac5b81610303a2ac38b8a1bee8d27',),
+        _SCHEDULES_FILES,
     ),
     '_lcm.regime_building.transition_support._SupportedStochasticTransition': (
         '495ece700e7d79617a84d5de87e1d7242db8b72aeffc1aae76cf995b19f35080',
@@ -124,13 +130,15 @@ _TEMPORAL_CODE_CONTRACT = 'source-bound-native-temporal-template/v1'
 _SCHEDULE_CALLS = MappingProxyType({
     '_lcm.regime_building.schedules._PeriodDispatch': frozenset({
         ('a6d5b3e9a861607d4e77f1b686e54ef817811db3b30dc8dbe474fd433ca6c64e', '1bd55955bb84d7c82e795f10fb7af96251135a20d696fc6e1b45eda0483f5c5e'),
-        ('b9b26eacf800b5be94f84ba493e4f4686b9ac5b81610303a2ac38b8a1bee8d27', 'eafb6be26a9b656e4b328b329e5f477d0583afe6e0868504616bedd39692d843'),
+        *((file, 'eafb6be26a9b656e4b328b329e5f477d0583afe6e0868504616bedd39692d843')
+          for file in _SCHEDULES_FILES),
     }),
     '_lcm.regime_building.schedules._Constant': frozenset({
         ('a6d5b3e9a861607d4e77f1b686e54ef817811db3b30dc8dbe474fd433ca6c64e', '704df376d94dc6edb0d84f0902332f4c2f7ffd0813b85be19506ef538701ee1b'),
     }),
     '_lcm.regime_building.schedules._ProbabilityConstant': frozenset({
-        ('b9b26eacf800b5be94f84ba493e4f4686b9ac5b81610303a2ac38b8a1bee8d27', 'a505af976343ae3f8570648b9c1239d616c3f98ec1118f9180f60cfc552d703e'),
+        *((file, 'a505af976343ae3f8570648b9c1239d616c3f98ec1118f9180f60cfc552d703e')
+          for file in _SCHEDULES_FILES),
     }),
     '_lcm.regime_building.transition_support._SupportedStochasticTransition': frozenset({
         ('bee97101a92d339e52e930066ac63b88158ca786f3d63cbb562d129ea10c1383', 'fc55c08981c08230b0817359225f8e0c4d3b87d4213897ce87d896dc45bc8f21'),
@@ -654,7 +662,7 @@ def inspect_native_schedule_authority(value: object, raw: object) -> dict[str, J
         for key in ('zip', 'range', 'len'):
             if vars(module).get(key, getattr(builtins, key)) is not getattr(builtins, key):
                 return None
-        if name.endswith('._PeriodDispatch') and file_sha256 == 'b9b26eacf800b5be94f84ba493e4f4686b9ac5b81610303a2ac38b8a1bee8d27':
+        if name.endswith('._PeriodDispatch') and file_sha256 in _SCHEDULES_FILES:
             if inspect_source_bound_function(vars(module).get('_read'), module_name=owner.__module__,
                     qualname='_read', file_sha256=file_sha256) is None:
                 return None

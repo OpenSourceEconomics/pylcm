@@ -232,8 +232,14 @@ def test_irreg_coordinate_compiles_without_a_loop() -> None:
     assert lowered.as_text().count("stablehlo.while") == 0
 
 
-def _irreg_coordinate_by_counting(*, value: float, points: np.ndarray) -> float:
-    """Coordinate from the count of points at or below the value."""
+def _irreg_coordinate_by_counting(
+    *, value: np.floating, points: np.ndarray
+) -> np.floating:
+    """Coordinate from the count of points at or below the value.
+
+    Each operation rounds in the format of `value` and `points`, in the order
+    the production lookup takes them.
+    """
     upper = min(max(int(np.sum(points <= value)), 1), len(points) - 1)
     lower_point, upper_point = points[upper - 1], points[upper]
     return upper - 1 + (value - lower_point) / (upper_point - lower_point)
@@ -241,8 +247,16 @@ def _irreg_coordinate_by_counting(*, value: float, points: np.ndarray) -> float:
 
 @pytest.mark.parametrize("n_points", range(2, 10))
 def test_irreg_coordinate_matches_a_count_of_points_below(n_points: int) -> None:
-    """Nodes, their adjacent floats, interior and exterior values all agree."""
-    points = np.cumsum(np.random.default_rng(seed=n_points).uniform(0.1, 2.0, n_points))
+    """Nodes, their adjacent floats, interior and exterior values all agree.
+
+    Points, values and the reference are all in the working format, so a node's
+    adjacent floats are adjacent there and the two results agree bit for bit.
+    """
+    points = np.asarray(
+        jnp.asarray(
+            np.cumsum(np.random.default_rng(seed=n_points).uniform(0.1, 2.0, n_points))
+        )
+    )
     values = np.concatenate(
         [
             points,

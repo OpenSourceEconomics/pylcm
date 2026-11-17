@@ -989,6 +989,29 @@ def test_a_drawn_formation_keeps_one_stay_problem_per_stay_row(
     }
 
 
+_N_DRAWS = 64
+
+
+def _assert_draws_integrate_exactly(
+    *, got: Mapping[str, np.ndarray], expected: Mapping[str, np.ndarray]
+) -> None:
+    """Assert drawn and product values differ only by the rounding of their sums.
+
+    Under dyadic masses the equal-weight average over the draws adds the same
+    terms as the product's weighted sum, in another order. Reordering a sum of
+    `_N_DRAWS` terms moves it by at most about `_N_DRAWS` machine epsilons
+    relative; 1e-12 stays the floor at float64.
+    """
+    got_values = np.concatenate([got[name].ravel() for name in sorted(expected)])
+    expected_values = np.concatenate(
+        [expected[name].ravel() for name in sorted(expected)]
+    )
+    epsilon = float(np.finfo(expected_values.dtype).eps)
+    np.testing.assert_allclose(
+        got_values, expected_values, rtol=max(1e-12, _N_DRAWS * epsilon)
+    )
+
+
 def test_a_drawn_formation_equals_the_product_when_the_draws_are_exact() -> None:
     """A drawn formation value equals the product value under dyadic laws.
 
@@ -998,13 +1021,9 @@ def test_a_drawn_formation_equals_the_product_when_the_draws_are_exact() -> None
     equal-weight average over the draws is the expectation given an offer.
     """
     dyadic = partial(_model, offer_probs=(0.5, 0.5), offered_probs=(0.25, 0.5, 0.25))
-    got = _solve(dyadic(nodes=QuasiMonteCarlo(n=64, seed=0)))
+    got = _solve(dyadic(nodes=QuasiMonteCarlo(n=_N_DRAWS, seed=0)))
     expected = _solve(dyadic())
-    np.testing.assert_allclose(
-        np.concatenate([got[name].ravel() for name in sorted(expected)]),
-        np.concatenate([expected[name].ravel() for name in sorted(expected)]),
-        rtol=1e-12,
-    )
+    _assert_draws_integrate_exactly(got=got, expected=expected)
 
 
 @pytest.mark.parametrize("offer", [1 / 64, 0.0])
@@ -1019,13 +1038,9 @@ def test_a_drawn_formation_draws_only_offers(offer: float) -> None:
     rare = partial(
         _model, offer_probs=(1 - offer, offer), offered_probs=(0.25, 0.5, 0.25)
     )
-    got = _solve(rare(nodes=QuasiMonteCarlo(n=64, seed=0)))
+    got = _solve(rare(nodes=QuasiMonteCarlo(n=_N_DRAWS, seed=0)))
     expected = _solve(rare())
-    np.testing.assert_allclose(
-        np.concatenate([got[name].ravel() for name in sorted(expected)]),
-        np.concatenate([expected[name].ravel() for name in sorted(expected)]),
-        rtol=1e-12,
-    )
+    _assert_draws_integrate_exactly(got=got, expected=expected)
 
 
 # Two factors of a 4-node group whose node masses are 1/4, 0, 1/2, 1/4.

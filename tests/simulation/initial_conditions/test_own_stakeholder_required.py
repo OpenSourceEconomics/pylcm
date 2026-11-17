@@ -46,6 +46,7 @@ from tests.collective_fixtures import (
     make_couple_initial_conditions,
     make_two_stakeholder_model,
 )
+from tests.conftest import assert_agrees_to_ulp
 from tests.regime_building.test_collective_regime_simulate import (
     _BETA,
     _DISSOLUTION_PARAMS,
@@ -603,4 +604,9 @@ def test_current_exit_settles_the_named_original_source_member(
     np.testing.assert_array_equal(acting["subject_id"], [0])
     np.testing.assert_array_equal(acting["regime_name"].to_numpy(), [destination])
     np.testing.assert_array_equal(acting["wage"], [2.0])
-    np.testing.assert_array_equal(acting["value"], [payoff])
+    # The payoff is an outside value less a dissolution cost, each rounded in the
+    # working format, so it lies within one ULP of the real number.
+    value = acting["value"].to_numpy()
+    assert_agrees_to_ulp(
+        got=value, expected=np.asarray([payoff], dtype=value.dtype), n_ulp=1
+    )
