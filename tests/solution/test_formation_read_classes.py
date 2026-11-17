@@ -516,12 +516,12 @@ def test_read_columns_follow_projections_guards_copies_and_descendants() -> None
 
     assert reads(target="single_f") == {"wage_f", "taste_f", "offer_f"}
     assert reads(target="single_m") == {"offer_f", "offered_m", "wage_m"}
-    assert reads(target="alone_f", kind=QueryKind.PARTICIPATING) == {
+    assert reads(target="alone_f") == {
         "wage_f",
         "offer_f",
     }
     # The husband leaves with the offered experience the projection gave him.
-    assert reads(target="alone_m", kind=QueryKind.PARTICIPATING) == {
+    assert reads(target="alone_m") == {
         "wage_m",
         "offer_f",
         "offered_m",
@@ -634,8 +634,8 @@ def test_dissolution_benchmarks_run_once_per_class_of_both_ancestors(
     also reads the offered experience he leaves with (12).
     """
     rows = _evaluated_rows(model=_model(dissolution=True), monkeypatch=monkeypatch)
-    assert rows[("single_f", "PARTICIPATING", "alone_f")] == 4
-    assert rows[("single_f", "PARTICIPATING", "alone_m")] == 12
+    assert rows[("single_f", "RAW", "alone_f")] == 4
+    assert rows[("single_f", "RAW", "alone_m")] == 12
     assert rows[("single_f", "PARTICIPATING", "couple")] == 48
 
 

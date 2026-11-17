@@ -1496,6 +1496,14 @@ def _information_stay(root_draw: FloatND) -> FloatND:
     return -100.0 + root_draw
 
 
+@categorical(ordered=False)
+class _NestedHousehold:
+    single_f: ScalarInt
+    single_m: ScalarInt
+    couple: ScalarInt
+    alone_f: ScalarInt
+
+
 @pytest.mark.coverage(
     backends=("cpu", "gpu-small", "gpu-large"), precisions="representative"
 )
@@ -1503,7 +1511,18 @@ def _information_stay(root_draw: FloatND) -> FloatND:
 def test_nested_information_uses_each_ancestors_settlement_operands(
     *, fixed: bool
 ) -> None:
-    """A constant descendant map cannot supply its ancestor's shift or guard."""
+    """A constant descendant map cannot supply its ancestor's shift or guard.
+
+    The single forms a couple by consent at wealth `w + ancestor_shift`, where
+    `w >= ancestor_threshold`, and observes the couple's middle draw `m = -1, 1`.
+    Each spouse of the couple is worth `10 + w + ancestor_shift + m` and leaves for
+    a single's problem at wealth `descendant_shift`, worth `descendant_shift` once
+    its hidden mean-zero leaf draw is priced. The couple therefore forms exactly
+    where the guard holds and `10 + w + ancestor_shift + m >= descendant_shift`:
+    both spouses then strictly beat their stay values, at most 1 for the husband
+    and `-100 + root_draw` for the single. Elsewhere the single stays at
+    `-100 + root_draw`, whose mean-zero draw integrates to -100.
+    """
     wealth = LinSpacedGrid(start=0, stop=12, n_points=13)
     regimes = {
         "single_f": Regime(
@@ -1514,28 +1533,47 @@ def test_nested_information_uses_each_ancestors_settlement_operands(
                 targets={
                     "self": ExitTarget(
                         regime="couple",
+                        role="f",
                         projection={"wealth": _ancestor_settlement},
                     )
                 },
                 available=_ancestor_available,
-                rule=Unilateral(),
+                observes=("middle_draw",),
+                rule=Consent(
+                    counterparty=Counterparty(
+                        regime="single_m", role="m", projection={"wealth": _wealth}
+                    )
+                ),
             ),
+        ),
+        "single_m": Regime(
+            states={"wealth": wealth},
+            functions={"utility": _information_benchmark},
+            shocks=("leaf_noise",),
         ),
         "couple": Regime(
             states={"wealth": wealth},
-            functions={"utility": _information_wealth},
+            functions={
+                "utility": CollectiveUtility(
+                    utilities={"f": _information_wealth, "m": _information_wealth}
+                )
+            },
             shocks=("middle_noise",),
             exit=Exit(
                 targets={
-                    "self": ExitTarget(
+                    "f": ExitTarget(
+                        regime="alone_f",
+                        projection={"wealth": _descendant_settlement},
+                    ),
+                    "m": ExitTarget(
                         regime="single_m",
                         projection={"wealth": _descendant_settlement},
-                    )
+                    ),
                 },
                 rule=Unilateral(),
             ),
         ),
-        "single_m": Regime(
+        "alone_f": Regime(
             states={"wealth": wealth},
             functions={"utility": _information_benchmark},
             shocks=("leaf_noise",),
@@ -1554,7 +1592,7 @@ def test_nested_information_uses_each_ancestors_settlement_operands(
         if runtime_model is None or fixed:
             model = Model(
                 regimes=regimes,
-                regime_id_class=_Household,
+                regime_id_class=_NestedHousehold,
                 n_periods=1,
                 initial_nodes=InitialNodes(by_period={0: "single_f"}),
                 edges={},
@@ -1589,7 +1627,7 @@ def test_nested_information_uses_each_ancestors_settlement_operands(
         descendant_node = next(
             node
             for node in kernel.definitions.values()
-            if node.read.target == "single_m"
+            if node.read.target == "alone_f"
         )
         assert ancestor_key in descendant_node.ancestors
         assert ancestor_node.available is not None
@@ -1600,14 +1638,9 @@ def test_nested_information_uses_each_ancestors_settlement_operands(
             params={} if fixed else params, log_level="off", runtime_checks=True
         )
         source_wealth = np.asarray([0.0, 1.0])
-        # The benchmark hides its mean-zero shock, so its value is descendant.
-        # A Participating middle policy must beat that benchmark at every hidden
-        # middle draw. It cannot exit to the benchmark on the root's behalf.
         middle = 10.0 + source_wealth[:, None] + shift + np.asarray([-1.0, 1.0])
-        support = np.all(middle >= descendant, axis=1)
-        expected = np.where(
-            (source_wealth >= threshold) & support, middle.mean(axis=1), -100.0
-        )
+        forms = (source_wealth[:, None] >= threshold) & (middle >= descendant)
+        expected = np.where(forms, middle, -100.0).mean(axis=1)
         np.testing.assert_allclose(solution.values[0]["single_f"], expected)
         assert np.all(np.isfinite(solution.values[0]["single_f"]))
 
@@ -1713,7 +1746,7 @@ def test_own_raw_and_full_evaluate_canonical_problem_once(  # noqa: PLR0915 - ke
     couple = kernel.definitions[root.inputs["exit_self"]]
     outside_key = couple.inputs["exit_f"]
     outside = kernel.definitions[outside_key]
-    assert outside.read.kind is QueryKind.PARTICIPATING
+    assert outside.read.kind is QueryKind.RAW
     assert outside.read.target == "single_f"
     assert not outside.inputs
     assert outside_key != own_key

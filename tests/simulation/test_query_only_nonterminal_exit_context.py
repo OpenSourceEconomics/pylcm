@@ -62,10 +62,8 @@ def _male_terminal() -> float:
 
 
 @pytest.mark.coverage(backends=("cpu",), precisions="both")
-def test_query_only_nonterminal_raw_and_nested_participating_keep_continuation() -> (
-    None
-):
-    """Consent reads the incoming Raw and formation's nested divorce outside."""
+def test_query_only_nonterminal_raw_reads_keep_continuation() -> None:
+    """Consent reads the incoming Raw and formation's nested Raw divorce outside."""
     work = DiscreteGrid(values=np.array([0, 1], dtype=np.int32))
     model = Model(
         regimes={
@@ -140,8 +138,8 @@ def test_query_only_nonterminal_raw_and_nested_participating_keep_continuation()
         (node.read.kind, node.read.target) for node in full.definitions.values()
     }
     assert (QueryKind.RAW, "incoming_m") in requested
-    assert (QueryKind.PARTICIPATING, "incoming_m") in requested
-    assert (QueryKind.PARTICIPATING, "incoming_f") in requested
+    assert (QueryKind.RAW, "incoming_f") in requested
+    assert (QueryKind.PARTICIPATING, "incoming_f") not in requested
     assert (QueryKind.FULL, "incoming_m") not in requested
     params = {"discount_factor": 1.0}
     solution = model.solve(params=params, log_level="off")

@@ -75,8 +75,9 @@ def _predicate(
 class _ExitReducer:
     """One scalar rule shared by solve and actual subject replay.
 
-    Target values are already evaluated at one common Participating action.
-    This reducer never maximizes the destination again to manufacture consent.
+    Target values are already evaluated at one common action: of the target's Raw
+    problem, or of the formed couple's Participating policy under consent. This
+    reducer never maximizes the destination again to manufacture consent.
     """
 
     kind: QueryKind
@@ -844,8 +845,13 @@ class _QueryGraphBuilder:
                 for state in target.projection
             }
             operand = f"exit_{member}"
+            # A subject moves at most once per period, so a target is read as its
+            # problem, without its own exit. A formed couple keeps its rule for
+            # staying, whose outside values are again problems.
             producer = self.make(
-                kind=QueryKind.PARTICIPATING,
+                kind=QueryKind.PARTICIPATING
+                if isinstance(declaration.rule, Consent)
+                else QueryKind.RAW,
                 owner=target.regime,
                 projection=target_projection,
                 guards=guards,
@@ -980,6 +986,74 @@ def bind_exit_query_graph(
     _validate_query_projection_bindings(nodes=builder.nodes, period=period)
     _bind_sample(nodes=builder.nodes, root=root_key)
     return MappingProxyType(builder.nodes), root_key
+
+
+def acting_kinds(
+    *,
+    contexts: Mapping[RegimeName, SolverBuildContext],
+    readers: tuple[tuple[RegimeName, Mapping[str, QueryNode], str, int], ...],
+) -> Mapping[tuple[RegimeName, int], QueryKind]:
+    """Return the problem each mover acts in: the one its move was priced at.
+
+    Each reader is a moving source, its simulated query graph, the graph's root and
+    its period. A destination entered in one period both by moves priced at its
+    Participating policy and by moves priced at its Raw problem is refused, unless
+    the two coincide because a Participating read drops the destination's exit.
+    """
+    moves: dict[tuple[RegimeName, int], dict[QueryKind, set[RegimeName]]] = {}
+    for source, definitions, root, period in readers:
+        for targets in definitions[root].exit_targets.values():
+            for query in targets.values():
+                read = definitions[query].read
+                moves.setdefault((read.target, period), {}).setdefault(
+                    read.kind, set()
+                ).add(source)
+    for (owner, period), kinds in moves.items():
+        if len(kinds) > 1 and _participating_read_keeps_exit(
+            context=contexts[owner], owner=owner, period=period
+        ):
+            readings = "; ".join(
+                f"{kind.value} after {', '.join(map(repr, sorted(sources)))}"
+                for kind, sources in sorted(kinds.items())
+            )
+            raise RegimeInitializationError(
+                f"Regime {owner!r} is entered in period {period} by moves priced at "
+                f"different problems ({readings}). A regime with an available exit "
+                "that needs no consent cannot be entered in one period both by "
+                "consent or a participation check, which read it with its exit, and "
+                "by another exit, which reads it without."
+            )
+    return MappingProxyType(
+        {
+            key: QueryKind.PARTICIPATING
+            if QueryKind.PARTICIPATING in kinds
+            else QueryKind.RAW
+            for key, kinds in moves.items()
+        }
+    )
+
+
+def _participating_read_keeps_exit(
+    *, context: SolverBuildContext, owner: RegimeName, period: int
+) -> bool:
+    """Whether a simulated Participating read of a regime differs from its Raw one.
+
+    A Participating read applies the regime's exit, unless that exit needs consent or
+    is unavailable at every state of the period; a Raw read never applies it.
+    """
+    from _lcm.model_graph import _exit_is_statically_unavailable  # noqa: PLC0415
+
+    declaration = exit_for_phase(
+        declaration=context.user_regimes_at(period=period)[owner].exit,
+        phase="simulate",
+    )
+    return (
+        declaration is not None
+        and not isinstance(declaration.rule, Consent)
+        and not _exit_is_statically_unavailable(
+            predicate=declaration.available, period=period, ages=context.ages
+        )
+    )
 
 
 def _bind_sample(*, nodes: dict[str, QueryNode], root: str) -> None:

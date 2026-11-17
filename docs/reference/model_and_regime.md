@@ -295,6 +295,20 @@ remain in `Model(edges=...)`.
   actions the household takes its Pareto-weighted argmax; with none kept, the exit is
   taken.
 
+A subject moves at most once per period, so an exit payoff is the value of the
+destination's problem at the projected state, without the destination's own exit. The
+destination's rule for leaving does not constrain that value, and two regimes may exit
+into each other. A formation by `Consent` is the exception: the formed couple applies
+its own rule for staying, and the outside values that rule compares are again problem
+values. A mover acts in the problem its move was priced at, the formed couple's
+Participating policy after consent and the destination's problem otherwise. A regime
+with an available exit that needs no consent, entered in one period both by consent or a
+participation check and by another exit, would act in two different problems; the model
+refuses it when it is built.
+
+A `ParticipationRead(kind="Participating")` of a regime with an exit compares the
+outside values of that exit the same way, as problem values.
+
 `Unilateral(renegotiate=Renegotiate(state="mu"))` first optimizes the Raw stay policy at
 every node of the ordered discrete state. It supports a collective pair: increasing node
 order favors the first stakeholder in the utility mapping, decreasing order the second.
@@ -320,8 +334,8 @@ cannot return changed state and separation destinations.
 `available` reads states, parameters and observed shocks, and precedes unsafe benchmark
 evaluation. `observes` adds target information available at the exit choice. Hidden
 target shocks are priced before the source choice and revealed when a mover executes the
-destination's Participating action. Partial observation of a correlated group is
-refused; see the adopted [IID and exit contract](../development/iid-exits-redesign.md).
+destination's action. Partial observation of a correlated group is refused; see the
+adopted [IID and exit contract](../development/iid-exits-redesign.md).
 
 When an exit observes every shock of a target group, all of that group's quadrature rows
 are the same physical point, so the target's policy is evaluated once and that answer is

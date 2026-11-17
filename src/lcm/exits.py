@@ -20,7 +20,13 @@ type ExitRole = str
 @beartype(conf=REGIME_CONF)
 @dataclass(frozen=True, kw_only=True)
 class ExitTarget:
-    """A destination's Participating policy at projected current states."""
+    """A destination regime and the current states a mover lands at.
+
+    The payoff of leaving is the value of the destination's problem at the projected
+    states, without the destination's own exit: a subject moves at most once per
+    period, and a mover acts in that problem. Under `Consent` the target is the
+    formed couple, which applies its own rule for staying.
+    """
 
     regime: RegimeName
     """Actual destination regime."""

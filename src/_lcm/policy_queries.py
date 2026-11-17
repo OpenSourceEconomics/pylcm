@@ -218,7 +218,13 @@ class QueryNode:
     """Canonical action problem and its explicitly named transient readers."""
 
     read: QueryRead
-    """Mapped context of this action problem."""
+    """Mapped context and kind of this action problem.
+
+    An exit target is read as Raw, the destination's problem without its own exit,
+    because a subject moves at most once per period. A consent target is read as
+    Participating: the formed couple applies its own rule for staying, and the
+    targets of that rule are read as Raw.
+    """
     context: SolverBuildContext
     """Canonical target Q/F, grids, parameters and continuation declarations."""
     inputs: Mapping[str, str] = MappingProxyType({})
@@ -465,7 +471,12 @@ class ScalarPolicyQueries:
     definitions: Mapping[str, QueryNode]
     """Phase-resolved canonical query nodes, including complete mapped contexts."""
     root: str
-    """Full for source choice, Participating for once-only destination action."""
+    """The node that acts.
+
+    - Full for an original occupant's choice.
+    - For a mover's once-only action, the kind its move was priced at: Participating
+      after a consent move or a participation entry, Raw after any other exit.
+    """
     period: int
     """Exact computational period of the phase-specific Q/F declarations."""
 
@@ -724,7 +735,7 @@ class ScalarPolicyQueries:
                     if name == self.root or key != "taste_shock_key"
                 },
                 _ACTING: name == self.root
-                and node.read.kind is QueryKind.PARTICIPATING,
+                and node.read.kind in {QueryKind.RAW, QueryKind.PARTICIPATING},
             }
             from _lcm.query_information import (  # noqa: PLC0415
                 InformationQueryCell,

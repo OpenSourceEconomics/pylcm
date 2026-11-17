@@ -89,14 +89,18 @@ class ParticipationEntryPlan:
 
 @dataclass(frozen=True, kw_only=True)
 class ExitSimulationPlan:
-    """Original Full choice and revealed destination Participating policies."""
+    """Original Full choice and revealed destination acting policies."""
 
     full: ScalarPolicyQueries | None
     """Original-source choice, priced with its prescribed caller information."""
     participating: Mapping[RegimeName, ScalarPolicyQueries]
-    """Final-regime policies after revelation; no second Full decision."""
+    """Final-regime policies after revelation; no second Full decision.
+
+    Each acts in the problem its movers were priced at: Raw after an ordinary
+    exit, Participating after consent or a participation entry.
+    """
     physical_names: tuple[str, ...] = ()
-    """Own physical columns consumed by this actor's Participating policy."""
+    """Own physical columns consumed by this actor's acting policy."""
     fixed_flat_params: FlatParams = MappingProxyType({})
     """All bound query-context operands, retaining their canonical namespace."""
     participation: Mapping[RegimeName, ParticipationEntryPlan] = MappingProxyType({})
@@ -152,7 +156,10 @@ def install_exit_simulation_queries(
     query-only counterparty remains a transient reader, not a simulated occupant.
     """
     from _lcm.current_iid import CurrentIIDPlan  # noqa: PLC0415
-    from _lcm.exit_queries import bind_exit_query_graph  # noqa: PLC0415
+    from _lcm.exit_queries import (  # noqa: PLC0415
+        acting_kinds,
+        bind_exit_query_graph,
+    )
     from _lcm.participation_queries import (  # noqa: PLC0415
         bind_participation_query_graph,
     )
@@ -259,6 +266,20 @@ def install_exit_simulation_queries(
         full_queries[owner, period] = ScalarPolicyQueries(
             definitions=definitions, root=root, period=period
         )
+    kinds = acting_kinds(
+        contexts=contexts,
+        readers=tuple(
+            (source, queries.definitions, queries.root, queries.period)
+            for source, queries in (
+                *((owner, queries) for (owner, _), queries in full_queries.items()),
+                *(
+                    (source, entry.queries)
+                    for entries in participation.values()
+                    for source, entry in entries.items()
+                ),
+            )
+        ),
+    )
     participating = {}
     for owner, period in sorted(actors):
         definitions, root = bind_exit_query_graph(
@@ -267,7 +288,7 @@ def install_exit_simulation_queries(
             root=owner,
             period=period,
             phase="simulate",
-            kind=QueryKind.PARTICIPATING,
+            kind=kinds.get((owner, period), QueryKind.PARTICIPATING),
         )
         participating[owner, period] = ScalarPolicyQueries(
             definitions=definitions, root=root, period=period

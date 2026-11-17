@@ -1366,10 +1366,22 @@ def _opposing_model(*, rule: ExitRule, reverse: bool = False) -> Model:
     )
 
 
-def test_reciprocal_unilateral_exits_refuse_the_public_participating_cycle() -> None:
-    """Reciprocal outside pricing cannot recursively price itself."""
-    with pytest.raises(ValueError, match="Policy query cycle"):
-        _opposing_model(rule=Unilateral())
+def test_reciprocal_unilateral_exits_read_each_other_s_problem() -> None:
+    """Each regime leaves from its lowest cell for the other's problem value.
+
+    With discount factor 0.5, a stay is worth `x + 0.5 * (x + 1)` in the source and
+    `y + 0.5 * (y + 2)` in the target, capped at 100 next period. At x = 0 the
+    target's problem at y = 10 is worth 16, less the fee 0.25; at y = 0 the source's
+    problem at x = 20 is worth 30.5, less the fee 0.5. Every other cell stays.
+    """
+    solution = _opposing_model(rule=Unilateral()).solve(
+        params={"discount_factor": 0.5}, log_level="off", runtime_checks=False
+    )
+    assert_array_almost_equal(
+        np.stack((solution.values[0]["source"], solution.values[0]["target"])),
+        [[15.75, 75.5, 150.0], [30.0, 76.0, 150.0]],
+        decimal=DECIMAL_PRECISION,
+    )
 
 
 def _two() -> float:

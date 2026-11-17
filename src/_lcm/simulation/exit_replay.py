@@ -517,7 +517,7 @@ def prepare_exit_period(  # noqa: C901, PLR0912, PLR0915 - retain replay's order
         plan = regime.simulation.exit_queries[period]
         queries = plan.participating[name]
         # The source Full draw chose the exit or the exact stay action once.
-        # Only movers reveal and choose a destination Participating action.
+        # Only movers reveal and act, in the problem their move was priced at.
         holders = run_simulation_operation(
             memory=memory,
             function=_moving_actor_rows,
