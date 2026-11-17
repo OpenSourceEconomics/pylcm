@@ -1,5 +1,6 @@
 """Inspect a constructed model's temporal regime graph and check its structure."""
 
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 
 from networkx import DiGraph
@@ -30,6 +31,7 @@ __all__ = [
     "analyze_regime_structure",
     "digraph",
     "find_regimes",
+    "layout_curve",
 ]
 
 
@@ -197,3 +199,39 @@ def find_regimes(
         output.mkdir(parents=True)
         write_production_report(report, output)
     return report
+
+
+# keyword-only-exempt: primary-argument=model
+def layout_curve(
+    model: Model,
+    *,
+    facts_backend: FactsBackend,
+    limits: Mapping[str, JSONValue] | None = None,
+    price: Iterable[dict[str, JSONValue]] = (),
+) -> dict[str, JSONValue]:
+    """Run the Supplement's layout search alone and return its layout curve.
+
+    There is no source check, no layout check and no recommendation; use
+    `analyze_regime_structure` or `find_regimes` for those. The model is not
+    solved or simulated.
+
+    Args:
+        model: The constructed model to analyze.
+        facts_backend: Where the dependency facts come from. `"metadata"` reads
+            the declared scalar expressions and is conservative; `"dense"` and
+            `"implicit"` interpret the captured source exactly and raise
+            `FactsBudgetError` when they run out of budget. `"implicit"` stores
+            per-status facts as decision diagrams.
+        limits: Optional search limits, such as `seconds` or `max_blocks`.
+        price: Given blocks to price, each as `regimes`, `periods` and optional
+            `statuses`.
+
+    Returns:
+        The `supplement-layout-curve/v1` record with its phase timings.
+
+    """
+    from _lcm_regime_finder.layout_search import analyze_layouts  # noqa: PLC0415
+
+    return analyze_layouts(
+        model, facts_backend=facts_backend, limits=limits, price=price
+    )

@@ -45,6 +45,20 @@ regime-periods it could not finish. `"metadata"` then gives a conservative resul
 `find_regimes(model, facts_backend=...)` returns the same analysis as a dictionary. It
 writes the report when you pass `output`.
 
+### Run the layout search alone
+
+```python
+from lcm.graphs import layout_curve
+
+curve = layout_curve(model, facts_backend="dense", limits={"max_blocks": 6})
+```
+
+`layout_curve` runs only the layout search and returns its record, described in
+[Layout search](../development/regime_layout_costs.md). It runs no source check, no
+layout check and no recommendation. Use it when you need the curve itself, for example
+to price given blocks through `price` or to time the search; use
+`analyze_regime_structure` when you need a checked curve and a recommendation.
+
 ## Read the result
 
 `result.candidates` is the layout curve. For each block budget `k`, its candidate is a
