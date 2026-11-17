@@ -11,8 +11,9 @@ placement is a stand-in for one CI run only, and two commands keep it so:
   the weights `check` names as missing and leaves every existing weight as it
   is. Each missing file takes its testcase seconds from the latest completed
   CPU run of the branch's open pull request that measured it; the run's leg
-  counts when it has a report for every shard of the run's own layout, since
-  per-file weights do not depend on the shard count. A file the run's manifest
+  counts when every shard artifact of the run's own layout has a report, since
+  per-file weights do not depend on the shard count. A shard may also carry a
+  serial-replay report, whose testcase timings are included. A file the run's manifest
   gave to the leg that recorded no testcase there is measured at 0 seconds; a
   file the run did not contain stays missing. Each filled weight names its run
   under the leg's `filled_from`. The hook then re-derives the shards and stages
@@ -236,7 +237,8 @@ def _fill_from_run(
     filled: list[str] = []
     for leg, files in missing.items():
         leg_reports = sorted(reports.get(leg, ()))
-        if len(leg_reports) != shards.get(leg):
+        # A shard's additional serial-replay XML does not constitute another shard.
+        if len({report.parent for report in leg_reports}) != shards.get(leg):
             continue
         measured = leg_weights_from_junit(
             repo_root=repo_root, junit_paths=leg_reports, drop_deleted_files=True

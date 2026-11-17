@@ -47,7 +47,7 @@ def payoff(offer: DiscreteState, choice: DiscreteState) -> FloatND:
     return offer + choice * (2.0 * offer - 1.0)
 
 
-def model(*, shock_group=None):
+def model(*, shock_group: ShockGroup | None = None) -> Model:
     return Model(
         n_periods=1,
         regime_id_class=Regimes,

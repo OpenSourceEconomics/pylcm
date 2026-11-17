@@ -13,6 +13,8 @@ import pytest
 
 from _lcm_regime_finder.declarations import normalize_declarations
 from _lcm_regime_finder.facts import (
+    Facts,
+    FactsBackendName,
     FactsBudgetError,
     SourceFacts,
     current_reads,
@@ -26,6 +28,7 @@ from _lcm_regime_finder.graph_scope import apply_scope
 from _lcm_regime_finder.model_snapshot import read_model
 from _lcm_regime_finder.records import JSONValue
 from _lcm_regime_finder.model_snapshot import source_function
+from lcm import Model
 from lcm_examples import precautionary_savings_health, stochastic_volatility
 
 from .test_metadata_independent import captured_snapshot, custom_right
@@ -42,12 +45,12 @@ def _tiny() -> dict[str, JSONValue]:
     return json.loads(path.read_text())
 
 
-def _from_model(model) -> dict[str, JSONValue]:
+def _from_model(model: Model) -> dict[str, JSONValue]:
     original = read_model(model)
     return apply_scope(original, normalize_declarations(original))
 
 
-def helper_utility(history, age):
+def helper_utility(history: int, age: int) -> int:
     """Read `history` only through a helper that ignores it."""
     return 1 + custom_right(age < 22, history, 0)
 
@@ -80,7 +83,7 @@ MODELS = {
 
 
 @pytest.fixture(params=sorted(MODELS), scope="module")
-def backends(request):
+def backends(request: pytest.FixtureRequest) -> dict[str, Facts]:
     declarations = MODELS[request.param]()
     return {
         name: make_facts(name, declarations, LIMITS, _no_budget)
@@ -88,7 +91,7 @@ def backends(request):
     }
 
 
-def test_metadata_reads_cover_dense_reads(backends) -> None:
+def test_metadata_reads_cover_dense_reads(backends: dict[str, Facts]) -> None:
     metadata, dense = backends["metadata"], backends["dense"]
     for cell in dense.cells.values():
         assert current_reads(dense, cell) <= current_reads(metadata, cell), cell["id"]
@@ -103,20 +106,22 @@ def test_metadata_reads_cover_dense_reads(backends) -> None:
                 )
 
 
-def test_metadata_liveness_covers_dense_liveness(backends) -> None:
+def test_metadata_liveness_covers_dense_liveness(backends: dict[str, Facts]) -> None:
     exact, _ = live_states(backends["dense"], _no_budget)
     conservative, _ = live_states(backends["metadata"], _no_budget)
     assert all(exact[cell] <= conservative[cell] for cell in exact)
 
 
-def test_metadata_forces_no_more_than_dense(backends) -> None:
+def test_metadata_forces_no_more_than_dense(backends: dict[str, Facts]) -> None:
     metadata, dense = backends["metadata"], backends["dense"]
     for cell in dense.cells:
         assert metadata.forced[cell].items() <= dense.forced[cell].items(), cell
         assert metadata.constants[cell] == dense.constants[cell], cell
 
 
-def test_implicit_matches_dense_at_every_status_point(backends) -> None:
+def test_implicit_matches_dense_at_every_status_point(
+    backends: dict[str, Facts],
+) -> None:
     dense, implicit = backends["dense"], backends["implicit"]
     for cell in dense.cells.values():
         whole = current_reads(dense, cell)
@@ -149,7 +154,9 @@ def _expired() -> None:
 
 
 @pytest.mark.parametrize("backend", ["dense", "implicit"])
-def test_exact_backend_over_budget_names_cells_and_suggests_metadata(backend) -> None:
+def test_exact_backend_over_budget_names_cells_and_suggests_metadata(
+    backend: FactsBackendName,
+) -> None:
     with pytest.raises(FactsBudgetError, match='facts_backend="metadata"') as error:
         make_facts(backend, _helper(), LIMITS, _expired)
     assert error.value.unfinished
@@ -158,7 +165,7 @@ def test_exact_backend_over_budget_names_cells_and_suggests_metadata(backend) ->
 @pytest.mark.parametrize(
     "model", ["stochastic_volatility", "precautionary_savings_health"]
 )
-def test_parallel_cells_give_the_serial_facts(model) -> None:
+def test_parallel_cells_give_the_serial_facts(model: str) -> None:
     declarations = MODELS[model]()
     serial = SourceFacts(declarations, LIMITS | {"facts_workers": 1}, _no_budget)
     parallel = SourceFacts(declarations, LIMITS | {"facts_workers": 2}, _no_budget)
@@ -181,7 +188,9 @@ def test_a_worker_timeout_is_a_budget_error() -> None:
     assert error.value.unfinished
 
 
-def test_a_status_a_callback_never_reads_does_not_split_its_cache(monkeypatch) -> None:
+def test_a_status_a_callback_never_reads_does_not_split_its_cache(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Fixing a status the callback ignores with everything free reuses that answer."""
     from .test_status_splitting import joint_model
 
@@ -189,7 +198,7 @@ def test_a_status_a_callback_never_reads_does_not_split_its_cache(monkeypatch) -
     interpreted = []
     original = SourceFacts._reads
 
-    def counting(self, callback, *args):
+    def counting(self: SourceFacts, callback: str, *args: JSONValue) -> frozenset[str]:
         interpreted.append(callback)
         return original(self, callback, *args)
 

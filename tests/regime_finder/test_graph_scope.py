@@ -1,13 +1,20 @@
 """Constructed-Model graph guarantees do not require runtime calibration or buffers."""
 
+from collections.abc import Mapping
 from copy import deepcopy
 
 from _lcm_regime_finder.production import analyze_production
 from _lcm_regime_finder import verify_production_result
+from _lcm_regime_finder.records import JSONValue
+from tests.regime_finder.test_declaration_ingestion import (
+    json_entries,
+    json_member,
+    json_rows,
+)
 from tests.regime_finder.test_model_adapter import snapshot, function
 
 
-def _analyze(source):
+def _analyze(source: Mapping[str, JSONValue]) -> dict[str, JSONValue]:
     result = analyze_production(
         source, limits={"seconds": 10}, facts_backend="metadata"
     )
@@ -23,11 +30,12 @@ def test_constructed_graph_uses_regime_domains_without_calibration_or_allocation
 ):
     source = snapshot()
     result = _analyze(source)
-    declaration = result["analysis"]["declarations"]
+    declaration = json_member(result, "analysis", "declarations")
     assert (declaration["analysis_scope"]) == ("pylcm-structural-graph/v1")
     assert not (
         any(
-            item["kind"] == "allocation_contract" for item in declaration["obligations"]
+            item["kind"] == "allocation_contract"
+            for item in json_rows(declaration, "obligations")
         )
     )
 
@@ -38,9 +46,8 @@ def test_runtime_zero_default_never_proves_state_irrelevant() -> None:
     utility["defaults"] = {"theta": 0}
     source["user_regimes"]["original"]["fields"]["functions"]["utility"] = utility
     result = _analyze(source)
-    assert all(
-        "x" in axes for axes in result["analysis"]["dependency_closure"].values()
-    )
+    closure = json_member(result, "analysis", "dependency_closure")
+    assert all(isinstance(axes, list) and "x" in axes for axes in closure.values())
 
 
 def test_opaque_function_preserves_its_declared_inputs() -> None:
@@ -49,9 +56,10 @@ def test_opaque_function_preserves_its_declared_inputs() -> None:
     utility["source_unavailable"] = True
     source["user_regimes"]["original"]["fields"]["functions"]["utility"] = utility
     result = _analyze(source)
+    closure = json_member(result, "analysis", "dependency_closure")
     assert all(
-        {"x", "history"} <= set(axes)
-        for axes in result["analysis"]["dependency_closure"].values()
+        isinstance(axes, list) and {"x", "history"} <= set(axes)
+        for axes in closure.values()
     )
 
 
@@ -61,7 +69,7 @@ def test_mutating_a_declared_input_fails_independent_replay() -> None:
     corrupt = deepcopy(result)
     utility = next(
         cb
-        for cb in corrupt["analysis"]["declarations"]["callbacks"].values()
+        for cb in json_entries(corrupt, "analysis", "declarations", "callbacks")
         if cb.get("arguments") == ["x", "history"]
     )
     utility["arguments"] = []
@@ -77,7 +85,8 @@ def test_global_union_cannot_replace_pylcm_regime_storage() -> None:
         "identity": "foreign-allocation",
     }
     result = _analyze(source)
-    assert (result["analysis"]["declarations"]["allocation"]["kind"]) == ("per_block")
+    allocation_path = ("analysis", "declarations", "allocation")
+    assert (json_member(result, *allocation_path)["kind"]) == ("per_block")
     corrupt = deepcopy(result)
-    corrupt["analysis"]["declarations"]["allocation"]["kind"] = "global_union"
+    json_member(corrupt, *allocation_path)["kind"] = "global_union"
     assert (verify_production_result(source, corrupt)["status"]) == ("FAIL")

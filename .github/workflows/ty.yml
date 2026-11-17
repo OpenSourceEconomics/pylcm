@@ -22,6 +22,8 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
       - uses: prefix-dev/setup-pixi@v0.11.3
         with:
           pixi-version: v0.83.0
@@ -46,6 +48,16 @@ jobs:
         # Every annotation under `src/`, `tests/`, `benchmarks/` and the docs names a
         # precise type, or carries a `# noqa: PANxxx - <reason>`.
         run: pixi run -e type-checking prek run precise-annotations --all-files
+      - name: Require annotations in changed tests
+        shell: bash {0}
+        env:
+          ANNOTATION_FROM_REF: >-
+            ${{ github.event.pull_request.base.sha || github.event.before }}
+          ANNOTATION_TO_REF: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: >-
+          pixi run -e type-checking prek run test-signature-annotations
+          --stage pre-push --from-ref "$ANNOTATION_FROM_REF"
+          --to-ref "$ANNOTATION_TO_REF"
       - name: Refuse dead internal and test code
         shell: bash {0}
         # Internal code that only tests call counts as dead; see tests/ci/dead_code.py.

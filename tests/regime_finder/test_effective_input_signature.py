@@ -7,47 +7,56 @@ import operator
 
 from _lcm_regime_finder import find_regimes, verify_production_result
 from _lcm_regime_finder.model_snapshot import source_function
-from tests.regime_finder.test_declaration_ingestion import decorated_callback
+from _lcm_regime_finder.records import JSONValue
+from tests.regime_finder.test_declaration_ingestion import (
+    decorated_callback,
+    json_member,
+)
 from tests.regime_finder.test_metadata_independent import captured_snapshot
 from tests.regime_finder.test_round4_semantic import one_cell
 
 
-def keyword_inputs(**kwargs):
+def keyword_inputs(**kwargs: int) -> int:
     return kwargs["history"]
 
 
-def positional_inputs(*args):
+def positional_inputs(*args: int) -> int:
     return args[0]
 
 
-def no_inputs():
+def no_inputs() -> int:
     return 11
 
 
 class AdvertisedInputs:
     @property
-    def __signature__(self):
+    def __signature__(self) -> inspect.Signature:
         return inspect.Signature(
             [inspect.Parameter("history", inspect.Parameter.POSITIONAL_OR_KEYWORD)]
         )
 
-    def __call__(self, *args, **kwargs):
+    def __call__(self, *args: int, **kwargs: int) -> int:
         return kwargs["history"] if kwargs else args[0]
 
 
 class UninspectableInputs:
     @property
-    def __signature__(self):
+    def __signature__(self) -> str:
         return "unavailable"
 
-    def __call__(self, *args, **kwargs):
+    def __call__(self, *args: int, **kwargs: int) -> int:
         return kwargs["history"] if kwargs else args[0]
 
 
-def _get_utility_record(result):
-    declarations = result["analysis"]["declarations"]
-    callback = declarations["cells"][0]["functions"]["utility"]
-    return declarations["callbacks"][callback]
+def _get_utility_record(result: dict[str, JSONValue]) -> dict[str, JSONValue]:
+    declarations = json_member(result, "analysis", "declarations")
+    cells = declarations["cells"]
+    assert isinstance(cells, list)
+    cell = cells[0]
+    assert isinstance(cell, dict)
+    callback = json_member(cell, "functions")["utility"]
+    assert isinstance(callback, str)
+    return json_member(declarations, "callbacks", callback)
 
 
 def test_variadic_and_uninspectable_inputs_keep_the_original_domain(
@@ -176,14 +185,26 @@ def test_wrapped_original_graph_gate_and_fallback_are_contained(
     for slot in ("gate", "fallback"):
         with subtests.test(slot=slot):
             source = captured_gate_graph()
-            gate = source["graph"]["fields"]["laws"]["source"]["fields"]["gated_edges"][
-                "landing"
-            ]["fields"]
-            fallback = gate["legs"]["person"]["fields"]["fallback"]["fields"]
+            gate = json_member(
+                source,
+                "graph",
+                "fields",
+                "laws",
+                "source",
+                "fields",
+                "gated_edges",
+                "landing",
+                "fields",
+            )
             if slot == "gate":
                 gate["gate"] = source_function(decorated_callback)
             else:
-                fallback["projection"]["history"] = source_function(decorated_callback)
+                fallback = json_member(
+                    gate, "legs", "person", "fields", "fallback", "fields"
+                )
+                json_member(fallback, "projection")["history"] = source_function(
+                    decorated_callback
+                )
             result = find_regimes(
                 source,
                 budget={"seconds": 10},

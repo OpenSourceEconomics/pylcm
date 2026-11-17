@@ -1,19 +1,31 @@
 """Independent source/binding mutation controls; no Model execution."""
 
 import pytest
+from collections.abc import Callable, Sequence
 from copy import deepcopy
 
 from _lcm_regime_finder.semantic_check import SourceProof
 from _lcm_regime_finder.model_snapshot import source_function
 from _lcm_regime_finder.declarations import ScalarSource, DeclarationError
 from _lcm_regime_finder.expressions import partial
+from _lcm_regime_finder import find_regimes
+from _lcm_regime_finder.declarations import normalize_declarations
+from _lcm_regime_finder.production import MetadataAnalysis
+from _lcm_regime_finder.records import JSONValue
+from tests.regime_finder.test_declaration_ingestion import json_member
+from tests.regime_finder.test_round5_local_obligations import native_fixture
 from tests.regime_finder.round6_source_oracle import (
     literal_transitive,
     varies_in_history,
 )
 
 
-def metadata(source, arguments, **extra):
+type PythonSource = str
+
+
+def metadata(
+    source: PythonSource, arguments: list[str], **extra: JSONValue
+) -> dict[str, JSONValue]:
     return {
         "kind": "callable",
         "source": source,
@@ -25,7 +37,7 @@ def metadata(source, arguments, **extra):
     }
 
 
-def wrapper_metadata():
+def wrapper_metadata() -> dict[str, JSONValue]:
     # This is the original Adda capture shape: an effective x argument, while
     # the inspected wrapper body receives self/*args/**kwargs. The checker
     # must not decide independence from those raw implementation names.
@@ -38,41 +50,41 @@ def wrapper_metadata():
     )
 
 
-def known_helper(history, shift=2):
+def known_helper(history: int, shift: int = 2) -> int:
     return history + shift
 
 
-def known_caller(history):
+def known_caller(history: int) -> int:
     return known_helper(history)
 
 
-def table_callback(table):
-    def lookup(history):
+def table_callback(table: dict[str, list[int]]) -> Callable[[int], int]:
+    def lookup(history: int) -> int:
         return history + table["bias"][0]
 
     return lookup
 
 
-def shared_table_caller():
+def shared_table_caller() -> Callable[[int], int]:
     table = {"bias": [2, 3]}
     left, right = table_callback(table), table_callback(table)
 
-    def caller(history):
+    def caller(history: int) -> int:
         return left(history) + right(history)
 
     return caller
 
 
-def tuple_default_helper(history, pair=(2, 3)):
+def tuple_default_helper(history: int, pair: tuple[int, int] = (2, 3)) -> int:
     return history if pair == (2, 3) else 0
 
 
-def tuple_default_caller(history):
+def tuple_default_caller(history: int) -> int:
     return tuple_default_helper(history)
 
 
-def binding_callback(payload):
-    def callback(history):
+def binding_callback(payload: Sequence[int]) -> Callable[[int], int]:
+    def callback(history: int) -> int:
         return history + payload[0]
 
     return callback
@@ -283,7 +295,8 @@ def test_compact_data_dag_cannot_force_exponential_literal_expansion() -> None:
 
 
 def test_callable_binding_is_not_certified_as_an_immutable_value() -> None:
-    captured = source_function(binding_callback(known_helper))
+    # The counterexample binds a callable where the fixture expects a data sequence.
+    captured = source_function(binding_callback(known_helper))  # ty: ignore[invalid-argument-type]
     checked = SourceProof({}).callback(captured)
     assert not (checked.proved)
     assert ("history") in (checked.reads)

@@ -7,6 +7,12 @@ from typing import TYPE_CHECKING
 import pytest
 from _lcm_regime_finder.production import analyze_production
 from _lcm_regime_finder.records import JSONValue
+from tests.regime_finder.test_declaration_ingestion import (
+    json_entries,
+    json_list,
+    json_member,
+    json_rows,
+)
 from _lcm_regime_finder import verify_production_result
 from tests.regime_finder.test_model_adapter import snapshot, function
 from tests.regime_finder.test_query_owners import policy_snapshot
@@ -15,7 +21,7 @@ if TYPE_CHECKING:
     from lcm.typing import StateName
 
 
-def process(name):
+def process(name: str) -> dict[str, JSONValue]:
     return {
         "kind": "dataclass",
         "type": f"lcm.processes.{name}",
@@ -29,7 +35,7 @@ def process(name):
     }
 
 
-def _check_analysis(source):
+def _check_analysis(source: Mapping[str, JSONValue]) -> dict[str, JSONValue]:
     result = analyze_production(
         source, limits={"seconds": 15}, facts_backend="metadata"
     )
@@ -49,8 +55,8 @@ def test_persistent_process_keeps_its_current_state_dependency() -> None:
     bad = deepcopy(result)
     cb = next(
         c
-        for c in bad["analysis"]["declarations"]["callbacks"].values()
-        if c.get("original", {}).get("type", "").endswith("RouwenhorstAR1Process")
+        for c in json_entries(bad, "analysis", "declarations", "callbacks")
+        if _original_type(c).endswith("RouwenhorstAR1Process")
     )
     cb.update(arguments=[], reads=[])
     assert (verify_production_result(source, bad)["status"]) == ("FAIL")
@@ -75,7 +81,7 @@ def test_new_iid_is_drawn_in_arrival_regime_without_a_current_value() -> None:
 
 def test_query_identity_is_preserved_without_numerical_factorization_claim() -> None:
     result = _check_analysis(policy_snapshot())
-    assert result["analysis"]["declarations"]["query_owners"]
+    assert json_member(result, "analysis", "declarations")["query_owners"]
 
 
 def test_unknown_process_class_is_not_dispatched_as_a_library_primitive() -> None:
@@ -95,8 +101,9 @@ def test_lowered_joint_normal_coordinate_is_an_iid_latent_axis() -> None:
     fields = source["user_regimes"]["original"]["fields"]
     coordinate = process("NormalIIDProcess")
     coordinate["type"] = "_lcm.processes.joint_normal_lowering._JointNormalCoordinate"
-    coordinate["fields"]["group"] = "income"
-    coordinate["fields"]["joint"] = {
+    coordinate_fields = _json_object(coordinate["fields"])
+    coordinate_fields["group"] = "income"
+    coordinate_fields["joint"] = {
         "kind": "dataclass",
         "type": "lcm.processes.JointNormalIIDProcess",
         "fields": {
@@ -110,8 +117,8 @@ def test_lowered_joint_normal_coordinate_is_an_iid_latent_axis() -> None:
     result = _check_analysis(source)
     callbacks = [
         cb
-        for cb in result["analysis"]["declarations"]["callbacks"].values()
-        if cb.get("original", {}).get("type") == coordinate["type"]
+        for cb in json_entries(result, "analysis", "declarations", "callbacks")
+        if _original_type(cb) == coordinate["type"]
     ]
     assert callbacks
     assert all(cb["arguments"] == [] for cb in callbacks)
@@ -123,8 +130,8 @@ def test_empty_target_map_does_not_create_a_next_state_provider() -> None:
     fields["state_transitions"]["absent"] = {}
     result = _check_analysis(source)
     assert all(
-        "next_absent" not in c["functions"]
-        for c in result["analysis"]["declarations"]["cells"]
+        "next_absent" not in json_member(c, "functions")
+        for c in json_rows(result, "analysis", "declarations", "cells")
     )
 
 
@@ -157,15 +164,18 @@ def test_equal_persistent_process_specs_keep_distinct_state_owners() -> None:
     )
     result = _check_analysis(source)
     assert all(
-        "history" in axes and "x" not in axes
-        for axes in result["analysis"]["dependency_closure"].values()
+        isinstance(axes, list) and "history" in axes and "x" not in axes
+        for axes in json_member(result, "analysis", "dependency_closure").values()
     )
     from _lcm_regime_finder.production import MetadataAnalysis
     from _lcm_regime_finder.semantic_check import check_semantics
 
-    declaration = deepcopy(result["analysis"]["declarations"])
-    relation = next(r for r in declaration["relations"] if r["kind"] == "transition")
-    relation["state_updates"]["history"] = relation["state_updates"]["x"]
+    declaration = deepcopy(json_member(result, "analysis", "declarations"))
+    relation = next(
+        r for r in json_rows(declaration, "relations") if r["kind"] == "transition"
+    )
+    updates = json_member(relation, "state_updates")
+    updates["history"] = updates["x"]
     changed = MetadataAnalysis(declaration, facts_backend="metadata").run()
     checked = check_semantics(source, declaration, changed)
     assert any(
@@ -194,10 +204,10 @@ def test_phased_process_owner_is_the_axis_not_the_phase_slot() -> None:
     }
     callbacks = [
         cb
-        for cb in result["analysis"]["declarations"]["callbacks"].values()
-        if cb.get("original", {}).get("type") in expected
+        for cb in json_entries(result, "analysis", "declarations", "callbacks")
+        if _original_type(cb) in expected
     ]
-    assert {cb["original"]["type"] for cb in callbacks} == expected
+    assert {_original_type(cb) for cb in callbacks} == expected
     assert all(cb["arguments"] == ["x"] for cb in callbacks)
 
 
@@ -209,12 +219,13 @@ def test_independent_check_rejects_miswired_intrinsic_draw_providers() -> None:
     fields["states"]["x"] = process("RouwenhorstAR1Process")
     del fields["state_transitions"]["x"]
     result = _check_analysis(source)
-    analysis = deepcopy(result["analysis"])
-    declaration = analysis["declarations"]
-    for cell in declaration["cells"]:
-        assert "next_x" in cell["functions"]
-        cell["functions"]["next_x"] = cell["functions"]["utility"]
-        for providers in cell["phase_functions"].values():
+    analysis = deepcopy(json_member(result, "analysis"))
+    declaration = json_member(analysis, "declarations")
+    for cell in json_rows(declaration, "cells"):
+        functions = json_member(cell, "functions")
+        assert "next_x" in functions
+        functions["next_x"] = functions["utility"]
+        for providers in json_entries(cell, "phase_functions"):
             assert "next_x" in providers
             providers["next_x"] = providers["utility"]
     checked = check_semantics(source, declaration, analysis)
@@ -238,16 +249,16 @@ def test_independent_check_rejects_erased_conditioned_process_inputs() -> None:
     }
     del fields["state_transitions"]["x"]
     result = _check_analysis(source)
-    analysis = deepcopy(result["analysis"])
-    declaration = analysis["declarations"]
+    analysis = deepcopy(json_member(result, "analysis"))
+    declaration = json_member(analysis, "declarations")
     callbacks = [
         cb
-        for cb in declaration["callbacks"].values()
-        if cb.get("original", {}).get("type", "").endswith("NormalIIDProcess")
+        for cb in json_entries(declaration, "callbacks")
+        if _original_type(cb).endswith("NormalIIDProcess")
     ]
     assert callbacks
     for callback in callbacks:
-        assert "history" in callback["arguments"]
+        assert "history" in json_list(callback, "arguments")
         callback.update(arguments=[], reads=[])
     checked = check_semantics(source, declaration, analysis)
     assert checked["status"] == "FAIL", checked
@@ -284,12 +295,13 @@ def test_equal_specs_do_not_authorize_source_provider_owner_swaps(
         "def utility(next_x):\n    return next_x\n", ["next_x"]
     )
     result = _check_analysis(source)
-    declaration = deepcopy(result["analysis"]["declarations"])
-    for cell in declaration["cells"]:
-        for providers in cell["phase_functions"].values():
+    declaration = deepcopy(json_member(result, "analysis", "declarations"))
+    for cell in json_rows(declaration, "cells"):
+        for providers in json_entries(cell, "phase_functions"):
             assert providers["next_x"] != providers["next_history"]
             providers["next_x"] = providers["next_history"]
-        cell["functions"]["next_x"] = cell["functions"]["next_history"]
+        functions = json_member(cell, "functions")
+        functions["next_x"] = functions["next_history"]
     analysis = MetadataAnalysis(declaration, facts_backend="metadata").run()
     checked = check_semantics(source, declaration, analysis)
     assert checked["status"] == "FAIL", checked
@@ -309,9 +321,22 @@ def test_equal_iid_specs_keep_distinct_source_draw_providers() -> None:
         ["next_x", "next_history"],
     )
     result = _check_analysis(source)
-    for cell in result["analysis"]["declarations"]["cells"]:
-        for providers in cell["phase_functions"].values():
+    for cell in json_rows(result, "analysis", "declarations", "cells"):
+        for providers in json_entries(cell, "phase_functions"):
             assert providers["next_x"] != providers["next_history"]
+
+
+def _text(value: JSONValue) -> str:
+    assert isinstance(value, str)
+    return value
+
+
+def _original_type(callback: dict[str, JSONValue]) -> str:
+    """The class of a callback's captured original declaration, or `""`."""
+    original = callback.get("original", {})
+    assert isinstance(original, dict)
+    kind = original.get("type", "")
+    return kind if isinstance(kind, str) else ""
 
 
 def _json_object(value: JSONValue) -> dict[str, JSONValue]:
@@ -419,7 +444,7 @@ def test_persistent_process_inputs_do_not_depend_on_names_or_declaration_order(
     )
     result = _check_analysis(source)
     expected = {axis, conditioning} if conditioned else {axis}
-    declarations = _json_object(result["analysis"]["declarations"])
+    declarations = json_member(result, "analysis", "declarations")
     callbacks = _json_object(declarations["callbacks"])
     transitions = [
         row
@@ -445,14 +470,14 @@ def test_conditioned_process_rejects_missing_or_extra_declared_inputs(
 
     source = _conditioned_ar1_capture()
     result = _check_analysis(source)
-    declarations = deepcopy(result["analysis"]["declarations"])
+    declarations = deepcopy(json_member(result, "analysis", "declarations"))
     names = {
         "drop_condition": ["z"],
         "drop_axis": ["history"],
         "extra_input": ["history", "z", "invented"],
     }[mutation]
     mutated = []
-    for callback in _json_rows(list(declarations["callbacks"].values())):
+    for callback in json_entries(declarations, "callbacks"):
         original = callback.get("original")
         if (
             not isinstance(original, dict)
@@ -493,23 +518,22 @@ def test_conditioned_process_rejects_foreign_original_law_with_the_same_axis() -
     assert isinstance(starts, list)
     starts.append([0, "foreign"])
     result = _check_analysis(source)
-    declarations = deepcopy(result["analysis"]["declarations"])
-    cells = {cell["id"]: cell for cell in declarations["cells"]}
-    original_relation = next(
+    declarations = deepcopy(json_member(result, "analysis", "declarations"))
+    cells = {cell["id"]: cell for cell in json_rows(declarations, "cells")}
+    solve_transitions = [
         row
-        for row in declarations["relations"]
-        if row["kind"] == "transition"
-        and row["phase"] == "solve"
-        and cells[row["source"]]["regime"] == "original"
+        for row in json_rows(declarations, "relations")
+        if row["kind"] == "transition" and row["phase"] == "solve"
+    ]
+    original_relation = next(
+        row for row in solve_transitions if cells[row["source"]]["regime"] == "original"
     )
     foreign_relation = next(
-        row
-        for row in declarations["relations"]
-        if row["kind"] == "transition"
-        and row["phase"] == "solve"
-        and cells[row["source"]]["regime"] == "foreign"
+        row for row in solve_transitions if cells[row["source"]]["regime"] == "foreign"
     )
-    original_relation["state_updates"]["z"] = foreign_relation["state_updates"]["z"]
+    json_member(original_relation, "state_updates")["z"] = json_member(
+        foreign_relation, "state_updates"
+    )["z"]
     analysis = MetadataAnalysis(declarations, facts_backend="metadata").run()
     checked = check_semantics(source, declarations, analysis)
     assert checked["status"] == "FAIL", checked
@@ -681,30 +705,35 @@ def test_each_transition_uses_its_target_and_phase_conditioning_law(
         composed=composed,
     )
     result = _check_analysis(source)
-    declaration = result["analysis"]["declarations"]
-    cells = {cell["id"]: cell for cell in declaration["cells"]}
+    declaration = json_member(result, "analysis", "declarations")
+    cells = {cell["id"]: cell for cell in json_rows(declaration, "cells")}
     callbacks = [
         (
             relation,
-            cells[relation["targets"][0]],
-            declaration["callbacks"][relation["state_updates"]["z"]],
+            cells[json_list(relation, "targets")[0]],
+            json_member(
+                declaration,
+                "callbacks",
+                _text(json_member(relation, "state_updates")["z"]),
+            ),
         )
-        for relation in declaration["relations"]
-        if relation["kind"] == "transition" and "z" in relation["state_updates"]
+        for relation in json_rows(declaration, "relations")
+        if relation["kind"] == "transition"
+        and "z" in json_member(relation, "state_updates")
     ]
     assert len(callbacks) == 4
     for relation, target, callback in callbacks:
         phase = relation["phase"]
-        condition = conditions[target["regime"]][0 if phase == "solve" else 1]
+        condition = conditions[_text(target["regime"])][0 if phase == "solve" else 1]
         assert _input_names(callback["arguments"]) == {condition}
         assert _input_names(callback["reads"]) == {condition}
         side = "solve" if phase == "solve" else "simulate"
-        assert callback["source_path"].startswith(
+        assert _text(callback["source_path"]).startswith(
             f"/user_regimes/{target['regime']}/fields/states/z/fields/{side}"
         )
         assert callback["original"] == _conditioned_iid_declaration(condition)
     source_cell = next(cell for cell in cells.values() if cell["regime"] == "source")
-    live = result["analysis"]["dependency_closure"][source_cell["id"]]
+    live = json_list(result, "analysis", "dependency_closure", _text(source_cell["id"]))
     expected = {condition for phases in conditions.values() for condition in phases}
     assert expected <= set(live)
     assert "source_history" not in live
@@ -717,10 +746,11 @@ def test_an_unused_source_process_law_does_not_retain_its_conditioner() -> None:
     result = _check_analysis(source)
     cell = next(
         cell
-        for cell in result["analysis"]["declarations"]["cells"]
+        for cell in json_rows(result, "analysis", "declarations", "cells")
         if cell["regime"] == "source"
     )
-    assert "source_history" not in result["analysis"]["dependency_closure"][cell["id"]]
+    live = json_list(result, "analysis", "dependency_closure", _text(cell["id"]))
+    assert "source_history" not in live
 
 
 @pytest.mark.parametrize("target_carries_process", [False, True])
@@ -736,10 +766,10 @@ def test_composed_next_state_uses_the_draw_law_for_that_transition_context(
     result = _check_analysis(source)
     cell = next(
         cell
-        for cell in result["analysis"]["declarations"]["cells"]
+        for cell in json_rows(result, "analysis", "declarations", "cells")
         if cell["regime"] == "source"
     )
-    live = result["analysis"]["dependency_closure"][cell["id"]]
+    live = json_list(result, "analysis", "dependency_closure", _text(cell["id"]))
     expected = "target_history" if target_carries_process else "source_history"
     unused = "source_history" if target_carries_process else "target_history"
     assert expected in live
@@ -764,30 +794,35 @@ def test_independent_replay_rejects_a_process_provider_from_another_owner(
         },
     )
     result = _check_analysis(source)
-    declarations = deepcopy(result["analysis"]["declarations"])
-    cells = {cell["id"]: cell for cell in declarations["cells"]}
+    declarations = deepcopy(json_member(result, "analysis", "declarations"))
+    cells = {cell["id"]: cell for cell in json_rows(declarations, "cells")}
     transitions = [
         row
-        for row in declarations["relations"]
+        for row in json_rows(declarations, "relations")
         if row["kind"] == "transition" and row["phase"] == "solve"
     ]
     selected = next(
-        row for row in transitions if cells[row["targets"][0]]["regime"] == "target_a"
+        row
+        for row in transitions
+        if cells[json_list(row, "targets")[0]]["regime"] == "target_a"
     )
-    current = declarations["callbacks"][selected["state_updates"]["z"]]
-    assert current["source_path"].startswith("/user_regimes/target_a/fields/states/z")
+    updates = json_member(selected, "state_updates")
+    current = json_member(declarations, "callbacks", _text(updates["z"]))
+    assert _text(current["source_path"]).startswith(
+        "/user_regimes/target_a/fields/states/z"
+    )
     if replacement == "source":
         source_cell = cells[selected["source"]]
-        provider = source_cell["phase_functions"]["solve"]["next_z"]
+        provider = json_member(source_cell, "phase_functions", "solve")["next_z"]
     else:
         foreign = next(
             row
             for row in transitions
-            if cells[row["targets"][0]]["regime"] == "target_b"
+            if cells[json_list(row, "targets")[0]]["regime"] == "target_b"
         )
-        provider = foreign["state_updates"]["z"]
-    assert provider != selected["state_updates"]["z"]
-    selected["state_updates"]["z"] = provider
+        provider = json_member(foreign, "state_updates")["z"]
+    assert provider != updates["z"]
+    updates["z"] = provider
     analysis = MetadataAnalysis(declarations, facts_backend="metadata").run()
     checked = check_semantics(source, declarations, analysis)
     assert checked["status"] == "FAIL", checked
@@ -1198,7 +1233,7 @@ def test_nested_conditioned_iid_scope_uses_exact_library_class_identities(
     from _lcm_regime_finder.graph_scope import _has_conditioned_law, unconditioned_iid
 
     declaration = process("NormalIIDProcess")
-    declaration["fields"]["sigma"] = _state_conditioning_record(identity)
+    _json_object(declaration["fields"])["sigma"] = _state_conditioning_record(identity)
     expected = identity != "foreign"
     assert _has_conditioned_law({"nested": [declaration]}) is expected
     assert unconditioned_iid(declaration) is not expected

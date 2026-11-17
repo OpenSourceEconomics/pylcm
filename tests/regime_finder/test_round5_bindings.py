@@ -10,7 +10,7 @@ import typing
 import lcm.typing as native_typing
 from beartype import BeartypeConf, BeartypeStrategy, FrozenDict, beartype
 from lcm.typing import FloatND
-from typing import Protocol, TypeAliasType
+from typing import Never, Protocol, TypeAliasType
 from dataclasses import dataclass
 import functools
 import inspect
@@ -18,12 +18,13 @@ import builtins
 from abc import ABCMeta
 from collections.abc import Callable
 from unittest.mock import patch
-from types import FunctionType
+from types import FunctionType, ModuleType
 
 import numpy as np
 import jax.numpy as jnp
 from jax import Array
 from numpy.typing import NDArray
+from jax.typing import ArrayLike, DTypeLike
 
 from _lcm_regime_finder.callable_identity import resolve_callable
 from _lcm_regime_finder.declarations import (
@@ -34,78 +35,86 @@ from _lcm_regime_finder.declarations import (
 from _lcm_regime_finder.expressions import partial as evaluate_expression
 from _lcm_regime_finder.model_snapshot import read_declarations, source_function
 from _lcm_regime_finder.production import analyze_production
-from _lcm_regime_finder.semantic_check import SourceProof, _Abstract, _UNKNOWN
+from _lcm_regime_finder.records import JSONValue
+from _lcm_regime_finder.semantic_check import (
+    SourceProof,
+    _Abstract,
+    _CallableRecords,
+    _UNKNOWN,
+)
 from tests.regime_finder.test_model_adapter import snapshot
 
 
 _OPTIONAL_BINDING = None
 
 
-def optional_global(history):
+def optional_global(history: int) -> int:
     return history if _OPTIONAL_BINDING is None else 0
 
 
-def optional_factory(marker):
-    def callback(history):
+def optional_factory(marker: int | str | None) -> Callable[[int], int | str]:
+    def callback(history: int) -> int | str:
         return history if marker is None else marker
 
     return callback
 
 
-def identity(history):
+def identity(history: int) -> int:
     return history
 
 
-def difference(left, right):
+def difference(left: int, right: int) -> int:
     return left - right
 
 
-def triple(first, second, third=3):
+def triple(first: int, second: int, third: int = 3) -> int:
     return first + second - third
 
 
-def default_helper(value=9):
+def default_helper(value: int = 9) -> int:
     return value
 
 
-def call_default(history):
+def call_default(history: int) -> int:
     del history
     return default_helper()
 
 
-def positional_callback(helper):
-    def callback(history):
+def positional_callback(helper: Callable[..., int]) -> Callable[[int], int]:
+    def callback(history: int) -> int:
         return helper(history)
 
     return callback
 
 
-def named_callback(helper):
-    def callback(history):
+def named_callback(helper: Callable[..., int]) -> Callable[[int], int]:
+    def callback(history: int) -> int:
         return helper(history=history)
 
     return callback
 
 
-def keyword_override(helper, replacement):
-    def callback(history):
+def keyword_override(
+    helper: Callable[..., int], replacement: int
+) -> Callable[[int], int]:
+    def callback(history: int) -> int:
         return helper(left=history, right=replacement)
 
     return callback
 
 
-def keyword_default(helper):
-    def callback(history):
+def keyword_default(helper: Callable[..., int]) -> Callable[[int], int]:
+    def callback(history: int) -> int:
         return helper(left=history)
 
     return callback
 
 
-def keyword_only(*, history=7):
+def keyword_only(*, history: int = 7) -> int:
     return history
 
 
-def variadic(**kwargs):
+def variadic(**kwargs: int) -> int:
     return kwargs["history"]
 
 
@@ -113,11 +122,11 @@ def variadic(**kwargs):
 class Receiver:
     optional: int | None
 
-    def callback(self, history):
+    def callback(self, history: int) -> int:
         return history if self.optional is None else 0
 
 
-def direct_oracle(callback, **arguments):
+def direct_oracle(callback: Callable[..., int], **arguments: int) -> int:
     """Python's actual invocation semantics; no production AST is reused."""
     bound = inspect.signature(callback).bind(**arguments)
     return callback(*bound.args, **bound.kwargs)
@@ -149,7 +158,7 @@ def test_bound_receiver_containing_none_remains_a_receiver() -> None:
     assert (captured["bindings"]["self"]) == (captured["bound_self"])
 
 
-def _check_scalar(callback, history):
+def _check_scalar(callback: Callable[..., int], history: int) -> dict[str, JSONValue]:
     captured = source_function(callback)
     expected = direct_oracle(callback, history=history)
     expression = ScalarSource(captured).expression()
@@ -550,23 +559,23 @@ def _french_true_array_branch() -> Array:
     return _french_true_array_leaf()
 
 
-def _array_constructor_alias(value):
+def _array_constructor_alias(value: ArrayLike) -> Array:
     return _ARRAY_CONSTRUCTOR_ALIAS(value)
 
 
-def _array_with_dtype(value):
+def _array_with_dtype(value: ArrayLike) -> Array:
     return _ARRAY_CONSTRUCTOR_ALIAS(value, dtype=np.float32)
 
 
-def _array_keyword_operand(value):
+def _array_keyword_operand(value: ArrayLike) -> Array:
     return _ARRAY_CONSTRUCTOR_ALIAS(a=value)
 
 
-def _array_positional_dtype(value):
+def _array_positional_dtype(value: ArrayLike) -> Array:
     return _ARRAY_CONSTRUCTOR_ALIAS(value, np.float32)
 
 
-def _asarray_spoof(value):
+def _asarray_spoof(value: ArrayLike) -> Never:
     raise AssertionError("A forged array converter must never run")
 
 
@@ -580,7 +589,7 @@ class _AsarrayCallableSpoof:
     __name__ = "asarray"
     __qualname__ = "asarray"
 
-    def __call__(self, value):
+    def __call__(self, value: ArrayLike) -> Never:
         raise AssertionError("A name-spoofed callable object must never run")
 
 
@@ -597,7 +606,7 @@ def test_asarray_french_no_arg_helper_chain_proves_empty_read_bound_only() -> No
     ((np.asarray, "numpy.asarray"), (jnp.asarray, "jax.numpy.asarray")),
 )
 def test_asarray_actual_alias_retains_input_reads_without_exact_values(
-    constructor, canonical: str
+    constructor: Callable[..., Array], canonical: str
 ) -> None:
     with patch.dict(
         _array_constructor_alias.__globals__, {"_ARRAY_CONSTRUCTOR_ALIAS": constructor}
@@ -631,7 +640,7 @@ def test_asarray_actual_alias_retains_input_reads_without_exact_values(
     "value", (0.1, 16_777_217.0, 2**80, -(2**80), 0, 1, [True, False])
 )
 def test_asarray_numeric_or_nonscalar_metadata_never_gains_exact_identity(
-    constructor, value
+    constructor: Callable[..., Array], value: float | list[bool]
 ) -> None:
     with patch.dict(
         _array_constructor_alias.__globals__, {"_ARRAY_CONSTRUCTOR_ALIAS": constructor}
@@ -644,7 +653,9 @@ def test_asarray_numeric_or_nonscalar_metadata_never_gains_exact_identity(
 
 
 @pytest.mark.parametrize("callback", (_array_keyword_operand, _array_positional_dtype))
-def test_asarray_unsupported_argument_shapes_remain_unproved(callback) -> None:
+def test_asarray_unsupported_argument_shapes_remain_unproved(
+    callback: Callable[[ArrayLike], Array],
+) -> None:
     answer = SourceProof({}).callback(source_function(callback))
     assert not answer.proved
     assert "value" in answer.reads
@@ -652,7 +663,7 @@ def test_asarray_unsupported_argument_shapes_remain_unproved(callback) -> None:
 
 @pytest.mark.parametrize("fake", (_asarray_spoof, _AsarrayCallableSpoof()))
 def test_asarray_rebound_module_lookalike_does_not_gain_primitive_authority(
-    fake,
+    fake: Callable[[ArrayLike], Never],
 ) -> None:
     with (
         patch.dict(vars(jnp), {"asarray": fake}),
@@ -683,7 +694,7 @@ def test_asarray_marker_dictionary_is_data_not_an_authenticated_callee() -> None
     assert not SourceProof({}, static={"value": True}).callback(captured).proved
 
 
-def _array_boolean_arithmetic_dependency(value):
+def _array_boolean_arithmetic_dependency(value: int) -> int:
     if jnp.asarray(True) + jnp.asarray(True) == 2:
         return 0
     return value
@@ -704,55 +715,55 @@ _NUMERIC_ALIAS: Callable[..., Array] = jnp.maximum
 _ARRAY_DTYPE = jnp.int32
 
 
-def _numeric_unary(value):
+def _numeric_unary(value: Array) -> Array:
     return _NUMERIC_ALIAS(value)
 
 
-def _numeric_binary(left, right):
+def _numeric_binary(left: Array, right: Array) -> Array:
     return _NUMERIC_ALIAS(left, right)
 
 
-def _numeric_clip(value, lower, upper):
+def _numeric_clip(value: Array, lower: Array, upper: Array) -> Array:
     return _NUMERIC_ALIAS(value, lower, upper)
 
 
-def _numeric_stack(left, right):
+def _numeric_stack(left: Array, right: Array) -> Array:
     return _NUMERIC_ALIAS((left, right))
 
 
-def _numeric_sum_slice(values):
+def _numeric_sum_slice(values: Array) -> Array:
     return _NUMERIC_ALIAS(values[2:])
 
 
-def _numeric_unpacked(left, right, options):
+def _numeric_unpacked(left: Array, right: Array, options: dict[str, Array]) -> Array:
     return _NUMERIC_ALIAS(left, right, **options)
 
 
-def _cast_from_asarray(value):
+def _cast_from_asarray(value: ArrayLike) -> Array:
     return jnp.asarray(value).astype(jnp.int32)
 
 
-def _cast_from_where(flag, left, right):
+def _cast_from_where(flag: Array, left: Array, right: Array) -> Array:
     return jnp.where(flag, left, right).astype(jnp.int32)
 
 
-def _cast_from_unknown_receiver(value):
+def _cast_from_unknown_receiver(value: Array) -> Array:
     return value.astype(jnp.int32)
 
 
-def _cast_with_formal_dtype(value, dtype):
+def _cast_with_formal_dtype(value: ArrayLike, dtype: DTypeLike) -> Array:
     return jnp.asarray(value).astype(dtype)
 
 
-def _cast_with_bound_dtype(value):
+def _cast_with_bound_dtype(value: ArrayLike) -> Array:
     return jnp.asarray(value).astype(_ARRAY_DTYPE)
 
 
-def _cast_shadowed_module(value, jnp):
+def _cast_shadowed_module(value: Array, jnp: ModuleType) -> Array:
     return value.astype(jnp.int32)
 
 
-def _numeric_spoof(value):
+def _numeric_spoof(value: Array) -> Never:
     raise AssertionError("A spoofed numeric primitive must not execute")
 
 
@@ -775,7 +786,7 @@ _numeric_spoof.__qualname__ = "exp"
     ),
 )
 def test_french_numeric_primitives_keep_all_operand_reads_unknown(
-    constructor, callback, reads
+    constructor: Callable[..., Array], callback: FunctionType, reads: set[str]
 ) -> None:
     with patch.dict(callback.__globals__, {"_NUMERIC_ALIAS": constructor}):
         captured = source_function(callback)
@@ -809,7 +820,9 @@ def test_array_dtype_only_keyword_is_authenticated_and_remains_unknown() -> None
         (_cast_with_bound_dtype, {"value"}),
     ),
 )
-def test_astype_requires_a_captured_native_array_producer(callback, reads) -> None:
+def test_astype_requires_a_captured_native_array_producer(
+    callback: Callable[..., Array], reads: set[str]
+) -> None:
     answer = SourceProof({}).callback(source_function(callback))
     assert answer.proved
     assert answer.reads == frozenset(reads)
@@ -825,7 +838,7 @@ def test_astype_requires_a_captured_native_array_producer(callback, reads) -> No
     ),
 )
 def test_astype_unknown_receiver_or_dtype_stays_unproved_and_retains_reads(
-    callback, reads
+    callback: Callable[..., Array], reads: set[str]
 ) -> None:
     answer = SourceProof({}).callback(source_function(callback))
     assert not answer.proved
@@ -892,23 +905,23 @@ def test_numeric_ufunc_same_method_changed_code_is_not_a_primitive() -> None:
     assert not SourceProof({}).callback(captured).proved
 
 
-def _spread_leaf(value):
+def _spread_leaf(value: int) -> int:
     return value
 
 
-def _helper_dict_spread(history):
+def _helper_dict_spread(history: int) -> int:
     return _spread_leaf(**{"value": history})
 
 
-def _helper_positional_spread(history):
+def _helper_positional_spread(history: int) -> int:
     return _spread_leaf(*(history,))
 
 
-def _helper_dynamic_spread(history, options):
+def _helper_dynamic_spread(history: int, options: dict[str, int]) -> int:
     return _spread_leaf(**options)
 
 
-def _numeric_positional_spread(left, right):
+def _numeric_positional_spread(left: Array, right: Array) -> Array:
     return _NUMERIC_ALIAS(*(left, right))
 
 
@@ -922,7 +935,7 @@ def _numeric_positional_spread(left, right):
     ),
 )
 def test_argument_spreads_remain_unproved_before_recognized_call_paths(
-    callback, reads
+    callback: Callable[..., int | Array], reads: set[str]
 ) -> None:
     proof = SourceProof({})
     answer = proof.callback(source_function(callback))
@@ -1067,10 +1080,12 @@ def test_mutated_cached_floatnd_class_does_not_grant_array_inputs() -> None:
     assert not SourceProof({}).callback(captured).proved
 
 
-def _array_input_resealed(captured, mutation: str):
+def _array_input_resealed(
+    callback: Callable[[FloatND], int | Array], mutation: str
+) -> tuple[_CallableRecords, dict[str, JSONValue]]:
     """Reuse the existing genuine-wire rehasher after a scoped metadata mutation."""
+    captured = source_function(callback)
     from copy import deepcopy
-    from _lcm_regime_finder.semantic_check import _CallableRecords
     from tests.regime_finder.test_source_proof import _native_wire_retyped_reference
 
     table = deepcopy(captured["callable_records"])
@@ -1163,9 +1178,7 @@ def _array_input_resealed(captured, mutation: str):
 def test_array_input_facts_require_the_actual_resealed_annotation_and_config(
     mutation: str,
 ) -> None:
-    records, original = _array_input_resealed(
-        source_function(_checked_floatnd_size), mutation
-    )
+    records, original = _array_input_resealed(_checked_floatnd_size, mutation)
     assert not records.errors
     answer = SourceProof({}, callable_records=records).callback(original)
     assert not answer.proved
@@ -1289,9 +1302,7 @@ def test_canonical_numeric_tower_does_not_allow_additional_array_overrides(
 def test_canonical_numeric_tower_requires_exact_resealed_builtin_facts(
     mutation: str,
 ) -> None:
-    records, original = _array_input_resealed(
-        source_function(_checked_floatnd_sum_size), mutation
-    )
+    records, original = _array_input_resealed(_checked_floatnd_sum_size, mutation)
     assert not records.errors
     answer = SourceProof({}, callable_records=records).callback(original)
     assert not answer.proved
@@ -1299,9 +1310,7 @@ def test_canonical_numeric_tower_requires_exact_resealed_builtin_facts(
 
 
 def test_old_array_config_without_numeric_tower_facts_is_not_upgraded() -> None:
-    records, original = _array_input_resealed(
-        source_function(_checked_floatnd_size), "old_array_config"
-    )
+    records, original = _array_input_resealed(_checked_floatnd_size, "old_array_config")
     assert not records.errors
     assert not SourceProof({}, callable_records=records).callback(original).proved
 

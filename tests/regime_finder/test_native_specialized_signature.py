@@ -5,37 +5,40 @@ from importlib.util import find_spec
 from copy import deepcopy
 from pathlib import Path
 import tempfile
+from collections.abc import Callable
 
 from _lcm_regime_finder import find_regimes, verify_production_result
 from _lcm_regime_finder.cli import load_problem
 from _lcm_regime_finder.pytask_api import export_model
+from _lcm_regime_finder.records import JSONValue
+from lcm.typing import DiscreteAction, DiscreteState, FloatND, IntND
 
 
-def economic_utility(choice, history):
+def economic_utility(choice: DiscreteAction, history: DiscreteState) -> IntND:
     return -((choice - history) ** 2)
 
 
-def next_history(history):
+def next_history(history: DiscreteState) -> DiscreteState:
     return history
 
 
-def terminal_value():
+def terminal_value() -> float:
     return 0.0
 
 
-def finite_aggregator(utility, CE, discount_factor):
+def finite_aggregator(utility: FloatND, CE: FloatND, discount_factor: float) -> FloatND:
     return utility + discount_factor * CE
 
 
 BUILDS = []
 
 
-def build_utility(age):
+def build_utility(age: int) -> Callable[[DiscreteAction, DiscreteState], IntND]:
     BUILDS.append(age)
     return economic_utility
 
 
-def same_signature(age):
+def same_signature(age: int) -> str:
     return "history-dependent-utility"
 
 
@@ -121,7 +124,7 @@ def test_constructor_export_and_public_analysis_retain_original_domain(
 
             # Old captures lack construction products: the safety guard
             # must still retain their whole economic domain.
-            def without_resolutions(value):
+            def without_resolutions(value: JSONValue) -> None:
                 if isinstance(value, dict):
                     value.pop("resolved_by_period", None)
                     for child in value.values():

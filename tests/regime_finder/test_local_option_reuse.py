@@ -2,6 +2,7 @@
 
 from _lcm_regime_finder.declarations import normalize_declarations
 from _lcm_regime_finder.production import MetadataAnalysis
+from _lcm_regime_finder.records import JSONValue
 from _lcm_regime_finder.semantic_check import check_semantics
 from .tiny_metadata_family import original
 

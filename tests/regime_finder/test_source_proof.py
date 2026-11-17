@@ -44,6 +44,7 @@ from lcm import (
 )
 from lcm.typing import (
     FloatND,
+    IntND,
     ScalarInt,
     UserAge,
     RegimeName,
@@ -65,6 +66,11 @@ from _lcm_regime_finder.callable_identity import (
 from _lcm_regime_finder.records import (
     JSONValue,
 )
+from tests.regime_finder.test_declaration_ingestion import (
+    json_list,
+    json_member,
+    json_object,
+)
 from _lcm_regime_finder.facts import (
     SourceFacts,
     current_reads,
@@ -76,6 +82,7 @@ from _lcm_regime_finder.model_snapshot import (
 )
 from _lcm_regime_finder.semantic_check import (
     SourceProof,
+    _Abstract,
     _CallableRecords,
     _UNKNOWN,
     _native_wrapper_inputs,
@@ -478,7 +485,9 @@ def _source_integer_membership(
     ],
 )
 def test_source_compiled_code_rejects_changed_constant_bits_or_types(
-    function, constant_type, replacement
+    function: FunctionType,
+    constant_type: type[float] | type[frozenset[float]],
+    replacement: float | frozenset[float],
 ) -> None:
     import hashlib
     from _lcm_regime_finder.current_api_contract import inspect_source_bound_function
@@ -531,7 +540,7 @@ def _schedule_variadic(**kwargs: float) -> float:
     raise AssertionError("A variadic case is not an authenticated finite interface")
 
 
-def _native_schedule():
+def _native_schedule() -> Callable[..., FloatND | IntND]:
     from _lcm.regime_building.schedules import _period_dispatch
 
     return _period_dispatch(
@@ -541,8 +550,10 @@ def _native_schedule():
     )
 
 
-def _schedule_answer(wrapper):
-    original, native = _native_wrapper_source(cast("UserFunction", wrapper))
+def _schedule_answer(
+    wrapper: UserFunction,
+) -> tuple[dict[str, JSONValue], dict[str, JSONValue], _CallableRecords, _Abstract]:
+    original, native = _native_wrapper_source(wrapper)
     records = _CallableRecords(original["callable_records"])
     assert not records.errors
     answer = SourceProof(
@@ -655,8 +666,9 @@ def test_native_schedule_rejects_outer_receiver_disagreement(field: str) -> None
     original, native, _, _ = _schedule_answer(_native_schedule())
     # Keep each compact payload internally valid; their operative disagreement
     # must be rejected independently of a changed integrity digest.
-    native["fields"] = dict(native["fields"])
-    native["fields"][field] = None
+    fields = dict(json_member(native, "fields"))
+    fields[field] = None
+    native["fields"] = fields
     records = _CallableRecords(original["callable_records"])
     assert not records.errors
     assert _native_wrapper_inputs(native, records) is None
@@ -686,7 +698,7 @@ def test_native_schedule_wire_reconciles_actual_inline_and_reference_encodings(
             field = "targets"
     _, native, records, _ = _schedule_answer(wrapper)
     meta = records.resolve(native["callable"])
-    assert isinstance(native["fields"][field], list)
+    assert isinstance(json_member(native, "fields")[field], list)
     receiver = meta["bound_self"]["fields"][field]
     assert receiver["kind"] == "callable-reference"
     assert records.resolve(receiver)["binding_type"] == "builtins.tuple"
@@ -695,7 +707,7 @@ def test_native_schedule_wire_reconciles_actual_inline_and_reference_encodings(
 
 @pytest.mark.parametrize("replacement", [False, 0, -0.0])
 def test_native_schedule_wire_preserves_scalar_types_and_signed_zero(
-    replacement,
+    replacement: float,
 ) -> None:
     from _lcm.regime_building import schedules
 
@@ -706,7 +718,7 @@ def test_native_schedule_wire_preserves_scalar_types_and_signed_zero(
     _, native, records, _ = _schedule_answer(cls(value=(0.0, 1.0)))
     assert _native_wrapper_inputs(native, records) == ()
     changed = deepcopy(native)
-    changed["fields"]["value"][0] = replacement
+    json_list(changed, "fields", "value")[0] = replacement
     assert _native_wrapper_inputs(changed, records) is None
 
 
@@ -718,7 +730,7 @@ def test_native_schedule_wire_rejects_forged_nested_dispatch_fields() -> None:
     )
     assert _native_wrapper_inputs(native, records) == ("period", "history", "x")
     changed = deepcopy(native)
-    cases = changed["fields"]["func"]["fields"]["cases"]
+    cases = json_list(changed, "fields", "func", "fields", "cases")
     cases[0] = cases[1]
     # The nested primary callable ref is unchanged. Its contradictory duplicate
     # fields must still reject rather than disappear during wire projection.
@@ -740,8 +752,8 @@ def test_native_schedule_wire_rejects_forged_nested_role_fields() -> None:
     _, native, records, _ = _schedule_answer(wrapper)
     assert _native_wrapper_inputs(native, records) == ("period", "history", "x")
     changed = deepcopy(native)
-    cases = changed["fields"]["cases"]
-    cases[0]["fields"]["func"] = cases[1]
+    cases = json_list(changed, "fields", "cases")
+    json_member(json_object(cases[0]), "fields")["func"] = cases[1]
     assert _native_wrapper_inputs(changed, records) is None
 
 
@@ -766,8 +778,8 @@ def test_native_schedule_wire_never_substitutes_source_equivalent_callable_ident
     _, native, records, _ = _schedule_answer(wrapper)
     assert _native_wrapper_inputs(native, records) == ("period", "history")
     changed = deepcopy(native)
-    cases = changed["fields"]["cases"]
-    assert cases[0]["capture_ref"] != cases[1]["capture_ref"]
+    cases = json_list(changed, "fields", "cases")
+    assert json_object(cases[0])["capture_ref"] != json_object(cases[1])["capture_ref"]
     cases[0] = cases[1]
     assert _native_wrapper_inputs(changed, records) is None
 
@@ -792,7 +804,9 @@ def test_native_schedule_wire_rejects_untracked_references_and_recursive_wire_da
     assert not _same_native_wire([0] * 8193, [0] * 8193, records)
 
 
-def _native_wire_retyped_reference(records, reference, binding_type):
+def _native_wire_retyped_reference(
+    records: _CallableRecords, reference: dict[str, JSONValue], binding_type: str
+) -> tuple[_CallableRecords, dict[str, JSONValue]]:
     """Reseal a genuine captured field after changing only its type label."""
     from _lcm_regime_finder.callable_identity import _digest, callable_record_digest
 
@@ -856,7 +870,7 @@ def test_native_schedule_wire_rejects_resealed_unknown_or_mismatched_tuple_bindi
     _, native, records, _ = _schedule_answer(cls(value=(0.0, 1.0)))
     meta = records.resolve(native["callable"])
     reference = meta["bound_self"]["fields"]["value"]
-    outer = native["fields"]["value"]
+    outer = json_member(native, "fields")["value"]
     assert _same_native_wire(outer, reference, records)
     changed_records, changed_ref = _native_wire_retyped_reference(
         records, reference, binding_type
@@ -877,7 +891,7 @@ def test_native_schedule_wire_rejects_resealed_descriptor_as_plain_mapping(
     _, native, records, _ = _schedule_answer(wrapper)
     meta = records.resolve(native["callable"])
     reference = meta["bound_self"]["fields"][field]
-    outer = native["fields"][field]
+    outer = json_member(native, "fields")[field]
     assert _same_native_wire(outer, reference, records)
     changed_records, changed_ref = _native_wire_retyped_reference(
         records, reference, "builtins.dict"
@@ -902,7 +916,9 @@ def test_native_schedule_wire_retains_actual_value_adapter_grid_and_mapping_form
     meta = records.resolve(native["callable"])
     for field in ("decoded", "codes", "positions", "encode"):
         assert _same_native_wire(
-            native["fields"][field], meta["bound_self"]["fields"][field], records
+            json_member(native, "fields")[field],
+            meta["bound_self"]["fields"][field],
+            records,
         )
 
 
@@ -922,7 +938,9 @@ def test_native_schedule_wire_grid_type_and_payload_spelling_must_agree() -> Non
     reference = meta["bound_self"]["fields"]["encode"]
     actual_type = records.resolve(reference)["binding_type"]
     assert actual_type in {"lcm.grids.DiscreteGrid", "_lcm.grids.discrete.DiscreteGrid"}
-    assert _same_native_wire(native["fields"]["encode"], reference, records)
+    assert _same_native_wire(
+        json_member(native, "fields")["encode"], reference, records
+    )
     other_type = (
         "_lcm.grids.discrete.DiscreteGrid"
         if actual_type == "lcm.grids.DiscreteGrid"
@@ -933,7 +951,7 @@ def test_native_schedule_wire_grid_type_and_payload_spelling_must_agree() -> Non
             records, reference, replacement
         )
         assert not _same_native_wire(
-            native["fields"]["encode"], changed_ref, changed_records
+            json_member(native, "fields")["encode"], changed_ref, changed_records
         )
 
 
@@ -2619,7 +2637,7 @@ def test_native_wire_rejects_mutated_categorical_field_keys_without_hashing(
     _, native, records, _ = _schedule_answer(wrapper)
     meta = records.resolve(native["callable"])
     reference = meta["bound_self"]["fields"]["encode"]
-    outer = deepcopy(native["fields"]["encode"])
+    outer = deepcopy(json_member(native, "fields")["encode"])
     assert _same_native_wire(outer, reference, records)
     record = records.resolve(reference)
     assert isinstance(record, dict)

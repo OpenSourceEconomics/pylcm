@@ -1,6 +1,7 @@
 """Public declaration specs must preserve the native query/visit distinction."""
 
 import pytest
+from collections.abc import Sequence
 from copy import deepcopy
 
 from _lcm_regime_finder import find_regimes
@@ -8,17 +9,29 @@ from _lcm_regime_finder.declarations import normalize_declarations
 from _lcm_regime_finder.graph_view import typed_incidence_graph
 from _lcm_regime_finder.model_snapshot import read_declarations
 from _lcm_regime_finder.production import MetadataAnalysis
+from _lcm_regime_finder.records import JSONValue
+from lcm.typing import RegimeName
+from _lcm_regime_finder.records import SemanticCheck
 from _lcm_regime_finder.semantic_check import check_semantics
 from tests.regime_finder.query_admission_oracle import physical_closure, demanded_owners
+from tests.regime_finder.test_declaration_ingestion import (
+    json_entries,
+    json_list,
+    json_member,
+    json_object,
+    json_rows,
+)
 from tests.regime_finder.test_model_adapter import function, grid
 from tests.regime_finder.test_query_owners import policy_snapshot
 
 
-def record(kind, **fields):
+def record(kind: str, **fields: JSONValue) -> dict[str, JSONValue]:
     return {"kind": "dataclass", "type": "lcm." + kind, "fields": fields}
 
 
-def reference(target, kind="ProjectedRegimeValue"):
+def reference(
+    target: RegimeName, kind: str = "ProjectedRegimeValue"
+) -> dict[str, JSONValue]:
     return record(
         kind,
         regime=target,
@@ -28,11 +41,11 @@ def reference(target, kind="ProjectedRegimeValue"):
 
 def spec(
     *,
-    names=("A", "B", "Q", "R"),
-    reference_kind="ProjectedRegimeValue",
-    slot="same_period_refs",
-    dates=None,
-):
+    names: tuple[RegimeName, RegimeName, RegimeName, RegimeName] = ("A", "B", "Q", "R"),
+    reference_kind: str = "ProjectedRegimeValue",
+    slot: str = "same_period_refs",
+    dates: Sequence[float] | None = None,
+) -> dict[str, JSONValue]:
     a, b, q, r = names
     base = record(
         "Regime",
@@ -44,9 +57,11 @@ def spec(
     )
     regimes = {name: deepcopy(base) for name in names}
     for name in (a, b):
-        regimes[name]["fields"][slot] = {"quoted": reference(q, reference_kind)}
-    regimes[q]["fields"]["same_period_refs"] = {"nested": reference(r)}
-    result = {
+        json_member(regimes[name], "fields")[slot] = {
+            "quoted": reference(q, reference_kind)
+        }
+    json_member(regimes[q], "fields")["same_period_refs"] = {"nested": reference(r)}
+    result: dict[str, JSONValue] = {
         "regimes": regimes,
         "n_periods": 3,
         "initial_nodes": [[0, a]],
@@ -58,7 +73,9 @@ def spec(
     return result
 
 
-def _check_source(raw):
+def _check_source(
+    raw: dict[str, JSONValue],
+) -> tuple[dict[str, JSONValue], dict[str, JSONValue], SemanticCheck]:
     normalized = normalize_declarations(raw)
     analysis = MetadataAnalysis(normalized, facts_backend="metadata").run()
     checked = check_semantics(raw, normalized, analysis)
@@ -106,12 +123,14 @@ def test_projected_reads_and_native_exit_shapes_preserve_owner_kind(
                 raw = spec(names=names)
                 if form == "exit":
                     for name in names[:2]:
-                        declaration = raw["regimes"][name]["fields"]
+                        declaration = json_member(raw, "regimes", name, "fields")
                         declaration["same_period_refs"] = {}
                         target = reference(names[2], "ExitTarget")
-                        target["fields"].update(role="f", utility_adjustment=None)
+                        json_member(target, "fields").update(
+                            role="f", utility_adjustment=None
+                        )
                         counterparty = reference(names[3], "Counterparty")
-                        counterparty["fields"]["role"] = "m"
+                        json_member(counterparty, "fields")["role"] = "m"
                         declaration["exits"] = {
                             "marry": record(
                                 "Exit",
@@ -131,12 +150,12 @@ def test_projected_reads_and_native_exit_shapes_preserve_owner_kind(
 def test_phase_and_exact_fractional_date_are_preserved() -> None:
     raw = spec(dates=[20, 20.5, 21])
     for name in ("A", "B"):
-        raw["regimes"][name]["fields"]["same_period_refs"] = {
+        json_member(raw, "regimes", name, "fields")["same_period_refs"] = {
             "quoted": record("Phased", solve=reference("Q"), simulate=reference("R"))
         }
-    raw["regimes"]["Q"]["fields"]["same_period_refs"] = {}
+    json_member(raw, "regimes", "Q", "fields")["same_period_refs"] = {}
     normalized, _, _ = _check_source(raw)
-    owners = normalized["query_owners"].values()
+    owners = json_entries(normalized, "query_owners")
     assert ({(q["regime"], q["phase"]) for q in owners}) == (
         {("Q", "solve"), ("R", "simulation")}
     )
@@ -145,15 +164,17 @@ def test_phase_and_exact_fractional_date_are_preserved() -> None:
 
 def test_explicit_initial_or_scheduled_target_remains_physical() -> None:
     raw = spec()
-    raw["initial_nodes"].append([2, "Q"])
-    raw["edges"]["B"] = record("Transition", law="R")
+    initial_nodes = raw["initial_nodes"]
+    assert isinstance(initial_nodes, list)
+    initial_nodes.append([2, "Q"])
+    json_member(raw, "edges")["B"] = record("Transition", law="R")
     normalized, _, _ = _check_source(raw)
-    physical = {(c["period"], c["regime"]) for c in normalized["cells"]}
+    physical = {(c["period"], c["regime"]) for c in json_rows(normalized, "cells")}
     assert (physical) == ({(0, "A"), (1, "B"), (2, "R"), (2, "Q")})
     assert not (
         any(
             q["period"] == 2 and q["regime"] in {"Q", "R"}
-            for q in normalized["query_owners"].values()
+            for q in json_entries(normalized, "query_owners")
         )
     )
 
@@ -162,9 +183,10 @@ def test_independent_checker_rejects_manufactured_physical_visit() -> None:
     raw = spec()
     normalized, analysis, _ = _check_source(raw)
     changed = deepcopy(normalized)
-    false_cell = deepcopy(changed["cells"][0])
+    cells = json_list(changed, "cells")
+    false_cell = deepcopy(json_object(cells[0]))
     false_cell.update(id="extra-query-cell", regime="Q")
-    changed["cells"].append(false_cell)
+    cells.append(false_cell)
     checked = check_semantics(raw, changed, analysis)
     assert (checked["status"]) == ("FAIL")
     assert any(
@@ -176,19 +198,19 @@ def test_independent_checker_rejects_manufactured_physical_visit() -> None:
 def test_gate_read_is_query_but_explicit_fallback_is_physical() -> None:
     raw = spec()
     for name in ("A", "B"):
-        raw["regimes"][name]["fields"]["same_period_refs"] = {}
-    raw["regimes"]["Q"]["fields"]["same_period_refs"] = {}
+        json_member(raw, "regimes", name, "fields")["same_period_refs"] = {}
+    json_member(raw, "regimes", "Q", "fields")["same_period_refs"] = {}
     gate = record(
         "Gate",
         predicate=function("def allowed(x):\n    return x > 0\n", ["x"]),
         references={"price": reference("Q")},
         routes={"self": record("StakeholderRoute", fallback=reference("R"))},
     )
-    raw["edges"]["A"] = record("Transition", law="B", gates={"B": gate})
+    json_member(raw, "edges")["A"] = record("Transition", law="B", gates={"B": gate})
     normalized, _, _ = _check_source(raw)
-    assert ({c["regime"] for c in normalized["cells"]}) == ({"A", "B", "R"})
-    assert ({q["regime"] for q in normalized["query_owners"].values()}) == ({"Q"})
-    assert ({q["period"] for q in normalized["query_owners"].values()}) == ({1})
+    assert ({c["regime"] for c in json_rows(normalized, "cells")}) == ({"A", "B", "R"})
+    assert ({q["regime"] for q in json_entries(normalized, "query_owners")}) == ({"Q"})
+    assert ({q["period"] for q in json_entries(normalized, "query_owners")}) == ({1})
 
 
 def test_unproved_fallback_type_is_not_invented_as_settlement() -> None:
@@ -199,7 +221,7 @@ def test_unproved_fallback_type_is_not_invented_as_settlement() -> None:
             "self": record("StakeholderRoute", fallback=reference("R", "Counterparty"))
         },
     )
-    raw["edges"]["A"] = record("Transition", law="B", gates={"B": gate})
+    json_member(raw, "edges")["A"] = record("Transition", law="B", gates={"B": gate})
     result = find_regimes(raw, budget={"seconds": 15}, facts_backend="metadata")
     assert (result["status"]) == ("UNRESOLVED")
     assert ("settlement contract unavailable") in (result.get("error", ""))
@@ -208,7 +230,7 @@ def test_unproved_fallback_type_is_not_invented_as_settlement() -> None:
 
 def test_nested_owned_reads_are_visible_to_topological_traversal() -> None:
     raw = policy_snapshot()
-    raw["user_regimes"]["query_partner"]["fields"]["same_period_refs"] = {
+    json_member(raw, "user_regimes", "query_partner", "fields")["same_period_refs"] = {
         "nested": reference("unused_owner")
     }
     normalized = normalize_declarations(raw)

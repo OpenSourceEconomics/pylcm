@@ -3,6 +3,7 @@
 from unittest.mock import patch
 
 from _lcm_regime_finder.production import MetadataAnalysis, analyze_production
+from _lcm_regime_finder.records import JSONValue
 from .tiny_metadata_family import original
 
 
@@ -11,7 +12,9 @@ def test_interface_expansion_observes_the_metadata_deadline() -> None:
     expanded = []
     build = MetadataAnalysis.function_interfaces
 
-    def overrun(analysis, *args):
+    def overrun(
+        analysis: MetadataAnalysis, *args: dict[str, JSONValue]
+    ) -> dict[str, JSONValue]:
         expanded.append(args[0]["id"])
         answer = build(analysis, *args)
         clock[0] = 2.0

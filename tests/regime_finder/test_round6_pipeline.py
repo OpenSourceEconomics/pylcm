@@ -11,6 +11,7 @@ import sys
 import tempfile
 from unittest.mock import patch
 
+from _lcm_regime_finder.owned_mutations import OwnedMutationPlan
 from _lcm_regime_finder.pytask_api import analyse_snapshot
 from _lcm_regime_finder.resources import run_bounded, _tree_rss
 
@@ -164,7 +165,9 @@ def test_late_budget_exit_cannot_publish_worker_success(
         ):
             output = Path(folder) / "result"
 
-            def exhausted_worker(_command, **_options):
+            def exhausted_worker(
+                _command: list[str], **_options: Path | float | OwnedMutationPlan | None
+            ) -> int:
                 assert _options["output"] == output / "outer-resource"
                 # Fix the supervisor outcome, not the child startup speed.
                 # Real process termination/checkpoints are tested separately.

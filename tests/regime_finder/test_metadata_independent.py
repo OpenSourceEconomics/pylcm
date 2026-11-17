@@ -9,11 +9,20 @@ import pytest
 from copy import deepcopy
 from fractions import Fraction
 import json
+from collections.abc import Callable
 from pathlib import Path
 
 from _lcm_regime_finder.declarations import normalize_declarations
 from _lcm_regime_finder.model_snapshot import source_function
 from _lcm_regime_finder.production import MetadataAnalysis
+from _lcm_regime_finder.records import JSONValue
+from tests.regime_finder.test_declaration_ingestion import (
+    json_entries,
+    json_list,
+    json_member,
+    json_object,
+    json_rows,
+)
 from _lcm_regime_finder.semantic_check import check_semantics
 from .metadata_oracle import (
     ScalarSourceOracle,
@@ -22,13 +31,15 @@ from .metadata_oracle import (
 )
 from .tiny_metadata_family import original
 
+type PythonSource = str
 
-def custom_where(condition, left, right):
+
+def custom_where(condition: bool, left: int, right: int) -> int:
     del condition, right
     return left
 
 
-def custom_right(condition, left, right):
+def custom_right(condition: bool, left: int, right: int) -> int:
     del condition, left
     return right
 
@@ -36,30 +47,34 @@ def custom_right(condition, left, right):
 _alias_of_custom = custom_where
 
 
-def custom_utility(history, age):
+def custom_utility(history: int, age: int) -> int:
     return 1 + custom_where(age < 22, history, 0)
 
 
-def aliased_utility(history, age):
+def aliased_utility(history: int, age: int) -> int:
     return 1 + _alias_of_custom(age < 22, history, 0)
 
 
-def closure_utility(helper):
-    def utility(history, age):
+def closure_utility(
+    helper: Callable[[bool, int, int], int],
+) -> Callable[[int, int], int]:
+    def utility(history: int, age: int) -> int:
         return 1 + helper(age < 22, history, 0)
 
     return utility
 
 
-def identity_history(history):
+def identity_history(history: int) -> int:
     return history
 
 
-def simple_utility(history):
+def simple_utility(history: int) -> int:
     return history
 
 
-def record(source, arguments, **extra):
+def record(
+    source: PythonSource, arguments: list[str], **extra: JSONValue
+) -> dict[str, JSONValue]:
     return {
         "kind": "callable",
         "source": source,
@@ -72,7 +87,9 @@ def record(source, arguments, **extra):
     }
 
 
-def captured_snapshot(callback=None):
+def captured_snapshot(
+    callback: dict[str, JSONValue] | None = None,
+) -> dict[str, JSONValue]:
     """Explicit original captured declaration, no proposed reduction/cuts."""
     grid = {
         "kind": "object",
@@ -139,7 +156,9 @@ def captured_snapshot(callback=None):
     }
 
 
-def _produce(spec=None):
+def _produce(
+    spec: dict[str, JSONValue] | None = None,
+) -> tuple[dict[str, JSONValue], dict[str, JSONValue], dict[str, JSONValue]]:
     source = original() if spec is None else spec
     declarations = normalize_declarations(source)
     analysis = MetadataAnalysis(declarations, facts_backend="metadata").run()
@@ -148,9 +167,11 @@ def _produce(spec=None):
 
 def test_trillion_point_axis_is_metadata_not_a_dense_tensor() -> None:
     source, declarations, analysis = _produce()
-    assert (analysis["declarations"]["domains"]["assets_large"]["size"]) == (10**12)
-    assert (analysis["production_execution"]["callbacks_called"]) == (0)
-    assert (analysis["production_execution"]["dense_cartesian_cells_enumerated"]) == (0)
+    domains = json_member(analysis, "declarations", "domains")
+    assert (json_member(domains, "assets_large")["size"]) == (10**12)
+    execution = json_member(analysis, "production_execution")
+    assert (execution["callbacks_called"]) == (0)
+    assert (execution["dense_cartesian_cells_enumerated"]) == (0)
     checked = check_semantics(source, declarations, analysis)
     assert (checked["dense_cartesian_rows_evaluated"]) == (0)
 
@@ -158,10 +179,10 @@ def test_trillion_point_axis_is_metadata_not_a_dense_tensor() -> None:
 def test_reduced_function_signatures_are_checked() -> None:
     source, declaration, analysis = _produce()
     corrupted = deepcopy(analysis)
-    option = corrupted["interfaces"]["c1"]["options"][-1]
-    function = option["function_interfaces"]["simulation"]["utility"]
-    function["arguments"].remove("assets")
-    function["unused_arguments"].append("assets")
+    option = json_rows(corrupted, "interfaces", "c1", "options")[-1]
+    function = json_member(option, "function_interfaces", "simulation", "utility")
+    json_list(function, "arguments").remove("assets")
+    json_list(function, "unused_arguments").append("assets")
     checked = check_semantics(source, declaration, corrupted)
     assert (checked["status"]) == ("FAIL"), checked
     assert any(
@@ -187,9 +208,9 @@ def test_source_custom_and_aliased_helpers_are_not_primitives() -> None:
         snapshot = captured_snapshot(metadata)
         _, declaration, analysis = _produce(snapshot)
         assert all(
-            "history" in option["states"]
-            for record in analysis["interfaces"].values()
-            for option in record["options"]
+            "history" in json_member(option, "states")
+            for record in json_entries(analysis, "interfaces")
+            for option in json_rows(record, "options")
         )
         assert (check_semantics(snapshot, declaration, analysis)["status"]) != ("FAIL")
 
@@ -252,19 +273,20 @@ def test_native_source_normalization_mutations(*, subtests: pytest.Subtests) -> 
         if change == "phase":
             normalized["relations"] = [
                 relation
-                for relation in normalized["relations"]
+                for relation in json_rows(normalized, "relations")
                 if relation["phase"] != "simulation"
             ]
+        first_cell = json_rows(normalized, "cells")[0]
         if change == "role":
-            normalized["cells"][0]["role"]["actor"] = "different actor"
+            json_member(first_cell, "role")["actor"] = "different actor"
         if change == "age":
-            normalized["cells"][0]["age"] = 19
+            first_cell["age"] = 19
         if change == "domain":
-            next(iter(normalized["domains"].values()))["values"] = [0, 2]
+            json_entries(normalized, "domains")[0]["values"] = [0, 2]
         if change == "consumer":
-            normalized["cells"][0]["consumers"] = []
+            first_cell["consumers"] = []
         if change == "start":
-            normalized["cells"][0]["admissible_start"] = False
+            first_cell["admissible_start"] = False
         altered = deepcopy(analysis)
         altered["declarations"] = normalized
         with subtests.test(change=change):
@@ -277,50 +299,55 @@ def test_original_period_age_provider_forces_correct_decision_dates() -> None:
     snapshot = captured_snapshot()
     dates = list(range(5))
     snapshot["ages"] = None
-    snapshot["graph"]["fields"]["coordinate_kind"] = "period"
+    graph_fields = json_member(snapshot, "graph", "fields")
+    graph_fields["coordinate_kind"] = "period"
     for reach in (
-        snapshot["reachability"],
-        snapshot["graph"]["fields"]["reachability"],
+        json_member(snapshot, "reachability"),
+        json_member(graph_fields, "reachability"),
     ):
-        reach["fields"]["nodes"] = [[period, "life"] for period in dates]
-    snapshot["graph"]["fields"]["initial_nodes"] = [[0, "life"]]
-    declaration = snapshot["user_regimes"]["life"]["fields"]
-    declaration["actions"]["choice"] = {
+        json_member(reach, "fields")["nodes"] = [[period, "life"] for period in dates]
+    graph_fields["initial_nodes"] = [[0, "life"]]
+    declaration = json_member(snapshot, "user_regimes", "life", "fields")
+    json_member(declaration, "actions")["choice"] = {
         "kind": "object",
         "type": "lcm.DiscreteGrid",
         "fields": {"values": [0, 1], "codes": [7, 9]},
     }
-    declaration["functions"]["age"] = record(
+    json_member(declaration, "functions")["age"] = record(
         "def age(period):\n    return 20 + period\n", ["period"]
     )
-    declaration["constraints"]["choice"] = record(
+    json_member(declaration, "constraints")["choice"] = record(
         "def allowed(choice, age):\n    return (choice == 0) | (age < 22)\n",
         ["choice", "age"],
     )
     source, normalized, analysis = _produce(snapshot)
-    for cell in normalized["cells"]:
-        option = analysis["interfaces"][cell["id"]]["options"][0]
+    for cell in json_rows(normalized, "cells"):
+        cell_id, period = cell["id"], cell["period"]
+        assert isinstance(cell_id, str)
+        assert isinstance(period, int)
+        option = json_rows(analysis, "interfaces", cell_id, "options")[0]
         assert (cell["age"]) is None
-        assert (option["action_reconstruction"]["choice"]["kind"]) == (
-            "constant" if cell["period"] >= 2 else "identity"
+        assert (json_member(option, "action_reconstruction", "choice")["kind"]) == (
+            "constant" if period >= 2 else "identity"
         )
     assert (check_semantics(source, normalized, analysis)["status"]) == ("PASS")
 
 
 def test_categorical_action_codes_do_not_replace_decoded_values() -> None:
     snapshot = captured_snapshot()
-    declaration = snapshot["user_regimes"]["life"]["fields"]
-    declaration["actions"]["choice"] = {
+    declaration = json_member(snapshot, "user_regimes", "life", "fields")
+    json_member(declaration, "actions")["choice"] = {
         "kind": "object",
         "type": "lcm.DiscreteGrid",
         "fields": {"values": [10, 20], "codes": [9, 3]},
     }
-    declaration["constraints"]["code"] = record(
+    json_member(declaration, "constraints")["code"] = record(
         "def allowed(choice_code):\n    return choice_code == 3\n", ["choice_code"]
     )
     source, normalized, analysis = _produce(snapshot)
-    for interface in analysis["interfaces"].values():
-        assert (interface["options"][0]["action_reconstruction"]["choice"]) == (
+    for interface in json_entries(analysis, "interfaces"):
+        option = json_rows(interface, "options")[0]
+        assert (json_member(option, "action_reconstruction")["choice"]) == (
             {"kind": "constant", "value": 20}
         )
     assert (check_semantics(source, normalized, analysis)["status"]) == ("PASS")
@@ -381,8 +408,9 @@ def test_original_relation_payload_and_consumer_wiring_mutations(
 
 def test_derived_category_codes_retain_original_value_dependencies() -> None:
     snapshot = captured_snapshot()
-    declaration = snapshot["user_regimes"]["life"]["fields"]
-    declaration["functions"]["class_value"] = record(
+    declaration = json_member(snapshot, "user_regimes", "life", "fields")
+    functions = json_member(declaration, "functions")
+    functions["class_value"] = record(
         "def class_value(history):\n    return [10, 20][history]\n", ["history"]
     )
     declaration["derived_categoricals"] = {
@@ -392,16 +420,17 @@ def test_derived_category_codes_retain_original_value_dependencies() -> None:
             "fields": {"values": [10, 20], "codes": [9, 3]},
         }
     }
-    declaration["functions"]["utility"] = record(
+    functions["utility"] = record(
         "def utility(class_value_code):\n    return class_value_code\n",
         ["class_value_code"],
     )
     source, normalized, analysis = _produce(snapshot)
     assert (check_semantics(source, normalized, analysis)["status"]) == ("PASS")
-    for cell in normalized["cells"]:
-        assert ("history") in (analysis["dependency_closure"][cell["id"]])
+    closure = json_member(analysis, "dependency_closure")
+    for cell in json_rows(normalized, "cells"):
+        assert ("history") in (json_list(closure, str(cell["id"])))
     modified = deepcopy(normalized)
-    modified["cells"][0]["derived_code_providers"] = {}
+    json_rows(modified, "cells")[0]["derived_code_providers"] = {}
     altered = deepcopy(analysis)
     altered["declarations"] = modified
     assert (check_semantics(source, modified, altered)["status"]) == ("FAIL")
@@ -428,10 +457,12 @@ def test_legacy_decorator_and_added_evaluated_arguments_stay_opaque() -> None:
         source, normalized, analysis = _produce(snapshot)
         bound = next(
             item
-            for item in normalized["callbacks"].values()
+            for item in json_entries(normalized, "callbacks")
             if item.get("original") == callback
         )
         assert (bound["status"]) == ("opaque")
-        assert (set(bound["reads"])) == (set(callback["arguments"]))
+        arguments = callback["arguments"]
+        assert isinstance(arguments, list)
+        assert (set(json_list(bound, "reads"))) == (set(arguments))
         checked = check_semantics(source, normalized, analysis)
         assert (checked["status"]) != ("FAIL"), checked

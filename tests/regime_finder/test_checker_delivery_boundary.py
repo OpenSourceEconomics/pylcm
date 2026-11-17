@@ -5,6 +5,7 @@ import contextlib
 import io
 import itertools
 import json
+from collections.abc import Iterator
 from pathlib import Path
 import sys
 import tempfile
@@ -13,10 +14,15 @@ from unittest.mock import patch
 PROJECT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT))
 from _lcm_regime_finder import cli, resources
+from _lcm_regime_finder.owned_mutations import OwnedMutationPlan
 from .checker_delivery_oracle import assert_delivery, file_identity
 
+type FileName = str
 
-def _prepare_delivery(root, *, source_name="source.json"):
+
+def _prepare_delivery(
+    root: Path, *, source_name: FileName = "source.json"
+) -> tuple[Path, Path, dict[Path, str]]:
     source = root / source_name
     source.parent.mkdir(parents=True, exist_ok=True)
     source.write_bytes(
@@ -45,13 +51,13 @@ def _prepare_delivery(root, *, source_name="source.json"):
     return source, report, {path: file_identity(path) for path in (source, report)}
 
 
-def _get_parameters():
+def _get_parameters() -> Iterator[tuple[str, str]]:
     return itertools.product(
         ("check-result", "check-model-result"), ("default", "explicit")
     )
 
 
-def _get_destination(root, report, mode):
+def _get_destination(root: Path, report: Path, mode: str) -> Path:
     # A literal public contract, not an import of the production resolver.
     return (
         report.parent / "verification/check.json"
@@ -60,7 +66,7 @@ def _get_destination(root, report, mode):
     )
 
 
-def _invoke(command, source, report, mode, result):
+def _invoke(command: str, source: Path, report: Path, mode: str, result: Path) -> int:
     arguments = [command, str(source), str(report)]
     if mode == "explicit":
         arguments += ["--output", str(result)]
@@ -119,7 +125,9 @@ def test_success_then_parent_boundary_failure_matrix(
             source, report, protected = _prepare_delivery(root)
             result = _get_destination(root, report, mode)
 
-            def finished_then_failed(*args, **kwargs):
+            def finished_then_failed(
+                *args: list[str], **kwargs: Path | float | OwnedMutationPlan | None
+            ) -> int:
                 assert (runner(*args, **kwargs)) == (0)
                 assert (json.loads(result.read_text())["status"]) == ("PASS")
                 if fault == "exception":

@@ -1,27 +1,33 @@
 """Public native normalization must preserve locality of interpretation gaps."""
 
-from _lcm_regime_finder import find_regimes as _find_regimes
+from collections.abc import Callable, Sequence
 from functools import partial
+
+from _lcm_regime_finder import find_regimes as _find_regimes
+from _lcm_regime_finder.records import JSONValue
 
 # These regressions exercise the optional stronger semantic audit, not the
 # Model-graph contract whose primitives retain their declared dependencies.
 find_regimes = partial(_find_regimes, analysis_scope="full_semantics")
 from _lcm_regime_finder.model_snapshot import source_function
+from .test_declaration_ingestion import json_rows
 from .test_model_adapter import grid
 
 
-def opaque_utility(x, history):
+def opaque_utility(x: int, history: int) -> int:
     result = x
     for weight in (1, 2):
         result = result + weight * history
     return result
 
 
-def safe_utility(x):
+def safe_utility(x: int) -> int:
     return x
 
 
-def native_fixture(*, callback=opaque_utility, values=(0, 1)):
+def native_fixture(
+    *, callback: Callable[..., float] = opaque_utility, values: Sequence[int] = (0, 1)
+) -> dict[str, JSONValue]:
     """Two independently admitted original regimes, no reduced answer supplied."""
     regimes = {}
     for name, function in (("opaque", callback), ("safe", safe_utility)):
@@ -73,7 +79,9 @@ def native_fixture(*, callback=opaque_utility, values=(0, 1)):
     }
 
 
-def _produce(source=None):
+def _produce(
+    source: dict[str, JSONValue] | None = None,
+) -> tuple[dict[str, JSONValue], dict[str, JSONValue]]:
     source = native_fixture() if source is None else source
     report = find_regimes(source, facts_backend="metadata")
     assert not (report["semantic_check"]["errors"]), report["semantic_check"]
@@ -82,8 +90,10 @@ def _produce(source=None):
 
 def test_actual_capture_gap_is_local_on_public_native_path() -> None:
     _, report = _produce()
-    obligations = report["analysis"]["obligations"]
+    obligations = json_rows(report, "analysis", "obligations")
     assert ([o["kind"] for o in obligations]) == (["callback_interpretation"])
     assert (report["status"]) == ("UNRESOLVED")
     (obligation,) = obligations
-    assert obligation["source_path"].startswith("/user_regimes/opaque/"), obligation
+    source_path = obligation["source_path"]
+    assert isinstance(source_path, str), obligation
+    assert source_path.startswith("/user_regimes/opaque/"), obligation

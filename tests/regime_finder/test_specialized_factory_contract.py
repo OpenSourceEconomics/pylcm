@@ -8,6 +8,8 @@ from copy import deepcopy
 from itertools import product
 
 from _lcm_regime_finder import find_regimes, verify_production_result
+from _lcm_regime_finder.records import JSONValue
+from tests.regime_finder.test_declaration_ingestion import json_member, json_rows
 from tests.regime_finder.test_model_adapter import snapshot, function, grid
 from .specialized_factory_oracle import (
     exact_policy,
@@ -15,7 +17,14 @@ from .specialized_factory_oracle import (
 )
 
 
-def specialization(*, clock="period", resolved=False, periods=6, scale=1, shift=0):
+def specialization(
+    *,
+    clock: str = "period",
+    resolved: bool = False,
+    periods: int = 6,
+    scale: int = 1,
+    shift: int = 0,
+) -> dict[str, JSONValue]:
     # The current native source documents AgeSpecializedFunction. The clock
     # mutation changes the captured graph's coordinate convention, not the
     # supported public declaration type or the factory's construction input.
@@ -53,8 +62,14 @@ def specialization(*, clock="period", resolved=False, periods=6, scale=1, shift=
 
 
 def original_case(
-    *, clock="period", phased=False, resolved=False, values=(0, 1), scale=1, shift=0
-):
+    *,
+    clock: str = "period",
+    phased: bool = False,
+    resolved: bool = False,
+    values: tuple[int, ...] = (0, 1),
+    scale: int = 1,
+    shift: int = 0,
+) -> dict[str, JSONValue]:
     source = snapshot()
     fields = source["user_regimes"]["original"]["fields"]
     fields["states"] = {"history": grid(list(values))}
@@ -86,34 +101,41 @@ def original_case(
     return source
 
 
-def _assert_no_unproved_removal(result, *, resolved=False):
+def _assert_no_unproved_removal(
+    result: dict[str, JSONValue], *, resolved: bool = False
+) -> None:
     assert (result.get("status")) == ("COMPLETE" if resolved else "UNRESOLVED"), (
         "An unsupported specialization must preserve the valid original Model and remain explicit"
     )
-    analysis = result["analysis"]
-    cells = analysis["declarations"]["cells"]
+    analysis = json_member(result, "analysis")
+    cells = json_rows(analysis, "declarations", "cells")
     assert ({(cell["period"], cell["regime"]) for cell in cells}) == (
         {(period, "original") for period in range(6)}
     )
     assert (len(cells)) == (6)
-    assert analysis["dependency_closure"]
-    assert (set(analysis["dependency_closure"])) == ({cell["id"] for cell in cells})
-    assert all("history" in axes for axes in analysis["dependency_closure"].values())
+    closure = json_member(analysis, "dependency_closure")
+    assert closure
+    assert (set(closure)) == ({cell["id"] for cell in cells})
+    assert all(
+        isinstance(axes, list) and "history" in axes for axes in closure.values()
+    )
     if not resolved:
         assert any(
             item["kind"] == "specialized_effective_signature"
-            for item in analysis["obligations"]
+            for item in json_rows(analysis, "obligations")
         ), analysis["obligations"]
     for cell in cells:
-        options = analysis["interfaces"][cell["id"]]["options"]
+        cell_id = cell["id"]
+        assert isinstance(cell_id, str)
+        options = json_rows(analysis, "interfaces", cell_id, "options")
         assert options, "The original cell needs an admissible representation"
-        assert (set(cell["states"])) == ({"history"})
-        assert (set(cell["actions"])) == ({"choice"})
+        assert (set(json_member(cell, "states"))) == ({"history"})
+        assert (set(json_member(cell, "actions"))) == ({"choice"})
         for option in options:
-            assert ("history") in (option["states"]), (
+            assert ("history") in (json_member(option, "states")), (
                 "A factory signature is not the signature of its returned economic function"
             )
-            assert (option["state_projection"]["history"]) == (
+            assert (json_member(option, "state_projection")["history"]) == (
                 {"kind": "identity", "target": "history"}
             )
             assert (option["actions"]) == (cell["actions"])

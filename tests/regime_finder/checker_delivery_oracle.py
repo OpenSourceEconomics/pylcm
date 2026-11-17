@@ -2,13 +2,17 @@
 
 import hashlib
 import json
+from collections.abc import Mapping
+from pathlib import Path
 
 
-def file_identity(path):
+def file_identity(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def assert_delivery(exit_code, result_path, protected, *, success):
+def assert_delivery(
+    exit_code: int, result_path: Path, protected: Mapping[Path, str], *, success: bool
+) -> None:
     """Check the specified public destination, authority and input identities.
 
     No production path resolver, cleanup inventory, status mapper or resource

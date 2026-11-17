@@ -12,10 +12,10 @@ def test_public_callable_slots_are_retained() -> None:
     )
     value = Decoupled()
 
-    def objective(utility, CE, beta):
+    def objective(utility: float, CE: float, beta: float) -> float:
         return utility + beta * CE
 
-    def stored(utility, CE, delta):
+    def stored(utility: float, CE: float, delta: float) -> float:
         return utility + delta * CE
 
     setattr(value, "objective", objective)

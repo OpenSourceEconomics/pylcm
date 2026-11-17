@@ -65,6 +65,19 @@ repos:
           - jupyter
           - pyi
           - python
+      - id: ruff-check
+        alias: test-signature-annotations
+        name: changed test signatures are annotated
+        # A changed test file must have complete signatures. Keep this on the
+        # push range so untouched legacy files do not block all-files formatting.
+        stages:
+          - pre-push
+        files: ^tests/.*\.py$
+        args:
+          - --select=ANN
+          - --ignore=ANN401
+          - --config
+          - lint.per-file-ignores = {}
       - id: ruff-format
         # Keep the imported checker source stable for comparison with its reviewed
         # implementation. Its directory has a separate Ruff lint configuration.

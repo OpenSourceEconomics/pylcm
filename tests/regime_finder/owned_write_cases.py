@@ -11,6 +11,37 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from collections.abc import Iterator
+from types import ModuleType
+from typing import Literal, TypedDict
+
+from _lcm_regime_finder.records import JSONValue
+
+
+class Case(TypedDict):
+    kind: str
+    command: str
+    output: str
+    protected_role: Literal["source", "report"] | None
+    slot: str | None
+    end_of_options: bool
+
+
+class Execution(TypedDict):
+    exit_code: int
+    stdout: str
+    stderr: str
+
+
+class Observation(TypedDict):
+    case: Case
+    command: list[str]
+    exit_code: int
+    public_status: JSONValue
+    passed: bool
+    violations: list[dict[str, JSONValue]]
+    stdout: str
+    stderr: str
 
 
 COMMANDS = ("check-result", "check-model-result")
@@ -28,7 +59,7 @@ STARTUP_REMOVALS = (
 )
 
 
-def cases():
+def cases() -> Iterator[Case]:
     for command, mode, role, slot in itertools.product(
         COMMANDS, OUTPUT_MODES, ROLES, SUPERVISOR_WRITES
     ):
@@ -68,7 +99,7 @@ def cases():
         }
 
 
-def run(project, argv):
+def run(project: Path, argv: list[str]) -> Execution:
     completed = subprocess.run(
         [sys.executable, "-m", "_lcm_regime_finder", *argv],
         cwd=project,
@@ -84,7 +115,7 @@ def run(project, argv):
     }
 
 
-def one_case(project, case, oracle):
+def one_case(project: Path, case: Case, oracle: ModuleType) -> Observation:
     with tempfile.TemporaryDirectory(prefix="rf10-owned-writes-") as name:
         root = Path(name)
         source = root / "source.json"
@@ -122,7 +153,9 @@ def one_case(project, case, oracle):
         protected = [source, report]
         supplied_source, supplied_report = source, report
         if case["kind"] != "positive":
-            alias = result.parent / "verification-run" / case["slot"]
+            slot = case["slot"]
+            assert slot is not None
+            alias = result.parent / "verification-run" / slot
             alias.parent.mkdir(parents=True, exist_ok=True)
             target = source if case["protected_role"] == "source" else report
             alias.symlink_to(target)

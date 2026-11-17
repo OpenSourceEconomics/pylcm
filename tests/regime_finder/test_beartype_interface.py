@@ -69,7 +69,7 @@ def test_native_model_export_keeps_beartyped_utility_and_default_aggregator() ->
     def terminal() -> float:
         return 0.0
 
-    def next_history(history):
+    def next_history(history: int) -> int:
         return history
 
     model = Model(
@@ -155,7 +155,7 @@ def test_generated_wrapper_is_reconciled_without_mutating_or_calling_target() ->
 
 def test_marker_alone_and_changed_wrapper_cannot_claim_a_finite_interface() -> None:
     @functools.wraps(typed_history)
-    def forged(*args, **kwargs):
+    def forged(*args: int, **kwargs: int) -> int:
         return kwargs["other_history"]
 
     setattr(forged, "__beartype_wrapper", True)

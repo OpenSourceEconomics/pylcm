@@ -26,7 +26,7 @@ FIXTURE = (
 )
 
 
-def _create_source(root):
+def _create_source(root: Path) -> tuple[Path, CaptureStore]:
     path = root / "input.json"
     source = json.loads(FIXTURE.read_text())
     store = CaptureStore(

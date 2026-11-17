@@ -10,11 +10,27 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 import stat
+from typing import TypedDict
+
+from _lcm.typing import JSONValue
+
+type Identity = dict[str, str | int | None]
 
 
-def identity(path):
+class FixtureDependencies(TypedDict):
+    """The read set of the known fixture and where its manifest resolves."""
+
+    paths: list[Path]
+    actual_manifest: Path
+    lexical_manifest: Path
+    locator: str
+    basis: str
+
+
+def identity(path: str | Path) -> Identity:
     path = Path(path)
     entry, target = path.lstat(), path.stat()
     if not stat.S_ISREG(target.st_mode):
@@ -30,7 +46,7 @@ def identity(path):
     }
 
 
-def fixture_dependencies(supplied_snapshot):
+def fixture_dependencies(supplied_snapshot: str | Path) -> FixtureDependencies:
     """The independently specified read set for this one known fixture shape."""
     supplied = Path(supplied_snapshot).absolute()
     actual = supplied.resolve(strict=True)
@@ -59,22 +75,22 @@ def fixture_dependencies(supplied_snapshot):
     }
 
 
-def snapshot(paths):
+def snapshot(paths: Iterable[str | Path]) -> dict[str, Identity]:
     return {str(Path(path)): identity(path) for path in dict.fromkeys(paths)}
 
 
 def assess(
     *,
-    protected,
-    exit_code,
-    result_path=None,
-    stdout=None,
-    positive=False,
-    preexisting_temporary=None,
-    result_is_original=False,
-):
+    protected: Mapping[str, Identity],
+    exit_code: int,
+    result_path: str | Path | None = None,
+    stdout: str | None = None,
+    positive: bool = False,
+    preexisting_temporary: Identity | None = None,
+    result_is_original: bool = False,
+) -> list[dict[str, JSONValue]]:
     """Safe rejection or coherent success is allowed for deliberately unsafe layouts."""
-    failures = []
+    failures: list[dict[str, JSONValue]] = []
     for path, expected in protected.items():
         try:
             observed = identity(path)
