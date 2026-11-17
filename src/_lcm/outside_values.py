@@ -446,6 +446,11 @@ def _unaligned_destination(
             f"{target!r} observes shock groups {sorted(node.observation_sources)} "
             "through other queries"
         )
+    uncarried = set(node.read.projection) - set(
+        node.context.state_action_space.state_names
+    )
+    if uncarried:
+        return f"{target!r} carries no states {sorted(uncarried)}"
     return None
 
 

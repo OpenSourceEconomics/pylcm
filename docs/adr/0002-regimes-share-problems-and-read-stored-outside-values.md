@@ -1,7 +1,7 @@
 # 2. Regimes share problems and read stored outside values
 
-Status: accepted on 2026-11-17, not implemented. The engine step comes first, the
-language step second.
+Status: accepted on 2026-11-17. The engine step is implemented for the solve, except
+that each reader tabulates its destinations itself; the language step is not started.
 
 ## Context
 
@@ -99,9 +99,25 @@ then:
 - Cycles among same-period reads cannot be declared, and no regime exists only to break
   one.
 - A problem solved with an endogenous-grid method can be the outside value of a
-  grid-search problem.
-- An exit whose destination has a device-local sharded state becomes solvable, since the
-  destination's problem is read and not rebuilt.
+  grid-search problem once its own solve publishes its values. Until then an outside
+  read of such a problem is refused when the model is built.
+- Stored reads leave a solve on several devices as point reads leave it. A sharded state
+  whose value changes over time is an axis of each regime's own devices, and a reader's
+  table takes the destination's next-period value by the transfer a point read uses. A
+  sharded state that keeps its value is read from each device's slice, which a query
+  cannot evaluate, so an exit whose reader or destination has one is refused, with
+  stored and with point reads. It becomes solvable once the destination's own solve
+  publishes its values, instead of the reader's program evaluating the destination's
+  problem to tabulate them.
+- Each reader tabulates the destinations it reads aligned, once per period, in its own
+  program. Two readers of one destination tabulate it twice, and a reader pays for the
+  destination's whole grid however few of its cells the reader lands on.
+- A table lives whole on every device of its reader, and the planner charges its full
+  size to the reader's cell.
+- Periods share a compiled program only where their reads align alike. A destination
+  that is not solved in a period leaves the read unaligned there. In the formation test
+  model with dissolution, periods 0, 1 and 2 share one program under point reads; under
+  stored reads period 0 compiles its own and periods 1 and 2 share one.
 - The kernel that evaluates one problem's action values at another regime's cells stays.
   A decision taken after observing the destination's shocks needs those values at each
   of the mover's cells and shock nodes, and no stored array provides them at a tolerable
