@@ -28,7 +28,7 @@ from lcm import (
     Transition,
     categorical,
 )
-from lcm.graphs import analyze_regime_structure, find_regimes
+from lcm.graphs import analyze_regime_structure, find_regimes, layout_curve
 from lcm.processes import (
     RouwenhorstAR1Process,
     StateConditioned,
@@ -111,6 +111,19 @@ def test_find_regimes_checks_a_native_model(period_model: Model) -> None:
     layers = report["layers"]
     assert isinstance(layers, dict)
     assert layers["layout_check"] == "PASS"
+
+
+def test_layout_curve_runs_the_layout_search_alone(*, period_model: Model) -> None:
+    """The public entry point returns the layout search's own record."""
+    from _lcm_regime_finder.layout_search import analyze_layouts  # noqa: PLC0415
+
+    curve = layout_curve(period_model, facts_backend="metadata")
+    expected = analyze_layouts(period_model, facts_backend="metadata")
+    assert isinstance(curve, dict)
+    assert {"curve", "lower_bound", "finest_count"} <= curve.keys()
+    curve.pop("phase_timings")
+    expected.pop("phase_timings")
+    assert curve == expected
 
 
 def test_find_regimes_writes_html(*, period_model: Model, tmp_path: Path) -> None:
