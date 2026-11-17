@@ -65,6 +65,10 @@ type SourceStates = Mapping[str, FloatND | IntND]
 type Frames = Mapping[str, CurrentIIDDrawFrame]
 type QueryArguments = Mapping[str, PytreeValue]
 type Dependencies = Mapping[str, PolicyAnswer]
+# The node of each shock group a frame enumerates, per row of the frame.
+type Codes = Mapping[ShockGroupName, IntND]
+# Each ancestor's codes at the row its descendants are evaluated for, by query key.
+type FrameCodes = Mapping[str, Codes]
 
 
 def support_size(*, node: QueryNode, period: int) -> int:
@@ -558,6 +562,18 @@ def representative_columns(
     # axes their own factor layout if such a query's rows ever dominate.
     if plan is None or not pinned or node.observation_sources:
         return None
+    return _factor_layout(plan=plan, pinned=pinned)
+
+
+def _factor_layout(
+    *, plan: CurrentIIDPlan, pinned: tuple[int, ...]
+) -> tuple[_FactorColumn, ...]:
+    """Each plan group's rows of the factor stack, and support rows of `pinned` ones.
+
+    A group contributes its node weights and one factor per categorical shock, in
+    plan order. The support rows of a group in `pinned` hold every other group at
+    its first node, so they list the group's nodes once each.
+    """
     sizes = tuple(nodes.weights.size for _, _, nodes in plan.bindings)
     columns = []
     first = 0
@@ -1204,6 +1220,27 @@ class InformationQueryCell:
     root_frame: CurrentIIDDrawFrame | None = None
     row_batch: int = _ROW_BATCH
     """Support rows evaluated together per step."""
+    kept: tuple[int, ...] = ()
+    """Plan columns whose groups the answer keeps as axes instead of integrating.
+
+    The answer then holds one value and one support flag per node of each kept
+    group, in plan order: the value integrates the other groups at that node, with
+    the kept groups reduced to their mass. Only a query without ancestors, draws or
+    observation axes keeps groups.
+    """
+
+    def __post_init__(self) -> None:
+        """Refuse kept groups on a query whose rows are not its plan's product."""
+        if self.kept and (
+            self.node.ancestors
+            or self.node.sample is not None
+            or self.node.observation_sources
+            or _plan(node=self.node) is None
+        ):
+            raise ValueError(
+                f"Query {self.name!r} keeps plan groups as axes, which needs a plan "
+                "and no ancestors, draws or observation axes."
+            )
 
     def _size(self, *, name: str, node: QueryNode) -> int:
         return (
@@ -1425,6 +1462,7 @@ class InformationQueryCell:
         return self._ancestors(
             position=0,
             frames={},
+            codes={},
             indices=(),
             live=live,
             source=source,
@@ -1470,7 +1508,15 @@ class InformationQueryCell:
         source: SourceStates,
         frames: Frames,
         guard: BoolND,
-    ) -> tuple[CurrentIIDDrawFrame, FloatND]:
+    ) -> tuple[CurrentIIDDrawFrame, FloatND, Codes]:
+        """Realise a query's frame, its factors and the node each row realises.
+
+        A row names, for each own group, the node of the group's plan its row index
+        or draw selects, and for each observed group the producer's node it meets.
+        A group the frame copies from its caller is named by the frame's own row
+        index, which need not be the node of the caller's values it holds. A
+        realised root holds realised shocks, not nodes, and names none.
+        """
         from _lcm.policy_queries import (  # noqa: PLC0415
             _PHYSICAL_CONTEXTS,
             _PROJECTION,
@@ -1513,7 +1559,7 @@ class InformationQueryCell:
                     if name in observed
                 },
             )
-            return _batch_metadata(frame=frame, size=1), jnp.ones((1, 1))
+            return _batch_metadata(frame=frame, size=1), jnp.ones((1, 1)), {}
         available = {
             **(
                 self.projection_operands
@@ -1533,20 +1579,22 @@ class InformationQueryCell:
         previous = None if parent is None else frames[parent]
         draws = None
         if node.sample is not None:
-            frame, factors, draws = self._drawn(
+            frame, factors, codes, draws = self._drawn(
                 node=node,
                 plan=plan,
                 fixed=fixed,
                 arguments=cast("QAndFKwargs", {**fixed, **mapped}),
             )
         elif plan is None:
-            frame, factors = _empty_frame(), jnp.ones((1, 1))
+            frame, factors, codes = _empty_frame(), jnp.ones((1, 1)), {}
         else:
+            indices = cast("IntND", fixed[CURRENT_IID_ROWS_ARGUMENT])
+            codes = _plan_codes(plan=plan, indices=indices)
             frame, factors = plan.realise_information_nodes(
                 arguments=cast("QAndFKwargs", {**fixed, **mapped}),
                 group_params=cast("AdmittedGroupParams", fixed[CURRENT_IID_ARGUMENT]),
                 node_operands=cast("NodeOperands", fixed[CURRENT_IID_NODES_ARGUMENT]),
-                indices=cast("IntND", fixed[CURRENT_IID_ROWS_ARGUMENT]),
+                indices=indices,
                 observation=previous,
                 observed=frozenset(
                     node.read.price_information
@@ -1566,11 +1614,13 @@ class InformationQueryCell:
                 if plan is None
                 else _batch_metadata(frame=frame, size=factors.shape[1]),
                 factors,
+                codes,
             )
         return self._observations(
             node=node,
             primary=_batch_metadata(frame=frame, size=factors.shape[1]),
             factors=factors,
+            codes=codes,
             source=source,
             frames=frames,
             draws=draws,
@@ -1583,13 +1633,14 @@ class InformationQueryCell:
         plan: CurrentIIDPlan | None,
         fixed: QueryArguments,
         arguments: QAndFKwargs,
-    ) -> tuple[CurrentIIDDrawFrame, FloatND, tuple[FloatND, ...]]:
+    ) -> tuple[CurrentIIDDrawFrame, FloatND, Codes, tuple[FloatND, ...]]:
         """Cross a drawn query's kept rows with one draw of every other own group.
 
         Row `kept * n + sample` holds kept row `kept` and sample `sample`; every
         kept row sees the same draws. Each drawn group adds the factor that
         scales its node's mass to the group total, and one more factor holds
-        the sample weight. Also returns one uniform per observation axis and row.
+        the sample weight. Also returns the node of each own group every row
+        realises, and one uniform per observation axis and row.
 
         Under a draw condition (`QueryNode.draw_condition`) that group is drawn
         among the nodes where an exit is available, and a last sample per kept
@@ -1609,7 +1660,7 @@ class InformationQueryCell:
             .set(jnp.full(rule.n, 1 / rule.n, uniforms.dtype))
         ]
         if plan is None:
-            frame, factors = _empty_frame(), jnp.stack(scales)
+            frame, factors, codes = _empty_frame(), jnp.stack(scales), {}
         else:
             params = cast("AdmittedGroupParams", fixed[CURRENT_IID_ARGUMENT])
             operands = cast("NodeOperands", fixed[CURRENT_IID_NODES_ARGUMENT])
@@ -1654,9 +1705,11 @@ class InformationQueryCell:
             factors = jnp.concatenate(
                 [factors, jnp.tile(jnp.stack(scales).astype(factors.dtype), (1, size))]
             )
+            codes = _plan_codes(plan=plan, indices=indices)
         return (
             frame,
             factors,
+            codes,
             tuple(
                 jnp.tile(uniforms[:, len(drawn) + axis], size)
                 for axis in range(len(node.observation_sources))
@@ -1669,21 +1722,23 @@ class InformationQueryCell:
         node: QueryNode,
         primary: CurrentIIDDrawFrame,
         factors: FloatND,
+        codes: Codes,
         source: SourceStates,
         frames: Frames,
         draws: tuple[FloatND, ...] | None = None,
-    ) -> tuple[CurrentIIDDrawFrame, FloatND]:
+    ) -> tuple[CurrentIIDDrawFrame, FloatND, Codes]:
         """Cross the primary rows with every observation row, or with `draws`.
 
         `draws` holds one uniform per primary row for each observation axis;
-        each row then meets the one observation row its uniforms select.
+        each row then meets the one observation row its uniforms select. Each
+        row names its primary row's nodes and the observed node it meets.
         """
         key = next(
             name for name, candidate in self.definitions.items() if candidate is node
         )
         extents = (factors.shape[1], *node.observation_counts)
 
-        def point(flat: IntND) -> tuple[CurrentIIDDrawFrame, FloatND]:
+        def point(flat: IntND) -> tuple[CurrentIIDDrawFrame, FloatND, Codes]:
             rows = (
                 jnp.unravel_index(flat, extents)
                 if draws is None
@@ -1691,12 +1746,13 @@ class InformationQueryCell:
             )
             frame = _row(frame=primary, row=rows[0])
             terms = [factors[:, rows[0]]]
+            named = {group: code[rows[0]] for group, code in codes.items()}
             for axis, (group, producer) in enumerate(
                 node.observation_sources.items(), start=1
             ):
                 target = self.definitions[producer]
                 fixed = self.information_arguments[producer]
-                chosen, weights = self._observer_row(
+                chosen, weights, named[group] = self._observer_row(
                     observer=node,
                     target=target,
                     group=group,
@@ -1736,18 +1792,18 @@ class InformationQueryCell:
                     },
                 )
                 terms.append(weights)
-            return frame, jnp.concatenate(terms)
+            return frame, jnp.concatenate(terms), named
 
         from _lcm.policy_queries import map_lanes  # noqa: PLC0415
 
-        frame, weights = map_lanes(
+        frame, weights, named = map_lanes(
             function=point,
             operands=jnp.arange(
                 math.prod(extents) if draws is None else extents[0], dtype=jnp.int32
             ),
             batch_size=self.row_batch,
         )
-        return frame, weights.T
+        return frame, weights.T, named
 
     def _observer_row(
         self,
@@ -1760,11 +1816,13 @@ class InformationQueryCell:
         observed: frozenset[str],
         source: SourceStates,
         frames: Frames,
-    ) -> tuple[CurrentIIDDrawFrame, FloatND]:
-        """An unavailable observation yields the neutral representative.
+    ) -> tuple[CurrentIIDDrawFrame, FloatND, IntND]:
+        """The observed group's node at `row`: its frame, weights and node index.
 
-        Its settlement and law run only on a discarded batch lane, reading the
-        producer's stand-in state rather than an unusable projection.
+        An unavailable observation yields the neutral representative, which
+        names node zero. Its settlement and law run only on a discarded batch
+        lane, reading the producer's stand-in state rather than an unusable
+        projection.
 
         A floating `row` is a uniform: the group's node is drawn with it, and
         the weights gain the factor that scales the node's mass to the group
@@ -1802,7 +1860,7 @@ class InformationQueryCell:
             available=available,
         )
 
-        def produce() -> tuple[CurrentIIDDrawFrame, FloatND]:
+        def produce() -> tuple[CurrentIIDDrawFrame, FloatND, IntND]:
             mapped = _observation_inputs(
                 node=observer,
                 group=group,
@@ -1854,15 +1912,19 @@ class InformationQueryCell:
                 frame=_batch_metadata(frame=produced, size=nodes.weights.size),
                 row=at,
             )
-            return chosen._replace(
-                valid=chosen.valid & (identity | jnp.all(mask) | ~jnp.any(mask)),
-                information_available={
-                    name: jnp.asarray(a=True) for name in chosen.physical
-                },
-            ), chosen_weights
+            return (
+                chosen._replace(
+                    valid=chosen.valid & (identity | jnp.all(mask) | ~jnp.any(mask)),
+                    information_available={
+                        name: jnp.asarray(a=True) for name in chosen.physical
+                    },
+                ),
+                chosen_weights,
+                jnp.asarray(at, jnp.int32),
+            )
 
         def prototype_fields() -> tuple[tuple[PytreeValue, ...], FloatND]:
-            frame, weights = produce()
+            frame, weights, _ = produce()
             return tuple(frame), weights
 
         prototype = jax.eval_shape(prototype_fields)
@@ -1884,7 +1946,8 @@ class InformationQueryCell:
             .set((row == 0).astype(neutral_weights.dtype))
         )
         neutral = vary_carry_like_body(
-            body=lambda _carry: produce(), carry=(neutral_frame, neutral_weights)
+            body=lambda _carry: produce(),
+            carry=(neutral_frame, neutral_weights, jnp.zeros((), jnp.int32)),
         )
         return jax.lax.cond(active, produce, lambda: neutral)
 
@@ -1893,6 +1956,7 @@ class InformationQueryCell:
         *,
         position: int,
         frames: Frames,
+        codes: FrameCodes,
         indices: tuple[IntND, ...],
         live: BoolND,
         source: SourceStates,
@@ -1901,6 +1965,7 @@ class InformationQueryCell:
         if position == len(self.node.ancestors):
             return self._own(
                 frames=frames,
+                codes=codes,
                 indices=indices,
                 live=live,
                 source=source,
@@ -1915,13 +1980,14 @@ class InformationQueryCell:
         )
 
         def admitted() -> PolicyAnswer:
-            frame, factors = self._realise(
+            frame, factors, named = self._realise(
                 node=node, fixed=fixed, source=source, frames=frames, guard=guard
             )
             if not _has_local_information(node=node, period=node.read.period):
                 return self._ancestors(
                     position=position + 1,
                     frames={**frames, name: frame},
+                    codes={**codes, name: named},
                     indices=indices,
                     live=live,
                     source=source,
@@ -1937,6 +2003,10 @@ class InformationQueryCell:
                 return self._ancestors(
                     position=position + 1,
                     frames={**frames, name: hold(_row(frame=frame, row=row))},
+                    codes={
+                        **codes,
+                        name: {group: code[row] for group, code in named.items()},
+                    },
                     indices=(*indices, at),
                     live=live,
                     source=source,
@@ -1985,14 +2055,15 @@ class InformationQueryCell:
         from _lcm.policy_queries import _query_landing_checks  # noqa: PLC0415
 
         members = self.node.value_shape
+        kept = self._kept_shape()
         return (
-            jnp.full((*dimensions, *members), -jnp.inf),
+            jnp.full((*dimensions, *kept, *members), -jnp.inf),
             jnp.full(
                 (*dimensions, self._size(name=self.name, node=self.node)),
                 -1,
                 jnp.int32,
             ),
-            jnp.zeros(dimensions, jnp.bool_),
+            jnp.zeros((*dimensions, *kept), jnp.bool_),
             jnp.ones(dimensions, jnp.bool_),
             jnp.zeros(
                 (*dimensions, len(_query_landing_checks(node=self.node))), jnp.int32
@@ -2071,11 +2142,17 @@ class InformationQueryCell:
         self,
         *,
         frames: Frames,
+        codes: FrameCodes,  # noqa: ARG002 - names each ancestor row's nodes
         indices: tuple[IntND, ...],
         live: BoolND,
         source: SourceStates,
         dependencies: Dependencies,
     ) -> PolicyAnswer:
+        """Price this query's own rows below the ancestor rows `frames` selects.
+
+        `codes` names, for each ancestor, the node of every group its selected
+        row realises.
+        """
         from _lcm.policy_queries import _PHYSICAL_CONTEXTS, _query_cell  # noqa: PLC0415
 
         guard = live & self._available(
@@ -2083,7 +2160,7 @@ class InformationQueryCell:
         )
 
         def admitted() -> PolicyAnswer:
-            frame, factors = self._realise(
+            frame, factors, _ = self._realise(
                 node=self.node,
                 fixed=self.fixed,
                 source=source,
@@ -2139,6 +2216,8 @@ class InformationQueryCell:
                 )
 
             answers = self._map_own(point=point, frame=frame)
+            if self.kept:
+                return self._kept_answer(answers=answers, factors=factors, frame=frame)
             pinned = self._pinned(name=self.name)
             columns = (
                 None
@@ -2175,6 +2254,70 @@ class InformationQueryCell:
             carry=self._absent(position=len(self.node.ancestors)),
         )
         return jax.lax.cond(guard, admitted, lambda: absent)
+
+    def _kept_shape(self) -> tuple[int, ...]:
+        """The node count of each kept group, in plan order."""
+        if not self.kept:
+            return ()
+        bindings = cast("CurrentIIDPlan", _plan(node=self.node)).bindings
+        return tuple(int(bindings[column][2].weights.size) for column in self.kept)
+
+    def _kept_answer(
+        self, *, answers: PolicyAnswer, factors: FloatND, frame: CurrentIIDDrawFrame
+    ) -> PolicyAnswer:
+        """Integrate each node of the kept groups over the rows realising it.
+
+        The rows of one kept node cross every node of the other groups, in row
+        order. Their weighted terms take the other groups' factors at each row and
+        each kept group's mass once, as a pinned group's representatives do. Every
+        row's landings count once.
+        """
+        plan = cast("CurrentIIDPlan", _plan(node=self.node))
+        values, actions, support, valid, landings = answers
+        rows = _kept_rows(plan=plan, kept=self.kept)
+        weights, copies = representative_factors(
+            factors=factors,
+            columns=_factor_layout(plan=plan, pinned=self.kept),
+            representatives=jnp.asarray(rows.ravel(), jnp.int32),
+        )
+        at = jnp.asarray(rows, jnp.int32)
+        terms = factored_weighted_term(
+            factors=weights.reshape(
+                (weights.shape[0], *rows.shape, *((1,) * (values.ndim - 1)))
+            ),
+            values=values[at],
+        )
+        shape = self._kept_shape()
+        present = jnp.all(~is_represented_zero(factors), axis=0).astype(jnp.int32)
+        return (
+            jnp.sum(terms, axis=1).reshape((*shape, *values.shape[1:])),
+            actions,
+            jnp.all((copies.reshape(rows.shape) == 0) | support[at], axis=1).reshape(
+                shape
+            ),
+            jnp.all(frame.valid) & jnp.all(valid),
+            sum_counts(counts=_scaled_counts(counts=landings, copies=present), axis=0),
+        )
+
+
+def _kept_rows(*, plan: CurrentIIDPlan, kept: tuple[int, ...]) -> np.ndarray:
+    """The plan rows realising each node of the kept groups, one line per node.
+
+    Lines follow the kept groups' nodes in plan order, the last varying fastest;
+    each line lists its rows in row order. The rows are the plan's full product, so
+    every node is realised by equally many rows.
+    """
+    indices = np.asarray(plan.indices)
+    sizes = tuple(int(plan.bindings[column][2].weights.size) for column in kept)
+    codes = np.ravel_multi_index(tuple(indices[:, list(kept)].T), sizes)
+    return np.argsort(codes, kind="stable").reshape(math.prod(sizes), -1)
+
+
+def _plan_codes(*, plan: CurrentIIDPlan, indices: IntND) -> Codes:
+    """Each plan group's node at every row of `indices`, one column per group."""
+    return {
+        group: indices[:, column] for column, (group, _, _) in enumerate(plan.bindings)
+    }
 
 
 def _scaled_counts(*, counts: IntND, copies: IntND) -> IntND:

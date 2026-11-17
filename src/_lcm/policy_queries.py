@@ -934,21 +934,12 @@ def build_policy_query_kernel(
             row_batch=_row_batch(chunk_size=chunk_size),
         )
         reads.extend(
-            replace(
-                read,
-                source=replace(
-                    read.source,
-                    source_regime=root_context.regime_name,
-                    core_key="_chunks",
-                    argument=_QUERY_ARGUMENTS,
-                    path=(
-                        name,
-                        read.source.argument or read.source.channel.value,
-                        *read.source.path,
-                    ),
-                ),
+            query_value_reads(
+                key=name,
+                reads=value_reads,
+                regime=root_context.regime_name,
+                core_key="_chunks",
             )
-            for read in value_reads
         )
     bank_arguments = _BankArguments(
         regime=root_context.regime_name, shape=bank_shape, dtype=dtype
@@ -1022,6 +1013,33 @@ def build_policy_query_kernel(
         chunk_size=chunk_size,
         root_context=root_context,
         period=period,
+    )
+
+
+def query_value_reads(
+    *, key: str, reads: tuple[ValueRead, ...], regime: RegimeName, core_key: str
+) -> tuple[ValueRead, ...]:
+    """Address a query's continuation reads inside the program that evaluates it.
+
+    The program takes every query's arguments under `query_arguments`, keyed by
+    query, so each read moves below its query's key.
+    """
+    return tuple(
+        replace(
+            read,
+            source=replace(
+                read.source,
+                source_regime=regime,
+                core_key=core_key,
+                argument=_QUERY_ARGUMENTS,
+                path=(
+                    key,
+                    read.source.argument or read.source.channel.value,
+                    *read.source.path,
+                ),
+            ),
+        )
+        for read in reads
     )
 
 

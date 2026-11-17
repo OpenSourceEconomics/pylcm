@@ -1,4 +1,4 @@
-"""Prove, when the model is built, that an outside read lands on stored nodes.
+"""Prove that an outside read lands on stored nodes, and tabulate those nodes.
 
 An exit's outside value is the value of the destination's problem at the member's
 projected state. A read is aligned when the build proves all of:
@@ -13,35 +13,63 @@ projected state. A read is aligned when the build proves all of:
 The proof is conservative and never evaluates anything inside a compiled program.
 What it cannot prove leaves the read unaligned, and the read is then evaluated at its
 exact point.
+
+An aligned read's destination is tabulated by a program of its own: the problem's
+value at every grid cell of the destination and every node of the groups the read
+keeps, with the other groups integrated.
 """
 
 import inspect
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from types import MappingProxyType
+from typing import cast
 
 import jax.numpy as jnp
 import numpy as np
 
+from _lcm.current_iid import CurrentIIDPlan
 from _lcm.engine import Regime
+from _lcm.execution.core_program import (
+    CoreBuildContext,
+    CoreExecutionDisposition,
+    CoreExecutionRequirements,
+    CoreProgram,
+    InternalOutputSpec,
+)
+from _lcm.execution.output_layout import StateAxesLeading
 from _lcm.grids import Grid
 from _lcm.policy_queries import (
     _PHYSICAL_CONTEXTS,
+    _PROJECTION,
+    _QUERY_ARGUMENTS,
     OutsideValueRead,
+    QueryKind,
     QueryNode,
     _as_target_state,
+    _node_inputs,
+    _query_cell,
+    _query_landing_checks,
+    _query_landing_totals,
+    _QueryArguments,
+    _row_batch,
+    map_lanes,
+    query_value_reads,
 )
 from _lcm.query_information import (
+    InformationQueryCell,
     _bindings,
     _callable_reads,
     _parent_sources,
     _pinned_columns,
+    has_information,
 )
 from _lcm.shock_projection import (
     _MAX_FINITE_PROJECTION_CELLS,
     finite_outputs,
     returned_input,
 )
-from _lcm.typing import PytreeValue
+from _lcm.typing import PytreeValue, ShapeDtypePytree
 from lcm.exceptions import RegimeInitializationError
 from lcm.grids import (
     DiscreteGrid,
@@ -52,7 +80,7 @@ from lcm.grids import (
     PiecewiseLogSpacedGrid,
 )
 from lcm.shocks import Discrete, Law, NodeSet, ShockGroupName, ShockName, _fingerprint
-from lcm.typing import RegimeName, StateName
+from lcm.typing import BoolND, FloatND, IntND, RegimeName, StateName
 
 # Grids whose points are fixed when the model is built. An irregular grid also needs
 # its points declared rather than supplied at run time.
@@ -136,6 +164,192 @@ def align_outside_read(
         groups=groups,
         origins=tuple(origin for _, origin in kept),
     )
+
+
+def outside_value_program(
+    *,
+    read: OutsideValueRead,
+    definitions: Mapping[str, QueryNode],
+    key: str,
+    reader: RegimeName,
+    width: int,
+) -> CoreProgram:
+    """Declare the program that tabulates an aligned read's destination problem.
+
+    Args:
+        read: The aligned read whose destination's values the program stores.
+        definitions: Mapping of query keys to the destination's bound Raw graph,
+            whose root `key` reads every destination state as itself.
+        key: The query key of that root.
+        reader: The regime whose period kernel runs the program.
+        width: The grid cells evaluated together per step.
+
+    Returns:
+        A planned program returning the values, the support and the reached-landing
+        totals of `OutsideValueTable`. The values and the support are published to
+        the reader's other programs under the labels "value" and "support".
+
+    """
+    node = definitions[key]
+    if node.ancestors or node.read.kind is not QueryKind.RAW:
+        raise ValueError(
+            f"Query {key!r} is not the root Raw read of {node.read.target!r}."
+        )
+    plan = node.context.current_iid_plans.get(node.read.period)
+    groups = () if plan is None else tuple(group for group, _, _ in plan.bindings)
+    missing = sorted(set(read.groups) - set(groups))
+    if missing:
+        raise ValueError(
+            f"{node.read.target!r} has no shock groups {missing} to keep in period "
+            f"{node.read.period}."
+        )
+    kept = tuple(groups.index(group) for group in read.groups)
+    base, value_reads = _node_inputs(node=node, period=node.read.period)
+    name = f"_outside:{read.label}"
+    table = OutsideValueTable(key=key, definitions=definitions, kept=kept, width=width)
+    values, support = table.shapes()
+    dtype = jnp.asarray(0.0).dtype
+    return CoreProgram(
+        name=name,
+        function=table,
+        argument_builder=_TableArguments(
+            key=key, builder=_QueryArguments(node=node, base=base)
+        ),
+        requirements=CoreExecutionRequirements(
+            value_reads=query_value_reads(
+                key=key, reads=value_reads, regime=reader, core_key=name
+            )
+        ),
+        output_roles=(
+            StateAxesLeading(state_names=(), shape=values, dtype=dtype),
+            StateAxesLeading(state_names=(), shape=support, dtype=jnp.bool_),
+            StateAxesLeading(
+                state_names=(),
+                shape=(len(_query_landing_checks(node=node)),),
+                dtype=jnp.int32,
+            ),
+        ),
+        internal_outputs=(
+            InternalOutputSpec(label="value", path=(0,)),
+            InternalOutputSpec(label="support", path=(1,)),
+        ),
+        disposition=CoreExecutionDisposition.PLANNED,
+    )
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class OutsideValueTable:
+    """Tabulate a destination's problem value at every grid cell and kept node.
+
+    At each cell of the destination's grid the destination's action problem is
+    evaluated as an outside read evaluates it at a point: each member's value at
+    one common action, integrating every shock group except the kept ones, whose
+    nodes become axes. A cell whose answer fails its integrity check is NaN, so a
+    failure surfaces only where a reader takes that cell.
+    """
+
+    key: str
+    """The query key of the destination's root Raw read."""
+    definitions: Mapping[str, QueryNode] = field(repr=False)
+    """The destination's bound Raw graph; omitted from the repr `jax.jit` takes."""
+    kept: tuple[int, ...]
+    """Plan columns of the groups kept as axes, in plan order."""
+    width: int
+    """Grid cells evaluated together per step."""
+
+    def shapes(self) -> tuple[tuple[int, ...], tuple[int, ...]]:
+        """The shapes of the values and of the support.
+
+        Both lead with the destination's state axes, in grid order, followed by one
+        axis per kept group; the values end with the members' axis.
+        """
+        node = self.definitions[self.key]
+        plan = node.context.current_iid_plans.get(node.read.period)
+        axes = (
+            *(
+                values.size
+                for values in node.context.state_action_space.states.values()
+            ),
+            *(
+                int(cast("CurrentIIDPlan", plan).bindings[column][2].weights.size)
+                for column in self.kept
+            ),
+        )
+        return (*axes, *node.value_shape), axes
+
+    def __call__(
+        self,
+        *,
+        states: Mapping[StateName, FloatND | IntND],
+        query_arguments: Mapping[str, Mapping[str, PytreeValue]],
+    ) -> tuple[FloatND, BoolND, IntND]:
+        """Return the values, the support and the reached-landing totals.
+
+        Args:
+            states: Mapping of the destination's state names to their grid points.
+            query_arguments: Mapping of the root's key to its canonical arguments.
+
+        Returns:
+            The values and the support, shaped as `shapes` says, and the landing
+            totals over every cell, one per declared landing check.
+
+        """
+        node = self.definitions[self.key]
+        arguments = query_arguments[self.key]
+        fixed = {
+            name: value for name, value in arguments.items() if name != _PROJECTION
+        }
+        projection = cast("Mapping[str, PytreeValue]", arguments[_PROJECTION])
+        live = jnp.asarray(a=True)
+        information = has_information(
+            node=node, definitions=self.definitions, period=node.read.period
+        )
+
+        def answer(
+            point: Mapping[StateName, FloatND | IntND],
+        ) -> tuple[FloatND, BoolND, IntND]:
+            result = (
+                InformationQueryCell(
+                    name=self.key,
+                    node=node,
+                    definitions=self.definitions,
+                    period=node.read.period,
+                    fixed=fixed,
+                    projection_operands=projection,
+                    information_arguments=MappingProxyType({}),
+                    row_batch=_row_batch(chunk_size=self.width),
+                    kept=self.kept,
+                )(live=live, source=point, dependencies={})
+                if information
+                else _query_cell(
+                    live,
+                    point,
+                    {},
+                    node=node,
+                    period=node.read.period,
+                    fixed=fixed,
+                    projection_operands=projection,
+                )
+            )
+            return jnp.where(result[3], result[0], jnp.nan), result[2], result[4]
+
+        value_shape, support_shape = self.shapes()
+        if not states:
+            values, support, landings = answer({})
+            return values, support, _query_landing_totals(counts=landings[None])
+        mesh = jnp.meshgrid(*states.values(), indexing="ij")
+        points = {
+            state: coordinate.reshape(-1)
+            for state, coordinate in zip(states, mesh, strict=True)
+        }
+        values, support, landings = map_lanes(
+            function=answer, operands=points, batch_size=self.width
+        )
+        return (
+            values.reshape(value_shape),
+            support.reshape(support_shape),
+            _query_landing_totals(counts=landings),
+        )
 
 
 def _unaligned_destination(
@@ -525,6 +739,26 @@ def _has_static_points(grid: Grid) -> bool:
     if type(grid) is IrregSpacedGrid:
         return not grid.pass_points_at_runtime
     return type(grid) in _STATIC_GRIDS
+
+
+@dataclass(frozen=True, kw_only=True)
+class _TableArguments:
+    """The destination's grid points and its root read's canonical arguments."""
+
+    key: str
+    builder: _QueryArguments
+
+    def __call__(
+        self, context: CoreBuildContext
+    ) -> Mapping[str, PytreeValue | ShapeDtypePytree]:
+        return MappingProxyType(
+            {
+                "states": self.builder.node.context.state_action_space.states,
+                _QUERY_ARGUMENTS: cast(
+                    "PytreeValue", MappingProxyType({self.key: self.builder(context)})
+                ),
+            }
+        )
 
 
 def _age_specialized_states(*, regime: Regime, period: int) -> frozenset[StateName]:

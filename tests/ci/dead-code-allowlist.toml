@@ -55,3 +55,8 @@ reason = "Protocol and TypedDict named only in quoted cast(...) type expressions
 path = "tests/test_grids.py"
 name = "_Bad"
 reason = "Defining the class under pytest.raises is the test; @categorical must reject it at decoration time."
+
+[[allow]]
+path = "src/_lcm/outside_values.py"
+name = "outside_value_program"
+reason = "Producer of stored outside values, built and tested before the policy-query kernel runs it; tests/solution/test_stored_outside_values.py is its only caller until the kernel declares it. Remove this entry when the kernel calls it."
