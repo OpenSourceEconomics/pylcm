@@ -43,6 +43,7 @@ from _lcm.solution.contract import ContinuationPayload
 from _lcm.time import TimeAxis
 from _lcm.typing import FlatParams, PytreeValue, QAndFKwargs
 from lcm import (
+    CollectiveUtility,
     DiscreteGrid,
     ExecutionConfig,
     Exit,
@@ -53,10 +54,12 @@ from lcm import (
     Periods,
     Regime,
     Unilateral,
+    ValueDependentConstraint,
     categorical,
 )
-from lcm.exceptions import ExecutionPlanningError
+from lcm.exceptions import ExecutionPlanningError, OffGridStateError
 from lcm.shocks import (
+    Discrete,
     GaussHermite,
     Normal,
     Product,
@@ -369,6 +372,7 @@ def _terminal_pair(
     projection: Callable[..., FloatND] = _wealth,
     observes: tuple[str, ...] = (),
     destination_constraints: Mapping[str, Callable[..., BoolND]] | None = None,
+    shocks: Mapping[str, ShockGroup] | None = None,
 ) -> Model:
     """A source leaves unilaterally for a destination; one period, both solved."""
     return Model(
@@ -387,7 +391,8 @@ def _terminal_pair(
                 shocks=destination_shocks,
             ),
         },
-        shocks={
+        shocks=shocks
+        or {
             "seen": _gauss(name="seen", n=3, sigma=_SEEN_SIGMA),
             "unseen": _gauss(name="unseen", n=2, sigma=_UNSEEN_SIGMA),
         },
@@ -762,6 +767,71 @@ def _observed_pair() -> Model:
     )
 
 
+@categorical(ordered=True)
+class _Offer:
+    none: ScalarInt
+    low: ScalarInt
+    high: ScalarInt
+
+
+@categorical(ordered=True)
+class _Luck:
+    bad: ScalarInt
+    good: ScalarInt
+
+
+def _offer_source_utility(*, wealth: FloatND, offer: IntND) -> FloatND:
+    return 1.0 + wealth + 0.1 * offer
+
+
+def _offer_earnings(
+    *, wealth: FloatND, work: IntND, offer: IntND, unseen: FloatND
+) -> FloatND:
+    return wealth + work * (0.3 + 0.4 * offer) + (1 - work) * 0.5 + unseen**2
+
+
+def _luck_source_utility(*, wealth: FloatND, luck: IntND, seen: FloatND) -> FloatND:
+    return 1.0 + wealth + 0.1 * luck + 0.1 * seen
+
+
+def _luck_earnings(
+    *, wealth: FloatND, work: IntND, luck: IntND, seen: FloatND, unseen: FloatND
+) -> FloatND:
+    return wealth + work * (0.7 + 0.3 * luck + seen) + (1 - work) * 0.5 + unseen**2
+
+
+def _categorical_pair(*, mixed: bool) -> Model:
+    """The source observes a group the destination keeps as an axis: one `Discrete`
+    shock with three categories, or, `mixed`, a two-category `Discrete` shock beside
+    a normal one. The probabilities are not dyadic.
+    """
+    shocks = ("luck", "seen") if mixed else ("offer",)
+    group = (
+        ShockGroup(
+            shocks={
+                "luck": Discrete(categories=_Luck, probs=(0.3, 0.7)),
+                "seen": Normal(mu=0.0, sigma=_SEEN_SIGMA),
+            },
+            nodes=Product(seen=GaussHermite(n=3)),
+        )
+        if mixed
+        else ShockGroup(
+            shocks={"offer": Discrete(categories=_Offer, probs=(0.1, 0.2, 0.7))}
+        )
+    )
+    return _terminal_pair(
+        destination_utility=_luck_earnings if mixed else _offer_earnings,
+        source_utility=_luck_source_utility if mixed else _offer_source_utility,
+        source_shocks=("kept",),
+        destination_shocks=("kept", "unseen"),
+        observes=shocks,
+        shocks={
+            "kept": group,
+            "unseen": _gauss(name="unseen", n=2, sigma=_UNSEEN_SIGMA),
+        },
+    )
+
+
 def _solved_chain() -> Model:
     """Source -> destination -> onward, each occupied and solved in the one period,
     so the source's read of the destination and the destination's read of onward
@@ -781,6 +851,8 @@ _AGREEMENT_CASES: dict[str, tuple[Callable[[], Model], Mapping[str, float]]] = {
     "irregular knots, aligned and unaligned reads": (_marriage_model, {}),
     "chain": (_solved_chain, {}),
     "observed group kept": (_observed_pair, {}),
+    "categorical group kept": (partial(_categorical_pair, mixed=False), {}),
+    "categorical and normal group kept": (partial(_categorical_pair, mixed=True), {}),
     "continuation": (_pair_over_two_periods, {"discount_factor": 0.9}),
     "formation with dissolution": (
         lambda: _formation_model(dissolution=True, query_cell=None),
@@ -840,6 +912,22 @@ def test_point_reads_agree_with_themselves_across_chunk_widths(
     _assert_agree(got=narrow.values, expected=wide.values)
 
 
+@pytest.mark.parametrize("mixed", [False, True], ids=["categorical", "mixed"])
+def test_a_categorical_group_is_kept_as_an_axis_of_the_table(
+    *, mixed: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The destination's table keeps the group holding a `Discrete` shock as an
+    axis, and the source's read gathers from it.
+    """
+    stored = _solve_arm(
+        model=partial(_categorical_pair, mixed=mixed),
+        stored=True,
+        monkeypatch=monkeypatch,
+    )
+    assert stored.tables == {"_outside:destination:kept"}
+    assert set(stored.gathers) == {"destination"}
+
+
 def test_a_perturbed_stored_value_fails_the_comparison(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -883,6 +971,178 @@ def test_a_failed_stored_cell_fails_only_the_read_that_takes_it(
     assert (bool(failed[True].gathers), bool(stored.gathers)) == (True, True)
     assert failed[True].failure == failed[False].failure
     assert "unresolved numerical status" in failed[True].failure
+    _assert_agree(got=stored.values, expected=point.values)
+
+
+@categorical(ordered=False)
+class _Leaving:
+    source: ScalarInt
+    destination: ScalarInt
+    elsewhere: ScalarInt
+    source_terminal: ScalarInt
+    destination_terminal: ScalarInt
+    elsewhere_terminal: ScalarInt
+
+
+def _past_the_top(wealth: FloatND) -> FloatND:
+    return jnp.where(wealth > 0.75, 1.5, wealth)
+
+
+def _poor_at_the_top(*, wealth: FloatND, work: IntND) -> FloatND:
+    return 2.0 + wealth + 0.1 * work - 10.0 * (wealth > 0.75)
+
+
+def _poor_at_the_top_f(*, wealth: FloatND, work: IntND) -> FloatND:
+    return _poor_at_the_top(wealth=wealth, work=work)
+
+
+def _poor_at_the_top_m(*, wealth: FloatND, work: IntND) -> FloatND:
+    return 1.0 + 0.5 * _poor_at_the_top(wealth=wealth, work=work)
+
+
+def _admit_all(Q_f: FloatND) -> BoolND:
+    return Q_f >= -1000.0
+
+
+def _leaving_destination(
+    *, collective: bool, landing: Callable[..., FloatND]
+) -> Regime:
+    """The destination works for its next wealth by `landing`; it stays at wealth
+    0 and 0.5 and is so poor at wealth 1 that it leaves there for `elsewhere`.
+
+    A `collective` destination keeps every action by a value constraint, so it
+    counts its landings in its kernel rather than in the preflight.
+    """
+    members = ("f", "m") if collective else ("self",)
+    return Regime(
+        states={"wealth": _wealth_grid()},
+        actions={"work": _work()},
+        functions={
+            "utility": CollectiveUtility(
+                utilities={"f": _poor_at_the_top_f, "m": _poor_at_the_top_m}
+            )
+            if collective
+            else _poor_at_the_top
+        },
+        constraints={"admit_all": ValueDependentConstraint(predicate=_admit_all)}
+        if collective
+        else {},
+        state_transitions={"wealth": landing},
+        exit=Exit(
+            targets={
+                member: ExitTarget(regime="elsewhere", projection={"wealth": _wealth})
+                for member in members
+            },
+            rule=Unilateral(),
+        ),
+    )
+
+
+def _leaving_model(
+    *,
+    collective: bool,
+    projection: Callable[..., FloatND] = _half,
+    landing: Callable[..., FloatND] = _past_the_top,
+) -> Model:
+    """The source reads the destination at `projection` of its wealth, the
+    destination's next wealth must stay on a raise-rule grid, and the destination
+    leaves for `elsewhere` at wealth 1, where `landing` takes it past the grid.
+    """
+    source = Regime(
+        states={"wealth": _wealth_grid()},
+        functions={"utility": _plain_source_utility},
+        state_transitions={"wealth": _keep_wealth},
+        exit=Exit(
+            targets={
+                "self": ExitTarget(
+                    regime="destination",
+                    role="f" if collective else None,
+                    projection={"wealth": projection},
+                )
+            },
+            rule=Unilateral(),
+        ),
+    )
+    elsewhere = replace(source, exit=None)
+    destination = _leaving_destination(collective=collective, landing=landing)
+    terminal = replace(
+        destination,
+        states={"wealth": LinSpacedGrid(start=0, stop=1, n_points=3, off_grid="raise")},
+        constraints={},
+        state_transitions={},
+        exit=None,
+    )
+    return Model(
+        regimes={
+            "source": source,
+            "destination": destination,
+            "elsewhere": elsewhere,
+            "source_terminal": replace(source, state_transitions={}, exit=None),
+            "destination_terminal": terminal,
+            "elsewhere_terminal": replace(elsewhere, state_transitions={}),
+        },
+        regime_id_class=_Leaving,
+        n_periods=2,
+        edges={
+            name: {f"{name}_terminal": Periods(values=(0,))}
+            for name in ("source", "destination", "elsewhere")
+        },
+        initial_nodes=InitialNodes(
+            by_period={0: ("source", "destination", "elsewhere")}
+        ),
+        execution_config=ExecutionConfig(device_memory_bytes=None),
+    )
+
+
+def _refusal(
+    *, model: Callable[[], Model], stored: bool, monkeypatch: pytest.MonkeyPatch
+) -> str:
+    """The message of the solve's `OffGridStateError`."""
+    with pytest.raises(OffGridStateError) as raised:
+        _solve_arm(model=model, stored=stored, monkeypatch=monkeypatch, params=_BETA)
+    return str(raised.value)
+
+
+_BETA = {"discount_factor": 0.9}
+
+
+@pytest.mark.parametrize("collective", [False, True], ids=["preflight", "kernel"])
+def test_a_landing_past_the_grid_where_the_destination_leaves_fails_both_modes(
+    *, collective: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The destination's stay problem at wealth 1 lands past its raise-rule grid,
+    and the destination leaves there; the source reads it only at wealth 0.5.
+
+    The destination's own solve refuses that landing: a plain destination in the
+    preflight, a destination with a value constraint in its kernel, which counts
+    the stay problem's landings where it leaves too. So both modes refuse alike,
+    and the table's check over the whole grid refuses nothing more.
+    """
+    model = partial(_leaving_model, collective=collective)
+    point = _refusal(model=model, stored=False, monkeypatch=monkeypatch)
+    stored = _refusal(model=model, stored=True, monkeypatch=monkeypatch)
+    assert stored == point
+    assert "regime='destination', target='destination_terminal'" in point
+    assert "state='wealth', phase='solve'" in point
+
+
+@pytest.mark.parametrize("collective", [False, True], ids=["preflight", "kernel"])
+def test_the_leaving_destination_on_the_grid_solves_both_modes_alike(
+    *, collective: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The control: with the landing kept on the grid, the same model solves, from
+    a table in the stored mode, to the point mode's values. Every member of the
+    destination takes `elsewhere`'s value at wealth 1 and more at wealth 0 and 0.5.
+    """
+    model = partial(_leaving_model, collective=collective, landing=_keep_wealth)
+    point = _solve_arm(model=model, stored=False, monkeypatch=monkeypatch, params=_BETA)
+    stored = _solve_arm(model=model, stored=True, monkeypatch=monkeypatch, params=_BETA)
+    destination = point.values["0/destination"].reshape(3, -1)
+    elsewhere = point.values["0/elsewhere"][:, None]
+    assert (destination[2] == elsewhere[2]).all()
+    assert (destination[:2] > elsewhere[:2]).all()
+    assert "_outside:destination" in stored.tables
+    assert "destination" in stored.gathers
     _assert_agree(got=stored.values, expected=point.values)
 
 
