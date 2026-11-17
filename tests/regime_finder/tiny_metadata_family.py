@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+
+from _lcm_regime_finder.records import JSONValue
 
 
-def original() -> Any:  # noqa: PAN002 - The parsed fixture JSON; tests index and edit it freely.
+def original() -> dict[str, JSONValue]:
     return json.loads(
         Path(__file__)
         .with_name("fixtures_metadata")

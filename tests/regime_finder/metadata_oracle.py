@@ -15,7 +15,9 @@ import hashlib
 import json
 from fractions import Fraction
 import math
-from typing import Any, TypedDict
+from typing import Any, TypedDict, cast
+
+from _lcm.typing import JSONValue
 
 
 class OracleUnsupported(ValueError):
@@ -32,6 +34,17 @@ def exact(value: int | float | str | Fraction) -> Fraction:
     if isinstance(value, float) and math.isfinite(value):
         return Fraction(str(value))
     raise OracleUnsupported("Expected a finite scalar number")
+
+
+# A decoded original binding: JSON, or a tuple or set rebuilt from its record.
+type Binding = (
+    JSONValue
+    | list[Binding]
+    | dict[str, Binding]
+    | tuple[Binding, ...]
+    | set[Binding]
+    | frozenset[Binding]
+)
 
 
 def unpack(value: Any) -> Any:  # noqa: PAN002 - Original Python callback values and captures have intentionally arbitrary types.
@@ -83,7 +96,7 @@ class ScalarSourceOracle:
         self.steps = 0
         self.used_primitives: set[str] = set()
         self.callable_records: Mapping[str, Any] = {}  # noqa: PAN002 - Original Python callback values and captures have intentionally arbitrary types.
-        self.binding_values = {}
+        self.binding_values: dict[str, Binding] = {}
 
     def call(self, metadata: Mapping[str, Any], values: Mapping[str, Any]) -> Any:  # noqa: PAN002 - Original Python callback values and captures have intentionally arbitrary types.
         self.steps = 0
@@ -91,7 +104,7 @@ class ScalarSourceOracle:
         self.binding_values = {}
         return self._call(metadata, (), dict(values), 0)
 
-    def _target(self, target: Any) -> Any:  # noqa: PAN002 - Original Python callback values and captures have intentionally arbitrary types.
+    def _target(self, target: Binding) -> Binding:
         """Independent finite-reference validation; no producer helper imported."""
         if not isinstance(target, dict) or target.get("kind") != "callable-reference":
             return target
@@ -99,7 +112,7 @@ class ScalarSourceOracle:
         if not isinstance(record, dict):
             raise OracleUnsupported("Missing original shared callable record")
 
-        def strip(value: Any) -> Any:  # noqa: PAN002 - Original Python callback values and captures have intentionally arbitrary types.
+        def strip(value: JSONValue) -> JSONValue:
             if isinstance(value, dict):
                 if value.get("kind") == "callable-reference":
                     return {
@@ -132,28 +145,33 @@ class ScalarSourceOracle:
             raise OracleUnsupported("Original shared callable identity changed")
         return record
 
-    def _binding(self, value: Any, active: frozenset[str] = frozenset()) -> Any:  # noqa: PAN002 - Original Python callback values and captures have intentionally arbitrary types.
+    def _binding(self, value: Binding, active: frozenset[str] = frozenset()) -> Binding:
         if isinstance(value, dict) and value.get("kind") == "callable-reference":
             record = self._target(value)
-            if record.get("kind") != "binding-record":
+            if not isinstance(record, dict) or record.get("kind") != "binding-record":
                 return value
             ref = value.get("capture_ref")
-            if ref in active or record.get("capture_status", "COMPLETE") != "COMPLETE":
+            if (
+                not isinstance(ref, str)
+                or ref in active
+                or record.get("capture_status", "COMPLETE") != "COMPLETE"
+            ):
                 raise OracleUnsupported(
                     "Cyclic, changed, or incomplete original binding"
                 )
             if ref not in self.binding_values:
                 decoded = self._binding(record["value"], active | {ref})
                 if record.get("binding_type") == "builtins.tuple":
-                    decoded = tuple(decoded)
+                    decoded = tuple(cast("Iterable[Binding]", decoded))
                 elif record.get("binding_type") in {
                     "builtins.set",
                     "builtins.frozenset",
                 }:
+                    items = cast("Iterable[Binding]", decoded)
                     decoded = (
-                        frozenset(decoded)
+                        frozenset(items)
                         if record["binding_type"] == "builtins.frozenset"
-                        else set(decoded)
+                        else set(items)
                     )
                 self.binding_values[ref] = decoded
             return self.binding_values[ref]
@@ -373,7 +391,8 @@ class ScalarSourceOracle:
             canonical = target.get("canonical")
             operation = self._PRIMITIVES.get(canonical)
             if (
-                target.get("kind") != "primitive"
+                not isinstance(canonical, str)
+                or target.get("kind") != "primitive"
                 or target.get("resolution") != "actual_object_identity"
                 or operation != target.get("operation")
             ):
