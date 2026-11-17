@@ -1530,7 +1530,13 @@ def _closed_native_constant(original: Mapping[str, Any], captures=None) -> bool:
     checks the actual bound receiver and source shape; a type spelling or an
     advertised empty signature alone is insufficient. It does not authenticate
     the capture process or prove arbitrary Python source equivalence.
+
+    An `InRole` output adapter around such a constant is closed too, when its
+    captured source only forwards its (empty) inputs to the constant and converts
+    the returned value.
     """
+    if original.get("type") == "_lcm.output_roles.InRole":
+        return _closed_in_role_constant(original, captures)
     if original.get("type") not in {
         "_lcm.regime_building.schedules._RegimeCodeConstant",
         "_lcm.regime_building.schedules._ProbabilityConstant",
@@ -1565,6 +1571,25 @@ def _closed_native_constant(original: Mapping[str, Any], captures=None) -> bool:
             and isinstance(call.func.value, ast.Name) and call.func.value.id == "jnp"
             and isinstance(call.args[0], ast.Attribute) and call.args[0].attr == "value"
             and isinstance(call.args[0].value, ast.Name) and call.args[0].value.id == "self")
+
+
+_IN_ROLE_BODY = [ast.dump(node) for node in ast.parse(
+    'value = cast("UserOutput", self.func(*args, **kwargs))\n'
+    'return _ADAPTERS[self.role](value=value, source=self.source)\n').body]
+
+
+def _closed_in_role_constant(original: Mapping[str, Any], captures=None) -> bool:
+    """Prove that an `InRole` adapter around a closed native constant reads nothing."""
+    inner = original.get("fields", {}).get("func")
+    meta = original.get("callable", {})
+    if not isinstance(inner, Mapping) or not _closed_native_constant(inner, captures):
+        return False
+    if meta.get("arguments") != [] or meta.get("raw_arguments") != ["self", "args", "kwargs"]:
+        return False
+    if meta.get("bound_self", {}).get("type") != original["type"]:
+        return False
+    fn = (captures or _CallableRecords()).function(meta.get("source", ""))
+    return fn is not None and [ast.dump(node) for node in fn.body] == _IN_ROLE_BODY
 
 
 def _feasibility_channels(consumer: Mapping[str, Any], decision_phase: str) -> tuple[str, ...]:
