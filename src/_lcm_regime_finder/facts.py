@@ -3,9 +3,9 @@
 Every backend answers the same primitive question: which current state and
 action coordinates one callback reads in one cell and phase, with the
 characteristic callbacks in `stops` cut off and, optionally, some status
-coordinates fixed to a code. Forced actions, constant states, identity carries
-and characteristic images are the backend's other facts. Current-period reads,
-update reads, the live-state closure and characteristic eligibility are derived
+coordinates fixed to a code. Forced actions, constant states and identity
+carries are the backend's other facts. Current-period reads, update reads, the
+live-state closure and the per-fibre live sets of the layout search are derived
 from these facts by the shared functions below, so every backend applies the
 same `produces`, zero-support and incidence rules.
 
@@ -93,10 +93,6 @@ class Facts(Protocol):
 
     def identity_update(self, update: object, axis: str, target_axis: str) -> bool:
         """Return whether `update` carries `axis` unchanged into `target_axis`."""
-        ...
-
-    def characteristic_image(self, spec: Record) -> list | None:
-        """Return the characteristic's value for each original value, or None."""
         ...
 
     @property
@@ -223,98 +219,6 @@ def live_states(
     return live, reasons
 
 
-def characteristic_cells(
-    facts: Facts, live: Mapping[str, set[str]], spec: Record
-) -> tuple[set[str], dict[str, set[str]]]:
-    """Return the cells where a characteristic can replace its state, and carries.
-
-    A cell is eligible if the state is live there only through the
-    characteristic, and every successor either carries it unchanged into an
-    eligible cell or reads it only through the characteristic. The second
-    return maps each eligible cell to the eligible cells it carries it into.
-    """
-    axis, domain_id = spec["state"], spec["domain"]
-    stops = identity_stops(facts.callbacks, [spec["callback"]])
-    eligible = {
-        cid for cid, cell in facts.cells.items()
-        if cell["states"].get(axis) == domain_id and axis in live[cid]
-        and axis not in current_reads(facts, cell, stops)
-    }
-    changed = True
-    while changed:
-        changed = False
-        for relation in live_relations(facts):
-            sid = relation["source"]
-            if sid not in eligible:
-                continue
-            for tid in relation.get("targets", []):
-                for target_axis in live[tid]:
-                    if "produces" in relation and target_axis not in relation["produces"]:
-                        continue
-                    update = relation.get("state_updates", {}).get(target_axis)
-                    if target_axis == axis and facts.identity_update(update, axis, target_axis):
-                        safe = tid in eligible
-                    else:
-                        safe = axis not in update_reads(facts, relation, target_axis, stops)
-                    if not safe:
-                        eligible.discard(sid)
-                        changed = True
-                        break
-                if sid not in eligible:
-                    break
-    requires: dict[str, set[str]] = {cid: set() for cid in eligible}
-    for relation in live_relations(facts):
-        sid = relation["source"]
-        if sid not in eligible or ("produces" in relation and axis not in relation["produces"]):
-            continue
-        if facts.identity_update(relation.get("state_updates", {}).get(axis), axis, axis):
-            requires[sid].update(
-                t for t in relation.get("targets", []) if t in eligible and axis in live[t]
-            )
-    return eligible, requires
-
-
-def lane_needs(
-    facts: Facts,
-    cell: Record,
-    live: Mapping[str, set[str]],
-    statuses: Mapping[str, int],
-    _memo: dict | None = None,
-    _active: frozenset = frozenset(),
-) -> set[str]:
-    """Return the states a cell needs at the points with these status codes.
-
-    That is what the cell's consumers read there, plus what its updates read for
-    every state a successor needs. A status an update carries unchanged stays
-    fixed in the successor, which then needs only what its own points with that
-    code need; otherwise the successor's whole-cell `live` states count. The fixed
-    statuses and the constant states are not needed as coordinates.
-    """
-    memo = {} if _memo is None else _memo
-    key = (cell["id"], tuple(sorted(statuses.items())))
-    if key in memo:
-        return memo[key]
-    needs = current_reads(facts, cell, statuses=statuses)
-    for relation in live_relations(facts, cell["id"]):
-        updates = relation.get("state_updates", {})
-        for target in relation.get("targets", []):
-            target_cell = facts.cells[target]
-            carried = {name: code for name, code in statuses.items()
-                       if target_cell["states"].get(name) == cell["states"][name]
-                       and name in updates and facts.identity_update(updates[name], name, name)}
-            if carried and (target, tuple(sorted(carried.items()))) not in _active:
-                target_live = lane_needs(facts, target_cell, live, carried, memo, _active | {key})
-            else:
-                target_live = live[target]
-            for target_axis in target_live:
-                if "produces" in relation and target_axis not in relation["produces"]:
-                    continue
-                needs |= update_reads(facts, relation, target_axis, statuses=statuses)
-    memo[key] = needs & set(cell["states"]) - set(facts.constants[cell["id"]]) - set(statuses)
-    return memo[key]
-
-
-
 def linked_points(
     facts: Facts,
     relation: Record,
@@ -403,18 +307,6 @@ def fibre_live(
             fixed = trial
     memo[key] = (needs(fixed) | set(fixed)) & set(cell["states"]) - set(facts.constants[cell["id"]])
     return memo[key]
-
-
-def lane_rows(lanes: list[Record], domains: Mapping[str, Record]) -> int:
-    """Return the state rows of a split: each lane's own grid, summed."""
-    total = 0
-    for lane in lanes:
-        rows = 1
-        for domain_id in lane["states"].values():
-            if domains[domain_id].get("solve_axis") is not False:
-                rows *= domains[domain_id]["size"]
-        total += rows
-    return total
 
 
 class MetadataFacts:
@@ -630,38 +522,6 @@ class MetadataFacts:
             if len(possible) == 1:
                 result[name] = possible[0]
         return result
-
-    def characteristic_image(self, spec):
-        axis, domain_id = spec["state"], spec["domain"]
-        domain = self.domains[domain_id]
-        cb = self.callbacks[spec["callback"]]
-        values = domain.get("values")
-        if domain.get("kind") != "categorical" or cb.get("status") != "proved" or cb.get("expression") is None:
-            return None
-        if not isinstance(values, list) or len(values) != domain.get("size") or len(values) > self.limits["metadata_categories"]:
-            return None
-        mapping = []
-        try:
-            for index, value in enumerate(values):
-                self.guard()
-                env = self.scalar_bindings(cb)
-                env[axis] = value
-                code_arguments = {c.get("category_codes", {}).get(axis, {}).get("argument")
-                                  for c in self.cells.values() if c["states"].get(axis) == domain_id}
-                code_arguments.discard(None)
-                if spec.get("code_argument"):
-                    code_arguments.add(spec["code_argument"])
-                for argument in code_arguments:
-                    if len(domain.get("codes", [])) == len(values):
-                        env[argument] = domain["codes"][index]
-                observed = partial(cb["expression"], env)
-                if not observed.known:
-                    raise ValueError("Characteristic has unresolved original arguments")
-                mapping.append(jsonable(observed.value))
-        except (AdmissionError, TypeError, ValueError):
-            return None
-        return mapping
-
 
 def transition_provider_index(*, relations, callbacks) -> dict[tuple[int, str], dict[str, str]]:
     """Bind next-state providers separately for every original edge and phase."""
@@ -908,25 +768,6 @@ class SourceFacts:
             and _identity_callback(self.callbacks[update], axis, self.captures)
         )
 
-    def characteristic_image(self, spec):
-        axis, domain_id = spec["state"], spec["domain"]
-        domain = self.domains.get(domain_id, {})
-        values = domain.get("values")
-        if not isinstance(values, list) or not values or len(values) > self.limits["metadata_categories"]:
-            return None
-        image = []
-        codes = domain.get("codes", [])
-        for index, value in enumerate(values):
-            static = {axis: value}
-            if len(codes) == len(values):
-                static[spec.get("code_argument", axis + "_code")] = codes[index]
-            answer = SourceProof(self.callbacks, static=static, callable_records=self.captures).callback(spec["callback"])
-            if not answer.proved or answer.value is _UNKNOWN or answer.reads:
-                return None
-            image.append(jsonable(answer.value))
-        return image
-
-
 class ImplicitFacts:
     """The dense backend's point facts, stored lazily as decision diagrams.
 
@@ -946,9 +787,6 @@ class ImplicitFacts:
 
     def identity_update(self, update, axis, target_axis):
         return self.dense.identity_update(update, axis, target_axis)
-
-    def characteristic_image(self, spec):
-        return self.dense.characteristic_image(spec)
 
     def callback_reads(self, callback, cell, phase, *, stops=frozenset(), relation=None, statuses=None):
         """Return the coordinates `callback` reads; a point query walks a diagram."""

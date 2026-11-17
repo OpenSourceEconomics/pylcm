@@ -196,7 +196,6 @@ def test_public_pipeline_retains_source_bound_store_with_a_generated_declaration
             root / "analysis",
             seconds=30,
             facts_backend="metadata",
-            search_mode="heuristic",
         )
         assert (result["status"]) not in (("INVALID", "FAILED", "INCOMPLETE"))
         normalized = load_problem(root / "analysis/normalized.json")

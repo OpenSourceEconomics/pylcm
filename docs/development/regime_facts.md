@@ -6,23 +6,22 @@ title: Dependency facts for regime analysis
 
 The regime analysis asks one question of a model: in each regime-period (a *cell*),
 which states and actions does each callback read? Everything else follows from the
-answers. Liveness, constant states, forced actions, characteristic maps, status splits
-and the checker's re-derivations all read them through one contract, `Facts`, in
+answers. Liveness, constant states, forced actions, the layout search's per-fibre live
+sets and the checkers' re-derivations all read them through one contract, `Facts`, in
 `src/_lcm_regime_finder/facts.py`. These are internal interfaces. The public interface
 is documented in [Check a regime graph](../user_guide/regime_checker.md).
 
 ## The contract
 
 A `Facts` backend exposes the normalized `cells`, `callbacks`, `domains` and
-`relations`, each cell's `constants` and `forced` actions, and three queries:
+`relations`, each cell's `constants` and `forced` actions, and two queries:
 
 - `callback_reads(callback, cell, phase, *, stops, relation, statuses)` returns the
-  coordinates a callback reads in that cell and phase. `stops` cuts characteristic
-  providers. `relation` adds a transition's context. `statuses` fixes some status codes,
-  and `None` means the whole cell.
+  coordinates a callback reads in that cell and phase. `stops` cuts the named providers.
+  `relation` adds a transition's context. `statuses` fixes some status codes, and `None`
+  means the whole cell.
 - `identity_update(update, axis, target_axis)` tells whether an update carries a state
   unchanged.
-- `characteristic_image(spec)` returns the values a characteristic map takes, or `None`.
 
 Shared functions in the same module derive everything else from these queries, for every
 backend alike:
@@ -31,8 +30,9 @@ backend alike:
   transitions. Relations with zero support are skipped everywhere.
 - `live_states` computes the least set of states each cell keeps: its own consumers'
   reads, plus the update reads for every live state of a successor.
-- `characteristic_cells` uses these to decide where a characteristic map is eligible.
-- `status_axes`, `status_points` and `lane_needs` read the facts at fixed status codes.
+- `status_axes` and `status_points` list a cell's statuses and their points.
+- `linked_points` and `fibre_live` give the layout search its links and each fibre's
+  live coordinates; see [Layout search](regime_layout_costs.md).
 
 ## Backends
 
@@ -71,43 +71,16 @@ a majority payoff is unchanged by any single flip at `(0, 0, 0)`, yet differs at
 `(1, 1, 1)`. The exact backends therefore interpret a callback with only the requested
 statuses bound, and every other state, action, shock and parameter free.
 
-## Status splitting
+## Live coordinates at a fibre
 
-A status state is a categorical state with several codes. `lane_needs` returns the
-states a cell needs at the points where some statuses are fixed: what its consumers read
-there, plus what its updates read for every state a successor needs. A status that an
-update carries unchanged stays fixed in the successor, so only the successor's points
-with that code count. For any other update, the successor's whole-cell live states
-count.
-
-A lane fixes some status states and leaves the others free. It keeps the states its
-points need, including any free status it reads. The lanes are the leaves of a tree that
-splits by one status at a time, so together they partition the cell's joint status
-rectangle. Splitting by employment and then, among the employed only, by health is one
-such tree. A memoized recursion finds the tree with the fewest rows: at each set of
-fixed statuses it keeps the lane unless splitting by one more status saves rows. The
-rectangle may hold at most `limits["status_lanes"]` points, 128 by default.
-
-The tree is built only if some lane can drop a state. A lane needs at least what each of
-its points needs, and it keeps a free status that every fibre inside it needs; a fibre
-fixes all statuses but one. If every point needs the cell's other states and every fibre
-its free status, every tree has as many rows as the unsplit cell. These points and
-fibres are nodes of the tree, so a tree that is built reuses them.
-
-A split is one interface option whose single state axis is a derived `lanes` domain.
-That domain is sized by the summed lane rows, so cost, merging and both searches use it
-unchanged. Cells split the same way share the domain and can share a block. All splits
-enter one added projection policy. The `metadata` backend has no per-status facts and
-reports `NOT_OFFERED`.
-
-The checker re-derives each split from the analysis's facts. It confirms that:
-
-- every point of the status rectangle lies in exactly one lane;
-- every lane keeps each state its points need;
-- the domain's rows equal the lanes' grids.
-
-Transitions need no separate check: a lane's needs already include what every state a
-successor needs reads in the update.
+A fibre fixes every status of a cell to one code. `fibre_live` returns the coordinates
+the fibre needs: what its consumers read with the statuses it can release left free,
+plus the update reads of every live coordinate at each linked successor fibre. A status
+that an update carries unchanged keeps its code in the successor; every other status of
+the successor takes all its codes. A relation whose target is its own cell, such as a
+solve-phase imputation, is not a link: whatever it reads is needed wherever a coordinate
+it produces is, up to a fixed point. Statuses are released greedily in name order while
+the release adds no read. The result is memoized per fibre.
 
 ## What the checker reads
 

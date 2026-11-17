@@ -20,9 +20,6 @@ FIXTURE = (
 )
 # Independent inventory of public result routes, not imported from the repair.
 PUBLIC_DECISION_FILES = (
-    "candidate-boundaries.json",
-    "recommended-boundaries.json",
-    "proposal-decisions.json",
     "report-data.json",
     "report-files.json",
     "report-manifest.json",
@@ -59,7 +56,6 @@ def _assert_revoked(output, status):
         assert not (record.get("transformation_authorized", False))
         assert (record.get("recommendation")) is None
         assert not (record.get("decisions"))
-        assert not (record.get("proposal_decisions"))
     for name in ("report.md", "report.html", "next-actions.md", "next-actions.html"):
         assert ("No optimum or transformation is authorized") in (
             (output / name).read_text()
@@ -82,8 +78,6 @@ def test_real_cli_late_chunk_failure_revokes_all_derived_exports() -> None:
                         "analyze-model",
                         "--facts-backend",
                         "metadata",
-                        "--search-mode",
-                        "exact",
                         str(source),
                         "--output",
                         str(output),
@@ -110,8 +104,6 @@ def test_real_cli_late_chunk_failure_revokes_all_derived_exports() -> None:
                     "analyze-model",
                     "--facts-backend",
                     "metadata",
-                    "--search-mode",
-                    "exact",
                     str(source),
                     "--output",
                     str(output),
@@ -144,8 +136,6 @@ def test_semantic_checker_exception_revokes_standalone_stale_exports() -> None:
                     "analyze-model",
                     "--facts-backend",
                     "metadata",
-                    "--search-mode",
-                    "exact",
                     str(source),
                     "--output",
                     str(output),
@@ -170,8 +160,6 @@ def test_positive_delivery_keeps_checked_authorizations() -> None:
                     "analyze-model",
                     "--facts-backend",
                     "metadata",
-                    "--search-mode",
-                    "exact",
                     str(source),
                     "--output",
                     str(output),
@@ -179,8 +167,11 @@ def test_positive_delivery_keeps_checked_authorizations() -> None:
                 ]
             )
         assert (code) == (0)
-        rows = json.loads((output / "recommended-boundaries.json").read_text())
-        assert any(row["transformation_authorized"] for row in rows)
+        report = json.loads((output / "report.json").read_text())
+        assert (report["recommendation"]["operation"]) in (
+            ("layout", "retain_original")
+        )
+        assert (output / "report-data.json").is_file()
 
 
 def _create_stand_in(output, tail):
@@ -212,7 +203,6 @@ def test_public_parent_late_source_failure_revokes_all_exports() -> None:
                 output,
                 seconds=10,
                 command_prefix=[sys.executable, "-c", script],
-                search_mode="exact",
                 facts_backend="metadata",
             )
         _assert_revoked(output, "INVALID")
@@ -230,7 +220,6 @@ def test_public_parent_late_budget_failure_revokes_all_exports() -> None:
                 output,
                 seconds=0.15,
                 command_prefix=[sys.executable, "-c", script],
-                search_mode="exact",
                 facts_backend="metadata",
             )
         _assert_revoked(output, "INCOMPLETE")
@@ -261,8 +250,6 @@ def test_pipeline_changed_checker_revokes_existing_success() -> None:
                     "pipeline",
                     "--facts-backend",
                     "metadata",
-                    "--search-mode",
-                    "heuristic",
                     str(source),
                     "--output",
                     str(output),
@@ -294,8 +281,6 @@ def test_pipeline_rejects_overlapping_output_before_hash_or_cleanup() -> None:
                     "pipeline",
                     "--facts-backend",
                     "metadata",
-                    "--search-mode",
-                    "heuristic",
                     str(source),
                     "--output",
                     str(output),
@@ -326,8 +311,6 @@ def test_pipeline_does_not_restore_adoption_advice_after_cli_failure() -> None:
                     "pipeline",
                     "--facts-backend",
                     "metadata",
-                    "--search-mode",
-                    "heuristic",
                     str(source),
                     "--output",
                     str(output),
@@ -354,9 +337,7 @@ def test_independent_check_cannot_publish_pass_after_late_chunk_change() -> None
         report_path = root / "bound-report.json"
         cli.save_json(
             report_path,
-            analyze_production(
-                cli.load_problem(source), search_mode="exact", facts_backend="metadata"
-            ),
+            analyze_production(cli.load_problem(source), facts_backend="metadata"),
         )
         check_path = root / "check.json"
         original = cli.verify_production_result
@@ -410,8 +391,6 @@ def test_checker_parent_revokes_pass_when_worker_fails_after_writing_it() -> Non
                         "analyze-model",
                         "--facts-backend",
                         "metadata",
-                        "--search-mode",
-                        "exact",
                         str(source),
                         "--output",
                         str(output),
@@ -456,9 +435,7 @@ def test_task_api_bad_capture_receipt_revokes_old_certificates() -> None:
         receipt = source.with_name(source.stem + ".metadata-capture.json")
         receipt.write_text('{"schema":"wrong","snapshot_sha256":"old"}')
         with pytest.raises(ValueError, match="Capture receipt"):
-            analyse_snapshot(
-                source, output, search_mode="exact", facts_backend="metadata"
-            )
+            analyse_snapshot(source, output, facts_backend="metadata")
         _assert_revoked(output, "INVALID")
 
 
@@ -476,7 +453,6 @@ def test_task_api_malformed_worker_result_revokes_old_exports() -> None:
                 output,
                 seconds=10,
                 command_prefix=[sys.executable, "-c", script],
-                search_mode="exact",
                 facts_backend="metadata",
             )
         _assert_revoked(output, "INVALID")
@@ -507,8 +483,6 @@ def test_direct_worker_incomplete_analysis_revokes_exports() -> None:
                     "analyze-model",
                     "--facts-backend",
                     "metadata",
-                    "--search-mode",
-                    "exact",
                     str(source),
                     "--output",
                     str(output),
@@ -544,8 +518,6 @@ def test_conditional_delivery_keeps_independently_valid_local_authority() -> Non
                     "analyze-model",
                     "--facts-backend",
                     "metadata",
-                    "--search-mode",
-                    "exact",
                     str(source),
                     "--output",
                     str(output),
@@ -553,5 +525,8 @@ def test_conditional_delivery_keeps_independently_valid_local_authority() -> Non
                 ]
             )
         assert (code) == (3)
-        rows = json.loads((output / "recommended-boundaries.json").read_text())
-        assert any(row["transformation_authorized"] for row in rows)
+        report = json.loads((output / "report.json").read_text())
+        assert (report["recommendation"]["operation"]) in (
+            ("layout", "retain_original")
+        )
+        assert (output / "report-data.json").is_file()

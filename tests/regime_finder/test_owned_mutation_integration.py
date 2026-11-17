@@ -57,8 +57,6 @@ def test_structural_input_artifacts_cannot_be_supervisor_log_targets(
                             "analyze-model",
                             "--facts-backend",
                             "metadata",
-                            "--search-mode",
-                            "heuristic",
                             str(source),
                             "--output",
                             str(output),

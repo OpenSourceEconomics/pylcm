@@ -25,7 +25,6 @@ class SemanticCheck(TypedDict, total=False):
     normalized_sha256: str
     guarantee: str
     dense_cartesian_rows_evaluated: int
-    projection_family_complete_verified: bool
     trusted_boundary: list[str]
 
 

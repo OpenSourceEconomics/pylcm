@@ -12,6 +12,28 @@ import zlib
 from _lcm_regime_finder import production_render as renderer
 
 
+def _point(cells, max_blocks):
+    blocks = [
+        {
+            "fibres": [{"period": c["period"], "regime": c["regime"], "statuses": {}}],
+            "periods": [c["period"]],
+            "states": {"history": "h"},
+            "actions": {},
+            "evaluations": 4,
+            "storage": 2,
+        }
+        for c in cells
+    ]
+    return {
+        "max_blocks": max_blocks,
+        "blocks": len(cells),
+        "evaluations": 4 * len(cells),
+        "storage": 2 * len(cells),
+        "exact": True,
+        "layout": [{"lanes": [], "blocks": blocks}],
+    }
+
+
 def fixture(count=3):
     cells = [
         {
@@ -35,56 +57,19 @@ def fixture(count=3):
         "action_reconstruction": {},
         "witnesses": [],
     }
-    blocks = [
-        {
-            "cells": [c["id"]],
-            "option_by_cell": {c["id"]: "identity"},
-            "original_regimes": [c["regime"]],
-            "ages": [c["age"]],
-            "periods": [c["period"]],
-            "state_axes": {"history": "h"},
-            "action_axes": {},
-            "allocation_kind": "per_block",
-            "cost": {"work": 4, "storage": 2, "clarity": 4},
-        }
-        for c in cells
-    ]
-    scenario = {
-        "status": "COMPLETE",
-        "allocation_contract": {
-            "status": "declared",
-            "kind": "per_block",
-            "boundary_unit": 1,
-        },
-        "clarity_weights": {"block": 4, "characteristic": 2, "dispatch": 1},
-        "frontier": [
-            {
-                "id": "G0000",
-                "blocks": blocks,
-                "cost": {"work": 4 * count, "storage": 2 * count, "clarity": 4 * count},
-            }
-        ],
-        "recommendation": {
-            "graph_id": "G0000",
-            "score": "3",
-            "weights": dict.fromkeys(renderer.METRICS, "1"),
-            "reference_scales": {
-                "work": 4 * count,
-                "storage": 2 * count,
-                "clarity": 4 * count,
-            },
-        },
-        "certificate": {
-            "complete": True,
-            "family": "Explicit renderer fixture family",
-            "frontier_scope": "All fixture candidates",
-        },
-        "independent_check": {"status": "PASS", "errors": [], "unresolved": []},
-    }
     return {
-        "schema": "regime-production-result/v1",
+        "schema": "regime-production-result/v2",
         "status": "COMPLETE",
+        "facts_backend": "metadata",
         "source_identity": {"name": "Renderer test fixture"},
+        "recommendation": {
+            "operation": "layout",
+            "curve_index": 0,
+            "max_blocks": count,
+            "score": 3,
+            "original_score": 3,
+        },
+        "original_cost": {"work": 4 * count, "storage": 2 * count, "clarity": 2},
         "analysis": {
             "declarations": {
                 "cells": cells,
@@ -109,12 +94,17 @@ def fixture(count=3):
             },
         },
         "semantic_check": {"status": "PASS", "errors": [], "unresolved": []},
-        "scenarios": [scenario],
+        "layouts": {
+            "schema": "supplement-layout-curve/v1",
+            "status": "COMPLETE",
+            "curve": [_point(cells, count)],
+        },
+        "layout_check": {"status": "PASS", "errors": []},
         "layers": {
+            "facts": "metadata",
             "source_semantics": "PASS",
-            "discovery": "COMPLETE",
-            "allocation": "DECLARED",
-            "frontier": "VERIFIED",
+            "layouts": "COMPLETE",
+            "layout_check": "PASS",
             "native_numerical_execution": "NOT_RUN",
         },
     }
@@ -140,20 +130,18 @@ def read_png(path):
     return size, zlib.decompress(b"".join(data))
 
 
-def test_exact_saved_result_and_all_alternatives() -> None:
+def test_exact_saved_result_and_all_curve_points() -> None:
     result = fixture()
-    alternate = deepcopy(result["scenarios"][0]["frontier"][0])
-    alternate["id"] = "G0001"
-    alternate["cost"] = {"work": 15, "storage": 5, "clarity": 14}
-    result["scenarios"][0]["frontier"].append(alternate)
+    cells = result["analysis"]["declarations"]["cells"]
+    result["layouts"]["curve"].append(_point(cells, 4))
     with tempfile.TemporaryDirectory() as directory:
         manifest = renderer.write_production_report(result, directory)
         assert (json.loads((Path(directory) / "report.json").read_text())) == (result)
         data = json.loads((Path(directory) / "report-data.json").read_text())
-        assert (len(data["scenarios"][0]["alternatives"])) == (2)
-        assert (data["scenarios"][0]["alternatives"][1]["plan"]) == (alternate)
-        assert (manifest["frontier_alternative_count"]) == (2)
-        assert ("Option 2") in ((Path(directory) / "report.html").read_text())
+        assert (data["schema"]) == ("regime-render-data/v2")
+        assert ([row["max_blocks"] for row in data["layouts"]]) == ([3, 4])
+        assert (manifest["curve_points"]) == (2)
+        assert ("At most 4 regimes") in ((Path(directory) / "report.html").read_text())
         assert not ((Path(directory) / "result.json").exists())
 
 
@@ -162,6 +150,9 @@ def test_html_and_mermaid_injection_are_data() -> None:
     attack = '"><script>alert("x")</script>\nclick N0 "javascript:x"'
     result["source_identity"]["name"] = attack
     result["analysis"]["declarations"]["cells"][0]["regime"] = attack
+    result["layouts"]["curve"][0]["layout"][0]["blocks"][0]["fibres"][0]["regime"] = (
+        attack
+    )
     rendered = renderer.render_html(result)
     assert ("<script>") not in (rendered)
     assert ("&lt;script&gt;") in (rendered)
@@ -217,16 +208,15 @@ def test_preview_budget_preserves_full_graph_and_result() -> None:
         assert (manifest["png_page_count"]) == (2)
         assert (manifest["omitted_preview_page_count"]) > (0)
         assert ("PNG preview limit") in ((Path(directory) / "report.html").read_text())
-        assert ("PNG preview limit") in ((Path(directory) / "report.md").read_text())
         assert ("N24[") in ((Path(directory) / "graphs/original.mmd").read_text())
         assert (json.loads((Path(directory) / "report.json").read_text())) == (result)
         pngs = [
             row["path"] for row in manifest["files"] if row["path"].endswith(".png")
         ]
-        assert all("scenario-001-option-0001" in name for name in pngs)
+        assert all("layout-k025" in name for name in pngs)
 
 
-def test_incomplete_missing_analysis_and_conditional_scope() -> None:
+def test_incomplete_result_states_why_no_curve_exists() -> None:
     incomplete = {
         "status": "INCOMPLETE",
         "error": "Resource budget reached",
@@ -236,37 +226,19 @@ def test_incomplete_missing_analysis_and_conditional_scope() -> None:
         manifest = renderer.write_production_report(incomplete, directory)
         assert (manifest["png_page_count"]) == (0)
         text = (Path(directory) / "report.html").read_text()
-        assert ("No frontier scenario was supplied") in (text)
+        assert ("No layout curve was produced") in (text)
         assert ("Resource budget reached") in (text)
-    result = fixture()
-    result["scenarios"][0]["allocation_contract"]["status"] = "conditional_scenario"
-    result["semantic_check"]["status"] = "UNRESOLVED"
-    text = renderer.render_html(result)
-    assert ("actual backend allocation contract is unresolved") in (text)
-    assert (
-        "candidate changes, not an established source-equivalent transformation"
-    ) in (text)
-
-
-def test_heuristic_local_discovery_is_not_labeled_graph_family_coverage() -> None:
-    result = fixture()
-    result["status"] = "HEURISTIC"
-    result["scenarios"][0]["status"] = "HEURISTIC"
-    for text in (renderer.render_html(result), renderer.render_markdown(result)):
-        assert "Dependency and local-option discovery" in text
-        assert "Candidate-family coverage" not in text
-        assert "unknown optimality gap" in text
 
 
 def test_period_only_blocks_list_their_periods_in_both_reports() -> None:
     result = fixture()
-    for block in result["scenarios"][0]["frontier"][0]["blocks"]:
-        block["ages"] = [None]
+    for cell in result["analysis"]["declarations"]["cells"]:
+        cell["age"] = None
     with tempfile.TemporaryDirectory() as directory:
         renderer.write_production_report(result, directory)
         markdown = (Path(directory) / "report.md").read_text()
         page = (Path(directory) / "report.html").read_text()
-    header = "| Block | Original regimes | Declared dates |"
+    header = "| regimes | periods | states | actions | evaluations | stored values |"
     table = markdown.split(header, 1)[1].splitlines()[2:5]
-    assert [row.split(" | ")[2] for row in table] == ["0", "1", "2"]
+    assert [row.split(" | ")[1] for row in table] == ["0", "1", "2"]
     assert "<td>Not supplied</td>" not in page

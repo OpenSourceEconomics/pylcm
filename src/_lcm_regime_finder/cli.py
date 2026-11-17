@@ -40,31 +40,6 @@ def input_artifact_identity(path, *, reads=None):
             'meaning': 'exact CLI input bytes; loaded source objects have separate canonical JSON anchors'}
 
 
-def candidate_boundary_maps(result):
-    """Export cost preferences with their independently computed disposition."""
-    from .graph_view import boundary_maps
-    decisions = {(row.get('scenario_index'), row.get('graph_id')): row
-                 for row in result.get('proposal_decisions', [])}
-    selections = {row.get('scenario_index'): row for row in result.get('recommendations', [])}
-    maps = []
-    for scenario_index, scenario in enumerate(result.get('scenarios', [])):
-        recommendation = selections.get(scenario_index, {}) if result.get('search_mode') == 'heuristic' else scenario.get('recommendation') or {}
-        selected = recommendation.get('graph_id')
-        for plan in scenario.get('candidates', scenario.get('frontier', [])):
-            if plan['id'] != selected:
-                continue
-            decision = decisions.get((scenario_index, selected), {
-                'disposition': 'investigate',
-                'reasons': ['No independent local decision record was supplied.']})
-            maps.append({'scenario_index': scenario_index,
-                         'allocation_contract': scenario['allocation_contract'],
-                         'graph_id': selected, 'cost_preferred': True,
-                         'decision': decision,
-                         'transformation_authorized': decision.get('disposition') == 'adopt',
-                         'boundary_maps': boundary_maps(result['analysis'], plan)})
-    return maps
-
-
 def load_problem(path, *, reads=None):
     """Read original data. A constructed-graph manifest never enters legacy IR."""
     path = Path(path)
@@ -72,9 +47,6 @@ def load_problem(path, *, reads=None):
         from .input_reads import discover_inputs
         reads = discover_inputs([path])
     data = reads.document(path)
-    if data.get('schema') == 'interned-json-cost-instance/v1':
-        from .symbolic_frontier import load_packet
-        return load_packet(path=path, reads=reads)
     if data.get('format') == 'lossless-json-fragments-1':
         from .read_fragments import read
         return read(path, reads=reads)
@@ -93,7 +65,7 @@ def load_problem(path, *, reads=None):
 
 
 def exit_status(status):
-    return {'HEURISTIC': 0, 'COMPLETE': 0, 'COMPLETE_COST_FAMILY': 0, 'OPTIMAL': 0, 'PASS': 0, 'INCOMPLETE': 2,
+    return {'COMPLETE': 0, 'OPTIMAL': 0, 'PASS': 0, 'INCOMPLETE': 2,
             'UNRESOLVED': 3, 'MISSING_PRODUCTION_INPUT': 3}.get(status, 1)
 
 
@@ -102,25 +74,17 @@ def _analysis_options(parser):
     parser.add_argument('--seconds', type=float, default=900)
     parser.add_argument('--facts-backend', choices=('metadata', 'dense', 'implicit'), required=True,
                         help='metadata: conservative scalar-language facts; dense or implicit: exact source facts')
-    parser.add_argument('--search-mode', choices=('heuristic', 'exact'), required=True,
-                        help='heuristic: checked heuristic candidates; exact: complete-family search')
-    parser.add_argument('--heuristic-rounds', type=int, default=2,
-                        help='Optional local grouping sweep effort; no Model-size rejection threshold')
-    parser.add_argument('--heuristic-neighbors', type=int, default=2,
-                        help='Sparse merge-neighbor effort per group')
-    parser.add_argument('--minimum-improvement', default='0',
+    parser.add_argument('--minimum-improvement', type=float, default=0.0,
                         help='Required relative fixed-reference scalar cost gain, in [0, 1)')
     parser.add_argument('--host-gib', type=float, default=8)
-    parser.add_argument('--cost-limits', help='JSON object of exact cost-search bookkeeping limits; not Model parameters')
-    parser.add_argument('--max-segments', type=int, default=2_000_000)
-    parser.add_argument('--max-groupings', type=int, default=100_000)
-    parser.add_argument('--max-frontier', type=int, default=5000)
-    parser.add_argument('--max-projection-policies', type=int, default=4096)
+    parser.add_argument('--max-blocks', type=int, help='Largest block budget k of the curve; default n0 + 12')
+    parser.add_argument('--lanes-per-regime', type=int, default=12,
+                        help='Above this, statuses become ordinary coordinates and the curve an upper bound')
+    parser.add_argument('--max-segments', type=int, default=2_000_000,
+                        help='Candidate segments of an explicit finite scalar regression')
     parser.add_argument('--contract', help='Actual source-bound production roles/allocation metadata JSON')
-    parser.add_argument('--weights', nargs=3, metavar=('WORK', 'STORAGE', 'CLARITY'))
+    parser.add_argument('--weights', nargs=3, type=float, metavar=('WORK', 'STORAGE', 'CLARITY'))
     parser.add_argument('--reference', nargs=3, type=int, metavar=('WORK', 'STORAGE', 'CLARITY'))
-    parser.add_argument('--allow-final-only-split', action='store_true',
-                        help='Allow the cost recommendation to select an extra final-date regime used only to omit inactive coordinates; the frontier is unchanged')
     parser.add_argument('--strict', action='store_true', help='Exact represented probability normalization in explicit finite scalar regressions')
     parser.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)
 
@@ -140,9 +104,9 @@ def _run_parent(args, argv, delivery):
         result = json.loads((output / 'report.json').read_text())
         delivery.publish(result) if check else save_json(destination, result)
     else:
-        result = {'schema': 'regime-production-result/v1', 'status': 'INVALID',
+        result = {'schema': 'regime-production-result/v2', 'status': 'INVALID',
                   'error': 'Worker produced no result; see analysis-execution.log',
-                  'scenarios': [], 'layers': {'native_numerical_execution': 'NOT_RUN'}}
+                  'layouts': None, 'layers': {'native_numerical_execution': 'NOT_RUN'}}
         delivery.publish(result) if check else save_json(destination, result)
     if check and code not in (0, 3):
         result = delivery.fail(status='INCOMPLETE' if code == 2 else 'INVALID',
@@ -159,13 +123,13 @@ def _run_parent(args, argv, delivery):
         print(json.dumps(result, sort_keys=True))
     else:
         semantic = result.get('semantic_check', {})
-        scenarios = result.get('scenarios', [])
-        if not isinstance(semantic, dict) or not isinstance(scenarios, list):
+        layouts = result.get('layouts') or {}
+        if not isinstance(semantic, dict) or not isinstance(layouts, dict):
             raise ValueError('Malformed analysis result')
         print(json.dumps({'status': result.get('status'), 'output': str(destination),
                           'resources': str(output / 'resource.json'),
                           'source_semantics': semantic.get('status'),
-                          'frontier_points': [len(s.get('frontier', [])) for s in scenarios]}, sort_keys=True))
+                          'curve_points': len(layouts.get('curve', []))}, sort_keys=True))
     return code
 
 
@@ -175,20 +139,10 @@ def main(argv=None):
     sub = parser.add_subparsers(dest='command', required=True)
     _analysis_options(sub.add_parser('find-regimes'))
     _analysis_options(sub.add_parser('analyze-model'))
-    curve = sub.add_parser('evaluation-curve', help='Raw grid-evaluation curve from a saved metadata analysis; no native model execution')
-    curve.add_argument('problem'); curve.add_argument('--output', required=True)
-    curve.add_argument('--seconds', type=float, default=900)
-    curve.add_argument('--host-gib', type=float, default=8)
-    curve.add_argument('--max-segments', type=int, default=2_000_000)
-    curve.add_argument('--max-groupings', type=int, default=100_000)
-    curve.add_argument('--max-frontier', type=int, default=5000)
-    curve.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)
-    curve.set_defaults(cost_limits=None)
     for name in ('check-result', 'check-model-result'):
         check = sub.add_parser(name); check.add_argument('problem'); check.add_argument('report')
         check.add_argument('--output'); check.add_argument('--seconds', type=float, default=900)
         check.add_argument('--host-gib', type=float, default=8)
-        check.add_argument('--cost-limits', help='JSON object of independent cost-check bookkeeping limits')
         check.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)
     adapt = sub.add_parser('adapt-source'); adapt.add_argument('manifest'); adapt.add_argument('--output', required=True)
     args = parser.parse_args(argv)
@@ -215,43 +169,16 @@ def main(argv=None):
             from .input_reads import discover_inputs
             reads = discover_inputs([args.problem, args.report])
         problem = load_problem(args.problem, reads=reads)
-        if args.cost_limits is not None and problem.get('schema') != 'exact-graph-cost-instance/v1':
-            raise ValueError('--cost-limits applies only to an exact cost-family input')
-        if args.command == 'evaluation-curve':
-            from .curve import build_curve_report
-            from .frontier import search_frontier
-            if delivery is None:
-                raise ValueError('Curve analysis requires an output delivery plan')
-            analysis = problem.get('analysis', problem)
-            if analysis.get('schema') != 'regime-semantic-analysis/v1':
-                raise ValueError('evaluation-curve requires a saved metadata analysis or a report containing one')
-            allocation = analysis.get('allocation_scenario', analysis['declarations']['allocation'])
-            analysis = dict(analysis, allocation_scenario=dict(allocation, boundary_unit=0))
-            limits = {'seconds': args.seconds, 'segments': args.max_segments,
-                      'groupings': args.max_groupings, 'frontier_points': args.max_frontier}
-            frontier = search_frontier(analysis, reporting_mode='curve', limits=limits)
-            result = build_curve_report(analysis, frontier, checking_limits=limits)
-            result['input_artifact'] = input_artifact_identity(args.problem, reads=reads)
-            from .structural_store import final_input_check
-            final_input_check(problem)
-            delivery.publish(result)
-            print(json.dumps({'status': result['status'], 'output': str(delivery.destination)}, sort_keys=True))
-            # A checked partial curve is a successful delivery, not complete coverage.
-            return 0
         if args.command in ('check-result', 'check-model-result'):
             report = reads.document(args.report)
             recorded_input = report.get('input_artifact')
             if recorded_input and recorded_input.get('sha256') != input_artifact_identity(args.problem, reads=reads)['sha256']:
                 result = {'status': 'FAIL', 'error': 'Exact input artifact differs from the analyzed source file'}
-            elif report.get('schema') == 'regime-production-result/v1':
+            elif report.get('schema') == 'regime-production-result/v2':
                 result = verify_production_result(problem, report, limits={'seconds': args.seconds})
-            elif report.get('schema') == 'regime-cost-family/v1':
-                from . import check_cost_frontier
-                result = check_cost_frontier(problem, report, seconds=args.seconds,
-                    limits=json.loads(args.cost_limits) if args.cost_limits is not None else None)
             else:
                 result = verify_certificate(problem, report)
-                if result['status'] == 'PASS' and report.get('schema') != 'regime-cost-family/v1':
+                if result['status'] == 'PASS':
                     from .transport_bridge import validate_generated_transport
                     result['generated_transport'] = validate_generated_transport(problem, report)
                     if result['generated_transport']['status'] == 'FAIL': result['status'] = 'FAIL'
@@ -263,34 +190,7 @@ def main(argv=None):
         if delivery is None:
             raise ValueError('Analysis requires an output delivery plan')
         output = delivery.run_output; output.mkdir(parents=True, exist_ok=True)
-        if problem.get('schema') == 'exact-graph-cost-instance/v1':
-            from . import find_cost_frontier, check_cost_frontier
-            def cost_checkpoint(record):
-                if record.get('schema') == 'regime-forest-table-checkpoint/v1':
-                    folder = output / 'cost-checkpoints' / record['instance_sha256']
-                    folder.mkdir(parents=True, exist_ok=True)
-                    table = folder / (str(record['table_index']) + '.json')
-                    save_json(table, record)
-                    save_json(folder / 'ROOT.json', {'table': table.name,
-                        'sha256': hashlib.sha256(table.read_bytes()).hexdigest(),
-                        'complete_cost_family': False,
-                        'scope': 'Atomic completed table only; independent replay required; resume not claimed'})
-                else:
-                    save_json(output / 'cost-partial.json', record)
-            started = time.perf_counter()
-            cost_limits = json.loads(args.cost_limits) if args.cost_limits is not None else None
-            result = find_cost_frontier(problem, seconds=args.seconds, limits=cost_limits, checkpoint=cost_checkpoint)
-            checked = check_cost_frontier(problem, result,
-                seconds=max(0, args.seconds - (time.perf_counter() - started)), limits=cost_limits)
-            result['independent_cost_check'] = checked
-            result['input_artifact'] = input_artifact_identity(args.problem, reads=reads)
-            if result['status'] == 'COMPLETE_COST_FAMILY' and not checked.get('cost_family_complete_verified'):
-                result['status'] = 'INCOMPLETE'
-                result['reason'] = 'Independent full cost-family coverage did not finish'
-            save_json(output / 'report.json', result)
-            save_json(output / 'summary.json', {key: result.get(key) for key in
-                ('schema', 'status', 'backend', 'scope', 'reason', 'independent_cost_check')})
-        elif is_production_input(problem):
+        if is_production_input(problem):
             from .production import analyze_production
             from .production_render import write_production_report
             checkpoint_started = time.perf_counter()
@@ -311,33 +211,26 @@ def main(argv=None):
                     'scope': 'Progress since entry to the production metadata branch; the supervisor measures the complete run. No complete or adoption claim.'})
                 if stage == 'normalized':
                     save_json(output / 'normalized.json', record['declarations'])
-                elif stage == 'metadata_analysis':
-                    save_json(output / 'analysis.json', record['analysis'])
                 elif stage == 'analysis':
                     if not (output / 'analysis.json').exists():
                         save_json(output / 'analysis.json', record['analysis'])
                     if not (output / 'normalized.json').exists():
                         save_json(output / 'normalized.json', record['analysis']['declarations'])
                     save_json(output / 'semantic-check.json', record['semantic_check'])
-                else:
-                    save_json(output / 'partial-frontier.json', record)
                 checkpoint_seconds += time.perf_counter() - checkpoint_entry
-            limits = {'seconds': args.seconds, 'segments': args.max_segments,
-                      'groupings': args.max_groupings, 'frontier_points': args.max_frontier,
-                      'projection_policies': args.max_projection_policies}
+            limits = {'seconds': args.seconds, 'lanes_per_regime': args.lanes_per_regime}
+            if args.max_blocks is not None:
+                limits['max_blocks'] = args.max_blocks
             recommendation = {}
             metrics = ('work', 'storage', 'clarity')
             if args.weights: recommendation['weights'] = dict(zip(metrics, args.weights))
             if args.reference: recommendation['reference'] = dict(zip(metrics, args.reference))
-            recommendation['allow_final_only_split'] = args.allow_final_only_split
             recommendation['minimum_improvement'] = args.minimum_improvement
             contract = json.loads(Path(args.contract).read_text()) if args.contract else None
             phase_started = time.perf_counter()
             result = analyze_production(problem, limits=limits, recommendation=recommendation,
                                         production_contract=contract, checkpoint=checkpoint,
-                                        facts_backend=args.facts_backend, search_mode=args.search_mode,
-                                        heuristic_effort={'rounds': args.heuristic_rounds,
-                                                          'neighbor_degree': args.heuristic_neighbors})
+                                        facts_backend=args.facts_backend)
             delivery_timings['analysis_call_including_checkpoints_seconds'] = time.perf_counter() - phase_started
             delivery_timings['checkpoint_write_seconds'] = checkpoint_seconds
             phase_started = time.perf_counter()
@@ -350,11 +243,7 @@ def main(argv=None):
             from .graph_view import typed_incidence_graph
             if 'cells' in result.get('analysis', {}).get('declarations', {}):
                 save_json(output / 'typed-graph.json', typed_incidence_graph(result['analysis']['declarations']))
-            maps = candidate_boundary_maps(result)
-            save_json(output / 'candidate-boundaries.json', maps)
-            save_json(output / 'recommended-boundaries.json',
-                      [row for row in maps if row['transformation_authorized']])
-            delivery_timings['graph_and_boundary_artifacts_seconds'] = time.perf_counter() - phase_started
+            delivery_timings['graph_artifacts_seconds'] = time.perf_counter() - phase_started
             phase_started = time.perf_counter()
             manifest = write_production_report(result, output)
             save_json(output / 'report-files.json', manifest)
@@ -363,7 +252,7 @@ def main(argv=None):
                 'schema': 'regime-metadata-delivery-timings/v1',
                 'phase_timings': result.get('phase_timings', {}),
                 'delivery_timings': delivery_timings,
-                'scope': 'perf_counter subphases within the outer worker budget; analysis_call includes checkpoint_write, and frontier_search includes frontier checkpoint callbacks. Do not add overlapping fields. The outer receipt also includes input JSON parsing, summary delivery and process overhead.'})
+                'scope': 'perf_counter subphases within the outer worker budget; analysis_call includes checkpoint_write. Do not add overlapping fields. The outer receipt also includes input JSON parsing, summary delivery and process overhead.'})
         else:
             if args.command == 'analyze-model':
                 raise ValueError('analyze-model requires original declaration metadata; use find-regimes for explicit finite scalar regressions')
@@ -388,8 +277,8 @@ def main(argv=None):
         print(json.dumps({'status': result['status'], 'output': str(output)}, sort_keys=True))
         return exit_status(result['status'])
     except Exception as exc:
-        result = {'schema': 'regime-production-result/v1', 'status': 'INVALID',
-                  'error': type(exc).__name__ + ': ' + str(exc), 'scenarios': []}
+        result = {'schema': 'regime-production-result/v2', 'status': 'INVALID',
+                  'error': type(exc).__name__ + ': ' + str(exc), 'layouts': None}
         if delivery is not None:
             result = delivery.fail(status='INVALID', reason=result['error'], details=result)
         print(json.dumps(result), file=sys.stderr)

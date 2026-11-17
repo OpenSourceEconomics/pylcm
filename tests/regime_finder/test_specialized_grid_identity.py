@@ -21,14 +21,12 @@ def test_same_native_program_is_not_split_merely_by_its_period_argument() -> Non
     }
     source["user_regimes"]["original"]["fields"]["states"]["x"] = grid
     result = analyze_production(
-        source, limits={"seconds": 10}, search_mode="exact", facts_backend="metadata"
+        source, limits={"seconds": 10}, facts_backend="metadata"
     )
     assert (result["status"]) == ("COMPLETE"), result.get("semantic_check")
     ids = {c["states"]["x"] for c in result["analysis"]["declarations"]["cells"]}
     assert (len(ids)) == (1)
-    selected = result["scenarios"][0]["recommendation"]["graph_id"]
-    point = next(p for p in result["scenarios"][0]["frontier"] if p["id"] == selected)
-    assert (len(point["blocks"])) == (1)
+    assert (result["layouts"]["curve"][0]["blocks"]) == (1)
     bad = deepcopy(result["analysis"])
     bad["declarations"]["domains"][next(iter(ids))]["size"] = 4
     checked = check_semantics(source, bad["declarations"], bad)

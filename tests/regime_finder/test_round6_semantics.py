@@ -7,10 +7,6 @@ from _lcm_regime_finder.semantic_check import SourceProof
 from _lcm_regime_finder.model_snapshot import source_function
 from _lcm_regime_finder.declarations import ScalarSource, DeclarationError
 from _lcm_regime_finder.expressions import partial
-from _lcm_regime_finder import find_regimes
-from _lcm_regime_finder.declarations import normalize_declarations
-from _lcm_regime_finder.production import MetadataAnalysis
-from tests.regime_finder.test_round5_local_obligations import native_fixture
 from tests.regime_finder.round6_source_oracle import (
     literal_transitive,
     varies_in_history,
@@ -311,44 +307,3 @@ def test_bounded_interpretation_keeps_actual_input_at_any_helper_depth() -> None
         assert ("history") in (answer.reads)
         if depth == 40:
             assert not (answer.proved)
-
-
-def test_unknown_context_has_structural_admission_and_separate_semantic_obligations() -> (
-    None
-):
-    source = native_fixture()
-    for regime in source["user_regimes"].values():
-        regime["fields"].pop("semantic_role")
-    report = find_regimes(source, facts_backend="metadata", search_mode="heuristic")
-    boundary = report["analysis"]["family_boundary"]
-    assert not (boundary["unrestricted_model_representation_optimum_claimed"])
-    assert not (boundary["endpoint_preference_is_admissibility_rule"])
-    candidates = boundary["conditional_merge_candidates"]
-    assert ([row["regimes"] for row in candidates]) == ([["opaque", "safe"]])
-    assert (candidates[0]["status"]) == ("ADMITTED_STRUCTURAL_BLOCK")
-    assert not (candidates[0]["automatic_graph_change"])
-    assert (len(candidates[0]["witness"]["cells"])) == (2)
-    assert (
-        candidates[0]["witness"]["admission"]["schema"]
-        == "lcm-regime-block-admission/v1"
-    )
-    assert candidates[0]["required_obligations"]
-    assert any(
-        row["disposition"] == "adopt" and row["changed_interfaces"]
-        for row in report["proposal_decisions"]
-    )
-
-
-def test_conditional_display_budget_does_not_silently_exhaust_search_family() -> None:
-    source = native_fixture()
-    for regime in source["user_regimes"].values():
-        regime["fields"].pop("semantic_role")
-    analysis = MetadataAnalysis(
-        normalize_declarations(source),
-        {"conditional_merge_pair_checks": 0},
-        facts_backend="metadata",
-        search_mode="exact",
-    ).run()
-    assert analysis["discovery_complete"]
-    assert (analysis["family_boundary"]["conditional_merge_pairs_unexamined"]) == (1)
-    assert (analysis["family_boundary"]["conditional_merge_candidates"]) == ([])

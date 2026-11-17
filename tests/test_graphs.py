@@ -14,6 +14,7 @@ import pytest
 
 from _lcm.reachability import EdgeStatus
 from _lcm.typing import JSONValue
+from _lcm_regime_finder.production import recommend
 from lcm import (
     AgeGrid,
     DiscreteGrid,
@@ -34,7 +35,7 @@ from lcm.processes import (
     TauchenAR1Process,
     UniformIIDProcess,
 )
-from lcm.regime_analysis import FactsBackend, SearchMode
+from lcm.regime_analysis import FactsBackend
 from lcm.typing import ContinuousState, DiscreteState, FloatND, Phase, ScalarInt
 from lcm_examples.stochastic_volatility import get_model as stochastic_volatility_model
 
@@ -106,20 +107,16 @@ def test_digraph_preserves_period_nodes_terminal_and_isolated_starts(
 
 def test_find_regimes_checks_a_native_model(period_model: Model) -> None:
     """The public checker accepts a Model without evaluating its utility."""
-    report = find_regimes(
-        period_model, facts_backend="metadata", search_mode="heuristic"
-    )
+    report = find_regimes(period_model, facts_backend="metadata")
     layers = report["layers"]
     assert isinstance(layers, dict)
-    assert layers["frontier"] == "RETAINED_CANDIDATES_CHECKED"
+    assert layers["layout_check"] == "PASS"
 
 
 def test_find_regimes_writes_html(*, period_model: Model, tmp_path: Path) -> None:
     """Users can read the result without running another command."""
     output = tmp_path / "report"
-    find_regimes(
-        period_model, output=output, facts_backend="metadata", search_mode="heuristic"
-    )
+    find_regimes(period_model, output=output, facts_backend="metadata")
     assert (output / "report.html").is_file()
 
 
@@ -132,7 +129,6 @@ def test_find_regimes_refuses_existing_output(
             period_model,
             output=tmp_path,
             facts_backend="metadata",
-            search_mode="heuristic",
         )
 
 
@@ -437,7 +433,7 @@ def test_analysis_preserves_source_only_conditional_draw(
         fixed_params={"discount_factor": 1.0},
         enable_jit=False,
     )
-    report = find_regimes(model, facts_backend=facts_backend, search_mode="heuristic")
+    report = find_regimes(model, facts_backend=facts_backend)
     analysis = report["analysis"]
     assert isinstance(analysis, dict)
     declarations = analysis["declarations"]
@@ -467,7 +463,6 @@ def test_analysis_preserves_conditioned_current_shock(
             income_n_points=3,
         ),
         facts_backend=facts_backend,
-        search_mode="heuristic",
     )
     analysis = report["analysis"]
     assert isinstance(analysis, dict)
@@ -487,41 +482,36 @@ def test_analysis_preserves_conditioned_current_shock(
         )
 
 
-@pytest.mark.parametrize("search_mode", ["heuristic", "exact"])
 @pytest.mark.parametrize("facts_backend", BACKENDS)
-def test_every_backend_and_search_mode_records_its_choice(
-    *, period_model: Model, facts_backend: FactsBackend, search_mode: SearchMode
+def test_every_backend_records_its_choice(
+    *, period_model: Model, facts_backend: FactsBackend
 ) -> None:
-    result = analyze_regime_structure(
-        period_model, facts_backend=facts_backend, search_mode=search_mode
-    )
-    assert (result.facts_backend, result.search_mode) == (facts_backend, search_mode)
+    result = analyze_regime_structure(period_model, facts_backend=facts_backend)
+    assert result.facts_backend == facts_backend
     assert _record(result.to_dict()["layers"])["facts"] == facts_backend
-    assert result.recommendations
+    assert result.candidates
 
 
-def test_analysis_requires_a_backend_and_a_search_mode(period_model: Model) -> None:
+def test_analysis_requires_a_backend(period_model: Model) -> None:
     with pytest.raises(TypeError, match="facts_backend"):
         analyze_regime_structure(period_model)  # ty: ignore[missing-argument]
-    with pytest.raises(TypeError, match="search_mode"):
-        find_regimes(period_model, facts_backend="metadata")  # ty: ignore[missing-argument]
+    with pytest.raises(TypeError, match="facts_backend"):
+        find_regimes(period_model)  # ty: ignore[missing-argument]
 
 
-def test_analyze_regime_structure_returns_typed_recommendations(
+def test_analyze_regime_structure_returns_a_typed_recommendation(
     period_model: Model,
 ) -> None:
-    """Recommendations link directly to immutable candidates and original costs."""
+    """The recommendation links directly to an immutable candidate or the original."""
     module = import_module("lcm.graphs")
     assert hasattr(module, "analyze_regime_structure")
-    result = module.analyze_regime_structure(
-        period_model, facts_backend="metadata", search_mode="heuristic"
-    )
+    result = module.analyze_regime_structure(period_model, facts_backend="metadata")
     assert isinstance(result, module.RegimeAnalysisResult)
     assert result.original.cost is not None
-    assert result.recommendations
-    assert all(
-        candidate is result.original or candidate in result.candidates
-        for candidate in result.recommendations
+    assert result.candidates
+    assert (
+        result.recommendation is result.original
+        or result.recommendation in result.candidates
     )
     assert result.checks
     with pytest.raises(AttributeError):
@@ -539,14 +529,12 @@ def test_analyze_regime_structure_writes_an_explicit_report(
     """Report writing accepts a string and protects an existing directory."""
     module = import_module("lcm.graphs")
     assert hasattr(module, "analyze_regime_structure")
-    result = module.analyze_regime_structure(
-        period_model, facts_backend="metadata", search_mode="heuristic"
-    )
+    result = module.analyze_regime_structure(period_model, facts_backend="metadata")
     output = tmp_path / "typed-report"
     result.write_report(str(output))
     text = (output / "report.html").read_text()
-    assert "Original representation" in text
-    assert "Recommendation" in text
+    assert "Original model" in text
+    assert "Layout curve" in text
     assert "parent run wrapper" not in text
     assert 'href="resource.json"' not in text
     assert "dates Not supplied" not in text
@@ -563,7 +551,7 @@ def test_model_to_networkx_matches_temporal_view(period_model: Model) -> None:
 
 
 def test_analysis_custom_cost_is_used_during_search(period_model: Model) -> None:
-    """A declared linear objective is recorded by the actual candidate search."""
+    """A declared linear objective is recorded with the recommendation."""
     module = import_module("lcm.graphs")
     assert hasattr(module, "LinearRegimeCostModel")
     model = module.LinearRegimeCostModel(
@@ -577,14 +565,38 @@ def test_analysis_custom_cost_is_used_during_search(period_model: Model) -> None
         period_model,
         cost_model=model,
         facts_backend="metadata",
-        search_mode="heuristic",
     )
     assert result.cost_model is model
-    scenario = _records(result.to_dict()["scenarios"])[0]
-    objective = _record(scenario["objective"])
-    assert objective["weights"] == {"work": "7", "storage": "3", "clarity": "2"}
-    assert objective["reference_scales"] == {"work": 1, "storage": 1, "clarity": 1}
-    assert objective["minimum_improvement"] == "1/4"
+    objective = _record(result.to_dict()["recommendation_preferences"])
+    assert objective["weights"] == {"work": 7.0, "storage": 3.0, "clarity": 2.0}
+    assert objective["reference"] == {"work": 1, "storage": 1, "clarity": 1}
+    assert objective["minimum_improvement"] == 0.25
+
+
+def test_a_layout_that_only_ties_the_original_is_not_recommended(
+    *, period_model: Model, tmp_path: Path
+) -> None:
+    """With no improvement, the result and the report both retain the original."""
+    result = analyze_regime_structure(period_model, facts_backend="metadata")
+    assert result.recommendation is result.original
+    result.write_report(tmp_path / "report")
+    assert "retains the original model" in (tmp_path / "report/report.html").read_text()
+
+
+@pytest.mark.parametrize(
+    ("threshold", "operation"), [(0.05, "layout"), (0.2, "retain_original")]
+)
+def test_a_layout_must_improve_the_original_by_the_required_margin(
+    *, threshold: float, operation: str
+) -> None:
+    """An 11% improvement clears a 5% margin and fails a 20% one."""
+    point = {"max_blocks": 2, "blocks": 2, "evaluations": 84, "storage": 84}
+    chosen = recommend(
+        {"curve": [point]},
+        {"work": 100, "storage": 100, "clarity": 2},
+        {"minimum_improvement": threshold},
+    )
+    assert chosen["operation"] == operation
 
 
 @pytest.mark.parametrize("weight", [0.0, -1.0, float("nan"), float("inf")])
@@ -666,9 +678,7 @@ def test_conditioned_persistent_process_preserves_original_phase_inputs(
         enable_jit=False,
     )
     module = import_module("lcm.graphs")
-    report = module.analyze_regime_structure(
-        model, facts_backend="metadata", search_mode="heuristic"
-    ).to_dict()
+    report = module.analyze_regime_structure(model, facts_backend="metadata").to_dict()
     declaration = _record(_record(report["analysis"])["declarations"])
     cells = {str(cell["id"]): cell for cell in _records(declaration["cells"])}
     transitions = [
@@ -749,9 +759,7 @@ def test_target_conditioned_process_preserves_needed_source_history() -> None:
     )
     report = (
         import_module("lcm.graphs")
-        .analyze_regime_structure(
-            model, facts_backend="metadata", search_mode="heuristic"
-        )
+        .analyze_regime_structure(model, facts_backend="metadata")
         .to_dict()
     )
     analysis = _record(report["analysis"])
