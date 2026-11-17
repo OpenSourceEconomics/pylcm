@@ -4993,12 +4993,9 @@ def _prepare_numerical_solution_phase(  # noqa: PLR0915 - native route admission
     # no continuation, so the set is empty there.
     co_map_state_names: tuple[StateName, ...] = ()
     co_map_v_arr_in_axes: tuple[MappingProxyType[RegimeName, int | None], ...] = ()
-    # A value constraint or a gated edge decides which actions and branches a
-    # landing is reached through only once the values are known, so these
-    # sources count their raise-rule landings inside the solve kernel, where
-    # both are, rather than in the preflight, where neither is.
-    counts_raise_landings = bool(value_aware_feasibility.value_constraints) or bool(
-        gated_continuations
+    counts_raise_landings = _counts_raise_landings(
+        value_aware_feasibility=value_aware_feasibility,
+        gated_continuations=gated_continuations,
     )
 
     period_to_state_nodes = _period_to_state_nodes(
@@ -5139,14 +5136,13 @@ def _prepare_numerical_solution_phase(  # noqa: PLR0915 - native route admission
             grid_schedule=grid_schedule,
             gated_continuations=gated_continuations,
             count_raise_landings=counts_raise_landings,
-            lottery_contraction_source=(
-                LotteryContractionSource(
-                    state_grids=state_grids[regime_name],
-                    action_names=frozenset(state_action_space.action_names),
-                    rebound_targets=frozenset(laws[regime_name].participation),
-                )
-                if isinstance(solver, GridSearch) and solver.lottery_contraction
-                else None
+            lottery_contraction_source=_lottery_contraction_source(
+                solver=solver,
+                state_grids=state_grids[regime_name],
+                action_names=state_action_space.action_names,
+                law=laws[regime_name],
+                counts_raise_landings=counts_raise_landings,
+                current_values_on_nodes=True,
             ),
         )
         grouped_Q_and_F = decision_Q_and_F()
@@ -6522,6 +6518,19 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
             continuation_functions=solve_functions,
             grid_schedule=grid_schedule,
             gated_continuations=gated_continuations,
+            # The simulation reads the solve's continuation, so it contracts the
+            # same draws; a subject's process value may lie off its nodes.
+            lottery_contraction_source=_lottery_contraction_source(
+                solver=solver,
+                state_grids=state_grids[regime_name],
+                action_names=state_action_space.action_names,
+                law=law,
+                counts_raise_landings=_counts_raise_landings(
+                    value_aware_feasibility=value_aware_feasibility,
+                    gated_continuations=gated_continuations,
+                ),
+                current_values_on_nodes=False,
+            ),
         )
         Q_and_F_functions = decision_Q_and_F().by_period
         # Typed queries may receive parent coordinates outside this source's
@@ -10027,6 +10036,50 @@ def _co_map_state_names(
         ):
             co_map.append(name)
     return tuple(co_map)
+
+
+def _counts_raise_landings(
+    *,
+    value_aware_feasibility: _ValueAwareFeasibility,
+    gated_continuations: Mapping[RegimeName, GatedContinuationSchedule],
+) -> bool:
+    """Return whether the source counts its raise-rule landings inside the kernel.
+
+    A value constraint or a gated edge decides which actions and branches a
+    landing is reached through only once the values are known, so these sources
+    count their landings inside the solve kernel, where both are, rather than in
+    the preflight, where neither is.
+    """
+    return bool(value_aware_feasibility.value_constraints) or bool(gated_continuations)
+
+
+def _lottery_contraction_source(
+    *,
+    solver: Solver,
+    state_grids: MappingProxyType[StateName, Grid],
+    action_names: tuple[ActionName, ...],
+    law: RegimeLaw,
+    counts_raise_landings: bool,
+    current_values_on_nodes: bool,
+) -> LotteryContractionSource | None:
+    """Return what the source contributes to contracting its draws, or `None`.
+
+    Contraction is a `GridSearch` option. A source that counts its raise-rule
+    landings reads every continuation's nodes as nodes, so its solve contracts
+    nothing; its simulation then contracts nothing either, to read the solve's Q.
+    """
+    if (
+        not isinstance(solver, GridSearch)
+        or not solver.lottery_contraction
+        or counts_raise_landings
+    ):
+        return None
+    return LotteryContractionSource(
+        state_grids=state_grids,
+        action_names=frozenset(action_names),
+        rebound_targets=frozenset(law.participation),
+        current_values_on_nodes=current_values_on_nodes,
+    )
 
 
 def _fail_if_blocked_regime_reads_unsupported_inputs(

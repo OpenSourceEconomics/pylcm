@@ -40,6 +40,7 @@ from _lcm.regime_building.V import create_v_interpolation_info
 from lcm import (
     AgeGrid,
     DiscreteGrid,
+    ExecutionConfig,
     LinSpacedGrid,
     Model,
     NormalIIDProcess,
@@ -168,7 +169,11 @@ def _final_utility(
 
 
 def _model(
-    *, final_z: _FinalZ, solver: GridSearch, income_kind: _IncomeKind = "markov"
+    *,
+    final_z: _FinalZ,
+    solver: GridSearch,
+    income_kind: _IncomeKind = "markov",
+    execution_config: ExecutionConfig = ExecutionConfig(),  # noqa: B008
 ) -> Model:
     shared = {
         "wealth": LinSpacedGrid(start=_WEALTH[0], stop=_WEALTH[1], n_points=_WEALTH[2]),
@@ -208,6 +213,7 @@ def _model(
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         edges={"alive": {"final": 0}},
         initial_nodes=((0, "alive"),),
+        execution_config=execution_config,
     )
 
 
@@ -222,7 +228,11 @@ def _params(*, final_z: _FinalZ) -> dict[str, UserParamsNode]:
 
 
 def _planned_contraction(
-    *, model: Model, source_name: RegimeName, target_name: RegimeName
+    *,
+    model: Model,
+    source_name: RegimeName,
+    target_name: RegimeName,
+    current_values_on_nodes: bool = True,
 ) -> LotteryContraction | None:
     """Plan the contraction from one regime toward another as the solve does."""
     source = model._regimes[source_name].solution
@@ -251,6 +261,7 @@ def _planned_contraction(
                 {name: source.grids[name] for name in source.state_names}
             ),
             action_names=frozenset(source.action_names),
+            current_values_on_nodes=current_values_on_nodes,
         ),
     )
 

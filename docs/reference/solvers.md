@@ -40,15 +40,27 @@ cancelling values, either summation order can lose a small term. The contraction
 only under the linear expectation, and not to a target reached through a participation
 check or to a stochastic process whose nodes come from runtime parameters. A next-period
 value of `+inf` is outside the supported domain: where one meets an infeasible `-inf`
-across draws, the contracted read is `-inf`, while per-draw enumeration gives NaN. Only
-the solve contracts: the simulation evaluates its Q with every draw enumerated, so with
-such cancelling values its choices can differ from the solve's by more than a tie, until
-the simulation contracts as well.
+across draws, the contracted read is `-inf`, while per-draw enumeration gives NaN.
+
+The simulation and the public `Model.lookup_policy`, which runs the simulation's
+decision, contract the same draws as the solve, with one exception: a stochastic process
+whose probabilities read the subject's current value. A simulated value may lie between
+the process's nodes, and which draws are contracted is fixed when the simulation is
+built, so this process draw stays enumerated in the simulation for every subject, even
+for one exactly on a node. Other eligible draws in the same continuation are still
+contracted. Where no such process draw is contracted in the solve, the simulation
+maximizes the Q the solve maximized, cancelling values included. Where one is, the
+simulated choice can differ from the solve's by more than a tie with cancelling values,
+even at a node.
+
+A regime with a gated edge or a value constraint contracts nothing in either phase. The
+internal participation and exit queries, which count their landings on the nodes, also
+keep every draw enumerated.
 
 The contraction is off by default. Its table is built inside the kernel's tile loops,
-and on GPU the compiler does not hoist it out of them, so it is rebuilt for every cell
-and action tile. A period solved in a few wide tiles gains, while one split into many
-narrow tiles, as fixed `axis_widths` or unbudgeted widths can force, loses.
+and on GPU the compiler does not hoist it out of them, so it is rebuilt for every cell,
+action and subject tile. A period solved in a few wide tiles gains, while one split into
+many narrow tiles, as fixed `axis_widths` or unbudgeted widths can force, loses.
 
 ## Capability table
 
