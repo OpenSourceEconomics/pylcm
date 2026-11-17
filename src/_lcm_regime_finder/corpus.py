@@ -59,7 +59,7 @@ def run_corpus(manifest_path, output, *, seconds=900, host_gib=8, reuse_verified
                                   analysis_report=str(report_path.relative_to(output)),
                                   source_semantics=result.get('semantic_check', {}).get('status'),
                                   layers=result.get('layers', {}),
-                                  frontier_points=[len(s.get('frontier', [])) for s in result.get('scenarios', [])],
+                                  curve_points=len((result.get('layouts') or {}).get('curve', [])),
                                   production_metadata=result.get('analysis', {}).get('declarations', {}).get('production_metadata'))
                     resource = folder / 'resource.json'
                     if resource.exists(): record['resources'] = json.loads(resource.read_text())

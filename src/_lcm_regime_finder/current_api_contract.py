@@ -7,9 +7,11 @@ The independent checker separately validates each original payload authority.
 from __future__ import annotations
 
 from collections.abc import Mapping
+import functools
 from inspect import Signature
 from types import CodeType, FunctionType, MappingProxyType, ModuleType, UnionType
 from typing import TypeAliasType
+from .callable_identity import _code_digest
 from .records import JSONValue
 
 NATIVE_INPUT_TYPES = frozenset({
@@ -245,7 +247,7 @@ def inspect_native_input_authority(value: object, raw: object) -> dict[str, JSON
     import marshal
     result: dict[str, JSONValue] = {
         'class_source': authority, 'call_code_contract': 'compiled-native-source-code/v1',
-        'call_code_sha256': hashlib.sha256(marshal.dumps(raw.__code__)).hexdigest(),
+        'call_code_sha256': _code_digest(raw),
     }
     if name == '_lcm.output_roles.InRole':
         base_module = sys.modules.get('_lcm.utils.functools')
@@ -395,6 +397,48 @@ def inspect_source_bound_function(
 
 
 
+def _source_file(path: str) -> tuple[bytes, str]:
+    """Return a file's newline-normalized bytes and their sha256.
+
+    The file is read again only when its modification time, size or inode changes.
+    """
+    import os
+    stat = os.stat(path)
+    return _read_source_file(path, stat.st_mtime_ns, stat.st_size, stat.st_ino)
+
+
+@functools.cache
+def _read_source_file(path: str, mtime_ns: int, size: int, inode: int) -> tuple[bytes, str]:
+    import hashlib
+    from pathlib import Path
+    data = Path(path).read_bytes().replace(b'\r\n', b'\n')
+    return data, hashlib.sha256(data).hexdigest()
+
+
+@functools.cache
+def _alias_template(source: bytes, filename: str, name: str, dtype_name: str, optimize: int) -> CodeType | None:
+    """Parse and compile the alias's source once per process; it is a pure function of the bytes."""
+    import ast
+    aliases = [node for node in ast.parse(source).body if isinstance(node, ast.TypeAlias)
+               and isinstance(node.name, ast.Name) and node.name.id == name]
+    if len(aliases) != 1 or aliases[0].type_params:
+        return None
+    expression = aliases[0].value
+    if (not isinstance(expression, ast.Subscript) or not isinstance(expression.value, ast.Name)
+            or expression.value.id != dtype_name or not isinstance(expression.slice, ast.Tuple)
+            or len(expression.slice.elts) != 2 or not isinstance(expression.slice.elts[0], ast.Name)
+            or expression.slice.elts[0].id != 'Array' or not isinstance(expression.slice.elts[1], ast.Constant)
+            or type(expression.slice.elts[1].value) is not str or expression.slice.elts[1].value != '...'):
+        return None
+    pending, matches = [compile(source, filename, 'exec', dont_inherit=True, optimize=optimize)], []
+    while pending:
+        code = pending.pop()
+        if code.co_name == code.co_qualname == name:
+            matches.append(code)
+        pending.extend(item for item in code.co_consts if type(item) is CodeType)
+    return matches[0] if len(matches) == 1 else None
+
+
 def _native_array_alias_evaluator(
     alias: TypeAliasType,
     native: ModuleType,
@@ -405,7 +449,6 @@ def _native_array_alias_evaluator(
     dtype_name: str,
 ) -> FunctionType | None:
     """Compile the finite native alias template without running an annotation body."""
-    import ast
     import builtins
     import inspect
     import sys
@@ -421,24 +464,8 @@ def _native_array_alias_evaluator(
             or type(evaluator.__defaults__) is not tuple or len(evaluator.__defaults__) != 1
             or type(evaluator.__defaults__[0]) is not int or evaluator.__defaults__[0] != 1):
         return None
-    aliases = [node for node in ast.parse(source).body if isinstance(node, ast.TypeAlias)
-               and isinstance(node.name, ast.Name) and node.name.id == name]
-    if len(aliases) != 1 or aliases[0].type_params:
-        return None
-    expression = aliases[0].value
-    if (not isinstance(expression, ast.Subscript) or not isinstance(expression.value, ast.Name)
-            or expression.value.id != dtype_name or not isinstance(expression.slice, ast.Tuple)
-            or len(expression.slice.elts) != 2 or not isinstance(expression.slice.elts[0], ast.Name)
-            or expression.slice.elts[0].id != 'Array' or not isinstance(expression.slice.elts[1], ast.Constant)
-            or type(expression.slice.elts[1].value) is not str or expression.slice.elts[1].value != '...'):
-        return None
-    pending, matches = [compile(source, filename, 'exec', dont_inherit=True, optimize=sys.flags.optimize)], []
-    while pending:
-        code = pending.pop()
-        if code.co_name == code.co_qualname == name:
-            matches.append(code)
-        pending.extend(item for item in code.co_consts if type(item) is CodeType)
-    return evaluator if len(matches) == 1 and _native_constant_equal(evaluator.__code__, matches[0]) else None
+    template = _alias_template(source, filename, name, dtype_name, sys.flags.optimize)
+    return evaluator if template is not None and _native_constant_equal(evaluator.__code__, template) else None
 
 
 def _native_cached_array_class(
@@ -659,7 +686,7 @@ def inspect_native_schedule_authority(value: object, raw: object) -> dict[str, J
         'authored_call_source': source,
         'authored_file_sha256': file_sha256,
         'call_code_contract': 'compiled-native-source-code/v1',
-        'call_code_sha256': hashlib.sha256(marshal.dumps(raw.__code__)).hexdigest(),
+        'call_code_sha256': _code_digest(raw),
     }
     return result if matches_schedule_call(name=name, authority=result, code_sha256=result['call_code_sha256']) else None
 
@@ -789,8 +816,6 @@ def gate_maps(data, *names):
 
 def inspect_native_floatnd_alias(value: object) -> dict[str, JSONValue] | None:
     """Authenticate only the actual native FloatND alias and its cached array class."""
-    import hashlib
-    from pathlib import Path
     import sys
     from typing import TypeAliasType
 
@@ -804,9 +829,8 @@ def inspect_native_floatnd_alias(value: object) -> dict[str, JSONValue] | None:
     if not isinstance(filename, str) or not isinstance(array_filename, str):
         return None
     try:
-        source = Path(filename).read_bytes().replace(b'\r\n', b'\n')
-        file_hash = hashlib.sha256(source).hexdigest()
-        array_hash = hashlib.sha256(Path(array_filename).read_bytes().replace(b'\r\n', b'\n')).hexdigest()
+        source, file_hash = _source_file(filename)
+        _, array_hash = _source_file(array_filename)
         if (file_hash not in {'92bd61b989e1259c67723f8d98e55f8e6b2a5fd4e4f42c9e017a63f80cd1c248',
                              '5335c3c4cdfdcc48c231bd7ba3e44285d93be331242d77404d7778f977fe6c99'}
                 or array_hash != 'e63908f56c995f24cbed97d9ba820c8b5fd98bc0301dfb4095cde3ab7d5dd1e4'):
@@ -831,7 +855,7 @@ def inspect_native_floatnd_alias(value: object) -> dict[str, JSONValue] | None:
                 or evaluator.__kwdefaults__ is not None or evaluator.__closure__ is not None
                 or vars(native).get('FloatND') is not value or vars(native).get('Float') is not dtype
                 or vars(jaxtyping).get('Float') is not dtype or vars(native).get('Array') is not numerical.Array
-                or Path(filename).read_bytes().replace(b'\r\n', b'\n') != source):
+                or _source_file(filename)[0] != source):
             return None
         return {'contract': 'source-bound-native-floatnd-alias/v1', 'alias': 'lcm.typing.FloatND',
                 'typing_file_sha256': file_hash, 'array_module_sha256': array_hash,

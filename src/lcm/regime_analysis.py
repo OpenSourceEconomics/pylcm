@@ -12,8 +12,6 @@ from lcm.typing import ActionName, RegimeName, StateName
 
 # Where an analysis takes its dependency facts from.
 type FactsBackend = Literal["metadata", "dense", "implicit"]
-# How an analysis searches the candidate family.
-type SearchMode = Literal["heuristic", "exact"]
 
 _COST_FEATURES = ("work", "storage", "clarity")
 
@@ -38,8 +36,6 @@ class LinearRegimeCostModel:
     """Fixed feature scales, or the unchanged original costs when omitted."""
     minimum_improvement: float = 0.0
     """Required relative objective improvement over the original."""
-    allow_final_only_split: bool = False
-    """Permit extra final-decision-only blocks in recommendations."""
 
     def __post_init__(self) -> None:
         for name in ("work_weight", "storage_weight", "complexity_weight"):
@@ -71,7 +67,6 @@ class LinearRegimeCostModel:
                 "clarity": self.complexity_weight,
             },
             "minimum_improvement": self.minimum_improvement,
-            "allow_final_only_split": self.allow_final_only_split,
         }
         if self.reference_scales is not None:
             result["reference"] = dict(
@@ -85,11 +80,11 @@ class RegimeCost:
     """Structural work, allocation and complexity estimates."""
 
     work: int
-    """Declared state-action evaluations and boundary charges."""
+    """State-action evaluations: periods times state grid times action grid, summed."""
     storage: int
-    """Allocated value entries, not peak memory bytes."""
+    """Stored values: periods times state grid, summed; not peak memory bytes."""
     complexity: int
-    """Weighted blocks, characteristics and dispatch clauses."""
+    """The number of regimes (blocks)."""
 
 
 @dataclass(frozen=True)
@@ -104,19 +99,17 @@ class RegimeCheck:
 
 @dataclass(frozen=True)
 class StatusLane:
-    """The codes of one status state that a split block solves on its own grid."""
+    """A lane: one original regime at one value of its uncontracted statuses."""
 
-    status: StateName
-    """The categorical state the block is split by."""
-    codes: tuple[int, ...]
-    """Codes of `status` in this lane."""
-    states: tuple[StateName, ...]
-    """States this lane keeps; the others are not needed at these codes."""
+    regime: RegimeName
+    """The original regime."""
+    statuses: tuple[tuple[StateName, int], ...]
+    """The (status, code) pairs of the lane; contracted statuses are absent."""
 
 
 @dataclass(frozen=True)
 class RegimeBlock:
-    """A proposed computational block retaining economic regime identities."""
+    """A regime of a layout: a group of lanes over an interval of its periods."""
 
     regimes: tuple[RegimeName, ...]
     """Original economic regimes dispatched within this block."""
@@ -125,58 +118,58 @@ class RegimeBlock:
     dates: tuple[str, ...]
     """Exact age labels, or period labels in a period-based model."""
     states: tuple[StateName, ...]
-    """Allocated state axes."""
+    """State coordinates the block keeps."""
     actions: tuple[ActionName, ...]
-    """Allocated action axes."""
+    """Action coordinates the block keeps."""
     cells: tuple[str, ...]
     """Original dated-cell identifiers."""
-    lanes: tuple[StatusLane, ...] = ()
-    """Status lanes of a split block; empty if the block is not split."""
+    lanes: tuple[StatusLane, ...]
+    """The lanes the block holds."""
+    cost: RegimeCost
+    """The block's evaluations, stored values and one regime."""
 
 
 @dataclass(frozen=True)
 class RegimeCandidate:
-    """A representation and its independently recorded checks."""
+    """A layout of the curve, or the original model, with its checks."""
 
     identifier: str
-    """Candidate identity, or retain-original."""
-    scenario: int | None
-    """Allocation scenario index, or None for the original."""
+    """`max_blocks=<k>` for a curve point, or retain-original."""
+    max_blocks: int | None
+    """The block budget k of the curve point, or None for the original."""
     cost: RegimeCost | None
-    """Estimated cost, or None if the original allocation is incomparable."""
+    """Its evaluations, stored values and number of regimes."""
     blocks: tuple[RegimeBlock, ...]
     """Directly inspectable computational blocks."""
     checks: tuple[RegimeCheck, ...]
-    """Local checks and disposition, separate from global search coverage."""
+    """The checks the layout passed through."""
     reasons: tuple[str, ...]
-    """Reasons supporting or qualifying the proposal."""
+    """Reasons supporting or qualifying the layout."""
 
 
 @dataclass(frozen=True)
 class RegimeAnalysisResult:
-    """Inspect recommendations without joining candidate IDs in wire records.
+    """The layout curve of a model and the layout the cost model recommends.
 
     The data view is recursively immutable. Use to_dict for an independent,
-    serializable copy. Recommendations reference the same candidate objects as
-    candidates, or original when the original is retained.
+    serializable copy. The recommendation is one of the candidates, or the
+    original when no layout improves on it.
     """
 
     status: str
     """Analysis outcome, with detailed scope in checks and data."""
     original: RegimeCandidate
-    """The original representation and comparable structural costs."""
+    """The original representation and its costs."""
     candidates: tuple[RegimeCandidate, ...]
-    """Examined complete representations."""
-    recommendations: tuple[RegimeCandidate, ...]
-    """Direct candidate references, including the original fallback."""
+    """One layout per block budget k: the at-most-k minimum of the curve."""
+    recommendation: RegimeCandidate
+    """The candidate the cost model selects, or the original."""
     checks: tuple[RegimeCheck, ...]
-    """Global check layers; these do not replace local proposal checks."""
+    """Global check layers."""
     cost_model: LinearRegimeCostModel
-    """The objective supplied to candidate generation and pruning."""
+    """The objective the recommendation minimizes."""
     facts_backend: FactsBackend
     """The backend that supplied the dependency facts."""
-    search_mode: SearchMode
-    """How the candidate family was searched."""
     data: Mapping[str, JSONValue] = field(repr=False)
     """Recursively immutable detailed report and source records."""
 
@@ -230,21 +223,17 @@ def _rows(value: JSONValue) -> tuple[Mapping[str, JSONValue], ...]:
     return tuple(_mapping(item) for item in value)
 
 
-def _cost(value: JSONValue) -> RegimeCost | None:
-    if value is None:
-        return None
-    record = _mapping(value)
-    return RegimeCost(
-        work=_integer(record["work"]),
-        storage=_integer(record["storage"]),
-        complexity=_integer(record["clarity"]),
-    )
-
-
 def _integer(value: JSONValue) -> int:
     if not isinstance(value, int) or isinstance(value, bool) or value < 0:
         msg = "Structural costs must be nonnegative integers."
         raise ValueError(msg)
+    return value
+
+
+def _sequence(value: JSONValue) -> Sequence[JSONValue]:
+    if not isinstance(value, Sequence) or isinstance(value, str):
+        msg = "Analysis rows must be a sequence."
+        raise TypeError(msg)
     return value
 
 
@@ -263,157 +252,142 @@ def result_from_report(
     analysis = _mapping(report.get("analysis", {}))
     declarations = _mapping(analysis.get("declarations", {}))
     cells = {str(cell["id"]): cell for cell in _rows(declarations.get("cells", []))}
-    derived = _mapping(analysis.get("derived_domains", {}))
+    by_place = {
+        (_integer(cell["period"]), str(cell["regime"])): identifier
+        for identifier, cell in cells.items()
+    }
 
-    def split(
-        axes: Mapping[str, JSONValue],
-    ) -> tuple[tuple[str, ...], tuple[StatusLane, ...]]:
-        states: list[str] = []
-        lanes: list[StatusLane] = []
-        for name, domain_id in axes.items():
-            domain = _mapping(derived.get(str(domain_id), {}))
-            if domain.get("kind") != "lanes":
-                states.append(name)
-                continue
-            status = str(domain["status_axis"])
-            states.append(status)
-            for lane in _rows(domain.get("lanes", [])):
-                kept = _strings(list(_mapping(lane.get("states", {}))))
-                states.extend(kept)
-                codes = _strings(_mapping(lane.get("codes", {}))[status])
-                lanes.append(
-                    StatusLane(
-                        status=status,
-                        codes=tuple(int(code) for code in codes),
-                        states=kept,
+    def date(identifier: str) -> str:
+        cell = cells[identifier]
+        return str(cell.get("age") if cell.get("age") is not None else cell["period"])
+
+    def layout_blocks(
+        layout: Sequence[Mapping[str, JSONValue]],
+    ) -> tuple[RegimeBlock, ...]:
+        result = []
+        for group in layout:
+            lanes = tuple(
+                StatusLane(
+                    regime=str(lane["regime"]),
+                    statuses=tuple(
+                        (str(n), _integer(c))
+                        for n, c in _mapping(lane["statuses"]).items()
+                    ),
+                )
+                for lane in _rows(group["lanes"])
+            )
+            for block in _rows(group["blocks"]):
+                fibres = _rows(block["fibres"])
+                identifiers = tuple(
+                    dict.fromkeys(
+                        by_place[_integer(f["period"]), str(f["regime"])]
+                        for f in fibres
                     )
                 )
-        return tuple(dict.fromkeys(states)), tuple(lanes)
-
-    def blocks(records: Sequence[Mapping[str, JSONValue]]) -> tuple[RegimeBlock, ...]:
-        result = []
-        for record in records:
-            identifiers = _strings(record.get("cells", []))
-            members = [cells[identifier] for identifier in identifiers]
-            result.append(
-                RegimeBlock(
-                    regimes=_strings(record.get("original_regimes", [])),
-                    periods=tuple(
-                        sorted({_integer(cell["period"]) for cell in members})
-                    ),
-                    dates=tuple(
-                        dict.fromkeys(
-                            str(
-                                cell.get("age")
-                                if cell.get("age") is not None
-                                else cell["period"]
-                            )
-                            for cell in members
-                        )
-                    ),
-                    states=split(_mapping(record.get("state_axes", {})))[0],
-                    actions=tuple(_mapping(record.get("action_axes", {}))),
-                    cells=identifiers,
-                    lanes=split(_mapping(record.get("state_axes", {})))[1],
+                regimes = tuple(sorted({str(f["regime"]) for f in fibres}))
+                result.append(
+                    RegimeBlock(
+                        regimes=regimes,
+                        periods=tuple(_integer(t) for t in _sequence(block["periods"])),
+                        dates=tuple(dict.fromkeys(date(i) for i in identifiers)),
+                        states=tuple(
+                            n for n in _mapping(block["states"]) if n != "regime"
+                        ),
+                        actions=tuple(_mapping(block["actions"])),
+                        cells=identifiers,
+                        lanes=tuple(lane for lane in lanes if lane.regime in regimes),
+                        cost=RegimeCost(
+                            work=_integer(block["evaluations"]),
+                            storage=_integer(block["storage"]),
+                            complexity=1,
+                        ),
+                    )
                 )
-            )
         return tuple(result)
 
-    original_groups: dict[str, list[str]] = {}
+    original_cost = report.get("original_cost")
+    groups: dict[str, list[str]] = {}
     for identifier, cell in cells.items():
-        original_groups.setdefault(str(cell["regime"]), []).append(identifier)
-    original_blocks = blocks(
-        tuple(
-            {
-                "original_regimes": [regime],
-                "cells": identifiers,
-                "state_axes": {
-                    name: domain
-                    for identifier in identifiers
-                    for name, domain in _mapping(
-                        cells[identifier].get("states", {})
-                    ).items()
-                },
-                "action_axes": {
-                    name: domain
-                    for identifier in identifiers
-                    for name, domain in _mapping(
-                        cells[identifier].get("actions", {})
-                    ).items()
-                },
-            }
-            for regime, identifiers in original_groups.items()
-        )
-    )
-    scenarios = _rows(report.get("scenarios", []))
-    original_cost = (
-        _cost(_mapping(scenarios[0].get("original", {})).get("cost"))
-        if scenarios
-        else None
-    )
+        groups.setdefault(str(cell["regime"]), []).append(identifier)
     original = RegimeCandidate(
         "retain-original",
         None,
-        original_cost,
-        original_blocks,
+        None
+        if original_cost is None
+        else RegimeCost(
+            work=_integer(_mapping(original_cost)["work"]),
+            storage=_integer(_mapping(original_cost)["storage"]),
+            complexity=_integer(_mapping(original_cost)["clarity"]),
+        ),
+        tuple(
+            RegimeBlock(
+                regimes=(regime,),
+                periods=tuple(
+                    sorted({_integer(cells[i]["period"]) for i in identifiers})
+                ),
+                dates=tuple(dict.fromkeys(date(i) for i in identifiers)),
+                states=tuple(
+                    dict.fromkeys(
+                        n for i in identifiers for n in _mapping(cells[i]["states"])
+                    )
+                ),
+                actions=tuple(
+                    dict.fromkeys(
+                        n for i in identifiers for n in _mapping(cells[i]["actions"])
+                    )
+                ),
+                cells=tuple(identifiers),
+                lanes=(),
+                cost=RegimeCost(work=0, storage=0, complexity=1),
+            )
+            for regime, identifiers in groups.items()
+        ),
         (RegimeCheck("preservation", "IDENTITY"),),
         ("Retain the supplied model unchanged.",),
     )
-    decisions = {
-        (row.get("scenario_index"), row.get("graph_id")): row
-        for row in _rows(report.get("proposal_decisions", []))
-    }
-    candidates = []
-    by_id = {}
-    for index, scenario in enumerate(scenarios):
-        for point in _rows(scenario.get("candidates", scenario.get("frontier", []))):
-            identifier = str(point["id"])
-            decision = decisions.get((index, identifier), {})
-            candidate = RegimeCandidate(
-                identifier,
-                index,
-                _cost(point.get("cost")),
-                blocks(_rows(point.get("blocks", []))),
-                (
-                    RegimeCheck(
-                        "disposition", str(decision.get("disposition", "investigate"))
-                    ),
-                    RegimeCheck(
-                        "source_semantics",
-                        str(
-                            _mapping(decision.get("semantic_checks", {})).get(
-                                "status", "UNRESOLVED"
-                            )
-                        ),
-                    ),
-                    RegimeCheck(
-                        "candidate_costs",
-                        str(
-                            _mapping(scenario.get("independent_check", {})).get(
-                                "status", "UNRESOLVED"
-                            )
-                        ),
-                    ),
-                ),
-                _strings(decision.get("reasons", [])),
-            )
-            candidates.append(candidate)
-            by_id[index, identifier] = candidate
-    recommendations = tuple(
-        by_id.get((row.get("scenario_index"), row.get("graph_id")), original)
-        for row in _rows(report.get("recommendations", []))
-    ) or (original,)
+    layouts = report.get("layouts")
+    points = _rows(_mapping(layouts).get("curve", [])) if layouts is not None else ()
+    checks = (
+        RegimeCheck(
+            "source_semantics",
+            str(_mapping(report.get("semantic_check", {})).get("status", "NOT_RUN")),
+        ),
+        RegimeCheck(
+            "layout_check",
+            str(_mapping(report.get("layout_check", {})).get("status", "NOT_RUN")),
+        ),
+    )
+    candidates = tuple(
+        RegimeCandidate(
+            f"max_blocks={_integer(point['max_blocks'])}",
+            _integer(point["max_blocks"]),
+            RegimeCost(
+                work=_integer(point["evaluations"]),
+                storage=_integer(point["storage"]),
+                complexity=_integer(point["blocks"]),
+            ),
+            layout_blocks(_rows(point["layout"])),
+            checks,
+            (f"Fewest evaluations with at most {point['max_blocks']} regimes.",),
+        )
+        for point in points
+    )
+    chosen = _mapping(report.get("recommendation", {}))
+    recommendation = (
+        candidates[_integer(chosen["curve_index"])]
+        if chosen.get("operation") == "layout"
+        else original
+    )
     return RegimeAnalysisResult(
         status=str(report.get("status", "UNRESOLVED")),
         original=original,
-        candidates=tuple(candidates),
-        recommendations=recommendations,
+        candidates=candidates,
+        recommendation=recommendation,
         checks=tuple(
             RegimeCheck(key, str(value))
             for key, value in _mapping(report.get("layers", {})).items()
         ),
         cost_model=cost_model,
         facts_backend=cast("FactsBackend", report["facts_backend"]),
-        search_mode=cast("SearchMode", report["search_mode"]),
         data=report,
     )

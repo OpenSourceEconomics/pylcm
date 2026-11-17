@@ -142,9 +142,6 @@ def discover_inputs(paths):
             return  # The actual decoder will reject malformed input, before work.
         if not isinstance(data, dict):
             return
-        if data.get('schema') == 'interned-json-cost-instance/v1':
-            from .symbolic_frontier import load_packet
-            load_packet(path=path, reads=reads)
         if data.get('format') == 'lossless-json-fragments-1':
             from .read_fragments import read
             data = read(Path(path), reads=reads)

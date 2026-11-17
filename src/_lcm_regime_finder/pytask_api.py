@@ -118,20 +118,15 @@ def export_model(model, destination, *, production_metadata, model_id=None,
     return receipt
 
 
-def analyse_snapshot(snapshot, output, *, facts_backend, search_mode, seconds=900, host_gib=8,
-                     command_prefix=None, allow_final_only_split=False,
-                     heuristic_rounds=2, heuristic_neighbors=2):
+def analyse_snapshot(snapshot, output, *, facts_backend, seconds=900, host_gib=8,
+                     command_prefix=None):
     """One failure boundary for receipt, worker and final delivery validation."""
     snapshot, output = Path(snapshot).resolve(), Path(output).resolve()
     if snapshot.is_relative_to(output):
         raise ValueError('Analysis output must not contain the original input; use a separate analysis subdirectory')
     try:
         return _analyse_snapshot(snapshot, output, seconds=seconds, host_gib=host_gib,
-                                 command_prefix=command_prefix,
-                                 allow_final_only_split=allow_final_only_split,
-                                 facts_backend=facts_backend, search_mode=search_mode,
-                                 heuristic_rounds=heuristic_rounds,
-                                 heuristic_neighbors=heuristic_neighbors)
+                                 command_prefix=command_prefix, facts_backend=facts_backend)
     except Exception as error:
         from .delivery import invalidate_delivery
         try:
@@ -146,16 +141,10 @@ def analyse_snapshot(snapshot, output, *, facts_backend, search_mode, seconds=90
         raise
 
 
-def _analyse_snapshot(snapshot, output, *, seconds, host_gib, command_prefix,
-                      allow_final_only_split, facts_backend, search_mode, heuristic_rounds,
-                      heuristic_neighbors):
+def _analyse_snapshot(snapshot, output, *, seconds, host_gib, command_prefix, facts_backend):
     from .resources import run_bounded
-    if search_mode not in {'heuristic', 'exact'}:
-        raise ValueError('search_mode must be heuristic or exact')
     if facts_backend not in {'metadata', 'dense', 'implicit'}:
         raise ValueError('facts_backend must be metadata, dense or implicit')
-    if type(allow_final_only_split) is not bool:
-        raise ValueError('allow_final_only_split must be a boolean')
     if seconds < 0 or host_gib <= 0:
         raise ValueError('Resource bounds require seconds>=0 and host_gib>0')
     started = time.perf_counter()
@@ -201,12 +190,12 @@ def _analyse_snapshot(snapshot, output, *, seconds, host_gib, command_prefix,
         detail = '; '.join(str(item) for item in obligations)
         reason = 'Source capture is incomplete' + (': ' + detail if detail else '.')
         elapsed = capture_seconds + time.perf_counter() - started
-        record = {'schema': 'regime-production-result/v1', 'status': 'INCOMPLETE',
+        record = {'schema': 'regime-production-result/v2', 'status': 'INCOMPLETE',
                   'phase': 'capture', 'reason': reason, 'analysis_started': False,
                   'capture_receipt': str(capture_path),
                   'capture_obligations': obligations,
                   'capture_exhaustion_reason': exhaustion,
-                  'recommendation': None, 'scenarios': [],
+                  'recommendation': None, 'layouts': None,
                   'transformation_authorized': False,
                   'metadata_budget': {
                       'total_seconds': seconds, 'capture_seconds_charged': capture_seconds,
@@ -226,11 +215,7 @@ def _analyse_snapshot(snapshot, output, *, seconds, host_gib, command_prefix,
         raise RuntimeError(f'Metadata capture INCOMPLETE; inspect {capture_path}')
     command = [*prefix, '-m', f'{__package__}.pipeline', str(snapshot), '--output', str(output),
                '--seconds', str(remaining), '--host-gib', str(host_gib), '--worker',
-               '--facts-backend', facts_backend, '--search-mode', search_mode,
-               '--heuristic-rounds', str(heuristic_rounds),
-               '--heuristic-neighbors', str(heuristic_neighbors)]
-    if allow_final_only_split:
-        command.append('--allow-final-only-split')
+               '--facts-backend', facts_backend]
     from .owned_mutations import resource_plan
     worker_plan = resource_plan(output/'outer-resource', inputs=[snapshot])
     try:
@@ -256,9 +241,9 @@ def _analyse_snapshot(snapshot, output, *, seconds, host_gib, command_prefix,
     if input_error is not None:
         if (output/'report.json').is_file():
             _write_json(output/'completed-before-source-check.json', json.loads((output/'report.json').read_text()))
-        record = {'schema': 'regime-production-result/v1', 'status': 'INVALID',
+        record = {'schema': 'regime-production-result/v2', 'status': 'INVALID',
                   'phase': 'structural_input_integrity', 'reason': input_error,
-                  'recommendation': None, 'scenarios': [], 'transformation_authorized': False}
+                  'recommendation': None, 'layouts': None, 'transformation_authorized': False}
         _write_json(output/'report.json', record)
         import html
         message = 'Structural input changed or is incomplete. No transformation is authorized. ' + input_error
@@ -273,8 +258,8 @@ def _analyse_snapshot(snapshot, output, *, seconds, host_gib, command_prefix,
                   'output':str(output), 'exit_code':code}
         outer_report = output/'outer-resource/report.json'
         incomplete = json.loads(outer_report.read_text()) if outer_report.is_file() else {
-            'schema': 'regime-production-result/v1', 'status': record['status'],
-            'recommendation': None, 'scenarios': [], 'error': record['reason']}
+            'schema': 'regime-production-result/v2', 'status': record['status'],
+            'recommendation': None, 'layouts': None, 'error': record['reason']}
         _write_json(output/'report.json', incomplete)
         # A killed worker cannot finish the rich report. Publish a small readable
         # result instead of leaving a stale successful report from an older run.
@@ -306,7 +291,7 @@ def _analyse_snapshot(snapshot, output, *, seconds, host_gib, command_prefix,
         if code != 2 and (output/'report.json').exists():
             (output/'report.json').replace(finished)
         _write_json(output/'report.json', {
-            'schema': 'regime-production-result/v1', 'status': 'INCOMPLETE',
+            'schema': 'regime-production-result/v2', 'status': 'INCOMPLETE',
             'reason': reason, 'recommendation': None,
             'completed_worker_evidence': finished.name if finished.exists() else None,
             'resource_report': 'outer-resource/report.json' if (output/'outer-resource/report.json').is_file() else None,

@@ -1578,21 +1578,20 @@ def _feasibility_channels(consumer: Mapping[str, Any], decision_phase: str) -> t
     return channels if decision_phase in applicability else ()
 
 
-def check_semantics(original: dict, normalized: dict, analysis: dict, *, check_coverage: bool = True, facts=None) -> SemanticCheck:
+def check_semantics(original: dict, normalized: dict, analysis: dict, *, facts=None) -> SemanticCheck:
     """Reject malformed certificates as data; never promote unchecked input.
 
     Dependencies are read from `facts`, the backend that produced the analysis,
     rebuilt from the declarations when it is not supplied for them.
     """
     try:
-        return _check_semantics(original, normalized, analysis, check_coverage=check_coverage, facts=facts)
+        return _check_semantics(original, normalized, analysis, facts=facts)
     except (KeyError, IndexError, TypeError, ValueError, AttributeError, RecursionError) as exc:
         return {"status": "FAIL", "errors": [{"kind": "malformed semantic certificate", "detail": str(exc)}],
-                "unresolved": [], "checks": 0, "dense_cartesian_rows_evaluated": 0,
-                "projection_family_complete_verified": False}
+                "unresolved": [], "checks": 0, "dense_cartesian_rows_evaluated": 0}
 
 
-def _check_semantics(original: dict, normalized: dict, analysis: dict, *, check_coverage: bool = True, facts=None) -> SemanticCheck:
+def _check_semantics(original: dict, normalized: dict, analysis: dict, *, facts=None) -> SemanticCheck:
     """Verify source retention, dependencies, projections and future closure.
 
     PASS is relative to the supplied original declaration/capture contract.
@@ -1624,8 +1623,7 @@ def _check_semantics(original: dict, normalized: dict, analysis: dict, *, check_
                 "checks": 0, "source_sha256": _digest(original),
                 "normalized_sha256": _digest(normalized),
                 "guarantee": "Original source authentication failed; no dependency context was admitted",
-                "dense_cartesian_rows_evaluated": 0,
-                "projection_family_complete_verified": False}
+                "dense_cartesian_rows_evaluated": 0}
     captures = _CallableRecords(normalized.get("callable_records", {}))
     for error in captures.errors:
         fail("compact callable capture identity", detail=error)
@@ -1711,7 +1709,6 @@ def _check_semantics(original: dict, normalized: dict, analysis: dict, *, check_
         facts = make_facts(analysis.get("facts_backend", "metadata"), dict(normalized, callbacks=authentic_callbacks),
                            {"seconds": float("inf"), "metadata_categories": 100_000}, lambda: None)
     checked_options: dict[str, list[dict]] = {}
-    split_live = None
     for cell_id, cell in cells.items():
         diagnostic_scope = {"scope": "source", "cell": cell_id}
         options = analysis.get("interfaces", {}).get(cell_id, {}).get("options", [])
@@ -1720,12 +1717,6 @@ def _check_semantics(original: dict, normalized: dict, analysis: dict, *, check_
         if len({option.get("id") for option in options}) != len(options): fail("duplicate option IDs", cell=cell_id)
         for option in options:
             diagnostic_scope = {"scope": "option", "cell": cell_id, "option": option.get("id")}
-            if "lanes" in option:
-                if split_live is None:
-                    from .facts import live_states
-                    split_live, _ = live_states(facts, lambda: None)
-                _check_lanes(option, cell, domains, facts, split_live, fail)
-                option = _lane_view(option, cell)
             state_projection = option.get("state_projection", {})
             reconstruction = option.get("action_reconstruction", {})
             if set(state_projection) != set(cell.get("states", {})): fail("state projection coverage", cell=cell_id, option=option.get("id"))
@@ -1741,33 +1732,6 @@ def _check_semantics(original: dict, normalized: dict, analysis: dict, *, check_
                     retained.add(state)
                 elif kind == "drop":
                     if state in option.get("states", {}): fail("dropped state retained as placeholder", cell=cell_id, state=state)
-                elif kind == "characteristic":
-                    callback_id = projection.get("callback")
-                    characteristic = next((record for record in normalized.get("characteristics", {}).values()
-                                           if record.get("callback") == callback_id and record.get("state") == state
-                                           and record.get("domain") == cell["states"][state]), None)
-                    if characteristic is None:
-                        fail("projection is not an existing characteristic", cell=cell_id, state=state)
-                        continue
-                    projected = facts.characteristic_image(characteristic)
-                    if projected is None:
-                        unknown("characteristic is outside pure construction language", callback=callback_id)
-                    else:
-                        if [_value_key(value) for value in projection.get("values", [])] != [_value_key(value) for value in projected]: fail("characteristic map differs from original function", cell=cell_id, state=state)
-                        derived_id = projection.get("domain", option.get("states", {}).get(target))
-                        derived = domains.get(derived_id, {})
-                        images = set(_value_key(value) for value in projected)
-                        if derived.get("size") != len(images): fail("characteristic image cardinality", cell=cell_id, state=state)
-                        if "values" in derived and {_value_key(value) for value in derived["values"]} != images: fail("characteristic image values", cell=cell_id, state=state)
-                    if domains.get(projection.get("domain"), {}).get("size") == 1:
-                        constant_values = domains[projection["domain"]].get("values", [])
-                        if len(constant_values) != 1 or option.get("constants", {}).get(target, _UNKNOWN) != constant_values[0]:
-                            fail("constant characteristic reconstruction missing", cell=cell_id, state=state)
-                        else:
-                            static[target] = constant_values[0]
-                        if target in option.get("states", {}): fail("constant characteristic retained as placeholder", cell=cell_id, state=state)
-                    elif option.get("states", {}).get(target) != projection.get("domain", option.get("states", {}).get(target)): fail("characteristic target domain mismatch", cell=cell_id, state=state)
-                    retained.add(target)
                 else:
                     fail("unknown state projection", cell=cell_id, state=state)
             for action, embedding in reconstruction.items():
@@ -1836,7 +1800,7 @@ def _check_semantics(original: dict, normalized: dict, analysis: dict, *, check_
             stops = identity_stops(callbacks, [p["callback"] for p in source_option.get("state_projection", {}).values() if p.get("kind") == "characteristic"])
             static = _static(source_cell, domains)
             static.update(source_option.get("constants", {}))
-            available = set(_lane_view(source_option, source_cell).get("states", {})) | set(source_option.get("actions", {}))
+            available = set(source_option.get("states", {})) | set(source_option.get("actions", {}))
             for action, embedding in source_option.get("action_reconstruction", {}).items():
                 if embedding.get("kind") == "constant": static[action] = embedding.get("value")
             phases = ("solve", "simulation") if relation.get("phase", "both") == "both" else (relation["phase"],)
@@ -1877,75 +1841,20 @@ def _check_semantics(original: dict, normalized: dict, analysis: dict, *, check_
                         else:
                             unknown("unproved full projected state law", relation=relation.get("id"), state=state)
                         checks += 1
-    diagnostic_scope = {"scope": "family"}
-    if check_coverage:
-        policy_coverage = _policy_coverage(normalized, analysis, fail, unknown, facts)
-    else:
-        policy_coverage = False
-        unknown("projection-family completeness was not checked in this local safety pass")
+    diagnostic_scope = {"scope": "source"}
+    _check_closure_and_forced(analysis, fail, facts)
     return {"status": "FAIL" if errors else ("UNRESOLVED" if unresolved else "PASS"),
             "errors": errors, "unresolved": unresolved, "checks": checks,
             "source_sha256": _digest(original), "normalized_sha256": _digest(normalized),
-            "guarantee": ("original declarations, bound callback factorization, full typed "
-                          "relation preservation and " + (
-                              "every coherent projection policy in the independently checked finite family"
-                              if policy_coverage else
-                              "supplied coherent projection policies only; full-family coverage is not established")),
+            "guarantee": ("original declarations, bound callback factorization and full typed "
+                          "relation preservation of the supplied interfaces"),
             "dense_cartesian_rows_evaluated": 0,
-            "projection_family_complete_verified": policy_coverage,
             "trusted_boundary": ["supplied original declaration/capture", "captured actual-object primitive identity", "pure deterministic scalar callback contract", "original joint law retained as one relation"]}
 
 
-def _lane_view(option: dict, cell: dict) -> dict:
-    """See a status split through the states its lanes keep, and its axis."""
-    lanes = option.get("lanes")
-    if not lanes:
-        return option
-    axis = next(iter(lanes[0].get("codes", {})), None)
-    states = {name: domain for lane in lanes for name, domain in lane.get("states", {}).items()}
-    if axis in cell.get("states", {}):
-        states[axis] = cell["states"][axis]
-    return {**option, "states": states}
-
-
-def _check_lanes(option: dict, cell: dict, domains: dict, facts, live, fail) -> None:
-    """A split's lanes partition one status axis and keep every needed state."""
-    from .facts import lane_needs, lane_rows, status_axes
-    lanes = option["lanes"]
-    axes = {name for lane in lanes for name in lane.get("codes", {})}
-    if len(axes) != 1 or any(len(lane.get("codes", {})) != 1 for lane in lanes):
-        fail("status split must use exactly one axis", cell=cell["id"]); return
-    axis = axes.pop()
-    codes = dict(status_axes(facts, cell)).get(axis)
-    split_codes = [code for lane in lanes for code in lane["codes"][axis]]
-    if codes is None or sorted(split_codes) != sorted(codes):
-        fail("status lanes do not partition the axis codes", cell=cell["id"], axis=axis); return
-    for lane in lanes:
-        for name, domain in lane.get("states", {}).items():
-            if name == axis or cell["states"].get(name) != domain:
-                fail("status lane changes a state domain", cell=cell["id"], state=name)
-        for code in lane["codes"][axis]:
-            missing = lane_needs(facts, cell, live, {axis: code}) - set(lane.get("states", {}))
-            if missing:
-                fail("status lane drops a needed state", cell=cell["id"], axis=axis, code=code, states=sorted(missing))
-    records = list(option.get("states", {}).values())
-    domain = domains.get(records[0], {}) if len(records) == 1 else {}
-    if (domain.get("kind") != "lanes" or domain.get("lanes") != lanes or domain.get("status_axis") != axis
-            or domain.get("size") != lane_rows(lanes, domains[cell["states"][axis]], domains)):
-        fail("status split rows differ from its lanes", cell=cell["id"])
-
-
-def _policy_coverage(declaration: dict, analysis: dict, fail, unknown, facts) -> bool:
-    """Closure/CSP replay of categorical policy completeness from the facts.
-
-    The live closure and characteristic eligibility come from the backend's
-    facts, not the producer's candidate list. A Boolean constraint search
-    propagates implications in both directions, so a 100-date chain needs 101
-    policies, rather than materializing 2**100 assignments. Different existing
-    maps of the same original axis are alternatives in this declared family.
-    """
-    from .facts import characteristic_cells, live_states
-    cells = {cell["id"]: cell for cell in declaration["cells"]}
+def _check_closure_and_forced(analysis: dict, fail, facts) -> None:
+    """Replay the claimed dependency closure and forced choices from the facts."""
+    from .facts import live_states
     if analysis.get("discovery_complete"):
         for cell_id, forced in facts.forced.items():
             for axis, value in forced.items():
@@ -1956,84 +1865,8 @@ def _policy_coverage(declaration: dict, analysis: dict, fail, unknown, facts) ->
     live, _ = live_states(facts, lambda: None)
     for cell_id, expected in live.items():
         claimed = set(analysis.get("dependency_closure", {}).get(cell_id, []))
-        if not expected <= claimed: fail("original future dependency closure omitted", cell=cell_id, missing=sorted(expected - claimed))
-    choices_by_axis = defaultdict(list)
-    proof_limited = False
-    for characteristic_id, characteristic in sorted(declaration.get("characteristics", {}).items()):
-        axis, callback = characteristic["state"], characteristic["callback"]
-        image = facts.characteristic_image(characteristic)
-        if image is None or len({_value_key(value) for value in image}) >= len(image): continue
-        eligible, successors = characteristic_cells(facts, live, characteristic)
-        if not eligible: continue
-        if len(eligible) > 750:
-            unknown("independent projection-family recursion budget exhausted", eligible_cells=len(eligible)); return False
-        predecessors = {cell: {source for source, targets in successors.items() if cell in targets} for cell in eligible}
-        regions = []
-        def assign(selected, rejected):
-            nonlocal proof_limited
-            if len(regions) > 20_000:
-                proof_limited = True; return
-            queue = list(selected)
-            selected = set(selected); rejected = set(rejected)
-            while queue:
-                for target in successors[queue.pop()]:
-                    if target not in selected: selected.add(target); queue.append(target)
-            queue = list(rejected)
-            while queue:
-                for source in predecessors[queue.pop()]:
-                    if source not in rejected: rejected.add(source); queue.append(source)
-            if selected & rejected: return
-            unassigned = eligible - selected - rejected
-            if not unassigned:
-                if selected: regions.append(frozenset(selected))
-                return
-            cell = min(unassigned)
-            assign(selected, rejected | {cell})
-            assign(selected | {cell}, rejected)
-        assign(set(), set())
-        choices_by_axis[axis].extend((callback, region) for region in regions)
-    if proof_limited:
-        unknown("independent projection-family coverage budget exhausted"); return False
-    def policy_key(choices):
-        result = []
-        for cell_id in sorted(cells):
-            states = []
-            for state in sorted(cells[cell_id]["states"]):
-                selected = next((callback for axis, (callback, region) in choices.items() if axis == state and cell_id in region), None)
-                states.append((state, "characteristic", selected) if selected else (state, "identity" if state in live[cell_id] else "drop"))
-            result.append((cell_id, states))
-        return _digest(result)
-    expected = set()
-    axes = sorted(choices_by_axis)
-    for combination in product(*([[None] + choices_by_axis[axis] for axis in axes])):
-        selected = {axis: choice for axis, choice in zip(axes, combination) if choice is not None}
-        expected.add(policy_key(selected))
-        if len(expected) > 20_000:
-            unknown("independent projection-family coverage budget exhausted"); return False
-    actual = set()
-    options = {cell: {option["id"]: option for option in record["options"]} for cell, record in analysis["interfaces"].items()}
-    for policy in analysis.get("projection_policies", []):
-        key = []
-        for cell_id in sorted(cells):
-            option = options[cell_id].get(policy.get("option_by_cell", {}).get(cell_id), {})
-            states = []
-            for state in sorted(cells[cell_id]["states"]):
-                projection = option.get("state_projection", {}).get(state, {})
-                kind = projection.get("kind")
-                states.append((state, kind, projection.get("callback")) if kind == "characteristic" else (state, kind))
-            key.append((cell_id, states))
-        actual.add(_digest(key))
-    if actual - expected:
-        if analysis.get("discovery_complete"):
-            fail("projection policy is outside independently derived family", extra=len(actual - expected), dependency_disagreement=[{"cell": cid, "independent": sorted(live[cid]), "producer": analysis.get("dependency_closure", {}).get(cid, [])} for cid in cells if set(live[cid]) != set(analysis.get("dependency_closure", {}).get(cid, []))])
-        else:
-            unknown("incomplete discovery retains conservative representation policies", count=len(actual - expected))
-    if analysis.get("discovery_complete") is True:
-        if expected != actual:
-            fail("complete claim omits coherent categorical projection policies", missing=len(expected - actual)); return False
-        return True
-    unknown("categorical projection discovery is explicitly incomplete", proved_policies=len(actual), full_family_policies=len(expected))
-    return False
+        if not expected <= claimed:
+            fail("original future dependency closure omitted", cell=cell_id, missing=sorted(expected - claimed))
 
 
 def _check_function_interfaces(cell, option, callbacks, domains, static, fail, unknown, captures=None):

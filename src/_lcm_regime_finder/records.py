@@ -1,4 +1,6 @@
 """Typed records for serialized analysis and mutable construction buffers."""
+import hashlib
+import json
 from fractions import Fraction
 from collections.abc import Mapping, Sequence
 from typing import NotRequired, TypedDict
@@ -23,7 +25,6 @@ class SemanticCheck(TypedDict, total=False):
     normalized_sha256: str
     guarantee: str
     dense_cartesian_rows_evaluated: int
-    projection_family_complete_verified: bool
     trusted_boundary: list[str]
 
 
@@ -193,3 +194,13 @@ class EndpointPreference(TypedDict, total=False):
     allow_final_only_split: bool
     reason: str
     deferred_graph_ids: list[str]
+
+
+def canonical(value: object) -> str:
+    """Return the sorted, compact JSON text that identities are digested from."""
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
+
+
+def digest(value: object) -> str:
+    """Return the sha256 of the canonical JSON text."""
+    return hashlib.sha256(canonical(value).encode()).hexdigest()

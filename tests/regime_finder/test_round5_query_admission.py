@@ -60,9 +60,7 @@ def spec(
 
 def _check_source(raw):
     normalized = normalize_declarations(raw)
-    analysis = MetadataAnalysis(
-        normalized, facts_backend="metadata", search_mode="exact"
-    ).run()
+    analysis = MetadataAnalysis(normalized, facts_backend="metadata").run()
     checked = check_semantics(raw, normalized, analysis)
     assert (checked["status"]) != ("FAIL"), checked
     return normalized, analysis, checked
@@ -70,9 +68,7 @@ def _check_source(raw):
 
 def test_public_spec_route_matches_literal_physical_closure() -> None:
     raw = read_declarations(spec())
-    result = find_regimes(
-        raw, budget={"seconds": 15}, facts_backend="metadata", search_mode="heuristic"
-    )
+    result = find_regimes(raw, budget={"seconds": 15}, facts_backend="metadata")
     normalized = result["analysis"]["declarations"]
     expected = physical_closure(
         {(0, "A")}, [((0, "A"), (1, "B")), ((1, "B"), (2, "B"))]
@@ -169,7 +165,7 @@ def test_independent_checker_rejects_manufactured_physical_visit() -> None:
     false_cell = deepcopy(changed["cells"][0])
     false_cell.update(id="extra-query-cell", regime="Q")
     changed["cells"].append(false_cell)
-    checked = check_semantics(raw, changed, analysis, check_coverage=False)
+    checked = check_semantics(raw, changed, analysis)
     assert (checked["status"]) == ("FAIL")
     assert any(
         e["kind"] == "original sparse date/regime admission changed"
@@ -204,12 +200,10 @@ def test_unproved_fallback_type_is_not_invented_as_settlement() -> None:
         },
     )
     raw["edges"]["A"] = record("Transition", law="B", gates={"B": gate})
-    result = find_regimes(
-        raw, budget={"seconds": 15}, facts_backend="metadata", search_mode="heuristic"
-    )
+    result = find_regimes(raw, budget={"seconds": 15}, facts_backend="metadata")
     assert (result["status"]) == ("UNRESOLVED")
     assert ("settlement contract unavailable") in (result.get("error", ""))
-    assert (result["scenarios"]) == ([])
+    assert (result["layouts"]) is None
 
 
 def test_nested_owned_reads_are_visible_to_topological_traversal() -> None:

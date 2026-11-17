@@ -6,23 +6,22 @@ title: Dependency facts for regime analysis
 
 The regime analysis asks one question of a model: in each regime-period (a *cell*),
 which states and actions does each callback read? Everything else follows from the
-answers. Liveness, constant states, forced actions, characteristic maps, status splits
-and the checker's re-derivations all read them through one contract, `Facts`, in
+answers. Liveness, constant states, forced actions, the layout search's per-fibre live
+sets and the checkers' re-derivations all read them through one contract, `Facts`, in
 `src/_lcm_regime_finder/facts.py`. These are internal interfaces. The public interface
 is documented in [Check a regime graph](../user_guide/regime_checker.md).
 
 ## The contract
 
 A `Facts` backend exposes the normalized `cells`, `callbacks`, `domains` and
-`relations`, each cell's `constants` and `forced` actions, and three queries:
+`relations`, each cell's `constants` and `forced` actions, and two queries:
 
 - `callback_reads(callback, cell, phase, *, stops, relation, statuses)` returns the
-  coordinates a callback reads in that cell and phase. `stops` cuts characteristic
-  providers. `relation` adds a transition's context. `statuses` fixes some status codes,
-  and `None` means the whole cell.
+  coordinates a callback reads in that cell and phase. `stops` cuts the named providers.
+  `relation` adds a transition's context. `statuses` fixes some status codes, and `None`
+  means the whole cell.
 - `identity_update(update, axis, target_axis)` tells whether an update carries a state
   unchanged.
-- `characteristic_image(spec)` returns the values a characteristic map takes, or `None`.
 
 Shared functions in the same module derive everything else from these queries, for every
 backend alike:
@@ -31,8 +30,9 @@ backend alike:
   transitions. Relations with zero support are skipped everywhere.
 - `live_states` computes the least set of states each cell keeps: its own consumers'
   reads, plus the update reads for every live state of a successor.
-- `characteristic_cells` uses these to decide where a characteristic map is eligible.
-- `status_axes`, `status_points` and `lane_needs` read the facts at fixed status codes.
+- `status_axes` and `status_points` list a cell's statuses and their points.
+- `linked_points` and `fibre_live` give the layout search its links and each fibre's
+  live coordinates; see [Layout search](regime_layout_costs.md).
 
 ## Backends
 
@@ -71,28 +71,16 @@ a majority payoff is unchanged by any single flip at `(0, 0, 0)`, yet differs at
 `(1, 1, 1)`. The exact backends therefore interpret a callback with only the requested
 statuses bound, and every other state, action, shock and parameter free.
 
-## Status splitting
+## Live coordinates at a fibre
 
-A status state is a categorical state with several codes. For each such axis of a cell,
-`lane_needs` returns the states its points need with that axis fixed: the consumers'
-reads plus the update reads for every live successor state. The analysis groups codes
-with equal needs into lanes. It offers each cell split by the axis whose lanes have the
-fewest rows in total. A lane with several codes keeps the status as a coordinate.
-
-A split is one interface option whose single state axis is a derived `lanes` domain.
-That domain is sized by the summed lane rows, so cost, merging and both searches use it
-unchanged. Cells split the same way share the domain and can share a block. All splits
-enter one added projection policy. The `metadata` backend has no per-status facts and
-reports `NOT_OFFERED`.
-
-The checker re-derives each split from the analysis's facts. It confirms that:
-
-- the lanes partition the axis codes;
-- every lane keeps each state its codes need;
-- the domain's rows equal the lanes' grids.
-
-Transitions need no separate check: a lane's needs already include what every live
-successor state's update reads.
+A fibre fixes every status of a cell to one code. `fibre_live` returns the coordinates
+the fibre needs: what its consumers read with the statuses it can release left free,
+plus the update reads of every live coordinate at each linked successor fibre. A status
+that an update carries unchanged keeps its code in the successor; every other status of
+the successor takes all its codes. A relation whose target is its own cell, such as a
+solve-phase imputation, is not a link: whatever it reads is needed wherever a coordinate
+it produces is, up to a fixed point. Statuses are released greedily in name order while
+the release adds no read. The result is memoized per fibre.
 
 ## What the checker reads
 

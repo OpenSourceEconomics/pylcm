@@ -183,3 +183,31 @@ def test_a_worker_timeout_is_a_budget_error() -> None:
             _no_budget,
         )
     assert error.value.unfinished
+
+
+def test_a_status_a_callback_never_reads_does_not_split_its_cache(monkeypatch) -> None:
+    """Fixing a status the callback ignores with everything free reuses that answer."""
+    from .test_status_splitting import joint_model
+
+    dense = make_facts("dense", _from_model(joint_model()), LIMITS, _no_budget)
+    interpreted = []
+    original = SourceFacts._reads
+
+    def counting(self, callback, *args):
+        interpreted.append(callback)
+        return original(self, callback, *args)
+
+    monkeypatch.setattr(SourceFacts, "_reads", counting)
+    cell = next(c for c in dense.cells.values() if "health" in c["states"])
+    unread = []
+    for callback in set(cell["functions"].values()):
+        free = dense.callback_reads(callback, cell, "solve")
+        unread += [
+            (callback, axis) for axis in ("employment", "health") if axis not in free
+        ]
+    assert unread, "positive control: some callback ignores a status"
+    before = len(interpreted)
+    for callback, axis in unread:
+        for code in (0, 1):
+            dense.callback_reads(callback, cell, "solve", statuses={axis: code})
+    assert len(interpreted) == before
