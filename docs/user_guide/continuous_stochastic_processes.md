@@ -199,7 +199,8 @@ the class:
 
 ### TauchenAR1Process
 
-Discretization via @tauchen1986. Uses CDF-based transition probabilities.
+Discretization via @tauchenFiniteStateMarkovChain1986. Uses CDF-based transition
+probabilities.
 
 ```python
 TauchenAR1Process(
@@ -285,8 +286,9 @@ that the solver integrates. These options apply only to `on_nodes`; ordinary
 
 ### RouwenhorstAR1Process
 
-Discretization via @rouwenhorst1995 / @kopecky2010. Better for highly persistent
-processes ($\rho$ close to 1).
+Discretization via @rouwenhorstAssetPricingImplications1995 /
+@kopeckyFiniteStateMarkovchain2010. Better for highly persistent processes ($\rho$ close
+to 1).
 
 ```python
 RouwenhorstAR1Process(n_points=7, rho=0.95, sigma=0.1, mu=0.0)
@@ -295,7 +297,7 @@ RouwenhorstAR1Process(n_points=7, rho=0.95, sigma=0.1, mu=0.0)
 ### TauchenNormalMixtureAR1Process
 
 AR(1) with mixture-of-normals innovations, discretized via Tauchen. Following
-@fella2019.
+@fellaMarkovchainApproximationsLifecycle2019.
 
 ```python
 TauchenNormalMixtureAR1Process(

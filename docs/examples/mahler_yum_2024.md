@@ -4,7 +4,7 @@ title: Mahler & Yum (2024)
 
 # Mahler & Yum (2024)
 
-Example implementation of the lifecycle model from @mahler2024.
+Example implementation of the lifecycle model from @mahlerLifestyleBehaviorsWealthHealth2024.
 
 Three regimes represent working life, mandatory retirement from age 65, and death. The
 working regime has nine states: wealth, health, productivity shock, lagged effort,

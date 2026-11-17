@@ -29,7 +29,7 @@ $$
 
 The keeper branch represents no adjustment; the adjuster branch searches candidate outer
 levels. This is nesting, not a coupled two-dimensional Euler inversion
-{cite}`druedahl2021`.
+{cite}`druedahlGuideSolvingNonconvex2021`.
 
 ## `NEGM`
 
