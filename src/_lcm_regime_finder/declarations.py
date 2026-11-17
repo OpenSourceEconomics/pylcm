@@ -838,6 +838,7 @@ def normalize_declarations(snapshot,production_contract=None):
               'declaration_type':source_fields.get('type','original-declaration-mapping'),
               'structural_roles':{k:copy.deepcopy(declaration[k]) for k in ('liquid','outer_continuous') if declaration.get(k) is not None},
               'solver_identity':normal.value_digest(declaration['solver']) if declaration.get('solver') is not None else None,
+              'operators':{k:(normal.value_digest(declaration[k]) if declaration.get(k) is not None else None) for k in ('koopmans_aggregator','certainty_equivalent','pareto_objective','taste_shocks')},
               'role':contract.get('roles',{}).get(name,declaration.get('semantic_role')),
               'ownership':None,'terminal':True,'admissible_start':key in start_set,
               'report_tags':list(contract.get('report_tags',{}).get(name,[])),

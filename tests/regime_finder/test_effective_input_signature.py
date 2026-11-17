@@ -74,7 +74,6 @@ def test_variadic_and_uninspectable_inputs_keep_the_original_domain(
             result = find_regimes(
                 source,
                 budget={"seconds": 10},
-                search_mode="exact",
                 facts_backend="metadata",
             )
             assert (result["status"]) == ("UNRESOLVED")
@@ -101,7 +100,6 @@ def test_independent_check_rejects_authority_with_flags_and_obligations_cleared(
         find_regimes(
             source,
             budget={"seconds": 10},
-            search_mode="exact",
             facts_backend="metadata",
         )
     )
@@ -129,7 +127,6 @@ def test_finite_advertised_inputs_survive_an_opaque_variadic_implementation() ->
     result = find_regimes(
         captured_snapshot(captured),
         budget={"seconds": 10},
-        search_mode="exact",
         facts_backend="metadata",
     )
     record = _get_utility_record(result)
@@ -148,7 +145,6 @@ def test_captured_empty_signature_is_still_a_finite_signature() -> None:
     result = find_regimes(
         captured_snapshot(captured),
         budget={"seconds": 10},
-        search_mode="exact",
         facts_backend="metadata",
     )
     assert not (_get_utility_record(result).get("unresolved_input_signature", False))
@@ -191,7 +187,6 @@ def test_wrapped_original_graph_gate_and_fallback_are_contained(
             result = find_regimes(
                 source,
                 budget={"seconds": 10},
-                search_mode="exact",
                 facts_backend="metadata",
             )
             assert (result["status"]) == ("UNRESOLVED")
@@ -231,7 +226,5 @@ def test_untagged_declarative_callback_does_not_inspect_unused_helper_bodies() -
             }
         },
     )
-    result = find_regimes(
-        source, budget={"seconds": 10}, search_mode="exact", facts_backend="metadata"
-    )
+    result = find_regimes(source, budget={"seconds": 10}, facts_backend="metadata")
     assert (result["semantic_check"]["status"]) == ("PASS")

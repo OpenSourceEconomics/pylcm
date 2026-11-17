@@ -72,9 +72,7 @@ def one_cell(
 
 def produce(source):
     declarations = normalize_declarations(source)
-    analysis = MetadataAnalysis(
-        declarations, facts_backend="metadata", search_mode="exact"
-    ).run()
+    analysis = MetadataAnalysis(declarations, facts_backend="metadata").run()
     return declarations, analysis, check_semantics(source, declarations, analysis)
 
 
@@ -490,7 +488,7 @@ def test_native_gate_callback_or_owned_leg_mutation_is_independently_rejected() 
         check = check_semantics(
             source,
             bad,
-            MetadataAnalysis(bad, facts_backend="metadata", search_mode="exact").run(),
+            MetadataAnalysis(bad, facts_backend="metadata").run(),
         )
         assert (check["status"]) == ("FAIL"), check
 
@@ -509,13 +507,3 @@ def test_native_gate_reward_contrast_retains_the_decisive_history() -> None:
         expected = ["history"] if cell["regime"] in {"source", "landing"} else []
         assert (analysis["dependency_closure"][cell["id"]]) == (expected)
     assert (check["status"]) == ("PASS"), check
-
-
-def test_local_pass_has_scoped_diagnostics_and_no_completeness_claim() -> None:
-    source = captured_gate_graph()
-    declarations, analysis, _ = produce(source)
-    local = check_semantics(source, declarations, analysis, check_coverage=False)
-    assert not (local["projection_family_complete_verified"])
-    assert any(item["scope"] == "family" for item in local["unresolved"])
-    for item in local["errors"] + local["unresolved"]:
-        assert ("scope") in (item)
