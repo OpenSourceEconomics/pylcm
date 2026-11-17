@@ -8,7 +8,8 @@ A two-regime consumption-savings model with income shocks (alive + dead). Suppor
 shocks (Normal Gauss-Hermite) and persistent AR(1) shocks (Rouwenhorst, Tauchen).
 Configurable interest rate and wealth grid type.
 
-With FGP-calibrated parameters, this replicates the simplified benchmark of @fella2019.
+With FGP-calibrated parameters, this replicates the simplified benchmark of
+@fellaMarkovchainApproximationsLifecycle2019.
 
 [View source on GitHub](https://github.com/OpenSourceEconomics/pylcm/blob/main/src/lcm_examples/precautionary_savings.py)
 
