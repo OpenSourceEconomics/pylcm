@@ -1,116 +1,163 @@
-# Layout cost reporting
+---
+title: Layout search
+---
 
-The cost search uses the offered coherent state projections, original regime-label
-groupings, and contiguous intervals of the original period buckets. This family is
-relative to the supplied representation. It does not start from a dense model or split
-categorical states into fibres. Reports identify this scope as
-`existing family, no dense start`.
+# Layout search
 
-## Admission and independent checking
+The regime analysis searches one family of layouts: the family of the paper's Supplement
+(lcm-paper, `paper/sections/supplement-choice.tex`). Line numbers below refer to that
+file at lcm-paper `d28955bd`. The search lives in
+`src/_lcm_regime_finder/layout_search.py`, and an independent checker in
+`layout_check.py`. The public interface is documented in
+[Check a regime graph](../user_guide/regime_checker.md). The per-fibre facts are
+described in [Dependency facts](regime_facts.md).
 
-`src/_lcm_regime_finder/block_admission_v1.json` is the versioned declarative admission
-specification. `block_admission.py` interprets it for the producer and its diagnostics.
-`block_admission_check.py` independently interprets it for the checkers; neither
-interpreter calls the other.
+## The family
 
-New exact results use `regime-frontier/v6`. Historical frontier versions retain their
-historical admission rules and default prices when checked. A raw current curve rejects
-those legacy certificates instead of treating a historical family as coverage of the
-current one. Source fingerprints and worker stability checks include the normative JSON
-as well as the implementation modules.
+- **Dense regimes** (:126-146). Nonterminal regimes of one kind (stage, solver,
+  aggregator and certainty equivalent) pool according to their taste shocks:
 
-Cells in a block need compatible execution-interface fields and identical domain
-identities for every shared axis name. Their original role, actor, ownership, terminal
-classification and report metadata are preserved separately per source cell, with a
-checked source-context binding in each block witness. Admission does not require the
-same actor or one choice per period. Missing roles are preserved as missing, rather than
-treated as an equivalence certificate. An allocation block is not an identification of
-the original economic decision nodes.
+  - Regimes without taste shocks pool together.
+  - A regime with taste shocks stays alone.
+  - The regimes without taste shocks join a single shocked regime only when none of them
+    has a discrete choice.
 
-These structural checks do not establish economic equivalence. Callback laws,
-information, terminal payoffs, ownership, queries and projection reconstruction still
-need their independent source-semantic checks before a proposed representation can be
-adopted.
+  Every terminal regime is a dense regime of its own.
 
-## Raw costs and curves
+- **Statuses, fibres and lanes** (:181-229).
 
-The defaults are `{"block": 1, "characteristic": 0, "dispatch": 0}`. Existing explicit
-price overrides remain supported by the search. A regime-count curve requires these
-default prices; it rejects other prices rather than relabelling a weighted complexity
-score as a regime count.
+  - A status is a categorical state.
+  - A fibre is a regime and a period, with one value for each of the regime's statuses.
+  - A lane is a regime with one value for each status, across periods.
 
-The installed checker command produces a raw curve from an existing `analysis.json`
-export (or a report containing that analysis):
+  The kept fibres are the fibres reachable from the initial fibres along links. A link
+  fixes only the statuses it carries unchanged; every other status of the target takes
+  all its values. A relation whose target is its own cell is not a link.
 
-```console
-pixi run python -m _lcm_regime_finder evaluation-curve analysis.json --output curve
-```
+- **Blocks and prices** (:516-566, :843-859). A block keeps the union of its fibres'
+  live coordinates. It charges each coordinate as follows:
 
-It writes `curve/report.json`, sets the unpriced-link objective before searching, and
-independently checks retained witnesses. The JSON status is `COMPLETE` or `PARTIAL`; a
-successful command does not promote a partial curve to full coverage. The command uses
-the existing worker resource and input-protection boundary. It does not construct a
-model or run numerical solution code.
+  - a status by the values it takes on the block's fibres;
+  - an ordinary state by its largest grid;
+  - an action by its largest grid.
 
-The internal reporting functions can also be used on an existing analysis export:
+  A block pays `|T_B| · |X_B| · |A_B|` evaluations and `|T_B| · |X_B|` stored values,
+  where `T_B` is the set of the block's own periods.
 
-```python
-from _lcm_regime_finder.curve import build_curve_report
-from _lcm_regime_finder.frontier import search_frontier
+- **Layouts** (:594-617). The lanes of a dense regime are partitioned into groups, which
+  stay fixed for all periods. Each group's active periods are cut into intervals. Each
+  interval is one block.
 
-allocation = analysis.get("allocation_scenario", analysis["declarations"]["allocation"])
-analysis = dict(analysis, allocation_scenario=dict(allocation, boundary_unit=0))
-result = search_frontier(analysis, reporting_mode="curve")
-report = build_curve_report(analysis, result)
-```
+Two rules settle cases that the Supplement leaves to the implementation:
 
-`analysis` is the `analysis` object in a checker report, including its normalized
-declarations, interfaces and offered projection policies. If an allocation scenario is
-supplied, set `analysis["allocation_scenario"]` to that exact scenario before searching.
-Raw mode does not call the recommendation function. The reporting function independently
-checks the result again; a serialized `PASS` field cannot authorize a completeness
-claim.
+- The regime label is live at every fibre of a pooled dense regime. A block therefore
+  pays for the number of regimes it holds.
+- A member without a status holds it at the first label of its grid. If the members of a
+  dense regime start that grid with different labels, a note records it. If no member of
+  a block has an action, every value of that action except the first is excluded, and
+  the block records these values as `excluded_actions`. This does not change prices,
+  because a block's actions come from its members' own cells.
 
-The `regime-evaluation-curve/v1` JSON contains full frontier witnesses and a curve of
-minimum evaluations with **at most** each regime budget. Curve rows reference the
-corresponding frontier witness by `graph_id`. Ties use fewer regimes, then less storage,
-then the canonical witness. The report contains no normalized score, improvement
-threshold or recommended layout.
+`search_layouts` lists both rules under `deviations`.
 
-Each point reports grid evaluations, directed link counts and unpriced link row units
-separately. Links are not priced in the curve objective; both search and reporting
-require `boundary_unit=0`. A frontier searched with charged links cannot be repriced
-afterwards because that search can have discarded relevant layouts. The generic search
-still supports explicit nonnegative link prices. Storage counts value entries.
-Largest-array sizes count state-action entries in one source regime-period array;
-largest stored-value array size is also supplied. Counts of distinct periods and of
-regime-period arrays at the largest size distinguish simultaneous regime arrays from
-dates. These are entry counts, not measured bytes or peak live memory.
+## The search
 
-Per-block diagnostics distinguish source-cell allocation from a hypothetical emitted
-regime with a source-identity state. The latter rectangle has one slice for each
-original source regime at every active period bucket of the block. Its evaluation count
-can exceed the current source-cell count when those sources have different active dates.
-Both counts and their difference are reported; the search objective is unchanged.
+For each dense regime, two recurrences give the least number of evaluations with exactly
+`n` blocks (:923-959):
 
-`emittable_as_one_regime` is conservative. A positive value requires a bound original
-constructed-Model capture and a complete, unchanged, single-regime identity witness. A
-negative value means that such a sufficient witness has not been established, rather
-than that emission is impossible. The report lists the criteria and reasons, including
-terminal consistency within each period and the absence of an emitted source-selector
-dispatcher for pooled blocks. No new regime emitter or native emission certificate is
-provided by these diagnostics.
+- The interval recurrence `f` cuts the active periods of a group.
+- The subset recurrence `h` enumerates groups of lanes, anchored on the lowest lane. Its
+  cost grows quickly with the number of lanes.
 
-`our_layout` denotes the unchanged input representation. It is admitted only if an
-offered coherent identity policy and its original label blocks pass independent
-membership checking. The metadata producer can remove unused coordinates or forced
-actions before offering any policies, so identity need not be offered. Such a case is
-`not_admitted`, with a reason; a projected reference is not silently substituted for the
-unchanged layout.
+A convolution over the dense regimes gives the exact table `w(n)`. Its at-most envelope
+gives the curve `ev*(k)`. Ties are broken by evaluations, then by the number of blocks,
+then by storage. Every point carries its witness layout.
 
-Pareto membership and evaluation-curve attainment are separate fields. A layout with
-lower storage can be nondominated while needing more evaluations at its regime budget. A
-`dominated` result includes an actual admitted dominating witness. Incomplete and
-heuristic results describe checked retained candidates, with no complete-family optimum
-claim. Even a complete cost result establishes neither source-semantic preservation nor
-optimality over arbitrary equivalent models.
+| `limits` key        | Default   | Meaning                                                                      |
+| ------------------- | --------- | ---------------------------------------------------------------------------- |
+| `max_blocks`        | `n0 + 12` | Largest block budget `k`. `n0` is the number of dense regimes.               |
+| `lanes_per_regime`  | 12        | Above this, statuses are contracted until every dense regime fits.           |
+| `contract_unproved` | `True`    | Contract statuses that pass (I1) only over each member's own grid.           |
+| `seconds`           | none      | Time limit for facts and search; on expiry the search raises `TimeoutError`. |
+
+## Contraction and exactness
+
+Lanes that differ only in an inert status can be merged (lem:inert, :1737-1889). A
+status is certified inert when two conditions hold:
+
+- (I1): every part of each kept contracted fibre is kept, where the parts range over the
+  dense regime's grid of the status.
+- (I2): every part has the contracted fibre's live set.
+
+A status fails (I1) if its grid differs across the members of a dense regime, or if some
+member lacks it.
+
+By default, such a status is still contracted, but as a restriction. Every point is then
+exact for the contracted family and an upper bound for the full family. The reason: a
+contracted lane is a union of full lanes, and a block's price depends only on its
+fibres, so a layout of contracted lanes is a layout of the full family at the same
+price. The same holds when a status is contracted because a dense regime had more than
+`lanes_per_regime` lanes (rem:truncated, :2005-2021).
+
+In either case the result reads `RESTRICTED`, and `restriction_reasons` gives the reason
+for each restricted status. A `RESTRICTED` result differs from a complete one in two
+ways:
+
+- The first point, with one block per dense regime, is marked `exact` (lem:first,
+  :1482-1503). So is any point whose evaluations equal `lower_bound`, with
+  `exact_reason` saying so.
+- `floor` is `lower_bound` when a point attains it, and null otherwise: the floor of
+  lem:lowest (iv) over contracted lanes is not a bound for the full family.
+
+`lower_bound` is lem:lowest (vi) on the full kept fibres, whatever was contracted. In
+each cell, two fibres join when they agree in every status live at either, and the bound
+sums the largest one-fibre price of each component. No layout of the full family costs
+less, so a found layout that attains it is the full family's lowest.
+
+With `contract_unproved=False`, these statuses stay lanes instead. The result can then
+be `COMPLETE`, at the price of a larger subset recurrence.
+
+## The record
+
+`search_layouts` returns a `supplement-layout-curve/v1` record with these fields:
+
+- `status`: `COMPLETE` or `RESTRICTED`.
+- `dense_regimes`, `inert_statuses`, `restricted_statuses`, `restriction_reasons` and
+  `lanes`.
+- `dense_count`: the count `ev^0` of the dense model (:851-859). Each dense regime
+  charges its label, the union grid of each state and the largest grid of each action,
+  in every active period.
+- `original_count`: the count of the model as written.
+- `exact`: the table `w(n)`. `curve`: the curve `ev*(k)`. Each point has its blocks,
+  evaluations, storage and witness layout, and each curve point also has an `exact`
+  flag.
+- `floor` and `flat_from`.
+- `lower_bound` (lem:lowest (vi)) and `finest_count`, the count of one block per kept
+  fibre (lem:lowest (iv)).
+- `deviations` and `notes`.
+- `priced`: the prices of blocks requested through `price`.
+
+A witness layout lists groups of lanes, and each group lists its cuts and its blocks.
+Each block lists its periods, its states with their grids, its actions and excluded
+actions, its evaluations and storage, and its fibres.
+
+## The checker
+
+`check_layouts(declarations, facts, result)` shares only the per-fibre facts with the
+search. With its own code, it re-derives:
+
+- the dense regimes and the kept fibres;
+- (I1) and (I2) for each claimed inert status;
+- the lanes;
+- `dense_count`, `original_count`, `lower_bound` and `finest_count`.
+
+It then prices every witness block literally and checks that:
+
+- the groups partition the lanes;
+- the cuts partition each group's active periods;
+- the totals match;
+- the curve is the at-most envelope of the exact table, no point lies below
+  `lower_bound`, and each point's `exact` flag follows the rules above.
+
+The tests also compare the search with a literal enumeration of the family on small
+models.

@@ -213,7 +213,7 @@ def test_public_production_cannot_adopt_deletion_of_overridable_input() -> None:
         },
     }
     result = analyze_production(
-        original, limits={"seconds": 10}, search_mode="exact", facts_backend="metadata"
+        original, limits={"seconds": 10}, facts_backend="metadata"
     )
     assert (result["semantic_check"]["status"]) == ("PASS")
     assert all(

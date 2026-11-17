@@ -46,16 +46,14 @@ def test_wrapper_cannot_hide_a_captured_objective_input() -> None:
         },
     }
     result = analyze_production(
-        source, limits={"seconds": 10}, search_mode="exact", facts_backend="metadata"
+        source, limits={"seconds": 10}, facts_backend="metadata"
     )
     assert (result["status"]) == ("COMPLETE")
     declaration = deepcopy(result["analysis"]["declarations"])
     for callback in declaration["callbacks"].values():
         if callback.get("original", {}).get("type") == "lcm.decoupled.Decoupled":
             callback.update(arguments=[], reads=[])
-    analysis = MetadataAnalysis(
-        declaration, facts_backend="metadata", search_mode="exact"
-    ).run()
+    analysis = MetadataAnalysis(declaration, facts_backend="metadata").run()
     checked = check_semantics(source, declaration, analysis)
     assert any(
         e["kind"] == "declared aggregator inputs changed" for e in checked["errors"]

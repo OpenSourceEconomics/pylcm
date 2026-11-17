@@ -167,7 +167,6 @@ def assess(
                     "transformation_authorized",
                     "recommendation",
                     "decisions",
-                    "proposal_decisions",
                 )
             ):
                 failures.append({"invariant": "no_authority_after_rejection"})

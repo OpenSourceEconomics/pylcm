@@ -134,7 +134,6 @@ def assess(*, exit_code, result_path, protected, success):
                     "transformation_authorized",
                     "recommendation",
                     "decisions",
-                    "proposal_decisions",
                 )
             ):
                 problems.append({"invariant": "no_authority_after_rejection"})

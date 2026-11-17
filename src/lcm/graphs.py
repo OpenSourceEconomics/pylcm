@@ -1,5 +1,6 @@
 """Inspect a constructed model's temporal regime graph and check its structure."""
 
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 
 from networkx import DiGraph
@@ -14,7 +15,6 @@ from lcm.regime_analysis import (
     RegimeCandidate,
     RegimeCheck,
     RegimeCost,
-    SearchMode,
     StatusLane,
 )
 from lcm.regime_analysis import result_from_report as _result_from_report
@@ -31,6 +31,7 @@ __all__ = [
     "analyze_regime_structure",
     "digraph",
     "find_regimes",
+    "layout_curve",
 ]
 
 
@@ -39,16 +40,14 @@ def analyze_regime_structure(
     model: Model,
     *,
     facts_backend: FactsBackend,
-    search_mode: SearchMode,
     cost_model: LinearRegimeCostModel | None = None,
 ) -> RegimeAnalysisResult:
-    """Analyze candidate regime structures using a declared linear cost model.
+    """Search the model's layout curve and recommend one point by a linear cost.
 
-    Return immutable recommendations, computational blocks, original costs and
-    scoped checks. No report is written. Call result.write_report(directory)
-    explicitly to save one. The search receives the objective before candidate
-    generation and pruning; a heuristic search does not establish a global
-    optimum.
+    For every block budget k the curve holds a layout of the least evaluations
+    with at most k regimes. The recommendation is the curve point that minimizes
+    the cost model, or the original model. No report is written; call
+    result.write_report(directory) to save one.
 
     Args:
         model: The constructed model to analyze.
@@ -57,10 +56,8 @@ def analyze_regime_structure(
             `"implicit"` interpret the captured source exactly and raise
             `FactsBudgetError` when they run out of budget. `"implicit"` stores
             per-status facts as decision diagrams.
-        search_mode: `"heuristic"` checks a bounded set of candidates; `"exact"`
-            searches the complete candidate family.
-        cost_model: The linear objective; the default weighs work, storage and
-            clarity equally.
+        cost_model: The linear objective over evaluations, stored values and
+            regimes; the default weighs them equally.
 
     Returns:
         The typed analysis result.
@@ -72,7 +69,6 @@ def analyze_regime_structure(
     report = analyze(
         model,
         facts_backend=facts_backend,
-        search_mode=search_mode,
         recommendation=selected_cost.as_recommendation(),
     )
     report["cost_model"] = selected_cost.as_recommendation()
@@ -168,14 +164,12 @@ def find_regimes(
     model: Model,
     *,
     facts_backend: FactsBackend,
-    search_mode: SearchMode,
     output: Path | None = None,
 ) -> dict[str, JSONValue]:
-    """Find and check candidate simplifications of a constructed model.
+    """Search and check the layout curve of a constructed model.
 
     The search uses the original solve and simulate declarations and grid sizes.
-    It checks candidate changes against the captured model. It does not solve or
-    simulate the model or establish a global optimum.
+    It does not solve or simulate the model.
 
     Args:
         model: The constructed model to analyze.
@@ -184,12 +178,10 @@ def find_regimes(
             `"implicit"` interpret the captured source exactly and raise
             `FactsBudgetError` when they run out of budget. `"implicit"` stores
             per-status facts as decision diagrams.
-        search_mode: `"heuristic"` checks a bounded set of candidates; `"exact"`
-            searches the complete candidate family.
         output: Optional new directory for the HTML and JSON reports.
 
     Returns:
-        The analysis report, including recommendations and any unresolved checks.
+        The analysis report: the layout curve, its check and the recommendation.
 
     Raises:
         FileExistsError: If the requested report directory already exists.
@@ -198,7 +190,7 @@ def find_regimes(
     # Import the analysis engine only when explicitly requested.
     from _lcm_regime_finder import find_regimes as analyze  # noqa: PLC0415
 
-    report = analyze(model, facts_backend=facts_backend, search_mode=search_mode)
+    report = analyze(model, facts_backend=facts_backend)
     if output is not None:
         from _lcm_regime_finder.production_render import (  # noqa: PLC0415
             write_production_report,
@@ -207,3 +199,39 @@ def find_regimes(
         output.mkdir(parents=True)
         write_production_report(report, output)
     return report
+
+
+# keyword-only-exempt: primary-argument=model
+def layout_curve(
+    model: Model,
+    *,
+    facts_backend: FactsBackend,
+    limits: Mapping[str, JSONValue] | None = None,
+    price: Iterable[dict[str, JSONValue]] = (),
+) -> dict[str, JSONValue]:
+    """Run the Supplement's layout search alone and return its layout curve.
+
+    There is no source check, no layout check and no recommendation; use
+    `analyze_regime_structure` or `find_regimes` for those. The model is not
+    solved or simulated.
+
+    Args:
+        model: The constructed model to analyze.
+        facts_backend: Where the dependency facts come from. `"metadata"` reads
+            the declared scalar expressions and is conservative; `"dense"` and
+            `"implicit"` interpret the captured source exactly and raise
+            `FactsBudgetError` when they run out of budget. `"implicit"` stores
+            per-status facts as decision diagrams.
+        limits: Optional search limits, such as `seconds` or `max_blocks`.
+        price: Given blocks to price, each as `regimes`, `periods` and optional
+            `statuses`.
+
+    Returns:
+        The `supplement-layout-curve/v1` record with its phase timings.
+
+    """
+    from _lcm_regime_finder.layout_search import analyze_layouts  # noqa: PLC0415
+
+    return analyze_layouts(
+        model, facts_backend=facts_backend, limits=limits, price=price
+    )

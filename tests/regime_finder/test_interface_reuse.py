@@ -7,9 +7,7 @@ from .tiny_metadata_family import original
 
 
 def test_repeated_interface_returns_an_isolated_plan() -> None:
-    analysis = MetadataAnalysis(
-        original(), facts_backend="metadata", search_mode="exact"
-    )
+    analysis = MetadataAnalysis(original(), facts_backend="metadata")
     analysis.dependencies()
     cell = next(iter(analysis.cells.values()))
     projection = {name: {"kind": "identity", "target": name} for name in cell["states"]}
@@ -21,9 +19,7 @@ def test_repeated_interface_returns_an_isolated_plan() -> None:
 
 
 def test_changed_projection_constants_and_cell_do_not_share_interfaces() -> None:
-    analysis = MetadataAnalysis(
-        original(), facts_backend="metadata", search_mode="exact"
-    )
+    analysis = MetadataAnalysis(original(), facts_backend="metadata")
     analysis.dependencies()
     cell = next(iter(analysis.cells.values()))
     projection = {name: {"kind": "identity", "target": name} for name in cell["states"]}

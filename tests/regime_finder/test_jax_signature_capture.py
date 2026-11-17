@@ -109,7 +109,6 @@ def test_incomplete_capture_is_not_reported_as_resource_exhaustion() -> None:
                     root / "analysis",
                     seconds=900,
                     facts_backend="metadata",
-                    search_mode="heuristic",
                 )
             runner.assert_not_called()
         summary = json.loads((root / "analysis/summary.json").read_text())

@@ -188,7 +188,6 @@ def test_native_conditional_action_exports_and_independently_checks() -> None:
         result = find_regimes(
             source,
             budget={"seconds": 30},
-            search_mode="exact",
             facts_backend="metadata",
         )
         assert (result["status"]) == ("COMPLETE"), result["analysis"]["obligations"]

@@ -31,7 +31,7 @@ def process(name):
 
 def _check_analysis(source):
     result = analyze_production(
-        source, limits={"seconds": 15}, search_mode="exact", facts_backend="metadata"
+        source, limits={"seconds": 15}, facts_backend="metadata"
     )
     assert (result["status"]) == ("COMPLETE"), str(result.get("semantic_check"))[
         :2000
@@ -85,7 +85,7 @@ def test_unknown_process_class_is_not_dispatched_as_a_library_primitive() -> Non
     fields["states"]["x"]["type"] = "foreign.RouwenhorstAR1Process"
     del fields["state_transitions"]["x"]
     result = analyze_production(
-        source, limits={"seconds": 15}, search_mode="exact", facts_backend="metadata"
+        source, limits={"seconds": 15}, facts_backend="metadata"
     )
     assert (result["status"]) != ("COMPLETE")
 
@@ -166,9 +166,7 @@ def test_equal_persistent_process_specs_keep_distinct_state_owners() -> None:
     declaration = deepcopy(result["analysis"]["declarations"])
     relation = next(r for r in declaration["relations"] if r["kind"] == "transition")
     relation["state_updates"]["history"] = relation["state_updates"]["x"]
-    changed = MetadataAnalysis(
-        declaration, facts_backend="metadata", search_mode="exact"
-    ).run()
+    changed = MetadataAnalysis(declaration, facts_backend="metadata").run()
     checked = check_semantics(source, declaration, changed)
     assert any(
         e["kind"] == "original process dependency owner changed"
@@ -219,7 +217,7 @@ def test_independent_check_rejects_miswired_intrinsic_draw_providers() -> None:
         for providers in cell["phase_functions"].values():
             assert "next_x" in providers
             providers["next_x"] = providers["utility"]
-    checked = check_semantics(source, declaration, analysis, check_coverage=False)
+    checked = check_semantics(source, declaration, analysis)
     assert checked["status"] == "FAIL", checked
     assert any(
         error["kind"] == "original intrinsic draw provider changed"
@@ -251,7 +249,7 @@ def test_independent_check_rejects_erased_conditioned_process_inputs() -> None:
     for callback in callbacks:
         assert "history" in callback["arguments"]
         callback.update(arguments=[], reads=[])
-    checked = check_semantics(source, declaration, analysis, check_coverage=False)
+    checked = check_semantics(source, declaration, analysis)
     assert checked["status"] == "FAIL", checked
 
 
@@ -292,9 +290,7 @@ def test_equal_specs_do_not_authorize_source_provider_owner_swaps(
             assert providers["next_x"] != providers["next_history"]
             providers["next_x"] = providers["next_history"]
         cell["functions"]["next_x"] = cell["functions"]["next_history"]
-    analysis = MetadataAnalysis(
-        declaration, facts_backend="metadata", search_mode="exact"
-    ).run()
+    analysis = MetadataAnalysis(declaration, facts_backend="metadata").run()
     checked = check_semantics(source, declaration, analysis)
     assert checked["status"] == "FAIL", checked
     assert any(
@@ -467,10 +463,8 @@ def test_conditioned_process_rejects_missing_or_extra_declared_inputs(
             callback[selected_field] = names
         mutated.append(callback)
     assert mutated
-    analysis = MetadataAnalysis(
-        declarations, search_mode="heuristic", facts_backend="metadata"
-    ).run()
-    checked = check_semantics(source, declarations, analysis, check_coverage=False)
+    analysis = MetadataAnalysis(declarations, facts_backend="metadata").run()
+    checked = check_semantics(source, declarations, analysis)
     assert checked["status"] == "FAIL", checked
 
 
@@ -516,10 +510,8 @@ def test_conditioned_process_rejects_foreign_original_law_with_the_same_axis() -
         and cells[row["source"]]["regime"] == "foreign"
     )
     original_relation["state_updates"]["z"] = foreign_relation["state_updates"]["z"]
-    analysis = MetadataAnalysis(
-        declarations, search_mode="heuristic", facts_backend="metadata"
-    ).run()
-    checked = check_semantics(source, declarations, analysis, check_coverage=False)
+    analysis = MetadataAnalysis(declarations, facts_backend="metadata").run()
+    checked = check_semantics(source, declarations, analysis)
     assert checked["status"] == "FAIL", checked
     assert any(
         row["kind"] == "original state update consumer changed"
@@ -540,9 +532,7 @@ def test_original_process_without_a_conditioning_name_has_no_source_authority(
     _json_object(_json_object(process_fields["state_conditioned"])["fields"])["on"] = (
         invalid_condition
     )
-    result = analyze_production(
-        source, facts_backend="metadata", search_mode="heuristic"
-    )
+    result = analyze_production(source, facts_backend="metadata")
     assert result["status"] in {"UNRESOLVED", "INVALID"}, result
     assert "conditioning" in result.get("error", "").lower(), result
     assert any(
@@ -550,10 +540,7 @@ def test_original_process_without_a_conditioning_name_has_no_source_authority(
         and "conditioning" in row.get("detail", "").lower()
         for row in result.get("analysis", {}).get("obligations", [])
     )
-    assert all(
-        row["authority"] != "source_checked"
-        for row in result.get("recommendations", [])
-    )
+    assert result["recommendation"]["operation"] == "retain_original", result
 
 
 def _conditioned_iid_declaration(conditioning: str | None) -> dict[str, JSONValue]:
@@ -801,10 +788,8 @@ def test_independent_replay_rejects_a_process_provider_from_another_owner(
         provider = foreign["state_updates"]["z"]
     assert provider != selected["state_updates"]["z"]
     selected["state_updates"]["z"] = provider
-    analysis = MetadataAnalysis(
-        declarations, search_mode="heuristic", facts_backend="metadata"
-    ).run()
-    checked = check_semantics(source, declarations, analysis, check_coverage=False)
+    analysis = MetadataAnalysis(declarations, facts_backend="metadata").run()
+    checked = check_semantics(source, declarations, analysis)
     assert checked["status"] == "FAIL", checked
 
 
@@ -834,7 +819,7 @@ def source_only_draw_report() -> dict[str, JSONValue]:
         fixed_params={"discount_factor": 1.0},
         enable_jit=False,
     )
-    return find_regimes(model, facts_backend="metadata", search_mode="heuristic")
+    return find_regimes(model, facts_backend="metadata")
 
 
 def _create_source_only_draw_capture(*, axis: StateName) -> dict[str, JSONValue]:
@@ -859,60 +844,23 @@ def _create_source_only_draw_capture(*, axis: StateName) -> dict[str, JSONValue]
     return original
 
 
-def _rebuild_provider_report(
-    *, original: dict[str, JSONValue], analysis: dict[str, JSONValue]
-) -> dict[str, JSONValue]:
-    from _lcm_regime_finder.heuristic import search_heuristic
-    from _lcm_regime_finder.heuristic_check import (
-        check_heuristic_frontier,
-        choose_candidate,
-    )
-    from _lcm_regime_finder.proposal_decision import (
-        build_decisions,
-        prepare_decision_context,
-    )
-
+def _forge_provider_report(*, analysis: dict[str, JSONValue]) -> dict[str, JSONValue]:
+    """A saved report that claims the forged analysis passed; replay must refute it."""
     declarations = _json_object(analysis["declarations"])
-    context = prepare_decision_context(original, analysis, check_coverage=False)
-    semantic = context.semantic
-    scoped = dict(analysis, allocation_scenario=declarations["allocation"])
-    scenario = search_heuristic(scoped, limits={"seconds": 30})
-    scenario["independent_check"] = check_heuristic_frontier(
-        scoped, scenario, limits={"seconds": 30}
-    )
-    decisions = build_decisions(
-        original, analysis, [scenario], seconds=30, _context=context
-    )
-    allowed = {
-        row["graph_id"]
-        for row in decisions
-        if row.get("scenario_index") == 0 and row["disposition"] == "adopt"
-    }
-    failed = (
-        semantic["status"] == "FAIL"
-        or scenario["independent_check"]["status"] == "FAIL"
-    )
-    if failed or scenario["independent_check"]["status"] != "PASS":
-        allowed = set()
-    chosen = choose_candidate(scoped, scenario, allowed_ids=allowed)
-    chosen.update(
-        scenario_index=0,
-        authority="source_checked"
-        if chosen["operation"] == "representation_specification"
-        else "retain_original",
-    )
     return {
-        "schema": "regime-production-result/v1",
-        "status": "INVALID" if failed else "HEURISTIC",
-        "search_mode": "heuristic",
+        "schema": "regime-production-result/v2",
+        "status": "COMPLETE",
+        "facts_backend": "metadata",
         "analysis_scope": declarations.get("analysis_scope", "full_semantics"),
         "source_identity": declarations["source_identity"],
         "analysis": analysis,
-        "semantic_check": semantic,
-        "scenarios": [scenario],
-        "proposal_decisions": decisions,
-        "recommendations": [chosen],
-        "layers": {"frontier": "RETAINED_CANDIDATES_CHECKED"},
+        "semantic_check": {"status": "PASS", "errors": [], "unresolved": []},
+        "recommendation": {
+            "operation": "retain_original",
+            "reason": "No checked layout curve",
+        },
+        "layouts": None,
+        "layout_check": {"status": "NOT_RUN", "errors": []},
     }
 
 
@@ -980,14 +928,12 @@ def test_source_only_native_draw_rejects_unowned_provider_overrides(
         declarations["callbacks"] == _json_object(honest["declarations"])["callbacks"]
     )
     assert declarations["cells"] == _json_object(honest["declarations"])["cells"]
-    analysis = MetadataAnalysis(
-        declarations, search_mode="heuristic", facts_backend="metadata"
-    ).run()
-    checked = check_semantics(original, declarations, analysis, check_coverage=False)
+    analysis = MetadataAnalysis(declarations, facts_backend="metadata").run()
+    checked = check_semantics(original, declarations, analysis)
     assert checked["status"] == "FAIL", checked
     assert any("producer" in row["kind"] for row in checked["errors"]), checked
     if full_replay:
-        forged = _rebuild_provider_report(original=original, analysis=analysis)
+        forged = _forge_provider_report(analysis=analysis)
         replayed = verify_production_result(original, forged, limits={"seconds": 30})
         assert replayed["status"] == "FAIL", replayed
         assert replayed["source_semantics"]["status"] == "FAIL", replayed
@@ -1011,13 +957,8 @@ def test_transition_producer_inventory_is_bound_to_original_outputs(
 
     original = _create_source_only_draw_capture(axis=axis)
     declarations = normalize_declarations(original)
-    honest = MetadataAnalysis(
-        declarations, search_mode="heuristic", facts_backend="metadata"
-    ).run()
-    assert (
-        check_semantics(original, declarations, honest, check_coverage=False)["status"]
-        != "FAIL"
-    )
+    honest = MetadataAnalysis(declarations, facts_backend="metadata").run()
+    assert check_semantics(original, declarations, honest)["status"] != "FAIL"
     changed = deepcopy(declarations)
     rows = changed["relations"]
     transition = next(
@@ -1038,7 +979,7 @@ def test_transition_producer_inventory_is_bound_to_original_outputs(
     changed["coverage"]["relations"] = len(rows)
     proposed = deepcopy(honest)
     proposed["declarations"] = changed
-    checked = check_semantics(original, changed, proposed, check_coverage=False)
+    checked = check_semantics(original, changed, proposed)
     assert checked["status"] == "FAIL", checked
     expected = {
         "missing_update": "original state update consumer changed",
@@ -1063,10 +1004,8 @@ def test_missing_original_producer_authority_cannot_be_filled_by_an_unrelated_ca
     )
     fields["state_transitions"] = {}
     declarations = normalize_declarations(original)
-    analysis = MetadataAnalysis(
-        declarations, search_mode="heuristic", facts_backend="metadata"
-    ).run()
-    checked = check_semantics(original, declarations, analysis, check_coverage=False)
+    analysis = MetadataAnalysis(declarations, facts_backend="metadata").run()
+    checked = check_semantics(original, declarations, analysis)
     assert checked["status"] == "UNRESOLVED", checked
     assert any(
         row["kind"] == "original state producer is not exposed"
@@ -1093,7 +1032,7 @@ def test_missing_original_producer_authority_cannot_be_filled_by_an_unrelated_ca
         ]["utility"]
         proposed = deepcopy(analysis)
         proposed["declarations"] = changed
-        rejected = check_semantics(original, changed, proposed, check_coverage=False)
+        rejected = check_semantics(original, changed, proposed)
         assert rejected["status"] == "FAIL", rejected
         assert any(
             row["kind"] == "unauthenticated original state producer update"
@@ -1139,10 +1078,8 @@ def test_original_joint_draw_can_feed_an_explicit_transition_without_being_a_tar
 
     original = _create_joint_draw_capture(axis=axis)
     declarations = normalize_declarations(original)
-    analysis = MetadataAnalysis(
-        declarations, search_mode="heuristic", facts_backend="metadata"
-    ).run()
-    checked = check_semantics(original, declarations, analysis, check_coverage=False)
+    analysis = MetadataAnalysis(declarations, facts_backend="metadata").run()
+    checked = check_semantics(original, declarations, analysis)
     assert checked["status"] != "FAIL", checked
     assert not checked["errors"], checked
     cells = {cell["id"]: cell for cell in declarations["cells"]}
@@ -1172,15 +1109,8 @@ def test_joint_producer_inventory_is_bound_to_original_incidence(
 
     original = _create_joint_draw_capture(axis=axis)
     declarations = normalize_declarations(original)
-    analysis = MetadataAnalysis(
-        declarations, search_mode="heuristic", facts_backend="metadata"
-    ).run()
-    assert (
-        check_semantics(original, declarations, analysis, check_coverage=False)[
-            "status"
-        ]
-        != "FAIL"
-    )
+    analysis = MetadataAnalysis(declarations, facts_backend="metadata").run()
+    assert check_semantics(original, declarations, analysis)["status"] != "FAIL"
     changed = deepcopy(declarations)
     rows = changed["relations"]
     joint = next(
@@ -1203,7 +1133,7 @@ def test_joint_producer_inventory_is_bound_to_original_incidence(
     changed["coverage"]["relations"] = len(rows)
     proposed = deepcopy(analysis)
     proposed["declarations"] = changed
-    checked = check_semantics(original, changed, proposed, check_coverage=False)
+    checked = check_semantics(original, changed, proposed)
     assert checked["status"] == "FAIL", checked
     expected = {
         "missing_joint": "full original joint relation omitted/duplicated",
@@ -1224,9 +1154,7 @@ def test_overlapping_original_joint_outputs_have_no_producer_authority(
 
     original = _create_joint_draw_capture(axis=axis)
     honest_declarations = normalize_declarations(original)
-    analysis = MetadataAnalysis(
-        honest_declarations, search_mode="heuristic", facts_backend="metadata"
-    ).run()
+    analysis = MetadataAnalysis(honest_declarations, facts_backend="metadata").run()
     fields = _json_object(
         _json_object(_json_object(original["user_regimes"])["source"])["fields"]
     )
@@ -1235,7 +1163,7 @@ def test_overlapping_original_joint_outputs_have_no_producer_authority(
     declarations = normalize_declarations(original)
     proposed = deepcopy(analysis)
     proposed["declarations"] = declarations
-    checked = check_semantics(original, declarations, proposed, check_coverage=False)
+    checked = check_semantics(original, declarations, proposed)
     assert checked["status"] == "FAIL", checked
     assert any(
         row["kind"] == "original joint producer output duplicated"
@@ -1295,9 +1223,7 @@ def test_public_conditioned_law_keeps_its_parameter_only_history() -> None:
         n_periods=3, wealth_n_points=8, consumption_n_points=8, income_n_points=3
     )
     original = read_model(model)
-    report = analyze_production(
-        original, search_mode="heuristic", facts_backend="metadata"
-    )
+    report = analyze_production(original, facts_backend="metadata")
     analysis = report["analysis"]
     cells = [
         cell for cell in analysis["declarations"]["cells"] if cell["regime"] == "alive"

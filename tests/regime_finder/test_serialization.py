@@ -49,8 +49,6 @@ def test_public_find_then_check_commands() -> None:
                 "find-regimes",
                 "--facts-backend",
                 "metadata",
-                "--search-mode",
-                "heuristic",
                 str(source),
                 "--output",
                 str(result_dir),

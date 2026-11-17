@@ -7,10 +7,9 @@ pixi run -e tests-cpu pytest tests/regime_finder -v --junitxml=reports/checker-t
 ```
 
 The suite checks native declaration capture, state and action dependencies, source and
-certificate mutations, categorical projections, joint transition laws, heuristic
-candidate checks, exact costs on small independent families, report generation and
-filesystem safety. The CI workload manifest selects it on Linux CPU and collects
-coverage, including the checker subprocesses.
+certificate mutations, joint transition laws, the layout curve and its independent
+check, report generation and filesystem safety. The CI workload manifest selects it on
+Linux CPU and collects coverage, including the checker subprocesses.
 
 The Python files stored with the `.py.txt` suffix are parser input, not imported test
 modules. The source adapter tests materialize their unchanged bytes in a temporary

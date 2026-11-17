@@ -1,4 +1,7 @@
 """Typed records for serialized analysis and mutable construction buffers."""
+import hashlib
+import json
+from fractions import Fraction
 from collections.abc import Mapping, Sequence
 from typing import NotRequired, TypedDict
 
@@ -22,7 +25,6 @@ class SemanticCheck(TypedDict, total=False):
     normalized_sha256: str
     guarantee: str
     dense_cartesian_rows_evaluated: int
-    projection_family_complete_verified: bool
     trusted_boundary: list[str]
 
 
@@ -31,32 +33,6 @@ class CheckLayer(TypedDict):
     checks: int
     notes: list[str]
     witnesses: NotRequired[list[JSONValue]]
-
-
-class LinearObjective(TypedDict):
-    constant: int
-    terms: list[tuple[str, int]]
-
-
-class PolynomialConstraint(TypedDict):
-    terms: list[tuple[str, int]]
-    relation: str
-    rhs: int
-
-
-class SignatureModel(TypedDict, total=False):
-    schema: str
-    variables: list[str]
-    constraints: list[PolynomialConstraint]
-    objectives: dict[str, LinearObjective]
-    metadata: dict[str, JSONValue]
-    instance_sha256: str
-    cell_order: list[str]
-    bins: list[JSONValue]
-    pareto_complete_representation: bool
-    full_plan_set_preserved: bool
-    frontier_complete_verified: bool
-    guard: str
 
 
 class DependencyEdge(TypedDict, total=False):
@@ -114,63 +90,11 @@ class IntervalCandidate(TypedDict):
     segment: Mapping[str, JSONValue]
 
 
+def canonical(value: object) -> str:
+    """Return the sorted, compact JSON text that identities are digested from."""
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
 
 
-
-
-class CandidateCheck(TypedDict, total=False):
-    status: str
-    checking_complete: bool
-
-
-class Scenario(TypedDict, total=False):
-    allocation_contract: Mapping[str, JSONValue]
-    status: str
-    error: str
-    frontier: list[dict[str, JSONValue]]
-    independent_check: CandidateCheck
-
-
-class RenderPoint(TypedDict):
-    ordinal: int
-    prefix: str
-    point: dict[str, JSONValue]
-    graph: dict[str, JSONValue]
-    cost_preferred: bool
-    decision: dict[str, JSONValue]
-    consequences: dict[str, JSONValue]
-
-
-class RenderScenario(TypedDict):
-    ordinal: int
-    title: str
-    conditional: bool
-    scenario: dict[str, JSONValue]
-    points: list[RenderPoint]
-
-
-class BaselineBlock(TypedDict):
-    component: int
-    label_group_mask: int
-    cells: list[str]
-    cost: tuple[int, ...]
-    option_by_cell: dict[str, str]
-
-
-class DecisionSummary(TypedDict, total=False):
-    operation: str
-    scenario: int
-    graph: str
-    decision: str
-    changed_interfaces: list[dict[str, JSONValue]]
-    remaining_kinds: dict[str, int]
-    examples: list[dict[str, JSONValue]]
-    reasons: list[str]
-
-
-class EndpointPreference(TypedDict, total=False):
-    scenario: int
-    recommended_graph: str | None
-    allow_final_only_split: bool
-    reason: str
-    deferred_graph_ids: list[str]
+def digest(value: object) -> str:
+    """Return the sha256 of the canonical JSON text."""
+    return hashlib.sha256(canonical(value).encode()).hexdigest()

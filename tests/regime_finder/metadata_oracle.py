@@ -464,21 +464,3 @@ def independent_joint_transport[Target, Projected: Hashable](
         "original_support": len(before),
         "reduced_support": len(after),
     }
-
-
-def nondominated[Value](
-    items: Iterable[Value], metrics=lambda item: item
-) -> list[Value]:
-    """Literal all-pairs Pareto oracle, independent of a search recurrence."""
-    items = list(items)
-    result = []
-    for index, item in enumerate(items):
-        point = tuple(metrics(item))
-        if not any(
-            other_index != index
-            and all(a <= b for a, b in zip(tuple(metrics(other)), point))
-            and any(a < b for a, b in zip(tuple(metrics(other)), point))
-            for other_index, other in enumerate(items)
-        ):
-            result.append(item)
-    return result
