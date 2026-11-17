@@ -4,10 +4,10 @@ title: Iskhakov et al. (2017)
 
 # Iskhakov et al. (2017)
 
-The deterministic retirement model of @iskhakov2017: a worker chooses consumption and
-whether to keep working or retire; retirement is absorbing and death arrives
-deterministically at a known age. Log utility with work disutility and a borrowing
-constraint.
+The deterministic retirement model of @iskhakovEndogenousGridMethod2017: a worker
+chooses consumption and whether to keep working or retire; retirement is absorbing and
+death arrives deterministically at a known age. Log utility with work disutility and a
+borrowing constraint.
 
 The paper provides a closed-form solution, which pylcm's test suite uses as an
 analytical oracle (`tests/data/analytical_solution/`). The discrete retirement choice

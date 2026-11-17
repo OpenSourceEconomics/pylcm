@@ -6,7 +6,7 @@ title: The endogenous-grid method
 
 The endogenous-grid method (EGM) removes a continuous root search from a smooth
 consumption-saving problem by choosing tomorrow's assets first and recovering today's
-resources from the Euler equation {cite}`carroll2006`.
+resources from the Euler equation {cite}`carrollMethodEndogenousGridpoints2006`.
 
 Write post-decision savings as
 

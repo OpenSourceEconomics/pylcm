@@ -5,13 +5,13 @@ title: Categories with characteristics
 # Categories with characteristics
 
 In some models the categories of a discrete state or action are combinations of
-characteristics. In {cite}`lowpistaferri2015`, a labour-market status is "employed",
-"applying for disability insurance", "on disability insurance for one quarter", and so
-on, and each status fixes whether the person holds a job, whether they may apply, and
-how long they have received benefits. Other models have the same structure: family
-composition (number of children and age of the youngest, where "no children" has no
-age), job offers (hours and insurance, where "no offer" has neither), or a migration
-choice (destination and border-crossing mode). The
+characteristics. In {cite}`lowDisabilityInsuranceDynamics2015`, a labour-market status
+is "employed", "applying for disability insurance", "on disability insurance for one
+quarter", and so on, and each status fixes whether the person holds a job, whether they
+may apply, and how long they have received benefits. Other models have the same
+structure: family composition (number of children and age of the youngest, where "no
+children" has no age), job offers (hours and insurance, where "no offer" has neither),
+or a migration choice (destination and border-crossing mode). The
 [LCM Zoo](https://github.com/OpenSourceEconomics/lcm-zoo) contains several such models.
 
 Only some combinations occur, so the model tracks one categorical variable with one
