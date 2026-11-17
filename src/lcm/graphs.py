@@ -6,6 +6,7 @@ from pathlib import Path
 from networkx import DiGraph
 
 from _lcm.typing import JSONValue
+from _lcm_regime_finder.layout_search import analyze_layouts as _analyze_layouts
 from lcm.model import Model
 from lcm.regime_analysis import (
     FactsBackend,
@@ -230,8 +231,6 @@ def layout_curve(
         The `supplement-layout-curve/v1` record with its phase timings.
 
     """
-    from _lcm_regime_finder.layout_search import analyze_layouts  # noqa: PLC0415
-
-    return analyze_layouts(
+    return _analyze_layouts(
         model, facts_backend=facts_backend, limits=limits, price=price
     )
