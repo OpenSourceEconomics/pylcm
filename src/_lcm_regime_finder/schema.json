@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "One original regime problem; no proposed answer",
+  "type": "object",
+  "required": ["schema_version", "ages", "states", "actions", "programs"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "name": {"type": "string"},
+    "ages": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "integer"}},
+    "age_scale": {},
+    "age_labels": {},
+    "parameters": {"type": "object"},
+    "external_parameters": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+    "states": {"type": "object", "additionalProperties": {"$ref": "#/$defs/domain"}},
+    "actions": {"type": "object", "additionalProperties": {"$ref": "#/$defs/domain"}},
+    "status_axes": {"type": "object", "additionalProperties": {"$ref": "#/$defs/domain"}},
+    "external_report_tags": {"type": "array", "items": {"type": "string"}},
+    "starts": {"type": "array"},
+    "later_starts": {"type": "array"},
+    "incoming_starts": {"type": "array"},
+    "numerical": {"type": "object"},
+    "limits": {"type": "object"},
+    "implementation": {"type": "object", "properties": {
+      "boundary_unit": {"type": "integer", "minimum": 0},
+      "compact_search": {"type": "boolean"},
+      "allow_sparse_admission": {"type": "boolean"},
+      "max_block_state_entries": {"type": "integer", "minimum": 1},
+      "max_block_action_entries": {"type": "integer", "minimum": 1},
+      "max_block_entries": {"type": "integer", "minimum": 1},
+      "global_state_axes": {"type": "array", "items": {"type": "string"}},
+      "global_action_axes": {"type": "array", "items": {"type": "string"}}
+    }},
+    "programs": {"type": "array", "minItems": 1, "items": {"type": "object", "required": ["id"], "properties": {
+      "id": {"type": "string", "minLength": 1},
+      "when": {"$ref": "#/$defs/expression"},
+      "declared_states": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+      "declared_actions": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+      "role": {"type": "object"},
+      "channel": {"type": "string"},
+      "routing_owner": {"type": ["string", "null"]},
+      "allocation": {"enum": ["per_block", "global_union"]},
+      "terminal": {"type": "boolean"},
+      "reward": {"$ref": "#/$defs/expression"},
+      "discount": {"$ref": "#/$defs/expression"},
+      "feasible": {"$ref": "#/$defs/expression"},
+      "terminal_payoff": {"$ref": "#/$defs/expression"},
+      "taste_group": {"$ref": "#/$defs/expression"},
+      "taste_law": {"$ref": "#/$defs/expression"},
+      "transitions": {"type": "array", "items": {"$ref": "#/$defs/edge"}},
+      "reads": {"type": "array", "items": {"$ref": "#/$defs/edge"}}
+    }}}
+  },
+  "not": {"anyOf": [{"required": ["reduced"]}, {"required": ["winning_cuts"]}, {"required": ["certificate"]}, {"required": ["state_map"]}, {"required": ["action_embedding"]}]},
+  "$defs": {
+    "domain": {"oneOf": [
+      {"type": "array", "minItems": 1, "uniqueItems": true},
+      {"type": "object", "required": ["values"], "properties": {"values": {"type": "array", "minItems": 1, "uniqueItems": true}, "solve_axis": {"type": "boolean"}, "simulation_axis": {"type": "boolean"}}},
+      {"type": "object", "required": ["size", "grid_id"], "not": {"required": ["values"]}, "properties": {"size": {"type": "integer", "minimum": 1}, "grid_id": {"type": "string", "minLength": 1}}}
+    ]},
+    "expression": {"anyOf": [
+      {"type": ["string", "number", "boolean", "null"]},
+      {"type": "array", "items": {"$ref": "#/$defs/expression"}},
+      {"type": "object", "required": ["opaque", "reads"], "properties": {"reads": {"type": "array", "items": {"type": "string"}}, "arguments": {"type": "array", "items": {"$ref": "#/$defs/expression"}}}},
+      {"type": "object", "required": ["and"]}, {"type": "object", "required": ["or"]},
+      {"type": "object", "required": ["not"]}, {"type": "object", "required": ["if", "then", "else"]}
+    ]},
+    "edge": {"type": "object", "properties": {
+      "target": {"type": "string"}, "when": {"$ref": "#/$defs/expression"},
+      "probability": {"$ref": "#/$defs/expression"}, "weight": {"$ref": "#/$defs/expression"},
+      "phase": {"enum": ["solve", "simulation", "both"]}, "offset": {"enum": [0, 1]},
+      "updates": {"type": "object", "additionalProperties": {"$ref": "#/$defs/expression"}},
+      "status_updates": {"type": "object", "additionalProperties": {"$ref": "#/$defs/expression"}}
+    }}
+  }
+}

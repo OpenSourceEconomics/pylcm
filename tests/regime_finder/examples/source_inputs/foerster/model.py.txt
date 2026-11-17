@@ -1,0 +1,1819 @@
+"""The paper's own model: the regime graph at its own grids, wired to `economics`.
+
+This is the Phase-4 declaration. `economics` holds the paper's primitives as
+pure functions and `calibration` holds its numbers; `production_scope_reference`
+certified the *topology* -- the A/C/CP/B/H/F staging, the undiscounted
+within-period edges, the stochastic custody mixture, the participation
+constraints and the selector channel -- against generated payoff tables. What
+was missing until now is the join: the same topology carrying the paper's
+economics on the paper's grids.
+
+**What is declared.** One economic period `t` runs as four pylcm periods, one
+per stage; `stage_period(t, stage)` is the only place that mapping is written:
+
+    stage 0   A(t)   bargaining-weight selector      C(t)   outside option
+    stage 1   B(t,k) married choice at weight mu_k   CP(t)  custody lottery
+    stage 2   BP(t,k) married pad                    H(t,c) husband, leader
+    stage 3   BP2(t,k) economic boundary             F(t,c) wife, follower
+
+The table describes working life. Retired married choices retain savings, love
+and bargaining states but drop children and hours. Retired divorce routes into
+independent personal R(t,s) problems at stage 2, each with own assets, own human
+capital and own savings. Personal pads align their continuation with the same
+clock. Children, custody, maintenance and the working leader/follower game end
+at retirement.
+
+The model's clock counts stages. Every table is indexed by the economic period
+and selected while the regimes of that period are built, so no regime function
+reads the pylcm period.
+
+`A(t)` reads `C(t)`'s two spouse values through a `ProjectedRegimeValue` on
+projected divorce states, uses them in the participation constraints of eq. (8),
+and its argmax is carried by a period-specific auxiliary stakeholder whose flow
+utility is `-|mu_k - mu_{t-1}|`: nearest feasible weight to the incumbent, and
+divorce exactly when no weight is feasible. `H(t,c)` carries the husband's hours
+and savings across an undiscounted same-period edge into `F(t,c)`, which
+publishes both spouses' divorced values at her best response -- the acyclic
+Stackelberg edge of eqs (3)-(5).
+
+**The static layer is a table, not a DP choice.** `model.md` Sec. 8 shows that
+home-production hours, leisure and the intra-household consumption split carry
+no continuation term. They are solved once, outside the recursion, by
+`economics.home_production_split_married` / `_divorced` (scipy root solves) and
+enter the jitted utilities as precomputed arrays. Savings is the only true
+continuous action.
+
+**Whose conventions.** The package's, wherever it and the article differ, and
+each one is named at the point it is used: the love shock is an AR(1) at
+`RHO_XI`, not a random walk (`economics.love_shock_grid`); assets accumulate on
+end-of-period wealth (`economics.next_assets`); consumption is split by
+`mu c_f**eta_f = c_m**eta_m` (`economics.partner_consumption`); the divorced
+home-productivity parameters sit in the slots the code reads them from
+(`calibration.MSMParams.a_div_f`).
+
+**Resolution.** `PAPER` is the paper's own grids. Everything else is a
+coarsening for a cheaper run; the declaration is identical, only the grids
+shrink. `Resolution` subsamples the paper's arrays rather than inventing
+grids, so a coarse run is a sub-grid of the paper's, never a different one.
+
+"""
+
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
+from typing import Any, Literal
+
+import jax.numpy as jnp
+import numpy as np
+from dags import rename_arguments
+from lcm import (
+    ByPeriod,
+    CollectiveUtility,
+    DiscreteGrid,
+    Gate,
+    InitialNodes,
+    IrregSpacedGrid,
+    JointTransition,
+    Model,
+    ParetoObjective,
+    Periods,
+    ProjectedRegimeValue,
+    Regime,
+    StakeholderRoute,
+    StochasticTransition,
+    Transition,
+    ValueDependentConstraint,
+    categorical,
+    fixed_transition,
+)
+from lcm.typing import (
+    BoolND,
+    ContinuousAction,
+    ContinuousState,
+    DiscreteAction,
+    DiscreteState,
+    FloatND,
+    IntND,
+    ScalarInt,
+)
+
+from lcm_zoo.foersterUntyingKnotHow2024 import economics
+from lcm_zoo.foersterUntyingKnotHow2024.calibration import Calibration
+
+__all__ = [
+    "STAGES_PER_PERIOD",
+    "Resolution",
+    "Tables",
+    "build_model",
+    "build_tables",
+    "create_model",
+    "regime_matrix",
+    "solve",
+    "stage_period",
+    "stage_selector",
+    "stakeholder_names",
+]
+
+#: One economic period runs as four pylcm periods; see the module docstring.
+STAGES_PER_PERIOD = 4
+
+
+def stage_period(economic_period: int, stage: int) -> int:
+    """Return the pylcm period at which `stage` of `economic_period` runs."""
+    return STAGES_PER_PERIOD * economic_period + stage
+
+
+def stage_selector(economic_period: int, stage: int) -> Periods:
+    """Return the `Periods` selector for `stage` of `economic_period`."""
+    return Periods(values=(stage_period(economic_period, stage),))
+
+
+@dataclass(frozen=True)
+class Resolution:
+    """How finely the paper's own grids are sampled.
+
+    Every field names a paper grid, and `PAPER` is that grid at full size. A
+    smaller value subsamples the paper's array keeping both endpoints, so a
+    coarse resolution is a sub-grid of the paper's rather than a different one.
+    The two shock grids are the exception: their nodes are *generated* by a
+    quadrature rule, so a smaller count is that rule at fewer nodes.
+    """
+
+    n_work: int
+    n_retire: int
+    n_mu: int
+    n_assets: int
+    n_hours: int
+    n_children: int
+    n_human_capital: int
+    n_wage_nodes: int
+    n_love_nodes: int
+
+    @property
+    def n_periods(self) -> int:
+        """Economic periods solved, working plus retirement."""
+        return self.n_work + self.n_retire
+
+    @property
+    def terminal_period(self) -> int:
+        """The pylcm period at which the zero terminal regime becomes active."""
+        return stage_period(self.n_periods, 0)
+
+
+def _subsample(values: np.ndarray, count: int) -> np.ndarray:
+    """Take `count` entries of `values`, keeping both endpoints."""
+    if count > len(values):
+        msg = f"cannot take {count} points from a grid of {len(values)}"
+        raise ValueError(msg)
+    if count == len(values):
+        return np.asarray(values, dtype=np.float64)
+    index = np.unique(np.linspace(0, len(values) - 1, count).round().astype(int))
+    if len(index) != count:
+        msg = f"subsampling {len(values)} points to {count} collapsed to {len(index)}"
+        raise ValueError(msg)
+    return np.asarray(values, dtype=np.float64)[index]
+
+
+@dataclass(frozen=True)
+class Tables:
+    """Everything the jitted model functions read, precomputed on the grids.
+
+    The static layer of `model.md` Sec. 8 lives here: `nonconsumption_married`
+    and `nonconsumption_divorced` already contain the leisure and home-good
+    terms at the solved `(q, l)` split, so a utility function only has to add
+    the consumption term. Nothing here is solved inside the recursion, and
+    nothing here calls scipy at solve time.
+    """
+
+    resolution: Resolution
+    calibration: Calibration
+
+    mu_grid: np.ndarray
+    assets_married: np.ndarray
+    assets_divorced: np.ndarray
+    hours_weekly: np.ndarray
+    hours_period: np.ndarray
+    love_nodes: np.ndarray
+
+    #: ``[period, human_capital, wage_node, hours]`` -- gross labour income per
+    #: period for each spouse, or the shock-invariant net pension once retired.
+    income_f: np.ndarray
+    income_m: np.ndarray
+
+    #: ``[stakeholder][hours_f, hours_m, children, mu]`` -- leisure plus
+    #: home-good utility in marriage at the solved static split.
+    nonconsumption_married_f: np.ndarray
+    nonconsumption_married_m: np.ndarray
+
+    #: ``[hours, children]`` -- the same after divorce, per spouse.
+    nonconsumption_divorced_f: np.ndarray
+    nonconsumption_divorced_m: np.ndarray
+
+    #: ``[children, mu]`` -- the wife's consumption per unit of expenditure, and
+    #: ``[mu]`` -- the husband's per unit of hers.
+    female_share: np.ndarray
+    male_ratio: np.ndarray
+
+    #: ``[human_capital, hours, next_human_capital]``, per spouse.
+    hc_transition_f: np.ndarray
+    hc_transition_m: np.ndarray
+
+    #: Gauss-Hermite weights, redrawn every period.
+    wage_weights: np.ndarray
+
+    #: ``[period, children, next_children]``; zero births once retired.
+    fertility: np.ndarray
+
+    #: ``[love_f, next_love_f, love_m, next_love_m]``.
+    love_transition: np.ndarray
+
+    #: ``[love_f_index, love_m_index]`` flattened support of the joint draw.
+    love_support: np.ndarray
+
+    equivalence_scale: np.ndarray
+
+
+def _wage_tables(
+    msm: Any,  # noqa: ANN401 -- calibration.MSMParams
+    n_human_capital: int,
+    nodes: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """``w_s(K, e)`` on the human-capital and Gauss-Hermite grids, Sec. 5."""
+    wage_f = np.empty((n_human_capital, len(nodes)))
+    wage_m = np.empty_like(wage_f)
+    for k in range(n_human_capital):
+        for e, node in enumerate(nodes):
+            wage_f[k, e] = economics.wage(
+                k, node, msm.phi0_f, msm.phi1_f, msm.sigma_eps_f
+            )
+            wage_m[k, e] = economics.wage(
+                k, node, msm.phi0_m, msm.phi1_m, msm.sigma_eps_m
+            )
+    return wage_f, wage_m
+
+
+def _income_tables(
+    resolution: Resolution,
+    calibration: Calibration,
+    wages: tuple[np.ndarray, np.ndarray],
+    hours_period: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Working earnings and shock-free net pensions on a common table layout.
+
+    Author retirement routines use exp(phi0 + phi1 * K), without a transitory
+    shock or Jensen correction. Retired callers select the invariant first wage
+    column; their regime grids do not carry wage-shock coordinates.
+    """
+    wage_f, wage_m = wages
+    n_h = len(hours_period)
+    shape = (resolution.n_periods, *wage_f.shape, n_h)
+    income_f = np.empty(shape)
+    income_m = np.empty(shape)
+    pension_f = economics.retirement_income(
+        np.exp(
+            calibration.msm.phi0_f
+            + calibration.msm.phi1_f * np.arange(resolution.n_human_capital)
+        )[:, None],
+        calibration.pension_replacement,
+        calibration.retirement_mean_hours_weekly["f"],
+        calibration.hours_per_period_factor,
+    )
+    pension_m = economics.retirement_income(
+        np.exp(
+            calibration.msm.phi0_m
+            + calibration.msm.phi1_m * np.arange(resolution.n_human_capital)
+        )[:, None],
+        calibration.pension_replacement,
+        calibration.retirement_mean_hours_weekly["m"],
+        calibration.hours_per_period_factor,
+    )
+    for period in range(resolution.n_periods):
+        if period < resolution.n_work:
+            income_f[period] = wage_f[:, :, None] * hours_period[None, None, :]
+            income_m[period] = wage_m[:, :, None] * hours_period[None, None, :]
+        else:
+            income_f[period] = np.repeat(pension_f[:, :, None], n_h, axis=2)
+            income_m[period] = np.repeat(pension_m[:, :, None], n_h, axis=2)
+    return income_f, income_m
+
+
+def _married_static_tables(
+    msm: Any,  # noqa: ANN401 -- calibration.MSMParams
+    hours_period: np.ndarray,
+    n_children: int,
+    mu_grid: np.ndarray,
+    time_budget: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Leisure plus home-good utility in marriage at the solved static split.
+
+    `model.md` Sec. 8a: `q` and `l` enter utility but not the budget, so their
+    split solves a within-period first-order condition with no continuation
+    term. It is a deterministic function of `(h_f, h_m, n, mu)` and is tabulated
+    once here rather than being carried as a DP choice.
+    """
+    n_h = len(hours_period)
+    shape = (n_h, n_h, n_children, len(mu_grid))
+    static_f = np.empty(shape)
+    static_m = np.empty(shape)
+    for i_f in range(n_h):
+        for i_m in range(n_h):
+            for n in range(n_children):
+                for k, mu in enumerate(mu_grid):
+                    q_f, q_m, l_f, l_m = economics.home_production_split_married(
+                        hours_period[i_f],
+                        hours_period[i_m],
+                        n,
+                        float(mu),
+                        gamma_f=msm.gamma_f,
+                        psi_f=msm.psi_f,
+                        gamma_m=msm.gamma_m,
+                        psi_m=msm.psi_m,
+                        b_level=msm.B,
+                        b_children=msm.b,
+                        kappa=msm.kappa,
+                        a=msm.a,
+                        sigma=msm.sigma,
+                        time_budget=time_budget,
+                    )
+                    home = economics.utility_home_good(
+                        economics.home_good_married(q_f, q_m, msm.a, msm.sigma),
+                        n,
+                        msm.B,
+                        msm.b,
+                        msm.kappa,
+                    )
+                    static_f[i_f, i_m, n, k] = (
+                        msm.psi_f * l_f ** (1 + msm.gamma_f) / (1 + msm.gamma_f) + home
+                    )
+                    static_m[i_f, i_m, n, k] = (
+                        msm.psi_m * l_m ** (1 + msm.gamma_m) / (1 + msm.gamma_m) + home
+                    )
+    return static_f, static_m
+
+
+def _divorced_static_tables(
+    msm: Any,  # noqa: ANN401 -- calibration.MSMParams
+    hours_period: np.ndarray,
+    n_children: int,
+    time_budget: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    """The same static layer after divorce, where the home good is private."""
+    n_h = len(hours_period)
+    static_f = np.empty((n_h, n_children))
+    static_m = np.empty_like(static_f)
+    spouses = (
+        (static_f, msm.gamma_f, msm.psi_f, msm.a_div_f),
+        (static_m, msm.gamma_m, msm.psi_m, msm.a_div_m),
+    )
+    for table, gamma, psi, a_div in spouses:
+        for i in range(n_h):
+            for n in range(n_children):
+                q, leisure = economics.home_production_split_divorced(
+                    hours_period[i],
+                    n,
+                    gamma=gamma,
+                    psi=psi,
+                    b_level=msm.B,
+                    b_children=msm.b,
+                    kappa=msm.kappa,
+                    a_div=a_div,
+                    time_budget=time_budget,
+                )
+                table[i, n] = psi * leisure ** (1 + gamma) / (
+                    1 + gamma
+                ) + economics.utility_home_good(
+                    economics.home_good_divorced(q, a_div),
+                    n,
+                    msm.B,
+                    msm.b,
+                    msm.kappa,
+                )
+    return static_f, static_m
+
+
+def _human_capital_tables(
+    msm: Any,  # noqa: ANN401 -- calibration.MSMParams
+    hours_period: np.ndarray,
+    n_human_capital: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """``[K, hours, K']`` for each spouse, from the three-branch law of motion."""
+    n_h = len(hours_period)
+    table_f = np.zeros((n_human_capital, n_h, n_human_capital))
+    table_m = np.zeros_like(table_f)
+    k_max = n_human_capital - 1
+    spouses = ((table_f, msm.alpha_f, msm.delta_f), (table_m, msm.alpha_m, msm.delta_m))
+    for table, alpha, delta in spouses:
+        for k in range(n_human_capital):
+            for i in range(n_h):
+                probabilities, levels = economics.human_capital_transition(
+                    k, hours_period[i], alpha, delta, k_max
+                )
+                table[k, i, levels] = probabilities
+    return table_f, table_m
+
+
+def _fertility_table(resolution: Resolution, fertility: np.ndarray) -> np.ndarray:
+    """``[period, n, n']``, App. D's birth process. No births once retired."""
+    n_n = resolution.n_children
+    table = np.zeros((resolution.n_periods, n_n, n_n))
+    for period in range(resolution.n_periods):
+        row = fertility[min(period, len(fertility) - 1)]
+        working = period < resolution.n_work
+        for n in range(n_n):
+            birth = float(row[n]) if working and n < min(n_n - 1, len(row)) else 0.0
+            table[period, n, n] = 1.0 - birth
+            if birth > 0.0:
+                table[period, n, n + 1] = birth
+    return table
+
+
+def _consumption_split(
+    calibration: Calibration, mu_grid: np.ndarray, scale: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
+    """The closed form of the intra-household split, `model.md` Sec. 14.5.
+
+    `economics.partner_consumption` sets ``c_m = (mu c_f**eta_f)**(1/eta_m)``.
+    At the paper's estimates ``eta_f == eta_m``, so ``c_m = mu**(1/eta) c_f``
+    and the expenditure aggregator inverts in closed form -- the solver's
+    bisection is not needed and is not reproduced. The guard is what keeps that
+    shortcut honest if the two ever differ.
+    """
+    eta = calibration.eta
+    if eta != calibration.eta_f or eta != calibration.eta_m:  # pragma: no cover
+        msg = "the closed-form consumption split assumes eta_f == eta_m == eta"
+        raise ValueError(msg)
+    male_ratio = mu_grid ** (1.0 / eta)
+    rho = calibration.rho
+    female_share = 1.0 / (
+        scale[:, None] * (1.0 + male_ratio[None, :] ** rho) ** (1.0 / rho)
+    )
+    return female_share, male_ratio
+
+
+def build_tables(resolution: Resolution, calibration: Calibration) -> Tables:
+    """Precompute every array the declaration reads. Runs scipy, never jax."""
+    cal = calibration
+    msm = cal.msm
+    mu_grid = _subsample(cal.mu_grid, resolution.n_mu)
+    assets = _subsample(cal.asset_grid_married, resolution.n_assets)
+    hours_weekly = _subsample(cal.hours_weekly, resolution.n_hours)
+    hours_period = np.asarray(
+        economics.weekly_to_period_hours(hours_weekly, cal.hours_per_period_factor)
+    )
+    scale = cal.equivalence_scale[: resolution.n_children]
+
+    nodes, weights = economics.gauss_hermite_wage_nodes(resolution.n_wage_nodes)
+    wages = _wage_tables(msm, resolution.n_human_capital, nodes)
+    income_f, income_m = _income_tables(resolution, cal, wages, hours_period)
+    married_f, married_m = _married_static_tables(
+        msm, hours_period, resolution.n_children, mu_grid, cal.time_budget_period
+    )
+    divorced_f, divorced_m = _divorced_static_tables(
+        msm, hours_period, resolution.n_children, cal.time_budget_period
+    )
+    female_share, male_ratio = _consumption_split(cal, mu_grid, scale)
+    hc_f, hc_m = _human_capital_tables(msm, hours_period, resolution.n_human_capital)
+
+    n_l = resolution.n_love_nodes
+    love_nodes = economics.love_shock_grid(msm.mu_xi, msm.sigma_xi, n_l, cal.rho_xi)
+    love_transition = economics.love_shock_transition(
+        msm.mu_xi, msm.sigma_xi, n_l, cal.rho_xi, cal.corr_xi
+    )
+    love_support = np.array(
+        [(i, j) for i in range(n_l) for j in range(n_l)], dtype=np.int64
+    )
+
+    return Tables(
+        resolution=resolution,
+        calibration=cal,
+        mu_grid=mu_grid,
+        assets_married=assets,
+        assets_divorced=assets / 2.0,
+        hours_weekly=hours_weekly,
+        hours_period=hours_period,
+        love_nodes=np.asarray(love_nodes),
+        income_f=income_f,
+        income_m=income_m,
+        nonconsumption_married_f=married_f,
+        nonconsumption_married_m=married_m,
+        nonconsumption_divorced_f=divorced_f,
+        nonconsumption_divorced_m=divorced_m,
+        female_share=female_share,
+        male_ratio=male_ratio,
+        hc_transition_f=hc_f,
+        hc_transition_m=hc_m,
+        wage_weights=np.asarray(weights),
+        fertility=_fertility_table(resolution, cal.fertility),
+        love_transition=np.asarray(love_transition),
+        love_support=love_support,
+        equivalence_scale=scale,
+    )
+
+
+# The declaration
+
+
+def _categorical(name: str, n_options: int) -> DiscreteGrid:
+    namespace: dict[str, Any] = {
+        "__annotations__": {f"o{index}": ScalarInt for index in range(n_options)},
+        "__doc__": f"Ordered categorical grid with {n_options} codes.",
+    }
+    return DiscreteGrid(categorical(ordered=True)(type(name, (), namespace)))
+
+
+def stakeholder_names(resolution: Resolution) -> tuple[str, ...]:
+    """The value channels every regime carries.
+
+    Two are the spouses. The rest are the auxiliary channels the certified
+    construction uses to carry the renegotiation argmax: `sel_t` scores the
+    candidate weights against the incumbent and `pick_t` reads the chosen
+    branch back out.
+
+    They are PERIOD-SPECIFIC, and that is not decoration. A stakeholder channel
+    accumulates through the continuation, so a single shared selector channel
+    would add the discounted stream of every future renegotiation penalty to
+    the score at `A(t)` and change which weight is chosen. A channel whose flow
+    utility is nonzero only at `A(t)` carries exactly the current penalty there,
+    because everything downstream of `A(t)` contributes zero to it.
+
+    The cost is that every regime carries `2 * n_periods + 2` value arrays. See
+    `specs/foersterUntyingKnotHow2024/STATUS.yaml` for what that means at the
+    paper's own grids.
+    """
+    selectors = tuple(f"sel_{period}" for period in range(resolution.n_periods))
+    picks = tuple(f"pick_{period}" for period in range(resolution.n_periods))
+    return ("f", "m", *selectors, *picks)
+
+
+def _weights(names: tuple[str, ...], positive: Mapping[str, float]) -> dict[str, float]:
+    return {name: float(positive.get(name, 0.0)) for name in names}
+
+
+def _collective(
+    names: tuple[str, ...],
+    default: Callable[..., FloatND],
+    overrides: Mapping[str, Callable[..., FloatND]] | None = None,
+    *,
+    weights: Mapping[str, float],
+) -> CollectiveUtility:
+    overrides = overrides or {}
+    return CollectiveUtility(
+        utilities={name: overrides.get(name, default) for name in names},
+        objective=ParetoObjective(weights=_weights(names, weights)),
+    )
+
+
+def _certain(period: IntND) -> FloatND:
+    return jnp.ones_like(period, dtype=float)
+
+
+def _fixed(names: tuple[str, ...]) -> dict[str, Any]:
+    return {name: fixed_transition(name) for name in names}
+
+
+def _per_target(targets: tuple[str, ...], transition: Any) -> dict[str, Any]:  # noqa: ANN401
+    return dict.fromkeys(targets, transition)
+
+
+def _zero_married() -> FloatND:
+    """Zero flow of a married pad stage.
+
+    A pad contributes nothing economically. It reads none of its states: it
+    carries them with `fixed_transition` to the next stage, which keeps them, and
+    pylcm counts that hand-over as a use.
+    """
+    return jnp.asarray(0.0)
+
+
+def _reported_assets(assets: ContinuousState) -> FloatND:
+    """Assets in the final married pads, retained for the simulation asset series."""
+    return assets
+
+
+def _zero_divorce() -> FloatND:
+    """Zero flow of a divorce pad stage; see `_zero_married`."""
+    return jnp.asarray(0.0)
+
+
+def _make_maintenance(tables: Tables) -> Callable[..., FloatND]:
+    """`maintenance.policy_maintenance` in jax, for the signed transfer to `f`.
+
+    The two implementations are pinned against each other by
+    `tests/test_foersterUntyingKnotHow2024_model.py`; this one exists only
+    because the solve is traced and the numpy one is not.
+    """
+    policy = tables.calibration.policy
+
+    def maintenance_f(
+        n_f: IntND, n_m: IntND, income_f: FloatND, income_m: FloatND
+    ) -> FloatND:
+        n_f_float = jnp.maximum(jnp.asarray(n_f, dtype=float), 1.0)
+        n_m_float = jnp.maximum(jnp.asarray(n_m, dtype=float), 1.0)
+        support_from_m = jnp.where(
+            n_f > 0,
+            n_f_float**policy.bn
+            * (policy.b0 + policy.b1 * income_m + policy.b2 * (income_m - income_f)),
+            0.0,
+        )
+        support_from_f = jnp.where(
+            n_m > 0,
+            n_m_float**policy.bn
+            * (policy.b0 + policy.b1 * income_f + policy.b2 * (income_f - income_m)),
+            0.0,
+        )
+        return support_from_m - support_from_f + policy.tau * (income_m - income_f)
+
+    return maintenance_f
+
+
+def _make_married_expenditure(tables: Tables, period: int) -> Callable[..., FloatND]:
+    """Eq. (6)'s ``x``, on the package's asset timing (`economics.next_assets`)."""
+    inc_f = jnp.asarray(tables.income_f[period])
+    inc_m = jnp.asarray(tables.income_m[period])
+    tax = tables.calibration.tax_rate if period < tables.resolution.n_work else 0.0
+    interest = tables.calibration.r
+
+    def expenditure(  # noqa: PLR0917
+        hours_f: DiscreteAction,
+        hours_m: DiscreteAction,
+        savings: ContinuousAction,
+        assets: ContinuousState,
+        hc_f: DiscreteState,
+        hc_m: DiscreteState,
+        wage_shock_f: DiscreteState,
+        wage_shock_m: DiscreteState,
+    ) -> FloatND:
+        income = inc_f[hc_f, wage_shock_f, hours_f] + inc_m[hc_m, wage_shock_m, hours_m]
+        return (1.0 - tax) * income + assets - savings / (1.0 + interest)
+
+    if period >= tables.resolution.n_work:
+
+        def retired_expenditure(
+            savings: ContinuousAction,
+            assets: ContinuousState,
+            hc_f: DiscreteState,
+            hc_m: DiscreteState,
+        ) -> FloatND:
+            income = inc_f[hc_f, 0, 0] + inc_m[hc_m, 0, 0]
+            return income + assets - savings / (1.0 + interest)
+
+        return retired_expenditure
+
+    return expenditure
+
+
+def _make_married_utility(
+    tables: Tables, node: int, who: Literal["f", "m"], *, retired: bool
+) -> Callable[..., FloatND]:
+    """Sec. 5's married felicity for one spouse at bargaining weight `mu_k`."""
+    share = jnp.asarray(tables.female_share[:, node])
+    ratio = float(tables.male_ratio[node])
+    static = jnp.asarray(
+        tables.nonconsumption_married_f[..., node]
+        if who == "f"
+        else tables.nonconsumption_married_m[..., node]
+    )
+    love_nodes = jnp.asarray(tables.love_nodes)
+    eta = tables.calibration.eta
+
+    def utility(
+        expenditure: FloatND,
+        hours_f: DiscreteAction,
+        hours_m: DiscreteAction,
+        children: DiscreteState,
+        own_love: DiscreteState,
+    ) -> FloatND:
+        own = share[children] * expenditure
+        if who == "m":
+            own = ratio * own
+        floored = jnp.maximum(own, tables.calibration.consumption_floor)
+        taste = love_nodes[own_love]
+        return (
+            floored ** (1 + eta) / (1 + eta)
+            + static[hours_f, hours_m, children]
+            + taste
+        )
+
+    if retired:
+
+        def retired_utility(
+            expenditure: FloatND,
+            own_love: DiscreteState,
+        ) -> FloatND:
+            own = share[0] * expenditure
+            if who == "m":
+                own = ratio * own
+            floored = jnp.maximum(own, tables.calibration.consumption_floor)
+            taste = love_nodes[own_love]
+            return floored ** (1 + eta) / (1 + eta) + static[0, 0, 0] + taste
+
+        return rename_arguments(retired_utility, mapper={"own_love": f"love_{who}"})
+
+    return rename_arguments(utility, mapper={"own_love": f"love_{who}"})
+
+
+def _make_divorce_expenditure(
+    tables: Tables, period: int, custody: int, who: Literal["f", "m"]
+) -> Callable[..., FloatND]:
+    """Eq. (2)'s ``x_s``, with the signed maintenance transfer of Sec. 8."""
+    inc_f = jnp.asarray(tables.income_f[period])
+    inc_m = jnp.asarray(tables.income_m[period])
+    tax = tables.calibration.tax_rate if period < tables.resolution.n_work else 0.0
+    interest = tables.calibration.r
+    maintenance_f = _make_maintenance(tables)
+    mother_has_custody = custody == 0
+
+    def expenditure(  # noqa: PLR0917
+        hours_f: DiscreteAction,
+        savings_f: ContinuousAction,
+        hours_m_state: DiscreteState,
+        savings_m_state: ContinuousState,
+        assets_f: ContinuousState,
+        assets_m: ContinuousState,
+        children: DiscreteState,
+        hc_f: DiscreteState,
+        hc_m: DiscreteState,
+        wage_shock_f: DiscreteState,
+        wage_shock_m: DiscreteState,
+        maintenance_on: DiscreteState,
+    ) -> FloatND:
+        income_f = inc_f[hc_f, wage_shock_f, hours_f]
+        income_m = inc_m[hc_m, wage_shock_m, hours_m_state]
+        n_f = children if mother_has_custody else 0 * children
+        n_m = children - n_f
+        transfer = maintenance_on * maintenance_f(n_f, n_m, income_f, income_m)
+        if who == "f":
+            return (
+                (1.0 - tax) * (income_f + transfer)
+                + assets_f
+                - savings_f / (1.0 + interest)
+            )
+        return (
+            (1.0 - tax) * (income_m - transfer)
+            + assets_m
+            - savings_m_state / (1.0 + interest)
+        )
+
+    return expenditure
+
+
+def _make_divorce_utility(
+    tables: Tables, custody: int, who: Literal["f", "m"]
+) -> Callable[..., FloatND]:
+    """Sec. 5's divorced felicity: no taste shock, and the home good is private."""
+    static = jnp.asarray(
+        tables.nonconsumption_divorced_f
+        if who == "f"
+        else tables.nonconsumption_divorced_m
+    )
+    scale = jnp.asarray(tables.equivalence_scale)
+    eta = tables.calibration.eta
+    keeps_children = (custody == 0) == (who == "f")
+
+    def utility(
+        expenditure_f: FloatND,
+        expenditure_m: FloatND,
+        hours_f: DiscreteAction,
+        hours_m_state: DiscreteState,
+        children: DiscreteState,
+    ) -> FloatND:
+        own_children = children if keeps_children else 0 * children
+        own_hours = hours_f if who == "f" else hours_m_state
+        # A divorced household enjoys no economies of scale: with one argument
+        # zero, `economics.expenditure` collapses to `e(n) * c`.
+        own = (expenditure_f if who == "f" else expenditure_m) / scale[own_children]
+        floored = jnp.maximum(own, tables.calibration.consumption_floor)
+        return floored ** (1 + eta) / (1 + eta) + static[own_hours, own_children]
+
+    return utility
+
+
+def _make_retired_expenditure(
+    tables: Tables, who: Literal["f", "m"]
+) -> Callable[..., FloatND]:
+    pension = jnp.asarray(
+        getattr(tables, f"income_{who}")[tables.resolution.n_work, :, 0, 0]
+    )
+    interest = tables.calibration.r
+
+    def expenditure(
+        savings: ContinuousAction, assets: ContinuousState, hc: DiscreteState
+    ) -> FloatND:
+        return pension[hc] + assets - savings / (1 + interest)
+
+    return expenditure
+
+
+def _make_retired_utility(
+    tables: Tables, who: Literal["f", "m"]
+) -> Callable[..., FloatND]:
+    static = float(getattr(tables, f"nonconsumption_divorced_{who}")[0, 0])
+    eta = tables.calibration.eta
+    floor = tables.calibration.consumption_floor
+
+    def utility(expenditure: FloatND) -> FloatND:
+        return jnp.maximum(expenditure, floor) ** (1 + eta) / (1 + eta) + static
+
+    return utility
+
+
+def _retired_route_closed() -> BoolND:
+    """A paired divorce landing always resolves into the two personal problems."""
+    return jnp.asarray(a=False)
+
+
+def _make_selector_utility(tables: Tables) -> Callable[..., FloatND]:
+    """Eq. (8): score the candidate weights by distance from the incumbent.
+
+    The divorce branch scores below every weight branch, so it is chosen exactly
+    when the participation constraints rule out every weight -- which is the
+    paper's rule, not an approximation of it.
+    """
+    nodes = jnp.asarray(tables.mu_grid)
+    n_nodes = len(tables.mu_grid)
+    floor = -float(np.ptp(tables.mu_grid)) - 1.0
+
+    def utility(branch: DiscreteAction, mu_incumbent: DiscreteState) -> FloatND:
+        clipped = jnp.minimum(branch, n_nodes - 1)
+        penalty = -jnp.abs(nodes[clipped] - nodes[mu_incumbent])
+        return jnp.where(branch < n_nodes, penalty, floor)
+
+    return utility
+
+
+def _pick_utility(branch: DiscreteAction) -> FloatND:
+    """Read the selected branch back out of the solved value arrays."""
+    return jnp.asarray(branch, dtype=float)
+
+
+def _zero_selector(branch: DiscreteAction) -> FloatND:
+    """Zero flow of the branch selector; it reads the action it chooses."""
+    return 0.0 * branch
+
+
+def _zero_married_choice(
+    hours_f: DiscreteAction,
+    hours_m: DiscreteAction,
+    savings: ContinuousAction,
+) -> FloatND:
+    """Zero flow of the married choice stage; it reads the actions it chooses."""
+    return 0.0 * (hours_f + hours_m + savings)
+
+
+def _zero_leader(hours_m: DiscreteAction, savings_m: ContinuousAction) -> FloatND:
+    """The leader stage carries no flow of its own.
+
+    `H(t,c)` is an undiscounted same-period edge: the husband picks hours and
+    savings, they are handed to `F(t,c)` as states, and both spouses' felicity
+    is paid there. With weight one on the male channel and zero flow here, his
+    argmax is exactly the maximiser of his own value AFTER her best response.
+    """
+    return 0.0 * (hours_m + savings_m)
+
+
+def _zero_follower(hours_f: DiscreteAction, savings_f: ContinuousAction) -> FloatND:
+    """Zero flow of the follower stage; it reads the actions it chooses."""
+    return 0.0 * (hours_f + savings_f)
+
+
+# Transitions
+
+
+def _half_assets(assets: ContinuousState) -> FloatND:
+    """Property division at divorce is equal (Sec. 5, "Division of assets")."""
+    return assets / 2.0
+
+
+def _maintenance_starts(children: DiscreteState) -> DiscreteState:
+    """Maintenance flows from the moment of divorce; `Xi` is absorbing at zero."""
+    return 0 * children + 1
+
+
+def _assets_from_savings(savings: ContinuousAction) -> FloatND:
+    return savings
+
+
+def _assets_f_from_savings(savings_f: ContinuousAction) -> FloatND:
+    return savings_f
+
+
+def _assets_m_from_state(savings_m_state: ContinuousState) -> FloatND:
+    return savings_m_state
+
+
+def _carry_hours_m(hours_m: DiscreteAction) -> DiscreteState:
+    return hours_m
+
+
+def _carry_savings_m(savings_m: ContinuousAction) -> FloatND:
+    return savings_m
+
+
+def _set_incumbent(node: int) -> Callable[..., DiscreteState]:
+    def transition() -> DiscreteState:
+        return jnp.asarray(node, dtype=jnp.int32)
+
+    return transition
+
+
+def _branch_probability(code: int) -> Callable[..., FloatND]:
+    def probability(branch: DiscreteAction) -> FloatND:
+        return (branch == code).astype(float)
+
+    return probability
+
+
+def _custody_probability(tables: Tables, custody: int) -> Callable[..., FloatND]:
+    mother = tables.calibration.p_custody_f
+
+    def probability(children: DiscreteState) -> FloatND:
+        share = mother if custody == 0 else 1.0 - mother
+        return share * jnp.ones_like(children, dtype=float)
+
+    return probability
+
+
+def _hc_f_from_action(table: np.ndarray) -> Callable[..., FloatND]:
+    probabilities = jnp.asarray(table)
+
+    def transition(hc_f: DiscreteState, hours_f: DiscreteAction) -> FloatND:
+        return probabilities[hc_f, hours_f]
+
+    return transition
+
+
+def _hc_m_from_action(table: np.ndarray) -> Callable[..., FloatND]:
+    probabilities = jnp.asarray(table)
+
+    def transition(hc_m: DiscreteState, hours_m: DiscreteAction) -> FloatND:
+        return probabilities[hc_m, hours_m]
+
+    return transition
+
+
+def _hc_m_from_state(table: np.ndarray) -> Callable[..., FloatND]:
+    probabilities = jnp.asarray(table)
+
+    def transition(hc_m: DiscreteState, hours_m_state: DiscreteState) -> FloatND:
+        return probabilities[hc_m, hours_m_state]
+
+    return transition
+
+
+def _fertility(table: np.ndarray) -> Callable[..., FloatND]:
+    probabilities = jnp.asarray(table)
+
+    def transition(children: DiscreteState) -> FloatND:
+        return probabilities[children]
+
+    return transition
+
+
+def _wage_redraw_f(weights: np.ndarray) -> Callable[..., FloatND]:
+    rows = jnp.asarray(np.tile(weights, (len(weights), 1)))
+
+    def transition(wage_shock_f: DiscreteState) -> FloatND:
+        return rows[wage_shock_f]
+
+    return transition
+
+
+def _wage_redraw_m(weights: np.ndarray) -> Callable[..., FloatND]:
+    rows = jnp.asarray(np.tile(weights, (len(weights), 1)))
+
+    def transition(wage_shock_m: DiscreteState) -> FloatND:
+        return rows[wage_shock_m]
+
+    return transition
+
+
+def _maintenance_hazard(p_stop: float) -> Callable[..., FloatND]:
+    # Code 0 is "stopped" and absorbing; code 1 is "flowing".
+    rows = jnp.asarray([[1.0, 0.0], [p_stop, 1.0 - p_stop]])
+
+    def transition(maintenance_on: DiscreteState) -> FloatND:
+        return rows[maintenance_on]
+
+    return transition
+
+
+def _love_probabilities(tables: Tables) -> Callable[..., FloatND]:
+    matrix = jnp.asarray(tables.love_transition)
+    n_nodes = tables.resolution.n_love_nodes
+
+    def probabilities(love_f: DiscreteState, love_m: DiscreteState) -> FloatND:
+        cell = matrix[love_f, :, love_m, :]
+        return cell.reshape(*cell.shape[:-2], n_nodes * n_nodes)
+
+    return probabilities
+
+
+def _next_love_f(love_draw: Mapping[str, IntND]) -> DiscreteState:
+    return love_draw["love_f"]
+
+
+def _next_love_m(love_draw: Mapping[str, IntND]) -> DiscreteState:
+    return love_draw["love_m"]
+
+
+def _identity_children(children: DiscreteState) -> DiscreteState:
+    return children
+
+
+def _identity_hc_f(hc_f: DiscreteState) -> DiscreteState:
+    return hc_f
+
+
+def _identity_hc_m(hc_m: DiscreteState) -> DiscreteState:
+    return hc_m
+
+
+def _identity_wage_shock_f(wage_shock_f: DiscreteState) -> DiscreteState:
+    return wage_shock_f
+
+
+def _identity_wage_shock_m(wage_shock_m: DiscreteState) -> DiscreteState:
+    return wage_shock_m
+
+
+#: How the married state is read as a divorce state, both by the regime edge the
+#: divorce branch takes and by the same-period reference `A(t)` uses to price the
+#: outside option. Assets divide equally and maintenance starts flowing.
+DIVORCE_PROJECTION: Mapping[str, Callable[..., Any]] = {
+    "assets_f": _half_assets,
+    "assets_m": _half_assets,
+    "children": _identity_children,
+    "hc_f": _identity_hc_f,
+    "hc_m": _identity_hc_m,
+    "wage_shock_f": _identity_wage_shock_f,
+    "wage_shock_m": _identity_wage_shock_m,
+    "maintenance_on": _maintenance_starts,
+}
+
+
+def _participation_f(
+    Q_f: FloatND,
+    V_outside_f: FloatND,
+    branch: DiscreteAction,
+    n_nodes: int,
+) -> Any:  # noqa: ANN401
+    return (branch >= n_nodes) | (Q_f >= V_outside_f)
+
+
+def _make_participation(who: Literal["f", "m"], n_nodes: int) -> Callable[..., Any]:
+    """Eq. (8): a weight branch is feasible only if that spouse consents.
+
+    The divorce branch is exempt -- it is the outside option, not a marriage
+    the spouse has to prefer -- so a cell where no weight satisfies both
+    constraints leaves divorce as the only feasible action.
+    """
+    if who == "f":
+
+        def constraint_f(
+            Q_f: FloatND,
+            V_outside_f: FloatND,
+            branch: DiscreteAction,
+        ) -> Any:  # noqa: ANN401
+            return (branch >= n_nodes) | (Q_f >= V_outside_f)
+
+        return constraint_f
+
+    def constraint_m(
+        Q_m: FloatND,
+        V_outside_m: FloatND,
+        branch: DiscreteAction,
+    ) -> Any:  # noqa: ANN401
+        return (branch >= n_nodes) | (Q_m >= V_outside_m)
+
+    return constraint_m
+
+
+def _make_can_consume_married(minimum: float) -> Callable[..., Any]:
+    """With ``1 + eta < 0`` a cell that buys nothing is not a choice.
+
+    The package floors consumption at 10 DKK inside `u_crra` rather than
+    excluding the cell; the floor is kept in the felicity (see
+    `economics.utility_private`) and this constraint additionally removes cells
+    that cannot pay for any consumption at all.
+    """
+
+    def constraint(expenditure: FloatND) -> Any:  # noqa: ANN401
+        return expenditure >= minimum
+
+    return constraint
+
+
+def _make_can_consume_divorced(minimum: float) -> Callable[..., Any]:
+    """Only the ACTING spouse's feasibility can be a constraint here.
+
+    `F(t,c)` is the wife's best response; the husband's savings arrived as a
+    state, so masking her action set on his expenditure would let his choice
+    delete her options. His side is floored in felicity instead, which is what
+    the package does for both spouses.
+    """
+
+    def constraint(expenditure_f: FloatND) -> Any:  # noqa: ANN401
+        return expenditure_f >= minimum
+
+    return constraint
+
+
+def _zero_terminal() -> FloatND:
+    return jnp.asarray(0.0)
+
+
+def build_model(  # noqa: C901, PLR0912, PLR0915
+    tables: Tables,
+) -> tuple[Model, dict[str, Any], dict[str, Any]]:
+    """Declare the paper's regime graph on `tables`' grids.
+
+    Returns the model, its params, and metadata naming the stakeholder order,
+    the stage layout and the regime census.
+    """
+    resolution = tables.resolution
+    calibration = tables.calibration
+    names = stakeholder_names(resolution)
+    n_mu = resolution.n_mu
+    n_periods = resolution.n_periods
+
+    branch_grid = _categorical("FoersterBranch", n_mu + 1)
+    incumbent_grid = _categorical("FoersterIncumbent", n_mu)
+    children_grid = _categorical("FoersterChildren", resolution.n_children)
+    hc_grid = _categorical("FoersterHumanCapital", resolution.n_human_capital)
+    wage_grid = _categorical("FoersterWageNode", resolution.n_wage_nodes)
+    love_grid = _categorical("FoersterLoveNode", resolution.n_love_nodes)
+    maintenance_grid = _categorical("FoersterMaintenance", 2)
+    hours_grid = _categorical("FoersterHours", resolution.n_hours)
+    married_assets = IrregSpacedGrid(points=tables.assets_married)
+    divorced_assets = IrregSpacedGrid(points=tables.assets_divorced)
+
+    married_states: dict[str, Any] = {
+        "assets": married_assets,
+        "children": children_grid,
+        "hc_f": hc_grid,
+        "hc_m": hc_grid,
+        "wage_shock_f": wage_grid,
+        "wage_shock_m": wage_grid,
+        "love_f": love_grid,
+        "love_m": love_grid,
+    }
+    divorce_states: dict[str, Any] = {
+        "assets_f": divorced_assets,
+        "assets_m": divorced_assets,
+        "children": children_grid,
+        "hc_f": hc_grid,
+        "hc_m": hc_grid,
+        "wage_shock_f": wage_grid,
+        "wage_shock_m": wage_grid,
+        "maintenance_on": maintenance_grid,
+    }
+    shared_states = ("children", "hc_f", "hc_m", "wage_shock_f", "wage_shock_m")
+
+    undiscounted = {"koopmans_aggregator": {"discount_factor": 1.0}}
+    discounted = {"koopmans_aggregator": {"discount_factor": float(calibration.beta)}}
+
+    love_joint = JointTransition(
+        support_size=resolution.n_love_nodes**2,
+        support={
+            "love_f": jnp.asarray(tables.love_support[:, 0], dtype=jnp.int32),
+            "love_m": jnp.asarray(tables.love_support[:, 1], dtype=jnp.int32),
+        },
+        probabilities=_love_probabilities(tables),
+        outputs={"love_f": _next_love_f, "love_m": _next_love_m},
+    )
+
+    edges: dict[str, Any] = {}
+    regimes: dict[str, Any] = {}
+    params: dict[str, Any] = {}
+    terminal = "TERM"
+
+    def a_name(period: int) -> str:
+        return f"A_{period}"
+
+    def c_name(period: int) -> str:
+        return f"C_{period}"
+
+    def cp_name(period: int) -> str:
+        return f"CP_{period}"
+
+    def b_name(period: int, node: int) -> str:
+        return f"B_{period}_{node}"
+
+    def bp_name(period: int, node: int) -> str:
+        return f"BP_{period}_{node}"
+
+    def bp2_name(period: int, node: int) -> str:
+        return f"BP2_{period}_{node}"
+
+    def h_name(period: int, custody: int) -> str:
+        return f"H_{period}_{custody}"
+
+    def f_name(period: int, custody: int) -> str:
+        return f"F_{period}_{custody}"
+
+    def hpad_name(period: int, custody: int) -> str:
+        return f"HPAD_{period}_{custody}"
+
+    def hpad2_name(period: int, custody: int) -> str:
+        return f"HPAD2_{period}_{custody}"
+
+    def retired_entry(period: int) -> str:
+        return f"DR_{period}"
+
+    def retired_gate(period: int) -> Gate:
+        routes = {}
+        for name in names:
+            if name in ("f", "m"):
+                projection = {
+                    "assets": fixed_transition(f"assets_{name}"),
+                    "hc": fixed_transition(f"hc_{name}"),
+                }
+                fallback = ProjectedRegimeValue(
+                    regime=f"R_{period}_{name}", projection=projection
+                )
+            else:
+                zero = f"RZERO_{period}_{name}"
+                regimes[zero] = Regime(functions={"utility": _zero_terminal})
+                fallback = ProjectedRegimeValue(regime=zero, projection={})
+            routes[name] = StakeholderRoute(target_stakeholder=name, fallback=fallback)
+        return Gate(predicate=_retired_route_closed, routes=routes)
+
+    for period in range(n_periods):
+        last = period == n_periods - 1
+        retired = period >= resolution.n_work
+        next_retired = period + 1 >= resolution.n_work
+        married_states = {
+            state: grid
+            for state, grid in married_states.items()
+            if not retired or state not in ("children", "wage_shock_f", "wage_shock_m")
+        }
+        divorce_states = {
+            state: grid
+            for state, grid in divorce_states.items()
+            if not retired or state in ("assets_f", "assets_m", "hc_f", "hc_m")
+        }
+        married_names = tuple(married_states)
+        divorce_names = tuple(divorce_states)
+        shared_names = tuple(
+            state for state in shared_states if state in married_states
+        )
+        divorce_projection = {
+            state: law
+            for state, law in DIVORCE_PROJECTION.items()
+            if state in divorce_states
+        }
+        selector = f"sel_{period}"
+        pick = f"pick_{period}"
+        b_targets = tuple(b_name(period, node) for node in range(n_mu))
+        hours = hours_grid
+
+        # A(t): the bargaining-weight selector of eq. (8).
+        a_transition: dict[str, Any] = {
+            name: StochasticTransition(func=_branch_probability(node))
+            for node, name in enumerate(b_targets)
+        }
+        a_transition[cp_name(period)] = StochasticTransition(
+            func=_branch_probability(n_mu)
+        )
+        a_state_transitions: dict[str, Any] = {
+            state: _per_target(b_targets, fixed_transition(state))
+            for state in married_names
+        }
+        a_state_transitions["mu_incumbent"] = _per_target(
+            b_targets, fixed_transition("mu_incumbent")
+        )
+        for state in shared_names:
+            a_state_transitions[state][cp_name(period)] = fixed_transition(state)
+        for state, law in divorce_projection.items():
+            if state not in shared_names:
+                a_state_transitions[state] = {cp_name(period): law}
+        references = {
+            "V_outside_f": ProjectedRegimeValue(
+                regime=c_name(period), projection=divorce_projection, stakeholder="f"
+            ),
+            "V_outside_m": ProjectedRegimeValue(
+                regime=c_name(period), projection=divorce_projection, stakeholder="m"
+            ),
+        }
+        regimes[a_name(period)] = Regime(
+            states={"mu_incumbent": incumbent_grid, **married_states},
+            state_transitions=a_state_transitions,
+            actions={"branch": branch_grid},
+            functions={
+                "utility": _collective(
+                    names,
+                    _zero_selector,
+                    {
+                        selector: _make_selector_utility(tables),
+                        pick: _pick_utility,
+                    },
+                    weights={selector: 1.0},
+                )
+            },
+            constraints={
+                "participation_f": ValueDependentConstraint(
+                    predicate=_make_participation("f", n_mu),
+                    references={"V_outside_f": references["V_outside_f"]},
+                ),
+                "participation_m": ValueDependentConstraint(
+                    predicate=_make_participation("m", n_mu),
+                    references={"V_outside_m": references["V_outside_m"]},
+                ),
+            },
+            description=(
+                f"Renegotiation selector, economic period {period}: nearest "
+                "feasible weight to the incumbent, else divorce."
+            ),
+        )
+        edges[a_name(period)] = Transition(
+            law=ByPeriod(cases={stage_period(period, 0): a_transition})
+        )
+        params[a_name(period)] = undiscounted
+
+        # C(t): the outside option A(t) prices its participation constraints at.
+        regimes[c_name(period)] = Regime(
+            states=divorce_states,
+            state_transitions=_fixed(divorce_names),
+            functions={
+                "utility": _collective(names, _zero_divorce, weights={"f": 1.0})
+            },
+            description="Same-period outside option on the projected divorce state.",
+        )
+        edges[c_name(period)] = {cp_name(period): stage_selector(period, 0)}
+        params[c_name(period)] = undiscounted
+
+        if retired:
+            landing = retired_entry(period)
+            regimes[cp_name(period)] = Regime(
+                states=divorce_states,
+                state_transitions=_fixed(divorce_names),
+                functions={
+                    "utility": _collective(names, _zero_divorce, weights={"f": 1.0})
+                },
+                description="Retired divorce projection without a custody lottery.",
+            )
+            edges[cp_name(period)] = Transition(
+                law=ByPeriod(cases={stage_period(period, 1): landing}),
+                gates={landing: retired_gate(period)},
+            )
+            params[cp_name(period)] = undiscounted
+            # This is a gate's projection domain, never an economic decision.
+            # Landing coordinates are observable for auditing the personal routes.
+            landing_functions = {
+                f"landing_{state}": fixed_transition(state) for state in divorce_names
+            }
+            regimes[landing] = Regime(
+                states=divorce_states,
+                functions={
+                    "utility": _collective(names, _zero_divorce, weights={"f": 1.0}),
+                    **landing_functions,
+                },
+                output_only_functions=tuple(landing_functions),
+                description="Paired landing domain for personal retirement routes.",
+            )
+            for who in ("f", "m"):
+                personal_states = {"assets": divorced_assets, "hc": hc_grid}
+                own = f"R_{period}_{who}"
+                post = f"RPOST_{period}_{who}"
+                regimes[own] = Regime(
+                    states=personal_states,
+                    actions={"savings": divorced_assets},
+                    state_transitions={
+                        "assets": _assets_from_savings,
+                        "hc": fixed_transition("hc"),
+                    },
+                    functions={
+                        "expenditure": _make_retired_expenditure(tables, who),
+                        "utility": _make_retired_utility(tables, who),
+                    },
+                    constraints={
+                        "can_consume": _make_can_consume_married(
+                            calibration.min_expenditure
+                        )
+                    },
+                    description=f"Retired {who}: own assets and human capital.",
+                )
+                edges[own] = {post: stage_selector(period, 2)}
+                params[own] = discounted
+                regimes[post] = Regime(
+                    states={"assets": divorced_assets} if last else personal_states,
+                    state_transitions=_fixed(
+                        ("assets",) if last else tuple(personal_states)
+                    ),
+                    functions={
+                        "utility": _zero_terminal,
+                        **({"reported_assets": _reported_assets} if last else {}),
+                    },
+                    output_only_functions=("reported_assets",) if last else (),
+                )
+                edges[post] = {
+                    "RTERM" if last else f"RPRE_{period + 1}_{who}": stage_selector(
+                        period, 3
+                    )
+                }
+                params[post] = undiscounted
+                if period > resolution.n_work:
+                    pre = f"RPRE_{period}_{who}"
+                    mid = f"RMID_{period}_{who}"
+                    for pad, target, slot in ((pre, mid, 0), (mid, own, 1)):
+                        regimes[pad] = Regime(
+                            states=personal_states,
+                            state_transitions=_fixed(tuple(personal_states)),
+                            functions={"utility": _zero_terminal},
+                        )
+                        edges[pad] = {target: stage_selector(period, slot)}
+                        params[pad] = undiscounted
+            if period == resolution.n_work:
+                # Already-divorced working couples arrive with chosen assets/current K.
+                for pad, target, slot in (
+                    (f"DPAD_{period}", f"DMID_{period}", 0),
+                    (f"DMID_{period}", landing, 1),
+                ):
+                    regimes[pad] = Regime(
+                        states=divorce_states,
+                        state_transitions=_fixed(divorce_names),
+                        functions={
+                            "utility": _collective(
+                                names, _zero_divorce, weights={"f": 1.0}
+                            )
+                        },
+                    )
+                    edges[pad] = (
+                        Transition(
+                            law=ByPeriod(cases={stage_period(period, slot): target}),
+                            gates={target: retired_gate(period)},
+                        )
+                        if slot == 1
+                        else {target: stage_selector(period, slot)}
+                    )
+                    params[pad] = undiscounted
+        else:
+            # CP(t): the custody lottery, drawn once at the moment of divorce.
+            h_targets = tuple(h_name(period, custody) for custody in range(2))
+            custody_law = {
+                name: StochasticTransition(func=_custody_probability(tables, custody))
+                for custody, name in enumerate(h_targets)
+            }
+            regimes[cp_name(period)] = Regime(
+                states=divorce_states,
+                state_transitions={
+                    state: _per_target(h_targets, fixed_transition(state))
+                    for state in divorce_names
+                },
+                functions={
+                    "utility": _collective(names, _zero_divorce, weights={"f": 1.0})
+                },
+                description="All-or-nothing custody draw at P(custodial = f).",
+            )
+            edges[cp_name(period)] = Transition(
+                law=ByPeriod(cases={stage_period(period, 1): custody_law})
+            )
+            params[cp_name(period)] = undiscounted
+
+        for node, mu in enumerate(tables.mu_grid):
+            b_state_transitions: dict[str, Any] = {
+                "assets": _assets_from_savings,
+                **_fixed(
+                    tuple(
+                        s for s in married_names if s not in ("assets", "hc_f", "hc_m")
+                    )
+                ),
+            }
+            if next_retired:
+                # The final working continuation indexes retirement at current K.
+                b_state_transitions["hc_f"] = fixed_transition("hc_f")
+                b_state_transitions["hc_m"] = fixed_transition("hc_m")
+            else:
+                b_state_transitions["hc_f"] = StochasticTransition(
+                    func=_hc_f_from_action(tables.hc_transition_f)
+                )
+                b_state_transitions["hc_m"] = StochasticTransition(
+                    func=_hc_m_from_action(tables.hc_transition_m)
+                )
+            regimes[b_name(period, node)] = Regime(
+                states=married_states,
+                state_transitions=b_state_transitions,
+                actions={"savings": married_assets}
+                if retired
+                else {
+                    "hours_f": hours,
+                    "hours_m": hours,
+                    "savings": married_assets,
+                },
+                functions={
+                    "expenditure": _make_married_expenditure(tables, period),
+                    "utility": _collective(
+                        names,
+                        _zero_terminal if retired else _zero_married_choice,
+                        {
+                            "f": _make_married_utility(
+                                tables, node, "f", retired=retired
+                            ),
+                            "m": _make_married_utility(
+                                tables, node, "m", retired=retired
+                            ),
+                        },
+                        weights={"f": float(mu), "m": 1.0},
+                    ),
+                },
+                constraints={
+                    "can_consume": _make_can_consume_married(
+                        tables.calibration.min_expenditure
+                    )
+                },
+                description=(
+                    f"Married choice at weight mu = {float(mu):g}: eq. (6)'s "
+                    "household objective over hours and savings."
+                ),
+            )
+            edges[b_name(period, node)] = {
+                bp_name(period, node): stage_selector(period, 1)
+            }
+            params[b_name(period, node)] = discounted
+
+            pad_states = {
+                state: grid
+                for state, grid in married_states.items()
+                if not next_retired
+                or state not in ("children", "wage_shock_f", "wage_shock_m")
+            }
+            regimes[bp_name(period, node)] = Regime(
+                states={"assets": married_assets} if last else pad_states,
+                state_transitions=_fixed(("assets",) if last else tuple(pad_states)),
+                functions={
+                    "utility": _collective(
+                        names,
+                        _zero_married,
+                        weights={"f": 1.0},
+                    )
+                },
+                description="Married pad, level with the leader stage.",
+            )
+            edges[bp_name(period, node)] = {
+                bp2_name(period, node): stage_selector(period, 2)
+            }
+            params[bp_name(period, node)] = undiscounted
+
+            next_married = terminal if last else a_name(period + 1)
+            bp2_transitions: dict[str, Any] = _fixed(married_names)
+            joint_transitions: dict[str, Any] = {}
+            if not last:
+                bp2_transitions = {
+                    "mu_incumbent": _set_incumbent(node),
+                    "assets": fixed_transition("assets"),
+                    "hc_f": fixed_transition("hc_f"),
+                    "hc_m": fixed_transition("hc_m"),
+                }
+                if not next_retired:
+                    bp2_transitions |= {
+                        "children": StochasticTransition(
+                            func=_fertility(tables.fertility[period])
+                        ),
+                        "wage_shock_f": StochasticTransition(
+                            func=_wage_redraw_f(tables.wage_weights)
+                        ),
+                        "wage_shock_m": StochasticTransition(
+                            func=_wage_redraw_m(tables.wage_weights)
+                        ),
+                    }
+                joint_transitions = {next_married: {"love_draw": love_joint}}
+            regimes[bp2_name(period, node)] = Regime(
+                states={"assets": married_assets} if last else pad_states,
+                state_transitions=_fixed(("assets",)) if last else bp2_transitions,
+                joint_transitions=joint_transitions,
+                functions={
+                    "utility": _collective(
+                        names,
+                        _zero_married,
+                        weights={"f": 1.0},
+                    ),
+                    **({"reported_assets": _reported_assets} if last else {}),
+                },
+                output_only_functions=("reported_assets",) if last else (),
+                description=(
+                    "Economic boundary: the chosen weight becomes the incumbent, "
+                    "births and wage draws resolve, and the joint love shock moves."
+                ),
+            )
+            edges[bp2_name(period, node)] = {next_married: stage_selector(period, 3)}
+            params[bp2_name(period, node)] = undiscounted
+
+        if retired:
+            continue
+
+        for custody in range(2):
+            regimes[h_name(period, custody)] = Regime(
+                states=divorce_states,
+                state_transitions={
+                    **_fixed(divorce_names),
+                    "hours_m_state": _carry_hours_m,
+                    "savings_m_state": _carry_savings_m,
+                },
+                actions={"hours_m": hours, "savings_m": divorced_assets},
+                functions={
+                    "utility": _collective(names, _zero_leader, weights={"m": 1.0})
+                },
+                description=(
+                    "Husband's leader stage, eqs (3)-(5): his hours and savings "
+                    "cross an undiscounted same-period edge into her problem."
+                ),
+            )
+            edges[h_name(period, custody)] = {
+                f_name(period, custody): stage_selector(period, 2)
+            }
+            params[h_name(period, custody)] = undiscounted
+
+            next_divorce = (
+                terminal
+                if last
+                else f"DPAD_{period + 1}"
+                if next_retired
+                else hpad_name(period + 1, custody)
+            )
+            f_transitions: dict[str, Any] = {
+                "hours_m_state": fixed_transition("hours_m_state"),
+                "savings_m_state": fixed_transition("savings_m_state"),
+                **_fixed(divorce_names),
+            }
+            if not last:
+                f_transitions |= {
+                    "assets_f": _assets_f_from_savings,
+                    "assets_m": _assets_m_from_state,
+                    "children": fixed_transition("children"),
+                    "maintenance_on": fixed_transition("maintenance_on")
+                    if next_retired
+                    else StochasticTransition(
+                        func=_maintenance_hazard(calibration.p_maintenance_stop)
+                    ),
+                }
+                if next_retired:
+                    f_transitions |= {
+                        "hc_f": fixed_transition("hc_f"),
+                        "hc_m": fixed_transition("hc_m"),
+                    }
+                else:
+                    f_transitions |= {
+                        "hc_f": StochasticTransition(
+                            func=_hc_f_from_action(tables.hc_transition_f)
+                        ),
+                        "hc_m": StochasticTransition(
+                            func=_hc_m_from_state(tables.hc_transition_m)
+                        ),
+                        "wage_shock_f": StochasticTransition(
+                            func=_wage_redraw_f(tables.wage_weights)
+                        ),
+                        "wage_shock_m": StochasticTransition(
+                            func=_wage_redraw_m(tables.wage_weights)
+                        ),
+                    }
+            regimes[f_name(period, custody)] = Regime(
+                states={
+                    **divorce_states,
+                    "hours_m_state": hours,
+                    "savings_m_state": divorced_assets,
+                },
+                state_transitions=f_transitions,
+                actions={"hours_f": hours, "savings_f": divorced_assets},
+                functions={
+                    "expenditure_f": _make_divorce_expenditure(
+                        tables, period, custody, "f"
+                    ),
+                    "expenditure_m": _make_divorce_expenditure(
+                        tables, period, custody, "m"
+                    ),
+                    "utility": _collective(
+                        names,
+                        _zero_follower,
+                        {
+                            "f": _make_divorce_utility(tables, custody, "f"),
+                            "m": _make_divorce_utility(tables, custody, "m"),
+                        },
+                        weights={"f": 1.0},
+                    ),
+                },
+                constraints={
+                    "can_consume_f": _make_can_consume_divorced(
+                        tables.calibration.min_expenditure
+                    )
+                },
+                description=(
+                    "Wife's best response and the divorced economic boundary; "
+                    f"custody branch {custody}."
+                ),
+            )
+            edges[f_name(period, custody)] = {next_divorce: stage_selector(period, 3)}
+            params[f_name(period, custody)] = discounted
+
+            if period >= 1:
+                regimes[hpad_name(period, custody)] = Regime(
+                    states=divorce_states,
+                    state_transitions=_fixed(divorce_names),
+                    functions={
+                        "utility": _collective(names, _zero_divorce, weights={"f": 1.0})
+                    },
+                    description="Divorced pad, level with the selector stage.",
+                )
+                edges[hpad_name(period, custody)] = {
+                    hpad2_name(period, custody): stage_selector(period, 0)
+                }
+                params[hpad_name(period, custody)] = undiscounted
+                regimes[hpad2_name(period, custody)] = Regime(
+                    states=divorce_states,
+                    state_transitions=_fixed(divorce_names),
+                    functions={
+                        "utility": _collective(names, _zero_divorce, weights={"f": 1.0})
+                    },
+                    description="Divorced pad, level with the married choice stage.",
+                )
+                edges[hpad2_name(period, custody)] = {
+                    h_name(period, custody): stage_selector(period, 1)
+                }
+                params[hpad2_name(period, custody)] = undiscounted
+
+    regimes[terminal] = Regime(
+        functions={"utility": _collective(names, _zero_terminal, weights={"f": 1.0})},
+        description="No bequest and no scrap value: the zero terminal regime.",
+    )
+
+    regimes["RTERM"] = Regime(functions={"utility": _zero_terminal})
+
+    ids: dict[str, Any] = {
+        "__annotations__": dict.fromkeys(regimes, ScalarInt),
+        "__doc__": "Regime ids of the Foerster declaration.",
+    }
+    regime_ids = categorical(ordered=False)(type("FoersterRegimeId", (), ids))
+    model = Model(
+        n_periods=resolution.terminal_period + 1,
+        regimes=regimes,
+        edges=edges,
+        initial_nodes=InitialNodes(by_period={0: "A_0"}),
+        regime_id_class=regime_ids,
+        description="Foerster (2025), Untying the Knot -- the paper's own model.",
+    )
+    metadata = {
+        "stakeholders": names,
+        "n_periods": n_periods,
+        "n_mu": n_mu,
+        "terminal_period": resolution.terminal_period,
+        "n_regimes": len(regimes),
+        "resolution": resolution,
+    }
+    return model, params, metadata
+
+
+def regime_matrix(tables: Tables) -> dict[str, dict[str, Any]]:
+    """The declared graph, read back off the built `Regime` objects."""
+    model, _, _ = build_model(tables)
+    return {
+        name: {
+            "states": sorted(regime.states),
+            "actions": sorted(regime.actions),
+            "targets": sorted(model.graph.edges.solve.get(name, {})),
+            "state_transitions": sorted(regime.state_transitions),
+            "joint_transitions": sorted(regime.joint_transitions),
+        }
+        for name, regime in model.user_regimes.items()
+    }
+
+
+def solve(
+    resolution: Resolution,
+    *,
+    calibration: Calibration,
+    log_level: Literal["off", "warning", "progress", "debug"] = "debug",
+) -> tuple[Any, dict[str, Any]]:
+    """Build and solve the paper's model at `resolution`."""
+    tables = build_tables(resolution, calibration)
+    model, params, metadata = build_model(tables)
+    values = model.solve(params=params, log_level=log_level)
+    return values, metadata
+
+
+def selected_weights(
+    values: Mapping[int, Mapping[str, Any]], metadata: Mapping[str, Any]
+) -> dict[int, dict[str, np.ndarray]]:
+    """Read each period's renegotiation outcome off the solved `A(t)` arrays.
+
+    The `pick_t` channel's flow utility at `A(t)` is the branch index and zero
+    everywhere downstream, so its value there IS the chosen branch. A branch at
+    or above the number of weight nodes is the divorce action -- the cell where
+    no weight satisfied both participation constraints.
+    """
+    names: tuple[str, ...] = metadata["stakeholders"]
+    n_mu: int = metadata["n_mu"]
+    outcome: dict[int, dict[str, np.ndarray]] = {}
+    for period in range(metadata["n_periods"]):
+        block = np.asarray(values[stage_period(period, 0)][f"A_{period}"])
+        chosen = np.rint(block[..., names.index(f"pick_{period}")]).astype(np.int64)
+        outcome[period] = {
+            "chosen_branch": chosen,
+            "dissolved": chosen >= n_mu,
+            "value_f": block[..., names.index("f")],
+            "value_m": block[..., names.index("m")],
+        }
+    return outcome
+
+
+def create_model(*, resolution: Resolution, calibration: Calibration) -> Model:
+    """Build the paper model from injected calibration without reading files."""
+    model, _, _ = build_model(build_tables(resolution, calibration))
+    return model

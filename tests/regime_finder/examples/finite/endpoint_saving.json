@@ -1,0 +1,58 @@
+{
+  "actions": {
+    "saving": {
+      "values": [
+        0,
+        1,
+        2
+      ]
+    }
+  },
+  "ages": [
+    0,
+    1,
+    2,
+    3
+  ],
+  "name": "endpoint-saving-clarity",
+  "parameters": {},
+  "programs": [
+    {
+      "discount": "1",
+      "feasible": "saving == 0 if age == 2 else True",
+      "id": "original",
+      "reward": "saving",
+      "role": {
+        "actor": "household",
+        "commitments": [],
+        "discount_boundary": "annual",
+        "observations": []
+      },
+      "terminal": false,
+      "transitions": [
+        {
+          "probability": "1",
+          "updates": {}
+        }
+      ],
+      "when": "age < 3"
+    },
+    {
+      "declared_actions": [],
+      "declared_states": [],
+      "id": "terminal",
+      "role": {
+        "actor": "household",
+        "commitments": [],
+        "discount_boundary": "annual",
+        "observations": []
+      },
+      "terminal": true,
+      "terminal_payoff": "0",
+      "transitions": [],
+      "when": "age == 3"
+    }
+  ],
+  "schema_version": 1,
+  "states": {}
+}

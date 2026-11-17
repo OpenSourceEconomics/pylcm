@@ -1,4 +1,4 @@
-"""Read-only accessors over the source-bound CPU workload manifest.
+"""Read and serialize the source-bound CPU workload manifest.
 
 `ci-workloads.json` is generated evidence, not hand-maintained: it records every
 pytest invocation `cpu.yml` makes (lane, OS, precision, worker count, isolation
@@ -10,9 +10,10 @@ comes from the reviewer's per-file CSV keyed to the frozen head
 `29396117e6ff6cc90cc0a1bdad7669554c7c32d9`; a file absent from that CSV is never
 assigned a weight of zero, it is listed in `unweighted_files`.
 
-This module only reads the manifest back. Regenerating it is a deliberate,
-reviewed step, not something a test or this module does implicitly, and each
-kind of regeneration has its own route:
+Regenerating the manifest is a deliberate, reviewed step, never an implicit
+effect of reading it. Every writer uses `dump_manifest` for canonical bytes;
+`python -m tests.ci.ci_workloads canonicalize` fixes only the byte form. Each
+kind of content regeneration has its own route:
 
 - a new test file ⇒ `tests/ci/generate_ci_workloads.py`, which registers it in
   `general_shard_universe` and `unweighted_files` and re-derives the general
@@ -31,6 +32,7 @@ not advance the root freeze or imply that other legs were re-measured.
 """
 
 import json
+import sys
 from collections.abc import Mapping, Sequence
 from functools import lru_cache
 from pathlib import Path
@@ -139,6 +141,29 @@ class WorkloadManifest(TypedDict):
 
 
 MANIFEST_PATH = Path(__file__).with_name("ci-workloads.json")
+_INDENT = 1
+
+
+def dump_manifest[ManifestValue](manifest: Mapping[str, ManifestValue]) -> str:
+    """Return sorted-key, indented UTF-8 JSON text with one final newline."""
+    return (
+        json.dumps(dict(manifest), indent=_INDENT, sort_keys=True, ensure_ascii=False)
+        + "\n"
+    )
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """Canonicalize the manifest, returning nonzero when its bytes change."""
+    if (sys.argv[1:] if argv is None else list(argv)) != ["canonicalize"]:
+        sys.stdout.write("usage: python -m tests.ci.ci_workloads canonicalize\n")
+        return 2
+    original = MANIFEST_PATH.read_bytes()
+    canonical = dump_manifest(json.loads(original)).encode("utf-8")
+    if original == canonical:
+        return 0
+    MANIFEST_PATH.write_bytes(canonical)
+    sys.stdout.write(f"canonicalized {MANIFEST_PATH.name}; stage it and retry\n")
+    return 1
 
 
 @lru_cache(maxsize=1)
@@ -334,6 +359,7 @@ __all__: Sequence[str] = (
     "MANIFEST_PATH",
     "all_manifest_files",
     "coverage_contributors",
+    "dump_manifest",
     "egm_acceptance_tests",
     "excluded_files",
     "file_weight_seconds",
@@ -354,3 +380,7 @@ __all__: Sequence[str] = (
     "shard_layout",
     "unweighted_files",
 )
+
+
+if __name__ == "__main__":
+    sys.exit(main())

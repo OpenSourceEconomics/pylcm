@@ -1,0 +1,94 @@
+{
+  "actions": {},
+  "ages": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6
+  ],
+  "name": "rare-incoming-history-positive-simulation",
+  "parameters": {
+    "tiny": "1/100000000000000000000000000000000000000000000000000"
+  },
+  "programs": [
+    {
+      "discount": "1",
+      "feasible": "True",
+      "id": "original",
+      "reward": "history if status == 'charged' else 0",
+      "role": {
+        "actor": "household",
+        "commitments": [],
+        "discount_boundary": "annual",
+        "observations": []
+      },
+      "terminal": false,
+      "transitions": [
+        {
+          "phase": "simulation",
+          "probability": "(1/100000000000000000000000000000000000000000000000000) if status == 'active' and age < 3 else 0",
+          "status_updates": {
+            "status": "'charged'"
+          },
+          "updates": {
+            "history": "history"
+          }
+        },
+        {
+          "phase": "simulation",
+          "probability": "1 - ((1/100000000000000000000000000000000000000000000000000) if status == 'active' and age < 3 else 0)",
+          "status_updates": {
+            "status": "status"
+          },
+          "updates": {
+            "history": "0"
+          }
+        },
+        {
+          "phase": "solve",
+          "probability": "1",
+          "status_updates": {
+            "status": "status"
+          },
+          "updates": {
+            "history": "0"
+          }
+        }
+      ],
+      "when": "age < 6"
+    },
+    {
+      "declared_actions": [],
+      "declared_states": [],
+      "id": "terminal",
+      "role": {
+        "actor": "household",
+        "commitments": [],
+        "discount_boundary": "annual",
+        "observations": []
+      },
+      "terminal": true,
+      "terminal_payoff": "0",
+      "transitions": [],
+      "when": "age == 6"
+    }
+  ],
+  "schema_version": 1,
+  "states": {
+    "history": {
+      "values": [
+        0,
+        1
+      ]
+    }
+  },
+  "status_axes": {
+    "status": [
+      "active",
+      "charged"
+    ]
+  }
+}

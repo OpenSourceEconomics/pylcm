@@ -1,4 +1,6 @@
 ---
+# Parser and transport fixtures retain the exact bytes their manifests describe.
+exclude: ^tests/regime_finder/((examples|source_fixtures)/.*\.py\.txt$|data/)
 repos:
   - repo: meta
     hooks:
@@ -39,7 +41,7 @@ repos:
       - id: name-tests-test
         args:
           - --pytest-test-first
-        exclude: tests/mock_regime.py|tests/collective_fixtures.py|tests/envelope_configs.py|^tests/test_models/|^tests/data/|^tests/egm/_|^tests/execution/_|^tests/solution/_|^tests/simulation/_|^tests/simulation/initial_conditions/_|^tests/ci/|^tests/candidate_certificate/|^tests/conformance_solver/
+        exclude: tests/mock_regime.py|tests/collective_fixtures.py|tests/envelope_configs.py|^tests/test_models/|^tests/data/|^tests/egm/_|^tests/execution/_|^tests/solution/_|^tests/simulation/_|^tests/simulation/initial_conditions/_|^tests/ci/|^tests/candidate_certificate/|^tests/conformance_solver/|^tests/regime_finder/(?!test_).*\.py$
       - id: no-commit-to-branch
         args:
           - --branch
@@ -64,6 +66,9 @@ repos:
           - pyi
           - python
       - id: ruff-format
+        # Keep the imported checker source stable for comparison with its reviewed
+        # implementation. Its directory has a separate Ruff lint configuration.
+        exclude: ^src/_lcm_regime_finder/(?!implicit/)
         types_or:
           - jupyter
           - pyi
@@ -165,6 +170,12 @@ repos:
         files: ^(pyproject\.toml|pixi\.toml|pixi\.lock)$
         stages:
           - pre-push
+      - id: ci-workload-manifest-format
+        name: CI workload manifest has canonical bytes
+        entry: pixi run -e tests-cpu python -m tests.ci.ci_workloads canonicalize
+        language: system
+        pass_filenames: false
+        files: ^tests/ci/ci-workloads\.json$
       # Shard weights come only from CI. On every commit this fills in the
       # weights the `workload-weights` CI gate names as missing in
       # tests/ci/ci-workloads.json, from the latest completed CPU run of the
@@ -189,6 +200,7 @@ repos:
         name: functions with two named arguments are keyword-only
         entry: pixi run -e type-checking python -m tests.ci.keyword_only_convention
         language: system
+        exclude: ^(src/_lcm_regime_finder|tests/regime_finder)/
         types_or:
           - python
           - jupyter
@@ -199,6 +211,7 @@ repos:
         entry: pixi run -e type-checking python -m tests.ci.precise_annotations
         language: system
         files: ^((src|tests|benchmarks)/.*\.py|docs/.*\.ipynb)$
+        exclude: ^src/_lcm_regime_finder/
         require_serial: true
       - id: no-hardcoded-user-paths
         name: no hardcoded user-specific absolute paths
@@ -266,6 +279,8 @@ ci:
   # the GitHub Actions run-ty job covers type checking and the keyword-only and
   # precise-annotation conventions, while pixi-lock-check needs a pixi binary
   # that pre-commit.ci does not provide.
+  # CPU manifest contract tests also check canonical bytes; the local fixing
+  # hook requires Pixi and therefore runs only in developer clones.
   #
   # The two script hooks live in the `.ai-instructions` submodule, which
   # pre-commit.ci does not check out, so there they fail as a missing
@@ -280,6 +295,7 @@ ci:
     - precise-annotations
     - ty
     - pixi-lock-check
+    - ci-workload-manifest-format
     - ci-workload-weights
     - pre-push-hooks-installed
     - notebook-cell-source-format

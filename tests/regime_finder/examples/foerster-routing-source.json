@@ -1,0 +1,14 @@
+{
+  "adapter": "pylcm_routing_ast",
+  "source": "source_inputs/foerster/model.py",
+  "constructor": "build_model",
+  "factory": "retired_gate",
+  "symbols": {
+    "tables.resolution.n_periods": 3
+  },
+  "factory_parameters": {
+    "period": 2
+  },
+  "api_source": "source_inputs/pylcm_api/processing.py",
+  "api_guard": "_fail_if_duplicate_fallback_regimes"
+}

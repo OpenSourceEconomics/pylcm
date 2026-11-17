@@ -1,0 +1,89 @@
+{
+  "actions": {
+    "effort": {
+      "values": [
+        0,
+        1
+      ]
+    }
+  },
+  "ages": [
+    0,
+    1,
+    2,
+    3,
+    4
+  ],
+  "name": "redundant-coefficient-and-label-split",
+  "parameters": {},
+  "programs": [
+    {
+      "discount": "1",
+      "feasible": "True",
+      "id": "arbitrary_first_name",
+      "reward": "(age + 1) * x + effort",
+      "role": {
+        "actor": "household",
+        "commitments": [],
+        "discount_boundary": "annual",
+        "observations": []
+      },
+      "terminal": false,
+      "transitions": [
+        {
+          "probability": "1",
+          "updates": {
+            "x": "x"
+          }
+        }
+      ],
+      "when": "age < 2"
+    },
+    {
+      "discount": "1",
+      "feasible": "True",
+      "id": "arbitrary_second_name",
+      "reward": "(age + 1) * x + effort",
+      "role": {
+        "actor": "household",
+        "commitments": [],
+        "discount_boundary": "annual",
+        "observations": []
+      },
+      "terminal": false,
+      "transitions": [
+        {
+          "probability": "1",
+          "updates": {
+            "x": "x"
+          }
+        }
+      ],
+      "when": "2 <= age < 4"
+    },
+    {
+      "declared_actions": [],
+      "declared_states": [],
+      "id": "terminal",
+      "role": {
+        "actor": "household",
+        "commitments": [],
+        "discount_boundary": "annual",
+        "observations": []
+      },
+      "terminal": true,
+      "terminal_payoff": "0",
+      "transitions": [],
+      "when": "age == 4"
+    }
+  ],
+  "schema_version": 1,
+  "states": {
+    "x": {
+      "values": [
+        0,
+        1
+      ]
+    }
+  }
+}

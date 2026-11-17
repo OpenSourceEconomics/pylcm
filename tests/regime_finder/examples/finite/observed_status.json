@@ -1,0 +1,76 @@
+{
+  "actions": {
+    "work": {
+      "values": [
+        0,
+        1
+      ]
+    }
+  },
+  "ages": [
+    0,
+    1,
+    2,
+    3,
+    4
+  ],
+  "name": "absorbing-claimed-smaller-domain",
+  "parameters": {},
+  "programs": [
+    {
+      "discount": "1",
+      "feasible": "work == 0 if status == 'claimed' else True",
+      "id": "original",
+      "reward": "earnings + work if status == 'active' else 0",
+      "role": {
+        "actor": "household",
+        "commitments": [],
+        "discount_boundary": "annual",
+        "observations": []
+      },
+      "terminal": false,
+      "transitions": [
+        {
+          "probability": "1",
+          "status_updates": {
+            "status": "status"
+          },
+          "updates": {
+            "earnings": "earnings"
+          }
+        }
+      ],
+      "when": "age < 4"
+    },
+    {
+      "declared_actions": [],
+      "declared_states": [],
+      "id": "terminal",
+      "role": {
+        "actor": "household",
+        "commitments": [],
+        "discount_boundary": "annual",
+        "observations": []
+      },
+      "terminal": true,
+      "terminal_payoff": "0",
+      "transitions": [],
+      "when": "age == 4"
+    }
+  ],
+  "schema_version": 1,
+  "states": {
+    "earnings": {
+      "values": [
+        0,
+        1
+      ]
+    }
+  },
+  "status_axes": {
+    "status": [
+      "active",
+      "claimed"
+    ]
+  }
+}

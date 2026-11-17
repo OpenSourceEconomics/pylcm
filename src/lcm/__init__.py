@@ -235,6 +235,9 @@ jax.tree_util.register_pytree_node(
 
 from lcm import shocks  # noqa: E402
 
+# Preserve the construction import order used by beartype's recursive hints.
+from lcm.declarations import FunctionDeclaration, ModelDeclarations  # noqa: E402
+
 __all__ = [
     "EULER_GAMMA",
     "AdditiveShockTransition",
@@ -260,6 +263,7 @@ __all__ = [
     "Exit",
     "ExitTarget",
     "ExtremeValueTasteShocks",
+    "FunctionDeclaration",
     "Gate",
     "GridBreakpoint",
     "InitialNodes",
@@ -275,6 +279,7 @@ __all__ = [
     "LogSpacedGrid",
     "LoweredPeriodCandidate",
     "Model",
+    "ModelDeclarations",
     "NestedConsumptionSavingsRegime",
     "NetOfAdjustmentCost",
     "NormalIIDProcess",
