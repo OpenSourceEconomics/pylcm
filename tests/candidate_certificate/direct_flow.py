@@ -693,7 +693,7 @@ _SOURCE_SEALS = {
     LIVENESS_SOURCE: "ee283c14ad41b8e9bc36b40ba7c6812269e14e92e0afc2b71e48d841271613af",
     CONTINUATION_READS_SOURCE: "35dfa6999f53742aa6b824578c5105a22c472884daeed0d33d4aaf195200e8e5",
     WORKSPACE_PLANNING_SOURCE: "bceac07d6652cad6ca266dc69b0c94c3ffc30faa41ed8e48bcd3417be5846ba6",
-    SIMULATION_PROGRAMS_SOURCE: "766e11decc7a84906267e3770a104e3b6be4ef602a88939acfacc098cf7d0fb2",
+    SIMULATION_PROGRAMS_SOURCE: "71a595ca6dc30ec36738e21746ff5f812ef39c31ef253642b04f3380ca16b086",
     SIMULATION_PROGRAM_TYPES_SOURCE: "677a3c49f34ceb56f9f6de970c98535384f907fa8ea6bff6e936e35dee388b81",
     SIMULATION_RUNTIME_SOURCE: "87865ad0c4cfabca80937c118015ca5b16dcff9af62004144ff5b638b0cecedb",
     LOGSUM_SOURCE: "e12061dd4f0f0176324182a2eb875cb6ebe4b97174091c597d46a622df93ff1b",
@@ -2480,7 +2480,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     SIMULATION_PROGRAMS_SOURCE: (
-        "0a6ed280b5aec39874bc933461a348c000cdf11bfc639e40f9ed3f136d5f69fe",
+        "3d8501e676103f09e3cfa8adc95a385c78d58fec778bfa109e3b7605d5fb3a00",
         {
             "build_simulation_programs": "50a1c5e1a2a1e655d66be0ccd7e8fd49ebbd38d3e977a0f7871c242bdb562171",
             "_decision_programs": "a1f66ecba211e4ad2a9871118bd991df57223f1ab6c08f2c1d9f60e33dd523aa",
@@ -2492,8 +2492,8 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_fail_if_the_streamed_reduction_is_wrong": "4393d8f3dc1dded01122dc6bf97e4f51c88e52f3804f79b08d600bc75496dd0a",
             "_decision_subject_arg_names": "bcf384bb7218cb328b3494a3eda67a40b1f23bd438663562315a47c47272f803",
             "_decision_value_reads": "7480309f78099994ba417dab87ff44c8ccc545f662855a44bc142bd3509cc1a9",
-            "_decision_body": "52627da58e6da7fc90bf91601f65f99ec34977fd271b671706226554daed74b7",
-            "_StreamedArgmaxQOverA.__call__": "e2861ff5ccf4eb82ce58b4b4c043280952eb2d0ab29e657946bbe92b2ee456a8",
+            "_decision_body": "86da044f26f1e28bdea525bfc7c64b64465ad0f3c95c25920eaa9fec1cccdef5",
+            "_StreamedArgmaxQOverA.__call__": "fa83f005cefa0540e50104ea40a56d9514f6e46e074a4ca977cb71ee70dbf2a1",
             "_StreamedArgmaxQOverA._fold": "c4cdc93b6c3412703e9b5edbf4a213bc9beaed8f5bdc9132600fe7de398a143c",
             "_SubjectTiled.__call__": "1f11a7951bae020b368431c354dc7294cc4d7778c567ac646eb95bd59fbc5e75",
             "_evaluate_subject_tile": "da5ea37bc7faea1405b83b856ca8701e178e0daf0a26223eb70146589d6d26de",

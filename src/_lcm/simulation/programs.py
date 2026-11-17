@@ -29,6 +29,7 @@ regime for the transition, and one role per drawable regime for the route.
 
 import dataclasses
 import inspect
+import math
 from collections.abc import Callable, Mapping
 from functools import partial
 from types import MappingProxyType
@@ -921,6 +922,11 @@ def _decision_body(
             action_names=action_names,
             q_and_f_arg_names=q_and_f_arg_names,
             action_width_keyword=action_width_keyword,
+            whole_product_Q_and_F=productmap(
+                func=Q_and_F,
+                variables=action_names,
+                batch_sizes=dict.fromkeys(action_names, 0),
+            ),
         ),
         args=[
             "next_regime_to_V_arr",
@@ -1231,6 +1237,9 @@ class _StreamedArgmaxQOverA:
     action_width_keyword: str
     """Name of the planner-bound static action-block width in the call."""
 
+    whole_product_Q_and_F: Callable[..., PytreeValue]
+    """`Q_and_F` mapped over the named action grids, for a block covering them."""
+
     folds: dict[int, Callable[..., HardMaxResult | BoundedResult[HardMaxResult]]] = (
         dataclasses.field(default_factory=dict, repr=False)
     )
@@ -1249,8 +1258,19 @@ class _StreamedArgmaxQOverA:
             for name, value in states_actions_params.items()
             if name in self.q_and_f_arg_names
         }
-        evaluated = self._fold(block_width=block_width)(
-            next_regime_to_V_arr=next_regime_to_V_arr, **q_and_f_params
+        n_actions = math.prod(
+            jnp.shape(cast("jax.Array", states_actions_params[name]))[0]
+            for name in self.action_names
+        )
+        evaluated = (
+            self._reduce_whole_product(
+                next_regime_to_V_arr=next_regime_to_V_arr, **q_and_f_params
+            )
+            if block_width >= n_actions
+            and not has_action_integrity(function=self.Q_and_F)
+            else self._fold(block_width=block_width)(
+                next_regime_to_V_arr=next_regime_to_V_arr, **q_and_f_params
+            )
         )
         result = cast(
             "HardMaxResult",
@@ -1268,6 +1288,39 @@ class _StreamedArgmaxQOverA:
             )
             if type(evaluated) is BoundedResult
             else output
+        )
+
+    def _reduce_whole_product(
+        self,
+        *,
+        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
+        **q_and_f_params: PytreeValue,
+    ) -> HardMaxResult:
+        """Return the hard max of `Q` mapped over the named grids, as one block.
+
+        Mapping the grids, as the dense route does, computes a term that reads
+        some actions once per value of those actions rather than once per action.
+        The C-order flattening of the mapped product is the canonical identity
+        order, and the block is reduced exactly as the stream reduces one block:
+        ties go to the lowest identity, a feasible NaN publishes NaN at identity
+        zero and an empty feasible set publishes `-inf` at identity -1.
+        """
+        Q_arr, F_arr = cast(
+            "tuple[FloatND, BoolND]",
+            self.whole_product_Q_and_F(
+                next_regime_to_V_arr=next_regime_to_V_arr, **q_and_f_params
+            ),
+        )
+        values = jnp.reshape(Q_arr, -1)
+        return HARD_MAX_REDUCTION.finalize(
+            accumulator=HARD_MAX_REDUCTION.add(
+                accumulator=HARD_MAX_REDUCTION.initialize(
+                    value_template=jnp.zeros((), dtype=values.dtype)
+                ),
+                values=values,
+                feasible=jnp.reshape(jnp.broadcast_to(F_arr, Q_arr.shape), -1),
+                action_ids=jnp.arange(values.shape[0], dtype=jnp.int32),
+            )
         )
 
     def _fold(

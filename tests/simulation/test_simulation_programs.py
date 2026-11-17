@@ -9,6 +9,8 @@ from typing import cast
 import jax
 import jax.numpy as jnp
 import pytest
+from jax.core import ShapedArray
+from jax.extend.core import Jaxpr
 
 from _lcm.execution.core_program import (
     CoreBuildContext,
@@ -27,6 +29,7 @@ from _lcm.simulation.programs import (
 )
 from _lcm.solution.contract import SolverBuildContext
 from _lcm.typing import ArgmaxQOverAFunction, PytreeValue, QAndFFunction
+from _lcm.utils.dispatchers import productmap
 from benchmarks.asv._simulation_witnesses import WITNESSES
 from lcm import (
     AgeGrid,
@@ -441,6 +444,24 @@ _TOY_ACTIONS = {
 }
 
 
+def _streamed_reducer(*, Q_and_F: Callable[..., PytreeValue]) -> _StreamedArgmaxQOverA:
+    """Return the streamed decision over the toy action product for `Q_and_F`."""
+    action_names = ("work", "consumption")
+    return _StreamedArgmaxQOverA(
+        Q_and_F=cast("QAndFFunction", Q_and_F),
+        action_names=action_names,
+        q_and_f_arg_names=frozenset(
+            {"next_regime_to_V_arr", "consumption", "work", "wealth"}
+        ),
+        action_width_keyword="_lcm_action_block_width",
+        whole_product_Q_and_F=productmap(
+            func=Q_and_F,
+            variables=action_names,
+            batch_sizes=dict.fromkeys(action_names, 0),
+        ),
+    )
+
+
 def _reducers() -> tuple[ArgmaxQOverAFunction, _StreamedArgmaxQOverA]:
     """Return the dense canonical reducer and its streamed counterpart."""
     toy = cast("QAndFFunction", _toy_Q_and_F)
@@ -450,15 +471,194 @@ def _reducers() -> tuple[ArgmaxQOverAFunction, _StreamedArgmaxQOverA]:
         state_names=("wealth",),
         n_discrete_action_axes=1,
     )
-    streamed = _StreamedArgmaxQOverA(
-        Q_and_F=toy,
-        action_names=("work", "consumption"),
-        q_and_f_arg_names=frozenset(
-            {"next_regime_to_V_arr", "consumption", "work", "wealth"}
-        ),
-        action_width_keyword="_lcm_action_block_width",
+    return cast("ArgmaxQOverAFunction", dense), _streamed_reducer(Q_and_F=toy)
+
+
+def _work_bonus_Q_and_F(
+    *,
+    next_regime_to_V_arr: Mapping[RegimeName, FloatND],
+    consumption: FloatND,
+    work: FloatND,
+    wealth: FloatND,
+) -> tuple[FloatND, BoolND]:
+    """Return the toy action value plus a bonus `sin(work)` that reads only `work`."""
+    value, feasible = _toy_Q_and_F(
+        next_regime_to_V_arr=next_regime_to_V_arr,
+        consumption=consumption,
+        work=work,
+        wealth=wealth,
     )
-    return cast("ArgmaxQOverAFunction", dense), streamed
+    return value + jnp.sin(work), feasible
+
+
+def _tied_Q_and_F(
+    *,
+    next_regime_to_V_arr: Mapping[RegimeName, FloatND],
+    consumption: FloatND,
+    work: FloatND,
+    wealth: FloatND,
+) -> tuple[FloatND, BoolND]:
+    """Return a value every consumption level ties on, feasible from 0.4 up to wealth.
+
+    The maximum is attained by working at every feasible consumption level, so the
+    lowest winning identity is the second consumption level under `work = 1`.
+    """
+    value = wealth - (work - 1.0) ** 2 + 0.0 * consumption
+    value = value + next_regime_to_V_arr["target"]
+    return value, jnp.asarray((consumption >= 0.4) & (consumption <= wealth))
+
+
+def _nan_where_feasible_Q_and_F(
+    *,
+    next_regime_to_V_arr: Mapping[RegimeName, FloatND],
+    consumption: FloatND,
+    work: FloatND,
+    wealth: FloatND,
+) -> tuple[FloatND, BoolND]:
+    """Return the toy value with NaN at the feasible action `work = 1, c = 1.3`."""
+    value, feasible = _toy_Q_and_F(
+        next_regime_to_V_arr=next_regime_to_V_arr,
+        consumption=consumption,
+        work=work,
+        wealth=wealth,
+    )
+    poisoned = (work == 1.0) & (consumption == 1.3)
+    return jnp.where(poisoned, jnp.nan, value), feasible
+
+
+def _nan_where_infeasible_Q_and_F(
+    *,
+    next_regime_to_V_arr: Mapping[RegimeName, FloatND],
+    consumption: FloatND,
+    work: FloatND,
+    wealth: FloatND,
+) -> tuple[FloatND, BoolND]:
+    """Return the toy value with NaN at every action above wealth, all infeasible."""
+    value, feasible = _toy_Q_and_F(
+        next_regime_to_V_arr=next_regime_to_V_arr,
+        consumption=consumption,
+        work=work,
+        wealth=wealth,
+    )
+    return jnp.where(feasible, value, jnp.nan), feasible
+
+
+def _primitive_output_shapes(*, jaxpr: Jaxpr, primitive: str) -> list[tuple[int, ...]]:
+    """Return the output shape of every `primitive` equation, nested jaxprs included."""
+    shapes: list[tuple[int, ...]] = []
+    for equation in jaxpr.eqns:
+        if equation.primitive.name == primitive:
+            shapes.extend(
+                cast("ShapedArray", var.aval).shape for var in equation.outvars
+            )
+        for param in equation.params.values():
+            for nested in param if isinstance(param, tuple | list) else (param,):
+                inner = getattr(nested, "jaxpr", nested)
+                if hasattr(inner, "eqns"):
+                    shapes.extend(
+                        _primitive_output_shapes(jaxpr=inner, primitive=primitive)
+                    )
+    return shapes
+
+
+def _decide(
+    *, streamed: _StreamedArgmaxQOverA, wealth: float, width: int
+) -> tuple[IntND, FloatND]:
+    """Return the streamed decision's identity and value at one wealth level."""
+    return cast(
+        "tuple[IntND, FloatND]",
+        streamed(
+            next_regime_to_V_arr=MappingProxyType({"target": jnp.asarray(0.25)}),
+            wealth=jnp.asarray(wealth),
+            _lcm_action_block_width=width,
+            **_TOY_ACTIONS,
+        ),
+    )
+
+
+@pytest.mark.parametrize("width", [14, 20])
+def test_full_width_decision_evaluates_a_one_action_term_once_per_its_value(
+    *, width: int
+) -> None:
+    """A block covering the product computes a `work`-only term per `work` value.
+
+    The term is mapped over the two `work` levels, not over the fourteen actions of
+    the product.
+    """
+    streamed = _streamed_reducer(Q_and_F=_work_bonus_Q_and_F)
+    jaxpr = jax.make_jaxpr(
+        lambda wealth: _decide(streamed=streamed, wealth=wealth, width=width)
+    )(2.5)
+    assert _primitive_output_shapes(jaxpr=jaxpr.jaxpr, primitive="sin") == [(2,)]
+
+
+@pytest.mark.parametrize(
+    ("Q_and_F", "wealth"),
+    [
+        (_work_bonus_Q_and_F, 2.5),
+        (_tied_Q_and_F, 2.5),
+        (_nan_where_feasible_Q_and_F, 2.5),
+        (_nan_where_infeasible_Q_and_F, 1.0),
+        (_toy_Q_and_F, -1.0),
+    ],
+    ids=["interior", "tied", "feasible-nan", "infeasible-nan", "nothing-feasible"],
+)
+@pytest.mark.parametrize("narrow_width", [1, 3])
+def test_full_width_decision_publishes_the_narrow_streams_identity(
+    *, Q_and_F: Callable[..., PytreeValue], wealth: float, narrow_width: int
+) -> None:
+    """A block covering the product names the action the narrow stream names.
+
+    Ties go to the lowest identity, a feasible NaN publishes identity zero, a NaN at
+    an infeasible action is ignored and an empty feasible set publishes -1.
+    """
+    streamed = _streamed_reducer(Q_and_F=Q_and_F)
+    full_index, _ = _decide(streamed=streamed, wealth=wealth, width=14)
+    narrow_index, _ = _decide(streamed=streamed, wealth=wealth, width=narrow_width)
+    assert int(full_index) == int(narrow_index)
+
+
+@pytest.mark.parametrize(
+    ("Q_and_F", "wealth"),
+    [
+        (_tied_Q_and_F, 2.5),
+        (_nan_where_feasible_Q_and_F, 2.5),
+        (_nan_where_infeasible_Q_and_F, 1.0),
+        (_toy_Q_and_F, -1.0),
+    ],
+    ids=["tied", "feasible-nan", "infeasible-nan", "nothing-feasible"],
+)
+@pytest.mark.parametrize("narrow_width", [1, 3])
+def test_full_width_decision_publishes_the_narrow_streams_value_bits(
+    *, Q_and_F: Callable[..., PytreeValue], wealth: float, narrow_width: int
+) -> None:
+    """On exactly representable values, the full block's value has the stream's bits.
+
+    This covers the tie, both NaN placements and the empty feasible set's `-inf`.
+    """
+    streamed = _streamed_reducer(Q_and_F=Q_and_F)
+    _, full_value = _decide(streamed=streamed, wealth=wealth, width=14)
+    _, narrow_value = _decide(streamed=streamed, wealth=wealth, width=narrow_width)
+    assert full_value.tobytes() == narrow_value.tobytes()
+
+
+@pytest.mark.parametrize(
+    ("Q_and_F", "wealth", "expected"),
+    [
+        (_tied_Q_and_F, 2.5, 8),
+        (_nan_where_feasible_Q_and_F, 2.5, 0),
+        (_toy_Q_and_F, -1.0, -1),
+    ],
+    ids=["tied", "feasible-nan", "nothing-feasible"],
+)
+def test_full_width_decision_identity_is_not_trivially_shared(
+    *, Q_and_F: Callable[..., PytreeValue], wealth: float, expected: int
+) -> None:
+    """The tie, NaN and empty cases each publish the identity their rule names."""
+    full_index, _ = _decide(
+        streamed=_streamed_reducer(Q_and_F=Q_and_F), wealth=wealth, width=14
+    )
+    assert int(full_index) == expected
 
 
 @pytest.mark.parametrize("width", [1, 2, 3, 5, 14])
