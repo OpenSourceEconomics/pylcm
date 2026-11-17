@@ -125,6 +125,31 @@ def _inert_errors(model: _Model, kept: set[Fibre], inert: frozenset[str]) -> lis
     return errors
 
 
+def lowest_bound(model: _Model, dense: list[tuple[str, ...]], kept: set[Fibre]) -> tuple[int, int]:
+    """lem:lowest (vi) and (iv) by breadth-first components: (LB, sum of e(phi))."""
+    home = {r: members for members in dense for r in members}
+    lower = finest = 0
+    for cid in sorted({cid for cid, _ in kept}):
+        fibres = sorted(f for f in kept if f[0] == cid)
+        members = home[model.cells[cid]["regime"]]
+        price = {f: literal_price(model, members, [f])[0] for f in fibres}
+        finest += sum(price.values())
+        unseen = set(fibres)
+        while unseen:
+            frontier = [unseen.pop()]
+            largest = price[frontier[0]]
+            while frontier:
+                a = frontier.pop()
+                for b in sorted(unseen):
+                    shared = (model.live(a) | model.live(b)) & set(model.axes[cid])
+                    if {n: c for n, c in a[1] if n in shared} == {n: c for n, c in b[1] if n in shared}:
+                        unseen.discard(b)
+                        frontier.append(b)
+                        largest = max(largest, price[b])
+            lower += largest
+    return lower, finest
+
+
 def check_layouts(declarations: Record, facts: Facts, result: Record, guard: Callable[[], None] = lambda: None) -> Record:
     """Return PASS or FAIL with the errors for a `search_layouts` result."""
     model = _Model(declarations, facts)
@@ -205,6 +230,16 @@ def check_layouts(declarations: Record, facts: Facts, result: Record, guard: Cal
         return evaluations, storage, blocks
 
     exact = {}
+    lower, finest = lowest_bound(model, dense, kept)
+    if (result["lower_bound"], result["finest_count"]) != (lower, finest):
+        errors.append("lem:lowest (vi) bound or the finest count differs")
+    restricted = result["status"] == "RESTRICTED"
+    for index, point in enumerate(result["curve"]):
+        if point["evaluations"] < lower:
+            errors.append(f"curve point k={point['max_blocks']} lies below the lem:lowest (vi) bound")
+        expected = not restricted or index == 0 or point["evaluations"] == lower
+        if point["exact"] != expected:
+            errors.append(f"curve point k={point['max_blocks']} misstates whether it is exact")
     for entry in result["exact"]:
         ev, st, n = layout_cost(entry["layout"], f"w({entry['blocks']})")
         if (ev, st, n) != (entry["evaluations"], entry["storage"], entry["blocks"]):

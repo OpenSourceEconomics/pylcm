@@ -103,10 +103,16 @@ In either case the result reads `RESTRICTED`, and `restriction_reasons` gives th
 for each restricted status. A `RESTRICTED` result differs from a complete one in two
 ways:
 
-- Only the first point, with one block per dense regime, is marked `exact` (lem:first,
-  :1482-1503).
-- `floor` is null, because the floor of lem:lowest(iv) over contracted lanes is not a
-  bound for the full family.
+- The first point, with one block per dense regime, is marked `exact` (lem:first,
+  :1482-1503). So is any point whose evaluations equal `lower_bound`, with
+  `exact_reason` saying so.
+- `floor` is `lower_bound` when a point attains it, and null otherwise: the floor of
+  lem:lowest (iv) over contracted lanes is not a bound for the full family.
+
+`lower_bound` is lem:lowest (vi) on the full kept fibres, whatever was contracted. In
+each cell, two fibres join when they agree in every status live at either, and the bound
+sums the largest one-fibre price of each component. No layout of the full family costs
+less, so a found layout that attains it is the full family's lowest.
 
 With `contract_unproved=False`, these statuses stay lanes instead. The result can then
 be `COMPLETE`, at the price of a larger subset recurrence.
@@ -126,6 +132,8 @@ be `COMPLETE`, at the price of a larger subset recurrence.
   evaluations, storage and witness layout, and each curve point also has an `exact`
   flag.
 - `floor` and `flat_from`.
+- `lower_bound` (lem:lowest (vi)) and `finest_count`, the count of one block per kept
+  fibre (lem:lowest (iv)).
 - `deviations` and `notes`.
 - `priced`: the prices of blocks requested through `price`.
 
@@ -141,14 +149,15 @@ search. With its own code, it re-derives:
 - the dense regimes and the kept fibres;
 - (I1) and (I2) for each claimed inert status;
 - the lanes;
-- `dense_count` and `original_count`.
+- `dense_count`, `original_count`, `lower_bound` and `finest_count`.
 
-It then prices every witness block literally and checks four things:
+It then prices every witness block literally and checks that:
 
 - the groups partition the lanes;
 - the cuts partition each group's active periods;
 - the totals match;
-- the curve is the at-most envelope of the exact table.
+- the curve is the at-most envelope of the exact table, no point lies below
+  `lower_bound`, and each point's `exact` flag follows the rules above.
 
 The tests also compare the search with a literal enumeration of the family on small
 models.

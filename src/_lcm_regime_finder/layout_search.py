@@ -361,6 +361,45 @@ class LayoutProblem:
         domain = self.domains[domain_id]
         return 1 if domain.get("solve_axis") is False else domain["size"]
 
+    def lowest_bounds(self) -> tuple[int, int]:
+        """lem:lowest (iv) and (vi) on the full kept fibres: (LB, sum of e(phi)).
+
+        In each cell, two fibres join when they agree in every status live at
+        either; LB sums each component's largest one-fibre price. Every layout
+        of the full family costs at least LB, whatever the search contracted.
+        A pooled dense regime's label is live everywhere, so components never
+        cross original regimes and a cell is an original regime-period.
+        """
+        home = {r: i for i, members in enumerate(self.dense) for r in members}
+        by_cell: dict[str, list[FibreKey]] = defaultdict(list)
+        for fibre in self.kept:
+            by_cell[fibre[0]].append(fibre)
+        lower = finest = 0
+        for cid, fibres in sorted(by_cell.items()):
+            self.guard()
+            index = home[self.cells[cid]["regime"]]
+            prices = {f: self.price(index, [f])["evaluations"] for f in fibres}
+            statuses = set(self.axes[cid])
+            parent = {f: f for f in fibres}
+
+            def root(f: FibreKey) -> FibreKey:
+                while parent[f] != f:
+                    parent[f] = parent[parent[f]]
+                    f = parent[f]
+                return f
+
+            for i, a in enumerate(fibres):
+                for b in fibres[i + 1:]:
+                    shared = (self.live(a) | self.live(b)) & statuses
+                    if all(dict(a[1])[n] == dict(b[1])[n] for n in shared):
+                        parent[root(a)] = root(b)
+            components: dict[FibreKey, int] = {}
+            for f in fibres:
+                components[root(f)] = max(components.get(root(f), 0), prices[f])
+            lower += sum(components.values())
+            finest += sum(prices.values())
+        return lower, finest
+
     def original_count(self) -> int:
         """The count of the model as written: each original regime on its own grids."""
         return sum(prod(self._size(d) for d in c["states"].values()) * prod(self._size(d) for d in c["actions"].values())
@@ -543,18 +582,28 @@ def search_layouts(
                 if incumbent is None or _exact_best([incumbent, candidate]) is candidate:
                     merged[left_n + right_n] = candidate
         table = merged
-    # A floor of the contracted lanes bounds nothing in the full family.
+    # A floor of the contracted lanes bounds nothing in the full family; the
+    # bound (vi) on the full fibres does, and a found layout that attains it is
+    # the lowest layout of the full family (lem:lowest (iv), (vi)).
+    lower, finest = problem.lowest_bounds()
     floors = [None] if problem.restricted else [s.floor() for s in searches]
     floor = None if None in floors else sum(f for f in floors if f is not None)
+    attained = any(c.evaluations == lower for c in table.values())
+    if attained:
+        floor = lower
     exact = [{"blocks": n, "evaluations": c.evaluations, "storage": c.storage, "layout": _layout(problem, searches, c)}
              for n, c in sorted(table.items())]
     curve = []
     for k in range(first, largest + 1):
         best = _at_most_best(c for n, c in table.items() if n <= k)
         if best is not None:
-            # lem:first (:1482-1503): one block per dense regime is exact in any lane family.
+            # lem:first (:1482-1503): one block per dense regime is exact in any
+            # lane family; a point at the bound (vi) is the full family's lowest.
+            is_exact = not problem.restricted or k == first or best.evaluations == lower
             curve.append({"max_blocks": k, "blocks": best.blocks, "evaluations": best.evaluations,
-                          "storage": best.storage, "exact": not problem.restricted or k == first,
+                          "storage": best.storage, "exact": is_exact,
+                          **({"exact_reason": "attains lem:lowest (vi) bound"}
+                             if problem.restricted and k != first and best.evaluations == lower else {}),
                           "layout": _layout(problem, searches, best)})
     flat = next((p["max_blocks"] for p in curve if floor is not None and p["evaluations"] == floor), None)
     return {
@@ -569,6 +618,8 @@ def search_layouts(
         "exact": exact,
         "curve": curve,
         "floor": floor,
+        "lower_bound": lower,
+        "finest_count": finest,
         "flat_from": flat,
         "deviations": list(DEVIATIONS),
         "notes": sorted(problem.notes),

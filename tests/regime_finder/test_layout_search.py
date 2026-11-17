@@ -448,15 +448,8 @@ def _covered_utility(health: DiscreteState, cover: DiscreteState) -> FloatND:
     return jnp.where(health == Health.good, 1.0, 0.0) + cover
 
 
-def test_a_status_whose_grid_differs_across_members_is_not_certified_inert() -> None:
-    """(I1) takes parts over the dense regime's grid (:1743-1747).
-
-    Old has no `full` cover, so the part (old, full) of a kept fibre is not kept.
-    Contracting cover is then a restriction, and the curve an upper bound.
-    """
-    from _lcm_regime_finder.layout_search import analyze_layouts
-
-    model = Model(
+def _cover_model() -> Model:
+    return Model(
         n_periods=3,
         regime_id_class=Stages,
         regimes={
@@ -488,15 +481,31 @@ def test_a_status_whose_grid_differs_across_members_is_not_certified_inert() -> 
         fixed_params={"discount_factor": 1.0},
         enable_jit=False,
     )
+
+
+def test_a_status_whose_grid_differs_across_members_is_not_certified_inert() -> None:
+    """(I1) takes parts over the dense regime's grid (:1743-1747).
+
+    Old has no `full` cover, so the part (old, full) of a kept fibre is not kept.
+    Contracting cover is then a restriction, and the curve an upper bound.
+    """
+    from _lcm_regime_finder.layout_search import analyze_layouts
+
+    model = _cover_model()
     result = analyze_layouts(model, limits={"max_blocks": 6})
     assert "cover" not in result["inert_statuses"]
     assert "cover" in result["restricted_statuses"]
     assert result["status"] == "RESTRICTED"
-    assert result["floor"] is None, "a floor of contracted lanes bounds nothing"
+    assert result["floor"] in (None, result["lower_bound"]), (
+        "only the full family's bound (vi) may stand as a floor"
+    )
     assert "differs" in result["restriction_reasons"]["cover"]
     first, *rest = result["curve"]
     assert first["exact"], "one block per dense regime is exact in any lane family"
-    assert not any(point["exact"] for point in rest)
+    assert all(
+        point["exact"] == (point["evaluations"] == result["lower_bound"])
+        for point in rest
+    )
     full = analyze_layouts(model, limits={"max_blocks": 6, "contract_unproved": False})
     assert full["status"] == "COMPLETE"
     assert {
@@ -506,3 +515,29 @@ def test_a_status_whose_grid_differs_across_members_is_not_certified_inert() -> 
         f["evaluations"] <= r["evaluations"]
         for f, r in zip(full["curve"], result["curve"], strict=True)
     )
+
+
+@pytest.mark.parametrize("fixture", ["joint", "life"])
+def test_the_lowest_bound_sits_below_every_layout_and_the_finest_above_the_floor(
+    fixture,
+) -> None:
+    """lem:lowest (iv), (vi): LB <= ev^min <= the finest layout's count."""
+    from .test_status_splitting import joint_model
+
+    result, _ = _search(
+        joint_model() if fixture == "joint" else life_model(), max_blocks=40
+    )
+    assert result["lower_bound"] <= min(p["evaluations"] for p in result["curve"])
+    assert result["curve"][-1]["evaluations"] <= result["finest_count"]
+
+
+def test_a_restricted_point_at_the_lowest_bound_is_exact() -> None:
+    """A layout that attains (vi) is the full family's lowest, contracted or not."""
+    from _lcm_regime_finder.layout_search import analyze_layouts
+
+    result = analyze_layouts(_cover_model(), limits={"max_blocks": 8})
+    assert result["status"] == "RESTRICTED"
+    at_bound = [p for p in result["curve"] if p["evaluations"] == result["lower_bound"]]
+    assert at_bound, "positive control: the restricted search reaches the bound here"
+    assert all(p["exact"] for p in at_bound)
+    assert result["floor"] == result["lower_bound"]
