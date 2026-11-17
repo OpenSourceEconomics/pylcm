@@ -188,7 +188,9 @@ def test_a_worker_timeout_is_a_budget_error() -> None:
     assert error.value.unfinished
 
 
-def test_a_status_a_callback_never_reads_does_not_split_its_cache(monkeypatch) -> None:
+def test_a_status_a_callback_never_reads_does_not_split_its_cache(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Fixing a status the callback ignores with everything free reuses that answer."""
     from .test_status_splitting import joint_model
 
@@ -196,7 +198,7 @@ def test_a_status_a_callback_never_reads_does_not_split_its_cache(monkeypatch) -
     interpreted = []
     original = SourceFacts._reads
 
-    def counting(self, callback, *args):
+    def counting(self: SourceFacts, callback: str, *args: JSONValue) -> frozenset[str]:
         interpreted.append(callback)
         return original(self, callback, *args)
 

@@ -1,6 +1,7 @@
 """Report behavior, escaping, exact records, PNG validity and bounded previews."""
 
 import binascii
+from collections.abc import Mapping, Sequence
 from copy import deepcopy
 import json
 from pathlib import Path
@@ -19,7 +20,9 @@ from tests.regime_finder.test_declaration_ingestion import (
 )
 
 
-def _point(cells, max_blocks):
+def _point(
+    cells: Sequence[Mapping[str, JSONValue]], max_blocks: int
+) -> dict[str, JSONValue]:
     blocks = [
         {
             "fibres": [{"period": c["period"], "regime": c["regime"], "statuses": {}}],
@@ -41,7 +44,7 @@ def _point(cells, max_blocks):
     }
 
 
-def fixture(count=3):
+def fixture(count: int = 3) -> dict[str, JSONValue]:
     cells = [
         {
             "id": f"c{i}",
@@ -143,8 +146,8 @@ def read_png(path: Path) -> tuple[tuple[int, ...], bytes]:
 
 def test_exact_saved_result_and_all_curve_points() -> None:
     result = fixture()
-    cells = result["analysis"]["declarations"]["cells"]
-    result["layouts"]["curve"].append(_point(cells, 4))
+    cells = json_rows(result, "analysis", "declarations", "cells")
+    json_list(result, "layouts", "curve").append(_point(cells, 4))
     with tempfile.TemporaryDirectory() as directory:
         manifest = renderer.write_production_report(result, directory)
         assert (json.loads((Path(directory) / "report.json").read_text())) == (result)
@@ -159,11 +162,11 @@ def test_exact_saved_result_and_all_curve_points() -> None:
 def test_html_and_mermaid_injection_are_data() -> None:
     result = fixture()
     attack = '"><script>alert("x")</script>\nclick N0 "javascript:x"'
-    result["source_identity"]["name"] = attack
-    result["analysis"]["declarations"]["cells"][0]["regime"] = attack
-    result["layouts"]["curve"][0]["layout"][0]["blocks"][0]["fibres"][0]["regime"] = (
-        attack
-    )
+    json_member(result, "source_identity")["name"] = attack
+    json_rows(result, "analysis", "declarations", "cells")[0]["regime"] = attack
+    point = json_rows(result, "layouts", "curve")[0]
+    block = json_rows(json_rows(point, "layout")[0], "blocks")[0]
+    json_rows(block, "fibres")[0]["regime"] = attack
     rendered = renderer.render_html(result)
     assert ("<script>") not in (rendered)
     assert ("&lt;script&gt;") in (rendered)
@@ -243,7 +246,7 @@ def test_incomplete_result_states_why_no_curve_exists() -> None:
 
 def test_period_only_blocks_list_their_periods_in_both_reports() -> None:
     result = fixture()
-    for cell in result["analysis"]["declarations"]["cells"]:
+    for cell in json_rows(result, "analysis", "declarations", "cells"):
         cell["age"] = None
     with tempfile.TemporaryDirectory() as directory:
         renderer.write_production_report(result, directory)

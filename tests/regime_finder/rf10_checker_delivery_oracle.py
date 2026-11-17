@@ -10,11 +10,16 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 import stat
 
+from _lcm.typing import JSONValue
 
-def identity(path):
+type Identity = dict[str, str | int | None]
+
+
+def identity(path: str | Path) -> Identity:
     """Record both the supplied input pathname and the file it currently reads."""
     path = Path(path)
     entry = path.lstat()
@@ -32,18 +37,24 @@ def identity(path):
     }
 
 
-def snapshot(paths):
+def snapshot(paths: Iterable[str | Path]) -> dict[str, Identity]:
     return {str(Path(path)): identity(path) for path in paths}
 
 
-def assess(*, exit_code, result_path, protected, success):
+def assess(
+    *,
+    exit_code: int,
+    result_path: str | Path,
+    protected: Mapping[str, Identity],
+    success: bool,
+) -> list[dict[str, JSONValue]]:
     """Return every violated invariant, without fixing one alias policy.
 
     Positive controls require normal PASS. For mutation cases, safe rejection
     and coherent success are both valid: a writer may safely replace an output
     alias and continue, provided the protected original inputs remain unchanged.
     """
-    problems = []
+    problems: list[dict[str, JSONValue]] = []
     for path, expected in protected.items():
         try:
             observed = identity(path)

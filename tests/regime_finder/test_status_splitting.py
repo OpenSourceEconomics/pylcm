@@ -6,10 +6,12 @@ and health matters only to the employed. The layout-search and facts-backend
 tests build on these models.
 """
 
+from collections.abc import Callable, Mapping
+
 import jax.numpy as jnp
 
 from lcm import DiscreteGrid, InitialNodes, Model, Periods, Regime, categorical
-from lcm.typing import DiscreteState, FloatND, ScalarInt
+from lcm.typing import DiscreteState, FloatND, ScalarInt, StateName
 
 
 @categorical(ordered=False)
@@ -73,7 +75,11 @@ def next_health(health: DiscreteState) -> DiscreteState:
     return health
 
 
-def _model(states, utility, transitions) -> Model:
+def _model(
+    states: Mapping[StateName, DiscreteGrid],
+    utility: Callable[..., FloatND],
+    transitions: Mapping[StateName, Callable[..., DiscreteState]],
+) -> Model:
     return Model(
         n_periods=2,
         regime_id_class=Regimes,

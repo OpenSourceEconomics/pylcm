@@ -17,7 +17,13 @@ from lcm import DiscreteGrid, InitialNodes, Model, Periods, Regime, categorical
 from lcm.typing import DiscreteState, FloatND, ScalarInt
 
 
-def _kind(*, terminal=False, key="k", taste=None, discrete=True):
+def _kind(
+    *,
+    terminal: bool = False,
+    key: str = "k",
+    taste: JSONValue = None,
+    discrete: bool = True,
+) -> Record:
     return {
         "terminal": terminal,
         "key": key,
@@ -173,7 +179,7 @@ def _search(model: Model, **limits: int) -> tuple[Record, LayoutProblem]:
 
 
 @pytest.mark.parametrize("fixture", ["joint", "life"])
-def test_the_recurrence_matches_literal_enumeration(fixture) -> None:
+def test_the_recurrence_matches_literal_enumeration(fixture: str) -> None:
     """w(n) and ev*(k) equal the literal minimum over every partition and cut."""
     from .layout_oracle import literal_tables
     from .test_status_splitting import joint_model
@@ -215,7 +221,7 @@ def test_a_given_layout_is_priced_from_its_fibres() -> None:
 
 
 @pytest.mark.parametrize("fixture", ["joint", "life"])
-def test_the_independent_checker_passes_the_search(fixture) -> None:
+def test_the_independent_checker_passes_the_search(fixture: str) -> None:
     from _lcm_regime_finder.facts import make_facts
     from _lcm_regime_finder.layout_check import check_layouts
 
@@ -233,7 +239,7 @@ def test_the_independent_checker_passes_the_search(fixture) -> None:
 @pytest.mark.parametrize(
     "forgery", ["underprice", "drop_lane", "bad_cut", "inert", "envelope"]
 )
-def test_the_independent_checker_refutes_forgeries(forgery) -> None:
+def test_the_independent_checker_refutes_forgeries(forgery: str) -> None:
     import copy
 
     from _lcm_regime_finder.facts import make_facts
@@ -519,7 +525,7 @@ def test_a_status_whose_grid_differs_across_members_is_not_certified_inert() -> 
 
 @pytest.mark.parametrize("fixture", ["joint", "life"])
 def test_the_lowest_bound_sits_below_every_layout_and_the_finest_above_the_floor(
-    fixture,
+    fixture: str,
 ) -> None:
     """lem:lowest (iv), (vi): LB <= ev^min <= the finest layout's count."""
     from .test_status_splitting import joint_model

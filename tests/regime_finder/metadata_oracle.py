@@ -77,7 +77,7 @@ class ScalarSourceOracle:
         "builtins.max": "max",
     }
 
-    def __init__(self, *, max_steps: int = 100_000, max_depth: int = 24):
+    def __init__(self, *, max_steps: int = 100_000, max_depth: int = 24) -> None:
         self.max_steps = max_steps
         self.max_depth = max_depth
         self.steps = 0
@@ -91,7 +91,7 @@ class ScalarSourceOracle:
         self.binding_values = {}
         return self._call(metadata, (), dict(values), 0)
 
-    def _target(self, target):
+    def _target(self, target: Any) -> Any:  # noqa: PAN002 - Original Python callback values and captures have intentionally arbitrary types.
         """Independent finite-reference validation; no producer helper imported."""
         if not isinstance(target, dict) or target.get("kind") != "callable-reference":
             return target
@@ -99,7 +99,7 @@ class ScalarSourceOracle:
         if not isinstance(record, dict):
             raise OracleUnsupported("Missing original shared callable record")
 
-        def strip(value):
+        def strip(value: Any) -> Any:  # noqa: PAN002 - Original Python callback values and captures have intentionally arbitrary types.
             if isinstance(value, dict):
                 if value.get("kind") == "callable-reference":
                     return {
@@ -132,7 +132,7 @@ class ScalarSourceOracle:
             raise OracleUnsupported("Original shared callable identity changed")
         return record
 
-    def _binding(self, value, active=frozenset()):
+    def _binding(self, value: Any, active: frozenset[str] = frozenset()) -> Any:  # noqa: PAN002 - Original Python callback values and captures have intentionally arbitrary types.
         if isinstance(value, dict) and value.get("kind") == "callable-reference":
             record = self._target(value)
             if record.get("kind") != "binding-record":
