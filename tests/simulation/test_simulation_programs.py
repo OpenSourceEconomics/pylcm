@@ -11,6 +11,7 @@ import jax.numpy as jnp
 import pytest
 from jax.core import ShapedArray
 from jax.extend.core import Jaxpr
+from numpy.testing import assert_array_equal
 
 from _lcm.execution.core_program import (
     CoreBuildContext,
@@ -29,7 +30,6 @@ from _lcm.simulation.programs import (
 )
 from _lcm.solution.contract import SolverBuildContext
 from _lcm.typing import ArgmaxQOverAFunction, PytreeValue, QAndFFunction
-from _lcm.utils.dispatchers import productmap
 from benchmarks.asv._simulation_witnesses import WITNESSES
 from lcm import (
     AgeGrid,
@@ -446,19 +446,13 @@ _TOY_ACTIONS = {
 
 def _streamed_reducer(*, Q_and_F: Callable[..., PytreeValue]) -> _StreamedArgmaxQOverA:
     """Return the streamed decision over the toy action product for `Q_and_F`."""
-    action_names = ("work", "consumption")
     return _StreamedArgmaxQOverA(
         Q_and_F=cast("QAndFFunction", Q_and_F),
-        action_names=action_names,
+        action_names=("work", "consumption"),
         q_and_f_arg_names=frozenset(
             {"next_regime_to_V_arr", "consumption", "work", "wealth"}
         ),
         action_width_keyword="_lcm_action_block_width",
-        whole_product_Q_and_F=productmap(
-            func=Q_and_F,
-            variables=action_names,
-            batch_sizes=dict.fromkeys(action_names, 0),
-        ),
     )
 
 
@@ -562,7 +556,11 @@ def _primitive_output_shapes(*, jaxpr: Jaxpr, primitive: str) -> list[tuple[int,
 
 
 def _decide(
-    *, streamed: _StreamedArgmaxQOverA, wealth: float, width: int
+    *,
+    streamed: _StreamedArgmaxQOverA,
+    wealth: float,
+    width: int,
+    actions: Mapping[str, jax.Array] = _TOY_ACTIONS,
 ) -> tuple[IntND, FloatND]:
     """Return the streamed decision's identity and value at one wealth level."""
     return cast(
@@ -571,7 +569,7 @@ def _decide(
             next_regime_to_V_arr=MappingProxyType({"target": jnp.asarray(0.25)}),
             wealth=jnp.asarray(wealth),
             _lcm_action_block_width=width,
-            **_TOY_ACTIONS,
+            **actions,
         ),
     )
 
@@ -659,6 +657,130 @@ def test_full_width_decision_identity_is_not_trivially_shared(
         streamed=_streamed_reducer(Q_and_F=Q_and_F), wealth=wealth, width=14
     )
     assert int(full_index) == expected
+
+
+def _vector_valued_Q_and_F(
+    *,
+    next_regime_to_V_arr: Mapping[RegimeName, FloatND],
+    consumption: FloatND,
+    work: FloatND,
+    wealth: FloatND,
+) -> tuple[FloatND, BoolND]:
+    """Return the toy action value three times over, one vector per action."""
+    value, feasible = _toy_Q_and_F(
+        next_regime_to_V_arr=next_regime_to_V_arr,
+        consumption=consumption,
+        work=work,
+        wealth=wealth,
+    )
+    return jnp.stack([value, value, value]), feasible
+
+
+@pytest.mark.parametrize("width", [1, 14])
+def test_streamed_decision_refuses_a_vector_action_value_at_every_width(
+    *, width: int
+) -> None:
+    """A kernel publishing more than one value per action is refused at any width."""
+    streamed = _streamed_reducer(Q_and_F=_vector_valued_Q_and_F)
+    with pytest.raises(ValueError, match="scalar Q"):
+        _decide(streamed=streamed, wealth=2.5, width=width)
+
+
+@pytest.mark.parametrize(
+    ("actions", "error", "match"),
+    [
+        ({"work": _TOY_ACTIONS["work"]}, TypeError, "Missing action-grid"),
+        (
+            {"work": jnp.asarray(1.0), "consumption": _TOY_ACTIONS["consumption"]},
+            ValueError,
+            "must be one-dimensional",
+        ),
+        (
+            {"work": _TOY_ACTIONS["work"], "consumption": jnp.zeros(0)},
+            ValueError,
+            "must not be empty",
+        ),
+    ],
+    ids=["missing-grid", "scalar-grid", "empty-grid"],
+)
+@pytest.mark.parametrize("width", [1, 14])
+def test_streamed_decision_refuses_a_malformed_action_grid_at_every_width(
+    *,
+    actions: Mapping[str, jax.Array],
+    error: type[Exception],
+    match: str,
+    width: int,
+) -> None:
+    """A missing, scalar or empty action grid is refused at any block width."""
+    streamed = _streamed_reducer(Q_and_F=_toy_Q_and_F)
+    with pytest.raises(error, match=match):
+        _decide(streamed=streamed, wealth=2.5, width=width, actions=actions)
+
+
+_LARGE_ACTIONS = {"first": jnp.arange(3.0), "second": jnp.arange(2000.0)}
+
+
+def _large_feasible_nan_Q_and_F(
+    *,
+    next_regime_to_V_arr: Mapping[RegimeName, FloatND],
+    first: FloatND,
+    second: FloatND,
+) -> tuple[FloatND, BoolND]:
+    """Return the continuation everywhere but NaN at one interior action."""
+    poisoned = (first == 1.0) & (second == 1500.0)
+    value = jnp.where(poisoned, jnp.nan, next_regime_to_V_arr["target"])
+    return value, jnp.ones((), dtype=bool)
+
+
+def _large_tied_Q_and_F(
+    *,
+    next_regime_to_V_arr: Mapping[RegimeName, FloatND],
+    first: FloatND,
+    second: FloatND,
+) -> tuple[FloatND, BoolND]:
+    """Return the continuation at every action, feasible from `first = 1` up."""
+    value = next_regime_to_V_arr["target"] + 0.0 * second
+    return value, jnp.asarray(first >= 1.0)
+
+
+@pytest.mark.parametrize(
+    ("Q_and_F", "expected_index", "expected_value"),
+    [(_large_feasible_nan_Q_and_F, 0, jnp.nan), (_large_tied_Q_and_F, 2000, 0.25)],
+    ids=["feasible-nan", "tied"],
+)
+@pytest.mark.parametrize("width", [7, 6000])
+def test_large_action_product_keeps_the_nan_and_tie_rules_at_every_width(
+    *,
+    Q_and_F: Callable[..., PytreeValue],
+    expected_index: int,
+    expected_value: float,
+    width: int,
+) -> None:
+    """Over six thousand actions, the tie and NaN rules hold at any block width.
+
+    A feasible NaN publishes NaN at identity zero, and a tie publishes the lowest
+    feasible identity, both in one compiled program.
+    """
+    streamed = _StreamedArgmaxQOverA(
+        Q_and_F=cast("QAndFFunction", Q_and_F),
+        action_names=("first", "second"),
+        q_and_f_arg_names=frozenset({"next_regime_to_V_arr", "first", "second"}),
+        action_width_keyword="_lcm_action_block_width",
+    )
+    continuation = MappingProxyType({"target": jnp.asarray(0.25)})
+    index, value = cast(
+        "tuple[IntND, FloatND]",
+        jax.jit(
+            lambda first, second: streamed(
+                next_regime_to_V_arr=continuation,
+                first=first,
+                second=second,
+                _lcm_action_block_width=width,
+            )
+        )(**_LARGE_ACTIONS),
+    )
+    assert int(index) == expected_index
+    assert_array_equal(value, jnp.asarray(expected_value, dtype=value.dtype))
 
 
 @pytest.mark.parametrize("width", [1, 2, 3, 5, 14])

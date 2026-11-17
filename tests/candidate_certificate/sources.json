@@ -14,7 +14,7 @@
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "2",
-  "source_inventory_sha256": "f1aa7c19f2a5a23ba64016e2d6467e94e8c1cffa89aea3f804e15afc548b2b95",
+  "source_inventory_sha256": "e1edb8a2bc2d079c5d26ead626f82c60aa1beca75052632cbfa97ff0cabd3e8f",
   "sources": [
     {
       "path": "src/_lcm/constraints/bounds.py",
@@ -478,7 +478,7 @@
     },
     {
       "path": "src/_lcm/simulation/programs.py",
-      "sha256": "71a595ca6dc30ec36738e21746ff5f812ef39c31ef253642b04f3380ca16b086"
+      "sha256": "91179034fa30bcab8cd879ef7e4249a458929ad066da993f11adc7b4d9f46334"
     },
     {
       "path": "src/_lcm/simulation/random.py",
@@ -546,7 +546,7 @@
     },
     {
       "path": "src/_lcm/solution/action_streaming.py",
-      "sha256": "c02b81f6930abe6b1de533d8c4c63fab36e70f0037798f54aaf5e6c12d8ee799"
+      "sha256": "d362e88105bcdb84cba8a38e6ace51ca92efad13682e6d9ae59303d01622a169"
     },
     {
       "path": "src/_lcm/solution/backward_induction.py",
