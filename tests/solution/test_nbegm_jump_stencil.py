@@ -73,7 +73,13 @@ def test_bounded_limit_below_uses_only_nodes_above_the_previous_cliff():
     # Approaching the second cliff (3.5) from below, bounded above the first (2.5):
     # only node 3 (value 50) qualifies, so the limit is the middle level 50.
     out = float(
-        _bounded_limit_below(grid=grid, values=values, limit=3.5, prev_limit=2.5, n=7)
+        _bounded_limit_below(
+            grid=grid,
+            values=values,
+            limit=jnp.asarray(3.5),
+            prev_limit=jnp.asarray(2.5),
+            n=7,
+        )
     )
     np.testing.assert_allclose(out, 50.0, atol=1e-6)
 
@@ -86,7 +92,13 @@ def test_bounded_limit_above_uses_only_nodes_below_the_next_cliff():
     # Approaching the first cliff (2.5) from above, bounded below the second (3.5):
     # only node 3 (value 50) qualifies, so the limit is the middle level 50.
     out = float(
-        _bounded_limit_above(grid=grid, values=values, limit=2.5, next_limit=3.5, n=7)
+        _bounded_limit_above(
+            grid=grid,
+            values=values,
+            limit=jnp.asarray(2.5),
+            next_limit=jnp.asarray(3.5),
+            n=7,
+        )
     )
     np.testing.assert_allclose(out, 50.0, atol=1e-6)
 
@@ -114,12 +126,12 @@ def test_boundary_targeting_coh_reads_continuation_without_bridging_lower_cliff(
         next_liquid_grid=grid,
         coh_case_grid=coh_case_grid,
         next_value=next_value,
-        discount_factor=discount_factor,
+        discount_factor=jnp.asarray(discount_factor),
         preferences=crra_preferences(crra=crra),
         savings_grid=savings_grid,
         next_liquid=gross_return * savings_grid + income,
-        asset_limit=asset_limit,
-        prev_limit=2.5,
+        asset_limit=jnp.asarray(asset_limit),
+        prev_limit=jnp.asarray(2.5),
         next_limit=grid[-1] + 1.0,
         equality_owner="otherwise",
         side="below",

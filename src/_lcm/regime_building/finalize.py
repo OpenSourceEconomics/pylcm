@@ -23,9 +23,8 @@ from dags import get_annotations
 from dags.annotations import ensure_annotations_are_strings
 
 from _lcm.certainty_equivalent import CertaintyEquivalent
-from _lcm.constraints.ir import Condition
 from _lcm.egm.nbegm import PieceSet
-from _lcm.grids import DiscreteGrid, Grid
+from _lcm.grids import Grid
 from _lcm.processes.joint_normal_lowering import (
     coordinate_names,
     joint_normal_declarations,
@@ -48,6 +47,7 @@ from _lcm.user_regime_validation import _validate_completeness
 from _lcm.utils.error_messages import format_messages
 from lcm.case_piece import CaseBoundary
 from lcm.collective import CollectiveUtility
+from lcm.condition import Condition
 from lcm.consumption_savings_regime import (
     NetOfAdjustmentCost,
     _composition_rule_message,
@@ -56,6 +56,7 @@ from lcm.consumption_savings_regime import (
 from lcm.decoupled import Decoupled
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.exits import Consent, Exit, RuleResult
+from lcm.grids import DiscreteGrid
 from lcm.phased import Phased
 from lcm.regime import ConstraintEntry, StateEntry, StateTransitionEntry
 from lcm.regime import Regime as UserRegime

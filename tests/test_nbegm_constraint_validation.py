@@ -508,7 +508,7 @@ def test_nbegm_carry_retains_the_declared_topology_at_a_grid_endpoint(
     if boundary == 0.1 and endpoint_status == "finite":
         with pytest.raises(
             InvalidValueFunctionError,
-            match=r"age 0\.0 in regime 'alive': 1 of 10 values are NaN",
+            match=r"age 0 in regime 'alive': 1 of 10 values are NaN",
         ):
             model.solve(params=_smooth_params(asset_limit=None), log_level="off")
     else:

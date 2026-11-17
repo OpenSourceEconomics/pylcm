@@ -1321,45 +1321,6 @@ def test_mapped_query_accepts_a_python_scalar_constant() -> None:
     np.testing.assert_allclose(result.values[0]["root"], [[2, 0.5], [3, 1.5], [2, 5]])
 
 
-def test_unavailable_benchmark_guards_domain_poison_and_its_derivative() -> None:
-    """Unavailable sqrt inputs cannot poison another source cell's tangent."""
-    _native_model(enable_jit=True)
-    context = _CONTEXTS["target"]
-
-    def settlement(*, wealth: FloatND, shift: FloatND) -> FloatND:
-        return jnp.sqrt(wealth + shift)
-
-    def available(wealth: FloatND) -> jax.Array:
-        return wealth >= 0
-
-    node = QueryNode(
-        read=replace(
-            _read(kind=QueryKind.PARTICIPATING, target="target"),
-            projection={"wealth": settlement},
-        ),
-        context=context,
-        available=available,
-    )
-    core = queries._QueryCore(node=node, period=0)
-
-    def value(shift: FloatND) -> FloatND:
-        answer = core(
-            **{
-                queries._SOURCE: {"wealth": jnp.asarray([-1.0, 1.0])},
-                queries._LIVE: jnp.ones((2,), dtype=bool),
-                queries._PROJECTION: {"shift": shift},
-                "period": jnp.int32(0),
-                "age": jnp.int32(0),
-                "action": context.state_action_space.actions["action"],
-                "next_regime_to_V_arr": MappingProxyType({}),
-            }
-        )
-        return jnp.sum(jnp.where(answer[2][:, None], answer[0], 0.0))
-
-    np.testing.assert_allclose(jax.jit(value)(jnp.asarray(0.0)), 5.0)
-    np.testing.assert_allclose(jax.jit(jax.grad(value))(jnp.asarray(0.0)), 2.5)
-
-
 def _information_mesh_inputs(
     *, guarded: bool, events: dict[str, list[float]]
 ) -> tuple[Model, QueryNode, Mapping[str, PytreeValue]]:

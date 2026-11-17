@@ -443,10 +443,10 @@ Candidate measurement uses compilation, and admission fails closed:
 - the selected widths are execution choices: they enter neither the model nor the
   parameter fingerprint, and a period capture records them so `replay_period` lowers the
   same executable without planning again. The capture also records each array's sharding
-  and each core's compiled placements as descriptors, without buffers: `replay_period`
-  lowers against the restored arrays' default placement, while
-  `replay_period_on_recorded_layout` reinstates the recorded layout and lowers against
-  the submesh the solve dispatched the period on.
+  and each core's compiled placements as descriptors, without buffers:
+  `lcm.persistence.replay_period` lowers against the restored arrays' default placement,
+  while `lcm.persistence.replay_period_on_recorded_layout` reinstates the recorded
+  layout and lowers against the submesh the solve dispatched the period on.
 
 For each complete device record, compiler admission reserves the larger of the raw
 reported peak and `argument + output - alias + temporary` bytes. The latter counts
@@ -786,11 +786,10 @@ or a DataFrame with a `regime_name` column.
 `progress` adds timing, and `debug` adds value statistics. `runtime_checks=True`
 independently enables numerical probability, NaN and existing feasibility/replay checks
 and raises on failure at every verbosity. `runtime_checks=False` explicitly skips those
-checks, including during automatic solving. Density derivative accuracy certification
-exists only as a test oracle; neither runtime-check setting runs it. Construction,
-parameter schema, initial-condition structure and solution-identity validation always
-run. Infinity-only value diagnostics remain warnings; an application requiring all
-stored values finite must retain that stronger invariant.
+checks, including during automatic solving. Construction, parameter schema,
+initial-condition structure and solution-identity validation always run. Infinity-only
+value diagnostics remain warnings; an application requiring all stored values finite
+must retain that stronger invariant.
 
 `model.simulate(...)` also reports the resolved execution plan it dispatched: the
 forward route (`"legacy"` or `"subjects"`), the ordered subject devices and their

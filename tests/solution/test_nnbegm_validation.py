@@ -17,7 +17,7 @@ from numpy.testing import assert_array_almost_equal as aaae
 
 import _lcm.solution.nnbegm as nnbegm_module
 from _lcm.egm.nested_published_policy import NestedEGMSimPolicy
-from _lcm.egm.nnbegm_validation import validate_nnbegm_regimes
+from _lcm.egm.nnbegm_validation import validate_nnbegm_regime
 from _lcm.egm.outer_replay_capability import OuterReplayCapability
 from _lcm.egm.published_policy import NNBEGMSimPolicy
 from _lcm.solution.nnbegm import (
@@ -94,8 +94,8 @@ _VALID = _valid_regime()
 
 
 def _validate(regime: Regime) -> None:
-    """Run the NNBEGM dynamic contract check on a single-regime mapping."""
-    validate_nnbegm_regimes(user_regimes={"alive": regime})
+    """Run the NNBEGM dynamic contract check on the single regime."""
+    validate_nnbegm_regime(regime_name="alive", user_regime=regime)
 
 
 def test_valid_two_asset_toy_nnbegm_regime_passes_validation() -> None:
@@ -159,18 +159,6 @@ def test_a_utility_composite_of_consumption_and_the_durable_is_accepted() -> Non
             **dict(_VALID.functions),
             "utility": _utility_coupling_consumption_and_durable_move,
         },
-    )
-    _validate(regime)
-
-
-def test_a_regime_with_a_non_nested_solver_is_left_alone() -> None:
-    """The dynamic NNBEGM check ignores regimes not bound to NNBEGM."""
-    regime = Regime(
-        states=_VALID.states,
-        state_transitions=_VALID.state_transitions,
-        actions={"illiquid_investment": n_nbegm_toy.ILLIQUID_INVESTMENT_GRID},
-        functions=_VALID.functions,
-        solver=n_nbegm_toy.build_solver(variant="brute"),
     )
     _validate(regime)
 

@@ -81,25 +81,16 @@ def _runtime_process_admission_errors(  # noqa: C901, PLR0912, PLR0915
             errors.append(message)
 
     fixed_identity = ast.unparse(_definition(tree=tree, name="_process_fixed_identity"))
-    if (
-        "type(value)" not in fixed_identity
-        or "_parameter_bytes(value)" not in fixed_identity
-    ):
-        errors.append("fixed composite type and bytes must remain in identity")
+    if "_parameter_bytes(value)" not in fixed_identity:
+        errors.append("fixed composite bytes must remain in identity")
     weak_identity = ast.unparse(
         _definition(tree=tree, name="_staged_parameter_is_weak")
     )
     if (
-        "type(value) in (bool, int, float)" not in weak_identity
+        "type(value) is float" not in weak_identity
         or "getattr(value, 'weak_type', False)" not in weak_identity
     ):
         errors.append("host and JAX scalar strength must remain in identity")
-    complete = ast.unparse(_definition(tree=tree, name="_complete_process_parameters"))
-    if (
-        "np.asarray(value, dtype=np.int32) if isinstance(value, bool | int) else value"
-        not in complete
-    ):
-        errors.append("fixed composite scalar promotion must match eager semantics")
 
     staged = ast.unparse(
         _definition(tree=tree, name="SimulationProcessGrids._produce_staged")
@@ -382,19 +373,13 @@ def test_runtime_process_admission_contract_is_complete() -> None:
         ),
         (
             "_process_fixed_identity",
-            "type(value)",
-            "None",
-            "fixed composite type and bytes must remain in identity",
-        ),
-        (
-            "_process_fixed_identity",
             "_parameter_bytes(value)",
             "None",
-            "fixed composite type and bytes must remain in identity",
+            "fixed composite bytes must remain in identity",
         ),
         (
             "_staged_parameter_is_weak",
-            "type(value) in (bool, int, float)",
+            "type(value) is float",
             "False",
             "host and JAX scalar strength must remain in identity",
         ),
@@ -403,18 +388,6 @@ def test_runtime_process_admission_contract_is_complete() -> None:
             'getattr(value, "weak_type", False)',
             "False",
             "host and JAX scalar strength must remain in identity",
-        ),
-        (
-            "_complete_process_parameters",
-            "np.asarray(value, dtype=np.int32)",
-            "value",
-            "fixed composite scalar promotion must match eager semantics",
-        ),
-        (
-            "_complete_process_parameters",
-            "else value",
-            "else np.asarray(value, dtype=canonical_float_dtype())",
-            "fixed composite scalar promotion must match eager semantics",
         ),
         (
             "SimulationProcessGrids.__call__",

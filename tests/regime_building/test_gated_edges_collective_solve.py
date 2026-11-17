@@ -914,10 +914,3 @@ def test_gated_edge_reference_uncovered_at_unconsumed_boundary_passes():
         regimes_to_active_periods=regimes_to_active_periods,
         gated_periods=(0, 1),
     )
-
-
-def test_gated_edge_refuses_a_plain_dict_for_its_legs() -> None:
-    """A gated edge holds read-only mappings; a plain dict is refused."""
-    edge = _edge_with_refs(fallback_regime="single")
-    with pytest.raises(RegimeInitializationError, match="legs"):
-        GatedEdge(gate=_always_open_gate, legs=dict(edge.legs))  # ty: ignore[invalid-argument-type]

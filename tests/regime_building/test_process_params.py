@@ -2,25 +2,15 @@
 
 from collections.abc import Mapping
 from types import MappingProxyType
-from typing import cast
 
 import pytest
 
 from _lcm.engine import Regime
-from _lcm.params.processing import (
-    create_params_template,
-    process_params,
-)
-from _lcm.typing import ParamsTemplate
-from _lcm.utils.containers import ensure_containers_are_immutable
+from _lcm.params.processing import create_params_template
 from lcm.exceptions import InvalidNameError, InvalidParamsError
+from tests.params._process_params import as_template, process_params
 
 type _TemplateNode = str | Mapping[str, _TemplateNode]
-
-
-def _as_template(plain: Mapping[str, _TemplateNode]) -> ParamsTemplate:
-    """Deep-freeze a plain nested dict into a `ParamsTemplate` for tests."""
-    return cast("ParamsTemplate", ensure_containers_are_immutable(plain))
 
 
 def _expected_flat_keys(*, params_template, regime):
@@ -34,7 +24,7 @@ def _expected_flat_keys(*, params_template, regime):
 @pytest.fixture
 def params_template():
     """Fixture providing a params_template with two regimes and two functions each."""
-    return _as_template(
+    return as_template(
         {
             "regime_0": {
                 "fun_0": {"arg_0": "float", "arg_1": "float"},
@@ -302,7 +292,7 @@ def test_passing_same_params_to_regimes_with_different_templates():
     # Template for a terminal regime - empty (no H, no transitions)
     dead_template: dict[str, dict[str, str]] = {}
 
-    params_template = _as_template(
+    params_template = as_template(
         {
             "alive": alive_template,
             "dead": dead_template,
@@ -337,7 +327,7 @@ def test_process_params_via_regular_params():
     state name (e.g., "adjustment_cost"), so users can pass them via regular params.
     """
     # Template includes ShockGrid params under the state name
-    params_template = _as_template(
+    params_template = as_template(
         {
             "working_life": {
                 "koopmans_aggregator": {"discount_factor": "float"},

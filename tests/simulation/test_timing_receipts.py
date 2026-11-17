@@ -314,6 +314,7 @@ def test_an_exhausted_retry_fails_the_row_and_reports_every_reading(
     """
     spreads = (0.4,) * timing_tests.HOST_TIME_ATTEMPTS
     _, chosen = _run_retry_loop(monkeypatch=monkeypatch, spreads=spreads)
+    monkeypatch.delenv("PYTEST_XDIST_WORKER", raising=False)
 
     with pytest.raises(Failed) as excinfo:
         timing_tests._require_a_steady_host(batch=chosen, receipt="RECEIPT")
@@ -325,6 +326,28 @@ def test_an_exhausted_retry_fails_the_row_and_reports_every_reading(
     assert "RECEIPT" in message
 
 
+def test_an_exhausted_retry_under_xdist_warns_and_leaves_the_row_to_pass(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A row sharing its machine with other workers reports the noise and passes.
+
+    Only the serial timing lane is a measurement; under xdist an unsteady host
+    is the expected state, so the readings go out as a warning, not a failure.
+    """
+    spreads = (0.4,) * timing_tests.HOST_TIME_ATTEMPTS
+    _, chosen = _run_retry_loop(monkeypatch=monkeypatch, spreads=spreads)
+    monkeypatch.setenv("PYTEST_XDIST_WORKER", "gw0")
+
+    with pytest.warns(UserWarning, match=timing_tests.UNSTABLE_HOST_MARKER) as caught:
+        steady = timing_tests._require_a_steady_host(batch=chosen, receipt="RECEIPT")
+
+    assert steady is False
+    message = str(caught[0].message)
+    assert timing_tests.UNSTABLE_HOST_MARKER in message
+    assert "[" + ", ".join(["0.200"] * timing_tests.HOST_TIME_ATTEMPTS) + "]" in message
+    assert "RECEIPT" in message
+
+
 def test_a_steady_batch_passes_the_precondition_untouched(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -332,7 +355,7 @@ def test_a_steady_batch_passes_the_precondition_untouched(
     spreads = (0.0, *(1.0,) * (timing_tests.HOST_TIME_ATTEMPTS - 1))
     _, chosen = _run_retry_loop(monkeypatch=monkeypatch, spreads=spreads)
 
-    timing_tests._require_a_steady_host(batch=chosen, receipt="RECEIPT")
+    assert timing_tests._require_a_steady_host(batch=chosen, receipt="RECEIPT")
 
 
 def _run_retry_loop(

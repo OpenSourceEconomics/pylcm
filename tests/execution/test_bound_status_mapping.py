@@ -8,11 +8,6 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
-from beartype import beartype
-from beartype.roar import (
-    BeartypeCallHintParamViolation,
-    BeartypeCallHintReturnViolation,
-)
 
 from _lcm.execution.output_layout import StateAxesLeading
 from _lcm.solution import feasibility
@@ -23,35 +18,6 @@ from _lcm.utils.dispatchers import (
     vary_carry_like_body,
 )
 from lcm.typing import BoolND, FloatND
-
-
-@pytest.mark.parametrize("container", ["text", "duck-tuple"])
-def test_bound_result_tree_transport_rejects_wrong_nominal_records(
-    *, container: str
-) -> None:
-    """Typed tree transport rejects another container before accessing its fields."""
-    wrong = (
-        "invalid record"
-        if container == "text"
-        else ((jnp.asarray(1.0), jnp.asarray(a=True)), ())
-    )
-    invalid = cast("feasibility.BoundedResult[tuple[FloatND, BoolND]]", wrong)
-    with pytest.raises(BeartypeCallHintParamViolation):
-        feasibility._flatten_bounded_result(result=invalid)
-
-
-def test_bound_result_return_contract_rejects_a_duck_tuple() -> None:
-    """An ordinary tuple cannot replace the declared nominal result on return."""
-
-    @beartype
-    def produce() -> feasibility.BoundedResult[tuple[FloatND, BoolND]]:
-        return cast(
-            "feasibility.BoundedResult[tuple[FloatND, BoolND]]",
-            ((jnp.asarray(1.0), jnp.asarray(a=True)), ()),
-        )
-
-    with pytest.raises(BeartypeCallHintReturnViolation):
-        produce()
 
 
 def test_bound_result_tree_keeps_inert_metadata_and_abstract_role_structure() -> None:
@@ -106,14 +72,9 @@ def test_bound_result_tree_keeps_inert_metadata_and_abstract_role_structure() ->
     assert jax.tree.leaves(role_tree) == roles
 
 
-@pytest.mark.parametrize("malformed", ["action-bank", "integer"])
-def test_bound_reduction_requires_one_boolean_per_owned_lane(*, malformed: str) -> None:
-    """Unreduced action banks and numeric flags cannot impersonate lane summaries."""
-    flags = (
-        jnp.asarray([[False, True], [False, False]])
-        if malformed == "action-bank"
-        else jnp.asarray([0, 1], dtype=jnp.int32)
-    )
+def test_bound_reduction_requires_one_boolean_per_owned_lane() -> None:
+    """Unreduced action banks cannot impersonate lane summaries."""
+    flags = jnp.asarray([[False, True], [False, False]])
     status = jax.tree_util.tree_unflatten(
         jax.tree_util.tree_structure(
             feasibility.BoundInputStatus(

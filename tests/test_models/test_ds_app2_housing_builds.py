@@ -12,10 +12,11 @@ is *not* a user-declared discrete action.
 These checks build the model at a tiny grid and assert structure only — no
 `.solve()` runs here. The 2-D-continuous + AR1-process NEGM solve OOMs a small
 box, so the solve/accuracy/timing sweep is a separate gpu-01 job. The ground
-truth for the NEGM mapping is `validate_negm_regimes`, which the `Model`
-constructor runs at build: if the housing margin were Euler-coupled in a way
-NEGM forbids, building the model would raise `ModelInitializationError`. A model
-that builds therefore *is* an accepted NEGM model.
+truth for the NEGM mapping is `validate_negm_regime`, which the `Model`
+constructor runs on every NEGM regime at build: if the housing margin were
+Euler-coupled in a way NEGM forbids, building the model would raise
+`ModelInitializationError`. A model that builds therefore *is* an accepted NEGM
+model.
 """
 
 import jax.numpy as jnp
@@ -54,9 +55,9 @@ def test_model_builds_at_small_grid_without_solving():
 
 @pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 def test_negm_contract_accepts_the_housing_regimes():
-    """`validate_negm_regimes` accepts the working and retired NEGM regimes.
+    """`validate_negm_regime` accepts the working and retired NEGM regimes.
 
-    The `Model` constructor runs `validate_negm_regimes` on the user regimes; a
+    The `Model` constructor runs `validate_negm_regime` on each NEGM regime; a
     successful build is the validator's acceptance. The working and retired
     regimes both carry an `NEGM` solver whose inner is a `DCEGM` on liquid
     assets, so both are checked.

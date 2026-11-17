@@ -28,28 +28,32 @@ import jax.numpy as jnp
 from dags import get_annotations, get_free_arguments
 from dags.signature import rename_arguments
 
-from _lcm.constraints.ir import Condition
+from _lcm.dtypes import name_of
 from _lcm.gated_edge import GatedEdge
-from _lcm.grids import DiscreteGrid, Grid
+from _lcm.grids import Grid
 from _lcm.identity_transition import _IdentityTransition
 from _lcm.processes import _ContinuousStochasticProcess
-from _lcm.processes.joint_normal import JointNormalIIDProcess
 from _lcm.regime_building.schedules import RegimeTransitionLaw
 from _lcm.regime_law import RegimeLaw, RegimeLaws
-from _lcm.typing import EconFunctionArg, FunctionName, RegimeName
+from _lcm.typing import AgeValue, EconFunctionArg, FunctionName, RegimeName
 from _lcm.utils.ast_inspection import value_indexed_arrays
+from _lcm.utils.functools import is_user_function
 from lcm.collective import (
     CollectiveUtility,
     ProjectedRegimeValue,
     ValueDependentConstraint,
 )
+from lcm.condition import Condition
 from lcm.decoupled import Decoupled
 from lcm.exceptions import (
+    InvalidFunctionOutputError,
     ModelInitializationError,
     RegimeInitializationError,
 )
+from lcm.grids import DiscreteGrid
 from lcm.participation import ParticipationCheck, ParticipationRead
 from lcm.phased import Phased
+from lcm.processes import JointNormalIIDProcess
 from lcm.regime import (
     ConstraintEntry,
     FunctionEntry,
@@ -804,11 +808,11 @@ def adapt_collective_utility(
     objective = declaration.objective
     if objective is not None:
         weights = {
-            stakeholder: weight
-            if isinstance(weight, float | int)
-            else adapt_user_function(
+            stakeholder: adapt_user_function(
                 func=weight, value_grids=value_grids, encode=None, adapters=adapters
             )
+            if is_user_function(weight)
+            else weight
             for stakeholder, weight in objective.weights.items()
         }
         if any(weights[s] is not w for s, w in objective.weights.items()):
@@ -1042,7 +1046,7 @@ class AdaptedBuild:
     encode: DiscreteGrid | None
     """The grid whose code a built function's returned value names, if any."""
 
-    def __call__(self, age: float) -> UserFunction:
+    def __call__(self, age: AgeValue) -> UserFunction:
         func = adapt_user_function(
             func=self.build(age), value_grids=self.value_grids, encode=self.encode
         )
@@ -1250,7 +1254,14 @@ class ValueAdapter:
                 for name in self._reads
             }
         )
-        return result if self.encode is None else self.encode.encode(result)
+        if self.encode is None:
+            return result
+        try:
+            return self.encode.encode(result)
+        except TypeError as error:
+            # An integer value grid refuses a non-integer dtype, which is static.
+            msg = f"{name_of(self.func)} returned a value of the wrong kind: {error}"
+            raise InvalidFunctionOutputError(msg) from error
 
 
 def _node_position(*, process: _ContinuousStochasticProcess, value: ValueND) -> ValueND:

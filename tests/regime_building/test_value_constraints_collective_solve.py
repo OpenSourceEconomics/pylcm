@@ -445,14 +445,6 @@ def test_ir_model_via_public_model_api():
 # Genuine projection + interpolation at off-grid projected coordinates
 
 
-@categorical(ordered=False)
-class ProjRegimeId:
-    single_f: ScalarInt
-    single_f_terminal: ScalarInt
-    married: ScalarInt
-    married_terminal: ScalarInt
-
-
 def test_projection_maps_states_and_reference_v_is_interpolated_off_grid():
     """A non-identity projection lands between the reference regime's grid points.
 
@@ -613,12 +605,6 @@ def test_projection_maps_states_and_reference_v_is_interpolated_off_grid():
 
 
 # On-path -inf vs the dissolution flag (no value constraints involved)
-
-
-@categorical(ordered=False)
-class InfRegimeId:
-    couple: ScalarInt
-    couple_terminal: ScalarInt
 
 
 def test_on_path_minus_inf_value_is_not_dissolution():

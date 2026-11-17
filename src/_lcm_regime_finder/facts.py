@@ -582,17 +582,6 @@ def status_axes(facts: Facts, cell: Record) -> tuple[tuple[str, tuple[int, ...]]
     return tuple(axes)
 
 
-def status_points(facts: Facts, cell: Record, limit: int) -> list[dict[str, int]]:
-    """Return every point of the cell's status rectangle, or raise past `limit`."""
-    axes = status_axes(facts, cell)
-    size = 1
-    for _, codes in axes:
-        size *= len(codes)
-    if size > limit:
-        raise FactsBudgetError(backend="dense", unfinished=[cell["id"]], limit=f"status_lanes limit of {limit}")
-    return [dict(zip([n for n, _ in axes], point, strict=True)) for point in product(*(c for _, c in axes))]
-
-
 class SourceFacts:
     """Exact facts from the captured callback source, one point at a time.
 

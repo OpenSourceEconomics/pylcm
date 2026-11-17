@@ -20,13 +20,13 @@ import jax.core
 import jax.numpy as jnp
 import numpy as np
 from beartype import beartype
-from jaxtyping import Num
+from jaxtyping import Float, Num
 
 from _lcm.beartype_conf import SHOCK_CONF
 from _lcm.dtypes import CanonicalArrayWriter
 from _lcm.grids.categorical import DataclassInstance
 from _lcm.probability import is_represented_zero
-from _lcm.processes.base import StateConditioned, sealed
+from _lcm.processes.base import sealed
 from _lcm.processes.joint_normal import (
     _exact_zero_pivots,
     admitted_correlation_factor,
@@ -34,6 +34,7 @@ from _lcm.processes.joint_normal import (
 from _lcm.simulation.random_address import inverse_cdf_index
 from lcm.exceptions import GridInitializationError, ShockDeclarationError
 from lcm.grids import DiscreteGrid
+from lcm.state_conditioned import StateConditioned
 from lcm.typing import (
     ActionName,
     BoolND,
@@ -50,7 +51,13 @@ from lcm.typing import (
 type ShockName = str
 type ShockGroupName = str
 type HostArray = Num[np.ndarray, "..."]
-type LawValue = float | int | FloatND | IntND | HostArray | tuple[float, ...]
+type HostFloatArray = Float[np.ndarray, "..."]
+# A law coefficient as declared and as resolved: a float. A Python `int` is
+# admitted at a public signature and stored as a `float`.
+type LawValue = float | FloatND | HostFloatArray | tuple[float, ...]
+# A value of the model context a law reads: a parameter or input of a callable
+# law, or a state, which may be an integer category code or index.
+type LawInput = LawValue | int | IntND | HostArray
 
 
 @beartype(conf=SHOCK_CONF)
@@ -130,7 +137,7 @@ class _ConditionedLookup:
     values: tuple[float, ...]
     """Values in categorical code order."""
 
-    def __call__(self, **inputs: LawValue) -> FloatND:
+    def __call__(self, **inputs: LawInput) -> FloatND:
         code = jnp.asarray(inputs[self.on])
         if code.dtype.kind not in "iu":
             return jnp.full(code.shape, jnp.nan)
@@ -567,8 +574,8 @@ class ShockGroup:
         self,
         *,
         base_nodes: FloatND,
-        params: Mapping[ParameterName, LawValue] = MappingProxyType({}),
-        inputs: Mapping[ReferenceName, LawValue] = MappingProxyType({}),
+        params: Mapping[ParameterName, LawInput] = MappingProxyType({}),
+        inputs: Mapping[ReferenceName, LawInput] = MappingProxyType({}),
     ) -> Realisation:
         """Map realised base innovations; this operation itself never samples a rule.
 
@@ -585,8 +592,8 @@ class ShockGroup:
         self,
         *,
         nodes: NodeSet,
-        params: Mapping[ParameterName, LawValue] = MappingProxyType({}),
-        inputs: Mapping[ReferenceName, LawValue] = MappingProxyType({}),
+        params: Mapping[ParameterName, LawInput] = MappingProxyType({}),
+        inputs: Mapping[ReferenceName, LawInput] = MappingProxyType({}),
     ) -> Realisation:
         """Evaluate all quadrature nodes, enumerating discrete outcomes exactly."""
         return self._realise(
@@ -627,7 +634,7 @@ class ShockGroup:
         return support
 
     def _has_identity_correlation(
-        self, *, params: Mapping[ParameterName, LawValue]
+        self, *, params: Mapping[ParameterName, LawInput]
     ) -> bool | BoolND:
         """Prove exact identity at the current binding, without admitting a factor.
 
@@ -654,7 +661,7 @@ class ShockGroup:
     def _correlation_factor(
         self,
         *,
-        params: Mapping[ParameterName, LawValue],
+        params: Mapping[ParameterName, LawInput],
         admitted_correlation_support: BoolND | None = None,
     ) -> tuple[FloatND, BoolND]:
         """Share the admitted active-precision factor between forward and inverse."""
@@ -693,8 +700,8 @@ class ShockGroup:
         self,
         *,
         base_nodes: FloatND,
-        params: Mapping[ParameterName, LawValue],
-        inputs: Mapping[ReferenceName, LawValue],
+        params: Mapping[ParameterName, LawInput],
+        inputs: Mapping[ReferenceName, LawInput],
         nodes: NodeSet | None,
         admitted_correlation_support: BoolND | None = None,
         scalar_cell_group: ShockGroupName | None = None,
@@ -931,8 +938,8 @@ def _resolve_parameter(
     *,
     value: LawParameter,
     name: ParameterName,
-    params: Mapping[ParameterName, LawValue],
-    inputs: Mapping[ReferenceName, LawValue],
+    params: Mapping[ParameterName, LawInput],
+    inputs: Mapping[ReferenceName, LawInput],
 ) -> FloatND:
     if value is None:
         if name not in params:

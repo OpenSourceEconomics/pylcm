@@ -39,7 +39,7 @@ def test_kink_aware_interp_returns_the_otherwise_side_at_the_exact_limit():
             query=jnp.asarray([limit]),
             grid=grid,
             values=values,
-            limit=limit,
+            limit=jnp.asarray(limit),
             equality_owner="otherwise",
         )[0]
     )
@@ -56,7 +56,7 @@ def test_kink_aware_interp_returns_the_when_side_at_the_exact_limit():
             query=jnp.asarray([limit]),
             grid=grid,
             values=values,
-            limit=limit,
+            limit=jnp.asarray(limit),
             equality_owner="when",
         )[0]
     )
@@ -89,12 +89,12 @@ def test_case_step_matches_a_dense_brute_through_a_value_jump():
         liquid_grid=liquid_grid,
         next_liquid_grid=liquid_grid,
         savings_grid=savings_grid,
-        discount_factor=beta,
+        discount_factor=jnp.asarray(beta),
         preferences=crra_preferences(crra=crra),
         next_liquid=(1.0 + return_liquid) * savings_grid + income,
         marginal_return=jnp.full_like(savings_grid, 1.0 + return_liquid),
         subsidy=subsidy,
-        asset_limit=limit,
+        asset_limit=jnp.asarray(limit),
         equality_owner="otherwise",
     )
 
@@ -134,7 +134,7 @@ def test_direct_route_offers_both_declared_savings_endpoints(
         liquid_grid=liquid,
         next_liquid_grid=savings,
         savings_grid=savings,
-        discount_factor=0.95,
+        discount_factor=jnp.asarray(0.95),
         preferences=crra_preferences(crra=2.0),
         next_liquid=savings,
         marginal_return=jnp.ones_like(savings),

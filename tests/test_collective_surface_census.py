@@ -59,16 +59,6 @@ def _calls(*, source: PythonSource, name: str) -> bool:
     return False
 
 
-def _passes_keyword(*, source: PythonSource, keyword: str) -> bool:
-    """Report whether the source passes `keyword=` to any call."""
-    for node in ast.walk(ast.parse(source)):
-        if isinstance(node, ast.Call) and any(
-            kw.arg == keyword for kw in node.keywords
-        ):
-            return True
-    return False
-
-
 def _reaches_public_model(*, source: PythonSource) -> bool:
     """Recognize a call to `Model`, plain or as an attribute."""
     return _calls(source=source, name="Model")

@@ -5,7 +5,6 @@ from types import MappingProxyType
 import jax.numpy as jnp
 import pytest
 
-from _lcm.regime_building.canonicalize import canonicalize_regimes
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.phases import PhasedRegimeSpec
 from lcm import (
@@ -19,6 +18,7 @@ from lcm.exceptions import ModelInitializationError
 from lcm.regime import Regime, StateTransitionEntry
 from lcm.typing import FloatND, StateName
 from tests.conftest import bind_laws
+from tests.regime_building._canonicalize import canonicalize_regimes
 
 
 def _probability() -> FloatND:

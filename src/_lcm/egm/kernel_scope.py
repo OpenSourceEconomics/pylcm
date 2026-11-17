@@ -14,7 +14,7 @@ from types import MappingProxyType
 
 from _lcm.constraints.bounds import matches_installed_literal_bound
 from _lcm.constraints.processed import ProcessedConstraintsMapping
-from _lcm.egm.preferences import concatenate_regime_function
+from _lcm.egm.preferences import concatenate_felicity, concatenate_regime_function
 from _lcm.egm.regime_introspection import (
     _get_child_discrete_actions,
     _get_child_resources,
@@ -341,7 +341,7 @@ def _find_unsupported_function_args(
         {solver.continuous_state} if asset_row_mode else set()
     )
     allowed_params = flat_param_names | {"age", "period"}
-    utility_func = concatenate_regime_function(functions=functions, target="utility")
+    utility_func = concatenate_felicity(functions=functions)
     arg_requirements: list[tuple[str, frozenset[str], set[str]]] = [
         (
             "the utility function",

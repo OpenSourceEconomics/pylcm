@@ -17,10 +17,10 @@ from types import MappingProxyType
 from typing import Literal, cast
 
 from _lcm.engine import _StochasticStateTransition
-from _lcm.grids import DiscreteGrid
 from _lcm.typing import RegimeName, TransitionFunctionName
 from _lcm.utils.ast_inspection import _get_func_indexing_params
 from lcm.exceptions import InvalidStateTransitionProbabilitiesError
+from lcm.grids import DiscreteGrid
 from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
 from lcm.regime import StateEntry, StateTransitionEntry

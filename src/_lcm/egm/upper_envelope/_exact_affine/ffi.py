@@ -110,31 +110,6 @@ def _default_backend() -> str:
 _REGISTERED: bool = False
 
 
-def kernel_built() -> bool:
-    """Return whether this platform has an exact-affine kernel at all.
-
-    Answers from the file alone, deliberately: a platform that never built one
-    is a different situation from a build that is present and cannot answer, and
-    only the first is a reason to stop asking. The second is a broken build and
-    belongs in front of whoever made it.
-    """
-    return _CPU_LIBRARY.is_file()
-
-
-def kernel_built_for_current_backend() -> bool:
-    """Return whether a kernel file exists for the selected JAX backend.
-
-    This is deliberately a file-presence predicate, not a loadability probe.
-    A missing file is a supported capability absence and can justify skipping a
-    test that explicitly declares an exact-kernel requirement. A file that is
-    present but stale, unloadable, or missing a symbol is a broken build and must
-    reach `_ensure_registered`, where it fails loudly.
-    """
-    if not kernel_built():
-        return False
-    return jax.default_backend() != "gpu" or cuda_kernel_built()
-
-
 def kernel_available() -> bool:
     """Return whether a verdict can be requested in this process.
 
@@ -306,12 +281,12 @@ def exact_affine_read(
 
     """
     _ensure_registered()
-    operands = _broadcast(x0, x1, v0, v1, x_query)
-    return _exact_affine_read_impl(*operands)
+    x0, x1, v0, v1, x_query = _broadcast(x0, x1, v0, v1, x_query)
+    return _exact_affine_read_ffi(x0=x0, x1=x1, v0=v0, v1=v1, x_query=x_query)
 
 
-# keyword-only-exempt: library-callback=jax.custom_jvp
 def _exact_affine_read_ffi(
+    *,
     x0: FloatND,
     x1: FloatND,
     v0: FloatND,
@@ -331,84 +306,6 @@ def _exact_affine_read_ffi(
         target, result_shapes, vmap_method="broadcast_all"
     )(*operands)
     return published, status
-
-
-# Bound by assignment rather than decorator syntax: the package-wide beartype
-# claw preserves plain functions but can rebind callable decorator instances to
-# ``__call__`` and thereby hide ``defjvp``.
-_exact_affine_read_impl = jax.custom_jvp(_exact_affine_read_ffi)
-
-
-# keyword-only-exempt: library-callback=jax.custom_jvp.defjvp
-@_exact_affine_read_impl.defjvp
-def _exact_affine_read_jvp(
-    primals: tuple[FloatND, FloatND, FloatND, FloatND, FloatND],
-    tangents: tuple[FloatND, FloatND, FloatND, FloatND, FloatND],
-) -> tuple[
-    tuple[FloatND, IntND],
-    tuple[FloatND, IntND],
-]:
-    """Differentiate the represented affine line at a fixed exact owner.
-
-    The native exact reader remains the primal source of truth. Its operands are
-    stopped before entering the opaque call so forward-over-forward AD never
-    asks JAX to differentiate the FFI. The tangent is the complete differential
-    of the unrounded affine rational in all five floating operands.
-
-    Forward mode only in this implementation. On finite primals and finite
-    directions, the affine differential is linear and has a mathematical
-    transpose. This rule also inspects tangent finiteness and the resulting
-    differential so it can fail closed on a non-finite direction; JAX therefore
-    cannot automatically transpose the custom JVP, and no separate reverse rule
-    is registered. Consequently `jax.grad` and `jax.vjp` raise here while
-    `jax.jvp` and `jax.jacfwd` carry the exact slope. Reverse-mode support would
-    require an explicit rule with its own non-finite-cotangent contract rather
-    than deleting the forward-mode refusal guard.
-    """
-    x0, x1, v0, v1, x_query = primals
-    dx0, dx1, dv0, dv1, dx_query = tangents
-    stopped = tuple(jax.lax.stop_gradient(value) for value in primals)
-    published, status = _exact_affine_read_ffi(
-        x0=stopped[0],
-        x1=stopped[1],
-        v0=stopped[2],
-        v1=stopped[3],
-        x_query=stopped[4],
-    )
-
-    width = x1 - x0
-    alpha = (x_query - x0) / width
-    slope = (v1 - v0) / width
-    one_minus_alpha = 1.0 - alpha
-    published_dot = (
-        one_minus_alpha * dv0
-        + alpha * dv1
-        + slope * (dx_query - one_minus_alpha * dx0 - alpha * dx1)
-    )
-    finite_primals = (
-        jnp.isfinite(x0)
-        & jnp.isfinite(x1)
-        & jnp.isfinite(v0)
-        & jnp.isfinite(v1)
-        & jnp.isfinite(x_query)
-    )
-    finite_tangents = (
-        jnp.isfinite(dx0)
-        & jnp.isfinite(dx1)
-        & jnp.isfinite(dv0)
-        & jnp.isfinite(dv1)
-        & jnp.isfinite(dx_query)
-    )
-    decided = (
-        (status == 0)
-        & finite_primals
-        & finite_tangents
-        & (width > 0)
-        & jnp.isfinite(published_dot)
-    )
-    published_dot = jnp.where(decided, published_dot, jnp.nan)
-    status_dot = jnp.zeros(jnp.shape(status), dtype=jax.dtypes.float0)
-    return (published, status), (published_dot, status_dot)
 
 
 @overload
@@ -540,10 +437,19 @@ def exact_query_winner(
     if stable_array.shape != shape:
         msg = f"stable_index must have segment shape {shape}, got {stable_array.shape}."
         raise ValueError(msg)
-    winner, status = _shared_segment_winner(*floating, live_array, stable_array, query)
+    winner, status = _shared_segment_winner_primal(
+        *floating, live_array, stable_array, query
+    )
     if return_strict_primary:
-        strict_primary = _shared_strict_primary(
-            *floating, live_array, query, winner, status
+        strict_primary = _shared_strict_primary_primal(
+            left_grid=floating[0],
+            right_grid=floating[1],
+            left_value=floating[2],
+            right_value=floating[3],
+            live=live_array,
+            x_query=query,
+            winner=winner,
+            status=status,
         )
         return winner, status, strict_primary
     return winner, status
@@ -680,12 +586,25 @@ def exact_query_winner_batched(
     if stable_array.shape != shape:
         msg = f"stable_index must have segment shape {shape}, got {stable_array.shape}."
         raise ValueError(msg)
-    winner, status = _batched_segment_winner_impl(
-        *floating, live_array, stable_array, query
+    winner, status = _batched_segment_winner_ffi(
+        left_grid=floating[0],
+        right_grid=floating[1],
+        left_value=floating[2],
+        right_value=floating[3],
+        live=live_array,
+        stable_index=stable_array,
+        x_query=query,
     )
     if return_strict_primary:
-        strict_primary = _batched_strict_primary(
-            *floating, live_array, query, winner, status
+        strict_primary = _batched_strict_primary_primal(
+            left_grid=floating[0],
+            right_grid=floating[1],
+            left_value=floating[2],
+            right_value=floating[3],
+            live=live_array,
+            x_query=query,
+            winner=winner,
+            status=status,
         )
         return winner, status, strict_primary
     return winner, status
@@ -714,8 +633,8 @@ def _canonical_query_segments(
     return canonical_x0, canonical_x1, canonical_v0, canonical_v1, lower, upper
 
 
-# keyword-only-exempt: library-callback=jax.custom_jvp
 def _shared_strict_primary_primal(
+    *,
     left_grid: FloatND,
     right_grid: FloatND,
     left_value: FloatND,
@@ -758,33 +677,8 @@ def _shared_strict_primary_primal(
     return (status == 0) & jnp.all(~candidate | (comparison == 1), axis=-1)
 
 
-_shared_strict_primary = jax.custom_jvp(_shared_strict_primary_primal)
-
-
-# keyword-only-exempt: library-callback=jax.custom_jvp.defjvp
-@_shared_strict_primary.defjvp
-def _shared_strict_primary_jvp(
-    primals: tuple[FloatND, FloatND, FloatND, FloatND, IntND, FloatND, IntND, IntND],
-    tangents: tuple[FloatND, FloatND, FloatND, FloatND, IntND, FloatND, IntND, IntND],
-) -> tuple[BoolND, BoolND]:
-    """Strict ownership is a discrete exact fact with a float0 tangent."""
-    del tangents
-    stopped = tuple(jax.lax.stop_gradient(value) for value in primals)
-    strict = _shared_strict_primary_primal(
-        left_grid=stopped[0],
-        right_grid=stopped[1],
-        left_value=stopped[2],
-        right_value=stopped[3],
-        live=stopped[4],
-        x_query=stopped[5],
-        winner=stopped[6],
-        status=stopped[7],
-    )
-    return strict, jnp.zeros(jnp.shape(strict), dtype=jax.dtypes.float0)
-
-
-# keyword-only-exempt: library-callback=jax.custom_jvp
 def _batched_strict_primary_primal(
+    *,
     left_grid: FloatND,
     right_grid: FloatND,
     left_value: FloatND,
@@ -834,33 +728,8 @@ def _batched_strict_primary_primal(
     return (status == 0) & jnp.all(~candidate | (comparison == 1), axis=-1)
 
 
-_batched_strict_primary = jax.custom_jvp(_batched_strict_primary_primal)
-
-
-# keyword-only-exempt: library-callback=jax.custom_jvp.defjvp
-@_batched_strict_primary.defjvp
-def _batched_strict_primary_jvp(
-    primals: tuple[FloatND, FloatND, FloatND, FloatND, IntND, FloatND, IntND, IntND],
-    tangents: tuple[FloatND, FloatND, FloatND, FloatND, IntND, FloatND, IntND, IntND],
-) -> tuple[BoolND, BoolND]:
-    """Batched strict ownership is discrete with a float0 tangent."""
-    del tangents
-    stopped = tuple(jax.lax.stop_gradient(value) for value in primals)
-    strict = _batched_strict_primary_primal(
-        left_grid=stopped[0],
-        right_grid=stopped[1],
-        left_value=stopped[2],
-        right_value=stopped[3],
-        live=stopped[4],
-        x_query=stopped[5],
-        winner=stopped[6],
-        status=stopped[7],
-    )
-    return strict, jnp.zeros(jnp.shape(strict), dtype=jax.dtypes.float0)
-
-
-# keyword-only-exempt: library-callback=jax.custom_jvp
 def _batched_segment_winner_ffi(
+    *,
     left_grid: FloatND,
     right_grid: FloatND,
     left_value: FloatND,
@@ -891,32 +760,6 @@ def _batched_segment_winner_ffi(
         x_query,
     )
     return winner, status
-
-
-_batched_segment_winner_impl = jax.custom_jvp(_batched_segment_winner_ffi)
-
-
-# keyword-only-exempt: library-callback=jax.custom_jvp.defjvp
-@_batched_segment_winner_impl.defjvp
-def _batched_segment_winner_jvp(
-    primals: tuple[FloatND, FloatND, FloatND, FloatND, IntND, IntND, FloatND],
-    tangents: tuple[FloatND, FloatND, FloatND, FloatND, IntND, IntND, FloatND],
-) -> tuple[tuple[IntND, IntND], tuple[IntND, IntND]]:
-    """Keep exact batched ownership discrete under differentiation."""
-    del tangents
-    stopped = tuple(jax.lax.stop_gradient(value) for value in primals)
-    winner, status = _batched_segment_winner_ffi(
-        left_grid=stopped[0],
-        right_grid=stopped[1],
-        left_value=stopped[2],
-        right_value=stopped[3],
-        live=stopped[4],
-        stable_index=stopped[5],
-        x_query=stopped[6],
-    )
-    winner_dot = jnp.zeros(jnp.shape(winner), dtype=jax.dtypes.float0)
-    status_dot = jnp.zeros(jnp.shape(status), dtype=jax.dtypes.float0)
-    return (winner, status), (winner_dot, status_dot)
 
 
 # keyword-only-exempt: library-callback=jax.custom_batching.custom_vmap
@@ -988,28 +831,28 @@ def _shared_segment_winner_vmap(
         operand=x_query, batched=query_batched, axis_size=axis_size
     )
     if any(segments_batched):
-        winner, status = _batched_segment_winner_impl(
-            _with_batch_axis(
+        winner, status = _batched_segment_winner_ffi(
+            left_grid=_with_batch_axis(
                 operand=left_grid, batched=segments_batched[0], axis_size=axis_size
             ),
-            _with_batch_axis(
+            right_grid=_with_batch_axis(
                 operand=right_grid, batched=segments_batched[1], axis_size=axis_size
             ),
-            _with_batch_axis(
+            left_value=_with_batch_axis(
                 operand=left_value, batched=segments_batched[2], axis_size=axis_size
             ),
-            _with_batch_axis(
+            right_value=_with_batch_axis(
                 operand=right_value, batched=segments_batched[3], axis_size=axis_size
             ),
-            _with_batch_axis(
+            live=_with_batch_axis(
                 operand=live, batched=segments_batched[4], axis_size=axis_size
             ),
-            _with_batch_axis(
+            stable_index=_with_batch_axis(
                 operand=stable_index,
                 batched=segments_batched[5],
                 axis_size=axis_size,
             ),
-            query.reshape(axis_size, -1),
+            x_query=query.reshape(axis_size, -1),
         )
     else:
         winner, status = _shared_segment_winner_ffi(
@@ -1034,102 +877,6 @@ _shared_segment_winner_primal = jax.custom_batching.custom_vmap(
     _shared_segment_winner_ffi
 )
 _shared_segment_winner_primal.def_vmap(_shared_segment_winner_vmap)
-_shared_segment_winner_impl = jax.custom_jvp(_shared_segment_winner_primal)
-
-
-# keyword-only-exempt: library-callback=jax.custom_jvp.defjvp
-@_shared_segment_winner_impl.defjvp
-def _shared_segment_winner_jvp(
-    primals: tuple[FloatND, FloatND, FloatND, FloatND, IntND, IntND, FloatND],
-    tangents: tuple[FloatND, FloatND, FloatND, FloatND, IntND, IntND, FloatND],
-) -> tuple[tuple[IntND, IntND], tuple[IntND, IntND]]:
-    """Keep exact shared ownership discrete under differentiation."""
-    del tangents
-    stopped = tuple(jax.lax.stop_gradient(value) for value in primals)
-    winner, status = _shared_segment_winner_primal(
-        left_grid=stopped[0],
-        right_grid=stopped[1],
-        left_value=stopped[2],
-        right_value=stopped[3],
-        live=stopped[4],
-        stable_index=stopped[5],
-        x_query=stopped[6],
-    )
-    winner_dot = jnp.zeros(jnp.shape(winner), dtype=jax.dtypes.float0)
-    status_dot = jnp.zeros(jnp.shape(status), dtype=jax.dtypes.float0)
-    return (winner, status), (winner_dot, status_dot)
-
-
-_shared_segment_winner = _shared_segment_winner_impl
-
-
-def exact_affine_handover(
-    *,
-    a_x0: FloatND,
-    a_x1: FloatND,
-    a_v0: FloatND,
-    a_v1: FloatND,
-    b_x0: FloatND,
-    b_x1: FloatND,
-    b_v0: FloatND,
-    b_v1: FloatND,
-    left: FloatND,
-    right: FloatND,
-) -> tuple[FloatND, IntND]:
-    """Return the first representable state where the incoming line owns.
-
-    The exact cross-multiplied line difference is affine. Its root is formed as
-    a fixed-width integer ratio and rounded directly to IEEE; an exact sign check
-    then moves at most one representable state to obtain the least float at or
-    above the root.
-
-    Args:
-        a_x0: Lower endpoint abscissa of the outgoing line.
-        a_x1: Upper endpoint abscissa of the outgoing line.
-        a_v0: Outgoing-line value at `a_x0`.
-        a_v1: Outgoing-line value at `a_x1`.
-        b_x0: Lower endpoint abscissa of the incoming line.
-        b_x1: Upper endpoint abscissa of the incoming line.
-        b_v0: Incoming-line value at `b_x0`.
-        b_v1: Incoming-line value at `b_x1`.
-        left: Left edge of the interval the outgoing line owns from.
-        right: Right edge of the interval in which the handover must lie.
-
-    Returns:
-        The first representable state the incoming line owns and a status. The
-        status is nonzero when the operands are invalid, the lines do not have a
-        unique increasing-slope handover, or that state cannot be represented.
-
-    Raises:
-        ExactAffineKernelUnavailableError: If the kernel is absent or unloadable.
-
-    """
-    _ensure_registered()
-    operands = _broadcast(
-        a_x0,
-        a_x1,
-        a_v0,
-        a_v1,
-        b_x0,
-        b_x1,
-        b_v0,
-        b_v1,
-        left,
-        right,
-    )
-    target = _target_for(
-        operands=operands,
-        f32="ExactAffineHandoverF32",
-        f64="ExactAffineHandoverF64",
-    )
-    result_shapes = (
-        jax.ShapeDtypeStruct(operands[0].shape, operands[0].dtype),
-        jax.ShapeDtypeStruct(operands[0].shape, jnp.int32),
-    )
-    handover, status = jax.ffi.ffi_call(
-        target, result_shapes, vmap_method="broadcast_all"
-    )(*operands)
-    return handover, status
 
 
 def exact_cell_hull(

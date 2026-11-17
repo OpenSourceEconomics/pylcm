@@ -262,7 +262,7 @@ def _callback(value: Any, coordinates: set[str], notes: list[str], callable_reco
             for name in ("func", "function"):
                 if name in attrs:
                     return _callback(attrs[name], coordinates, notes, callable_records)
-        if short == "_Constant":
+        if short in {"_RegimeCodeConstant", "_ProbabilityConstant"}:
             return _callback({"kind": "callable", "source": "def fixed():\n    return 0\n",
                               "arguments": [], "constant_payload": value, "analysis_only_stub": True}, coordinates, notes, callable_records)
         if short == "_PeriodDispatch" and attrs.get("cases"):

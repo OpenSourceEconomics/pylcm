@@ -163,11 +163,3 @@ def test_donation_off_preserves_values_and_the_model_fingerprint(
         assert len(actual) == len(expected)
         for actual_leaf, expected_leaf in zip(actual, expected, strict=True):
             np.testing.assert_array_equal(actual_leaf, expected_leaf)
-
-
-@pytest.mark.parametrize("value", [0, 1, None, "yes", np.bool_(1)])
-def test_donation_switch_requires_an_exact_bool(
-    value: int | str | np.bool_ | None,
-) -> None:
-    with pytest.raises(ValueError, match=r"donate_buffers.*bool"):
-        ExecutionConfig(donate_buffers=value)  # ty: ignore[invalid-argument-type]

@@ -13,8 +13,9 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from _lcm.egm.euler_errors import consumption_euler_error_log10
 from _lcm.egm.one_asset_egm_step import egm_one_asset_step
+from _lcm.egm.preferences import Preferences
+from lcm.typing import Float1D
 from tests.conftest import X64_ENABLED
 from tests.solution._crra_preferences import crra_preferences
 
@@ -25,6 +26,60 @@ _EXACT_RESIDUAL_LOG10_BOUND = -8.0 if X64_ENABLED else -6.0
 _LIQUID_GRID = jnp.linspace(0.1, 20.0, 12)
 _SAVINGS_GRID = jnp.linspace(0.0, 20.0, 40)
 _DISCOUNT, _CRRA, _RETURN, _INCOME = 0.98, 2.0, 0.02, 0.50
+
+
+def _consumption_euler_error_log10(
+    *,
+    liquid_grid: Float1D,
+    consumption: Float1D,
+    next_consumption: Float1D,
+    discount_factor: float,
+    preferences: Preferences,
+    next_liquid: Float1D,
+    marginal_return: Float1D,
+) -> Float1D:
+    """Compute the log10 unit-free consumption Euler error at each liquid grid point.
+
+    For chosen consumption `c` the Euler equation implies
+    `c_euler = (u')^-1(beta*g'(A)*u'(c_next))`, with `c_next` the next-period
+    consumption policy interpolated at the landing point `g(A)` the regime's own law
+    of motion gives for the savings `A = liquid - c`. The error is
+    `log10(|c_euler / c - 1|)`.
+
+    Both readings of the law are taken as arguments rather than rebuilt here from an
+    assumed functional form: a metric that rebuilds `(1 + r)*A + income` reports the
+    accuracy of a model the regime does not declare whenever the law carries anything
+    else, and the departure cannot register as an error anywhere.
+
+    Args:
+        liquid_grid: Regular liquid-state grid (ascending); the abscissae
+            `next_consumption` is read at.
+        consumption: Chosen consumption policy on `liquid_grid`.
+        next_consumption: Next period's consumption policy on `liquid_grid`. Pass the
+            identity `liquid_grid` for a terminal bequest (all wealth consumed).
+        discount_factor: Discount factor `beta`.
+        preferences: The regime's felicity `u`, its marginal `u'`, and its
+            inverse marginal `(u')^-1`, bound to this solve's parameters.
+        next_liquid: The regime's own law of motion evaluated at each point's savings
+            `liquid_grid - consumption`, same shape. Where that saving lands next
+            period.
+        marginal_return: That law's derivative with respect to savings, same shape.
+            How the landing point moves when savings move, which is the factor the
+            Euler equation discounts the continuation marginal by. For the
+            conventional law this is the gross return at every point.
+
+    Returns:
+        The base-10 log relative consumption error at each liquid grid point, shape
+        `(len(liquid_grid),)`.
+
+    """
+    consumption_next = jnp.interp(next_liquid, liquid_grid, next_consumption)
+    marginal_next = preferences.marginal_utility(consumption_next)
+    consumption_euler = preferences.inverse_marginal_utility(
+        discount_factor * marginal_return * marginal_next
+    )
+    relative_error = jnp.abs(consumption_euler / consumption - 1.0)
+    return jnp.log10(relative_error)
 
 
 def _conventional_law(savings):
@@ -62,7 +117,7 @@ def test_constrained_consume_all_solution_has_an_exact_euler_residual():
     next_liquid, marginal_return = _law_readings(
         law=_conventional_law, savings=liquid - c_star
     )
-    err = consumption_euler_error_log10(
+    err = _consumption_euler_error_log10(
         liquid_grid=liquid,
         consumption=c_star,
         next_consumption=next_liquid,
@@ -95,7 +150,7 @@ def _retired_median_euler_error(*, n_liquid):
     # The continuation is the terminal bequest: at death all wealth is consumed, so the
     # next-period consumption policy is the identity in liquid.
     errors = np.asarray(
-        consumption_euler_error_log10(
+        _consumption_euler_error_log10(
             liquid_grid=liquid_grid,
             consumption=step.consumption,
             next_consumption=liquid_grid,
@@ -161,7 +216,7 @@ def test_euler_error_vanishes_for_a_policy_optimal_under_a_fixed_cost_law():
         and jnp.all(next_liquid < liquid_grid.max())
     ), "witness requires interior landing points; the interpolation clamps outside"
 
-    errors = consumption_euler_error_log10(
+    errors = _consumption_euler_error_log10(
         liquid_grid=liquid_grid,
         consumption=c_star,
         next_consumption=liquid_grid,

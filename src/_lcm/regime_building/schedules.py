@@ -44,6 +44,7 @@ from typing import TYPE_CHECKING, Literal, NoReturn, cast, no_type_check
 import jax.numpy as jnp
 
 from _lcm.gated_edge import GatedEdge
+from _lcm.output_roles import OutputRole, in_role
 from _lcm.reachability import PhaseName
 from _lcm.regime_building.transition_support import (
     _SupportedDeterministicTransition,
@@ -534,29 +535,16 @@ def lower_demanded_transitions(
         if declared is None:
             lowered[name] = None
             continue
-        law_by_period = schedules.law_by_period_by_regime[name]
-        solve_periods = schedules.context_periods_by_regime[name]
-        if not solve_periods:
-            if not law_by_period:
-                # A declared nonterminal law is a case law or a schedule of them.
-                law_by_period = {
-                    0: cast(
-                        "CaseLaw",
-                        declared.laws[0] if isinstance(declared, ByAge) else declared,
-                    )
-                }
-            solve_periods = (min(law_by_period),)
-        else:
+        law_by_period, solve_periods = _lowering_inputs(
+            schedules=schedules, name=name, declared=declared
+        )
+        if schedules.context_periods_by_regime[name]:
             _fail_if_conflicting_annotations(
                 regime_name=name,
-                laws=tuple(
-                    _phase_side(law=law_by_period[period], side=side)
-                    for side, periods in zip(
-                        _SIDES,
-                        (solve_periods, visited_periods[name]),
-                        strict=True,
-                    )
-                    for period in periods
+                laws=_demanded_sides(
+                    law_by_period=law_by_period,
+                    solve_periods=solve_periods,
+                    simulate_periods=visited_periods[name],
                 ),
             )
         lowered[name] = _lower(
@@ -566,6 +554,73 @@ def lower_demanded_transitions(
             code_by_name=code_by_name,
         )
     return MappingProxyType(lowered)
+
+
+def demanded_declared_laws(
+    *,
+    schedules: RegimeSchedules,
+    declared_transitions: Mapping[RegimeName, RegimeTransitionLaw],
+) -> MappingProxyType[RegimeName, tuple[PhaseLaw, ...]]:
+    """Each nonterminal regime's declared laws at the periods lowering reads.
+
+    These are the laws `lower_demanded_transitions` combines, as the user wrote
+    them: the solve side at the valued periods and the simulate side at the
+    visited ones. Whatever form lowering gives their union, these decide how
+    the model reads an edge parameter.
+    """
+    return MappingProxyType(
+        {
+            name: _demanded_sides(
+                law_by_period=law_by_period,
+                solve_periods=solve_periods,
+                simulate_periods=schedules.acting_periods_by_regime[name],
+            )
+            for name, declared in declared_transitions.items()
+            if declared is not None
+            for law_by_period, solve_periods in (
+                _lowering_inputs(schedules=schedules, name=name, declared=declared),
+            )
+        }
+    )
+
+
+def _lowering_inputs(
+    *,
+    schedules: RegimeSchedules,
+    name: RegimeName,
+    declared: CaseLaw | ByAge,
+) -> tuple[Mapping[int, CaseLaw], tuple[int, ...]]:
+    """A regime's per-period laws and the periods its solve side is lowered over.
+
+    A regime without valued periods keeps one declared law, at one period.
+    """
+    law_by_period = schedules.law_by_period_by_regime[name]
+    solve_periods = schedules.context_periods_by_regime[name]
+    if solve_periods:
+        return law_by_period, solve_periods
+    if not law_by_period:
+        # A declared nonterminal law is a case law or a schedule of them.
+        law_by_period = {
+            0: cast(
+                "CaseLaw",
+                declared.laws[0] if isinstance(declared, ByAge) else declared,
+            )
+        }
+    return law_by_period, (min(law_by_period),)
+
+
+def _demanded_sides(
+    *,
+    law_by_period: Mapping[int, CaseLaw],
+    solve_periods: tuple[int, ...],
+    simulate_periods: tuple[int, ...],
+) -> tuple[PhaseLaw, ...]:
+    """The solve side at the solve periods, then the simulate side at its own."""
+    return tuple(
+        _phase_side(law=law_by_period[period], side=side)
+        for side, periods in zip(_SIDES, (solve_periods, simulate_periods), strict=True)
+        for period in periods
+    )
 
 
 def _fail_if_conflicting_annotations(
@@ -1154,11 +1209,11 @@ def _with_signature[F: UserFunction](
 
 
 @dataclass(frozen=True, eq=False)
-class _Constant:
-    """Return `value` as an array; read nothing."""
+class _RegimeCodeConstant:
+    """Return the regime code `value` as an array; read nothing."""
 
-    value: float | tuple[float, ...]
-    """The fixed value or probability vector."""
+    value: int
+    """The regime code a deterministic law returns."""
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "__signature__", inspect.Signature())
@@ -1166,7 +1221,24 @@ class _Constant:
         object.__setattr__(self, "__name__", "constant")
 
     @no_type_check
-    def __call__(self) -> FloatND | IntND:
+    def __call__(self) -> IntND:
+        return jnp.asarray(self.value)
+
+
+@dataclass(frozen=True, eq=False)
+class _ProbabilityConstant:
+    """Return the probability or probability vector `value`; read nothing."""
+
+    value: float | tuple[float, ...]
+    """A stochastic law's probability, or its probability vector over regimes."""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "__signature__", inspect.Signature())
+        object.__setattr__(self, "__annotations__", {})
+        object.__setattr__(self, "__name__", "constant")
+
+    @no_type_check
+    def __call__(self) -> FloatND:
         return jnp.asarray(self.value)
 
 
@@ -1199,7 +1271,13 @@ def _indicator(
 ) -> Callable[..., FloatND]:
     """Probability one where a deterministic selector returns `code`."""
     return _with_signature(
-        _Indicator(selector=selector, code=code, names=names),
+        _Indicator(
+            selector=in_role(
+                func=selector, role=OutputRole.CODE, kind="Regime selector"
+            ),
+            code=code,
+            names=names,
+        ),
         names=names,
         sources=(selector,),
     )
@@ -1224,7 +1302,7 @@ class _Indicator:
                 "A declaration view is for construction-time checks only and is "
                 "never evaluated."
             )
-        selected = self.selector(**{name: kwargs[name] for name in self.names})
+        selected = self.selector(**_read(kwargs=kwargs, names=self.names))
         return jnp.asarray(selected == self.code, dtype=float)
 
 
@@ -1233,7 +1311,15 @@ def _period_masked(
 ) -> Callable[..., FloatND]:
     """A probability cell that is exactly zero outside `periods`."""
     return _with_signature(
-        _PeriodMasked(cell=cell, periods=periods, names=names),
+        _PeriodMasked(
+            cell=in_role(
+                func=cell,
+                role=OutputRole.FLOAT,
+                kind="Regime transition probability",
+            ),
+            periods=periods,
+            names=names,
+        ),
         names=_with_period(names),
         sources=(cell,),
     )
@@ -1252,9 +1338,15 @@ class _PeriodMasked:
 
     @no_type_check
     def __call__(self, **kwargs: EconFunctionArg) -> FloatND:
-        value = self.cell(**{name: kwargs[name] for name in self.names})
+        value = self.cell(**_read(kwargs=kwargs, names=self.names))
         selected = jnp.isin(kwargs["period"], jnp.asarray(self.periods))
         return jnp.where(selected, value, jnp.zeros_like(value))
+
+
+def _read(
+    *, kwargs: Mapping[str, EconFunctionArg], names: tuple[str, ...]
+) -> dict[str, EconFunctionArg]:
+    return {name: kwargs[name] for name in names}
 
 
 def _period_dispatch(
@@ -1267,7 +1359,9 @@ def _period_dispatch(
     names = tuple(sorted({name for names in case_names for name in names}))
     return _with_signature(
         _PeriodDispatch(
-            cases=cases, case_names=case_names, case_by_period=case_by_period
+            cases=cases,
+            case_names=case_names,
+            case_by_period=case_by_period,
         ),
         names=_with_period(names),
         sources=cases,
@@ -1291,9 +1385,11 @@ class _PeriodDispatch:
         # declared law of this regime evaluated on the same arguments, so an
         # unselected case can at worst produce a value that is discarded. The
         # regime law is never differentiated, so a discarded non-finite value
-        # cannot reach a gradient.
+        # cannot reach a gradient. Each case returns its role's kind (`_dispatch`
+        # wraps it): selecting among them would promote a wrong kind onto a right
+        # one.
         values = [
-            jnp.asarray(case(**{name: kwargs[name] for name in names}))
+            case(**_read(kwargs=kwargs, names=names))
             for case, names in zip(self.cases, self.case_names, strict=True)
         ]
         index = jnp.asarray(self.case_by_period)[kwargs["period"]]
@@ -1398,7 +1494,7 @@ def _plain_law(
     if isinstance(law, str):
         if code_by_name is None:
             return _DeclaredExit(target=law)
-        return _Constant(value=_code(name=law, code_by_name=code_by_name))
+        return _RegimeCodeConstant(value=_code(name=law, code_by_name=code_by_name))
     if isinstance(law, DeterministicTransition):
         return law.func
     return law
@@ -1464,6 +1560,8 @@ def _deterministic_dispatch(
         cases=cast("tuple[UserFunction, ...]", cases),
         laws=laws,
         law_by_period=law_by_period,
+        role=OutputRole.CODE,
+        kind="Regime selector",
     )
 
 
@@ -1472,9 +1570,12 @@ def _dispatch(
     cases: tuple[UserFunction, ...],
     laws: tuple[PhaseLaw, ...],
     law_by_period: Mapping[int, PhaseLaw],
+    role: OutputRole,
+    kind: str,
 ) -> Callable[..., FloatND | IntND]:
     n_periods = max(law_by_period) + 2
     position = {id(law): index for index, law in enumerate(laws)}
+    cases = tuple(in_role(func=case, role=role, kind=kind) for case in cases)
     return _period_dispatch(
         cases=cases,
         case_names=tuple(_argument_names(case) for case in cases),
@@ -1509,7 +1610,13 @@ def _vector_union(
         for law in laws
     )
     return _SupportedStochasticTransition(
-        func=_dispatch(cases=cases, laws=laws, law_by_period=law_by_period),
+        func=_dispatch(
+            cases=cases,
+            laws=laws,
+            law_by_period=law_by_period,
+            role=OutputRole.FLOAT,
+            kind="Regime transition probability",
+        ),
         targets=targets,
     )
 
@@ -1527,7 +1634,7 @@ def _vector_case(
         )
     one_hot = [0.0] * n_regimes
     one_hot[_code(name=law, code_by_name=code_by_name)] = 1.0
-    return _Constant(value=tuple(one_hot))
+    return _ProbabilityConstant(value=tuple(one_hot))
 
 
 def _mapping_union(
@@ -1641,7 +1748,9 @@ def _law_cells(
     if isinstance(law, Mapping):
         return law
     if isinstance(law, str):
-        return MappingProxyType({law: StochasticTransition(func=_Constant(value=1.0))})
+        return MappingProxyType(
+            {law: StochasticTransition(func=_ProbabilityConstant(value=1.0))}
+        )
     if isinstance(law, DeterministicTransition):
         names = _argument_names(law.func)
         return MappingProxyType(

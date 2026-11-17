@@ -29,10 +29,10 @@
 #
 # - `median` — moves when a solution degrades broadly.
 # - `max` — moves first when a mask stops covering a node, since an uncovered
-#   node is a large regret. The node count is small (9 for retired), so this is
-#   a one-node statistic and moves discontinuously with the mask. It is
-#   declared anyway: a single badly wrong node is the shape a
-#   coverage failure takes, and a median cannot see it.
+#   node is a large regret. The node count is small (7 per period for W5), so
+#   this is a one-node statistic and moves discontinuously with the mask. It is
+#   declared anyway: a single badly wrong node is the shape a coverage failure
+#   takes, and a median cannot see it.
 #
 # A tail quantile does not qualify and is deliberately absent. On the rooftop cut
 # it is rounding-chaotic — the keep/delete verdict on a candidate sitting within
@@ -57,14 +57,13 @@
 # need not carry all of them.
 contract_version: 4
 workloads:
-  retired_egm:
+  one_asset_egm:
     description: >-
-      The 1-D EGM solver's retired value on the unconstrained liquid interior.
-      Covers W1 (reading the terminal regime on the terminal regime's own grid)
-      and the matched-grid control.
+      The 1-D EGM solver's value on the unconstrained wealth interior of a
+      one-asset model whose state is not named `liquid`. Covers W5 only.
     sentinel:
       median_value_regret: 0.01
       max_value_regret: 0.03
     measured:
-      cpu_float64: {median: 0.0027, max: 0.0199}
-      cpu_float32: {median: 0.0027, max: 0.0199}
+      cpu_float64: {median: 0.0025, max: 0.0068}
+      cpu_float32: {median: 0.0025, max: 0.0068}

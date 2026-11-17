@@ -25,7 +25,6 @@ from lcm import (
     LinearExpectation,
     LinSpacedGrid,
     Model,
-    Phased,
     PowerMean,
     QuasiArithmeticMean,
     Regime,
@@ -44,10 +43,9 @@ from lcm.consumption_savings_regime import (
 )
 from lcm.exceptions import (
     InvalidNameError,
-    InvalidParamsError,
     ModelInitializationError,
     RegimeInitializationError,
-    ScaledLotteryDifferentiationError,
+    UnsupportedDifferentiationError,
 )
 from lcm.regime import FunctionEntry, RegimeReplacement
 from lcm.solvers import DCEGM, NBEGM, NNBEGM, FiniteOuterGrid, RFCEnvelope
@@ -868,20 +866,6 @@ def test_nbegm_certainty_equivalent_rejects_a_liquid_reading_continuation():
         )
 
 
-def test_certainty_equivalent_rejects_phased():
-    """The certainty equivalent is phase-invariant; `Phased` is rejected."""
-    with pytest.raises(RegimeInitializationError):
-        _make_model(
-            alive_kwargs={  # ty: ignore[invalid-argument-type] - deliberately invalid phase-varying certainty equivalent
-                "certainty_equivalent": Phased(  # ty: ignore[invalid-argument-type]
-                    solve=PowerMean(),
-                    simulate=PowerMean(),
-                ),
-            },
-            dead_kwargs={},
-        )
-
-
 def test_params_template_contains_certainty_equivalent_params():
     """CE params surface under the pseudo-function name `certainty_equivalent`."""
     model = _make_model(
@@ -1677,16 +1661,6 @@ def test_power_mean_aggregate_is_continuous_across_unit_risk_aversion_off_unit_m
         params={"risk_aversion": jnp.asarray(risk_aversion)},
     )
     np.testing.assert_allclose(float(got), 3.0, rtol=1e-3)
-
-
-def test_power_mean_aggregate_reports_a_bad_param_type_as_invalid_params():
-    """A malformed runtime param points the user at their params, not their regime."""
-    with pytest.raises(InvalidParamsError):
-        PowerMean().aggregate(
-            values=jnp.array([1.0, 9.0]),
-            weights=jnp.array([0.5, 0.5]),
-            params={"risk_aversion": "two"},  # ty: ignore[invalid-argument-type]
-        )
 
 
 def _power_transform(*, value: FloatND, risk_aversion: FloatND) -> FloatND:
@@ -2515,7 +2489,7 @@ def test_differentiating_a_scaled_lottery_fails_loudly(mean) -> None:
             values=values, coefficients=coefficients, shifts=shifts, params={}
         )
 
-    with pytest.raises(ScaledLotteryDifferentiationError, match="aggregate_scaled"):
+    with pytest.raises(UnsupportedDifferentiationError):
         jax.grad(reduce_lottery)(values)
 
 

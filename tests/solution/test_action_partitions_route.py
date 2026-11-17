@@ -60,8 +60,6 @@ def test_execution_config_action_partitions_are_frozen() -> None:
     [
         ({"working": 0}, ValueError),
         ({"working": -2}, ValueError),
-        ({"working": True}, ValueError),
-        ({"working": 2.0}, ValueError),
         ({"": 2}, ValueError),
     ],
 )

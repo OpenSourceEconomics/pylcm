@@ -20,9 +20,8 @@ from beartype import beartype
 import lcm.solvers as _solvers
 from _lcm.beartype_conf import REGIME_CONF
 from _lcm.constraints.processed import ConstraintLike
-from _lcm.grids import DiscreteGrid, Grid
+from _lcm.grids import Grid
 from _lcm.post_decision_bound import _PostDecisionLowerBound
-from _lcm.processes.joint_normal import JointNormalIIDProcess
 from _lcm.processes.joint_normal_lowering import lower_joint_normal_processes
 from _lcm.regime_building.transitions import collect_state_transitions
 from _lcm.regime_law import RegimeLaw
@@ -43,7 +42,9 @@ from lcm.decoupled import (
 )
 from lcm.exceptions import RegimeInitializationError
 from lcm.exits import Exit
+from lcm.grids import DiscreteGrid
 from lcm.phased import Phased
+from lcm.processes import JointNormalIIDProcess
 from lcm.shocks import ShockGroupName
 from lcm.taste_shocks import ExtremeValueTasteShocks
 from lcm.transition import (
@@ -551,8 +552,8 @@ class Regime:
         returned unchanged, and reading the view never changes the regime.
         """
         from _lcm.constraints.dynamic_bound import get_floor_node  # noqa: PLC0415
-        from _lcm.constraints.ir import Ref  # noqa: PLC0415
         from _lcm.constraints.processed import normalize_constraints  # noqa: PLC0415
+        from lcm.condition import Ref  # noqa: PLC0415
 
         functions = dict(decompose_functions(self.functions))
         for name, constraint in self.constraints.items():

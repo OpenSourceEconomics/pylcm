@@ -19,9 +19,6 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from _lcm.egm.upper_envelope._exact_affine.ffi import (
-    kernel_built_for_current_backend,
-)
 from _lcm.egm.upper_envelope.query import (
     ComparisonArithmetic,
     EnvelopeWinner,
@@ -29,6 +26,7 @@ from _lcm.egm.upper_envelope.query import (
     finish_envelope_winner,
     merge_envelope_winner,
 )
+from tests.ci._capability import kernel_built_for_current_backend
 from tests.conftest import X64_ENABLED
 
 # Self-brackets are named above every consecutive link, as in the one-shot layout

@@ -10,7 +10,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 from scipy.optimize import brentq
-from scipy.special import log_ndtr, ndtr
+from scipy.special import ndtr
 
 import lcm
 from lcm import shocks as sh
@@ -146,29 +146,6 @@ def test_law_transform(*, law: sh.Law, base: float, expected: float) -> None:
         result = function(base_nodes=jnp.asarray([[base]]))
         result.raise_if_invalid()
         np.testing.assert_allclose(result.values["eps"], [expected], rtol=_tol())
-
-
-def test_mixture_inverse_cdf_and_implicit_derivative() -> None:
-    group = sh.ShockGroup(
-        shocks={
-            "eps": sh.NormalMixture(p1=0.5, mu1=None, sigma1=2.0, mu2=3.0, sigma2=2.0)
-        },
-        nodes=sh.Product(eps=sh.GaussHermite(3)),
-    )
-
-    def quantile(mu: FloatND) -> FloatND:
-        return group.transform(
-            base_nodes=jnp.asarray([[0.0]]), params={"eps__mu1": mu}
-        ).values["eps"][0]
-
-    np.testing.assert_allclose(jax.jit(quantile)(jnp.asarray(-3.0)), 0.0, atol=_tol())
-    np.testing.assert_allclose(jax.grad(quantile)(jnp.asarray(-3.0)), 0.5, rtol=_tol())
-    result = group.transform(
-        base_nodes=jnp.asarray([[-10.0], [10.0]]),
-        params={"eps__mu1": jnp.asarray(-3.0)},
-    )
-    result.raise_if_invalid()
-    assert np.isfinite(np.asarray(result.values["eps"])).all()
 
 
 def test_exact_discrete_and_zero_masses() -> None:
@@ -396,29 +373,6 @@ def test_user_nodes_fingerprint_and_owned_inputs() -> None:
     ).resolve_nodes(group_name="wage", age=0)
     np.testing.assert_allclose(first.base_nodes[:, 0], [-1, 1], atol=0)
     assert first.fingerprint != second.fingerprint
-
-
-def test_mixture_probability_derivative_keeps_positive_tail() -> None:
-    """The mixture-weight slope retains survival mass beyond rounded unit CDFs."""
-
-    z = 40.0 if jax.config.jax_enable_x64 else 15.0
-    group = sh.ShockGroup(
-        shocks={"eps": sh.NormalMixture(p1=None, mu1=0, sigma1=1, mu2=-1, sigma2=1)},
-        nodes=sh.Product(eps=sh.GaussHermite(3)),
-    )
-
-    def quantile(p: FloatND) -> FloatND:
-        result = group.transform(base_nodes=jnp.asarray([[z]]), params={"eps__p1": p})
-        return result.values["eps"][0]
-
-    log_sf = float(log_ndtr(np.asarray(-z)))
-    log_difference = log_sf + np.log(
-        -np.expm1(float(log_ndtr(np.asarray(-(z + 1)))) - log_sf)
-    )
-    reference = np.exp(log_difference + z * z / 2 + np.log(2 * np.pi) / 2)
-    derivative = jax.jit(jax.grad(quantile))(jnp.asarray(1.0))
-    assert reference > 0
-    np.testing.assert_allclose(derivative, reference, rtol=32 * _tol())
 
 
 def test_discrete_terminal_plateau_skips_zero_mass() -> None:

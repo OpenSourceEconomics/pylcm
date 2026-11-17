@@ -24,7 +24,7 @@ from lcm.shocks import (
     Discrete,
     HostArray,
     Law,
-    LawValue,
+    LawInput,
     LogNormal,
     Normal,
     NormalMixture,
@@ -127,8 +127,8 @@ def apply_overrides(  # noqa: C901 - scalar law/support cases and dated activati
     group: ShockGroup,
     addressed: Mapping[ShockName, FloatND],
     overrides: Mapping[ShockName, ShockOverride],
-    params: Mapping[ParameterName, LawValue],
-    inputs: Mapping[ReferenceName, LawValue],
+    params: Mapping[ParameterName, LawInput],
+    inputs: Mapping[ReferenceName, LawInput],
     admitted_correlation_support: BoolND | None,
     active: Mapping[ShockName, BoolND] = MappingProxyType({}),
     fallback_physical: Mapping[ShockName, FloatND | IntND] = MappingProxyType({}),
@@ -250,7 +250,7 @@ def apply_overrides(  # noqa: C901 - scalar law/support cases and dated activati
 def _recover_correlated(
     *,
     group: ShockGroup,
-    params: Mapping[ParameterName, LawValue],
+    params: Mapping[ParameterName, LawInput],
     coordinates: Mapping[ShockName, FloatND],
     informative: Mapping[ShockName, BoolND],
     addressed: Mapping[ShockName, FloatND],
@@ -274,7 +274,7 @@ def _recover_correlated(
 def _recover_factor(
     *,
     group: ShockGroup,
-    params: Mapping[ParameterName, LawValue],
+    params: Mapping[ParameterName, LawInput],
     coordinates: Mapping[ShockName, FloatND],
     informative: Mapping[ShockName, BoolND],
     completion: Mapping[ShockName, FloatND] | None,
@@ -505,8 +505,8 @@ def _law_parameters(
     *,
     name: ShockName,
     law: Law,
-    params: Mapping[ParameterName, LawValue],
-    inputs: Mapping[ReferenceName, LawValue],
+    params: Mapping[ParameterName, LawInput],
+    inputs: Mapping[ReferenceName, LawInput],
 ) -> dict[ParameterName, FloatND]:
     """Resolve the same producing-law scalar parameters for either entry route."""
     parameters = {
@@ -546,8 +546,8 @@ def supplied_group_values(
     *,
     group: ShockGroup,
     supplied: Mapping[ShockName, ShockOverride],
-    params: Mapping[ParameterName, LawValue],
-    inputs: Mapping[ReferenceName, LawValue],
+    params: Mapping[ParameterName, LawInput],
+    inputs: Mapping[ReferenceName, LawInput],
     admitted_correlation_support: BoolND | None,
 ) -> tuple[Mapping[ShockName, FloatND | IntND], BoolND]:
     """Validate supplied values or coordinates; return no latent draw evidence.
@@ -645,8 +645,8 @@ def _finish_supplied_group(
     informative: Mapping[ShockName, BoolND],
     physical: dict[ShockName, FloatND | IntND],
     physical_names: set[ShockName],
-    params: Mapping[ParameterName, LawValue],
-    inputs: Mapping[ReferenceName, LawValue],
+    params: Mapping[ParameterName, LawInput],
+    inputs: Mapping[ReferenceName, LawInput],
     identity: BoolND,
     admitted_correlation_support: BoolND | None,
 ) -> tuple[dict[ShockName, FloatND | IntND], BoolND]:
@@ -696,7 +696,7 @@ def _supplied_form(
     *,
     group: ShockGroup,
     supplied: Mapping[ShockName, ShockOverride],
-    params: Mapping[ParameterName, LawValue],
+    params: Mapping[ParameterName, LawInput],
 ) -> tuple[set[ShockName], bool, bool | BoolND]:
     """Retain full-frame grammar unless runtime identity can validate a partial."""
     unknown = supplied.keys() - group.shocks.keys()

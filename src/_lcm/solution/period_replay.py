@@ -17,23 +17,17 @@ and reports `layout`.
 
 import dataclasses
 import logging
-import time
-from collections.abc import Hashable, Mapping, MutableMapping, Sequence
+from collections.abc import Hashable, Mapping, Sequence
 from pathlib import Path
 from types import MappingProxyType
 from typing import Literal, NotRequired, TypedDict, TypeGuard, cast
 
 import cloudpickle
 import jax
-import jax.numpy as jnp
 import numpy as np
 
 from _lcm.engine import Regime, StateActionSpace, _RegimeSharding
 from _lcm.execution.abstract_program_inputs import abstract_program_inputs
-from _lcm.execution.compiler_memory import (
-    CompilerMemoryBytes,
-    compiler_memory_bytes,
-)
 from _lcm.execution.core_program import (
     CoreBuildContext,
     CoreExecutionDisposition,
@@ -57,16 +51,9 @@ from _lcm.execution.value_transfer import (
     ValueTransferKind,
     resolve_value_transfer,
 )
-from _lcm.execution.workspace_planning import (
-    bootstrap_widths,
-    compiler_memory_reservation,
-)
-from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.solution.backward_induction import (
     _assert_lowered_output_roles,
     _attach_resolved_output_layout,
-    _build_base_state_action_spaces,
-    _build_continuation_templates,
     _edge_kwargs,
     _resolve_program_for_execution,
     _run_period_kernel,
@@ -87,10 +74,10 @@ from _lcm.solution.period_capture import (
     rebuild_sharding,
 )
 from _lcm.time import TimeAxis, age_at
-from _lcm.typing import FlatParams, RegimeName, ValueND
+from _lcm.typing import RegimeName, ValueND
 from lcm.exceptions import ExecutionPlanningError
 from lcm.solver_api import ArtifactKey, KernelOutput
-from lcm.typing import ContinuousState, DiscreteState, FloatND
+from lcm.typing import ContinuousState, DiscreteState
 
 # How faithfully a replay reproduced the captured run:
 # - `logical` — leaves agree in tree, shape and dtype; placement is the
@@ -159,32 +146,6 @@ class PeriodReplay:
     """How faithfully this replay reproduced the captured run."""
 
 
-@dataclasses.dataclass(frozen=True)
-class PeriodCoreMemoryAnalysis:
-    """Compiler memory of one captured period's cores at capture-roundtrip placement.
-
-    The capture preserves the period's logical pytrees and array shapes. Its pickle
-    round trip does not preserve production sharding, so these byte counts describe
-    executables lowered with the restored arrays' default backend placement. They are
-    not production-layout or production-memory measurements.
-    """
-
-    regime_name: RegimeName
-    """Name of the regime the captured kernel belongs to."""
-
-    period: int
-    """Index of the captured period in the model horizon."""
-
-    age: float | None
-    """Age at capture, or `None` for a period model."""
-
-    preserves_production_sharding: bool
-    """Always false: period capture serializes neither sharding nor placement."""
-
-    core_memory_bytes: MappingProxyType[str, CompilerMemoryBytes | None]
-    """Byte counts per production core, keyed as the kernel publishes them."""
-
-
 def replay_period(*, directory: Path) -> PeriodReplay:
     """Re-run the regime-period captured in `directory`.
 
@@ -226,49 +187,6 @@ def replay_period(*, directory: Path) -> PeriodReplay:
         age=age_at(ages=kernel_kwargs["ages"], period=period),
         output=output,
         scope="logical",
-    )
-
-
-def analyze_period_core_memory(*, directory: Path) -> PeriodCoreMemoryAnalysis:
-    """Compile, but never execute, one captured period's cores and read their memory.
-
-    The production cores are lowered against the capture's logical pytrees and
-    production shapes. The capture round trip loses device sharding, so every executable
-    uses the restored arrays' default backend placement. Calling `memory_analysis()`
-    on the resulting executables is safe even when their estimated runtime
-    allocation exceeds the available device budget because this function
-    deliberately has no execution path.
-
-    Args:
-        directory: A capture directory written during a solve.
-
-    Returns:
-        The captured identity and compiler memory per core.
-
-    """
-    payload = _load_capture_payload(directory=directory)
-    regime = payload["regime"]
-    period = payload["period"]
-    kernel_kwargs = payload["kernel_kwargs"]
-    core_tile_widths = payload["core_tile_widths"]
-
-    production = _compile_cores_for_one_period(
-        regime=regime,
-        period=period,
-        kernel_kwargs=kernel_kwargs,
-        core_tile_widths=core_tile_widths,
-    )
-    return PeriodCoreMemoryAnalysis(
-        regime_name=kernel_kwargs["regime_name"],
-        period=period,
-        age=age_at(ages=kernel_kwargs["ages"], period=period),
-        preserves_production_sharding=False,
-        core_memory_bytes=MappingProxyType(
-            {
-                key: compiler_memory_bytes(compiled=core.compiled)
-                for key, core in production.items()
-            }
-        ),
     )
 
 
@@ -399,25 +317,6 @@ def _require_exact_core_tile_widths(
     return widths
 
 
-def _project_axis_widths(
-    *,
-    program: MaterializedCoreProgram,
-    axis_widths: Mapping[str, int],
-) -> MappingProxyType[str, int]:
-    """Bind one program's declared axes from a model-wide width mapping.
-
-    A caller fixes the widths whose effect it is measuring and leaves the rest
-    out. An axis the caller names takes that width, rounded onto the set the
-    axis admits; an axis the caller omits takes the bootstrap width the
-    unbudgeted route would lower it at. A name that binds no axis of the period
-    is refused elsewhere, so an omission is never silently a typo.
-    """
-    axes = program.requirements.axes
-    names = {axis.name for axis in axes}
-    fixed = {name: int(width) for name, width in axis_widths.items() if name in names}
-    return bootstrap_widths(axes=axes, fixed_widths=MappingProxyType(fixed))
-
-
 def _compile_cores_for_one_period(
     *,
     regime: Regime,
@@ -427,8 +326,6 @@ def _compile_cores_for_one_period(
     core_donations: Mapping[str, tuple[str, ...]] = MappingProxyType({}),
     recorded_core_layouts: Mapping[str, CoreLayoutDescriptor] | None = None,
     replay_devices_by_id: Mapping[int, jax.Device] = MappingProxyType({}),
-    axis_widths: Mapping[str, int] | None = None,
-    core_timings: MutableMapping[str, tuple[float, float]] | None = None,
 ) -> MappingProxyType[str, PlannedCore]:
     """Lower and compile the cores of a single period.
 
@@ -440,10 +337,7 @@ def _compile_cores_for_one_period(
     candidate and its width-invariance check can only pass. It runs anyway, so
     the solve loop and the replay reach a graph's producers through one routine.
 
-    `axis_widths` takes precedence over `core_tile_widths`: when it is given,
-    every core's widths are projected from it and the captured `core_tile_widths`
-    are ignored entirely. `core_tile_widths` is read only when `axis_widths` is
-    `None`, and then it must pin exactly one width mapping per core.
+    `core_tile_widths` must pin exactly one width mapping per core.
 
     A core donates exactly the arguments `core_donations` names for it, which is
     empty unless the caller reinstates a captured lowering's donation. The
@@ -471,16 +365,9 @@ def _compile_cores_for_one_period(
             f"at a time in period {period}, and such a period cannot be replayed."
         )
         raise ExecutionPlanningError(msg)
-    declared_widths: Mapping[str, int] = (
-        MappingProxyType({}) if axis_widths is None else axis_widths
-    )
-    captured_widths = (
-        None
-        if axis_widths is not None
-        else _require_exact_core_tile_widths(
-            raw=core_tile_widths,
-            core_names=tuple(graph),
-        )
+    captured_widths = _require_exact_core_tile_widths(
+        raw=core_tile_widths,
+        core_names=tuple(graph),
     )
     compiled: dict[str, PlannedCore] = {}
     producers: dict[str, MappingProxyType[Hashable, ResolvedProducer]] = {}
@@ -489,11 +376,7 @@ def _compile_cores_for_one_period(
         declaration = graph[core_name]
         materialized = materialize_core_program(program=declaration, context=context)
         templates = internal_input_templates(program=materialized, producers=producers)
-        widths = (
-            captured_widths[core_name]
-            if captured_widths is not None
-            else _project_axis_widths(program=materialized, axis_widths=declared_widths)
-        )
+        widths = captured_widths[core_name]
         source_value_template = kernel_kwargs["next_regime_to_V_arr"][
             kernel_kwargs["regime_name"]
         ]
@@ -549,11 +432,9 @@ def _compile_cores_for_one_period(
             out_shardings=layout.out_shardings,
             donate_argnames=donated or None,
         )
-        lowering_start = time.monotonic()
         lowered = jitted.lower(
             **resolved.arguments, **templates, **resolved.static_kwargs
         )
-        lowering_seconds = time.monotonic() - lowering_start
         _assert_lowered_output_roles(
             lowered=lowered,
             output_roles=resolved.output_roles,
@@ -562,13 +443,7 @@ def _compile_cores_for_one_period(
                 f"{kernel_kwargs['regime_name']} {core_name} (replay period {period})"
             ),
         )
-        compile_start = time.monotonic()
         executable = lowered.compile()
-        if core_timings is not None:
-            core_timings[core_name] = (
-                lowering_seconds,
-                time.monotonic() - compile_start,
-            )
         compiled[core_name] = _attach_resolved_output_layout(
             compiled=executable,
             layout=layout,
@@ -1148,267 +1023,3 @@ def _assert_recorded_sharding(
             f"expected {recorded!r}, got {observed!r}."
         )
         raise ValueError(msg)
-
-
-@dataclasses.dataclass(frozen=True, kw_only=True)
-class DeclaredCoreCompilation:
-    """One core of one declared regime-period, compiled and never dispatched.
-
-    The byte counts are the compiler's own report for this executable at the
-    declared widths and placement. They are a statement about the compiled
-    program, not about an allocator: nothing here reserves device memory, and
-    nothing here is executed.
-    """
-
-    regime_name: RegimeName
-    """Regime the core belongs to."""
-
-    period: int
-    """Index of the declared period in the model horizon."""
-
-    age: float | None
-    """Age at this period, or `None` for a period model."""
-
-    core_name: str
-    """Key the period kernel publishes this core under."""
-
-    tile_widths: MappingProxyType[str, int]
-    """Width bound to each execution axis the core declares."""
-
-    lowering_seconds: float
-    """Host wall of the jaxpr-to-MLIR lowering."""
-
-    compile_seconds: float
-    """Host wall of the backend compilation."""
-
-    reservation_bytes: int | None
-    """Complete reported allocation the compiler reserves, or `None` when the
-    backend reported none."""
-
-    peak_bytes: int | None
-    """Raw reported peak of the executable, or `None` when unreported."""
-
-    memory: CompilerMemoryBytes | None
-    """The compiler's per-field memory report, or `None` when unavailable."""
-
-    compiled: jax.stages.Compiled
-    """The compiled executable, for a caller that reads its text or its report."""
-
-
-def compile_declared_period_cores(
-    *,
-    regimes: MappingProxyType[RegimeName, Regime],
-    flat_params: FlatParams,
-    ages: TimeAxis,
-    regime_name: RegimeName,
-    period: int,
-    axis_widths: Mapping[str, int],
-    device_ids: tuple[int, ...] = (),
-    process_grid_resolver: ProcessGridResolver | None = None,
-) -> tuple[DeclaredCoreCompilation, ...]:
-    """Materialize, lower and compile one declared regime-period, without solving.
-
-    The state-action spaces and continuation templates are built by the solve's
-    own builders, so the cores are lowered against the argument trees and
-    logical shapes production uses. Every period above the declared one is
-    skipped: nothing is solved, and no compiled program is called.
-
-    Args:
-        regimes: The model's internal regimes.
-        flat_params: Regime parameters, as a solve would pass them.
-        ages: The model's age grid.
-        regime_name: Regime whose period kernel is compiled.
-        period: Index of the period in `ages`.
-        axis_widths: Width per execution axis, for the model as a whole. Each
-            core is handed the axes it declares that this mapping names; an
-            axis it declares that the mapping omits takes the bootstrap width
-            the unbudgeted route would lower it at, so a caller fixing one axis
-            need not enumerate the rest. A name no core of this period declares
-            is refused, because a width that binds nothing would read as a
-            width that was applied.
-        device_ids: Devices the continuation templates are placed over.
-        process_grid_resolver: Resolver for runtime process grids, when the
-            model needs one.
-
-    Returns:
-        One entry per core the period kernel publishes, in compilation order.
-
-    Raises:
-        ValueError: When the regime is not declared, when it is inactive in the
-            period, or when a declared width binds no axis of this period.
-
-    """
-    regime = _require_declared_regime(
-        regimes=regimes, regime_name=regime_name, period=period
-    )
-    base_spaces = _build_base_state_action_spaces(
-        regimes=regimes,
-        flat_params=flat_params,
-        process_grid_resolver=process_grid_resolver,
-    )
-    V_templates, next_regime_to_continuation, edge_templates = (
-        _build_continuation_templates(
-            regimes=regimes,
-            flat_params=flat_params,
-            device_ids=device_ids,
-            process_grid_resolver=process_grid_resolver,
-        )
-    )
-    # The cores are compiled against concrete inputs, which no solve has produced
-    # here; zeros laid out like the templates stand in for them while compiling.
-    next_regime_to_V_arr = _zeros_like_templates(templates=V_templates)
-    next_edge_to_V_arr = _zeros_like_templates(templates=edge_templates)
-    kernel_kwargs: PeriodCompileInputs = {
-        "regime_name": regime_name,
-        "period": period,
-        "state_action_space": base_spaces[regime_name],
-        "flat_params": flat_params,
-        "ages": ages,
-        "next_regime_to_V_arr": next_regime_to_V_arr,
-        "next_regime_to_continuation": next_regime_to_continuation,
-        "next_edge_to_V_arr": next_edge_to_V_arr,
-        "retain_replay": False,
-        "selected_artifact_keys": frozenset(),
-    }
-    _fail_if_widths_bind_nothing(
-        declared_axis_names=_declared_axis_names(
-            regime=regime, period=period, kernel_kwargs=kernel_kwargs
-        ),
-        axis_widths=axis_widths,
-    )
-    timings: dict[str, tuple[float, float]] = {}
-    compiled = _compile_cores_for_one_period(
-        regime=regime,
-        period=period,
-        kernel_kwargs=kernel_kwargs,
-        core_tile_widths=MappingProxyType({}),
-        axis_widths=axis_widths,
-        core_timings=timings,
-    )
-    return tuple(
-        _declared_compilation(
-            regime_name=regime_name,
-            period=period,
-            age=age_at(ages=ages, period=period),
-            core_name=core_name,
-            core=core,
-            timing=timings[core_name],
-        )
-        for core_name, core in compiled.items()
-    )
-
-
-def _require_declared_regime(
-    *,
-    regimes: Mapping[RegimeName, Regime],
-    regime_name: RegimeName,
-    period: int,
-) -> Regime:
-    """Return the regime, refusing a name or a period it does not declare."""
-    if regime_name not in regimes:
-        msg = (
-            f"The model declares no regime {regime_name!r}; it declares "
-            f"{sorted(regimes)!r}."
-        )
-        raise ValueError(msg)
-    regime = regimes[regime_name]
-    if period not in regime.active_periods:
-        msg = (
-            f"Regime {regime_name!r} is not solved in period {period}, so it "
-            "publishes no kernel there."
-        )
-        raise ValueError(msg)
-    return regime
-
-
-def _declared_axis_names(
-    *,
-    regime: Regime,
-    period: int,
-    kernel_kwargs: PeriodCompileInputs,
-) -> frozenset[str]:
-    """Collect the execution axes this period's cores declare.
-
-    Reads the materialized core programs only, so a width that binds nothing is
-    refused before anything is lowered or compiled.
-    """
-    context = _core_build_context_for_one_period(
-        regime=regime, period=period, kernel_kwargs=kernel_kwargs
-    )
-    graph = select_programs(
-        graph=core_program_graph(kernel=regime.solution.period_kernels[period]),
-        retain_replay=kernel_kwargs["retain_replay"],
-        selected_artifact_keys=kernel_kwargs["selected_artifact_keys"],
-    )
-    return frozenset(
-        axis.name
-        for declaration in graph.values()
-        for axis in materialize_core_program(
-            program=declaration, context=context
-        ).requirements.axes
-    )
-
-
-def _fail_if_widths_bind_nothing(
-    *,
-    declared_axis_names: frozenset[str],
-    axis_widths: Mapping[str, int],
-) -> None:
-    """Raise when a declared width binds no axis of any core of this period."""
-    bound = set(declared_axis_names)
-    unbound = sorted(set(axis_widths) - bound)
-    if unbound:
-        msg = (
-            f"Declared widths {unbound!r} name no execution axis of any core "
-            f"of this period; the cores declare {sorted(bound)!r}."
-        )
-        raise ValueError(msg)
-
-
-def _declared_compilation(
-    *,
-    regime_name: RegimeName,
-    period: int,
-    age: float | None,
-    core_name: str,
-    core: PlannedCore,
-    timing: tuple[float, float],
-) -> DeclaredCoreCompilation:
-    """Read one compiled core's walls and memory report into a record."""
-    compiled = core.compiled
-    if not isinstance(compiled, jax.stages.Compiled):
-        msg = f"Core {core_name!r} carries no compiled JAX executable."
-        raise TypeError(msg)
-    reservation = compiler_memory_reservation(
-        compiled=core.compiled, widths=core.tile_widths
-    )
-    reservation_bytes = reservation.reservation_bytes
-    peak_bytes = reservation.peak_bytes
-    lowering_seconds, compile_seconds = timing
-    return DeclaredCoreCompilation(
-        regime_name=regime_name,
-        period=period,
-        age=age,
-        core_name=core_name,
-        tile_widths=MappingProxyType(dict(core.tile_widths)),
-        lowering_seconds=lowering_seconds,
-        compile_seconds=compile_seconds,
-        reservation_bytes=reservation_bytes,
-        peak_bytes=peak_bytes,
-        memory=compiler_memory_bytes(compiled=core.compiled),
-        compiled=compiled,
-    )
-
-
-def _zeros_like_templates[Key: Hashable](
-    *, templates: Mapping[Key, jax.ShapeDtypeStruct]
-) -> MappingProxyType[Key, FloatND]:
-    """Return a zero array laid out like each abstract template, under its key."""
-    return MappingProxyType(
-        {
-            key: jnp.zeros(
-                template.shape, dtype=template.dtype, device=template.sharding
-            )
-            for key, template in templates.items()
-        }
-    )

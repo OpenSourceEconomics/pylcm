@@ -4,7 +4,6 @@ from types import MappingProxyType
 import jax
 import jax.numpy as jnp
 import pytest
-from beartype.roar import BeartypeCallHintViolation
 from numpy.testing import assert_array_almost_equal as aaae
 
 from _lcm.utils.dispatchers import (
@@ -451,16 +450,6 @@ def test_vmap_1d_callable_with_only_kwargs():
         match="This function has been decorated so that it allows only kwargs, but was",
     ):
         vmapped(a)
-
-
-def test_vmap_1d_callable_with_invalid():
-    """`callable_with` rejects anything outside the documented literal options."""
-
-    def func(a):
-        return a
-
-    with pytest.raises(BeartypeCallHintViolation):
-        vmap_1d(func=func, variables=("a",), callable_with="invalid")  # ty: ignore[invalid-argument-type]
 
 
 def _identity_utility(consumption):

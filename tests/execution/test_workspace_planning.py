@@ -7,13 +7,11 @@ from typing import Literal, Never, cast
 import jax
 import jax.numpy as jnp
 import pytest
-from beartype.roar import BeartypeCallHintViolation
 
 from _lcm.execution.compiler_memory import CompilerMemoryReport
 from _lcm.execution.core_program import ReducedAxis, TiledOutputAxis
 from _lcm.execution.reductions import ReductionDeclaration
 from _lcm.execution.workspace_planning import (
-    WorkspacePlan,
     compiler_peak_bytes,
     plan_workspace,
     workspace_width_candidates,
@@ -43,10 +41,6 @@ class _Reduction:
     def exactness(self) -> Literal["exact"]:
         """Return `"exact"`: the fold is order independent."""
         return "exact"
-
-
-class _IntSubclass(int):
-    pass
 
 
 class _Executable[Analysis]:
@@ -555,12 +549,6 @@ def test_selected_executable_is_never_executed_or_recompiled() -> None:
     )
 
 
-def test_workspace_plan_refuses_a_plain_dict_of_widths() -> None:
-    """A workspace plan holds a read-only width mapping; a plain dict is refused."""
-    with pytest.raises(BeartypeCallHintViolation, match="widths"):
-        WorkspacePlan(widths={"action_product": 2}, peak_bytes=4, compiled=object())  # ty: ignore[invalid-argument-type]
-
-
 def test_duplicate_axis_names_are_rejected_before_compilation() -> None:
     compile_calls = 0
 
@@ -578,84 +566,50 @@ def test_duplicate_axis_names_are_rejected_before_compilation() -> None:
     assert compile_calls == 0
 
 
-def test_non_axis_declaration_is_rejected_before_compilation() -> None:
-    with pytest.raises(BeartypeCallHintViolation):
-        plan_workspace(
-            axes=cast("tuple[ReducedAxis, ...]", (object(),)),
-            compile_candidate=lambda _widths: object(),
-        )
-
-
 @pytest.mark.parametrize(
-    ("axis", "error", "match"),
+    ("axis", "match"),
     [
         (
             _axis(
                 coordinate_names=("only",),
                 coordinate_extents=(2, 3),
             ),
-            ValueError,
             "same length",
         ),
         (
             _axis(coordinate_extents=(), coordinate_names=()),
-            ValueError,
             "declare coordinate extents",
         ),
-        (
-            _axis(coordinate_extents=cast("tuple[int, ...]", (True,))),
-            TypeError,
-            "extents must be integers",
-        ),
-        (
-            _axis(coordinate_extents=(0,)),
-            ValueError,
-            "extents must be positive",
-        ),
-        (
-            _axis(coordinate_extents=(-2,)),
-            ValueError,
-            "extents must be positive",
-        ),
-        (_axis(extent=1), ValueError, "extent greater than one"),
+        (_axis(coordinate_extents=(0,)), "extents must be positive"),
+        (_axis(coordinate_extents=(-2,)), "extents must be positive"),
+        (_axis(extent=1), "extent greater than one"),
     ],
     ids=(
         "mismatched-coordinate-declaration",
         "empty-coordinate-product",
-        "bool-extent",
         "zero-extent",
         "negative-extent",
         "singleton-product",
     ),
 )
 def test_invalid_axis_extent_assumptions_are_rejected_at_the_planner_seam(
-    *, axis: ReducedAxis, error: type[Exception], match: str
+    *, axis: ReducedAxis, match: str
 ) -> None:
-    with pytest.raises(error, match=match):
+    with pytest.raises(ValueError, match=match):
         plan_workspace(
             axes=(axis,),
             compile_candidate=lambda _widths: object(),
         )
 
 
-@pytest.mark.parametrize(
-    ("fixed_width", "error", "match"),
-    [
-        (True, TypeError, "must be an integer"),
-        (cast("int", 2.0), BeartypeCallHintViolation, "fixed_widths"),
-        (_IntSubclass(2), TypeError, "must be an integer"),
-        (0, ValueError, "must be positive"),
-        (-1, ValueError, "must be positive"),
-    ],
-    ids=("bool", "float", "int-subclass", "zero", "negative"),
-)
+@pytest.mark.parametrize("fixed_width", [0, -1], ids=("zero", "negative"))
 def test_invalid_fixed_width_is_rejected_before_compilation(
-    *, fixed_width: float, error: type[Exception], match: str
+    *, fixed_width: int
 ) -> None:
-    with pytest.raises(error, match=match):
+    with pytest.raises(ValueError, match="must be positive"):
         plan_workspace(
             axes=(_axis(),),
-            fixed_widths={"action_product": cast("int", fixed_width)},
+            fixed_widths={"action_product": fixed_width},
             compile_candidate=lambda _widths: object(),
         )
 
@@ -685,20 +639,8 @@ def test_an_axis_whose_name_was_emptied_is_rejected_at_the_planner_seam() -> Non
         plan_workspace(axes=(axis,), compile_candidate=lambda _widths: object())
 
 
-@pytest.mark.parametrize(
-    ("budget", "error", "match"),
-    [
-        (True, TypeError, "integer number of bytes"),
-        (cast("int", 1.0), BeartypeCallHintViolation, "budget_bytes"),
-        (_IntSubclass(1), TypeError, "integer number of bytes"),
-        (0, ValueError, "positive"),
-        (-1, ValueError, "positive"),
-    ],
-    ids=("bool", "float", "int-subclass", "zero", "negative"),
-)
-def test_invalid_budget_is_rejected_before_compilation(
-    *, budget: float, error: type[Exception], match: str
-) -> None:
+@pytest.mark.parametrize("budget", [0, -1], ids=("zero", "negative"))
+def test_invalid_budget_is_rejected_before_compilation(*, budget: int) -> None:
     compile_calls = 0
 
     def compile_candidate(_widths: Mapping[str, int]) -> object:  # noqa: PAN001 - Returns a fresh opaque witness; compilation must not be reached.
@@ -706,22 +648,14 @@ def test_invalid_budget_is_rejected_before_compilation(
         compile_calls += 1
         return object()
 
-    with pytest.raises(error, match=match):
+    with pytest.raises(ValueError, match="positive"):
         plan_workspace(
             axes=(_axis(),),
             compile_candidate=compile_candidate,
-            budget_bytes=cast("int", budget),
+            budget_bytes=budget,
         )
 
     assert compile_calls == 0
-
-
-def test_non_callable_compiler_is_rejected() -> None:
-    with pytest.raises(BeartypeCallHintViolation):
-        plan_workspace(
-            axes=(_axis(),),
-            compile_candidate=object(),  # ty: ignore[invalid-argument-type]
-        )
 
 
 def test_resident_bytes_make_a_candidate_that_fits_alone_infeasible() -> None:

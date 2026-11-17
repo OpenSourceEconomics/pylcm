@@ -31,7 +31,12 @@ Two runtime checkers have separate jobs:
   `_lcm` through the package claw, and maps violations on selected user-facing
   constructors (`Model`, `Regime`, grids, `DCEGM`) to project exceptions. Its default
   strategy checks one sampled entry of each container per call, so it is not an
-  exhaustive container check.
+  exhaustive container check. The two claws differ in one respect: `lcm` keeps the
+  PEP 484 numeric tower, so a public `float` parameter admits an `int`, while `_lcm`
+  turns it off, so an internal `float` parameter refuses an `int`. Normalize at the
+  public boundary (a Pydantic `CONFIG_FLOAT` field, or an explicit `float(...)` where
+  a public function hands a value inward) and annotate internal code with the one
+  type it actually receives.
 - **Pydantic** owns the constructors of plain-data configuration records: the envelope
   configurations (`ExactEnvelope`, `FUESEnvelope`, `RFCEnvelope`), `AdaptiveOuterMesh`,
   `UniformObservedFixedCost`, `WidthSearchPolicy` and `ExecutionConfig`. They are
@@ -61,8 +66,10 @@ identity and is never rebuilt from a dictionary.
 
 Keep these out of Pydantic:
 
-- Process-law values. Their numeric kind (`3` versus `3.0`, signed zero, weak versus
-  strong scalars) is part of their identity, so they never pass through `CONFIG_FLOAT`.
+- Process-law values. They follow the `CONFIG_FLOAT` rule — an `int` or `float` is
+  stored as a Python `float`, a Boolean is refused — but in the process classes' own
+  `__post_init__`, since the processes are frozen dataclasses rather than Pydantic
+  records.
 - Grid constructors, `Model`, `Regime` and runtime parameter processing, which
   normalize into canonical JAX storage or depend on the whole model.
 - Anything traced, vmapped or differentiated.
@@ -143,7 +150,7 @@ There are exactly three exemptions:
 
 1. **A module that implements an arithmetic and nothing else** — operator surrogates
    keep the spelling their operation is known by (`two_sum(a, b)`,
-   `dd_mul(left, right)`). State it once in the module docstring; such a module may
+   `dd_add(left, right)`). State it once in the module docstring; such a module may
    contain *only* operators, so the exemption stays auditable rather than sprinkled per
    function. The declaration is `Keyword-only exemption: arithmetic-only module.`
 

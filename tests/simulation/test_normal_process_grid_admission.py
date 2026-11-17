@@ -290,7 +290,8 @@ def test_normal_fixed_scale_preserves_weak_dtype_promotion(fixed: float) -> None
 
 
 def test_normal_equal_fixed_scalars_keep_distinct_binding_provenance() -> None:
-    """Fixed scalar type and signed-zero bytes survive the fast binding lookup."""
+    """An integer-written fixed scalar shares its float twin's binding; signed zero
+    keeps its own."""
     parameters = {"sigma": jnp.asarray(0.1)}
     owner = _owner(parameters=parameters)
     required = jax.sharding.SingleDeviceSharding(jax.devices()[0])
@@ -299,8 +300,8 @@ def test_normal_equal_fixed_scalars_keep_distinct_binding_provenance() -> None:
         actual = np.asarray(owner(spec=spec, parameters=parameters, required=required))
         eager = np.asarray(spec.compute_gridpoints(**spec.params, **parameters))
         assert actual.tobytes() == eager.tobytes()
-    assert len(owner.bindings) == 3
-    assert len(owner.grids) == 3
+    assert len(owner.bindings) == 2
+    assert len(owner.grids) == 2
     mixed = {
         "mu": jnp.asarray(0.0, dtype=jnp.float32),
         "sigma": jnp.asarray(0.1, dtype=jnp.float32),

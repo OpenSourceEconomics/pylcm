@@ -19,6 +19,7 @@ import jax
 import pytest
 
 from lcm import ExecutionConfig
+from lcm_examples import collective_household
 from lcm_examples.collective_regimes import get_dissolution_model
 from tests.test_models import (
     ds_app2_housing,
@@ -36,6 +37,7 @@ _MODELS = {
         n_periods=6, distribution_type="normal"
     ),
     "dissolution": get_dissolution_model,
+    "marriage_market": collective_household.get_model,
     "ds_app2_housing": lambda: ds_app2_housing.build_model(n_grid=8),
     "negm_kinked_toy": negm_kinked_toy.build_model,
     "n_nbegm_toy": lambda: n_nbegm_toy.build_model(variant="n_nbegm"),

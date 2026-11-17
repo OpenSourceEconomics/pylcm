@@ -199,7 +199,8 @@ the class:
 
 ### TauchenAR1Process
 
-Discretization via @tauchen1986. Uses CDF-based transition probabilities.
+Discretization via @tauchenFiniteStateMarkovChain1986. Uses CDF-based transition
+probabilities.
 
 ```python
 TauchenAR1Process(
@@ -269,23 +270,9 @@ TauchenAR1Process.on_nodes(
   node and normalizes the row in log space. It ignores cell widths: this is a discrete
   probability rule, not numerical integration of the continuous normal density.
 
-Density-rule first-order derivatives use normalized scaled arithmetic. Routine process,
-solve and simulation calls do not run the expensive host accuracy certificate, at any
-`runtime_checks` setting. The usual probability, finiteness and feasibility checks still
-follow that setting. Routine density derivatives have no quantitative componentwise
-accuracy guarantee in ill-conditioned rows.
-
-A stronger accuracy certificate exists only as a test oracle, in
-`tests/test_models/density_derivative_admission.py`. It checks deliberately supplied
-rows: every local first-order partial in `mu`, `rho`, source and `sigma` (scaled by
-`sigma`, except for `rho`) must lie within `tau + tau*abs(g_true)` of the true value,
-with `tau=1e-12` at float64 and `tau=1e-5` at float32, or the row is rejected. It is not
-part of the library and is never run on a model. To exercise it with its adversarial
-tests, run:
-
-```console
-pixi run -e tests-cpu pytest tests/test_density_derivative_accuracy.py -v
-```
+Derivatives of density-rule rows with respect to process parameters are not supported.
+Gradients of simulated statistics are not meaningful in models with discrete choices, so
+no rule carries a derivative guarantee.
 
 All rules support finite unit-root or explosive persistence on these fixed nodes. They
 also support a `StateConditioned` innovation scale. Quadrature target clipping is part
@@ -299,8 +286,9 @@ that the solver integrates. These options apply only to `on_nodes`; ordinary
 
 ### RouwenhorstAR1Process
 
-Discretization via @rouwenhorst1995 / @kopecky2010. Better for highly persistent
-processes ($\rho$ close to 1).
+Discretization via @rouwenhorstAssetPricingImplications1995 /
+@kopeckyFiniteStateMarkovchain2010. Better for highly persistent processes ($\rho$ close
+to 1).
 
 ```python
 RouwenhorstAR1Process(n_points=7, rho=0.95, sigma=0.1, mu=0.0)
@@ -309,7 +297,7 @@ RouwenhorstAR1Process(n_points=7, rho=0.95, sigma=0.1, mu=0.0)
 ### TauchenNormalMixtureAR1Process
 
 AR(1) with mixture-of-normals innovations, discretized via Tauchen. Following
-@fella2019.
+@fellaMarkovchainApproximationsLifecycle2019.
 
 ```python
 TauchenNormalMixtureAR1Process(

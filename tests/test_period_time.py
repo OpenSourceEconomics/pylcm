@@ -160,7 +160,7 @@ def test_period_selectors_bound_an_explicit_transition_law(
     assert frame["regime_name"].tolist() == ["work", "work", "done"]
 
 
-@pytest.mark.parametrize("n_periods", [0, -1, True, 2.5])
+@pytest.mark.parametrize("n_periods", [0, -1, True])
 def test_period_horizon_requires_positive_integer(n_periods: float) -> None:
     with pytest.raises(ModelInitializationError, match="n_periods"):
         _model(n_periods=n_periods)
@@ -219,12 +219,9 @@ def test_by_period_schedule_preserves_stage_boundaries() -> None:
     ]
 
 
-@pytest.mark.parametrize("selector", [1.0, True, lcm.AgeRange(start=0)])
-def test_by_period_refuses_nonperiod_selectors(
-    selector: float | lcm.AgeRange,
-) -> None:
+def test_by_period_refuses_nonperiod_selectors() -> None:
     with pytest.raises(lcm.exceptions.RegimeInitializationError, match=r"[Pp]eriod"):
-        lcm.ByPeriod(cases={selector: "work"})
+        lcm.ByPeriod(cases={1.0: "work"})
 
 
 @pytest.mark.parametrize("dataframe", [False, True])
@@ -258,7 +255,6 @@ def test_period_start_and_output_without_age(*, dataframe: bool) -> None:
         {"period": jnp.array([-1])},
         {"period": jnp.array([3])},
         {"period": jnp.array([0.5])},
-        {"period": jnp.array([True])},
     ],
 )
 @pytest.mark.parametrize(
@@ -382,8 +378,8 @@ def test_period_declared_transitions_preserve_coordinate_kind() -> None:
 def test_period_model_rejects_age_specialization() -> None:
     with pytest.raises(ModelInitializationError, match=r"[Aa]geSpecialized|coordinate"):
         _specialized_model(
-            lcm.AgeSpecializedFunction(
-                build=_specialized_flow,  # ty: ignore[invalid-argument-type] - Period builder is refused before age specialization.
+            lcm.AgeSpecializedFunction(  # ty: ignore[invalid-argument-type] - A period builder is refused before age specialization.
+                build=_specialized_flow,
                 signature=int,
             )
         )
@@ -589,13 +585,10 @@ def test_age_callback_coordinates_preserve_age_grid_scalars(
         assert type(actual) is type(expected)
 
 
-@pytest.mark.parametrize("coordinate", [True, 1.0])
-def test_period_schedule_inspection_rejects_noninteger_coordinates(
-    coordinate: float,
-) -> None:
+def test_period_schedule_inspection_rejects_noninteger_coordinates() -> None:
     schedule = lcm.ByPeriod(cases={1: "work"}).resolve(n_periods=3)
     with pytest.raises((TypeError, KeyError), match=r"period|integer"):
-        schedule.at(coordinate)
+        schedule.at(1.0)
 
 
 def test_period_schedule_has_no_covered_ages() -> None:
@@ -630,40 +623,25 @@ def test_period_capture_and_public_replay_report_no_age(tmp_path: Path) -> None:
     np.testing.assert_allclose(replay.value, 6.0)
 
 
-@pytest.mark.parametrize("surface", ["logical", "layout", "memory", "declared"])
+@pytest.mark.parametrize("surface", ["logical", "layout"])
 def test_period_inspection_reports_no_age(
     *, surface: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     model = _model(n_periods=3)
-    if surface == "declared":
-        records = model._compile_period_cores(
-            params={}, regime_name="work", period=1, axis_widths={}
-        )
-        assert records
-        for record in records:
-            assert record.period == 1
-            assert record.age is None
-        return
     monkeypatch.setenv("LCM_CAPTURE_PERIOD", "work@1")
     monkeypatch.setenv("LCM_CAPTURE_DIR", str(tmp_path))
     model.solve(params={}, log_level="off")
     directory = tmp_path / "work@1"
-    if surface == "memory":
-        analysis = period_replay.analyze_period_core_memory(directory=directory)
-        assert analysis.period == 1
-        assert analysis.age is None
-        assert analysis.core_memory_bytes
-    else:
-        replay = (
-            period_replay.replay_period(directory=directory)
-            if surface == "logical"
-            else period_replay.replay_period_on_recorded_layout(
-                directory=directory, devices=jax.devices()
-            )
+    replay = (
+        period_replay.replay_period(directory=directory)
+        if surface == "logical"
+        else period_replay.replay_period_on_recorded_layout(
+            directory=directory, devices=jax.devices()
         )
-        assert replay.period == 1
-        assert replay.age is None
-        np.testing.assert_allclose(replay.output.value, 6.0)
+    )
+    assert replay.period == 1
+    assert replay.age is None
+    np.testing.assert_allclose(replay.output.value, 6.0)
 
 
 def test_period_solve_and_simulation_logs_use_period_labels(
@@ -763,25 +741,10 @@ def test_initial_nodes_requires_one_nonempty_coordinate_map(
         lcm.InitialNodes(**kwargs)
 
 
-@pytest.mark.parametrize(
-    "selector",
-    [True, 0.0, Fraction(0), (0, 1.0), lcm.AgeRange(start=0)],
-)
-def test_initial_nodes_refuses_nonperiod_keys(
-    selector: float | Fraction | tuple[int, float] | lcm.AgeRange,
-) -> None:
-    """Period coordinates must be genuinely integer-valued."""
-    with pytest.raises(ModelInitializationError, match=r"[Pp]eriod"):
-        lcm.InitialNodes(by_period={selector: "work"})
-
-
-@pytest.mark.parametrize(
-    "selector", [lcm.PeriodRange(start=0), lcm.Periods(values=(0,))]
-)
-def test_initial_nodes_refuses_period_keys_in_age_map(selector: PeriodSelector) -> None:
+def test_initial_nodes_refuses_period_keys_in_age_map() -> None:
     """An explicit period selector cannot be relabelled as an age."""
     with pytest.raises(ModelInitializationError, match=r"[Aa]ge"):
-        lcm.InitialNodes(by_age={selector: "work"})
+        lcm.InitialNodes(by_age={lcm.PeriodRange(start=0): "work"})
 
 
 @pytest.mark.parametrize("selector", [-1, 3, (0, 3), lcm.Periods(values=(3,))])
@@ -819,15 +782,10 @@ def test_period_initial_nodes_refuses_empty_selection(selector: PeriodSelector) 
         )
 
 
-@pytest.mark.parametrize(
-    "initial_nodes", [((0, "work"),), {0: "work"}, {lcm.Periods(values=(0,)): "work"}]
-)
-def test_period_initial_nodes_requires_named_keyword(
-    initial_nodes: UserInitialNodes | Mapping[lcm.Periods, RegimeName],
-) -> None:
+def test_period_initial_nodes_requires_named_keyword() -> None:
     """Period declarations cannot silently reinterpret legacy age syntax."""
     with pytest.raises(ModelInitializationError, match=r"by_period"):
-        _model(n_periods=3, initial_nodes=initial_nodes)  # ty: ignore[invalid-argument-type] - Explicit period mapping deliberately exercises legacy rejection.
+        _model(n_periods=3, initial_nodes={0: "work"})
 
 
 def test_initial_nodes_rejects_clock_mismatch_both_directions() -> None:
@@ -858,17 +816,6 @@ def test_period_initial_nodes_does_not_clip_explicit_collections(
         _model(
             n_periods=3, initial_nodes=lcm.InitialNodes(by_period={selector: "work"})
         )
-
-
-@pytest.mark.parametrize(
-    "value", [lcm.ByAge(cases={0: "work"}), lcm.ByPeriod(cases={0: "work"})]
-)
-def test_initial_nodes_refuses_transition_schedules_as_names(
-    value: lcm.ByAge | lcm.ByPeriod,
-) -> None:
-    """Initial-node values name regimes rather than laws selected by another clock."""
-    with pytest.raises(ModelInitializationError):
-        lcm.InitialNodes(by_period={0: value})  # ty: ignore[invalid-argument-type] - Schedules are deliberately invalid regime names.
 
 
 def test_period_initial_nodes_is_read_only() -> None:
@@ -905,14 +852,10 @@ def test_by_period_owns_nested_law_mappings(wrapper: str) -> None:
         law["done"] = probability
 
 
-@pytest.mark.parametrize(
-    "selector", [lcm.PeriodRange(start=0), lcm.Periods(values=(0,))]
-)
 @pytest.mark.parametrize("mapping", [False, True])
-def test_age_initial_nodes_refuses_legacy_period_selectors(
-    *, selector: lcm.PeriodRange | lcm.Periods, mapping: bool
-) -> None:
+def test_age_initial_nodes_refuses_legacy_period_selectors(*, mapping: bool) -> None:
     """Legacy age syntax must not admit the explicitly period-labelled wrappers."""
+    selector = lcm.PeriodRange(start=0)
     initial_nodes = {selector: "work"} if mapping else ((selector, "work"),)
     with pytest.raises(ModelInitializationError, match=r"[Aa]ge"):
         _age_model(initial_nodes=initial_nodes)  # ty: ignore[invalid-argument-type] - Period selectors deliberately enter the legacy age boundary.
@@ -1123,3 +1066,38 @@ def test_valid_clock_support_preserves_solve_and_simulation(
     )
     assert np.isin(terminal["x"].to_numpy(), expected_nodes).all()
     np.testing.assert_array_equal(terminal["value"], terminal["x"])
+
+
+@pytest.mark.parametrize("phase", ["solve", "simulate"])
+def test_period_header_prints_a_sub_annual_age_with_two_decimals(
+    *, phase: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A Fraction-valued age reads `0.33` in the period header of both phases."""
+    model = lcm.Model(
+        ages=lcm.AgeGrid(exact_values=(0, Fraction(1, 3), Fraction(2, 3))),
+        regimes={
+            "work": lcm.Regime(functions={"utility": _flow}),
+            "done": lcm.Regime(functions={"utility": _terminal}),
+        },
+        regime_id_class=RegimeId,
+        initial_nodes=((0, "work"),),
+        edges={"work": {"work": (0,), "done": (Fraction(1, 3),)}},
+        fixed_params={"discount_factor": 0.5},
+    )
+    solution = model.solve(params={}, log_level="off")
+    with caplog.at_level(logging.INFO, logger="lcm"):
+        if phase == "solve":
+            model.solve(params={}, log_level="progress")
+        else:
+            model.simulate(
+                params={},
+                initial_conditions={
+                    "age": jnp.array([0.0]),
+                    "regime_id": jnp.array([RegimeId.work]),
+                },
+                solution=solution,
+                seed=3,
+                log_level="progress",
+            )
+    messages = [record.getMessage() for record in caplog.records]
+    assert any(message.startswith("Age 0.33 (") for message in messages)

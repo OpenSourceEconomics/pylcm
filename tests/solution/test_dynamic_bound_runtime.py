@@ -38,7 +38,6 @@ from _lcm.solution.feasibility import (
     BoundedResult,
     BoundInputStatus,
     CountedGridSearch,
-    FeasibilityKernelOutput,
 )
 from _lcm.typing import (
     ConstraintFunction,
@@ -979,40 +978,6 @@ def test_counted_value_owner_preserves_integrity_beside_two_counts() -> None:
     np.testing.assert_array_equal(result.output[0], [-np.inf, -np.inf, 2.0])
     np.testing.assert_array_equal(jnp.stack(result.output[1:]), [1, 1])
     np.testing.assert_array_equal(jnp.stack(result.bound_status[0]), [True, False])
-
-
-@pytest.mark.parametrize("invalid", [False, True])
-def test_kernel_output_accepts_only_scalar_boolean_integrity(*, invalid: bool) -> None:
-    """Kernel output summaries are scalar Booleans before their host acceptance seam."""
-    assert "bound_status" in FeasibilityKernelOutput.__dataclass_fields__, (
-        "The private kernel output must transport mandatory integrity."
-    )
-    template = BoundInputStatus(
-        nonfinite_floor=jnp.asarray(a=False),
-        invalid_shifted_grid=jnp.asarray(a=False),
-    )
-    status = jax.tree_util.tree_unflatten(
-        jax.tree_util.tree_structure(template),
-        [
-            jnp.asarray([True, False]) if invalid else jnp.asarray(a=True),
-            jnp.asarray(a=False),
-        ],
-    )
-
-    def output() -> FeasibilityKernelOutput:
-        return FeasibilityKernelOutput(
-            value=jnp.asarray([2.0]),
-            feasibility_counts=(jnp.int32(0), jnp.int32(0)),
-            bound_status=(status,),
-        )
-
-    if invalid:
-        with pytest.raises(TypeError, match="scalar Boolean"):
-            output()
-    else:
-        np.testing.assert_array_equal(
-            jnp.stack(output().bound_status[0]), [True, False]
-        )
 
 
 @pytest.mark.parametrize("streamed", [False, True])

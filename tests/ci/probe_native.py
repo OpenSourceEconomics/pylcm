@@ -7,6 +7,7 @@ from pathlib import Path
 
 import hatch_build
 from _lcm.egm.upper_envelope._exact_affine import ffi
+from tests.ci._capability import kernel_built_for_current_backend
 
 BROKEN_PAYLOAD = 1
 REINSTALL_REQUIRED = 2
@@ -23,7 +24,7 @@ class ProbeResult:
 
 def payload_present() -> bool:
     """Return whether the selected backend has every required library file."""
-    return ffi.kernel_built_for_current_backend()
+    return kernel_built_for_current_backend()
 
 
 def manifest_matches(root: Path) -> bool:

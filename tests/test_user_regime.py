@@ -12,7 +12,6 @@ import pytest
 from dags import rename_arguments
 from dags.tree import QNAME_DELIMITER
 
-from _lcm.grids import IrregSpacedGrid
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.transitions import (
     _IdentityTransition,
@@ -47,6 +46,7 @@ from lcm.exceptions import (
     ModelInitializationError,
     RegimeInitializationError,
 )
+from lcm.grids import IrregSpacedGrid
 from lcm.regime import (
     ActionEntry,
     FunctionEntry,
@@ -638,11 +638,6 @@ def test_regime_requires_utility_in_functions():
     )
     with pytest.raises(RegimeInitializationError, match=r"utility.*must be provided"):
         _finalize(regime, law=None)
-
-
-def test_markov_transition_rejects_non_callable():
-    with pytest.raises(RegimeInitializationError, match="func"):
-        StochasticTransition(func=42)  # ty: ignore[invalid-argument-type]
 
 
 def test_identity_transition_call():

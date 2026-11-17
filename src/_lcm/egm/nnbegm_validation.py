@@ -42,7 +42,7 @@ from _lcm.egm.validation import (
     _without,
     fail_if_off_node_process_enters_utility,
 )
-from _lcm.solution.nnbegm import NNBEGM, _BoundNNBEGM
+from _lcm.solution.nnbegm import _BoundNNBEGM
 from _lcm.typing import (
     FunctionName,
     RegimeName,
@@ -53,19 +53,6 @@ from lcm.exceptions import ModelInitializationError
 from lcm.regime import Regime as UserRegime
 from lcm.regime import StateTransitionEntry
 from lcm.typing import UserFunction
-
-
-def validate_nnbegm_regimes(
-    *,
-    user_regimes: Mapping[RegimeName, UserRegime],
-) -> None:
-    """Validate the remaining model contract for every NNBEGM regime."""
-    for regime_name, user_regime in user_regimes.items():
-        if isinstance(user_regime.solver, NNBEGM):
-            validate_nnbegm_regime(
-                regime_name=regime_name,
-                user_regime=user_regime,
-            )
 
 
 def validate_nnbegm_regime(

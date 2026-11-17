@@ -3,7 +3,6 @@
 The bracket is bounded by the component quantiles at the same probability. Log-CDF
 or log-survival comparison avoids rounding a tail probability to zero or unity.
 An unresolved bracket yields NaN, which the public law's validity channel refuses.
-Derivatives follow the implicit CDF equation, not the bisection branch history.
 """
 
 import jax
@@ -13,10 +12,6 @@ from jax.scipy.special import log_ndtr, logsumexp
 from lcm.typing import BoolND, FloatND, LoopIndex
 
 _BISECTION_CAPACITY = 2200
-
-
-def _log_density(value: FloatND) -> FloatND:
-    return -0.5 * value * value - 0.5 * jnp.log(2 * jnp.pi)
 
 
 def _solve(
@@ -135,48 +130,6 @@ def _log_difference(*, left: FloatND, right: FloatND) -> tuple[FloatND, FloatND]
     )
 
 
-# keyword-only-exempt: library-callback=jax.custom_jvp
-def _quantile_primal(
-    z: FloatND, p: FloatND, mu1: FloatND, sigma1: FloatND, mu2: FloatND, sigma2: FloatND
-) -> FloatND:
-    return _solve(z=z, p=p, mu1=mu1, sigma1=sigma1, mu2=mu2, sigma2=sigma2)
-
-
-_quantile = jax.custom_jvp(_quantile_primal)
-
-
-# keyword-only-exempt: library-callback=jax.custom_jvp
-def _quantile_jvp(
-    primals: tuple[FloatND, ...], tangents: tuple[FloatND, ...]
-) -> tuple[FloatND, FloatND]:
-    z, p, mu1, sigma1, mu2, sigma2 = primals
-    dz, dp, dm1, ds1, dm2, ds2 = tangents
-    value = _quantile(*primals)
-    t1, t2 = (value - mu1) / sigma1, (value - mu2) / sigma2
-    ld1, ld2 = _log_density(t1) - jnp.log(sigma1), _log_density(t2) - jnp.log(sigma2)
-    log_density = jnp.logaddexp(jnp.log(p) + ld1, jnp.log1p(-p) + ld2)
-    r1, r2 = (
-        jnp.exp(jnp.log(p) + ld1 - log_density),
-        jnp.exp(jnp.log1p(-p) + ld2 - log_density),
-    )
-    high, low = jnp.maximum(t1, t2), jnp.minimum(t1, t2)
-    upper_tail = low > 0
-    log_larger = jnp.where(upper_tail, log_ndtr(-low), log_ndtr(high))
-    log_smaller = jnp.where(upper_tail, log_ndtr(-high), log_ndtr(low))
-    log_difference, _ = _log_difference(left=log_larger, right=log_smaller)
-    probability_slope = jnp.sign(t1 - t2) * jnp.exp(log_difference - log_density)
-    derivative = (
-        jnp.exp(_log_density(z) - log_density) * dz
-        - probability_slope * dp
-        + r1 * (dm1 + t1 * ds1)
-        + r2 * (dm2 + t2 * ds2)
-    )
-    return value, derivative
-
-
-_quantile.defjvp(_quantile_jvp)
-
-
 def mixture_quantile(
     *,
     z: FloatND,
@@ -186,11 +139,6 @@ def mixture_quantile(
     mu2: FloatND,
     sigma2: FloatND,
 ) -> tuple[FloatND, BoolND]:
-    """Return quantiles and convergence; smooth derivatives require positive scales.
-
-    An inactive zero-scale component is valid for primal evaluation. Its boundary
-    derivative is outside the smooth law contract and produces a nonfinite tangent,
-    which a derivative consumer must reject at its numerical runtime boundary.
-    """
-    value = _quantile(z, p, mu1, sigma1, mu2, sigma2)
+    """Return quantiles and whether each one converged."""
+    value = _solve(z=z, p=p, mu1=mu1, sigma1=sigma1, mu2=mu2, sigma2=sigma2)
     return value, jnp.isfinite(value)

@@ -171,7 +171,10 @@ def test_value_storage_refuses_a_file(tmp_path: Path) -> None:
 def test_host_storage_publishes_the_device_storage_values(
     *, build_model: Callable[[ExecutionConfig], Model]
 ) -> None:
-    """Every (period, regime) value is bitwise the one device storage publishes."""
+    """Every (period, regime) value is bitwise the one device storage publishes.
+
+    A read hands out a device array, as under device storage.
+    """
     device = build_model(ExecutionConfig()).solve(params=_PARAMS, log_level="off")
     host = build_model(_host()).solve(params=_PARAMS, log_level="off")
 
@@ -180,10 +183,10 @@ def test_host_storage_publishes_the_device_storage_values(
     }
     for period, regime_to_value in device.values.items():
         for regime_name, value in regime_to_value.items():
+            host_value = host.value(period=period, regime=regime_name)
+            assert host_value.sharding.memory_kind == "device"
             np.testing.assert_array_equal(
-                np.asarray(host.value(period=period, regime=regime_name)),
-                np.asarray(value),
-                strict=True,
+                np.asarray(host_value), np.asarray(value), strict=True
             )
 
 
@@ -347,18 +350,6 @@ def test_a_debug_solve_snapshot_holds_the_device_storage_values(
                 np.asarray(value),
                 strict=True,
             )
-
-
-@_MODELS
-def test_host_storage_reads_a_value_on_the_device(
-    *, build_model: Callable[[ExecutionConfig], Model]
-) -> None:
-    """A read hands out a device array, as under device storage."""
-    solution = build_model(_host()).solve(params=_PARAMS, log_level="off")
-    for period, regime_to_value in solution.values.items():
-        for regime_name in regime_to_value:
-            value = solution.value(period=period, regime=regime_name)
-            assert value.sharding.memory_kind == "device"
 
 
 def _three_regime_initial_conditions() -> dict[str, jax.Array]:

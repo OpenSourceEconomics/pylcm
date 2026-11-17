@@ -34,11 +34,12 @@ from _lcm.reachability import PhaseReachability
 from _lcm.regime_building.max_Q_over_a import get_max_Q_over_a
 from _lcm.regime_building.ndimage import map_coordinates
 from _lcm.solution.backward_induction import (
+    _apply_transfer_marks,
     _CoreCandidate,
     _count_triples_per_lowering_key,
     _drain_V_arr_shards,
     _group_cores_by_regime_period,
-    _mark_reused_transfers,
+    _transfer_consumer_counts,
     _uncompiled,
     solve,
 )
@@ -483,6 +484,19 @@ def _marks(*, marked: Mapping[_CoreCandidate, ResolvedCoreProgram]) -> list[bool
     ]
 
 
+def _mark_reused_transfers(
+    *, resolved_programs: Mapping[_CoreCandidate, ResolvedCoreProgram]
+) -> dict[_CoreCandidate, ResolvedCoreProgram]:
+    """Mark every transfer whose result more than one source core of a period reads.
+
+    The two steps the solve loop runs over its resolved programs.
+    """
+    return _apply_transfer_marks(
+        programs=resolved_programs,
+        consumers=_transfer_consumer_counts(resolved_programs=resolved_programs),
+    )
+
+
 def test_two_width_candidates_of_one_core_are_one_consumer() -> None:
     """Alternative widths of one core read a transfer once, not twice."""
     program = _program(transfer=_aligned_transfer())
@@ -561,14 +575,6 @@ _PLANNING_MAPS = pytest.mark.parametrize(
     [_grouped_cores, _uncompiled_candidates, _triples_per_lowering],
     ids=["cores_by_cell", "uncompiled", "triples_per_lowering"],
 )
-
-
-@_PLANNING_MAPS
-def test_planning_maps_are_read_only[T](
-    build: Callable[[], Mapping[Hashable, T]],
-) -> None:
-    """Planning maps handed from one compile stage to the next are read-only views."""
-    assert type(build()) is MappingProxyType
 
 
 @_PLANNING_MAPS

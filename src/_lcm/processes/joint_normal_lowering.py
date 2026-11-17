@@ -14,11 +14,7 @@ from jaxtyping import Bool, Float
 
 from _lcm.dtypes import canonical_float_dtype
 from _lcm.grids import Grid
-from _lcm.processes.iid import NormalIIDProcess
-from _lcm.processes.joint_normal import (
-    JointNormalIIDProcess,
-    compiled_covariance_factor,
-)
+from _lcm.processes.joint_normal import compiled_covariance_factor
 from _lcm.typing import FlatRegimeParams, RegimeNamesToIds
 from lcm.collective import CollectiveUtility
 from lcm.exceptions import (
@@ -28,6 +24,7 @@ from lcm.exceptions import (
     RegimeInitializationError,
 )
 from lcm.phased import Phased
+from lcm.processes import JointNormalIIDProcess, NormalIIDProcess
 from lcm.transition import AgeSpecializedGrid, PeriodSpecializedGrid
 from lcm.typing import (
     FloatND,

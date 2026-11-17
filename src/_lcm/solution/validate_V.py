@@ -17,6 +17,7 @@ from typing import Literal
 import jax.numpy as jnp
 
 from _lcm.engine import StateActionSpace
+from _lcm.time import format_age
 from _lcm.typing import (
     FlatRegimeParams,
     JSONValue,
@@ -159,8 +160,8 @@ def value_function_nan_error[PartialSolution: PeriodToRegimeToVArr](
     all_nan = n_nan == total
     fraction_hint = "all" if all_nan else f"{n_nan} of {total}"
     exc = InvalidValueFunctionError(
-        f"Value function at {time_kind} {age}{regime_part}: {fraction_hint} values "
-        f"are NaN.\n\n"
+        f"Value function at {time_kind} {format_age(age)}{regime_part}: "
+        f"{fraction_hint} values are NaN.\n\n"
         "NaN propagates through Q = U + beta * CE. Common causes:\n"
         "- A missing feasibility constraint (e.g. negative leisure passed "
         "to a fractional exponent).\n"
@@ -357,77 +358,3 @@ def _format_diagnostic_summary(summary: Mapping[str, JSONValue]) -> str:
                 lines.append(f"    {dim_name:24s} [{formatted}]")
 
     return "\n".join(lines)
-
-
-def contains_nan(period_to_regime_to_V_arr: PeriodToRegimeToVArr) -> bool:
-    """Return whether any value-function array holds a NaN."""
-    return any(
-        bool(v_array_has_nan(V_arr))
-        for regime_to_V_arr in period_to_regime_to_V_arr.values()
-        for V_arr in regime_to_V_arr.values()
-    )
-
-
-def validate_supplied_V_shapes(
-    *,
-    period_to_regime_to_V_arr: PeriodToRegimeToVArr,
-    regime_to_expected_rank: Mapping[RegimeName, int],
-) -> None:
-    """Fail if a supplied value function has the wrong number of axes.
-
-    The rank a solve produces is the rank `simulate` accepts, so the expected
-    rank comes from the same rule the solver builds V with
-    (`_lcm.solution.v_topology.expected_V_rank`): one axis per solve state kept
-    as a grid axis, plus a trailing stakeholder axis for a collective regime. A
-    regime whose every state is folded away has a rank-zero value function, a
-    single number.
-
-    Nothing downstream can recover a rank mismatch. An array of the wrong rank
-    still broadcasts, so it reaches the Bellman equation as an ordinary value and
-    either fails far from its origin — as a shape complaint naming some other
-    array — or silently contributes an expectation over an axis the regime does
-    not have. The expected rank is known only here, which is why the check lives
-    at the boundary that accepts a caller-supplied solution.
-
-    Only the rank is checked, not the axis lengths. Under age-specialized grids
-    a regime's grids legitimately change length from period to period, so a
-    length check would reject valid models; the rank does not vary with age, so
-    the rank check is safe wherever the length check would not be.
-
-    Args:
-        period_to_regime_to_V_arr: Mapping of periods to regime names to value
-            function arrays, as supplied by the caller.
-        regime_to_expected_rank: Mapping of regime names to the rank each
-            regime's value function has.
-
-    Raises:
-        InvalidValueFunctionError: If any array's rank disagrees with the rank
-            of the regime it is keyed under.
-
-    """
-    mismatches = []
-    for period, regime_to_V_arr in period_to_regime_to_V_arr.items():
-        for regime_name, V_arr in regime_to_V_arr.items():
-            if regime_name not in regime_to_expected_rank:
-                continue
-            expected = regime_to_expected_rank[regime_name]
-            actual = tuple(jnp.shape(V_arr))
-            if len(actual) != expected:
-                mismatches.append(
-                    f"  period {period}, regime {regime_name!r}: value function "
-                    f"has shape {actual} ({len(actual)} axes), but this regime's "
-                    f"value function has {expected} axes (one per state that is "
-                    f"not folded, plus one for the stakeholder axis of a "
-                    f"collective regime)"
-                )
-    if mismatches:
-        detail = "\n".join(mismatches)
-        msg = (
-            "Supplied value function arrays do not match the value functions of "
-            "the regimes they are keyed under:\n"
-            f"{detail}\n"
-            "A regime's value function has one axis per solve state it keeps as "
-            "a grid axis, in declaration order, plus a trailing stakeholder axis "
-            "when the regime is collective."
-        )
-        raise InvalidValueFunctionError(msg)

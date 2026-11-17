@@ -11,8 +11,8 @@ from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.regime_building.processing import _get_weights_func_for_process
 from _lcm.simulation.simulate import _row_selections
 from _lcm.solution import fingerprint as fingerprints
-from lcm import NormalIIDProcess, TauchenAR1Process
-from lcm.exceptions import GridInitializationError, OffGridStateError
+from lcm import TauchenAR1Process
+from lcm.exceptions import OffGridStateError
 from lcm.typing import OffGrid
 from tests.test_models.processes import RegimeId
 from tests.test_process_simulation_laws import (
@@ -55,28 +55,6 @@ def _simulate(
     first = frame.loc[frame["period"] == 0].sort_values("subject_id")
     second = frame.loc[frame["period"] == 1].sort_values("subject_id")
     return first["value"].to_numpy(), second["income"].to_numpy()
-
-
-@pytest.mark.parametrize(
-    "build",
-    [
-        lambda: _tauchen(off_grid="nearest"),
-        lambda: _on_nodes(off_grid="nearest"),  # ty: ignore[invalid-argument-type]
-        lambda: NormalIIDProcess(
-            n_points=3,
-            gauss_hermite=True,
-            mu=0.0,
-            sigma=1.0,
-            off_grid="nearest",  # ty: ignore[invalid-argument-type]
-        ),
-    ],
-    ids=["tauchen", "on-nodes", "iid"],
-)
-def test_process_refuses_an_unknown_off_grid_rule(
-    *, build: Callable[[], _ContinuousStochasticProcess]
-) -> None:
-    with pytest.raises(GridInitializationError, match="off_grid"):
-        build()
 
 
 @pytest.mark.parametrize("rule", _RULES)

@@ -1,4 +1,3 @@
-import inspect
 from collections.abc import Iterable
 
 import jax
@@ -11,7 +10,6 @@ from numpy.testing import assert_array_equal
 from _lcm.solution.action_reduction import (
     HARD_MAX_REDUCTION,
     HardMaxAccumulator,
-    HardMaxReduction,
     HardMaxResult,
 )
 from tests.solution._reduced_maximum_probe import (
@@ -312,34 +310,3 @@ def test_hard_max_block_values_reach_exactly_one_reduction():
         if reads_a_block and not writes_a_block:
             block_reductions.append(eqn.primitive.name)
     assert block_reductions == ["custom_jvp_call"]
-
-
-@pytest.mark.parametrize(
-    ("dtype", "raw_ids"),
-    [
-        (jnp.float32, [1.9, 2.1]),
-        (jnp.int64, [2**31, 7]),
-        (jnp.uint32, [2**32 - 1, 7]),
-    ],
-    ids=["float-truncation", "int64-wrap", "uint32-wrap"],
-)
-def test_hard_max_rejects_action_id_dtypes_that_would_cast_lossily(
-    *,
-    dtype: np.dtype,
-    raw_ids: list[float | int],
-) -> None:
-    """Global identities are int32 by contract, never silently narrowed."""
-    if dtype == jnp.int64 and not jax.config.x64_enabled:
-        pytest.skip("JAX cannot materialize int64 when x64 is disabled")
-    action_ids = jnp.asarray(raw_ids, dtype=dtype)
-    accumulator = HARD_MAX_REDUCTION.initialize(value_template=jnp.asarray(0.0))
-    unwrapped_add = inspect.unwrap(HardMaxReduction.add)
-
-    with pytest.raises(TypeError, match=r"action_ids.*int32"):
-        unwrapped_add(
-            HARD_MAX_REDUCTION,
-            accumulator=accumulator,
-            values=jnp.asarray([1.0, 2.0]),
-            feasible=jnp.asarray([True, True]),
-            action_ids=action_ids,
-        )

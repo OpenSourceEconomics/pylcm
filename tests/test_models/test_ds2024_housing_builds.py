@@ -16,12 +16,13 @@ Two oracles validate it on the liquid-housing interior:
   NEGM keeper's depreciated hold reproduces it up to grid resolution.
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Literal
 
 import numpy as np
 import pytest
 
+from lcm.typing import FloatND
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
 from tests.solution._ds2024_housing_vfi_oracle import solve_ds2024_housing_vfi
 from tests.test_models.ds2024_housing import (
@@ -90,17 +91,10 @@ def test_ds2024_housing_builds_and_solves(variant: Literal["negm", "brute"]):
         assert np.isfinite(interior).all()
 
 
-@pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
-def test_ds2024_housing_negm_matches_brute_on_interior():
-    """The NEGM solve agrees with its grid-search twin on the liquid-housing interior.
-
-    At zero depreciation the keeper holds the house, so the NEGM nest and the
-    brute grid search solve the identical Bellman problem. The pooled interior
-    value difference is sub-unit in the mean and the overwhelming majority of
-    cells fall within the cell tolerance — the NEGM model is correct up to grid
-    resolution.
-    """
-    brute = (
+@pytest.fixture(scope="module")
+def brute() -> Mapping[int, Mapping[str, FloatND]]:
+    """The zero-depreciation grid-search twin's values, read by two tests."""
+    return (
         build_model(
             variant="brute",
             n_grid=N_GRID,
@@ -110,6 +104,20 @@ def test_ds2024_housing_negm_matches_brute_on_interior():
         .solve(params=build_params(variant="brute", delta=0.0), log_level="debug")
         .values
     )
+
+
+@pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
+def test_ds2024_housing_negm_matches_brute_on_interior(
+    brute: Mapping[int, Mapping[str, FloatND]],
+):
+    """The NEGM solve agrees with its grid-search twin on the liquid-housing interior.
+
+    At zero depreciation the keeper holds the house, so the NEGM nest and the
+    brute grid search solve the identical Bellman problem. The pooled interior
+    value difference is sub-unit in the mean and the overwhelming majority of
+    cells fall within the cell tolerance — the NEGM model is correct up to grid
+    resolution.
+    """
     negm = (
         build_model(
             variant="negm",
@@ -157,7 +165,9 @@ def _pooled_interior_difference(*, pylcm_solution, oracle):
     return np.concatenate(differences)
 
 
-def test_ds2024_housing_vfi_oracle_matches_brute_at_zero_delta():
+def test_ds2024_housing_vfi_oracle_matches_brute_at_zero_delta(
+    brute: Mapping[int, Mapping[str, FloatND]],
+):
     """The host VFI oracle reproduces the brute solve at zero depreciation.
 
     The oracle is a from-scratch NumPy value-function iteration; at `delta = 0` it
@@ -165,16 +175,6 @@ def test_ds2024_housing_vfi_oracle_matches_brute_at_zero_delta():
     the liquid-housing interior up to grid resolution. This pins the oracle's
     economics before it is used as the `delta > 0` reference.
     """
-    brute = (
-        build_model(
-            variant="brute",
-            n_grid=N_GRID,
-            n_periods=N_PERIODS,
-            n_consumption=N_CONSUMPTION,
-        )
-        .solve(params=build_params(variant="brute", delta=0.0), log_level="debug")
-        .values
-    )
     oracle = solve_ds2024_housing_vfi(
         n_grid=N_GRID, n_periods=N_PERIODS, n_consumption=400, delta=0.0
     )

@@ -120,23 +120,6 @@ def scale_by_power_of_two(value: FloatND, exponent: IntND) -> FloatND:
     return value * multiplier
 
 
-def normalizing_exponent(*values: FloatND) -> IntND:
-    """Return `e` such that scaling by `2**-e` lands the largest term near one.
-
-    Scaling by a power of two is exact, so it moves no information. Pulling the
-    operands into the binade around one is what keeps products out of the range
-    where the error-free transforms stop being error-free. Zero and non-finite
-    terms are ignored; a group holding nothing else scales by `2**0`, which
-    leaves it alone.
-    """
-    magnitude = jnp.zeros_like(values[0])
-    for term in values:
-        magnitude = jnp.maximum(magnitude, jnp.abs(term))
-    usable = jnp.isfinite(magnitude) & (magnitude > 0.0)
-    _mantissa, exponent = jnp.frexp(jnp.where(usable, magnitude, 1.0))
-    return jnp.where(usable, exponent, jnp.zeros_like(exponent))
-
-
 def is_stored_zero(value: FloatND) -> BoolND:
     """Report where a float is a true zero, decided on the stored bits.
 
@@ -239,39 +222,6 @@ def dd_mul_float(value: DoubleDouble, factor: FloatND) -> DoubleDouble:
     )
 
 
-def dd_mul(left: DoubleDouble, right: DoubleDouble) -> DoubleDouble:
-    """Multiply two double-doubles, accumulating both error bounds and the tail."""
-    left_high, left_low, left_dropped = left
-    right_high, right_low, right_dropped = right
-    product, error = two_prod(left_high, right_high)
-    cross_high, cross_high_error = two_prod(left_high, right_low)
-    cross_low, cross_low_error = two_prod(left_low, right_high)
-    tail, tail_error = two_prod(left_low, right_low)
-
-    accumulated = (product, jnp.zeros_like(product), jnp.zeros_like(product))
-    for term in (
-        error,
-        cross_high,
-        cross_high_error,
-        cross_low,
-        cross_low_error,
-        tail,
-        tail_error,
-    ):
-        accumulated = dd_add_float(accumulated, term)
-
-    left_scale = jnp.abs(left_high) + jnp.abs(left_low)
-    right_scale = jnp.abs(right_high) + jnp.abs(right_low)
-    new_high, new_low, new_dropped = accumulated
-    dropped = (
-        new_dropped
-        + scale_tail_bound(bound=left_dropped, factor=right_scale)
-        + scale_tail_bound(bound=right_dropped, factor=left_scale)
-        + scale_tail_bound(bound=left_dropped, factor=right_dropped)
-    )
-    return new_high, new_low, dropped
-
-
 def dd_quotient(
     numerator: DoubleDouble, denominator: DoubleDouble
 ) -> tuple[FloatND, FloatND]:
@@ -281,50 +231,13 @@ def dd_quotient(
     carries no certificate: one Newton correction on the remainder leaves a
     result good to roughly twice the working precision, which is enough to *find*
     a structure but never enough to *prove* one. Decisions that must hold exactly
-    go through the native affine comparator, or through `dd_quotient_bounded`
-    where the quotient itself is the quantity being decided on.
+    go through the native affine comparator.
     """
     denominator_high, _low, _dropped = denominator
     estimate = numerator[0] / denominator_high
     remainder = dd_add(numerator, dd_negate(dd_mul_float(denominator, estimate)))
     correction = (remainder[0] + remainder[1]) / denominator_high
     return two_sum(estimate, correction)
-
-
-def dd_quotient_bounded(
-    numerator: DoubleDouble, denominator: DoubleDouble
-) -> DoubleDouble:
-    """Return `numerator / denominator` with a bound on how far off it is.
-
-    The bound is what separates a quotient that merely *looks* exact from one
-    that is, so it is **measured rather than assumed**: the quotient is
-    multiplied back by the denominator and what fails to reproduce the numerator
-    is what is reported, referred back through the denominator. A division that
-    reproduces its numerator exactly is exact, and this says so with a bound of
-    zero.
-
-    That distinction is the whole point. A crossing that lands on a representable
-    abscissa — the ordinary case, since two lines routinely meet at a node — has
-    an exact quotient, and a consumer asking which side of it the truth falls on
-    can be told. A blanket second-order charge on every division would leave that
-    consumer with a positive bound around an exactly located answer, and it would
-    refuse precisely the cases that are easiest to be sure about.
-
-    Referring the left-over back through the denominator is itself rounded, and
-    a bound rounded down is not a bound, so the result is widened by a few
-    rounding steps. The widening is multiplicative, which leaves an exact zero
-    exactly zero: nothing needs covering where nothing was left over. It also
-    absorbs dividing by the denominator's leading word rather than its full
-    value, a relative slack of the same order.
-    """
-    high, low = dd_quotient(numerator, denominator)
-    left_over = dd_add(
-        numerator,
-        dd_negate(dd_mul(denominator, (high, low, jnp.zeros_like(high)))),
-    )
-    unreproduced = jnp.abs(left_over[0] + left_over[1]) + left_over[2]
-    referred = unreproduced / jnp.abs(denominator[0])
-    return high, low, referred * (1.0 + 4.0 * jnp.finfo(referred.dtype).eps)
 
 
 def _split(a: FloatND) -> tuple[FloatND, FloatND]:

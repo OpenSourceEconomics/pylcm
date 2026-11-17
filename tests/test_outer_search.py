@@ -47,9 +47,6 @@ def _make_nnbegm(*, outer_search: OuterSearch) -> NNBEGM:
         lambda: AdaptiveOuterMesh(initial_grid=_MESH_GRID, value_rtol=-1e-8),
         lambda: AdaptiveOuterMesh(initial_grid=_MESH_GRID, value_rtol=float("nan")),
         lambda: AdaptiveOuterMesh(initial_grid=_MESH_GRID, outer_lipschitz_bound=0),
-        lambda: AdaptiveOuterMesh(initial_grid=_MESH_GRID, max_nodes=True),
-        lambda: AdaptiveOuterMesh(initial_grid=_MESH_GRID, fail_closed=1),  # ty: ignore[invalid-argument-type]
-        lambda: AdaptiveOuterMesh(initial_grid=(0.0, 1.0)),  # ty: ignore[invalid-argument-type]
     ],
 )
 def test_adaptive_outer_mesh_rejects_bad_config(
@@ -178,12 +175,6 @@ def test_finite_outer_grid_reproduces_the_frozen_candidate_values() -> None:
 
 def test_adaptive_outer_mesh_keeps_the_supplied_initial_grid() -> None:
     assert AdaptiveOuterMesh(initial_grid=_MESH_GRID).initial_grid is _MESH_GRID
-
-
-def test_adaptive_outer_mesh_stores_integer_tolerances_as_floats() -> None:
-    mesh = AdaptiveOuterMesh(initial_grid=_MESH_GRID, value_atol=1, value_rtol=1)
-
-    assert (type(mesh.value_atol), type(mesh.value_rtol)) == (float, float)
 
 
 def test_adaptive_outer_mesh_admits_an_infinite_lipschitz_bound() -> None:

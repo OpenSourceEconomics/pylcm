@@ -10,7 +10,6 @@ with no shape to object to.
 
 import jax.numpy as jnp
 import numpy as np
-import pandas as pd
 from numpy.testing import assert_array_almost_equal as aaae
 
 from lcm import (
@@ -78,123 +77,64 @@ class _RegimeId:
     annuity: ScalarInt  # code 2
 
 
-def test_leg_fallback_on_an_age_specialized_reference_is_read_at_its_own_age() -> None:
-    """`saver`'s solved value at age 1 reads `annuity` on age 2's principal grid.
+def test_simulated_saver_value_agrees_with_backward_induction() -> None:
+    """Solve and simulation both read the fallback annuity on its own age's grid.
 
     At age 2 the annuity's grid is `[0, 3, 6]`, so a principal of `4` falls
-    between two nodes and interpolates to `118`, making the saver worth `59`.
-    Measuring that principal against the annuity's age-1 grid `[0, 4, 8]`
-    instead makes it an exact node worth `116`, which would make the saver
-    worth `58`.
-    """
-    solution = _build_model().solve(
-        params={"discount_factor": _DISCOUNT_FACTOR}, log_level="debug"
-    )
+    between two nodes and interpolates to `118`, making the saver worth `59` at
+    age 1; reading it on age 1's `[0, 4, 8]` would make it `58`. At age 0 the
+    saver stays put and is worth half of that, `29.5`.
 
+    Simulation rebuilds the gated continuation from the stored value functions,
+    so a simulated saver at period 1 owes the same `59`. Its period-2 row lands
+    in `annuity`, the shut gate's fallback, at a principal of `4` (its whole
+    balance), and is paid the annuity's exact `100 + 4 ** 2 = 116` there rather
+    than the `118` the fold interpolates.
+    """
+    model = _build_model()
+    solution = model.solve(
+        params={"discount_factor": _DISCOUNT_FACTOR}, log_level="off"
+    )
     aaae(
         np.asarray(solution.values[1]["saver"]),
         _EXPECTED_SAVER_V_AT_AGE_1,
         decimal=DECIMAL_PRECISION,
     )
-
-
-def test_leg_fallback_on_an_age_specialized_reference_discounts_into_the_prior_age():
-    """`saver` is worth `29.5` at age 0, half its age-1 value.
-
-    The saver stays put at age 0 with probability one and pays nothing, so its
-    value there is the discounted age-1 value and nothing else. This pins the
-    fold's result one step further back than the age at which it is taken.
-    """
-    solution = _build_model().solve(
-        params={"discount_factor": _DISCOUNT_FACTOR}, log_level="debug"
-    )
-
     aaae(
         np.asarray(solution.values[0]["saver"]),
         _EXPECTED_SAVER_V_AT_AGE_0,
         decimal=DECIMAL_PRECISION,
     )
 
-
-def test_simulated_saver_value_agrees_with_backward_induction() -> None:
-    """A simulated saver at period 1 is worth the `59` the solver gives it.
-
-    Simulation rebuilds the gated continuation from the stored value functions
-    rather than reusing the solved one, so it owes the same folded value —
-    including the same choice of which age's annuity grid to read.
-    """
-    model = _build_model()
-    solution = model.solve(
-        params={"discount_factor": _DISCOUNT_FACTOR}, log_level="off"
-    )
     result = model.simulate(
         params={"discount_factor": _DISCOUNT_FACTOR},
         initial_conditions=_initial_conditions(n_subjects=2),
         solution=solution,
         log_level="debug",
     )
+    frame = result.to_dataframe()
 
-    simulated = result.to_dataframe().query("regime_name == 'saver' and period == 1")
+    simulated = frame.query("regime_name == 'saver' and period == 1")
     aaae(
         simulated["value"].to_numpy(),
         np.full(2, _EXPECTED_SAVER_V_AT_AGE_1),
         decimal=DECIMAL_PRECISION,
     )
 
-
-def test_shut_gate_routes_the_saver_into_the_age_specialized_fallback() -> None:
-    """A saver leaving at age 1 continues in `annuity`, the shut gate's fallback.
-
-    Which regime the row occupies is a discrete outcome, so it pins the routing
-    without any tolerance.
-    """
-    routed = _routed_rows()
-
+    routed = frame.query("period == 2")
     np.testing.assert_array_equal(
         routed["regime_name"].to_numpy(), np.full(2, "annuity")
     )
-
-
-def test_routed_saver_lands_on_the_principal_its_projection_supplies() -> None:
-    """A routed subject enters `annuity` at a principal of `4`, its whole balance."""
-    routed = _routed_rows()
-
     aaae(
         routed["principal"].to_numpy(),
         np.full(2, _EXPECTED_ROUTED_PRINCIPAL),
         decimal=DECIMAL_PRECISION,
     )
-
-
-def test_routed_saver_is_paid_the_annuity_at_its_realized_principal() -> None:
-    """The routed row is worth `116`, the annuity's payoff at a principal of `4`.
-
-    A simulated subject sits at its realized principal rather than on a node, so
-    it is paid the annuity's exact `100 + 4 ** 2` — not the `118` the fold
-    interpolates from age 2's coarser `[0, 3, 6]`.
-    """
-    routed = _routed_rows()
-
     aaae(
         routed["value"].to_numpy(),
         np.full(2, _EXPECTED_ROUTED_ANNUITY_VALUE),
         decimal=DECIMAL_PRECISION,
     )
-
-
-def _routed_rows() -> pd.DataFrame:
-    """Simulate the model and return the period-2 rows every saver routes into."""
-    model = _build_model()
-    solution = model.solve(
-        params={"discount_factor": _DISCOUNT_FACTOR}, log_level="off"
-    )
-    result = model.simulate(
-        params={"discount_factor": _DISCOUNT_FACTOR},
-        initial_conditions=_initial_conditions(n_subjects=2),
-        solution=solution,
-        log_level="debug",
-    )
-    return result.to_dataframe().query("period == 2")
 
 
 def _build_model() -> Model:

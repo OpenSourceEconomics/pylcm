@@ -12,15 +12,11 @@ import jax.numpy as jnp
 from dags import concatenate_functions
 from dags.tree import qname_from_tree_path
 
-from _lcm.grids import DiscreteGrid, Grid
+from _lcm.grids import Grid
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.processes.ar1 import _AR1Process
 from _lcm.processes.iid import _IIDProcess
-from _lcm.processes.state_conditioned import (
-    StateConditioned,
-    gather_sigma,
-    sigma_array_by_code,
-)
+from _lcm.processes.state_conditioned import gather_sigma, sigma_array_by_code
 from _lcm.simulation.random_address import draw_categorical_index
 from _lcm.transition_plans import (
     LotteryLifetime,
@@ -43,6 +39,8 @@ from _lcm.typing import (
     TransitionFunctionsMapping,
 )
 from lcm.exceptions import ModelInitializationError
+from lcm.grids import DiscreteGrid
+from lcm.state_conditioned import StateConditioned
 from lcm.typing import (
     ContinuousState,
     DiscreteState,
@@ -51,7 +49,6 @@ from lcm.typing import (
     IntND,
     ReferenceName,
     ScalarFloat,
-    ScalarInt,
 )
 
 
@@ -224,39 +221,6 @@ def get_next_stochastic_weights_function(
     )
 
 
-def get_next_interpolation_basis_weights_function(
-    *,
-    regime_name: RegimeName,
-    functions: EconFunctionsMapping,
-    transitions: MappingProxyType[TransitionFunctionName, TransitionFunction],
-    transition_plans: TargetTransitionPlans,
-) -> Callable[..., dict[str, FloatND | IntND]]:
-    """Get function that computes the node-basis weights of the declared entries.
-
-    These weights place one declared value on the target's nodes; they are the
-    coefficients of an interpolation, not probabilities, and the caller contracts
-    them into a single continuation before any certainty equivalent runs.
-
-    Args:
-        regime_name: Name of the regime that the transitions target.
-        functions: Immutable mapping of auxiliary functions of the model.
-        transitions: Transitions to the target regime.
-        transition_plans: Immutable mapping of target regime names to their
-            transition laws.
-
-    Returns:
-        Function that computes the node-basis weights of the declared entries.
-
-    """
-    return _get_next_weights_function(
-        regime_name=regime_name,
-        functions=functions,
-        transitions=transitions,
-        transition_plans=transition_plans,
-        select=_has_interpolation_basis,
-    )
-
-
 def _get_next_weights_function(
     *,
     regime_name: RegimeName,
@@ -322,13 +286,6 @@ def _is_lottery(
 ) -> bool:
     """Whether `name` is a stochastic law of `target`."""
     return plans[target].is_lottery(name)
-
-
-def _has_interpolation_basis(
-    *, plans: TargetTransitionPlans, target: RegimeName, name: TransitionFunctionName
-) -> bool:
-    """Whether `name` is a declared entry placed on `target`'s nodes."""
-    return plans[target].has_interpolation_basis(name)
 
 
 def _extend_bundle_for_simulation(
@@ -648,7 +605,7 @@ class _AR1NextState:
     """Name of the process state whose current value the draw conditions on."""
     args: dict[ReferenceName, str]
     """Argument names and annotations, in signature order."""
-    fixed_params: dict[str, ScalarFloat | ScalarInt]
+    fixed_params: dict[str, ScalarFloat]
     """Process parameters fixed at construction."""
     runtime_param_names: dict[str, str]
     """Mapping of qualified runtime-param names to the process's own names."""
@@ -716,7 +673,7 @@ class _IIDNextState:
     """Qualified `<target>__next_<state>` name of the transition."""
     args: dict[ReferenceName, str]
     """Argument names and annotations, in signature order."""
-    fixed_params: dict[str, ScalarFloat | ScalarInt]
+    fixed_params: dict[str, ScalarFloat]
     """Process parameters fixed at construction."""
     runtime_param_names: dict[str, str]
     """Mapping of qualified runtime-param names to the process's own names."""

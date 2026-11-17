@@ -30,7 +30,6 @@ from jaxtyping import Array, Int
 
 from _lcm.dtypes import safe_to_int_dtype
 from _lcm.engine import Regime as EngineRegime
-from _lcm.grids import DiscreteGrid
 from _lcm.grids.categorical import categorical
 from _lcm.grids.discrete import MISSING_CAT_CODE
 from _lcm.identity_transition import _IdentityTransition
@@ -53,6 +52,7 @@ from _lcm.utils.functools import publish_signature
 from _lcm.utils.namespace import flatten_regime_namespace
 from lcm.composite_state import CompositeState
 from lcm.exceptions import InvalidInitialConditionsError, ModelInitializationError
+from lcm.grids import DiscreteGrid
 from lcm.phased import Phased
 from lcm.regime import Regime, StateTransitionEntry
 from lcm.transition import fixed_transition

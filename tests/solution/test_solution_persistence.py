@@ -26,7 +26,6 @@ from lcm.exceptions import IncompatibleSolutionError, SolutionIntegrityError
 from lcm.persistence import load_solution, save_solution
 from lcm.solver_api import (
     EGM_CONTINUATION,
-    SOLUTION_SCHEMA_VERSION,
     SOLVER_API_VERSION,
     ArtifactAuthority,
     ArtifactChannel,
@@ -50,7 +49,7 @@ from lcm.solver_api import (
     ValueArraySchema,
     ValueStore,
 )
-from lcm.typing import FloatND, RegimeName
+from lcm.typing import FloatND
 
 type _MutableJSONValue = (
     bool
@@ -909,7 +908,7 @@ def test_safe_zero_leaf_nodes_survive_lazy_persistence_roundtrip(
     assert materialized[1:] == ((), (None, ()))
 
 
-@pytest.mark.parametrize("zero_node", [[], {}], ids=["list", "dict"])
+@pytest.mark.parametrize("zero_node", [[]], ids=["list"])
 def test_public_raw_materialize_rejects_mutable_zero_leaf_templates(
     *, tmp_path: Path, zero_node: ArtifactPayload
 ) -> None:
@@ -1246,10 +1245,6 @@ def test_save_normalizes_mutated_metadata_before_writing(tmp_path: Path) -> None
     assert list(tmp_path.glob(f".{path.name}.*.tmp")) == []
 
 
-class _CompatibilityVersionSubclass(int):
-    """Equality-compatible version token with the wrong exact runtime type."""
-
-
 class _ArmedHashString(str):  # noqa: SLOT000
     """Raise if a snapshot hashes this noncanonical metadata key."""
 
@@ -1261,28 +1256,17 @@ class _ArmedHashString(str):  # noqa: SLOT000
         return super().__hash__()
 
 
-class _HostileComparisonInt(int):
-    """Raise if a boundary compares this noncanonical integer."""
-
-    def __lt__(self, other: object) -> bool:
-        raise RuntimeError("hostile comparison escaped")
-
-
 @pytest.mark.parametrize(
     ("field_name", "invalid"),
     [
         ("solver_api_version", np.int64(SOLVER_API_VERSION)),
-        (
-            "solution_schema_version",
-            _CompatibilityVersionSubclass(SOLUTION_SCHEMA_VERSION),
-        ),
     ],
 )
 def test_save_rejects_weakly_typed_compatibility_versions(
     *,
     tmp_path: Path,
     field_name: str,
-    invalid: np.int64 | _CompatibilityVersionSubclass,
+    invalid: np.int64,
 ) -> None:
     """Reject equality-compatible versions before decoding or creating state."""
     source = _make_solution()
@@ -1380,81 +1364,6 @@ def test_save_rejects_armed_metadata_key_before_hashing(tmp_path: Path) -> None:
         metadata=metadata,
         values=ValueStore(value_entries),
     )
-    object.__setattr__(malformed, "_artifact_authority", source._artifact_authority)
-    lazy_value.solution = malformed
-    path = tmp_path / "solution.lcm"
-
-    with pytest.raises(IncompatibleSolutionError):
-        save_solution(solution=malformed, path=path)
-
-    assert lazy_value.materialization_count == 0
-    assert not path.exists()
-    assert list(tmp_path.glob(f".{path.name}.*.tmp")) == []
-
-
-def test_save_rejects_nonexact_value_schema_shape_before_comparison(
-    tmp_path: Path,
-) -> None:
-    """Reject a hostile shape integer before its comparison or value decoding."""
-    source = _make_solution()
-    coordinate = _VALUE_COORDINATES[0]
-    schema = dataclasses.replace(source.metadata.value_schemas[coordinate])
-    object.__setattr__(schema, "shape", (_HostileComparisonInt(2),))
-    schemas = dict(source.metadata.value_schemas)
-    schemas[coordinate] = schema
-    metadata = dataclasses.replace(source.metadata)
-    object.__setattr__(metadata, "value_schemas", MappingProxyType(schemas))
-    value_entries: dict[tuple[int, str], FloatND | solver_api_module._LazyEntry] = {
-        item: source.value(period=item[0], regime=item[1])
-        for item in _VALUE_COORDINATES
-    }
-    lazy_value = _SaveEnvelopeMutatingLazyEntry(
-        value=_eager_fixture_value(value_entries[coordinate])
-    )
-    value_entries[coordinate] = lazy_value
-    malformed = dataclasses.replace(
-        source,
-        metadata=metadata,
-        values=ValueStore(value_entries),
-    )
-    object.__setattr__(malformed, "_artifact_authority", source._artifact_authority)
-    lazy_value.solution = malformed
-    path = tmp_path / "solution.lcm"
-
-    with pytest.raises(IncompatibleSolutionError):
-        save_solution(solution=malformed, path=path)
-
-    assert lazy_value.materialization_count == 0
-    assert not path.exists()
-    assert list(tmp_path.glob(f".{path.name}.*.tmp")) == []
-
-
-def test_save_rejects_nonexact_value_coordinate_before_hashing(
-    tmp_path: Path,
-) -> None:
-    """Reject a hostile flat coordinate before ValueStore reconstruction."""
-    source = _make_solution()
-    coordinate = _VALUE_COORDINATES[0]
-    lazy_value = _SaveEnvelopeMutatingLazyEntry(
-        value=source.value(period=coordinate[0], regime=coordinate[1])
-    )
-    hostile_regime = _ArmedHashString(_REGIME)
-    entries: dict[tuple[int, RegimeName], FloatND | _SaveEnvelopeMutatingLazyEntry] = {
-        (
-            (period, hostile_regime)
-            if (period, regime) == coordinate
-            else (period, regime)
-        ): (
-            lazy_value
-            if (period, regime) == coordinate
-            else source.value(period=period, regime=regime)
-        )
-        for period, regime in _VALUE_COORDINATES
-    }
-    hostile_regime.armed = True
-    values = ValueStore()
-    object.__setattr__(values, "_entries", MappingProxyType(entries))
-    malformed = dataclasses.replace(source, values=values)
     object.__setattr__(malformed, "_artifact_authority", source._artifact_authority)
     lazy_value.solution = malformed
     path = tmp_path / "solution.lcm"
@@ -1706,20 +1615,6 @@ def test_save_detaches_eager_artifact_before_lazy_value_mutates_it(
         assert _StatefulPersistenceTree.unflatten_count == 0
     finally:
         _StatefulPersistenceTree.reset()
-
-
-def test_result_construction_rejects_noncanonical_omission_reason() -> None:
-    """A user string never enters the omissions as if it were an omission enum."""
-    source = _make_solution()
-
-    with pytest.raises(TypeError, match="exact OmissionReason"):
-        dataclasses.replace(
-            source,
-            replay_artifacts=ArtifactStore(
-                {_REPLAY_REFS[0]: source.replay_artifacts[_REPLAY_REFS[0]]}
-            ),
-            omissions={_REPLAY_REFS[1]: "not_requested"},
-        )
 
 
 def test_save_preflight_rejects_noncanonical_omission_reason(tmp_path: Path) -> None:

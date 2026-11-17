@@ -7,9 +7,6 @@ neither dropped nor made likelier than it is, however far below the likeliest
 one it sits. Under a power mean with a large exponent that ratio is what the
 continuation value is made of, so losing it moves the value and reverses
 choices.
-
-A consumer that has to name the weights as plain numbers is the one place a
-node may be understated — the declared approximation — and never enlarged.
 """
 
 import jax
@@ -20,10 +17,8 @@ import pytest
 from _lcm.certainty_equivalent import QuasiArithmeticMean
 from _lcm.power_mean import weighted_power_mean
 from _lcm.probability import (
-    flattened_to_one_scale,
     is_live,
     normalized_scaled_weights,
-    restored_against_a_nonfinite_value,
     scaled_exact_product,
 )
 from _lcm.regime_building.zero_safe import zero_safe_average
@@ -151,57 +146,6 @@ def test_the_linear_mean_reads_a_node_at_the_scale_it_carries():
     )
 
     np.testing.assert_allclose(float(np.asarray(got)), 1.0, rtol=_relative_tolerance())
-
-
-def test_flattening_never_states_a_probability_larger_than_it_is():
-    """Put on one scale as numbers, a node is understated rather than enlarged."""
-    coefficients, shifts, true_log2_ratio = _wide_spread_witness()
-
-    flattened = flattened_to_one_scale(coefficients=coefficients, shifts=shifts)
-
-    ratio = np.longdouble(np.asarray(flattened)[1]) / np.longdouble(
-        np.asarray(flattened)[0]
-    )
-    assert ratio <= np.exp2(np.longdouble(true_log2_ratio))
-
-
-def test_flattening_keeps_an_event_that_can_occur_live():
-    """A node too rare for the shared scale stays an event where `±inf` stands there.
-
-    A represented zero is the null event, and it annihilates whatever value
-    stands at its node. A state where no action is feasible carries `-inf`, and
-    rounding its probability to zero would drop that infinity and report an
-    ordinary number for a continuation that has none. Every strictly positive
-    weight gives the same infinity, so flooring the weight loses nothing.
-    """
-    coefficients, shifts, _ = _wide_spread_witness()
-
-    flattened = restored_against_a_nonfinite_value(
-        coefficients=coefficients,
-        lowered=flattened_to_one_scale(coefficients=coefficients, shifts=shifts),
-        values=jnp.asarray([2.0, -jnp.inf], dtype=coefficients.dtype),
-    )
-
-    assert bool(np.asarray(is_live(flattened))[1])
-
-
-def test_flattening_keeps_an_event_carrying_a_nan_live():
-    """A node too rare for the shared scale stays an event where `NaN` stands there.
-
-    A `NaN` at a node that can occur is a misspecified model, and the answer is
-    that `NaN` whatever the node's probability is. Rounding the weight to a
-    represented zero would let the zero-safe reduction read the node as the null
-    event and report an ordinary number for a model that has none.
-    """
-    coefficients, shifts, _ = _wide_spread_witness()
-
-    flattened = restored_against_a_nonfinite_value(
-        coefficients=coefficients,
-        lowered=flattened_to_one_scale(coefficients=coefficients, shifts=shifts),
-        values=jnp.asarray([2.0, jnp.nan], dtype=coefficients.dtype),
-    )
-
-    assert bool(np.asarray(is_live(flattened))[1])
 
 
 def test_a_rare_node_keeps_its_nan_through_a_general_transform():

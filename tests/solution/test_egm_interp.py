@@ -30,7 +30,12 @@ import numpy as np
 import pytest
 
 from _lcm.egm import interp
+from lcm.typing import Float1D, FloatND
 from tests.conftest import X64_ENABLED
+from tests.solution._outer_envelope_reference import (
+    interp_left_germ_on_padded_grid,
+    interp_right_germ_on_padded_grid,
+)
 
 # The germ read and its host reference rerun identical interpolation
 # arithmetic, so the two sides agree to the active float precision's
@@ -508,6 +513,29 @@ def test_prepared_interpolation_holds_no_grid_by_query_intermediate():
     assert not offenders, "grid-by-query intermediate present:\n" + "\n".join(offenders)
 
 
+def _interp_and_derivative_on_padded_grid(
+    *,
+    x_query: FloatND,
+    xp: Float1D,
+    fp: Float1D,
+    fp_slopes: Float1D | None = None,
+) -> tuple[FloatND, FloatND]:
+    """Prepare a NaN-padded row and read it with its analytic derivative.
+
+    The contract is `interp.interp_and_derivative_on_prepared_grid`'s, read on the
+    row `interp.prepare_padded_grid` prepares from `xp`.
+    """
+    search_grid, valid_length = interp.prepare_padded_grid(xp)
+    return interp.interp_and_derivative_on_prepared_grid(
+        x_query=x_query,
+        search_grid=search_grid,
+        valid_length=valid_length,
+        xp=xp,
+        fp=fp,
+        fp_slopes=fp_slopes,
+    )
+
+
 def test_paired_read_derivative_at_an_interior_node_is_the_right_side_slope():
     """At an exact interior node the paired derivative is the right piece's slope.
 
@@ -521,7 +549,7 @@ def test_paired_read_derivative_at_an_interior_node_is_the_right_side_slope():
     fp = jnp.array([1.0, 2.0, 4.0])
     fp_slopes = jnp.array([0.0, 0.0, 0.0])
 
-    value, derivative = interp.interp_and_derivative_on_padded_grid(
+    value, derivative = _interp_and_derivative_on_padded_grid(
         x_query=jnp.asarray(1.0), xp=xp, fp=fp, fp_slopes=fp_slopes
     )
 
@@ -541,10 +569,10 @@ def test_paired_read_derivative_uses_node_slopes_at_first_and_last_node():
     fp = xp**3
     fp_slopes = 3.0 * xp**2
 
-    _, at_first = interp.interp_and_derivative_on_padded_grid(
+    _, at_first = _interp_and_derivative_on_padded_grid(
         x_query=jnp.asarray(1.0), xp=xp, fp=fp, fp_slopes=fp_slopes
     )
-    _, at_last = interp.interp_and_derivative_on_padded_grid(
+    _, at_last = _interp_and_derivative_on_padded_grid(
         x_query=jnp.asarray(2.0), xp=xp, fp=fp, fp_slopes=fp_slopes
     )
 
@@ -562,7 +590,7 @@ def test_paired_read_derivative_matches_finite_differences_off_node(
     step = 1e-6
 
     for query in (1.1, 1.25, 1.7, 1.95):
-        _, derivative = interp.interp_and_derivative_on_padded_grid(
+        _, derivative = _interp_and_derivative_on_padded_grid(
             x_query=jnp.asarray(query), xp=xp, fp=fp, fp_slopes=fp_slopes
         )
         left = interp.interp_on_padded_grid(
@@ -589,10 +617,10 @@ def test_paired_read_derivative_out_of_support_matches_the_value_conventions():
     fp = jnp.array([0.0, 3.0, 5.0, jnp.nan])
     fp_slopes = jnp.array([3.0, 2.0, 0.5, jnp.nan])
 
-    _, below = interp.interp_and_derivative_on_padded_grid(
+    _, below = _interp_and_derivative_on_padded_grid(
         x_query=jnp.asarray(0.0), xp=xp, fp=fp, fp_slopes=fp_slopes
     )
-    _, above = interp.interp_and_derivative_on_padded_grid(
+    _, above = _interp_and_derivative_on_padded_grid(
         x_query=jnp.asarray(100.0), xp=xp, fp=fp, fp_slopes=fp_slopes
     )
 
@@ -610,7 +638,7 @@ def test_paired_read_derivative_at_a_duplicated_abscissa_reads_the_right_piece()
     xp = jnp.array([0.0, 1.0, 1.0, 2.0])
     fp = jnp.array([0.0, 10.0, 2.0, 3.0])
 
-    value, derivative = interp.interp_and_derivative_on_padded_grid(
+    value, derivative = _interp_and_derivative_on_padded_grid(
         x_query=jnp.asarray(1.0), xp=xp, fp=fp
     )
 
@@ -627,7 +655,7 @@ def test_paired_read_derivative_is_zero_on_neg_inf_brackets():
     xp = jnp.array([0.0, 1.0, 2.0])
     fp = jnp.array([-jnp.inf, 3.0, 5.0])
 
-    _, derivative = interp.interp_and_derivative_on_padded_grid(
+    _, derivative = _interp_and_derivative_on_padded_grid(
         x_query=jnp.asarray(0.5), xp=xp, fp=fp
     )
 
@@ -639,10 +667,10 @@ def test_paired_read_linear_derivative_at_a_node_is_the_right_secant():
     xp = jnp.array([0.0, 1.0, 2.0])
     fp = jnp.array([1.0, 2.0, 4.0])
 
-    _, at_interior = interp.interp_and_derivative_on_padded_grid(
+    _, at_interior = _interp_and_derivative_on_padded_grid(
         x_query=jnp.asarray(1.0), xp=xp, fp=fp
     )
-    _, at_last = interp.interp_and_derivative_on_padded_grid(
+    _, at_last = _interp_and_derivative_on_padded_grid(
         x_query=jnp.asarray(2.0), xp=xp, fp=fp
     )
 
@@ -666,7 +694,7 @@ def test_paired_read_on_a_singleton_row_is_the_node_value_with_zero_slope():
     fp = jnp.array([5.0, jnp.nan, jnp.nan])
     fp_slopes = jnp.array([2.0, jnp.nan, jnp.nan])
 
-    value, derivative = interp.interp_and_derivative_on_padded_grid(
+    value, derivative = _interp_and_derivative_on_padded_grid(
         x_query=jnp.asarray(0.25), xp=xp, fp=fp, fp_slopes=fp_slopes
     )
 
@@ -684,7 +712,7 @@ def test_reads_on_an_empty_row_propagate_nan():
     empty = jnp.full(3, jnp.nan)
 
     value = interp.interp_on_padded_grid(x_query=jnp.asarray(0.25), xp=empty, fp=empty)
-    paired_value, paired_derivative = interp.interp_and_derivative_on_padded_grid(
+    paired_value, paired_derivative = _interp_and_derivative_on_padded_grid(
         x_query=jnp.asarray(0.25), xp=empty, fp=empty, fp_slopes=empty
     )
 
@@ -832,7 +860,7 @@ def test_right_germ_reproduces_a_cubic_interior_derivatives():
     slopes = 3.0 * xp**2
     x_query = jnp.array([1.2, 1.5, 1.9, 2.4])
 
-    right_finite, first, second, third = interp.interp_right_germ_on_padded_grid(
+    right_finite, first, second, third = interp_right_germ_on_padded_grid(
         x_query=x_query, xp=xp, fp=fp, fp_slopes=slopes
     )
 
@@ -854,7 +882,7 @@ def test_right_germ_at_a_node_uses_the_right_brackets_limited_slope():
     fp = jnp.array([0.9, 1.0, 1.1])
     slopes = jnp.array([0.1, 100.0, 0.1])
 
-    _, first, _, _ = interp.interp_right_germ_on_padded_grid(
+    _, first, _, _ = interp_right_germ_on_padded_grid(
         x_query=jnp.array([1.0]), xp=xp, fp=fp, fp_slopes=slopes
     )
 
@@ -872,7 +900,7 @@ def test_right_germ_is_flat_and_finite_on_the_clamp_rays():
     fp = jnp.array([0.0, 3.0, 5.0, jnp.nan])
     slopes = jnp.array([3.0, 3.0, 1.0, jnp.nan])
 
-    right_finite, first, second, third = interp.interp_right_germ_on_padded_grid(
+    right_finite, first, second, third = interp_right_germ_on_padded_grid(
         x_query=jnp.array([0.5, 1.0, 4.0, 7.0]), xp=xp, fp=fp, fp_slopes=slopes
     )
 
@@ -894,7 +922,7 @@ def test_right_germ_flags_a_neg_inf_bracket_as_not_right_finite():
     fp = jnp.array([0.0, 1.0, -jnp.inf])
     slopes = jnp.array([1.0, 1.0, 1.0])
 
-    right_finite, first, second, third = interp.interp_right_germ_on_padded_grid(
+    right_finite, first, second, third = interp_right_germ_on_padded_grid(
         x_query=jnp.array([1.0, 1.5]), xp=xp, fp=fp, fp_slopes=slopes
     )
 
@@ -922,7 +950,7 @@ def test_right_germ_matches_scalar_host_on_random_rows():
         rays = [xp[0] - 0.5, xp[-1] + 0.5]
         queries = np.array(nodes + interior + rays)
 
-        got = interp.interp_right_germ_on_padded_grid(
+        got = interp_right_germ_on_padded_grid(
             x_query=jnp.asarray(queries),
             xp=jnp.asarray(xp),
             fp=jnp.asarray(fp),
@@ -956,7 +984,7 @@ def test_left_germ_reproduces_a_cubic_interior_derivatives():
     slopes = 3.0 * xp**2
     x_query = jnp.array([1.2, 1.5, 1.9, 2.4, 3.0])
 
-    left_finite, first, second, third = interp.interp_left_germ_on_padded_grid(
+    left_finite, first, second, third = interp_left_germ_on_padded_grid(
         x_query=x_query, xp=xp, fp=fp, fp_slopes=slopes
     )
 
@@ -979,7 +1007,7 @@ def test_left_germ_at_a_node_uses_the_left_brackets_limited_slope():
     fp = jnp.array([0.9, 1.0, 1.1])
     slopes = jnp.array([0.1, 100.0, 0.1])
 
-    _, first, _, _ = interp.interp_left_germ_on_padded_grid(
+    _, first, _, _ = interp_left_germ_on_padded_grid(
         x_query=jnp.array([1.0]), xp=xp, fp=fp, fp_slopes=slopes
     )
 
@@ -998,7 +1026,7 @@ def test_left_germ_is_dead_at_and_below_the_first_node():
     fp = jnp.array([0.0, 3.0, 5.0, jnp.nan])
     slopes = jnp.array([3.0, 3.0, 1.0, jnp.nan])
 
-    left_finite, first, second, third = interp.interp_left_germ_on_padded_grid(
+    left_finite, first, second, third = interp_left_germ_on_padded_grid(
         x_query=jnp.array([0.5, 1.0, 4.0, 7.0]), xp=xp, fp=fp, fp_slopes=slopes
     )
 
@@ -1020,7 +1048,7 @@ def test_left_germ_flags_a_neg_inf_bracket_as_not_left_finite():
     fp = jnp.array([-jnp.inf, 1.0, 2.0])
     slopes = jnp.array([1.0, 1.0, 1.0])
 
-    left_finite, first, _, _ = interp.interp_left_germ_on_padded_grid(
+    left_finite, first, _, _ = interp_left_germ_on_padded_grid(
         x_query=jnp.array([0.5, 1.0]), xp=xp, fp=fp, fp_slopes=slopes
     )
 

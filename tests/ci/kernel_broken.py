@@ -3,7 +3,12 @@
 from pathlib import Path
 
 from _lcm.egm.upper_envelope._exact_affine import ffi
-from tests.ci._capability import nonexistent_directory, point_at
+from tests.ci._capability import (
+    kernel_built,
+    kernel_built_for_current_backend,
+    nonexistent_directory,
+    point_at,
+)
 
 # The file exists, so capability classification must say "built". Registration
 # then reaches the stale-library failure mode: the shared object loads, but one
@@ -27,5 +32,5 @@ def _raise_missing_target(*, library: Path, platform: str) -> None:  # noqa: ARG
 # original function type rather than its signature, so the swap needs naming.
 ffi._register_platform = _raise_missing_target  # ty: ignore[invalid-assignment]
 
-assert ffi.kernel_built() is True
-assert ffi.kernel_built_for_current_backend() is True
+assert kernel_built() is True
+assert kernel_built_for_current_backend() is True

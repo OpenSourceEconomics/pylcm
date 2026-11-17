@@ -22,7 +22,6 @@ import dags.tree as dt
 from dags.tree import qname_from_tree_path, tree_path_from_qname
 
 from _lcm.exits import ExitFunctionPath, exit_functions, rule_operands
-from _lcm.grids import DiscreteGrid, IrregSpacedGrid
 from _lcm.params.edges import (
     EDGES,
     FALLBACK,
@@ -30,6 +29,15 @@ from _lcm.params.edges import (
     READS,
     ROUTES,
     user_path,
+)
+from _lcm.params.numeric_roles import (
+    NumericRole,
+    TemplateAnnotation,
+    annotated_params,
+    callable_param_roles,
+    merge_roles,
+    merge_template_params,
+    role_of_leaf,
 )
 from _lcm.params.temporal import validate_temporal_variants
 from _lcm.processes import _ContinuousStochasticProcess
@@ -54,6 +62,7 @@ from lcm.decoupled import (
     resolve_koopmans_aggregator,
 )
 from lcm.exceptions import InvalidNameError, ModelInitializationError
+from lcm.grids import DiscreteGrid, IrregSpacedGrid
 from lcm.participation import ParticipationCheck
 from lcm.phased import Phased
 from lcm.regime import ProjectedRegimeValue, StateTransitionEntry
@@ -299,7 +308,7 @@ def create_regime_params_template(  # noqa: C901 - classify ordinary and law-onl
                 "under the pseudo-function name 'taste_shocks' in the params — "
                 "this conflicts with a regime function of the same name."
             )
-        function_params["taste_shocks"] = {"scale": "float"}
+        function_params["taste_shocks"] = {"scale": _float_slot()}
 
     _add_koopmans_aggregator_params(
         function_params=function_params, user_regime=user_regime
@@ -440,7 +449,7 @@ def _exit_params_template(
             branch = exit_params.setdefault(path[1], {})
             for segment in path[2:]:
                 branch = cast("_TemplateBranch", branch.setdefault(segment, {}))
-            branch.update(params)
+            branch.update(merge_template_params(left=branch, right=params))
     return {} if not exit_params else {"exits": exit_params}
 
 
@@ -579,6 +588,7 @@ def create_edge_params_template(
     *,
     source: RegimeName,
     declared_transitions: tuple[Transition, ...],
+    demanded_laws: tuple[_LawNode, ...],
     vocabulary_by_regime: Mapping[RegimeName, EdgeVocabulary],
 ) -> EdgeParamsTemplate:
     """Create a source regime's branch of the `edges` parameter template.
@@ -610,6 +620,8 @@ def create_edge_params_template(
         source: The source regime's name.
         declared_transitions: The `Transition`s declared for the source, one per
             phase of `Model(edges=...)`.
+        demanded_laws: The source's declared laws at its demanded periods, one
+            phase side each. Their callables decide each slot's numeric role.
         vocabulary_by_regime: The edge vocabulary of each regime of the model.
 
     Returns:
@@ -624,6 +636,15 @@ def create_edge_params_template(
 
     """
     variables = set(vocabulary_by_regime[source].variables)
+    demanded_roles: dict[tuple[str, ...], set[NumericRole]] = {}
+    for law in demanded_laws:
+        for path, func, _ in iter_edge_callables(law=law, path=()):
+            for param_name, annotation in _edge_callable_params(
+                source=source, path=path, func=func, non_params=variables
+            ).items():
+                demanded_roles.setdefault((*path, param_name), set()).add(
+                    role_of_leaf(annotation)
+                )
     params_by_path: list[tuple[tuple[str, ...], Mapping[ParameterName, str]]] = []
     law_params_by_path: list[tuple[tuple[str, ...], Mapping[ParameterName, str]]] = []
     for transition in declared_transitions:
@@ -651,28 +672,75 @@ def create_edge_params_template(
                     ),
                 )
             )
-            params = _discovered_params(
-                name="edge",
-                func=func,
-                non_params=non_params,
-                kind=(
-                    "Edge-callable (at "
-                    f"{user_path(path=(EDGES, source, *path))}) argument"
-                ),
+            params = _edge_callable_params(
+                source=source, path=path, func=func, non_params=non_params
             )
             params_by_path.append((path, params))
             if gate is None:
                 law_params_by_path.append((path, params))
+            else:
+                # A gate, a participation check or a projection is demanded
+                # wherever its edge is.
+                for param_name, annotation in params.items():
+                    demanded_roles.setdefault((*path, param_name), set()).add(
+                        role_of_leaf(annotation)
+                    )
     # Only the law's own cases decide its form; a gate is no case of it.
     _fail_if_coarse_law_params_meet_per_target_cells(
         source=source, params_by_path=law_params_by_path
     )
+    return _edge_template(params_by_path=params_by_path, demanded_roles=demanded_roles)
+
+
+def _edge_callable_params(
+    *,
+    source: RegimeName,
+    path: tuple[str, ...],
+    func: UserFunction,
+    non_params: AbstractSet[str],
+) -> Mapping[ParameterName, str]:
+    """The parameters one edge callable reads, with their annotations."""
+    return _discovered_params(
+        name="edge",
+        func=func,
+        non_params=non_params,
+        kind=f"Edge-callable (at {user_path(path=(EDGES, source, *path))}) argument",
+    )
+
+
+def _edge_template(
+    *,
+    params_by_path: list[tuple[tuple[str, ...], Mapping[ParameterName, str]]],
+    demanded_roles: Mapping[tuple[str, ...], set[NumericRole]],
+) -> EdgeParamsTemplate:
+    """File every declared slot under the role its demanded readers give it.
+
+    Slots are filed over every case and phase, demanded or not. A slot only
+    undemanded cases read, as a float by one and as an integer by another, keeps
+    the value's kind. `schedules` refuses the two readings when a model demands
+    both laws.
+    """
+    roles_by_slot: dict[tuple[str, ...], set[NumericRole]] = {}
+    for path, params in params_by_path:
+        for param_name, annotation in params.items():
+            roles_by_slot.setdefault((*path, param_name), set()).add(
+                role_of_leaf(annotation)
+            )
     # A mutable build buffer of nested slots; freezing gives it its template type.
     template: _TemplateBranch = {}
     for path, params in params_by_path:
         for param_name, annotation in params.items():
+            slot = (*path, param_name)
+            roles = demanded_roles.get(slot, roles_by_slot[slot]) - {
+                NumericRole.AS_GIVEN
+            }
             _insert_edge_slot(
-                template=template, path=(*path, param_name), annotation=annotation
+                template=template,
+                path=slot,
+                annotation=TemplateAnnotation(
+                    str(annotation),
+                    role=next(iter(roles)) if len(roles) == 1 else NumericRole.AS_GIVEN,
+                ),
             )
     return cast("EdgeParamsTemplate", _freeze_template_node(template))
 
@@ -824,7 +892,11 @@ def _insert_edge_slot(
         branch = node
     if isinstance(branch.get(path[-1]), dict):
         raise InvalidNameError(_edge_slot_clash(path=path))
-    branch[path[-1]] = annotation
+    previous = branch.get(path[-1])
+    branch[path[-1]] = merge_template_params(
+        left={path[-1]: previous} if isinstance(previous, str) else {},
+        right={path[-1]: annotation},
+    )[path[-1]]
 
 
 # The entries a gate's parameters nest under, below its target.
@@ -914,9 +986,13 @@ def _record_params(
     if len(path) > 1:
         func_name, target_regime_name = path[0], path[1]
         target_branch = per_target_params.setdefault(target_regime_name, {})
-        target_branch[func_name] = target_branch.get(func_name, {}) | params
+        target_branch[func_name] = merge_template_params(
+            left=target_branch.get(func_name, {}), right=params
+        )
     else:
-        function_params[name] = function_params.get(name, {}) | params
+        function_params[name] = merge_template_params(
+            left=function_params.get(name, {}), right=params
+        )
 
 
 def _freeze_template_node(value: _TemplateNode) -> RegimeParamsTemplateNode:
@@ -981,8 +1057,8 @@ def _add_joint_transition_params(
                     non_params=output_non_params,
                 )
                 transition_name = f"next_{output_name}"
-                target_branch[transition_name] = (
-                    target_branch.get(transition_name, {}) | params
+                target_branch[transition_name] = merge_template_params(
+                    left=target_branch.get(transition_name, {}), right=params
                 )
 
 
@@ -1019,7 +1095,9 @@ def _union_callable_params(
     """Union signature-derived parameters over one role's phase variants."""
     tree: dict[str, str] = {}
     for index, func in enumerate(functions):
-        tree |= _input_types({f"role_{index}": func})
+        tree = merge_template_params(
+            left=tree, right=_annotated_input_types(name=f"role_{index}", func=func)
+        )
     params = {
         arg_name: annotation
         for arg_name, annotation in sorted(tree.items())
@@ -1027,6 +1105,20 @@ def _union_callable_params(
     }
     return _annotate_temporal_params(
         params=params, functions=functions, name="joint transition"
+    )
+
+
+def _float_slot(text: str = "float") -> TemplateAnnotation:
+    """Return the leaf of a library-owned float coefficient."""
+    return TemplateAnnotation(text, role=NumericRole.FLOAT)
+
+
+def _annotated_input_types(
+    *, name: str, func: UserFunction
+) -> dict[str, TemplateAnnotation]:
+    """Return a callable's arguments with their display text and numeric roles."""
+    return annotated_params(
+        params=_input_types({name: func}), roles=callable_param_roles(func)
     )
 
 
@@ -1077,6 +1169,14 @@ def _discovered_params(
         }
     else:
         tree = dict(dt.create_tree_with_input_types({name: func}))
+    roles: dict[str, NumericRole] = {}
+    for variant in _callables_in(value=func):
+        for arg_name, role in callable_param_roles(variant).items():
+            roles[arg_name] = merge_roles(
+                name=arg_name,
+                left=roles.get(arg_name, NumericRole.AS_GIVEN),
+                right=role,
+            )
     # A generated function binds some public parameter fields to private
     # arguments; those fields are parameters whatever the engine wires.
     bound = {
@@ -1092,11 +1192,22 @@ def _discovered_params(
         raise InvalidNameError(errors[0])
     # The check above admits no delimiter in a parameter's name, so every
     # parameter is a top-level leaf of `tree` holding its annotation string.
-    params = {
-        arg_name: cast("str", annotation)
+    params: dict[str, str] = {
+        arg_name: TemplateAnnotation(
+            cast("str", annotation),
+            role=roles.get(arg_name, NumericRole.AS_GIVEN),
+        )
         for arg_name, annotation in sorted(tree.items())
         if arg_name not in non_params
-    } | {field: cast("str", annotation) for field, annotation in bound.items()}
+    } | {
+        field: TemplateAnnotation(
+            cast("str", annotation),
+            role=roles.get(
+                getattr(func, "_lcm_law_arguments", {})[field], NumericRole.AS_GIVEN
+            ),
+        )
+        for field, annotation in bound.items()
+    }
     return _annotate_temporal_params(
         params=params, functions=list(_callables_in(value=func)), name=name
     )
@@ -1114,7 +1225,9 @@ def _annotate_temporal_params(
         )
     return MappingProxyType(
         {
-            param: f"TimeVarying[{annotation}] or scalar"
+            param: TemplateAnnotation(
+                f"TimeVarying[{annotation}] or scalar", role=role_of_leaf(annotation)
+            )
             if param in temporal
             else annotation
             for param, annotation in params.items()
@@ -1511,7 +1624,10 @@ def _add_koopmans_aggregator_params(
     for aggregator in reversed(
         koopmans_aggregator_variants(declaration=user_regime.koopmans_aggregator)
     ):
-        tree |= _input_types({"koopmans_aggregator": aggregator})
+        tree = merge_template_params(
+            left=tree,
+            right=_annotated_input_types(name="koopmans_aggregator", func=aggregator),
+        )
     variables = {
         *set(user_regime.states),
         *set(user_regime.actions),
@@ -1545,13 +1661,21 @@ def _add_pareto_objective_params(
             "params — this conflicts with a regime function of the same name."
         )
     wired = {*user_regime.states, "period", "age"}
-    params = {
-        arg: "float"
-        for weight in objective.weights.values()
-        if is_user_function(weight)
-        for arg in get_union_of_args([weight])
-        if arg not in wired
-    }
+    params: dict[str, TemplateAnnotation] = {}
+    for weight in objective.weights.values():
+        if not is_user_function(weight):
+            continue
+        roles = callable_param_roles(weight)
+        params = merge_template_params(
+            left=params,
+            right={
+                arg: TemplateAnnotation(
+                    "float", role=roles.get(arg, NumericRole.AS_GIVEN)
+                )
+                for arg in get_union_of_args([weight])
+                if arg not in wired
+            },
+        )
     if params:
         function_params[PARETO_OBJECTIVE_ENTRY] = dict(sorted(params.items()))
 
@@ -1575,7 +1699,7 @@ def _add_certainty_equivalent_params(
             "same name."
         )
     function_params["certainty_equivalent"] = dict.fromkeys(
-        sorted(user_regime.certainty_equivalent.param_names), "float"
+        sorted(user_regime.certainty_equivalent.param_names), _float_slot()
     )
 
 
@@ -1597,14 +1721,14 @@ def _add_runtime_grid_params(
                     name=state_name,
                     kind="process state",
                 )
-                function_params[state_name] = dict.fromkeys(names, "float")
+                function_params[state_name] = dict.fromkeys(names, _float_slot())
             continue
         grid = declaration
         if isinstance(grid, IrregSpacedGrid) and grid.pass_points_at_runtime:
             _fail_if_runtime_grid_shadows_function(
                 function_params=function_params, name=state_name, kind="state"
             )
-            function_params[state_name] = {"points": "Float1D"}
+            function_params[state_name] = {"points": _float_slot("Float1D")}
         elif (
             isinstance(grid, _ContinuousStochasticProcess)
             and grid.params_to_pass_at_runtime
@@ -1615,7 +1739,7 @@ def _add_runtime_grid_params(
                 kind="_ContinuousStochasticProcess state",
             )
             function_params[state_name] = dict.fromkeys(
-                grid.params_to_pass_at_runtime, "float"
+                grid.params_to_pass_at_runtime, _float_slot()
             )
 
     for action_name, grid in user_regime.actions.items():
@@ -1623,7 +1747,7 @@ def _add_runtime_grid_params(
             _fail_if_runtime_grid_shadows_function(
                 function_params=function_params, name=action_name, kind="action"
             )
-            function_params[action_name] = {"points": "Float1D"}
+            function_params[action_name] = {"points": _float_slot("Float1D")}
 
 
 def _fail_if_runtime_grid_shadows_function(

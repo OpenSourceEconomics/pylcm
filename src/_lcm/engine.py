@@ -25,7 +25,7 @@ from _lcm.egm.nested_published_policy import NestedEGMSimPolicy
 from _lcm.egm.published_policy import EGMSimPolicy, NBEGMGridPolicy, NNBEGMSimPolicy
 from _lcm.execution.execution_plan import visible_devices
 from _lcm.execution.placement import ACTION_PARTITION_AXIS
-from _lcm.grids import DiscreteGrid, Grid, IrregSpacedGrid
+from _lcm.grids import Grid
 from _lcm.post_decision_bound import PostDecisionBoundSpec
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.processes.grid_resolution import ProcessGridResolver
@@ -54,6 +54,7 @@ from _lcm.typing import (
 )
 from _lcm.utils.containers import first_non_none
 from lcm.exceptions import ExecutionPlanningError, PyLCMError
+from lcm.grids import DiscreteGrid, IrregSpacedGrid
 from lcm.solver_api import (
     ArtifactAuthority,
     ArtifactKey,
@@ -73,7 +74,6 @@ from lcm.typing import (
     Int1D,
     IntND,
     ScalarFloat,
-    ScalarInt,
 )
 
 if TYPE_CHECKING:
@@ -751,7 +751,7 @@ def resolve_phase_process_grids(
             spec=spec,
             required=required,
             parameters={
-                param: cast("ScalarFloat | ScalarInt", all_params[f"{name}__{param}"])
+                param: cast("ScalarFloat", all_params[f"{name}__{param}"])
                 for param in spec.params_to_pass_at_runtime
             },
         )
@@ -826,13 +826,11 @@ def phase_state_action_space(
             )
             if not all_present:
                 continue
-            process_kw: dict[str, ScalarFloat | ScalarInt] = dict(spec.params)
+            process_kw: dict[str, ScalarFloat] = dict(spec.params)
             for p in spec.params_to_pass_at_runtime:
                 # Runtime process-grid params are flat JAX scalars — never
                 # a `MappingLeaf` / `SequenceLeaf` — so narrow via `cast`.
-                process_kw[p] = cast(
-                    "ScalarFloat | ScalarInt", all_params[f"{name}__{p}"]
-                )
+                process_kw[p] = cast("ScalarFloat", all_params[f"{name}__{p}"])
             state_replacements[name] = spec.compute_gridpoints(**process_kw)
 
     new_states = (

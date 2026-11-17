@@ -19,13 +19,8 @@ which `test_CESAggregator_equals_the_general_power_mean` pins.
 
 from typing import NamedTuple
 
-import jax
 import jax.numpy as jnp
 
-from _lcm.egm.ce_scaled_linear import (
-    join_represented_ce_direction,
-    scale_ce_direction,
-)
 from _lcm.probability import (
     is_live,
     is_negative,
@@ -367,12 +362,6 @@ def _anchored_power_mean(
 
 
 def _applied_to_anchor(*, payoff: FloatND, deviation: FloatND) -> FloatND:
-    """Apply the deviation with exact primal identity and its product derivative."""
-    return _anchor_with_tangent(payoff, deviation)
-
-
-# keyword-only-exempt: library-callback=jax.custom_jvp
-def _anchor_primal(payoff: FloatND, deviation: FloatND) -> FloatND:
     """Return `payoff * exp(deviation)`, without touching an untouched payoff.
 
     A deviation of exactly zero is the riskless lottery: the answer *is* the
@@ -384,30 +373,6 @@ def _anchor_primal(payoff: FloatND, deviation: FloatND) -> FloatND:
     representation, which is exact at every magnitude the format holds.
     """
     return jnp.where(deviation == 0.0, payoff, payoff * jnp.exp(deviation))
-
-
-# keyword-only-exempt: library-callback=jax.custom_jvp.defjvp
-def _anchor_jvp(
-    primals: tuple[FloatND, FloatND], tangents: tuple[FloatND, FloatND]
-) -> tuple[FloatND, FloatND]:
-    """Transport both product slopes without flushing a tiny incoming direction."""
-    payoff, deviation = primals
-    payoff_dot, deviation_dot = tangents
-    value = _anchor_with_tangent(payoff, deviation)
-    sign = jnp.ones_like(value)
-    base = scale_ce_direction(logabs=deviation, sign=sign, direction=payoff_dot)
-    direction = join_represented_ce_direction(
-        coefficient=value,
-        sign=sign,
-        base=base,
-        direction=deviation_dot,
-    )
-    return value, direction
-
-
-# Construct by call so the method-only import hook retains the JVP registration.
-_anchor_with_tangent = jax.custom_jvp(_anchor_primal)
-_anchor_with_tangent.defjvp(_anchor_jvp)
 
 
 def _log_sum(log_terms: FloatND) -> FloatND:

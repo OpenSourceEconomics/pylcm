@@ -12,11 +12,7 @@ from typing import cast
 import pytest
 
 from _lcm.solution.nbegm import NBEGM, _BoundNBEGM
-from _lcm.solution.nnbegm import (
-    NNBEGM,
-    _BoundNNBEGM,
-    _fail_if_inner_is_not_nbegm,
-)
+from _lcm.solution.nnbegm import NNBEGM, _BoundNNBEGM
 from lcm import LinSpacedGrid
 from lcm.consumption_savings_regime import (
     ConsumptionSavingsRegime,
@@ -157,12 +153,6 @@ def test_nested_regime_binds_both_margins_without_an_inner_spec() -> None:
         "new_illiquid",
         None,
     )
-
-
-def test_non_nbegm_inner_is_rejected_by_the_structural_guard() -> None:
-    """The guard refuses a non-NBEGM inner with `RegimeInitializationError`."""
-    with pytest.raises(RegimeInitializationError, match="inner"):
-        _fail_if_inner_is_not_nbegm(GridSearch())  # ty: ignore[invalid-argument-type]
 
 
 @pytest.mark.parametrize(

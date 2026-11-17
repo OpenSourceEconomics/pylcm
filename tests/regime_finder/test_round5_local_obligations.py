@@ -21,13 +21,6 @@ def safe_utility(x):
     return x
 
 
-def variadic_utility(x, history, **extra):
-    result = x
-    for weight in (1, 2):
-        result = result + weight * history
-    return result
-
-
 def native_fixture(*, callback=opaque_utility, values=(0, 1)):
     """Two independently admitted original regimes, no reduced answer supplied."""
     regimes = {}

@@ -11,10 +11,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from _lcm.egm.outer_interpolation import (
-    LocalCubicOuterInterpolant,
-    OuterInterpolant,
-)
+from _lcm.egm.outer_interpolation import LocalCubicOuterInterpolant
 
 _INTERP = LocalCubicOuterInterpolant()
 
@@ -32,10 +29,6 @@ def _exactness_atol(*, expected: np.ndarray, floor: float) -> float:
     values = np.asarray(expected)
     scale = float(np.max(np.abs(values))) or 1.0
     return max(floor, 64.0 * float(np.finfo(values.dtype).eps) * scale)
-
-
-def test_satisfies_the_protocol() -> None:
-    assert isinstance(_INTERP, OuterInterpolant)
 
 
 def test_reproduces_node_values_exactly() -> None:
@@ -165,12 +158,6 @@ def test_out_of_domain_query_is_invalid_not_extrapolated() -> None:
     read = _INTERP.evaluate(nodes=nodes, values=values, query=jnp.array([-0.1, 1.1]))
     assert float(read[0]) == -jnp.inf
     assert float(read[1]) == -jnp.inf
-    validity = _INTERP.evaluate_validity(
-        nodes=nodes, values=values, query=jnp.array([-0.1, 0.5, 1.1])
-    )
-    assert not bool(validity[0])
-    assert bool(validity[1])
-    assert not bool(validity[2])
 
 
 def test_vectorized_state_cells_interpolate_independently() -> None:

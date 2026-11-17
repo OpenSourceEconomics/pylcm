@@ -1798,60 +1798,6 @@ def test_date_specialization_uses_numeric_original_age_or_actual_period(
     assert result == expected
 
 
-def _report_original(*, numeric_values: bool = False) -> dict[str, JSONValue]:
-    original: dict[str, JSONValue] = snapshot()
-    _fields(original)["constraints"] = {
-        "allowed": function(
-            "def allowed(choice_code, period):\n    return (choice_code == 0) | (period < 2)\n",
-            ["choice_code", "period"],
-        )
-    }
-    if numeric_values:
-        _object(_fields(original)["states"])["x"] = grid([10.0, 20.0])
-        _object(_fields(original)["actions"])["choice"] = grid([10.0, 20.0])
-        _object(_fields(original)["state_transitions"])["x"] = function(
-            "def next_x():\n    return 20.0\n", []
-        )
-    return original
-
-
-def _assert_source_report(
-    report: dict[str, JSONValue],
-    original: dict[str, JSONValue],
-    *,
-    conservative_update: bool = False,
-) -> None:
-    assert report["schema"] == "regime-source-facts/v1"
-    assert report["status"] == "SOURCE_FACTS_BUILT"
-    assert report["transformation_authorized"] is False
-    assert isinstance(json.dumps(report, allow_nan=False), str)
-    declarations = _normalized(original)
-    cells = tuple(_object(row) for row in _rows(report["cells"]))
-    assert tuple(row["id"] for row in cells) == tuple(
-        _object(row)["id"] for row in _rows(declarations["cells"])
-    )
-    assert tuple(_object(row)["id"] for row in _rows(report["relations"])) == tuple(
-        _object(row)["id"] for row in _rows(declarations["relations"])
-    )
-    exclusions = _object(report["excluded_action_values"])
-    for cell, declared in zip(cells, _rows(declarations["cells"]), strict=True):
-        assert cell["direct_reads"] == ["x"]
-        has_successor = any(
-            _object(row)["source"] == cell["id"] and bool(_object(row)["targets"])
-            for row in _rows(declarations["relations"])
-        )
-        assert cell["live_coordinates"] == (
-            ["history", "x"] if conservative_update and has_successor else ["x"]
-        )
-        period = _object(declared)["period"]
-        assert isinstance(period, int)
-        expected = [1] if period >= 2 else []
-        assert _object(exclusions[_name(cell["id"])])["choice"] == expected
-    assert all(isinstance(item, str) for item in _rows(report["source_obligations"]))
-    assert "recommendation" not in report
-    assert "optimality_certificate" not in report
-
-
 def test_native_first_array_has_source_authenticated_alias_reference_forwarding() -> (
     None
 ):

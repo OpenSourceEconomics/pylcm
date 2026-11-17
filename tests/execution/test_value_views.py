@@ -49,12 +49,7 @@ from _lcm.execution.value_transfer import (
     apply_value_transfer_plan,
     transfer_result_key,
 )
-from _lcm.execution.value_views import (
-    fail_if_value_transfer_exceeds_budget,
-    plan_value_transfer_footprint,
-)
 from _lcm.typing import ArgumentTree, PytreeValue, ShapeDtypePytree
-from lcm.exceptions import ExecutionPlanningError
 from lcm.typing import RegimeName, StateName
 
 _STATES = ("pref_type", "assets", "health")
@@ -763,47 +758,6 @@ def test_an_ordinary_read_is_one_communication_stage() -> None:
 
 _ITEM = 4
 _FULL = math.prod(_SHAPE) * _ITEM
-_BLOCK = 4 * 2 * _ITEM
-
-
-@pytest.mark.parametrize(
-    ("view", "copy", "expected"),
-    [
-        ("shared", False, (_FULL, 0, 0)),
-        ("selected", False, (_FULL, _BLOCK, 0)),
-        ("selected", True, (_FULL, _BLOCK, _BLOCK)),
-    ],
-    ids=["shared-alias", "selected-aligned", "selected-copy"],
-)
-def test_owner_selection_and_destination_bytes_are_accounted_separately(
-    *, view: str, copy: bool, expected: tuple[int, int, int]
-) -> None:
-    """The stored owner stays charged; each fresh buffer is charged once."""
-    stored = _stored(values=_values(), sharding=_single())
-    required = _named() if copy else _single()
-    transfer = _transfer(
-        stored=stored,
-        view=(
-            _shared_view(required=required)
-            if view == "shared"
-            else _selected_view(code=1, required=required)
-        ),
-        required=required,
-        kind=(
-            ValueTransferKind.COPY_TO_SOURCE_LAYOUT
-            if copy
-            else ValueTransferKind.ALIGNED_LOCAL
-        ),
-    )
-    device = _device().id
-
-    footprint = plan_value_transfer_footprint(transfer=transfer)
-
-    assert (
-        footprint.owner_bytes[device],
-        footprint.selected_bytes.get(device, 0),
-        footprint.destination_bytes.get(device, 0),
-    ) == expected
 
 
 def test_a_selected_view_reduces_the_consumer_footprint_by_the_type_count() -> None:
@@ -836,32 +790,6 @@ def test_only_an_aligned_shared_leaf_delivers_the_stored_buffer(
     )
 
     assert transfer.delivers_stored_buffer is expected
-
-
-def test_a_transfer_beyond_the_budget_is_refused_before_anything_runs() -> None:
-    """Admission names the device and its need, and nothing is dispatched."""
-    stored = _stored(values=_values(), sharding=_single())
-    transfer = _selected_transfer(stored=stored, code=1, copy=True)
-    before = _compiled_selections()
-
-    with pytest.raises(ExecutionPlanningError, match=r"needs \d+ bytes"):
-        fail_if_value_transfer_exceeds_budget(
-            transfer=transfer,
-            budget_bytes=_FULL + _BLOCK,
-            other_resident_bytes=MappingProxyType({}),
-        )
-    assert _compiled_selections() == before
-
-
-def test_a_transfer_exactly_at_the_budget_is_admitted() -> None:
-    """The owner plus the selected block plus its copy fit an exact budget."""
-    stored = _stored(values=_values(), sharding=_single())
-
-    fail_if_value_transfer_exceeds_budget(
-        transfer=_selected_transfer(stored=stored, code=1, copy=True),
-        budget_bytes=_FULL + 2 * _BLOCK,
-        other_resident_bytes=MappingProxyType({}),
-    )
 
 
 def _program_reading(

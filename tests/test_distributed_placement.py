@@ -63,8 +63,6 @@ from _lcm.execution.value_transfer import (
 )
 from _lcm.execution.workspace_planning import compiler_peak_bytes, plan_workspace
 from _lcm.grids import categorical
-from _lcm.grids.continuous import LinSpacedGrid
-from _lcm.grids.discrete import DiscreteGrid
 from _lcm.regime_building import processing
 from _lcm.simulation import entry_allocations, process_grids
 from _lcm.simulation.entry_allocations import SimulationEntryAllocations
@@ -84,6 +82,7 @@ from lcm import DeterministicTransition, Transition, fixed_transition
 from lcm.ages import AgeGrid
 from lcm.exceptions import ExecutionPlanningError
 from lcm.execution import ExecutionConfig
+from lcm.grids import DiscreteGrid, LinSpacedGrid
 from lcm.model import Model
 from lcm.persistence import PeriodCapture
 from lcm.regime import Regime as UserRegime
@@ -223,7 +222,7 @@ class _SolvePlacementArguments(TypedDict, closed=True):
 
 class _ProcessArguments(TypedDict, closed=True):
     spec: process_grids._ContinuousStochasticProcess
-    parameters: Mapping[str, process_grids.ScalarFloat | process_grids.ScalarInt]
+    parameters: Mapping[str, process_grids.ScalarFloat]
     required: jax.sharding.Sharding
 
 

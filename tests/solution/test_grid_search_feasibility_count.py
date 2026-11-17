@@ -8,7 +8,6 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
-from beartype.roar import BeartypeCallHintParamViolation
 
 from _lcm.execution.output_layout import StateAxesLeading
 from _lcm.policy_queries import _get_padded_query_bank_size, _PolicyQueryKernel
@@ -183,21 +182,6 @@ def test_native_carrier_forwards_exact_counts_to_host_diagnostics(dtype: str) ->
     assert not output.continuations
     assert not output.replay
     assert not output.auxiliary
-
-
-@pytest.mark.parametrize(
-    ("dtype", "shape"),
-    [("int16", ()), ("uint32", ()), ("float32", ()), ("int32", (1,))],
-)
-def test_native_feasibility_carrier_rejects_wrong_count_type_or_shape(
-    *, dtype: str, shape: tuple[int, ...]
-) -> None:
-    """Counters require signed int32/int64 scalars, independent of value channels."""
-    invalid = jnp.zeros(shape, dtype=dtype)
-    with pytest.raises((TypeError, BeartypeCallHintParamViolation), match="counts"):
-        FeasibilityKernelOutput(
-            value=jnp.asarray([1.0]), feasibility_counts=(invalid, invalid)
-        )
 
 
 def test_gridsearch_roles_and_reservations_match_counter_precision() -> None:

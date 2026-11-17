@@ -1,6 +1,6 @@
 """Tests for params accepted at the boundary by `_validate_param_types`.
 
-After `process_params` casts typed numeric arrays to canonical pylcm
+After `Model._process_params` casts typed numeric arrays to canonical pylcm
 dtypes, every supported user input form (numpy arrays, JAX arrays,
 Python scalars) reaches the validator as a JAX array or Python scalar
 and is accepted.

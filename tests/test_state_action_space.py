@@ -5,9 +5,10 @@ import numpy as np
 from numpy.testing import assert_array_equal
 
 from _lcm.engine import StateActionSpace, VariableInfo, Variables
-from _lcm.grids import DiscreteGrid, IrregSpacedGrid, LinSpacedGrid, categorical
+from _lcm.grids import categorical
 from _lcm.regime_building.V import VInterpolationInfo, create_v_interpolation_info
 from _lcm.state_action_space import create_state_action_space
+from lcm.grids import DiscreteGrid, IrregSpacedGrid, LinSpacedGrid
 from lcm.regime import Regime as UserRegime
 from lcm.typing import ScalarInt
 

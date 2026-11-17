@@ -18,10 +18,11 @@ import jax
 import numpy as np
 from dags import concatenate_functions
 
-from _lcm.grids import DiscreteGrid, Grid
+from _lcm.grids import Grid
 from _lcm.shock_registry import ShockBinding
 from _lcm.typing import QualifiedName
 from lcm.exceptions import ShockDeclarationError
+from lcm.grids import DiscreteGrid
 from lcm.phased import Phased
 from lcm.regime import StateEntry
 from lcm.shocks import (

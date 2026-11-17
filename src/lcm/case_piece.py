@@ -14,7 +14,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
 
-from _lcm.constraints.ir import Compare, Condition
+from _lcm.constraints.ir import Compare
+from lcm.condition import Condition
 from lcm.exceptions import NBEGMCaseError
 from lcm.typing import UserFunction
 

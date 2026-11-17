@@ -10,17 +10,10 @@ node in the pool varies with age, so nothing but the grids can. A pool carrying
 an unresolved `PeriodizedEconFunction` would break that silently rather than
 loudly, because the fold's grouping has no reason to consult a function's
 signature and a frozen representative-age closure returns a number like any
-other. Both halves are pinned here: that publication resolves the marker, and
-that the pool refuses one if it ever stops.
+other. Pinned here: publication resolves the marker.
 """
 
-import re
-from types import MappingProxyType
-
-import pytest
-
 from _lcm.regime_building.age_normalization import PeriodizedEconFunction
-from _lcm.regime_building.gated_edges import _build_target_dag_pool
 from lcm import (
     AgeGrid,
     AgeSpecializedFunction,
@@ -29,7 +22,6 @@ from lcm import (
     Regime,
     categorical,
 )
-from lcm.exceptions import ModelInitializationError
 from lcm.typing import ContinuousState, FloatND, ScalarInt
 
 _AGES = AgeGrid(start=0, inclusive_stop=3, step="Y")
@@ -48,42 +40,6 @@ class RegimeId:
 
     worker: ScalarInt  # code 0
     dead: ScalarInt  # code 1
-
-
-def test_target_dag_pool_refuses_an_age_specialized_node():
-    """A pool node that still varies by age is refused, naming it.
-
-    Publication resolves every marker, so this fires only if that stops — at
-    which point a fold would freeze one age's closure into every period.
-    """
-    with pytest.raises(
-        ModelInitializationError,
-        match=re.escape(
-            "the DAG pool of target regime 'dead' carries age-specialized "
-            "node(s) ['bonus']"
-        ),
-    ):
-        _build_target_dag_pool(
-            target_functions=MappingProxyType({"bonus": _periodized_bonus()}),
-            target_deterministic_transitions=MappingProxyType({}),
-            edge_target="dead",
-        )
-
-
-def test_target_dag_pool_accepts_concrete_nodes():
-    """The control: the same pool of plain callables is built without complaint.
-
-    Without it, a guard that rejected every pool would pass the test above.
-    """
-    pool = _build_target_dag_pool(
-        # A published node is an ordinary model function; the engine's
-        # `EconFunction` protocol is wider than any one of them.
-        target_functions=MappingProxyType({"bonus": _plain_bonus}),  # ty: ignore[invalid-argument-type]
-        target_deterministic_transitions=MappingProxyType({}),
-        edge_target="dead",
-    )
-
-    assert sorted(pool) == ["bonus"]
 
 
 def test_published_functions_resolve_an_age_specialized_marker():
@@ -112,20 +68,6 @@ def test_the_marker_really_was_periodized_in_that_build():
     canonical = _build_model()._regimes["worker"]
 
     assert canonical.simulation.age_specialized_function_names == frozenset({"bonus"})
-
-
-def _periodized_bonus() -> PeriodizedEconFunction:
-    """An unresolved marker of the kind publication is supposed to remove."""
-    return PeriodizedEconFunction(
-        representative=_plain_bonus,  # ty: ignore[invalid-argument-type]
-        function_by_signature=MappingProxyType({_BONUS_SCALE_EARLY: _plain_bonus}),  # ty: ignore[invalid-argument-type]
-        signature_by_period=MappingProxyType({0: _BONUS_SCALE_EARLY}),
-    )
-
-
-def _plain_bonus(wealth: ContinuousState) -> FloatND:
-    """A concrete node of the kind a published function set holds."""
-    return _BONUS_SCALE_EARLY * wealth
 
 
 def _build_model() -> Model:

@@ -28,18 +28,10 @@ from _lcm.regime_building.gated_edges import (
 )
 from _lcm.regime_building.Q_and_F import ResolvedProjectedRegimeValue
 from _lcm.typing import ConstraintFunction
-from lcm import categorical
 from lcm.exceptions import ModelInitializationError
-from lcm.typing import BoolND, FloatND, RegimeName, ScalarInt
+from lcm.typing import BoolND, FloatND, RegimeName
 
 _BETA = 0.95
-
-
-@categorical(ordered=False)
-class _SelfLoopRegimeId:
-    src: ScalarInt
-    src_exit: ScalarInt
-    src_fallback: ScalarInt
 
 
 def _gate(x: FloatND) -> BoolND:

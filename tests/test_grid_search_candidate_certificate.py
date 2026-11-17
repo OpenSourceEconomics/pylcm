@@ -656,6 +656,14 @@ def test_q_and_f_arrays_reach_full_reducers_without_candidate_transformation():
     assert tuple(sorted(result["certified_corridor_sources"])) == CERTIFIED_SOURCES
 
 
+def test_public_grid_and_process_shells_have_literal_inventory_obligations() -> None:
+    """Include the public constructors that call the certified grid machinery."""
+    assert isinstance(_parse("src/_lcm/processes/ar1_on_nodes.py"), ast.Module)
+    assert isinstance(_parse("src/lcm/grids.py"), ast.Module)
+    assert isinstance(_parse("src/lcm/processes.py"), ast.Module)
+    assert isinstance(_parse("src/lcm/state_conditioned.py"), ast.Module)
+
+
 def test_borrowing_floor_sources_have_literal_inventory_obligations() -> None:
     """Include floor declaration, normalization, scalar validation and proof owners."""
     assert isinstance(
@@ -1078,9 +1086,6 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate():
         "streaming_ev1:runtime_scale_constant",
         "streaming_ev1:scale_signature_dropped",
         "streaming_ev1:published_value_negated",
-        "streaming_ev1:composite_version_changed",
-        "streaming_ev1:hard_max_semantic_key_dropped",
-        "streaming_ev1:logsum_semantic_key_dropped",
         "streaming_ev1:scale_rebound",
         "streaming_ev1:continuous_extent_changed",
         "streaming_ev1:skip_last_block",
@@ -1190,29 +1195,35 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate():
     # Independent literals make both cardinality and family identity part of this
     # certificate, rather than trusting constants supplied by the mutation generator.
     original_names = {
-        name for name in names if not name.startswith("simulation_adapter:")
+        name
+        for name in names
+        if not name.startswith(("simulation_adapter:", "public_shell:"))
     }
-    assert len(original_names) == 380
+    assert len(original_names) == 377
     assert (
         hashlib.sha256(("\n".join(sorted(original_names)) + "\n").encode()).hexdigest()
-        == "73b99cc5e6503e740328b3923fe0684799d8d11030bf9fd6ba6e083159946f15"
+        == "b6df15e5f213d0ddbc5eebb690ae1718f519c0d1fa75b7f1e8aed53b76028128"
     )
     historical_names = {
         name
         for name in names
-        if not name.startswith("simulation_adapter:initial_physical_")
+        # `public_shell:` controls arrived when the public grid and process
+        # classes moved to `lcm`; the earlier population stays pinned without them.
+        if not name.startswith(
+            ("simulation_adapter:initial_physical_", "public_shell:")
+        )
     }
-    assert len(historical_names) == 398
+    assert len(historical_names) == 395
     assert (
         hashlib.sha256(
             ("\n".join(sorted(historical_names)) + "\n").encode()
         ).hexdigest()
-        == "a00c2dd641b34fdfa7f618fb19d3e79648c1082583727f15fafbb004d62faf6d"
+        == "2f1f0e0a6ce13bc16159eb8f154cb230e9912ccae149cef245c1b531c8ec03e9"
     )
-    assert len(names) == 410
+    assert len(names) == 412
     assert (
         hashlib.sha256(("\n".join(sorted(names)) + "\n").encode()).hexdigest()
-        == "c94857b93f5a6254cbda1aa14b3658232da1df482f907578db49540ac23aeb6c"
+        == "39b2e6f7ea82047c1b09c454bbe353fb2cc1a89d81a588b5bd8a91f3ee02bb76"
     )
 
 

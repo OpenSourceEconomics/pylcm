@@ -237,13 +237,6 @@ def _sequence(value: JSONValue) -> Sequence[JSONValue]:
     return value
 
 
-def _strings(value: JSONValue) -> tuple[str, ...]:
-    if not isinstance(value, Sequence) or isinstance(value, str):
-        msg = "Analysis labels must be a sequence."
-        raise TypeError(msg)
-    return tuple(str(item) for item in value)
-
-
 # keyword-only-exempt: primary-argument=report
 def result_from_report(
     report: Mapping[str, JSONValue], *, cost_model: LinearRegimeCostModel

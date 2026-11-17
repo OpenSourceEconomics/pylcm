@@ -44,7 +44,6 @@ from lcm.typing import (
     FunctionName,
     RegimeName,
     ScalarFloat,
-    ScalarInt,
     UserFunction,
 )
 
@@ -222,10 +221,10 @@ class PostDecisionShock(_IIDProcess):
         _IIDProcess._NON_PARAM_FIELDS | {"group", "nodes", "weights"}  # noqa: SLF001
     )
 
-    def compute_gridpoints(self, **kwargs: ScalarFloat | ScalarInt) -> Float1D:  # noqa: ARG002
+    def compute_gridpoints(self, **kwargs: ScalarFloat) -> Float1D:  # noqa: ARG002
         return jnp.asarray(self.nodes)
 
-    def compute_transition_probs(self, **kwargs: ScalarFloat | ScalarInt) -> FloatND:  # noqa: ARG002
+    def compute_transition_probs(self, **kwargs: ScalarFloat) -> FloatND:  # noqa: ARG002
         return jnp.full(
             (self.n_points, self.n_points), fill_value=jnp.asarray(self.weights)
         )
@@ -233,7 +232,7 @@ class PostDecisionShock(_IIDProcess):
     def draw_shock(
         self,
         *,
-        params: MappingProxyType[str, ScalarFloat | ScalarInt],  # noqa: ARG002
+        params: MappingProxyType[str, ScalarFloat],  # noqa: ARG002
         key: PRNGKeyND,
     ) -> ScalarFloat:
         ((name, law),) = self.group.shocks.items()

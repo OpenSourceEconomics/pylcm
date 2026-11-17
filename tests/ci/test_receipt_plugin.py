@@ -170,6 +170,13 @@ def test_a_serial_invocation_publishes_its_own_complete_selection(
     assert canonical["deselected_node_ids"] == []
     assert canonical["inventory_complete"], canonical["incomplete_reasons"]
     assert reconcile_with_junit(receipt=canonical, junit_path=junit)["reconciled"]
+    # An expected skip was selected and executed; it is still recorded as skipped.
+    skipped = set(canonical["skipped_node_ids"])
+    assert skipped == {"test_suite.py::test_third"}
+    assert skipped <= set(canonical["selected_node_ids"])
+    assert skipped <= set(canonical["executed_node_ids"])
+    assert skipped.isdisjoint(canonical["deselected_node_ids"])
+    assert canonical["outcomes"]["test_suite.py::test_third"] == "skipped"
 
 
 def test_a_two_worker_invocation_publishes_the_distributed_collection(
@@ -200,8 +207,13 @@ def test_a_two_worker_invocation_publishes_the_distributed_collection(
 def test_both_workers_collect_everything_and_execute_disjoint_shares(
     tmp_path: Path,
 ) -> None:
-    """Identical collection, disjoint execution: two populations, not one."""
-    process, receipts, _ = _run_pytest(
+    """Identical collection, disjoint execution: two populations, not one.
+
+    Every participant publishes under its own name, the supporting records join
+    the canonical one by invocation id, and the canonical record carries the
+    identity of what produced it.
+    """
+    process, receipts, junit = _run_pytest(
         directory=tmp_path, suite=SUITE, arguments=("-n", "2", "--dist", "load")
     )
 
@@ -213,27 +225,27 @@ def test_both_workers_collect_everything_and_execute_disjoint_shares(
     assert executed[0].isdisjoint(executed[1])
     assert set().union(*executed) == set(canonical["executed_node_ids"])
 
-
-def test_every_participant_publishes_under_its_own_name(tmp_path: Path) -> None:
-    """Three processes, three files: no participant overwrites another."""
-    _, receipts, _ = _run_pytest(directory=tmp_path, suite=SUITE, arguments=("-n", "2"))
-
     names = sorted(path.name for path in receipts.glob("*.receipt.json"))
     assert len(names) == 3
     assert len(set(names)) == 3
     assert sum("worker-" in name for name in names) == 2
 
-
-def test_the_controller_and_its_workers_share_one_invocation_id(
-    tmp_path: Path,
-) -> None:
-    """Supporting records can be joined to the canonical one they belong to."""
-    _, receipts, _ = _run_pytest(directory=tmp_path, suite=SUITE, arguments=("-n", "2"))
-
-    canonical, workers = _records(receipts=receipts)
     assert {record["invocation_id"] for record in workers.values()} == {
         canonical["invocation_id"]
     }
+
+    assert canonical["environment"]["source_sha"] == "0" * 40
+    assert canonical["environment"]["runner_os"] == "Linux"
+    assert canonical["runtime"]["precision"] in {32, 64}
+    assert canonical["runtime"]["device_count"] is not None
+    assert canonical["runtime"]["device_count"] >= 1
+    assert canonical["runtime"]["backend"]
+    assert canonical["runtime"]["python_version"]
+    assert canonical["policy"]["numprocesses"] == 2
+    assert canonical["junit_path"] == str(junit)
+    assert canonical["exit_status"] == 0
+    assert canonical["start_wall_clock"] is not None
+    assert canonical["start_wall_clock"] < canonical["end_wall_clock"]
 
 
 def test_an_invocation_with_no_selected_tests_records_an_empty_selection(
@@ -254,21 +266,6 @@ def test_an_invocation_with_no_selected_tests_records_an_empty_selection(
     assert reconcile_with_junit(receipt=canonical, junit_path=junit)["reconciled"]
 
 
-def test_a_partially_skipped_population_keeps_its_skips_out_of_the_selection(
-    tmp_path: Path,
-) -> None:
-    """An expected skip was selected and executed; it is still recorded as skipped."""
-    _, receipts, _ = _run_pytest(directory=tmp_path, suite=SUITE, arguments=())
-
-    canonical, _ = _records(receipts=receipts)
-    skipped = set(canonical["skipped_node_ids"])
-    assert skipped == {"test_suite.py::test_third"}
-    assert skipped <= set(canonical["selected_node_ids"])
-    assert skipped <= set(canonical["executed_node_ids"])
-    assert skipped.isdisjoint(canonical["deselected_node_ids"])
-    assert canonical["outcomes"]["test_suite.py::test_third"] == "skipped"
-
-
 def test_an_all_skipped_population_is_still_a_complete_inventory(
     tmp_path: Path,
 ) -> None:
@@ -284,29 +281,6 @@ def test_an_all_skipped_population_is_still_a_complete_inventory(
     assert set(canonical["outcomes"].values()) == {"skipped"}
     assert canonical["inventory_complete"], canonical["incomplete_reasons"]
     assert reconcile_with_junit(receipt=canonical, junit_path=junit)["reconciled"]
-
-
-def test_a_canonical_record_carries_the_identity_of_what_produced_it(
-    tmp_path: Path,
-) -> None:
-    """Two receipts can be told apart, and neither read as evidence about the other."""
-    _, receipts, junit = _run_pytest(
-        directory=tmp_path, suite=SUITE, arguments=("-n", "2")
-    )
-
-    canonical, _ = _records(receipts=receipts)
-    assert canonical["environment"]["source_sha"] == "0" * 40
-    assert canonical["environment"]["runner_os"] == "Linux"
-    assert canonical["runtime"]["precision"] in {32, 64}
-    assert canonical["runtime"]["device_count"] is not None
-    assert canonical["runtime"]["device_count"] >= 1
-    assert canonical["runtime"]["backend"]
-    assert canonical["runtime"]["python_version"]
-    assert canonical["policy"]["numprocesses"] == 2
-    assert canonical["junit_path"] == str(junit)
-    assert canonical["exit_status"] == 0
-    assert canonical["start_wall_clock"] is not None
-    assert canonical["start_wall_clock"] < canonical["end_wall_clock"]
 
 
 def _collector(
@@ -566,22 +540,42 @@ def test_a_nodeid_maps_to_the_junit_name_pytest_writes_for_it(
     assert junit_identity(nodeid=nodeid) == expected
 
 
-@pytest.mark.parametrize("defect", [None, "missing", "unexpected"])
-def test_parametrized_native_junit_population_is_reconciled_exactly(
-    *, tmp_path: Path, defect: str | None
-) -> None:
-    """Parameter delimiters survive; missing and extra outcomes are refused."""
-    suite = """
+_NATIVE_JUNIT_SUITE = """
 import pytest
 
 @pytest.mark.parametrize("case", [1, 2], ids=["left::right", "nested[one::two]"])
 def test_family(case: int) -> None:
     assert case in (1, 2)
 """
+
+
+@pytest.fixture(scope="module")
+def native_junit_run(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> tuple[int, str, bytes]:
+    """Run the parametrized native pytest producer once for all defect variants.
+
+    Returns its exit status, its canonical receipt as JSON text and its pristine
+    JUnit bytes; each variant rebuilds its own receipt and XML from these.
+    """
     process, receipts, junit = _run_pytest(
-        directory=tmp_path, suite=suite, arguments=()
+        directory=tmp_path_factory.mktemp("native-junit"),
+        suite=_NATIVE_JUNIT_SUITE,
+        arguments=(),
     )
     canonical, _ = _records(receipts=receipts)
+    return process.returncode, json.dumps(canonical), junit.read_bytes()
+
+
+@pytest.mark.parametrize("defect", [None, "missing", "unexpected"])
+def test_parametrized_native_junit_population_is_reconciled_exactly(
+    *, tmp_path: Path, defect: str | None, native_junit_run: tuple[int, str, bytes]
+) -> None:
+    """Parameter delimiters survive; missing and extra outcomes are refused."""
+    returncode, canonical_json, junit_bytes = native_junit_run
+    canonical: Receipt = json.loads(canonical_json)
+    junit = tmp_path / "junit.xml"
+    junit.write_bytes(junit_bytes)
     tree = ET.parse(junit)  # noqa: S314 - local XML written by the pytest child
     xml_suite = tree.find(".//testsuite")
     if xml_suite is None:
@@ -600,7 +594,7 @@ def test_family(case: int) -> None:
     tree.write(junit)
     expected_count = {None: 2, "missing": 1, "unexpected": 3}[defect]
     assert (
-        process.returncode,
+        returncode,
         reconcile_with_junit(receipt=canonical, junit_path=junit),
     ) == (
         0,

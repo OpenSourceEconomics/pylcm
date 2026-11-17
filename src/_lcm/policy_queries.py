@@ -18,6 +18,7 @@ from dags import with_signature
 from jax.core import Tracer
 
 from _lcm.current_iid import CurrentIIDDrawFrame
+from _lcm.dtypes import Code, as_canonical_float, as_code
 from _lcm.engine import StateActionSpace
 from _lcm.execution.core_program import (
     CoreArgumentBuilder,
@@ -30,7 +31,8 @@ from _lcm.execution.core_program import (
 )
 from _lcm.execution.output_layout import VALUE, StateAxesLeading
 from _lcm.execution.pending_work import PendingSolveWork
-from _lcm.grids import DiscreteGrid
+from _lcm.grids import Grid
+from _lcm.output_roles import OutputRole, target_role
 from _lcm.params.edges import EDGES, flat_namespaces, regime_kernel_params
 from _lcm.regime_building.argmax import argmax_and_max
 from _lcm.regime_building.collective import ParetoWeights, collective_argmax_and_readout
@@ -65,6 +67,7 @@ from _lcm.typing import (
 from _lcm.utils.counts import sum_counts
 from _lcm.utils.dispatchers import productmap, vary_carry_like_body
 from lcm.exceptions import ExecutionPlanningError, UnsupportedOperationError
+from lcm.grids import DiscreteGrid
 from lcm.shocks import ShockGroupName
 from lcm.solver_api import KernelOutput
 from lcm.typing import (
@@ -2146,11 +2149,18 @@ def _mapped_query_states(
     Under a false `guard` a cell runs only as a discarded lane of a batch, and the
     target reads its first grid point instead: a point its own solve evaluates.
     """
+    grid = node.context.state_action_space.states
+    state_grids = {name: node.context.grids[name] for name in grid}
+    # Where the engine receives a projected state: it takes the target state's
+    # kind, so a projection may return `1` for a continuous state or a Python
+    # integer for a code.
     mapped = {
-        name: jnp.asarray(
-            helper(
+        name: _as_target_state(
+            value=helper(
                 **{key: available[key] for key in inspect.signature(helper).parameters}
-            )
+            ),
+            name=name,
+            grids=state_grids,
         )
         for name, helper in node.read.projection.items()
         if names is None or name in names
@@ -2159,11 +2169,24 @@ def _mapped_query_states(
         raise ValueError("A mapped query state must be scalar per source cell.")
     if guard is None:
         return mapped
-    grid = node.context.state_action_space.states
     return {
         name: jnp.where(guard, value, jnp.asarray(grid[name][0], value.dtype))
         for name, value in mapped.items()
     }
+
+
+def _as_target_state(
+    *, value: PytreeValue, name: str, grids: Mapping[str, Grid]
+) -> FloatND | Code:
+    """Adapt one projection's output to the role of the target state it lands on."""
+    # A projection returns one array-like; the adapters refuse any other kind.
+    output = cast("FloatND | IntND | BoolND", value)
+    if name not in grids:
+        return jnp.asarray(output)
+    source = f"The projection of state '{name}'"
+    if target_role(grids[name]) is OutputRole.FLOAT:
+        return as_canonical_float(value=output, source=source)
+    return as_code(value=output, source=source)
 
 
 def _query_action(

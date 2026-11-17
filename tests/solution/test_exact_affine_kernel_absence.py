@@ -16,6 +16,7 @@ import pytest
 from _lcm.egm.upper_envelope._exact_affine import ffi
 from lcm.exceptions import ExactAffineKernelUnavailableError, ModelInitializationError
 from lcm.solvers import ExactEnvelope
+from tests.ci._capability import kernel_built, kernel_built_for_current_backend
 from tests.conftest import EXACT_KERNEL_SKIP_REASON, X64_ENABLED
 from tests.test_models import nbegm_medicaid_toy, negm_kinked_toy
 from tests.test_models.dcegm_paper_twin import build_dcegm_model
@@ -58,9 +59,9 @@ def test_current_cpu_backend_requires_the_cpu_library_file(*, monkeypatch, tmp_p
     monkeypatch.setattr(ffi, "_CPU_LIBRARY", library)
     monkeypatch.setattr(ffi.jax, "default_backend", lambda: "cpu")
 
-    assert ffi.kernel_built_for_current_backend() is False
+    assert kernel_built_for_current_backend() is False
     library.touch()
-    assert ffi.kernel_built_for_current_backend() is True
+    assert kernel_built_for_current_backend() is True
 
 
 def test_current_gpu_backend_requires_both_cpu_and_cuda_library_files(
@@ -74,9 +75,9 @@ def test_current_gpu_backend_requires_both_cpu_and_cuda_library_files(
     monkeypatch.setattr(ffi, "_CUDA_LIBRARY", cuda_library)
     monkeypatch.setattr(ffi.jax, "default_backend", lambda: "gpu")
 
-    assert ffi.kernel_built_for_current_backend() is False
+    assert kernel_built_for_current_backend() is False
     cuda_library.touch()
-    assert ffi.kernel_built_for_current_backend() is True
+    assert kernel_built_for_current_backend() is True
 
 
 def test_a_gpu_backend_requires_a_loadable_cuda_exact_kernel(monkeypatch):
@@ -133,7 +134,7 @@ def test_a_present_kernel_missing_a_target_fails_as_a_broken_build(
     monkeypatch.setattr(ffi, "_register_platform", raise_missing_symbol)
     monkeypatch.setattr(ffi.jax, "default_backend", lambda: "cpu")
 
-    assert ffi.kernel_built_for_current_backend() is True
+    assert kernel_built_for_current_backend() is True
     with pytest.raises(ExactAffineKernelUnavailableError, match="reinstall pylcm"):
         ffi._ensure_registered()
 
@@ -155,7 +156,7 @@ def test_a_present_unloadable_kernel_is_unavailable_but_not_absent(
     monkeypatch.setattr(ffi, "_register_platform", raise_load_error)
     monkeypatch.setattr(ffi.jax, "default_backend", lambda: "cpu")
 
-    assert ffi.kernel_built_for_current_backend() is True
+    assert kernel_built_for_current_backend() is True
     assert ffi.kernel_available() is False
 
 
@@ -169,7 +170,7 @@ def test_a_platform_with_no_kernel_file_reports_it_is_not_built(monkeypatch):
     """A platform that never built a CPU library reports capability absence."""
     monkeypatch.setattr(ffi, "_CPU_LIBRARY", Path("/nowhere/libcertified.so"))
 
-    assert ffi.kernel_built() is False
+    assert kernel_built() is False
 
 
 def test_a_present_kernel_counts_as_built_before_it_is_loaded(*, monkeypatch, tmp_path):
@@ -178,7 +179,7 @@ def test_a_present_kernel_counts_as_built_before_it_is_loaded(*, monkeypatch, tm
     library.touch()
     monkeypatch.setattr(ffi, "_CPU_LIBRARY", library)
 
-    assert ffi.kernel_built() is True
+    assert kernel_built() is True
 
 
 def _f(value):
@@ -203,18 +204,6 @@ def _f(value):
         lambda: ffi.exact_affine_read(
             x0=_f(0.0), x1=_f(1.0), v0=_f(0.0), v1=_f(1.0), x_query=_f(0.5)
         ),
-        lambda: ffi.exact_affine_handover(
-            a_x0=_f(0.0),
-            a_x1=_f(1.0),
-            a_v0=_f(0.0),
-            a_v1=_f(1.0),
-            b_x0=_f(0.0),
-            b_x1=_f(1.0),
-            b_v0=_f(1.0),
-            b_v1=_f(0.0),
-            left=_f(0.0),
-            right=_f(1.0),
-        ),
         lambda: ffi.exact_cell_hull(
             left=_f(0.0),
             right=_f(1.0),
@@ -226,7 +215,7 @@ def _f(value):
             max_runs=1,
         ),
     ],
-    ids=["compare", "read", "handover", "cell_hull"],
+    ids=["compare", "read", "cell_hull"],
 )
 def test_every_entry_point_reports_a_missing_kernel(*, monkeypatch, request_a_verdict):
     """No exact entry point reaches XLA without a kernel behind it."""

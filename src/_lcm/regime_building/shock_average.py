@@ -38,7 +38,6 @@ from dags import concatenate_functions
 from dags.tree import qname_from_tree_path
 
 from _lcm.additive_shock_transition import AdditiveShockTransition
-from _lcm.grids.continuous import IrregSpacedGrid, LinSpacedGrid
 from _lcm.probability import is_represented_zero
 from _lcm.regime_building.V import (
     VInterpolationInfo,
@@ -67,50 +66,13 @@ from _lcm.typing import (
 from _lcm.utils.functools import get_union_of_args
 from _lcm.zero_safe import scaled_joint_weight
 from lcm.exceptions import ModelInitializationError
+from lcm.grids import IrregSpacedGrid, LinSpacedGrid
 from lcm.typing import Float1D, FloatND, Int1D, IntND, ScalarInt, UserFunction
 
 _TIME_NAMES = frozenset({"period", "age"})
 # Knots `_merged_knots` adds beyond the merged points, one on each side.
 _N_ANCHORS = 2
 _HIGHEST = jax.lax.Precision.HIGHEST
-
-
-def average_over_shock(
-    *,
-    values: FloatND,
-    points: Float1D,
-    coordinate: Callable[[FloatND], FloatND],
-    shocks: Float1D,
-    weights: Float1D,
-) -> tuple[Float1D, FloatND]:
-    """Average values over a shock added to the last axis's coordinate.
-
-    Args:
-        values: Values on a grid, the shocked axis last.
-        points: The grid points of the last axis, ascending.
-        coordinate: Map from a value of the last axis to its fractional grid
-            coordinate, as the value function's interpolator computes it.
-        shocks: One shock per node of the averaged draws.
-        weights: The nodes' probabilities.
-
-    Returns:
-        Tuple of the merged points, ascending, and the average at those points,
-        the last axis of `values` replaced by them. A point that coincides with
-        another is kept once; its copy moves above the largest point, where the
-        average is linear, so there are always `len(points) * len(shocks)` merged
-        points, plus one anchor below and one above them (`_merged_knots`).
-
-    """
-    knots, stencil = shock_reading_stencil(
-        points=points, coordinate=coordinate, shocks=shocks
-    )
-    return knots, apply_averaging(
-        values=values,
-        stencil=stencil,
-        coefficients=weights,
-        shifts=None,
-        subscripts="...n,nzm->...mz",
-    )
 
 
 def shock_reading_stencil(

@@ -29,7 +29,7 @@ def _corner_value(coh: jnp.ndarray) -> np.ndarray:
         coh=coh,
         savings=jnp.asarray(0.0),
         preferences=crra_preferences(crra=CRRA),
-        discount_factor=DISCOUNT_FACTOR,
+        discount_factor=jnp.asarray(DISCOUNT_FACTOR),
         continuation=jnp.zeros_like(coh),
     )
     return np.asarray(value)

@@ -2194,22 +2194,6 @@ def _restore_artifact_authority_from_pickle(
     )
 
 
-def _canonicalize_declared_template(
-    *,
-    template: ArtifactPayload,
-    payload_runtime_type: ArtifactRuntimeType,
-    containers: Mapping[TreePath, ArtifactRuntimeType],
-    leaves: Mapping[TreePath, LeafAuthority],
-) -> ArtifactPayload:
-    """Validate and detach a template for callback-free lazy reconstruction."""
-    return _canonicalize_declared_template_snapshot(
-        template=template,
-        payload_runtime_type=payload_runtime_type,
-        containers=containers,
-        leaves=leaves,
-    ).payload
-
-
 def _canonicalize_artifact_payload_snapshot(  # noqa: C901
     *,
     payload: ArtifactPayload,

@@ -1,30 +1,12 @@
-"""EGM kernels read `V_{t+1}` on the target regime's period-`t+1` grid.
+"""EGM kernels do not require the continuous state to carry their role name.
 
-A period-`t` EGM kernel interpolates its continuation off a grid. Which grid is
-correct is fixed by where the continuation lives, not by where the kernel
-publishes its own result: it is the **target** regime's grid, at period
-**`t+1`**. Two axes make those differ from the source's own current grid:
+The 1-D EGM kernel calls its continuous state `liquid` internally. W5 solves a
+one-asset model whose state is named `wealth` and compares it with the same model
+solved by dense `GridSearch` on the unconstrained interior. Grid search never
+interpolates a continuation, so it cannot share a defect in how EGM reads one.
 
-- **cross-regime** — the target is a different regime whose state is discretized
-  on a different grid (the retired regime's liquid support need not match the
-  working regime's, and the terminal regime's need not match either);
-- **temporal** — the state's grid is age-specialized, so period `t+1`'s nodes
-  differ from period `t`'s within one regime.
-
-The oracle throughout is the same model solved by dense `GridSearch`, compared on
-the covered interior. Grid search never interpolates a continuation, so it cannot
-share the defect.
-
-Every configuration here is reachable from the public API: the DS pension model
-takes per-regime grid overrides, all defaulting to one shared grid, so the
-negative control is exactly today's model.
-
-A third axis makes the target's array differ from this regime's without moving
-any node: the **order** the two regimes' states resolve in, which decides what
-the value array's axes mean. W10 covers it, in
-`tests/solution/test_egm_continuation_axis_order.py` — a pension-first target
-reaching a liquid-first kernel is a layout question rather than a grid one, and
-it is asserted against an exact affine oracle rather than against brute force.
+The order in which two regimes' states resolve is covered by W10, in
+`tests/solution/test_egm_continuation_axis_order.py`.
 """
 
 from functools import partial
@@ -35,7 +17,6 @@ import yaml
 
 from lcm import (
     AgeGrid,
-    AgeSpecializedGrid,
     LinSpacedGrid,
     Model,
     categorical,
@@ -50,24 +31,11 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
-from tests.test_models.deterministic.ds_pension import get_model, get_params
 
 _N_PERIODS = 5
-_RETIREMENT_PERIOD = 3
 
 _SAVINGS_GRID = LinSpacedGrid(start=0.0, stop=20.0, n_points=40)
 
-# The interior the two solvers are comparable on: the off-grid top-pension
-# boundary layer thickens backward, and the steep low-liquid rows are where the
-# dense brute is least reliable.
-_WORKING_INTERIOR = {2: np.s_[3:, :9], 1: np.s_[3:, :8], 0: np.s_[3:, :7]}
-# The lowest liquid nodes are borrowing-constrained, where an exact EGM
-# inversion and a discrete consumption sweep are not comparable at all.
-_RETIRED_INTERIOR = np.s_[3:]
-# When the two periods' grids differ, the candidate cloud inverted from the
-# post-decision grids covers one pension column fewer, so the same off-grid
-# top-pension layer is one column thicker than in the matched-grid case.
-_MOVING_INTERIOR = {2: np.s_[3:, :7], 1: np.s_[3:, :7], 0: np.s_[3:, :6]}
 # The renamed 1-D model's borrowing constraint binds over its lowest wealth
 # nodes, where the exact EGM solution and a discrete consumption sweep are not
 # comparable. Above them the two agree to well under a percent.
@@ -79,23 +47,7 @@ _RENAMED_UNCONSTRAINED = np.s_[5:]
 _CONTRACT = yaml.safe_load(
     (Path(__file__).parent / "provenance_contract.yaml").read_text(encoding="utf-8")
 )
-_RETIRED_SENTINEL = _CONTRACT["workloads"]["retired_egm"]["sentinel"]
-
-
-def _solve_pair(**grid_overrides):
-    """Solve one grid configuration with the EGM solvers and with dense brute."""
-    solvers = grid_overrides.pop("solvers")
-    egm = (
-        get_model(n_periods=_N_PERIODS, solvers=solvers, **grid_overrides)
-        .solve(params=get_params(), log_level="debug")
-        .values
-    )
-    brute = (
-        get_model(n_periods=_N_PERIODS, n_consumption=200, **grid_overrides)
-        .solve(params=get_params(), log_level="debug")
-        .values
-    )
-    return egm, brute
+_ONE_ASSET_SENTINEL = _CONTRACT["workloads"]["one_asset_egm"]["sentinel"]
 
 
 def _assert_within_sentinel(*, rel, sentinel):
@@ -108,30 +60,6 @@ def _assert_within_sentinel(*, rel, sentinel):
     """
     assert np.median(rel) < sentinel["median_value_regret"]
     assert np.max(rel) < sentinel["max_value_regret"]
-
-
-def _assert_retired_matches_brute(*, egm, brute, period=_RETIREMENT_PERIOD):
-    """The retired value agrees with brute on the unconstrained liquid interior."""
-    egm_v = np.asarray(egm[period]["retired"])[_RETIRED_INTERIOR]
-    brute_v = np.asarray(brute[period]["retired"])[_RETIRED_INTERIOR]
-    assert np.isfinite(egm_v).all()
-    rel = np.abs(egm_v - brute_v) / np.abs(brute_v)
-    _assert_within_sentinel(rel=rel, sentinel=_RETIRED_SENTINEL)
-
-
-def _moving_liquid_grid(*, start, stop_at_age, n_points):
-    """A liquid grid whose ceiling moves with age, shape held fixed.
-
-    The ceiling stays inside the solver's post-decision `a_grid`, so the
-    envelope covers every node and the comparison measures which grid the
-    continuation is read on rather than how uncovered holes are filled.
-    """
-    return AgeSpecializedGrid(
-        build=lambda age: LinSpacedGrid(
-            start=start, stop=stop_at_age(age), n_points=n_points
-        ),
-        signature=lambda age: float(stop_at_age(age)),
-    )
 
 
 def _renamed_one_asset_model(*, solver, n_consumption=14):
@@ -250,4 +178,4 @@ def test_w5_egm_does_not_require_the_state_to_be_named_liquid():
         egm_v = np.asarray(egm[period]["alive"])[_RENAMED_UNCONSTRAINED]
         brute_v = np.asarray(brute[period]["alive"])[_RENAMED_UNCONSTRAINED]
         rel = np.abs(egm_v - brute_v) / np.abs(brute_v)
-        _assert_within_sentinel(rel=rel, sentinel=_RETIRED_SENTINEL)
+        _assert_within_sentinel(rel=rel, sentinel=_ONE_ASSET_SENTINEL)

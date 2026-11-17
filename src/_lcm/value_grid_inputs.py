@@ -20,9 +20,9 @@ import pandas as pd
 from jax import Array
 from jax.typing import ArrayLike
 
-from _lcm.grids import DiscreteGrid
 from _lcm.grids.discrete import MISSING_CAT_CODE
-from _lcm.typing import RegimeName, RegimeNamesToIds
+from _lcm.typing import DiscreteGridValue, RegimeName, RegimeNamesToIds
+from lcm.grids import DiscreteGrid
 from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
 from lcm.typing import (
@@ -213,7 +213,7 @@ def encode_initial_values(
 
 def _codes_of_categorical(
     *,
-    declared: tuple[int | float, ...],
+    declared: tuple[DiscreteGridValue, ...],
     is_integer: bool,
     categorical: pd.Categorical | pd.Series,
     name: str,

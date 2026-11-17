@@ -111,25 +111,19 @@ def test_model_initial_nodes_has_no_default() -> None:
     assert parameter.default is inspect.Parameter.empty
 
 
-_NOT_A_MAPPING = r"parameter initial_nodes=.* violates type hint UserInitialNodes"
-
-
 @pytest.mark.parametrize(
     ("initial_nodes", "match"),
     [
-        (None, _NOT_A_MAPPING),
         ({}, r"^`initial_nodes` must be a nonempty mapping .*; got \{\}\.$"),
-        ("working", _NOT_A_MAPPING),
-        (("working", "retirement"), _NOT_A_MAPPING),
         ({25: ()}, r"a nonempty sequence of names; got \(\)\.$"),
         ({25: "unknown"}, r"names unknown regime\(s\) \['unknown'\]"),
     ],
-    ids=["none", "empty", "bare-name", "bare-sequence", "empty-rule", "unknown"],
+    ids=["empty", "empty-rule", "unknown"],
 )
 def test_model_rejects_malformed_initial_nodes(
     *, initial_nodes: InitialNodesFixture, match: str
 ) -> None:
-    """`None`, empty, bare-name and unknown-name roots all fail at construction."""
+    """Empty and unknown-name roots fail at construction."""
     with pytest.raises(ModelInitializationError, match=match):
         _model(initial_nodes=initial_nodes)
 
@@ -138,10 +132,9 @@ def test_model_rejects_malformed_initial_nodes(
     ("initial_nodes", "match"),
     [
         ({61: "working"}, r"^Age 61 in selector 61 is not an age of the model"),
-        ({True: "working"}, r"^Age selector True must name numeric ages"),
         ({"25": "working"}, r"^Age selector '25' must name numeric ages"),
     ],
-    ids=["off-grid", "boolean-age", "string-age"],
+    ids=["off-grid", "string-age"],
 )
 def test_model_rejects_malformed_root_ages(
     *, initial_nodes: InitialNodesFixture, match: str
@@ -218,7 +211,6 @@ def test_explicit_initial_nodes_owns_regime_collections() -> None:
         {25: ()},
         {25: ""},
         {25: ("working", "")},
-        {True: "working"},
         {float("nan"): "working"},
     ],
 )

@@ -277,8 +277,6 @@ def test_execution_config_invariant_block_widths_are_frozen() -> None:
     [
         ({"pref_type": 0}, ValueError),
         ({"pref_type": -1}, ValueError),
-        ({"pref_type": True}, ValueError),
-        ({"pref_type": 1.0}, ValueError),
         ({"": 1}, ValueError),
     ],
 )

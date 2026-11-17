@@ -171,7 +171,6 @@ from _lcm.persistence.solution import (
     StreamedSolutionArchive,
     WrittenPeriod,
 )
-from _lcm.processes.ar1 import RouwenhorstAR1Process
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.regime_building.gated_edges import (
     EDGE_PERIOD_CONTEXT_ARGS,
@@ -263,8 +262,9 @@ from _lcm.solution.v_topology import (
     _RegimeVTopology,
     placed_V_sharding,
 )
-from _lcm.time import TimeAxis, coordinate_at, coordinate_kind
+from _lcm.time import TimeAxis, coordinate_at, coordinate_kind, display_age_at
 from _lcm.typing import (
+    AgeValue,
     ArgumentTree,
     ArtifactPayload,
     FlatParams,
@@ -305,6 +305,7 @@ from lcm.exceptions import (
     ShockDeclarationError,
 )
 from lcm.execution import WidthSearch
+from lcm.processes import RouwenhorstAR1Process
 from lcm.solver_api import (
     SIMULATION_POLICY,
     ArtifactKey,
@@ -340,9 +341,9 @@ type GatherChecks = dict[
     int, tuple[xla_client.LoadedExecutable | jax.stages.Compiled, _GatherCheck]
 ]
 
-# The age of a gated edge's fold period: a Python number, a concrete or traced
-# scalar array of any integer or float width, or `None` where no age is known.
-type FoldAge = float | Int[Scalar, ""] | Float[Scalar, ""] | None
+# The age of a gated edge's fold period: a Python time coordinate, a concrete or
+# traced scalar array of any integer or float width, or `None` where no age is known.
+type FoldAge = AgeValue | Int[Scalar, ""] | Float[Scalar, ""] | None
 
 # A regime's base state, discrete-action and continuous-action arrays.
 type _SpaceArrays = tuple[
@@ -839,7 +840,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
 
                 log_period_header(
                     logger=logger,
-                    age=ages.values[period],
+                    age_label=display_age_at(ages=ages, period=period),
                     n_active_regimes=len(active_regimes),
                     time_kind=coordinate_kind(ages),
                 )
@@ -3609,27 +3610,6 @@ def _regime_retains_replay(*, regime: Regime, retain_replay: bool) -> bool:
     return retain_replay and (
         regime.simulation.egm_policy_read is not None
         or regime.simulation.external_replay_route is not None
-    )
-
-
-def _resident_bytes_by_triple(
-    *,
-    regimes: MappingProxyType[RegimeName, Regime],
-    ledger: PlannedInputLiveness,
-    templates: SolveInputMappings[ValueTemplate],
-    program_metadata: Mapping[_CoreTriple, _ProgramExecutionMetadata],
-    device_ids: tuple[int, ...],
-) -> MappingProxyType[_CoreTriple, int]:
-    """Return the declared-read lower bound before candidates are compiled."""
-    inventory = _resident_inventory_by_triple(
-        regimes=regimes,
-        ledger=ledger,
-        templates=templates,
-        program_metadata=program_metadata,
-        device_ids=device_ids,
-    )
-    return MappingProxyType(
-        {triple: position.resident_bytes() for triple, position in inventory.items()}
     )
 
 
@@ -7867,25 +7847,6 @@ def _donated_arguments(*, donations: tuple[ResolvedDonation, ...]) -> tuple[str,
     return tuple(donation.argument for donation in donations if donation.donated)
 
 
-def _mark_reused_transfers(
-    *, resolved_programs: Mapping[_CoreCandidate, ResolvedCoreProgram]
-) -> dict[_CoreCandidate, ResolvedCoreProgram]:
-    """Mark every transfer whose result more than one source core of a period reads.
-
-    Two source cores of one period that read one stored artifact into one required
-    layout need one copy between them, so the plan says so and the scheduler makes
-    it once. Consumers are counted by core triple, not by width candidate: two
-    widths of one core are alternatives, not two readers. The mark is a scheduling
-    fact and stays out of the specialization key, so every lowering key is the key
-    the unmarked program had. A program whose transfers already carry the marks the
-    count implies is returned unchanged, so the single-source case rebuilds nothing.
-    """
-    return _apply_transfer_marks(
-        programs=resolved_programs,
-        consumers=_transfer_consumer_counts(resolved_programs=resolved_programs),
-    )
-
-
 def _transfer_consumer_counts(
     *, resolved_programs: Mapping[_CoreCandidate, ResolvedCoreProgram]
 ) -> dict[_ConsumerKey, set[_CoreTriple]]:
@@ -7908,7 +7869,18 @@ def _apply_transfer_marks(
     programs: Mapping[_CoreCandidate, ResolvedCoreProgram],
     consumers: Mapping[_ConsumerKey, Collection[_CoreTriple]],
 ) -> dict[_CoreCandidate, ResolvedCoreProgram]:
-    """Write a census of shared transfer results onto each candidate's plan."""
+    """Write a census of shared transfer results onto each candidate's plan.
+
+    A transfer is marked when more than one source core of a period reads its
+    result: two source cores that read one stored artifact into one required layout
+    need one copy between them, so the plan says so and the scheduler makes it once.
+    Consumers are counted by core triple, not by width candidate
+    (`_transfer_consumer_counts`): two widths of one core are alternatives, not two
+    readers. The mark is a scheduling fact and stays out of the specialization key,
+    so every lowering key is the key the unmarked program had. A program whose
+    transfers already carry the marks the count implies is returned unchanged, so
+    the single-source case rebuilds nothing.
+    """
     marked: dict[_CoreCandidate, ResolvedCoreProgram] = {}
     for candidate, resolved in programs.items():
         triple = candidate[0]

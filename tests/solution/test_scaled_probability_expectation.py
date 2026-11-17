@@ -141,23 +141,6 @@ def test_downward_scaling_matches_ieee_ldexp_on_random_finite_values(
 
 
 @pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
-def test_downward_scaling_has_the_expected_value_gradient(*, compiled: bool) -> None:
-    """The bit-level primal retains the ordinary power-of-two derivative."""
-    dtype = jnp.zeros(()).dtype
-    shifts = jnp.asarray([0, -1, -7], dtype=jnp.int32)
-
-    def total(values: FloatND) -> FloatND:
-        return jnp.sum(scaled_down_by_power_of_two(values=values, shift=shifts))
-
-    gradient = jax.grad(_maybe_jit(func=total, compiled=compiled))(
-        jnp.asarray([1.0, 1.0, 1.0], dtype=dtype)
-    )
-    expected = jnp.asarray([1.0, 0.5, 2.0**-7], dtype=dtype)
-
-    np.testing.assert_array_equal(np.asarray(gradient), np.asarray(expected))
-
-
-@pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
 def test_a_large_rare_contribution_is_formed_before_its_scale_is_applied(
     *, compiled: bool
 ) -> None:

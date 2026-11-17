@@ -20,7 +20,7 @@ import pytest
 from dags import concatenate_functions
 from numpy._core.overrides import array_function_dispatch
 
-import _lcm.grids.continuous as grid_declarations
+import lcm.grids as grid_declarations
 import lcm.model as lcm_model
 from _lcm.certainty_equivalent import CertaintyEquivalent
 from _lcm.constraints.ir import And
@@ -862,7 +862,7 @@ class _LinSpacedGridNominalTwin:
     batch_size: int
 
 
-_LinSpacedGridNominalTwin.__module__ = "_lcm.grids.continuous"
+_LinSpacedGridNominalTwin.__module__ = "lcm.grids"
 _LinSpacedGridNominalTwin.__qualname__ = "LinSpacedGrid"
 
 
@@ -927,17 +927,21 @@ def test_discrete_grid_fingerprint_binds_category_order_and_ordered_flag() -> No
 @pytest.mark.parametrize(
     ("category_class", "digest"),
     [
-        (_LowHigh, "30057dfad0a7a3a262dac7558951d80e60b684abce0221b7d94d5833937ad1ec"),
+        (_LowHigh, "efef37cff4d2d33f3f63be6a5863f9675ca2c30ab4b4d6d4cca8f5993e888ccc"),
         (
             _OrderedLowHigh,
-            "1812ba3f47fda4df33a5fc16af774047af3ea200cbff48b143f6f630480e5465",
+            "d37f7d76d600b403ad992b1b99cb58fb936600256e5d299202da68018d4224dd",
         ),
     ],
 )
 def test_category_grid_fingerprint_is_unchanged_by_the_value_field(
     *, category_class, digest
 ) -> None:
-    """The digests were computed before value grids existed, at both precisions."""
+    """The digests were computed before value grids existed, at both precisions.
+
+    They were re-pinned once when `DiscreteGrid` moved to `lcm.grids`; with the old
+    module name restored the class reproduces the original digests.
+    """
     grid = DiscreteGrid(category_class=category_class)
 
     assert fingerprints._semantic_fingerprint(grid) == digest
@@ -2680,3 +2684,50 @@ def test_exact_empty_default_containers_keep_semantic_fingerprints() -> None:
         dataclasses.replace(original, mapping={}),
     ):
         assert baseline != fingerprints._semantic_fingerprint(changed)
+
+
+def _shared_helper(*, x: float) -> float:
+    return x + 1.0
+
+
+def test_a_function_reached_repeatedly_is_walked_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Later visits of one function replay the first walk instead of repeating it."""
+    walked = []
+    full_walk = fingerprints._SemanticHasher._visit_value
+
+    # keyword-only-exempt: primary-argument=self
+    def counting_walk(
+        self: fingerprints._SemanticHasher,
+        *,
+        value: fingerprints._Reachable,
+        _ignore_beartype_guards: bool = False,
+    ) -> None:
+        if value is _shared_helper:
+            walked.append(value)
+        full_walk(self, value=value, _ignore_beartype_guards=_ignore_beartype_guards)
+
+    monkeypatch.setattr(fingerprints._SemanticHasher, "_visit_value", counting_walk)
+    fingerprints._semantic_fingerprint(
+        (_shared_helper, [_shared_helper], {"f": _shared_helper})
+    )
+
+    assert len(walked) == 1
+
+
+def test_replayed_function_visits_give_the_full_walk_digest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A model whose adapters recur fingerprints as if every visit walked in full."""
+    from lcm_examples import collective_household  # noqa: PLC0415
+
+    replayed = collective_household.get_model(n_periods=3)._model_structure_fingerprint
+    monkeypatch.setattr(
+        fingerprints._SemanticHasher,
+        "visit",
+        fingerprints._SemanticHasher._visit_value,
+    )
+    walked = collective_household.get_model(n_periods=3)._model_structure_fingerprint
+
+    assert replayed == walked

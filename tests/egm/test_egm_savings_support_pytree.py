@@ -4,7 +4,6 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
-from beartype.roar import BeartypeCallHintParamViolation
 
 from _lcm.egm.one_asset_egm_step import (
     _EGMSavingsSupport,
@@ -64,16 +63,6 @@ def test_savings_support_preserves_named_leaves_through_abstract_roundtrip() -> 
     np.testing.assert_array_equal(restored.floor, 0.25)
     np.testing.assert_array_equal(restored.active, [True, False, True])
     np.testing.assert_array_equal(restored.candidate_id, [0, -1, 1])
-
-
-def test_savings_support_constructor_requires_a_scalar_floor() -> None:
-    """A runtime floor cannot be a rank-one array."""
-    with pytest.raises(BeartypeCallHintParamViolation, match="parameter floor"):
-        _EGMSavingsSupport(
-            floor=jnp.asarray([0.25]),
-            active=jnp.asarray([True]),
-            candidate_id=jnp.asarray([0], dtype=jnp.int32),
-        )
 
 
 @pytest.mark.parametrize("leaf_count", [2, 4], ids=["missing", "extra"])

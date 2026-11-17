@@ -24,7 +24,7 @@ from beartype import beartype
 from _lcm.beartype_conf import REGIME_CONF
 from _lcm.certainty_equivalent import PowerMean, aggregates_nonlinearly
 from _lcm.constraints.processed import ConstraintLike
-from _lcm.grids import DiscreteGrid, Grid
+from _lcm.grids import Grid
 from _lcm.identity_transition import _IdentityTransition
 from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.regime_building.phases import (
@@ -45,6 +45,7 @@ from lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
 from lcm.decoupled import Decoupled
 from lcm.exceptions import RegimeInitializationError
 from lcm.exits import Consent, Exit
+from lcm.grids import DiscreteGrid
 from lcm.koopmans_aggregation import CESAggregator, LinearAggregator
 from lcm.phased import Phased
 from lcm.solvers import NBEGM, NNBEGM, GridSearch

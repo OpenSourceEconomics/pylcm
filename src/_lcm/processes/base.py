@@ -3,12 +3,12 @@
 `_ContinuousStochasticProcess` fixes what a process owes the engine — a node
 grid, and the weights of moving onto it — while the Gauss-Hermite and
 normal-mixture helpers build those nodes and weights for the leaf classes.
-`StateConditioned` marks a process parameter that varies with another state.
+`lcm.state_conditioned.StateConditioned` marks a process parameter that varies with
+another state.
 """
 
 import math
 from abc import abstractmethod
-from collections.abc import Mapping
 from dataclasses import dataclass, field, fields, replace
 from types import MappingProxyType
 from typing import ClassVar, Literal, Self
@@ -23,63 +23,8 @@ from _lcm.grids import coordinates as grid_coordinates
 from _lcm.grids.continuous import _validate_off_grid
 from _lcm.typing import PRNGKeyND
 from lcm.exceptions import GridInitializationError
-from lcm.typing import Float1D, FloatND, OffGrid, ScalarFloat, ScalarInt, StateName
-
-
-@dataclass(frozen=True, kw_only=True)
-class StateConditioned:
-    r"""A shock parameter conditioned on a discrete state of the same regime.
-
-    Write it in place of the parameter it conditions. Use it when the size of a shock
-    depends on where the subject currently is — the variance of the earnings innovation
-    differing by employment status, with
-    $\sigma_\text{employed} < \sigma_\text{unemployed}$:
-
-        NormalIIDProcess(
-            n_points=7,
-            gauss_hermite=False,
-            mu=0.0,
-            n_std=3.0,
-            sigma=StateConditioned(
-                on="employment_status",
-                by={"employed": 0.2, "unemployed": 0.5},
-            ),
-        )
-
-    Writing $s_t$ for the time-$t$ value of `on` and $\sigma_{s_t}$ for `by[s_t]`, an
-    AR(1) process transitions as
-
-    ```{math}
-    y_{t+1} \mid y_t, s_t \sim N(\mu + \rho y_t,\ \sigma_{s_t}^2),
-    ```
-
-    an IID process dropping the $\rho y_t$ term. The row is binned on one set of nodes,
-    placed from the widest value in `by` — only $\sigma_{s_t}$ varies with $s_t$.
-    Standing where the scalar would go, it says which parameter is conditioned and
-    leaves no way to give that parameter twice.
-
-    The conditioning value is dated $t$, so the variance of the innovation realized
-    between $t$ and $t+1$ is set by where the subject is at $t$. The mapping it is read
-    against is the *target* regime's declaration, so a process declared with different
-    values in the source and target regimes takes the target's.
-
-    `on` must name a `DiscreteGrid` state the regime carries. Build that grid from the
-    same `@categorical` class in every regime that carries it: the per-category value is
-    selected by the category's integer code, so regimes that encode the same categories
-    in a different order would draw each other's values.
-
-    All of it is fixed at build time. Neither `by` nor the process's own parameters
-    reach the params template, so none of them can be estimated.
-
-    Defined in this leaf module so the process base class can annotate the field without
-    an import cycle; re-exported from `_lcm.processes.state_conditioned`.
-    """
-
-    on: StateName
-    """Name of the `DiscreteGrid` state whose time-$t$ value selects the parameter."""
-
-    by: Mapping[str, float]
-    """Mapping of that state's category names to the value used for each."""
+from lcm.state_conditioned import StateConditioned
+from lcm.typing import Float1D, FloatND, OffGrid, ScalarFloat
 
 
 def standard_normal(key: PRNGKeyND) -> ScalarFloat:
@@ -205,6 +150,7 @@ class _ContinuousStochasticProcess(ContinuousGrid):
             msg = "simulated_draws must be 'continuous' or 'nodes'."
             raise GridInitializationError(msg)
         _validate_off_grid(self.off_grid)
+        self._store_law_values_as_floats()
         self._resolve_conditioned_sigma()
 
     def has_same_law_as(self, other: _ContinuousStochasticProcess) -> bool:
@@ -216,6 +162,29 @@ class _ContinuousStochasticProcess(ContinuousGrid):
         return replace(self, simulated_draws="continuous") == replace(
             other, simulated_draws="continuous"
         )
+
+    def _store_law_values_as_floats(self) -> None:
+        """Store every fixed law value as a Python `float`, however it was written.
+
+        A law written with `1` describes the law written with `1.0`, so both store
+        one value and share one identity. A Boolean is refused: it names no number.
+        """
+        law_fields = (
+            spec.name
+            for spec in fields(self)
+            if spec.name not in self._NON_PARAM_FIELDS | {"gauss_hermite"}
+        )
+        for name in law_fields:
+            value = getattr(self, name)
+            if value is None or isinstance(value, StateConditioned):
+                continue
+            if isinstance(value, bool) or not isinstance(value, int | float):
+                msg = (
+                    f"{self.constructor_name}: `{name}` must be a real number, "
+                    f"but got {value!r}."
+                )
+                raise GridInitializationError(msg)
+            object.__setattr__(self, name, float(value))
 
     def _resolve_conditioned_sigma(self) -> None:
         """Split a conditioned `sigma` into its declaration and its node-placing value.
@@ -231,10 +200,7 @@ class _ContinuousStochasticProcess(ContinuousGrid):
         unusable = {
             category: value
             for category, value in declaration.by.items()
-            if not isinstance(value, float | int)
-            or isinstance(value, bool)
-            or not math.isfinite(value)
-            or value <= 0.0
+            if not math.isfinite(value) or value <= 0.0
         }
         if not values or unusable:
             msg = (
@@ -253,27 +219,21 @@ class _ContinuousStochasticProcess(ContinuousGrid):
         )
 
     @property
-    def params(self) -> MappingProxyType[str, ScalarFloat | ScalarInt]:
-        """Distribution parameters as canonical 0-d JAX scalars.
+    def params(self) -> MappingProxyType[str, ScalarFloat]:
+        """Fixed distribution parameters as 0-d JAX floats of the active precision.
 
-        Boundary cast: dataclass fields supplied by the user as Python
-        `bool` / `int` / `float` are returned as `ScalarInt` / `ScalarFloat`
-        so every consumer downstream — `compute_gridpoints`,
-        `compute_transition_probs`, the regime-building runtime closures —
-        sees the canonical dtype.
+        Every fixed law value is a Python `float`, so each consumer downstream —
+        `compute_gridpoints`, `compute_transition_probs`, the regime-building
+        runtime closures — receives a floating scalar.
 
         """
-        out: dict[str, ScalarFloat | ScalarInt] = {}
-        for name in self._param_field_names:
-            value = getattr(self, name)
-            if value is None:
-                continue
-            # `bool` before `int` — `True` is a Python `int` subclass.
-            if isinstance(value, bool | int):
-                out[name] = jnp.int32(value)
-            else:
-                out[name] = jnp.asarray(value)
-        return MappingProxyType(out)
+        return MappingProxyType(
+            {
+                name: jnp.asarray(getattr(self, name))
+                for name in self._param_field_names
+                if getattr(self, name) is not None
+            }
+        )
 
     @property
     def params_to_pass_at_runtime(self) -> tuple[str, ...]:
@@ -288,11 +248,11 @@ class _ContinuousStochasticProcess(ContinuousGrid):
         return not self.params_to_pass_at_runtime
 
     @abstractmethod
-    def compute_gridpoints(self, **kwargs: ScalarFloat | ScalarInt) -> Float1D:
+    def compute_gridpoints(self, **kwargs: ScalarFloat) -> Float1D:
         """Compute discretized gridpoints for the process."""
 
     @abstractmethod
-    def compute_transition_probs(self, **kwargs: ScalarFloat | ScalarInt) -> FloatND:
+    def compute_transition_probs(self, **kwargs: ScalarFloat) -> FloatND:
         """Compute transition probability matrix for the process."""
 
     def get_gridpoints(self) -> Float1D:

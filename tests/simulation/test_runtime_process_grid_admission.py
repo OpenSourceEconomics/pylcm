@@ -217,12 +217,14 @@ _INTEGER_CASES = (
 
 
 @pytest.mark.parametrize(("spec", "runtime"), _INTEGER_CASES)
-def test_integer_capable_process_support_preserves_eager_bytes(
+def test_integer_written_process_support_preserves_eager_bytes(
     *, spec: _ContinuousStochasticProcess, runtime: dict[str, int]
 ) -> None:
-    """Valid strong integer bindings keep eager promotion and support bytes."""
+    """Integer-written laws bind as floats and keep the eager support bytes."""
     placed_runtime = {
-        name: jax.numpy.asarray(value, dtype=jax.numpy.int32)
+        name: jax.numpy.asarray(
+            float(value), dtype=process_grids.canonical_float_dtype()
+        )
         for name, value in runtime.items()
     }
     eager = np.asarray(spec.compute_gridpoints(**spec.params, **placed_runtime))
@@ -718,15 +720,17 @@ def test_given_node_supports_keep_signed_zero_at_every_reuse_layer(
 
 
 def test_given_node_trace_identity_includes_active_float_dtype() -> None:
-    """Integer law operands cannot hide a change in the supplied axis's dtype."""
+    """Weakly typed fixed law operands cannot hide a change in the axis's dtype."""
     original = jax.config.read("jax_enable_x64")
     nodes = (-31.0, 0.0, 37.0)
     observed = []
     try:
         for x64 in (False, True):
             jax.config.update("jax_enable_x64", val=x64)
-            params = {"rho": jax.numpy.asarray(1, dtype=jax.numpy.int32)}
-            process = TauchenAR1Process.on_nodes(nodes=np.array(nodes), sigma=1, mu=0)
+            params: dict[str, jax.Array] = {}
+            process = TauchenAR1Process.on_nodes(
+                nodes=np.array(nodes), rho=1, sigma=1, mu=0
+            )
             owner = _owner(parameters=params)
             try:
                 actual = owner(

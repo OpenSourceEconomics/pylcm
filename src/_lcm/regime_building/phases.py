@@ -617,7 +617,7 @@ class RegimePhaseSpec:
     regime_transition: _PhaseRegimeTransition
     """Phase-resolved regime transition; `None` for terminal regimes.
     `normalize_regime_phases` emits the user form (bare callable,
-    `StochasticTransition`, or per-target dict); `canonicalize_regimes` rewrites
+    `StochasticTransition`, or per-target dict); `canonicalize_phased_regimes` rewrites
     every non-terminal form into a per-target mapping — coarse forms become
     cells sharing one `_CoarseTransitionCell`."""
 
@@ -632,7 +632,7 @@ class RegimePhaseSpec:
     """Markov laws declared once for every target, by state. A law toward a
     target that does not carry the state may read its draw `next_<state>`, which
     is then taken from this law inside the transition. Set by
-    `canonicalize_regimes`."""
+    `canonicalize_phased_regimes`."""
 
     exits: Mapping[str, Exit] = MappingProxyType({})
     """Current-period exits with the phase's mapped settlements."""

@@ -25,7 +25,7 @@ from _lcm.execution.value_transfer import (
     classify_value_transfer,
     resolve_value_transfer,
 )
-from _lcm.grids import ContinuousGrid, DiscreteGrid
+from _lcm.grids import ContinuousGrid
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.simulation import (
     population_operations,
@@ -131,6 +131,7 @@ from _lcm.typing import (
 )
 from _lcm.utils.logging import LogLevel, get_logger
 from lcm.exceptions import ExecutionPlanningError
+from lcm.grids import DiscreteGrid
 from lcm.solver_api import SIMULATION_POLICY
 
 type _FiniteRankOutput = tuple[

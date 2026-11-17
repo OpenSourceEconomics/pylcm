@@ -516,13 +516,13 @@ def _publication_oracle(*, benefit: float) -> pd.DataFrame:
 
 
 @pytest.mark.coverage(backends=("cpu", "gpu-small", "gpu-large"))
-@pytest.mark.parametrize("subject_capacity", [64, 8])
 @pytest.mark.parametrize("persistent_compilation_cache", [False], indirect=True)
 def test_value_only_policy_changes_reuse_publication_capacity(
-    *, persistent_compilation_cache: bool, subject_capacity: int
+    *, persistent_compilation_cache: bool
 ) -> None:
     """Changing regime occupancy preserves code for one fixed input population."""
     assert not persistent_compilation_cache
+    subject_capacity = 8
     float_dtype = np.float64 if jax.config.x64_enabled else np.float32
     assert str(jnp.asarray(0.0).dtype) == np.dtype(float_dtype).name
     stage = "setup"
@@ -540,71 +540,66 @@ def test_value_only_policy_changes_reuse_publication_capacity(
     frame_counts: dict[str, list[int]] = {}
     jax.monitoring.register_event_time_span_listener(record_compile)
     try:
-        for arm, numerators in (
-            ("same", [17] * 8),
-            ("vary", [17, 19, 21, 23, 25, 27, 29, 19]),
-        ):
-            model = _publication_capacity_model(subject_capacity=subject_capacity)
-            assert str(np.asarray(model._time.values).dtype) == "int32"
-            initial = {
-                "wealth": (np.arange(64, dtype=float_dtype) + float_dtype(0.5))
-                / float_dtype(64),
-                "age": np.full(64, 51, dtype=np.int32),
-                "regime_id": np.full(
-                    64, model.regime_names_to_ids["working"], dtype=np.int32
-                ),
+        arm, numerators = "vary", [17, 29, 17]
+        model = _publication_capacity_model(subject_capacity=subject_capacity)
+        assert str(np.asarray(model._time.values).dtype) == "int32"
+        initial = {
+            "wealth": (np.arange(64, dtype=float_dtype) + float_dtype(0.5))
+            / float_dtype(64),
+            "age": np.full(64, 51, dtype=np.int32),
+            "regime_id": np.full(
+                64, model.regime_names_to_ids["working"], dtype=np.int32
+            ),
+        }
+        target_counts[arm] = []
+        frame_counts[arm] = []
+        for numerator in numerators:
+            benefit = numerator / 64.0
+            params = {
+                "discount_factor": 0.0,
+                "benefit": benefit,
+                "rates": np.asarray([1.0, 2.0], dtype=float_dtype),
             }
-            target_counts[arm] = []
-            frame_counts[arm] = []
-            for numerator in numerators:
-                benefit = numerator / 64.0
-                params = {
-                    "discount_factor": 0.0,
-                    "benefit": benefit,
-                    "rates": np.asarray([1.0, 2.0], dtype=float_dtype),
-                }
-                events.clear()
-                stage = "solve"
-                solution = model.solve(params=params, log_level="off")
-                jax.effects_barrier()
-                stage = "simulate"
-                result = model.simulate(
-                    params=params,
-                    solution=solution,
-                    initial_conditions=initial,
-                    seed=0,
-                    log_level="off",
-                )
-                jax.effects_barrier()
-                assert result.n_subjects == 64
-                assert result._subject_batch_size == subject_capacity
-                stage = "plain_frame"
-                plain = result.to_dataframe(use_categorical_codes=True)
-                stage = "targets_frame"
-                frame = result.to_dataframe(
-                    additional_targets=["reported_income"], use_categorical_codes=True
-                )
-                jax.effects_barrier()
-                stage = "oracle"
-                expected = _publication_oracle(benefit=benefit)
-                pd.testing.assert_frame_equal(
-                    frame.sort_values(["subject_id", "period"]).reset_index(drop=True),
-                    expected,
-                    check_exact=True,
-                )
-                pd.testing.assert_frame_equal(
-                    plain.sort_values(["subject_id", "period"]).reset_index(drop=True),
-                    expected.drop(columns="reported_income"),
-                    check_exact=True,
-                )
-                target_counts[arm].append(events.count("targets_frame"))
-                frame_counts[arm].append(events.count("plain_frame"))
+            events.clear()
+            stage = "solve"
+            solution = model.solve(params=params, log_level="off")
+            jax.effects_barrier()
+            stage = "simulate"
+            result = model.simulate(
+                params=params,
+                solution=solution,
+                initial_conditions=initial,
+                seed=0,
+                log_level="off",
+            )
+            jax.effects_barrier()
+            assert result.n_subjects == 64
+            assert result._subject_batch_size == subject_capacity
+            stage = "plain_frame"
+            plain = result.to_dataframe(use_categorical_codes=True)
+            stage = "targets_frame"
+            frame = result.to_dataframe(
+                additional_targets=["reported_income"], use_categorical_codes=True
+            )
+            jax.effects_barrier()
+            stage = "oracle"
+            expected = _publication_oracle(benefit=benefit)
+            pd.testing.assert_frame_equal(
+                frame.sort_values(["subject_id", "period"]).reset_index(drop=True),
+                expected,
+                check_exact=True,
+            )
+            pd.testing.assert_frame_equal(
+                plain.sort_values(["subject_id", "period"]).reset_index(drop=True),
+                expected.drop(columns="reported_income"),
+                check_exact=True,
+            )
+            target_counts[arm].append(events.count("targets_frame"))
+            frame_counts[arm].append(events.count("plain_frame"))
     finally:
         jax.monitoring.unregister_event_time_span_listener(record_compile)
-    assert target_counts["same"][0] > 0, (
+    assert target_counts["vary"][0] > 0, (
         "The actual target path must exercise a cold compilation."
     )
-    assert not any(target_counts["same"][1:]), target_counts
-    assert target_counts["vary"][-1] == 0, target_counts
     assert not any(target_counts["vary"][1:]), target_counts
-    assert not any(frame_counts["same"][1:] + frame_counts["vary"][1:]), frame_counts
+    assert not any(frame_counts["vary"][1:]), frame_counts

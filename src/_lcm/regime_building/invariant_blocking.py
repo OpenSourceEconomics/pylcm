@@ -20,7 +20,6 @@ from collections.abc import Mapping
 from types import MappingProxyType
 
 from _lcm.engine import Regime
-from _lcm.grids import DiscreteGrid
 from _lcm.reachability import ModelReachability
 from _lcm.regime_building.finalize import FinalizedUserRegime
 from _lcm.regime_building.fixed_components import FixedComponentSplit
@@ -36,6 +35,7 @@ from _lcm.time import TimeAxis
 from _lcm.typing import RegimeName, StateName
 from lcm.exceptions import ExecutionPlanningError
 from lcm.execution import InvariantBlockSchedule
+from lcm.grids import DiscreteGrid
 from lcm.typing import UserAge
 
 _REMEDY = (

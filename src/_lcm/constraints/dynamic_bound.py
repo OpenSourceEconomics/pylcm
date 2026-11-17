@@ -10,13 +10,13 @@ import jax.numpy as jnp
 from dags import concatenate_functions, get_annotations
 from numpy.typing import DTypeLike
 
-from _lcm.constraints.ir import Const, Ref
+from _lcm.constraints.ir import Const
 from _lcm.constraints.processed import (
     ConstraintLike,
     ProcessedConstraint,
     normalize_constraints,
 )
-from _lcm.dtypes import canonical_float_dtype
+from _lcm.dtypes import as_canonical_float, canonical_float_dtype
 from _lcm.post_decision_bound import (
     BoundDependencyEntry,
     PostDecisionBoundSpec,
@@ -25,7 +25,9 @@ from _lcm.post_decision_bound import (
 from _lcm.regime_building.age_specialization import resolve_node
 from _lcm.regime_law import RegimeLaw
 from _lcm.time import TimeAxis, coordinate_kind, specialization_coordinate_at
+from _lcm.typing import AgeValue
 from _lcm.variables import from_regime
+from lcm.condition import Ref
 from lcm.exceptions import ModelInitializationError
 from lcm.transition import AgeSpecializedFunction
 from lcm.typing import (
@@ -48,7 +50,12 @@ else:
 
 @dataclass(frozen=True, kw_only=True, eq=False)
 class ScalarFloor:
-    """Preserve a floor's signature while checking its scalar floating result."""
+    """Preserve a floor's signature while checking its real scalar result.
+
+    This is where the engine receives a callable floor: an integer result, such
+    as `return 0`, is converted to the canonical float dtype, while a Boolean,
+    complex or non-scalar result is refused.
+    """
 
     function: UserFunction
     """Original producer, composed through the ordinary DAG."""
@@ -62,14 +69,16 @@ class ScalarFloor:
 
     @no_type_check
     def __call__(self, *args: FloatND, **kwargs: FloatND) -> FloatND:
-        value = jnp.asarray(self.function(*args, **kwargs))
-        if value.ndim != 0 or not jnp.issubdtype(value.dtype, jnp.floating):
+        value = as_canonical_float(
+            value=self.function(*args, **kwargs),
+            source=f"Borrowing bound '{self.constraint_name}'",
+        )
+        if value.ndim != 0:
             raise ModelInitializationError(
-                f"Borrowing bound '{self.constraint_name}' must return a real "
-                f"floating scalar; "
-                f"got shape {value.shape}, dtype {value.dtype}."
+                f"Borrowing bound '{self.constraint_name}' must return a scalar; "
+                f"got shape {value.shape}."
             )
-        return value.astype(canonical_float_dtype())
+        return value
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -79,7 +88,7 @@ class _ScalarFloorFactory:
     function: AgeSpecializedFunction
     constraint_name: str
 
-    def __call__(self, age: float) -> UserFunction:
+    def __call__(self, age: AgeValue) -> UserFunction:
         return ScalarFloor(
             function=self.function.build(age), constraint_name=self.constraint_name
         )

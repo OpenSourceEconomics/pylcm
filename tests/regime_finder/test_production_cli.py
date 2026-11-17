@@ -12,10 +12,8 @@ from unittest.mock import patch
 from _lcm_regime_finder import find_regimes, verify_production_result
 from _lcm_regime_finder.graph_view import typed_incidence_graph
 from tests.regime_finder.test_source_proof import (
-    _assert_source_report,
     _name,
     _object,
-    _report_original,
 )
 
 ROOT = Path(__file__).resolve().parents[2]

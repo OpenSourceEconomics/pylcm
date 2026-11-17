@@ -73,9 +73,11 @@ class ParetoObjective:
     """
 
     def __post_init__(self) -> None:
-        object.__setattr__(
-            self, "weights", ensure_containers_are_immutable(self.weights)
-        )
+        weights = {
+            name: weight if callable(weight) else float(weight)
+            for name, weight in self.weights.items()
+        }
+        object.__setattr__(self, "weights", ensure_containers_are_immutable(weights))
         if self.normalization not in {"pointwise", "none"}:
             msg = (
                 f"`ParetoObjective.normalization` is {self.normalization!r}, "
@@ -325,10 +327,9 @@ class Gate:
     Reads ordinary target states, the edge's own params, and the target fold's
     `period` / `age`. An argument named `V_target`, `V_target_<s>` or
     `D_target` raises `GateReadsValueError` when the gate is declared. A
-    predicate returning a probability rather than a Boolean is rejected when it
-    is evaluated, i.e. on the first `solve()` rather than at model build: the
-    branch is selected with a strict `where`, in which every nonzero value is
-    true.
+    predicate returning anything but a Boolean is rejected when it is evaluated,
+    i.e. on the first `solve()` rather than at model build: the branch is
+    selected with a strict `where`, in which every nonzero value is true.
     """
 
     routes: Mapping[str, StakeholderRoute]

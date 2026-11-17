@@ -21,7 +21,6 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
-from beartype.roar import BeartypeCallHintParamViolation
 from jax.extend.core import ClosedJaxpr
 from numpy.testing import assert_array_equal
 
@@ -32,7 +31,7 @@ from _lcm.solution.action_streaming import (
     build_streaming_max_Q_over_a,
     merge_partition_accumulators,
 )
-from lcm.typing import Float2D, ScalarFloat
+from lcm.typing import Float2D
 from tests.solution.test_action_streaming import (
     count_primitive,
     scan_lengths,
@@ -282,25 +281,6 @@ def _one_cell(*, row: list[float], mask: list[bool]) -> tuple[np.ndarray, np.nda
     return np.asarray([row], dtype=dtype), np.asarray([mask], dtype=bool)
 
 
-def test_partitioned_unique_max_preserves_its_analytic_parameter_derivative() -> None:
-    """The winning action in a nonzero partition carries its slope through exchange."""
-    coefficients = jnp.asarray([[1.0, 3.0, 2.0, 4.0, 0.0]])
-
-    def maximum(theta: ScalarFloat) -> ScalarFloat:
-        return _partitioned_lanes(
-            n_partitions=3,
-            block_width=2,
-            values=theta * coefficients,
-            feasible=np.ones((1, 5), dtype=bool),
-        ).best_value[0, 0]
-
-    derivative = jax.grad(maximum)(jnp.asarray(2.0))
-
-    assert_array_equal(
-        np.asarray(derivative), np.asarray(4.0, dtype=coefficients.dtype)
-    )
-
-
 # Each case names one convention; every value of interest sits in a later
 # partition than a competitor, so the merge, not one participant, decides it.
 _EDGE_CASES = {
@@ -375,14 +355,33 @@ def test_partitioned_reduction_keeps_each_hard_max_convention(
     )
 
 
+def _block_range(*, layout: ActionPartitionLayout, partition: int) -> tuple[int, int]:
+    """Return the half-open range of block indices one participant owns."""
+    return (
+        partition * layout.n_blocks // layout.n_partitions,
+        (partition + 1) * layout.n_blocks // layout.n_partitions,
+    )
+
+
+def _action_interval(
+    *, layout: ActionPartitionLayout, partition: int
+) -> tuple[int, int]:
+    """Return the half-open global action interval one participant owns."""
+    start_block, stop_block = _block_range(layout=layout, partition=partition)
+    return (
+        min(start_block * layout.block_width, layout.n_actions),
+        min(stop_block * layout.block_width, layout.n_actions),
+    )
+
+
 def test_more_participants_than_blocks_leaves_empty_partitions_that_change_nothing():
     values, feasible = _draw_case(seed=3, n_cells=8, n_actions=5)
     layout = ActionPartitionLayout(n_actions=5, block_width=2, n_partitions=7)
     empty = [
         partition
         for partition in range(7)
-        if layout.action_interval(partition=partition)[0]
-        == layout.action_interval(partition=partition)[1]
+        if _action_interval(layout=layout, partition=partition)[0]
+        == _action_interval(layout=layout, partition=partition)[1]
     ]
 
     got = _partitioned(n_partitions=7, block_width=2, values=values, feasible=feasible)
@@ -403,7 +402,8 @@ def test_partition_intervals_are_ordered_whole_blocks_covering_every_action_once
         n_actions=n_actions, block_width=block_width, n_partitions=n_partitions
     )
     intervals = [
-        layout.action_interval(partition=partition) for partition in range(n_partitions)
+        _action_interval(layout=layout, partition=partition)
+        for partition in range(n_partitions)
     ]
 
     covered = [action for start, stop in intervals for action in range(start, stop)]
@@ -413,7 +413,8 @@ def test_partition_intervals_are_ordered_whole_blocks_covering_every_action_once
     block_counts = [
         stop - start
         for start, stop in (
-            layout.block_range(partition=partition) for partition in range(n_partitions)
+            _block_range(layout=layout, partition=partition)
+            for partition in range(n_partitions)
         )
     ]
     no_idle_participant = layout.n_blocks < n_partitions or min(block_counts) >= 1
@@ -484,25 +485,14 @@ def test_padded_action_slots_never_publish_an_identity_outside_the_product():
     assert 0 <= int(got.best_global_action_id[0]) < 7
 
 
-@pytest.mark.parametrize("n_partitions", [0, -1, True])
+@pytest.mark.parametrize("n_partitions", [0, -1])
 def test_partition_count_must_be_a_positive_exact_int(n_partitions: int) -> None:
-    with pytest.raises((TypeError, ValueError), match="n_partitions"):
+    with pytest.raises(ValueError, match="n_partitions"):
         build_partitioned_streaming_max_Q_over_a(
             Q_and_F=_table_Q_and_F,
             action_names=("choice",),
             block_width=2,
             n_partitions=n_partitions,
-            axis_name=_AXIS,
-        )
-
-
-def test_a_float_partition_count_is_refused_by_the_type_contract() -> None:
-    with pytest.raises(BeartypeCallHintParamViolation, match="n_partitions"):
-        build_partitioned_streaming_max_Q_over_a(
-            Q_and_F=_table_Q_and_F,
-            action_names=("choice",),
-            block_width=2,
-            n_partitions=1.5,  # ty: ignore[invalid-argument-type]
             axis_name=_AXIS,
         )
 

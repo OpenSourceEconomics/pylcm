@@ -160,7 +160,7 @@ def test_budget_only_actions_share_one_continuation_class(*, route: str):
 
     assert statics.n_action_branches > 1
     assert statics.continuation_action_names == ()
-    assert statics.n_continuation_classes == 1
+    assert len(statics.continuation_representatives) == 1
     assert statics.continuation_representatives == (0,)
     assert statics.continuation_class_of_branch == (0,) * statics.n_action_branches
 
@@ -171,7 +171,7 @@ def test_an_action_reaching_the_continuation_splits_the_classes(*, route: str):
     statics = kernel.statics
 
     assert statics.continuation_action_names == ("buy_private",)
-    assert statics.n_continuation_classes == statics.n_action_branches == 2
+    assert len(statics.continuation_representatives) == statics.n_action_branches == 2
     assert statics.continuation_representatives == (0, 1)
     assert statics.continuation_class_of_branch == (0, 1)
 
@@ -284,7 +284,7 @@ def test_ignoring_the_channels_makes_the_core_disagree_with_the_oracle(
         nbegm_module, "_continuation_action_names", lambda **_kwargs: ()
     )
     kernel, context, child = _kernel(_CONTINUATION_FEEDING[route])
-    assert kernel.statics.n_continuation_classes == 1
+    assert len(kernel.statics.continuation_representatives) == 1
 
     with pytest.raises(AssertionError):
         _assert_kernel_agrees_with_oracle(kernel=kernel, context=context, child=child)
@@ -341,7 +341,7 @@ def test_the_class_partition_is_derived_from_the_continuation_actions_alone():
     ]
     distinct = list(dict.fromkeys(keys))
 
-    assert statics.n_continuation_classes == len(distinct)
+    assert len(statics.continuation_representatives) == len(distinct)
     assert statics.continuation_class_of_branch == tuple(
         distinct.index(key) for key in keys
     )

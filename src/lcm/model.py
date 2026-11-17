@@ -27,6 +27,7 @@ import numpy as np
 import pandas as pd
 from beartype import beartype
 from beartype.roar import BeartypeCallHintViolation
+from dags.tree import qname_from_tree_path
 
 from _lcm.beartype_conf import MODEL_CONF, PARAMS_CONF, SIMULATION_INPUT_CONF
 from _lcm.current_iid_node_adapter import NodeAxisAdapter, adapt_declaration
@@ -50,15 +51,7 @@ from _lcm.execution.execution_plan import (
 )
 from _lcm.execution.footprint import layout_footprint
 from _lcm.execution.output_layout import OutputRoleLeaf
-from _lcm.grids import (
-    DiscreteGrid,
-    Grid,
-    IrregSpacedGrid,
-    LinSpacedGrid,
-    LogSpacedGrid,
-    PiecewiseLinSpacedGrid,
-    PiecewiseLogSpacedGrid,
-)
+from _lcm.grids import Grid
 from _lcm.grids.categorical import get_category_codes, validate_category_class
 from _lcm.model_graph import (
     DroppedCells,
@@ -82,6 +75,7 @@ from _lcm.pandas_utils import (
 )
 from _lcm.params.edges import regime_kernel_params
 from _lcm.params.mapping_leaf import UserMappingLeaf
+from _lcm.params.numeric_roles import NumericRole, template_roles
 from _lcm.params.processing import (
     broadcast_to_template,
     cast_params_to_canonical_dtypes,
@@ -99,15 +93,11 @@ from _lcm.persistence.solution import (
     pylcm_commit,
 )
 from _lcm.post_decision_shocks import lower_post_decision_shocks
-from _lcm.processes.ar1 import (
-    RouwenhorstAR1Process,
-    TauchenAR1Process,
-    _AR1Process,
-    _TauchenOnNodesProcess,
-)
+from _lcm.processes.ar1 import _AR1Process
+from _lcm.processes.ar1_on_nodes import _TauchenOnNodesProcess
 from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.processes.grid_resolution import ProcessGridResolver
-from _lcm.processes.iid import LogNormalIIDProcess, NormalIIDProcess, _IIDProcess
+from _lcm.processes.iid import _IIDProcess
 from _lcm.processes.joint_normal_lowering import (
     coordinate_names,
     joint_normal_declarations,
@@ -153,6 +143,7 @@ from _lcm.regime_building.processing import (
     prepare_model_structure,
 )
 from _lcm.regime_building.schedules import (
+    demanded_declared_laws,
     gated_source_periods,
     lower_demanded_transitions,
     resolve_initial_nodes,
@@ -295,10 +286,6 @@ from _lcm.solution.model_authority import (
 )
 from _lcm.solution.model_seal import BindingRecorder, SealedBindings
 from _lcm.solution.native_values import NativeValueMaterializer
-from _lcm.solution.period_replay import (
-    DeclaredCoreCompilation,
-    compile_declared_period_cores,
-)
 from _lcm.solution.preconditions import (
     check_pareto_weights,
     check_solver_params,
@@ -383,11 +370,25 @@ from lcm.exceptions import (
     UnsupportedOperationError,
 )
 from lcm.execution import ExecutionConfig, InvariantBlockSchedule
+from lcm.grids import (
+    DiscreteGrid,
+    IrregSpacedGrid,
+    LinSpacedGrid,
+    LogSpacedGrid,
+    PiecewiseLinSpacedGrid,
+    PiecewiseLogSpacedGrid,
+)
 from lcm.initial_nodes import InitialNodes, UserInitialNodes
 from lcm.koopmans_aggregation import LinearAggregator
 from lcm.lowering import LoweredPeriodCandidate, PeriodCandidate
 from lcm.period_capture import CapturedPeriodReplay, PeriodCapture
 from lcm.phased import Phased
+from lcm.processes import (
+    LogNormalIIDProcess,
+    NormalIIDProcess,
+    RouwenhorstAR1Process,
+    TauchenAR1Process,
+)
 from lcm.regime import (
     ActionEntry,
     ConstraintEntry,
@@ -448,6 +449,7 @@ from lcm.typing import (
     FloatND,
     Intermediate,
     IntND,
+    ParameterName,
     Phase,
     PRNGKey,
     ReferenceName,
@@ -457,6 +459,7 @@ from lcm.typing import (
     UserInitialConditions,
     UserInitialConditionsInput,
     UserParams,
+    UserParamsNode,
     UserSeed,
     ValueND,
     _UserFacingTemplateNode,
@@ -1740,6 +1743,10 @@ class Model:
             gated_source_periods=gated_source_periods(schedules=schedules),
             visited_periods_by_regime=schedules.acting_periods_by_regime,
             declared_transitions=self._declared_transitions,
+            demanded_edge_laws=demanded_declared_laws(
+                schedules=schedules,
+                declared_transitions=prepared_graph.declarations,
+            ),
             declared_edge_vocabulary=declared_edge_vocabulary,
             post_decision_shocks=post_decision_shock_processes,
             # The pruning candidates combine state and action names. Only the
@@ -2124,11 +2131,14 @@ class Model:
                 binding_recorder=recorder,
                 array_recorder=numeric_roots.append,
                 shock_groups=self.shocks,
-                shock_fixed_params={
-                    name: value
-                    for name, value in self.fixed_params.items()
-                    if name in self.shocks
-                },
+                shock_fixed_params=_float_role_identity(
+                    fixed_params={
+                        name: value
+                        for name, value in self.fixed_params.items()
+                        if name in self.shocks
+                    },
+                    roles=self._shock_registry.param_roles,
+                ),
             )
         except (TypeError, ValueError) as error:
             msg = (
@@ -2436,50 +2446,6 @@ class Model:
             for name, slots in self._shock_registry.params_template.items()
         }
         return {**template, **group_templates}
-
-    @beartype(conf=PARAMS_CONF)
-    def _compile_period_cores(
-        self,
-        *,
-        params: UserParams,
-        regime_name: RegimeName,
-        period: int,
-        axis_widths: Mapping[str, int],
-    ) -> tuple[DeclaredCoreCompilation, ...]:
-        """Compile one declared regime-period at fixed widths, without solving.
-
-        Every core the period kernel publishes is materialized against the
-        model's own state-action spaces and continuation templates, lowered and
-        compiled. No period above it is solved, and no compiled program is
-        called, so the result describes the compiled programs and their
-        compiler-reported memory — never a run.
-
-        Args:
-            params: Parameters the cores are materialized against.
-            regime_name: Regime whose period kernel is compiled.
-            period: Index of the period in the model horizon.
-            axis_widths: Width per execution axis, for the model as a whole.
-                An axis a core declares and this mapping names takes that
-                width; one the mapping omits takes the bootstrap width the
-                unbudgeted route would lower it at. A width that binds no axis
-                of this period is refused.
-
-        Returns:
-            One entry per core, in compilation order, each carrying its widths,
-            its lowering and compile walls, and its compiler memory report.
-
-        """
-        flat_params, generation = self._prepare_call(params=params)
-        self = generation.execution  # noqa: PLW0642 - bind the remaining call to its acquired real programs
-        return compile_declared_period_cores(
-            regimes=self._regimes,
-            flat_params=flat_params,
-            ages=self._time,
-            regime_name=regime_name,
-            period=period,
-            axis_widths=axis_widths,
-            device_ids=self._execution.device_ids,
-        )
 
     @beartype(conf=PARAMS_CONF)
     def validate_transitions(
@@ -6522,7 +6488,9 @@ class Model:
             # before canonicalization can allocate another numeric payload.
             array_writer.publish(stage="params", tree=flat_params)
         flat_params = cast_params_to_canonical_dtypes(
-            flat_params, array_writer=array_writer
+            flat_params,
+            array_writer=array_writer,
+            roles=template_roles(self._params_template),
         )
         flat_params = materialize_granular_transition_params(
             flat_params=flat_params,
@@ -6579,7 +6547,13 @@ class Model:
                 ),
             )
             group_flat_params = cast_params_to_canonical_dtypes(
-                group_flat_params, array_writer=array_writer
+                group_flat_params,
+                array_writer=array_writer,
+                roles={
+                    qname_from_tree_path((name, slot)): role
+                    for name, slots in self._shock_registry.param_roles.items()
+                    for slot, role in slots.items()
+                },
             )
             flat_params = MappingProxyType({**flat_params, **group_flat_params})
         _validate_param_types(flat_params)
@@ -6818,10 +6792,54 @@ def _missing_policy_message(
     )
 
 
+def _float_role_identity(
+    *,
+    fixed_params: Mapping[ShockGroupName, UserParamsNode],
+    roles: Mapping[ShockGroupName, Mapping[ParameterName, NumericRole]],
+) -> MappingProxyType[ShockGroupName, UserParamsNode]:
+    """Write each fixed float-role group leaf as the float its value denotes.
+
+    The boundary cast turns an integer in a float-role slot into a float, so the
+    semantic identity reads that slot as a float too: `mu=1` and `mu=1.0` fix one
+    law. Every other leaf, an integer callback input included, is unchanged.
+    """
+    return MappingProxyType(
+        {
+            name: (
+                {
+                    slot: _as_float_denotation(value)
+                    if roles.get(name, {}).get(slot, NumericRole.AS_GIVEN)
+                    is NumericRole.FLOAT
+                    else value
+                    for slot, value in slots.items()
+                }
+                if isinstance(slots, Mapping)
+                else slots
+            )
+            for name, slots in fixed_params.items()
+        }
+    )
+
+
+def _as_float_denotation(value: UserParamsNode) -> UserParamsNode:
+    """Return a real scalar or array as the float its value denotes.
+
+    An integer or float array of any width, NumPy or JAX, becomes a float64
+    array, so equal values written in different dtypes fix one law.
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return float(value)
+    if isinstance(value, np.ndarray | jax.Array) and value.dtype.kind in "iuf":
+        return np.asarray(value, dtype=np.float64)
+    return value
+
+
 def _readable_template(node: RegimeParamsTemplateNode) -> _UserFacingTemplateNode:
     """Copy a params-template node into plain dicts, keeping its annotation leaves."""
     if isinstance(node, str):
-        return node
+        return str(node)
     return {key: _readable_template(inner) for key, inner in node.items()}
 
 

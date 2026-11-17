@@ -206,10 +206,14 @@ def subject_operand_sharding(
 
 def _required_operand_bytes(
     *,
-    leaf: jax.Array | HostArray | np.generic | complex,
+    leaf: jax.Array | HostArray | np.generic | bool | int | float | complex,
     sharding: jax.sharding.Sharding,
 ) -> int:
-    """Size canonical numeric payloads without materializing a device array."""
+    """Size canonical numeric payloads without materializing a device array.
+
+    A Python scalar leaf is any of the four builtin numbers; JAX's typed literals
+    subclass `float` and `int`.
+    """
     if isinstance(leaf, jax.Array):
         shape = tuple(leaf.shape)
         count = math.prod(shape)

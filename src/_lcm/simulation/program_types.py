@@ -216,28 +216,6 @@ class SimulationPrograms:
             return self.decision
         return MappingProxyType({**self.decision, **self.type_local_decision})
 
-    @property
-    def declared_axis_names(self) -> frozenset[str]:
-        """Return every planner axis name these programs declare."""
-        return frozenset(
-            name
-            for family in (
-                self.decision,
-                self.type_local_decision,
-                self.transition,
-                self.route,
-                self.gate_fold,
-                self.gate_route,
-                self.policy_prepare,
-                self.policy_rank,
-                self.exit_full,
-                self.exit_participating,
-                *self.participation_families,
-            )
-            for program in family.values()
-            for name in program.requirements.axis_names
-        )
-
 
 def transition_output_roles(
     *, target_next_state_names: Mapping[RegimeName, Sequence[str]]

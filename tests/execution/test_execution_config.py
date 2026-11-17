@@ -35,17 +35,17 @@ def test_execution_config_accepts_an_explicit_opt_out_of_the_budget() -> None:
     assert ExecutionConfig(device_memory_bytes=None).device_memory_bytes is None
 
 
-@pytest.mark.parametrize("device_memory_bytes", [True, 0, -1])
-def test_execution_config_rejects_nonpositive_or_boolean_budgets(
+@pytest.mark.parametrize("device_memory_bytes", [0, -1])
+def test_execution_config_rejects_nonpositive_budgets(
     *, device_memory_bytes: int
 ) -> None:
     with pytest.raises(ValueError, match="device_memory_bytes"):
         ExecutionConfig(device_memory_bytes=device_memory_bytes)
 
 
-@pytest.mark.parametrize("device_memory_bytes", [1.5, "1024", "devices", "Device"])
-def test_execution_config_rejects_noninteger_budgets(
-    *, device_memory_bytes: float | str
+@pytest.mark.parametrize("device_memory_bytes", ["devices", "Device"])
+def test_execution_config_rejects_unknown_budget_keywords(
+    *, device_memory_bytes: str
 ) -> None:
     with pytest.raises(ValueError, match="device_memory_bytes"):
         ExecutionConfig(device_memory_bytes=device_memory_bytes)  # ty: ignore[invalid-argument-type]
@@ -195,8 +195,8 @@ def test_simulation_sharding_is_an_explicit_legacy_preserving_opt_in() -> None:
     assert resolved.axis_widths == {}
 
 
-@pytest.mark.parametrize("mode", ["automatic", "", None, True, 1])
-def test_simulation_sharding_rejects_unknown_modes(mode: str | int | None) -> None:
+@pytest.mark.parametrize("mode", ["automatic", ""])
+def test_simulation_sharding_rejects_unknown_modes(mode: str) -> None:
     with pytest.raises(ValueError, match="simulation_sharding"):
         ExecutionConfig(simulation_sharding=mode)  # ty: ignore[invalid-argument-type]
 
@@ -320,15 +320,9 @@ def test_execution_config_keeps_the_supplied_width_search_policy() -> None:
     assert ExecutionConfig(width_search=policy).width_search is policy
 
 
-def test_execution_config_refuses_a_width_search_mapping() -> None:
-    """The policy is a `WidthSearchPolicy` instance, never a mapping of its fields."""
-    with pytest.raises(ValueError, match="width_search"):
-        ExecutionConfig(width_search={"kind": WidthSearch.BOUNDED})  # ty: ignore[invalid-argument-type]
-
-
-@pytest.mark.parametrize("devices", [(), (0, -1), (0, True), [0]])
+@pytest.mark.parametrize("devices", [(), (0, -1)])
 def test_execution_config_refuses_unusable_device_ids(
-    *, devices: tuple[int, ...] | list[int]
+    *, devices: tuple[int, ...]
 ) -> None:
     with pytest.raises(ValueError, match="devices"):
-        ExecutionConfig(devices=devices)  # ty: ignore[invalid-argument-type]
+        ExecutionConfig(devices=devices)

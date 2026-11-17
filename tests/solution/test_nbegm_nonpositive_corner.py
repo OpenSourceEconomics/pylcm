@@ -62,7 +62,7 @@ def _brute_where_feasible() -> np.ndarray:
             coh_of_liquid=lambda liquid: liquid,
             next_value_of_liquid=_next_value_of_liquid,
             crra=CRRA,
-            discount_factor=DISCOUNT_FACTOR,
+            discount_factor=jnp.asarray(DISCOUNT_FACTOR),
             gross_return=GROSS_RETURN,
             income=INCOME,
         )
@@ -77,12 +77,12 @@ def test_case_step_publishes_nan_where_cash_on_hand_is_non_positive():
         liquid_grid=LIQUID_GRID,
         next_liquid_grid=LIQUID_GRID,
         savings_grid=SAVINGS_GRID,
-        discount_factor=DISCOUNT_FACTOR,
+        discount_factor=jnp.asarray(DISCOUNT_FACTOR),
         preferences=crra_preferences(crra=CRRA),
         next_liquid=(1.0 + RETURN_LIQUID) * SAVINGS_GRID + INCOME,
         marginal_return=jnp.full_like(SAVINGS_GRID, 1.0 + RETURN_LIQUID),
         subsidy=0.0,
-        asset_limit=3.0,
+        asset_limit=jnp.asarray(3.0),
         equality_owner="otherwise",
     )
     assert np.isnan(np.asarray(value)[INFEASIBLE]).all()
@@ -96,14 +96,14 @@ def test_case_step_matches_the_dense_brute_on_the_feasible_nodes():
         liquid_grid=LIQUID_GRID,
         next_liquid_grid=LIQUID_GRID,
         savings_grid=SAVINGS_GRID,
-        discount_factor=DISCOUNT_FACTOR,
+        discount_factor=jnp.asarray(DISCOUNT_FACTOR),
         preferences=crra_preferences(crra=CRRA),
         next_liquid=(1.0 + RETURN_LIQUID) * SAVINGS_GRID + INCOME,
         marginal_return=jnp.full_like(SAVINGS_GRID, 1.0 + RETURN_LIQUID),
         subsidy=0.0,
         # Above the grid, so the case is an ordinary smooth-continuation solve
         # and the dense brute is a like-for-like oracle.
-        asset_limit=99.0,
+        asset_limit=jnp.asarray(99.0),
         equality_owner="otherwise",
     )
     np.testing.assert_allclose(
@@ -120,7 +120,7 @@ def test_multi_interval_step_publishes_minus_inf_where_cash_on_hand_is_non_posit
         liquid_grid=LIQUID_GRID,
         next_liquid_grid=LIQUID_GRID,
         savings_grid=SAVINGS_GRID,
-        discount_factor=DISCOUNT_FACTOR,
+        discount_factor=jnp.asarray(DISCOUNT_FACTOR),
         preferences=crra_preferences(crra=CRRA),
         next_liquid=(GROSS_RETURN) * SAVINGS_GRID + INCOME,
         marginal_return=jnp.full_like(SAVINGS_GRID, GROSS_RETURN),
@@ -139,7 +139,7 @@ def test_recurring_jump_case_marks_its_non_positive_corner_dead():
         liquid_grid=LIQUID_GRID,
         next_liquid_grid=LIQUID_GRID,
         savings_grid=SAVINGS_GRID,
-        discount_factor=DISCOUNT_FACTOR,
+        discount_factor=jnp.asarray(DISCOUNT_FACTOR),
         preferences=crra_preferences(crra=CRRA),
         next_liquid=(GROSS_RETURN) * SAVINGS_GRID + INCOME,
         marginal_return=jnp.full_like(SAVINGS_GRID, GROSS_RETURN),

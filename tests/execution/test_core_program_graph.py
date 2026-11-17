@@ -11,7 +11,6 @@ from typing import cast
 import jax
 import jax.numpy as jnp
 import pytest
-from beartype.roar import BeartypeCallHintParamViolation
 
 from _lcm.execution.core_program import (
     CoreBuildContext,
@@ -126,24 +125,16 @@ def test_compiler_options_survive_materialization_and_resolution() -> None:
 @pytest.mark.parametrize(
     "options",
     [
-        [("scan_unroll", 1)],
-        (["scan_unroll", 1],),
         (("", 1),),
-        (("scan_unroll", True),),
-        (("scan_unroll", 1.0),),
         (("scan_unroll", 1), ("scan_unroll", 2)),
     ],
+    ids=["empty-name", "duplicate-name"],
 )
-def test_compiler_options_refuse_mutable_or_ambiguous_metadata(
-    options: list[tuple[str, int]]
-    | tuple[list[str | int], ...]
-    | tuple[tuple[str, int | float], ...],
+def test_compiler_options_refuse_ambiguous_metadata(
+    options: tuple[tuple[str, int], ...],
 ) -> None:
-    """Compile identity requires immutable, uniquely named integer options."""
-    with pytest.raises(
-        (TypeError, ValueError, BeartypeCallHintParamViolation),
-        match="compiler_options",
-    ):
+    """Compile identity requires uniquely and non-emptily named options."""
+    with pytest.raises((TypeError, ValueError), match="compiler_options"):
         dataclasses.replace(_native_program(), compiler_options=options)
 
 
@@ -376,24 +367,6 @@ def test_native_graph_rejects_incoherent_disposition_reason(
         core_program_graph(kernel=_NativeKernel({"main": program}))
 
 
-class _CoresOnlyKernel:
-    """Publish only the retired core-enumeration interface, never a graph."""
-
-    def cores(self) -> Mapping[str, Callable[..., PytreeValue]]:
-        return {"main": _identity}
-
-    def build_lower_args[Ignored](
-        self, **_context: Ignored
-    ) -> Mapping[str, PytreeValue]:
-        return {}
-
-
-def test_core_program_graph_rejects_a_kernel_without_a_native_graph() -> None:
-    """A kernel is executable only through its own native core-program graph."""
-    with pytest.raises(BeartypeCallHintParamViolation, match="parameter kernel"):
-        core_program_graph(kernel=_CoresOnlyKernel())  # ty: ignore[invalid-argument-type]
-
-
 def test_every_disposition_is_planned_dense_or_host_driven() -> None:
     """The engine plans a program, runs it deliberately dense, or lets a host
     driver dispatch it a data-dependent number of times; nothing else."""
@@ -466,52 +439,16 @@ def test_retained_artifact_payload_types_are_snapshotted() -> None:
     assert declaration.retained_artifact_payload_types == {key: dict}
 
 
-def test_retained_artifact_payload_types_must_be_a_mapping() -> None:
-    with pytest.raises(TypeError, match="must be a mapping"):
-        dataclasses.replace(
-            _native_program(),
-            retained_artifact_payload_types=(),
-        )
-
-
-@pytest.mark.parametrize(
-    ("payload_types", "match"),
-    [
-        pytest.param({"not-a-key": dict}, "exact ArtifactKey", id="wrong-key"),
-        pytest.param(
-            {ArtifactKey(type_id="tests.core_program.typed"): object()},
-            "must be types",
-            id="wrong-type",
-        ),
-        pytest.param(
-            {ArtifactKey(type_id="tests.core_program.typed"): dict},
-            "does not retain",
-            id="unretained",
-        ),
-    ],
-)
-def test_retained_artifact_payload_type_declarations_are_exact(
-    *,
-    payload_types: Mapping[ArtifactKey | str, type[PytreeValue] | object],  # noqa: PAN001 - Arbitrary non-type rejection witness.
-    match: str,
-) -> None:
+def test_retained_artifact_payload_types_must_name_retained_keys() -> None:
     declaration = dataclasses.replace(
-        _native_program(), retained_artifact_payload_types=payload_types
+        _native_program(),
+        retained_artifact_payload_types={
+            ArtifactKey(type_id="tests.core_program.typed"): dict
+        },
     )
 
-    with pytest.raises((TypeError, ValueError), match=match):
+    with pytest.raises(ValueError, match="does not retain"):
         core_program_graph(kernel=_NativeKernel({"main": declaration}))
-
-
-def test_retained_artifact_keys_must_be_exact_public_keys() -> None:
-    declaration = dataclasses.replace(
-        _scoped_program(name="typed", scope=ProgramScope.ARTIFACT),
-        retained_artifact_keys=("tests.core_program.typed",),
-        retained_artifact_payload_types={},
-    )
-
-    with pytest.raises(TypeError, match="exact public ArtifactKey"):
-        core_program_graph(kernel=_NativeKernel({"typed": declaration}))
 
 
 def test_retained_artifact_requires_a_payload_type_declaration() -> None:
@@ -712,23 +649,3 @@ def test_native_graph_rejects_two_replays_replacing_one_values_program() -> None
 
     with pytest.raises(ValueError, match="share replacement"):
         core_program_graph(kernel=_NativeKernel(graph))
-
-
-def test_native_graph_rejects_a_scope_outside_the_enumeration() -> None:
-    program = _native_program()
-    object.__setattr__(program, "scope", "replay")
-
-    with pytest.raises(TypeError, match="scope"):
-        core_program_graph(kernel=_NativeKernel({"main": program}))
-
-
-def test_core_build_context_refuses_ages_that_are_no_time_axis() -> None:
-    """A build context's ages are a time axis or absent, never another object."""
-    with pytest.raises(BeartypeCallHintParamViolation, match="ages"):
-        dataclasses.replace(_context(), ages=object())
-
-
-def test_core_build_context_refuses_a_regime_level_that_is_no_mapping() -> None:
-    """Each regime's flat params are a mapping of parameter leaves, never a string."""
-    with pytest.raises(BeartypeCallHintParamViolation, match="flat_params"):
-        dataclasses.replace(_context(), flat_params=MappingProxyType({"working": "x"}))

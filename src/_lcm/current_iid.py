@@ -33,7 +33,7 @@ from lcm.exceptions import InvalidParamsError, ShockDeclarationError
 from lcm.shocks import (
     BaseInnovations,
     Discrete,
-    LawValue,
+    LawInput,
     LogNormal,
     NodeSet,
     Normal,
@@ -71,16 +71,16 @@ type NodeOperands = Mapping[
     ShockGroupName, Mapping[str, FloatND | Mapping[ShockName, IntND]]
 ]
 type AdmittedGroupParams = Mapping[
-    ShockGroupName, Mapping[ReferenceName, LawValue | BoolND]
+    ShockGroupName, Mapping[ReferenceName, LawInput | BoolND]
 ]
 
 
 def law_parameters(
-    *, params: Mapping[ReferenceName, LawValue | BoolND]
-) -> Mapping[ReferenceName, LawValue]:
+    *, params: Mapping[ReferenceName, LawInput | BoolND]
+) -> Mapping[ReferenceName, LawInput]:
     """Separate the engine's admitted support marker from scientific operands."""
     return cast(
-        "Mapping[ReferenceName, LawValue]",
+        "Mapping[ReferenceName, LawInput]",
         {
             name: value
             for name, value in params.items()
@@ -90,8 +90,8 @@ def law_parameters(
 
 
 def source_law_params(
-    *, binding: ShockBinding, supplied: Mapping[ReferenceName, LawValue | BoolND]
-) -> Mapping[ReferenceName, LawValue | BoolND]:
+    *, binding: ShockBinding, supplied: Mapping[ReferenceName, LawInput | BoolND]
+) -> Mapping[ReferenceName, LawInput | BoolND]:
     """Retain the producing phase's law slots from shared group parameters."""
     return MappingProxyType(
         {
@@ -114,7 +114,7 @@ class CurrentIIDDrawFrame(NamedTuple):
     addressed_bases: Mapping[ShockName, FloatND]
     held_bases: Mapping[ShockName, FloatND]
     source_params: AdmittedGroupParams
-    source_inputs: Mapping[ShockGroupName, Mapping[ReferenceName, LawValue]]
+    source_inputs: Mapping[ShockGroupName, Mapping[ReferenceName, LawInput]]
     recovery_error: Mapping[ShockName, FloatND]
     valid: BoolND
     information_available: Mapping[ShockName, BoolND] = MappingProxyType({})
@@ -174,7 +174,7 @@ class CurrentIIDDrawPlan:
         for name, binding in self.bindings.items():
             supplied = group_params.get(name, {})
             params = cast(
-                "Mapping[ReferenceName, LawValue]",
+                "Mapping[ReferenceName, LawInput]",
                 {
                     key: value
                     for key, value in supplied.items()
@@ -321,7 +321,7 @@ class _CurrentIIDDraw:
         self, **kwargs: PytreeValue
     ) -> CurrentIIDDrawOutput | BoundedResult[CurrentIIDDrawOutput]:
         group_params = cast(
-            "Mapping[ShockGroupName, Mapping[ReferenceName, LawValue | BoolND]]",
+            "Mapping[ShockGroupName, Mapping[ReferenceName, LawInput | BoolND]]",
             kwargs[CURRENT_IID_ARGUMENT],
         )
         keys = cast("Mapping[ShockName, PRNGKeyND]", kwargs[CURRENT_IID_KEYS_ARGUMENT])
@@ -564,7 +564,7 @@ class CurrentIIDPlan:
         *,
         arguments: Mapping[ReferenceName, QAndFArg],
         group_params: Mapping[
-            ShockGroupName, Mapping[ReferenceName, LawValue | BoolND]
+            ShockGroupName, Mapping[ReferenceName, LawInput | BoolND]
         ],
         node_operands: NodeOperands,
         indices: IntND,
@@ -732,7 +732,7 @@ class _CurrentIIDExpectation:
         self, **kwargs: QAndFArg
     ) -> CurrentIIDMaxOutput | BoundedResult[CurrentIIDMaxOutput]:
         group_params = cast(
-            "Mapping[ShockGroupName, Mapping[ReferenceName, LawValue | BoolND]]",
+            "Mapping[ShockGroupName, Mapping[ReferenceName, LawInput | BoolND]]",
             kwargs[CURRENT_IID_ARGUMENT],
         )
         node_operands = cast(
@@ -802,13 +802,13 @@ def _law_inputs(
     *,
     binding: ShockBinding,
     arguments: Mapping[ReferenceName, QAndFArg],
-    params: Mapping[ReferenceName, LawValue],
-) -> Mapping[ReferenceName, LawValue]:
+    params: Mapping[ReferenceName, LawInput],
+) -> Mapping[ReferenceName, LawInput]:
     """Evaluate the admitted current-state helper DAG in its group namespace."""
-    inputs = {name: cast("LawValue", arguments[name]) for name in binding.state_inputs}
+    inputs = {name: cast("LawInput", arguments[name]) for name in binding.state_inputs}
     inputs.update(
         {
-            name: cast("LawValue", arguments[name])
+            name: cast("LawInput", arguments[name])
             for name in ("age", "period")
             if name in arguments
         }
@@ -838,8 +838,8 @@ def _law_inputs(
 def law_informativeness(
     *,
     binding: ShockBinding,
-    params: Mapping[ReferenceName, LawValue],
-    inputs: Mapping[ReferenceName, LawValue],
+    params: Mapping[ReferenceName, LawInput],
+    inputs: Mapping[ReferenceName, LawInput],
 ) -> Mapping[ShockName, BoolND]:
     """Distinguish mathematical physical signals from held random addresses.
 

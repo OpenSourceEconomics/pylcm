@@ -1,4 +1,4 @@
-"""`DiscreteGrid`: the outcome space of one discrete variable.
+"""The machinery behind `lcm.grids.DiscreteGrid`, one discrete variable's outcomes.
 
 A grid holds either a category class, whose codes index the variable's axis, or
 a strictly ascending sequence of numbers, whose positions are the codes. Stochastic
@@ -13,12 +13,10 @@ from typing import NamedTuple
 import jax
 import jax.numpy as jnp
 import numpy as np
-from beartype import beartype
 from jax import Array
 from jax.typing import ArrayLike
 from jaxtyping import Int
 
-from _lcm.beartype_conf import GRID_CONF
 from _lcm.dtypes import canonical_float_dtype
 from _lcm.grids.base import Grid, UserVector, fail_if_not_a_numeric_vector
 from _lcm.grids.categorical import (
@@ -27,85 +25,39 @@ from _lcm.grids.categorical import (
     get_category_codes,
 )
 from lcm.exceptions import GridInitializationError
-from lcm.typing import BoolND, Float1D, FloatND, Int1D, IntND, ValueND
+from lcm.typing import (
+    BoolND,
+    Float1D,
+    FloatND,
+    Int1D,
+    IntND,
+    ValueND,
+)
 
 # The code of a value off a value grid, equal to the simulation's sentinel for
 # a categorical state missing from initial conditions. int32 min stays
 # out of bounds after JAX normalizes a negative index by adding the axis length,
 # so a fill-mode read cannot wrap it onto the last node the way `-1` would.
 MISSING_CAT_CODE = jnp.iinfo(jnp.int32).min
-_INT32_MAX = jnp.iinfo(jnp.int32).max
 
 # A code array of any integer width; with x64 enabled, `jnp.array([0])` is int64.
 type _CodeIndex = Int[Array, "..."]
 
+# A value grid's declared values, all of the declaring array's one numeric kind.
+type _DeclaredValues = tuple[int, ...] | tuple[float, ...]
 
-class DiscreteGrid(Grid):
-    """A discrete grid defining the outcome space of a discrete variable.
 
-    A grid is declared in one of two ways:
+class _DiscreteGrid(Grid):
+    """Storage and reads of a discrete grid; `lcm.grids.DiscreteGrid` constructs it.
 
-    - `category_class`: named categories. User functions receive the code of a
-      category.
-    - `values`: a one-dimensional NumPy or JAX array of numbers, e.g.
-      `values=jnp.array([0, 20, 40])` or `values=jnp.arange(31)`. The codes are
-      the positions `0..n-1` of the values.
-
-    A value returned for a value grid names a node when it equals that node. For
-    float values, `tolerance` widens the match to any value within that absolute
-    distance of a node; `nearest` snaps a float to its closest node instead.
-
-    Args:
-        category_class: The category class representing the grid categories. Must
-            be a dataclass with fields that have unique int values. The legacy
-            single-positional-argument form remains supported for compatibility.
-        values: The numbers the variable takes, as a one-dimensional NumPy or JAX
-            array of integer or floating dtype: strictly ascending and finite.
-            Integers are stored as int32, floats at the canonical float dtype.
-            Lists, tuples and ranges are refused.
-        tolerance: The absolute distance within which a float matches a node. Zero
-            (exact match) by default. Must be below half the smallest gap between
-            values, and at least the float spacing at every value when positive.
-            Integer values always match exactly.
-
-    Raises:
-        GridInitializationError: If the `category_class` is not a dataclass with int
-            fields, or if `values` or `tolerance` are invalid.
-
+    The public class parses its arguments and calls one of the two initializers
+    below, so a grid is either a category-class grid or a value grid.
     """
 
-    @beartype(conf=GRID_CONF)
-    def __init__(
-        self,
-        *legacy_category_class: type[DataclassInstance],
-        category_class: type[DataclassInstance] | None = None,
-        values: UserVector | None = None,
-        tolerance: float = 0.0,
+    def _init_from_category_class(
+        self, category_class: type[DataclassInstance]
     ) -> None:
-        if len(legacy_category_class) > 1:
-            msg = "DiscreteGrid accepts at most one positional argument."
-            raise TypeError(msg)
-        if legacy_category_class:
-            if category_class is not None:
-                msg = "DiscreteGrid got multiple values for 'category_class'."
-                raise TypeError(msg)
-            category_class = legacy_category_class[0]
-
-        if values is not None:
-            if category_class is not None:
-                raise GridInitializationError(
-                    "DiscreteGrid takes either `category_class` or `values`, not both."
-                )
-            self.__init_values(values=values, tolerance=tolerance)
-            return
-        if category_class is None:
-            msg = "DiscreteGrid requires either `category_class` or `values`."
-            raise TypeError(msg)
-        if tolerance != 0.0:
-            raise GridInitializationError(
-                "`tolerance` applies only to a grid declared with float `values`."
-            )
-
+        """Validate and store a category class's names, codes and ordering."""
         _validate_discrete_grid(category_class)
         category_codes = get_category_codes(category_class)
         self.__categories = tuple(category_codes)
@@ -115,12 +67,12 @@ class DiscreteGrid(Grid):
         # comes from `to_jax()`.
         self.__codes = tuple(int(code) for code in category_codes.values())
         self.__ordered: bool = getattr(category_class, "_ordered", False)
-        self.__values: tuple[int | float, ...] | None = None
+        self.__values: _DeclaredValues | None = None
         self.__nodes_by_dtype: dict[np.dtype, _Nodes] = {}
         self.__tolerance = 0.0
         self.__holds_integers = False
 
-    def __init_values(
+    def _init_from_values(
         self,
         *,
         values: UserVector,
@@ -132,10 +84,16 @@ class DiscreteGrid(Grid):
             argument="values",
             example="DiscreteGrid(values=jnp.array([0, 5, 10]))",
         )
-        declared = _validate_values(np.asarray(values).tolist())
-        is_integer = isinstance(declared[0], int)
+        host_values = np.asarray(values)
+        is_integer = bool(np.issubdtype(host_values.dtype, np.integer))
+        declared = _validate_values(
+            scalars=tuple(int(value) for value in host_values.tolist())
+            if is_integer
+            else tuple(float(value) for value in host_values.tolist()),
+            is_integer=is_integer,
+        )
         self.__values = declared
-        self.__tolerance = float(tolerance)
+        self.__tolerance = tolerance
         self.__holds_integers = is_integer
         self.__nodes_by_dtype = {}
         # Validated at the precision in force now; `values_to_jax` and every
@@ -166,7 +124,7 @@ class DiscreteGrid(Grid):
         return self.__ordered
 
     @property
-    def values(self) -> tuple[int | float, ...] | None:
+    def values(self) -> _DeclaredValues | None:
         """Return the declared values, or `None` for a category-class grid."""
         return self.__values
 
@@ -222,7 +180,7 @@ class DiscreteGrid(Grid):
         """
         nodes, midpoints = self.__nodes()
         if midpoints is None:
-            value = _classify_integers(value)
+            value = _as_int32(value)
             index = jnp.clip(
                 jnp.searchsorted(nodes, value, side="left"), 0, nodes.shape[0] - 1
             )
@@ -243,7 +201,7 @@ class DiscreteGrid(Grid):
         clamped or wrapped onto a node.
         """
         nodes = self.__nodes().values
-        codes = _classify_integers(code)
+        codes = _as_int32(code)
         n_nodes = nodes.shape[0]
         index = jnp.where((codes >= 0) & (codes < n_nodes), codes, n_nodes)
         return nodes.at[index].get(
@@ -301,7 +259,7 @@ class _Nodes(NamedTuple):
 
 
 def _build_nodes(
-    *, declared: tuple[int | float, ...], tolerance: float, dtype: np.dtype
+    *, declared: _DeclaredValues, tolerance: float, dtype: np.dtype
 ) -> _Nodes:
     """Store the declared values at `dtype`, or raise if they do not survive it."""
     is_integer = dtype.kind == "i"
@@ -332,24 +290,21 @@ def _build_nodes(
     return _Nodes(values=value_array, midpoints=midpoints)
 
 
-def _validate_values(values: list[int | float]) -> tuple[int | float, ...]:
-    """Return the values as Python scalars, or raise if they are no value grid."""
-    if len(values) == 0:
+def _validate_values(*, scalars: _DeclaredValues, is_integer: bool) -> _DeclaredValues:
+    """Return the normalized values, or raise if they are no value grid."""
+    if len(scalars) == 0:
         raise GridInitializationError("`values` must hold at least one value.")
-    scalars = tuple(values)
-    message = _value_kind_error(scalars) or _value_order_error(scalars)
+    message = _value_kind_error(
+        scalars=scalars, is_integer=is_integer
+    ) or _value_order_error(scalars)
     if message is not None:
         raise GridInitializationError(message)
     return scalars
 
 
-def _value_kind_error(scalars: tuple[int | float, ...]) -> str | None:
-    """Report integer values outside int32 or float values that are not finite.
-
-    The scalars come from one array's `tolist()`, so they are all `int` or all
-    `float`.
-    """
-    if isinstance(scalars[0], int):
+def _value_kind_error(*, scalars: _DeclaredValues, is_integer: bool) -> str | None:
+    """Report integer values outside int32 or float values that are not finite."""
+    if is_integer:
         out_of_range = [
             value for value in scalars if not MISSING_CAT_CODE < value < 2**31
         ]
@@ -365,7 +320,7 @@ def _value_kind_error(scalars: tuple[int | float, ...]) -> str | None:
     return None
 
 
-def _value_order_error(scalars: tuple[int | float, ...]) -> str | None:
+def _value_order_error(scalars: _DeclaredValues) -> str | None:
     """Report the first pair of values that is not strictly ascending."""
     for position, (left, right) in enumerate(itertools.pairwise(scalars)):
         if not left < right:
@@ -477,21 +432,11 @@ def _downward_midpoints(*, nodes: np.ndarray) -> np.ndarray:
     return np.asarray(cuts, dtype=nodes.dtype)
 
 
-def _classify_integers(value: ArrayLike) -> IntND:
-    """Return each integer as int32 if int32 holds it, else `MISSING_CAT_CODE`.
+def _as_int32(value: ArrayLike) -> IntND:
+    """Return integers as `int32`; one outside the `int32` range wraps.
 
-    The range test runs on the original integers, in their own dtype, before any
-    conversion, so no integer of any width or signedness can alias a different
-    int32. `MISSING_CAT_CODE` is never a node and never a valid code, so callers
-    need no separate validity mask:
-
-    - int8, int16, uint8 and uint16 widen to int32 first, which is exact; a
-      bound wider than the dtype would otherwise wrap into it.
-    - int32, int64, uint32 and uint64 compare against bounds built in their own
-      dtype, so no comparison promotes; unsigned integers are never negative, so
-      their lower bound is 0.
-    - Host values are classified in NumPy before they reach the device, so a
-      64-bit host integer is never truncated on upload when x64 is off.
+    Host values are converted in NumPy, so JAX never sees a 64-bit host integer
+    it would refuse at single precision.
 
     Raises:
         TypeError: If the values are not integers.
@@ -502,15 +447,7 @@ def _classify_integers(value: ArrayLike) -> IntND:
     if integers.dtype.kind not in "iu":
         msg = f"Value-grid integers and codes must be integers; got {integers.dtype}."
         raise TypeError(msg)
-    if integers.dtype.itemsize < np.dtype(np.int32).itemsize:
-        integers = integers.astype(library.int32)
-    bound = integers.dtype.type
-    lowest = 0 if integers.dtype.kind == "u" else MISSING_CAT_CODE + 1
-    in_range = (integers >= bound(lowest)) & (integers <= bound(_INT32_MAX))
-    classified = library.where(
-        in_range, integers.astype(library.int32), library.int32(MISSING_CAT_CODE)
-    )
-    return jnp.asarray(classified, dtype=jnp.int32)
+    return jnp.asarray(integers.astype(library.int32))
 
 
 def _as_float_query(*, value: ArrayLike, dtype: np.dtype) -> FloatND:

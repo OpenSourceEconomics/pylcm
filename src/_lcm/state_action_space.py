@@ -11,8 +11,9 @@ from typing import TYPE_CHECKING
 import jax.numpy as jnp
 
 from _lcm.engine import StateActionSpace, Variables
-from _lcm.grids import Grid, IrregSpacedGrid
+from _lcm.grids import Grid
 from _lcm.typing import StateName, StateOrActionName
+from lcm.grids import IrregSpacedGrid
 from lcm.typing import FloatND, IntND
 
 if TYPE_CHECKING:

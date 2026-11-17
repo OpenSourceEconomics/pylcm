@@ -10,7 +10,6 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
-from beartype.roar import BeartypeCallHintParamViolation
 
 from _lcm.execution.abstract_program_inputs import abstract_program_inputs
 from _lcm.execution.core_program import (
@@ -285,11 +284,3 @@ def test_abstract_value_key_describes_a_period_keyed_input_by_leaf_metadata() ->
         jax.tree.structure(value),
         ((jax.Array, (2,), np.dtype("float32"), False, leaf.sharding),),
     )
-
-
-def test_abstract_value_key_refuses_a_value_outside_every_described_tree() -> None:
-    """A value that is no array, host value or tree of them is refused on entry."""
-    with pytest.raises(
-        BeartypeCallHintParamViolation, match=r"_abstract_value_key\(\) parameter value"
-    ):
-        _abstract_value_key(value=object())  # ty: ignore[invalid-argument-type]

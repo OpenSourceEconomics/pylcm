@@ -24,6 +24,8 @@ from pathlib import Path
 
 _MIN_COMPILE_TIME_VAR = "JAX_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECS"
 _CACHE_DIR_VAR = "JAX_COMPILATION_CACHE_DIR"
+# A runner may switch the cache off; the tests that write to it must not inherit that.
+_ENABLE_CACHE_VAR = "JAX_ENABLE_COMPILATION_CACHE"
 
 
 def _env_with_home(tmp_path: Path) -> dict[str, str]:
@@ -36,7 +38,7 @@ def _env_with_home(tmp_path: Path) -> dict[str, str]:
     kept = {
         k: v
         for k, v in os.environ.items()
-        if k not in (_MIN_COMPILE_TIME_VAR, _CACHE_DIR_VAR)
+        if k not in (_MIN_COMPILE_TIME_VAR, _CACHE_DIR_VAR, _ENABLE_CACHE_VAR)
     }
     return kept | {"HOME": str(tmp_path), "USERPROFILE": str(tmp_path)}
 
@@ -88,9 +90,11 @@ def test_import_respects_user_min_compile_time():
 
 def test_fast_compilation_populates_the_persistent_cache(tmp_path: Path):
     """Compiling a sub-second kernel writes an entry to the persistent cache."""
-    env = {k: v for k, v in os.environ.items() if k != _MIN_COMPILE_TIME_VAR} | {
-        "JAX_COMPILATION_CACHE_DIR": str(tmp_path)
-    }
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if k not in (_MIN_COMPILE_TIME_VAR, _ENABLE_CACHE_VAR)
+    } | {_CACHE_DIR_VAR: str(tmp_path)}
     code = """
 import jax
 import lcm

@@ -131,6 +131,15 @@ class InvalidAdditionalTargetsError(PyLCMError):
     """Raised when the additional targets are invalid."""
 
 
+class InvalidFunctionOutputError(PyLCMError):
+    """Raised when a user function returns a value of the wrong kind.
+
+    A predicate (constraint, gate, participation or exit availability) returns a
+    Boolean, a discrete state's law an integer code, and a utility, continuous
+    law or probability a number. Only the returned dtype is checked.
+    """
+
+
 class ModelInitializationError(PyLCMError):
     """Raised when there is an error in the model initialization."""
 
@@ -217,14 +226,15 @@ class ExactAffineKernelUnavailableError(PyLCMError):
     """
 
 
-class ScaledLotteryDifferentiationError(PyLCMError):
-    """Raised when differentiating a lottery with extremely small probabilities.
+class UnsupportedDifferentiationError(PyLCMError):
+    """Raised when differentiating through an operation that states no derivative.
 
-    `aggregate_scaled` preserves probabilities that are too small to represent as
-    ordinary floating-point numbers. Derivatives with respect to such probabilities
-    are not supported. pylcm therefore raises this error instead of returning zero,
-    which could incorrectly suggest to an optimizer that the objective is locally
-    flat.
+    Some reductions work on the bit pattern of their operands so that tiny
+    probabilities and huge values combine without overflow. Automatic differentiation
+    reads such an operation as a constant. pylcm raises this error instead of
+    returning zero, which could incorrectly suggest that an objective is locally flat.
+    Derivatives of a solution or a simulation with respect to model parameters are
+    not supported.
     """
 
 

@@ -8,16 +8,18 @@ ALLOCATION = {'kind': 'per_block', 'status': 'declared',
               'identity': 'pylcm-regime-domains/v1', 'boundary_unit': 1,
               'meaning': 'Separate value domains for each declared regime; structural entries, not peak device bytes'}
 
-IID_TYPES = {'_lcm.processes.iid.' + name for name in (
+IID_TYPES = {'lcm.processes.' + name for name in (
     'NormalIIDProcess', 'UniformIIDProcess', 'LogNormalIIDProcess', 'NormalMixtureIIDProcess')}
 IID_TYPES.add('_lcm.processes.joint_normal_lowering._JointNormalCoordinate')
-AR1_TYPES = {'_lcm.processes.ar1.' + name for name in (
-    'TauchenAR1Process', 'RouwenhorstAR1Process', 'TauchenNormalMixtureAR1Process', '_TauchenOnNodesProcess')}
+AR1_TYPES = {'lcm.processes.' + name for name in (
+    'TauchenAR1Process', 'RouwenhorstAR1Process', 'TauchenNormalMixtureAR1Process')}
+AR1_TYPES.add('_lcm.processes.ar1_on_nodes._TauchenOnNodesProcess')
 
 
 def _has_conditioned_law(value: JSONValue) -> bool:
     if isinstance(value, dict):
-        if value.get('type') == '_lcm.processes.base.StateConditioned':
+        if value.get('type') in {'lcm.state_conditioned.StateConditioned',
+                                  '_lcm.processes.base.StateConditioned'}:
             return True
         return any(_has_conditioned_law(item) for item in value.values())
     if isinstance(value, list):

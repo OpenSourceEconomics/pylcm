@@ -2409,20 +2409,6 @@ class _StringSubclass(str):
     __slots__ = ()
 
 
-class _IntegerSubclass(int):
-    """Equal integer impostor used to exercise exact-type validation."""
-
-    __slots__ = ()
-
-
-class _ArtifactKeySubclass(
-    ArtifactKey  # ty: ignore[subclass-of-dataclass-with-order]
-):
-    """Structurally equal key subclass that must not be accepted as an address."""
-
-    __slots__ = ()
-
-
 @pytest.mark.parametrize(
     "factory",
     [
@@ -2431,46 +2417,14 @@ class _ArtifactKeySubclass(
             id="artifact-key-type-id",
         ),
         pytest.param(
-            lambda: ArtifactKey(
-                type_id="plugin.key", schema_version=_IntegerSubclass(1)
-            ),
-            id="artifact-key-version",
-        ),
-        pytest.param(
             lambda: SolverIdentity(
                 plugin_id=_StringSubclass("plugin"), plugin_version="1"
             ),
             id="solver-plugin-id",
         ),
         pytest.param(
-            lambda: SolverIdentity(
-                plugin_id="plugin", plugin_version=_StringSubclass("1")
-            ),
-            id="solver-plugin-version",
-        ),
-        pytest.param(
-            lambda: SolverIdentity(
-                plugin_id="plugin", plugin_version="1", solver_api_version=True
-            ),
-            id="solver-api-version-bool",
-        ),
-        pytest.param(
             lambda: ArtifactRef(period=True, regime="active", key=POLICY_KEY),
             id="artifact-ref-period-bool",
-        ),
-        pytest.param(
-            lambda: ArtifactRef(
-                period=0, regime=_StringSubclass("active"), key=POLICY_KEY
-            ),
-            id="artifact-ref-regime",
-        ),
-        pytest.param(
-            lambda: ArtifactRef(
-                period=0,
-                regime="active",
-                key=_ArtifactKeySubclass(type_id="plugin.key"),
-            ),
-            id="artifact-ref-key",
         ),
     ],
 )

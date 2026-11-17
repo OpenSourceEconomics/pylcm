@@ -194,10 +194,3 @@ def test_abstract_read_requires_exact_destination_metadata(mismatch: str) -> Non
             input_transfer_plan=(transfer,),
             abstract_inputs=True,
         )
-
-
-def test_concrete_resolution_still_requires_concrete_transfer_inputs() -> None:
-    """The default dispatch path never accepts a shape descriptor as an array."""
-    program, transfer = _inputs()
-    with pytest.raises(TypeError, match="concrete JAX array"):
-        resolve_core_program(program=program, input_transfer_plan=(transfer,))

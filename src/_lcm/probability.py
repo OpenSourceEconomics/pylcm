@@ -27,8 +27,8 @@ caller supplied, bit for bit.
 """
 
 import dataclasses
-import functools
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable
+from typing import NoReturn
 
 import jax
 import jax.numpy as jnp
@@ -37,15 +37,45 @@ from jax import Array
 from jax.typing import DTypeLike
 from jaxtyping import Int
 
+from lcm.exceptions import UnsupportedDifferentiationError
 from lcm.typing import BoolND, FloatND, ValueND
-
-# The bit pattern of a float, as an integer of the same width. Genuinely
-# width-polymorphic: `int32` beside `float32`, `int64` beside `float64`.
-type _BitsND = Int[Array, "..."]
 
 # The tangent JAX pairs with an integer primal: a `float0` zero array, held on
 # the host or traced.
 type _IntegerTangent = ValueND | np.ndarray
+
+
+# keyword-only-exempt: library-callback=jax.custom_jvp.defjvp
+def _refuse_derivative(
+    primals: tuple[ValueND, ...], tangents: tuple[_IntegerTangent, ...]
+) -> NoReturn:
+    """Raise rather than report the zero plain differentiation would return."""
+    del primals, tangents
+    msg = (
+        "This operation states no derivative: it is computed on the bit pattern "
+        "of its operands, which automatic differentiation reads as a constant. "
+        "pylcm does not support differentiating a solution or a simulation with "
+        "respect to model parameters."
+    )
+    raise UnsupportedDifferentiationError(msg)
+
+
+def without_derivative[**P, R](primal: Callable[P, R]) -> Callable[P, R]:
+    """Wrap a bit-level operation so that differentiating through it raises.
+
+    Evaluation, `jit` and `vmap` are unaffected. Without the wrapper, automatic
+    differentiation would silently return zero.
+    """
+    # Built by call rather than by decorator: `@jax.custom_jvp` produces a callable
+    # instance, which the package claw rebinds to a bound method of its `__call__`.
+    guarded = jax.custom_jvp(primal)
+    guarded.defjvp(_refuse_derivative)
+    return guarded
+
+
+# The bit pattern of a float, as an integer of the same width. Genuinely
+# width-polymorphic: `int32` beside `float32`, `int64` beside `float64`.
+type _BitsND = Int[Array, "..."]
 
 _FLOAT32_BYTES = 4
 _FLOAT32_MANTISSA_BITS = 23
@@ -120,8 +150,7 @@ def log_of_nonnegative(values: FloatND) -> FloatND:
     significand is passed to `log`.
 
     Zero, infinities, NaNs, and negative inputs retain the ordinary logarithm
-    conventions.  The custom tangent is the mathematical `dx / x`; the bit
-    decomposition is only a representation device for the primal.
+    conventions.  The bit decomposition is only a representation device.
 
     Args:
         values: Nonnegative floating values.
@@ -130,7 +159,7 @@ def log_of_nonnegative(values: FloatND) -> FloatND:
         Elementwise natural logarithms.
 
     """
-    return _log_of_nonnegative_with_tangent(jnp.asarray(values))
+    return _log_of_nonnegative_bits(jnp.asarray(values))
 
 
 def _log_of_nonnegative_bits(values: FloatND) -> FloatND:
@@ -148,20 +177,6 @@ def _log_of_nonnegative_bits(values: FloatND) -> FloatND:
     # one prevents a dead direct-log branch from ever consuming the value.
     direct_log = jnp.log(jnp.where(subnormal, jnp.ones_like(arr), arr))
     return jnp.where(subnormal, subnormal_log, direct_log)
-
-
-# keyword-only-exempt: library-callback=jax.custom_jvp.defjvp
-def _log_of_nonnegative_jvp(
-    primals: tuple[FloatND], tangents: tuple[FloatND]
-) -> tuple[FloatND, FloatND]:
-    """Differentiate the representation-aware logarithm as `dx / x`."""
-    (values,) = primals
-    (values_dot,) = tangents
-    return _log_of_nonnegative_with_tangent(values), values_dot / values
-
-
-_log_of_nonnegative_with_tangent = jax.custom_jvp(_log_of_nonnegative_bits)
-_log_of_nonnegative_with_tangent.defjvp(_log_of_nonnegative_jvp)
 
 
 def is_represented_zero(values: FloatND) -> BoolND:
@@ -345,89 +360,6 @@ def normalized_scaled_weights(
     )
 
 
-def flattened_to_one_scale(*, coefficients: FloatND, shifts: _BitsND) -> FloatND:
-    """Return scaled weights as plain numbers, on the one scale they all reach.
-
-    Every entry carries a scale of its own, which is what keeps it exact. A
-    consumer that reduces the lottery as numbers rather than as logarithms has
-    nowhere to put that scale, so the entries come down onto the largest one
-    all of them reach. An entry further below it than the format can express
-    underflows to zero: understated, the direction the contract allows, and
-    never enlarged.
-
-    Against a finite value that understatement is the whole story, and the
-    smallest error available to anything that has to name the weight as a
-    number. Against a non-finite one it is a lost answer instead, and
-    `restored_against_a_nonfinite_value` is what puts such a weight back. The
-    two are separate because only the second reads the values, and a consumer
-    that also needs the lottery's mass wants that mass to depend on the weights
-    alone.
-
-    Args:
-        coefficients: The scaled weights' significands.
-        shifts: Each one's own base-two scale.
-
-    Returns:
-        The weights on one scale, as ordinary numbers.
-
-    """
-    arr = jnp.asarray(coefficients)
-    shifts = jnp.asarray(shifts)
-    # The lottery is the last axis, and the lotteries beside it in a batch are
-    # unrelated. A scale taken across the whole array would let the likeliest
-    # node anywhere decide what is representable everywhere, so a batch row whose
-    # nodes are all rare would come down to nothing although on its own terms its
-    # weights are ordinary.
-    common = jnp.min(shifts, axis=-1, keepdims=True)
-    return jnp.ldexp(arr, (common - shifts).astype(jnp.int32))
-
-
-def restored_against_a_nonfinite_value(
-    *, coefficients: FloatND, lowered: FloatND, values: FloatND
-) -> FloatND:
-    """Return the lowered weights, with a vanished live one put back.
-
-    Lowering understates a weight too far below the scale to express, and
-    against a finite value that is the whole story. Against a non-finite one it
-    is a lost answer instead, so the weight comes back at the smallest normal
-    magnitude, keeping its sign — normal, not merely nonzero, because a
-    subnormal operand is what the backend flushes, and `0 * -inf` is the NaN
-    this is here to avoid.
-
-    Both non-finite values are ones whose contribution does not shrink with the
-    weight: every strictly positive weight against `+-inf` yields the same
-    infinity, and every strictly positive weight against a `NaN` yields the same
-    `NaN`. Letting the weight round to zero would make an event that can occur
-    impossible — reporting an ordinary number for a continuation that has none,
-    or a well-posed answer for a node whose entry lies outside the target's
-    support. What decides is the value at the node, never how small the weight
-    is: a weight the format cannot express is understated, and understating a
-    weight is not ruling the node out.
-
-    This is separate from the lowering because it is the only step that makes a
-    weight depend on the value beside it. A consumer that needs the mass of the
-    lottery as well as its weighted sum takes the mass from the lowered weights
-    and applies this to the weighted term alone, where the value is an operand
-    already — a live node against a non-finite value carries the result whatever
-    the mass is, so the mass never needs the restored weight.
-
-    Args:
-        coefficients: The scaled weights' significands, as they arrived.
-        lowered: The same weights on one scale, from `flattened_to_one_scale`.
-        values: What each weight stands against, read only for finiteness.
-
-    Returns:
-        The lowered weights, with every vanished live non-finite one restored.
-
-    """
-    arr = jnp.asarray(coefficients)
-    smallest = jnp.asarray(jnp.finfo(arr.dtype).tiny, dtype=arr.dtype)
-    vanished_against_nonfinite = (
-        is_live(arr) & ~is_live(lowered) & ~jnp.isfinite(jnp.asarray(values))
-    )
-    return jnp.where(vanished_against_nonfinite, jnp.copysign(smallest, arr), lowered)
-
-
 def rescaled_weight_pair(
     *, first_weight: FloatND, second_weight: FloatND
 ) -> tuple[FloatND, FloatND]:
@@ -442,47 +374,6 @@ def rescaled_weight_pair(
     return (
         scaled_by_power_of_two(values=first, shift=shift),
         scaled_by_power_of_two(values=second, shift=shift),
-    )
-
-
-def rescaled_weight_group(
-    *, weights: Sequence[FloatND], cofactors: Sequence[FloatND] | None = None
-) -> tuple[FloatND, ...]:
-    """Return weights carried as separate arrays, scaled by one common factor.
-
-    `rescaled_lottery_weights` for a lottery whose branches are held one array
-    per branch rather than stacked along an axis — the retained target regimes,
-    each contributing its own probability at every state-action point. The
-    factor is a single scalar, so it cancels out of any ratio taken within a
-    point, whichever point that is.
-
-    `cofactors[i]` is what `weights[i]` goes on to be multiplied by: the node
-    weights of that target's own lottery. Lifting a regime probability just
-    into the normal range is not enough when it is about to be multiplied by a
-    quadrature weight of a sixth — the product lands back below the range and
-    the node is lost before any lottery is assembled — so the factor is chosen
-    large enough for the products, not only for the probabilities.
-
-    Args:
-        weights: One array per branch.
-        cofactors: What each branch's weight is multiplied by afterwards, in
-            the same order. `None` scales for the weights alone.
-
-    Returns:
-        Tuple of the weights, each multiplied by the same power of two.
-
-    """
-    if cofactors is None:
-        cofactors = [jnp.asarray(1.0, dtype=jnp.asarray(w).dtype) for w in weights]
-    needed = [
-        _shift_to_keep_product_normal(weight=w, cofactor=c)
-        for w, c in zip(weights, cofactors, strict=True)
-    ]
-    shift = functools.reduce(jnp.maximum, needed)
-    headroom = functools.reduce(jnp.minimum, [_binades_of_headroom(w) for w in weights])
-    shift = jnp.minimum(shift, headroom)
-    return tuple(
-        scaled_by_power_of_two(values=jnp.asarray(w), shift=shift) for w in weights
     )
 
 
@@ -556,7 +447,7 @@ def exact_product(factors: FloatND) -> FloatND:
     multiply, exponents add, and the result is written into its bit pattern,
     subnormal or not. Nothing is lost that the format can hold, and what the
     format cannot hold — a product below the smallest subnormal — comes back as
-    zero. `nonzero_exact_product` is the form that marks that case.
+    zero.
 
     A zero factor is the genuine null event and a non-finite one is not a
     probability; both take the ordinary product, which says the right thing
@@ -579,45 +470,6 @@ def exact_product(factors: FloatND) -> FloatND:
             exponent=parts.exponent,
             negative=parts.negative,
         ),
-    )
-
-
-def nonzero_exact_product(factors: FloatND) -> FloatND:
-    """Return `exact_product`, never zero where every factor can occur.
-
-    A product below the smallest representable magnitude is the one case the
-    format genuinely cannot hold, and it comes back as the smallest
-    representable magnitude of the same sign rather than as zero, so an event
-    that can occur is never spelled the way one that cannot is.
-
-    Whether that substitution applies is read off the exponent the product
-    would need, not off the encoded number. A subnormal that exists only as an
-    intermediate cannot be classified: XLA:CPU answers a bit-level test of one
-    differently depending on whether the answer leaves the fused region or
-    merely selects inside it, so a float round-trip here would replace
-    perfectly representable products with the substitute.
-
-    Args:
-        factors: The factors stacked along the leading axis. Trailing axes
-            broadcast.
-
-    Returns:
-        Their product over the leading axis, with a vanished product replaced.
-
-    """
-    arr = jnp.asarray(factors)
-    parts = _product_parts(arr)
-    encoded = _encoded(
-        significand=parts.significand, exponent=parts.exponent, negative=parts.negative
-    )
-    smallest_magnitude = jnp.asarray(
-        jnp.finfo(arr.dtype).smallest_subnormal, dtype=arr.dtype
-    )
-    substitute = jnp.where(parts.negative, -smallest_magnitude, smallest_magnitude)
-    binades_below = (1 - _exponent_bias(arr)) - parts.exponent
-    vanished = ~parts.ordinary & (binades_below > _mantissa_bits(arr))
-    return jnp.where(
-        parts.ordinary, parts.plain, jnp.where(vanished, substitute, encoded)
     )
 
 
@@ -644,7 +496,7 @@ def balanced_product(*, weight: FloatND, value: FloatND) -> FloatND:
         Their product.
 
     """
-    return _balanced_with_tangent(jnp.asarray(weight), jnp.asarray(value))
+    return _balanced_no_derivative(jnp.asarray(weight), jnp.asarray(value))
 
 
 # keyword-only-exempt: library-callback=jax.custom_jvp
@@ -677,33 +529,7 @@ def _balanced_bits(weight: FloatND, value: FloatND) -> FloatND:
     return _scaled_bits(values=weight_arr, shift=shift) * lowered_value
 
 
-# keyword-only-exempt: library-callback=jax.custom_jvp.defjvp
-def _balanced_jvp(
-    primals: tuple[FloatND, FloatND], tangents: tuple[FloatND, FloatND]
-) -> tuple[FloatND, FloatND]:
-    """Differentiate the product against each operand as the other's slope.
-
-    The slopes are the primals, which differentiation treats as constants, so
-    the tangent is an ordinary multiplication — reverse mode has to transpose
-    it, and neither a bitcast nor a `custom_jvp` call has a transpose. The
-    balanced form is therefore the primal's alone. Where the weight is below
-    the normal range the derivative with respect to the value flushes to zero;
-    that derivative is the weight itself, so what is lost is a slope already
-    smaller than the format can hold.
-    """
-    weight, value = primals
-    weight_dot, value_dot = tangents
-    return (
-        _balanced_with_tangent(weight, value),
-        weight_dot * value + value_dot * weight,
-    )
-
-
-# One differentiable boundary for the whole product, rather than one per
-# operand: the bit manipulation inside carries no derivative and does not need
-# to, and a wrapper per operand costs a second trace of the same machinery.
-_balanced_with_tangent = jax.custom_jvp(_balanced_bits)
-_balanced_with_tangent.defjvp(_balanced_jvp)
+_balanced_no_derivative = without_derivative(_balanced_bits)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -810,9 +636,7 @@ def scaled_down_by_power_of_two(*, values: FloatND, shift: _BitsND) -> FloatND:
     for every non-positive shift, including the normal/subnormal boundary,
     without materialising a subnormal scaling operand.
 
-    The map is linear in `values` away from the usual rounding boundaries, so
-    its custom derivative multiplies by the same exact power of two. The tangent
-    remains an ordinary multiplication and can be transposed by reverse mode.
+    Differentiating through the map raises `UnsupportedDifferentiationError`.
 
     Args:
         values: Values to scale.
@@ -822,7 +646,7 @@ def scaled_down_by_power_of_two(*, values: FloatND, shift: _BitsND) -> FloatND:
         `values * 2**shift` with IEEE round-to-nearest-even semantics.
 
     """
-    return _scaled_down_with_tangent(jnp.asarray(values), shift)
+    return _scaled_down_no_derivative(jnp.asarray(values), shift)
 
 
 # keyword-only-exempt: library-callback=jax.custom_jvp
@@ -874,22 +698,7 @@ def _scaled_down_bits(values: FloatND, shift: _BitsND) -> FloatND:
     return jax.lax.bitcast_convert_type(output_bits, arr.dtype)
 
 
-# keyword-only-exempt: library-callback=jax.custom_jvp.defjvp
-def _scaled_down_jvp(
-    primals: tuple[FloatND, _BitsND], tangents: tuple[FloatND, _IntegerTangent]
-) -> tuple[FloatND, FloatND]:
-    """Differentiate downward scaling as multiplication by `2**shift`."""
-    values, shift = primals
-    values_dot, _ = tangents
-    slope = _scaled_down_bits(values=jnp.ones_like(values), shift=shift)
-    return (
-        _scaled_down_with_tangent(values, shift),
-        values_dot * slope,
-    )
-
-
-_scaled_down_with_tangent = jax.custom_jvp(_scaled_down_bits)
-_scaled_down_with_tangent.defjvp(_scaled_down_jvp)
+_scaled_down_no_derivative = without_derivative(_scaled_down_bits)
 
 
 def scaled_by_power_of_two(*, values: FloatND, shift: _BitsND) -> FloatND:
@@ -978,67 +787,6 @@ def _scaled_bits_jvp(
 # `__call__`, which loses `defjvp` along with everything else the object knows.
 _scaled_with_tangent = jax.custom_jvp(_scaled_bits)
 _scaled_with_tangent.defjvp(_scaled_bits_jvp)
-
-
-def _shift_to_keep_product_normal(*, weight: FloatND, cofactor: FloatND) -> _BitsND:
-    """Return the binades needed to keep `weight * cofactor` a normal number.
-
-    Read off the exponents rather than from the product itself, which is the
-    quantity that cannot be formed without losing what is being measured.
-    """
-    arr = jnp.asarray(weight)
-    smallest_exponent = _smallest_live_exponent(arr) + _smallest_live_exponent(cofactor)
-    needed = (1 - _exponent_bias(arr)) - smallest_exponent
-    return jnp.maximum(needed, jnp.zeros_like(needed))
-
-
-def _binades_of_headroom(values: FloatND) -> _BitsND:
-    """Return how far the largest entry can be scaled up and stay finite."""
-    arr = jnp.asarray(values)
-    return (_exponent_bias(arr) - 1) - _largest_live_exponent(arr)
-
-
-def _smallest_live_exponent(values: FloatND) -> _BitsND:
-    """Return the base-two exponent of the smallest live magnitude, or zero."""
-    arr = jnp.asarray(values)
-    live = is_live(arr) & jnp.isfinite(arr)
-    exponents = jnp.where(
-        live, _unbiased_exponent(arr), jnp.zeros_like(live, jnp.int32)
-    )
-    return jnp.min(jnp.where(live, exponents, jnp.max(exponents)))
-
-
-def _largest_live_exponent(values: FloatND) -> _BitsND:
-    """Return the base-two exponent of the largest live magnitude, or zero."""
-    arr = jnp.asarray(values)
-    live = is_live(arr) & jnp.isfinite(arr)
-    exponents = jnp.where(
-        live, _unbiased_exponent(arr), jnp.zeros_like(live, jnp.int32)
-    )
-    return jnp.max(exponents)
-
-
-def binades_above_smallest_normal(values: FloatND) -> _BitsND:
-    """How far each entry can be halved before it leaves the normal range.
-
-    A caller with a power of two to apply to a product decides how much of it
-    the weight can absorb before it becomes a subnormal the backend may flush,
-    and how much has to be applied to the product instead. An entry already
-    below the normal range has no room at all.
-
-    Args:
-        values: Entries whose headroom is wanted.
-
-    Returns:
-        The number of binades each entry has above the smallest normal.
-
-    """
-    arr = jnp.asarray(values)
-    return jnp.where(
-        is_below_smallest_normal(arr),
-        jnp.zeros((), jnp.int32),
-        (_unbiased_exponent(arr) - (1 - _exponent_bias(arr))).astype(jnp.int32),
-    )
 
 
 def _unbiased_exponent(values: FloatND) -> _BitsND:

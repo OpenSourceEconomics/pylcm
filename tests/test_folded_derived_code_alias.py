@@ -91,6 +91,16 @@ _CASES = pytest.mark.parametrize(
 )
 
 
+_NUMERICAL_CASES = pytest.mark.parametrize(
+    ("placement", "process_placement", "values", "code_phase", "enable_jit"),
+    [
+        ("model", "model", False, "both", True),
+        ("regime", "model", True, "solve", False),
+        ("model", "regime", True, "simulate", True),
+    ],
+)
+
+
 def _make_model(
     *,
     placement: _Placement,
@@ -219,7 +229,7 @@ def test_unread_model_state_is_still_pruned(
     assert "unread" not in model.user_regimes["live"].states
 
 
-@_CASES
+@_NUMERICAL_CASES
 def test_derived_code_value_is_the_literal_utility(
     *,
     placement: _Placement,
@@ -241,7 +251,7 @@ def test_derived_code_value_is_the_literal_utility(
     np.testing.assert_array_equal(np.asarray(solution.values[0]["live"]), expected)
 
 
-@_CASES
+@_NUMERICAL_CASES
 def test_derived_code_flow_is_the_literal_utility(
     *,
     placement: _Placement,

@@ -28,19 +28,8 @@ from jax.extend.core import (
 from jax.typing import DTypeLike
 
 from _lcm.dtypes import canonical_float_dtype
-from _lcm.processes.ar1 import (
-    RouwenhorstAR1Process,
-    TauchenAR1Process,
-    TauchenNormalMixtureAR1Process,
-    _TauchenOnNodesProcess,
-)
+from _lcm.processes.ar1_on_nodes import _TauchenOnNodesProcess
 from _lcm.processes.base import _ContinuousStochasticProcess
-from _lcm.processes.iid import (
-    LogNormalIIDProcess,
-    NormalIIDProcess,
-    NormalMixtureIIDProcess,
-    UniformIIDProcess,
-)
 from _lcm.simulation.eager_stages import run_eager_stage
 from _lcm.simulation.host_operations import (
     ProfiledSimulationOperations,
@@ -54,12 +43,20 @@ from _lcm.simulation.residency import (
 )
 from _lcm.typing import HostArray
 from lcm.exceptions import ExecutionPlanningError
+from lcm.processes import (
+    LogNormalIIDProcess,
+    NormalIIDProcess,
+    NormalMixtureIIDProcess,
+    RouwenhorstAR1Process,
+    TauchenAR1Process,
+    TauchenNormalMixtureAR1Process,
+    UniformIIDProcess,
+)
 from lcm.typing import (
     Float1D,
     ParameterName,
     ReferenceName,
     ScalarFloat,
-    ScalarInt,
     ValueND,
 )
 
@@ -74,10 +71,8 @@ type _SupportKey = tuple[Hashable, ...]
 # The canonical content of one operand: dtype string, shape and raw bytes.
 type _OperandBytes = tuple[str, tuple[int, ...], bytes]
 
-# Each fixed process field's name, Python type and content, `None` when unset.
-type _FixedIdentity = tuple[
-    tuple[ParameterName, type[float | int | None], _OperandBytes | None], ...
-]
+# Each fixed process field's name and content, `None` when unset.
+type _FixedIdentity = tuple[tuple[ParameterName, _OperandBytes | None], ...]
 
 # A JAXPR atom's static array contract: shape, dtype string and weak type.
 type _AvalSchema = tuple[tuple[int, ...], str, bool]
@@ -167,7 +162,7 @@ def _shared_uniform_operations() -> ProfiledSimulationOperations:
 class _GridBinding:
     """Retain immutable operands so an identity key cannot name a recycled object."""
 
-    parameters: Mapping[str, ScalarFloat | ScalarInt]
+    parameters: Mapping[str, ScalarFloat]
     """Exact runtime operands held for this binding."""
     key: _SupportKey
     """Canonical support identity, independent of equivalent parameter copies."""
@@ -243,7 +238,7 @@ class SimulationProcessGrids:
         self,
     ) -> tuple[
         tuple[Float1D, ...],
-        tuple[Mapping[str, ScalarFloat | ScalarInt], ...],
+        tuple[Mapping[str, ScalarFloat], ...],
         tuple[ValueND | Mapping[ParameterName, ValueND], ...],
     ]:
         """Expose every support and identity-binding owner to memory accounting."""
@@ -257,7 +252,7 @@ class SimulationProcessGrids:
         self,
         *,
         spec: _ContinuousStochasticProcess,
-        parameters: Mapping[str, ScalarFloat | ScalarInt],
+        parameters: Mapping[str, ScalarFloat],
         required: jax.sharding.Sharding,
     ) -> Float1D:
         """Admit a support once and reuse its exact coordinates for later reads.
@@ -303,8 +298,7 @@ class SimulationProcessGrids:
                 tuple(
                     (
                         name,
-                        type(value) in (bool, int, float)
-                        or getattr(value, "weak_type", False),
+                        type(value) is float or getattr(value, "weak_type", False),
                     )
                     for name, value in sorted(complete.items())
                 ),
@@ -518,40 +512,34 @@ class SimulationProcessGrids:
 
 
 def _uniform_parameters(
-    *, spec: UniformIIDProcess, parameters: Mapping[str, ScalarFloat | ScalarInt]
+    *, spec: UniformIIDProcess, parameters: Mapping[str, ScalarFloat]
 ) -> Mapping[ParameterName, ProcessValue]:
-    """Mirror process scalar dtypes on the host before admitted device placement."""
+    """Place fixed endpoints on the host at the active float precision."""
     complete: dict[ParameterName, ProcessValue] = dict(parameters)
     for name in ("start", "stop"):
         value = getattr(spec, name)
         if value is not None:
-            dtype = (
-                np.int32 if isinstance(value, bool | int) else canonical_float_dtype()
-            )
-            complete[name] = np.asarray(value, dtype=dtype)
+            complete[name] = np.asarray(value, dtype=canonical_float_dtype())
     return MappingProxyType(complete)
 
 
 def _normal_parameters(
-    *, spec: NormalIIDProcess, parameters: Mapping[str, ScalarFloat | ScalarInt]
+    *, spec: NormalIIDProcess, parameters: Mapping[str, ScalarFloat]
 ) -> Mapping[ParameterName, ProcessValue]:
-    """Preserve weak fixed floats and canonical strong fixed integers on upload."""
+    """Complete runtime operands with the fixed host floats, kept weakly typed."""
     complete: dict[ParameterName, ProcessValue] = dict(parameters)
-    for name in ("mu", "sigma", "n_std"):
-        value = getattr(spec, name)
-        if value is not None:
-            complete[name] = (
-                np.asarray(value, dtype=np.int32)
-                if isinstance(value, bool | int)
-                else value
-            )
+    complete.update(
+        (name, getattr(spec, name))
+        for name in ("mu", "sigma", "n_std")
+        if getattr(spec, name) is not None
+    )
     return MappingProxyType(complete)
 
 
 def _normal_fixed_identity(spec: NormalIIDProcess) -> _FixedIdentity:
-    """Distinguish fixed scalar types and signed zero before binding reuse."""
+    """Distinguish fixed values, signed zero included, before binding reuse."""
     return tuple(
-        (name, type(value), None if value is None else _parameter_bytes(value))
+        (name, None if value is None else _parameter_bytes(value))
         for name in ("mu", "sigma", "n_std")
         for value in (getattr(spec, name),)
     )
@@ -560,27 +548,23 @@ def _normal_fixed_identity(spec: NormalIIDProcess) -> _FixedIdentity:
 def _complete_process_parameters(
     *,
     spec: _ContinuousStochasticProcess,
-    parameters: Mapping[str, ScalarFloat | ScalarInt],
+    parameters: Mapping[str, ScalarFloat],
 ) -> Mapping[ParameterName, ProcessValue]:
-    """Complete runtime operands with fixed host scalars before device admission."""
+    """Complete runtime operands with the fixed host floats before device admission."""
     complete: dict[ParameterName, ProcessValue] = dict(parameters)
     for name in spec._param_field_names:  # noqa: SLF001
         value = getattr(spec, name)
         if value is not None:
-            complete[name] = (
-                np.asarray(value, dtype=np.int32)
-                if isinstance(value, bool | int)
-                else value
-            )
+            complete[name] = value
     return MappingProxyType(complete)
 
 
 def _process_fixed_identity(
     spec: _ContinuousStochasticProcess,
 ) -> _FixedIdentity:
-    """Distinguish fixed scalar types and bytes before binding reuse."""
+    """Distinguish fixed values by their bytes before binding reuse."""
     return tuple(
-        (name, type(value), None if value is None else _parameter_bytes(value))
+        (name, None if value is None else _parameter_bytes(value))
         for name in spec._param_field_names  # noqa: SLF001
         for value in (getattr(spec, name),)
     )
@@ -601,11 +585,11 @@ def _supplied_node_identity(spec: _ContinuousStochasticProcess) -> _OperandBytes
 
 def _staged_parameter_is_weak(value: ProcessValue) -> bool:
     """Preserve host and JAX weak typing in composite support identity."""
-    return type(value) in (bool, int, float) or bool(getattr(value, "weak_type", False))
+    return type(value) is float or bool(getattr(value, "weak_type", False))
 
 
 def _process_grid_call(
-    *values: ScalarFloat | ScalarInt,
+    *values: ScalarFloat,
     spec: _ContinuousStochasticProcess,
     parameter_names: tuple[ParameterName, ...],
 ) -> Float1D:
@@ -994,7 +978,7 @@ def _parameter_bytes(value: ProcessValue) -> _OperandBytes:
 
 
 def _compute_uniform_grid(
-    *, parameters: Mapping[str, ScalarFloat | ScalarInt], n_points: int
+    *, parameters: Mapping[str, ScalarFloat], n_points: int
 ) -> Float1D:
     """Compute equally spaced support with the Uniform process law."""
     return UniformIIDProcess(n_points=n_points).compute_gridpoints(**parameters)
@@ -1002,7 +986,7 @@ def _compute_uniform_grid(
 
 def _compute_normal_stage(
     *,
-    parameters: Mapping[str, ScalarFloat | ScalarInt],
+    parameters: Mapping[str, ScalarFloat],
     n_points: int,
     stage: _GridStage,
 ) -> ValueND:

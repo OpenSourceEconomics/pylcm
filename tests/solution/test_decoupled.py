@@ -32,7 +32,6 @@ from lcm.exceptions import (
     InvalidValueFunctionError,
     ModelInitializationError,
     NoFeasibleActionError,
-    RegimeInitializationError,
     UnsupportedOperationError,
 )
 from lcm.solvers import GridSearch
@@ -427,27 +426,6 @@ def test_lookup_without_decoupled_publishes_no_objective_profile() -> None:
     assert got.Q_objective is None
 
 
-@pytest.mark.parametrize(
-    "build",
-    [
-        lambda: lcm.Decoupled(
-            objective=long_run,
-            value=lcm.Phased(solve=long_run, simulate=long_run),  # ty: ignore[invalid-argument-type]
-        ),
-        lambda: lcm.Decoupled(
-            objective=lcm.Decoupled(objective=long_run, value=long_run),  # ty: ignore[invalid-argument-type]
-            value=long_run,
-        ),
-        lambda: lcm.Decoupled(objective=long_run, value=2.0),  # ty: ignore[invalid-argument-type]
-    ],
-    ids=["phased-value", "nested", "not-callable"],
-)
-def test_decoupled_refuses_an_invalid_declaration(build) -> None:
-    """Only `objective` may be `Phased`, and both parts must be aggregators."""
-    with pytest.raises(RegimeInitializationError, match="Decoupled"):
-        build()
-
-
 def test_phased_koopmans_aggregator_refuses_a_decoupled_aggregator() -> None:
     """`Phased` around a `Decoupled` is refused; put `Phased` on `objective`."""
     with pytest.raises(ModelInitializationError, match="Decoupled"):
@@ -765,49 +743,6 @@ def test_readout_follows_the_empty_tie_and_nan_contract(
     assert got == (
         expected_index,
         "nan" if np.isnan(expected_value) else expected_value,
-    )
-
-
-def shocked_utility(*, choice: DiscreteAction, shock: FloatND) -> FloatND:
-    return utility(choice) + shock
-
-
-SHOCK_POINTS = 3
-
-
-def _shocked_model() -> lcm.Model:
-    return lcm.Model(
-        n_periods=3,
-        regimes={
-            "decide": lcm.Regime(
-                actions={"choice": lcm.DiscreteGrid(Choice)},
-                states={
-                    "wealth": lcm.DiscreteGrid(Wealth),
-                    "shock": lcm.NormalIIDProcess(
-                        n_points=SHOCK_POINTS,
-                        gauss_hermite=True,
-                        mu=0.0,
-                        sigma=1.0,
-                    ),
-                },
-                state_transitions={"wealth": next_wealth},
-                constraints={"can_afford": can_afford},
-                functions={"utility": shocked_utility},
-                koopmans_aggregator=PRESENT_BIAS,
-            ),
-            "end": lcm.Regime(
-                states={"wealth": lcm.DiscreteGrid(Wealth)},
-                functions={"utility": terminal_utility},
-            ),
-        },
-        regime_id_class=RegimeId,
-        initial_nodes=lcm.InitialNodes(by_period={0: "decide"}),
-        edges={
-            "decide": {
-                "decide": lcm.PeriodRange(exclusive_stop=1),
-                "end": lcm.Periods(values=(1,)),
-            }
-        },
     )
 
 

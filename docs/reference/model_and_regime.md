@@ -239,6 +239,27 @@ A general regime declares:
 
 Use `Regime.replace(...)` to derive a modified immutable declaration.
 
+(api-function-returns)=
+
+### What a function returns
+
+Each user function returns the kind its role reads. A Python scalar (`0`, `1.5`, `True`)
+is accepted wherever an array of its kind is, and is converted where the engine receives
+it:
+
+| Role                                                                                                                                    | Returns                                                        |
+| --------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| Constraint, `ValueDependentConstraint` predicate, gate, participation predicate, exit availability                                      | A Boolean, e.g. `wealth > 0` or `work == 1`                    |
+| Law of a discrete state, regime selector                                                                                                | An integer code, or a Boolean for the codes 0 and 1            |
+| Utility, law of a continuous state, transition probability, joint-transition weight or output, exit utility adjustment, borrowing bound | A number: an integer or a float, read at the model's precision |
+
+Only the returned dtype is checked, when the function is first evaluated in `solve()`. A
+return of the wrong kind raises `InvalidFunctionOutputError`, naming the function. A
+predicate returning `1` is refused rather than read by truthiness: no check can tell `1`
+from `2` inside a compiled function. A code returned as a float is refused rather than
+truncated onto a code, and a Boolean utility is usually a comparison returned in place
+of its consequence.
+
 A regime declares no regime transition; its outgoing edges and their law live in
 `Model(edges=...)`, and a regime without outgoing edges is terminal. Terminal regimes
 declare no `state_transitions`, `joint_transitions`, Koopmans aggregator, or certainty

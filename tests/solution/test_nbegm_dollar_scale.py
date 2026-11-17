@@ -40,7 +40,7 @@ def _solve_at_scale(scale: float) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         liquid_grid=liquid_grid,
         next_liquid_grid=liquid_grid,
         savings_grid=savings_grid,
-        discount_factor=DISCOUNT_FACTOR,
+        discount_factor=jnp.asarray(DISCOUNT_FACTOR),
         preferences=crra_preferences(crra=CRRA),
         next_liquid=GROSS_RETURN * savings_grid + 0.5 * scale,
         marginal_return=jnp.full_like(savings_grid, GROSS_RETURN),
@@ -69,7 +69,7 @@ def test_dollar_scaled_marginals_match_the_dense_oracle():
             jnp.asarray(liquid_grid) ** (1.0 - CRRA) / (1.0 - CRRA),
         ),
         crra=CRRA,
-        discount_factor=DISCOUNT_FACTOR,
+        discount_factor=jnp.asarray(DISCOUNT_FACTOR),
         gross_return=GROSS_RETURN,
         income=0.5e4,
     )

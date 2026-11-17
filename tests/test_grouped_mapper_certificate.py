@@ -2,13 +2,38 @@
 
 import ast
 import hashlib
+from collections.abc import Mapping
 from pathlib import Path
 from shutil import copyfile
+from types import MappingProxyType
 
 import pytest
 
 from tests.candidate_certificate import direct_flow
 from tests.candidate_certificate.generate_sources import sha256_file
+
+type RepositoryRelativePath = str
+
+
+@pytest.fixture(scope="module")
+def clean_corridor_sources() -> tuple[RepositoryRelativePath, ...]:
+    """Check the frozen checkout once, independently of all resealed mutants."""
+    clean = direct_flow.verify_direct_candidate_flow(
+        repo_root=Path(__file__).parents[1]
+    )
+    assert clean["ok"], clean["errors"]
+    return tuple(clean["certified_corridor_sources"])
+
+
+@pytest.fixture(scope="module")
+def grouped_mapper_mutations() -> Mapping[str, Mapping[str, str]]:
+    """Generate the complete population once, read-only; do not sample names."""
+    population = direct_flow.grouped_mapper_mutation_specs(
+        repo_root=Path(__file__).parents[1]
+    )
+    return MappingProxyType(
+        {name: MappingProxyType(dict(spec)) for name, spec in population.items()}
+    )
 
 
 def test_grouped_mapper_population_is_independent() -> None:
@@ -20,7 +45,7 @@ def test_grouped_mapper_population_is_independent() -> None:
         direct_flow.uniform_process_mutation_specs(repo_root=root),
         direct_flow.action_grid_mutation_specs(repo_root=root),
     )
-    assert tuple(map(len, populations)) == (410, 94, 37, 10)
+    assert tuple(map(len, populations)) == (412, 94, 37, 10)
     grouped = direct_flow.grouped_mapper_mutation_specs(repo_root=root)
     assert len(grouped) == 18
     digest = hashlib.sha256(("\n".join(sorted(grouped)) + "\n").encode()).hexdigest()
@@ -34,18 +59,21 @@ def test_grouped_mapper_population_is_independent() -> None:
 
 @pytest.mark.parametrize("mutation", tuple(direct_flow._GROUPED_MAPPER_MUTATIONS))
 def test_grouped_mapper_mutation_fails_after_byte_reseal(
-    *, mutation: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    *,
+    mutation: str,
+    clean_corridor_sources: tuple[RepositoryRelativePath, ...],
+    grouped_mapper_mutations: Mapping[str, Mapping[str, str]],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Source seals cannot substitute for the reviewed semantic mapper contract."""
     root = Path(__file__).parents[1]
-    clean = direct_flow.verify_direct_candidate_flow(repo_root=root)
-    assert clean["ok"], clean["errors"]
-    sources = clean["certified_corridor_sources"]
+    sources = clean_corridor_sources
     for relative in sources:
         destination = tmp_path / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
         copyfile(root / relative, destination)
-    spec = direct_flow.grouped_mapper_mutation_specs(repo_root=root)[mutation]
+    spec = grouped_mapper_mutations[mutation]
     (tmp_path / spec["path"]).write_text(spec["source"], encoding="utf-8")
     monkeypatch.setattr(
         direct_flow,
@@ -68,7 +96,11 @@ def test_grouped_mapper_mutation_fails_after_byte_reseal(
     ids=("changed-values", "dropped-candidates", "ignored-counted-width"),
 )
 def test_broadcast_width_body_fails_after_byte_reseal(
-    *, replacement: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    *,
+    replacement: str,
+    clean_corridor_sources: tuple[RepositoryRelativePath, ...],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The new mapper body cannot alter operands/results behind a class-only pin.
 
@@ -76,9 +108,7 @@ def test_broadcast_width_body_fails_after_byte_reseal(
     All three changes preserve the wrapper's schema and every older callable.
     """
     root = Path(__file__).parents[1]
-    clean = direct_flow.verify_direct_candidate_flow(repo_root=root)
-    assert clean["ok"], clean["errors"]
-    sources = clean["certified_corridor_sources"]
+    sources = clean_corridor_sources
     for relative in sources:
         destination = tmp_path / relative
         destination.parent.mkdir(parents=True, exist_ok=True)

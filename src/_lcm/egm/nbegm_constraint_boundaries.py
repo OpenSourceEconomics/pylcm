@@ -1,6 +1,6 @@
 """Compile declarative liquid-state constraints into NBEGM boundary surfaces."""
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -16,10 +16,18 @@ from _lcm.constraints.dispositions import (
     ConstraintContext,
     Reject,
 )
-from _lcm.constraints.ir import Compare, Const, Ref
+from _lcm.constraints.ir import Compare, Const
 from _lcm.constraints.routes import BoundaryCompiler, BoundConstraint
 from _lcm.typing import FunctionName, QualifiedName
-from lcm.typing import BoolND, FloatND, IntND, ReferenceName, StateName
+from lcm.condition import Ref
+from lcm.typing import (
+    BoolND,
+    FloatND,
+    IntND,
+    ReferenceName,
+    ScalarFloat,
+    StateName,
+)
 
 
 @dataclass(frozen=True)
@@ -28,6 +36,20 @@ class NBEGMFeasibilitySurface:
 
     threshold: Ref | Const
     """Literal or flat parameter defining the boundary value."""
+
+    feasible_side: Literal["below", "above"]
+    """Side of the threshold admitted by the comparison."""
+
+    includes_boundary: bool
+    """Whether equality belongs to the feasible side."""
+
+
+@dataclass(frozen=True, kw_only=True)
+class BoundFeasibilitySurface:
+    """One feasibility surface whose literal threshold is bound as a JAX scalar."""
+
+    threshold: Ref | ScalarFloat
+    """Flat parameter, or the literal at the precision the kernel is bound at."""
 
     feasible_side: Literal["below", "above"]
     """Side of the threshold admitted by the comparison."""
@@ -182,18 +204,43 @@ def _compile_surface(
     )
 
 
+def bind_feasibility_surfaces(
+    *,
+    program: NBEGMFeasibilityBoundaryProgram,
+    bind_literal: Callable[[float], ScalarFloat],
+) -> tuple[BoundFeasibilitySurface, ...]:
+    """Bind every literal threshold of one program while its kernel is built.
+
+    `bind_literal` materializes a literal, a flag read as `0.0` or `1.0`, at the
+    precision of the kernel being bound, so no Python number reaches the traced
+    boundary resolution.
+    """
+    return tuple(
+        BoundFeasibilitySurface(
+            threshold=(
+                bind_literal(float(surface.threshold.value))
+                if isinstance(surface.threshold, Const)
+                else surface.threshold
+            ),
+            feasible_side=surface.feasible_side,
+            includes_boundary=surface.includes_boundary,
+        )
+        for surface in program.surfaces
+    )
+
+
 def feasibility_axis_boundaries(
     *,
-    programs: tuple[NBEGMFeasibilityBoundaryProgram, ...],
+    surfaces: tuple[BoundFeasibilitySurface, ...],
     params: Mapping[str, FloatND | IntND | BoolND],
 ) -> tuple[AxisBoundary, ...]:
-    """Resolve compiled literal and flat-parameter thresholds into axis sources."""
+    """Resolve bound literal and flat-parameter thresholds into axis sources."""
     return tuple(
         AxisBoundary(
             value=(
-                surface.threshold.value
-                if isinstance(surface.threshold, Const)
-                else params[surface.threshold.name]
+                params[surface.threshold.name]
+                if isinstance(surface.threshold, Ref)
+                else surface.threshold
             ),
             owner=boundary_owner_for_feasible_region(
                 feasible_side=surface.feasible_side,
@@ -201,8 +248,7 @@ def feasibility_axis_boundaries(
             ),
             effect="feasibility",
         )
-        for program in programs
-        for surface in program.surfaces
+        for surface in surfaces
     )
 
 

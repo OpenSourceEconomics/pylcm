@@ -29,18 +29,18 @@ its own grid is the boundary compiler's job, not the tree's.
 import inspect
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Literal, Self
+from typing import Literal
 
 import jax.numpy as jnp
 
 from _lcm.typing import AnnotationForm
 from _lcm.utils.functools import array_result
-from lcm.typing import BoolND, FloatND, ReferenceName, UserFunction, ValueND
+from lcm.typing import BoolND, ReferenceName, UserFunction, ValueND
 
 type ComparisonOperator = Literal["<", "<=", ">", ">=", "==", "!="]
 
-# What an operand resolves to: a model value, or a literal exactly as written.
-type OperandValue = ValueND | float | int | bool
+# What an operand resolves to: a model value, or a literal as stored.
+type OperandValue = ValueND | float | bool
 
 
 class Operand:
@@ -51,53 +51,25 @@ class BoolExpr:
     """Base class for every node of a condition's expression tree."""
 
 
-class Ref(Operand):
-    """A named value the condition reads: a state, action, DAG output, or param.
+class _Ref(Operand):
+    """A named value the condition reads; `lcm.condition.Ref` adds the operators.
 
-    Comparison operators build conditions instead of returning booleans, which
-    is what makes `assets < limit` a declaration rather than a computation.
-    Equality therefore does not answer "are these the same reference" — compare
-    `.name` for that.
+    The expression tree only needs the name, so the walks below recognise a
+    reference by this base and the public class keeps the comparison operators that
+    build conditions.
     """
 
     def __init__(self, name: ReferenceName) -> None:
         self.name = name
         """The name this leaf resolves against when the condition is evaluated."""
 
-    def __lt__(self, other: Self | bool | float) -> Condition:
-        return _compare(left=self, op="<", right=other)
-
-    def __le__(self, other: Self | bool | float) -> Condition:
-        return _compare(left=self, op="<=", right=other)
-
-    def __gt__(self, other: Self | bool | float) -> Condition:
-        return _compare(left=self, op=">", right=other)
-
-    def __ge__(self, other: Self | bool | float) -> Condition:
-        return _compare(left=self, op=">=", right=other)
-
-    def __eq__(self, other: Self | bool | float) -> Condition:  # ty: ignore[invalid-method-override]
-        return _compare(left=self, op="==", right=other)
-
-    def __ne__(self, other: Self | bool | float) -> Condition:  # ty: ignore[invalid-method-override]
-        return _compare(left=self, op="!=", right=other)
-
-    def __hash__(self) -> int:
-        return hash(("lcm.ref", self.name))
-
-    def __repr__(self) -> str:
-        return f"ref({self.name!r})"
-
-    def __str__(self) -> str:
-        return self.name
-
 
 @dataclass(frozen=True, eq=False)
 class Const(Operand):
     """A literal operand."""
 
-    value: float | int | bool
-    """The declared number, kept exactly as written."""
+    value: float | bool
+    """The declared number as a float, or a flag; `lcm.condition.Ref` converts ints."""
 
 
 @dataclass(frozen=True, eq=False)
@@ -173,107 +145,6 @@ class Opaque(BoolExpr):
     """The user's predicate, called with the names in its own signature."""
 
 
-@dataclass(frozen=True, eq=False)
-class Condition:
-    """A declared fact about the model, readable by every solver.
-
-    Carries the expression rather than a predicate, so a solver can inspect
-    what the condition says instead of only being able to call it. The
-    evaluator is generated from the same expression, which is what keeps the
-    predicate a solver proves and the predicate simulation evaluates identical.
-
-    Instances compare by identity. `==` on a reference builds a condition
-    rather than answering a question, so field-by-field equality on an
-    expression would return a truthy object for any two nodes and report
-    unrelated declarations as the same one. Compare renderings or dependencies
-    when structural sameness is what is wanted.
-    """
-
-    expression: BoolExpr
-    """The expression tree this condition declares."""
-
-    def __post_init__(self) -> None:
-        # A condition has to pass for an ordinary constraint callable, because
-        # every existing consumer -- the DAG builder, the params template, the
-        # feasibility mask -- reaches a constraint through its signature.
-        # Stamping one here is what lets a declared condition reach them all
-        # with no rewiring.
-        if isinstance(self.expression, Opaque):
-            signature = inspect.signature(self.expression.func)
-            name = getattr(self.expression.func, "__name__", "condition")
-        else:
-            parameters = [
-                inspect.Parameter(
-                    arg_name,
-                    inspect.Parameter.KEYWORD_ONLY,
-                    annotation=FloatND,
-                )
-                for arg_name in _arg_names_of(self.expression)
-            ]
-            signature = inspect.Signature(parameters, return_annotation=BoolND)
-            name = "condition"
-        object.__setattr__(self, "__signature__", signature)
-        object.__setattr__(self, "__name__", name)
-        object.__setattr__(
-            self, "__annotations__", _annotations_of_signature(signature)
-        )
-
-    @property
-    def arg_names(self) -> tuple[str, ...]:
-        """Tuple of the argument names the condition is called with."""
-        return _arg_names_of(self.expression)
-
-    def __call__(self, **values: ValueND) -> BoolND:
-        return self.evaluate(**values)
-
-    @classmethod
-    def from_callable(cls, func: UserFunction) -> Condition:
-        """Carry an arbitrary predicate as a condition without structure.
-
-        Args:
-            func: A predicate over model values.
-
-        Returns:
-            A condition that evaluates exactly as `func` does.
-
-        """
-        return cls(expression=Opaque(func=func))
-
-    @property
-    def dependencies(self) -> frozenset[str]:
-        """Frozenset of names that must be available to evaluate the condition."""
-        return dependencies_of(self.expression)
-
-    @property
-    def is_opaque(self) -> bool:
-        """Whether the condition offers a solver no structure to reason about."""
-        return isinstance(self.expression, Opaque)
-
-    def evaluate(self, **values: ValueND) -> BoolND:
-        """Evaluate the condition on the supplied values.
-
-        Args:
-            **values: One entry per dependency.
-
-        Returns:
-            The elementwise truth of the condition.
-
-        """
-        return evaluate_expression(expression=self.expression, values=values)
-
-    def __and__(self, other: Condition) -> Condition:
-        return Condition(expression=And(left=self.expression, right=other.expression))
-
-    def __or__(self, other: Condition) -> Condition:
-        return Condition(expression=Or(left=self.expression, right=other.expression))
-
-    def __invert__(self) -> Condition:
-        return Condition(expression=Not(operand=self.expression))
-
-    def __str__(self) -> str:
-        return describe(self.expression)
-
-
 def dependencies_of(expression: BoolExpr) -> frozenset[str]:
     """Return every name the expression reads.
 
@@ -287,7 +158,7 @@ def dependencies_of(expression: BoolExpr) -> frozenset[str]:
     match expression:
         case Compare(left=left, right=right):
             return frozenset(
-                operand.name for operand in (left, right) if isinstance(operand, Ref)
+                operand.name for operand in (left, right) if isinstance(operand, _Ref)
             )
         case And(left=left, right=right) | Or(left=left, right=right):
             return dependencies_of(left) | dependencies_of(right)
@@ -410,7 +281,7 @@ def describe(expression: BoolExpr) -> str:
 
 
 def _describe_operand(operand: Operand) -> str:
-    if isinstance(operand, Ref):
+    if isinstance(operand, _Ref):
         return operand.name
     if isinstance(operand, Const):
         return repr(operand.value)
@@ -428,20 +299,6 @@ def signature_names(func: UserFunction) -> tuple[str, ...]:
 
     """
     return tuple(inspect.signature(func).parameters)
-
-
-def _compare(
-    *, left: Ref, op: ComparisonOperator, right: Ref | bool | float
-) -> Condition:
-    """Build a comparison as a condition, keeping the declared name on the left."""
-    if isinstance(right, Ref):
-        return Condition(expression=Compare(left=left, op=op, right=right))
-    if isinstance(right, bool | int | float):
-        return Condition(expression=Compare(left=left, op=op, right=Const(right)))
-    raise TypeError(
-        f"Cannot compare {left!r} with {right!r}: a condition compares a "
-        f"reference with another reference or with a number."
-    )
 
 
 def _apply_comparison(
@@ -476,7 +333,7 @@ def _operand_value(
 ) -> OperandValue:
     if isinstance(operand, Const):
         return operand.value
-    if isinstance(operand, Ref):
+    if isinstance(operand, _Ref):
         _fail_if_names_are_missing(names=(operand.name,), values=values)
         return values[operand.name]
     raise TypeError(f"Not an operand: {operand!r}")
@@ -495,9 +352,10 @@ def _fail_if_names_are_missing(
         )
 
 
-def _annotations_of_signature(
+def annotations_of_signature(
     signature: inspect.Signature,
 ) -> dict[str, AnnotationForm]:
+    """Return a signature's annotations as the plain dict a callable carries."""
     # It becomes the callable's `__annotations__`, which `annotationlib` reads only
     # as a plain dict.
     annotations: dict[str, AnnotationForm] = {
@@ -510,7 +368,7 @@ def _annotations_of_signature(
     return annotations
 
 
-def _arg_names_of(expression: BoolExpr) -> tuple[str, ...]:
+def arg_names_of(expression: BoolExpr) -> tuple[str, ...]:
     """Return the names a condition is called with, in a stable order."""
     if isinstance(expression, Opaque):
         return signature_names(expression.func)

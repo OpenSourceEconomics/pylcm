@@ -6,6 +6,7 @@ status point identically, and fixing a status only removes reads.
 """
 
 import json
+from itertools import product
 from pathlib import Path
 
 import pytest
@@ -18,7 +19,7 @@ from _lcm_regime_finder.facts import (
     live_relations,
     live_states,
     make_facts,
-    status_points,
+    status_axes,
     update_reads,
 )
 from _lcm_regime_finder.graph_scope import apply_scope
@@ -119,7 +120,9 @@ def test_implicit_matches_dense_at_every_status_point(backends) -> None:
     dense, implicit = backends["dense"], backends["implicit"]
     for cell in dense.cells.values():
         whole = current_reads(dense, cell)
-        for point in status_points(dense, cell, 128):
+        axes = status_axes(dense, cell)
+        for codes in product(*(c for _, c in axes)):
+            point = dict(zip([n for n, _ in axes], codes, strict=True))
             exact = current_reads(dense, cell, statuses=point)
             assert current_reads(implicit, cell, statuses=point) == exact, (
                 cell["id"],
@@ -150,13 +153,6 @@ def test_exact_backend_over_budget_names_cells_and_suggests_metadata(backend) ->
     with pytest.raises(FactsBudgetError, match='facts_backend="metadata"') as error:
         make_facts(backend, _helper(), LIMITS, _expired)
     assert error.value.unfinished
-
-
-def test_status_rectangle_over_its_limit_is_a_budget_error() -> None:
-    dense = make_facts("dense", _tiny(), LIMITS, _no_budget)
-    cell = next(iter(dense.cells.values()))
-    with pytest.raises(FactsBudgetError, match="status_lanes"):
-        status_points(dense, cell, 1)
 
 
 @pytest.mark.parametrize(

@@ -90,26 +90,6 @@ __global__ void QueryWinnerBatchedKernel(
 
 
 template <typename T>
-__global__ void HandoverKernel(
-    int64_t n, const T* ax0, const T* ax1, const T* av0, const T* av1,
-    const T* bx0, const T* bx1, const T* bv0, const T* bv1,
-    const T* left, const T* right, T* output, int32_t* status) {
-  for (int64_t i = static_cast<int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
-       i < n; i += static_cast<int64_t>(blockDim.x) * gridDim.x) {
-    T state;
-    if (core::ExactHandoverState(ax0[i], ax1[i], av0[i], av1[i], bx0[i],
-                                 bx1[i], bv0[i], bv1[i], left[i], right[i],
-                                 &state)) {
-      output[i] = state;
-      status[i] = 0;
-    } else {
-      output[i] = core::QuietNaN<T>();
-      status[i] = core::kUnresolved;
-    }
-  }
-}
-
-template <typename T>
 __global__ void CellHullKernel(
     int64_t batch, int32_t max_runs, int32_t n_candidates,
     const T* left, const T* right, const int32_t* live,
@@ -285,39 +265,6 @@ ffi::Error QueryWinnerBatchedImpl(
 
 
 template <typename T, ffi::DataType DType>
-ffi::Error HandoverImpl(
-    cudaStream_t stream, ffi::Buffer<DType> ax0, ffi::Buffer<DType> ax1,
-    ffi::Buffer<DType> av0, ffi::Buffer<DType> av1,
-    ffi::Buffer<DType> bx0, ffi::Buffer<DType> bx1,
-    ffi::Buffer<DType> bv0, ffi::Buffer<DType> bv1,
-    ffi::Buffer<DType> left, ffi::Buffer<DType> right,
-    ffi::ResultBuffer<DType> output,
-    ffi::ResultBuffer<ffi::S32> status) {
-  const int64_t n = static_cast<int64_t>(ax0.element_count());
-  const size_t sizes[] = {ax1.element_count(), av0.element_count(),
-                          av1.element_count(), bx0.element_count(),
-                          bx1.element_count(), bv0.element_count(),
-                          bv1.element_count(), left.element_count(),
-                          right.element_count(), (*output).element_count(),
-                          (*status).element_count()};
-  for (size_t size : sizes) {
-    if (size != static_cast<size_t>(n)) {
-      return ffi::Error::InvalidArgument(
-          "all exact handover buffers must match");
-    }
-  }
-  if (n == 0) return ffi::Error::Success();
-  constexpr int threads = 64;
-  const int blocks = static_cast<int>((n + threads - 1) / threads);
-  HandoverKernel<<<blocks, threads, 0, stream>>>(
-      n, ax0.typed_data(), ax1.typed_data(), av0.typed_data(), av1.typed_data(),
-      bx0.typed_data(), bx1.typed_data(), bv0.typed_data(), bv1.typed_data(),
-      left.typed_data(), right.typed_data(), (*output).typed_data(),
-      (*status).typed_data());
-  return LaunchError("exact affine handover launch failed");
-}
-
-template <typename T, ffi::DataType DType>
 ffi::Error CellHullImpl(
     cudaStream_t stream, ffi::Buffer<DType> left,
     ffi::Buffer<DType> right, ffi::Buffer<ffi::S32> live,
@@ -470,30 +417,6 @@ ffi::Error QueryWinnerBatchedF64Impl(
 }
 
 
-ffi::Error HandoverF32Impl(
-    cudaStream_t stream, ffi::Buffer<ffi::F32> ax0,
-    ffi::Buffer<ffi::F32> ax1, ffi::Buffer<ffi::F32> av0,
-    ffi::Buffer<ffi::F32> av1, ffi::Buffer<ffi::F32> bx0,
-    ffi::Buffer<ffi::F32> bx1, ffi::Buffer<ffi::F32> bv0,
-    ffi::Buffer<ffi::F32> bv1, ffi::Buffer<ffi::F32> left,
-    ffi::Buffer<ffi::F32> right, ffi::ResultBuffer<ffi::F32> output,
-    ffi::ResultBuffer<ffi::S32> status) {
-  return HandoverImpl<float, ffi::F32>(stream, ax0, ax1, av0, av1, bx0, bx1,
-                                       bv0, bv1, left, right, output, status);
-}
-
-ffi::Error HandoverF64Impl(
-    cudaStream_t stream, ffi::Buffer<ffi::F64> ax0,
-    ffi::Buffer<ffi::F64> ax1, ffi::Buffer<ffi::F64> av0,
-    ffi::Buffer<ffi::F64> av1, ffi::Buffer<ffi::F64> bx0,
-    ffi::Buffer<ffi::F64> bx1, ffi::Buffer<ffi::F64> bv0,
-    ffi::Buffer<ffi::F64> bv1, ffi::Buffer<ffi::F64> left,
-    ffi::Buffer<ffi::F64> right, ffi::ResultBuffer<ffi::F64> output,
-    ffi::ResultBuffer<ffi::S32> status) {
-  return HandoverImpl<double, ffi::F64>(stream, ax0, ax1, av0, av1, bx0, bx1,
-                                        bv0, bv1, left, right, output, status);
-}
-
 ffi::Error CellHullF32Impl(
     cudaStream_t stream, ffi::Buffer<ffi::F32> left,
     ffi::Buffer<ffi::F32> right, ffi::Buffer<ffi::S32> live,
@@ -632,40 +555,6 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
         .Ret<ffi::Buffer<ffi::S32>>()
         .Ret<ffi::Buffer<ffi::S32>>());
 
-
-XLA_FFI_DEFINE_HANDLER_SYMBOL(
-    ExactAffineHandoverF32, HandoverF32Impl,
-    ffi::Ffi::Bind()
-        .Ctx<ffi::PlatformStream<cudaStream_t>>()
-        .Arg<ffi::Buffer<ffi::F32>>()
-        .Arg<ffi::Buffer<ffi::F32>>()
-        .Arg<ffi::Buffer<ffi::F32>>()
-        .Arg<ffi::Buffer<ffi::F32>>()
-        .Arg<ffi::Buffer<ffi::F32>>()
-        .Arg<ffi::Buffer<ffi::F32>>()
-        .Arg<ffi::Buffer<ffi::F32>>()
-        .Arg<ffi::Buffer<ffi::F32>>()
-        .Arg<ffi::Buffer<ffi::F32>>()
-        .Arg<ffi::Buffer<ffi::F32>>()
-        .Ret<ffi::Buffer<ffi::F32>>()
-        .Ret<ffi::Buffer<ffi::S32>>());
-
-XLA_FFI_DEFINE_HANDLER_SYMBOL(
-    ExactAffineHandoverF64, HandoverF64Impl,
-    ffi::Ffi::Bind()
-        .Ctx<ffi::PlatformStream<cudaStream_t>>()
-        .Arg<ffi::Buffer<ffi::F64>>()
-        .Arg<ffi::Buffer<ffi::F64>>()
-        .Arg<ffi::Buffer<ffi::F64>>()
-        .Arg<ffi::Buffer<ffi::F64>>()
-        .Arg<ffi::Buffer<ffi::F64>>()
-        .Arg<ffi::Buffer<ffi::F64>>()
-        .Arg<ffi::Buffer<ffi::F64>>()
-        .Arg<ffi::Buffer<ffi::F64>>()
-        .Arg<ffi::Buffer<ffi::F64>>()
-        .Arg<ffi::Buffer<ffi::F64>>()
-        .Ret<ffi::Buffer<ffi::F64>>()
-        .Ret<ffi::Buffer<ffi::S32>>());
 
 XLA_FFI_DEFINE_HANDLER_SYMBOL(
     ExactCellHullF32, CellHullF32Impl,

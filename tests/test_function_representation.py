@@ -6,7 +6,7 @@ from typing import cast
 import jax.numpy as jnp
 import pytest
 
-from _lcm.grids import ContinuousGrid, DiscreteGrid
+from _lcm.grids import ContinuousGrid
 from _lcm.regime_building.V import (
     VInterpolationInfo,
     _fail_if_interpolation_axes_are_not_last,
@@ -18,6 +18,7 @@ from _lcm.regime_building.V import (
 from _lcm.typing import DataclassInstance
 from _lcm.utils.dispatchers import productmap
 from lcm import LinSpacedGrid
+from lcm.grids import DiscreteGrid
 from lcm.typing import ScalarInt
 
 

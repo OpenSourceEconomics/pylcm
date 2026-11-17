@@ -48,7 +48,7 @@ short form an agent needs before editing.
   plain `Regime`; it enforces nothing and only documents that finalization has happened.
   A bare `Regime` validates only local, value-shape properties at construction —
   completeness may be satisfied only at the model level.
-- `canonicalize_regimes` (`src/_lcm/regime_building/canonicalize.py`): the model-level
+- `canonicalize_phased_regimes` (`src/_lcm/regime_building/canonicalize.py`): the model-level
   canonicalization stage. Rewrites every phase slice's laws into the canonical
   target-granular form `Mapping[RegimeName, law]` over exactly the reachable targets
   carrying the state in that phase — bare laws broadcast, per-target dicts pass through,
@@ -162,7 +162,11 @@ short form an agent needs before editing.
   device-memory budget (request capped by each device's pool limit less its headroom
   fraction), and the workspace widths that fit inside it.
 
-**Grid System (`src/_lcm/grids/`, `src/_lcm/processes/`)**
+**Grid System (`src/lcm/grids.py`, `src/lcm/processes.py`)**
+
+The public classes below are defined in `lcm.grids` and `lcm.processes`; their abstract
+bases, validators, coordinate helpers and quadrature machinery live in `src/_lcm/grids/`
+and `src/_lcm/processes/`, which never import the public modules at load time.
 
 - `DiscreteGrid`: Categorical variables with string labels (pure outcome space).
 - `LinSpacedGrid`: Linearly spaced grid (start, stop, n_points).
@@ -175,7 +179,7 @@ short form an agent needs before editing.
   auto-assigned `ScalarInt` (0-d `jnp.int32`) codes. Requires explicit `ordered=True` or
   `ordered=False`. Every field must be annotated as `ScalarInt` (from `lcm.typing`) —
   other annotations raise `CategoricalDefinitionError` at decoration time.
-- **Stochastic processes** (in `src/_lcm/processes/`): `UniformIIDProcess`,
+- **Stochastic processes** (in `src/lcm/processes.py`): `UniformIIDProcess`,
   `NormalIIDProcess`, `LogNormalIIDProcess`, `NormalMixtureIIDProcess`,
   `TauchenAR1Process`, `RouwenhorstAR1Process`, `TauchenNormalMixtureAR1Process`. These
   bundle a discretized grid and its transition mechanism — they go in `states` and must
@@ -206,7 +210,7 @@ regime names to transition functions for target-dependent transitions.
 1. `prune_broadcast_variables()` weeds the broadcast states and actions per regime by
    DAG reachability, closing both phase slices jointly to one fixed point
 1. `normalize_regime_phases()` expands every slot into per-phase `RegimePhaseSpec`
-   slices, then `canonicalize_regimes()` rewrites each slice's laws and regime
+   slices, then `canonicalize_phased_regimes()` rewrites each slice's laws and regime
    transition into the canonical target-granular form
 1. `process_regimes()` converts the canonical spec into `_lcm.engine.Regime` objects and
    pre-compiles optimization functions

@@ -23,7 +23,7 @@ from types import MappingProxyType
 import numpy as np
 import pytest
 
-from _lcm.egm.validation import validate_dcegm_regimes
+from _lcm.egm.validation import validate_dcegm_regime
 from _lcm.regime_building.finalize import FinalizedUserRegime, finalize_regimes
 from _lcm.regime_law import bind_regime_law
 from lcm import LinearAggregator, LinearExpectation
@@ -72,9 +72,16 @@ def test_dcegm_accepts_utility_reading_passive_housing():
     The keeper's utility reads the passive housing state through
     `alpha * log(housing)`. The DC-EGM envelope condition forbids utility
     reaching the *Euler* state (here `liquid_assets`), but a passive state is
-    allowed, so `validate_dcegm_regimes` accepts the keeper regimes.
+    allowed, so `validate_dcegm_regime` accepts the keeper regime.
     """
-    validate_dcegm_regimes(user_regimes=_finalized_keeper_regimes(), laws=_KEEPER_LAWS)
+    regimes = _finalized_keeper_regimes()
+    validate_dcegm_regime(
+        regime_name="keeper",
+        user_regime=regimes["keeper"],
+        user_regimes=regimes,
+        laws=_KEEPER_LAWS,
+        solution_reachability=None,
+    )
 
 
 @pytest.mark.requires(device="gpu")

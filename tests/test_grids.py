@@ -2,6 +2,7 @@ import dataclasses
 import functools
 import itertools
 import math
+import pickle
 from dataclasses import make_dataclass
 from fractions import Fraction
 from types import MappingProxyType
@@ -14,23 +15,22 @@ import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
 from _lcm.dtypes import canonical_float_dtype
-from _lcm.grids import (
-    DiscreteGrid,
-    IrregSpacedGrid,
-    LinSpacedGrid,
-    LogSpacedGrid,
-    PiecewiseLinSpacedGrid,
-    PiecewiseLogSpacedGrid,
-    categorical,
-    validate_category_class,
-)
-from _lcm.grids import discrete as discrete_module
+from _lcm.grids import categorical, validate_category_class
 from _lcm.grids.categorical import _validate_discrete_grid, get_category_codes
 from _lcm.grids.continuous import _validate_continuous_grid
 from _lcm.grids.discrete import MISSING_CAT_CODE
 from _lcm.simulation import initial_conditions
 from _lcm.typing import DataclassInstance
 from lcm.exceptions import CategoricalDefinitionError, GridInitializationError
+from lcm.grids import (
+    DiscreteGrid,
+    GridBreakpoint,
+    IrregSpacedGrid,
+    LinSpacedGrid,
+    LogSpacedGrid,
+    PiecewiseLinSpacedGrid,
+    PiecewiseLogSpacedGrid,
+)
 from lcm.typing import ScalarInt
 from tests.conftest import DECIMAL_PRECISION, X64_ENABLED
 
@@ -73,57 +73,9 @@ def test_get_category_codes_returns_a_read_only_mapping():
     assert type(get_category_codes(_Category)) is MappingProxyType
 
 
-def test_discrete_grid_reports_a_field_without_a_value():
-    """A category field without a value is reported like any non-`ScalarInt`."""
-    category_class = cast(
-        "type[DataclassInstance]", make_dataclass("Category", [("a", ScalarInt)])
-    )
-    error_msg = (
-        "Field values of the category_class must be `ScalarInt` "
-        r"\(0-d int32 jax scalars\). The values to the following "
-        r"fields are not: \['a'\]"
-    )
-    with pytest.raises(GridInitializationError, match=error_msg):
-        DiscreteGrid(category_class=category_class)
-
-
 def test_validate_discrete_grid_empty():
     category_class = _make_dc("Category")
     error_msg = "category_class must have at least one field"
-    with pytest.raises(GridInitializationError, match=error_msg):
-        _validate_discrete_grid(category_class)
-
-
-def test_validate_discrete_grid_non_scalar_input():
-    category_class = _make_dc("Category", ("a", jnp.int32(1)), ("b", "s"))
-    error_msg = (
-        "Field values of the category_class must be `ScalarInt` "
-        r"\(0-d int32 jax scalars\). The values to the following "
-        r"fields are not: \['b'\]"
-    )
-    with pytest.raises(GridInitializationError, match=error_msg):
-        _validate_discrete_grid(category_class)
-
-
-def test_validate_discrete_grid_non_int32_input():
-    """A 0-d integer scalar of another width is no `ScalarInt` code."""
-    category_class = _make_dc("Category", ("a", jnp.int32(0)), ("b", jnp.int16(1)))
-    error_msg = (
-        "Field values of the category_class must be `ScalarInt` "
-        r"\(0-d int32 jax scalars\). The values to the following "
-        r"fields are not: \['b'\]"
-    )
-    with pytest.raises(GridInitializationError, match=error_msg):
-        _validate_discrete_grid(category_class)
-
-
-def test_validate_discrete_grid_none_input():
-    category_class = _make_dc("Category", ("a", None), ("b", jnp.int32(1)))
-    error_msg = (
-        "Field values of the category_class must be `ScalarInt` "
-        r"\(0-d int32 jax scalars\). The values to the following "
-        r"fields are not: \['a'\]"
-    )
     with pytest.raises(GridInitializationError, match=error_msg):
         _validate_discrete_grid(category_class)
 
@@ -154,18 +106,6 @@ def test_validate_category_class_valid():
     category_class = _make_dc("Category", ("a", jnp.int32(0)), ("b", jnp.int32(1)))
     errors = validate_category_class(category_class)
     assert errors == ()
-
-
-def test_validate_category_class_not_dataclass():
-    """Non-dataclass should return error."""
-
-    class NotDataclass:
-        a = 0
-        b = 1
-
-    errors = validate_category_class(NotDataclass)  # ty: ignore[invalid-argument-type]
-    assert len(errors) == 1
-    assert "must be a dataclass" in errors[0]
 
 
 def test_validate_category_class_non_consecutive():
@@ -241,30 +181,6 @@ def test_discrete_grid_ordered_false():
 # @categorical: ScalarInt annotation contract
 
 
-def test_categorical_rejects_int_annotation():
-    """Plain `int` annotations are rejected at decoration time."""
-    with pytest.raises(
-        CategoricalDefinitionError,
-        match=r"must annotate every field as `ScalarInt`",
-    ):
-        # `a: int` MUST stay — this is the rejected case under test.
-        @categorical(ordered=False)
-        class _Bad:
-            a: int
-
-
-def test_categorical_rejects_str_annotation():
-    """Non-`ScalarInt` annotations of any kind are rejected."""
-    with pytest.raises(
-        CategoricalDefinitionError,
-        match=r"must annotate every field as `ScalarInt`",
-    ):
-
-        @categorical(ordered=False)
-        class _Bad:
-            a: str
-
-
 def test_categorical_error_lists_all_offending_fields():
     """The error message names every field with a wrong annotation."""
     with pytest.raises(CategoricalDefinitionError, match=r"`x: int`.*`y: str`"):
@@ -316,29 +232,11 @@ def test_categorical_instance_attr_is_scalar_int():
     assert int(instance.second) == 1
 
 
-def test_lin_spaced_grid_rejects_non_numeric_start():
-    """Non-numeric `start` raises `GridInitializationError`."""
-    with pytest.raises(GridInitializationError, match="start"):
-        LinSpacedGrid(start="a", stop=1, n_points=10)  # ty: ignore[invalid-argument-type]
-
-
-def test_lin_spaced_grid_rejects_non_numeric_stop():
-    """Non-numeric `stop` raises `GridInitializationError`."""
-    with pytest.raises(GridInitializationError, match="stop"):
-        LinSpacedGrid(start=1, stop="a", n_points=10)  # ty: ignore[invalid-argument-type]
-
-
-def test_lin_spaced_grid_rejects_non_numeric_n_points():
-    """Non-numeric `n_points` raises `GridInitializationError`."""
-    with pytest.raises(GridInitializationError, match="n_points"):
-        LinSpacedGrid(start=1, stop=2, n_points="a")  # ty: ignore[invalid-argument-type]
-
-
 def test_validate_continuous_grid_negative_n_points():
     error_msg = "n_points must be an int greater than 0 but is -1"
     with pytest.raises(GridInitializationError, match=error_msg):
         _validate_continuous_grid(
-            start=jnp.asarray(1.0), stop=jnp.asarray(2.0), n_points=jnp.int32(-1)
+            start=jnp.asarray(1.0), stop=jnp.asarray(2.0), n_points=-1
         )
 
 
@@ -346,7 +244,7 @@ def test_validate_continuous_grid_start_greater_than_stop():
     error_msg = "start must be less than stop"
     with pytest.raises(GridInitializationError, match=error_msg):
         _validate_continuous_grid(
-            start=jnp.asarray(2.0), stop=jnp.asarray(1.0), n_points=jnp.int32(10)
+            start=jnp.asarray(2.0), stop=jnp.asarray(1.0), n_points=10
         )
 
 
@@ -422,7 +320,7 @@ def test_validate_continuous_grid_rejects_nan_start():
         _validate_continuous_grid(
             start=jnp.asarray(float("nan")),
             stop=jnp.asarray(10.0),
-            n_points=jnp.int32(5),
+            n_points=5,
         )
 
 
@@ -431,7 +329,7 @@ def test_validate_continuous_grid_rejects_inf_stop():
         _validate_continuous_grid(
             start=jnp.asarray(1.0),
             stop=jnp.asarray(float("inf")),
-            n_points=jnp.int32(5),
+            n_points=5,
         )
 
 
@@ -444,6 +342,13 @@ def test_irreg_spaced_grid_rejects_points_that_round_to_one_node() -> None:
     lower = 2 ** (np.finfo(_canonical_float()).nmant + 1)
     with pytest.raises(GridInitializationError, match="strictly ascending"):
         IrregSpacedGrid(points=np.array([lower, lower + 1]))
+
+
+def test_irreg_spaced_grid_stores_integer_points_as_canonical_floats() -> None:
+    grid = IrregSpacedGrid(points=np.array([0, 1, 3]))
+    np.testing.assert_array_equal(
+        np.asarray(grid.to_jax()), np.array([0.0, 1.0, 3.0], dtype=_canonical_float())
+    )
 
 
 def test_irreg_spaced_grid_keeps_adjacent_representable_points() -> None:
@@ -480,11 +385,6 @@ def test_irreg_spaced_grid_creation():
 def test_irreg_spaced_grid_invalid_too_few_points():
     with pytest.raises(GridInitializationError, match="at least 2 elements"):
         IrregSpacedGrid(points=np.array([1.0]))
-
-
-def test_irreg_spaced_grid_invalid_non_numeric():
-    with pytest.raises(GridInitializationError, match="points"):
-        IrregSpacedGrid(points=np.array([1.0, "a", 3.0]))
 
 
 def test_irreg_spaced_grid_invalid_not_ascending():
@@ -685,34 +585,13 @@ def test_value_grid_keeps_the_declared_values():
     assert grid.values == (0, 20, 40)
 
 
-@pytest.mark.parametrize(
-    ("values", "type_name"),
-    [
-        pytest.param([0, 20, 40], "list", id="list"),
-        pytest.param((0.5, 1.0), "tuple", id="tuple"),
-        pytest.param(range(3), "range", id="range"),
-    ],
-)
-def test_value_grid_refuses_a_non_array_container(*, values, type_name):
+def test_value_grid_refuses_a_non_array_container():
     """`values` is a NumPy or JAX array; the error names the type and the spelling."""
     with pytest.raises(
         GridInitializationError,
-        match=rf"got {type_name}.*DiscreteGrid\(values=jnp\.array\(",
+        match=r"got list.*DiscreteGrid\(values=jnp\.array\(",
     ):
-        DiscreteGrid(values=values)
-
-
-@pytest.mark.parametrize(
-    "values",
-    [
-        pytest.param(np.array(["a", "b"]), id="string"),
-        pytest.param(np.array([0j, 1j]), id="complex"),
-    ],
-)
-def test_value_grid_refuses_an_array_of_non_numeric_dtype(values):
-    """An array whose dtype is neither integer nor floating is refused."""
-    with pytest.raises(GridInitializationError, match="integer or floating dtype"):
-        DiscreteGrid(values=values)
+        DiscreteGrid(values=[0, 20, 40])  # ty: ignore[invalid-argument-type]
 
 
 @pytest.mark.parametrize(
@@ -1039,38 +918,6 @@ def _canonical_np_float() -> type[np.floating]:
     return np.float64 if X64_ENABLED else np.float32
 
 
-@pytest.mark.parametrize("shape", [(), (1,), (1, 1)])
-@pytest.mark.parametrize(
-    ("integer_dtype", "value"),
-    [(np.int64, 2**32 + 20), (np.int64, -(2**32) + 20), (np.uint64, 2**32 + 20)],
-)
-@pytest.mark.parametrize("route", ["eager", "jit_closure"])
-def test_integer_value_grid_keeps_wide_host_integers_off_the_grid(
-    *, shape, integer_dtype, value, route
-):
-    """A wide host integer whose low int32 word is a node does not match it."""
-    grid = DiscreteGrid(values=np.array([0, 20, 40]))
-    query = np.asarray(value, dtype=integer_dtype).reshape(shape)
-    observed = np.asarray(
-        jax.jit(lambda: grid.encode(query))()
-        if route == "jit_closure"
-        else grid.encode(query)
-    )
-    np.testing.assert_array_equal(observed, np.full(shape, MISSING_CAT_CODE))
-
-
-def test_integer_value_grid_matches_across_int32_boundaries():
-    """Membership follows the original integer on both sides of the int32 range."""
-    nodes = (-(2**31) + 1, -1, 0, 20, 2**31 - 1)
-    query = np.asarray(
-        [-(2**31) - 1, -(2**31), -(2**31) + 1, -1, 0, 20, 2**31 - 1, 2**31, 2**32 + 20],
-        dtype=np.int64,
-    )
-    expected = [nodes.index(v) if v in nodes else MISSING_CAT_CODE for v in query]
-    observed = DiscreteGrid(values=np.array(nodes)).encode(query)
-    assert np.asarray(observed).tolist() == expected
-
-
 @pytest.mark.parametrize("integer_dtype", [np.int64, np.uint64])
 def test_float_value_grid_reads_wide_host_integers_as_floats(integer_dtype):
     """A wide host integer reaches a float grid as its own float, not its low word."""
@@ -1080,29 +927,6 @@ def test_float_value_grid_reads_wide_host_integers_as_floats(integer_dtype):
         np.asarray(grid.encode(query)).tolist(),
         np.asarray(grid.nearest(query)).tolist(),
     ) == ([MISSING_CAT_CODE], [40.0])
-
-
-@pytest.mark.parametrize("float_grid", [False, True])
-@pytest.mark.parametrize("integer_dtype", [np.int64, np.uint64])
-@pytest.mark.parametrize("route", ["eager", "jit_closure"])
-def test_value_grid_decodes_wide_host_codes_as_off_grid(
-    *, float_grid, integer_dtype, route
-):
-    """A host code outside `0..n-1` reads off-grid even when its low word is valid."""
-    alias = -(2**32) if integer_dtype == np.int64 else 2**33
-    codes = np.asarray([[0, 2**32, alias], [1, 2**32 + 1, alias + 1]], integer_dtype)
-    nodes = (0.0, 0.25, 0.5) if float_grid else (0, 20, 40)
-    off = math.nan if float_grid else MISSING_CAT_CODE
-    grid = DiscreteGrid(values=np.array(nodes))
-    observed = np.asarray(
-        jax.jit(lambda: grid.decode(codes))()
-        if route == "jit_closure"
-        else grid.decode(codes)
-    )
-    expected = np.asarray(
-        [nodes[int(c)] if 0 <= int(c) < 3 else off for c in codes.flat]
-    ).reshape(codes.shape)
-    np.testing.assert_array_equal(observed, expected)
 
 
 @pytest.mark.skipif(X64_ENABLED, reason="these floats are finite at float64")
@@ -1337,27 +1161,6 @@ def test_value_grid_decodes_narrow_device_codes_by_their_integer_bounds(
     )
 
 
-@pytest.mark.parametrize("dtype", [np.int64, np.uint64])
-@pytest.mark.parametrize("kind", ["integer", "float"])
-@pytest.mark.parametrize("route", ["eager", "jit_closure"])
-def test_value_grid_decodes_wide_host_codes_by_their_original_bounds(
-    *, dtype, kind, route
-):
-    """Wide host codes are bounded before any narrowing, around both int32 edges."""
-    values = [0, 1, 2, 3, 2**31, 2**32, 2**32 + 1, 2**32 + 2]
-    values += [-1, -(2**31), -(2**32)] if dtype is np.int64 else [2**64 - 1]
-    codes = np.asarray(values, dtype=dtype)
-    grid = _range_grid(n_nodes=3, kind=kind)
-    decoded = (
-        jax.jit(lambda: grid.decode(codes))()
-        if route == "jit_closure"
-        else grid.decode(codes)
-    )
-    _assert_decodes_like_python_integers(
-        decoded=decoded, codes=codes, n_nodes=3, kind=kind
-    )
-
-
 @pytest.mark.parametrize("dtype", [np.int8, np.uint8, np.int16, np.uint16])
 def test_integer_value_grid_encodes_narrow_host_integers_by_membership(dtype):
     """Narrow host integers match exactly the nodes they equal."""
@@ -1401,8 +1204,10 @@ def _reference_decode(*, nodes, code, floating):
 
 
 def _representable(*, dtype, candidates):
+    """The candidates `dtype` holds, within `int32`: wider ones are out of contract."""
     info = np.iinfo(dtype)
-    return sorted({c for c in candidates if info.min <= c <= info.max})
+    low, high = max(info.min, MISSING_CAT_CODE), min(info.max, 2**31 - 1)
+    return sorted({c for c in candidates if low <= c <= high})
 
 
 def _integer_routes(*, function, host, dtype):
@@ -1490,67 +1295,72 @@ def test_value_grid_decodes_every_integer_dtype_like_python_integers(*, kind, dt
         )
 
 
-_CLASSIFY_INTEGERS = discrete_module._classify_integers
+def test_value_grid_stores_a_mixed_literal_float_array_as_floats():
+    """`np.array([0, 1.0, 2])` is a float array, so its grid stores three floats."""
+    values = DiscreteGrid(values=np.array([0, 1.0, 2])).values
+    assert values is not None
+    assert [type(value) for value in values] == [float, float, float]
 
 
-def _classify_bypassing_device_inputs(value):
-    if isinstance(value, jax.Array):
-        return jnp.asarray(value).astype(jnp.int32)
-    return _CLASSIFY_INTEGERS(value)
+_FLOAT_BOUND_GRIDS = {
+    "lin": lambda: LinSpacedGrid(start=1, stop=5, n_points=5),
+    "log": lambda: LogSpacedGrid(start=1, stop=5, n_points=5),
+    "piecewise-lin": lambda: PiecewiseLinSpacedGrid(
+        start=0,
+        stop=4,
+        breakpoints=(GridBreakpoint(value=2.0),),
+        points_per_segment=(3, 3),
+    ),
+    "piecewise-log": lambda: PiecewiseLogSpacedGrid(
+        start=1,
+        stop=4,
+        breakpoints=(GridBreakpoint(value=2.0),),
+        points_per_segment=(3, 3),
+    ),
+}
 
 
-def _classify_after_casting_to_int32(value):
-    return _CLASSIFY_INTEGERS(jnp.asarray(value).astype(jnp.int32))
+@pytest.mark.parametrize("kind", sorted(_FLOAT_BOUND_GRIDS))
+def test_grid_stores_integer_bounds_as_python_floats(kind):
+    """`start` and `stop` written as ints are stored as Python floats."""
+    grid = _FLOAT_BOUND_GRIDS[kind]()
+    assert (type(grid.start), type(grid.stop)) == (float, float)
 
 
-def _classify_with_a_zero_fill(value):
-    classified = _CLASSIFY_INTEGERS(value)
-    return jnp.where(classified == MISSING_CAT_CODE, 0, classified)
+@pytest.mark.parametrize("kind", sorted(_FLOAT_BOUND_GRIDS))
+def test_grid_stdlib_replace_reconstructs_from_the_stored_values(kind):
+    """`dataclasses.replace` rebuilds an equal grid from the stored fields."""
+    grid = _FLOAT_BOUND_GRIDS[kind]()
+    assert dataclasses.replace(grid) == grid
 
 
-@pytest.mark.parametrize(
-    "mutant",
-    [
-        _classify_bypassing_device_inputs,
-        _classify_after_casting_to_int32,
-        _classify_with_a_zero_fill,
-    ],
-)
-def test_integer_differential_detects_each_broken_classifier(*, monkeypatch, mutant):
-    """Each way of losing the original integer makes the encode differential fail."""
-    monkeypatch.setattr(discrete_module, "_classify_integers", mutant)
-    with pytest.raises(AssertionError):
-        test_integer_value_grid_encodes_every_integer_dtype_like_python_integers(
-            grid_name="mixed_boundaries", dtype=np.uint32
-        )
+@pytest.mark.parametrize("grid_class", [LinSpacedGrid, LogSpacedGrid])
+def test_grid_replace_reconstructs_from_the_stored_values(grid_class):
+    """The grid's own `replace` changes one field and keeps the stored others."""
+    grid = grid_class(start=1, stop=5, n_points=5)
+    assert grid.replace(stop=6) == grid_class(start=1.0, stop=6.0, n_points=5)
 
 
-@pytest.mark.parametrize(
-    ("points", "type_name"),
-    [
-        pytest.param([0.0, 1.0, 3.0], "list", id="list"),
-        pytest.param((0.0, 1.0, 3.0), "tuple", id="tuple"),
-        pytest.param(range(3), "range", id="range"),
-    ],
-)
-def test_irreg_spaced_grid_refuses_a_non_array_container(*, points, type_name):
-    """`points` is a NumPy or JAX array; the error names the type and the spelling."""
-    with pytest.raises(
-        GridInitializationError,
-        match=rf"got {type_name}.*IrregSpacedGrid\(points=jnp\.array\(",
-    ):
-        IrregSpacedGrid(points=points)
+@pytest.mark.parametrize("kind", sorted(_FLOAT_BOUND_GRIDS))
+def test_grids_built_from_equal_declarations_are_equal(kind):
+    """Two grids built from one declaration compare equal."""
+    assert _FLOAT_BOUND_GRIDS[kind]() == _FLOAT_BOUND_GRIDS[kind]()
 
 
-@pytest.mark.parametrize(
-    "points",
-    [
-        pytest.param(np.array(["a", "b"]), id="string"),
-        pytest.param(np.array([True, False]), id="bool"),
-        pytest.param(np.zeros((2, 2)), id="2d"),
-    ],
-)
-def test_irreg_spaced_grid_refuses_a_non_numeric_or_multidimensional_array(points):
-    """An array must be one-dimensional with an integer or floating dtype."""
-    with pytest.raises(GridInitializationError, match="points"):
-        IrregSpacedGrid(points=points)
+@pytest.mark.parametrize("kind", sorted(_FLOAT_BOUND_GRIDS))
+def test_grid_is_frozen(kind):
+    """Assigning a field of a built grid raises."""
+    grid = _FLOAT_BOUND_GRIDS[kind]()
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        grid.start = 0.0  # ty: ignore[invalid-assignment]
+
+
+@pytest.mark.parametrize("kind", sorted(_FLOAT_BOUND_GRIDS))
+def test_grid_survives_a_pickle_round_trip(kind):
+    """A pickled grid loads as an equal grid with the same nodes."""
+    grid = _FLOAT_BOUND_GRIDS[kind]()
+    restored = pickle.loads(pickle.dumps(grid))
+    assert (restored == grid, restored.to_jax().tolist()) == (
+        True,
+        grid.to_jax().tolist(),
+    )

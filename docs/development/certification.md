@@ -371,10 +371,12 @@ meaning only when the machine served both legs comparably.
 
 When it did not, the row **declines to measure**: it skips with a reason prefixed
 `TIMING_UNSTABLE_HOST` (`tests/ci/simulation_timings.py`), and
-`check_simulation_timing_report.py` reads that as a measurement not taken. Any *other*
-skip is refused exactly as a failure is, because it means the bar did not run and
-nothing said why. The steadiness ceiling is a relative interquartile range of 0.15 on
-the control leg.
+`check_simulation_timing_report.py` reads that as a measurement not taken. Outside this
+lane, a witness that runs as an xdist worker and finds no steady host emits the same
+message as a warning and passes without reading the bar; a steady host above the bar
+fails everywhere. Any *other* skip is refused exactly as a failure is, because it means
+the bar did not run and nothing said why. The steadiness ceiling is a relative
+interquartile range of 0.15 on the control leg.
 
 The checker also verifies the complete six-row population, not just the verdicts: a lane
 that produced four rows and no failures has not passed.

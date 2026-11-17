@@ -24,7 +24,6 @@ import jax.numpy as jnp
 import numpy as np
 import pandas as pd
 import pytest
-from beartype.roar import BeartypeCallHintParamViolation
 from numpy.testing import assert_array_almost_equal as aaae
 from pandas.testing import assert_frame_equal
 
@@ -69,7 +68,11 @@ from lcm.consumption_savings_regime import (
     LiquidMargin,
     post_decision_lower_bound,
 )
-from lcm.exceptions import InvalidStateTransitionError, RegimeInitializationError
+from lcm.exceptions import (
+    InvalidFunctionOutputError,
+    InvalidStateTransitionError,
+    RegimeInitializationError,
+)
 from lcm.regime import Regime as UserRegime
 from lcm.regime import StochasticTransition
 from lcm.solver_api import ResultRetention, SolutionResult
@@ -304,6 +307,21 @@ def test_adapted_law_returns_the_code_of_its_value(*, step, expected):
     )
     code = adapted(wealth=jnp.int32(1), step=jnp.int32(step))
     assert jnp.asarray(code).tolist() == expected
+
+
+def _next_wealth_half(*, wealth: DiscreteState) -> DiscreteState:
+    return wealth + 0.5
+
+
+def test_adapted_law_returning_a_float_for_an_integer_grid_names_the_law():
+    """A float for an integer value grid is refused naming the law that returned it."""
+    adapted = adapt_user_function(
+        func=_next_wealth_half, value_grids=_VALUE_GRIDS, encode=_WEALTH
+    )
+    with pytest.raises(
+        InvalidFunctionOutputError, match=r"_next_wealth_half returned .*integer"
+    ):
+        adapted(wealth=jnp.int32(1))
 
 
 def test_adapted_function_publishes_code_annotations():
@@ -1025,22 +1043,9 @@ def test_an_imputation_reading_a_value_grid_matches_its_twin_on_codes(
         for category_control in (False, True)
     )
     np.testing.assert_array_equal(got, expected)
-
-
-@pytest.mark.parametrize("nodes", _NODE_PAIRS)
-@pytest.mark.parametrize("enable_jit", [False, True])
-def test_an_age_specialized_imputation_of_category_codes_still_solves(
-    *, nodes, enable_jit
-):
-    """A model without value grids keeps its age-specialized imputations."""
-    model = _one_period_model(
-        working=_imputation_regime(nodes=nodes, marked=True, category_control=True),
-        enable_jit=enable_jit,
-    )
-    np.testing.assert_array_equal(
-        _first_values(model=model, params={"discount_factor": 1.0}),
-        np.asarray(nodes, dtype=float),
-    )
+    if marked:
+        # A model without value grids keeps its age-specialized imputations.
+        np.testing.assert_array_equal(expected, np.asarray(nodes, dtype=float))
 
 
 @pytest.mark.parametrize("nodes", _NODE_PAIRS)
@@ -2547,25 +2552,6 @@ def test_drawn_code_count_is_exact_at_any_signed_width(*, width):
         new_regime_ids=jnp.ones(5, dtype=jnp.int32),
     )
     assert counts.tolist() == [3]
-
-
-@pytest.mark.parametrize(
-    "codes",
-    [
-        jnp.asarray([0, 2, 3], dtype=jnp.uint32),
-        jnp.asarray([0.0, 0.5, 3.0]),
-    ],
-    ids=["unsigned", "float"],
-)
-def test_drawn_code_count_refuses_codes_that_are_not_signed_integers(*, codes):
-    with pytest.raises(BeartypeCallHintParamViolation):
-        _count_drawn_off_grid_codes(
-            codes=(codes,),
-            n_codes=(jnp.int32(3),),
-            target_ids=(jnp.int32(1),),
-            subjects=jnp.ones(3, dtype=bool),
-            new_regime_ids=jnp.ones(3, dtype=jnp.int32),
-        )
 
 
 # A reader of a value grid and the same reader on category codes. The value

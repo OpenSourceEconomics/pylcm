@@ -178,17 +178,21 @@ def _simulate(*, model: Model, solution):
     )
 
 
-def test_the_solved_value_is_priced_under_the_solve_leg() -> None:
-    """`worker`'s value folds `hardship`'s value at the whole-wealth projection.
+def test_a_routed_row_lands_in_the_simulate_legs_regime() -> None:
+    """The solve leg prices the decision; the simulate leg places the routed row.
 
     On the wealth nodes `(0, 1, 2)` the gate closes at the first two, so the
     source's continuation is `V_hardship = (0, 1)` there and `V_retired = 20` at
     the top node. The realized settlement is worth far more (`shelter` pays
-    `100 * wealth`), so a solve that read the simulate leg instead would report
-    a strictly larger value at both closed nodes.
+    `100 * wealth`), so a solve that read the simulate leg would report a
+    strictly larger value at both closed nodes.
+
+    The closed row enters `shelter`, the regime the settlement names, at
+    `0.5 * wealth` and as the `guest` of the household that took her in; a
+    router reading the priced leg would put her in `hardship` without a role.
+    The row above the gate still retires, at its own wealth.
     """
     model = _make_model()
-
     solution = model.solve(params=_PARAMS, log_level="off")
 
     np.testing.assert_array_almost_equal(
@@ -197,67 +201,22 @@ def test_the_solved_value_is_priced_under_the_solve_leg() -> None:
         decimal=DECIMAL_PRECISION,
     )
 
-
-def test_a_routed_row_lands_in_the_simulate_legs_regime() -> None:
-    """The closed row enters `shelter`, the regime the settlement names.
-
-    The solve leg names `hardship`, so a router reading the priced leg would
-    put the row there — the regime she expected rather than the one she got.
-    """
-    model = _make_model()
-    solution = model.solve(params=_PARAMS, log_level="off")
-
     result = _simulate(model=model, solution=solution)
 
-    np.testing.assert_array_equal(
-        np.asarray(result.raw_results["shelter"][1].in_regime), [True, False]
-    )
+    shelter = result.raw_results["shelter"][1]
+    np.testing.assert_array_equal(np.asarray(shelter.in_regime), [True, False])
     assert 1 not in result.raw_results["hardship"]
-
-
-def test_a_routed_row_lands_at_the_simulate_legs_state() -> None:
-    """The closed row carries `0.5 * wealth`, the settlement's own coordinate."""
-    model = _make_model()
-    solution = model.solve(params=_PARAMS, log_level="off")
-
-    result = _simulate(model=model, solution=solution)
-
     np.testing.assert_array_almost_equal(
-        np.asarray(result.raw_results["shelter"][1].states["wealth"])[0],
+        np.asarray(shelter.states["wealth"])[0],
         _SETTLEMENT_SHARE * 1.0,
         decimal=DECIMAL_PRECISION,
     )
+    assert int(shelter.own_stakeholder[0]) == model.stakeholder_names_to_ids["guest"]
 
-
-def test_a_routed_row_carries_the_simulate_legs_role() -> None:
-    """She becomes the `guest` of the household that took her in.
-
-    The role travels with the realized destination, not with the priced one:
-    the solve leg names a singleton regime and carries no role at all.
-    """
-    model = _make_model()
-    solution = model.solve(params=_PARAMS, log_level="off")
-
-    result = _simulate(model=model, solution=solution)
-
-    assert (
-        int(result.raw_results["shelter"][1].own_stakeholder[0])
-        == model.stakeholder_names_to_ids["guest"]
-    )
-
-
-def test_the_open_branch_is_untouched_by_the_phase_split() -> None:
-    """The row above the gate still retires, at its own wealth."""
-    model = _make_model()
-    solution = model.solve(params=_PARAMS, log_level="off")
-
-    result = _simulate(model=model, solution=solution)
-
-    np.testing.assert_array_equal(
-        np.asarray(result.raw_results["retired"][1].in_regime), [False, True]
-    )
+    retired = result.raw_results["retired"][1]
+    np.testing.assert_array_equal(np.asarray(retired.in_regime), [False, True])
     np.testing.assert_array_almost_equal(
-        np.asarray(result.raw_results["retired"][1].states["wealth"])[1],
+        np.asarray(retired.states["wealth"])[1],
         2.0,
         decimal=DECIMAL_PRECISION,
     )

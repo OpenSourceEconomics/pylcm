@@ -29,7 +29,7 @@ import numpy as np
 from dags import concatenate_functions
 
 from _lcm.engine import Regime, SimulationPhase, SolutionPhase
-from _lcm.grids import DiscreteGrid, Grid
+from _lcm.grids import Grid
 from _lcm.time import TimeAxis
 from _lcm.typing import (
     FlatRegimeParams,
@@ -39,6 +39,7 @@ from _lcm.typing import (
     StateName,
 )
 from lcm.exceptions import ModelInitializationError
+from lcm.grids import DiscreteGrid
 from lcm.typing import ScalarFloat, ScalarInt, UserAge
 
 type Phase = SolutionPhase | SimulationPhase

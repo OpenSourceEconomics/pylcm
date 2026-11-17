@@ -350,11 +350,19 @@ def test_period_diagnostic_levels_and_error_order_are_preserved(
     if runtime_checks:
         with pytest.raises(InvalidValueFunctionError, match="1 of 3 values are NaN"):
             simulation._validate_period_values(
-                logger=logger, age=age, period_results=records, memory=memory
+                logger=logger,
+                age=age,
+                age_label="0",
+                period_results=records,
+                memory=memory,
             )
     else:
         simulation._validate_period_values(
-            logger=logger, age=age, period_results=records, memory=memory
+            logger=logger,
+            age=age,
+            age_label="0",
+            period_results=records,
+            memory=memory,
         )
     warnings = [
         record.getMessage()

@@ -49,6 +49,7 @@ from dags.exceptions import InvalidFunctionArgumentsError
 from dags.tree import qname_from_tree_path
 from jaxtyping import Int, Scalar
 
+from _lcm.output_roles import OutputRole, in_role
 from _lcm.params.edges import (
     FALLBACK,
     PREDICATE,
@@ -69,11 +70,11 @@ from _lcm.regime_building.Q_and_F import (
 )
 from _lcm.regime_building.V import VInterpolationInfo
 from _lcm.typing import (
+    AgeValue,
     ArrayTree,
     EconFunctionsMapping,
     FlatParams,
     FunctionName,
-    HostArray,
     ParamsLeaf,
     QAndFArg,
     QAndFKwargs,
@@ -84,14 +85,13 @@ from _lcm.typing import (
     TransitionFunctionName,
 )
 from _lcm.utils.functools import get_union_of_args
-from lcm.exceptions import ModelInitializationError, RegimeInitializationError
+from lcm.exceptions import ModelInitializationError
 from lcm.typing import (
     BoolND,
     FloatND,
     ReferenceName,
     ScalarFloat,
     UserFunction,
-    ValueND,
 )
 
 # The two parameter namespaces a
@@ -203,7 +203,7 @@ def bind_edge_period_context(
     *,
     func: Callable[..., ArrayTree],
     fold_period: int,
-    fold_age: float | ScalarFloat | Int[Scalar, ""] | None,
+    fold_age: AgeValue | ScalarFloat | Int[Scalar, ""] | None,
 ) -> MappingProxyType[ReferenceName, Int[Scalar, ""] | ScalarFloat]:
     """Bind the target-fold context an edge callable explicitly declares.
 
@@ -532,27 +532,6 @@ class ResolvedGatedEdge:
             return compiled.channels
         return EdgeChannels(component_names=())
 
-    def combine_at(self, *, period: int) -> EdgeBranchCombiner:
-        """How to gate this edge's channels, compiled for one fold period.
-
-        Keyed by period for the same reason `folds_by_period` is: the combiner
-        carries this edge's projected readers, and a leg fallback on an
-        `AgeSpecializedGrid` is read on its own regime's nodes,
-        which move with age while their shape does not. A combiner taken from
-        another period would place that read on the wrong nodes and silently
-        gate on the wrong side.
-
-        The channel LAYOUT is period-invariant — an `AgeSpecializedGrid` moves
-        a read grid's nodes, never which components the legs open onto — so
-        `channels` still answers from any compiled period.
-        """
-        return _select_period_callable(
-            by_period=self.folds_by_period,
-            period=period,
-            what="combiner",
-            target=self.target,
-        ).combine
-
     def simulate_gate_evaluator_at(self, *, period: int) -> Callable[..., BoolND]:
         """Return the simulate gate evaluator for the period it routes against."""
         return _select_period_callable(
@@ -867,45 +846,6 @@ class _CompiledEdgeGate:
     `period` / `age`, and its own free params under their qualified names."""
 
 
-def _as_boolean_gate(
-    *, value: ValueND | HostArray | bool | float, target: RegimeName, phase: str
-) -> BoolND:
-    """Return the gate output as a Boolean array, or reject its dtype.
-
-    A gate selects a branch with a strict `jnp.where`, where every nonzero
-    value counts as true. A numeric gate would therefore open the edge for
-    every cell instead of expressing a probability or failing, changing both
-    the solved continuation and the simulated route with no diagnostic. The
-    return annotation cannot constrain what a user function returns, so the
-    realized dtype is checked here, at each of the two places a gate is
-    evaluated.
-
-    Args:
-        value: Whatever the compiled gate evaluator returned.
-        target: Name of the edge's target regime, for the error message.
-        phase: `"solve"` or `"simulate"`, naming the evaluator that ran.
-
-    Returns:
-        The gate output as a Boolean array.
-
-    Raises:
-        RegimeInitializationError: The output dtype is not boolean.
-
-    """
-    gate = jnp.asarray(value)
-    if gate.dtype != jnp.bool_:
-        msg = (
-            f"The gate of the gated edge into regime '{target}' returned dtype "
-            f"'{gate.dtype}' in the {phase} phase, but a gate must return a "
-            "boolean. A gate selects a branch with a strict `where`, which "
-            "treats every nonzero value as true, so a numeric gate would open "
-            "the edge everywhere rather than express a probability. Return a "
-            "comparison or a boolean combination, e.g. `wealth > threshold`."
-        )
-        raise RegimeInitializationError(msg)
-    return gate
-
-
 def _compile_edge_gate(
     *,
     edge: ResolvedGatedEdge,
@@ -984,7 +924,14 @@ def _compile_edge_gate(
     )
 
     gate_evaluator = concatenate_functions(
-        functions={**dag_pool, "__gate__": qualified_gate},
+        functions={
+            **dag_pool,
+            "__gate__": in_role(
+                func=qualified_gate,
+                role=OutputRole.BOOL,
+                kind=f"The gate of the edge into regime '{edge.target}', function",
+            ),
+        },
         targets="__gate__",
         enforce_signature=False,
         set_annotations=True,
@@ -1613,12 +1560,8 @@ class _EdgeBranchCombine:
     @no_type_check
     def gate(self, **kwargs: ParamsLeaf) -> BoolND:
         """Evaluate the gate at the realized point: `True` opens onto the target."""
-        return _as_boolean_gate(
-            value=self.gate_evaluator(
-                **{name: kwargs[name] for name in self.gate_arg_names}
-            ),
-            target=self.edge_target,
-            phase="solve",
+        return self.gate_evaluator(
+            **{name: kwargs[name] for name in self.gate_arg_names}
         )
 
     @no_type_check
@@ -1690,15 +1633,11 @@ class _SimulateGateEvaluator:
         # The predicate declares its params under their OWN qnames; map the
         # qualified leaves back before handing them over, so it sees the names
         # the solve side passes it.
-        return _as_boolean_gate(
-            value=self.gate_evaluator(
-                **{
-                    arg: jnp.asarray(kwargs[exposed])
-                    for arg, exposed in self.gate_extra_exposed.items()
-                }
-            ),
-            target=self.edge_target,
-            phase="simulate",
+        return self.gate_evaluator(
+            **{
+                arg: jnp.asarray(kwargs[exposed])
+                for arg, exposed in self.gate_extra_exposed.items()
+            }
         )
 
 

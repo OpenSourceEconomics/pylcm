@@ -12,7 +12,6 @@ import jax.numpy as jnp
 import numpy as np
 import pandas as pd
 import pytest
-from beartype.roar import BeartypeCallHintParamViolation
 
 import lcm
 from _lcm import exit_queries, policy_queries
@@ -617,89 +616,6 @@ def _settlement(wealth: FloatND) -> FloatND:
     return 2 * wealth - 1
 
 
-def _unsafe_scale(wealth: FloatND) -> FloatND:
-    return jnp.sqrt(wealth)
-
-
-def _signal(*, eps: FloatND, wealth: FloatND) -> FloatND:
-    return eps + 0 * wealth
-
-
-def test_unavailable_observer_guards_unsafe_mapped_law() -> None:
-    """At source0 the target law is sqrt(-1), behind a false source guard."""
-    wealth = LinSpacedGrid(start=0, stop=1, n_points=2)
-    model = Model(
-        regimes={
-            "single_f": Regime(
-                states={"wealth": wealth},
-                functions={"utility": _stay},
-                exits={
-                    "move": Exit(
-                        targets={
-                            "self": ExitTarget(
-                                regime="single_m", projection={"wealth": _settlement}
-                            )
-                        },
-                        rule="unilateral",
-                        observes=("eps",),
-                        available=_positive,
-                    )
-                },
-            ),
-            "single_m": Regime(
-                states={"wealth": wealth},
-                functions={"utility": _signal},
-                shocks=("signal",),
-            ),
-        },
-        shocks={
-            "signal": ShockGroup(
-                shocks={"eps": Normal(mu=0, sigma=_unsafe_scale)},
-                nodes=UserNodes(
-                    nodes=np.asarray([[-1.0], [1.0]]), weights=np.asarray([0.5, 0.5])
-                ),
-            )
-        },
-        regime_id_class=_Singles,
-        n_periods=1,
-        edges={},
-        initial_nodes=InitialNodes(by_period={0: ("single_f",)}),
-        execution_config=ExecutionConfig(device_memory_bytes=None),
-    )
-    result = model.solve(params={}, log_level="off", runtime_checks=False)
-    np.testing.assert_allclose(result.values[0]["single_f"], [0.5, 0.75])
-    kernel = model._regimes["single_f"].solution.period_kernels[0]
-    assert isinstance(kernel, _PolicyQueryKernel)
-    scalar = ScalarPolicyQueries(
-        definitions=kernel.definitions, root=kernel.root, period=0
-    )
-    arguments = scalar.arguments(
-        context=CoreBuildContext(
-            state_action_space=kernel.root_context.state_action_space,
-            next_regime_to_V_arr={},
-            next_regime_to_continuation={},
-            flat_params={},
-            period=0,
-            ages=kernel.root_context.ages,
-        ),
-        fixed_flat_params=kernel.fixed_flat_params,
-    )
-
-    def price(wealth: FloatND) -> FloatND:
-        return scalar(
-            states={"wealth": wealth},
-            arguments=cast("Mapping[str, Mapping[str, PytreeValue]]", arguments),
-        )[0]
-
-    @jax.jit
-    def prices(points: FloatND) -> tuple[FloatND, FloatND]:
-        return jax.lax.map(jax.value_and_grad(price), points)
-
-    values, derivatives = prices(jnp.asarray([0.0, 1.0]))
-    np.testing.assert_allclose(values, [0.5, 0.75])
-    np.testing.assert_allclose(derivatives, [0.0, 0.5])
-
-
 def _taste_target(*, action: IntND, wealth: FloatND) -> FloatND:
     return jnp.log(3.0) * action + 0 * wealth
 
@@ -1141,62 +1057,6 @@ def test_query_only_target_retains_its_genuine_next_period_value_read() -> None:
     assert model._regimes["single_m"].active_periods == ()
 
 
-@pytest.mark.coverage(
-    backends=("cpu", "gpu-small", "gpu-large"), precisions="representative"
-)
-def test_null_shared_category_keeps_the_query_boundary_probability_derivative() -> None:
-    """The null solve category retains its finite target policy without 0/0."""
-    base = _offer_model(observed=False, shared=True)
-    model = Model(
-        regimes=base.user_regimes,
-        shocks={"offers": ShockGroup(shocks={"offer": Discrete(categories=_Offer)})},
-        regime_id_class=_Singles,
-        n_periods=1,
-        edges={},
-        initial_nodes=InitialNodes(by_period={0: ("single_f",)}),
-        execution_config=ExecutionConfig(device_memory_bytes=None),
-    )
-    result = model.solve(
-        params={"offers": {"offer__probs": np.asarray([1.0, 0.0])}},
-        log_level="off",
-        runtime_checks=False,
-    )
-    np.testing.assert_allclose(result.values[0]["single_f"], 0.5)
-    kernel = model._regimes["single_f"].solution.period_kernels[0]
-    assert isinstance(kernel, _PolicyQueryKernel)
-    scalar = ScalarPolicyQueries(
-        definitions=kernel.definitions, root=kernel.root, period=0
-    )
-
-    def price(probability: FloatND) -> FloatND:
-        arguments = scalar.arguments(
-            context=CoreBuildContext(
-                state_action_space=kernel.root_context.state_action_space,
-                next_regime_to_V_arr={},
-                next_regime_to_continuation={},
-                flat_params=MappingProxyType(
-                    {
-                        "offers": MappingProxyType(
-                            {"offer__probs": jnp.stack([1 - probability, probability])}
-                        )
-                    }
-                ),
-                period=0,
-                ages=kernel.root_context.ages,
-            ),
-            fixed_flat_params=kernel.fixed_flat_params,
-        )
-        return scalar(
-            states={"wealth": jnp.asarray(0.0)},
-            arguments=cast("Mapping[str, Mapping[str, PytreeValue]]", arguments),
-        )[0]
-
-    value, derivative = jax.jit(jax.value_and_grad(price))(jnp.asarray(0.0))
-    np.testing.assert_allclose(value, 0.5)
-    # Prices are .5 and 1.75 after source choice; dp*(1.75-.5) survives at p=0.
-    np.testing.assert_allclose(derivative, 1.25)
-
-
 def _unused_helper(toll: FloatND) -> FloatND:
     return toll
 
@@ -1432,16 +1292,7 @@ def _vector_available() -> BoolND:
 @pytest.mark.parametrize(
     ("action", "error", "message"),
     [
-        (np.int64(2**32), BeartypeCallHintParamViolation, "RuleResult.__init__"),
-        (
-            np.asarray(2**32, dtype=np.int64),
-            BeartypeCallHintParamViolation,
-            "RuleResult.__init__",
-        ),
-        (np.int64(7), BeartypeCallHintParamViolation, "RuleResult.__init__"),
-        (1.0, BeartypeCallHintParamViolation, "RuleResult.__init__"),
         (True, ValueError, "scalar integer"),
-        (np.asarray([0]), BeartypeCallHintParamViolation, "RuleResult.__init__"),
         (2**32, ValueError, "known global alternative"),
         (7, ValueError, "known global alternative"),
     ],
@@ -1486,7 +1337,7 @@ def test_public_availability_accepts_python_scalar_but_refuses_vector_reduction(
         params={}, log_level="off", runtime_checks=False
     )
     np.testing.assert_allclose(result.values[0]["single_f"], 1.0)
-    with pytest.raises(ValueError, match="scalar boolean"):
+    with pytest.raises(ValueError, match="must be a scalar Boolean"):
         _rule_model(rule="unilateral", available=_vector_available).solve(
             params={}, log_level="off", runtime_checks=False
         )

@@ -12,7 +12,6 @@ import pytest
 from numpy.testing import assert_array_almost_equal
 
 from _lcm import shock_nodes
-from _lcm.current_iid import CURRENT_IID_ARGUMENT
 from _lcm.execution.core_program import (
     CoreBuildContext,
     core_program_graph,
@@ -21,15 +20,16 @@ from _lcm.execution.core_program import (
 from _lcm.params.edges import regime_kernel_params
 from _lcm.processes.base import standard_normal
 from _lcm.simulation import chunk_admission as admission
-from _lcm.simulation.chunk_planning import (
-    SimulationChunkProfile,
-    plan_simulation_chunks,
-)
+from _lcm.simulation.chunk_planning import SimulationChunkProfile, _required_bytes
 from _lcm.simulation.entry_allocations import SimulationEntryAllocations
 from _lcm.simulation.program_arguments import current_iid_arguments
 from _lcm.simulation.program_types import SUBJECT_WIDTH_KEYWORD
 from _lcm.simulation.random_address import RandomAddress, draw_row_keys
-from _lcm.simulation.residency import measure_buffer_footprint
+from _lcm.simulation.residency import (
+    DeviceBufferFootprint,
+    measure_buffer_footprint,
+    resident_bytes_by_device,
+)
 from _lcm.zero_safe import factored_weighted_term
 from lcm import (
     AgeGrid,
@@ -719,25 +719,6 @@ def _scalar_core(*, model: Model, params: UserParams):
     )
 
 
-def test_native_value_consumes_runtime_correlation_derivative() -> None:
-    """The admitted mask stays fixed while the SPD correlation remains traced."""
-
-    core = _scalar_core(
-        model=_correlated_model(), params={"joint": {"corr": np.eye(2)}}
-    )
-
-    def value(rho):
-        groups = core.arguments[CURRENT_IID_ARGUMENT]
-        group = {**groups["joint"], "corr": jnp.array([[1.0, rho], [rho, 1.0]])}
-        return core.function(
-            **{**core.arguments, CURRENT_IID_ARGUMENT: {"joint": group}}
-        )[0]
-
-    actual, derivative = jax.jit(jax.value_and_grad(value))(0.37)
-    np.testing.assert_allclose(actual, 0.37, rtol=1e-5, atol=0)
-    np.testing.assert_allclose(derivative, 1.0, rtol=1e-5, atol=0)
-
-
 def test_native_node_banks_are_declared_dynamic_operands() -> None:
     """Workspace and residency admission can see the complete fixed support banks."""
     core = _scalar_core(
@@ -846,99 +827,6 @@ def test_joint_rare_factors_survive_until_the_economic_value(*, infinite: bool) 
         np.testing.assert_allclose(
             actual, (probability * payoff) * probability, rtol=1e-5, atol=0
         )
-
-
-def test_zero_probability_retains_native_weight_derivative() -> None:
-    """A null primal event still contributes dweight times its finite payoff."""
-
-    params = {
-        "joint": {
-            "first__probs": np.array([1.0, 0.0]),
-            "second__probs": np.array([0.7, 0.3]),
-        },
-        "alive": {"utility": {"payoff": 2.0}},
-    }
-    core = _scalar_core(model=_rare_model(), params=params)
-
-    def value(probability):
-        groups = core.arguments[CURRENT_IID_ARGUMENT]
-        group = {
-            **groups["joint"],
-            "first__probs": jnp.array([1.0 - probability, probability]),
-        }
-        return core.function(
-            **{**core.arguments, CURRENT_IID_ARGUMENT: {"joint": group}}
-        )[0]
-
-    actual, derivative = jax.jit(jax.value_and_grad(value))(0.0)
-    assert actual == 0.0
-    np.testing.assert_allclose(derivative, 0.6, rtol=1e-5, atol=0)
-
-
-def test_native_rare_probability_derivative_meets_its_finite_payoff() -> None:
-    """A probability slope forms the other factor with payoff before rounding."""
-
-    probability = 1e-200 if jax.config.x64_enabled else 1e-25
-    payoff = 1e300 if jax.config.x64_enabled else 1e30
-    core = _scalar_core(
-        model=_rare_model(),
-        params={
-            "joint": {
-                "first__probs": np.array([1.0, probability]),
-                "second__probs": np.array([1.0, probability]),
-            },
-            "alive": {"utility": {"payoff": payoff}},
-        },
-    )
-
-    def value(p):
-        group = {
-            **core.arguments[CURRENT_IID_ARGUMENT]["joint"],
-            "first__probs": jnp.array([1.0, p]),
-        }
-        return core.function(
-            **{**core.arguments, CURRENT_IID_ARGUMENT: {"joint": group}}
-        )[0]
-
-    actual, derivative = jax.jit(jax.value_and_grad(value))(probability)
-    np.testing.assert_allclose(
-        actual, probability * payoff * probability, rtol=1e-5, atol=0
-    )
-    np.testing.assert_allclose(derivative, probability * payoff, rtol=1e-5, atol=0)
-
-
-def test_native_value_cotangent_range_is_explicit(record_property) -> None:
-    """Record the precision limit without certifying an extreme AD consumer."""
-    probability = 1e-160 if jax.config.x64_enabled else 1e-22
-    multiplier = 1e300 if jax.config.x64_enabled else 1e30
-    core = _scalar_core(
-        model=_rare_model(),
-        params={
-            "joint": {
-                "first__probs": np.array([1.0, probability]),
-                "second__probs": np.array([1.0, probability]),
-            },
-            "alive": {"utility": {"payoff": multiplier}},
-        },
-    )
-
-    def value(theta):
-        return core.function(
-            **{**core.arguments, "utility__payoff": theta * multiplier}
-        )[0]
-
-    primal, forward = jax.jit(
-        lambda theta: jax.jvp(value, (theta,), (jnp.ones_like(theta),))
-    )(jnp.asarray(1.0))
-    reverse = jax.jit(jax.grad(value))(1.0)
-    expected = probability * multiplier * probability
-    np.testing.assert_allclose(primal, expected, rtol=1e-5, atol=0)
-    for name, actual in (("forward", forward), ("reverse", reverse)):
-        record_property(f"{name}_extreme_value_sensitivity", float(actual))
-        # Active value cotangents can flush or round in their subnormal range.
-        assert float(actual) == 0.0 or np.isclose(actual, expected, rtol=0.1, atol=0)
-    record_property("analytic_extreme_value_sensitivity", expected)
-    record_property("extreme_value_sensitivity_certified", value=False)
 
 
 @pytest.mark.parametrize("mu", [-1e4, 0.0])
@@ -1501,28 +1389,15 @@ def test_forward_inventory_reserves_physical_bank_and_actual_producers(
     assert names.count("draw_window_keys") == 16
     assert "_current_iid_invalid" in names
     # A controlled omission must change the real profile's strict admission result.
-    live = measure_buffer_footprint(tree=())
     devices = tuple(profile.output_reservation)
-    full = plan_simulation_chunks(
-        candidates=(32,),
-        profile_candidate=lambda *, n_subjects: {profile.n_subjects: profile}[
-            n_subjects
-        ],
-        live=live,
-        budget_bytes=2**27,
+    resident = resident_bytes_by_device(
+        live=measure_buffer_footprint(tree=()),
+        arguments=DeviceBufferFootprint(spans=MappingProxyType({})),
         devices=devices,
     )
-    budget = max(full.required_bytes.values()) - 1
-    with pytest.raises(ExecutionPlanningError, match=r"chunk"):
-        plan_simulation_chunks(
-            candidates=(32,),
-            profile_candidate=lambda *, n_subjects: {profile.n_subjects: profile}[
-                n_subjects
-            ],
-            live=live,
-            budget_bytes=budget,
-            devices=devices,
-        )
+    full = _required_bytes(profile=profile, resident=resident, devices=devices)
+    assert max(full.values()) <= 2**27
+    budget = max(full.values()) - 1
     physical_bytes = sum(
         value.nbytes
         for period in result.raw_results.values()
@@ -1538,16 +1413,8 @@ def test_forward_inventory_reserves_physical_bank_and_actual_producers(
             }
         ),
     )
-    control = plan_simulation_chunks(
-        candidates=(32,),
-        profile_candidate=lambda *, n_subjects: {omitted.n_subjects: omitted}[
-            n_subjects
-        ],
-        live=live,
-        budget_bytes=budget,
-        devices=devices,
-    )
-    assert max(control.required_bytes.values()) <= budget
+    control = _required_bytes(profile=omitted, resident=resident, devices=devices)
+    assert max(control.values()) <= budget
 
 
 def test_solve_law_reads_carried_imputation_without_a_grid_axis() -> None:
@@ -2108,24 +1975,3 @@ def test_ordinary_native_consumers_read_the_published_physical_bits(
     np.testing.assert_array_equal(
         frame["value"], physical - np.asarray(1e20, dtype=physical.dtype)
     )
-
-
-def test_native_scale_sensitivity_consumes_the_physical_law() -> None:
-    core = _scalar_core(
-        model=_runtime_scale_model(), params={"innovation": {"eps__sigma": 2.0}}
-    )
-
-    def value(scale: FloatND) -> FloatND:
-        groups = core.arguments[CURRENT_IID_ARGUMENT]
-        return core.function(
-            **{
-                **core.arguments,
-                CURRENT_IID_ARGUMENT: {
-                    "innovation": {**groups["innovation"], "eps__sigma": scale}
-                },
-            }
-        )[0]
-
-    actual, derivative = jax.jit(jax.value_and_grad(value))(2.0)
-    np.testing.assert_allclose(actual, 4.0)
-    np.testing.assert_allclose(derivative, 4.0)

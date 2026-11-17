@@ -344,8 +344,8 @@ _PROFILED_HELPER_MUTATIONS = {
     ),
     "simulation_entry:parameter_writer_bypassed": (
         "src/lcm/model.py",
-        "            flat_params, array_writer=array_writer\n",
-        "            flat_params, array_writer=None\n",
+        "array_writer=array_writer,\n            roles=template_roles(",
+        "array_writer=None,\n            roles=template_roles(",
     ),
     "simulation_entry:integer_upload_bypassed": (
         "src/_lcm/dtypes.py",

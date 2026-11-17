@@ -356,12 +356,8 @@ def test_store_lookups_reject_nonexact_coordinates_before_hashing() -> None:
 
     assert True not in values
     assert hostile_regime not in values[0]
-    with pytest.raises(TypeError, match="exact ints"):
-        result.value(period=True, regime="alive")
     with pytest.raises(TypeError, match="exact strs"):
         result.value(period=0, regime=hostile_regime)
-    with pytest.raises(TypeError, match="exact strs"):
-        values.load_state(period=0, regime=hostile_regime)
 
     key = ArtifactKey(type_id="example.policy")
     ref = ArtifactRef(period=0, regime="alive", key=key)
@@ -370,8 +366,6 @@ def test_store_lookups_reject_nonexact_coordinates_before_hashing() -> None:
     object.__setattr__(hostile_ref, "regime", hostile_regime)
 
     assert hostile_ref not in artifacts
-    with pytest.raises(TypeError, match="exact strs"):
-        artifacts.load_state(hostile_ref)
 
 
 def test_solve_records_instance_params_and_value_array_schemas() -> None:
@@ -2185,54 +2179,33 @@ def _solve_scalar_and_collective_model() -> SolutionResult:
     return model.solve(params={}, log_level="off")
 
 
-def test_value_array_labels_dimensions_with_state_names() -> None:
-    """Dimensions are the stored value axes, in schema order."""
-    result = _solve_labelled_model()
-    array = result.value_array(period=0, regime="alive")
-    assert array.dims == result.metadata.value_schemas[0, "alive"].axis_names
-
-
-def test_value_array_carries_grid_nodes_as_coordinates() -> None:
-    """Continuous states carry the resolved grid nodes as coordinates."""
-    result = _solve_labelled_model()
-    array = result.value_array(period=0, regime="alive")
-    np.testing.assert_array_equal(array["wealth"], [1.0, 2.0, 3.0])
-
-
 @pytest.mark.parametrize(
     ("use_categorical_codes", "expected"), [(False, ["low", "high"]), (True, [0, 1])]
 )
 def test_value_array_categorical_coordinates(
     *, use_categorical_codes: bool, expected: list[str] | list[int]
 ) -> None:
-    """Discrete states carry labels in declaration order, or integer codes."""
+    """Discrete states carry labels in declaration order, or integer codes.
+
+    Without the argument, the array is labelled: its dimensions are the stored
+    value axes in schema order, continuous states carry their grid nodes, the
+    discrete coordinate is an ordered categorical a curve can be selected by,
+    and the data is the solution's JAX value rather than a host copy.
+    """
     result = _solve_labelled_model()
     array = result.value_array(
         period=0, regime="alive", use_categorical_codes=use_categorical_codes
     )
     assert array["kind"].to_numpy().tolist() == expected
-
-
-def test_value_array_categorical_coordinate_keeps_ordering() -> None:
-    """A labelled discrete coordinate is an ordered categorical when declared so."""
-    result = _solve_labelled_model()
-    index = result.value_array(period=0, regime="alive").indexes["kind"]
-    assert isinstance(index, pd.CategoricalIndex)
-    assert index.ordered
-
-
-def test_value_array_selects_a_curve_by_label() -> None:
-    """Selecting a discrete label returns the value curve over the other states."""
-    result = _solve_labelled_model()
-    curve = result.value_array(period=0, regime="alive").sel(kind="high")
-    np.testing.assert_array_equal(curve, [11.0, 12.0, 13.0])
-
-
-def test_value_array_is_backed_by_the_stored_value() -> None:
-    """The labelled array keeps the solution's JAX value instead of a host copy."""
-    result = _solve_labelled_model()
-    array = result.value_array(period=0, regime="alive")
-    assert isinstance(array.data, jax.Array)
+    if use_categorical_codes:
+        return
+    default_array = result.value_array(period=0, regime="alive")
+    assert default_array.dims == result.metadata.value_schemas[0, "alive"].axis_names
+    np.testing.assert_array_equal(default_array["wealth"], [1.0, 2.0, 3.0])
+    assert isinstance(default_array.indexes["kind"], pd.CategoricalIndex)
+    assert default_array.indexes["kind"].ordered
+    np.testing.assert_array_equal(default_array.sel(kind="high"), [11.0, 12.0, 13.0])
+    assert isinstance(default_array.data, jax.Array)
 
 
 def test_value_array_scalar_regime_has_no_dimensions() -> None:

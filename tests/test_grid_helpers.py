@@ -16,9 +16,7 @@ from tests.conftest import DECIMAL_PRECISION
 
 
 def test_linspace():
-    calculated = linspace(
-        start=jnp.asarray(1.0), stop=jnp.asarray(2.0), n_points=jnp.int32(6)
-    )
+    calculated = linspace(start=jnp.asarray(1.0), stop=jnp.asarray(2.0), n_points=6)
     expected = np.array([1, 1.2, 1.4, 1.6, 1.8, 2])
     aaae(calculated, expected, decimal=DECIMAL_PRECISION)
 
@@ -58,9 +56,7 @@ def test_linspace_mapped_value():
 
 
 def test_logspace():
-    calculated = logspace(
-        start=jnp.asarray(1.0), stop=jnp.asarray(100.0), n_points=jnp.int32(7)
-    )
+    calculated = logspace(start=jnp.asarray(1.0), stop=jnp.asarray(100.0), n_points=7)
     expected = np.array(
         [
             1.0,
@@ -95,7 +91,11 @@ def test_map_coordinates_linear():
         "n_points": jnp.int32(3),
     }
 
-    grid = linspace(**grid_info)  # [0, 0.5, 1]
+    grid = linspace(
+        start=grid_info["start"],
+        stop=grid_info["stop"],
+        n_points=int(grid_info["n_points"]),
+    )  # [0, 0.5, 1]
 
     values = 2 * grid  # [0, 1.0, 2.0]
 
@@ -120,7 +120,11 @@ def test_map_coordinates_logarithmic():
         "n_points": jnp.int32(3),
     }
 
-    grid = logspace(**grid_info)  # [1.0, 1.414213562373095, 2.0]
+    grid = logspace(
+        start=grid_info["start"],
+        stop=grid_info["stop"],
+        n_points=int(grid_info["n_points"]),
+    )  # [1.0, 1.414213562373095, 2.0]
 
     values = 2 * grid  # [2.0, 2.82842712474619, 4.0]
 
@@ -145,7 +149,11 @@ def test_map_coordinates_linear_outside_grid():
         "n_points": jnp.int32(2),
     }
 
-    grid = linspace(**grid_info)  # [1, 2]
+    grid = linspace(
+        start=grid_info["start"],
+        stop=grid_info["stop"],
+        n_points=int(grid_info["n_points"]),
+    )  # [1, 2]
 
     values = 2 * grid  # [2, 4]
 
@@ -175,9 +183,7 @@ def test_get_linspace_coordinate_with_array():
 
 
 def test_get_logspace_coordinate_with_array():
-    grid = logspace(
-        start=jnp.asarray(1.0), stop=jnp.asarray(100.0), n_points=jnp.int32(7)
-    )
+    grid = logspace(start=jnp.asarray(1.0), stop=jnp.asarray(100.0), n_points=7)
     mid = (float(grid[1]) + float(grid[2])) / 2
     values = jnp.array([mid])
     coords = get_logspace_coordinate(

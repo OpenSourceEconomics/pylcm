@@ -3,7 +3,6 @@
 import jax.numpy as jnp
 import pytest
 
-from _lcm.params.processing import process_params
 from _lcm.simulation import initial_conditions as preflight
 from _lcm.simulation.initial_conditions import (
     initial_conditions_feasibility_mask,
@@ -11,6 +10,7 @@ from _lcm.simulation.initial_conditions import (
 )
 from lcm import IrregSpacedGrid, LinSpacedGrid
 from lcm.exceptions import InvalidInitialConditionsError
+from tests.params._process_params import process_params
 from tests.simulation.initial_conditions._models import (
     make_constrained_asymmetric_model,
     make_constraint_model,

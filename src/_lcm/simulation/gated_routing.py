@@ -951,22 +951,6 @@ def split_population_call_args(
     return batched, static
 
 
-def install_population_call(
-    *,
-    func: _EdgeCallable,
-    axis_size: int,
-    call: _PopulationCall,
-    subject_width: int | None = None,
-) -> None:
-    """Install `call` as the population call `func` is invoked through.
-
-    Ahead-of-time compilation lowers and compiles a gate evaluator before
-    `simulate()` runs and installs the compiled program here, so the router's
-    first call dispatches it instead of tracing and compiling on the spot.
-    """
-    _POPULATION_CALLS.setdefault(func, {})[(axis_size, subject_width)] = call
-
-
 # What each edge callable was built once and for all with. Weakly keyed, so a
 # model's compiled artifacts are released together with the model.
 _ACCEPTED_ARG_NAMES: WeakKeyDictionary[_EdgeCallable, frozenset[str]] = (

@@ -17,12 +17,13 @@ from _lcm.constraints.dispositions import (
     Proof,
     ProvedByConstruction,
 )
-from _lcm.constraints.ir import Const, Ref
+from _lcm.constraints.ir import Const
 from _lcm.constraints.processed import ProcessedConstraint
 from _lcm.constraints.routes import BoundConstraint, StructuralProof
 from _lcm.dtypes import canonical_float_dtype
 from _lcm.post_decision_bound import PostDecisionBoundSpec
 from _lcm.typing import FunctionName
+from lcm.condition import Ref
 
 
 def lower_bound_declaration(

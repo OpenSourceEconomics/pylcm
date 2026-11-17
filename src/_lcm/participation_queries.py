@@ -34,6 +34,7 @@ from _lcm.exit_queries import (
     _validate_query_projection_bindings,
 )
 from _lcm.grids.continuous import ContinuousGrid
+from _lcm.output_roles import OutputRole, in_role
 from _lcm.params.edges import regime_kernel_params
 from _lcm.participation_continuation import (
     PARTICIPATION_CONTINUATION,
@@ -1249,7 +1250,7 @@ class _ParticipationReducer:
         accepted = jnp.asarray(
             call_with_declared_arguments(function=self.predicate, operands=values)
         )
-        if accepted.shape != () or accepted.dtype != jnp.bool_:
+        if accepted.shape != ():
             raise ValueError("A participation predicate must return a scalar Boolean.")
         target = cast("PolicyAnswer", operands[_ACTING_TARGET])
         accepted &= target[2]
@@ -1833,14 +1834,18 @@ def _bind_participation(
                 ),
             )
         )
-    predicate = _bound_edge_function(
-        builder=builder,
-        source=source,
-        target=target,
-        path=(target, "predicate"),
-        function=declaration.predicate,
-        information=information,
-        read_names=read_names,
+    predicate = in_role(
+        func=_bound_edge_function(
+            builder=builder,
+            source=source,
+            target=target,
+            path=(target, "predicate"),
+            function=declaration.predicate,
+            information=information,
+            read_names=read_names,
+        ),
+        role=OutputRole.BOOL,
+        kind="A participation predicate",
     )
     reducer = _ParticipationReducer(
         predicate=predicate,

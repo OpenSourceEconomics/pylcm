@@ -242,5 +242,6 @@ def test_nested_replay_scores_canonical_q_once_on_the_read_winner(
     )
     assert calls
     assert all(actions == states for actions, states, _ in calls), calls
-    periods = [period for _, _, period in calls]
+    # Concrete here: the nested replay passes each period as a host-built int32.
+    periods = [int(period) for _, _, period in calls]
     assert len(periods) == len(set(periods)), calls

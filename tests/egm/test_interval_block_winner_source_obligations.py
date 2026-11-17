@@ -130,7 +130,7 @@ def test_python_exact_winner_abi_requires_an_explicit_stable_index_operand() -> 
         assert "segment shape" in body
 
     ffi_text = _text(FFI)
-    assert "stable_index=stopped[5]" in ffi_text
+    assert "stable_index=stable_array" in ffi_text
     assert "operand=stable_index" in ffi_text
 
 

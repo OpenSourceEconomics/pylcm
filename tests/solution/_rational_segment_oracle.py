@@ -10,7 +10,7 @@ invariance, collinear tie intervals).
 The module carries two independent representations:
 
 - rational `Branch`/`Segment` for the geometry (exact envelope, breakpoints,
-  interval owners, pairwise crossings); and
+  pairwise crossings); and
 - `FloatSegment` for classifying IEEE-float inputs by the exact sign of their
   rational margin (the reference for the certified-sign primitive).
 """
@@ -178,37 +178,6 @@ def all_breakpoints(branches: tuple[Branch, ...]) -> set[Fraction]:
     return points
 
 
-def interval_owners(
-    *, branches: tuple[Branch, ...], points: set[Fraction]
-) -> list[tuple[Fraction, Fraction, tuple[str, ...]]]:
-    """Return the exact owner of every open cell between consecutive breakpoints.
-
-    Evaluating one interior representative (the cell midpoint) resolves open-cell
-    ownership that vertex-only argmax misses.
-    """
-    ordered = sorted(points)
-    out: list[tuple[Fraction, Fraction, tuple[str, ...]]] = []
-    for left, right in pairwise(ordered):
-        if right <= left:
-            continue
-        mid = (left + right) / 2
-        try:
-            _, owners = exact_envelope(branches=branches, q=mid)
-        except ValueError:
-            continue
-        out.append((left, right, owners))
-    return out
-
-
-def f1_branches() -> tuple[Branch, ...]:
-    """Return the three-branch witness (A=1+R/10, B=.84+R/3, C=.2+R)."""
-    return (
-        Branch("A", (F(0), F(1)), (F(1), F(11, 10)), (F(10), F(10))),
-        Branch("B", (F(0), F(1)), (F(21, 25), F(88, 75)), (F(3), F(3))),
-        Branch("C", (F(3, 5), F(6, 5)), (F(4, 5), F(7, 5)), (F(1), F(1))),
-    )
-
-
 def to_fraction(x: float) -> Fraction:
     """Return the exact rational value of an IEEE float."""
     return Fraction(float(x))
@@ -251,20 +220,6 @@ def exact_margin(*, a: FloatSegment, b: FloatSegment, x: float | Fraction) -> Fr
 def sign(x: Fraction) -> int:
     """Return the sign of a rational as -1, 0, or +1."""
     return (x > 0) - (x < 0)
-
-
-def exact_crossing(*, a: FloatSegment, b: FloatSegment) -> Fraction | None:
-    """Return the exact crossing of two float links inside their overlap, else None."""
-    lo = max(to_fraction(a.x0), to_fraction(b.x0))
-    hi = min(to_fraction(a.x1), to_fraction(b.x1))
-    if lo > hi:
-        return None
-    margin_lo = exact_margin(a=a, b=b, x=lo)
-    margin_hi = exact_margin(a=a, b=b, x=hi)
-    if margin_lo == margin_hi:
-        return lo if margin_lo == 0 and lo == hi else None
-    root = lo - margin_lo * (hi - lo) / (margin_hi - margin_lo)
-    return root if lo <= root <= hi else None
 
 
 def classify_cell(

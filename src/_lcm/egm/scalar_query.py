@@ -12,11 +12,9 @@ from _lcm.continuation import EGMQuerySpec
 from _lcm.egm.carry import EGM_ENDOGENOUS_COORDINATE
 from _lcm.egm.interp import locate_on_grid
 from _lcm.egm.preferences import (
-    NEWTON_ACTION_FLOOR,
     Preferences,
     get_discount_factor_reader,
     get_preferences_builder,
-    newton_action_ceiling,
 )
 from _lcm.egm.query_data import EGMQueryData, QueryNodeKind
 from _lcm.solution.feasibility import (
@@ -87,8 +85,7 @@ def build_scalar_egm_query(
         build_preferences=get_preferences_builder(
             functions=functions,
             action_name=bound.action,
-            action_lower=NEWTON_ACTION_FLOOR,
-            action_upper=newton_action_ceiling(model.offsets),
+            scale_grid=model.offsets,
         ),
         read_discount_factor=get_discount_factor_reader(
             functions=functions,

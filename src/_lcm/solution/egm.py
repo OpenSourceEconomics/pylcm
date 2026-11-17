@@ -1841,17 +1841,14 @@ def _build_egm_core(
     """
     from _lcm.egm.one_asset_egm_step import egm_one_asset_step  # noqa: PLC0415
     from _lcm.egm.preferences import (  # noqa: PLC0415
-        NEWTON_ACTION_FLOOR,
         get_discount_factor_reader,
         get_preferences_builder,
-        newton_action_ceiling,
     )
 
     build_preferences = get_preferences_builder(
         functions=functions,
         action_name=consumption_action,
-        action_lower=NEWTON_ACTION_FLOOR,
-        action_upper=newton_action_ceiling(savings_grid),
+        scale_grid=savings_grid,
     )
     read_discount_factor = get_discount_factor_reader(
         functions=functions, koopmans_aggregator=koopmans_aggregator
