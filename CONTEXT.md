@@ -26,8 +26,22 @@ _Avoid_: initial values, start states
 ### Model structure
 
 **Regime**:
-A self-contained block of the model with its own states, actions, constraints and
-functions; a subject is in exactly one regime per period.
+What a subject is in during a period: a problem together with the rule for leaving
+it in that period. A subject is in exactly one regime per period. A regime that
+declares states, actions and functions itself owns a problem no other regime shares.
+_Avoid_: visible regime, status, view
+
+**Problem**:
+An action problem: states, actions, constraints, functions and laws of motion,
+valued with next period's regimes and with nothing from the current period. Several
+regimes may share one problem.
+_Avoid_: hidden regime, stage, action regime
+
+**Outside value**:
+What a member of a regime gets by leaving it in the current period: the value of the
+destination's problem at the member's projected state, given the current shocks the
+decision observes, and with no further move in that period.
+_Avoid_: benchmark, threat point, participating value
 
 **Action-free regime**:
 A regime that declares no actions. Its constraints, if any, depend only on states
