@@ -214,6 +214,24 @@ def demanded_query_order(
 
 
 @dataclass(frozen=True, kw_only=True)
+class OutsideValueRead:
+    """Proof, made when the model is built, that an outside read lands on stored nodes.
+
+    Every state the read projects is a point of the destination's grid, and each
+    destination shock group kept as an axis is fixed by an ancestor's frame on the
+    destination's own nodes. The destination's other groups are integrated, since no
+    ancestor observes them.
+    """
+
+    label: str
+    """Name of the destination's array, unique per destination and kept groups."""
+    groups: tuple[ShockGroupName, ...]
+    """The destination's plan groups kept as axes, in plan order."""
+    origins: tuple[str, ...]
+    """For each kept group, the query whose frame enumerates the group's nodes."""
+
+
+@dataclass(frozen=True, kw_only=True)
 class QueryNode:
     """Canonical action problem and its explicitly named transient readers."""
 
@@ -278,6 +296,12 @@ class QueryNode:
 
     The mass where no exit is available then enters once, through one more row
     per kept row, at the value of staying.
+    """
+    outside_value: OutsideValueRead | None = None
+    """Proof that this outside read lands on the destination's stored nodes.
+
+    None when the build cannot prove it; the read keeps its Raw identity either
+    way, since it is the same problem value.
     """
 
     def __post_init__(self) -> None:

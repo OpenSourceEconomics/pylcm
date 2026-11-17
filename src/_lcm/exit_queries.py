@@ -19,9 +19,11 @@ from dags.tree import qname_from_tree_path
 from _lcm.current_iid import CurrentIIDPlan
 from _lcm.engine import Regime
 from _lcm.exits import exit_for_phase, exit_functions
+from _lcm.outside_values import UnalignedOutsideRead, align_outside_read
 from _lcm.policy_queries import (
     _PHYSICAL_CONTEXTS,
     _TASTE,
+    OutsideValueRead,
     PolicyAnswer,
     QueryKind,
     QueryNode,
@@ -35,6 +37,7 @@ from _lcm.policy_queries import (
 from _lcm.query_information import default_chunk_size
 from _lcm.renegotiation import FixedNode, RenegotiationQueries
 from _lcm.solution.contract import SolverBuildContext
+from _lcm.solution.grid_search import GridSearch
 from _lcm.typing import PytreeValue, QualifiedName
 from _lcm.utils.functools import (
     ComposedProjection,
@@ -43,7 +46,7 @@ from _lcm.utils.functools import (
 from _lcm.utils.functools import (
     call_with_declared_arguments as _call,
 )
-from lcm.exceptions import RegimeInitializationError
+from lcm.exceptions import RegimeInitializationError, UnsupportedOperationError
 from lcm.exits import Consent, Exit, ExitRole, MutualConsent, Unilateral
 from lcm.grids import DiscreteGrid
 from lcm.shocks import Discrete, ShockGroupName, ShockName, _fingerprint
@@ -57,6 +60,11 @@ from lcm.typing import (
     StateName,
     UserFunction,
 )
+
+# Whether the solve's exit graphs mark the outside reads proved aligned. Read once per
+# lowering when the model is built; simulation and participation graphs never mark
+# them.
+_READ_STORED_OUTSIDE_VALUES: bool = True
 
 
 def _predicate(
@@ -443,6 +451,13 @@ class _QueryGraphBuilder:
     """Transient graph under construction; frozen by the caller on completion."""
     keys: list[str] = field(default_factory=list)
     """Construction-local identities reserved before recursive descent."""
+    outside_reads: dict[str, tuple[RegimeName, str]] = field(default_factory=dict)
+    """Reads of a destination's problem: the exit's source and the member priced.
+
+    The targets of every exit that needs no consent, at any depth, and a consent
+    exit's counterparty. A consent target and the reads of the source's own
+    problem are not outside reads.
+    """
 
     def bound(
         self,
@@ -865,6 +880,8 @@ class _QueryGraphBuilder:
                 },
             )
             inputs[operand] = producer
+            if not isinstance(declaration.rule, Consent):
+                self.outside_reads[producer] = (owner, f"member {member!r}")
             destination_members = self.contexts[target.regime].stakeholders
             index = (
                 None
@@ -927,6 +944,7 @@ class _QueryGraphBuilder:
                     for state in counterparty.projection
                 },
             )
+            self.outside_reads[inputs["counterparty_raw"]] = (owner, "the counterparty")
             couple_operand = targets["self"][0]
             participating = self.nodes[inputs[couple_operand]]
             hidden = participating.read.policy_information - (
@@ -957,8 +975,16 @@ def bind_exit_query_graph(
     period: int,
     phase: Phase = "solve",
     kind: QueryKind = QueryKind.FULL,
+    stored_outside_reads: bool = False,
+    value_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
 ) -> tuple[Mapping[str, QueryNode], str]:
-    """Bind demanded public reads after every actual canonical context exists."""
+    """Bind demanded public reads after every actual canonical context exists.
+
+    With `stored_outside_reads`, each outside read proved aligned carries its
+    `OutsideValueRead`, and an outside read of a problem solved without grid search
+    is refused. `value_periods_by_regime` names the periods each regime is solved
+    in; without it, a regime is solved in each of its active periods.
+    """
     aliases = {
         (owner, name): f"_lcm_exit_operand_{index}"
         for index, (owner, name) in enumerate(
@@ -985,7 +1011,75 @@ def bind_exit_query_graph(
     _bind_observation_sources(nodes=builder.nodes, period=period)
     _validate_query_projection_bindings(nodes=builder.nodes, period=period)
     _bind_sample(nodes=builder.nodes, root=root_key)
+    if stored_outside_reads:
+        _bind_outside_reads(
+            nodes=builder.nodes,
+            outside_reads=builder.outside_reads,
+            canonical_regimes=canonical_regimes,
+            value_periods_by_regime={
+                name: regime.active_periods
+                for name, regime in canonical_regimes.items()
+            }
+            if value_periods_by_regime is None
+            else value_periods_by_regime,
+        )
     return MappingProxyType(builder.nodes), root_key
+
+
+def _bind_outside_reads(
+    *,
+    nodes: dict[str, QueryNode],
+    outside_reads: Mapping[str, tuple[RegimeName, str]],
+    canonical_regimes: Mapping[RegimeName, Regime],
+    value_periods_by_regime: Mapping[RegimeName, tuple[int, ...]],
+) -> None:
+    """Mark the outside reads proved aligned; refuse reads of non-grid-search problems.
+
+    A problem solved on an endogenous grid publishes no stored array and cannot be
+    evaluated at a point, so no outside read of it is admitted.
+    """
+    for key, (source, member) in outside_reads.items():
+        alignment = align_outside_read(
+            key=key,
+            definitions=nodes,
+            canonical_regimes=canonical_regimes,
+            value_periods_by_regime=value_periods_by_regime,
+        )
+        node = nodes[key]
+        _fail_if_endogenous_grid_read(
+            node=node, alignment=alignment, source=source, member=member
+        )
+        if isinstance(alignment, OutsideValueRead):
+            nodes[key] = replace(node, outside_value=alignment)
+
+
+def _fail_if_endogenous_grid_read(
+    *,
+    node: QueryNode,
+    alignment: OutsideValueRead | UnalignedOutsideRead,
+    source: RegimeName,
+    member: str,
+) -> None:
+    """Refuse an outside read of a problem solved without grid search."""
+    target = node.read.target
+    solver = node.context.user_regimes_at(period=node.read.period)[target].solver
+    if isinstance(solver, GridSearch):
+        return
+    # A solver bound to its regime subclasses the public configuration it names.
+    name = next(
+        cls.__name__ for cls in type(solver).__mro__ if not cls.__name__.startswith("_")
+    )
+    read = f"The outside value of {member} in the exit of {source!r} reads {target!r}"
+    if isinstance(alignment, UnalignedOutsideRead):
+        raise UnsupportedOperationError(
+            f"{read}, whose {name} solver cannot be evaluated at a point, at a "
+            f"projected state that is not provably a grid point ({alignment.reason}). "
+            f"Put the projected states on the grid of {target!r}."
+        )
+    raise UnsupportedOperationError(
+        "Stored outside values of an endogenous-grid problem are not produced yet. "
+        f"{read}, solved with the {name} solver, at points of its grid."
+    )
 
 
 def acting_kinds(
@@ -1334,6 +1428,7 @@ def lower_exit_queries(
     canonical_regimes: Mapping[RegimeName, Regime],
     root: RegimeName,
     period: int,
+    value_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
 ) -> _PolicyQueryKernel:
     """Lower a bound Full graph into the existing native publication schedule."""
     nodes, root_key = bind_exit_query_graph(
@@ -1341,6 +1436,8 @@ def lower_exit_queries(
         canonical_regimes=canonical_regimes,
         root=root,
         period=period,
+        stored_outside_reads=_READ_STORED_OUTSIDE_VALUES,
+        value_periods_by_regime=value_periods_by_regime,
     )
     root_context = contexts[root]
     kernel = build_policy_query_kernel(
@@ -1403,6 +1500,7 @@ def install_exit_policy_queries(
                     canonical_regimes=canonical_regimes,
                     root=owner,
                     period=period,
+                    value_periods_by_regime=value_periods_by_regime,
                 )
                 structure = (
                     solution.period_signatures[period],
