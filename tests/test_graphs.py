@@ -14,6 +14,7 @@ import pytest
 
 from _lcm.reachability import EdgeStatus
 from _lcm.typing import JSONValue
+from _lcm_regime_finder.layout_search import analyze_layouts
 from _lcm_regime_finder.production import recommend
 from lcm import (
     AgeGrid,
@@ -115,8 +116,6 @@ def test_find_regimes_checks_a_native_model(period_model: Model) -> None:
 
 def test_layout_curve_runs_the_layout_search_alone(*, period_model: Model) -> None:
     """The public entry point returns the layout search's own record."""
-    from _lcm_regime_finder.layout_search import analyze_layouts  # noqa: PLC0415
-
     curve = layout_curve(period_model, facts_backend="metadata")
     expected = analyze_layouts(period_model, facts_backend="metadata")
     assert isinstance(curve, dict)
