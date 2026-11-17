@@ -132,8 +132,6 @@ def one_case(project: Path, case: Case, oracle: ModuleType) -> Observation:
                 "analyze-model",
                 "--facts-backend",
                 "metadata",
-                "--search-mode",
-                "heuristic",
                 str(source),
                 "--output",
                 str(analysis),

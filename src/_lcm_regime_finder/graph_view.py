@@ -3,36 +3,6 @@ from __future__ import annotations
 from copy import deepcopy
 
 
-def boundary_maps(analysis, plan):
-    """Instantiate explicit source/action and target/state maps for one plan.
-
-    The full original law is transported jointly. The original source callback
-    is an identity anchor; this object never asserts that a coarse coordinate
-    can reconstruct a unique original state.
-    """
-    chosen = {cell: interface for block in plan['blocks'] for cell, interface in block['option_by_cell'].items()}
-    options = {cell: next(o for o in value['options'] if o['id'] == chosen[cell])
-               for cell, value in analysis['interfaces'].items()}
-    result = []
-    for relation in analysis['declarations']['relations']:
-        source = options[relation['source']]
-        result.append({'original_relation': relation['id'], 'kind': relation['kind'],
-                       'phase': relation.get('phase', 'both'), 'ownership': deepcopy(relation.get('ownership')),
-                       'source_cell': relation['source'], 'source_interface': source['id'],
-                       'source_action_reconstruction': deepcopy(source['action_reconstruction']),
-                       'original_callbacks': deepcopy(relation.get('callbacks', [])),
-                       'original_joint_outputs': deepcopy(relation.get('joint_outputs', {})),
-                       'original_state_updates': deepcopy(relation.get('state_updates', {})),
-                       'query_target': relation.get('query_target'),
-                       'targets': [{'cell': target, 'interface': options[target]['id'],
-                                    'state_projection': deepcopy(options[target]['state_projection']),
-                                    'bound_constants': deepcopy(options[target]['constants'])}
-                                   for target in relation.get('targets', [])],
-                       'transport': 'push forward the full original joint law through these target maps; factor source consumers through the checked reduced DAG',
-                       'native_execution': 'NOT_RUN'})
-    return result
-
-
 def typed_incidence_graph(declarations):
     """Keep each full relation as a node, including joint laws and owned routes.
 

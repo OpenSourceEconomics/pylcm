@@ -114,7 +114,6 @@ def test_constructor_export_and_public_analysis_retain_original_domain(
             resolved = find_regimes(
                 source,
                 budget={"seconds": 30},
-                search_mode="exact",
                 facts_backend="metadata",
             )
             assert (resolved["status"]) == ("COMPLETE"), resolved["analysis"][
@@ -139,7 +138,6 @@ def test_constructor_export_and_public_analysis_retain_original_domain(
             report = find_regimes(
                 source,
                 budget={"seconds": 30},
-                search_mode="exact",
                 facts_backend="metadata",
             )
             assert (report["status"]) == ("UNRESOLVED")

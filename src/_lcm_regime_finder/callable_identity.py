@@ -20,6 +20,7 @@ import hashlib
 import inspect
 import json
 import marshal
+import re
 import os
 from pathlib import Path
 import sys
@@ -162,9 +163,31 @@ def _file_stamp(path):
     return stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns
 
 
+def _beartype_renames(*functions):
+    """Name beartype's generated ``__beartype_object_<id(default)>`` parameters by position."""
+    generated = {name for function in functions
+                 for name, default in (getattr(function, '__kwdefaults__', None) or {}).items()
+                 if name == '__beartype_object_' + str(id(default))}
+    code = getattr(functions[-1], '__code__', None)
+    positions = code.co_varnames if code is not None else ()
+    order = sorted(generated, key=lambda name: (positions.index(name) if name in positions else len(positions), name))
+    return {name: '__beartype_object_' + str(index) for index, name in enumerate(order)}
+
+
 def _code_digest(value):
+    """Digest a function's code; a beartype wrapper's code without its memory addresses.
+
+    beartype names a generated parameter and the wrapper's code file by memory address,
+    and the line table's column offsets shift with the address's digits.
+    """
     code = getattr(value, '__code__', None)
-    return hashlib.sha256(marshal.dumps(code)).hexdigest() if code is not None else None
+    if code is None:
+        return None
+    if code.co_filename.startswith('<@beartype('):
+        renames = _beartype_renames(value)
+        code = code.replace(co_filename=re.sub(r' at 0x[0-9a-f]+>$', '>', code.co_filename), co_linetable=b'',
+                            co_varnames=tuple(renames.get(name, name) for name in code.co_varnames))
+    return hashlib.sha256(marshal.dumps(code)).hexdigest()
 
 
 def _live_token(value):
@@ -1008,6 +1031,17 @@ def _beartype_interface(value: object) -> tuple[types.FunctionType, inspect.Sign
     return interface
 
 
+def _canonical_beartype_names(result, value, raw):
+    """Record beartype's generated parameters under their positional names (see `_code_digest`)."""
+    renames = _beartype_renames(value, raw)
+    for key in ('arguments', 'raw_arguments'):
+        if key in result:
+            result[key] = [renames.get(name, name) for name in result[key]]
+    for key in ('defaults', 'parameter_kinds', 'physical_parameter_kinds'):
+        if key in result:
+            result[key] = {renames.get(name, name): item for name, item in result[key].items()}
+
+
 def _capture_record(value, normalize, session):
     result = {'kind': 'callable', 'module': getattr(value, '__module__', type(value).__module__),
               'qualname': getattr(value, '__qualname__', type(value).__qualname__),
@@ -1143,6 +1177,7 @@ def _capture_record(value, normalize, session):
         wrapped = inspect.getattr_static(value, '__wrapped__', None)
         if callable(wrapped) and wrapped is not value:
             result['wrapped_target'] = session.reference(wrapped, normalize)
+        _canonical_beartype_names(result, value, raw)
         result['binding_sha256'] = _digest({key: result.get(key) for key in
                                           ('defaults', 'partial_bindings', 'bound_self')})
         return result
@@ -1240,6 +1275,7 @@ def _capture_record(value, normalize, session):
                     pass
         except (SyntaxError, UnboundLocalError):
             pass
+    _canonical_beartype_names(result, value, raw)
     result['binding_sha256'] = _digest({key: callable_record_payload({'value': result.get(key)})['value']
                                        for key in ('bindings', 'defaults', 'bound_self', 'partial_bindings')})
     return result

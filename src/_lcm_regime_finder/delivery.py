@@ -13,8 +13,7 @@ from .owned_mutations import Mutation, OwnedMutationPlan, resource_mutations
 
 
 DECISION_EXPORTS = (
-    'candidate-boundaries.json', 'recommended-boundaries.json',
-    'proposal-decisions.json', 'report-data.json', 'report-files.json', 'report-manifest.json',
+    'report-data.json', 'report-files.json', 'report-manifest.json',
     'family-boundary.json', 'certificate.json', 'certificate-check.json',
     'transport-check.json', 'recommended.mmd',
 )
@@ -148,11 +147,11 @@ def invalidate_delivery(output, *, status, reason, details=None):
         (output / (name + '.writing')).unlink(missing_ok=True)
     record = dict(details or {})
     # No result copied from a failed worker can smuggle an old authorization.
-    for key in ('recommended', 'certificate', 'decisions', 'proposal_decisions',
+    for key in ('recommended', 'certificate', 'decisions', 'layouts',
                 'analysis', 'independent_certificate_check', 'generated_transport'):
         record.pop(key, None)
-    record.update(schema='regime-production-result/v1', status=status,
-                  reason=str(reason), recommendation=None, scenarios=[],
+    record.update(schema='regime-production-result/v2', status=status,
+                  reason=str(reason), recommendation=None, layouts=None,
                   transformation_authorized=False)
     message = ('# Metadata analysis ' + status.lower() + '\n\n' + str(reason) +
                '\n\nNo optimum or transformation is authorized by this delivery. '

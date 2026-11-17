@@ -92,9 +92,7 @@ def model(*, shock_group: ShockGroup | None = None) -> Model:
 
 def test_capture_to_recommendation_retains_probability_only_history() -> None:
     captured = read_model(model())
-    report = analyze_production(
-        captured, facts_backend="metadata", search_mode="heuristic"
-    )
+    report = analyze_production(captured, facts_backend="metadata")
     # Literal observed-exit oracle: max(stay=.5, target=0/2) in
     # the two offer outcomes. Only their probabilities use this state.
     probabilities = offer_probabilities(jnp.asarray([0, 1], dtype=jnp.int32))
@@ -125,9 +123,7 @@ def test_continuous_law_inputs_and_shared_callable_references_remain_live() -> N
             for key in ("capture_ref", "identity_sha256", "capture_graph_sha256")
         },
     }
-    report = analyze_production(
-        captured, facts_backend="metadata", search_mode="heuristic"
-    )
+    report = analyze_production(captured, facts_backend="metadata")
     assert (verify_production_result(captured, report)["status"]) == ("PASS")
     for cell in report["analysis"]["declarations"]["cells"]:
         assert all(
@@ -145,9 +141,7 @@ def test_unregistered_conditional_group_does_not_keep_an_unused_state() -> None:
         0.5,
         0.5,
     ]
-    report = analyze_production(
-        captured, facts_backend="metadata", search_mode="heuristic"
-    )
+    report = analyze_production(captured, facts_backend="metadata")
     assert (verify_production_result(captured, report)["status"]) == ("PASS")
     targets = [
         c
@@ -166,9 +160,7 @@ def test_independent_source_check_rejects_missing_or_miswired_law(
     *, subtests: pytest.Subtests
 ) -> None:
     captured = read_model(model())
-    report = analyze_production(
-        captured, facts_backend="metadata", search_mode="heuristic"
-    )
+    report = analyze_production(captured, facts_backend="metadata")
     for mutation in ("omit", "rename", "phase", "erase_inputs", "missing_group"):
         analysis = deepcopy(report["analysis"])
         declaration = analysis["declarations"]
@@ -189,17 +181,13 @@ def test_independent_source_check_rejects_missing_or_miswired_law(
                 callback = declaration["callbacks"][law["callback"]]
                 callback["arguments"] = callback["reads"] = []
         with subtests.test(mutation=mutation):
-            checked = check_semantics(
-                captured, declaration, analysis, check_coverage=False
-            )
+            checked = check_semantics(captured, declaration, analysis)
             assert (checked["status"]) == ("FAIL"), checked
 
 
 def test_original_shock_probability_mutation_invalidates_saved_recommendation() -> None:
     captured = read_model(model())
-    report = analyze_production(
-        captured, facts_backend="metadata", search_mode="heuristic"
-    )
+    report = analyze_production(captured, facts_backend="metadata")
     source = deepcopy(captured)
     source["shocks"]["offers"] = source["shocks"]["unregistered"]
     assert (verify_production_result(source, report)["status"]) == ("FAIL")

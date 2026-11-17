@@ -146,9 +146,7 @@ def test_minimal_binary_public_entrypoint() -> None:
     assert not (constant_representation_is_policy_sufficient())
     source = original_case()
     unchanged = deepcopy(source)
-    report = find_regimes(
-        source, budget={"seconds": 30}, search_mode="exact", facts_backend="metadata"
-    )
+    report = find_regimes(source, budget={"seconds": 30}, facts_backend="metadata")
     _assert_no_unproved_removal(report)
     assert (source) == (unchanged)
     assert (verify_production_result(source, report)["status"]) == ("UNRESOLVED")
@@ -168,7 +166,6 @@ def test_age_period_phase_and_domain_mutations(*, subtests: pytest.Subtests) -> 
             report = find_regimes(
                 source,
                 budget={"seconds": 30},
-                search_mode="exact",
                 facts_backend="metadata",
             )
             _assert_no_unproved_removal(report)
@@ -184,7 +181,6 @@ def test_resolved_effective_functions_retain_history(
             report = find_regimes(
                 source,
                 budget={"seconds": 30},
-                search_mode="exact",
                 facts_backend="metadata",
             )
             assert (report["status"]) == ("COMPLETE"), report.get("semantic_check")
@@ -197,9 +193,7 @@ def test_checker_rejects_old_false_complete_claim() -> None:
     # admitted-input witness. Recreate the relevant old producer assertions
     # while preserving the ORIGINAL wrapper and source identity.
     source = original_case()
-    report = find_regimes(
-        source, budget={"seconds": 30}, search_mode="exact", facts_backend="metadata"
-    )
+    report = find_regimes(source, budget={"seconds": 30}, facts_backend="metadata")
     _assert_no_unproved_removal(report)
     bad = deepcopy(report)
     analysis = bad["analysis"]

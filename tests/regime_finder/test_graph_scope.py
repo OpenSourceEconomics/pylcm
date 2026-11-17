@@ -16,7 +16,7 @@ from tests.regime_finder.test_model_adapter import snapshot, function
 
 def _analyze(source: Mapping[str, JSONValue]) -> dict[str, JSONValue]:
     result = analyze_production(
-        source, limits={"seconds": 10}, search_mode="exact", facts_backend="metadata"
+        source, limits={"seconds": 10}, facts_backend="metadata"
     )
     assert (result["status"]) == ("COMPLETE"), str(result.get("semantic_check"))[:2500]
     assert (
@@ -32,9 +32,6 @@ def test_constructed_graph_uses_regime_domains_without_calibration_or_allocation
     result = _analyze(source)
     declaration = json_member(result, "analysis", "declarations")
     assert (declaration["analysis_scope"]) == ("pylcm-structural-graph/v1")
-    scenarios = json_rows(result, "scenarios")
-    assert (len(scenarios)) == (1)
-    assert (json_member(scenarios[0], "allocation_contract")["kind"]) == ("per_block")
     assert not (
         any(
             item["kind"] == "allocation_contract"

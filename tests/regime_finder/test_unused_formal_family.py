@@ -99,7 +99,6 @@ def test_unused_outer_formal_does_not_create_a_false_family_disagreement() -> No
     assert ([unused_outer(value) for value in (-3, 0, 9)]) == ([0.0, 0.0, 0.0])
     report = find_regimes(
         native_fixture(callback=unused_outer),
-        search_mode="exact",
         facts_backend="metadata",
     )
     assert (report["semantic_check"]["errors"]) == ([])
@@ -128,7 +127,6 @@ def test_actual_and_transitive_inputs_stay_in_the_family(
             assert ([function(value) for value in (-3, 0, 9)]) == (expected)
             report = find_regimes(
                 native_fixture(callback=function),
-                search_mode="exact",
                 facts_backend="metadata",
             )
             assert (report["semantic_check"]["errors"]) == ([])
@@ -144,7 +142,6 @@ def test_captured_signature_with_unavailable_body_keeps_actual_input_scope() -> 
     assert ([unused_builtin(value) for value in (-3, 0, 9)]) == ([0.0, 0.0, 0.0])
     report = find_regimes(
         native_fixture(callback=unused_builtin),
-        search_mode="exact",
         facts_backend="metadata",
     )
     assert (report["semantic_check"]["errors"]) == ([])
@@ -164,7 +161,6 @@ def test_nested_closure_receiver_and_partial_inputs_remain_dependencies(
             assert (function(7)) == (expected)
             report = find_regimes(
                 native_fixture(callback=function),
-                search_mode="exact",
                 facts_backend="metadata",
             )
             assert (report["semantic_check"]["errors"]) == ([])
@@ -180,7 +176,6 @@ def test_nested_closure_receiver_and_partial_inputs_remain_dependencies(
 def test_variadic_helper_retains_the_conservative_outer_scope() -> None:
     report = find_regimes(
         native_fixture(callback=variadic_outer),
-        search_mode="exact",
         facts_backend="metadata",
     )
     assert (report["semantic_check"]["errors"]) == ([])

@@ -31,10 +31,9 @@ def test_interface_expansion_observes_the_metadata_deadline() -> None:
             original(),
             limits={"seconds": 1},
             facts_backend="metadata",
-            search_mode="heuristic",
         )
     assert (result["status"]) == ("INCOMPLETE")
     assert (result["semantic_check"]["status"]) == ("NOT_RUN")
     assert ("Metadata dependency analysis budget exhausted") in (result["error"])
-    assert not (result["scenarios"])
+    assert (result["layouts"]) is None
     assert (len(expanded)) == (1)

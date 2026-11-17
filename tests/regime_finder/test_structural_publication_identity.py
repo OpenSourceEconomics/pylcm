@@ -57,8 +57,6 @@ def test_actual_saved_report_passes_public_checker_on_unchanged_source() -> None
                     "analyze-model",
                     "--facts-backend",
                     "metadata",
-                    "--search-mode",
-                    "heuristic",
                     str(source),
                     "--output",
                     str(output),
@@ -86,9 +84,7 @@ def test_publication_does_not_change_any_committed_report_field() -> None:
         root = Path(tmp)
         source, owner = _create_source(root)
         problem = cli.load_problem(source)
-        report = analyze_production(
-            problem, facts_backend="metadata", search_mode="heuristic"
-        )
+        report = analyze_production(problem, facts_backend="metadata")
         expected = deepcopy(report)
         assert (verify_production_result(problem, report)["status"]) == ("PASS")
         for folder in (root / "first", root / "second/nested"):

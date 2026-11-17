@@ -30,4 +30,3 @@ def assert_delivery(exit_code, result_path, protected, *, success):
     assert not result.get("transformation_authorized"), result
     assert not result.get("recommendation"), result
     assert not result.get("decisions"), result
-    assert not result.get("proposal_decisions"), result

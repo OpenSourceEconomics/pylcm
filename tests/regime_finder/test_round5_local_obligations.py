@@ -1,27 +1,16 @@
 """Public native normalization must preserve locality of interpretation gaps."""
 
-import pytest
-from copy import deepcopy
 from collections.abc import Callable, Sequence
-from itertools import product
+from functools import partial
 
 from _lcm_regime_finder import find_regimes as _find_regimes
-from functools import partial
+from _lcm_regime_finder.records import JSONValue
 
 # These regressions exercise the optional stronger semantic audit, not the
 # Model-graph contract whose primitives retain their declared dependencies.
 find_regimes = partial(_find_regimes, analysis_scope="full_semantics")
 from _lcm_regime_finder.model_snapshot import source_function
-from _lcm_regime_finder.records import JSONValue
-from _lcm_regime_finder.proposal_decision import build_decisions, verify_decisions
-from .round5_locality_oracle import unchanged_applications, literal_loop_payoff
-from .test_declaration_ingestion import (
-    json_entries,
-    json_list,
-    json_member,
-    json_object,
-    json_rows,
-)
+from .test_declaration_ingestion import json_rows
 from .test_model_adapter import grid
 
 
@@ -34,13 +23,6 @@ def opaque_utility(x: int, history: int) -> int:
 
 def safe_utility(x: int) -> int:
     return x
-
-
-def variadic_utility(x: int, history: int, **extra: int) -> int:
-    result = x
-    for weight in (1, 2):
-        result = result + weight * history
-    return result
 
 
 def native_fixture(
@@ -101,153 +83,17 @@ def _produce(
     source: dict[str, JSONValue] | None = None,
 ) -> tuple[dict[str, JSONValue], dict[str, JSONValue]]:
     source = native_fixture() if source is None else source
-    report = find_regimes(source, search_mode="exact", facts_backend="metadata")
-    assert ("proposal_decisions") in (report), report
+    report = find_regimes(source, facts_backend="metadata")
     assert not (report["semantic_check"]["errors"]), report["semantic_check"]
     return source, report
 
 
 def test_actual_capture_gap_is_local_on_public_native_path() -> None:
-    source, report = _produce()
+    _, report = _produce()
     obligations = json_rows(report, "analysis", "obligations")
     assert ([o["kind"] for o in obligations]) == (["callback_interpretation"])
     assert (report["status"]) == ("UNRESOLVED")
-    changed = [
-        r
-        for r in json_rows(report, "proposal_decisions")[1:]
-        if r["changed_interfaces"]
-    ]
-    assert changed
-    for row in changed:
-        assert (row["disposition"]) == ("adopt"), row
-        assert (
-            {x["original_regime"] for x in json_rows(row, "changed_interfaces")}
-        ) == ({"safe"})
-        assert any(
-            json_member(d, "obligation")["kind"] == "callback_interpretation"
-            for d in json_rows(row, "discharged_unchanged_obligations")
-        )
-    assert (
-        verify_decisions(
-            source,
-            report["analysis"],
-            report["scenarios"],
-            report["proposal_decisions"],
-        )["status"]
-    ) == ("PASS")
-
-
-def test_independent_oracle_and_domain_mutations(*, subtests: pytest.Subtests) -> None:
-    for values in ((-2, 0), (1, 3, 8), (8, 3, 1)):
-        with subtests.test(values=values):
-            _, report = _produce(native_fixture(values=values))
-            assert all(
-                r["disposition"] == "adopt"
-                for r in json_rows(report, "proposal_decisions")[1:]
-            )
-            for x, history in product(values, repeat=2):
-                actual = {"opaque": ("actual-capture", (x, history))}
-                assert unchanged_applications(actual, deepcopy(actual))
-                assert (opaque_utility(x, history)) == (literal_loop_payoff(x, history))
-                changed = {"opaque": ("actual-capture", (x, history + 1))}
-                assert not (unchanged_applications(actual, changed))
-                assert (opaque_utility(x, history)) != (
-                    literal_loop_payoff(x, history + 1)
-                )
-
-
-def test_capture_variadic_and_query_premises_are_never_interpretation(
-    *, subtests: pytest.Subtests
-) -> None:
-    for kind in (
-        "capture_identity",
-        "variadic_dependency",
-        "policy_query_evaluation",
-        "role_timing_contract",
-        "unrecognized_future_obligation",
-    ):
-        with subtests.test(kind=kind):
-            source, report = _produce()
-            analysis = deepcopy(json_member(report, "analysis"))
-            obligations = json_list(analysis, "obligations")
-            item = dict(json_object(obligations[0]), id="negative-control", kind=kind)
-            obligations.append(item)
-            rows = build_decisions(source, analysis, report["scenarios"])[1:]
-            assert all(r["disposition"] == "investigate" for r in rows)
-            assert all(item in r["residual_obligations"] for r in rows)
-    _, report = _produce(native_fixture(callback=variadic_utility))
-    assert all(
-        r["disposition"] == "investigate"
-        for r in json_rows(report, "proposal_decisions")[1:]
-    )
-
-
-def test_source_binding_and_pointer_mutations_cannot_be_discharged(
-    *, subtests: pytest.Subtests
-) -> None:
-    source, report = _produce()
-    for field, value in (
-        ("source_path", "/user_regimes/safe/fields/functions/utility"),
-        ("identity", "different-source"),
-        ("bindings", {"changed": 1}),
-        ("arguments", ["x"]),
-    ):
-        with subtests.test(field=field):
-            analysis = deepcopy(json_member(report, "analysis"))
-            callback = next(
-                c
-                for c in json_entries(analysis, "declarations", "callbacks")
-                if c.get("status") == "opaque"
-            )
-            callback[field] = value
-            rows = build_decisions(source, analysis, report["scenarios"])[1:]
-            assert all(r["disposition"] != "adopt" for r in rows)
-            assert not (
-                any(
-                    d["obligation"]["kind"] == "callback_interpretation"
-                    for r in rows
-                    for d in r["discharged_unchanged_obligations"]
-                )
-            )
-
-
-def test_altered_opaque_interface_requires_own_factorization() -> None:
-    source, report = _produce()
-    analysis = deepcopy(json_member(report, "analysis"))
-    cell = next(
-        c
-        for c in json_rows(analysis, "declarations", "cells")
-        if c["regime"] == "opaque"
-    )
-    cell_id = cell["id"]
-    assert isinstance(cell_id, str)
-    for option in json_rows(analysis, "interfaces", cell_id, "options"):
-        json_member(option, "states").pop("history")
-        json_member(option, "state_projection")["history"] = {"kind": "drop"}
-    rows = build_decisions(source, analysis, report["scenarios"])[1:]
-    assert all(r["disposition"] != "adopt" for r in rows)
-    assert all(
-        any(o["kind"] == "callback_interpretation" for o in r["residual_obligations"])
-        for r in rows
-    )
-
-
-def test_all_uses_including_second_changed_cell_must_be_unchanged() -> None:
-    source = native_fixture()
-    second = json_member(source, "user_regimes", "safe", "fields")
-    json_member(second, "functions")["utility"] = deepcopy(
-        json_member(source, "user_regimes", "opaque", "fields", "functions")["utility"]
-    )
-    json_member(second, "states")["unused"] = grid([0, 1])
-    _, report = _produce(source)
-    assert all(
-        r["disposition"] == "investigate"
-        for r in json_rows(report, "proposal_decisions")[1:]
-    )
-    assert all(
-        any(
-            o["kind"] == "callback_interpretation"
-            for o in json_rows(r, "residual_obligations")
-        )
-        for r in json_rows(report, "proposal_decisions")[1:]
-    )
+    (obligation,) = obligations
+    source_path = obligation["source_path"]
+    assert isinstance(source_path, str), obligation
+    assert source_path.startswith("/user_regimes/opaque/"), obligation

@@ -30,7 +30,6 @@ def test_separate_phase_receipt_includes_checks_and_delivery() -> None:
             output,
             seconds=10,
             facts_backend="metadata",
-            search_mode="heuristic",
         )
         receipt = json.loads((output / "delivery-timings.json").read_text())
         assert all(
@@ -39,9 +38,8 @@ def test_separate_phase_receipt_includes_checks_and_delivery() -> None:
                 "normalization_seconds",
                 "metadata_analysis_seconds",
                 "source_check_seconds",
-                "frontier_search_seconds",
-                "frontier_check_seconds",
-                "proposal_check_seconds",
+                "layout_search_seconds",
+                "layout_check_seconds",
             )
         )
         assert all(
@@ -49,7 +47,7 @@ def test_separate_phase_receipt_includes_checks_and_delivery() -> None:
             for name in (
                 "checkpoint_write_seconds",
                 "canonical_report_write_seconds",
-                "graph_and_boundary_artifacts_seconds",
+                "graph_artifacts_seconds",
                 "readable_report_seconds",
             )
         )
@@ -76,7 +74,6 @@ def test_existing_capture_consumes_the_same_budget() -> None:
                 root / "result",
                 seconds=1,
                 facts_backend="metadata",
-                search_mode="heuristic",
             )
         summary = json.loads((root / "result/summary.json").read_text())
         assert (summary["metadata_budget"]["capture_seconds_charged"]) == (2.0)
@@ -102,7 +99,6 @@ def test_stale_success_is_replaced_on_early_exhaustion() -> None:
                 output,
                 seconds=0,
                 facts_backend="metadata",
-                search_mode="heuristic",
             )
         summary = json.loads((output / "summary.json").read_text())
         assert (summary["status"]) == ("INCOMPLETE")
@@ -136,7 +132,6 @@ def test_capture_receipt_is_bound_to_exact_snapshot() -> None:
                 source,
                 root / "result",
                 facts_backend="metadata",
-                search_mode="heuristic",
             )
 
 
@@ -196,7 +191,6 @@ def test_late_budget_exit_cannot_publish_worker_success(
                         output,
                         seconds=10,
                         facts_backend="metadata",
-                        search_mode="heuristic",
                     )
             summary = json.loads((output / "summary.json").read_text())
             report = json.loads((output / "report.json").read_text())
@@ -231,8 +225,6 @@ def test_direct_cli_guards_the_entire_output_namespace(
                         "analyze-model",
                         "--facts-backend",
                         "metadata",
-                        "--search-mode",
-                        "heuristic",
                         str(original),
                         "--output",
                         str(output),
