@@ -28,7 +28,7 @@ NATIVE_SCHEDULE_TYPES = frozenset(name for name in NATIVE_INPUT_TYPES
     if name.startswith(('_lcm.regime_building.schedules.', '_lcm.regime_building.transition_support.'))
     or name == 'lcm.transition.StochasticTransition')
 
-_PARTICIPATION_FILE = "19cc45ca193a562403f57f5d96525cf1e68641bef68abc3d4f4f6ea352d8301a"
+_PARTICIPATION_FILE = "6563ec4dd3a98aa957e868e0632ac00eb5982b00dd94c1346b6356ccf6aff94f"
 # Schedule files whose `_PeriodDispatch` and `_ProbabilityConstant` are identical.
 # The second counts every period a gated source reads in `gated_source_periods`.
 _SCHEDULES_FILES = (
@@ -83,7 +83,7 @@ _AUTHORITIES = {
         ('17dcfe8cc029b7160ab93846ad05d942b08f57162b7ec0eefc25105d020926a8',),
     ),
     "lcm.participation.ParticipationRead": (
-        "4d036ef554fa2b2e93e8b1f8da3366c701700c4e439006944674570d37e0d428",
+        "89f7727400c91fe8de17013e818ec7e282bf8e45f01ab8b8bb2fc7861441386b",
         (_PARTICIPATION_FILE,),
     ),
     "lcm.participation.ParticipationCheck": (
