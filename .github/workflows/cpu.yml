@@ -1600,6 +1600,90 @@ jobs:
             --junitxml="$pylcm_junit" \
             ${coverage_args[@]+"${coverage_args[@]}"}
           check_population "$pylcm_junit"
+      - name: Run tests/simulation/test_eager_operation_placement.py
+        # Unchained: its own step, its own fresh pytest process, its own JUnit
+        # report and population guard. Never merged with a sibling -- equal
+        # device count is not evidence of cache, environment or serial-group
+        # compatibility. `always()` so one lane's failure does not hide the
+        # rest; the job still fails if any step did.
+        if: always()
+        shell: bash {0}
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          check_population() {
+            local xml="$1" total skipped
+            total=$(grep -oP ' tests="\K[0-9]+' "$xml" | head -n 1)
+            skipped=$(grep -oP ' skipped="\K[0-9]+' "$xml" | head -n 1)
+            if [ -z "$total" ] || [ "$total" -eq 0 ]; then
+              echo "NOTHING COLLECTED: $xml" >&2
+              return 1
+            fi
+            if [ "$skipped" -eq "$total" ]; then
+              echo "EVERYTHING SKIPPED: $xml ($skipped/$total)" >&2
+              return 1
+            fi
+            if [ "${2:-}" = "no-skips" ] && [ "$skipped" -ne 0 ]; then
+              echo "NATIVE CASES SKIPPED: $xml ($skipped/$total)" >&2
+              return 1
+            fi
+          }
+          coverage_args=()
+          if test "$PYLCM_CI_PRECISION" = "64"; then
+            coverage_args=(--cov=./ --cov-append --cov-report=)
+          fi
+          pylcm_junit=reports/junit-cpu-fp$PYLCM_CI_PRECISION-eager-operation-placement.xml
+          pixi run -e tests-cpu pytest \
+            tests/simulation/test_eager_operation_placement.py \
+            --precision="$PYLCM_CI_PRECISION" -p no:randomly \
+            --policy-child --hardware-profile=cpu \
+            --timeout=600 --timeout-method=thread -v -n 0 \
+            --durations=25 \
+            --junitxml="$pylcm_junit" \
+            ${coverage_args[@]+"${coverage_args[@]}"}
+          check_population "$pylcm_junit"
+      - name: Run tests/simulation/test_runtime_regimes_lifetime.py
+        # Unchained: its own step, its own fresh pytest process, its own JUnit
+        # report and population guard. Never merged with a sibling -- equal
+        # device count is not evidence of cache, environment or serial-group
+        # compatibility. `always()` so one lane's failure does not hide the
+        # rest; the job still fails if any step did.
+        if: always()
+        shell: bash {0}
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          check_population() {
+            local xml="$1" total skipped
+            total=$(grep -oP ' tests="\K[0-9]+' "$xml" | head -n 1)
+            skipped=$(grep -oP ' skipped="\K[0-9]+' "$xml" | head -n 1)
+            if [ -z "$total" ] || [ "$total" -eq 0 ]; then
+              echo "NOTHING COLLECTED: $xml" >&2
+              return 1
+            fi
+            if [ "$skipped" -eq "$total" ]; then
+              echo "EVERYTHING SKIPPED: $xml ($skipped/$total)" >&2
+              return 1
+            fi
+            if [ "${2:-}" = "no-skips" ] && [ "$skipped" -ne 0 ]; then
+              echo "NATIVE CASES SKIPPED: $xml ($skipped/$total)" >&2
+              return 1
+            fi
+          }
+          coverage_args=()
+          if test "$PYLCM_CI_PRECISION" = "64"; then
+            coverage_args=(--cov=./ --cov-append --cov-report=)
+          fi
+          pylcm_junit=reports/junit-cpu-fp$PYLCM_CI_PRECISION-runtime-regimes-lifetime.xml
+          pixi run -e tests-cpu pytest \
+            tests/simulation/test_runtime_regimes_lifetime.py \
+            --precision="$PYLCM_CI_PRECISION" -p no:randomly \
+            --policy-child --hardware-profile=cpu \
+            --timeout=600 --timeout-method=thread -v -n 0 \
+            --durations=25 \
+            --junitxml="$pylcm_junit" \
+            ${coverage_args[@]+"${coverage_args[@]}"}
+          check_population "$pylcm_junit"
       - name: Run tests/test_distributed_constant_simulation.py
         # Unchained: its own step, its own fresh pytest process, its own JUnit
         # report and population guard. Never merged with a sibling -- equal

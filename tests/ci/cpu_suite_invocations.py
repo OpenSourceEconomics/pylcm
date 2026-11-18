@@ -46,6 +46,8 @@ FOUR_DEVICE_TEST_FILES = (
     "tests/simulation/test_host_operations.py",
     "tests/test_distributed_taste_stream.py",
     "tests/test_distributed_entry_allocations.py",
+    "tests/simulation/test_eager_operation_placement.py",
+    "tests/simulation/test_runtime_regimes_lifetime.py",
 )
 
 # These modules receive eight devices from the process environment; they never
