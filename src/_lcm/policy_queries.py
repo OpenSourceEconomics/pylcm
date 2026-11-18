@@ -301,6 +301,15 @@ class QueryNode:
     The mass where no exit is available then enters once, through one more row
     per kept row, at the value of staying.
     """
+    available_nodes: tuple[int, tuple[bool, ...]] | None = None
+    """Enumerated plan position whose nodes alone decide whether the exit is
+    available, and whether it is at each of them.
+
+    The plan's rows then cross that group's available nodes and its first
+    unavailable one with every node of the other groups. At a row of that one
+    node the group's factors hold the cell's mass of every unavailable node, and
+    its landings count once per such node present.
+    """
     outside_value: OutsideValueRead | None = None
     """Proof that this outside read lands on the destination's stored nodes.
 

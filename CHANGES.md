@@ -45,6 +45,11 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 - A budgeted simulation of a regime with a current-period exit and a gated edge builds
   when the gate's fallback regime declares its states in an order other than the sorted
   one.
+- When an exit's `available` reads only discrete shocks of one group that the stay
+  problem ignores, the solve evaluates that group's nodes where the exit is available
+  and one more node that carries the mass of all the others at the value of staying,
+  instead of every node. Values agree with the full enumeration to rounding; simulation
+  is unchanged.
 
 ### Discrete limited commitment
 

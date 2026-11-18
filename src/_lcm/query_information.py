@@ -1355,10 +1355,13 @@ class InformationQueryCell:
     def _product_groups(
         self, *, frame: CurrentIIDDrawFrame, size: int
     ) -> tuple[tuple[int, tuple[ShockName, ...]], ...] | None:
-        """Each independent group's node count and shocks, if the own rows are
-        their whole product in declared order and fit one step; else `None`.
+        """Each independent group's count of enumerated nodes and its shocks, if the
+        own rows are their whole product in declared order and fit one step; else
+        `None`.
 
         Drawn rows, observation axes and the realised root are not such a product.
+        A group whose unavailable nodes collapse into one (`QueryNode.available_nodes`)
+        counts its available nodes and that one.
         """
         plan = self.node.context.current_iid_plans.get(self.node.read.period)
         if (
@@ -1369,9 +1372,10 @@ class InformationQueryCell:
             or self.name == self.realised_root
         ):
             return None
+        indices = np.asarray(plan.indices)
         groups = tuple(
-            (int(nodes.weights.size), tuple(binding.group.shocks))
-            for _, binding, nodes in plan.bindings
+            (int(np.unique(indices[:, column]).size), tuple(binding.group.shocks))
+            for column, (_, binding, _) in enumerate(plan.bindings)
         )
         shocks = {shock for _, members in groups for shock in members}
         if (
@@ -1507,6 +1511,101 @@ class InformationQueryCell:
         }
         return _query_availability(node=node, available=available)
 
+    def _law_arguments(
+        self,
+        *,
+        node: QueryNode,
+        fixed: QueryArguments,
+        source: SourceStates,
+        frames: Frames,
+        guard: BoolND,
+    ) -> QAndFKwargs:
+        """The operands a query's shock laws read: its arguments and mapped states."""
+        from _lcm.policy_queries import (  # noqa: PLC0415
+            _PHYSICAL_CONTEXTS,
+            _PROJECTION,
+            _mapped_query_states,
+        )
+
+        available = {
+            **(
+                self.projection_operands
+                if node is self.node
+                else cast("QueryArguments", fixed[_PROJECTION])
+            ),
+            **source,
+            "period": fixed["period"],
+            "age": fixed["age"],
+            _PHYSICAL_CONTEXTS: {
+                name: frame.physical for name, frame in frames.items()
+            },
+        }
+        mapped = _mapped_query_states(node=node, available=available, guard=guard)
+        return cast("QAndFKwargs", {**fixed, **mapped})
+
+    def _collapse_unavailable(
+        self,
+        *,
+        factors: FloatND,
+        source: SourceStates,
+        frames: Frames,
+        guard: BoolND,
+    ) -> tuple[FloatND, IntND]:
+        """Weight this query's rows of its one unavailable node by all such nodes.
+
+        The collapsed group's law runs once over all its nodes at the cell. At
+        each row of the node standing for the unavailable ones (`_standing_rows`)
+        the group's node weight becomes their summed mass and its categorical
+        factors one; the other factors stay.
+
+        Returns:
+            The factors, and per row the number of present unavailable nodes it
+            stands for: one at every other row.
+
+        """
+        node = self.node
+        plan = cast("CurrentIIDPlan", _plan(node=node))
+        column, available = cast("tuple[int, tuple[bool, ...]]", node.available_nodes)
+        group, _, nodes = plan.bindings[column]
+        site = CurrentIIDPlan(
+            bindings=(plan.bindings[column],),
+            indices=jnp.arange(nodes.weights.size, dtype=jnp.int32)[:, None],
+        )
+        _, weights = site.realise_information_nodes(
+            arguments=self._law_arguments(
+                node=node, fixed=self.fixed, source=source, frames=frames, guard=guard
+            ),
+            group_params={
+                group: cast("AdmittedGroupParams", self.fixed[CURRENT_IID_ARGUMENT])[
+                    group
+                ]
+            },
+            node_operands={
+                group: cast("NodeOperands", self.fixed[CURRENT_IID_NODES_ARGUMENT])[
+                    group
+                ]
+            },
+            indices=site.indices,
+        )
+        rest = weights[:, ~np.asarray(available)]
+        rows = _factor_layout(plan=plan, pinned=())[column][0]
+        standing = np.repeat(
+            _standing_rows(node=node), math.prod(node.observation_counts)
+        )
+        columns = np.flatnonzero(standing)
+        stand_in = (
+            jnp.ones(rows.size, factors.dtype)
+            .at[0]
+            .set(jnp.sum(exact_product(rest)).astype(factors.dtype))
+        )
+        present = sum_counts(counts=jnp.all(~is_represented_zero(rest), axis=0))
+        return (
+            factors.at[np.ix_(rows, columns)].set(
+                jnp.broadcast_to(stand_in[:, None], (rows.size, columns.size))
+            ),
+            jnp.where(jnp.asarray(standing), present, 1).astype(jnp.int32),
+        )
+
     def _realise(
         self,
         *,
@@ -1524,12 +1623,6 @@ class InformationQueryCell:
         index, which need not be the node of the caller's values it holds. A
         realised root holds realised shocks, not nodes, and names none.
         """
-        from _lcm.policy_queries import (  # noqa: PLC0415
-            _PHYSICAL_CONTEXTS,
-            _PROJECTION,
-            _mapped_query_states,
-        )
-
         key = next(
             name for name, candidate in self.definitions.items() if candidate is node
         )
@@ -1567,20 +1660,9 @@ class InformationQueryCell:
                 },
             )
             return _batch_metadata(frame=frame, size=1), jnp.ones((1, 1)), {}
-        available = {
-            **(
-                self.projection_operands
-                if node is self.node
-                else cast("QueryArguments", fixed[_PROJECTION])
-            ),
-            **source,
-            "period": fixed["period"],
-            "age": fixed["age"],
-            _PHYSICAL_CONTEXTS: {
-                name: frame.physical for name, frame in frames.items()
-            },
-        }
-        mapped = _mapped_query_states(node=node, available=available, guard=guard)
+        arguments = self._law_arguments(
+            node=node, fixed=fixed, source=source, frames=frames, guard=guard
+        )
         plan = node.context.current_iid_plans.get(node.read.period)
         parent = node.ancestors[-1] if node.ancestors else None
         previous = None if parent is None else frames[parent]
@@ -1590,7 +1672,7 @@ class InformationQueryCell:
                 node=node,
                 plan=plan,
                 fixed=fixed,
-                arguments=cast("QAndFKwargs", {**fixed, **mapped}),
+                arguments=arguments,
             )
         elif plan is None:
             frame, factors, codes = _empty_frame(), jnp.ones((1, 1)), {}
@@ -1598,7 +1680,7 @@ class InformationQueryCell:
             indices = cast("IntND", fixed[CURRENT_IID_ROWS_ARGUMENT])
             codes = _plan_codes(plan=plan, indices=indices)
             frame, factors = plan.realise_information_nodes(
-                arguments=cast("QAndFKwargs", {**fixed, **mapped}),
+                arguments=arguments,
                 group_params=cast("AdmittedGroupParams", fixed[CURRENT_IID_ARGUMENT]),
                 node_operands=cast("NodeOperands", fixed[CURRENT_IID_NODES_ARGUMENT]),
                 indices=indices,
@@ -2200,6 +2282,11 @@ class InformationQueryCell:
                 frames=frames,
                 guard=guard,
             )
+            stands_for = None
+            if self.node.available_nodes is not None:
+                factors, stands_for = self._collapse_unavailable(
+                    factors=factors, source=source, frames=frames, guard=guard
+                )
 
             stay = self._stay(frame=frame, frames=frames, live=live, source=source)
 
@@ -2266,6 +2353,8 @@ class InformationQueryCell:
                 copies = jnp.all(~is_represented_zero(factors), axis=0).astype(
                     jnp.int32
                 )
+                if stands_for is not None:
+                    copies = copies * stands_for
             else:
                 factors, copies = representative_factors(
                     factors=factors, columns=columns, representatives=pinned[0]
@@ -2344,6 +2433,14 @@ def _kept_rows(*, plan: CurrentIIDPlan, kept: tuple[int, ...]) -> np.ndarray:
     sizes = tuple(int(plan.bindings[column][2].weights.size) for column in kept)
     codes = np.ravel_multi_index(tuple(indices[:, list(kept)].T), sizes)
     return np.argsort(codes, kind="stable").reshape(math.prod(sizes), -1)
+
+
+def _standing_rows(*, node: QueryNode) -> np.ndarray:
+    """Whether each plan row of a query realises the node standing for the nodes
+    where its exit is unavailable (`QueryNode.available_nodes`)."""
+    column, available = cast("tuple[int, tuple[bool, ...]]", node.available_nodes)
+    plan = cast("CurrentIIDPlan", _plan(node=node))
+    return ~np.asarray(available)[np.asarray(plan.indices)[:, column]]
 
 
 def _plan_codes(*, plan: CurrentIIDPlan, indices: IntND) -> Codes:

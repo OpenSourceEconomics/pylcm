@@ -66,6 +66,12 @@ from lcm.typing import (
 # them.
 _READ_STORED_OUTSIDE_VALUES: bool = True
 
+# Whether the solve's enumerated exit choices evaluate the nodes where the exit is
+# available and one node for all the others (`_bind_available_nodes`), instead of
+# every node. Read once per lowering when the model is built; simulation and
+# participation graphs always enumerate every node.
+_COLLAPSE_UNAVAILABLE_NODES: bool = True
+
 
 def _predicate(
     *,
@@ -977,13 +983,16 @@ def bind_exit_query_graph(
     kind: QueryKind = QueryKind.FULL,
     stored_outside_reads: bool = False,
     value_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
+    collapse_unavailable_nodes: bool = False,
 ) -> tuple[Mapping[str, QueryNode], str]:
     """Bind demanded public reads after every actual canonical context exists.
 
     With `stored_outside_reads`, each outside read proved aligned carries its
     `OutsideValueRead`, and an outside read of a problem solved without grid search
     is refused. `value_periods_by_regime` names the periods each regime is solved
-    in; without it, a regime is solved in each of its active periods.
+    in; without it, a regime is solved in each of its active periods. With
+    `collapse_unavailable_nodes`, the root enumerates only the nodes where its exit
+    is available, and one more (`_bind_available_nodes`).
     """
     aliases = {
         (owner, name): f"_lcm_exit_operand_{index}"
@@ -1011,6 +1020,8 @@ def bind_exit_query_graph(
     _bind_observation_sources(nodes=builder.nodes, period=period)
     _validate_query_projection_bindings(nodes=builder.nodes, period=period)
     _bind_sample(nodes=builder.nodes, root=root_key)
+    if collapse_unavailable_nodes:
+        _bind_available_nodes(nodes=builder.nodes, root=root_key)
     if stored_outside_reads:
         _bind_outside_reads(
             nodes=builder.nodes,
@@ -1233,6 +1244,85 @@ def _draw_condition(
     return owners[0] if reads and len(owners) == 1 else None
 
 
+def _bind_available_nodes(*, nodes: dict[str, QueryNode], root: str) -> None:
+    """Enumerate the root's exit choice at the nodes where its exit is available.
+
+    It applies when the root enumerates its rows, renegotiates nothing, and its
+    exit's predicate reads only discrete shocks of one group that its stay problem
+    ignores (`_draw_condition`). The group's nodes then carry fixed codes, so where
+    the exit is available is known now. Where it is not, the row's value is the
+    stay value whatever the node, so the plan keeps the available nodes and the
+    first unavailable one, which stands for all of them
+    (`QueryNode.available_nodes`). A predicate true at every node changes nothing.
+    """
+    from _lcm.query_information import (  # noqa: PLC0415
+        _exit_available,
+        _frame_shocks,
+        stay_read_shocks,
+    )
+
+    node = nodes[root]
+    predicate = node.exit_availability
+    plan = node.context.current_iid_plans.get(node.read.period)
+    shocks = stay_read_shocks(name=root, definitions=nodes)
+    if (
+        predicate is None
+        or plan is None
+        or shocks is None
+        or node.sample is not None
+        or node.state_updates
+    ):
+        return
+    column = _draw_condition(
+        predicate=predicate,
+        frame_shocks=_frame_shocks(key=root, definitions=nodes),
+        groups=tuple(
+            None
+            if shocks & binding.group.shocks.keys()
+            else frozenset(binding.group.shocks)
+            for _, binding, _ in plan.bindings
+        ),
+    )
+    if column is None:
+        return
+    _, binding, support = plan.bindings[column]
+    names = tuple(inspect.signature(predicate).parameters)
+    if not all(isinstance(binding.group.shocks.get(name), Discrete) for name in names):
+        return
+    available = np.asarray(
+        _exit_available(
+            predicate=predicate,
+            arguments={},
+            physical={name: support.discrete_codes[name] for name in names},
+        ),
+        dtype=bool,
+    )
+    if available.all():
+        return
+    kept = (*np.flatnonzero(available).tolist(), int(np.flatnonzero(~available)[0]))
+    indices = jnp.asarray(
+        tuple(
+            product(
+                *(
+                    kept if position == column else range(group.weights.size)
+                    for position, (_, _, group) in enumerate(plan.bindings)
+                )
+            )
+        ),
+        dtype=jnp.int32,
+    )
+    nodes[root] = replace(
+        node,
+        context=replace(
+            node.context,
+            current_iid_plans=MappingProxyType(
+                {node.read.period: replace(plan, indices=indices)}
+            ),
+        ),
+        available_nodes=(column, tuple(available.tolist())),
+    )
+
+
 def _bind_observation_sources(*, nodes: dict[str, QueryNode], period: int) -> None:
     """Locate declared target-only observations at their producing query context."""
     for key, node in tuple(nodes.items()):
@@ -1442,6 +1532,7 @@ def lower_exit_queries(
         period=period,
         stored_outside_reads=_READ_STORED_OUTSIDE_VALUES,
         value_periods_by_regime=value_periods_by_regime,
+        collapse_unavailable_nodes=_COLLAPSE_UNAVAILABLE_NODES,
     )
     tables = {}
     for node in nodes.values():

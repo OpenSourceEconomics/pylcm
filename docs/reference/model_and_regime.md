@@ -401,6 +401,11 @@ target shocks are priced before the source choice and revealed when a mover exec
 destination's action. Partial observation of a correlated group is refused; see the
 adopted [IID and exit contract](../development/iid-exits-redesign.md).
 
+When `available` reads nothing but discrete shocks of one group that the stay problem
+does not read, as an offer flag does, the solve enumerates that group's nodes where the
+exit is available and one node where it is not, weighted by the whole mass of those
+nodes at the value of staying; the values equal the full enumeration's to rounding.
+
 When an exit observes every shock of a target group, all of that group's quadrature rows
 are the same physical point, so the target's policy is evaluated once and that answer is
 weighted by every row's original weight. Values equal the row-by-row reduction. A group

@@ -7,6 +7,10 @@ single's taste, and the stay benchmarks read neither the offered partner nor mos
 couple shocks. Each query therefore runs once per distinct combination of the
 caller columns it, its guards and its own descendants read, and its consumers
 gather that answer back to every caller row.
+
+The counts below are those of a solve that enumerates every node of the offer
+group; tests/solution/test_exit_available_rows.py counts the rows of one that
+collapses the nodes without an offer into one.
 """
 
 import math
@@ -469,6 +473,7 @@ def test_each_caller_prices_a_couple_once_per_read_class(
     partner, the observed wage and the guard (12 classes), times its own 3 taste
     rows.
     """
+    monkeypatch.setattr(exit_queries, "_COLLAPSE_UNAVAILABLE_NODES", False)
     rows = _evaluated_rows(model=_model(), monkeypatch=monkeypatch)
     for member, spouse in (("f", "m"), ("m", "f")):
         root = f"single_{member}"
@@ -633,6 +638,7 @@ def test_dissolution_benchmarks_run_once_per_class_of_both_ancestors(
     The wife's reads her own wage and the offer guard (4 classes); the husband's
     also reads the offered experience he leaves with (12).
     """
+    monkeypatch.setattr(exit_queries, "_COLLAPSE_UNAVAILABLE_NODES", False)
     rows = _evaluated_rows(model=_model(dissolution=True), monkeypatch=monkeypatch)
     assert rows[("single_f", "RAW", "alone_f")] == 4
     assert rows[("single_f", "RAW", "alone_m")] == 12
@@ -837,6 +843,7 @@ def test_a_query_computes_its_continuation_once_per_class_that_fixes_it(
     per state of the table the read takes from (3) when stored.
     """
     monkeypatch.setattr(exit_queries, "_READ_STORED_OUTSIDE_VALUES", stored)
+    monkeypatch.setattr(exit_queries, "_COLLAPSE_UNAVAILABLE_NODES", False)
     values = _continuation_values(
         model=_model(n_match=n_match), monkeypatch=monkeypatch
     )
@@ -865,6 +872,7 @@ def test_a_continuation_reading_an_observed_shock_runs_once_per_class(
     match.
     """
     monkeypatch.setattr(exit_queries, "_READ_STORED_OUTSIDE_VALUES", stored)
+    monkeypatch.setattr(exit_queries, "_COLLAPSE_UNAVAILABLE_NODES", False)
     values = _continuation_values(
         model=_model(n_match=n_match, lasting_match=True), monkeypatch=monkeypatch
     )
@@ -931,6 +939,7 @@ def test_a_query_weights_one_term_per_representative_of_its_rows(
     benchmark repeats the caller's row.
     """
     monkeypatch.setattr(exit_queries, "_READ_STORED_OUTSIDE_VALUES", stored)
+    monkeypatch.setattr(exit_queries, "_COLLAPSE_UNAVAILABLE_NODES", False)
     shapes = _weighted_shapes(model=_model(n_match=n_match), monkeypatch=monkeypatch)
     assert {
         key[1:]: values[0]
@@ -1076,6 +1085,7 @@ def test_an_unset_chunk_width_fills_one_step_with_the_widest_query(
     7281 cells of 144 rows are the most that stay within the 1048576 lanes of one
     step, so a query with few rows does not pay one launch per 64 cells.
     """
+    monkeypatch.setattr(exit_queries, "_COLLAPSE_UNAVAILABLE_NODES", False)
     requested = {}
     build = exit_queries.build_policy_query_kernel
 
