@@ -5171,6 +5171,16 @@ def _prepare_numerical_solution_phase(  # noqa: PLR0915 - native route admission
         # process may lie off its nodes, so a process draw reading its own current
         # value stays enumerated there.
         solve_source = decision_Q_and_F.keywords["lottery_contraction_source"]
+        # A query evaluates the whole grid and reads every continuation whole, so
+        # it takes no co-mapped state; publication keeps each device's slice.
+        query_periods = _query_periods_without_co_map(
+            query_periods=query_periods,
+            co_map_state_names=co_map_state_names,
+            regime_name=regime_name,
+            active_periods=regimes_to_active_periods[regime_name],
+            user_regimes=user_regimes,
+            period_regimes=period_regimes,
+        )
         query_Q_and_F_functions = (
             decision_Q_and_F(
                 active_periods=query_periods,
@@ -5181,6 +5191,7 @@ def _prepare_numerical_solution_phase(  # noqa: PLR0915 - native route admission
                     and lottery_contraction.QUERY_CONTRACTION != "off"
                     else solve_source
                 ),
+                co_map_state_names=invariant_bindings,
             ).by_period
             if query_periods
             else MappingProxyType({})
@@ -10044,6 +10055,36 @@ def _get_vmap_params(
     """Get parameter names that should be vmapped (states and actions)."""
     non_vmap = {"period", "age"} | flat_param_names
     return tuple(arg for arg in all_args if arg not in non_vmap)
+
+
+def _query_periods_without_co_map(
+    *,
+    query_periods: tuple[int, ...],
+    co_map_state_names: tuple[StateName, ...],
+    regime_name: RegimeName,
+    active_periods: tuple[int, ...],
+    user_regimes: Mapping[RegimeName, UserRegime],
+    period_regimes: PeriodRegimes | None,
+) -> tuple[int, ...]:
+    """Return the periods whose Q/F a query evaluates.
+
+    A regime that co-maps a state adds the periods in which it has an exit, as
+    `SolverBuildContext.user_regimes_at` resolves it: an exit's root is a query
+    too, so it reads the state's whole axis there.
+    """
+    if not co_map_state_names:
+        return query_periods
+    exit_periods = (
+        period
+        for period in active_periods
+        if (
+            user_regimes
+            if period_regimes is None
+            else period_regimes.by_period.get(period, user_regimes)
+        )[regime_name].exit
+        is not None
+    )
+    return tuple(sorted({*query_periods, *exit_periods}))
 
 
 def _co_map_state_names(

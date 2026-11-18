@@ -112,12 +112,15 @@ then:
   model-level state the destination does not read is pruned from it, and the exit's
   projection onto that state with it, so an exit from a regime that shards the state
   into one that prunes it solves as on one device. A sharded state that keeps its value
-  is read from each device's slice, which a query cannot evaluate, so an exit whose
-  reader or destination has one is refused, with stored and with point reads. A
-  destination with one becomes readable once its own solve publishes its values, instead
-  of the reader's program evaluating the destination's problem to tabulate them. A
-  reader with one stays refused until a query can evaluate such a problem, because the
-  reader's own program is a query.
+  is co-mapped in a regime's ordinary solve, which reads only each device's slice. A
+  query takes it as an ordinary axis instead: in an exit period each device of the
+  reader computes the whole grid of that state, for the reader's problem and for every
+  destination problem the reader's program evaluates, and holds each next-period value
+  that carries the state whole. Publishing the reader's value keeps each device's own
+  slice. An exit whose reader or destination has such a state therefore solves as on one
+  device, with stored and with point reads; its exit periods cost each device the
+  compute and the memory of the whole axis rather than of its slice. A participation
+  check on such a state stays refused.
 - Each reader tabulates the destinations it reads aligned, once per period, in its own
   program. Two readers of one destination tabulate it twice, and a reader pays for the
   destination's whole grid however few of its cells the reader lands on.

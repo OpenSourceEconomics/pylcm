@@ -49,6 +49,12 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   [Current-period exits](docs/reference/model_and_regime.md#current-period-exits).
 - An exit into a regime that prunes a model-level state builds: the projection onto that
   state is dropped, as a law of motion toward that regime is.
+- An exit whose reader or destination shards a state that keeps its value over time
+  solves on several devices, with stored and with point reads, as on one device. In
+  an exit period each of the reader's devices computes the whole grid of that state
+  and holds every next-period value that carries it whole, then keeps its own slice
+  of the reader's value; other periods still compute only each device's slice. A
+  participation check on such a state is still refused.
 - A budgeted simulation of a regime with a current-period exit and a gated edge builds
   when the gate's fallback regime declares its states in an order other than the sorted
   one.

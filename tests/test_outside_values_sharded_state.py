@@ -13,17 +13,24 @@ outside value at its point:
 - a destination that prunes the reader's sharded model-level state, because it does
   not read it, takes the exit's projection of the states it carries and solves as on
   one device, with stored and with point reads;
+- a sharded state that keeps its value on the reader or the destination is co-mapped
+  in that regime's ordinary solve, which reads only each device's slice; the exit
+  still solves as on one device, with stored and with point reads, because a query
+  takes the state as an ordinary axis. Each of the reader's devices computes the
+  whole grid of the state in the exit period and holds every next-period value that
+  carries it whole, and the reader's published value keeps only each device's own
+  slice. A projection that flips the fixed state and a reader that prunes it are
+  covered;
 - singles, with or without a state of their own, who marry by consent into a couple
-  that shards a model-level state and dissolves into them, neither single reading
-  the state, solve as on one device;
-- a sharded state that is the identity on the reader or the destination is refused,
-  and stored reads refuse it exactly as point reads do;
+  that shards a model-level state, flipping or fixed, and dissolves into them,
+  neither single reading the state, solve as on one device;
 - a simulation over subjects sharded across devices reproduces the unsharded one.
 
 The witnesses run in child processes, because the placements under test only exist
 where several devices do, and a topology is pinned before JAX initializes a backend.
 """
 
+import functools
 import gc
 import json
 import re
@@ -33,7 +40,7 @@ import weakref
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal, TypedDict, overload
+from typing import Literal, NotRequired, TypedDict, overload
 
 import jax
 import jax.numpy as jnp
@@ -112,6 +119,10 @@ def _source_utility(*, wealth: FloatND, kind: DiscreteState) -> FloatND:
     return 1.0 + wealth + 0.6 * kind
 
 
+def _blind_source_utility(*, wealth: FloatND) -> FloatND:
+    return 1.0 + wealth
+
+
 def _destination_utility(
     *, wealth: FloatND, work: IntND, kind: DiscreteState
 ) -> FloatND:
@@ -130,6 +141,10 @@ def _kind(kind: DiscreteState) -> DiscreteState:
     return kind
 
 
+def _low_kind() -> DiscreteState:
+    return jnp.asarray(_Kind.low)
+
+
 def _kind_law(*, law: _Law, target: RegimeName) -> dict[RegimeName, UserFunction]:
     return {target: fixed_transition("kind") if law == "fixed" else _flip}
 
@@ -141,16 +156,20 @@ def build_model(
     reader_law: _Law = "flip",
     destination_law: _Law | None = "flip",
     project_kind: bool = True,
+    kind_projection: Literal["keep", "flip"] = "keep",
+    reader_reads_kind: bool = True,
     simulation_sharding: Literal["legacy", "subjects"] = "legacy",
 ) -> Model:
     """Build a source that may leave for a destination in the first of two periods.
 
     Both carry wealth onto the grid of their terminal successor. The source reads a
-    model-level discrete `kind`; the destination reads it too unless
-    `destination_law` is None, in which case it prunes it. The exit projects every
-    state the destination declares, the model-level kind included, unless
-    `project_kind` is False. Leaving pays where
-    `1.9 * wealth > 0.64 + 0.05 * kind`: at wealth 0.5 and 1, never at 0.
+    model-level discrete `kind` unless `reader_reads_kind` is False; the destination
+    reads it too unless `destination_law` is None. A regime that does not read the
+    kind prunes it. The exit projects every state the destination declares, the
+    model-level kind included, unless `project_kind` is False: a reader that reads
+    the kind keeps it or flips it, one that prunes it lands on the low kind. With
+    the kind kept, leaving pays where `1.9 * wealth > 0.64 + 0.05 * kind`: at wealth
+    0.5 and 1, never at 0.
 
     Args:
         devices: Device ids the model is planned for.
@@ -159,6 +178,8 @@ def build_model(
         destination_law: Law of the destination's kind toward its successor, or
             None for a destination that does not read the kind.
         project_kind: Whether the exit projects the kind as well as wealth.
+        kind_projection: Whether the exit keeps the reader's kind or flips it.
+        reader_reads_kind: Whether the source reads the kind.
         simulation_sharding: How the simulated subjects are spread over devices.
 
     Returns:
@@ -173,21 +194,29 @@ def build_model(
         if destination_law is None
         else {"kind": _kind_law(law=destination_law, target="destination_terminal")}
     )
+    source_utility = _source_utility if reader_reads_kind else _blind_source_utility
+    source_kind = (
+        {"kind": _kind_law(law=reader_law, target="source_terminal")}
+        if reader_reads_kind
+        else {}
+    )
+    projected_kind = (
+        (_kind if kind_projection == "keep" else _flip)
+        if reader_reads_kind
+        else _low_kind
+    )
     return Model(
         regimes={
             "source": Regime(
                 states={"wealth": _wealth_grid()},
-                functions={"utility": _source_utility},
-                state_transitions={
-                    "wealth": _keep_wealth,
-                    "kind": _kind_law(law=reader_law, target="source_terminal"),
-                },
+                functions={"utility": source_utility},
+                state_transitions={"wealth": _keep_wealth, **source_kind},
                 exit=Exit(
                     targets={
                         "self": ExitTarget(
                             regime="destination",
                             projection={"wealth": _wealth}
-                            | ({"kind": _kind} if project_kind else {}),
+                            | ({"kind": projected_kind} if project_kind else {}),
                         )
                     },
                     rule=Unilateral(),
@@ -201,7 +230,7 @@ def build_model(
             ),
             "source_terminal": Regime(
                 states={"wealth": _wealth_grid()},
-                functions={"utility": _source_utility},
+                functions={"utility": source_utility},
             ),
             "destination_terminal": Regime(
                 states={"wealth": _wealth_grid()},
@@ -226,6 +255,49 @@ def build_model(
     )
 
 
+class _Laws(TypedDict):
+    """How the reader and the destination treat the kind, as `build_model` takes it."""
+
+    reader_law: _Law
+    destination_law: _Law | None
+    kind_projection: NotRequired[Literal["keep", "flip"]]
+    reader_reads_kind: NotRequired[bool]
+
+
+_DEVICE_LOCAL: _Laws = {"reader_law": "flip", "destination_law": "flip"}
+
+#: Exits whose reader or destination keeps a sharded kind fixed, so that the kind
+#: is co-mapped in that regime's own solve.
+_FIXED_CASES: dict[str, _Laws] = {
+    "fixed reader, pruning destination": {
+        "reader_law": "fixed",
+        "destination_law": None,
+    },
+    "fixed reader, flipping destination": {
+        "reader_law": "fixed",
+        "destination_law": "flip",
+    },
+    "flipping reader, fixed destination": {
+        "reader_law": "flip",
+        "destination_law": "fixed",
+    },
+    "fixed reader, fixed destination": {
+        "reader_law": "fixed",
+        "destination_law": "fixed",
+    },
+    "fixed reader, fixed destination, flipping projection": {
+        "reader_law": "fixed",
+        "destination_law": "fixed",
+        "kind_projection": "flip",
+    },
+    "pruning reader, fixed destination": {
+        "reader_law": "fixed",
+        "destination_law": "fixed",
+        "reader_reads_kind": False,
+    },
+}
+
+
 class TransferRead(TypedDict):
     core: str
     target_regime: RegimeName
@@ -235,6 +307,8 @@ class TransferRead(TypedDict):
 class SolveArm(TypedDict):
     values: _ValueLists
     devices: dict[RegimeName, list[int]]
+    replicated: dict[RegimeName, bool]
+    shard_shapes: dict[RegimeName, list[list[int]]]
     tables: list[str]
     reads: list[TransferRead]
     reader_reservation: int
@@ -250,6 +324,13 @@ class DeviceLocalReport(TypedDict):
     one_device_point: SolveArm
 
 
+class FixedCaseReport(TypedDict):
+    point: SolveArm
+    stored: SolveArm
+    one_device_point: SolveArm
+    one_device_stored: SolveArm
+
+
 class PrunedReport(TypedDict):
     point: _ValueLists
     stored: _ValueLists
@@ -260,17 +341,6 @@ class PrunedReport(TypedDict):
 class MarriageReport(TypedDict):
     sharded: _ValueLists
     one_device: _ValueLists
-
-
-class Refusal(TypedDict):
-    error: str
-    message: str
-
-
-class RefusalReport(TypedDict):
-    point: dict[str, Refusal]
-    stored: dict[str, Refusal]
-    one_device_point: dict[str, Refusal]
 
 
 class SimulationReport(TypedDict):
@@ -317,8 +387,8 @@ class _TableRecord:
         self.pending.clear()
 
 
-def _solve_arm(*, stored: bool, devices: tuple[int, ...]) -> SolveArm:
-    """Solve the device-local model with stored or point reads and record its plan."""
+def _solve_arm(*, stored: bool, devices: tuple[int, ...], laws: _Laws) -> SolveArm:
+    """Solve the model with stored or point reads and record its plan."""
     from _lcm import exit_queries, policy_queries  # noqa: PLC0415
     from _lcm.solution import backward_induction  # noqa: PLC0415
 
@@ -355,7 +425,7 @@ def _solve_arm(*, stored: bool, devices: tuple[int, ...]) -> SolveArm:
             _after(function=kernel_class.__call__, then=tables.returned),
         )
         model = build_model(
-            devices=devices, sharded=("kind",) if len(devices) > 1 else ()
+            devices=devices, sharded=("kind",) if len(devices) > 1 else (), **laws
         )
         kernel = model._regimes["source"].solution.period_kernels[0]
         assert isinstance(kernel, kernel_class)
@@ -373,6 +443,14 @@ def _solve_arm(*, stored: bool, devices: tuple[int, ...]) -> SolveArm:
         },
         "devices": {
             regime: sorted(device.id for device in value.sharding.device_set)
+            for regime, value in solution.values[0].items()
+        },
+        "replicated": {
+            regime: value.sharding.is_fully_replicated
+            for regime, value in solution.values[0].items()
+        },
+        "shard_shapes": {
+            regime: [list(shard.data.shape) for shard in value.addressable_shards]
             for regime, value in solution.values[0].items()
         },
         "tables": sorted(program.name for program in table_programs),
@@ -398,9 +476,21 @@ def report_device_local() -> DeviceLocalReport:
     """Solve the device-local model with both reads on four devices and on one."""
     devices = tuple(range(_N_DEVICES))
     return {
-        "point": _solve_arm(stored=False, devices=devices),
-        "stored": _solve_arm(stored=True, devices=devices),
-        "one_device_point": _solve_arm(stored=False, devices=(0,)),
+        "point": _solve_arm(stored=False, devices=devices, laws=_DEVICE_LOCAL),
+        "stored": _solve_arm(stored=True, devices=devices, laws=_DEVICE_LOCAL),
+        "one_device_point": _solve_arm(stored=False, devices=(0,), laws=_DEVICE_LOCAL),
+    }
+
+
+def report_fixed_case(*, case: str) -> FixedCaseReport:
+    """Solve one fixed-kind case with both reads on four devices and on one."""
+    laws = _FIXED_CASES[case]
+    devices = tuple(range(_N_DEVICES))
+    return {
+        "point": _solve_arm(stored=False, devices=devices, laws=laws),
+        "stored": _solve_arm(stored=True, devices=devices, laws=laws),
+        "one_device_point": _solve_arm(stored=False, devices=(0,), laws=laws),
+        "one_device_stored": _solve_arm(stored=True, devices=(0,), laws=laws),
     }
 
 
@@ -435,17 +525,28 @@ def report_pruned_destination() -> PrunedReport:
     }
 
 
-def _marriage_values(*, devices: tuple[int, ...], single_states: bool) -> _ValueLists:
+def _marriage_values(
+    *,
+    devices: tuple[int, ...],
+    single_states: bool,
+    match_law: Literal["flip", "fixed"] = "flip",
+    stored: bool = True,
+) -> _ValueLists:
     """Solve the marriage whose couple alone reads the model-level match."""
-    solution = marriage_model(
-        model_level=True,
-        single_states=single_states,
-        execution_config=ExecutionConfig(
-            devices=devices,
-            sharded_states=("match",) if len(devices) > 1 else (),
-            device_memory_bytes=_BUDGET,
-        ),
-    ).solve(params=_PARAMS, log_level="off", runtime_checks=False)
+    from _lcm import exit_queries  # noqa: PLC0415
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(exit_queries, "_READ_STORED_OUTSIDE_VALUES", stored)
+        solution = marriage_model(
+            model_level=True,
+            single_states=single_states,
+            match_law=match_law,
+            execution_config=ExecutionConfig(
+                devices=devices,
+                sharded_states=("match",) if len(devices) > 1 else (),
+                device_memory_bytes=_BUDGET,
+            ),
+        ).solve(params=_PARAMS, log_level="off", runtime_checks=False)
     return {
         f"{period}/{regime}": np.asarray(value).tolist()
         for period, by_regime in solution.values.items()
@@ -463,49 +564,17 @@ def report_marriage(*, single_states: bool) -> MarriageReport:
     }
 
 
-#: Laws of the reader's and the destination's kind, by refusal case.
-_REFUSAL_CASES: dict[str, tuple[_Law, _Law | None]] = {
-    "destination co-maps the kind": ("flip", "fixed"),
-    "reader co-maps the kind": ("fixed", "flip"),
-}
-
-
-def _refusal(
-    *, stored: bool, devices: tuple[int, ...], case: tuple[_Law, _Law | None]
-) -> Refusal:
-    """Build and solve one refusal case; the error class and message it raised."""
-    from _lcm import exit_queries  # noqa: PLC0415
-
-    with pytest.MonkeyPatch.context() as patch:
-        patch.setattr(exit_queries, "_READ_STORED_OUTSIDE_VALUES", stored)
-        try:
-            build_model(
-                devices=devices,
-                sharded=("kind",) if len(devices) > 1 else (),
-                reader_law=case[0],
-                destination_law=case[1],
-            ).solve(params=_PARAMS, log_level="off", runtime_checks=False)
-        except Exception as error:  # noqa: BLE001 - the refusal is the report
-            return {"error": type(error).__name__, "message": str(error)}
-    return {"error": "", "message": ""}
-
-
-def report_refusals() -> RefusalReport:
-    """Record how each refusal case fails, by reading mode and placement."""
+def report_fixed_marriage() -> PrunedReport:
+    """Solve the marriage whose couple keeps its sharded match fixed, singles with
+    states, with both reads on four devices and on one.
+    """
+    solve = functools.partial(_marriage_values, single_states=True, match_law="fixed")
     devices = tuple(range(_N_DEVICES))
     return {
-        "point": {
-            name: _refusal(stored=False, devices=devices, case=case)
-            for name, case in _REFUSAL_CASES.items()
-        },
-        "stored": {
-            name: _refusal(stored=True, devices=devices, case=case)
-            for name, case in _REFUSAL_CASES.items()
-        },
-        "one_device_point": {
-            name: _refusal(stored=False, devices=(0,), case=case)
-            for name, case in _REFUSAL_CASES.items()
-        },
+        "point": solve(devices=devices, stored=False),
+        "stored": solve(devices=devices, stored=True),
+        "one_device_point": solve(devices=(0,), stored=False),
+        "one_device_stored": solve(devices=(0,), stored=True),
     }
 
 
@@ -515,7 +584,12 @@ _INITIAL_KIND = (0, 0, 0, 1, 1, 1)
 
 
 def _simulate(
-    *, stored: bool, devices: tuple[int, ...], subjects: bool
+    *,
+    stored: bool,
+    devices: tuple[int, ...],
+    subjects: bool,
+    sharded: tuple[str, ...] = (),
+    laws: _Laws = _DEVICE_LOCAL,
 ) -> pd.DataFrame:
     """Solve with stored or point reads, then simulate the subjects."""
     from _lcm import exit_queries  # noqa: PLC0415
@@ -524,8 +598,9 @@ def _simulate(
         patch.setattr(exit_queries, "_READ_STORED_OUTSIDE_VALUES", stored)
         model = build_model(
             devices=devices,
-            sharded=(),
+            sharded=sharded,
             simulation_sharding="subjects" if subjects else "legacy",
+            **laws,
         )
         solution = model.solve(params=_PARAMS, log_level="off", runtime_checks=False)
     n_subjects = len(_INITIAL_WEALTH)
@@ -574,6 +649,34 @@ def report_subject_sharded_simulation(*, decimal: int) -> SimulationReport:
     }
 
 
+def report_fixed_reader_simulation(*, decimal: int) -> dict[str, str]:
+    """Simulate a fixed reader's solves sharded on four devices against one device.
+
+    The value is each four-device read's mismatch with point reads on one device.
+    """
+    laws = _FIXED_CASES["fixed reader, pruning destination"]
+    one_device = _simulate(stored=False, devices=(0,), subjects=False, laws=laws)
+    tolerance = 10.0**-decimal
+    return {
+        name: _mismatch(
+            check=functools.partial(
+                pd.testing.assert_frame_equal,
+                _simulate(
+                    stored=stored,
+                    devices=tuple(range(_N_DEVICES)),
+                    subjects=False,
+                    sharded=("kind",),
+                    laws=laws,
+                ),
+                one_device,
+                rtol=tolerance,
+                atol=tolerance,
+            )
+        )
+        for name, stored in (("point", False), ("stored", True))
+    }
+
+
 @overload
 def _run_in_child_process(
     *, entry_point: Literal["report_device_local"], arguments: str = ""
@@ -582,8 +685,8 @@ def _run_in_child_process(
 
 @overload
 def _run_in_child_process(
-    *, entry_point: Literal["report_refusals"], arguments: str = ""
-) -> RefusalReport: ...
+    *, entry_point: Literal["report_fixed_case"], arguments: str = ""
+) -> FixedCaseReport: ...
 
 
 @overload
@@ -594,7 +697,15 @@ def _run_in_child_process(
 
 @overload
 def _run_in_child_process(
-    *, entry_point: Literal["report_pruned_destination"], arguments: str = ""
+    *, entry_point: Literal["report_fixed_reader_simulation"], arguments: str = ""
+) -> dict[str, str]: ...
+
+
+@overload
+def _run_in_child_process(
+    *,
+    entry_point: Literal["report_pruned_destination", "report_fixed_marriage"],
+    arguments: str = "",
 ) -> PrunedReport: ...
 
 
@@ -607,7 +718,12 @@ def _run_in_child_process(
 def _run_in_child_process(
     *, entry_point: str, arguments: str = ""
 ) -> (
-    DeviceLocalReport | RefusalReport | SimulationReport | PrunedReport | MarriageReport
+    DeviceLocalReport
+    | FixedCaseReport
+    | SimulationReport
+    | PrunedReport
+    | MarriageReport
+    | dict[str, str]
 ):
     """Run one module-level report function on four CPU devices and return its report.
 
@@ -653,16 +769,24 @@ def device_local() -> DeviceLocalReport:
     return _run_in_child_process(entry_point="report_device_local")
 
 
-@pytest.fixture(scope="module")
-def refusals() -> RefusalReport:
-    """Return the refusal cases from one four-device child process."""
-    return _run_in_child_process(entry_point="report_refusals")
+@functools.cache
+def _fixed_case(case: str) -> FixedCaseReport:
+    """Return one fixed-kind case's solves from one four-device child process."""
+    return _run_in_child_process(
+        entry_point="report_fixed_case", arguments=f"case={case!r}"
+    )
 
 
 @pytest.fixture(scope="module")
 def pruned_destination() -> PrunedReport:
     """Return the pruned-destination solves from one four-device child process."""
     return _run_in_child_process(entry_point="report_pruned_destination")
+
+
+@pytest.fixture(scope="module")
+def fixed_marriage() -> PrunedReport:
+    """Return the fixed-match marriage solves from one four-device child process."""
+    return _run_in_child_process(entry_point="report_fixed_marriage")
 
 
 @pytest.fixture(scope="module")
@@ -803,6 +927,106 @@ def test_a_pruned_destination_solves_as_point_reads_on_one_device(
     )
 
 
+@pytest.mark.parametrize("arm", ["point", "stored", "one_device_stored"])
+@pytest.mark.parametrize("case", list(_FIXED_CASES))
+def test_a_fixed_sharded_kind_solves_as_point_reads_on_one_device(
+    *, case: str, arm: Literal["point", "stored", "one_device_stored"]
+) -> None:
+    """An exit whose reader or destination keeps the sharded kind fixed solves on
+    four devices, with stored and with point reads, as with point reads on one
+    device, to 16 ULP.
+    """
+    report = _fixed_case(case)
+    _assert_agree(
+        got=_values(report[arm]["values"]),
+        expected=_values(report["one_device_point"]["values"]),
+    )
+
+
+@pytest.mark.parametrize("arm", ["point", "stored"])
+@pytest.mark.parametrize(
+    "case",
+    [
+        name
+        for name, laws in _FIXED_CASES.items()
+        if laws.get("reader_reads_kind", True)
+    ],
+)
+def test_the_reader_publishes_its_value_split_along_the_kind(
+    *, case: str, arm: Literal["point", "stored"]
+) -> None:
+    """The reader's exit-period value lives on the reader's two devices, each
+    holding one kind and every wealth point; the query evaluates the whole grid
+    inside the reader's program and no device keeps the other's kind.
+    """
+    solved = _fixed_case(case)[arm]
+    assert (
+        solved["devices"]["source"],
+        solved["replicated"]["source"],
+        solved["shard_shapes"]["source"],
+    ) == ([0, 1], False, [[1, 3], [1, 3]])
+
+
+@pytest.mark.parametrize("case", list(_FIXED_CASES))
+def test_a_fixed_case_s_table_is_replicated_on_the_reader_s_devices(
+    case: str,
+) -> None:
+    """With stored reads the reader tabulates the destination once, and every
+    array of the table lives whole on each device of the reader's mesh.
+    """
+    stored = _fixed_case(case)["stored"]
+    reader_devices = stored["devices"]["source"]
+    assert (
+        stored["tables"],
+        stored["table_devices"],
+        stored["tables_replicated"],
+    ) == (["_outside:destination"], [reader_devices] * 2, [True, True])
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        name
+        for name, laws in _FIXED_CASES.items()
+        if laws["destination_law"] and laws.get("reader_reads_kind", True)
+    ],
+)
+def test_a_destination_carrying_the_kind_is_read_across_meshes(case: str) -> None:
+    """A destination that carries the sharded kind beside a reader that carries it
+    too runs on devices of its own; the reader's chunk loop with point reads, and
+    its table with stored reads, take the destination's next-period value by a
+    cross-mesh copy.
+    """
+    report = _fixed_case(case)
+    assert (
+        report["point"]["devices"]["destination"],
+        _destination_reads(report["point"]),
+        _destination_reads(report["stored"]),
+    ) == (
+        [2, 3],
+        [("_chunks", "cross_mesh_copy")],
+        [("_outside:destination", "cross_mesh_copy")],
+    )
+
+
+def test_a_pruning_reader_copies_a_fixed_destination_into_its_layout() -> None:
+    """A destination that keeps the kind fixed takes the first two devices and a
+    reader that prunes the kind runs on the next one; the reader's chunk loop with
+    point reads, and its table with stored reads, copy the destination's next-period
+    value into the reader's layout.
+    """
+    report = _fixed_case("pruning reader, fixed destination")
+    assert (
+        report["point"]["devices"],
+        _destination_reads(report["point"]),
+        _destination_reads(report["stored"]),
+    ) == (
+        {"source": [2], "destination": [0, 1]},
+        [("_chunks", "copy_to_source_layout")],
+        [("_outside:destination", "copy_to_source_layout")],
+    )
+
+
 @pytest.mark.parametrize(
     "single_states",
     [
@@ -825,6 +1049,23 @@ def test_a_sharded_couple_state_the_singles_prune_solves_as_on_one_device(
     )
 
 
+@pytest.mark.parametrize("arm", ["point", "stored", "one_device_stored"])
+def test_a_fixed_sharded_couple_state_solves_as_point_reads_on_one_device(
+    *,
+    arm: Literal["point", "stored", "one_device_stored"],
+    fixed_marriage: PrunedReport,
+) -> None:
+    """Singles with a state of their own who marry by consent into a couple that
+    keeps its sharded model-level match fixed, and dissolve from it, solve on four
+    devices, with stored and with point reads, as with point reads on one device,
+    to 16 ULP.
+    """
+    _assert_agree(
+        got=_values(fixed_marriage[arm]),
+        expected=_values(fixed_marriage["one_device_point"]),
+    )
+
+
 def test_an_exit_projection_names_every_state_its_destination_declares() -> None:
     """A model-level state is declared in every regime, so an exit's projection
     names it even where the destination prunes it.
@@ -837,35 +1078,6 @@ def test_an_exit_projection_names_every_state_its_destination_declares() -> None
         ),
     ):
         build_model(devices=(0,), sharded=(), destination_law=None, project_kind=False)
-
-
-@pytest.mark.parametrize("case", list(_REFUSAL_CASES))
-def test_point_reads_refuse_a_co_mapped_case(
-    *, case: str, refusals: RefusalReport
-) -> None:
-    """A query cannot evaluate a problem whose sharded state is co-mapped."""
-    assert refusals["point"][case] == {
-        "error": "UnsupportedOperationError",
-        "message": "This query closure needs an unblocked action problem.",
-    }
-
-
-@pytest.mark.parametrize("case", list(_REFUSAL_CASES))
-def test_stored_reads_refuse_as_point_reads_do(
-    *, case: str, refusals: RefusalReport
-) -> None:
-    """Stored reads raise the error point reads raise, with the same message."""
-    assert refusals["stored"][case] == refusals["point"][case]
-
-
-@pytest.mark.parametrize("case", list(_REFUSAL_CASES))
-def test_every_refused_case_solves_on_one_device(
-    *, case: str, refusals: RefusalReport
-) -> None:
-    """Without sharding nothing is co-mapped, so every case refused on four devices
-    solves.
-    """
-    assert refusals["one_device_point"][case] == {"error": "", "message": ""}
 
 
 def test_movers_leave_where_the_destination_pays_more(
@@ -900,3 +1112,14 @@ def test_a_stored_read_solve_simulates_like_a_point_read_solve(
     a point-read solve on one device, to this precision's decimals.
     """
     assert subject_sharded["stored_matches_point"] == ""
+
+
+def test_a_fixed_reader_sharded_on_four_devices_simulates_as_on_one() -> None:
+    """A reader that keeps its sharded kind fixed, solved on four devices with point
+    and with stored reads, simulates as a point-read solve on one device, to this
+    precision's decimals.
+    """
+    assert _run_in_child_process(
+        entry_point="report_fixed_reader_simulation",
+        arguments=f"decimal={tests.conftest.DECIMAL_PRECISION!r}",
+    ) == {"point": "", "stored": ""}

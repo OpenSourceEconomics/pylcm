@@ -1277,11 +1277,7 @@ def _admit_node(
         raise UnsupportedOperationError(
             "A collective query does not declare an EV1 stakeholder-taste law."
         )
-    if (
-        context.co_map_state_names
-        or context.invariant_bindings
-        or context.action_partitions != 1
-    ):
+    if context.invariant_bindings or context.action_partitions != 1:
         raise UnsupportedOperationError(
             "This query closure needs an unblocked action problem."
         )

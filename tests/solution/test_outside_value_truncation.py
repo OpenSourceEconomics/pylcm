@@ -10,6 +10,8 @@ every projection onto it in their problems: the model solves and simulates as if
 couple alone declared it.
 """
 
+from typing import Literal
+
 import jax.numpy as jnp
 import numpy as np
 import pandas as pd
@@ -393,15 +395,16 @@ def marriage_model(
     model_level: bool,
     execution_config: ExecutionConfig | None = None,
     single_states: bool = False,
+    match_law: Literal["flip", "fixed"] = "flip",
 ) -> Model:
     """Two singles marry by consent; the couple dissolves unilaterally into them.
 
     Only the couple reads its `match`, which flips toward the couple's terminal
-    period; a formed couple starts with a good match. With `model_level` the match
-    is declared on the model, so every regime declares it and every projection
-    names it, the counterparty's and the dissolution's onto the singles included;
-    the singles prune it. Otherwise only the couple declares it, and the
-    projections onto the singles omit it.
+    period, or keeps its value with `match_law="fixed"`; a formed couple starts with
+    a good match. With `model_level` the match is declared on the model, so every
+    regime declares it and every projection names it, the counterparty's and the
+    dissolution's onto the singles included; the singles prune it. Otherwise only the
+    couple declares it, and the projections onto the singles omit it.
 
     With `single_states` each single carries its own `wealth`, kept by an identity
     law and read by its utility; the couple does not carry it. The counterparty
@@ -412,6 +415,7 @@ def marriage_model(
         execution_config: Placement of the solve; one device without a budget
             when None.
         single_states: Whether each single carries its own wealth.
+        match_law: The match's law toward the couple's terminal period.
 
     Returns:
         The model.
@@ -459,7 +463,13 @@ def marriage_model(
             functions={
                 "utility": CollectiveUtility(utilities={"f": _wife, "m": _husband})
             },
-            state_transitions={"match": {"couple_terminal": _flip_match}},
+            state_transitions={
+                "match": {
+                    "couple_terminal": _flip_match
+                    if match_law == "flip"
+                    else fixed_transition("match")
+                }
+            },
             exit=Exit(
                 targets={
                     "f": ExitTarget(regime="single_f", projection=onto_single),

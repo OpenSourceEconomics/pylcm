@@ -1911,6 +1911,12 @@ def _bind_participation(
     _validate_query_projection_bindings(nodes=builder.nodes, period=builder.period)
     if builder.phase == "solve":
         for node in builder.nodes.values():
+            # Exits evaluate a co-mapped state's problem whole; a participation
+            # check does not yet.
+            if node.context.co_map_state_names:
+                raise UnsupportedOperationError(
+                    "This query closure needs an unblocked action problem."
+                )
             _admit_node(node=node, period=builder.period, same_period_values=True)
     return ParticipationQueryPlan(
         source=source,
