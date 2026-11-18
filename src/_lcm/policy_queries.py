@@ -1402,6 +1402,24 @@ class _QueryChunks:
         **tables: FloatND | BoolND,
     ) -> _ChunkOutput:
         """Run every chunk; `tables` holds the tables the stored reads take."""
+        from _lcm.regime_building.Q_and_F import (  # noqa: PLC0415
+            prepare_contracted_values,
+        )
+
+        # Prototype hoist: each step's contracted tables are built once here,
+        # outside the chunk loop, per reader.
+        query_arguments = {
+            name: (
+                prepare_contracted_values(
+                    function=core.node.context.Q_and_F_functions.get(core.period),
+                    arguments=arguments,
+                    skip=frozenset(core.node.gated_channels),
+                )
+                if (core := self.cores.get(name)) is not None
+                else arguments
+            )
+            for name, arguments in query_arguments.items()
+        }
         source_size = math.prod(value.size for value in states.values())
         full_chunks = (
             0 < source_size <= jnp.iinfo(jnp.int32).max

@@ -45,10 +45,12 @@ from _lcm.probability import (
 )
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.reachability import PhaseName
+from _lcm.regime_building import lottery_contraction as _contraction_switch
 from _lcm.regime_building.lottery_contraction import (
     LotteryContraction,
     LotteryContractionSource,
     plan_lottery_contraction,
+    prepared_key,
 )
 from _lcm.regime_building.next_state import (
     get_next_state_function_for_solution,
@@ -102,7 +104,7 @@ from _lcm.zero_safe import (
     scaled_joint_weight,
     zero_safe_weighted_term,
 )
-from lcm.exceptions import ModelInitializationError
+from lcm.exceptions import ModelInitializationError, UnsupportedOperationError
 from lcm.grids import IrregSpacedGrid
 from lcm.typing import (
     ActionName,
@@ -1939,6 +1941,7 @@ def get_Q_and_F_collective(
     ),
     count_raise_landings: bool = False,
     bound_specs: tuple[PostDecisionBoundSpec, ...] = (),
+    lottery_contraction_source: LotteryContractionSource | None = None,
 ) -> QAndFFunction:
     """Non-terminal (Q, F) for a collective regime — per-stakeholder continuation.
 
@@ -2081,6 +2084,7 @@ def get_Q_and_F_collective(
         n_stakeholders=n_stakeholders,
         gated_continuations=gated_continuations,
         count_raise_landings=count_raise_landings,
+        lottery_contraction_source=lottery_contraction_source,
         extend_process_edges=phase_name,
     )
 
@@ -3893,6 +3897,16 @@ class _ComputeCE:
                 co_map_next_names=self.co_map_next_names,
                 n_stakeholders=self.n_stakeholders,
                 reduces_per_target=self.reduces_per_target,
+                prepared=(
+                    None
+                    if continuation.lottery_contraction is None
+                    else next_regime_to_V_arr.get(
+                        prepared_key(
+                            target=target_regime_name,
+                            contraction=continuation.lottery_contraction,
+                        )
+                    )
+                ),
             )
             landing_counts.extend(read.landing_counts)
             participation_valid &= read.valid
@@ -4096,6 +4110,51 @@ class _ComputeCE:
         return values, landing_counts
 
 
+def prepare_contracted_values(
+    *,
+    function: QAndFFunction | None,
+    arguments: Mapping[str, PytreeValue],
+    skip: frozenset[RegimeName] = frozenset(),
+) -> Mapping[str, PytreeValue]:
+    """Return `arguments` with each contracted target of `function` prepared once.
+
+    Prototype for the query and outside-table programs: called before their loops,
+    so the contracted table is built once per program call rather than per chunk.
+    Only the `_ComputeCE` continuations of `function` itself are prepared; any
+    other reader of the same leaf contracts `raw` in place.
+
+    Raises:
+        UnsupportedOperationError: The switch is "inline" and `function` contracts
+            a draw: inside these programs' loops the table is rebuilt per lane,
+            row and action, terabytes on a modest grid.
+    """
+    switch = _contraction_switch.QUERY_CONTRACTION
+    if switch == "off":
+        return arguments
+    compute_CE = getattr(function, "compute_CE", None)
+    values = arguments.get("next_regime_to_V_arr")
+    if not isinstance(compute_CE, _ComputeCE) or not isinstance(values, Mapping):
+        return arguments
+    prepared = dict(values)
+    for target, continuation in compute_CE.continuations.items():
+        contraction = continuation.lottery_contraction
+        leaf = values.get(target)
+        if contraction is None or target in skip or leaf is None:
+            continue
+        if switch != "hoisted":
+            msg = (
+                f"QUERY_CONTRACTION={switch!r} contracts the continuation toward "
+                f"'{target}' inside a query or outside-table program's loops; "
+                'use "hoisted" or "off".'
+            )
+            raise UnsupportedOperationError(msg)
+        prepared[prepared_key(target=target, contraction=contraction)] = contraction(
+            values=cast("FloatND", leaf),
+            states_actions_params=cast("QAndFKwargs", arguments),
+        )
+    return {**arguments, "next_regime_to_V_arr": MappingProxyType(prepared)}
+
+
 def _participation_value_and_integrity(
     *,
     continuation: _TargetContinuation,
@@ -4248,8 +4307,13 @@ class _TargetContinuation:
         co_map_next_names: frozenset[str],
         n_stakeholders: int | None,
         reduces_per_target: bool,
+        prepared: FloatND | None = None,
     ) -> _TargetValue:
-        """Read this target's nodes, counts and integrity, reducing a linear mean."""
+        """Read this target's nodes, counts and integrity, reducing a linear mean.
+
+        `prepared` is this reader's contracted table built ahead of the caller's
+        loops; without it the table is built here.
+        """
         landing_counts: list[IntND] = []
         next_states = self.next_states(**states_actions_params)
 
@@ -4281,8 +4345,12 @@ class _TargetContinuation:
                     dimension=0,
                 )
         # Contract before slicing fixed axes, while the received value layout remains.
-        next_values = self.with_contracted_draws(
-            values=next_values, states_actions_params=states_actions_params
+        next_values = (
+            prepared
+            if prepared is not None
+            else self.with_contracted_draws(
+                values=next_values, states_actions_params=states_actions_params
+            )
         )
         fixed_slice_names = frozenset(name for _, name in self.fixed_value_axes)
         # Fixed components select one value surface, not one value per
@@ -4771,11 +4839,14 @@ def _build_target_continuation(
             v_interpolation_info=v_interpolation_info,
             co_map_state_names=co_map_state_names,
             source=lottery_contraction_source,
-            ordinary_reader=(
-                gated_continuation is None
-                and n_stakeholders is None
-                and not count_raise_landings
-                and participation_reader is None
+            ordinary_reader=gated_continuation is None
+            and participation_reader is None
+            and _contracts_despite_counting_or_members(
+                v_interpolation_info=v_interpolation_info,
+                bundle=bundle,
+                co_map_state_names=co_map_state_names,
+                n_stakeholders=n_stakeholders,
+                count_raise_landings=count_raise_landings,
             ),
         )
     )
@@ -5120,6 +5191,33 @@ def _build_target_continuation(
         participation_query=participation_reader is not None,
         lottery_contraction=lottery_contraction,
         gated_read=gated_continuation is not None,
+    )
+
+
+def _contracts_despite_counting_or_members(
+    *,
+    v_interpolation_info: VInterpolationInfo,
+    bundle: MappingProxyType[TransitionFunctionName, TransitionFunction],
+    co_map_state_names: tuple[StateName, ...],
+    n_stakeholders: int | None,
+    count_raise_landings: bool,
+) -> bool:
+    """Whether a landing-counting or collective continuation may still contract.
+
+    Prototype: with `QUERY_CONTRACTION` on, a counting request plans no counter
+    when the target has no raise-rule grid (and, ungated, no fallback check), and
+    a collective continuation contracts per member, the stakeholder axis riding
+    along. Off, both keep every draw enumerated, as shipped.
+    """
+    if _contraction_switch.QUERY_CONTRACTION == "off":
+        return n_stakeholders is None and not count_raise_landings
+    return not count_raise_landings or not _raise_rule_grids(
+        v_interpolation_info=v_interpolation_info,
+        state_names=tuple(
+            name
+            for name in v_interpolation_info.state_names
+            if f"next_{name}" in bundle and name not in co_map_state_names
+        ),
     )
 
 

@@ -97,6 +97,31 @@ from lcm.typing import (
 
 type StochasticWeightsFunction = Callable[..., dict[str, FloatND | IntND]]
 
+# ponytail: prototype switch for the query/collective measurement, read at model
+# build ("off"/"inline") and at trace time ("hoisted"). Productionizing replaces it
+# by a solver option threaded through the build.
+#   "off"     - query and collective continuations never contract (shipped behaviour);
+#   "inline"  - they contract inside `read`, i.e. inside the kernel's loops; refused
+#               where a query or outside-table program would read the table;
+#   "hoisted" - as "inline", and the query/outside-table programs build each
+#               reader's contracted table once per call, before their loops.
+QUERY_CONTRACTION: str = "off"
+
+
+PREPARED_PREFIX = "__contracted__"
+
+
+def prepared_key(*, target: RegimeName, contraction: LotteryContraction) -> str:
+    """Key of one reader's prepared table beside the raw value arrays.
+
+    The key names the target and the reader's contraction object, so it is part
+    of the mapping's tree structure (static), and a table prepared for one reader
+    is never read by another: a reader without its key contracts the raw array.
+    """
+    # ponytail: id() is unique per process only; production would key on a stable
+    # fingerprint of the contraction.
+    return f"{PREPARED_PREFIX}{target}__{id(contraction):x}"
+
 
 @dataclass(frozen=True, kw_only=True)
 class LotteryContractionSource:

@@ -130,6 +130,7 @@ from _lcm.reachability import (
     build_model_reachability,
     candidate_targets_from_transition,
 )
+from _lcm.regime_building import lottery_contraction
 from _lcm.regime_building.age_normalization import (
     AgeGridSchedule,
     PeriodizedEconFunction,
@@ -5166,9 +5167,20 @@ def _prepare_numerical_solution_phase(  # noqa: PLR0915 - native route admission
         Q_and_F_functions = grouped_Q_and_F.by_period
         # Queries receive parent coordinates outside the source's own preflight.
         # Their counters must not change the ordinary solver's Q/F contract.
+        # Prototype: a query evaluates the regime at projected states, which for a
+        # process may lie off its nodes, so a process draw reading its own current
+        # value stays enumerated there.
+        solve_source = decision_Q_and_F.keywords["lottery_contraction_source"]
         query_Q_and_F_functions = (
             decision_Q_and_F(
-                active_periods=query_periods, count_raise_landings=True
+                active_periods=query_periods,
+                count_raise_landings=True,
+                lottery_contraction_source=(
+                    dataclass_replace(solve_source, current_values_on_nodes=False)
+                    if solve_source is not None
+                    and lottery_contraction.QUERY_CONTRACTION != "off"
+                    else solve_source
+                ),
             ).by_period
             if query_periods
             else MappingProxyType({})
@@ -10495,6 +10507,7 @@ def _build_Q_and_F_per_period(
                 ),
                 gated_continuations=period_gated_continuations,
                 count_raise_landings=count_raise_landings,
+                lottery_contraction_source=lottery_contraction_source,
             )
             continue
         built[key] = get_Q_and_F(
