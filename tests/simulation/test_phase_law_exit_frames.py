@@ -27,8 +27,6 @@ from tests.conftest import DECIMAL_PRECISION
 class _PhaseFrameRegimes:
     source: ScalarInt
     couple: ScalarInt
-    outside_f: ScalarInt
-    outside_m: ScalarInt
 
 
 def _single_flow() -> float:
@@ -71,7 +69,7 @@ def test_phase_specific_shared_offer_frame_reaches_participating_final_actor(
                     },
                     rule=Consent(
                         counterparty=Counterparty(
-                            regime="outside_m", role="m", projection={}
+                            regime="source", role="m", projection={}
                         )
                     ),
                     observes=("offer",),
@@ -87,15 +85,13 @@ def test_phase_specific_shared_offer_frame_reaches_participating_final_actor(
                 shocks=("offers",),
                 exit=Exit(
                     targets={
-                        "f": ExitTarget(regime="outside_f", projection={}),
-                        "m": ExitTarget(regime="outside_m", projection={}),
+                        "f": ExitTarget(regime="source", projection={}),
+                        "m": ExitTarget(regime="source", projection={}),
                     },
                     rule=Unilateral(),
                     observes=("offer",),
                 ),
             ),
-            "outside_f": Regime(functions={"utility": _single_flow}),
-            "outside_m": Regime(functions={"utility": _single_flow}),
         },
         shocks={
             "offers": ShockGroup(
