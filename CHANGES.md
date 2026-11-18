@@ -5,6 +5,35 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
+### Regimes may share a `Problem`
+
+- `lcm.Problem` declares an action problem with the thirteen slots of `Regime` from
+  `states` to `certainty_equivalent`, and `Regime(problem=..., exit=...)` holds one. A
+  holder takes the problem's slots at construction and is then the regime that declares
+  them itself: same values, same fingerprint, parameters per regime. Several regimes may
+  hold one problem and differ in their exits and edges. A problem slot declared beside
+  `problem`, a `ConsumptionSavingsRegime` or `NestedConsumptionSavingsRegime` holding a
+  problem, and a `ValueDependentConstraint` in a `Problem` raise
+  `RegimeInitializationError`. See [`Problem`](docs/reference/model_and_regime.md#problem).
+
+### Exits read the destination's problem
+
+- A subject moves at most once per period. An exit that needs no consent reads its
+  destination's problem at the projected state, and a consent counterparty its regime's
+  problem, without that regime's own exit; a formed couple applies its own rule for
+  staying, whose outside values are again problem values. Two regimes may exit into each
+  other, and no regime is needed only to be read. Values change where a destination has
+  an exit that needs no consent.
+- In a solve, an outside read the build proves to land on the destination's grid takes
+  the destination's problem value from a table the reader fills once per period; any
+  other read is evaluated at its exact point. See
+  [Current-period exits](docs/reference/model_and_regime.md#current-period-exits).
+- An exit into a regime that prunes a model-level state builds: the projection onto that
+  state is dropped, as a law of motion toward that regime is.
+- A budgeted simulation of a regime with a current-period exit and a gated edge builds
+  when the gate's fallback regime declares its states in an order other than the sorted
+  one.
+
 ### Discrete limited commitment
 
 - `Unilateral(renegotiate=Renegotiate(state="mu"))` adjusts an ordered discrete

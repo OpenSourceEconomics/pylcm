@@ -228,7 +228,11 @@ whether this target edge is attempted at all, like any other per-target cell. Th
 decision, having arrived at the target's coordinates, says whether the row keeps that
 target or takes its route's fallback. A move decided in the current period instead — the
 household dissolving because a partner walks out now — is a participation `Exit` in the
-source's `Regime(exit=...)`; see the [migration guide](migrating_dated_regimes.md).
+source's `Regime(exit=...)`; see the [migration guide](migrating_dated_regimes.md). An
+exit, and a consent counterparty, may name a regime that subjects are in, even one with
+an exit of its own: an exit that needs no consent reads its destination's problem, and a
+counterparty its regime's problem, without that regime's exit. No regime is needed only
+to be read.
 
 ### A gate routes on states
 

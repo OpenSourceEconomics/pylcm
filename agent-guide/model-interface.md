@@ -113,6 +113,16 @@ Model(
   separator `__` and cannot start or end with `_`. `edges` is reserved as a regime, function
   and argument name
 
+**Shared problems:** `Problem` takes the thirteen action-problem slots of `Regime`
+(`states` through `certainty_equivalent`), and `Regime(problem=..., exit=...,
+description=...)` holds one. At construction the holder takes the problem's own objects
+for those slots and is from then on the regime that declares them itself: same values,
+same fingerprint. Several regimes may hold one problem and differ in their exits and
+edges; parameters stay per regime. Refused with `RegimeInitializationError`: a problem
+slot declared beside `problem`, a `ConsumptionSavingsRegime` or
+`NestedConsumptionSavingsRegime` holding a problem, and a `ValueDependentConstraint` in
+a `Problem`. Nothing in the engine shares work between holders.
+
 ### Model Creation
 
 ```python

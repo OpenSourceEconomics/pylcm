@@ -28,7 +28,14 @@ class ParticipationRead(ProjectedRegimeValue):
     """
 
     kind: ParticipationValueKind
-    """Exact policy problem or integrated stored-value object requested."""
+    """The object read at the projected state:
+
+    - `"Raw"` ⇒ the referenced regime's problem, without its exit
+    - `"Participating"` ⇒ that problem with the regime's exit applied as a rule for
+      staying, without the move; slated for removal once a regime's value can be
+      read at observed shocks
+    - `"IntegratedFull"` ⇒ the regime's value, stored and integrated over shocks
+    """
     field: Literal["value", "support"] = "value"
     """Policy support is Boolean and is unavailable from IntegratedFull."""
     observes: tuple[str, ...] = ()

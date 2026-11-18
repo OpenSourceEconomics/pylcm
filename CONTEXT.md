@@ -40,7 +40,8 @@ _Avoid_: hidden regime, stage, action regime
 **Outside value**:
 What a member of a regime gets by leaving it in the current period: the value of the
 destination's problem at the member's projected state, given the current shocks the
-decision observes, and with no further move in that period.
+decision observes, and with no further move in that period. A move that needs the
+consent of a destination's members also applies the destination's rule for staying.
 _Avoid_: benchmark, threat point, participating value
 
 **Action-free regime**:
@@ -71,7 +72,8 @@ _Avoid_: next-regime function, edge law
 
 **Per-target state law**:
 A state law of a source regime that differs by target regime. It belongs to the
-source regime, not to the edge, even though it is evaluated only toward its target.
+source regime's problem, not to the edge, even though it is evaluated only toward its
+target.
 _Avoid_: edge law, handoff law
 
 **Carried state**:

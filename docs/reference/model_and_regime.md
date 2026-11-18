@@ -344,10 +344,14 @@ remain in `Model(edges=...)`.
   real destination and maps its complete current state. A collective destination
   requires its stakeholder `role`. The adjustment reads source states and parameters and
   enters the exit payoff once. A projection may use `Phased(solve=..., simulate=...)`
-  settlements; it does not change information.
+  settlements; it does not change information. A projection names every state its
+  destination declares, model-level ones included. Where the destination does not read a
+  model-level state and pruning drops it, the projection onto it is dropped as well, as
+  a law of motion toward that destination is, so the same projection builds either way.
 - `Consent(counterparty=Counterparty(regime=..., role=..., projection=...))` compares
   each party's payoff at the destination's common Participating policy strictly against
-  that party's Raw stay value. Equality keeps the original state.
+  that party's Raw stay value. Equality keeps the original state. The counterparty's
+  projection follows the same rule as a target's.
 - Built-in `rule=Unilateral()` keeps the match only if every member is willing to stay;
   `rule=MutualConsent()` ends it only if every member is unwilling. A member is willing
   when its stay value is above its exit payoff, or equal to it under the default
@@ -506,14 +510,21 @@ state of the referenced regime from the landed target state, and `stakeholder` s
 collective reference's exact role. The `reads` mapping key is the argument name the
 predicate receives.
 
-- `kind="Raw"` and `kind="Participating"` reconstruct their canonical `GridSearch`
-  action problems at the projected state, including the common action for a collective
-  regime. `field="value"` reads the selected value; `field="support"` reads Boolean
-  policy support. A read's `observes` adds the referenced physical shocks visible for
-  this comparison to the decision's declared information.
-- `kind="IntegratedFull"` reads the stored, shock-integrated Full value representation
-  at the projected state. It exposes only `field="value"`, with empty `observes`; policy
-  reconstruction, realized information and support are unavailable from this read.
+- `kind="Raw"` reads the referenced regime's problem: its action problem without its
+  exit.
+- `kind="Participating"` reads the same problem with the referenced regime's exit
+  applied as a rule for staying, without the move; an exit by `Consent` is not applied.
+- `kind="IntegratedFull"` reads the regime's value: the stored, shock-integrated Full
+  value at the projected state, moves included.
+
+`Raw` and `Participating` reconstruct their canonical `GridSearch` action problems at
+the projected state, including the common action for a collective regime.
+`field="value"` reads the selected value; `field="support"` reads Boolean policy
+support. A read's `observes` adds the referenced physical shocks visible for this
+comparison to the decision's declared information. `IntegratedFull` exposes only
+`field="value"`, with empty `observes`; policy reconstruction, realized information and
+support are unavailable from it. `Participating` is slated for removal once a regime's
+value can be read at observed shocks.
 
 (api-extreme-value-taste-shocks)=
 

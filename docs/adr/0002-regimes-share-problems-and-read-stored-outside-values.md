@@ -1,7 +1,11 @@
 # 2. Regimes share problems and read stored outside values
 
 Status: accepted on 2026-11-17. The engine step is implemented for the solve, except
-that each reader tabulates its destinations itself; the language step is not started.
+that each reader tabulates its destinations itself. The language step is implemented: a
+regime may hold a shared `Problem`, lowered at construction to the regime it would
+declare itself; nothing in the engine shares work between holders yet. The
+`Participating` participation read is kept until a regime's value can be read at
+observed shocks.
 
 ## Context
 
@@ -68,7 +72,8 @@ regime that declares states, actions and functions itself owns a problem no othe
 shares, so existing models keep their meaning. `Exit`, `ExitTarget`, the exit rules,
 `ParticipationCheck` and `ValueDependentConstraint` stay. A participation read
 distinguishes a problem's value from a regime's value; the kind that keeps a
-destination's exits without moving goes away.
+destination's exits without moving goes away once a regime's value can be read at
+observed shocks.
 
 ### Order of work
 
