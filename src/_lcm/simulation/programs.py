@@ -1210,17 +1210,20 @@ class _StreamedArgmaxQOverA:
 
     Publishes the flat identity of the winning action in the canonical C order
     of the action product, and the value it attains — the same pair the dense
-    canonical reducer publishes, obtained by the exact hard-max fold the solve
-    kernel streams with. An all-infeasible cell publishes identity -1, as the
-    dense reducer does; no action grid decodes it, so a caller refuses the cell
-    before reading its action.
+    canonical reducer publishes, obtained by the exact hard-max stream of
+    `build_streaming_max_Q_over_a`. A block covering the whole product maps the
+    named grids and is reduced as one block, so its value can differ from a
+    narrower fold's by rounding, never its rule. An all-infeasible cell
+    publishes identity -1, as the dense reducer does; no action grid decodes it,
+    so a caller refuses the cell before reading its action.
     """
 
     __name__: ClassVar[str] = "streamed_argmax_and_max_Q_over_a"
     """Name `dags` reads off the callable when it reports an invalid argument."""
 
     Q_and_F: QAndFFunction
-    """The regime's action value and feasibility, evaluated per action block."""
+    """The regime's action value and feasibility, evaluated per action block or
+    mapped over the named grids when one block covers the product."""
 
     action_names: tuple[ActionName, ...]
     """Action variable names, spanning the canonical streamed product."""
