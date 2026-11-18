@@ -9,7 +9,6 @@ from jax._src import monitoring
 from lcm import ExecutionConfig, IrregSpacedGrid
 from lcm.model import Model
 from lcm.typing import UserParams
-from tests.simulation.initial_conditions._models import make_constraint_model
 
 _COMPILE_EVENT = "/jax/core/compile/backend_compile_duration"
 
@@ -24,6 +23,9 @@ except RuntimeError:
 pytestmark = pytest.mark.skipif(
     _PYTEST_PARALLEL, reason="Requires a fresh four-CPU-device process"
 )
+
+# Its categorical regimes build arrays at import, which would initialise the backend.
+from tests.simulation.initial_conditions._models import make_constraint_model  # noqa: E402
 
 
 def _model() -> Model:
