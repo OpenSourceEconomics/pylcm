@@ -1,0 +1,382 @@
+"""Regimes that hold one problem solve and simulate like their hand-declared twins.
+
+Two couples hold one collective problem and differ only in the rule of their exit:
+one dissolves unless both members are willing to stay, the other only if neither
+is. Two singles hold one single's problem without an exit. The couple's problem
+reads a current shock and a model-level state. In the second and last period every
+regime moves on to a terminal regime of its kind that pays the same flow again. The
+twin model declares every slot by hand on each regime, so any difference between
+the two is the language's.
+
+Closed form at the couple's cells in the first period, with an outside value of
+`2 * wealth` per period for each member and a mean-zero shock in the wife's utility
+(the discounted second period scales every comparison alike):
+
+- the wife gets `3 * wealth` in the couple and never wants to leave;
+- the husband gets `wealth + skill`, so he wants to leave everywhere except at
+  `wealth = 1, skill = 1`, where he is indifferent and stays;
+- the unilateral couple therefore dissolves where the husband wants to leave, and
+  the mutual-consent couple never does.
+"""
+
+from collections.abc import Mapping
+
+import jax.numpy as jnp
+import numpy as np
+import pandas as pd
+import pytest
+
+from lcm import (
+    CollectiveUtility,
+    DiscreteGrid,
+    ExecutionConfig,
+    Exit,
+    ExitTarget,
+    InitialNodes,
+    LinSpacedGrid,
+    Model,
+    MutualConsent,
+    Periods,
+    Problem,
+    Regime,
+    Unilateral,
+    categorical,
+    fixed_transition,
+)
+from lcm.exits import ExitRule
+from lcm.result import SimulationResult
+from lcm.shocks import GaussHermite, Normal, Product, ShockGroup
+from lcm.solver_api import SolutionResult
+from lcm.typing import ContinuousState, DiscreteState, FloatND, RegimeName, ScalarInt
+
+_PARAMS = {"discount_factor": 0.9}
+_COUPLES = ("couple_u", "couple_m")
+_FIRST_PERIOD = (*_COUPLES, "single_f", "single_m")
+_LAST_PERIOD = ("couple_end", "single_end")
+_REGIME_NAMES = (*_FIRST_PERIOD, *_LAST_PERIOD)
+_EDGES = {
+    "couple_u": {"couple_end": Periods(values=(0,))},
+    "couple_m": {"couple_end": Periods(values=(0,))},
+    "single_f": {"single_end": Periods(values=(0,))},
+    "single_m": {"single_end": Periods(values=(0,))},
+}
+
+
+@categorical(ordered=False)
+class _Household:
+    couple_u: ScalarInt
+    couple_m: ScalarInt
+    single_f: ScalarInt
+    single_m: ScalarInt
+    couple_end: ScalarInt
+    single_end: ScalarInt
+
+
+@categorical(ordered=True)
+class _Skill:
+    low: ScalarInt
+    high: ScalarInt
+
+
+def _wife(*, wealth: ContinuousState, match: FloatND) -> FloatND:
+    return 3.0 * wealth + match
+
+
+def _skilled_husband(*, wealth: ContinuousState, skill: DiscreteState) -> FloatND:
+    return wealth + skill
+
+
+def _husband(wealth: ContinuousState) -> FloatND:
+    return wealth
+
+
+def _outside(wealth: ContinuousState) -> FloatND:
+    return 2.0 * wealth
+
+
+def _wealth() -> LinSpacedGrid:
+    return LinSpacedGrid(start=1.0, stop=2.0, n_points=2)
+
+
+def _household(*, skill: bool) -> CollectiveUtility:
+    return CollectiveUtility(
+        utilities={"f": _wife, "m": _skilled_husband if skill else _husband}
+    )
+
+
+def _couple_problem(*, last: bool, skill: bool) -> Problem:
+    return Problem(
+        states={"wealth": _wealth()},
+        state_transitions={} if last else {"wealth": fixed_transition("wealth")},
+        functions={"utility": _household(skill=skill)},
+        shocks=("match",),
+    )
+
+
+def _single_problem(*, last: bool) -> Problem:
+    return Problem(
+        states={"wealth": _wealth()},
+        state_transitions={} if last else {"wealth": fixed_transition("wealth")},
+        functions={"utility": _outside},
+    )
+
+
+def _dissolution(*, rule: ExitRule, skill: bool) -> Exit:
+    return Exit(
+        rule=rule,
+        targets={
+            member: ExitTarget(
+                regime=f"single_{member}",
+                projection={"wealth": fixed_transition("wealth")}
+                | ({"skill": fixed_transition("skill")} if skill else {}),
+            )
+            for member in ("f", "m")
+        },
+    )
+
+
+def _shared_regimes(*, skill: bool) -> dict[RegimeName, Regime]:
+    couple = _couple_problem(last=False, skill=skill)
+    single = _single_problem(last=False)
+    return {
+        "couple_u": Regime(
+            problem=couple, exit=_dissolution(rule=Unilateral(), skill=skill)
+        ),
+        "couple_m": Regime(
+            problem=couple, exit=_dissolution(rule=MutualConsent(), skill=skill)
+        ),
+        "single_f": Regime(problem=single),
+        "single_m": Regime(problem=single),
+        "couple_end": Regime(problem=_couple_problem(last=True, skill=skill)),
+        "single_end": Regime(problem=_single_problem(last=True)),
+    }
+
+
+def _twin_regimes() -> dict[RegimeName, Regime]:
+    def couple(*, last: bool, rule: ExitRule | None) -> Regime:
+        return Regime(
+            states={"wealth": _wealth()},
+            state_transitions={} if last else {"wealth": fixed_transition("wealth")},
+            functions={"utility": _household(skill=True)},
+            shocks=("match",),
+            exit=None if rule is None else _dissolution(rule=rule, skill=True),
+        )
+
+    def single(*, last: bool) -> Regime:
+        return Regime(
+            states={"wealth": _wealth()},
+            state_transitions={} if last else {"wealth": fixed_transition("wealth")},
+            functions={"utility": _outside},
+        )
+
+    return {
+        "couple_u": couple(last=False, rule=Unilateral()),
+        "couple_m": couple(last=False, rule=MutualConsent()),
+        "single_f": single(last=False),
+        "single_m": single(last=False),
+        "couple_end": couple(last=True, rule=None),
+        "single_end": single(last=True),
+    }
+
+
+def _model(*, regimes: Mapping[RegimeName, Regime], skill: bool) -> Model:
+    """Build the model, with the model-level state `skill` or without it."""
+    return Model(
+        regimes=regimes,
+        states={"skill": DiscreteGrid(category_class=_Skill)} if skill else {},
+        state_transitions={"skill": fixed_transition("skill")} if skill else {},
+        shocks={
+            "match": ShockGroup(
+                shocks={"match": Normal(mu=0.0, sigma=0.5)},
+                nodes=Product(match=GaussHermite(n=2)),
+            )
+        },
+        n_periods=2,
+        regime_id_class=_Household,
+        initial_nodes=InitialNodes(by_period={0: _COUPLES}),
+        edges=_EDGES,
+        execution_config=ExecutionConfig(device_memory_bytes=None),
+    )
+
+
+@pytest.fixture(scope="module")
+def shared_regimes() -> dict[RegimeName, Regime]:
+    return _shared_regimes(skill=True)
+
+
+@pytest.fixture(scope="module")
+def shared(shared_regimes: dict[RegimeName, Regime]) -> Model:
+    return _model(regimes=shared_regimes, skill=True)
+
+
+@pytest.fixture(scope="module")
+def twin() -> Model:
+    return _model(regimes=_twin_regimes(), skill=True)
+
+
+@pytest.fixture(scope="module")
+def shared_solution(shared: Model) -> SolutionResult:
+    return shared.solve(params=_PARAMS, log_level="off")
+
+
+@pytest.fixture(scope="module")
+def twin_solution(twin: Model) -> SolutionResult:
+    return twin.solve(params=_PARAMS, log_level="off")
+
+
+def _simulate(*, model: Model, solution: SolutionResult) -> pd.DataFrame:
+    roles = [model.stakeholder_names_to_ids[member] for member in ("f", "m")] * 4
+    result: SimulationResult = model.simulate(
+        params=_PARAMS,
+        solution=solution,
+        initial_conditions={
+            "period": jnp.zeros(8, dtype=jnp.int32),
+            "wealth": jnp.asarray([1.0, 1.0, 2.0, 2.0] * 2),
+            "skill": jnp.asarray([1, 1, 0, 0, 1, 1, 0, 0], dtype=jnp.int32),
+            "regime_id": jnp.asarray(
+                [_Household.couple_u] * 4 + [_Household.couple_m] * 4,
+                dtype=jnp.int32,
+            ),
+            "own_stakeholder": jnp.asarray(roles, dtype=jnp.int32),
+        },
+        seed=0,
+        log_level="off",
+    )
+    return result.to_dataframe()
+
+
+@pytest.mark.parametrize(
+    ("period", "regime_name"),
+    [(0, name) for name in _COUPLES] + [(1, name) for name in _LAST_PERIOD],
+)
+def test_shared_problem_solves_bitwise_like_its_hand_declared_twin(
+    *,
+    shared_solution: SolutionResult,
+    twin_solution: SolutionResult,
+    period: int,
+    regime_name: RegimeName,
+) -> None:
+    np.testing.assert_array_equal(
+        np.asarray(shared_solution.values[period][regime_name]),
+        np.asarray(twin_solution.values[period][regime_name]),
+    )
+
+
+def test_shared_problem_has_its_twin_s_model_fingerprint(
+    *, shared_solution: SolutionResult, twin_solution: SolutionResult
+) -> None:
+    assert (
+        shared_solution.metadata.model_fingerprint
+        == twin_solution.metadata.model_fingerprint
+    )
+
+
+def test_shared_problem_simulates_like_its_hand_declared_twin(
+    *,
+    shared: Model,
+    twin: Model,
+    shared_solution: SolutionResult,
+    twin_solution: SolutionResult,
+) -> None:
+    pd.testing.assert_frame_equal(
+        _simulate(model=shared, solution=shared_solution),
+        _simulate(model=twin, solution=twin_solution),
+    )
+
+
+def test_the_exit_rule_of_each_holder_decides_its_value(
+    shared_solution: SolutionResult,
+) -> None:
+    """The unilateral couple dissolves where the husband would leave; the
+    mutual-consent couple does not, so their values differ there."""
+    values = shared_solution.values[0]
+    assert not np.array_equal(
+        np.asarray(values["couple_u"]), np.asarray(values["couple_m"])
+    )
+
+
+@pytest.mark.parametrize("slot", ["states", "state_transitions", "functions", "shocks"])
+def test_two_couples_hold_one_problem_s_objects(slot: str) -> None:
+    regimes = _shared_regimes(skill=True)
+    assert getattr(regimes["couple_u"], slot) is getattr(regimes["couple_m"], slot)
+
+
+def test_shared_problem_has_its_twin_s_params_template(
+    *, shared: Model, twin: Model
+) -> None:
+    assert shared.get_params_template() == twin.get_params_template()
+
+
+def test_results_name_regimes_not_problems(shared_solution: SolutionResult) -> None:
+    """The singles are only read as outside values, so no value of theirs is kept;
+    the two couples holding one problem keep one each, by regime name."""
+    assert set(shared_solution.values[0]) == set(_COUPLES)
+
+
+def test_regime_ids_name_regimes_not_problems(shared: Model) -> None:
+    assert set(shared.regime_names_to_ids) == set(_REGIME_NAMES)
+
+
+def test_edges_name_regimes_not_problems(shared: Model) -> None:
+    assert shared.edges == _EDGES
+
+
+def test_simulated_rows_name_regimes_not_problems(
+    *, shared: Model, shared_solution: SolutionResult
+) -> None:
+    frame = _simulate(model=shared, solution=shared_solution)
+    assert set(frame["regime_name"]) <= set(_REGIME_NAMES)
+
+
+@pytest.mark.parametrize("regime_name", _COUPLES)
+def test_a_finalized_holder_keeps_its_problem(
+    *,
+    shared: Model,
+    shared_regimes: dict[RegimeName, Regime],
+    regime_name: RegimeName,
+) -> None:
+    """Finalization derives each regime anew, and the derived regime still holds
+    the problem it was declared with."""
+    assert (
+        shared.user_regimes[regime_name].problem is shared_regimes[regime_name].problem
+    )
+
+
+@pytest.fixture(scope="module")
+def without_skill() -> Model:
+    return _model(regimes=_shared_regimes(skill=False), skill=False)
+
+
+@pytest.fixture(scope="module")
+def rebuilt(without_skill: Model) -> Model:
+    """The model built again from its own finalized regimes.
+
+    It has no model-level state: a finalized regime carries such a state as its
+    own, and the rebuilt model would then declare it on both levels.
+    """
+    return _model(regimes=without_skill.user_regimes, skill=False)
+
+
+@pytest.mark.parametrize("regime_name", _COUPLES)
+def test_rebuilt_holders_keep_their_problem(
+    *, without_skill: Model, rebuilt: Model, regime_name: RegimeName
+) -> None:
+    assert (
+        rebuilt.user_regimes[regime_name].problem
+        is without_skill.user_regimes[regime_name].problem
+    )
+
+
+@pytest.mark.parametrize("regime_name", _COUPLES)
+def test_finalized_regimes_rebuild_the_model(
+    *, without_skill: Model, rebuilt: Model, regime_name: RegimeName
+) -> None:
+    """Finalized holders build the same model again and solve to the same values."""
+    np.testing.assert_array_equal(
+        np.asarray(
+            rebuilt.solve(params=_PARAMS, log_level="off").values[0][regime_name]
+        ),
+        np.asarray(
+            without_skill.solve(params=_PARAMS, log_level="off").values[0][regime_name]
+        ),
+    )

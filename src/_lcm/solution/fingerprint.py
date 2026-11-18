@@ -1122,7 +1122,7 @@ def _project_user_regime_declaration(
                         else value
                     )
                     for name, value in all_fields
-                    if name != "description"
+                    if name not in {"description", "problem"}
                     # An empty reporting declaration adds no semantic facts to
                     # the pre-existing feature-free model identity.
                     and not (

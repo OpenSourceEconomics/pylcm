@@ -175,6 +175,7 @@ from lcm.persistence import (  # noqa: E402
     _bind_forward_refs as _bind_persistence_forward_refs,
 )
 from lcm.phased import Phased  # noqa: E402
+from lcm.problem import Problem  # noqa: E402
 from lcm.processes import (  # noqa: E402
     JointNormalIIDProcess,
     LogNormalIIDProcess,
@@ -187,6 +188,7 @@ from lcm.processes import (  # noqa: E402
     UniformIIDProcess,
 )
 from lcm.regime import Regime  # noqa: E402
+from lcm.regime import _bind_forward_refs as _bind_regime_forward_refs  # noqa: E402
 from lcm.result import PolicyLookup, SimulationResult  # noqa: E402
 from lcm.taste_shocks import ExtremeValueTasteShocks  # noqa: E402
 from lcm.temporal import (  # noqa: E402
@@ -221,6 +223,7 @@ from lcm.version import __version__  # noqa: E402
 # rewritten string annotations resolve at call time.
 _bind_variables_forward_refs(regime_cls=Regime)
 _bind_persistence_forward_refs(model_cls=Model, simulation_result_cls=SimulationResult)
+_bind_regime_forward_refs(problem_cls=Problem)
 _bind_typing_forward_refs(
     age_selector=_AgeSelector,
     initial_nodes_cls=InitialNodes,
@@ -230,6 +233,7 @@ del (
     _AgeSelector,
     _UserInitialNodes,
     _bind_persistence_forward_refs,
+    _bind_regime_forward_refs,
     _bind_typing_forward_refs,
     _bind_variables_forward_refs,
 )
@@ -308,6 +312,7 @@ __all__ = [
     "PiecewiseLogSpacedGrid",
     "PolicyLookup",
     "PowerMean",
+    "Problem",
     "ProjectedRegimeValue",
     "QuasiArithmeticMean",
     "Regime",

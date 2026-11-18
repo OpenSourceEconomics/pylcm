@@ -13,7 +13,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from functools import cached_property
 from types import MappingProxyType
-from typing import ClassVar, Literal, TypedDict, Unpack, cast
+from typing import TYPE_CHECKING, ClassVar, Literal, TypedDict, Unpack, cast
 
 from beartype import beartype
 
@@ -54,6 +54,19 @@ from lcm.transition import (
     StochasticTransition,
 )
 from lcm.typing import UserFunction
+
+if TYPE_CHECKING:
+    from lcm.problem import Problem
+
+    type _ProblemClass = type[Problem]
+else:
+    # `lcm.problem` imports this module; `lcm.__init__` binds `Problem` by
+    # calling `_bind_forward_refs`, so the class is not yet resolvable when that
+    # call is checked.
+    type _ProblemClass = object
+
+# Evaluated only when a call is checked, after `Problem` is bound.
+type _HeldProblem = Problem
 
 # One `Regime.states` value; `None` masks a model-level state of the same name.
 type StateEntry = (
@@ -109,6 +122,7 @@ class _SlotsBesideFunctions(TypedDict, total=False):
     koopmans_aggregator: UserFunction | Phased | Decoupled | None
     certainty_equivalent: CertaintyEquivalent | None
     description: str
+    problem: _HeldProblem | None
 
 
 class RegimeReplacement(_SlotsBesideFunctions, total=False):
@@ -335,6 +349,13 @@ class Regime:
     description: str = ""
     """Description of the regime."""
 
+    problem: _HeldProblem | None = field(default=None, repr=False)
+    """The action problem this regime holds, which other regimes may hold too.
+
+    A regime that holds a problem declares none of the problem's slots and takes
+    them from the problem; it adds only `exit` and `description`.
+    """
+
     stakeholders: tuple[str, ...] | None = field(init=False, default=None)
     """Names of the stakeholders whose individual values this regime carries.
 
@@ -458,6 +479,11 @@ class Regime:
         object.__setattr__(self, name, value)
 
     def __post_init__(self) -> None:
+        if self.problem is not None:
+            from lcm.problem import lowered_slots  # noqa: PLC0415 - lcm.problem imports this module
+
+            for name in lowered_slots(regime=self):
+                object.__setattr__(self, name, getattr(self.problem, name))
         if len(set(self.shocks)) != len(self.shocks) or any(
             not name.isidentifier()
             or path_segment_name_errors(kind="Shock group", names=(name,))
@@ -1084,3 +1110,13 @@ def _resolve_phase_variant(
     if isinstance(value, Phased):
         value = value.solve if phase == "solve" else value.simulate
     return cast("UserFunction", value)
+
+
+def _bind_forward_refs(*, problem_cls: _ProblemClass) -> None:
+    """Bind `Problem` into this module's globals.
+
+    `Regime.problem` and `RegimeReplacement` name `Problem`, whose module imports
+    this one. `lcm.__init__` calls this helper once `Problem` is loaded, so the
+    annotations resolve when beartype checks a call.
+    """
+    globals()["Problem"] = problem_cls

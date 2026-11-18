@@ -22,6 +22,7 @@ documentation and tests.
 | [`lcm.PeriodCandidate`](model_and_regime.md#api-period-candidate-lowering)                           | Exact primary ranked-width request                |
 | [`lcm.LoweredPeriodCandidate`](model_and_regime.md#api-period-candidate-lowering)                    | Immutable descriptors and raw unoptimized IR      |
 | [`lcm.Regime`](model_and_regime.md#api-regime)                                                       | General regime                                    |
+| [`lcm.Problem`](model_and_regime.md#api-problem)                                                     | Action problem several regimes may hold           |
 | [`lcm.Exit`](model_and_regime.md#api-current-exits)                                                  | The regime's current-period move                  |
 | [`lcm.ExitTarget`](model_and_regime.md#api-current-exits)                                            | Mapped destination policy and adjustment          |
 | [`lcm.Consent`](model_and_regime.md#api-current-exits)                                               | Strict formation consent                          |
