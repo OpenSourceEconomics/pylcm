@@ -317,6 +317,13 @@ Model(
 )
 ```
 
+- `Transition(roles={"couple": "f"})` is the plain edge from a singleton source into a
+  collective target: the row continues as stakeholder `f`, and a landing with no
+  feasible action raises `NoFeasibleActionError`. It is lowered into the always-open
+  gate whose fallback is the target itself in that role, so the source has a gated
+  source's scope. Refused at build, naming source, target and role: a non-collective
+  target, an unknown role, a collective source, a target the transition never reaches,
+  a target with a gate or participation check as well.
 - **The transition key is always the GATE-OPEN target.** An edge that may dissolve a
   couple is keyed by the *continuing* collective regime. Keying it by the singleton
   would send both partners there whenever the couple stays together.

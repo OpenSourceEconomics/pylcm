@@ -5,6 +5,18 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
+### A singleton source enters a collective target in a declared role
+
+- `Transition(roles={"couple": "f"})` declares that a row moving from a singleton source
+  into the collective regime `couple` continues there as its stakeholder `f`. It replaces
+  the hand-written always-open `Gate` with a never-taken fallback, solves and simulates
+  identically to it, and refuses a landing without a feasible action with
+  `NoFeasibleActionError`, as a plain edge does. A role on a non-collective target, an
+  unknown role, a role on a collective source, a role on a target the transition never
+  reaches, and a role beside a gate or participation check on the same target raise
+  `ModelInitializationError`. See
+  [Regime transitions](docs/reference/transitions.md#api-regime-transitions).
+
 ### Regimes may share a `Problem`
 
 - `lcm.Problem` declares an action problem with the thirteen slots of `Regime` from

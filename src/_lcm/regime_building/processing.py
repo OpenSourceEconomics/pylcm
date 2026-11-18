@@ -3279,10 +3279,12 @@ def _fail_if_collective_regime_targets_unsupported(
                     f"{target_regime.stakeholders}), but every transition "
                     "target of a collective regime must be a collective regime "
                     "with the identical `stakeholders` tuple (and a singleton "
-                    "regime cannot target a collective one). Per-stakeholder "
-                    "routing across these layouts requires a `GatedEdge` or "
-                    "a `ParticipationCheck` with explicit stakeholder routes "
-                    "for this target."
+                    "regime cannot target a collective one). A singleton source "
+                    "names the role it enters this target in with "
+                    "`Transition(roles=...)`; other per-stakeholder routing "
+                    "across these layouts requires a `Gate` or a "
+                    "`ParticipationCheck` with explicit stakeholder routes for "
+                    "this target."
                 )
                 raise NotImplementedError(msg)
 

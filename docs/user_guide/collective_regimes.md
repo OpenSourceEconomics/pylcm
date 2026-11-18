@@ -155,13 +155,38 @@ constraints = {
 Written as one predicate, `(work == 0) & (Q_f >= 0.0)`, the same restriction is refused
 when only `work == 1` sends a discrete state off its grid.
 
+## Entering a household in a role
+
+Where nothing is decided on landing — marriage arrives with a probability and both
+partners take it — a singleton source names the role its row continues in with `roles`:
+
+```python
+edges = {
+    "single_f": Transition(
+        law={
+            "single_f": StochasticTransition(func=meets_nobody),
+            "couple": StochasticTransition(func=meets_a_partner),
+        },
+        roles={"couple": "f"},
+    ),
+    # ... the other sources' edges
+}
+```
+
+The single woman's continuation toward `couple` is the couple's value for `f`, and a
+simulated row entering `couple` carries the role `f`. The edge is otherwise a plain one:
+a row landing where the household has no feasible action raises `NoFeasibleActionError`.
+To send such a row somewhere else, or to make the move depend on the landing, declare a
+gate or a participation check instead.
+
 ## Marrying and dissolving: a participation check on landing
 
-A raw transition between regimes with different stakeholder structure stays rejected —
-there is no rule that would say who the arriving row is. A `ParticipationCheck` supplies
-one. It lives on the source's edges in `Model(edges=...)`, in the `Transition`'s
-`participation`, keyed by the destination it decides on. Its `reads` name every value
-the predicate compares, each a `ParticipationRead` of a regime at projected coordinates:
+Without a role, a raw transition between regimes with different stakeholder structure
+stays rejected — there is no rule that would say who the arriving row is. A
+`ParticipationCheck` supplies one. It lives on the source's edges in `Model(edges=...)`,
+in the `Transition`'s `participation`, keyed by the destination it decides on. Its
+`reads` name every value the predicate compares, each a `ParticipationRead` of a regime
+at projected coordinates:
 
 ```python
 from lcm import (
@@ -592,9 +617,10 @@ value-dependent transition; the branch it takes then sets the role it carries on
   its role across an ordinary regime transition, so a two-leg transition the cohort runs
   into later counts; one in a regime the cohort can never arrive at does not, and no
   seed is required for it.
-- Entering a collective regime through a value-dependent transition sets the role from
-  the route's `target_stakeholder`; leaving through the closed branch sets it from the
-  fallback's `stakeholder`, or clears it for a singleton destination.
+- Entering a collective regime through `roles` sets the declared role, and through a
+  value-dependent transition the route's `target_stakeholder`; leaving through the
+  closed branch sets it from the fallback's `stakeholder`, or clears it for a singleton
+  destination.
 
 ```python
 initial_conditions = {

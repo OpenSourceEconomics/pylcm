@@ -3,7 +3,7 @@
 import inspect
 from collections.abc import Generator, Mapping
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import Literal, cast
 
@@ -41,7 +41,7 @@ from _lcm.user_regime_validation import (
     fail_if_a_joint_target_is_unreachable,
     validate_regimes,
 )
-from lcm.collective import Gate
+from lcm.collective import Gate, ProjectedRegimeValue, StakeholderRoute
 from lcm.exceptions import (
     InvalidRegimeTransitionProbabilitiesError,
     ModelInitializationError,
@@ -68,8 +68,17 @@ from lcm.transition import (
     _fail_if_invalid_age_selector,
     _period_by_age,
     _select_periods,
+    fixed_transition,
 )
-from lcm.typing import AgeLabel, RegimeName, UserAge, UserFunction, UserParams
+from lcm.typing import (
+    AgeLabel,
+    BoolND,
+    RegimeName,
+    StateName,
+    UserAge,
+    UserFunction,
+    UserParams,
+)
 
 type ResolvedEdges = MappingProxyType[
     RegimeName, MappingProxyType[RegimeName, frozenset[UserAge]]
@@ -507,12 +516,13 @@ def bind_edge_laws(
     """
     _validate_graph_coordinate_kind(edges=edges, ages=ages)
     # `_resolve_edges` refuses a phase that is not a mapping of sources.
-    declared = cast(
+    as_written = cast(
         "dict[Side, PhaseEdges]",
         {"solve": edges.solve, "simulate": edges.simulate}
         if isinstance(edges, Phased)
         else {"solve": edges, "simulate": edges},
     )
+    declared = _with_roles_as_gates(declared=as_written, regimes=regimes)
     structural = {
         side: (
             {
@@ -539,6 +549,7 @@ def bind_edge_laws(
         side: _resolve_edges(edges=structural[side], regimes=regimes, ages=ages)
         for side in _PHASE_SIDES
     }
+    _fail_if_a_role_names_no_target(declared=as_written, resolved=resolved)
     bound: dict[RegimeName, RegimeTransitionLaw] = {}
     for name in regimes:
         laws_by_side: dict[Side, MappingProxyType[int, PhaseLaw]] = {}
@@ -613,6 +624,65 @@ def collect_declared_transitions(
             if isinstance(declaration, Transition):
                 found.setdefault(source, []).append(declaration)
     return MappingProxyType({source: tuple(decls) for source, decls in found.items()})
+
+
+def role_gate_is_open() -> BoolND:
+    """Open, at every landing, the gate a `Transition.roles` entry is lowered into.
+
+    Reading no state, it roots none of the target's states, so the target keeps
+    exactly the states a plain edge into it would leave it.
+    """
+    return jnp.ones((), dtype=bool)
+
+
+def complete_role_fallbacks(
+    *, laws: RegimeLaws, regimes: Mapping[RegimeName, Regime]
+) -> MappingProxyType[RegimeName, RegimeLaw]:
+    """Project each role gate's fallback onto its target's states by the identity.
+
+    A `Transition.roles` entry is lowered into an always-open gate whose
+    fallback is the target itself, in the same role. Its projection is filled
+    here, once pruning and the post-decision split have fixed the target's
+    states. The fallback is priced but never selected in the solve. A row that
+    lands where the target has no feasible action is routed back into the same
+    target at the same state, decides again, and is refused with
+    `NoFeasibleActionError`, as on a plain edge.
+
+    Args:
+        laws: Each regime's law, by regime name.
+        regimes: The regimes with their final states, by regime name.
+
+    Returns:
+        The laws, each role gate's fallback projecting every target state onto
+        itself.
+
+    """
+    completed: dict[RegimeName, RegimeLaw] = {}
+    for name, law in laws.items():
+        gated_edges = {
+            target: (
+                replace(
+                    edge,
+                    legs=MappingProxyType(
+                        {
+                            route: _identity_fallback_route(
+                                route=leg, states=tuple(regimes[target].states)
+                            )
+                            for route, leg in edge.legs.items()
+                        }
+                    ),
+                )
+                if edge.gate is role_gate_is_open
+                else edge
+            )
+            for target, edge in law.gated_edges.items()
+        }
+        completed[name] = (
+            replace(law, gated_edges=MappingProxyType(gated_edges))
+            if any(edge.gate is role_gate_is_open for edge in gated_edges.values())
+            else law
+        )
+    return MappingProxyType(completed)
 
 
 def _transition_targets(
@@ -810,6 +880,148 @@ def _declared_participation(
                 "declare differing settlements with Phased fallback projections."
             )
     return MappingProxyType({**simulate, **solve})
+
+
+def _with_roles_as_gates(
+    *, declared: Mapping[Side, PhaseEdges], regimes: Mapping[RegimeName, Regime]
+) -> dict[Side, PhaseEdges]:
+    """Lower every `Transition.roles` entry into the always-open gate it stands for.
+
+    The gate opens onto the target in the declared role. Its fallback is the
+    target itself in the same role, with a projection `complete_role_fallbacks`
+    fills once the target's states are final. One gate object serves a source's
+    role in both phases, so `Phased` edges gate a target shared by both phases
+    identically.
+    """
+    gates: dict[tuple[RegimeName, RegimeName, str], Gate] = {}
+    lowered: dict[Side, PhaseEdges] = {}
+    for side, phase in declared.items():
+        if not isinstance(phase, Mapping):
+            lowered[side] = phase
+            continue
+        lowered[side] = {
+            source: (
+                _role_lowered_transition(
+                    source=source, transition=decl, regimes=regimes, gates=gates
+                )
+                if isinstance(decl, Transition) and decl.roles
+                else decl
+            )
+            for source, decl in phase.items()
+        }
+    return lowered
+
+
+def _role_lowered_transition(
+    *,
+    source: RegimeName,
+    transition: Transition,
+    regimes: Mapping[RegimeName, Regime],
+    gates: dict[tuple[RegimeName, RegimeName, str], Gate],
+) -> Transition:
+    """Return `transition` with its roles declared as gates, the gates memoized."""
+    role_gates: dict[RegimeName, Gate] = {}
+    for target, role in transition.roles.items():
+        _fail_if_role_invalid(
+            source=source,
+            target=target,
+            role=role,
+            transition=transition,
+            regimes=regimes,
+        )
+        key = (source, target, role)
+        if key not in gates:
+            gates[key] = Gate(
+                predicate=role_gate_is_open,
+                routes={
+                    role: StakeholderRoute(
+                        target_stakeholder=role,
+                        fallback=ProjectedRegimeValue(
+                            regime=target, projection={}, stakeholder=role
+                        ),
+                    )
+                },
+            )
+        role_gates[target] = gates[key]
+    return replace(transition, gates={**transition.gates, **role_gates}, roles={})
+
+
+def _fail_if_role_invalid(
+    *,
+    source: RegimeName,
+    target: RegimeName,
+    role: str,
+    transition: Transition,
+    regimes: Mapping[RegimeName, Regime],
+) -> None:
+    """Refuse a role its source, its target or the transition cannot carry.
+
+    A target that is no regime of the model is left to
+    `_fail_if_a_role_names_no_target`.
+    """
+    entry = (
+        f"`Transition.roles` of '{source}' gives target '{target}' the role '{role}'"
+    )
+    if target in transition.gates or target in transition.participation:
+        declared = "Gate" if target in transition.gates else "ParticipationCheck"
+        raise ModelInitializationError(
+            f"{entry}, and the transition declares both a role and a `{declared}` "
+            f"for '{target}'. A role is the always-open gate; declare one of them."
+        )
+    stakeholders = regimes[source].stakeholders
+    if stakeholders is not None:
+        raise ModelInitializationError(
+            f"{entry}, but '{source}' is collective (stakeholders={stakeholders}): "
+            "each of its rows already carries a role. Route a collective source "
+            "into another layout with a `Gate` or a `ParticipationCheck`."
+        )
+    if target not in regimes:
+        return
+    target_stakeholders = regimes[target].stakeholders
+    if target_stakeholders is None:
+        raise ModelInitializationError(
+            f"{entry}, but '{target}' is not collective: a role names one of a "
+            "collective target's stakeholders. Reach a singleton target by a "
+            "plain edge."
+        )
+    if role not in target_stakeholders:
+        raise ModelInitializationError(
+            f"{entry}, but the stakeholders of '{target}' are {target_stakeholders}."
+        )
+
+
+def _fail_if_a_role_names_no_target(
+    *, declared: Mapping[Side, PhaseEdges], resolved: Mapping[Side, ResolvedEdges]
+) -> None:
+    """Refuse a `Transition.roles` key its phase's edges never reach."""
+    for side, phase in declared.items():
+        if not isinstance(phase, Mapping):
+            continue
+        for source, decl in phase.items():
+            if not isinstance(decl, Transition):
+                continue
+            reached = resolved[side].get(source, {})
+            for target, role in decl.roles.items():
+                if target not in reached:
+                    raise ModelInitializationError(
+                        f"`Transition.roles` of '{source}' gives '{target}' the "
+                        f"role '{role}', but '{target}' is not a target of this "
+                        f"transition in the {side} edges. Its targets are "
+                        f"{sorted(reached)}."
+                    )
+
+
+def _identity_fallback_route(
+    *, route: StakeholderRoute, states: tuple[StateName, ...]
+) -> StakeholderRoute:
+    """Return `route` with its fallback projecting every state onto itself."""
+    return replace(
+        route,
+        fallback=replace(
+            route.solve_fallback,
+            projection={state: fixed_transition(state) for state in states},
+        ),
+    )
 
 
 def _targets_by_period(

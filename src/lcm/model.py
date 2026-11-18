@@ -58,6 +58,7 @@ from _lcm.model_graph import (
     ModelGraph,
     bind_edge_laws,
     collect_declared_transitions,
+    complete_role_fallbacks,
     demanded_exit_function_paths,
     naming_cells_without_edges,
     prepare_graph,
@@ -1584,6 +1585,9 @@ class Model:
             ages=self._time,
             active_periods_by_regime=schedules.context_periods_by_regime,
         )
+        # A `Transition.roles` gate falls back to its target at the identity, over
+        # the states pruning and the post-decision split leave the target.
+        laws = complete_role_fallbacks(laws=laws, regimes=pruned_regimes)
         # Removal is regime-local; initialization preserves names another regime keeps.
         self._post_decision_state_names = frozenset(
             name for unread in post_decision_states.values() for name in unread
