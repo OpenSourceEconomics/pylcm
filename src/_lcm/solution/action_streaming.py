@@ -94,9 +94,10 @@ def build_streaming_max_Q_over_a(
     At the source-program level, ``Q_and_F`` is vmapped over one block at a time and a
     padded final block is marked infeasible before reduction. The scan emits ``None``
     as its history. A block covering the whole product instead maps ``Q_and_F`` over
-    the named grids, as the dense route does, and reduces that product as one block. These source-level properties do not by themselves bound runtime
-    or peak memory after compiler transformation. The reduction deliberately retains
-    GridSearch's established feasible-NaN behavior:
+    the named grids, as the dense route does, and reduces that product as one block.
+    These source-level properties do not by themselves bound runtime or peak memory
+    after compiler transformation. The reduction deliberately retains GridSearch's
+    established feasible-NaN behavior:
     a NaN maximum publishes action identity zero, even when that action is infeasible.
     """
     _validate_streaming_configuration(
