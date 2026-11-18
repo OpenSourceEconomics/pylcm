@@ -13,6 +13,10 @@ outside value at its point:
 - a destination that prunes the reader's sharded model-level state, because it does
   not read it, takes the exit's projection of the states it carries and solves as on
   one device, with stored and with point reads;
+- singles with a state of their own who marry by consent into a couple that shards
+  a model-level state and dissolves into them, neither single reading the state,
+  solve as on one device; stateless singles do not yet, because a grid-search core
+  without a streamed axis does not get its successor's value moved to its device;
 - a sharded state that is the identity on the reader or the destination is refused,
   and stored reads refuse it exactly as point reads do;
 - a simulation over subjects sharded across devices reproduces the unsharded one.
@@ -64,6 +68,7 @@ from lcm.typing import (
     ScalarInt,
     UserFunction,
 )
+from tests.solution.test_outside_value_truncation import marriage_model
 from tests.solution.test_stored_outside_values import (
     _assert_agree,
     _keep_wealth,
@@ -253,6 +258,11 @@ class PrunedReport(TypedDict):
     one_device_stored: _ValueLists
 
 
+class MarriageReport(TypedDict):
+    sharded: _ValueLists
+    one_device: _ValueLists
+
+
 class Refusal(TypedDict):
     error: str
     message: str
@@ -426,6 +436,34 @@ def report_pruned_destination() -> PrunedReport:
     }
 
 
+def _marriage_values(*, devices: tuple[int, ...], single_states: bool) -> _ValueLists:
+    """Solve the marriage whose couple alone reads the model-level match."""
+    solution = marriage_model(
+        model_level=True,
+        single_states=single_states,
+        execution_config=ExecutionConfig(
+            devices=devices,
+            sharded_states=("match",) if len(devices) > 1 else (),
+            device_memory_bytes=_BUDGET,
+        ),
+    ).solve(params=_PARAMS, log_level="off", runtime_checks=False)
+    return {
+        f"{period}/{regime}": np.asarray(value).tolist()
+        for period, by_regime in solution.values.items()
+        for regime, value in by_regime.items()
+    }
+
+
+def report_marriage(*, single_states: bool) -> MarriageReport:
+    """Solve the marriage with the couple's match sharded on four devices and on one."""
+    return {
+        "sharded": _marriage_values(
+            devices=tuple(range(_N_DEVICES)), single_states=single_states
+        ),
+        "one_device": _marriage_values(devices=(0,), single_states=single_states),
+    }
+
+
 #: Laws of the reader's and the destination's kind, by refusal case.
 _REFUSAL_CASES: dict[str, tuple[_Law, _Law | None]] = {
     "destination co-maps the kind": ("flip", "fixed"),
@@ -561,9 +599,17 @@ def _run_in_child_process(
 ) -> PrunedReport: ...
 
 
+@overload
+def _run_in_child_process(
+    *, entry_point: Literal["report_marriage"], arguments: str = ""
+) -> MarriageReport: ...
+
+
 def _run_in_child_process(
     *, entry_point: str, arguments: str = ""
-) -> DeviceLocalReport | RefusalReport | SimulationReport | PrunedReport:
+) -> (
+    DeviceLocalReport | RefusalReport | SimulationReport | PrunedReport | MarriageReport
+):
     """Run one module-level report function on four CPU devices and return its report.
 
     The child carries this run's float policy, because a topology pin needs a fresh
@@ -755,6 +801,40 @@ def test_a_pruned_destination_solves_as_point_reads_on_one_device(
     _assert_agree(
         got=_values(pruned_destination[arm]),
         expected=_values(pruned_destination["one_device_point"]),
+    )
+
+
+@pytest.mark.parametrize(
+    "single_states",
+    [
+        pytest.param(True, id="single_states"),
+        pytest.param(
+            False,
+            id="stateless_singles",
+            marks=pytest.mark.xfail(
+                strict=True,
+                raises=AssertionError,
+                reason=(
+                    "A grid-search core without a streamed axis is dense and does "
+                    "not get the cross-device transfer of its successor's value "
+                    "(grid_search.py `requires_plan`); unrelated to exits."
+                ),
+            ),
+        ),
+    ],
+)
+def test_a_sharded_couple_state_the_singles_prune_solves_as_on_one_device(
+    *, single_states: bool
+) -> None:
+    """Singles who marry by consent into a couple that shards the model-level match
+    and dissolves into them, neither single reading the match, solve on four
+    devices as on one, to 16 ULP.
+    """
+    marriage = _run_in_child_process(
+        entry_point="report_marriage", arguments=f"single_states={single_states!r}"
+    )
+    _assert_agree(
+        got=_values(marriage["sharded"]), expected=_values(marriage["one_device"])
     )
 
 

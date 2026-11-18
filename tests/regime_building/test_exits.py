@@ -8,11 +8,12 @@ import numpy as np
 import pytest
 
 import lcm
+from _lcm.exits import exit_without_pruned_states
 from _lcm.grids import Grid
 from lcm import Consent, Counterparty, Exit, ExitTarget, Model
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.exits import ExitRule, MutualConsent, Unilateral
-from lcm.typing import BoolND, FloatND, UserParams
+from lcm.typing import BoolND, FloatND, IntND, StateName, UserFunction, UserParams
 
 _UNILATERAL = Unilateral()
 
@@ -541,3 +542,122 @@ def test_exit_time_only_availability_can_exclude_inactive_contexts(
         edges={"later": {"source": lcm.Periods(values=(1,))}},
     )
     assert model.get_params_template()["source"]["exit"] == {"available": {}}
+
+
+def _kind(kind: IntND) -> IntND:
+    return kind
+
+
+def _double(wealth: FloatND) -> FloatND:
+    return 2 * wealth
+
+
+def test_exit_without_pruned_states_returns_an_exit_with_nothing_to_drop() -> None:
+    """Where no destination prunes a projected state, the declaration itself returns."""
+    declaration = Exit(
+        targets={
+            "self": ExitTarget(
+                regime="couple", role="f", projection={"wealth": _half, "kind": _kind}
+            )
+        },
+        rule=Consent(
+            counterparty=Counterparty(
+                regime="single_m", role="m", projection={"wealth": _half}
+            )
+        ),
+    )
+    pruned = {"single_f": frozenset({"kind"}), "single_m": frozenset({"kind"})}
+    assert exit_without_pruned_states(declaration=declaration, pruned=pruned) is (
+        declaration
+    )
+
+
+def test_exit_without_pruned_states_drops_a_target_s_pruned_state_only() -> None:
+    """The projection onto the pruned `kind` goes; wealth and health stay in order."""
+    declaration = Exit(
+        targets={
+            "self": ExitTarget(
+                regime="single",
+                projection={"wealth": _half, "kind": _kind, "health": _double},
+            )
+        },
+        rule=_UNILATERAL,
+    )
+    result = exit_without_pruned_states(
+        declaration=declaration, pruned={"single": frozenset({"kind"})}
+    )
+    assert result is not None
+    assert tuple(
+        cast(
+            "Mapping[StateName, UserFunction]", result.targets["self"].projection
+        ).items()
+    ) == (
+        ("wealth", _half),
+        ("health", _double),
+    )
+
+
+def test_exit_without_pruned_states_drops_by_each_destination_s_own_pruning() -> None:
+    """The counterparty's single prunes `kind` and loses its projection onto it; the
+    couple carries `kind` and keeps the target's projection onto the same name.
+    """
+    declaration = Exit(
+        targets={
+            "self": ExitTarget(
+                regime="couple", role="f", projection={"kind": _kind, "wealth": _half}
+            )
+        },
+        rule=Consent(
+            counterparty=Counterparty(
+                regime="single_m", role="m", projection={"kind": _kind, "wealth": _half}
+            )
+        ),
+    )
+    result = exit_without_pruned_states(
+        declaration=declaration,
+        pruned={
+            "single_f": frozenset({"kind"}),
+            "single_m": frozenset({"kind"}),
+            "couple": frozenset(),
+        },
+    )
+    assert result is not None
+    assert isinstance(result.rule, Consent)
+    assert (
+        tuple(
+            cast("Mapping[StateName, UserFunction]", result.targets["self"].projection)
+        ),
+        tuple(
+            cast(
+                "Mapping[StateName, UserFunction]", result.rule.counterparty.projection
+            )
+        ),
+    ) == (("kind", "wealth"), ("wealth",))
+
+
+def test_exit_without_pruned_states_drops_a_phased_projection_by_phase() -> None:
+    """Each settlement loses its projection onto the pruned `kind`, and keeps its own
+    projection onto wealth, as a `Phased` projection.
+    """
+    declaration = Exit(
+        targets={
+            "self": ExitTarget(
+                regime="single",
+                projection=lcm.Phased(
+                    solve={"wealth": _half, "kind": _kind},
+                    simulate={"wealth": _double, "kind": _kind},
+                ),
+            )
+        },
+        rule=_UNILATERAL,
+    )
+    result = exit_without_pruned_states(
+        declaration=declaration, pruned={"single": frozenset({"kind"})}
+    )
+    assert result is not None
+    projection = result.targets["self"].projection
+    assert isinstance(projection, lcm.Phased)
+    assert (dict(projection.solve), dict(projection.simulate)) == (
+        {"wealth": _half},
+        {"wealth": _double},
+    )

@@ -4,13 +4,19 @@ A subject moves at most once per period, so the value of leaving is the value of
 destination's action problem at the projected state: the destination's own exit does
 not constrain it. A consent target is the exception: the formed couple applies its own
 rule for staying, and the outside values that rule compares are again problem values.
+
+A model-level state that only the couple reads is pruned from the singles, and so is
+every projection onto it in their problems: the model solves and simulates as if the
+couple alone declared it.
 """
 
 import jax.numpy as jnp
 import numpy as np
+import pandas as pd
 import pytest
 
 from _lcm.policy_queries import QueryKind
+from _lcm.regime_building.collective import NO_ROLE
 from lcm import (
     CollectiveUtility,
     Consent,
@@ -22,12 +28,14 @@ from lcm import (
     InitialNodes,
     LinSpacedGrid,
     Model,
+    Periods,
     Regime,
     Unilateral,
     categorical,
+    fixed_transition,
 )
 from lcm.exceptions import RegimeInitializationError
-from lcm.typing import FloatND, IntND, ScalarInt
+from lcm.typing import ContinuousState, DiscreteState, FloatND, IntND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
 
 
@@ -330,3 +338,239 @@ def test_a_regime_without_an_exit_may_be_entered_by_consent_and_by_dissolution()
     model = _two_entries_model(couple_exit=False)
     acting = model._regimes["couple"].simulation.exit_queries[0].participating["couple"]
     assert acting.definitions[acting.root].read.kind is QueryKind.PARTICIPATING
+
+
+@categorical(ordered=False)
+class _Marriage:
+    single_f: ScalarInt
+    single_m: ScalarInt
+    couple: ScalarInt
+    single_f_terminal: ScalarInt
+    single_m_terminal: ScalarInt
+    couple_terminal: ScalarInt
+
+
+@categorical(ordered=False)
+class _Match:
+    poor: ScalarInt
+    good: ScalarInt
+
+
+def _wife(*, action: IntND, match: DiscreteState) -> FloatND:
+    return 1.0 + 6.0 * match + 2.0 * action
+
+
+def _husband(*, action: IntND, match: DiscreteState) -> FloatND:
+    return 6.0 + match - 2.0 * action
+
+
+def _good_match() -> DiscreteState:
+    return jnp.asarray(_Match.good)
+
+
+def _match(match: DiscreteState) -> DiscreteState:
+    return match
+
+
+def _flip_match(match: DiscreteState) -> DiscreteState:
+    return 1 - match
+
+
+def _five_plus_wealth(wealth: ContinuousState) -> FloatND:
+    return 5.0 + wealth
+
+
+def _own_wealth(wealth: ContinuousState) -> ContinuousState:
+    return wealth
+
+
+def _no_wealth() -> ContinuousState:
+    return jnp.asarray(0.0)
+
+
+def marriage_model(
+    *,
+    model_level: bool,
+    execution_config: ExecutionConfig | None = None,
+    single_states: bool = False,
+) -> Model:
+    """Two singles marry by consent; the couple dissolves unilaterally into them.
+
+    Only the couple reads its `match`, which flips toward the couple's terminal
+    period; a formed couple starts with a good match. With `model_level` the match
+    is declared on the model, so every regime declares it and every projection
+    names it, the counterparty's and the dissolution's onto the singles included;
+    the singles prune it. Otherwise only the couple declares it, and the
+    projections onto the singles omit it.
+
+    With `single_states` each single carries its own `wealth`, kept by an identity
+    law and read by its utility; the couple does not carry it. The counterparty
+    lands at the proposing single's wealth, and a dissolving member at zero wealth.
+
+    Args:
+        model_level: Whether the match is declared on the model.
+        execution_config: Placement of the solve; one device without a budget
+            when None.
+        single_states: Whether each single carries its own wealth.
+
+    Returns:
+        The model.
+
+    """
+    match = DiscreteGrid(category_class=_Match)
+    onto_single = ({"match": _match} if model_level else {}) | (
+        {"wealth": _no_wealth} if single_states else {}
+    )
+    couple_states = {} if model_level else {"match": match}
+    single_grids = (
+        {"wealth": LinSpacedGrid(start=0, stop=1, n_points=3)} if single_states else {}
+    )
+    single_laws = {"wealth": fixed_transition("wealth")} if single_states else {}
+    single_utility = _five_plus_wealth if single_states else _five
+    regimes = {
+        "single_f": Regime(
+            states=single_grids,
+            functions={"utility": single_utility},
+            state_transitions=single_laws,
+            exit=Exit(
+                targets={
+                    "self": ExitTarget(
+                        regime="couple", role="f", projection={"match": _good_match}
+                    )
+                },
+                rule=Consent(
+                    counterparty=Counterparty(
+                        regime="single_m",
+                        role="m",
+                        projection=({"match": _good_match} if model_level else {})
+                        | ({"wealth": _own_wealth} if single_states else {}),
+                    )
+                ),
+            ),
+        ),
+        "single_m": Regime(
+            states=single_grids,
+            functions={"utility": single_utility},
+            state_transitions=single_laws,
+        ),
+        "couple": Regime(
+            states=couple_states,
+            actions={"action": DiscreteGrid(values=jnp.asarray([0, 1]))},
+            functions={
+                "utility": CollectiveUtility(utilities={"f": _wife, "m": _husband})
+            },
+            state_transitions={"match": {"couple_terminal": _flip_match}},
+            exit=Exit(
+                targets={
+                    "f": ExitTarget(regime="single_f", projection=onto_single),
+                    "m": ExitTarget(regime="single_m", projection=onto_single),
+                },
+                rule=Unilateral(),
+            ),
+        ),
+    }
+    for name, regime in tuple(regimes.items()):
+        regimes[f"{name}_terminal"] = regime.replace(exit=None, state_transitions={})
+    return Model(
+        regimes=regimes,
+        states={"match": match} if model_level else {},
+        regime_id_class=_Marriage,
+        n_periods=2,
+        edges={
+            name: {f"{name}_terminal": Periods(values=(0,))}
+            for name in ("single_f", "single_m", "couple")
+        },
+        initial_nodes=InitialNodes(by_period={0: ("single_f", "single_m", "couple")}),
+        execution_config=execution_config or ExecutionConfig(device_memory_bytes=None),
+    )
+
+
+_MARRIAGE_PARAMS = {"discount_factor": 0.9}
+
+
+def _marriage_values(*, model_level: bool) -> dict[str, np.ndarray]:
+    solution = marriage_model(model_level=model_level).solve(
+        params=_MARRIAGE_PARAMS, log_level="off", runtime_checks=False
+    )
+    return {
+        f"{period}/{regime}": np.asarray(value)
+        for period, by_regime in solution.values.items()
+        for regime, value in by_regime.items()
+    }
+
+
+def test_a_model_level_state_only_a_couple_reads_solves_as_a_couple_state() -> None:
+    """Declared on the model and pruned by the singles, the match gives the values,
+    bit for bit, that it gives declared on the couple alone.
+    """
+    np.testing.assert_equal(
+        _marriage_values(model_level=True), _marriage_values(model_level=False)
+    )
+
+
+def _marriage_frame(*, model_level: bool) -> pd.DataFrame:
+    model = marriage_model(model_level=model_level)
+    solution = model.solve(
+        params=_MARRIAGE_PARAMS, log_level="off", runtime_checks=False
+    )
+    return model.simulate(
+        params=_MARRIAGE_PARAMS,
+        solution=solution,
+        initial_conditions={
+            "period": jnp.zeros(4, dtype=jnp.int32),
+            "regime_id": jnp.asarray(
+                [
+                    _Marriage.single_f,
+                    _Marriage.single_m,
+                    _Marriage.couple,
+                    _Marriage.couple,
+                ],
+                dtype=jnp.int32,
+            ),
+            "match": jnp.asarray([0, 0, 0, 1], dtype=jnp.int32),
+            "own_stakeholder": jnp.asarray(
+                [
+                    NO_ROLE,
+                    NO_ROLE,
+                    model.stakeholder_names_to_ids["f"],
+                    model.stakeholder_names_to_ids["m"],
+                ],
+                dtype=jnp.int32,
+            ),
+        },
+        seed=17,
+        log_level="off",
+        runtime_checks=False,
+    ).to_dataframe(use_categorical_codes=True)
+
+
+def test_a_model_level_state_only_a_couple_reads_simulates_as_a_couple_state() -> None:
+    """Declared on the model and pruned by the singles, the match gives the simulated
+    panel, bit for bit, that it gives declared on the couple alone.
+    """
+    pd.testing.assert_frame_equal(
+        _marriage_frame(model_level=True),
+        _marriage_frame(model_level=False),
+        check_exact=True,
+    )
+
+
+def test_a_single_marries_and_a_poor_match_dissolves_under_a_model_level_state() -> (
+    None
+):
+    """The single woman marries, the single man stays, the wife of a poor match
+    leaves for the single woman's problem and the husband of a good match stays.
+
+    The wife's utility is `1 + 6 * match + 2 * action` and the husband's
+    `6 + match - 2 * action`, the match flips into the terminal period and a single
+    is worth 5 in each. A poor match leaves the wife at most 3 + 0.9 * 7 = 9.3,
+    below the 9.5 of staying single; a good match pays both more than 9.5.
+    """
+    frame = _marriage_frame(model_level=True)
+    first = frame.loc[frame["period"] == 0].sort_values("subject_id")
+    assert first["regime_name"].astype(str).tolist() == [
+        "couple",
+        "single_m",
+        "single_f",
+        "couple",
+    ]
