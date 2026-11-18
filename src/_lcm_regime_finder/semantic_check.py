@@ -2119,6 +2119,8 @@ def _check_current_type_sources(original, fail):
             if value.get("kind") not in ("dataclass", "object") or not isinstance(tag, str):
                 tag = ""
             label = tag.split(".")[-1]
+            if label == "Transition" and value.get("fields", {}).get("roles"):
+                fail("original transition roles are not read", declaration_type=tag)
             required = label in ("ParticipationRead", "ParticipationCheck") or (label == "Transition" and bool(value.get("fields", {}).get("participation")))
             if required:
                 if not matches_authority(name=tag, observed=value.get("canonical_type_source")):

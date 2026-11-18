@@ -29,6 +29,7 @@ NATIVE_SCHEDULE_TYPES = frozenset(name for name in NATIVE_INPUT_TYPES
     or name == 'lcm.transition.StochasticTransition')
 
 _PARTICIPATION_FILE = "6563ec4dd3a98aa957e868e0632ac00eb5982b00dd94c1346b6356ccf6aff94f"
+_TRANSITION_FILE = 'b7f52018a3fb050f9847394b68b5d0edeb9cead6f49b6594746c1b63c680b0dc'
 # Schedule files whose `_PeriodDispatch` and `_ProbabilityConstant` are identical.
 # The second counts every period a gated source reads in `gated_source_periods`.
 _SCHEDULES_FILES = (
@@ -55,10 +56,8 @@ _AUTHORITIES = {
         ('40b09a4e739186e8e0cbbd7b0f249309e198b4183ed5465facc20c3d5411d690',),
     ),
     'lcm.transition.StochasticTransition': (
-        ('747f4a807c304c2fc207a401d351d0bcd67804d0ecc6eaf5e9ced52676c59585',
-         ('bee97101a92d339e52e930066ac63b88158ca786f3d63cbb562d129ea10c1383',)),
-        ('a5abf1139bbcd62bccf43d2531ecd849532da5712519cfdebe005e3fa46970d8',
-         ('12e409188007d10443b59c25db287487d24971dd1036b2d115a353d84e3df9c6',)),
+        'a5abf1139bbcd62bccf43d2531ecd849532da5712519cfdebe005e3fa46970d8',
+        (_TRANSITION_FILE,),
     ),
     'lcm.temporal._TemporalDecorator': (
         'c73722027a1fcdf9b30823e45e5e6111f3b05aa44045505fbab2a6abae4a92ad',
@@ -90,16 +89,11 @@ _AUTHORITIES = {
         "44c8bb9ec6f04e6e31bd557fe5f58bfbbcb3bb5d8d2ccfedd0e86ba38c38fd36",
         (_PARTICIPATION_FILE,),
     ),
+    # The finder reads `targets`, `law`, `gates`, `arrivals` and `participation` of
+    # this class; `validate_original_types` refuses a non-empty `roles`.
     "lcm.transition.Transition": (
-        "46088bb83593235ee33e56c2f0b92a29ba51396e91d38467dac62058008c2245",
-        (
-            "587518f47dc4909c070ffd72e161cec0be134919a7d89f480976e6c1b0d1c496",
-            # Specialization types changed in the same file. Transition is identical.
-            "bee97101a92d339e52e930066ac63b88158ca786f3d63cbb562d129ea10c1383",
-            # `StochasticTransition` converts its output and the age-specialized
-            # types are constrained in the same file. Transition is identical.
-            "12e409188007d10443b59c25db287487d24971dd1036b2d115a353d84e3df9c6",
-        ),
+        "d741a82b61117b2d6f17124a63a4a109127fbb5378e3854a1de21be6c020a83e",
+        (_TRANSITION_FILE,),
     ),
 }
 
@@ -141,12 +135,10 @@ _SCHEDULE_CALLS = MappingProxyType({
           for file in _SCHEDULES_FILES),
     }),
     '_lcm.regime_building.transition_support._SupportedStochasticTransition': frozenset({
-        ('bee97101a92d339e52e930066ac63b88158ca786f3d63cbb562d129ea10c1383', 'fc55c08981c08230b0817359225f8e0c4d3b87d4213897ce87d896dc45bc8f21'),
-        ('12e409188007d10443b59c25db287487d24971dd1036b2d115a353d84e3df9c6', 'e42c57e95f9bd898a5daa6b6fbf5340a88ffc7a29765c66d577f71fd39febd31'),
+        (_TRANSITION_FILE, 'e42c57e95f9bd898a5daa6b6fbf5340a88ffc7a29765c66d577f71fd39febd31'),
     }),
     'lcm.transition.StochasticTransition': frozenset({
-        ('bee97101a92d339e52e930066ac63b88158ca786f3d63cbb562d129ea10c1383', 'fc55c08981c08230b0817359225f8e0c4d3b87d4213897ce87d896dc45bc8f21'),
-        ('12e409188007d10443b59c25db287487d24971dd1036b2d115a353d84e3df9c6', 'e42c57e95f9bd898a5daa6b6fbf5340a88ffc7a29765c66d577f71fd39febd31'),
+        (_TRANSITION_FILE, 'e42c57e95f9bd898a5daa6b6fbf5340a88ffc7a29765c66d577f71fd39febd31'),
     }),
 })
 
@@ -666,7 +658,7 @@ def inspect_native_schedule_authority(value: object, raw: object) -> dict[str, J
             if inspect_source_bound_function(vars(module).get('_read'), module_name=owner.__module__,
                     qualname='_read', file_sha256=file_sha256) is None:
                 return None
-    elif file_sha256 == '12e409188007d10443b59c25db287487d24971dd1036b2d115a353d84e3df9c6':
+    elif file_sha256 == _TRANSITION_FILE:
         dtypes = sys.modules.get('_lcm.dtypes')
         if dtypes is None:
             return None
@@ -797,11 +789,17 @@ def inspect_temporal_input_authority(
 
 
 def validate_original_types(value):
-    """Refuse a modern spelling without the corresponding original source."""
+    """Refuse a modern spelling without the corresponding original source, and `roles`."""
     if isinstance(value, dict):
         name = value.get("type", "")
         if value.get("kind") not in ("dataclass", "object") or not isinstance(name, str):
             name = ""
+        if name.rsplit(".", 1)[-1] == "Transition" and value.get("fields", {}).get("roles"):
+            raise ValueError(
+                "A declaration spec is read before `Transition.roles` is lowered into its "
+                "gate, so the regime finder does not read `roles`. Analyze the constructed "
+                "Model, whose bound law carries each role as its always-open gate, or "
+                "declare that gate under `gates`.")
         modern = name.rsplit(".", 1)[-1] in {"ParticipationRead", "ParticipationCheck"}
         modern_transition = name.rsplit(".", 1)[-1] == "Transition" and bool(value.get("fields", {}).get("participation"))
         if modern or modern_transition:
