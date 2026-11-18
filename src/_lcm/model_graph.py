@@ -515,14 +515,17 @@ def bind_edge_laws(
         snapshotted as exact source ages.
     """
     _validate_graph_coordinate_kind(edges=edges, ages=ages)
-    # `_resolve_edges` refuses a phase that is not a mapping of sources.
-    as_written = cast(
-        "dict[Side, PhaseEdges]",
+    # Not validated yet: `_resolve_edges` refuses a phase that is not a mapping of
+    # sources, and a source that maps to anything but a `Transition` or a target.
+    as_written: dict[Side, DeclaredModelEdges] = (
         {"solve": edges.solve, "simulate": edges.simulate}
         if isinstance(edges, Phased)
-        else {"solve": edges, "simulate": edges},
+        else {"solve": edges, "simulate": edges}
     )
-    declared = _with_roles_as_gates(declared=as_written, regimes=regimes)
+    declared = cast(
+        "dict[Side, PhaseEdges]",
+        _with_roles_as_gates(declared=as_written, regimes=regimes),
+    )
     structural = {
         side: (
             {
@@ -883,8 +886,8 @@ def _declared_participation(
 
 
 def _with_roles_as_gates(
-    *, declared: Mapping[Side, PhaseEdges], regimes: Mapping[RegimeName, Regime]
-) -> dict[Side, PhaseEdges]:
+    *, declared: Mapping[Side, DeclaredModelEdges], regimes: Mapping[RegimeName, Regime]
+) -> dict[Side, DeclaredModelEdges]:
     """Lower every `Transition.roles` entry into the always-open gate it stands for.
 
     The gate opens onto the target in the declared role. Its fallback is the
@@ -894,7 +897,7 @@ def _with_roles_as_gates(
     identically.
     """
     gates: dict[tuple[RegimeName, RegimeName, str], Gate] = {}
-    lowered: dict[Side, PhaseEdges] = {}
+    lowered: dict[Side, DeclaredModelEdges] = {}
     for side, phase in declared.items():
         if not isinstance(phase, Mapping):
             lowered[side] = phase
@@ -991,7 +994,9 @@ def _fail_if_role_invalid(
 
 
 def _fail_if_a_role_names_no_target(
-    *, declared: Mapping[Side, PhaseEdges], resolved: Mapping[Side, ResolvedEdges]
+    *,
+    declared: Mapping[Side, DeclaredModelEdges],
+    resolved: Mapping[Side, ResolvedEdges],
 ) -> None:
     """Refuse a `Transition.roles` key its phase's edges never reach."""
     for side, phase in declared.items():
