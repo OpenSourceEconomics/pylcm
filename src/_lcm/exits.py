@@ -8,7 +8,13 @@ from typing import cast
 from _lcm.output_roles import OutputRole, in_role
 from lcm.exits import Consent, Exit
 from lcm.phased import Phased
-from lcm.typing import Phase, RegimeName, UserFunction
+from lcm.typing import (
+    Phase,
+    RegimeName,
+    StateName,
+    StateOrActionName,
+    UserFunction,
+)
 
 type ExitFunctionPath = tuple[str, ...]
 type ExitFunctionDemand = Mapping[
@@ -78,6 +84,78 @@ def exit_functions(
             }
         )
     return MappingProxyType(functions)
+
+
+def exit_without_pruned_states(
+    *,
+    declaration: Exit | None,
+    pruned: Mapping[RegimeName, frozenset[StateOrActionName]],
+) -> Exit | None:
+    """Drop each projection onto a state that its destination prunes.
+
+    A projection names every state its destination declares, model-level ones
+    included. Where the destination reads no such state, demand prunes it, and its
+    value has no axis to land on; the projection onto it is dropped, as a law of
+    motion toward a target that prunes the law's state is.
+
+    Args:
+        declaration: The source's exit, if any.
+        pruned: Per regime, the model-level states and actions demand pruned.
+
+    Returns:
+        The exit, unchanged where no destination prunes a projected state.
+
+    """
+    if declaration is None:
+        return None
+    rule = declaration.rule
+    projections = [(t.regime, t.projection) for t in declaration.targets.values()]
+    if isinstance(rule, Consent):
+        projections.append((rule.counterparty.regime, rule.counterparty.projection))
+    if not any(
+        pruned.get(destination, frozenset())
+        & (
+            {*projection.solve, *projection.simulate}
+            if isinstance(projection, Phased)
+            else set(projection)
+        )
+        for destination, projection in projections
+    ):
+        return declaration
+
+    def kept(
+        *, value: Mapping[StateName, UserFunction] | Phased, destination: RegimeName
+    ) -> Mapping[StateName, UserFunction] | Phased:
+        if isinstance(value, Phased):
+            return Phased(
+                solve=kept(value=value.solve, destination=destination),
+                simulate=kept(value=value.simulate, destination=destination),
+            )
+        dropped = pruned.get(destination, frozenset())
+        return {state: f for state, f in value.items() if state not in dropped}
+
+    if isinstance(rule, Consent):
+        counterparty = rule.counterparty
+        rule = replace(
+            rule,
+            counterparty=replace(
+                counterparty,
+                projection=kept(
+                    value=counterparty.projection, destination=counterparty.regime
+                ),
+            ),
+        )
+    return replace(
+        declaration,
+        rule=rule,
+        targets={
+            role: replace(
+                target,
+                projection=kept(value=target.projection, destination=target.regime),
+            )
+            for role, target in declaration.targets.items()
+        },
+    )
 
 
 def _for_phase[T](*, value: T | Phased, phase: Phase) -> T:

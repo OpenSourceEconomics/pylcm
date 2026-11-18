@@ -104,11 +104,15 @@ then:
 - Stored reads leave a solve on several devices as point reads leave it. A sharded state
   whose value changes over time is an axis of each regime's own devices, and a reader's
   table takes the destination's next-period value by the transfer a point read uses. A
-  sharded state that keeps its value is read from each device's slice, which a query
-  cannot evaluate, so an exit whose reader or destination has one is refused, with
-  stored and with point reads. It becomes solvable once the destination's own solve
-  publishes its values, instead of the reader's program evaluating the destination's
-  problem to tabulate them.
+  model-level state the destination does not read is pruned from it, and the exit's
+  projection onto that state with it, so an exit from a regime that shards the state
+  into one that prunes it solves as on one device. A sharded state that keeps its value
+  is read from each device's slice, which a query cannot evaluate, so an exit whose
+  reader or destination has one is refused, with stored and with point reads. A
+  destination with one becomes readable once its own solve publishes its values, instead
+  of the reader's program evaluating the destination's problem to tabulate them. A
+  reader with one stays refused until a query can evaluate such a problem, because the
+  reader's own program is a query.
 - Each reader tabulates the destinations it reads aligned, once per period, in its own
   program. Two readers of one destination tabulate it twice, and a reader pays for the
   destination's whole grid however few of its cells the reader lands on.

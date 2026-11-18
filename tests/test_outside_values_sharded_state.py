@@ -10,9 +10,11 @@ outside value at its point:
   solve and agree with each other and with the one-device solve, the table reads the
   destination's continuation by the transfer the point read uses, it is replicated
   on the reader's devices, charged to the reader's cell and released with its kernel;
-- a sharded state the destination does not read, or one that is the identity on the
-  reader or the destination, is refused, and stored reads refuse it exactly as point
-  reads do;
+- a destination that prunes the reader's sharded model-level state, because it does
+  not read it, takes the exit's projection of the states it carries and solves as on
+  one device, with stored and with point reads;
+- a sharded state that is the identity on the reader or the destination is refused,
+  and stored reads refuse it exactly as point reads do;
 - a simulation over subjects sharded across devices reproduces the unsharded one.
 
 The witnesses run in child processes, because the placements under test only exist
@@ -21,6 +23,7 @@ where several devices do, and a topology is pinned before JAX initializes a back
 
 import gc
 import json
+import re
 import subprocess
 import sys
 import weakref
@@ -50,6 +53,7 @@ from lcm import (
     categorical,
     fixed_transition,
 )
+from lcm.exceptions import RegimeInitializationError
 from lcm.solver_api import KernelOutput
 from lcm.typing import (
     BoolND,
@@ -81,6 +85,9 @@ _BUDGET = 2**30
 #: The kind's law toward a regime's terminal successor: the identity, which makes a
 #: sharded kind co-mapped, or a flip, which keeps it a device-local axis.
 type _Law = Literal["fixed", "flip"]
+
+#: A solve's value arrays as nested lists, by "<period>/<regime>".
+type _ValueLists = dict[str, list[list[float]]]
 
 
 @categorical(ordered=False)
@@ -129,13 +136,16 @@ def build_model(
     sharded: tuple[str, ...] = ("kind",),
     reader_law: _Law = "flip",
     destination_law: _Law | None = "flip",
+    project_kind: bool = True,
     simulation_sharding: Literal["legacy", "subjects"] = "legacy",
 ) -> Model:
     """Build a source that may leave for a destination in the first of two periods.
 
     Both carry wealth onto the grid of their terminal successor. The source reads a
     model-level discrete `kind`; the destination reads it too unless
-    `destination_law` is None, in which case it prunes it. Leaving pays where
+    `destination_law` is None, in which case it prunes it. The exit projects every
+    state the destination declares, the model-level kind included, unless
+    `project_kind` is False. Leaving pays where
     `1.9 * wealth > 0.64 + 0.05 * kind`: at wealth 0.5 and 1, never at 0.
 
     Args:
@@ -144,6 +154,7 @@ def build_model(
         reader_law: Law of the source's kind toward its successor.
         destination_law: Law of the destination's kind toward its successor, or
             None for a destination that does not read the kind.
+        project_kind: Whether the exit projects the kind as well as wealth.
         simulation_sharding: How the simulated subjects are spread over devices.
 
     Returns:
@@ -171,7 +182,8 @@ def build_model(
                     targets={
                         "self": ExitTarget(
                             regime="destination",
-                            projection={"wealth": _wealth, "kind": _kind},
+                            projection={"wealth": _wealth}
+                            | ({"kind": _kind} if project_kind else {}),
                         )
                     },
                     rule=Unilateral(),
@@ -217,7 +229,7 @@ class TransferRead(TypedDict):
 
 
 class SolveArm(TypedDict):
-    values: dict[str, list[list[float]]]
+    values: _ValueLists
     devices: dict[RegimeName, list[int]]
     tables: list[str]
     reads: list[TransferRead]
@@ -232,6 +244,13 @@ class DeviceLocalReport(TypedDict):
     point: SolveArm
     stored: SolveArm
     one_device_point: SolveArm
+
+
+class PrunedReport(TypedDict):
+    point: _ValueLists
+    stored: _ValueLists
+    one_device_point: _ValueLists
+    one_device_stored: _ValueLists
 
 
 class Refusal(TypedDict):
@@ -376,9 +395,39 @@ def report_device_local() -> DeviceLocalReport:
     }
 
 
+def _pruned_destination_values(
+    *, stored: bool, devices: tuple[int, ...]
+) -> _ValueLists:
+    """Solve the model whose destination prunes the kind; its values by key."""
+    from _lcm import exit_queries  # noqa: PLC0415
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(exit_queries, "_READ_STORED_OUTSIDE_VALUES", stored)
+        solution = build_model(
+            devices=devices,
+            sharded=("kind",) if len(devices) > 1 else (),
+            destination_law=None,
+        ).solve(params=_PARAMS, log_level="off", runtime_checks=False)
+    return {
+        f"{period}/{regime}": np.asarray(value).tolist()
+        for period, by_regime in solution.values.items()
+        for regime, value in by_regime.items()
+    }
+
+
+def report_pruned_destination() -> PrunedReport:
+    """Solve the pruned-destination model with both reads on four devices and on one."""
+    devices = tuple(range(_N_DEVICES))
+    return {
+        "point": _pruned_destination_values(stored=False, devices=devices),
+        "stored": _pruned_destination_values(stored=True, devices=devices),
+        "one_device_point": _pruned_destination_values(stored=False, devices=(0,)),
+        "one_device_stored": _pruned_destination_values(stored=True, devices=(0,)),
+    }
+
+
 #: Laws of the reader's and the destination's kind, by refusal case.
 _REFUSAL_CASES: dict[str, tuple[_Law, _Law | None]] = {
-    "destination prunes the kind": ("flip", None),
     "destination co-maps the kind": ("flip", "fixed"),
     "reader co-maps the kind": ("fixed", "flip"),
 }
@@ -506,9 +555,15 @@ def _run_in_child_process(
 ) -> SimulationReport: ...
 
 
+@overload
+def _run_in_child_process(
+    *, entry_point: Literal["report_pruned_destination"], arguments: str = ""
+) -> PrunedReport: ...
+
+
 def _run_in_child_process(
     *, entry_point: str, arguments: str = ""
-) -> DeviceLocalReport | RefusalReport | SimulationReport:
+) -> DeviceLocalReport | RefusalReport | SimulationReport | PrunedReport:
     """Run one module-level report function on four CPU devices and return its report.
 
     The child carries this run's float policy, because a topology pin needs a fresh
@@ -560,6 +615,12 @@ def refusals() -> RefusalReport:
 
 
 @pytest.fixture(scope="module")
+def pruned_destination() -> PrunedReport:
+    """Return the pruned-destination solves from one four-device child process."""
+    return _run_in_child_process(entry_point="report_pruned_destination")
+
+
+@pytest.fixture(scope="module")
 def subject_sharded() -> SimulationReport:
     """Return the subject-sharded simulation from one four-device child process."""
     return _run_in_child_process(
@@ -568,9 +629,9 @@ def subject_sharded() -> SimulationReport:
     )
 
 
-def _values(arm: SolveArm) -> dict[str, np.ndarray]:
+def _values(values: _ValueLists) -> dict[str, np.ndarray]:
     dtype = np.float64 if tests.conftest.X64_ENABLED else np.float32
-    return {key: np.asarray(value, dtype=dtype) for key, value in arm["values"].items()}
+    return {key: np.asarray(value, dtype=dtype) for key, value in values.items()}
 
 
 def test_the_reader_and_its_destination_run_on_disjoint_meshes(
@@ -602,7 +663,8 @@ def test_sharded_stored_reads_agree_with_sharded_point_reads(
 ) -> None:
     """On four devices, stored reads give point reads' values to 16 ULP."""
     _assert_agree(
-        got=_values(device_local["stored"]), expected=_values(device_local["point"])
+        got=_values(device_local["stored"]["values"]),
+        expected=_values(device_local["point"]["values"]),
     )
 
 
@@ -613,8 +675,8 @@ def test_sharded_stored_reads_agree_with_the_one_device_solve(
     to 16 ULP.
     """
     _assert_agree(
-        got=_values(device_local["stored"]),
-        expected=_values(device_local["one_device_point"]),
+        got=_values(device_local["stored"]["values"]),
+        expected=_values(device_local["one_device_point"]["values"]),
     )
 
 
@@ -680,36 +742,45 @@ def test_a_table_is_released_when_its_kernel_returns(
     assert device_local["stored"]["tables_released"] == [True, True]
 
 
-@pytest.mark.parametrize(
-    ("case", "error", "message"),
-    [
-        (
-            "destination prunes the kind",
-            "ValueError",
-            (
-                "A query of regime 'destination' needs exactly one projection per "
-                "state of its value function (['wealth']); got ['kind', 'wealth']."
-            ),
-        ),
-        (
-            "destination co-maps the kind",
-            "UnsupportedOperationError",
-            "This query closure needs an unblocked action problem.",
-        ),
-        (
-            "reader co-maps the kind",
-            "UnsupportedOperationError",
-            "This query closure needs an unblocked action problem.",
-        ),
-    ],
-)
-def test_point_reads_refuse_a_sharded_case(
-    *, case: str, error: str, message: str, refusals: RefusalReport
+@pytest.mark.parametrize("arm", ["point", "stored", "one_device_stored"])
+def test_a_pruned_destination_solves_as_point_reads_on_one_device(
+    *,
+    arm: Literal["point", "stored", "one_device_stored"],
+    pruned_destination: PrunedReport,
 ) -> None:
-    """A destination that prunes the reader's model-level state cannot take the
-    read's projection of it, and a query cannot evaluate a co-mapped problem.
+    """A destination that does not read the reader's sharded model-level kind prunes
+    it, and the exit, which projects the kind too, solves on four devices and with
+    stored reads as with point reads on one device, to 16 ULP.
     """
-    assert refusals["point"][case] == {"error": error, "message": message}
+    _assert_agree(
+        got=_values(pruned_destination[arm]),
+        expected=_values(pruned_destination["one_device_point"]),
+    )
+
+
+def test_an_exit_projection_names_every_state_its_destination_declares() -> None:
+    """A model-level state is declared in every regime, so an exit's projection
+    names it even where the destination prunes it.
+    """
+    with pytest.raises(
+        RegimeInitializationError,
+        match=re.escape(
+            "Exit of source solve projection must name destination states "
+            "['kind', 'wealth']."
+        ),
+    ):
+        build_model(devices=(0,), sharded=(), destination_law=None, project_kind=False)
+
+
+@pytest.mark.parametrize("case", list(_REFUSAL_CASES))
+def test_point_reads_refuse_a_co_mapped_case(
+    *, case: str, refusals: RefusalReport
+) -> None:
+    """A query cannot evaluate a problem whose sharded state is co-mapped."""
+    assert refusals["point"][case] == {
+        "error": "UnsupportedOperationError",
+        "message": "This query closure needs an unblocked action problem.",
+    }
 
 
 @pytest.mark.parametrize("case", list(_REFUSAL_CASES))
@@ -720,22 +791,14 @@ def test_stored_reads_refuse_as_point_reads_do(
     assert refusals["stored"][case] == refusals["point"][case]
 
 
-@pytest.mark.parametrize(
-    ("case", "solved"),
-    [
-        ("destination prunes the kind", False),
-        ("destination co-maps the kind", True),
-        ("reader co-maps the kind", True),
-    ],
-)
-def test_only_the_pruned_destination_is_refused_on_one_device(
-    *, case: str, solved: bool, refusals: RefusalReport
+@pytest.mark.parametrize("case", list(_REFUSAL_CASES))
+def test_every_refused_case_solves_on_one_device(
+    *, case: str, refusals: RefusalReport
 ) -> None:
-    """Without sharding nothing is co-mapped, so only the pruned destination still
-    fails, and as it fails on four devices.
+    """Without sharding nothing is co-mapped, so every case refused on four devices
+    solves.
     """
-    expected = {"error": "", "message": ""} if solved else refusals["point"][case]
-    assert refusals["one_device_point"][case] == expected
+    assert refusals["one_device_point"][case] == {"error": "", "message": ""}
 
 
 def test_movers_leave_where_the_destination_pays_more(

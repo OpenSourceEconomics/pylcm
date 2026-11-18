@@ -38,7 +38,7 @@ from typing import Literal, TypedDict, cast, no_type_check
 
 from dags import get_ancestors
 
-from _lcm.exits import exit_functions
+from _lcm.exits import exit_functions, exit_without_pruned_states
 from _lcm.processes import _ContinuousStochasticProcess, _IIDProcess
 from _lcm.reachability import PhaseName, candidate_targets_from_transition
 from _lcm.regime_building.age_specialization import resolve_node
@@ -298,7 +298,8 @@ def prune_broadcast_variables(
     variable's grid, and for states the part of the regime's law entry that
     the pruned state took with it — an entry law toward a target that retains
     the state stays, so which entry laws a model has does not depend on
-    whether the state is declared at model or at regime level.
+    whether the state is declared at model or at regime level. For the same
+    reason an exit's projection onto a state its destination prunes is dropped.
 
     Args:
         user_regimes: Mapping of regime names to merged `Regime` instances.
@@ -349,10 +350,20 @@ def prune_broadcast_variables(
     reachable_targets = _reachable_targets(user_regimes=user_regimes, laws=laws)
 
     pruned_regimes: dict[RegimeName, UserRegime] = {}
-    pruned_variables: dict[RegimeName, frozenset[StateOrActionName]] = {}
-    for regime_name, user_regime in user_regimes.items():
-        pruned = broadcast_variables[regime_name] - kept[regime_name]
-        pruned_variables[regime_name] = frozenset(pruned)
+    pruned_variables = {
+        regime_name: frozenset(broadcast_variables[regime_name] - kept[regime_name])
+        for regime_name in user_regimes
+    }
+    for regime_name, declared_regime in user_regimes.items():
+        pruned = pruned_variables[regime_name]
+        exit_declaration = exit_without_pruned_states(
+            declaration=declared_regime.exit, pruned=pruned_variables
+        )
+        user_regime = (
+            declared_regime
+            if exit_declaration is declared_regime.exit
+            else declared_regime.replace(exit=exit_declaration)
+        )
         if not pruned:
             pruned_regimes[regime_name] = user_regime
             continue
