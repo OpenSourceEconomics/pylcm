@@ -17,6 +17,13 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   `ModelInitializationError`. See
   [Regime transitions](docs/reference/transitions.md#api-regime-transitions).
 
+### Regimes without a grid of their own solve on several devices
+
+- A grid-search regime with no state or action to stream, which reads the value of a
+  regime placed on other devices, moves that value onto its own devices as a streamed
+  regime does, instead of failing with incompatible devices. One-device solves are
+  unchanged.
+
 ### Regimes may share a `Problem`
 
 - `lcm.Problem` declares an action problem with the thirteen slots of `Regime` from

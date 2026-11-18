@@ -1518,6 +1518,11 @@ class _CanonicalRegimeBuilder:
             period_regimes=self.period_regimes,
             state_action_space=self.state_action_spaces[regime_name],
             submesh_device_ids=self.placement.devices_for(regime_name=regime_name),
+            regimes_on_other_devices=frozenset(
+                name
+                for name, ids in self.placement.device_ids_by_regime.items()
+                if ids != self.placement.devices_for(regime_name=regime_name)
+            ),
             axis_widths=self._widths_for(regime_name=regime_name),
             sharded_state_names=self.sharded_state_names_by_regime[regime_name],
             ages=self.ages,
@@ -4719,6 +4724,7 @@ def _prepare_solution_phase(
     period_regimes: PeriodRegimes | None = None,
     state_action_space: StateActionSpace,
     submesh_device_ids: tuple[int, ...],
+    regimes_on_other_devices: frozenset[RegimeName],
     axis_widths: MappingProxyType[str, int],
     sharded_state_names: frozenset[StateName],
     ages: TimeAxis,
@@ -4815,6 +4821,7 @@ def _prepare_solution_phase(
         period_regimes=period_regimes,
         state_action_space=state_action_space,
         submesh_device_ids=submesh_device_ids,
+        regimes_on_other_devices=regimes_on_other_devices,
         axis_widths=axis_widths,
         sharded_state_names=sharded_state_names,
         ages=ages,
@@ -4868,6 +4875,7 @@ def _prepare_numerical_solution_phase(  # noqa: PLR0915 - native route admission
     period_regimes: PeriodRegimes | None = None,
     state_action_space: StateActionSpace,
     submesh_device_ids: tuple[int, ...],
+    regimes_on_other_devices: frozenset[RegimeName],
     axis_widths: MappingProxyType[str, int],
     sharded_state_names: frozenset[StateName],
     ages: TimeAxis,
@@ -5229,6 +5237,7 @@ def _prepare_numerical_solution_phase(  # noqa: PLR0915 - native route admission
         Q_and_F_functions=Q_and_F_functions,
         grids=all_grids[regime_name],
         submesh_device_ids=submesh_device_ids,
+        regimes_on_other_devices=regimes_on_other_devices,
         sharded_state_names=sharded_state_names,
         action_partitions=action_partitions,
         axis_widths=axis_widths,

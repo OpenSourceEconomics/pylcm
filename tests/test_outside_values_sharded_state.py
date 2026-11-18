@@ -13,10 +13,9 @@ outside value at its point:
 - a destination that prunes the reader's sharded model-level state, because it does
   not read it, takes the exit's projection of the states it carries and solves as on
   one device, with stored and with point reads;
-- singles with a state of their own who marry by consent into a couple that shards
-  a model-level state and dissolves into them, neither single reading the state,
-  solve as on one device; stateless singles do not yet, because a grid-search core
-  without a streamed axis does not get its successor's value moved to its device;
+- singles, with or without a state of their own, who marry by consent into a couple
+  that shards a model-level state and dissolves into them, neither single reading
+  the state, solve as on one device;
 - a sharded state that is the identity on the reader or the destination is refused,
   and stored reads refuse it exactly as point reads do;
 - a simulation over subjects sharded across devices reproduces the unsharded one.
@@ -808,19 +807,7 @@ def test_a_pruned_destination_solves_as_point_reads_on_one_device(
     "single_states",
     [
         pytest.param(True, id="single_states"),
-        pytest.param(
-            False,
-            id="stateless_singles",
-            marks=pytest.mark.xfail(
-                strict=True,
-                raises=AssertionError,
-                reason=(
-                    "A grid-search core without a streamed axis is dense and does "
-                    "not get the cross-device transfer of its successor's value "
-                    "(grid_search.py `requires_plan`); unrelated to exits."
-                ),
-            ),
-        ),
+        pytest.param(False, id="stateless_singles"),
     ],
 )
 def test_a_sharded_couple_state_the_singles_prune_solves_as_on_one_device(

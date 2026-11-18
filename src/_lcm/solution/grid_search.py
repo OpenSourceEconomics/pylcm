@@ -513,10 +513,18 @@ class GridSearch(Solver):
                 ),
                 value_reads=value_reads,
             )
-            # A bound continuation needs its selected-view transfer even when
-            # all local state and action products have extent one. "Dense"
+            # A bound continuation needs its selected-view transfer, and a value
+            # placed on other devices its cross-device transfer, even when all
+            # local state and action products have extent one. "Dense"
             # arithmetic must not bypass the engine's value-read planning.
-            requires_plan = bool(requirements.axes) or bool(context.invariant_bindings)
+            requires_plan = (
+                bool(requirements.axes)
+                or bool(context.invariant_bindings)
+                or any(
+                    read.target.regime in context.regimes_on_other_devices
+                    for read in value_reads
+                )
+            )
             program = CoreProgram(
                 name="main",
                 function=program_functions[q_id],
