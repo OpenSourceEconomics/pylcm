@@ -8,7 +8,7 @@ import time
 from . import _gpu_mem
 from ._mahler_execution import POLICY_LABEL, create_mahler_gpu_model
 
-_N_SUBJECTS = 100
+_N_SUBJECTS = 10_000
 
 # Warm samples MahlerYumBudgetedGpu's setup_cache collects per commit, shared
 # by track_execution_time and track_peak_cpu_mem: build once, one cold call,
@@ -147,7 +147,7 @@ class MahlerYumBudgetedGpu(_MahlerYum):
     """
 
     # A different capacity/width policy is a different measurement series.
-    version = f"4-{POLICY_LABEL}"
+    version = f"5-{POLICY_LABEL}"
     simulation_seed = 0
 
     def _build(self):
@@ -219,7 +219,7 @@ class MahlerYumBudgetedGpuPeakMem(_gpu_mem.GpuPeakMemProfile):
     phases -- solve+save and load+simulate -- that genuinely need one.
     """
 
-    version = f"4-{POLICY_LABEL}"
+    version = f"5-{POLICY_LABEL}"
     phases = (
         _gpu_mem.SOLVE_SAVE_ALL_PERSISTABLE,
         _gpu_mem.LOAD_SUPPLIED_SOLUTION_SIMULATE,

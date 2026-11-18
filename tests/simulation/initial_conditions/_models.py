@@ -13,6 +13,7 @@ from lcm import (
     fixed_transition,
 )
 from lcm.ages import AgeGrid
+from lcm.grids import ContinuousGrid
 from lcm.regime import Regime as UserRegime
 from lcm.typing import (
     BoolND,
@@ -77,7 +78,9 @@ def _next_wealth(
     return wealth - consumption + 2.0
 
 
-def make_constraint_model(wealth_grid) -> Model:
+def make_constraint_model(
+    *, wealth_grid: ContinuousGrid, execution_config: ExecutionConfig | None = None
+) -> Model:
     """Create a constraint model with the given wealth grid."""
     final_age = 1
 
@@ -114,6 +117,7 @@ def make_constraint_model(wealth_grid) -> Model:
         ages=AgeGrid(start=0, inclusive_stop=final_age + 1, step="Y"),
         regime_id_class=RegimeId,
         initial_nodes={0: "working_life"},
+        execution_config=execution_config or ExecutionConfig(),
         edges={
             "working_life": Transition(
                 targets={"working_life": 0, "dead": (0, 1)},
