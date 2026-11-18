@@ -1113,7 +1113,7 @@ def route_original_subjects(
 ) -> tuple[
     IntND,
     IntND,
-    dict[RegimeName, dict[str, FloatND | IntND]],
+    MappingProxyType[RegimeName, MappingProxyType[str, FloatND | IntND]],
     BoolND,
     FloatND,
 ]:
@@ -1122,6 +1122,11 @@ def route_original_subjects(
     In particular, a row entering a regime whose original occupants leave cannot
     take that regime's exit. Its destination coordinates came from the original
     source's bound projection, before any row's state or membership was changed.
+
+    The states come back as immutable mappings in the order of `original_states`.
+    A compiled call hands a returned `dict` back with its keys sorted, while an
+    immutable mapping keeps its order, so profiled and dispatched exits publish
+    the carrier in the order the planned programs declare.
     """
     final_ids = original_regime_ids
     final_roles = original_roles
@@ -1144,7 +1149,15 @@ def route_original_subjects(
         retained = (original_regime_ids == regime_ids[source]) & ~moved
         for name, value in projections[projection].items():
             states[source][name] = jnp.where(retained, value, states[source][name])
-    return final_ids, final_roles, states, moved, paid
+    return (
+        final_ids,
+        final_roles,
+        MappingProxyType(
+            {name: MappingProxyType(values) for name, values in states.items()}
+        ),
+        moved,
+        paid,
+    )
 
 
 def apply_retained_state_updates(
@@ -1152,9 +1165,15 @@ def apply_retained_state_updates(
     states: Mapping[StateName, FloatND | IntND],
     updates: Mapping[StateName, FloatND | IntND],
     holders: BoolND,
-) -> dict[StateName, FloatND | IntND]:
-    """Apply a final actor's selected coordinates only to its moving rows."""
-    return {
-        name: jnp.where(holders, updates[name], value) if name in updates else value
-        for name, value in states.items()
-    }
+) -> MappingProxyType[StateName, FloatND | IntND]:
+    """Apply a final actor's selected coordinates only to its moving rows.
+
+    The states keep their incoming order through compilation, as in
+    `route_original_subjects`.
+    """
+    return MappingProxyType(
+        {
+            name: jnp.where(holders, updates[name], value) if name in updates else value
+            for name, value in states.items()
+        }
+    )

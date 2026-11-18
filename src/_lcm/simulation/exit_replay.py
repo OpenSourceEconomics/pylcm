@@ -455,6 +455,7 @@ def prepare_exit_period(  # noqa: C901, PLR0912, PLR0915 - retain replay's order
         ),
         subject_outputs=True,
     )
+    final_states = dict(final_states)
     bases = _merge_bases(
         originals=originals,
         regime_ids=regime_ids,
