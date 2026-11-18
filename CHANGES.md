@@ -16,6 +16,10 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   reaches, and a role beside a gate or participation check on the same target raise
   `ModelInitializationError`. See
   [Regime transitions](docs/reference/transitions.md#api-regime-transitions).
+- Two routes of one gate may share a fallback regime when, in each phase, they name the
+  same stakeholder and the same parameter-free projection function per state, so both
+  write the same row; any other sharing is refused as before, the message now naming a
+  parameter where only that stands in the way.
 
 ### Regimes without a grid of their own solve on several devices
 

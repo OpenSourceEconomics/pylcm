@@ -157,6 +157,7 @@ from _lcm.regime_building.diagnostics import _build_compute_intermediates_per_pe
 from _lcm.regime_building.finalize import FinalizedUserRegime
 from _lcm.regime_building.fixed_components import FixedComponentLaw
 from _lcm.regime_building.gated_edges import (
+    EDGE_PERIOD_CONTEXT_ARGS,
     CompiledEdgeFold,
     ResolvedGatedEdge,
     ResolvedStakeholderRoute,
@@ -3564,7 +3565,13 @@ def _fail_if_gated_edges_invalid(
                         regime_to_v_interpolation_info=regime_to_v_interpolation_info,
                         projection_phase="simulate",
                     )
-            _fail_if_duplicate_fallback_regimes(prefix=prefix, edge=edge)
+            _fail_if_duplicate_fallback_regimes(
+                prefix=prefix,
+                edge=edge,
+                target_state_names=simulate_variables_from_regime(
+                    user_regime=representative_user_regimes[target_name]
+                ).state_names,
+            )
             _fail_if_gated_edge_references_inactive(
                 prefix=prefix,
                 source_name=regime_name,
@@ -3729,34 +3736,67 @@ def _fail_if_gated_edge_references_inactive(
             raise ModelInitializationError(msg)
 
 
-def _fail_if_duplicate_fallback_regimes(*, prefix: str, edge: GatedEdge) -> None:
-    """Reject an edge whose legs share a fallback regime.
+def _fail_if_duplicate_fallback_regimes(
+    *, prefix: str, edge: GatedEdge, target_state_names: Collection[StateName]
+) -> None:
+    """Reject an edge whose legs share a fallback regime they may write apart.
 
     `route_gated_edges`
     (`_lcm.simulation.gated_routing`) writes EVERY leg's own projected
     fallback state into `leg.fallback.regime`'s per-subject state slot, one
     leg at a time, masked by `subjects_in_regime` — never keyed by leg. If
-    two legs of the SAME edge name the same fallback regime (even with
-    different projections, e.g. two stakeholders both falling back to a
-    shared regime name), the second leg's write silently overwrites the
+    two legs of the SAME edge name the same fallback regime with different
+    projections, the second leg's write silently overwrites the
     first's for every subject in the source regime, regardless of which leg
     `_select_own_leg` would actually select for a given row — a genuine data
     corruption, not merely an unused branch. A singleton source (exactly one
     leg) can never trigger this; only a multi-leg (collective) source can.
+
+    Two legs write the same value exactly when their references name the same
+    stakeholder and the same projection function per state, and no such
+    function reads a parameter: a parameter is qualified by the leg's route
+    (`_route_fallback_with_qualified_params`), so each leg may bind its own
+    value, while every other argument is the target's realized state or the
+    period context, the same for both legs. Such legs may share the regime.
     """
-    # The write is per phase: the fold reads the solve references and the
-    # router writes into the simulate ones, so two legs colliding in EITHER
-    # set is the corruption this rejects.
-    duplicates: list[RegimeName] = []
-    for phase_regimes in (
-        [leg.solve_fallback.regime for leg in edge.legs.values()],
-        [leg.simulate_fallback.regime for leg in edge.legs.values()],
+    # The check is per phase: the fold reads the solve references and the
+    # router writes into the simulate ones, so each phase's references are
+    # compared with the same phase's only.
+    duplicates: set[RegimeName] = set()
+    params_read: dict[StateName, list[str]] = {}
+    declarations_differ = False
+    for phase_refs in (
+        [leg.solve_fallback for leg in edge.legs.values()],
+        [leg.simulate_fallback for leg in edge.legs.values()],
     ):
-        seen: set[RegimeName] = set()
-        for regime_name in phase_regimes:
-            if regime_name in seen and regime_name not in duplicates:
-                duplicates.append(regime_name)
-            seen.add(regime_name)
+        first_by_regime: dict[RegimeName, ProjectedRegimeValue] = {}
+        for ref in phase_refs:
+            if ref.regime not in first_by_regime:
+                first_by_regime[ref.regime] = ref
+                continue
+            first = first_by_regime[ref.regime]
+            same = (
+                first.stakeholder == ref.stakeholder
+                and first.projection.keys() == ref.projection.keys()
+                and all(first.projection[s] is f for s, f in ref.projection.items())
+            )
+            reads = {
+                state_name: params
+                for state_name, projection in ref.projection.items()
+                if (
+                    params := [
+                        arg
+                        for arg in get_union_of_args([projection])
+                        if arg not in target_state_names
+                        and arg not in EDGE_PERIOD_CONTEXT_ARGS
+                    ]
+                )
+            }
+            if same and not reads:
+                continue
+            duplicates.add(ref.regime)
+            declarations_differ |= not same
+            params_read.update(reads)
     if duplicates:
         msg = (
             f"{prefix}two or more legs share the same fallback regime "
@@ -3765,9 +3805,20 @@ def _fail_if_duplicate_fallback_regimes(*, prefix: str, edge: GatedEdge) -> None
             "per-subject slot; legs sharing a fallback regime would have "
             "one leg's write silently overwrite the other's for every "
             "subject, regardless of which leg is actually selected. Give "
-            "each leg its own fallback regime."
+            "each leg its own fallback regime. Legs may share one only where "
+            "their fallbacks name the same stakeholder and the same "
+            "projection function for every state, and none of those "
+            "functions reads a parameter (any argument other than the "
+            "target's states, `period` and `age`)"
         )
-        raise ModelInitializationError(msg)
+        if not declarations_differ:
+            reads_text = "; ".join(
+                f"the projection for {state_name!r} reads the parameter "
+                f"{', '.join(map(repr, params))}"
+                for state_name, params in params_read.items()
+            )
+            msg += f"; here {reads_text}, which each leg binds under its own route"
+        raise ModelInitializationError(f"{msg}.")
 
 
 def _fail_if_target_stakeholder_invalid(

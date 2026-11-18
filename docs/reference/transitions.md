@@ -101,7 +101,10 @@ such case — names none, so it requires `targets`.
 supplies the probability of reaching the target as for any other destination, and the
 target's [`Gate`](collective_regimes.md#api-gate) decides whether a row stays there or
 takes its route's fallback. One gate per target holds at every age the target is reached
-and in both phases; a gate is never wrapped in `ByAge` or `Phased`.
+and in both phases; a gate is never wrapped in `ByAge` or `Phased`. Two routes of one
+gate may name the same fallback regime in a phase only when their fallbacks there name
+the same stakeholder and the same projection function for every state, and none of those
+functions reads a parameter, so that both routes write the same row.
 
 `roles={target: stakeholder}` is the plain edge from a singleton source into a
 collective target: a row taking it continues as that stakeholder of the target, and its
