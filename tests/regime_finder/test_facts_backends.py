@@ -6,6 +6,7 @@ status point identically, and fixing a status only removes reads.
 """
 
 import json
+import sys
 from itertools import product
 from pathlib import Path
 
@@ -46,7 +47,22 @@ def _tiny() -> dict[str, JSONValue]:
 
 
 def _from_model(model: Model) -> dict[str, JSONValue]:
+    """Return the scoped declarations of a completely captured model.
+
+    An incomplete capture leaves `dense` reading every coordinate of a callback
+    while `metadata` keeps its declared inputs, so the backend order below would
+    report the capture rather than the backends. macOS has no process-tree
+    telemetry, so the capture's host guard reads the worker's lifetime peak there;
+    a capture that a resource limit ends on such a runner skips the comparison.
+    """
     original = read_model(model)
+    report = original["capture_report"]
+    if sys.platform == "darwin" and report["exhaustion_reason"] is not None:
+        pytest.skip(
+            f"The model capture ran out of {report['exhaustion_reason']} on this "
+            f"runner (lifetime peak {report['peak_self_process_lifetime_gib']} GiB)."
+        )
+    assert report["status"] == "COMPLETE", report
     return apply_scope(original, normalize_declarations(original))
 
 
