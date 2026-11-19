@@ -2382,7 +2382,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_evaluate_collective_block": "749560fecb8e6255290a47b07e1cdb84f8c13db506caa11ea178b8ef3c4b3b57",
             "_scan_blocks": "90d220fa12e133d9921aaad62053012fc47ab1917b16a623db2abea8a2ecc62f",
             "_reduce_whole_product": "7a9d6038ddebf14aaec04a50f0962a6de9c4a3f7486c181e8b0821214128f9eb",
-            "_reduce_no_action":"27a09e4e36247d95db9c565aaefa311f3c1ded3c88889f0ed305cb825bae243e",
+            "_reduce_no_action": "27a09e4e36247d95db9c565aaefa311f3c1ded3c88889f0ed305cb825bae243e",
             "_start_collective_reduction": "019872b31d89c2a2c8ba68ee6128a9feb2b90b52c6ee3b00506708db6195adce",
             "_scan_collective_blocks": "2af8554d14cb82cab0ccd29f86fe325860add8700fd726b33bffe92a95b4aa7a",
             "_add_collective_block": "5ed017db741c30cae43dd1c4a526c703c8601857c2fbca23e9900ca560e78198",
