@@ -68,7 +68,7 @@ class RenegotiationQueries:
 
 @dataclass(frozen=True, kw_only=True)
 class SettlementQueries:
-    """Read the candidate settlement nearest the default that the stayer accepts."""
+    """Read the settlement nearest the default that the stayer accepts."""
 
     points: tuple[float, ...]
     """Candidate settlements, increasing in favour of the first stakeholder."""
@@ -90,16 +90,32 @@ class SettlementQueries:
         supported: Bool1D,
         default: ScalarFloat,
     ) -> tuple[IntND, BoolND]:
-        """Return the nearest accepted candidate and whether the pair separates there.
+        """Return the accepted settlement and whether the pair separates there.
 
-        Only a pair in which exactly one member refuses at the default searches.
-        The other member, the stayer, accepts separation at a candidate whose
-        outside value is at least its stay value, whatever the rule's `tie`.
+        Row 0 of `outside` and `supported` is the default and row `1 + k` candidate
+        `k`; the returned index counts the same rows. Only a pair in which exactly
+        one member refuses at the default settles. The other member, the stayer,
+        accepts separation where its outside value is at least its stay value,
+        whatever the rule's `tie`, and every destination is supported. The
+        settlement is the first of these that the stayer accepts:
+
+        - the default, at distance zero: the stayer, willing to stay there, is
+          exactly indifferent, which happens only under `tie="stay"`;
+        - the candidate nearest the default strictly on the stayer's side.
+
+        The pair separates there if the member who wants to leave still gains under
+        `tie`, as it always does at the default.
         """
-        points = jnp.asarray(self.points)
+        candidates = jnp.asarray(self.points)
+        points = jnp.concatenate((jnp.reshape(default, (1,)), candidates))
         stayer = jnp.where(willing[0], 0, 1)
         leaver = 1 - stayer
-        side = jnp.where(stayer == 0, points > default, points < default)
+        side = jnp.concatenate(
+            (
+                jnp.ones(1, dtype=bool),
+                jnp.where(stayer == 0, candidates > default, candidates < default),
+            )
+        )
         accepts = side & supported & (outside[:, stayer] >= inside[stayer])
         gains = (
             outside[:, leaver] > inside[leaver]

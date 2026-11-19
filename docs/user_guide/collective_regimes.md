@@ -210,17 +210,21 @@ The settlement rule, with outside values evaluated at a settlement:
    settlement.
 1. If nobody wants to leave, the household stays. If both want to leave, it separates at
    the default.
-1. If exactly one wants to leave, the settlement moves toward the other member: among
-   the candidates on that member's side of the default (increasing values favour the
-   first stakeholder), take the nearest at which that member accepts separation. The
-   household separates there if the member who wants to leave still gains, and stays
-   otherwise. Without such a candidate it stays.
+1. If exactly one wants to leave and the other is exactly indifferent at the default,
+   the household separates at the default, provided both destinations have a feasible
+   action there: no shift is needed to compensate the indifferent member. Under
+   `tie="leave"` an indifferent member wants to leave, so this case does not arise.
+1. Otherwise, if exactly one wants to leave, the settlement moves toward the other
+   member: among the candidates on that member's side of the default (increasing values
+   favour the first stakeholder), take the nearest at which that member accepts
+   separation. The household separates there if the member who wants to leave still
+   gains, and stays otherwise. Without such a candidate it stays.
 
-The settlement is searched on the candidates only, never between them, and needs a
-regime with two members. The default reads what `available` reads, at the decision; it
-is clipped to the candidates' range. A household that separates lands where the
-projections put it at the selected settlement and receives the adjustments evaluated
-there.
+A shifted settlement is searched on the candidates only, never between them. A
+settlement needs a regime with two members. The default reads what `available` reads, at
+the decision; it is clipped to the candidates' range. A household that separates lands
+where the projections put it at the selected settlement and receives the adjustments
+evaluated there.
 
 ## Entering a household in a role
 

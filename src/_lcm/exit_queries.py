@@ -317,8 +317,9 @@ class _ExitReducer:
         member is willing to stay when that value is above its exit payoff, or
         equal to it when the rule's `tie` is `"stay"`; no feasible action leaves
         every member unwilling. Under a settlement the outside values are those at
-        the default, and a pair in which exactly one member refuses separates at the
-        candidate the settlement selects, under that candidate's exit ID.
+        the default, and a pair in which exactly one member refuses separates where
+        the settlement selects: at the default under the default's exit ID, or at a
+        candidate under that candidate's.
         """
         stay = cast("PolicyAnswer", operands["answer"])
         rule = cast("Unilateral | MutualConsent", cast("Exit", self.declaration).rule)
@@ -331,6 +332,9 @@ class _ExitReducer:
         stays = jnp.all(willing) if isinstance(rule, Unilateral) else jnp.any(willing)
         identifier = jnp.asarray(self.n_actions)
         settles = jnp.asarray(a=False)
+        eligible, integrity = self._eligible(
+            operands=operands, payoffs=payoffs, active=active
+        )
         if self.settlement is not None:
             candidates = tuple(
                 self._payoffs(operands=operands, targets=targets, adjustments=paid)
@@ -338,10 +342,15 @@ class _ExitReducer:
                     self.settlement.targets, self.settlement.adjustments, strict=True
                 )
             )
+            # Row 0 is the default and row `1 + k` candidate `k`, so a row's exit ID
+            # is `n_actions` plus its index.
             settled = jnp.stack(
-                tuple(
-                    jnp.stack(tuple(payoff[member] for member in self.members))
-                    for payoff, _, _ in candidates
+                (
+                    outside,
+                    *(
+                        jnp.stack(tuple(payoff[member] for member in self.members))
+                        for payoff, _, _ in candidates
+                    ),
                 )
             )
             nearest, settles = self.settlement.select(
@@ -349,16 +358,19 @@ class _ExitReducer:
                 willing=willing,
                 outside=settled,
                 supported=jnp.stack(
-                    tuple(
-                        jnp.all(
-                            jnp.stack(
-                                tuple(
-                                    cast("PolicyAnswer", operands[key])[2]
-                                    for key, _ in targets.values()
+                    (
+                        eligible,
+                        *(
+                            jnp.all(
+                                jnp.stack(
+                                    tuple(
+                                        cast("PolicyAnswer", operands[key])[2]
+                                        for key, _ in targets.values()
+                                    )
                                 )
                             )
-                        )
-                        for targets in self.settlement.targets
+                            for targets in self.settlement.targets
+                        ),
                     )
                 ),
                 default=cast(
@@ -369,11 +381,8 @@ class _ExitReducer:
             settles &= active
             valid &= jnp.all(jnp.stack(tuple(checked for _, _, checked in candidates)))
             outside = jnp.where(settles, settled[nearest], outside)
-            identifier = jnp.where(settles, self.n_actions + 1 + nearest, identifier)
+            identifier = jnp.where(settles, self.n_actions + nearest, identifier)
         kept = jnp.where(active, stays & ~settles, stay[2])
-        eligible, integrity = self._eligible(
-            operands=operands, payoffs=payoffs, active=active
-        )
         move = (settles | (eligible & ~kept)) & (self.kind is QueryKind.FULL)
         value = jnp.where(move, outside, jnp.where(kept, inside, -jnp.inf))
         return (

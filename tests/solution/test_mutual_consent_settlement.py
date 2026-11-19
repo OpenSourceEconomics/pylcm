@@ -2,12 +2,14 @@
 
 Every model has one period, so a stay value is the flow utility of the household's
 choice and an outside value is the destination's flow utility plus the adjustment.
-Each expected number is written down by hand from the rule, not computed by a second
-implementation.
+Each expected number is written down by hand from the rule, or solved exactly in
+rational arithmetic from the stayer's indifference equation; none is computed by a
+second implementation of the engine's search.
 """
 
 from collections.abc import Callable
 from dataclasses import dataclass, replace
+from fractions import Fraction
 from typing import Literal
 
 import jax.numpy as jnp
@@ -727,4 +729,334 @@ def test_settlement_is_part_of_the_durable_identity() -> None:
     """Declaring a settlement changes the rule's fingerprint."""
     assert _semantic_fingerprint(MutualConsent()) != _semantic_fingerprint(
         MutualConsent(settle=_settlement())
+    )
+
+
+# Cells of the indifferent-stayer family: a name giving the signs of
+# `(W_f - O_f(d), W_m - O_m(d))`, the stay values `W`, the default `d` and whether the
+# exit is available. Outside values are `O_f(s) = 4 s` and `O_m(s) = 4 - 4 s`, so
+# every number below is dyadic and equality at the default is exact at both
+# precisions. A `0` names the stayer, exactly indifferent at the default.
+_ROOT_INTERCEPTS = (Fraction(0), Fraction(4))
+_ROOT_SLOPES = (Fraction(4), Fraction(-4))
+_ROOT_CELLS = (
+    ("++", (2.5, 3.5), 0.375, True),
+    ("+0", (2.5, 2.5), 0.375, True),
+    ("+-", (2.5, 0.5), 0.375, True),
+    ("0+", (1.5, 3.5), 0.375, True),
+    ("00", (1.5, 2.5), 0.375, True),
+    ("0-:shift", (1.5, 0.5), 0.375, True),
+    ("0-:route", (1.5, 2.2), 0.375, True),
+    ("0-:default_on_a_node", (2.0, 1.0), 0.5, True),
+    ("0-:default_at_the_upper_end", (4.0, -1.0), 1.0, True),
+    ("0-:unavailable", (1.5, 0.5), 0.375, False),
+    ("-+", (-0.5, 3.5), 0.375, True),
+    ("-0:shift", (0.5, 2.5), 0.375, True),
+    ("-0:route", (1.0, 2.5), 0.375, True),
+    ("-0:default_at_the_lower_end", (-1.0, 4.0), 0.0, True),
+    ("--", (1.0, 2.0), 0.375, True),
+)
+_ROOT_FRACTION_POINTS = tuple(Fraction(point) for point in _POINTS)
+
+type _RootCell = tuple[str, tuple[float, float], float, bool]
+
+
+def _exact_outside(settlement: Fraction) -> tuple[Fraction, Fraction]:
+    return (
+        _ROOT_INTERCEPTS[0] + _ROOT_SLOPES[0] * settlement,
+        _ROOT_INTERCEPTS[1] + _ROOT_SLOPES[1] * settlement,
+    )
+
+
+def _exact_settlement(
+    *, cell: _RootCell, tie: Literal["stay", "leave"]
+) -> Fraction | None:
+    """The settlement at which the pair separates, None where it stays.
+
+    The stayer's share solves its indifference equation `O_p(r) = W_p` exactly. When
+    the root is the default, the pair separates there; otherwise at the first
+    candidate at or beyond the root, if the leaver still gains there.
+    """
+    _, stay_values, default_value, available = cell
+    if not available:
+        return None
+    inside = tuple(Fraction(value) for value in stay_values)
+    default = Fraction(default_value)
+    surplus = tuple(w - o for w, o in zip(inside, _exact_outside(default), strict=True))
+    willing = tuple(s >= 0 if tie == "stay" else s > 0 for s in surplus)
+    if all(willing):
+        return None
+    if not any(willing):
+        return default
+    stayer = willing.index(True)
+    leaver = 1 - stayer
+    root = (inside[stayer] - _ROOT_INTERCEPTS[stayer]) / _ROOT_SLOPES[stayer]
+    if root == default:
+        settlement = default
+    else:
+        beyond = [
+            point
+            for point in _ROOT_FRACTION_POINTS
+            if (point >= root if stayer == 0 else point <= root)
+        ]
+        if not beyond:
+            return None
+        settlement = min(beyond, key=lambda point: abs(point - root))
+    gain = _exact_outside(settlement)[leaver] - inside[leaver]
+    return settlement if (gain > 0 if tie == "stay" else gain >= 0) else None
+
+
+def _published(
+    *, cells: tuple[_RootCell, ...], settlements: tuple[Fraction | None, ...]
+) -> np.ndarray:
+    """`O(s*)` where the pair separates at `s*`, else `W`, as `(f, m)` rows."""
+    return np.asarray(
+        [
+            [
+                float(value)
+                for value in (
+                    cell[1] if settlement is None else _exact_outside(settlement)
+                )
+            ]
+            for cell, settlement in zip(cells, settlements, strict=True)
+        ]
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class _CellFlag:
+    values: tuple[bool, ...]
+
+    def __call__(self, *, case: IntND) -> BoolND:
+        return jnp.asarray(self.values)[case]
+
+
+# Single f has a feasible action only from these assets on.
+_FLOOR_F = 2.0
+
+
+def _solvent(*, assets: FloatND) -> BoolND:
+    return assets >= _FLOOR_F
+
+
+def _root_model(
+    *,
+    cells: tuple[_RootCell, ...],
+    division: Literal["transfer", "assets"],
+    tie: Literal["stay", "leave"],
+    floor_f: bool = False,
+) -> Model:
+    """Two members settling `_ROOT_CELLS`-style cells; `floor_f` bounds f's assets."""
+    n_cells = len(cells)
+    divided = {
+        member: _Divided(
+            intercepts=(float(_ROOT_INTERCEPTS[index]),) * n_cells,
+            slope=float(_ROOT_SLOPES[index]),
+        )
+        for index, member in enumerate(("f", "m"))
+    }
+    singles = {
+        f"single_{member}": Regime(
+            states={"assets": LinSpacedGrid(start=-16.0, stop=16.0, n_points=33)},
+            functions={"utility": _assets},
+            constraints={"solvent": _solvent} if floor_f and member == "f" else {},
+        )
+        if division == "assets"
+        else Regime(functions={"utility": _Constant(value=0.0)})
+        for member in ("f", "m")
+    }
+    return Model(
+        regimes={
+            "couple": Regime(
+                states={"case": DiscreteGrid(values=jnp.arange(n_cells))},
+                functions={
+                    "utility": CollectiveUtility(
+                        utilities={
+                            member: _CellValue(
+                                values=tuple(cell[1][index] for cell in cells)
+                            )
+                            for index, member in enumerate(("f", "m"))
+                        }
+                    )
+                },
+                exit=Exit(
+                    rule=MutualConsent(
+                        tie=tie,
+                        settle=Settlement(
+                            name="share",
+                            candidates=LinSpacedGrid(
+                                start=0.0, stop=1.0, n_points=len(_POINTS)
+                            ),
+                            default=_CellValue(values=tuple(cell[2] for cell in cells)),
+                        ),
+                    ),
+                    targets={
+                        member: ExitTarget(
+                            regime=f"single_{member}",
+                            projection={"assets": divided[member]}
+                            if division == "assets"
+                            else {},
+                            utility_adjustment=None
+                            if division == "assets"
+                            else divided[member],
+                        )
+                        for member in ("f", "m")
+                    },
+                    available=_CellFlag(values=tuple(cell[3] for cell in cells)),
+                ),
+            ),
+            **singles,
+        },
+        n_periods=1,
+        edges={},
+        initial_nodes=InitialNodes(by_period={0: ("couple", "single_f", "single_m")}),
+        regime_id_class=_Household,
+        execution_config=ExecutionConfig(device_memory_bytes=None),
+    )
+
+
+def _check_simulated_settlements(
+    *,
+    model: Model,
+    cells: tuple[_RootCell, ...],
+    settlements: tuple[Fraction | None, ...],
+    division: Literal["transfer", "assets"],
+) -> None:
+    """Movers land in the singles at `s*` and report `O(s*)`; stayers report `W`."""
+    frame = _simulate_every_cell(model=model, n_cells=len(cells))
+    separates = np.repeat(
+        np.asarray([s is not None for s in settlements], dtype=bool), 2
+    )
+    assert list(frame["regime_name"]) == list(
+        np.where(separates, np.tile(["single_f", "single_m"], len(cells)), "couple")
+    )
+    published = _published(cells=cells, settlements=settlements).reshape(-1)
+    np.testing.assert_array_almost_equal(
+        _own_values(frame), published, decimal=DECIMAL_PRECISION
+    )
+    if division == "assets":
+        np.testing.assert_array_almost_equal(
+            frame.loc[separates, "assets"],
+            published[separates],
+            decimal=DECIMAL_PRECISION,
+        )
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+@pytest.mark.parametrize("tie", ["stay", "leave"])
+@pytest.mark.parametrize("division", ["transfer", "assets"])
+def test_settlement_publishes_the_exact_root_of_the_stayers_indifference(
+    *, division: Literal["transfer", "assets"], tie: Literal["stay", "leave"]
+) -> None:
+    """A stayer indifferent at the default settles there; others take the candidates.
+
+    Under `tie="stay"` a pair in which one member refuses at the default and the other
+    is exactly indifferent there separates at the default, wherever it lies relative
+    to the candidates. Under `tie="leave"` an indifferent member refuses.
+    """
+    model = _root_model(cells=_ROOT_CELLS, division=division, tie=tie)
+    settlements = tuple(_exact_settlement(cell=cell, tie=tie) for cell in _ROOT_CELLS)
+    np.testing.assert_array_almost_equal(
+        model.solve(params={}, log_level="off").values[0]["couple"],
+        _published(cells=_ROOT_CELLS, settlements=settlements),
+        decimal=DECIMAL_PRECISION,
+    )
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+@pytest.mark.parametrize("tie", ["stay", "leave"])
+@pytest.mark.parametrize("division", ["transfer", "assets"])
+def test_settlement_lands_members_of_an_indifferent_stayer_at_the_default(
+    *, division: Literal["transfer", "assets"], tie: Literal["stay", "leave"]
+) -> None:
+    """Simulated members separate, land and are paid at the solve's settlement."""
+    _check_simulated_settlements(
+        model=_root_model(cells=_ROOT_CELLS, division=division, tie=tie),
+        cells=_ROOT_CELLS,
+        settlements=tuple(
+            _exact_settlement(cell=cell, tie=tie) for cell in _ROOT_CELLS
+        ),
+        division=division,
+    )
+
+
+def test_exact_settlements_of_the_indifferent_stayer_cells() -> None:
+    """The rational oracle gives the hand-derived settlement of every cell."""
+    stay = {cell[0]: _exact_settlement(cell=cell, tie="stay") for cell in _ROOT_CELLS}
+    leave = {cell[0]: _exact_settlement(cell=cell, tie="leave") for cell in _ROOT_CELLS}
+    at_default = {cell[0]: Fraction(cell[2]) for cell in _ROOT_CELLS}
+    assert stay == {
+        "++": None,
+        "+0": None,
+        "+-": Fraction(3, 4),
+        "0+": None,
+        "00": None,
+        **{
+            name: at_default[name]
+            for name in (
+                "0-:shift",
+                "0-:route",
+                "0-:default_on_a_node",
+                "0-:default_at_the_upper_end",
+                "-0:shift",
+                "-0:route",
+                "-0:default_at_the_lower_end",
+                "--",
+            )
+        },
+        "0-:unavailable": None,
+        "-+": Fraction(0),
+    }
+    assert leave == {
+        "++": None,
+        "+0": None,
+        "+-": Fraction(3, 4),
+        "0+": None,
+        "00": at_default["00"],
+        **{
+            name: at_default[name]
+            for name in (
+                "0-:shift",
+                "0-:route",
+                "0-:default_on_a_node",
+                "0-:default_at_the_upper_end",
+                "-0:shift",
+                "-0:route",
+                "-0:default_at_the_lower_end",
+                "--",
+            )
+        },
+        "0-:unavailable": None,
+        "-+": Fraction(0),
+    }
+
+
+# With `_FLOOR_F` f's destination is unsupported at a default of 0.25 (f lands with
+# 1) and supported at 0.5. In the first cell f would be indifferent at the default if
+# it were supported; m refuses there.
+_FLOOR_CELLS = (
+    ("0-:default_unsupported", (1.0, 0.5), 0.25, True),
+    ("0-:default_on_a_node", (2.0, 1.0), 0.5, True),
+)
+_FLOOR_SETTLED_AT = (Fraction(1, 2), Fraction(1, 2))
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+def test_settlement_searches_the_candidates_past_an_unsupported_default() -> None:
+    """A default without a feasible destination is no settlement; the search goes on.
+
+    Where the default is supported and the stayer is indifferent there, the pair
+    separates at the default.
+    """
+    model = _root_model(cells=_FLOOR_CELLS, division="assets", tie="stay", floor_f=True)
+    np.testing.assert_array_almost_equal(
+        model.solve(params={}, log_level="off").values[0]["couple"],
+        _published(cells=_FLOOR_CELLS, settlements=_FLOOR_SETTLED_AT),
+        decimal=DECIMAL_PRECISION,
+    )
+    _check_simulated_settlements(
+        model=model,
+        cells=_FLOOR_CELLS,
+        settlements=_FLOOR_SETTLED_AT,
+        division="assets",
     )

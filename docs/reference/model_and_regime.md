@@ -415,10 +415,15 @@ at the household optimum and `d` the default:
 1. A member refuses to stay when `O_i(d)` is above `W_i`, or equal to it under
    `tie="leave"`.
 1. Nobody refuses: stay at the optimum. Both refuse: separate at `d`.
-1. Exactly one refuses. Among the candidates strictly on the other member's side of `d`,
-   take the one nearest `d` at which that member accepts separation, `O_i(s) >= W_i`
-   whatever `tie` says. Separate there if the member who wants to leave still gains
-   under `tie`; otherwise, or without such a candidate, stay at the optimum.
+1. Exactly one refuses and the other member is exactly indifferent at `d`,
+   `O_i(d) = W_i`, which happens only under `tie="stay"`. If every destination is
+   supported at `d`, separate at `d` under the exit ID, landings and adjustments of `d`:
+   no shift is needed to compensate that member.
+1. Otherwise, with exactly one refusing: among the candidates strictly on the other
+   member's side of `d`, take the one nearest `d` at which that member accepts
+   separation, `O_i(s) >= W_i` whatever `tie` says. Separate there if the member who
+   wants to leave still gains under `tie`; otherwise, or without such a candidate, stay
+   at the optimum.
 
 The engine does not check that the accepting member's outside value rises in that
 member's direction; the rule takes the nearest accepting candidate. A member whose
@@ -427,8 +432,8 @@ candidate read whose projections land on the destination's grid takes the stored
 A household that separates lands at the projections evaluated with the selected
 settlement and receives the adjustments evaluated with it. The settlement is not a
 column of the simulated output; the landing states and values carry it. Two members
-only; the candidates are searched on the grid, never between its points; a default that
-is random and unobserved at the decision cannot be declared.
+only; a shifted settlement is searched on the candidates, never between them; a default
+that is random and unobserved at the decision cannot be declared.
 
 An outside policy can have a gated transition into the next period. Its nominal target
 components and each projected personal fallback enter as explicit future value reads;

@@ -90,10 +90,14 @@ class Settlement:
     """A division on separation that the members can shift before a mutual-consent exit.
 
     Exit-target projections and utility adjustments read the settlement under
-    `name`. When exactly one member wants to leave at the default, the settlement
-    moves to the nearest candidate in favour of the other member at which that
-    member accepts separation; the pair separates there if the member who wants to
-    leave still gains, and stays otherwise.
+    `name`. When exactly one member wants to leave at the default, the other member
+    accepts separation where its outside value is at least its stay value:
+
+    - if it does so at the default, which every destination supports, the pair
+      separates at the default;
+    - otherwise the settlement moves to the nearest candidate in favour of that
+      member at which it accepts, and the pair separates there if the member who
+      wants to leave still gains, and stays otherwise.
     """
 
     name: str
@@ -169,7 +173,11 @@ class MutualConsent:
     settle: Settlement | None = field(
         default=None, metadata={"fingerprint_omit_if_default": True}
     )
-    """Division on separation that the members can shift before the exit."""
+    """Division on separation that the members can shift before the exit.
+
+    It needs no shift when the member who does not want to leave is exactly
+    indifferent at the default, which happens only under `tie="stay"`.
+    """
 
     def __post_init__(self) -> None:
         _fail_if_adjusted_each_action(
