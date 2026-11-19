@@ -155,13 +155,109 @@ constraints = {
 Written as one predicate, `(work == 0) & (Q_f >= 0.0)`, the same restriction is refused
 when only `work == 1` sends a discrete state off its grid.
 
+## Dissolving in the current period: where the members compare
+
+A regime's `Exit` with `rule=Unilateral()` or `rule=MutualConsent()` decides before the
+period's action whether the household stays. `compares` says which stay values each
+member compares with its outside value (the
+[reference](../reference/model_and_regime.md#api-current-exits) has the details):
+
+- `compares="each_action"`, the default without an adjustment: every stay action is
+  tested, and the household takes its best action that passes the rule. It separates
+  only if none passes.
+- `compares="optimum"`: only the household's unconstrained optimum is tested.
+  `Unilateral` separates when any member refuses there, `MutualConsent` when every
+  member does. A household that stays acts at its optimum.
+
+Under mutual consent the members can also shift the division on separation before they
+decide. `Settlement` names it as an argument the exit's projections and utility
+adjustments read:
+
+```python
+from lcm import Exit, ExitTarget, LinSpacedGrid, MutualConsent, Settlement
+
+
+def wife_assets(*, wealth, share):
+    return share * wealth
+
+
+def husband_assets(*, wealth, share):
+    return (1.0 - share) * wealth
+
+
+def equal_split():
+    return 0.5
+
+
+dissolution = Exit(
+    rule=MutualConsent(
+        settle=Settlement(
+            name="share",
+            candidates=LinSpacedGrid(start=0.0, stop=1.0, n_points=21),
+            default=equal_split,
+        )
+    ),
+    targets={
+        "f": ExitTarget(regime="single_f", projection={"wealth": wife_assets}),
+        "m": ExitTarget(regime="single_m", projection={"wealth": husband_assets}),
+    },
+)
+```
+
+The settlement rule, with outside values evaluated at a settlement:
+
+1. Each member compares its value at the optimum with its outside value at the `default`
+   settlement.
+1. If nobody wants to leave, the household stays. If both want to leave, it separates at
+   the default.
+1. If exactly one wants to leave and the other is exactly indifferent at the default,
+   the household separates at the default, provided both destinations have a feasible
+   action there: no shift is needed to compensate the indifferent member. Under
+   `tie="leave"` an indifferent member wants to leave, so this case does not arise.
+1. Otherwise, if exactly one wants to leave, the settlement moves toward the other
+   member: among the candidates on that member's side of the default (increasing values
+   favour the first stakeholder), take the nearest at which that member accepts
+   separation. The household separates there if the member who wants to leave still
+   gains, and stays otherwise. Without such a candidate it stays.
+
+A shifted settlement is searched on the candidates only, never between them. A
+settlement needs a regime with two members. The default reads what `available` reads, at
+the decision; it is clipped to the candidates' range. A household that separates lands
+where the projections put it at the selected settlement and receives the adjustments
+evaluated there.
+
+## Entering a household in a role
+
+Where nothing is decided on landing — marriage arrives with a probability and both
+partners take it — a singleton source names the role its row continues in with `roles`:
+
+```python
+edges = {
+    "single_f": Transition(
+        law={
+            "single_f": StochasticTransition(func=meets_nobody),
+            "couple": StochasticTransition(func=meets_a_partner),
+        },
+        roles={"couple": "f"},
+    ),
+    # ... the other sources' edges
+}
+```
+
+The single woman's continuation toward `couple` is the couple's value for `f`, and a
+simulated row entering `couple` carries the role `f`. The edge is otherwise a plain one:
+a row landing where the household has no feasible action raises `NoFeasibleActionError`.
+To send such a row somewhere else, or to make the move depend on the landing, declare a
+gate or a participation check instead.
+
 ## Marrying and dissolving: a participation check on landing
 
-A raw transition between regimes with different stakeholder structure stays rejected —
-there is no rule that would say who the arriving row is. A `ParticipationCheck` supplies
-one. It lives on the source's edges in `Model(edges=...)`, in the `Transition`'s
-`participation`, keyed by the destination it decides on. Its `reads` name every value
-the predicate compares, each a `ParticipationRead` of a regime at projected coordinates:
+Without a role, a raw transition between regimes with different stakeholder structure
+stays rejected — there is no rule that would say who the arriving row is. A
+`ParticipationCheck` supplies one. It lives on the source's edges in `Model(edges=...)`,
+in the `Transition`'s `participation`, keyed by the destination it decides on. Its
+`reads` name every value the predicate compares, each a `ParticipationRead` of a regime
+at projected coordinates:
 
 ```python
 from lcm import (
@@ -228,7 +324,11 @@ whether this target edge is attempted at all, like any other per-target cell. Th
 decision, having arrived at the target's coordinates, says whether the row keeps that
 target or takes its route's fallback. A move decided in the current period instead — the
 household dissolving because a partner walks out now — is a participation `Exit` in the
-source's `Regime(exits=...)`; see the [migration guide](migrating_dated_regimes.md).
+source's `Regime(exit=...)`; see the [migration guide](migrating_dated_regimes.md). An
+exit, and a consent counterparty, may name a regime that subjects are in, even one with
+an exit of its own: an exit that needs no consent reads its destination's problem, and a
+counterparty its regime's problem, without that regime's exit. No regime is needed only
+to be read.
 
 ### A gate routes on states
 
@@ -588,9 +688,10 @@ value-dependent transition; the branch it takes then sets the role it carries on
   its role across an ordinary regime transition, so a two-leg transition the cohort runs
   into later counts; one in a regime the cohort can never arrive at does not, and no
   seed is required for it.
-- Entering a collective regime through a value-dependent transition sets the role from
-  the route's `target_stakeholder`; leaving through the closed branch sets it from the
-  fallback's `stakeholder`, or clears it for a singleton destination.
+- Entering a collective regime through `roles` sets the declared role, and through a
+  value-dependent transition the route's `target_stakeholder`; leaving through the
+  closed branch sets it from the fallback's `stakeholder`, or clears it for a singleton
+  destination.
 
 ```python
 initial_conditions = {

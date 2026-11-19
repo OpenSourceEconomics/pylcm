@@ -371,6 +371,15 @@ class SolverBuildContext:
     these devices, so its arrays land where the regime's value does.
     """
 
+    regimes_on_other_devices: frozenset[RegimeName] = field(
+        default=frozenset(), metadata={"fingerprint_omit_if_default": True}
+    )
+    """Regimes whose nodes run on a device set other than this regime's.
+
+    A value such a regime stores reaches this regime's devices only through a
+    planned transfer. Empty when every regime runs on the same devices.
+    """
+
     period_to_state_nodes: (
         MappingProxyType[int, MappingProxyType[StateName, Float1D]] | None
     ) = None

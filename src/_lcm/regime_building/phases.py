@@ -22,7 +22,7 @@ from _lcm.constraints.processed import (
     ProcessedConstraintsMapping,
     normalize_constraints,
 )
-from _lcm.exits import exits_for_phase
+from _lcm.exits import exit_for_phase
 from _lcm.grids import Grid
 from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.regime_law import RegimeLaw, RegimeLaws
@@ -31,7 +31,7 @@ from _lcm.utils.error_messages import format_messages
 from lcm.collective import CollectiveUtility
 from lcm.decoupled import Decoupled
 from lcm.exceptions import RegimeInitializationError
-from lcm.exits import Consent, Exit
+from lcm.exits import Consent
 from lcm.phased import Phased
 from lcm.transition import (
     AgeSpecializedGrid,
@@ -167,7 +167,6 @@ def normalize_regime_phases(user_regime: Regime, *, law: RegimeLaw) -> PhasedReg
 
     return PhasedRegimeSpec(
         solution=_build_phase_spec(
-            exits=exits_for_phase(exits=user_regime.exits, phase="solve"),
             constraints=constraints,
             functions=solve_functions,
             grid_states=solve_grid_states,
@@ -178,7 +177,6 @@ def normalize_regime_phases(user_regime: Regime, *, law: RegimeLaw) -> PhasedReg
             objective_aggregator=user_regime.get_objective_aggregator(),
         ),
         simulation=_build_phase_spec(
-            exits=exits_for_phase(exits=user_regime.exits, phase="simulate"),
             constraints=constraints,
             functions=simulate_functions,
             grid_states=simulate_grid_states,
@@ -304,7 +302,6 @@ def normalize_all_regime_phases(
 
 def _build_phase_spec(
     *,
-    exits: Mapping[str, Exit],
     constraints: dict[str, ConstraintLike],
     functions: dict[FunctionName, UserFunction],
     grid_states: dict[StateName, Grid | AgeSpecializedGrid],
@@ -316,7 +313,6 @@ def _build_phase_spec(
 ) -> RegimePhaseSpec:
     """Assemble one phase's slice from its resolved slot values."""
     return RegimePhaseSpec(
-        exits=exits,
         functions=MappingProxyType(functions),
         # Constraints are phase-invariant by the slot grammar (phase-variant
         # containers are rejected by the resolver), so both slices normalize the
@@ -466,24 +462,23 @@ def phase_variation_paths(
 
 def _exit_phase_variation_paths(*, user_regime: Regime) -> tuple[str, ...]:
     """Track phase-specific exit and counterparty settlements for replay."""
-    varied = []
-    for name, declaration in user_regime.exits.items():
-        projections = {
-            f"exits[{name!r}].targets[{role!r}].projection": target.projection
-            for role, target in declaration.targets.items()
-        }
-        if isinstance(declaration.rule, Consent):
-            projections[f"exits[{name!r}].counterparty.projection"] = (
-                declaration.rule.counterparty.projection
-            )
-        varied.extend(
-            path
-            for path, projection in projections.items()
-            if isinstance(projection, Phased)
-            and projection.solve is not projection.simulate
+    declaration = user_regime.exit
+    if declaration is None:
+        return ()
+    projections = {
+        f"exit.targets[{role!r}].projection": target.projection
+        for role, target in declaration.targets.items()
+    }
+    if isinstance(declaration.rule, Consent):
+        projections["exit.counterparty.projection"] = (
+            declaration.rule.counterparty.projection
         )
-
-    return tuple(varied)
+    return tuple(
+        path
+        for path, projection in projections.items()
+        if isinstance(projection, Phased)
+        and projection.solve is not projection.simulate
+    )
 
 
 def project_onto_solve_phase(user_regime: Regime) -> Regime:
@@ -507,7 +502,7 @@ def project_onto_solve_phase(user_regime: Regime) -> Regime:
         if isinstance(spec, Phased) and callable(spec.solve)
     }
     return user_regime.replace(
-        exits=exits_for_phase(exits=user_regime.exits, phase="solve"),
+        exit=exit_for_phase(declaration=user_regime.exit, phase="solve"),
         functions={
             **{
                 name: _solve_variant(value)
@@ -633,9 +628,6 @@ class RegimePhaseSpec:
     target that does not carry the state may read its draw `next_<state>`, which
     is then taken from this law inside the transition. Set by
     `canonicalize_phased_regimes`."""
-
-    exits: Mapping[str, Exit] = MappingProxyType({})
-    """Current-period exits with the phase's mapped settlements."""
 
 
 def _split_functions(

@@ -9,7 +9,7 @@ whose guard is false reads stand-in inputs and its answer is discarded.
 import re
 from collections.abc import Callable, Mapping
 from dataclasses import replace
-from typing import ClassVar, cast
+from typing import cast
 
 import jax
 import jax.numpy as jnp
@@ -30,7 +30,7 @@ from lcm import (
     Model,
     Periods,
     Regime,
-    RuleResult,
+    Unilateral,
     categorical,
 )
 from lcm.exceptions import RegimeInitializationError
@@ -192,47 +192,45 @@ def _model(
                 "experience": _next_experience,
                 **(keep_level if member == "f" else {}),
             },
-            exits={
-                "marry": Exit(
-                    targets={
-                        "self": ExitTarget(
-                            regime="couple",
-                            role=member,
-                            projection={
-                                "experience_f": couple_projection
-                                if member == "f"
-                                else _experience,
-                                "experience_m": _experience,
-                                **(
-                                    {
-                                        "level": _flipped_level
-                                        if member == "f"
-                                        else _no_level
-                                    }
-                                    if wage_level
-                                    else {}
-                                ),
-                            },
-                        )
-                    },
-                    rule=Consent(
-                        counterparty=Counterparty(
-                            regime="single_m" if member == "f" else "single_f",
-                            role="m" if member == "f" else "f",
-                            projection={
-                                "experience": _experience,
-                                **(
-                                    {"level": _no_level}
-                                    if wage_level and member == "m"
-                                    else {}
-                                ),
-                            },
-                        )
-                    ),
-                    available=marry_available if member == "f" else None,
-                    observes=("wage_f", "wage_m", "match"),
-                )
-            },
+            exit=Exit(
+                targets={
+                    "self": ExitTarget(
+                        regime="couple",
+                        role=member,
+                        projection={
+                            "experience_f": couple_projection
+                            if member == "f"
+                            else _experience,
+                            "experience_m": _experience,
+                            **(
+                                {
+                                    "level": _flipped_level
+                                    if member == "f"
+                                    else _no_level
+                                }
+                                if wage_level
+                                else {}
+                            ),
+                        },
+                    )
+                },
+                rule=Consent(
+                    counterparty=Counterparty(
+                        regime="single_m" if member == "f" else "single_f",
+                        role="m" if member == "f" else "f",
+                        projection={
+                            "experience": _experience,
+                            **(
+                                {"level": _no_level}
+                                if wage_level and member == "m"
+                                else {}
+                            ),
+                        },
+                    )
+                ),
+                available=marry_available if member == "f" else None,
+                observes=("wage_f", "wage_m", "match"),
+            ),
         )
         for member in ("f", "m")
     }
@@ -251,7 +249,7 @@ def _model(
                 **keep_level,
             },
             shocks=("wage_f", "wage_m", "match"),
-            exits={"dissolve": _dissolve()} if dissolution else {},
+            exit=_dissolve() if dissolution else None,
         ),
         **(_alone(experience=experience, work=work) if dissolution else {}),
     }
@@ -259,24 +257,22 @@ def _model(
         regimes[f"{name}_terminal"] = replace(
             regime,
             state_transitions={},
-            exits={
-                key: replace(
-                    declaration,
-                    targets={
-                        member: replace(target, regime=f"{target.regime}_terminal")
-                        for member, target in declaration.targets.items()
-                    },
-                    rule=replace(
-                        declaration.rule,
-                        counterparty=replace(
-                            declaration.rule.counterparty,
-                            regime=f"{declaration.rule.counterparty.regime}_terminal",
-                        ),
+            exit=replace(
+                regime.exit,
+                targets={
+                    member: replace(target, regime=f"{target.regime}_terminal")
+                    for member, target in regime.exit.targets.items()
+                },
+                rule=replace(
+                    regime.exit.rule,
+                    counterparty=replace(
+                        regime.exit.rule.counterparty,
+                        regime=f"{regime.exit.rule.counterparty.regime}_terminal",
                     ),
-                )
-                for key, declaration in regime.exits.items()
-                if isinstance(declaration.rule, Consent)
-            },
+                ),
+            )
+            if regime.exit is not None and isinstance(regime.exit.rule, Consent)
+            else None,
         )
     law = Normal(mu=0.0, sigma=0.3) if match_law is None else match_law
     match = (
@@ -334,30 +330,6 @@ def _experience_m(experience_m: IntND) -> IntND:
     return experience_m
 
 
-class _StrictParticipation:
-    """Keep the couple's best action that both spouses prefer to dissolving."""
-
-    reads_outside_values: ClassVar[bool] = True
-
-    def __call__(
-        self,
-        *,
-        Q_f: FloatND,
-        Q_m: FloatND,
-        exit_payoffs: Mapping[str, Mapping[str, FloatND]],
-        alternative_ids: IntND,
-        pareto_weights: Mapping[str, FloatND],
-    ) -> RuleResult:
-        q_f, q_m = Q_f.reshape(-1), Q_m.reshape(-1)
-        outside = exit_payoffs["dissolve"]
-        kept = (q_f > outside["f"]) & (q_m > outside["m"])
-        objective = pareto_weights["f"] * q_f + pareto_weights["m"] * q_m
-        stay = jnp.argmax(jnp.where(kept, objective, -jnp.inf))
-        return RuleResult(
-            action=alternative_ids[jnp.where(jnp.any(kept), stay, q_f.size)]
-        )
-
-
 def _dissolve() -> Exit:
     return Exit(
         targets={
@@ -369,7 +341,7 @@ def _dissolve() -> Exit:
             )
             for member in ("f", "m")
         },
-        rule=_StrictParticipation(),
+        rule=Unilateral(tie="leave"),
     )
 
 
@@ -428,15 +400,14 @@ def test_cells_of_a_chunk_run_as_one_batch(monkeypatch: pytest.MonkeyPatch) -> N
     assert 2 in trips
 
 
-def test_a_default_chunk_steps_through_two_thousand_support_rows() -> None:
-    """A 64-cell chunk evaluates 2048 rows per step, 131072 lanes.
+def test_a_default_chunk_steps_through_sixteen_thousand_support_rows() -> None:
+    """A 64-cell chunk evaluates 16384 rows per step, 1048576 lanes.
 
-    Steps are launch-bound: on the EKL age-65 singles a step four times wider
-    took 22% less time per chunk, while one sixteen times wider gained nothing
-    more and tripled the compiler workspace.
+    Steps are launch-bound, so a wide step runs fewer launches for the same lanes.
+    Admission halves a chunk whose step outgrows the memory budget.
     """
-    assert policy_queries._row_batch(chunk_size=64) == 2048
-    assert policy_queries._row_batch(chunk_size=4096) == policy_queries._ROW_BATCH
+    assert policy_queries._row_batch(chunk_size=64) == 16384
+    assert policy_queries._row_batch(chunk_size=32768) == policy_queries._ROW_BATCH
 
 
 def test_halving_the_chunk_doubles_the_support_rows_per_step(
@@ -516,6 +487,7 @@ def test_pinned_rows_reproduce_the_full_row_reduction(
     monkeypatch.setattr(query_information, "pinned_support", lambda **_: None)
     monkeypatch.setattr(query_information, "ancestor_classes", lambda **_: None)
     monkeypatch.setattr(query_information, "own_stay_classes", lambda **_: None)
+    monkeypatch.setattr(query_information, "continuation_members", lambda **_: None)
     _assert_same_values(
         got=batched, expected=_values(_model(n_match=3, marry_available=_experienced))
     )
@@ -530,6 +502,7 @@ def _unpinned_scalar_values(
         patch.setattr(query_information, "pinned_support", lambda **_: None)
         patch.setattr(query_information, "ancestor_classes", lambda **_: None)
         patch.setattr(query_information, "own_stay_classes", lambda **_: None)
+        patch.setattr(query_information, "continuation_members", lambda **_: None)
         return _values(model())
 
 
@@ -547,8 +520,15 @@ def test_pinned_ancestor_rows_stay_one_per_representative(
     shapes = {}
     original = query_information.InformationQueryCell.__call__
 
-    def record(self, **kwargs):
-        answer = original(self, **kwargs)
+    # keyword-only-exempt: primary-argument=self
+    def record(
+        self: query_information.InformationQueryCell,
+        *,
+        live: BoolND,
+        source: query_information.SourceStates,
+        dependencies: query_information.Dependencies,
+    ) -> policy_queries.PolicyAnswer:
+        answer = original(self, live=live, source=source, dependencies=dependencies)
         if len(self.node.ancestors) == 2:
             shapes[self.node.read.target] = answer[0].shape
         return answer

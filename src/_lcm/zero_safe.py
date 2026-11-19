@@ -70,7 +70,6 @@ from _lcm.probability import (
     _significand_in_unit_range,
     _unbiased_exponent,
     balanced_product,
-    exact_product,
     is_below_smallest_normal,
     is_live,
     is_negative,
@@ -78,6 +77,7 @@ from _lcm.probability import (
     scaled_by_power_of_two,
     scaled_down_by_power_of_two,
     scaled_exact_product,
+    weighted_exact_product,
     without_derivative,
 )
 from lcm.typing import BoolND, FloatND, IntND
@@ -89,6 +89,8 @@ def factored_weighted_term(*, factors: FloatND, values: FloatND) -> FloatND:
     Leading-axis factors retain their represented support. Including the finite
     value in the exponent arithmetic lets a large value rescue a contribution
     whose probability alone is below the format. No mass normalization occurs.
+    Past the factor axis the factors broadcast against the values, and their
+    product is formed once per entry they hold.
 
     Differentiating through the term raises `UnsupportedDifferentiationError`;
     an economic marginal is weighted as its own explicit value channel.
@@ -100,7 +102,7 @@ def factored_weighted_term(*, factors: FloatND, values: FloatND) -> FloatND:
 def _factored_primal(factors: FloatND, values: FloatND) -> FloatND:
     support = jnp.all(~is_represented_zero(factors), axis=0)
     safe_values = jnp.where(support | jnp.isfinite(values), values, 0.0)
-    product = exact_product(jnp.concatenate((factors, safe_values[None]), axis=0))
+    product = weighted_exact_product(factors=factors, values=safe_values)
     negative = jnp.sum(is_negative(factors), axis=0) % 2 == 1
     nonfinite = jnp.where(negative, -values, values)
     nonfinite = jnp.where(jnp.any(jnp.isnan(factors), axis=0), jnp.nan, nonfinite)

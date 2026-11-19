@@ -5,6 +5,144 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
+### `GridSearch(lottery_contraction=True)` contracts in exits and collective regimes
+
+- With the option on, the eligible draws are summed into the next-period value also in
+  regimes with an exit, which their exit and consent queries solve, and in collective
+  regimes, each member's value on its own. A query builds each table once per call,
+  before its loops. Values agree with enumerating the draws to rounding: the tests bound
+  the gap by 16 units in the last place at the largest value magnitude. Compile time and
+  host memory can rise and device peak can fall. A query keeps the draws toward a target
+  whose `off_grid="raise"` landings it counts, and a draw whose probabilities read a
+  current shock, which it binds per row after building its tables. A regime with an
+  exit, whose query reads its own kernel, now keeps such a draw enumerated there too;
+  before, the option summed it in that kernel, inside the query's loops. With the option
+  off, the default, every program is unchanged. See
+  [Grid-search lottery contraction](docs/reference/solvers.md#grid-search-lottery-contraction).
+
+### The regime finder keeps collective regimes, exits and renegotiation apart
+
+- `find_regimes` pools a collective regime only with regimes of the same stakeholders,
+  and pools regimes only when their exits are equal (rule, tie, comparison,
+  renegotiation, settlement, targets with roles, observed shocks and availability). The
+  normalized cells carry the stakeholders, the exit's identity and the renegotiated
+  states, and the independent source check verifies them and the cells' operators.
+- Work and storage count one action value and one stored value per stakeholder, as the
+  solve does.
+- The state an exit's `Renegotiate` moves is an ordinary, always-live state of its
+  regime: it is never contracted, split into lanes or carried as a status.
+- The independent source check binds each exit's root relation as the exit declares
+  it: the whole exit as its one callback, in both phases, with no support claim. A
+  report whose exit no longer reads the states its availability reads fails the check.
+- The independent layout check also derives what a layout result exports: the lane
+  listing, and each block's periods, states with their grids, actions, excluded
+  actions and fibres. A report that alters any of them fails the check, even when its
+  prices are genuine; the order in which a block lists its fibres is free.
+- The exit relation records the shocks the exit observes. A layout search that would
+  have to link two cells of one period inside one dense regime ends `UNRESOLVED` with a
+  plain reason rather than an internal error. See
+  [Check a regime graph](docs/user_guide/regime_checker.md#collective-models).
+
+### Exit rules compare at the optimum and settle before separation
+
+- `Unilateral(compares=...)` and `MutualConsent(compares=...)` say where each member's
+  stay value meets its outside value: `"each_action"` tests every stay action, as
+  before, and `"optimum"` only the household's unconstrained optimum, where
+  `Unilateral` separates when any member refuses and `MutualConsent` when every member
+  does. The default keeps every existing declaration, its values and its fingerprint.
+- `MutualConsent(settle=Settlement(name=..., candidates=..., default=...))` shifts a
+  division read by the exit's projections and utility adjustments before the pair
+  decides: when exactly one member wants to leave at the default, the pair separates at
+  the default if the other member is exactly indifferent there (under `tie="stay"`),
+  and otherwise at the candidate nearest the default on the other member's side that
+  this member accepts, if the leaver still gains there, and stays otherwise. Two
+  members only. See
+  [Current-period exits](docs/reference/model_and_regime.md#current-period-exits) and
+  [ADR 3](docs/adr/0003-exit-rules-compare-at-the-optimum-and-settle-before-separation.md).
+
+### A singleton source enters a collective target in a declared role
+
+- `Transition(roles={"couple": "f"})` declares that a row moving from a singleton source
+  into the collective regime `couple` continues there as its stakeholder `f`. It replaces
+  the hand-written always-open `Gate` with a never-taken fallback, solves and simulates
+  identically to it, and refuses a landing without a feasible action with
+  `NoFeasibleActionError`, as a plain edge does. A role on a non-collective target, an
+  unknown role, a role on a collective source, a role on a target the transition never
+  reaches, and a role beside a gate or participation check on the same target raise
+  `ModelInitializationError`. See
+  [Regime transitions](docs/reference/transitions.md#api-regime-transitions).
+- Two routes of one gate may share a fallback regime when, in each phase, they name the
+  same stakeholder and the same parameter-free projection function per state, so both
+  write the same row; any other sharing is refused as before, the message now naming a
+  parameter where only that stands in the way.
+
+### Regimes without a grid of their own solve on several devices
+
+- A grid-search regime with no state or action to stream, which reads the value of a
+  regime placed on other devices, moves that value onto its own devices as a streamed
+  regime does, instead of failing with incompatible devices. One-device solves are
+  unchanged.
+
+### Regimes may share a `Problem`
+
+- `lcm.Problem` declares an action problem with the thirteen slots of `Regime` from
+  `states` to `certainty_equivalent`, and `Regime(problem=..., exit=...)` holds one. A
+  holder takes the problem's slots at construction and is then the regime that declares
+  them itself: same values, same fingerprint, parameters per regime. Several regimes may
+  hold one problem and differ in their exits and edges. A problem slot declared beside
+  `problem`, a `ConsumptionSavingsRegime` or `NestedConsumptionSavingsRegime` holding a
+  problem, and a `ValueDependentConstraint` in a `Problem` raise
+  `RegimeInitializationError`. See [`Problem`](docs/reference/model_and_regime.md#problem).
+- Every problem slot of a holder is its default or the problem's own object; anything
+  else is refused. A holder given a copy of its problem with one slot changed, or
+  constructed with its problem's solver beside slots of its own, is refused instead of
+  keeping the first problem's slots and solving the wrong problem. `replace` of a holder
+  that changes a slot needs `problem=None`, and the finalized regimes of a model hold no
+  problem.
+- `Model.problems` maps each regime name to the problem the regime was given, or `None`,
+  so regimes sharing a problem map to one object. It enters no fingerprint.
+
+### Exits read the destination's problem
+
+- A subject moves at most once per period. An exit that needs no consent reads its
+  destination's problem at the projected state, and a consent counterparty its regime's
+  problem, without that regime's own exit; a formed couple applies its own rule for
+  staying, whose outside values are again problem values. Two regimes may exit into each
+  other, and no regime is needed only to be read. Values change where a destination has
+  an exit that needs no consent.
+- In a solve, an outside read the build proves to land on the destination's grid takes
+  the destination's problem value from a table the reader fills once per period; any
+  other read is evaluated at its exact point. See
+  [Current-period exits](docs/reference/model_and_regime.md#current-period-exits).
+- An exit into a regime that prunes a model-level state builds: the projection onto that
+  state is dropped, as a law of motion toward that regime is.
+- An exit whose reader or destination shards a state that keeps its value over time
+  solves on several devices, with stored and with point reads, as on one device. In
+  an exit period each of the reader's devices computes the whole grid of that state
+  and holds every next-period value that carries it whole, then keeps its own slice
+  of the reader's value; other periods still compute only each device's slice. A
+  participation check on such a state is still refused.
+- A budgeted simulation of a regime with a current-period exit and a gated edge builds
+  when the gate's fallback regime declares its states in an order other than the sorted
+  one.
+- When an exit's `available` reads only discrete shocks of one group that the stay
+  problem ignores, the solve evaluates that group's nodes where the exit is available
+  and one more node that carries the mass of all the others at the value of staying,
+  instead of every node. Values agree with the full enumeration to rounding; simulation
+  is unchanged.
+
+### Discrete limited commitment
+
+- `Unilateral(renegotiate=Renegotiate(state="mu"))` adjusts an ordered discrete
+  bargaining state toward a refusing member, choosing the first mutually willing
+  Raw policy or separating at the first opposing refusal or grid edge. The selected
+  state, action and spouse values travel together through solve and simulation.
+  Continuing state laws use `fixed_transition`; continuous indifference and unrouted
+  policy lookup are outside this feature's supported boundary.
+- An exit's outside policy may carry a future gated continuation, including a
+  target used only by a policy query. Its open value components and projected
+  personal fallbacks retain the gate's pointwise landing convention.
+
 ### Validated configuration records
 
 - The envelope configurations, `DCEGM`'s `refined_grid_factor` and
@@ -179,9 +317,12 @@ unchanged. The solvers keep the derivative rules they use themselves.
 - Node rules are `Product`, `MonteCarlo`, `QuasiMonteCarlo` and `UserNodes`; thin a
   group of several shocks with `QuasiMonteCarlo`. `UserNodes` with a negative weight
   raises `ShockDeclarationError` when it is declared.
-- `Regime(exits={name: Exit(...)})` declares a value-dependent move in the current
-  period, before the action, with `ExitTarget` destinations and a `"unilateral"`,
-  `"mutual"`, `Consent` or custom rule; see
+- `Regime(exit=Exit(...))` declares a value-dependent move in the current
+  period, before the action, with `ExitTarget` destinations and a
+  `Unilateral(tie=...)`, `MutualConsent(tie=...)` or `Consent` rule. `tie` says what
+  a member indifferent between staying and leaving does: `"stay"` (default) or
+  `"leave"`. Its parameters live under `exit`. With runtime checks on, a NaN
+  household objective at a feasible action fails the solve; see
   [Current-period exits](docs/reference/model_and_regime.md#current-period-exits).
 - `simulate(shock_paths=...)` and tagged entries in mapping-form `initial_conditions`
   override current shocks: `BaseInnovations(values=...)` supplies innovations
@@ -292,7 +433,7 @@ unchanged. The solvers keep the derivative rules they use themselves.
 - A `Gate` predicate naming `V_target`, `V_target_<s>` or `D_target` raises the new
   `lcm.exceptions.GateReadsValueError` when the gate is declared, and
   `Gate(references=...)` raises `TypeError`. Declare a value comparison made in the
-  current period as an `Exit` in `Regime(exits=...)`, and one made on landing as a
+  current period as an `Exit` in `Regime(exit=...)`, and one made on landing as a
   `ParticipationCheck` with named `ParticipationRead`s in `Transition(participation=...)`; see
   [Gates route on states only](docs/user_guide/migrating_dated_regimes.md#gates-route-on-states-only).
 - `solve()` no longer publishes a `DISSOLUTION_FLAG` replay artifact, and

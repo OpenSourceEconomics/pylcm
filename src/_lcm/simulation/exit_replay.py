@@ -30,6 +30,7 @@ from _lcm.simulation.exits import (
     OriginalExitOutput,
     ParticipatingExitOutput,
     PreparedExitDecision,
+    apply_retained_state_updates,
     participation_entry_routes,
     route_original_subjects,
 )
@@ -170,6 +171,7 @@ def prepare_exit_period(  # noqa: C901, PLR0912, PLR0915 - retain replay's order
     projected = {}
     adjustments = {}
     routes = []
+    state_updates = []
     pending_entries = {}
     for name, regime in actors.items():
         for source in regime.simulation.exit_queries[period].participation:
@@ -268,6 +270,10 @@ def prepare_exit_period(  # noqa: C901, PLR0912, PLR0915 - retain replay's order
             states=states[name],
         )
         root = plan.full.definitions[plan.full.root]
+        if root.state_updates:
+            address = f"{name}:{plan.full.root}"
+            projected[address] = source_projections[plan.full.root]
+            state_updates.append((name, address))
         for identifier, members in root.exit_targets.items():
             for member, query in members.items():
                 target = plan.full.definitions[query].read
@@ -426,6 +432,7 @@ def prepare_exit_period(  # noqa: C901, PLR0912, PLR0915 - retain replay's order
             "regime_ids": regime_names_to_ids,
         },
         static_arguments={
+            "state_updates": tuple(state_updates),
             "routes": tuple(
                 (
                     route.source,
@@ -436,7 +443,7 @@ def prepare_exit_period(  # noqa: C901, PLR0912, PLR0915 - retain replay's order
                     route.projection,
                 )
                 for route in routes
-            )
+            ),
         },
         subject_arg_names=(
             "original_regime_ids",
@@ -448,6 +455,7 @@ def prepare_exit_period(  # noqa: C901, PLR0912, PLR0915 - retain replay's order
         ),
         subject_outputs=True,
     )
+    final_states = dict(final_states)
     bases = _merge_bases(
         originals=originals,
         regime_ids=regime_ids,
@@ -510,7 +518,7 @@ def prepare_exit_period(  # noqa: C901, PLR0912, PLR0915 - retain replay's order
         plan = regime.simulation.exit_queries[period]
         queries = plan.participating[name]
         # The source Full draw chose the exit or the exact stay action once.
-        # Only movers reveal and choose a destination Participating action.
+        # Only movers reveal and act, in the problem their move was priced at.
         holders = run_simulation_operation(
             memory=memory,
             function=_moving_actor_rows,
@@ -578,7 +586,7 @@ def prepare_exit_period(  # noqa: C901, PLR0912, PLR0915 - retain replay's order
                 produced,
             ),
         )
-        answer, frame_payload = cast("ParticipatingExitOutput", output)
+        answer, frame_payload, selected_states = cast("ParticipatingExitOutput", output)
         frame = CurrentIIDDrawFrame(*frame_payload)
         _check_answer(
             queries=queries,
@@ -590,6 +598,18 @@ def prepare_exit_period(  # noqa: C901, PLR0912, PLR0915 - retain replay's order
             period=period,
             states=final_states[name],
         )
+        if selected_states:
+            final_states[name] = run_simulation_operation(
+                memory=memory,
+                function=apply_retained_state_updates,
+                arguments={
+                    "states": final_states[name],
+                    "updates": selected_states,
+                    "holders": holders,
+                },
+                subject_arg_names=("states", "updates", "holders"),
+                subject_outputs=True,
+            )
         source_answer, source_frame = originals.get(name, (answer, frame))
         physical_names = plan.physical_names
         reporting_sources = {name} | {
@@ -677,9 +697,16 @@ def prepare_exit_period(  # noqa: C901, PLR0912, PLR0915 - retain replay's order
             subject_outputs=True,
         )
         prepared[name] = PreparedExitDecision(*selected)
+    # The operations above may hand back their mappings with sorted keys, as a
+    # compiled or mesh-placed call does, so the carrier keeps its incoming order.
     return (
         MappingProxyType(
-            {name: MappingProxyType(columns) for name, columns in final_states.items()}
+            {
+                name: MappingProxyType(
+                    {state: final_states[name][state] for state in columns}
+                )
+                for name, columns in states.items()
+            }
         ),
         final_ids,
         final_roles,

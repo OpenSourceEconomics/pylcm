@@ -39,7 +39,7 @@ from lcm.shocks import (
     ShockName,
     Uniform,
 )
-from lcm.typing import BoolND, FloatND, IntND, ReferenceName, RegimeName
+from lcm.typing import BoolND, FloatND, IntND, ReferenceName, RegimeName, StateName
 
 if TYPE_CHECKING:
     from _lcm.engine import Regime
@@ -68,7 +68,9 @@ type OriginalExitOutput = tuple[
     Mapping[str, FloatND],
 ]
 type ParticipatingExitOutput = tuple[
-    tuple[FloatND, IntND, BoolND, BoolND, IntND], ExitFramePayload
+    tuple[FloatND, IntND, BoolND, BoolND, IntND],
+    ExitFramePayload,
+    Mapping[str, FloatND | IntND],
 ]
 
 
@@ -87,14 +89,18 @@ class ParticipationEntryPlan:
 
 @dataclass(frozen=True, kw_only=True)
 class ExitSimulationPlan:
-    """Original Full choice and revealed destination Participating policies."""
+    """Original Full choice and revealed destination acting policies."""
 
     full: ScalarPolicyQueries | None
     """Original-source choice, priced with its prescribed caller information."""
     participating: Mapping[RegimeName, ScalarPolicyQueries]
-    """Final-regime policies after revelation; no second Full decision."""
+    """Final-regime policies after revelation; no second Full decision.
+
+    Each acts in the problem its movers were priced at: Raw after an ordinary
+    exit, Participating after consent or a participation entry.
+    """
     physical_names: tuple[str, ...] = ()
-    """Own physical columns consumed by this actor's Participating policy."""
+    """Own physical columns consumed by this actor's acting policy."""
     fixed_flat_params: FlatParams = MappingProxyType({})
     """All bound query-context operands, retaining their canonical namespace."""
     participation: Mapping[RegimeName, ParticipationEntryPlan] = MappingProxyType({})
@@ -150,7 +156,10 @@ def install_exit_simulation_queries(
     query-only counterparty remains a transient reader, not a simulated occupant.
     """
     from _lcm.current_iid import CurrentIIDPlan  # noqa: PLC0415
-    from _lcm.exit_queries import bind_exit_query_graph  # noqa: PLC0415
+    from _lcm.exit_queries import (  # noqa: PLC0415
+        acting_kinds,
+        bind_exit_query_graph,
+    )
     from _lcm.participation_queries import (  # noqa: PLC0415
         bind_participation_query_graph,
     )
@@ -185,7 +194,7 @@ def install_exit_simulation_queries(
     roots = {
         (owner, period)
         for owner, period in original_actors
-        if contexts[owner].user_regimes_at(period=period)[owner].exits
+        if contexts[owner].user_regimes_at(period=period)[owner].exit is not None
         or contexts[owner].participation_queries.get(period)
     }
     full_queries = {}
@@ -257,6 +266,20 @@ def install_exit_simulation_queries(
         full_queries[owner, period] = ScalarPolicyQueries(
             definitions=definitions, root=root, period=period
         )
+    kinds = acting_kinds(
+        contexts=contexts,
+        readers=tuple(
+            (source, queries.definitions, queries.root, queries.period)
+            for source, queries in (
+                *((owner, queries) for (owner, _), queries in full_queries.items()),
+                *(
+                    (source, entry.queries)
+                    for entries in participation.values()
+                    for source, entry in entries.items()
+                ),
+            )
+        ),
+    )
     participating = {}
     for owner, period in sorted(actors):
         definitions, root = bind_exit_query_graph(
@@ -265,7 +288,7 @@ def install_exit_simulation_queries(
             root=owner,
             period=period,
             phase="simulate",
-            kind=QueryKind.PARTICIPATING,
+            kind=kinds.get((owner, period), QueryKind.PARTICIPATING),
         )
         participating[owner, period] = ScalarPolicyQueries(
             definitions=definitions, root=root, period=period
@@ -496,13 +519,47 @@ class OriginalExitDecision:
             group_params=group_params,
             overrides=overrides,
         )
-        answer = self.queries(states=states, arguments=query_arguments, frame=frame)
-        projections = {}
+        answer, updates = self.queries.evaluate(
+            states=states, arguments=query_arguments, frame=frame
+        )
+        projections = {self.queries.root: updates} if root.state_updates else {}
         adjustments = {}
+        # A read several exit IDs share, such as a member's read at the default of a
+        # settlement its projection ignores, lands every row taking any of them and
+        # pays the adjustment of the ID taken.
+        chosen: dict[str, BoolND] = {}
+        for identifier, targets in root.exit_targets.items():
+            for query in targets.values():
+                chosen[query] = chosen.get(query, jnp.asarray(a=False)) | (
+                    answer[1] == identifier
+                )
         for identifier, targets in root.exit_targets.items():
             for member, query in targets.items():
                 node = self.queries.definitions[query]
                 selected = answer[1] == identifier
+                helper = root.exit_adjustments.get(identifier, {}).get(member)
+                operands = {
+                    **fixed,
+                    **cast("Mapping[str, PytreeValue]", fixed["_lcm_query_projection"]),
+                    **states,
+                    **frame.physical,
+                }
+                adjustments[query] = (
+                    adjustments.get(query, jnp.asarray(0.0))
+                    if helper is None
+                    else jnp.where(
+                        selected,
+                        helper(
+                            **{
+                                name: operands[name]
+                                for name in signature(helper).parameters
+                            }
+                        ),
+                        adjustments.get(query, 0.0),
+                    )
+                )
+                if query in projections:
+                    continue
 
                 # Every participation fallback is priced for each arriving row.
                 # Replay validates that actual mapping even when the target accepts;
@@ -511,7 +568,7 @@ class OriginalExitDecision:
                 project_here = (
                     _holders
                     if root.read.kind is QueryKind.PARTICIPATION and identifier == 1
-                    else selected
+                    else chosen[query]
                 )
 
                 # Keep inactive projections behind a scalar condition; vmap's
@@ -537,27 +594,6 @@ class OriginalExitDecision:
                     project_here,
                     project,
                     lambda neutral=neutral: neutral,
-                )
-                helper = root.exit_adjustments.get(identifier, {}).get(member)
-                operands = {
-                    **fixed,
-                    **cast("Mapping[str, PytreeValue]", fixed["_lcm_query_projection"]),
-                    **states,
-                    **frame.physical,
-                }
-                adjustments[query] = (
-                    jnp.asarray(0.0)
-                    if helper is None
-                    else jax.lax.cond(
-                        selected,
-                        lambda helper=helper, operands=operands: helper(
-                            **{
-                                name: operands[name]
-                                for name in signature(helper).parameters
-                            }
-                        ),
-                        lambda: jnp.asarray(0.0),
-                    )
                 )
         return answer, _frame_output(frame=frame), projections, adjustments
 
@@ -623,10 +659,10 @@ class RevealedExitDecision:
             overrides=overrides,
             produced=produced,
         )
-        return (
-            self.queries(states=states, arguments=query_arguments, frame=frame),
-            _frame_output(frame=frame),
+        answer, updates = self.queries.evaluate(
+            states=states, arguments=query_arguments, frame=frame
         )
+        return answer, _frame_output(frame=frame), updates
 
 
 def _observe_query_frame(
@@ -954,16 +990,31 @@ def exit_policy_program(
             answer_roles,
             frame_roles,
             {
-                query: dict.fromkeys(
-                    queries.definitions[query].read.projection,
-                    "projected_current_state",
-                )
-                for query in targets
+                **(
+                    {
+                        queries.root: dict.fromkeys(
+                            root.state_updates, "projected_current_state"
+                        )
+                    }
+                    if root.state_updates
+                    else {}
+                ),
+                **{
+                    query: dict.fromkeys(
+                        queries.definitions[query].read.projection,
+                        "projected_current_state",
+                    )
+                    for query in targets
+                },
             },
             dict.fromkeys(targets, "source_utility_adjustment"),
         )
         if original
-        else (answer_roles, frame_roles)
+        else (
+            answer_roles,
+            frame_roles,
+            dict.fromkeys(root.state_updates, "projected_current_state"),
+        )
     )
     return CoreProgram(
         name=name,
@@ -1069,10 +1120,11 @@ def route_original_subjects(
     adjustments: Mapping[str, FloatND],
     routes: tuple[ExitRouteFields, ...],
     regime_ids: Mapping[RegimeName, IntND | int],
+    state_updates: tuple[tuple[RegimeName, str], ...] = (),
 ) -> tuple[
     IntND,
     IntND,
-    dict[RegimeName, dict[str, FloatND | IntND]],
+    MappingProxyType[RegimeName, MappingProxyType[str, FloatND | IntND]],
     BoolND,
     FloatND,
 ]:
@@ -1081,6 +1133,11 @@ def route_original_subjects(
     In particular, a row entering a regime whose original occupants leave cannot
     take that regime's exit. Its destination coordinates came from the original
     source's bound projection, before any row's state or membership was changed.
+
+    The states come back as immutable mappings in the order of `original_states`.
+    A compiled call hands a returned `dict` back with its keys sorted, while an
+    immutable mapping keeps its order, so profiled and dispatched exits publish
+    the carrier in the order the planned programs declare.
     """
     final_ids = original_regime_ids
     final_roles = original_roles
@@ -1099,4 +1156,35 @@ def route_original_subjects(
         paid = jnp.where(selected, adjustments[projection], paid)
         for name, value in projections[projection].items():
             states[target][name] = jnp.where(selected, value, states[target][name])
-    return final_ids, final_roles, states, moved, paid
+    for source, projection in state_updates:
+        retained = (original_regime_ids == regime_ids[source]) & ~moved
+        for name, value in projections[projection].items():
+            states[source][name] = jnp.where(retained, value, states[source][name])
+    return (
+        final_ids,
+        final_roles,
+        MappingProxyType(
+            {name: MappingProxyType(values) for name, values in states.items()}
+        ),
+        moved,
+        paid,
+    )
+
+
+def apply_retained_state_updates(
+    *,
+    states: Mapping[StateName, FloatND | IntND],
+    updates: Mapping[StateName, FloatND | IntND],
+    holders: BoolND,
+) -> MappingProxyType[StateName, FloatND | IntND]:
+    """Apply a final actor's selected coordinates only to its moving rows.
+
+    The states keep their incoming order through compilation, as in
+    `route_original_subjects`.
+    """
+    return MappingProxyType(
+        {
+            name: jnp.where(holders, updates[name], value) if name in updates else value
+            for name, value in states.items()
+        }
+    )

@@ -131,7 +131,7 @@ def test_projected_reads_and_native_exit_shapes_preserve_owner_kind(
                         )
                         counterparty = reference(names[3], "Counterparty")
                         json_member(counterparty, "fields")["role"] = "m"
-                        declaration["exits"] = {
+                        declaration["exit"] = {
                             "marry": record(
                                 "Exit",
                                 available=None,

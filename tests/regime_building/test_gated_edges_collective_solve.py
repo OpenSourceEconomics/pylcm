@@ -30,6 +30,7 @@ from _lcm.regime_building.processing import (
 )
 from _lcm.regime_law import RegimeLaws
 from _lcm.solution.backward_induction import solve
+from _lcm.typing import PeriodToRegimeToSimulationPolicy, PeriodToRegimeToVArr
 from _lcm.user_regime_validation import validate_regime_law
 from _lcm.utils.logging import get_logger
 from lcm import (
@@ -52,7 +53,7 @@ from lcm import (
 )
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
-from lcm.exits import Exit, ExitTarget
+from lcm.exits import Exit, ExitTarget, Unilateral
 from lcm.koopmans_aggregation import LinearAggregator
 from lcm.transition import AgeSelector, StochasticTransition
 from lcm.typing import (
@@ -64,7 +65,10 @@ from lcm.typing import (
     ScalarInt,
 )
 from tests.conftest import bind_laws, build_prepared_structure
-from tests.regime_building.test_collective_regime_simulate import _ParticipationRule
+from tests.regime_building.test_collective_regime_simulate import (
+    _dissolution_cost_f,
+    _dissolution_cost_m,
+)
 
 
 @categorical(ordered=True)
@@ -246,7 +250,9 @@ def _make_consent_regimes() -> dict[str, Regime]:
     }
 
 
-def _solve_consent(*, enable_jit: bool = False):
+def _solve_consent(
+    *, enable_jit: bool = False
+) -> tuple[PeriodToRegimeToVArr, PeriodToRegimeToSimulationPolicy]:
     laws = _consent_laws(_consent_edge())
     ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
     regimes = process_regimes(
@@ -300,7 +306,7 @@ def _solve_consent(*, enable_jit: bool = False):
     return _bi_result.value_functions, _bi_result.simulation_policies
 
 
-def test_consent_gate_routes_marriage_value_and_fallback():
+def test_consent_gate_routes_marriage_value_and_fallback() -> None:
     """UNANIMITY: gate open -> married value flows; one partner short -> fallback.
 
     wage=1: (V_married_f=2 > V_single_f_ref=1.5) & (V_married_m=1 > V_single_m_ref
@@ -316,7 +322,7 @@ def test_consent_gate_routes_marriage_value_and_fallback():
     np.testing.assert_allclose(V_single_f, np.array([2.9, 4.85]), rtol=1e-6)
 
 
-def test_consent_gate_matches_under_jit():
+def test_consent_gate_matches_under_jit() -> None:
     """The public (jitted) path folds the same edge."""
     solution, _sim = _solve_consent(enable_jit=True)
     np.testing.assert_allclose(
@@ -357,7 +363,7 @@ def _u_zero_collective(*, wage: ContinuousState, work: DiscreteAction) -> FloatN
 # Scope fences and build-time validation (pins)
 
 
-def test_raw_ungated_mixed_transition_still_rejected():
+def test_raw_ungated_mixed_transition_still_rejected() -> None:
     """A singleton regime reaching a collective target WITHOUT an edge is rejected."""
     regimes = _make_consent_regimes()
     # Drop the gate but keep the singleton -> collective transition.
@@ -391,7 +397,7 @@ def test_raw_ungated_mixed_transition_still_rejected():
         )
 
 
-def test_probabilistic_gate_is_rejected():
+def test_probabilistic_gate_is_rejected() -> None:
     """A stochastic (StochasticTransition) gate is out of scope — boolean only."""
     with pytest.raises(RegimeInitializationError, match="boolean"):
         validate_regime_law(
@@ -448,7 +454,7 @@ def _consent_model(edge: ParticipationCheck) -> Model:
     )
 
 
-def test_consent_model_builds_with_valid_routes():
+def test_consent_model_builds_with_valid_routes() -> None:
     """Control for the refusals below: the well-formed decision builds and solves."""
     solution = _consent_model(_consent_edge()).solve(
         params={"discount_factor": _BETA}, log_level="off"
@@ -458,13 +464,13 @@ def test_consent_model_builds_with_valid_routes():
     )
 
 
-def test_edge_fallback_to_unknown_regime_is_rejected():
+def test_edge_fallback_to_unknown_regime_is_rejected() -> None:
     """A participation check whose fallback names a missing regime is rejected."""
     with pytest.raises(ModelInitializationError, match="no_such_regime"):
         _consent_model(_consent_edge(fallback_regime="no_such_regime"))
 
 
-def test_edge_leg_naming_a_missing_target_stakeholder_is_rejected():
+def test_edge_leg_naming_a_missing_target_stakeholder_is_rejected() -> None:
     """A participation route naming a stakeholder the target lacks is rejected."""
     with pytest.raises(RegimeInitializationError, match="exact role"):
         _consent_model(_consent_edge(target_stakeholder="not_a_stakeholder"))
@@ -662,19 +668,21 @@ def _participation_topology_regimes() -> dict[str, Regime]:
     regimes = _make_full_topology_regimes()
     regimes["married"] = regimes["married"].replace(
         constraints={},
-        exits={
-            "dissolve": Exit(
-                targets={
-                    "f": ExitTarget(
-                        regime="single_f_p1", projection={"wage": _identity_wage}
-                    ),
-                    "m": ExitTarget(
-                        regime="single_m_p1", projection={"wage": _identity_wage}
-                    ),
-                },
-                rule=_ParticipationRule(),
-            )
-        },
+        exit=Exit(
+            targets={
+                "f": ExitTarget(
+                    regime="single_f_p1",
+                    projection={"wage": _identity_wage},
+                    utility_adjustment=_dissolution_cost_f,
+                ),
+                "m": ExitTarget(
+                    regime="single_m_p1",
+                    projection={"wage": _identity_wage},
+                    utility_adjustment=_dissolution_cost_m,
+                ),
+            },
+            rule=Unilateral(),
+        ),
     )
     return regimes
 
@@ -728,7 +736,7 @@ def _consent_participation(
     )
 
 
-def test_full_ekl_topology_via_public_model_api():
+def test_full_ekl_topology_via_public_model_api() -> None:
     """single_f/single_m + married with consent check + dissolution exit, one model.
 
     married (period 1) is the participation miniature (empty participation at
@@ -770,7 +778,7 @@ def test_full_ekl_topology_via_public_model_api():
     # cell paid by the dissolution exit).
     np.testing.assert_allclose(
         np.asarray(solution[1]["married"]),
-        np.array([[2.0, 1.0], [5.5, 1.0], [6.0, 3.0]]),
+        np.array([[2.0, 1.0], [5.0, 0.8], [6.0, 3.0]]),
         rtol=1e-6,
     )
     # single_f period-0: mutual-consent continuation.
@@ -781,7 +789,7 @@ def test_full_ekl_topology_via_public_model_api():
     )
 
 
-def test_singleton_source_with_two_legs_is_rejected():
+def test_singleton_source_with_two_legs_is_rejected() -> None:
     """A singleton source must declare exactly one route."""
     edge = _consent_edge()
     two_routes = ParticipationCheck(
@@ -829,7 +837,7 @@ def _edge_with_refs(*, fallback_regime: RegimeName) -> GatedEdge:
     )
 
 
-def test_gated_edge_reference_uncovered_in_consumed_period_is_rejected():
+def test_gated_edge_reference_uncovered_in_consumed_period_is_rejected() -> None:
     """A fallback uncovered in a period whose ``Wbar`` is
     actually CONSUMED (target covered at t, source covered at t-1) must be rejected
     at construction, so the solve-side `_roll_gated_edges` never feeds the source
@@ -860,7 +868,7 @@ def test_gated_edge_reference_uncovered_in_consumed_period_is_rejected():
         )
 
 
-def test_gated_edge_references_covered_in_every_consumed_period_pass():
+def test_gated_edge_references_covered_in_every_consumed_period_pass() -> None:
     """A fallback covered in every consumed period passes the guard."""
     edge = _edge_with_refs(fallback_regime="single_m_terminal")
     regimes_to_active_periods = MappingProxyType(
@@ -883,7 +891,7 @@ def test_gated_edge_references_covered_in_every_consumed_period_pass():
     )
 
 
-def test_gated_edge_reference_uncovered_at_unconsumed_boundary_passes():
+def test_gated_edge_reference_uncovered_at_unconsumed_boundary_passes() -> None:
     """Over-reach guard: a self-loop edge's reference may be uncovered in a
     target-covered period whose ``Wbar`` is NEVER consumed — the target's earliest
     covered period, where no source exists one period earlier. Requiring

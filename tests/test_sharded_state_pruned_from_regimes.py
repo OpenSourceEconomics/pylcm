@@ -10,7 +10,8 @@ terminal one.
 
 Both directions are covered: a state read in the early regimes and dropped by
 the later ones, and the mirror where only a later regime reads it while an
-earlier one enters it through a target-keyed law.
+earlier one enters it through a target-keyed law. So are regimes with no grid of
+their own to stream, which read a value placed on other devices all the same.
 
 The placement witnesses run in a four-CPU-device child process, because the
 placement under test only exists where several devices do, and a topology is
@@ -248,6 +249,43 @@ def mirror_model(*, devices: tuple[int, ...], sharded: tuple[StateName, ...]) ->
     )
 
 
+def _utility_of_kind(kind: ScalarInt) -> FloatND:
+    return 1.0 + 0.1 * kind
+
+
+def _no_utility() -> FloatND:
+    return jnp.asarray(0.5)
+
+
+def _middle_kind() -> ScalarInt:
+    return jnp.asarray(_Kind.middle)
+
+
+def stateless_model(
+    *, devices: tuple[int, ...], sharded: tuple[StateName, ...]
+) -> Model:
+    """Regimes without a state or action of their own around a `kind`-only regime.
+
+    The working regime prunes `kind` and enters it into the retirement regime,
+    whose only state is `kind` and which has no action; the dead regime prunes it.
+    No regime has a grid of its own to stream.
+    """
+    return Model(
+        regimes={
+            "working": Regime(functions={"utility": _no_utility}),
+            "retired": Regime(functions={"utility": _utility_of_kind}),
+            "dead": Regime(functions={"utility": _no_utility}),
+        },
+        states={"kind": DiscreteGrid(category_class=_Kind)},
+        state_transitions={"kind": {"retired": _middle_kind}},
+        ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
+        regime_id_class=_RegimeId,
+        execution_config=ExecutionConfig(devices=devices, sharded_states=sharded),
+        initial_nodes={0: "working"},
+        edges=_EDGES,
+    )
+
+
 def build_unread_sharded_state() -> Model:
     """Build a model naming a sharded state no regime's DAG reads."""
     return _build(
@@ -430,6 +468,17 @@ def report_mirror(*, decimal: int) -> PlacementReport:
     report["simulation_matches_reference"] = not mismatch
     report["simulation_mismatch"] = mismatch
     report["transfer_from_retaining_regime"] = report["transfers"]["retired"]
+    return report
+
+
+def report_stateless(*, decimal: int) -> PlacementReport:
+    """Report the stateless model's placement and values against one device."""
+    report = _solve_and_compare(
+        model=stateless_model(devices=tuple(range(_N_DEVICES)), sharded=("kind",)),
+        reference=stateless_model(devices=(0,), sharded=()),
+        decimal=decimal,
+    )
+    del report["_solution"], report["_reference_solution"]
     return report
 
 
@@ -630,6 +679,18 @@ def test_the_mirror_simulation_equals_the_single_device_simulation(
 ) -> None:
     """The mirror model's simulated frames agree with its unsharded reference."""
     assert mirror["simulation_matches_reference"] is True
+
+
+def test_regimes_without_a_grid_of_their_own_read_across_placements() -> None:
+    """A regime with neither a state nor an action of its own reads the sharded
+    value of the `kind`-only regime it enters, which in turn reads the one-device
+    value of the regime it continues into, and the solve agrees with one device.
+    """
+    report = _run_in_four_device_process(entry_point="report_stateless")
+    assert (report["devices"]["retired"], report["solution_mismatches"]) == (
+        list(range(_KIND_EXTENT)),
+        [],
+    )
 
 
 def test_subject_sharded_simulation_equals_the_single_device_simulation(

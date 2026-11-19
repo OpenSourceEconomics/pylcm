@@ -39,12 +39,14 @@ from lcm import (
     fixed_transition,
 )
 from lcm.exceptions import InvalidInitialConditionsError
+from lcm.result import SimulationResult
 from lcm.solver_api import ResultRetention, SolutionResult
 from lcm.typing import RegimeName, ScalarInt
 from tests.collective_fixtures import (
     make_couple_initial_conditions,
     make_two_stakeholder_model,
 )
+from tests.conftest import assert_agrees_to_ulp
 from tests.regime_building.test_collective_regime_simulate import (
     _BETA,
     _DISSOLUTION_PARAMS,
@@ -171,7 +173,7 @@ class ConsentRegimeId:
 
 
 @pytest.fixture(scope="module")
-def dissolution_model_and_solution():
+def dissolution_model_and_solution() -> tuple[Model, SolutionResult]:
     """Solve the two-leg collective dissolution miniature once.
 
     `married` carries the stakeholders `("f", "m")` and a dissolution edge whose
@@ -198,7 +200,7 @@ def dissolution_model_and_solution():
 
 
 @pytest.fixture(scope="module")
-def consent_model_and_solution():
+def consent_model_and_solution() -> tuple[Model, SolutionResult]:
     """Solve the singleton-source consent miniature once.
 
     `single_f` is a singleton whose gated edge into the collective
@@ -223,8 +225,10 @@ def consent_model_and_solution():
 
 @pytest.mark.parametrize("expected_in_message", ["own_stakeholder", "married"])
 def test_collective_source_without_an_own_role_is_refused(
-    *, dissolution_model_and_solution, expected_in_message
-):
+    *,
+    dissolution_model_and_solution: tuple[Model, SolutionResult],
+    expected_in_message: str,
+) -> None:
     """Starting a cohort in a collective regime with no role is a caller error.
 
     The message names the entry that is missing and the collective regime that
@@ -244,8 +248,11 @@ def test_collective_source_without_an_own_role_is_refused(
     ],
 )
 def test_named_own_role_routes_the_dissolving_row_to_its_own_leg(
-    *, dissolution_model_and_solution, fallback_regime, expected_membership
-):
+    *,
+    dissolution_model_and_solution: tuple[Model, SolutionResult],
+    fallback_regime: RegimeName,
+    expected_membership: tuple[bool, ...],
+) -> None:
     """An all-husbands cohort dissolves into `single_m`, never into `single_f`.
 
     The role selects the leg, and the leg selects the continuing regime, so the
@@ -261,7 +268,9 @@ def test_named_own_role_routes_the_dissolving_row_to_its_own_leg(
     )
 
 
-def test_singleton_source_needs_no_own_role(consent_model_and_solution):
+def test_singleton_source_needs_no_own_role(
+    consent_model_and_solution: tuple[Model, SolutionResult],
+) -> None:
     """A cohort starting single routes through its gated edge with no role seeded.
 
     The role decides between one stakeholder's leg and another's, and a
@@ -292,7 +301,7 @@ def test_singleton_source_needs_no_own_role(consent_model_and_solution):
     )
 
 
-def test_collective_source_with_no_role_dependent_route_needs_no_own_role():
+def test_collective_source_with_no_role_dependent_route_needs_no_own_role() -> None:
     """A collective cohort whose model declares no multi-leg edge simulates unseeded.
 
     Nothing in such a model reads the role: there is no gated edge whose legs
@@ -315,7 +324,9 @@ def test_collective_source_with_no_role_dependent_route_needs_no_own_role():
     )
 
 
-def _simulate_dissolution_cohort(*, setup, own_stakeholder):
+def _simulate_dissolution_cohort(
+    *, setup: tuple[Model, SolutionResult], own_stakeholder: str | None
+) -> SimulationResult:
     """Simulate the dissolution miniature's three-subject cohort at one role."""
     model, solution = setup
     return model.simulate(
@@ -361,7 +372,7 @@ class UnreachableRoleRoutingRegimeId:
     single_m_terminal: ScalarInt
 
 
-def _make_unreachable_role_routing_regimes():
+def _make_unreachable_role_routing_regimes() -> dict[RegimeName, Regime]:
     """Add a collective start that cannot reach the two-leg dissolution edge.
 
     `alone` carries the same stakeholders as `married` and runs out into its own
@@ -395,7 +406,7 @@ def _make_unreachable_role_routing_regimes():
     }
 
 
-def test_a_start_that_cannot_reach_a_role_dependent_route_needs_no_own_role():
+def test_a_start_that_cannot_reach_a_role_dependent_route_needs_no_own_role() -> None:
     """A collective cohort is seeded for its own routes, not the model's.
 
     The role a subject starts with selects among the legs of a gated edge it
@@ -458,7 +469,9 @@ class ReachableRoleRoutingRegimeId:
     single_m_terminal: ScalarInt
 
 
-def test_a_start_that_runs_into_a_role_dependent_route_still_needs_an_own_role():
+def test_a_start_that_runs_into_a_role_dependent_route_still_needs_an_own_role() -> (
+    None
+):
     """A role is demanded wherever a subject can still arrive at a two-leg edge.
 
     A row keeps the role it started with across an ordinary regime transition,
@@ -563,7 +576,7 @@ def test_current_exit_requires_an_actual_source_member_role(
 
 @pytest.mark.parametrize(
     ("role", "destination", "payoff"),
-    [("f", "single_f", 5.5), ("m", "single_m", 1.0)],
+    [("f", "single_f", 5.0), ("m", "single_m", 0.8)],
     ids=["wife", "husband"],
 )
 def test_current_exit_settles_the_named_original_source_member(
@@ -591,4 +604,9 @@ def test_current_exit_settles_the_named_original_source_member(
     np.testing.assert_array_equal(acting["subject_id"], [0])
     np.testing.assert_array_equal(acting["regime_name"].to_numpy(), [destination])
     np.testing.assert_array_equal(acting["wage"], [2.0])
-    np.testing.assert_array_equal(acting["value"], [payoff])
+    # The payoff is an outside value less a dissolution cost, each rounded in the
+    # working format, so it lies within one ULP of the real number.
+    value = acting["value"].to_numpy()
+    assert_agrees_to_ulp(
+        got=value, expected=np.asarray([payoff], dtype=value.dtype), n_ulp=1
+    )

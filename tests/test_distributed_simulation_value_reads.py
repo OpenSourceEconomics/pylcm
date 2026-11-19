@@ -725,9 +725,15 @@ def test_collective_queries_share_original_value_copies_on_an_ordered_submesh(  
             )
         else:
             np.testing.assert_array_equal(answer[2], np.ones(4, dtype=bool))
+            # At wage 2 the household leaves. Its own exit pays each member the
+            # single value (7.4, 2.9) net of the exit costs (0.5, 0.2); the
+            # participation check's fallback pays the single value without them.
+            leaving = (
+                [7.4, 2.9] if family == "participation_entry:married" else [6.9, 2.7]
+            )
             np.testing.assert_allclose(
                 answer[0],
-                [[2.95, 1.95], [7.4, 2.9], [8.85, 5.85], [2.95, 1.95]],
+                [[2.95, 1.95], leaving, [8.85, 5.85], [2.95, 1.95]],
                 rtol=10.0**-DECIMAL_PRECISION,
             )
             exits = tuple(queries.definitions[queries.root].exit_targets)

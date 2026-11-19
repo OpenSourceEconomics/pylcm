@@ -9,15 +9,14 @@ A fixed population keeps each original subject and its own current role;
 settling a household does not create another subject for its other member.
 """
 
-from collections.abc import Mapping
 from types import MappingProxyType
-from typing import ClassVar
 
 import jax.numpy as jnp
 import numpy as np
 import pandas as pd
 
 from _lcm.certainty_equivalent import LinearExpectation
+from _lcm.engine import Regime as EngineRegime
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.processing import process_regimes
 from _lcm.regime_building.transition_support import (
@@ -26,6 +25,7 @@ from _lcm.regime_building.transition_support import (
 from _lcm.regime_law import RegimeLawDeclaration
 from _lcm.simulation.simulate import simulate
 from _lcm.solution.backward_induction import solve
+from _lcm.typing import FlatRegimeParams, PeriodToRegimeToVArr, RegimeNamesToIds
 from _lcm.utils.logging import get_logger
 from lcm import (
     AgeRange,
@@ -45,7 +45,7 @@ from lcm import (
     fixed_transition,
 )
 from lcm.ages import AgeGrid
-from lcm.exits import Exit, ExitTarget, RuleResult
+from lcm.exits import Exit, ExitTarget, Unilateral
 from lcm.koopmans_aggregation import LinearAggregator
 from lcm.result import SimulationResult
 from lcm.solver_api import (
@@ -60,7 +60,6 @@ from lcm.typing import (
     DiscreteAction,
     DiscreteState,
     FloatND,
-    IntND,
     RegimeName,
     ScalarInt,
 )
@@ -75,6 +74,14 @@ class Work:
 
 
 _BETA = 0.95
+
+type _Solved = tuple[
+    AgeGrid,
+    MappingProxyType[RegimeName, EngineRegime],
+    RegimeNamesToIds,
+    MappingProxyType[RegimeName, FlatRegimeParams],
+    PeriodToRegimeToVArr,
+]
 
 
 def _prob_one(age: FloatND) -> FloatND:
@@ -91,7 +98,7 @@ def _solve_and_process(
     laws: dict[RegimeName, RegimeLawDeclaration | Transition],
     ages: AgeGrid,
     regime_names: list[RegimeName],
-):
+) -> tuple[MappingProxyType[RegimeName, EngineRegime], RegimeNamesToIds]:
     """Shared build+solve harness (kernel-level, mirrors the solve-side tests).
 
     `laws` maps each regime to its law as `Model(edges=...)` would bind it;
@@ -196,7 +203,7 @@ def _make_couple_regimes() -> dict[str, Regime]:
     return {"couple": couple, "couple_terminal": couple_terminal}
 
 
-def test_couple_simulates_recomputed_joint_argmax_two_periods():
+def test_couple_simulates_recomputed_joint_argmax_two_periods() -> None:
     """A married couple's simulated actions/values match the hand-computed path.
 
     Hand computation (see `test_nonterminal_collective_solve.py`): at BOTH
@@ -270,7 +277,7 @@ def test_couple_simulates_recomputed_joint_argmax_two_periods():
     )
 
 
-def test_couple_simulate_with_runtime_validation_enabled():
+def test_couple_simulate_with_runtime_validation_enabled() -> None:
     """The trailing stakeholder axis on `V_arr` broadcasts against `in_regime`.
 
     The `validate_V` / NaN-diagnostic code paths compare `V_arr` against
@@ -461,7 +468,7 @@ def _make_consent_regimes() -> dict[str, Regime]:
     }
 
 
-def _solve_consent():
+def _solve_consent() -> _Solved:
     ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
     regimes_dict = _make_consent_regimes()
     regimes, regime_names_to_ids = _solve_and_process(
@@ -493,7 +500,7 @@ def _solve_consent():
     return ages, regimes, regime_names_to_ids, flat_params, solution
 
 
-def test_consent_routing_simulate_matches_gate_exactly():
+def test_consent_routing_simulate_matches_gate_exactly() -> None:
     """wage=1 clears mutual consent (marries); wage=2 does not (stays single).
 
     Gate at wage=1: (V_married_f=2 > V_single_f_ref=1.5) & (V_married_m=1 >
@@ -543,7 +550,7 @@ def test_consent_routing_simulate_matches_gate_exactly():
     )  # u_single_f_terminal(wage=2) = 1.5*2
 
 
-def test_consent_routing_never_populates_the_non_routed_target():
+def test_consent_routing_never_populates_the_non_routed_target() -> None:
     """single_m_terminal has no source edge in this topology, so it stays empty."""
     ages, regimes, regime_names_to_ids, flat_params, solution = _solve_consent()
     initial_conditions = MappingProxyType(
@@ -602,45 +609,16 @@ def _u_zero_collective(*, wage: ContinuousState, work: DiscreteAction) -> FloatN
     return 0.0 * wage * work
 
 
-def _ir_f(*, Q_f: FloatND, V_single_f_ref: FloatND, delta_f: FloatND) -> BoolND:
-    return Q_f >= V_single_f_ref - delta_f
+_COST_F = "exit__targets__f__utility_adjustment__delta_f"
+_COST_M = "exit__targets__m__utility_adjustment__delta_m"
 
 
-def _ir_m(*, Q_m: FloatND, V_single_m_ref: FloatND, delta_m: FloatND) -> BoolND:
-    return Q_m >= V_single_m_ref - delta_m
+def _dissolution_cost_f(delta_f: FloatND) -> FloatND:
+    return -delta_f
 
 
-class _ParticipationRule:
-    """One common action meets both thresholds; dissolution pays full outside value."""
-
-    reads_outside_values: ClassVar[bool] = True
-
-    def __call__(
-        self,
-        *,
-        Q_f: FloatND,
-        Q_m: FloatND,
-        exit_payoffs: Mapping[str, Mapping[str, FloatND]],
-        alternative_ids: IntND,
-        pareto_weights: Mapping[str, FloatND],
-        delta_f: FloatND,
-        delta_m: FloatND,
-    ) -> RuleResult:
-        q_f, q_m = Q_f.reshape(-1), Q_m.reshape(-1)
-        outside = exit_payoffs["dissolve"]
-        kept = (
-            jnp.isfinite(q_f)
-            & jnp.isfinite(q_m)
-            & _ir_f(Q_f=q_f, V_single_f_ref=outside["f"], delta_f=delta_f)
-            & _ir_m(Q_m=q_m, V_single_m_ref=outside["m"], delta_m=delta_m)
-        )
-        objective = pareto_weights["f"] * jnp.where(
-            pareto_weights["f"] == 0, 0.0, q_f
-        ) + pareto_weights["m"] * jnp.where(pareto_weights["m"] == 0, 0.0, q_m)
-        stay = jnp.argmax(jnp.where(kept, objective, -jnp.inf))
-        return RuleResult(
-            action=alternative_ids[jnp.where(jnp.any(kept), stay, q_f.size)]
-        )
+def _dissolution_cost_m(delta_m: FloatND) -> FloatND:
+    return -delta_m
 
 
 def _participation_support(*, target_support: BoolND) -> BoolND:
@@ -748,19 +726,21 @@ def _make_dissolution_regimes() -> dict[str, Regime]:
                 utilities={"f": _u_married_ir_f, "m": _u_married_ir_m}
             )
         },
-        exits={
-            "dissolve": Exit(
-                targets={
-                    "f": ExitTarget(
-                        regime="single_f", projection={"wage": _identity_wage}
-                    ),
-                    "m": ExitTarget(
-                        regime="single_m", projection={"wage": _identity_wage}
-                    ),
-                },
-                rule=_ParticipationRule(),
-            )
-        },
+        exit=Exit(
+            targets={
+                "f": ExitTarget(
+                    regime="single_f",
+                    projection={"wage": _identity_wage},
+                    utility_adjustment=_dissolution_cost_f,
+                ),
+                "m": ExitTarget(
+                    regime="single_m",
+                    projection={"wage": _identity_wage},
+                    utility_adjustment=_dissolution_cost_m,
+                ),
+            },
+            rule=Unilateral(),
+        ),
     )
     married_terminal = Regime(
         states={"wage": _WAGE_3},
@@ -794,7 +774,7 @@ def _make_dissolution_regimes() -> dict[str, Regime]:
     }
 
 
-def _solve_dissolution():
+def _solve_dissolution() -> _Solved:
     ages = AgeGrid(start=0, inclusive_stop=3, step="Y")
     regimes_dict = _make_dissolution_regimes()
     regimes, regime_names_to_ids = _solve_and_process(
@@ -811,8 +791,8 @@ def _solve_dissolution():
             "married_ir": MappingProxyType(
                 {
                     "koopmans_aggregator__discount_factor": jnp.asarray(_BETA),
-                    "exits__dissolve__rule__delta_f": jnp.asarray(0.5),
-                    "exits__dissolve__rule__delta_m": jnp.asarray(0.2),
+                    _COST_F: jnp.asarray(0.5),
+                    _COST_M: jnp.asarray(0.2),
                 }
             ),
             "married_terminal": MappingProxyType({}),
@@ -839,7 +819,7 @@ def _solve_dissolution():
     return ages, regimes, regime_names_to_ids, flat_params, solution
 
 
-def test_dissolution_edge_routes_the_row_to_its_own_roles_single_regime():
+def test_dissolution_edge_routes_the_row_to_its_own_roles_single_regime() -> None:
     """D=True at wage=2 (the IR mask empties there, see solve test).
 
     The cohort declares itself the wives, so the dissolving household's row is
@@ -849,7 +829,7 @@ def test_dissolution_edge_routes_the_row_to_its_own_roles_single_regime():
     """
     ages, regimes, regime_names_to_ids, flat_params, solution = _solve_dissolution()
     np.testing.assert_allclose(
-        np.asarray(solution[1]["married_ir"])[1], [5.5, 1.0], rtol=1e-6
+        np.asarray(solution[1]["married_ir"])[1], [5.0, 0.8], rtol=1e-6
     )
 
     initial_conditions = MappingProxyType(
@@ -935,10 +915,10 @@ def _simulate_directly_in_married_ir(*, wages: list[float]) -> SimulationResult:
     )
 
 
-def test_empty_participation_publishes_the_original_exit_payoffs() -> None:
-    """Full pays the original outside tuple where no common stay action participates."""
+def test_empty_participation_publishes_the_exit_payoffs_net_of_costs() -> None:
+    """Without a kept stay action each member gets the outside value minus the cost."""
     _, _, _, _, values = _solve_dissolution()
-    np.testing.assert_allclose(values[1]["married_ir"][1], [5.5, 1.0], rtol=1e-6)
+    np.testing.assert_allclose(values[1]["married_ir"][1], [5.0, 0.8], rtol=1e-6)
 
 
 def test_initial_households_with_empty_participation_take_their_own_exit() -> None:
@@ -948,11 +928,11 @@ def test_initial_households_with_empty_participation_take_their_own_exit() -> No
         result.raw_results["single_f"][1].in_regime, [False, True, False]
     )
     np.testing.assert_allclose(
-        result.raw_results["single_f"][1].V_arr[1], 5.5, rtol=1e-6
+        result.raw_results["single_f"][1].V_arr[1], 5.0, rtol=1e-6
     )
 
 
-def test_value_masked_simulate_reports_the_solved_values_off_the_empty_cell():
+def test_value_masked_simulate_reports_the_solved_values_off_the_empty_cell() -> None:
     """Households on the cells the mask leaves feasible get the solved values."""
     married_ir = _simulate_directly_in_married_ir(wages=[1.0, 3.0]).raw_results[
         "married_ir"
@@ -1118,7 +1098,7 @@ def _make_consent_regimes_with_discrete_target_axis() -> dict[str, Regime]:
     }
 
 
-def _solve_consent_discrete_axis():
+def _solve_consent_discrete_axis() -> _Solved:
     ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
     regimes_dict = _make_consent_regimes_with_discrete_target_axis()
     regimes, regime_names_to_ids = _solve_and_process(
@@ -1150,7 +1130,7 @@ def _solve_consent_discrete_axis():
     return ages, regimes, regime_names_to_ids, flat_params, solution
 
 
-def test_consent_routing_simulate_with_discrete_target_axis_routes_correctly():
+def test_consent_routing_simulate_with_discrete_target_axis_routes_correctly() -> None:
     """Regression pin for the discrete-target-axis gate-interpolation crash.
 
     Four subjects cross wage in {1, 2} with educ in {low, high}, so the
@@ -1277,7 +1257,7 @@ def test_public_model_prices_the_actual_participation_routes() -> None:
     )
 
 
-def test_public_model_solve_returns_labelled_values_for_every_demanded_period():
+def test_public_model_solve_returns_labelled_values_for_every_demanded_period() -> None:
     """The public solve result labels exactly the periods holding a demanded node.
 
     The age-0 root reaches no node in the final period, so it has no key.
@@ -1289,7 +1269,7 @@ def test_public_model_solve_returns_labelled_values_for_every_demanded_period():
     assert set(solution.values) == {0, 1, 2}
 
 
-def test_public_model_simulate_routes_dissolution_edge_when_flags_supplied():
+def test_public_model_simulate_routes_dissolution_edge_when_flags_supplied() -> None:
     """End-to-end: a dissolution participation reading participation support simulates.
 
     Reproduces `test_dissolution_edge_routes_the_row_to_its_own_roles_single_regime`
@@ -1372,7 +1352,7 @@ def test_public_model_replays_participation_from_values_only() -> None:
 # crash in `_lcm.simulation.result_dataframe._process_regime`.
 
 
-def test_to_dataframe_splits_collective_value_into_per_stakeholder_columns():
+def test_to_dataframe_splits_collective_value_into_per_stakeholder_columns() -> None:
     """A mixed singleton+collective topology (consent routing) round-trips.
 
     Reuses the consent fixture (`test_consent_routing_simulate_matches_gate_exactly`):
@@ -1485,7 +1465,7 @@ def _make_solo_regimes() -> dict[str, Regime]:
     return {"solo": solo, "solo_terminal": solo_terminal}
 
 
-def test_to_dataframe_singleton_only_value_column_is_unchanged():
+def test_to_dataframe_singleton_only_value_column_is_unchanged() -> None:
     """A singleton-only model's `to_dataframe()` keeps a single 1D `value` column.
 
     No regime here declares `stakeholders`, so `_process_regime` never enters

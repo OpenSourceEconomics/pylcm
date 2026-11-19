@@ -6,9 +6,16 @@ from types import MappingProxyType
 from typing import cast
 
 from _lcm.output_roles import OutputRole, in_role
-from lcm.exits import Consent, Exit
+from lcm.exits import Consent, Exit, ExitRule, MutualConsent, Unilateral
 from lcm.phased import Phased
-from lcm.typing import Phase, RegimeName, UserFunction
+from lcm.typing import (
+    Phase,
+    ReferenceName,
+    RegimeName,
+    StateName,
+    StateOrActionName,
+    UserFunction,
+)
 
 type ExitFunctionPath = tuple[str, ...]
 type ExitFunctionDemand = Mapping[
@@ -16,88 +23,175 @@ type ExitFunctionDemand = Mapping[
 ]
 
 
-def rule_operands(*, stakeholders: tuple[str, ...] | None) -> frozenset[str]:
-    """Name exactly the engine-owned channels of the public custom-rule grammar."""
-    return frozenset(
-        {
-            "exit_payoffs",
-            "availability",
-            "alternative_ids",
-            "pareto_weights",
-            *(f"Q_{member}" for member in stakeholders or ("self",)),
-        }
-    )
+def compares_at_optimum(rule: ExitRule | None) -> bool:
+    """Return whether a rule compares at the household's unconstrained optimum.
+
+    An undeclared comparison point is the optimum when the rule adjusts before the
+    exit and every stay action otherwise.
+    """
+    if not isinstance(rule, Unilateral | MutualConsent):
+        return False
+    if rule.compares is not None:
+        return rule.compares == "optimum"
+    return (
+        rule.renegotiate if isinstance(rule, Unilateral) else rule.settle
+    ) is not None
 
 
-def exits_for_phase(*, exits: Mapping[str, Exit], phase: Phase) -> Mapping[str, Exit]:
-    """Resolve settlement phases without changing an exit's information set."""
-    resolved = {}
-    for name, declaration in exits.items():
-        targets = {
-            role: replace(
-                target,
-                projection=getattr(target.projection, phase)
-                if isinstance(target.projection, Phased)
-                else target.projection,
-            )
-            for role, target in declaration.targets.items()
-        }
-        rule = declaration.rule
-        if isinstance(rule, Consent):
-            counterparty = rule.counterparty
-            projection = counterparty.projection
-            rule = replace(
-                rule,
-                counterparty=replace(
-                    counterparty,
-                    projection=getattr(projection, phase)
-                    if isinstance(projection, Phased)
-                    else projection,
-                ),
-            )
-        resolved[name] = replace(declaration, targets=targets, rule=rule)
-    return MappingProxyType(resolved)
+def settlement_names(declaration: Exit | None) -> frozenset[ReferenceName]:
+    """Return the argument the exit's settlement binds; it is never a parameter."""
+    if declaration is None:
+        return frozenset()
+    rule = declaration.rule
+    if isinstance(rule, MutualConsent) and rule.settle is not None:
+        return frozenset({rule.settle.name})
+    return frozenset()
+
+
+def exit_for_phase(*, declaration: Exit | None, phase: Phase) -> Exit | None:
+    """Resolve settlement phases without changing the exit's information set."""
+    if declaration is None:
+        return None
+    targets = {
+        role: replace(
+            target, projection=_for_phase(value=target.projection, phase=phase)
+        )
+        for role, target in declaration.targets.items()
+    }
+    rule = declaration.rule
+    if isinstance(rule, Consent):
+        counterparty = rule.counterparty
+        rule = replace(
+            rule,
+            counterparty=replace(
+                counterparty,
+                projection=_for_phase(value=counterparty.projection, phase=phase),
+            ),
+        )
+    return replace(declaration, targets=targets, rule=rule)
 
 
 def exit_functions(
-    *, exits: Mapping[str, Exit], phase: Phase
-) -> Mapping[tuple[str, ...], UserFunction]:
+    *, declaration: Exit | None, phase: Phase
+) -> Mapping[ExitFunctionPath, UserFunction]:
     """Name every callable by its public declaration path for binding and demand."""
+    declaration = exit_for_phase(declaration=declaration, phase=phase)
+    if declaration is None:
+        return MappingProxyType({})
     functions = {}
-    for name, declaration in exits_for_phase(exits=exits, phase=phase).items():
-        prefix = ("exits", name)
-        if declaration.available is not None:
-            functions[*prefix, "available"] = in_role(
-                func=declaration.available,
-                role=OutputRole.BOOL,
-                kind="Exit availability",
+    if declaration.available is not None:
+        functions["exit", "available"] = in_role(
+            func=declaration.available, role=OutputRole.BOOL, kind="Exit availability"
+        )
+    for role, target in declaration.targets.items():
+        target_path = ("exit", "targets", role)
+        if target.utility_adjustment is not None:
+            functions[*target_path, "utility_adjustment"] = in_role(
+                func=target.utility_adjustment,
+                role=OutputRole.FLOAT,
+                kind=f"Exit utility adjustment of '{role}', function",
             )
-        if callable(declaration.rule):
-            functions[*prefix, "rule"] = cast("UserFunction", declaration.rule)
-        for role, target in declaration.targets.items():
-            target_path = (*prefix, "targets", role)
-            if target.utility_adjustment is not None:
-                functions[*target_path, "utility_adjustment"] = in_role(
-                    func=target.utility_adjustment,
-                    role=OutputRole.FLOAT,
-                    kind=f"Exit utility adjustment of '{role}', function",
-                )
-            functions.update(
-                {
-                    (*target_path, "projection", state): function
-                    for state, function in cast(
-                        "Mapping[str, UserFunction]", target.projection
-                    ).items()
-                }
-            )
-        if isinstance(declaration.rule, Consent):
-            functions.update(
-                {
-                    (*prefix, "counterparty", "projection", state): function
-                    for state, function in cast(
-                        "Mapping[str, UserFunction]",
-                        declaration.rule.counterparty.projection,
-                    ).items()
-                }
-            )
+        functions.update(
+            {
+                (*target_path, "projection", state): function
+                for state, function in cast(
+                    "Mapping[str, UserFunction]", target.projection
+                ).items()
+            }
+        )
+    if isinstance(declaration.rule, Consent):
+        functions.update(
+            {
+                ("exit", "counterparty", "projection", state): function
+                for state, function in cast(
+                    "Mapping[str, UserFunction]",
+                    declaration.rule.counterparty.projection,
+                ).items()
+            }
+        )
+    if (
+        isinstance(declaration.rule, MutualConsent)
+        and declaration.rule.settle is not None
+    ):
+        functions["exit", "settle", "default"] = in_role(
+            func=declaration.rule.settle.default,
+            role=OutputRole.FLOAT,
+            kind="Settlement default, function",
+        )
     return MappingProxyType(functions)
+
+
+def exit_without_pruned_states(
+    *,
+    declaration: Exit | None,
+    pruned: Mapping[RegimeName, frozenset[StateOrActionName]],
+) -> Exit | None:
+    """Drop each projection onto a state that its destination prunes.
+
+    A projection names every state its destination declares, model-level ones
+    included. Where the destination reads no such state, demand prunes it, and its
+    value has no axis to land on; the projection onto it is dropped, as a law of
+    motion toward a target that prunes the law's state is.
+
+    Args:
+        declaration: The source's exit, if any.
+        pruned: Per regime, the model-level states and actions demand pruned.
+
+    Returns:
+        The exit, unchanged where no destination prunes a projected state.
+
+    """
+    if declaration is None:
+        return None
+    rule = declaration.rule
+    projections = [(t.regime, t.projection) for t in declaration.targets.values()]
+    if isinstance(rule, Consent):
+        projections.append((rule.counterparty.regime, rule.counterparty.projection))
+    if not any(
+        pruned.get(destination, frozenset())
+        & (
+            {*projection.solve, *projection.simulate}
+            if isinstance(projection, Phased)
+            else set(projection)
+        )
+        for destination, projection in projections
+    ):
+        return declaration
+
+    def kept(
+        *, value: Mapping[StateName, UserFunction] | Phased, destination: RegimeName
+    ) -> Mapping[StateName, UserFunction] | Phased:
+        if isinstance(value, Phased):
+            return Phased(
+                solve=kept(value=value.solve, destination=destination),
+                simulate=kept(value=value.simulate, destination=destination),
+            )
+        dropped = pruned.get(destination, frozenset())
+        return {state: f for state, f in value.items() if state not in dropped}
+
+    if isinstance(rule, Consent):
+        counterparty = rule.counterparty
+        rule = replace(
+            rule,
+            counterparty=replace(
+                counterparty,
+                projection=kept(
+                    value=counterparty.projection, destination=counterparty.regime
+                ),
+            ),
+        )
+    return replace(
+        declaration,
+        rule=rule,
+        targets={
+            role: replace(
+                target,
+                projection=kept(value=target.projection, destination=target.regime),
+            )
+            for role, target in declaration.targets.items()
+        },
+    )
+
+
+def _for_phase[T](*, value: T | Phased, phase: Phase) -> T:
+    return cast("T", getattr(value, phase)) if isinstance(value, Phased) else value

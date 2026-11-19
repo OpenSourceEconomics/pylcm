@@ -228,7 +228,9 @@ class Transition:
 
     `gates` makes the transition into a target value-dependent: the law still
     supplies the probability of reaching it, and the target's `Gate` decides
-    whether a row stays there or takes its route's fallback.
+    whether a row stays there or takes its route's fallback. `roles` is the
+    plain edge from a singleton source into a collective target: it names the
+    stakeholder the arriving row becomes.
     """
 
     targets: Mapping[RegimeName, AgeSelector | PeriodSelector] | None = None
@@ -254,6 +256,22 @@ class Transition:
         default_factory=lambda: MappingProxyType({})
     )
     """Typed participation checks attached to actual scheduled incoming edges."""
+
+    roles: Mapping[RegimeName, str] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
+    """The stakeholder a row continues as, per collective target of a singleton source.
+
+    `roles={"couple": "f"}` declares that a row moving from this singleton source
+    into the collective target `couple` continues there as its stakeholder `f`:
+    its continuation value toward `couple` is the target's value for `f`, and a
+    simulated row entering `couple` carries the role `f`. The role holds wherever
+    the edge fires, at every age a `ByAge` case reaches the target and in both
+    phases. A row landing where the target has no feasible action raises
+    `NoFeasibleActionError`, as on any plain edge.
+
+    A target takes a role, a `Gate` or a `ParticipationCheck`, never two of them.
+    """
 
     def __post_init__(self) -> None:
         if self.law is None:
@@ -282,6 +300,7 @@ class Transition:
         object.__setattr__(
             self, "participation", MappingProxyType(dict(self.participation))
         )
+        object.__setattr__(self, "roles", MappingProxyType(dict(self.roles)))
         if self.gates.keys() & self.participation.keys():
             raise RegimeInitializationError(
                 "A scheduled target cannot declare both a Gate and a "

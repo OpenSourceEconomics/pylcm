@@ -281,7 +281,7 @@ A gate routes on states, never on a value. A predicate argument named `V_target`
 `RegimeInitializationError`, when the `Gate` is constructed. A move decided by comparing
 values is declared where its comparison is made:
 
-- in the current period, as an `Exit` of the source regime in `Regime(exits=...)`;
+- in the current period, as an `Exit` of the source regime in `Regime(exit=...)`;
 - on landing, as a `ParticipationCheck` in `Transition(participation=...)`, whose
   `reads` name each value the predicate compares.
 

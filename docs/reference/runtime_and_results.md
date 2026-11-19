@@ -826,6 +826,11 @@ group no endogenous-grid regime reads, raises `UnsupportedOperationError`: its d
 depends on a current shock, which needs an explicit observation or conditional query.
 See [Combinations not yet composed with current shocks](shocks.md#current-iid-refusals).
 
+An active `Unilateral(renegotiate=Renegotiate(...))` also raises
+`UnsupportedOperationError`. Its current decision may change the bargaining state or
+enter a separation destination, which an unrouted `PolicyLookup` cannot express. Use
+`Model.simulate` to execute and report that decision.
+
 `keep_intermediates` names the intermediates of the decision to keep, in any order: the
 action values `"Q"`, their feasibility `"F"`, the flow utility `"U"` and the
 certainty-equivalent continuation `"CE"`. Each kept one fills the field of that name

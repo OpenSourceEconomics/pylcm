@@ -47,11 +47,18 @@ class WorkflowStrategy(TypedDict):
     matrix: WorkflowMatrix
 
 
-class WorkflowJob(TypedDict, total=False):
-    steps: list[WorkflowStep]
-    needs: str | list[str]
-    strategy: WorkflowStrategy
-    env: dict[str, str]
+WorkflowJob = TypedDict(
+    "WorkflowJob",
+    {
+        "steps": list[WorkflowStep],
+        "needs": str | list[str],
+        "strategy": WorkflowStrategy,
+        "env": dict[str, str],
+        "outputs": dict[str, str],
+        "if": str,
+    },
+    total=False,
+)
 
 
 class Workflow(TypedDict):

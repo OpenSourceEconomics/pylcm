@@ -30,6 +30,7 @@ from lcm.exceptions import (
     ShockDeclarationError,
     UnsupportedOperationError,
 )
+from lcm.exits import Unilateral
 from lcm.shocks import PhysicalValues, ShockGroup, Uniform, UserNodes
 from lcm.typing import BoolND, FloatND, IntND, ScalarInt
 from tests.simulation.test_current_exits import _hidden_offer_model
@@ -76,18 +77,14 @@ def _model(
             "source": Regime(
                 functions={"utility": _stay},
                 states={"x": LinSpacedGrid(start=0, stop=1, n_points=3)},
-                exits={
-                    "leave": Exit(
-                        targets={
-                            "self": ExitTarget(
-                                regime="target", projection={"y": _mapped_y}
-                            )
-                        },
-                        rule="unilateral",
-                        observes=("signal",),
-                        available=_available,
-                    )
-                },
+                exit=Exit(
+                    targets={
+                        "self": ExitTarget(regime="target", projection={"y": _mapped_y})
+                    },
+                    rule=Unilateral(),
+                    observes=("signal",),
+                    available=_available,
+                ),
             ),
             "target": Regime(
                 functions={"utility": _target},

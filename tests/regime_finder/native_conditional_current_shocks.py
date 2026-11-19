@@ -5,6 +5,7 @@ import pytest
 
 import jax.numpy as jnp
 
+from lcm.exits import Unilateral
 from lcm import DiscreteGrid, Exit, ExitTarget, InitialNodes, Model, Regime, categorical
 from lcm.shocks import Discrete, GaussHermite, Normal, Product, ShockGroup
 from lcm.typing import DiscreteState, FloatND, ScalarInt
@@ -57,18 +58,16 @@ def model(*, shock_group: ShockGroup | None = None) -> Model:
             "source": Regime(
                 states={"lagged_school": DiscreteGrid(Binary)},
                 functions={"utility": stay},
-                exits={
-                    "leave": Exit(
-                        targets={
-                            "self": ExitTarget(
-                                regime="target",
-                                projection={"lagged_school": same_history},
-                            )
-                        },
-                        rule="unilateral",
-                        observes=("offer",),
-                    )
-                },
+                exit=Exit(
+                    targets={
+                        "self": ExitTarget(
+                            regime="target",
+                            projection={"lagged_school": same_history},
+                        )
+                    },
+                    rule=Unilateral(),
+                    observes=("offer",),
+                ),
             ),
             "target": Regime(
                 states={"lagged_school": DiscreteGrid(Binary)},
