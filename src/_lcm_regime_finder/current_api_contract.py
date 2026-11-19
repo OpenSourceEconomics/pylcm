@@ -11,7 +11,7 @@ import functools
 from inspect import Signature
 from types import CodeType, FunctionType, MappingProxyType, ModuleType, UnionType
 from typing import TypeAliasType
-from .callable_identity import _code_digest
+from .callable_identity import _code_digest, note_lost_source
 from .records import JSONValue
 
 NATIVE_INPUT_TYPES = frozenset({
@@ -210,7 +210,8 @@ def inspect_authority(cls: type[object]) -> dict[str, JSONValue] | None:
             return None
         file_bytes = Path(filename).read_bytes().replace(b"\r\n", b"\n")
         file_hash = hashlib.sha256(file_bytes).hexdigest()
-    except (TypeError, OSError):
+    except (TypeError, OSError) as error:
+        note_lost_source(name, error)
         return None
     return {"module": cls.__module__, "qualname": cls.__qualname__,
             "source_sha256": hashlib.sha256(source.encode()).hexdigest(),
@@ -241,7 +242,8 @@ def inspect_native_input_authority(value: object, raw: object) -> dict[str, JSON
         return None
     try:
         source = textwrap.dedent(inspect.getsource(raw)).strip()
-    except (OSError, TypeError):
+    except (OSError, TypeError) as error:
+        note_lost_source(name + '.__call__', error)
         return None
     if not matches_native_call(name=name, authority=authority, source=source,
                                file_sha256=authority['file_sha256']):
@@ -395,7 +397,8 @@ def inspect_source_bound_function(
         if len(matches) != 1 or not _native_constant_equal(authored.__code__, matches[0]):
             return None
         return authored
-    except (OSError, TypeError, ValueError, SyntaxError, RecursionError):
+    except (OSError, TypeError, ValueError, SyntaxError, RecursionError) as error:
+        note_lost_source(module_name + '.' + qualname, error)
         return None
 
 
@@ -564,7 +567,8 @@ def inspect_native_first_array_return(
         if not isinstance(expanded_hint, UnionType):
             return None
         return original_hint, expanded_hint
-    except (OSError, TypeError, ValueError, SyntaxError, RecursionError):
+    except (OSError, TypeError, ValueError, SyntaxError, RecursionError) as error:
+        note_lost_source('lcm.typing.ValueND', error)
         return None
 
 
@@ -681,7 +685,8 @@ def inspect_native_schedule_authority(value: object, raw: object) -> dict[str, J
                 return None
     try:
         source = textwrap.dedent(inspect.getsource(authored)).strip()
-    except (OSError, TypeError):
+    except (OSError, TypeError) as error:
+        note_lost_source(name + '.__call__', error)
         return None
     result: dict[str, JSONValue] = {
         'class_source': authority,
@@ -784,7 +789,8 @@ def inspect_temporal_input_authority(
             'temporal_names': [name for name in names if isinstance(name, str)],
         }
         return MappingProxyType(authority), target, signature
-    except (AttributeError, OSError, TypeError, ValueError):
+    except (AttributeError, OSError, TypeError, ValueError) as error:
+        note_lost_source('lcm.temporal._TemporalDecorator.__call__', error)
         return None
 
 
@@ -869,7 +875,8 @@ def inspect_native_floatnd_alias(value: object) -> dict[str, JSONValue] | None:
         return {'contract': 'source-bound-native-floatnd-alias/v1', 'alias': 'lcm.typing.FloatND',
                 'typing_file_sha256': file_hash, 'array_module_sha256': array_hash,
                 'array_type': 'jax.Array', 'dtype': 'jaxtyping.Float', 'shape': '...'}
-    except (OSError, TypeError, ValueError, AttributeError, SyntaxError, RecursionError):
+    except (OSError, TypeError, ValueError, AttributeError, SyntaxError, RecursionError) as error:
+        note_lost_source('lcm.typing.FloatND', error)
         return None
 
 

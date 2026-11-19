@@ -382,7 +382,10 @@ class CaptureSession:
             self.files[key] = (stamp, digest)
             self.source_bytes += len(payload)
             return digest
-        except (OSError, TypeError):
+        except (OSError, TypeError) as error:
+            # `<...>` names generated source (beartype wrappers, exec); it has no file.
+            if not (isinstance(path, str) and path.startswith('<') and path.endswith('>')):
+                note_lost_source(str(path), error)
             return None
 
     def intern(self, value, normalize):
@@ -574,6 +577,18 @@ def capture_session(*, limits=None):
     finally:
         session.finish()
         _CAPTURE_SESSION.reset(token)
+
+
+def note_lost_source(subject: str, error: Exception) -> None:
+    """Name a swallowed source or authority read failure in the active capture report.
+
+    The caller still answers "unproved"; the obligation keeps the report from reading
+    COMPLETE while that proof is missing. Outside a capture session there is no report.
+    """
+    session = _CAPTURE_SESSION.get()
+    if session is not None:
+        session.obligations.append(
+            f'Source or authority unreadable during capture: {subject}: {type(error).__name__}: {error}')
 
 
 def _file_digest(path):
@@ -869,7 +884,8 @@ def _floatnd_signature_refs(
     try:
         fn = next(node for node in ast.parse(textwrap.dedent(inspect.getsource(target))).body
                   if isinstance(node, ast.FunctionDef))
-    except (OSError, TypeError, SyntaxError, StopIteration):
+    except (OSError, TypeError, SyntaxError, StopIteration) as error:
+        note_lost_source(target.__module__ + '.' + target.__qualname__, error)
         return {}, {}
     parameters, bindings = {}, {}
     for argument in (*fn.args.posonlyargs, *fn.args.args, *fn.args.kwonlyargs):
