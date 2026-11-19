@@ -886,25 +886,6 @@ def test_numeric_pjit_same_object_changed_executable_code_is_not_a_primitive() -
     assert not SourceProof({}).callback(captured).proved
 
 
-def test_numeric_ufunc_same_method_changed_code_is_not_a_primitive() -> None:
-    target = jnp.maximum
-    method = inspect.getattr_static(type(target), "__call__")
-    original_code = method.__code__
-    assert method.__closure__ is None
-    replacement = _numeric_spoof.__code__.replace(
-        co_filename=original_code.co_filename,
-        co_firstlineno=original_code.co_firstlineno,
-        co_qualname=original_code.co_qualname,
-    )
-    try:
-        method.__code__ = replacement
-        with patch.dict(_numeric_binary.__globals__, {"_NUMERIC_ALIAS": target}):
-            captured = source_function(_numeric_binary)
-    finally:
-        method.__code__ = original_code
-    assert not SourceProof({}).callback(captured).proved
-
-
 def _spread_leaf(value: int) -> int:
     return value
 
@@ -1517,28 +1498,6 @@ def test_minimum_numpy_uses_exactly_the_existing_maximum_authority_boundary() ->
         assert minimum["canonical"] == "numpy.minimum"
         assert answer.proved and answer.reads == frozenset({"left", "right"})
     assert answer.value is _UNKNOWN
-
-
-def test_minimum_rejects_changed_same_object_ufunc_method_code() -> None:
-    target = jnp.minimum
-    method = inspect.getattr_static(type(target), "__call__")
-    assert isinstance(method, FunctionType)
-    original_code = method.__code__
-    assert method.__closure__ is None
-    replacement = _minimum_spoof.__code__.replace(
-        co_filename=original_code.co_filename,
-        co_firstlineno=original_code.co_firstlineno,
-        co_qualname=original_code.co_qualname,
-    )
-    try:
-        method.__code__ = replacement
-        captured = source_function(_minimum_direct)
-    finally:
-        method.__code__ = original_code
-    assert method.__code__ is original_code
-    answer = SourceProof({}).callback(captured)
-    assert not answer.proved
-    assert {"left", "right"} <= answer.reads
 
 
 @pytest.mark.parametrize("behavior", ["equal", "raise"])

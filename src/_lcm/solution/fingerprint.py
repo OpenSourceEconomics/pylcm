@@ -6,10 +6,13 @@ import dataclasses
 import dis
 import functools
 import hashlib
+import importlib.metadata
 import inspect
 import json
 import os
 import pathlib
+import platform
+import re
 import sys
 import types
 import typing
@@ -1460,6 +1463,9 @@ class _SemanticHasher:
             self.frame(label="inspect-signature-python-seal")
             self.visit(value=_PYTHON_IMPLEMENTATION_SEAL)
             return
+        if (seal := _dependency_seal(value)) is not None:
+            self.frame(label="dependency", payload=seal.encode())
+            return
         if self._visit_native_numeric_callable(value):
             return
         if _is_native_numeric_type(value) and isinstance(value, type):
@@ -2824,6 +2830,69 @@ def _is_captured_jax_pjit(value: _Reachable) -> bool:
         value is candidate and function is captured_function and code is captured_code
         for candidate, captured_function, captured_code in _JAX_NUMERIC_PJIT_FUNCTIONS
     )
+
+
+def _dependency_seal(value: _Reachable) -> str | None:
+    """Name a callable, class or module of a dependency, sealed by its version.
+
+    The fingerprint walks pylcm's and the model's own code only. A function, class
+    or callable object defined in the standard library or in a declared dependency
+    is identified by its qualified name and that package's version; what it does
+    internally is the package's business. A `functools.partial` and a bound method
+    are not stopped here: their target and receiver may be the model's own.
+    """
+    if isinstance(value, functools.partial) or inspect.ismethod(value):
+        return None
+    if isinstance(value, types.ModuleType):
+        module = value.__name__
+        name = module
+    elif (
+        inspect.isfunction(value) or inspect.isbuiltin(value) or isinstance(value, type)
+    ):
+        module = getattr(value, "__module__", None)
+        name = getattr(value, "__qualname__", getattr(value, "__name__", ""))
+    elif callable(value):
+        # An instance's own `__module__`; a wrapper such as `jax.jit` of a model
+        # function records the model's module there, not the wrapper's.
+        state = getattr(value, "__dict__", None)
+        module = state.get("__module__") if isinstance(state, dict) else None
+        if module is None and type(value) is _JAX_UFUNC_TYPE:
+            module = type(value).__module__
+        name = getattr(value, "__qualname__", getattr(value, "__name__", ""))
+    else:
+        return None
+    if not isinstance(module, str):
+        return None
+    version = _dependency_versions().get(module.partition(".")[0])
+    return None if version is None else f"{version}:{module}.{name}"
+
+
+@functools.cache
+def _dependency_versions() -> Mapping[str, str]:
+    """Map each top-level module of Python or a declared dependency to its version.
+
+    The dependencies are pylcm's own declared requirements, so every package whose
+    code a model reaches is listed in `pyproject.toml`, not merely installed.
+    """
+    declared = {
+        _normalized_distribution(re.split(r"[<>=!~ ;\[]", requirement, maxsplit=1)[0])
+        for requirement in importlib.metadata.requires("pylcm") or ()
+        if "extra ==" not in requirement
+    }
+    python = f"python=={platform.python_version()}"
+    versions = dict.fromkeys(sys.stdlib_module_names, python)
+    for module, distributions in importlib.metadata.packages_distributions().items():
+        for distribution in distributions:
+            if _normalized_distribution(distribution) in declared:
+                versions[module] = (
+                    f"{distribution}=={importlib.metadata.version(distribution)}"
+                )
+    return MappingProxyType(versions)
+
+
+def _normalized_distribution(name: str) -> str:
+    """Normalize a distribution name as packaging does (PEP 503)."""
+    return re.sub(r"[-_.]+", "-", name).lower()
 
 
 def _native_numeric_versions() -> tuple[tuple[str, str], ...]:
