@@ -5,9 +5,9 @@ import pytest
 from benchmarks.asv import _gpu_mem, bench_iskhakov_et_al_2017
 
 _CLASSES = [
-    (bench_iskhakov_et_al_2017.IskhakovEtAl2017Solve, "2"),
+    (bench_iskhakov_et_al_2017.IskhakovEtAl2017Solve, "3"),
     (bench_iskhakov_et_al_2017.IskhakovEtAl2017DCEGMSolve, "3"),
-    (bench_iskhakov_et_al_2017.IskhakovEtAl2017Simulate, "2"),
+    (bench_iskhakov_et_al_2017.IskhakovEtAl2017Simulate, "3"),
     (bench_iskhakov_et_al_2017.IskhakovEtAl2017DCEGMSimulate, "2"),
 ]
 

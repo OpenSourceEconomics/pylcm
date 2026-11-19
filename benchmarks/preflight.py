@@ -10,10 +10,13 @@ def main() -> None:
         regime_name for regime_name in model.user_regimes if regime_name != "dead"
     )
     if not living_regimes or any(
-        "hcc_transitory" in model.state_names(regime_name=regime_name)
+        "lagged_hcc_transitory" in model.state_names(regime_name=regime_name)
         for regime_name in living_regimes
     ):
-        msg = "ACA benchmarks require hcc_transitory folding in every living regime."
+        msg = (
+            "ACA benchmarks require lagged_hcc_transitory folding in every living "
+            "regime."
+        )
         raise AssertionError(msg)
 
 

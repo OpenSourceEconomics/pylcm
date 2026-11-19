@@ -128,6 +128,7 @@ from lcm.typing import (
     ScalarInt,
     UserParamsNode,
 )
+from lcm_examples import with_lottery_contraction
 
 _DATA_DIR = Path(__file__).parent / "data"
 
@@ -744,15 +745,22 @@ _SURVIVAL_PROBS = _load_survival_probs()
 def create_model(
     *,
     execution_config: ExecutionConfig = ExecutionConfig(),  # noqa: B008
+    lottery_contraction: bool = False,
 ) -> Model:
-    """Build the lifecycle model with the requested hardware-local controls."""
+    """Build the lifecycle model with the requested hardware-local controls.
+
+    `lottery_contraction` is passed to every regime's `GridSearch` solver.
+    """
     return Model(
         edges=MODEL_EDGES,
-        regimes={
-            "working": WORKING_REGIME,
-            "retirement": RETIREMENT_REGIME,
-            "dead": DEAD_REGIME,
-        },
+        regimes=with_lottery_contraction(
+            regimes={
+                "working": WORKING_REGIME,
+                "retirement": RETIREMENT_REGIME,
+                "dead": DEAD_REGIME,
+            },
+            lottery_contraction=lottery_contraction,
+        ),
         ages=ages,
         regime_id_class=RegimeId,
         initial_nodes={ages.exact_values[0]: "working"},

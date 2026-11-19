@@ -101,10 +101,10 @@ def test_aca_module_defines_no_gpu_memory_profile() -> None:
     assert profiles == []
 
 
-def test_aca_asv_version_identifies_fixed_forward_simulation_seed() -> None:
-    """ACA timing observations identify the deterministic series."""
-    assert bench_aca_baseline.AcaBaseline.version == "2"
-    assert bench_aca_baseline.AcaBaselineDebugLog.version == "2"
+def test_aca_asv_version_identifies_the_lottery_contracting_series() -> None:
+    """ACA timing observations identify the lottery-contracting series."""
+    assert bench_aca_baseline.AcaBaseline.version == "3"
+    assert bench_aca_baseline.AcaBaselineDebugLog.version == "3"
 
 
 class _BuildStoppedError(Exception):
@@ -160,7 +160,7 @@ class _AcaFoldPreflightModel:
 
     def state_names(self, *, regime_name: RegimeName) -> tuple[StateName, ...]:
         assert regime_name == "living"
-        return ("assets",) if self.folded else ("assets", "hcc_transitory")
+        return ("assets",) if self.folded else ("assets", "lagged_hcc_transitory")
 
 
 @pytest.mark.parametrize("folded", [False, True])
@@ -176,7 +176,7 @@ def test_aca_preflight_requires_folded_health_cost_value_axes(
     if folded:
         preflight.main()
     else:
-        with pytest.raises(AssertionError, match="hcc_transitory"):
+        with pytest.raises(AssertionError, match="lagged_hcc_transitory"):
             preflight.main()
 
 
@@ -193,5 +193,5 @@ def test_aca_preflight_requires_living_health_cost_regimes(
     model.user_regimes = dict.fromkeys(regime_names)
     monkeypatch.setattr(bench_aca_baseline, "_build", lambda: (model, {}, {}))
 
-    with pytest.raises(AssertionError, match="hcc_transitory"):
+    with pytest.raises(AssertionError, match="lagged_hcc_transitory"):
         preflight.main()

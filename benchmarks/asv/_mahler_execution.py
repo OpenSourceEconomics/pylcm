@@ -11,6 +11,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
+from ._gpu_mem import lottery_contraction_kwargs
+
 if TYPE_CHECKING:
     import jax
 
@@ -36,7 +38,12 @@ def create_mahler_gpu_model() -> tuple[Model, Path]:
         devices=tuple(jax.local_devices()[:1]), report_path=report_path
     )
     _assert_fp64()
-    return create_model(execution_config=config), report_path
+    return (
+        create_model(
+            execution_config=config, **lottery_contraction_kwargs(create_model)
+        ),
+        report_path,
+    )
 
 
 def create_mahler_execution_config(

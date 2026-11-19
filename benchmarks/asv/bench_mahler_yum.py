@@ -22,18 +22,22 @@ class _MahlerYum:
 
     # Stable version stamp so asv keeps continuity across benchmark-body
     # refactors that don't change what's measured.
-    version = "1"
+    version = "2"
     timeout = 1200
     simulation_seed: int | None = None
 
     def _build(self):
         import lcm_examples.mahler_yum_2024 as mahler_yum
 
-        execution = _gpu_mem.default_budget_execution_kwargs()
         # Historical revisions ASV builds have only the module-level model.
+        create_model = getattr(mahler_yum, "create_model", None)
+        options = {
+            **_gpu_mem.default_budget_execution_kwargs(),
+            **_gpu_mem.lottery_contraction_kwargs(create_model),
+        }
         self.model = (
-            mahler_yum.create_model(**execution)
-            if execution
+            create_model(**options)
+            if create_model is not None and options
             else mahler_yum.MAHLER_YUM_MODEL
         )
         self._build_inputs()
@@ -147,7 +151,7 @@ class MahlerYumBudgetedGpu(_MahlerYum):
     """
 
     # A different capacity/width policy is a different measurement series.
-    version = f"5-{POLICY_LABEL}"
+    version = f"6-{POLICY_LABEL}"
     simulation_seed = 0
 
     def _build(self):
@@ -219,7 +223,7 @@ class MahlerYumBudgetedGpuPeakMem(_gpu_mem.GpuPeakMemProfile):
     phases -- solve+save and load+simulate -- that genuinely need one.
     """
 
-    version = f"5-{POLICY_LABEL}"
+    version = f"6-{POLICY_LABEL}"
     phases = (
         _gpu_mem.SOLVE_SAVE_ALL_PERSISTABLE,
         _gpu_mem.LOAD_SUPPLIED_SOLUTION_SIMULATE,

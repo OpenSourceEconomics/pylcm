@@ -235,11 +235,9 @@ def _make_model_and_params(
                 law=retirement_law,
             ),
         },
-        regimes={
-            "working_life": working_life,
-            "retirement": retirement,
-            "dead": dead,
-        },
+        regimes=_gpu_mem.with_lottery_contraction(
+            {"working_life": working_life, "retirement": retirement, "dead": dead}
+        ),
         ages=ages,
         regime_id_class=RegimeId,
         initial_nodes={40: "working_life"},
@@ -287,7 +285,7 @@ class IskhakovEtAl2017Solve:
 
     # Version bumped: setup_cache-based combined producer replaces the
     # separate ASV-native time_execution/peakmem_execution benchmarks.
-    version = "2"
+    version = "3"
     timeout = 600
 
     def _build(self) -> None:
@@ -342,6 +340,7 @@ class IskhakovEtAl2017Solve:
 class IskhakovEtAl2017SolveGpuPeakMem(_gpu_mem.GpuPeakMem):
     bench_module = "benchmarks.asv.bench_iskhakov_et_al_2017"
     bench_class = "IskhakovEtAl2017Solve"
+    version = "2"
 
 
 class IskhakovEtAl2017DCEGMSolve:
@@ -416,7 +415,7 @@ class IskhakovEtAl2017Simulate:
 
     # Version bumped: setup_cache-based combined producer replaces the
     # separate ASV-native time_execution/peakmem_execution benchmarks.
-    version = "2"
+    version = "3"
     timeout = 600
 
     def _build(self) -> None:
@@ -479,6 +478,7 @@ class IskhakovEtAl2017Simulate:
 class IskhakovEtAl2017SimulateGpuPeakMem(_gpu_mem.GpuPeakMem):
     bench_module = "benchmarks.asv.bench_iskhakov_et_al_2017"
     bench_class = "IskhakovEtAl2017Simulate"
+    version = "2"
 
 
 class IskhakovEtAl2017DCEGMSimulate:

@@ -52,7 +52,8 @@ def test_setup_cache_measures_each_combination_exactly_once(
     models = {name: _FakeModel(n_iterations=7) for name in dispatch.WITNESS_NAMES}
 
     def _fake_witness_builder(name: str):
-        def _build():
+        def _build(*, lottery_contraction: bool):
+            assert lottery_contraction
             return models[name], {"p": 1}, {"c": 2}
 
         return _build
@@ -88,6 +89,6 @@ def test_setup_cache_measures_each_combination_exactly_once(
         assert compiles == measurement["compile_requests"]
 
 
-def test_version_identifies_the_shared_measurement_protocol() -> None:
-    """A version bump marks the switch from per-tracker to shared measurement."""
-    assert dispatch.SimulationDispatch.version == "2"
+def test_version_identifies_the_lottery_contracting_witnesses() -> None:
+    """The series measures witnesses built with lottery contraction."""
+    assert dispatch.SimulationDispatch.version == "3"

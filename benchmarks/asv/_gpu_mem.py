@@ -51,7 +51,8 @@ from typing import TYPE_CHECKING, TypedDict
 
 if TYPE_CHECKING:
     from _lcm.typing import JSONValue
-    from lcm import ExecutionConfig
+    from lcm import ExecutionConfig, Model, Regime
+    from lcm.typing import RegimeName
 
 
 class BudgetExecutionKwargs(TypedDict, total=False):
@@ -153,6 +154,38 @@ def default_budget_execution_kwargs() -> BudgetExecutionKwargs:
         pool_limits=limits,
     )
     return {"execution_config": config_type(device_memory_bytes=budget)}
+
+
+def lottery_contraction_kwargs(
+    factory: Callable[..., Model] | None,
+) -> dict[str, bool]:
+    """Return `lottery_contraction=True` if `factory` accepts it, else nothing.
+
+    The paired harness also builds historical revisions, whose example factories
+    are missing or predate the keyword.
+    """
+    import inspect
+
+    if factory is not None and "lottery_contraction" in (
+        inspect.signature(factory).parameters
+    ):
+        return {"lottery_contraction": True}
+    return {}
+
+
+def with_lottery_contraction(
+    regimes: Mapping[RegimeName, Regime],
+) -> Mapping[RegimeName, Regime]:
+    """Contract lotteries in every grid-search regime, where the revision can.
+
+    Imports are deferred so the ASV forkserver never initialises JAX.
+    """
+    import lcm_examples
+
+    contract = getattr(lcm_examples, "with_lottery_contraction", None)
+    if contract is None:
+        return regimes
+    return contract(regimes=regimes, lottery_contraction=True)
 
 
 def _file_provenance(path: Path) -> dict[str, JSONValue]:

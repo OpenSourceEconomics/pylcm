@@ -61,6 +61,7 @@ def _make_model():
         wealth_n_points=_WEALTH_N_POINTS,
         consumption_n_points=_CONSUMPTION_N_POINTS,
         **_gpu_mem.default_budget_execution_kwargs(),
+        **_gpu_mem.lottery_contraction_kwargs(collective_household.get_model),
     )
     return model, collective_household.get_params()
 
@@ -84,7 +85,7 @@ class CollectiveHouseholdConstruct:
 
     # Version bumped: setup_cache-based combined producer replaces the
     # separate ASV-native time_execution/peakmem_execution benchmarks.
-    version = "2"
+    version = "3"
     timeout = 600
 
     def setup_for_gpu_measurement(self):
@@ -135,7 +136,7 @@ class CollectiveHouseholdSolve:
 
     # Version bumped: setup_cache-based combined producer replaces the
     # separate ASV-native time_execution/peakmem_execution benchmarks.
-    version = "2"
+    version = "3"
     timeout = 900
 
     def _build(self):
@@ -192,7 +193,7 @@ class CollectiveHouseholdSimulate:
     these points.
     """
 
-    version = "1"
+    version = "2"
     timeout = 900
     # 10,000 (the intermediate point) added little coverage over the two
     # endpoints in the PR#440 benchmark review's measured run (warm
@@ -277,6 +278,7 @@ class CollectiveHouseholdSimulate:
 class CollectiveHouseholdSimulateGpuPeakMem(_gpu_mem.GpuPeakMem):
     bench_module = "benchmarks.asv.bench_collective_household"
     bench_class = "CollectiveHouseholdSimulate"
+    version = "2"
     # shortcut: Restore this large-cohort probe when it meets its time limit.
     skip_params = [()]
 
@@ -299,7 +301,7 @@ class ReferenceChainSolve:
     are a first solve with no model building in them.
     """
 
-    version = "1"
+    version = "2"
     timeout = 900
     # Depths 2 and 4 (the intermediate points) had warm-solve ratios of
     # 1.20/1.21 against the depth-1 baseline in the PR#440 benchmark
@@ -404,7 +406,7 @@ def _make_reference_chain(*, depth):
 
     return (
         Model(
-            regimes=regimes,
+            regimes=_gpu_mem.with_lottery_contraction(regimes),
             edges={
                 name: {terminal_name: (0,)}
                 for name, terminal_name in zip(link_names, terminal_names, strict=True)

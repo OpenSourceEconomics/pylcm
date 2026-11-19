@@ -19,6 +19,8 @@ from lcm import LinSpacedGrid, Model
 from lcm.execution import ExecutionConfig
 from lcm.typing import UserInitialConditions, UserParams
 
+from ._gpu_mem import lottery_contraction_kwargs, with_lottery_contraction
+
 _REPOSITORY_ROOT = str(pathlib.Path(__file__).resolve().parents[2])
 if _REPOSITORY_ROOT not in sys.path:
     # The benchmark runner launches its worker from the benchmark directory, so
@@ -41,7 +43,9 @@ MULTI_INITIAL_CONDITIONS = {
 
 
 def multi_regime(
-    *, execution_config: ExecutionConfig | None = None
+    *,
+    execution_config: ExecutionConfig | None = None,
+    lottery_contraction: bool = False,
 ) -> tuple[Model, UserParams, UserInitialConditions]:
     """Build the two-non-terminal-regime shock model and its simulate inputs."""
     base = get_multi_regime_model(
@@ -51,13 +55,14 @@ def multi_regime(
     )
     # Five living decisions spend at most 0.75 of the minimum initial wealth 1.0.
     consumption = LinSpacedGrid(start=0.1, stop=0.15, n_points=4)
+    regimes = {
+        name: regime.replace(actions={"consumption": consumption})
+        if name in {"work", "retire"}
+        else regime
+        for name, regime in base.user_regimes.items()
+    }
     model = Model(
-        regimes={
-            name: regime.replace(actions={"consumption": consumption})
-            if name in {"work", "retire"}
-            else regime
-            for name, regime in base.user_regimes.items()
-        },
+        regimes=with_lottery_contraction(regimes) if lottery_contraction else regimes,
         edges=base.edges,
         regime_id_class=MultiRegimeId,
         ages=base.ages,
@@ -73,7 +78,9 @@ def multi_regime(
 
 
 def dissolution(
-    *, execution_config: ExecutionConfig | None = None
+    *,
+    execution_config: ExecutionConfig | None = None,
+    lottery_contraction: bool = False,
 ) -> tuple[Model, UserParams, UserInitialConditions]:
     """Build the collective dissolution model and its simulate inputs."""
     from lcm_examples.collective_regimes import (
@@ -82,7 +89,12 @@ def dissolution(
     )
 
     model = get_dissolution_model(
-        execution_config=execution_config or ExecutionConfig()
+        execution_config=execution_config or ExecutionConfig(),
+        **(
+            lottery_contraction_kwargs(get_dissolution_model)
+            if lottery_contraction
+            else {}
+        ),
     )
     initial_conditions = {
         "wage": jnp.array([1.0, 2.0, 3.0]),

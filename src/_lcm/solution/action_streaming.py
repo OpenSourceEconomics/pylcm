@@ -46,7 +46,7 @@ from _lcm.solution.logsumexp_action_reduction import (
     BoundLogSumExpReduction,
 )
 from _lcm.typing import PytreeValue, QAndFArg
-from _lcm.utils.dispatchers import vary_carry_like_body
+from _lcm.utils.dispatchers import productmap, vary_carry_like_body
 from lcm.typing import ActionName, BoolND, FloatND, ReferenceName
 
 _INT32_MAX = 2_147_483_647
@@ -92,9 +92,13 @@ def build_streaming_max_Q_over_a(
 
     At the source-program level, ``Q_and_F`` is vmapped over one block at a time and a
     padded final block is marked infeasible before reduction. The scan emits ``None``
-    as its history. These source-level properties do not by themselves bound runtime
-    or peak memory after compiler transformation. The reduction deliberately retains
-    GridSearch's established feasible-NaN behavior:
+    as its history. A block covering the whole product instead maps ``Q_and_F`` over
+    the named grids, as the dense route does, and reduces that product as one block.
+    Mapping binds each grid by name, so on that route ``Q_and_F`` must declare every
+    action name as a parameter; a ``**kwargs`` kernel cannot be mapped there.
+    These source-level properties do not by themselves bound runtime or peak memory
+    after compiler transformation. The reduction deliberately retains GridSearch's
+    established feasible-NaN behavior:
     a NaN maximum publishes action identity zero, even when that action is infeasible.
     """
     _validate_streaming_configuration(
@@ -346,6 +350,13 @@ class _StreamingHardMax:
             action_names=self.action_names,
             kwargs=kwargs,
         )
+        if self.block_width >= n_actions:
+            return _reduce_whole_product(
+                Q_and_F=self.Q_and_F,
+                action_names=self.action_names,
+                n_actions=n_actions,
+                kwargs=kwargs,
+            )
         n_blocks = (n_actions + self.block_width - 1) // self.block_width
         evaluate_block = partial(
             _evaluate_block,
@@ -1461,6 +1472,37 @@ def _flush_ev1_branch_group(
         partial(_finalize_ev1_branch_group_operand, reduction=reduction),
         _keep_ev1_accumulator,
         accumulator,
+    )
+
+
+def _reduce_whole_product(
+    *,
+    Q_and_F: Callable[..., tuple[FloatND, BoolND]],
+    action_names: tuple[ActionName, ...],
+    n_actions: int,
+    kwargs: dict[ReferenceName, QAndFArg],
+) -> HardMaxResult:
+    """Reduce a block covering the action product, mapping the named grids.
+
+    Mapping each grid, as the dense route does, evaluates a term that reads only
+    some actions once per value of those actions rather than once per action. The
+    C-order flattening of the mapped product is the canonical identity order, and
+    the flat block is validated and reduced exactly as one streamed block is.
+    """
+    values, feasible = productmap(
+        func=Q_and_F,
+        variables=action_names,
+        batch_sizes=dict.fromkeys(action_names, 0),
+    )(**kwargs)
+    values, feasible = (
+        jnp.reshape(array, (n_actions, *array.shape[len(action_names) :]))
+        for array in (jnp.asarray(values), jnp.asarray(feasible))
+    )
+    _validate_block_Q_and_F(values=values, feasible=feasible)
+    return HARD_MAX_REDUCTION.finalize(
+        accumulator=_start_reduction(
+            block=(values, feasible, jnp.arange(n_actions, dtype=jnp.int32))
+        )
     )
 
 
