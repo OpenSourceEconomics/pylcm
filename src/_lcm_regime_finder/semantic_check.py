@@ -2357,6 +2357,18 @@ def _check_capture(original: dict, normalized: dict, fail, unknown) -> None:
                      and relation.get("source") == cell["id"] and relation.get("targets") == [] and relation.get("original") == exit_declaration]
             if len(exits) != 1 or exits[0].get("observes") != fields(exit_declaration).get("observes", []):
                 fail("original exit information changed", cell=cell["id"])
+            if len(exits) == 1:
+                root = exits[0]
+                root_callbacks = [callbacks.get(identifier, {}).get("original")
+                                  for identifier in root.get("callbacks", [])]
+                # The exit's availability and settlement default reach the facts only
+                # through this root, so an unchanged payload is not enough: the root
+                # holds the whole exit as its one callback, in both phases, and no
+                # source-bound proof of zero support exists for it.
+                if (root_callbacks != [exit_declaration]
+                        or root.get("phase", "both") != "both"
+                        or root.get("support") is not None):
+                    fail("original exit root incidence changed", cell=cell["id"])
         if cell.get("report_tags", []) != contract.get("report_tags", {}).get(regime, []): fail("reporting tag contract changed", cell=cell["id"])
         if start_pairs is not None and cell.get("admissible_start") != ((period, regime) in start_pairs): fail("admissible original start changed", cell=cell["id"])
         if set(cell.get("states", {})) != set(declaration.get("states", {})): fail("original state axes omitted", cell=cell.get("id"))

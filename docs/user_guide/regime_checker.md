@@ -101,8 +101,11 @@ The family, the counts and the exactness rules are those of the paper's Suppleme
 The checker follows the model's declared functions, constraints and conditional laws. A
 state is kept wherever a current calculation reads it, or a calculation in a successor
 period needs it. A state that is absent from current utility can still affect an offer
-probability or a future state, and it is kept for that reason. Every layout of the
-family solves the same decision problem on the coordinates it keeps.
+probability or a future state, and it is kept for that reason. An exit's availability is
+such a calculation: the source check binds each exit to the dependency graph as the
+model declares it, so a report in which an exit no longer reads the states its
+availability reads fails the check. Every layout of the family solves the same decision
+problem on the coordinates it keeps.
 
 These checks are relative to the captured declarations and to the model's pure-function
 contracts. The checker does not prove that arbitrary Python functions carry their

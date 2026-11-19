@@ -16,6 +16,9 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   solve does.
 - The state an exit's `Renegotiate` moves is an ordinary, always-live state of its
   regime: it is never contracted, split into lanes or carried as a status.
+- The independent source check binds each exit's root relation as the exit declares
+  it: the whole exit as its one callback, in both phases, with no support claim. A
+  report whose exit no longer reads the states its availability reads fails the check.
 - The exit relation records the shocks the exit observes. A layout search that would
   have to link two cells of one period inside one dense regime ends `UNRESOLVED` with a
   plain reason rather than an internal error. See
