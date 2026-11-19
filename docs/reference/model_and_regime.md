@@ -65,6 +65,8 @@ Public inspection attributes include:
 
 - `ages`, `n_periods`, and `regime_names_to_ids`;
 - `user_regimes`, the finalized declarations in user vocabulary;
+- `problems`, the [`Problem`](#api-problem) each regime was given, or `None`, by regime
+  name;
 - `edges`, the edges exactly as declared, `Transition` laws included;
 - `initial_nodes`, a normalized immutable `InitialNodes` whose `by_age` or `by_period`
   mapping contains exact coordinates and sorted, unique tuples of regime names;
@@ -295,7 +297,10 @@ a slot of a holder is refused, and so is giving a holder another problem whose o
 differ from those the holder carries, such as a copy of its problem with one slot
 changed. Construct a new `Regime(problem=...)` for another problem, or pass
 `problem=None` beside the slots a regime declares itself. A regime the model derives by
-rewriting slots, such as each of `model.user_regimes`, holds no problem.
+rewriting slots, such as each of `model.user_regimes`, holds no problem. Ask the model
+instead: `model.problems` maps each regime name to the problem the regime was given, and
+two regimes share a problem when they map to the same object. A model built from another
+model's `user_regimes` therefore knows no problems.
 
 Three declarations are refused with `RegimeInitializationError`:
 

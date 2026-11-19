@@ -22,11 +22,17 @@ Closed form at the couple's cells in the first period, with an outside value of
 import dataclasses
 from collections.abc import Callable, Mapping
 
+import cloudpickle
 import jax.numpy as jnp
 import numpy as np
 import pandas as pd
 import pytest
 
+from _lcm.regime_law import bind_regime_law
+from _lcm.solution.fingerprint import (
+    _project_user_regime_declaration,
+    _semantic_fingerprint,
+)
 from lcm import (
     CollectiveUtility,
     DiscreteGrid,
@@ -347,6 +353,150 @@ def test_a_finalized_holder_holds_no_problem(
     assert shared.user_regimes[regime_name].problem is None
 
 
+def _holders(
+    problems: Mapping[RegimeName, Problem | None],
+) -> set[frozenset[RegimeName]]:
+    """Group the regimes by the problem object they map to, leaving out those
+    without one."""
+    return {
+        frozenset(name for name, other in problems.items() if other is problem)
+        for problem in problems.values()
+        if problem is not None
+    }
+
+
+_HOLDERS = {
+    frozenset(_COUPLES),
+    frozenset({"single_f", "single_m"}),
+    frozenset({"couple_end"}),
+    frozenset({"single_end"}),
+}
+
+
+@pytest.mark.parametrize("regime_name", _REGIME_NAMES)
+def test_the_model_names_the_problem_each_regime_was_given(
+    *, shared: Model, shared_regimes: dict[RegimeName, Regime], regime_name: RegimeName
+) -> None:
+    assert shared.problems[regime_name] is shared_regimes[regime_name].problem
+
+
+def test_the_model_names_a_problem_for_every_regime(shared: Model) -> None:
+    assert set(shared.problems) == set(_REGIME_NAMES)
+
+
+def test_regimes_holding_one_problem_map_to_one_object(shared: Model) -> None:
+    """The couples hold one problem, the singles another, and each terminal regime
+    a problem of its own."""
+    assert _holders(shared.problems) == _HOLDERS
+
+
+@pytest.fixture(scope="module")
+def mixed() -> Model:
+    """The terminal regimes declare their slots themselves."""
+    regimes = _shared_regimes(skill=True)
+    for name in _LAST_PERIOD:
+        regimes[name] = regimes[name].replace(problem=None)
+    return _model(regimes=regimes, skill=True)
+
+
+def test_a_regime_without_a_problem_maps_to_none(mixed: Model) -> None:
+    assert {name: mixed.problems[name] for name in _LAST_PERIOD} == dict.fromkeys(
+        _LAST_PERIOD
+    )
+    assert _holders(mixed.problems) == {
+        frozenset(_COUPLES),
+        frozenset({"single_f", "single_m"}),
+    }
+
+
+def test_a_model_of_regimes_declaring_their_slots_knows_no_problems(
+    twin: Model,
+) -> None:
+    assert dict(twin.problems) == dict.fromkeys(_REGIME_NAMES)
+
+
+@pytest.mark.parametrize("regime_name", _REGIME_NAMES)
+def test_the_model_names_the_problem_its_finalized_regime_no_longer_holds(
+    *, shared: Model, regime_name: RegimeName
+) -> None:
+    assert (
+        shared.user_regimes[regime_name].problem,
+        shared.problems[regime_name] is not None,
+    ) == (None, True)
+
+
+def test_the_problems_of_a_model_cannot_be_changed(shared: Model) -> None:
+    with pytest.raises(TypeError):
+        shared.problems["couple_u"] = None  # ty: ignore[invalid-assignment]
+    with pytest.raises(AttributeError):
+        shared.problems = {}  # ty: ignore[invalid-assignment]
+
+
+@pytest.fixture(scope="module")
+def restored(shared: Model) -> Model:
+    return cloudpickle.loads(cloudpickle.dumps(shared))
+
+
+def test_a_pickled_model_keeps_which_regimes_share_a_problem(restored: Model) -> None:
+    assert _holders(restored.problems) == _HOLDERS
+
+
+@pytest.mark.parametrize("regime_name", _REGIME_NAMES)
+def test_a_pickled_model_keeps_the_problem_of_each_regime(
+    *, shared: Model, restored: Model, regime_name: RegimeName
+) -> None:
+    """The restored problem is a copy that declares what the original declares.
+
+    A fixed state's law compares by identity, so a copy of a problem holding one
+    is never `==` to the original; the two are compared as the model fingerprints
+    a regime that holds each.
+    """
+    original, copy = shared.problems[regime_name], restored.problems[regime_name]
+    assert original is not None
+    assert copy is not None
+    law = bind_regime_law(None)
+    assert (
+        copy is not original,
+        _semantic_fingerprint(
+            _project_user_regime_declaration(Regime(problem=copy), law=law)
+        ),
+    ) == (
+        True,
+        _semantic_fingerprint(
+            _project_user_regime_declaration(Regime(problem=original), law=law)
+        ),
+    )
+
+
+def test_a_model_archive_without_problems_knows_none(shared: Model) -> None:
+    """An archive written by a model that recorded no problems restores one that
+    names none."""
+    state = shared.__getstate__()
+    del state["_problems"]
+    model = Model.__new__(Model)
+    model.__setstate__(state)
+    assert dict(model.problems) == dict.fromkeys(_REGIME_NAMES)
+
+
+@pytest.fixture(scope="module")
+def detached_solution() -> SolutionResult:
+    """The shared model built from its regimes after each let go of its problem."""
+    regimes = {
+        name: regime.replace(problem=None)
+        for name, regime in _shared_regimes(skill=True).items()
+    }
+    return _model(regimes=regimes, skill=True).solve(params=_PARAMS, log_level="off")
+
+
+def test_the_problems_of_a_model_do_not_enter_its_fingerprint(
+    *, shared_solution: SolutionResult, detached_solution: SolutionResult
+) -> None:
+    assert (
+        shared_solution.metadata.model_fingerprint
+        == detached_solution.metadata.model_fingerprint
+    )
+
+
 @pytest.fixture(scope="module")
 def without_skill() -> Model:
     return _model(regimes=_shared_regimes(skill=False), skill=False)
@@ -367,6 +517,13 @@ def test_a_model_rebuilt_from_finalized_holders_holds_no_problem(
     *, rebuilt: Model, regime_name: RegimeName
 ) -> None:
     assert rebuilt.user_regimes[regime_name].problem is None
+
+
+def test_a_model_rebuilt_from_finalized_holders_knows_no_problems(
+    rebuilt: Model,
+) -> None:
+    """The finalized regimes hold no problem, so the model they build names none."""
+    assert dict(rebuilt.problems) == dict.fromkeys(_REGIME_NAMES)
 
 
 @pytest.mark.parametrize("regime_name", _COUPLES)

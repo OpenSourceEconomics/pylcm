@@ -99,6 +99,8 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   keeping the first problem's slots and solving the wrong problem. `replace` of a holder
   that changes a slot needs `problem=None`, and the finalized regimes of a model hold no
   problem.
+- `Model.problems` maps each regime name to the problem the regime was given, or `None`,
+  so regimes sharing a problem map to one object. It enters no fingerprint.
 
 ### Exits read the destination's problem
 
