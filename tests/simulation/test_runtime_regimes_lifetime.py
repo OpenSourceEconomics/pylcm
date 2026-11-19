@@ -9,19 +9,30 @@ from jax._src import monitoring
 from lcm import ExecutionConfig, IrregSpacedGrid
 from lcm.model import Model
 from lcm.typing import UserParams
-from tests.simulation.initial_conditions._models import make_constraint_model
 
 _COMPILE_EVENT = "/jax/core/compile/backend_compile_duration"
 
+# Pin before backend initialization; ordinary-suite workers must skip atomically.
+try:
+    jax.config.update("jax_num_cpu_devices", 4)
+    jax.config.update("jax_platform_name", "cpu")
+    _PYTEST_PARALLEL = False
+except RuntimeError:
+    _PYTEST_PARALLEL = True
+
+pytestmark = pytest.mark.skipif(
+    _PYTEST_PARALLEL, reason="Requires a fresh four-CPU-device process"
+)
+
+# Its categorical regimes build arrays at import, which would initialise the backend.
+from tests.simulation.initial_conditions._models import make_constraint_model  # noqa: E402
+
 
 def _model() -> Model:
-    devices = jax.devices()
-    if len(devices) < 2:
-        pytest.skip("Select this test with at least two visible devices.")
     return make_constraint_model(
         wealth_grid=IrregSpacedGrid(n_points=15),
         execution_config=ExecutionConfig(
-            devices=tuple(device.id for device in devices[:2]),
+            devices=tuple(device.id for device in jax.devices()[:2]),
             sharded_states=(),
             simulation_sharding="subjects",
         ),
@@ -70,21 +81,16 @@ def _count_compiles(*, model: Model, lowest_point: float) -> int:
 
 
 @pytest.mark.parametrize(
-    ("second_lowest_point", "expected_compiles"),
-    [(2.0, 0), (2.5, 0)],
-    ids=["repeated_points", "new_points"],
+    "second_lowest_point", [2.0, 2.5], ids=["repeated_points", "new_points"]
 )
 def test_simulate_at_new_grid_points_compiles_nothing(
-    *, second_lowest_point: float, expected_compiles: int
+    *, second_lowest_point: float
 ) -> None:
     """A second simulate whose parameters only move runtime grid points reuses
     every program the first call compiled, as a repeat of the same points does."""
     model = _model()
     _simulate(model=model, lowest_point=2.0)
-    assert (
-        _count_compiles(model=model, lowest_point=second_lowest_point)
-        == expected_compiles
-    )
+    assert _count_compiles(model=model, lowest_point=second_lowest_point) == 0
 
 
 def test_first_simulate_compiles_its_programs() -> None:

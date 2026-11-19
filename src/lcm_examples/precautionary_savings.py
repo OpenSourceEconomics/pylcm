@@ -38,6 +38,7 @@ from lcm.typing import (
     ScalarInt,
     UserParamsNode,
 )
+from lcm_examples import with_lottery_contraction
 
 type ShockType = Literal["normal_gh", "rouwenhorst", "tauchen"]
 type WealthGridType = Literal["lin", "log", "irreg"]
@@ -96,6 +97,7 @@ def create_model(
     consumption_n_points: int = 7,
     income_n_points: int = 5,
     execution_config: ExecutionConfig | None = None,
+    lottery_contraction: bool = False,
 ) -> Model:
     """Create the precautionary savings model.
 
@@ -109,6 +111,7 @@ def create_model(
         consumption_n_points: Number of consumption grid points.
         income_n_points: IID base quadrature nodes or persistent income grid points.
         execution_config: Optional hardware-local execution controls.
+        lottery_contraction: Passed to every regime's `GridSearch` solver.
 
     Returns:
         A configured Model instance.
@@ -175,7 +178,10 @@ def create_model(
     }
     return Model(
         edges={"alive": Transition(targets=alive_targets, law=alive_law)},
-        regimes={"alive": alive, "dead": dead},
+        regimes=with_lottery_contraction(
+            regimes={"alive": alive, "dead": dead},
+            lottery_contraction=lottery_contraction,
+        ),
         regime_id_class=RegimeId,
         initial_nodes={20: "alive"},
         ages=AgeGrid(start=20, inclusive_stop=20 + (n_periods - 1) * 10, step="10Y"),

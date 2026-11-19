@@ -66,6 +66,7 @@ from lcm.typing import (
     StateName,
     UserParamsNode,
 )
+from lcm_examples import with_lottery_contraction
 
 # Lowest wealth node, kept strictly positive so log utility stays finite.
 WEALTH_MIN = 1.0
@@ -103,6 +104,7 @@ def get_model(
     wealth_n_points: int = 20,
     consumption_n_points: int = 20,
     execution_config: ExecutionConfig | None = None,
+    lottery_contraction: bool = False,
 ) -> Model:
     """Build the marriage-market model.
 
@@ -111,6 +113,7 @@ def get_model(
         wealth_n_points: Nodes on every regime's wealth grid.
         consumption_n_points: Nodes on every regime's consumption-share grid.
         execution_config: Optional hardware-local execution controls.
+        lottery_contraction: Passed to every regime's `GridSearch` solver.
 
     Returns:
         The model, ready to `solve()` with `get_params()`.
@@ -359,16 +362,19 @@ def get_model(
                 participation=single_m_participation if meeting_can_arrive else {},
             ),
         },
-        regimes={
-            "couple": couple,
-            "couple_terminal": couple_terminal,
-            "single_f": single_f,
-            "single_m": single_m,
-            "single_f_terminal": single_f_terminal,
-            "single_m_terminal": _single_terminal(
-                wealth=wealth, consumption_share=consumption_share
-            ),
-        },
+        regimes=with_lottery_contraction(
+            regimes={
+                "couple": couple,
+                "couple_terminal": couple_terminal,
+                "single_f": single_f,
+                "single_m": single_m,
+                "single_f_terminal": single_f_terminal,
+                "single_m_terminal": _single_terminal(
+                    wealth=wealth, consumption_share=consumption_share
+                ),
+            },
+            lottery_contraction=lottery_contraction,
+        ),
         ages=AgeGrid(start=0, inclusive_stop=n_periods - 1, step="Y"),
         regime_id_class=RegimeId,
         initial_nodes={0: ("couple", "single_f", "single_m")},

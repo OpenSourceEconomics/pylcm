@@ -8,14 +8,23 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from _lcm.simulation.memory import run_simulation_operation
+from _lcm.simulation.memory import run_simulation_operation, run_simulation_producer
+
+# Pin before backend initialization; ordinary-suite workers must skip atomically.
+try:
+    jax.config.update("jax_num_cpu_devices", 4)
+    jax.config.update("jax_platform_name", "cpu")
+    _PYTEST_PARALLEL = False
+except RuntimeError:
+    _PYTEST_PARALLEL = True
+
+pytestmark = pytest.mark.skipif(
+    _PYTEST_PARALLEL, reason="Requires a fresh four-CPU-device process"
+)
 
 
 def _subject_sharding() -> jax.NamedSharding:
-    devices = jax.devices()
-    if len(devices) < 2:
-        pytest.skip("Select this test with at least two visible devices.")
-    mesh = jax.make_mesh((2,), ("subjects",), devices=devices[:2])
+    mesh = jax.make_mesh((2,), ("subjects",), devices=jax.devices()[:2])
     return jax.NamedSharding(mesh, jax.P("subjects"))
 
 
@@ -37,6 +46,23 @@ def test_run_simulation_operation_reads_points_committed_to_one_device() -> None
     assert len(values.sharding.device_set) == 2
     assert points.sharding.device_set == {jax.devices()[0]}
     count = run_simulation_operation(
+        memory=None,
+        function=_count_below_last_point,
+        arguments={"values": values, "points": points, "subjects": subjects},
+    )
+    assert int(count) == 4
+
+
+def test_run_simulation_producer_reads_points_committed_to_one_device() -> None:
+    """An unbudgeted producer reads single-device grid points beside subject rows
+    sharded over two devices, as an operation does."""
+    sharding = _subject_sharding()
+    values = jax.device_put(jnp.array([0.5, 2.0, 3.5, 1.0, 4.0, 2.5]), sharding)
+    subjects = jax.device_put(
+        jnp.array([True, True, False, True, True, True]), sharding
+    )
+    points = jax.device_put(jnp.array([0.0, 1.5, 3.0]), jax.devices()[0])
+    count = run_simulation_producer(
         memory=None,
         function=_count_below_last_point,
         arguments={"values": values, "points": points, "subjects": subjects},
@@ -92,3 +118,16 @@ def test_run_simulation_operation_replica_does_not_keep_its_operand_alive() -> N
     del points
     gc.collect()
     assert operand() is None
+
+
+def test_run_simulation_operation_passes_uncommitted_operands_through() -> None:
+    """An uncommitted operand reaches the operation as is; JAX places it itself."""
+    values = jax.device_put(jnp.arange(6.0), _subject_sharding())
+    points = jnp.array([0.0, 1.5, 3.0])
+    assert not points.committed
+    returned = run_simulation_operation(
+        memory=None,
+        function=_return_points,
+        arguments={"values": values, "points": points},
+    )
+    assert returned is points

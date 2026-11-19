@@ -324,9 +324,11 @@ def run_simulation_producer[T: PytreeValue](
 
     `owner` caches the executable, by default `memory.producers`; a producer that
     chunk admission profiles passes the runtime's operations, which hold it.
+    Unbudgeted producers run eagerly and place their operands as unbudgeted
+    operations do, see `run_simulation_operation`.
     """
     if memory is None:
-        return function(**arguments)
+        return function(**_replicate_onto_subject_mesh(arguments=arguments))
     placed = place_simulation_arguments(
         arguments=arguments,
         # Validation cohorts may have any size, including fewer rows than devices.
@@ -372,8 +374,8 @@ def _replicate_onto_subject_mesh(
 
     Arguments are returned unchanged unless exactly one multi-device mesh
     places some of them; operands already on that mesh's devices keep their
-    placement. Each operand is replicated once per mesh while it lives, see
-    `_replica_on_mesh`.
+    placement, and so do uncommitted operands, which JAX places itself. Each
+    operand is replicated once per mesh while it lives, see `_replica_on_mesh`.
     """
     leaves = [
         leaf for leaf in jax.tree.leaves(arguments) if isinstance(leaf, jax.Array)
@@ -391,7 +393,11 @@ def _replicate_onto_subject_mesh(
     replicated = jax.NamedSharding(mesh, jax.P())
 
     def place(leaf: PytreeValue) -> PytreeValue:
-        if isinstance(leaf, jax.Array) and leaf.sharding.device_set != devices:
+        if (
+            isinstance(leaf, jax.Array)
+            and leaf.committed
+            and leaf.sharding.device_set != devices
+        ):
             return _replica_on_mesh(leaf=leaf, sharding=replicated)
         return leaf
 

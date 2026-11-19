@@ -32,7 +32,6 @@ from _lcm.solution.action_reduction import (
     HardMaxResult,
     LogSumExpAccumulator,
     LogSumExpResult,
-    _reduce_block,
 )
 from _lcm.solution.feasibility import (
     BoundedResult,
@@ -95,6 +94,8 @@ def build_streaming_max_Q_over_a(
     padded final block is marked infeasible before reduction. The scan emits ``None``
     as its history. A block covering the whole product instead maps ``Q_and_F`` over
     the named grids, as the dense route does, and reduces that product as one block.
+    Mapping binds each grid by name, so on that route ``Q_and_F`` must declare every
+    action name as a parameter; a ``**kwargs`` kernel cannot be mapped there.
     These source-level properties do not by themselves bound runtime or peak memory
     after compiler transformation. The reduction deliberately retains GridSearch's
     established feasible-NaN behavior:
@@ -1499,10 +1500,8 @@ def _reduce_whole_product(
     )
     _validate_block_Q_and_F(values=values, feasible=feasible)
     return HARD_MAX_REDUCTION.finalize(
-        accumulator=_reduce_block(
-            values=values,
-            feasible=feasible,
-            action_ids=jnp.arange(n_actions, dtype=jnp.int32),
+        accumulator=_start_reduction(
+            block=(values, feasible, jnp.arange(n_actions, dtype=jnp.int32))
         )
     )
 

@@ -61,7 +61,7 @@ def _measure_combination(*, witness: str, log_level: str) -> dict[str, float]:
     from ._simulation_witnesses import WITNESSES
 
     model, model_params, initial_conditions = WITNESSES[witness](
-        **_gpu_mem.default_budget_execution_kwargs()
+        **_gpu_mem.default_budget_execution_kwargs(), lottery_contraction=True
     )
     solution = model.solve(params=model_params, log_level="off", runtime_checks=False)
 
@@ -95,7 +95,7 @@ class SimulationDispatch:
 
     # Bumped from "1": measurement moved from a per-tracker warm+measured
     # cycle into one shared `setup_cache` producer per combination.
-    version = "2"
+    version = "3"
     timeout = 600
     params = (list(WITNESS_NAMES), list(LOG_LEVELS))
     param_names = ["witness", "log_level"]

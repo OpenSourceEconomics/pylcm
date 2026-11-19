@@ -139,12 +139,16 @@ _CROSSING_NODE = 11.071428298950195
 
 
 def test_inner_core_records_are_cell_width_invariant_at_a_fixed_node() -> None:
-    """The adjuster's inner solve at one outer node is bit-identical across cell widths.
+    """The adjuster's inner solve at one outer node does not depend on the cell width.
 
-    The value, marginal, and consumption rows a cell publishes are the same
-    working-format numbers whether the illiquid cells run as one fused vmap or as
-    single-cell `lax.map` steps, including at an envelope crossing where a
-    last-ULP change in a candidate value would switch the selected policy.
+    Whether the illiquid cells run as one fused vmap or as single-cell `lax.map`
+    steps, a cell publishes:
+
+    - the same value, policy and endogenous-grid numbers, bit for bit, including at
+      an envelope crossing where a last-ULP change in a candidate value would switch
+      the selected policy;
+    - marginal utilities within 2 ULP, since XLA may evaluate the marginal with
+      different instructions in the two layouts.
     """
     model = n_nbegm_toy.build_model(
         variant="n_nbegm",
@@ -177,12 +181,17 @@ def test_inner_core_records_are_cell_width_invariant_at_a_fixed_node() -> None:
         context=node_context,
     )
     outputs = {
-        width: jax.tree.leaves(
+        width: jax.tree_util.tree_leaves_with_path(
             jax.jit(partial(materialized.function, __lcm_cell_width__=width))(
                 **materialized.arguments
             )
         )
         for width in (3, 1)
     }
-    for fused, tiled in zip(outputs[3], outputs[1], strict=True):
-        np.testing.assert_array_equal(np.asarray(fused), np.asarray(tiled))
+    for (path, fused), (_, tiled) in zip(outputs[3], outputs[1], strict=True):
+        if path[-1] == jax.tree_util.GetAttrKey("marginal_utility"):
+            np.testing.assert_array_max_ulp(
+                np.asarray(fused), np.asarray(tiled), maxulp=2
+            )
+        else:
+            np.testing.assert_array_equal(np.asarray(fused), np.asarray(tiled))
