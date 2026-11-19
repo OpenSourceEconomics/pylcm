@@ -264,19 +264,23 @@ def test_ceiling_publishes_a_stakeholder_value_for_every_wage_point(
     assert np.asarray(bounded.values[0]["couple"]).shape == (_N_WAGE, 2)
 
 
-@pytest.mark.parametrize("triple", [_COUPLE, _TERMINAL])
 def test_ceiling_lowers_the_admitted_compiler_reservation(
-    *, monkeypatch: pytest.MonkeyPatch, triple: Triple
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The narrower tile the ceiling selects reserves fewer compiler bytes."""
+    """The narrower tile the ceiling selects reserves fewer compiler bytes.
+
+    Checked on the couple period, whose workspace grows with the cell width. The
+    terminal period reserves a few kilobytes at any width, and XLA's buffer
+    assignment, not the tile width, decides which of its tiles reserves less.
+    """
     _, unbounded = _solve(monkeypatch=monkeypatch)
     _, bounded = _solve(
         monkeypatch=monkeypatch, axis_width_ceilings={"cell": _CELL_CEILING}
     )
 
-    assert _admitted_reservation(census=bounded, triple=triple) < _admitted_reservation(
-        census=unbounded, triple=triple
-    )
+    assert _admitted_reservation(
+        census=bounded, triple=_COUPLE
+    ) < _admitted_reservation(census=unbounded, triple=_COUPLE)
 
 
 def test_ceiling_narrows_a_fixed_width_that_exceeds_it(

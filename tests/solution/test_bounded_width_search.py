@@ -36,11 +36,11 @@ pytestmark = pytest.mark.usefixtures("x64_enabled")
 
 ALIVE_0 = ("alive", 0, "main")
 DEAD_3 = ("dead", 3, "main")
-# Between the `alive` period-1 pair at width 2 (32228 reservation plus 1592
-# resident bytes, admitted) and the period-0 pair at width 2 (32228 plus 1720,
-# refused); width 1 (25492 plus 1720) fits. The reservations are XLA's compiled
+# Between the `alive` period-1 pair at width 2 (29732 reservation plus 1592
+# resident bytes, admitted) and the period-0 pair at width 2 (29732 plus 1720,
+# refused); width 1 (24572 plus 1720) fits. The reservations are XLA's compiled
 # memory analysis, so they move with the installed jaxlib.
-_PAIR_REJECTS_ALIVE_0 = 33884
+_PAIR_REJECTS_ALIVE_0 = 31388
 
 
 class _Captured(TypedDict, total=False):
