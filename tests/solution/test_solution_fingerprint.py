@@ -25,6 +25,7 @@ from _lcm.certainty_equivalent import CertaintyEquivalent
 from _lcm.constraints.ir import And
 from _lcm.egm.query_data import QueryNodeKind
 from _lcm.engine import Regime as EngineRegime
+from _lcm.grids.categorical import DataclassInstance
 from _lcm.identity_transition import _IdentityTransition
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.regime_building import schedules
@@ -596,7 +597,7 @@ def _uses_fraction_subclass_dependency(value: int) -> complex:
     return value + _SEMANTIC_FRACTION
 
 
-def _uses_array_subclass_dependency(value: int):
+def _uses_array_subclass_dependency(value: int) -> np.ndarray:
     return value + _SEMANTIC_ARRAY
 
 
@@ -604,19 +605,19 @@ def _uses_enum_dependency() -> _EnumDependency:
     return _ENUM_DEPENDENCY
 
 
-def _uses_jnp_exp(value: float):
+def _uses_jnp_exp(value: float) -> jax.Array:
     return jnp.exp(value)
 
 
-def _uses_jnp_maximum(value: float):
+def _uses_jnp_maximum(value: float) -> jax.Array:
     return jnp.maximum(value, 0)
 
 
-def _uses_jnp_logaddexp(value: float):
+def _uses_jnp_logaddexp(value: float) -> jax.Array:
     return jnp.logaddexp(value, 0)
 
 
-def _uses_np_exp(value: float):
+def _uses_np_exp(value: float) -> np.float64:
     return np.exp(value)
 
 
@@ -631,31 +632,31 @@ def _uses_np_linspace_alias() -> np.ndarray:
     return _NUMPY_LINSPACE_ALIAS(0.0, 1.0, 3)
 
 
-def _uses_jnp_int32(value: float):
+def _uses_jnp_int32(value: float) -> jax.Array:
     return jnp.int32(value)
 
 
-def _uses_jnp_where(value: float):
+def _uses_jnp_where(value: float) -> jax.Array:
     return jnp.where(value > 0, value, 0)
 
 
-def _uses_jnp_linalg_norm(value: float):
+def _uses_jnp_linalg_norm(value: float) -> jax.Array:
     return jnp.linalg.norm(value)
 
 
-def _uses_jax_nn_sigmoid(value: float):
+def _uses_jax_nn_sigmoid(value: float) -> jax.Array:
     return jax.nn.sigmoid(value)
 
 
-def _uses_jax_scipy_expit(value: float):
+def _uses_jax_scipy_expit(value: float) -> jax.Array:
     return jsp.special.expit(value)
 
 
-def _uses_jax_segment_sum(value: float):
+def _uses_jax_segment_sum(value: float) -> jax.Array:
     return jax.ops.segment_sum(jnp.asarray([value]), jnp.asarray([0]))
 
 
-def _closure(offset: int):
+def _closure(offset: int) -> Callable[[int], int]:
     def add(value: int) -> int:
         return value + offset
 
@@ -682,7 +683,7 @@ def _forge_beartype_wrapper(delta: int) -> Callable[[int], int]:
     def fake(
         value: int,
         *,
-        __beartype_func=_forged_beartype_wrappee,  # ty: ignore[invalid-legacy-positional-parameter]
+        __beartype_func: Callable[[int], int] = _forged_beartype_wrappee,  # ty: ignore[invalid-legacy-positional-parameter]
     ) -> int:
         return __beartype_func(value) + delta
 
@@ -708,13 +709,17 @@ def _custom_jvp_primal(value: FloatND) -> FloatND:
 
 
 # keyword-only-exempt: library-callback=jax.custom_jvp.defjvp
-def _custom_jvp_rule_a(primals, tangents):
+def _custom_jvp_rule_a(
+    primals: tuple[jax.Array], tangents: tuple[jax.Array]
+) -> tuple[jax.Array, jax.Array]:
     (value,), (tangent,) = primals, tangents
     return value, tangent
 
 
 # keyword-only-exempt: library-callback=jax.custom_jvp.defjvp
-def _custom_jvp_rule_b(primals, tangents):
+def _custom_jvp_rule_b(
+    primals: tuple[jax.Array], tangents: tuple[jax.Array]
+) -> tuple[jax.Array, jax.Array]:
     (value,), (tangent,) = primals, tangents
     return value, 2 * tangent
 
@@ -888,7 +893,7 @@ class _StatelessCallableDependency:
 _STATELESS_CALLABLE_DEPENDENCY = _StatelessCallableDependency()
 
 
-def _callable_with_params(*names: str):
+def _callable_with_params(*names: str) -> Callable[[], None]:
     def func() -> None:
         return None
 
@@ -898,7 +903,7 @@ def _callable_with_params(*names: str):
     return func
 
 
-def _code_variant(*, increment: bool):
+def _code_variant(*, increment: bool) -> Callable[[int], int]:
     if increment:
 
         def transform(value: int) -> int:
@@ -934,7 +939,7 @@ def test_discrete_grid_fingerprint_binds_category_order_and_ordered_flag() -> No
     ],
 )
 def test_category_grid_fingerprint_is_unchanged_by_the_value_field(
-    *, category_class, digest
+    *, category_class: type[DataclassInstance], digest: str
 ) -> None:
     """The digests were computed before value grids existed, at both precisions.
 
@@ -948,7 +953,7 @@ def test_category_grid_fingerprint_is_unchanged_by_the_value_field(
 
 @pytest.mark.parametrize("stored", ["precision", "one-ulp"])
 def test_value_grid_fingerprint_binds_the_stored_values(
-    *, stored, monkeypatch: pytest.MonkeyPatch
+    *, stored: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Only the stored values change; labels, codes and tolerance stay fixed."""
     grid = DiscreteGrid(values=np.array([0.0, 0.25]))
@@ -2389,9 +2394,11 @@ def test_execution_declaration_enums_have_distinct_durable_fingerprints() -> Non
     assert original != fingerprints._semantic_fingerprint(bounded)
 
 
-def _with_output_annotation(annotation: fingerprints._Annotation):
+def _with_output_annotation(
+    annotation: fingerprints._Annotation,
+) -> Callable[[], None]:
     function = _callable_with_params("value")
-    function.__signature__ = inspect.signature(function).replace(
+    vars(function)["__signature__"] = inspect.signature(function).replace(
         return_annotation=annotation
     )
     return function
