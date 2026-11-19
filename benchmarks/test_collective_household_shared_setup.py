@@ -116,9 +116,9 @@ def test_parameterized_classes_track_the_median_warm_call(
 
 
 @pytest.mark.parametrize(
-    ("method", "n_subjects", "skipped"),
+    ("method", "n_subjects"),
     [
-        (method, n_subjects, n_subjects == 100_000)
+        (method, n_subjects)
         for method in (
             "peakmem_execution",
             "track_compilation_time",
@@ -126,16 +126,15 @@ def test_parameterized_classes_track_the_median_warm_call(
         )
         for n_subjects in (1_000, 100_000)
     ]
-    + [("track_gpu_peak_mem", None, True)],
+    + [("track_gpu_peak_mem", None)],
 )
-def test_large_cohort_is_skipped_before_benchmark_setup(
+def test_every_cohort_reaches_benchmark_setup(
     *,
     monkeypatch: pytest.MonkeyPatch,
     method: str,
     n_subjects: int | None,
-    skipped: bool,
 ) -> None:
-    """ASV skips large-cohort measurements and still sets up the small cohort."""
+    """ASV sets up every cohort's measurements and the GPU peak-memory probe."""
     benchmark_class = (
         bench_collective_household.CollectiveHouseholdSimulateGpuPeakMem
         if n_subjects is None
@@ -158,6 +157,6 @@ def test_large_cohort_is_skipped_before_benchmark_setup(
         )
 
     assert (benchmark.do_setup(), calls) == (
-        skipped,
-        [] if skipped else [(n_subjects,)],
+        False,
+        [()] if n_subjects is None else [(n_subjects,)],
     )

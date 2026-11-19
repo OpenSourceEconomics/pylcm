@@ -201,8 +201,6 @@ class CollectiveHouseholdSimulate:
     # dropped rather than kept as a third routine point.
     params = [1_000, 100_000]
     param_names = ["n_subjects"]
-    # shortcut: Restore large cohorts when execution meets the benchmark time limit.
-    skip_params = [(100_000,)]
 
     def _build(self, n_subjects):
         from lcm_examples import collective_household
@@ -279,8 +277,6 @@ class CollectiveHouseholdSimulateGpuPeakMem(_gpu_mem.GpuPeakMem):
     bench_module = "benchmarks.asv.bench_collective_household"
     bench_class = "CollectiveHouseholdSimulate"
     version = "2"
-    # shortcut: Restore this large-cohort probe when it meets its time limit.
-    skip_params = [()]
 
 
 class ReferenceChainSolve:
