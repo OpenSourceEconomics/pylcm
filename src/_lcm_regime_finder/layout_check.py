@@ -6,6 +6,9 @@ fibres, the claimed inert statuses (I1, I2) and the lanes, prices every
 witness block literally (Defs. "Blocks" and "Counts"), and checks that every
 layout partitions the lanes into groups cut along their own periods and that
 the curve is the at-most-k envelope of the exact table under the tie rule.
+What the result exports is checked as well: the lane listing, and each
+block's periods, states, actions, excluded actions and fibres, whose order
+alone is free.
 It does not re-prove optimality; the literal oracle tests do that on small
 models.
 """
@@ -16,6 +19,7 @@ from itertools import product
 from math import prod
 
 from .facts import Facts, Record, fibre_live, linked_points, live_relations, status_axes
+from .records import canonical
 
 type Point = tuple[tuple[str, int], ...]
 type Fibre = tuple[str, Point]
@@ -116,6 +120,40 @@ def literal_price(model: _Model, members: tuple[str, ...], fibres: list[Fibre]) 
     return len(periods) * rows * columns, len(periods) * rows
 
 
+def literal_block_payload(*, model: _Model, members: tuple[str, ...], fibres: list[Fibre]) -> Record:
+    """Derive the block fields the result exports from the kept fibres, with the checker's own code."""
+    cells = [model.cells[cid] for cid, _ in fibres]
+    periods = sorted({c["period"] for c in cells})
+    present = {c["regime"] for c in cells}
+    live = set().union(*(model.live(f) for f in fibres))
+    statuses = {name for cid, _ in fibres for name in model.axes[cid]}
+    states: Record = {"regime": sorted(present)} if len(members) > 1 else {}
+    for name in sorted(live):
+        if name in statuses:
+            states[name] = sorted({model.value(members, f, name) for f in fibres}, key=repr)
+        else:
+            states[name] = max(model.size(c["states"][name]) for c in cells if name in c["states"])
+    action_names = set().union(*(model.actions(cid) for cid, _ in fibres))
+    actions = {name: max(model.size(c["actions"][name]) for c in cells if name in c["actions"])
+               for name in sorted(action_names)}
+    hull_actions = {name for c in model.cells.values()
+                    if c["regime"] in present and c["period"] in periods for name in c["actions"]}
+    excluded = {}
+    for cell in sorted(model.cells.values(), key=lambda c: (c["regime"], c["period"])):
+        if cell["regime"] in members:
+            for name, did in cell["actions"].items():
+                values = model.domains[did].get("values")
+                if name not in action_names | hull_actions and isinstance(values, list) and len(values) > 1:
+                    excluded.setdefault(name, values[1:])
+    described_fibres = [
+        {"period": model.cells[cid]["period"], "regime": model.cells[cid]["regime"],
+         "statuses": {name: model.value(members, (cid, point), name) for name in sorted(statuses)}}
+        for cid, point in fibres
+    ]
+    return {"periods": periods, "states": states, "actions": actions,
+            "excluded_actions": excluded, "fibres": described_fibres}
+
+
 def _inert_errors(model: _Model, kept: set[Fibre], inert: frozenset[str]) -> list[str]:
     errors = []
     for cid, point in sorted(kept):
@@ -178,6 +216,10 @@ def check_layouts(declarations: Record, facts: Facts, result: Record, guard: Cal
     for cid, point in sorted(kept):
         regime = model.cells[cid]["regime"]
         lanes[home[regime]][(regime, tuple((n, c) for n, c in point if n not in contracted))].append((cid, point))
+    expected_lanes = [[{"regime": regime, "statuses": dict(point)}
+                       for regime, point in sorted(lanes[index])] for index in range(len(dense))]
+    if result.get("lanes") != expected_lanes:
+        errors.append("reported lanes differ from the independently derived lanes")
     if result["original_count"] != sum(prod(model.size(d) for d in c["states"].values())
                                        * prod(model.size(d) for d in c["actions"].values())
                                        * (len(c.get("stakeholders") or ()) or 1)
@@ -225,6 +267,16 @@ def check_layouts(declarations: Record, facts: Facts, result: Record, guard: Cal
             for (start, stop), block in zip(zip(cuts, cuts[1:], strict=False), group["blocks"], strict=True):
                 fibres = [f for f in owned if model.cells[f[0]]["period"] in active[start:stop]]
                 ev, st = literal_price(model, members, fibres)
+                payload = literal_block_payload(model=model, members=members, fibres=fibres)
+                for field in ("periods", "states", "actions", "excluded_actions"):
+                    if block.get(field) != payload[field]:
+                        errors.append(f"{where}: block {members} periods {active[start:stop]} "
+                                      f"{field} differ from the independently derived block")
+                reported_fibres = block.get("fibres")
+                if (not isinstance(reported_fibres, list)
+                        or sorted(map(canonical, reported_fibres)) != sorted(map(canonical, payload["fibres"]))):
+                    errors.append(f"{where}: block {members} periods {active[start:stop]} "
+                                  "fibres differ from the independently kept fibres")
                 if (ev, st) != (block["evaluations"], block["storage"]):
                     errors.append(f"{where}: block {members} periods {active[start:stop]} priced "
                                   f"{block['evaluations']}/{block['storage']}, literal {ev}/{st}")

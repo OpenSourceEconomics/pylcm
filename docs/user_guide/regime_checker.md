@@ -85,7 +85,9 @@ readability.
 
 - the source check passed;
 - every point of the curve is exact in the searched family;
-- the independent layout check passed.
+- the independent layout check passed: with its own code, it derived the lanes and every
+  block's cost, periods, states, actions and fibres from the kept coordinates, and they
+  agree with the report.
 
 The status is `UNRESOLVED` when a source premise remains open, or when the curve is
 `RESTRICTED`. A restricted curve merged some status lanes it could not prove mergeable,

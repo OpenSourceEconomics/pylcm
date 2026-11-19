@@ -166,7 +166,10 @@ It then prices every witness block literally and checks that:
 - the cuts partition each group's active periods;
 - the totals match;
 - the curve is the at-most envelope of the exact table, no point lies below
-  `lower_bound`, and each point's `exact` flag follows the rules above.
+  `lower_bound`, and each point's `exact` flag follows the rules above;
+- the result's `lanes` equal the lanes it re-derived;
+- each block's periods, states with their grids, actions, excluded actions and fibres
+  equal those it derives from the block's kept fibres, in any order of the fibres.
 
 The tests also compare the search with a literal enumeration of the family on small
 models.

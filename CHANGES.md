@@ -19,6 +19,10 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 - The independent source check binds each exit's root relation as the exit declares
   it: the whole exit as its one callback, in both phases, with no support claim. A
   report whose exit no longer reads the states its availability reads fails the check.
+- The independent layout check also derives what a layout result exports: the lane
+  listing, and each block's periods, states with their grids, actions, excluded
+  actions and fibres. A report that alters any of them fails the check, even when its
+  prices are genuine; the order in which a block lists its fibres is free.
 - The exit relation records the shocks the exit observes. A layout search that would
   have to link two cells of one period inside one dense regime ends `UNRESOLVED` with a
   plain reason rather than an internal error. See
