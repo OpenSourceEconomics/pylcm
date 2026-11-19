@@ -658,8 +658,12 @@ def _without_reads(regime: Regime) -> Regime:
             _with_rule(MutualConsent(settle=_settlement(name="utility"))),
             "name of a state",
         ),
+        (
+            _with_rule(MutualConsent(settle=_settlement(name="utility_f"))),
+            "name of a state",
+        ),
     ],
-    ids=("unread", "state", "function"),
+    ids=("unread", "state", "function", "engine_function"),
 )
 def test_settlement_refuses_an_unread_or_taken_name(
     *, regime_change: Callable[[Regime], Regime], match: str

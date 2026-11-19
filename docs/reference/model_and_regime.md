@@ -363,9 +363,10 @@ remain in `Model(edges=...)`.
   optimum: `Unilateral` separates when any member refuses there, `MutualConsent` when
   every member does, and a household that stays acts at its optimum. Where the exit is
   not available the household stays at its optimum; with no feasible action and the exit
-  available it separates. The default `None` is `"optimum"` with `renegotiate` or
-  `settle` and `"each_action"` otherwise; `"each_action"` together with either is
-  refused.
+  available it separates. A separation needs a feasible action in every destination
+  where the exit puts its member; without one the cell has no value, as under
+  `"each_action"`. The default `None` is `"optimum"` with `renegotiate` or `settle` and
+  `"each_action"` otherwise; `"each_action"` together with either is refused.
 
 A subject moves at most once per period, so an exit payoff is the value of the
 destination's problem at the projected state, without the destination's own exit. The

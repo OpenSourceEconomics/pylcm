@@ -258,7 +258,14 @@ def _validate_settlement(*, declaration: Exit, regime: Regime) -> None:
         raise RegimeInitializationError(
             "Settlement requires two collective stakeholders."
         )
-    taken = {*regime.states, *regime.actions, *regime.functions}
+    # The author's names and the engine's: a household's `utility` is bound as
+    # `utility_<s>` per stakeholder, and a settlement may shadow neither.
+    taken = {
+        *regime.states,
+        *regime.actions,
+        *regime.functions,
+        *regime.decomposed_functions,
+    }
     if name in taken:
         raise RegimeInitializationError(
             f"Settlement {name!r} has the name of a state, action or function of the "

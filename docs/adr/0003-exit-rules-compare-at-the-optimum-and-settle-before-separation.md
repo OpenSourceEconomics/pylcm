@@ -33,7 +33,9 @@ walk over a state of the source.
 - At the optimum a member is willing when its value at the unconstrained optimum is
   above its outside value, or equal to it under `tie="stay"`. `Unilateral` stays when
   every member is willing, `MutualConsent` when at least one is. A pair that stays acts
-  at the optimum. With no feasible action nobody is willing.
+  at the optimum. With no feasible action nobody is willing. A separation needs a
+  feasible action in every destination where the exit puts its member; without one the
+  cell has no value, as under the per-action rule.
 - `MutualConsent(settle=Settlement(name=..., candidates=..., default=...))` adds a
   settlement read by exit-target projections and utility adjustments under `name`.
   1. Each member compares its stay value with its outside value at the default.
