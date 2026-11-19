@@ -495,10 +495,19 @@ def test_roles_equal_their_lowered_gate() -> None:
     assert curves[0] == curves[1]
 
 
-@pytest.mark.parametrize("label", ["shared", "value_reader"])
-def test_problem_holders_and_value_readers_stay_unresolved(label: str) -> None:
-    """A `Problem` holder and a reader of a collective value keep an open obligation."""
-    assert _report(label, "dense")["status"] == "UNRESOLVED"
+def test_problem_holders_are_checked_as_the_regimes_declaring_their_slots() -> None:
+    """Holders of one `Problem` get the result of the hand-declared twin regimes."""
+    shared, twin = _report("shared", "dense"), _report("twin", "dense")
+    assert (shared["status"], shared["analysis"]["obligations"]) == ("COMPLETE", [])
+    assert (shared["layouts"]["dense_regimes"], shared["original_cost"]) == (
+        twin["layouts"]["dense_regimes"],
+        twin["original_cost"],
+    )
+
+
+def test_readers_of_a_collective_value_stay_unresolved() -> None:
+    """A reader of a collective value keeps an open obligation."""
+    assert _report("value_reader", "dense")["status"] == "UNRESOLVED"
 
 
 def test_gate_whose_fallback_is_its_source_shows_no_internal_error() -> None:
