@@ -18,7 +18,6 @@ import jax.scipy as jsp
 import numpy as np
 import pytest
 from dags import concatenate_functions
-from numpy._core.overrides import array_function_dispatch
 
 import lcm.grids as grid_declarations
 import lcm.model as lcm_model
@@ -26,6 +25,7 @@ from _lcm.certainty_equivalent import CertaintyEquivalent
 from _lcm.constraints.ir import And
 from _lcm.egm.query_data import QueryNodeKind
 from _lcm.engine import Regime as EngineRegime
+from _lcm.grids.categorical import DataclassInstance
 from _lcm.identity_transition import _IdentityTransition
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.regime_building import schedules
@@ -597,7 +597,7 @@ def _uses_fraction_subclass_dependency(value: int) -> complex:
     return value + _SEMANTIC_FRACTION
 
 
-def _uses_array_subclass_dependency(value: int):
+def _uses_array_subclass_dependency(value: int) -> np.ndarray:
     return value + _SEMANTIC_ARRAY
 
 
@@ -605,19 +605,19 @@ def _uses_enum_dependency() -> _EnumDependency:
     return _ENUM_DEPENDENCY
 
 
-def _uses_jnp_exp(value: float):
+def _uses_jnp_exp(value: float) -> jax.Array:
     return jnp.exp(value)
 
 
-def _uses_jnp_maximum(value: float):
+def _uses_jnp_maximum(value: float) -> jax.Array:
     return jnp.maximum(value, 0)
 
 
-def _uses_jnp_logaddexp(value: float):
+def _uses_jnp_logaddexp(value: float) -> jax.Array:
     return jnp.logaddexp(value, 0)
 
 
-def _uses_np_exp(value: float):
+def _uses_np_exp(value: float) -> np.float64:
     return np.exp(value)
 
 
@@ -632,31 +632,31 @@ def _uses_np_linspace_alias() -> np.ndarray:
     return _NUMPY_LINSPACE_ALIAS(0.0, 1.0, 3)
 
 
-def _uses_jnp_int32(value: float):
+def _uses_jnp_int32(value: float) -> jax.Array:
     return jnp.int32(value)
 
 
-def _uses_jnp_where(value: float):
+def _uses_jnp_where(value: float) -> jax.Array:
     return jnp.where(value > 0, value, 0)
 
 
-def _uses_jnp_linalg_norm(value: float):
+def _uses_jnp_linalg_norm(value: float) -> jax.Array:
     return jnp.linalg.norm(value)
 
 
-def _uses_jax_nn_sigmoid(value: float):
+def _uses_jax_nn_sigmoid(value: float) -> jax.Array:
     return jax.nn.sigmoid(value)
 
 
-def _uses_jax_scipy_expit(value: float):
+def _uses_jax_scipy_expit(value: float) -> jax.Array:
     return jsp.special.expit(value)
 
 
-def _uses_jax_segment_sum(value: float):
+def _uses_jax_segment_sum(value: float) -> jax.Array:
     return jax.ops.segment_sum(jnp.asarray([value]), jnp.asarray([0]))
 
 
-def _closure(offset: int):
+def _closure(offset: int) -> Callable[[int], int]:
     def add(value: int) -> int:
         return value + offset
 
@@ -683,7 +683,7 @@ def _forge_beartype_wrapper(delta: int) -> Callable[[int], int]:
     def fake(
         value: int,
         *,
-        __beartype_func=_forged_beartype_wrappee,  # ty: ignore[invalid-legacy-positional-parameter]
+        __beartype_func: Callable[[int], int] = _forged_beartype_wrappee,  # ty: ignore[invalid-legacy-positional-parameter]
     ) -> int:
         return __beartype_func(value) + delta
 
@@ -709,13 +709,17 @@ def _custom_jvp_primal(value: FloatND) -> FloatND:
 
 
 # keyword-only-exempt: library-callback=jax.custom_jvp.defjvp
-def _custom_jvp_rule_a(primals, tangents):
+def _custom_jvp_rule_a(
+    primals: tuple[jax.Array], tangents: tuple[jax.Array]
+) -> tuple[jax.Array, jax.Array]:
     (value,), (tangent,) = primals, tangents
     return value, tangent
 
 
 # keyword-only-exempt: library-callback=jax.custom_jvp.defjvp
-def _custom_jvp_rule_b(primals, tangents):
+def _custom_jvp_rule_b(
+    primals: tuple[jax.Array], tangents: tuple[jax.Array]
+) -> tuple[jax.Array, jax.Array]:
     (value,), (tangent,) = primals, tangents
     return value, 2 * tangent
 
@@ -889,7 +893,7 @@ class _StatelessCallableDependency:
 _STATELESS_CALLABLE_DEPENDENCY = _StatelessCallableDependency()
 
 
-def _callable_with_params(*names: str):
+def _callable_with_params(*names: str) -> Callable[[], None]:
     def func() -> None:
         return None
 
@@ -899,7 +903,7 @@ def _callable_with_params(*names: str):
     return func
 
 
-def _code_variant(*, increment: bool):
+def _code_variant(*, increment: bool) -> Callable[[int], int]:
     if increment:
 
         def transform(value: int) -> int:
@@ -935,7 +939,7 @@ def test_discrete_grid_fingerprint_binds_category_order_and_ordered_flag() -> No
     ],
 )
 def test_category_grid_fingerprint_is_unchanged_by_the_value_field(
-    *, category_class, digest
+    *, category_class: type[DataclassInstance], digest: str
 ) -> None:
     """The digests were computed before value grids existed, at both precisions.
 
@@ -949,7 +953,7 @@ def test_category_grid_fingerprint_is_unchanged_by_the_value_field(
 
 @pytest.mark.parametrize("stored", ["precision", "one-ulp"])
 def test_value_grid_fingerprint_binds_the_stored_values(
-    *, stored, monkeypatch: pytest.MonkeyPatch
+    *, stored: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Only the stored values change; labels, codes and tolerance stay fixed."""
     grid = DiscreteGrid(values=np.array([0.0, 0.25]))
@@ -1248,25 +1252,6 @@ def test_stdlib_dataclasses_replace_has_a_closed_fingerprint() -> None:
     assert fingerprints._semantic_fingerprint(dataclasses.replace) == (
         fingerprints._semantic_fingerprint(dataclasses.replace)
     )
-
-
-def test_nominal_dataclasses_field_marker_cannot_spoof_captured_identity(
-    *, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    marker = vars(dataclasses)["_FIELD_CLASSVAR"]
-    nominal_marker = type(marker)(repr(marker))
-    monkeypatch.setitem(vars(dataclasses), "_FIELD_CLASSVAR", nominal_marker)
-
-    with pytest.raises(
-        TypeError,
-        match=r"direct object dependency dataclasses[.]_FIELD_BASE",
-    ):
-        fingerprints._semantic_fingerprint(dataclasses.replace)
-
-
-def test_noncaptured_inspect_callable_remains_fail_closed() -> None:
-    with pytest.raises(TypeError, match="ForwardRef"):
-        fingerprints._semantic_fingerprint(inspect.get_annotations)
 
 
 def test_default_model_declaration_has_a_closed_fingerprint() -> None:
@@ -1761,75 +1746,6 @@ def test_numpy_scalar_categories_have_distinct_versioned_identity(
     assert fingerprint != fingerprints._semantic_fingerprint(np.float64)
 
 
-def test_nominal_numpy_scalar_category_cannot_spoof_native_identity() -> None:
-    class NominalFloating:
-        pass
-
-    NominalFloating.__module__ = "numpy"
-    NominalFloating.__name__ = "floating"
-    NominalFloating.__qualname__ = "floating"
-    assert not fingerprints._is_native_numeric_type(NominalFloating)
-    with pytest.raises(TypeError, match="direct class dependency"):
-        fingerprints._semantic_fingerprint(NominalFloating)
-
-
-@pytest.mark.parametrize(
-    "changed",
-    ["owner", "default", "signature", "wrappee", "export", "raw-default", "code"],
-)
-def test_cond_operand_origin_changes_refuse_native_sealing(
-    *, changed: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    genuine = jax.lax.cond
-    original = fingerprints._JAX_COND_ORIGINAL
-    module = fingerprints._JAX_COND_MODULE
-    assert isinstance(original, FunctionType)
-    assert isinstance(module, ModuleType)
-    baseline = fingerprints._semantic_fingerprint(genuine)
-    assert baseline
-    if changed == "owner":
-        monkeypatch.setattr(module, "_no_operand_sentinel", object())
-    elif changed == "default":
-        monkeypatch.setattr(original, "__kwdefaults__", {"operand": object()})
-    elif changed == "signature":
-        monkeypatch.setattr(
-            genuine,
-            "__signature__",
-            inspect.signature(genuine),
-            raising=False,
-        )
-    elif changed == "wrappee":
-        clone = FunctionType(original.__code__, original.__globals__)
-        monkeypatch.setattr(genuine, "__wrapped__", clone)
-    elif changed == "export":
-        monkeypatch.setattr(jax.lax, "cond", jax.lax.switch)
-    elif changed == "raw-default":
-        monkeypatch.setattr(
-            genuine,
-            "__kwdefaults__",
-            {"operand": fingerprints._JAX_COND_OPERAND_DEFAULT},
-        )
-    else:
-        monkeypatch.setattr(original, "__code__", _next_regime_code.__code__)
-    with pytest.raises(TypeError, match="Original JAX cond"):
-        fingerprints._semantic_fingerprint(genuine)
-
-
-def test_cond_omission_identity_does_not_admit_user_or_nominal_defaults() -> None:
-    marker = fingerprints._JAX_COND_OPERAND_DEFAULT
-
-    def nominal_cond(operand: object = marker) -> object:  # noqa: PAN001 - Deliberately tests an opaque user default, including the real native marker.
-        return operand
-
-    with pytest.raises(TypeError, match="default dependency for parameter 'operand'"):
-        fingerprints._semantic_fingerprint(nominal_cond)
-    nominal_cond.__module__ = jax.lax.cond.__module__
-    nominal_cond.__name__ = jax.lax.cond.__name__
-    nominal_cond.__qualname__ = jax.lax.cond.__qualname__
-    with pytest.raises(TypeError, match="default dependency for parameter 'operand'"):
-        fingerprints._semantic_fingerprint(nominal_cond)
-
-
 def test_numpy_dispatcher_alias_has_the_same_native_identity() -> None:
     assert fingerprints._semantic_fingerprint(np.linspace) == (
         fingerprints._semantic_fingerprint(_NUMPY_LINSPACE_ALIAS)
@@ -1852,39 +1768,6 @@ def test_numpy_dispatcher_version_participates_in_the_fingerprint(
     assert fingerprints._semantic_fingerprint(_uses_np_linspace) != baseline
 
 
-def test_numpy_dispatcher_implementation_defaults_participate(
-    *, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    implementation = getattr(np.linspace, "_implementation", None)
-    assert isinstance(implementation, FunctionType)
-    baseline = fingerprints._semantic_fingerprint(_uses_np_linspace)
-    monkeypatch.setattr(implementation, "__defaults__", (4,))
-    assert fingerprints._semantic_fingerprint(_uses_np_linspace) != baseline
-
-
-@pytest.mark.parametrize("check", ["specimen-type", "native-identity", "fingerprint"])
-def test_numpy_dispatcher_type_and_name_do_not_grant_native_identity(
-    check: str,
-) -> None:
-    def dispatcher(*args: object, **kwargs: object) -> tuple[()]:  # noqa: ARG001, PAN001 - Uncalled impostor accepts arbitrary inputs.
-        return ()
-
-    def implementation(*args: object, **kwargs: object) -> int:  # noqa: ARG001, PAN001 - Uncalled impostor accepts arbitrary inputs.
-        return 1
-
-    nominal = array_function_dispatch(dispatcher)(implementation)
-    nominal.__module__ = np.linspace.__module__
-    nominal.__name__ = np.linspace.__name__
-    nominal.__qualname__ = np.linspace.__qualname__
-    if check == "specimen-type":
-        assert type(nominal) is type(np.linspace)
-    elif check == "native-identity":
-        assert fingerprints._native_numeric_callable_kind(nominal) is None
-    else:
-        with pytest.raises(TypeError, match="non-Python __call__"):
-            fingerprints._semantic_fingerprint(nominal)
-
-
 def test_numpy_dispatcher_changed_implementation_code_fails_closed(
     *, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1896,22 +1779,6 @@ def test_numpy_dispatcher_changed_implementation_code_fails_closed(
     fingerprints._semantic_fingerprint(_uses_np_linspace)
     monkeypatch.setattr(implementation, "__code__", replacement.__code__)
     with pytest.raises(TypeError, match="direct object dependency"):
-        fingerprints._semantic_fingerprint(_uses_np_linspace)
-
-
-def test_numpy_dispatcher_unknown_state_fails_closed(
-    *, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(np.linspace, "semantic_offset", 1, raising=False)
-    with pytest.raises(TypeError, match="unknown state"):
-        fingerprints._semantic_fingerprint(_uses_np_linspace)
-
-
-def test_numpy_dispatcher_changed_wrapped_implementation_fails_closed(
-    *, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(np.linspace, "__wrapped__", lambda: 1)
-    with pytest.raises(TypeError, match="changed wrapped implementation"):
         fingerprints._semantic_fingerprint(_uses_np_linspace)
 
 
@@ -2527,9 +2394,11 @@ def test_execution_declaration_enums_have_distinct_durable_fingerprints() -> Non
     assert original != fingerprints._semantic_fingerprint(bounded)
 
 
-def _with_output_annotation(annotation: fingerprints._Annotation):
+def _with_output_annotation(
+    annotation: fingerprints._Annotation,
+) -> Callable[[], None]:
     function = _callable_with_params("value")
-    function.__signature__ = inspect.signature(function).replace(
+    vars(function)["__signature__"] = inspect.signature(function).replace(
         return_annotation=annotation
     )
     return function

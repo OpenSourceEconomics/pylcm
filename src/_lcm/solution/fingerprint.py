@@ -6,10 +6,13 @@ import dataclasses
 import dis
 import functools
 import hashlib
+import importlib.metadata
 import inspect
 import json
 import os
 import pathlib
+import platform
+import re
 import sys
 import types
 import typing
@@ -261,7 +264,6 @@ _JAX_PJIT_FUNCTION_TYPE = type(jnp.exp)
 # arity, or the ufunc's identity element.
 type _UfuncStaticProperty = Callable[..., Array] | bool | int | float | None
 # The qualified name, executable bytes and bound arguments of a JAX ufunc method.
-type _SealedUfuncPartial = tuple[str, types.CodeType, tuple[Callable[..., Array], ...]]
 _JAX_UFUNC_TYPE = type(jnp.maximum)
 _JAX_CUSTOM_JVP_TYPE = jax.custom_jvp
 _JAX_PUBLIC_NUMERIC_MODULES = (
@@ -326,20 +328,6 @@ _JAX_NUMERIC_PJIT_FUNCTIONS = tuple(
         "Mapping[str, _UfuncStaticProperty]", vars(ufunc)["_ufunc__static_props"]
     ).values()
     if type(value) is _JAX_PJIT_FUNCTION_TYPE
-)
-# JAX builds some ufunc methods, such as the `accumulate` of `jnp.maximum`, by
-# partially applying a private implementation. Like the captured pjit functions, they
-# are sealed by package versions, the implementation's identity and its executable
-# bytes, not by walking the private helpers that implementation calls.
-_JAX_UFUNC_PARTIALS = tuple(
-    (value, value.func, value.func.__code__)
-    for ufunc in _JAX_NUMPY_UFUNCS
-    for value in cast(
-        "Mapping[str, _UfuncStaticProperty]", vars(ufunc)["_ufunc__static_props"]
-    ).values()
-    if type(value) is functools.partial
-    and type(value.func) is types.FunctionType
-    and not value.keywords
 )
 _JAX_NUMERIC_SCALAR_TYPES = tuple(
     value
@@ -1475,6 +1463,9 @@ class _SemanticHasher:
             self.frame(label="inspect-signature-python-seal")
             self.visit(value=_PYTHON_IMPLEMENTATION_SEAL)
             return
+        if (seal := _dependency_seal(value)) is not None:
+            self.frame(label="dependency", payload=seal.encode())
+            return
         if self._visit_native_numeric_callable(value):
             return
         if _is_native_numeric_type(value) and isinstance(value, type):
@@ -1750,19 +1741,11 @@ class _SemanticHasher:
                 self.frame(label="user-jax-pjit")
                 self.visit(value=function)
         elif kind == "jax-ufunc":
-            state = vars(value)
-            properties = state.get("_ufunc__static_props")
-            if type(properties) is not dict:
-                raise TypeError("A JAX ufunc has no exact static-properties mapping.")
+            # A captured public ufunc is sealed by its identity and the package
+            # versions; its private method table is JAX's implementation.
             self.frame(
                 label="native-callable-name",
-                payload=str(state.get("__name__", "")).encode(),
-            )
-            self.visit(
-                value={
-                    name: _seal_captured_ufunc_partial(prop)
-                    for name, prop in properties.items()
-                }
+                payload=str(vars(value).get("__name__", "")).encode(),
             )
         elif kind == "numpy-array-function":
             self._visit_numpy_array_function(value)
@@ -2849,26 +2832,67 @@ def _is_captured_jax_pjit(value: _Reachable) -> bool:
     )
 
 
-def _seal_captured_ufunc_partial(
-    value: _UfuncStaticProperty,
-) -> _UfuncStaticProperty | _SealedUfuncPartial:
-    """Replace an unchanged captured partial method by its sealed identity.
+def _dependency_seal(value: _Reachable) -> str | None:
+    """Name a callable, class or module of a dependency, sealed by its version.
 
-    Anything else, a partial changed since import included, is returned as is and
-    hashed through its complete semantics.
+    The fingerprint walks pylcm's and the model's own code only. A function, class
+    or callable object defined in the standard library or in a declared dependency
+    is identified by its qualified name and that package's version; what it does
+    internally is the package's business. A `functools.partial` and a bound method
+    are not stopped here: their target and receiver may be the model's own.
     """
-    for candidate, function, code in _JAX_UFUNC_PARTIALS:
-        if (
-            value is candidate
-            and candidate.func is function
-            and function.__code__ is code
-        ):
-            return (
-                f"{function.__module__}.{function.__qualname__}",
-                code,
-                candidate.args,
-            )
-    return value
+    if isinstance(value, functools.partial) or inspect.ismethod(value):
+        return None
+    if isinstance(value, types.ModuleType):
+        module = value.__name__
+        name = module
+    elif (
+        inspect.isfunction(value) or inspect.isbuiltin(value) or isinstance(value, type)
+    ):
+        module = getattr(value, "__module__", None)
+        name = getattr(value, "__qualname__", getattr(value, "__name__", ""))
+    elif callable(value):
+        # An instance's own `__module__`; a wrapper such as `jax.jit` of a model
+        # function records the model's module there, not the wrapper's.
+        state = getattr(value, "__dict__", None)
+        module = state.get("__module__") if isinstance(state, dict) else None
+        if module is None and type(value) is _JAX_UFUNC_TYPE:
+            module = type(value).__module__
+        name = getattr(value, "__qualname__", getattr(value, "__name__", ""))
+    else:
+        return None
+    if not isinstance(module, str):
+        return None
+    version = _dependency_versions().get(module.partition(".")[0])
+    return None if version is None else f"{version}:{module}.{name}"
+
+
+@functools.cache
+def _dependency_versions() -> Mapping[str, str]:
+    """Map each top-level module of Python or a declared dependency to its version.
+
+    The dependencies are pylcm's own declared requirements, so every package whose
+    code a model reaches is listed in `pyproject.toml`, not merely installed.
+    """
+    declared = {
+        _normalized_distribution(re.split(r"[<>=!~ ;\[]", requirement, maxsplit=1)[0])
+        for requirement in importlib.metadata.requires("pylcm") or ()
+        if "extra ==" not in requirement
+    }
+    python = f"python=={platform.python_version()}"
+    versions = dict.fromkeys(sys.stdlib_module_names, python)
+    for module, distributions in importlib.metadata.packages_distributions().items():
+        for distribution in distributions:
+            if _normalized_distribution(distribution) in declared:
+                versions[module] = (
+                    f"{distribution}=={importlib.metadata.version(distribution)}"
+                )
+    return MappingProxyType(versions)
+
+
+def _normalized_distribution(name: str) -> str:
+    """Normalize a distribution name as packaging does (PEP 503)."""
+    return re.sub(r"[-_.]+", "-", name).lower()
 
 
 def _native_numeric_versions() -> tuple[tuple[str, str], ...]:

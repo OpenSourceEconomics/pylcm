@@ -616,35 +616,9 @@ def _numeric_implementation_sealed(
             return _closed_numeric_defaults(value)
         if native._is_captured_jax_pjit(value):
             return _closed_numeric_defaults(vars(value).get('_fun'))
-        if not any(value is item for item in native._JAX_NUMPY_UFUNCS):
-            return False
-        from .current_api_contract import inspect_source_bound_function
-        raw = inspect.getattr_static(type(value), '__call__', None)
-        if not inspect.isfunction(raw):
-            return False
-        module = sys.modules.get(raw.__module__)
-        filename = vars(module).get('__file__') if isinstance(module, types.ModuleType) else None
-        if (not filename or inspect_source_bound_function(raw, module_name=raw.__module__,
-                qualname=raw.__qualname__, file_sha256=_file_digest(filename)) is None):
-            return False
-        properties = vars(value).get('_ufunc__static_props')
-        if type(properties) is not dict:
-            return False
-        for item in properties.values():
-            if inspect.isfunction(item):
-                if (not native._is_captured_jax_python_function(item)
-                        or not _closed_numeric_defaults(item)):
-                    return False
-            elif type(item) is functools.partial:
-                if native._seal_captured_ufunc_partial(item) is item:
-                    return False
-            elif callable(item):
-                if (not native._is_captured_jax_pjit(item)
-                        or not _closed_numeric_defaults(vars(item).get('_fun'))):
-                    return False
-            elif not any(type(item) is allowed for allowed in (type(None), bool, int, float, str)):
-                return False
-        return True
+        # A captured public JAX ufunc is sealed by its identity and the package
+        # versions; its method table is JAX's implementation.
+        return any(value is item for item in native._JAX_NUMPY_UFUNCS)
     except (ImportError, AttributeError, TypeError, ValueError):
         return False
 
