@@ -635,6 +635,9 @@ def _numeric_implementation_sealed(
                 if (not native._is_captured_jax_python_function(item)
                         or not _closed_numeric_defaults(item)):
                     return False
+            elif type(item) is functools.partial:
+                if native._seal_captured_ufunc_partial(item) is item:
+                    return False
             elif callable(item):
                 if (not native._is_captured_jax_pjit(item)
                         or not _closed_numeric_defaults(vars(item).get('_fun'))):
