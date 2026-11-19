@@ -101,10 +101,10 @@ def test_aca_module_defines_no_gpu_memory_profile() -> None:
     assert profiles == []
 
 
-def test_aca_asv_version_identifies_fixed_forward_simulation_seed() -> None:
-    """ACA timing observations identify the deterministic series."""
-    assert bench_aca_baseline.AcaBaseline.version == "2"
-    assert bench_aca_baseline.AcaBaselineDebugLog.version == "2"
+def test_aca_asv_version_identifies_the_lottery_contracting_series() -> None:
+    """ACA timing observations identify the lottery-contracting series."""
+    assert bench_aca_baseline.AcaBaseline.version == "3"
+    assert bench_aca_baseline.AcaBaselineDebugLog.version == "3"
 
 
 class _BuildStoppedError(Exception):

@@ -45,6 +45,7 @@ from lcm.typing import (
     IntND,
     ScalarInt,
 )
+from lcm_examples import with_lottery_contraction
 
 
 @categorical(ordered=True)
@@ -240,13 +241,15 @@ def _has_policy_support(target_support: BoolND) -> BoolND:
 def get_dissolution_model(
     *,
     execution_config: ExecutionConfig = ExecutionConfig(),  # noqa: B008
+    lottery_contraction: bool = False,
 ) -> Model:
     """Build a three-period collective model with participation and dissolution.
 
     At wage two, neither household action satisfies both participation constraints.
     The participation check reads the couple's participating policy support on
     landing, and routes each stakeholder to their own singleton fallback where it
-    is empty.
+    is empty. `lottery_contraction` is passed to every regime's `GridSearch`
+    solver.
     """
     single_f = Regime(
         states={"wage": _DISSOLUTION_WAGE_GRID},
@@ -344,13 +347,16 @@ def get_dissolution_model(
             "married": Transition(law=married_law, participation=married_participation),
             "married_with_participation": {"married_terminal": 1},
         },
-        regimes={
-            "married": married,
-            "married_with_participation": married_with_participation,
-            "married_terminal": married_terminal,
-            "single_f": single_f,
-            "single_m": single_m,
-        },
+        regimes=with_lottery_contraction(
+            regimes={
+                "married": married,
+                "married_with_participation": married_with_participation,
+                "married_terminal": married_terminal,
+                "single_f": single_f,
+                "single_m": single_m,
+            },
+            lottery_contraction=lottery_contraction,
+        ),
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=DissolutionRegimeId,
         initial_nodes={0: "married"},

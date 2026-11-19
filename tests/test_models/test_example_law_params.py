@@ -13,9 +13,13 @@ import jax.numpy as jnp
 import pytest
 
 from lcm import Model
+from lcm.solvers import GridSearch
 from lcm_examples import (
+    collective_household,
+    collective_regimes,
     epstein_zin,
     iskhakov_et_al_2017,
+    mahler_yum_2024,
     mortality,
     precautionary_savings,
     precautionary_savings_health,
@@ -277,3 +281,25 @@ def test_housing_params_fit_every_horizon(
 def test_ds_pension_law_input_lives_under_its_source_edge() -> None:
     """The pension helper writes one `final_age_alive` for both retired-law cells."""
     assert ds_pension.get_params()["edges"] == {"retired": {"final_age_alive": 4.0}}
+
+
+@pytest.mark.parametrize(
+    "create_model",
+    [
+        mahler_yum_2024.create_model,
+        lambda **kwargs: precautionary_savings.create_model(
+            n_periods=3, shock_type="rouwenhorst", **kwargs
+        ),
+        collective_household.get_model,
+        collective_regimes.get_dissolution_model,
+    ],
+    ids=["mahler_yum", "precautionary_savings", "collective_household", "dissolution"],
+)
+def test_example_regimes_search_grids_with_lottery_contraction(
+    create_model: Callable[..., Model],
+) -> None:
+    """An example built with `lottery_contraction=True` contracts in every regime."""
+    model = create_model(lottery_contraction=True)
+    assert {regime.solver for regime in model.user_regimes.values()} == {
+        GridSearch(lottery_contraction=True)
+    }

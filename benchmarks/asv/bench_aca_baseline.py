@@ -116,7 +116,8 @@ def _build() -> tuple[Model, UserParams, UserInitialConditions]:
     from lcm import DiscreteGrid
 
     model = create_benchmark_model(
-        pref_type_grid=DiscreteGrid(category_class=BenchmarkPrefType)
+        pref_type_grid=DiscreteGrid(category_class=BenchmarkPrefType),
+        **_gpu_mem.lottery_contraction_kwargs(create_benchmark_model),
     )
     edge_periods = model.reachability.solution.periods_for_edge(
         source="retiree_oamc_forced_forcedout",
@@ -139,7 +140,7 @@ class AcaBaseline:
     """aca-baseline simulate with runtime validation and logging off."""
 
     # Benchmark semantics version for deterministic forward simulation.
-    version = "2"
+    version = "3"
     timeout = 14400
     # Simulate logging and validation configuration; `AcaBaselineDebugLog`
     # overrides all three.

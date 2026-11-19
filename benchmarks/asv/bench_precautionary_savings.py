@@ -16,11 +16,15 @@ _WARM_SAMPLES = 3
 def _make_model(*, wealth_grid_type="lin", wealth_n_points=10, consumption_n_points=10):
     from lcm_examples import precautionary_savings
 
-    execution = _gpu_mem.default_budget_execution_kwargs()
     # Historical revisions the paired harness builds have only `get_model`.
+    create_model = getattr(precautionary_savings, "create_model", None)
+    options = {
+        **_gpu_mem.default_budget_execution_kwargs(),
+        **_gpu_mem.lottery_contraction_kwargs(create_model),
+    }
     build = (
-        precautionary_savings.create_model
-        if execution
+        create_model
+        if create_model is not None and options
         else precautionary_savings.get_model
     )
     model = build(
@@ -29,7 +33,7 @@ def _make_model(*, wealth_grid_type="lin", wealth_n_points=10, consumption_n_poi
         wealth_grid_type=wealth_grid_type,
         wealth_n_points=wealth_n_points,
         consumption_n_points=consumption_n_points,
-        **execution,
+        **options,
     )
     params = precautionary_savings.get_params(
         shock_type="rouwenhorst",
@@ -63,7 +67,7 @@ class PrecautionarySavingsSolve:
 
     # Version bumped: setup_cache-based combined producer replaces the
     # separate ASV-native time_execution/peakmem_execution benchmarks.
-    version = "2"
+    version = "3"
     timeout = 600
 
     def _build(self):
@@ -112,7 +116,7 @@ class PrecautionarySavingsSolve:
 class PrecautionarySavingsSimulate:
     """Simulate-only timing/CPU-memory, one shared measured producer."""
 
-    version = "2"
+    version = "3"
     timeout = 600
 
     def _build(self):
@@ -166,12 +170,13 @@ class PrecautionarySavingsSimulate:
 class PrecautionarySavingsSimulateGpuPeakMem(_gpu_mem.GpuPeakMem):
     bench_module = "benchmarks.asv.bench_precautionary_savings"
     bench_class = "PrecautionarySavingsSimulate"
+    version = "2"
 
 
 class PrecautionarySavingsSimulateWithSolve:
     """Combined solve+simulate timing/CPU-memory, one shared measured producer."""
 
-    version = "2"
+    version = "3"
     timeout = 600
 
     def _build(self):
@@ -224,12 +229,13 @@ class PrecautionarySavingsSimulateWithSolve:
 class PrecautionarySavingsSimulateWithSolveGpuPeakMem(_gpu_mem.GpuPeakMem):
     bench_module = "benchmarks.asv.bench_precautionary_savings"
     bench_class = "PrecautionarySavingsSimulateWithSolve"
+    version = "2"
 
 
 class PrecautionarySavingsSimulateWithSolveIrreg:
     """Combined solve+simulate on an irregular grid, one shared measured producer."""
 
-    version = "2"
+    version = "3"
     timeout = 600
 
     def _build(self):
@@ -283,3 +289,4 @@ class PrecautionarySavingsSimulateWithSolveIrreg:
 class PrecautionarySavingsSimulateWithSolveIrregGpuPeakMem(_gpu_mem.GpuPeakMem):
     bench_module = "benchmarks.asv.bench_precautionary_savings"
     bench_class = "PrecautionarySavingsSimulateWithSolveIrreg"
+    version = "2"

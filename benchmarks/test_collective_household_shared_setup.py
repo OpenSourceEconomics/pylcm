@@ -52,7 +52,7 @@ def test_each_class_reads_its_shared_cache(
     ]
     assert instance.track_execution_time(cache) == 2.0
     assert instance.track_peak_cpu_mem(cache) == 42.0
-    assert benchmark_class.version == "2"
+    assert benchmark_class.version == "3"
     assert not hasattr(benchmark_class, "time_execution")
     assert not hasattr(benchmark_class, "peakmem_execution")
 

@@ -490,7 +490,7 @@ def test_gpu_peak_is_captured_before_warm_calls(
     assert instance.track_execution_time(cache) == 2.0
     assert (
         bench_mahler_yum.MahlerYumBudgetedGpu.version
-        == f"5-{bench_mahler_yum.POLICY_LABEL}"
+        == f"6-{bench_mahler_yum.POLICY_LABEL}"
     )
 
 
