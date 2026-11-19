@@ -2,6 +2,10 @@
 
 from tests.regime_finder._callable_records import validate_callable_records
 
+from collections.abc import Callable
+
+import numpy as np
+from numpy.typing import ArrayLike, NDArray
 import pytest
 from copy import deepcopy
 from dataclasses import dataclass
@@ -14,6 +18,7 @@ from pathlib import Path
 import tempfile
 import sys
 from types import SimpleNamespace
+from typing import TypedDict
 from unittest.mock import patch
 
 from _lcm_regime_finder.callable_identity import (
@@ -29,36 +34,40 @@ from _lcm_regime_finder.model_snapshot import (
     source_function,
 )
 
+type Callback = Callable[[int], int]
+type Payload = list[Payload] | tuple[int, int] | NDArray[np.int32]
+type Offset = int | NDArray[np.int32]
 
-def leaf(history):
+
+def leaf(history: int) -> int:
     return history
 
 
-def alternate(history):
+def alternate(history: int) -> int:
     return -history
 
 
-def shared_layer(child):
+def shared_layer(child: Callback) -> Callback:
     left = right = child
 
-    def callback(history):
+    def callback(history: int) -> int:
         return left(history) + right(history)
 
     return callback
 
 
-def callback_with_binding(offset):
-    def callback(history):
+def callback_with_binding(offset: Offset) -> Callable[[int], Offset]:
+    def callback(history: int) -> Offset:
         return history + offset
 
     return callback
 
 
-def recursive_left(history):
+def recursive_left(history: int) -> int:
     return recursive_right(history)
 
 
-def recursive_right(history):
+def recursive_right(history: int) -> int:
     return recursive_left(history)
 
 
@@ -66,11 +75,11 @@ _MUTABLE = [1, 2]
 _NAMESPACE = SimpleNamespace(operation=leaf)
 
 
-def reads_mutable(history):
+def reads_mutable(history: int) -> int:
     return history + _MUTABLE[0]
 
 
-def reads_module_attribute(history):
+def reads_module_attribute(history: int) -> int:
     return _NAMESPACE.operation(history)
 
 
@@ -78,8 +87,13 @@ def reads_module_attribute(history):
 class Receiver:
     coefficient: int
 
-    def callback(self, history):
+    def callback(self, history: int) -> int:
         return history + self.coefficient
+
+
+class FakeRegime(TypedDict):
+    functions: dict[str, Callable[[int], Offset]]
+    states: dict[str, dict[str, int]]
 
 
 class FakeModel:
@@ -92,8 +106,8 @@ class FakeModel:
     reachability = {"nodes": [(0, "original"), (1, "original")]}
     graph = {"initial_nodes": initial_nodes, "reachability": reachability}
 
-    def __init__(self):
-        self.user_regimes = {
+    def __init__(self) -> None:
+        self.user_regimes: dict[str, FakeRegime] = {
             "original": {
                 "functions": {"utility": shared_layer(leaf)},
                 "states": {"history": {"n_points": 10**18}},
@@ -107,15 +121,15 @@ class SharedTables:
     values: list[int]
 
 
-def bound_table_callback(tables, shift):
-    def callback(history):
+def bound_table_callback(tables: SharedTables, shift: int) -> Callback:
+    def callback(history: int) -> int:
         return history + tables.offset + tables.values[0] + shift
 
     return callback
 
 
-def binding_payload_callback(payload):
-    def callback(history):
+def binding_payload_callback(payload: Payload) -> Callback:
+    def callback(history: int) -> int:
         return history if payload is None else history + 1
 
     return callback
@@ -371,7 +385,7 @@ def test_numpy_sqrt_and_clip_are_not_recursive_library_trees(
 
 def test_wrapper_is_not_unwrapped_to_advertised_body() -> None:
     @functools.wraps(leaf)
-    def wrapper(history):
+    def wrapper(history: int) -> int:
         return -history
 
     captured = source_function(wrapper)
@@ -384,11 +398,11 @@ def test_wrapper_is_not_unwrapped_to_advertised_body() -> None:
 
 
 def test_wrapper_defaults_come_from_actual_wrapper() -> None:
-    def original(history=1):
+    def original(history: int = 1) -> int:
         return history
 
     @functools.wraps(original)
-    def wrapper(history=7):
+    def wrapper(history: int = 7) -> int:
         return -history
 
     captured = source_function(wrapper)
@@ -410,7 +424,7 @@ def test_rebound_library_export_does_not_assign_primitive_by_spelling() -> None:
         assert (captured.get("kind")) != ("primitive")
 
         @functools.wraps(original)
-        def wrapper(*arguments, **keywords):
+        def wrapper(*arguments: ArrayLike, **keywords: ArrayLike) -> int:
             return 0
 
         setattr(np, "where", wrapper)
@@ -539,3 +553,32 @@ def test_complete_capture_preserves_production_domain_without_rows() -> None:
     )
     assert validate_callable_records(captured["callable_records"])
     assert (checkpoints[-1]["stage"]) == ("capture_complete")
+
+
+def test_unreadable_authority_file_makes_the_capture_incomplete(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A read error that loses an authority proof is named in the capture report."""
+    import errno
+
+    from lcm_examples import stochastic_volatility
+
+    model = stochastic_volatility.get_model(
+        n_periods=3, wealth_n_points=8, consumption_n_points=8, income_n_points=3
+    )
+    read_bytes = Path.read_bytes
+
+    def failing_read_bytes(path: Path) -> bytes:
+        if path.as_posix().endswith("_lcm/output_roles.py"):
+            raise OSError(errno.EMFILE, "Too many open files")
+        return read_bytes(path)
+
+    monkeypatch.setattr(Path, "read_bytes", failing_read_bytes)
+    report = read_model(model)["capture_report"]
+    assert report["status"] == "INCOMPLETE"
+    named = [
+        item
+        for item in report["obligations"]
+        if "output_roles" in item and "OSError: [Errno 24] Too many open files" in item
+    ]
+    assert named, report["obligations"]
