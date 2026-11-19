@@ -1213,9 +1213,12 @@ class _StreamedArgmaxQOverA:
     canonical reducer publishes, obtained by the exact hard-max stream of
     `build_streaming_max_Q_over_a`. A block covering the whole product maps the
     named grids and is reduced as one block, so its value can differ from a
-    narrower fold's by rounding, never its rule. An all-infeasible cell
-    publishes identity -1, as the dense reducer does; no action grid decodes it,
-    so a caller refuses the cell before reading its action.
+    narrower fold's by rounding. The identity is therefore not width-invariant
+    either: on a near-tie, that rounding can make the two widths name different
+    actions. The tie, NaN and empty-set rules are the same at every width. An
+    all-infeasible cell publishes identity -1, as the dense reducer does; no
+    action grid decodes it, so a caller refuses the cell before reading its
+    action.
     """
 
     __name__: ClassVar[str] = "streamed_argmax_and_max_Q_over_a"

@@ -649,7 +649,7 @@ def test_full_width_decision_publishes_the_narrow_streams_value_bits(
     ],
     ids=["tied", "feasible-nan", "nothing-feasible"],
 )
-def test_full_width_decision_identity_is_not_trivially_shared(
+def test_full_width_decision_publishes_the_identity_each_rule_names(
     *, Q_and_F: Callable[..., PytreeValue], wealth: float, expected: int
 ) -> None:
     """The tie, NaN and empty cases each publish the identity their rule names."""
