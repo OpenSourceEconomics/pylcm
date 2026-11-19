@@ -306,9 +306,9 @@ class QueryNode:
     available, and whether it is at each of them.
 
     The plan's rows then cross that group's available nodes and its first
-    unavailable one with every node of the other groups. At a row of that one
-    node the group's factors hold the cell's mass of every unavailable node, and
-    its landings count once per such node present.
+    unavailable one with every node of the other groups. A row of that one node
+    weights its value by each unavailable node's factors of the group in turn,
+    and its landings count once per such node present.
     """
     outside_value: OutsideValueRead | None = None
     """Proof that this outside read lands on the destination's stored nodes.

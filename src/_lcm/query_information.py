@@ -38,7 +38,11 @@ from _lcm.policy_queries import (
     QueryNode,
     StayTable,
 )
-from _lcm.probability import exact_product, is_represented_zero
+from _lcm.probability import (
+    exact_product,
+    is_represented_zero,
+    scaled_exact_product,
+)
 from _lcm.shock_registry import ShockBinding
 from _lcm.simulation.random_address import inverse_cdf_index
 from _lcm.typing import PytreeValue, QAndFKwargs
@@ -168,7 +172,9 @@ def _draw(*, weights: FloatND, uniform: FloatND) -> tuple[IntND, FloatND]:
     """
     # ponytail: one comparison per node and draw; search the cumulative masses
     # if a group's node count ever dominates.
-    mass = exact_product(weights)
+    # The masses share one power of two, which keeps them normal whatever their
+    # size and changes neither their ratios nor which of them are zero.
+    mass, _ = scaled_exact_product(weights)
     total = jnp.sum(mass)
     row = inverse_cdf_index(
         probabilities=mass / jnp.where(total > 0, total, 1.0),
@@ -197,7 +203,9 @@ def _draw_available(
         weights=jnp.concatenate([weights, available[None].astype(weights.dtype)]),
         uniform=uniform,
     )
-    rest = exact_product(weights) * ~available
+    rest, _ = scaled_exact_product(
+        jnp.concatenate([weights, (~available)[None].astype(weights.dtype)])
+    )
     node = jnp.argmax(rest).astype(row.dtype)
     mass = rest[node]
     rest_scale = jnp.where(
@@ -1237,16 +1245,22 @@ class InformationQueryCell:
     evaluating its destination's problem; None for every other query."""
 
     def __post_init__(self) -> None:
-        """Refuse kept groups on a query whose rows are not its plan's product."""
+        """Refuse kept groups on a query whose rows are not its plan's product.
+
+        A plan whose unavailable nodes collapse into one is not, and its standing
+        rows are weighted by each unavailable node only on the integrating route.
+        """
         if self.kept and (
             self.node.ancestors
             or self.node.sample is not None
             or self.node.observation_sources
             or _plan(node=self.node) is None
+            or self.node.available_nodes is not None
         ):
             raise ValueError(
                 f"Query {self.name!r} keeps plan groups as axes, which needs a plan "
-                "and no ancestors, draws or observation axes."
+                "and no ancestors, draws, observation axes or collapsed unavailable "
+                "nodes."
             )
 
     def _size(self, *, name: str, node: QueryNode) -> int:
@@ -1551,17 +1565,19 @@ class InformationQueryCell:
         source: SourceStates,
         frames: Frames,
         guard: BoolND,
-    ) -> tuple[FloatND, IntND]:
-        """Weight this query's rows of its one unavailable node by all such nodes.
+    ) -> tuple[FloatND, np.ndarray]:
+        """Factor each row of this query's one unavailable node as every such node.
 
-        The collapsed group's law runs once over all its nodes at the cell. At
-        each row of the node standing for the unavailable ones (`_standing_rows`)
-        the group's node weight becomes their summed mass and its categorical
-        factors one; the other factors stay.
+        The collapsed group's law runs once over all its nodes at the cell. Each
+        row of the node standing for the unavailable ones (`_standing_rows`) keeps
+        the other groups' factors and takes, once per unavailable node, that
+        node's factors of the group: the factors the full enumeration gives the
+        row of that node. No mass is summed before it meets the value, so a mass
+        below the normal range keeps its share and its rows their count.
 
         Returns:
-            The factors, and per row the number of present unavailable nodes it
-            stands for: one at every other row.
+            The factors of the standing rows, one trailing entry per unavailable
+            node, and the standing rows.
 
         """
         node = self.node
@@ -1594,18 +1610,9 @@ class InformationQueryCell:
             _standing_rows(node=node), math.prod(node.observation_counts)
         )
         columns = np.flatnonzero(standing)
-        stand_in = (
-            jnp.ones(rows.size, factors.dtype)
-            .at[0]
-            .set(jnp.sum(exact_product(rest)).astype(factors.dtype))
-        )
-        present = sum_counts(counts=jnp.all(~is_represented_zero(rest), axis=0))
-        return (
-            factors.at[np.ix_(rows, columns)].set(
-                jnp.broadcast_to(stand_in[:, None], (rows.size, columns.size))
-            ),
-            jnp.where(jnp.asarray(standing), present, 1).astype(jnp.int32),
-        )
+        at_standing = factors[:, columns, None]
+        stack = jnp.broadcast_to(at_standing, (*at_standing.shape[:2], rest.shape[1]))
+        return stack.at[rows].set(rest[:, None, :].astype(factors.dtype)), columns
 
     def _realise(
         self,
@@ -2283,9 +2290,9 @@ class InformationQueryCell:
                 frames=frames,
                 guard=guard,
             )
-            stands_for = None
+            unavailable = None
             if self.node.available_nodes is not None:
-                factors, stands_for = self._collapse_unavailable(
+                unavailable = self._collapse_unavailable(
                     factors=factors, source=source, frames=frames, guard=guard
                 )
 
@@ -2354,16 +2361,19 @@ class InformationQueryCell:
                 copies = jnp.all(~is_represented_zero(factors), axis=0).astype(
                     jnp.int32
                 )
-                if stands_for is not None:
-                    copies = copies * stands_for
             else:
                 factors, copies = representative_factors(
                     factors=factors, columns=columns, representatives=pinned[0]
                 )
                 actions = actions[pinned[1]]
             per_row = factors.reshape((*factors.shape, *((1,) * (values.ndim - 1))))
+            terms = factored_weighted_term(factors=per_row, values=values)
+            if unavailable is not None:
+                terms, copies = _with_unavailable_nodes(
+                    terms=terms, copies=copies, values=values, unavailable=unavailable
+                )
             return (
-                jnp.sum(factored_weighted_term(factors=per_row, values=values), axis=0),
+                jnp.sum(terms, axis=0),
                 actions,
                 jnp.all((copies == 0) | support),
                 jnp.all(frame.valid) & jnp.all(valid),
@@ -2445,6 +2455,35 @@ def _kept_rows(*, plan: CurrentIIDPlan, kept: tuple[int, ...]) -> np.ndarray:
     sizes = tuple(int(plan.bindings[column][2].weights.size) for column in kept)
     codes = np.ravel_multi_index(tuple(indices[:, list(kept)].T), sizes)
     return np.argsort(codes, kind="stable").reshape(math.prod(sizes), -1)
+
+
+def _with_unavailable_nodes(
+    *,
+    terms: FloatND,
+    copies: IntND,
+    values: FloatND,
+    unavailable: tuple[FloatND, np.ndarray],
+) -> tuple[FloatND, IntND]:
+    """Each standing row's weighted term and copies, summed over the unavailable
+    nodes it stands for (`InformationQueryCell._collapse_unavailable`).
+
+    Each node's term is the full enumeration's term of its row, so the row's
+    value meets each node's factors as they are, and the row counts once per
+    node present. The weighting sees one row per standing row and node.
+    """
+    stack, rows = unavailable
+    nodes = stack.shape[2]
+    per_node = stack.reshape((stack.shape[0], -1, *((1,) * (values.ndim - 1))))
+    weighted = factored_weighted_term(
+        factors=per_node, values=jnp.repeat(values[rows], nodes, axis=0)
+    )
+    present = jnp.all(~is_represented_zero(stack), axis=0)
+    return (
+        terms.at[rows].set(
+            jnp.sum(weighted.reshape((rows.size, nodes, *values.shape[1:])), axis=1)
+        ),
+        copies.at[rows].set(sum_counts(counts=present, axis=1)),
+    )
 
 
 def _standing_rows(*, node: QueryNode) -> np.ndarray:
