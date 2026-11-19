@@ -191,7 +191,7 @@ def test_chunk_stage_devices_must_match_actual_executable_placement() -> None:
     def actual_body(*, values: jax.Array) -> jax.Array:
         return values + 1
 
-    placement = jax.sharding.SingleDeviceSharding(jax.devices()[3])
+    placement = jax.sharding.make_single_device_sharding(jax.devices()[3])
     abstract = jax.ShapeDtypeStruct((4,), np.dtype(np.int32), sharding=placement)
     compiled = jax.jit(actual_body).lower(values=abstract).compile()
     memory = compiler_memory_reservation(compiled=compiled, widths={})

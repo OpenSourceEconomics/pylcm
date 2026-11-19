@@ -91,7 +91,7 @@ from _lcm.simulation.residency import measure_buffer_footprint
 from tests.simulation.test_process_grid_entry_admission import _COMPOSITE_CASES
 
 target = jax.devices()[2]
-required = jax.sharding.SingleDeviceSharding(target)
+required = jax.sharding.make_single_device_sharding(target)
 for spec, parameters in _COMPOSITE_CASES[1:]:
     runtime = {
         name: jax.numpy.asarray(value) for name, value in parameters.items()
@@ -182,7 +182,7 @@ def test_runtime_process_support_matches_eager_bytes_with_fixed_or_runtime_param
         _owner(parameters=runtime)(
             spec=resolved_spec,
             parameters=runtime,
-            required=jax.sharding.SingleDeviceSharding(jax.devices()[0]),
+            required=jax.sharding.make_single_device_sharding(jax.devices()[0]),
         )
     )
 
@@ -232,7 +232,7 @@ def test_integer_written_process_support_preserves_eager_bytes(
         _owner(parameters=placed_runtime)(
             spec=spec,
             parameters=placed_runtime,
-            required=jax.sharding.SingleDeviceSharding(jax.devices()[0]),
+            required=jax.sharding.make_single_device_sharding(jax.devices()[0]),
         )
     )
 
@@ -438,7 +438,7 @@ def test_staged_process_graph_is_preflighted_before_dispatch(
             parameters={
                 name: jax.numpy.asarray(value) for name, value in parameters.items()
             },
-            required=jax.sharding.SingleDeviceSharding(jax.devices()[0]),
+            required=jax.sharding.make_single_device_sharding(jax.devices()[0]),
         )
 
     assert dispatched == []
@@ -502,7 +502,7 @@ def test_nested_process_graph_rewiring_is_refused_before_dispatch(
             parameters={
                 name: jax.numpy.asarray(value) for name, value in parameters.items()
             },
-            required=jax.sharding.SingleDeviceSharding(jax.devices()[0]),
+            required=jax.sharding.make_single_device_sharding(jax.devices()[0]),
         )
     except ExecutionPlanningError as caught:
         error = caught
@@ -564,7 +564,7 @@ def test_process_stages_retain_intermediates_and_place_host_constants(
     actual = owner(
         spec=spec,
         parameters=runtime,
-        required=jax.sharding.SingleDeviceSharding(jax.devices()[0]),
+        required=jax.sharding.make_single_device_sharding(jax.devices()[0]),
     )
     eager = np.asarray(spec.compute_gridpoints(**runtime))
 
@@ -616,7 +616,7 @@ def test_refused_process_stage_releases_all_intermediate_roots(
         owner(
             spec=spec,
             parameters=runtime,
-            required=jax.sharding.SingleDeviceSharding(jax.devices()[0]),
+            required=jax.sharding.make_single_device_sharding(jax.devices()[0]),
         )
 
     assert (attempts, observed_prior_ownership, owner.temporary_roots) == (
@@ -635,7 +635,7 @@ def test_given_node_supports_preserve_distinct_axes(*, runtime: bool) -> None:
         else {}
     )
     owner = _owner(parameters=parameters)
-    required = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    required = jax.sharding.make_single_device_sharding(jax.devices()[0])
     for nodes in ((-1.0, 0.0, 1.0), (-2.0, 0.0, 2.0)):
         process = TauchenAR1Process.on_nodes(
             nodes=np.array(nodes),
@@ -653,7 +653,7 @@ def test_given_node_support_refuses_insufficient_placement_budget() -> None:
     process = TauchenAR1Process.on_nodes(
         nodes=np.array([-1.0, 0.0, 1.0]), rho=1.0, sigma=0.1
     )
-    required = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    required = jax.sharding.make_single_device_sharding(jax.devices()[0])
     with pytest.raises(ExecutionPlanningError):
         owner(spec=process, parameters={}, required=required)
     assert not owner.grids
@@ -694,7 +694,7 @@ def test_given_node_supports_keep_signed_zero_at_every_reuse_layer(
         if cache_boundary == "binding"
         else {"rho": jax.numpy.array(first_params["rho"], copy=True)}
     )
-    required = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    required = jax.sharding.make_single_device_sharding(jax.devices()[0])
     owners = [_owner(parameters=(first_params, second_params))]
     if cache_boundary == "trace":
         owners.append(_owner(parameters=(first_params, second_params)))
@@ -736,7 +736,7 @@ def test_given_node_trace_identity_includes_active_float_dtype() -> None:
                 actual = owner(
                     spec=process,
                     parameters=params,
-                    required=jax.sharding.SingleDeviceSharding(jax.devices()[0]),
+                    required=jax.sharding.make_single_device_sharding(jax.devices()[0]),
                 )
                 observed.append(
                     _array_identity(actual) == _array_identity(jax.numpy.asarray(nodes))

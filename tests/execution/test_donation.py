@@ -69,7 +69,7 @@ def _shardings(
     *, kind: ValueTransferKind
 ) -> tuple[jax.sharding.Sharding, jax.sharding.Sharding]:
     """Return stored and source layouts a transfer of `kind` classifies as."""
-    source_sharding = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    source_sharding = jax.sharding.make_single_device_sharding(jax.devices()[0])
     if kind is ValueTransferKind.ALIGNED_LOCAL:
         return source_sharding, source_sharding
     mesh = jax.sharding.Mesh(np.asarray(jax.devices()), ("device",))

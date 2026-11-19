@@ -278,8 +278,8 @@ def _describe_jax(
         )
     if isinstance(value, jax.sharding.Sharding):
         assert isinstance(
-            value, (jax.sharding.NamedSharding, jax.sharding.SingleDeviceSharding)
-        )
+            value, jax.sharding.NamedSharding
+        ) or jax.sharding.is_single_device_sharding(value)
         mesh = getattr(value, "mesh", None)
         return (
             type(value).__qualname__,

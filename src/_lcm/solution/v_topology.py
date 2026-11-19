@@ -84,7 +84,7 @@ def placed_V_sharding(
     """
     if sharding_plan is not None:
         return sharding_plan.V_arr_sharding(state_order)
-    return jax.sharding.SingleDeviceSharding(devices[0])
+    return jax.sharding.make_single_device_sharding(devices[0])
 
 
 def _get_regime_V_shapes_and_shardings(

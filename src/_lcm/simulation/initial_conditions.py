@@ -974,7 +974,7 @@ def subject_array_sharding(
         regime.solution.sharded_state_names for regime in regimes.values()
     )
     if not distributes_any:
-        return jax.sharding.SingleDeviceSharding(devices[0])
+        return jax.sharding.make_single_device_sharding(devices[0])
     if n_subjects % len(devices) != 0:
         # Defensive: `Model.simulate` rounds the chunk size up to a device
         # multiple and pads the population to a chunk multiple, so every

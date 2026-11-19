@@ -31,7 +31,7 @@ _SCRIPT = textwrap.dedent(
     devices = jax.devices()
     mesh = jax.sharding.Mesh(devices, ("kind",))
     sharded = jax.NamedSharding(mesh, jax.P("kind", None))
-    single = jax.sharding.SingleDeviceSharding(devices[0])
+    single = jax.sharding.make_single_device_sharding(devices[0])
 
     committed_single = jax.device_put(jnp.zeros((4, 3)), single)
     committed_sharded = jax.device_put(jnp.zeros((4, 3)), sharded)

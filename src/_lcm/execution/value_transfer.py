@@ -1493,7 +1493,7 @@ def _selection_sharding(
     axis. Selecting along a partitioned axis would leave the block on only the
     devices holding it; that layout is not planned here and is refused.
     """
-    if isinstance(layout, jax.sharding.SingleDeviceSharding):
+    if jax.sharding.is_single_device_sharding(layout):
         return layout
     if not isinstance(layout, jax.NamedSharding):
         msg = (

@@ -1116,7 +1116,9 @@ def _profile_outer_storage(  # noqa: C901, PLR0912
     """
     devices = inventory.runtime.subject_devices
     scalar = jax.ShapeDtypeStruct(
-        (), np.dtype(np.int32), sharding=jax.sharding.SingleDeviceSharding(devices[0])
+        (),
+        np.dtype(np.int32),
+        sharding=jax.sharding.make_single_device_sharding(devices[0]),
     )
     population_columns = {}
     padded_inputs: dict[jax.Device, int] = {}
@@ -1197,7 +1199,8 @@ def _profile_outer_storage(  # noqa: C901, PLR0912
                 local = cast(
                     "jax.ShapeDtypeStruct",
                     abstract_tree(
-                        tree=leaf, sharding=jax.sharding.SingleDeviceSharding(host)
+                        tree=leaf,
+                        sharding=jax.sharding.make_single_device_sharding(host),
                     ),
                 )
                 leaf = final_inventory.operation(
@@ -1215,7 +1218,9 @@ def _profile_outer_storage(  # noqa: C901, PLR0912
                         "rows": jax.ShapeDtypeStruct(
                             (original_population,),
                             np.dtype(np.int32),
-                            sharding=jax.sharding.SingleDeviceSharding(executing[0]),
+                            sharding=jax.sharding.make_single_device_sharding(
+                                executing[0]
+                            ),
                         ),
                     },
                     subject_arg_names=("array",),

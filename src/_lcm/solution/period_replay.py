@@ -208,7 +208,7 @@ def _load_capture_payload(*, directory: Path) -> PeriodCapturePayload:
         # allocated for it.
         kernel_kwargs = payload["kernel_kwargs"].copy()
         held = kernel_kwargs["next_regime_to_V_arr"]
-        default = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+        default = jax.sharding.make_single_device_sharding(jax.devices()[0])
         kernel_kwargs["next_regime_to_V_arr"] = MappingProxyType(
             {
                 name: held[name]

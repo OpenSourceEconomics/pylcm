@@ -258,7 +258,7 @@ def test_normal_support_matches_eager_bytes_across_generated_parameters(
     ]
     spec = NormalIIDProcess(n_points=n_points, gauss_hermite=False)
     owner = _owner(parameters=tuple(parameters))
-    required = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    required = jax.sharding.make_single_device_sharding(jax.devices()[0])
     for operands in parameters:
         eager = np.asarray(spec.compute_gridpoints(**operands))
         actual = np.asarray(owner(spec=spec, parameters=operands, required=required))
@@ -281,7 +281,7 @@ def test_normal_fixed_scale_preserves_weak_dtype_promotion(fixed: float) -> None
         _owner(parameters=parameters)(
             spec=spec,
             parameters=parameters,
-            required=jax.sharding.SingleDeviceSharding(jax.devices()[0]),
+            required=jax.sharding.make_single_device_sharding(jax.devices()[0]),
         )
     )
     assert eager.dtype == np.dtype("float32")
@@ -294,7 +294,7 @@ def test_normal_equal_fixed_scalars_keep_distinct_binding_provenance() -> None:
     keeps its own."""
     parameters = {"sigma": jnp.asarray(0.1)}
     owner = _owner(parameters=parameters)
-    required = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    required = jax.sharding.make_single_device_sharding(jax.devices()[0])
     for mu, n_std in ((0.0, 3), (0.0, 3.0), (-0.0, 3.0)):
         spec = NormalIIDProcess(n_points=5, gauss_hermite=False, mu=mu, n_std=n_std)
         actual = np.asarray(owner(spec=spec, parameters=parameters, required=required))
@@ -372,7 +372,7 @@ def test_normal_stages_retain_operands_and_prior_outputs(
     result = owner(
         spec=NormalIIDProcess(n_points=5, gauss_hermite=False),
         parameters=parameters,
-        required=jax.sharding.SingleDeviceSharding(jax.devices()[0]),
+        required=jax.sharding.make_single_device_sharding(jax.devices()[0]),
     )
     assert len(produced) == 5
     np.testing.assert_array_equal(
@@ -409,7 +409,7 @@ def test_normal_refused_stage_releases_temporary_owners(
         owner(
             spec=NormalIIDProcess(n_points=5, gauss_hermite=False),
             parameters=parameters,
-            required=jax.sharding.SingleDeviceSharding(jax.devices()[0]),
+            required=jax.sharding.make_single_device_sharding(jax.devices()[0]),
         )
     assert stages == ["multiply", "subtract", "multiply", "add"]
     assert not owner.temporary_roots
@@ -426,7 +426,7 @@ def test_normal_support_reuses_sealed_bindings_and_rejects_changed_operands() ->
     }
     owner = _owner(parameters=parameters)
     spec = NormalIIDProcess(n_points=5, gauss_hermite=False)
-    required = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    required = jax.sharding.make_single_device_sharding(jax.devices()[0])
     result = owner(spec=spec, parameters=parameters, required=required)
     owner.seal()
     assert owner(spec=spec, parameters=parameters, required=required) is result

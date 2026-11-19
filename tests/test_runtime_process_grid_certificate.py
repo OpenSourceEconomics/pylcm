@@ -593,7 +593,7 @@ def test_runtime_process_admission_contract_is_complete() -> None:
         (
             "SimulationProcessGrids._produce",
             "required=required",
-            "required=jax.sharding.SingleDeviceSharding(jax.devices()[0])",
+            "required=jax.sharding.make_single_device_sharding(jax.devices()[0])",
             "every process stage must emit on the selected devices",
         ),
         (
