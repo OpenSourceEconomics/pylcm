@@ -14,6 +14,10 @@ artifact per lane and this module refuses to let the upload proceed unless every
 recorded lane is present and non-empty. An unexpected extra artifact is also an
 error: it means a lane was added without being recorded, so nobody decided
 whether its coverage belongs in the published number.
+
+`--not-run` names a recorded lane that legitimately ran no tests this run, such
+as the source-only certificate campaign on a pull request that cannot change its
+verdict. That lane must then deliver nothing: an artifact from it is unrecorded.
 """
 
 from __future__ import annotations
@@ -54,9 +58,20 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Check a downloaded coverage-artifact tree against the manifest."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("root", type=Path)
+    parser.add_argument(
+        "--not-run",
+        action="append",
+        default=[],
+        help="A recorded contributor whose lane ran no tests this run.",
+    )
     args = parser.parse_args(argv)
 
-    expected = tuple(ci_workloads.coverage_contributors())
+    recorded = tuple(ci_workloads.coverage_contributors())
+    unknown = sorted(set(args.not_run) - set(recorded))
+    if unknown:
+        sys.stderr.write(f"--not-run names unrecorded contributors: {unknown}\n")
+        return 1
+    expected = tuple(name for name in recorded if name not in args.not_run)
     if not args.root.is_dir():
         sys.stderr.write(f"no coverage artifact directory at {args.root}\n")
         return 1
