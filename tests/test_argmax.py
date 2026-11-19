@@ -31,7 +31,7 @@ from tests.solution._reduced_maximum_probe import (
 jitted_argmax = jit(argmax_and_max, static_argnames=["axis", "initial"])
 
 
-def test_argmax_1d_with_mask():
+def test_argmax_1d_with_mask() -> None:
     a = jnp.arange(10.0)
     mask = jnp.array([1, 0, 0, 1, 1, 0, 0, 0, 0, 0], dtype=bool)
     _argmax, _max = jitted_argmax(a=a, where=mask, initial=-1.0)
@@ -39,7 +39,7 @@ def test_argmax_1d_with_mask():
     assert _max == 4
 
 
-def test_argmax_2d_with_mask():
+def test_argmax_2d_with_mask() -> None:
     a = jnp.arange(10.0).reshape(2, 5)
     mask = jnp.array([1, 0, 0, 1, 1, 0, 0, 0, 0, 0], dtype=bool).reshape(a.shape)
 
@@ -56,14 +56,14 @@ def test_argmax_2d_with_mask():
     assert_array_equal(_max, jnp.array([4, -1]))
 
 
-def test_argmax_1d_no_mask():
+def test_argmax_1d_no_mask() -> None:
     a = jnp.arange(10.0)
     _argmax, _max = jitted_argmax(a=a)
     assert _argmax == 9
     assert _max == 9
 
 
-def test_argmax_2d_no_mask():
+def test_argmax_2d_no_mask() -> None:
     a = jnp.arange(10.0).reshape(2, 5)
 
     _argmax, _max = jitted_argmax(a=a, axis=None)
@@ -83,7 +83,7 @@ def test_argmax_2d_no_mask():
     assert _max == 9
 
 
-def test_argmax_3d_no_mask():
+def test_argmax_3d_no_mask() -> None:
     a = jnp.arange(24.0).reshape(2, 3, 4)
 
     _argmax, _max = jitted_argmax(a=a, axis=None)
@@ -118,26 +118,26 @@ def test_argmax_3d_no_mask():
     assert_array_equal(_max, jnp.array([11, 23]))
 
 
-def test_argmax_with_ties():
+def test_argmax_with_ties() -> None:
     # If multiple maxima exist, argmax will select the first index.
     a = jnp.zeros((2, 2, 2))
     _argmax, _ = jitted_argmax(a=a, axis=(1, 2))
     assert_array_equal(_argmax, jnp.array([0, 0]))
 
 
-def test_move_axes_to_back_1d():
+def test_move_axes_to_back_1d() -> None:
     a = jnp.arange(4, dtype=jnp.int32)
     got = _move_axes_to_back(a=a, axes=(0,))
     assert_array_equal(got, a)
 
 
-def test_move_axes_to_back_2d():
+def test_move_axes_to_back_2d() -> None:
     a = jnp.arange(4, dtype=jnp.int32).reshape(2, 2)
     got = _move_axes_to_back(a=a, axes=(0,))
     assert_array_equal(got, a.transpose(1, 0))
 
 
-def test_move_axes_to_back_3d():
+def test_move_axes_to_back_3d() -> None:
     # 2 dimensions in back
     a = jnp.arange(8, dtype=jnp.int32).reshape(2, 2, 2)
     got = _move_axes_to_back(a=a, axes=(0, 1))
@@ -149,13 +149,13 @@ def test_move_axes_to_back_3d():
     assert_array_equal(got, a.transpose(0, 2, 1))
 
 
-def test_flatten_last_n_axes_1d():
+def test_flatten_last_n_axes_1d() -> None:
     a = jnp.arange(4, dtype=jnp.int32)
     got = _flatten_last_n_axes(a=a, n=1)
     assert_array_equal(got, a)
 
 
-def test_flatten_last_n_axes_2d():
+def test_flatten_last_n_axes_2d() -> None:
     a = jnp.arange(4, dtype=jnp.int32).reshape(2, 2)
 
     got = _flatten_last_n_axes(a=a, n=1)
@@ -165,7 +165,7 @@ def test_flatten_last_n_axes_2d():
     assert_array_equal(got, a.reshape(4))
 
 
-def test_flatten_last_n_axes_3d():
+def test_flatten_last_n_axes_3d() -> None:
     a = jnp.arange(8, dtype=jnp.int32).reshape(2, 2, 2)
 
     got = _flatten_last_n_axes(a=a, n=1)
@@ -178,7 +178,9 @@ def test_flatten_last_n_axes_3d():
     assert_array_equal(got, a.reshape(8))
 
 
-def test_argmax_and_max_identity_is_not_matched_against_a_separately_reduced_max():
+def test_argmax_and_max_identity_is_not_matched_against_a_separately_reduced_max() -> (
+    None
+):
     """The argmax and the max it reports come out of one reduction."""
     a = jnp.array([[-1650.6389, -14.865698, -14.989168, -7401.933]])
     where = jnp.array([[True, True, True, False]])
