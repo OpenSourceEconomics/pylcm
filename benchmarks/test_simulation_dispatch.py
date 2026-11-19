@@ -52,7 +52,8 @@ def test_setup_cache_measures_each_combination_exactly_once(
     models = {name: _FakeModel(n_iterations=7) for name in dispatch.WITNESS_NAMES}
 
     def _fake_witness_builder(name: str):
-        def _build():
+        def _build(*, lottery_contraction: bool):
+            assert lottery_contraction
             return models[name], {"p": 1}, {"c": 2}
 
         return _build
