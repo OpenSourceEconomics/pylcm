@@ -3206,7 +3206,7 @@ class DiskPolicyEntry(_LazyEntry):
                 leaf.
 
         """
-        cpu = jax.sharding.SingleDeviceSharding(
+        cpu = jax.sharding.make_single_device_sharding(
             jax.devices("cpu")[0], memory_kind="device"
         )
         return jax.tree_util.tree_unflatten(

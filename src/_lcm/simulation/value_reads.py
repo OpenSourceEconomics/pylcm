@@ -323,7 +323,7 @@ def _host_replay_sharding(*, devices: tuple[jax.Device, ...]) -> jax.sharding.Sh
     if not devices:
         raise ValueError("Simulation value placement requires at least one device.")
     if len(devices) == 1:
-        return jax.sharding.SingleDeviceSharding(devices[0])
+        return jax.sharding.make_single_device_sharding(devices[0])
     mesh = jax.make_mesh(
         (len(devices),), ("X",), (jax.sharding.AxisType.Auto,), devices=devices
     )

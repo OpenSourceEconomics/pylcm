@@ -733,7 +733,7 @@ def test_dcegm_addresses_each_leaf_inside_the_rolling_mapping(
 def test_an_egm_node_declares_exactly_the_continuation_leaves_it_reads() -> None:
     """An EGM node's declared reads name exactly its own continuation leaves."""
     program = _egm_program()
-    sharding = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    sharding = jax.sharding.make_single_device_sharding(jax.devices()[0])
     programs = {
         "main": _ProgramExecutionMetadata(
             requirements=program.requirements,

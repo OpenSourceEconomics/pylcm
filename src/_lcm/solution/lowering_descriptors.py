@@ -70,8 +70,9 @@ def _describe_jax(
             tuple(describe_lowering_value(child) for child in value.children()),
         )
     if isinstance(value, jax.sharding.Sharding):
-        if not isinstance(
-            value, (jax.sharding.NamedSharding, jax.sharding.SingleDeviceSharding)
+        if not (
+            isinstance(value, jax.sharding.NamedSharding)
+            or jax.sharding.is_single_device_sharding(value)
         ):
             raise ExecutionPlanningError("Unsupported lowering sharding descriptor.")
         mesh = getattr(value, "mesh", None)

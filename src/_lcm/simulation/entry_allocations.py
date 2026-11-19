@@ -393,7 +393,7 @@ class SimulationEntryAllocations:
                 result = self.process_grid_resolver(
                     spec=spec,
                     parameters={},
-                    required=jax.sharding.SingleDeviceSharding(self.devices[0]),
+                    required=jax.sharding.make_single_device_sharding(self.devices[0]),
                 )
         else:
             result = materialize_original_grid(
@@ -429,7 +429,7 @@ class SimulationEntryAllocations:
         recipe = prepare_validation_recipe(function=function, arguments=arguments)
         environment = list(recipe.initial_values)
         self._validation_stage_roots = tuple(environment)
-        required = jax.sharding.SingleDeviceSharding(self.devices[0])
+        required = jax.sharding.make_single_device_sharding(self.devices[0])
         try:
             for stage, operands, outputs in recipe.stages:
                 result = run_eager_stage(

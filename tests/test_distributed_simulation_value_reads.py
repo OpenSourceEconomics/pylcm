@@ -481,7 +481,7 @@ def test_a_copy_that_reuses_an_original_shard_is_never_explicitly_deleted() -> N
     """A wider replica can own fresh shards while still aliasing its stored source."""
     devices = jax.devices()
     stored = jax.device_put(
-        jnp.arange(8), jax.sharding.SingleDeviceSharding(devices[1])
+        jnp.arange(8), jax.sharding.make_single_device_sharding(devices[1])
     )
     read = _read(unit="alive")
     owner = PeriodSimulationReads(

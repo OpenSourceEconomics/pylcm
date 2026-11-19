@@ -565,7 +565,7 @@ def test_period_transfer_scratch_counts_pending_copy_occurrences(
     other_layout = dataclasses.replace(
         transfer,
         source=dataclasses.replace(transfer.source, argument="other", path=()),
-        source_sharding=jax.sharding.SingleDeviceSharding(jax.devices()[0]),
+        source_sharding=jax.sharding.make_single_device_sharding(jax.devices()[0]),
         kind=ValueTransferKind.COPY_TO_SOURCE_LAYOUT,
     )
     aligned = dataclasses.replace(

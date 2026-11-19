@@ -1007,7 +1007,10 @@ _EAGER_PLACEMENT_MUTATIONS = {
     "eager_internal:producer_layout_replaced": (
         "src/_lcm/execution/eager_core.py",
         "                sharding=value.sharding,",
-        "                sharding=jax.sharding.SingleDeviceSharding(jax.devices()[0]),",
+        (
+            "                sharding="
+            "jax.sharding.make_single_device_sharding(jax.devices()[0]),"
+        ),
     ),
     "eager_internal:selected_templates_omitted": (
         "src/_lcm/solution/backward_induction.py",

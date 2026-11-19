@@ -186,7 +186,7 @@ def test_abstract_host_operands_cannot_bypass_placement_guards(
 ) -> None:
     """Preparation refuses a leaf that physical dispatch would still need to place."""
     device = jax.devices()[0]
-    sharding = jax.sharding.SingleDeviceSharding(device)
+    sharding = jax.sharding.make_single_device_sharding(device)
     value = (
         jnp.ones(3, dtype=jnp.int32)
         if invalid == "concrete"
@@ -288,7 +288,7 @@ def test_profiled_participation_entry_reuses_actual_dispatch_key(  # noqa: PLR09
             assert jax.tree.leaves(information)
             abstract = abstract_tree(
                 tree=information,
-                sharding=jax.sharding.SingleDeviceSharding(jax.devices()[0]),
+                sharding=jax.sharding.make_single_device_sharding(jax.devices()[0]),
             )
             assert jax.tree.structure(abstract) == jax.tree.structure(information)
             produced_information.append(True)

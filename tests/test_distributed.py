@@ -1133,7 +1133,7 @@ def test_value_transfer_copies_a_named_target_onto_a_single_device_source():
         jax.make_mesh((4,), ("type1",)),
         PartitionSpec("type1"),
     )
-    source_sharding = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    source_sharding = jax.sharding.make_single_device_sharding(jax.devices()[0])
 
     resolved = backward_induction._resolve_value_transfer_layout(
         stored_sharding=target_sharding,
@@ -1548,7 +1548,7 @@ def test_solve_with_partial_distribution_returns_correct_shardings(
     assert transfer.source.core_key == "main"
     assert transfer.source.channel is ValueInputChannel.NEXT_REGIME_VALUE
     assert transfer.source.path == ("retirement",)
-    assert isinstance(transfer.stored_sharding, jax.sharding.SingleDeviceSharding)
+    assert jax.sharding.is_single_device_sharding(transfer.stored_sharding)
     assert isinstance(transfer.source_sharding, NamedSharding)
     assert transfer.source_sharding.spec == PartitionSpec()
     assert transfer.source_sharding.is_fully_replicated

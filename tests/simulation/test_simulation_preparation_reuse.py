@@ -297,7 +297,7 @@ def test_payload_storage_matches_materialized_shards(
 ) -> None:
     """Raw storage independently sizes keys; duplicate future owners stay charged."""
     device = jax.devices()[0]
-    sharding = jax.sharding.SingleDeviceSharding(device)
+    sharding = jax.sharding.make_single_device_sharding(device)
     if kind in {"threefry2x32", "rbg", "unsafe_rbg"}:
         value = jax.random.split(jax.random.key(71, impl=kind), shape)
         before = np.asarray(jax.random.key_data(value)).tobytes()
@@ -366,7 +366,7 @@ def test_operand_bytes_match_actual_canonical_conversion(
         }
         value = values[kind]
         canonical = jnp.asarray(value)
-        sharding = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+        sharding = jax.sharding.make_single_device_sharding(jax.devices()[0])
         with _observe_preparation(monkeypatch=monkeypatch) as counts:
             actual = operand_placement._required_operand_bytes(
                 leaf=value,
@@ -499,7 +499,7 @@ def test_operand_admission_exact_boundary_and_occurrences(delta: int) -> None:
 
 def test_metadata_paths_under_jit_vmap_and_scan() -> None:
     """Static metadata costs follow the transformed logical axes, not stored values."""
-    sharding = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    sharding = jax.sharding.make_single_device_sharding(jax.devices()[0])
 
     def costs(value: jax.Array) -> jax.Array:
         abstract = jax.ShapeDtypeStruct(value.shape, value.dtype, sharding=sharding)

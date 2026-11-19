@@ -734,11 +734,11 @@ def _sharding_descriptor(*, array: Array, jax: ModuleType) -> dict[str, JSONValu
             ],
             "memory_kind": sharding.memory_kind,
         }
-    if isinstance(sharding, jax.sharding.SingleDeviceSharding):
+    if jax.sharding.is_single_device_sharding(sharding):
         devices = tuple(sharding.device_set)
         if len(devices) != 1:
             raise RuntimeError(
-                "SingleDeviceSharding unexpectedly names more than one device."
+                "A single-device sharding unexpectedly names more than one device."
             )
         device = devices[0]
         return {

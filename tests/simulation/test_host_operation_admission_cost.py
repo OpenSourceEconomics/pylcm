@@ -565,7 +565,7 @@ def _placement_arguments(*, device: jax.Device) -> Mapping[str, PytreeValue]:
         {
             "grid": jax.device_put(
                 jnp.arange(32, dtype=jnp.int32),
-                jax.sharding.SingleDeviceSharding(device),
+                jax.sharding.make_single_device_sharding(device),
             ),
             "scalars": (np.float32(1.5), 3),
             "states": jnp.arange(16, dtype=jnp.int32),

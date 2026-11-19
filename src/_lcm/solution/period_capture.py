@@ -597,7 +597,7 @@ def rebuild_sharding(
             memory_kind=descriptor.memory_kind,
         )
     if descriptor.kind == "SingleDeviceSharding":
-        return jax.sharding.SingleDeviceSharding(
+        return jax.sharding.make_single_device_sharding(
             devices[0], memory_kind=descriptor.memory_kind
         )
     msg = f"rebuild_sharding does not rebuild sharding kind {descriptor.kind!r}."

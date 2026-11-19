@@ -553,7 +553,7 @@ def _resolved_program(
         )
         for _core, argument, label in own
     )
-    sharding = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    sharding = jax.sharding.make_single_device_sharding(jax.devices()[0])
     array = jnp.zeros(3)
     return ResolvedCoreProgram(
         name=core,

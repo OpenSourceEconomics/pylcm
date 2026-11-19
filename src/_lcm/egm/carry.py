@@ -885,7 +885,9 @@ def _place_carry_template_on_one_device(
     visible = visible_devices()
     if devices == (visible[0],) or len(devices) == len(visible):
         return template
-    return jax.device_put(template, jax.sharding.SingleDeviceSharding(devices[0]))
+    return jax.device_put(
+        template, jax.sharding.make_single_device_sharding(devices[0])
+    )
 
 
 # keyword-only-exempt: library-callback=jax.tree.map

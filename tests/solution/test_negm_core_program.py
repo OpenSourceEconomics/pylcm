@@ -123,7 +123,7 @@ def _aligned_transfer_plan(
     *, program: MaterializedCoreProgram
 ) -> tuple[ResolvedValueTransfer, ...]:
     """Resolve every declared read as the aligned transfer of a one-device solve."""
-    sharding = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    sharding = jax.sharding.make_single_device_sharding(jax.devices()[0])
     return tuple(
         ResolvedValueTransfer(
             target=read.target,

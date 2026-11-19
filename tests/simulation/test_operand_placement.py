@@ -252,7 +252,7 @@ def test_abstract_materialization_preserves_container_order_and_value_reads(
     subject = jax.NamedSharding(mesh, jax.P("X"))
     shared = jax.NamedSharding(mesh, jax.P())
     protected = jax.ShapeDtypeStruct(
-        (6,), float, sharding=jax.sharding.SingleDeviceSharding(devices[0])
+        (6,), float, sharding=jax.sharding.make_single_device_sharding(devices[0])
     )
     weights = jax.ShapeDtypeStruct((6,), float, sharding=shared)
     scalar = jax.ShapeDtypeStruct((), float, sharding=shared, weak_type=True)

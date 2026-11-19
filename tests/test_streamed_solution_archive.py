@@ -171,7 +171,7 @@ def test_a_written_value_whose_bytes_changed_is_refused(tmp_path: Path) -> None:
 
 
 def _cpu_sharding() -> jax.sharding.Sharding:
-    return jax.sharding.SingleDeviceSharding(jax.devices("cpu")[0])
+    return jax.sharding.make_single_device_sharding(jax.devices("cpu")[0])
 
 
 def test_a_weakly_typed_value_is_planned_and_read_weakly_typed(tmp_path: Path) -> None:
