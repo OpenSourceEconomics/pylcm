@@ -155,6 +155,73 @@ constraints = {
 Written as one predicate, `(work == 0) & (Q_f >= 0.0)`, the same restriction is refused
 when only `work == 1` sends a discrete state off its grid.
 
+## Dissolving in the current period: where the members compare
+
+A regime's `Exit` with `rule=Unilateral()` or `rule=MutualConsent()` decides before the
+period's action whether the household stays. `compares` says which stay values each
+member compares with its outside value (the
+[reference](../reference/model_and_regime.md#api-current-exits) has the details):
+
+- `compares="each_action"`, the default without an adjustment: every stay action is
+  tested, and the household takes its best action that passes the rule. It separates
+  only if none passes.
+- `compares="optimum"`: only the household's unconstrained optimum is tested.
+  `Unilateral` separates when any member refuses there, `MutualConsent` when every
+  member does. A household that stays acts at its optimum.
+
+Under mutual consent the members can also shift the division on separation before they
+decide. `Settlement` names it as an argument the exit's projections and utility
+adjustments read:
+
+```python
+from lcm import Exit, ExitTarget, LinSpacedGrid, MutualConsent, Settlement
+
+
+def wife_assets(*, wealth, share):
+    return share * wealth
+
+
+def husband_assets(*, wealth, share):
+    return (1.0 - share) * wealth
+
+
+def equal_split():
+    return 0.5
+
+
+dissolution = Exit(
+    rule=MutualConsent(
+        settle=Settlement(
+            name="share",
+            candidates=LinSpacedGrid(start=0.0, stop=1.0, n_points=21),
+            default=equal_split,
+        )
+    ),
+    targets={
+        "f": ExitTarget(regime="single_f", projection={"wealth": wife_assets}),
+        "m": ExitTarget(regime="single_m", projection={"wealth": husband_assets}),
+    },
+)
+```
+
+The settlement rule, with outside values evaluated at a settlement:
+
+1. Each member compares its value at the optimum with its outside value at the `default`
+   settlement.
+1. If nobody wants to leave, the household stays. If both want to leave, it separates at
+   the default.
+1. If exactly one wants to leave, the settlement moves toward the other member: among
+   the candidates on that member's side of the default (increasing values favour the
+   first stakeholder), take the nearest at which that member accepts separation. The
+   household separates there if the member who wants to leave still gains, and stays
+   otherwise. Without such a candidate it stays.
+
+The settlement is searched on the candidates only, never between them, and needs a
+regime with two members. The default reads what `available` reads, at the decision; it
+is clipped to the candidates' range. A household that separates lands where the
+projections put it at the selected settlement and receives the adjustments evaluated
+there.
+
 ## Entering a household in a role
 
 Where nothing is decided on landing — marriage arrives with a probability and both

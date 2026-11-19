@@ -7,9 +7,11 @@ from typing import Literal
 from beartype import beartype
 
 from _lcm.beartype_conf import REGIME_CONF
+from _lcm.grids.base import Grid
+from _lcm.grids.continuous import ContinuousGrid
 from _lcm.utils.containers import ensure_containers_are_immutable
 from _lcm.utils.error_messages import path_segment_name_errors
-from lcm.exceptions import RegimeInitializationError
+from lcm.exceptions import GridInitializationError, RegimeInitializationError
 from lcm.phased import Phased
 from lcm.shocks import MonteCarlo, QuasiMonteCarlo
 from lcm.typing import RegimeName, StateName, UserFunction
@@ -84,15 +86,67 @@ class Renegotiate:
 
 @beartype(conf=REGIME_CONF)
 @dataclass(frozen=True, kw_only=True)
+class Settlement:
+    """A division on separation that the members can shift before a mutual-consent exit.
+
+    Exit-target projections and utility adjustments read the settlement under
+    `name`. When exactly one member wants to leave at the default, the settlement
+    moves to the nearest candidate in favour of the other member at which that
+    member accepts separation; the pair separates there if the member who wants to
+    leave still gains, and stays otherwise.
+    """
+
+    name: str
+    """Argument name under which projections and utility adjustments read it."""
+    candidates: Grid
+    """Ordered candidate values; increasing order favours the first stakeholder."""
+    default: UserFunction
+    """The division by law: reads what the exit's `available` may read.
+
+    Its value is clipped to the range of the candidates.
+    """
+
+    def __post_init__(self) -> None:
+        _validate_names(kind="Settlement", names=(self.name,))
+        if not isinstance(self.candidates, ContinuousGrid):
+            raise RegimeInitializationError(
+                "Settlement candidates must be an ordered one-dimensional continuous "
+                f"grid, got {type(self.candidates).__name__}."
+            )
+        try:
+            self.candidates.to_jax()
+        except GridInitializationError as error:
+            raise RegimeInitializationError(
+                "Settlement candidates need points fixed when the exit is declared."
+            ) from error
+
+
+@beartype(conf=REGIME_CONF)
+@dataclass(frozen=True, kw_only=True)
 class Unilateral:
     """Any member can end the match: it continues only if every member is willing."""
 
     tie: Literal["stay", "leave"] = "stay"
     """What a member exactly indifferent between staying and the exit does."""
+    compares: Literal["each_action", "optimum"] | None = field(
+        default=None, metadata={"fingerprint_omit_if_default": True}
+    )
+    """Where each member's stay value is compared with its outside value.
+
+    - `"each_action"`: at every stay action; the household keeps its best action
+      that passes the rule.
+    - `"optimum"`: at the household's unconstrained optimum only.
+    - `None`: `"optimum"` with `renegotiate`, `"each_action"` otherwise.
+    """
     renegotiate: Renegotiate | None = field(
         default=None, metadata={"fingerprint_omit_if_default": True}
     )
     """Discrete adjustment attempted before the current-period exit."""
+
+    def __post_init__(self) -> None:
+        _fail_if_adjusted_each_action(
+            compares=self.compares, adjusted=self.renegotiate is not None
+        )
 
 
 @beartype(conf=REGIME_CONF)
@@ -102,6 +156,25 @@ class MutualConsent:
 
     tie: Literal["stay", "leave"] = "stay"
     """What a member exactly indifferent between staying and the exit does."""
+    compares: Literal["each_action", "optimum"] | None = field(
+        default=None, metadata={"fingerprint_omit_if_default": True}
+    )
+    """Where each member's stay value is compared with its outside value.
+
+    - `"each_action"`: at every stay action; the household keeps its best action
+      that passes the rule.
+    - `"optimum"`: at the household's unconstrained optimum only.
+    - `None`: `"optimum"` with `settle`, `"each_action"` otherwise.
+    """
+    settle: Settlement | None = field(
+        default=None, metadata={"fingerprint_omit_if_default": True}
+    )
+    """Division on separation that the members can shift before the exit."""
+
+    def __post_init__(self) -> None:
+        _fail_if_adjusted_each_action(
+            compares=self.compares, adjusted=self.settle is not None
+        )
 
 
 type ExitRule = Unilateral | MutualConsent | Consent
@@ -166,6 +239,16 @@ def _freeze_projection(
     if any(not callable(function) for function in projection.values()):
         raise RegimeInitializationError("Exit projection entries must be callable.")
     return ensure_containers_are_immutable(projection)
+
+
+def _fail_if_adjusted_each_action(
+    *, compares: Literal["each_action", "optimum"] | None, adjusted: bool
+) -> None:
+    if adjusted and compares == "each_action":
+        raise RegimeInitializationError(
+            "An adjustment before the exit compares at the optimum; "
+            "compares='each_action' cannot be combined with renegotiate or settle."
+        )
 
 
 def _validate_names(*, kind: str, names: tuple[str, ...]) -> None:

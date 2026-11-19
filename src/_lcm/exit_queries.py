@@ -18,7 +18,7 @@ from dags.tree import qname_from_tree_path
 
 from _lcm.current_iid import CurrentIIDPlan
 from _lcm.engine import Regime
-from _lcm.exits import exit_for_phase, exit_functions
+from _lcm.exits import compares_at_optimum, exit_for_phase, exit_functions
 from _lcm.outside_values import UnalignedOutsideRead, align_outside_read
 from _lcm.policy_queries import (
     _PHYSICAL_CONTEXTS,
@@ -35,7 +35,13 @@ from _lcm.policy_queries import (
     gated_query_targets,
 )
 from _lcm.query_information import default_chunk_size
-from _lcm.renegotiation import FixedNode, RenegotiationQueries
+from _lcm.renegotiation import (
+    ClippedDefault,
+    FixedNode,
+    FixedSettlement,
+    RenegotiationQueries,
+    SettlementQueries,
+)
 from _lcm.solution.contract import SolverBuildContext
 from _lcm.solution.grid_search import GridSearch
 from _lcm.typing import PytreeValue, QualifiedName
@@ -47,7 +53,14 @@ from _lcm.utils.functools import (
     call_with_declared_arguments as _call,
 )
 from lcm.exceptions import RegimeInitializationError, UnsupportedOperationError
-from lcm.exits import Consent, Exit, ExitRole, MutualConsent, Unilateral
+from lcm.exits import (
+    Consent,
+    Exit,
+    ExitRole,
+    MutualConsent,
+    Settlement,
+    Unilateral,
+)
 from lcm.grids import DiscreteGrid
 from lcm.shocks import Discrete, ShockGroupName, ShockName, _fingerprint
 from lcm.typing import (
@@ -116,6 +129,8 @@ class _ExitReducer:
     """A source EV1 component belongs to a discrete combination, not a continuous ID."""
     renegotiation: RenegotiationQueries | None = None
     """Raw policies across a declared discrete state, before applying participation."""
+    settlement: SettlementQueries | None = None
+    """Outside reads at each candidate settlement of a mutual-consent exit."""
 
     def __post_init__(self) -> None:
         """Keep declaration containers immutable and IDs inside their native width."""
@@ -126,9 +141,46 @@ class _ExitReducer:
         for name in ("targets", "adjustments"):
             object.__setattr__(self, name, MappingProxyType(dict(getattr(self, name))))
 
+    def exits(
+        self,
+    ) -> dict[
+        int,
+        tuple[
+            Mapping[ExitRole, tuple[str, int | None]],
+            Mapping[ExitRole, Callable[..., PytreeValue]],
+        ],
+    ]:
+        """Each exit ID with its members' reads and adjustments.
+
+        The exit at the default takes the ID after the stay actions; a separation
+        at candidate settlement `k` takes the `k`-th ID after that.
+        """
+        exits = {self.n_actions: (self.targets, self.adjustments)}
+        if self.settlement is not None:
+            exits.update(
+                {
+                    self.n_actions + 1 + index: pair
+                    for index, pair in enumerate(
+                        zip(
+                            self.settlement.targets,
+                            self.settlement.adjustments,
+                            strict=True,
+                        )
+                    )
+                }
+            )
+        return exits
+
     def _payoffs(
-        self, *, operands: Mapping[ReferenceName, PytreeValue]
+        self,
+        *,
+        operands: Mapping[ReferenceName, PytreeValue],
+        targets: Mapping[ExitRole, tuple[str, int | None]] | None = None,
+        adjustments: Mapping[ExitRole, Callable[..., PytreeValue]] | None = None,
     ) -> tuple[dict[str, FloatND], BoolND, BoolND]:
+        """Each member's outside payoff, by default at the exit's own reads."""
+        targets = self.targets if targets is None else targets
+        adjustments = self.adjustments if adjustments is None else adjustments
         declaration = cast("Exit", self.declaration)
         active = (
             jnp.asarray(a=True)
@@ -138,18 +190,18 @@ class _ExitReducer:
         valid = jnp.asarray(a=True)
         payoffs = {}
         for member in declaration.targets:
-            if member not in self.targets:
+            if member not in targets:
                 payoffs[member] = jnp.asarray(-jnp.inf)
                 continue
-            key, index = self.targets[member]
+            key, index = targets[member]
             answer = cast("PolicyAnswer", operands[key])
             value = answer[0] if index is None else answer[0][index]
-            if member in self.adjustments:
+            if member in adjustments:
                 adjustment = jnp.where(
                     active,
                     cast(
                         "FloatND",
-                        _call(function=self.adjustments[member], operands=operands),
+                        _call(function=adjustments[member], operands=operands),
                     ),
                     0.0,
                 )
@@ -167,7 +219,7 @@ class _ExitReducer:
         or equal to it when the rule's `tie` is `"stay"`.
         """
         rule = None if self.declaration is None else self.declaration.rule
-        if self.renegotiation is not None:
+        if compares_at_optimum(rule):
             return jnp.asarray(a=True)
         if not isinstance(rule, Unilateral | MutualConsent):
             return jnp.asarray(a=True)
@@ -192,6 +244,10 @@ class _ExitReducer:
         valid &= stay[3]
         if self.renegotiation is not None:
             return self._renegotiated(
+                operands=operands, payoffs=payoffs, active=active, valid=valid
+            )
+        if compares_at_optimum(cast("Exit", self.declaration).rule):
+            return self._at_optimum(
                 operands=operands, payoffs=payoffs, active=active, valid=valid
             )
         if _TASTE in operands and self.kind is QueryKind.FULL:
@@ -245,6 +301,87 @@ class _ExitReducer:
             kept | move,
             valid & integrity & jnp.all(jnp.stack(tuple(answer[3] for answer in raw))),
             cast("PolicyAnswer", operands["answer"])[4],
+        )
+
+    def _at_optimum(
+        self,
+        *,
+        operands: Mapping[ReferenceName, PytreeValue],
+        payoffs: Mapping[str, FloatND],
+        active: BoolND,
+        valid: BoolND,
+    ) -> PolicyAnswer:
+        """Compare each member's value at the unconstrained optimum with its exit.
+
+        The stay answer is the household optimum, since `keep` masks no action. A
+        member is willing to stay when that value is above its exit payoff, or
+        equal to it when the rule's `tie` is `"stay"`; no feasible action leaves
+        every member unwilling. Under a settlement the outside values are those at
+        the default, and a pair in which exactly one member refuses separates at the
+        candidate the settlement selects, under that candidate's exit ID.
+        """
+        stay = cast("PolicyAnswer", operands["answer"])
+        rule = cast("Unilateral | MutualConsent", cast("Exit", self.declaration).rule)
+        collective = self.members != ("self",)
+        inside = stay[0] if collective else stay[0][None]
+        outside = jnp.stack(tuple(payoffs[member] for member in self.members))
+        willing = (inside >= outside if rule.tie == "stay" else inside > outside) & (
+            stay[2]
+        )
+        stays = jnp.all(willing) if isinstance(rule, Unilateral) else jnp.any(willing)
+        identifier = jnp.asarray(self.n_actions)
+        settles = jnp.asarray(a=False)
+        if self.settlement is not None:
+            candidates = tuple(
+                self._payoffs(operands=operands, targets=targets, adjustments=paid)
+                for targets, paid in zip(
+                    self.settlement.targets, self.settlement.adjustments, strict=True
+                )
+            )
+            settled = jnp.stack(
+                tuple(
+                    jnp.stack(tuple(payoff[member] for member in self.members))
+                    for payoff, _, _ in candidates
+                )
+            )
+            nearest, settles = self.settlement.select(
+                inside=inside,
+                willing=willing,
+                outside=settled,
+                supported=jnp.stack(
+                    tuple(
+                        jnp.all(
+                            jnp.stack(
+                                tuple(
+                                    cast("PolicyAnswer", operands[key])[2]
+                                    for key, _ in targets.values()
+                                )
+                            )
+                        )
+                        for targets in self.settlement.targets
+                    )
+                ),
+                default=cast(
+                    "FloatND",
+                    _call(function=self.settlement.default, operands=operands),
+                ),
+            )
+            settles &= active
+            valid &= jnp.all(jnp.stack(tuple(checked for _, _, checked in candidates)))
+            outside = jnp.where(settles, settled[nearest], outside)
+            identifier = jnp.where(settles, self.n_actions + 1 + nearest, identifier)
+        kept = jnp.where(active, stays & ~settles, stay[2])
+        eligible, integrity = self._eligible(
+            operands=operands, payoffs=payoffs, active=active
+        )
+        move = (settles | (eligible & ~kept)) & (self.kind is QueryKind.FULL)
+        value = jnp.where(move, outside, jnp.where(kept, inside, -jnp.inf))
+        return (
+            value if collective else value[0],
+            jnp.where(move, identifier, jnp.where(kept, stay[1], -1)).astype(jnp.int32),
+            kept | move,
+            valid & integrity,
+            stay[4],
         )
 
     def updated_state(self, **operands: PytreeValue) -> FloatND | IntND:
@@ -704,14 +841,17 @@ class _QueryGraphBuilder:
             exit_targets={}
             if declaration is None
             else {
-                reducer.n_actions: {
-                    member: inputs[operand]
-                    for member, (operand, _) in reducer.targets.items()
+                identifier: {
+                    member: inputs[operand] for member, (operand, _) in targets.items()
                 }
+                for identifier, (targets, _) in reducer.exits().items()
             },
             exit_adjustments={}
             if declaration is None
-            else {reducer.n_actions: reducer.adjustments},
+            else {
+                identifier: adjustments
+                for identifier, (_, adjustments) in reducer.exits().items()
+            },
             sample=None if rule is None else (rule, ()),
             exit_availability=reducer.available,
         )
@@ -745,6 +885,7 @@ class _QueryGraphBuilder:
         consent_read = None
         predicate = None
         renegotiation = None
+        settlement = None
         if declaration is not None:
             predicate = functions.get(("exit", "available"))
             child_guards = guards + (
@@ -764,10 +905,32 @@ class _QueryGraphBuilder:
                 period=self.period,
                 ages=context.ages,
             ):
+                settle = (
+                    declaration.rule.settle
+                    if isinstance(declaration.rule, MutualConsent)
+                    else None
+                )
+                default = (
+                    None
+                    if settle is None
+                    else self._settlement_default(
+                        settle=settle, declaration=declaration, functions=functions
+                    )
+                )
                 inputs, targets, adjustments, consent_read = self._exit_reads(
                     owner=owner,
                     declaration=declaration,
-                    projection=projection,
+                    projection=projection
+                    if settle is None or default is None
+                    else {
+                        **projection,
+                        settle.name: _compose(
+                            projection=projection,
+                            function=default,
+                            source=source_key,
+                            physical_names=physical_names,
+                        ),
+                    },
                     guards=child_guards,
                     ancestry=ancestry,
                     functions=functions,
@@ -776,6 +939,24 @@ class _QueryGraphBuilder:
                     policy_information=policy_information,
                     physical_names=physical_names,
                 )
+                if settle is not None and default is not None:
+                    settled, adjustments, settlement = self._settlement_reads(
+                        settle=settle,
+                        default=default,
+                        targets=targets,
+                        adjustments=adjustments,
+                        owner=owner,
+                        declaration=declaration,
+                        projection=projection,
+                        guards=child_guards,
+                        ancestry=ancestry,
+                        functions=functions,
+                        source_key=source_key,
+                        ancestors=ancestors,
+                        policy_information=policy_information,
+                        physical_names=physical_names,
+                    )
+                    inputs.update(settled)
                 if (
                     isinstance(declaration.rule, Unilateral)
                     and declaration.rule.renegotiate is not None
@@ -814,6 +995,7 @@ class _QueryGraphBuilder:
             available=predicate,
             consent_read=consent_read,
             renegotiation=renegotiation,
+            settlement=settlement,
             weights=None
             if context.pareto_weights is None
             else context.pareto_weights.compute,
@@ -971,6 +1153,150 @@ class _QueryGraphBuilder:
                 else destination_members.index(counterparty.role),
             )
         return inputs, targets, adjustments, consent_read
+
+    def _settlement_default(
+        self,
+        *,
+        settle: Settlement,
+        declaration: Exit,
+        functions: Mapping[tuple[str, ...], Callable[..., PytreeValue]],
+    ) -> Callable[..., PytreeValue]:
+        """Bind the source-context default, clipped to the candidates' range."""
+        shocks = {
+            shock
+            for context in self.contexts.values()
+            for plan in context.current_iid_plans.values()
+            if plan is not None
+            for shock in plan.physical_names
+        } | set(declaration.observes)
+        if settle.name in shocks:
+            raise RegimeInitializationError(
+                f"Settlement {settle.name!r} has the name of a shock."
+            )
+        points = _settlement_points(settle)
+        function = functions["exit", "settle", "default"]
+        return with_signature(
+            ClippedDefault(function=function, low=points[0], high=points[-1]),
+            args=list(inspect.signature(function).parameters),
+            enforce=False,
+        )
+
+    def _settlement_reads(
+        self,
+        *,
+        settle: Settlement,
+        default: Callable[..., PytreeValue],
+        targets: Mapping[ExitRole, tuple[str, int | None]],
+        adjustments: Mapping[ExitRole, Callable[..., PytreeValue]],
+        owner: RegimeName,
+        declaration: Exit,
+        projection: Mapping[StateName, Callable[..., PytreeValue]],
+        guards: tuple[Callable[..., PytreeValue], ...],
+        ancestry: tuple[tuple[QueryKind, str], ...],
+        functions: Mapping[tuple[str, ...], Callable[..., PytreeValue]],
+        source_key: str,
+        ancestors: tuple[str, ...],
+        policy_information: frozenset[str],
+        physical_names: frozenset[str],
+    ) -> tuple[
+        dict[str, str], dict[ExitRole, Callable[..., PytreeValue]], SettlementQueries
+    ]:
+        """Read each member's outside value at every candidate settlement.
+
+        A member whose projection does not read the settlement keeps its read at
+        the default; only its adjustment changes with the candidate. Returns the
+        candidate reads, the adjustments at the default and the candidates' rule.
+        """
+        moving = {
+            member: target
+            for member, target in declaration.targets.items()
+            if any(
+                _reads(
+                    function=functions["exit", "targets", member, "projection", state],
+                    name=settle.name,
+                )
+                for state in cast("Mapping[StateName, UserFunction]", target.projection)
+            )
+        }
+        inputs = {}
+        node_targets = []
+        node_adjustments = []
+        points = _settlement_points(settle)
+        for index, point in enumerate(points):
+            fixed = with_signature(FixedSettlement(value=point), args=[], enforce=False)
+            node = dict(targets)
+            if moving:
+                reads, moved, _, _ = self._exit_reads(
+                    owner=owner,
+                    declaration=replace(declaration, targets=moving),
+                    projection={**projection, settle.name: fixed},
+                    guards=guards,
+                    ancestry=ancestry,
+                    functions=functions,
+                    source_key=source_key,
+                    ancestors=ancestors,
+                    policy_information=policy_information,
+                    physical_names=physical_names,
+                )
+                for member, (operand, slot) in moved.items():
+                    key = f"_lcm_settle_{index}_{member}"
+                    inputs[key] = reads[operand]
+                    node[member] = (key, slot)
+            node_targets.append(MappingProxyType(node))
+            node_adjustments.append(
+                MappingProxyType(
+                    {
+                        member: _bind_settlement(
+                            function=adjustment,
+                            name=settle.name,
+                            helper=fixed,
+                            source=source_key,
+                        )
+                        for member, adjustment in adjustments.items()
+                    }
+                )
+            )
+        return (
+            inputs,
+            {
+                member: _bind_settlement(
+                    function=adjustment,
+                    name=settle.name,
+                    helper=default,
+                    source=source_key,
+                )
+                for member, adjustment in adjustments.items()
+            },
+            SettlementQueries(
+                points=points,
+                default=default,
+                targets=tuple(node_targets),
+                adjustments=tuple(node_adjustments),
+                tie=cast("MutualConsent", declaration.rule).tie,
+            ),
+        )
+
+
+def _settlement_points(settle: Settlement) -> tuple[float, ...]:
+    """The candidate settlements in the working float format, as host scalars."""
+    return tuple(float(point) for point in np.asarray(settle.candidates.to_jax()))
+
+
+def _reads(*, function: Callable[..., PytreeValue], name: ReferenceName) -> bool:
+    return name in inspect.signature(function).parameters
+
+
+def _bind_settlement(
+    *,
+    function: Callable[..., PytreeValue],
+    name: ReferenceName,
+    helper: Callable[..., PytreeValue],
+    source: ReferenceName,
+) -> Callable[..., PytreeValue]:
+    """Evaluate a source-context callback at the settlement `helper` gives."""
+    if not _reads(function=function, name=name):
+        return function
+    return _compose(projection={name: helper}, function=function, source=source)
 
 
 def bind_exit_query_graph(

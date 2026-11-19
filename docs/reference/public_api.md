@@ -30,6 +30,7 @@ documentation and tests.
 | [`lcm.Unilateral`](model_and_regime.md#api-current-exits)                                            | Dissolution unless every member is willing        |
 | [`lcm.Renegotiate`](model_and_regime.md#api-current-exits)                                           | Directional discrete adjustment before separation |
 | [`lcm.MutualConsent`](model_and_regime.md#api-current-exits)                                         | Dissolution only if every member is unwilling     |
+| [`lcm.Settlement`](model_and_regime.md#api-current-exits)                                            | Division shifted before a mutual-consent exit     |
 | [`lcm.ExecutionConfig`](runtime_and_results.md#execution-configuration)                              | Devices, budget, sharded states, widths, donation |
 | [`lcm.InvariantBlockSchedule`](runtime_and_results.md#execution-configuration)                       | Period- or block-major invariant schedule         |
 | [`lcm.ConsumptionSavingsRegime`](consumption_savings.md#api-consumption-savings-regime)              | One liquid margin                                 |

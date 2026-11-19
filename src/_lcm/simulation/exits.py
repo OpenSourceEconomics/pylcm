@@ -524,10 +524,42 @@ class OriginalExitDecision:
         )
         projections = {self.queries.root: updates} if root.state_updates else {}
         adjustments = {}
+        # A read several exit IDs share, such as a member's read at the default of a
+        # settlement its projection ignores, lands every row taking any of them and
+        # pays the adjustment of the ID taken.
+        chosen: dict[str, BoolND] = {}
+        for identifier, targets in root.exit_targets.items():
+            for query in targets.values():
+                chosen[query] = chosen.get(query, jnp.asarray(a=False)) | (
+                    answer[1] == identifier
+                )
         for identifier, targets in root.exit_targets.items():
             for member, query in targets.items():
                 node = self.queries.definitions[query]
                 selected = answer[1] == identifier
+                helper = root.exit_adjustments.get(identifier, {}).get(member)
+                operands = {
+                    **fixed,
+                    **cast("Mapping[str, PytreeValue]", fixed["_lcm_query_projection"]),
+                    **states,
+                    **frame.physical,
+                }
+                adjustments[query] = (
+                    adjustments.get(query, jnp.asarray(0.0))
+                    if helper is None
+                    else jnp.where(
+                        selected,
+                        helper(
+                            **{
+                                name: operands[name]
+                                for name in signature(helper).parameters
+                            }
+                        ),
+                        adjustments.get(query, 0.0),
+                    )
+                )
+                if query in projections:
+                    continue
 
                 # Every participation fallback is priced for each arriving row.
                 # Replay validates that actual mapping even when the target accepts;
@@ -536,7 +568,7 @@ class OriginalExitDecision:
                 project_here = (
                     _holders
                     if root.read.kind is QueryKind.PARTICIPATION and identifier == 1
-                    else selected
+                    else chosen[query]
                 )
 
                 # Keep inactive projections behind a scalar condition; vmap's
@@ -562,27 +594,6 @@ class OriginalExitDecision:
                     project_here,
                     project,
                     lambda neutral=neutral: neutral,
-                )
-                helper = root.exit_adjustments.get(identifier, {}).get(member)
-                operands = {
-                    **fixed,
-                    **cast("Mapping[str, PytreeValue]", fixed["_lcm_query_projection"]),
-                    **states,
-                    **frame.physical,
-                }
-                adjustments[query] = (
-                    jnp.asarray(0.0)
-                    if helper is None
-                    else jnp.where(
-                        selected,
-                        helper(
-                            **{
-                                name: operands[name]
-                                for name in signature(helper).parameters
-                            }
-                        ),
-                        0.0,
-                    )
                 )
         return answer, _frame_output(frame=frame), projections, adjustments
 

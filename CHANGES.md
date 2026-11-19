@@ -5,6 +5,21 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
+### Exit rules compare at the optimum and settle before separation
+
+- `Unilateral(compares=...)` and `MutualConsent(compares=...)` say where each member's
+  stay value meets its outside value: `"each_action"` tests every stay action, as
+  before, and `"optimum"` only the household's unconstrained optimum, where
+  `Unilateral` separates when any member refuses and `MutualConsent` when every member
+  does. The default keeps every existing declaration, its values and its fingerprint.
+- `MutualConsent(settle=Settlement(name=..., candidates=..., default=...))` shifts a
+  division read by the exit's projections and utility adjustments before the pair
+  decides: when exactly one member wants to leave at the default, the pair separates at
+  the candidate nearest the default on the other member's side that this member
+  accepts, if the leaver still gains there, and stays otherwise. Two members only. See
+  [Current-period exits](docs/reference/model_and_regime.md#current-period-exits) and
+  [ADR 3](docs/adr/0003-exit-rules-compare-at-the-optimum-and-settle-before-separation.md).
+
 ### A singleton source enters a collective target in a declared role
 
 - `Transition(roles={"couple": "f"})` declares that a row moving from a singleton source

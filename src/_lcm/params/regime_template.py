@@ -21,7 +21,7 @@ from typing import Literal, cast
 import dags.tree as dt
 from dags.tree import qname_from_tree_path, tree_path_from_qname
 
-from _lcm.exits import ExitFunctionPath, exit_functions
+from _lcm.exits import ExitFunctionPath, exit_functions, settlement_names
 from _lcm.params.edges import (
     EDGES,
     FALLBACK,
@@ -445,7 +445,7 @@ def _exit_params_template(
             params = _discovered_params(
                 name=qname_from_tree_path(path),
                 func=function,
-                non_params=variables,
+                non_params=variables | settlement_names(user_regime.exit),
             )
             branch = exit_params
             for segment in path[1:]:

@@ -358,6 +358,14 @@ remain in `Model(edges=...)`.
   `tie="stay"`; `tie="leave"` makes an indifferent member leave. Among the kept stay
   actions the household takes its Pareto-weighted argmax; with none kept, the exit is
   taken.
+- `compares` says where that comparison is made. `"each_action"` tests every stay
+  action, as just described. `"optimum"` tests only the household's unconstrained
+  optimum: `Unilateral` separates when any member refuses there, `MutualConsent` when
+  every member does, and a household that stays acts at its optimum. Where the exit is
+  not available the household stays at its optimum; with no feasible action and the exit
+  available it separates. The default `None` is `"optimum"` with `renegotiate` or
+  `settle` and `"each_action"` otherwise; `"each_action"` together with either is
+  refused.
 
 A subject moves at most once per period, so an exit payoff is the value of the
 destination's problem at the projected state, without the destination's own exit. The
@@ -381,6 +389,35 @@ and stop at the first node both accept. Simultaneous refusal, reaching the grid 
 encountering the other member's refusal separates the pair; a later feasible island does
 not reopen the path. Equality follows the rule's `tie`. Outside payoffs use the original
 source's settlement, without moving that benchmark along the candidate grid.
+
+`MutualConsent(settle=Settlement(name="share", candidates=grid, default=f))` lets a pair
+of members shift the division on separation before deciding. Every exit target's
+projection functions and utility adjustment may read the settlement as the argument
+`name`; a settlement no target reads, and a name that is a state, action, function or
+shock of the source, are refused when the model is built. `candidates` is a continuous
+grid with fixed points; increasing values favour the first stakeholder. `default` reads
+what `available` reads and is clipped to the candidates' range. With `O_i(s)` member
+`i`'s outside value at settlement `s` (its destination's problem value at the
+projections evaluated with `s`, plus its adjustment evaluated with `s`), `W_i` its value
+at the household optimum and `d` the default:
+
+1. A member refuses to stay when `O_i(d)` is above `W_i`, or equal to it under
+   `tie="leave"`.
+1. Nobody refuses: stay at the optimum. Both refuse: separate at `d`.
+1. Exactly one refuses. Among the candidates strictly on the other member's side of `d`,
+   take the one nearest `d` at which that member accepts separation, `O_i(s) >= W_i`
+   whatever `tie` says. Separate there if the member who wants to leave still gains
+   under `tie`; otherwise, or without such a candidate, stay at the optimum.
+
+The engine does not check that the accepting member's outside value rises in that
+member's direction; the rule takes the nearest accepting candidate. A member whose
+projection does not read the settlement is read once, and only its adjustment varies; a
+candidate read whose projections land on the destination's grid takes the stored table.
+A household that separates lands at the projections evaluated with the selected
+settlement and receives the adjustments evaluated with it. The settlement is not a
+column of the simulated output; the landing states and values carry it. Two members
+only; the candidates are searched on the grid, never between its points; a default that
+is random and unobserved at the decision cannot be declared.
 
 An outside policy can have a gated transition into the next period. Its nominal target
 components and each projected personal fallback enter as explicit future value reads;

@@ -44,7 +44,7 @@ from _lcm.utils.functools import is_user_function
 from lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
 from lcm.decoupled import Decoupled
 from lcm.exceptions import RegimeInitializationError
-from lcm.exits import Consent, Exit, Unilateral
+from lcm.exits import Consent, Exit, MutualConsent, Unilateral
 from lcm.grids import DiscreteGrid
 from lcm.koopmans_aggregation import CESAggregator, LinearAggregator
 from lcm.phased import Phased
@@ -162,6 +162,8 @@ def validate_exit_targets(
             _validate_renegotiation(
                 declaration=declaration, regime=regime, law=laws[source], phase=phase
             )
+            _validate_optimum_comparison(declaration=declaration, regime=regime)
+            _validate_settlement(declaration=declaration, regime=regime)
             for target in declaration.targets.values():
                 context = f"Exit of {source}"
                 if target.regime not in regimes:
@@ -232,6 +234,54 @@ def _validate_renegotiation(
         raise RegimeInitializationError(
             "Renegotiate carries its selected node through fixed_transition, "
             "not through a joint state update."
+        )
+
+
+def _validate_optimum_comparison(*, declaration: Exit, regime: Regime) -> None:
+    """Require a deterministic household optimum for a rule that compares there."""
+    from _lcm.exits import compares_at_optimum  # noqa: PLC0415 - phase validator cycle
+
+    if compares_at_optimum(declaration.rule) and regime.taste_shocks is not None:
+        raise RegimeInitializationError(
+            "An exit rule that compares at the household optimum needs a regime "
+            "without taste shocks."
+        )
+
+
+def _validate_settlement(*, declaration: Exit, regime: Regime) -> None:
+    """Require two members, a target that reads the settlement and a free name."""
+    rule = declaration.rule
+    if not isinstance(rule, MutualConsent) or rule.settle is None:
+        return
+    name = rule.settle.name
+    if len(regime.stakeholders or ()) != 2:  # noqa: PLR2004 - directional two-member rule
+        raise RegimeInitializationError(
+            "Settlement requires two collective stakeholders."
+        )
+    taken = {*regime.states, *regime.actions, *regime.functions}
+    if name in taken:
+        raise RegimeInitializationError(
+            f"Settlement {name!r} has the name of a state, action or function of the "
+            "regime."
+        )
+    callbacks = [
+        function
+        for target in declaration.targets.values()
+        for function in (
+            *cast("Mapping[str, UserFunction]", target.projection).values(),
+            *(
+                ()
+                if target.utility_adjustment is None
+                else (target.utility_adjustment,)
+            ),
+        )
+    ]
+    if not any(
+        name in inspect.signature(function).parameters for function in callbacks
+    ):
+        raise RegimeInitializationError(
+            f"Settlement {name!r} is read by no exit-target projection or utility "
+            "adjustment."
         )
 
 

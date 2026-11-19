@@ -6,10 +6,11 @@ from types import MappingProxyType
 from typing import cast
 
 from _lcm.output_roles import OutputRole, in_role
-from lcm.exits import Consent, Exit
+from lcm.exits import Consent, Exit, ExitRule, MutualConsent, Unilateral
 from lcm.phased import Phased
 from lcm.typing import (
     Phase,
+    ReferenceName,
     RegimeName,
     StateName,
     StateOrActionName,
@@ -20,6 +21,31 @@ type ExitFunctionPath = tuple[str, ...]
 type ExitFunctionDemand = Mapping[
     RegimeName, Mapping[Phase, frozenset[ExitFunctionPath]]
 ]
+
+
+def compares_at_optimum(rule: ExitRule | None) -> bool:
+    """Return whether a rule compares at the household's unconstrained optimum.
+
+    An undeclared comparison point is the optimum when the rule adjusts before the
+    exit and every stay action otherwise.
+    """
+    if not isinstance(rule, Unilateral | MutualConsent):
+        return False
+    if rule.compares is not None:
+        return rule.compares == "optimum"
+    return (
+        rule.renegotiate if isinstance(rule, Unilateral) else rule.settle
+    ) is not None
+
+
+def settlement_names(declaration: Exit | None) -> frozenset[ReferenceName]:
+    """Return the argument the exit's settlement binds; it is never a parameter."""
+    if declaration is None:
+        return frozenset()
+    rule = declaration.rule
+    if isinstance(rule, MutualConsent) and rule.settle is not None:
+        return frozenset({rule.settle.name})
+    return frozenset()
 
 
 def exit_for_phase(*, declaration: Exit | None, phase: Phase) -> Exit | None:
@@ -82,6 +108,15 @@ def exit_functions(
                     declaration.rule.counterparty.projection,
                 ).items()
             }
+        )
+    if (
+        isinstance(declaration.rule, MutualConsent)
+        and declaration.rule.settle is not None
+    ):
+        functions["exit", "settle", "default"] = in_role(
+            func=declaration.rule.settle.default,
+            role=OutputRole.FLOAT,
+            kind="Settlement default, function",
         )
     return MappingProxyType(functions)
 
