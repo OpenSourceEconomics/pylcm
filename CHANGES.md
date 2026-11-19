@@ -69,6 +69,12 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   `problem`, a `ConsumptionSavingsRegime` or `NestedConsumptionSavingsRegime` holding a
   problem, and a `ValueDependentConstraint` in a `Problem` raise
   `RegimeInitializationError`. See [`Problem`](docs/reference/model_and_regime.md#problem).
+- Every problem slot of a holder is its default or the problem's own object; anything
+  else is refused. A holder given a copy of its problem with one slot changed, or
+  constructed with its problem's solver beside slots of its own, is refused instead of
+  keeping the first problem's slots and solving the wrong problem. `replace` of a holder
+  that changes a slot needs `problem=None`, and the finalized regimes of a model hold no
+  problem.
 
 ### Exits read the destination's problem
 

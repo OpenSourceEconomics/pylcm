@@ -128,20 +128,31 @@ class Problem:
 def lowered_slots(*, regime: Regime) -> tuple[str, ...]:
     """Return the slots a regime takes from the problem it holds.
 
+    Each problem slot of a regime that holds a problem is either still the
+    `Regime` default, and then takes the problem's object, or already is the
+    problem's object, as after `replace` of a holder that changes only its
+    `exit` or `description`. Anything else, an object carried over from
+    another problem included, is a declaration of the regime's own.
+
     Args:
-        regime: A regime whose `problem` is set.
+        regime: A regime, with or without a `problem`.
 
     Returns:
         The names of the problem's slots, or an empty tuple when the regime
-        already carries them.
+        holds no problem.
 
     Raises:
-        RegimeInitializationError: If the regime is a specialized regime, or if it
-            declares one of the problem's slots itself.
+        RegimeInitializationError: If the regime is a specialized regime, or if one
+            of its problem slots is neither the default nor the problem's object.
     """
     problem = regime.problem
     if problem is None:
         return ()
+    if type(regime) is not Regime:
+        raise RegimeInitializationError(
+            f"A {type(regime).__name__} cannot hold a Problem: its margin "
+            "declarations belong to its own problem. Declare its slots itself."
+        )
     slots = tuple(declaration.name for declaration in dataclasses.fields(Problem))
     defaults = {
         declaration.name: declaration.default
@@ -150,23 +161,17 @@ def lowered_slots(*, regime: Regime) -> tuple[str, ...]:
         for declaration in dataclasses.fields(Regime)
         if declaration.name in slots
     }
-    declared = [name for name in slots if getattr(regime, name) != defaults[name]]
-    # The solver's identity marks a regime derived (by `replace`, a lowering or an
-    # engine rewrite) from one already lowered from this problem: nothing in the
-    # engine replaces a regime's solver, and a regime that declares its own slots
-    # gets a solver object of its own. A regime that carries no other slot was
-    # handed the problem's solver by its author and is not lowered yet.
-    if regime.solver is problem.solver and set(declared) - {"solver"}:
-        return ()
-    if type(regime) is not Regime:
-        raise RegimeInitializationError(
-            f"A {type(regime).__name__} cannot hold a Problem: its margin "
-            "declarations belong to its own problem. Declare its slots itself."
-        )
+    declared = [
+        name
+        for name in slots
+        if getattr(regime, name) is not getattr(problem, name)
+        and getattr(regime, name) != defaults[name]
+    ]
     if declared:
         raise RegimeInitializationError(
             "A regime that holds a problem declares none of the problem's slots, "
-            f"but this one also declares {declared}. Declare them on the Problem, "
-            "or omit `problem` and declare the slots on the regime."
+            f"but this one also declares {declared}: each is neither left at its "
+            "default nor the problem's own object. Declare them on the Problem, or "
+            "pass `problem=None` and declare the slots on the regime."
         )
     return slots

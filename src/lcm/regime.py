@@ -353,7 +353,12 @@ class Regime:
     """The action problem this regime holds, which other regimes may hold too.
 
     A regime that holds a problem declares none of the problem's slots and takes
-    them from the problem; it adds only `exit` and `description`.
+    the problem's own objects for them; it adds only `exit` and `description`.
+    A slot that is neither the default nor the problem's object, such as one
+    passed to `replace` or carried over from another problem, is refused. To
+    declare a slot of its own, a regime passes `problem=None`. A regime derived
+    by rewriting slots, such as a joint-normal lowering or the model's
+    finalized regime, holds no problem.
     """
 
     stakeholders: tuple[str, ...] | None = field(init=False, default=None)
@@ -540,7 +545,7 @@ class Regime:
 
         Returns:
             This regime when it declares no joint process; otherwise a new
-            regime holding the lowered states and functions.
+            regime holding the lowered states and functions and no problem.
 
         Raises:
             RegimeInitializationError: If a generated name collides with a
@@ -557,7 +562,7 @@ class Regime:
             | frozenset(self.constraints)
             | frozenset(self.state_transitions),
         )
-        return self.replace(states=states, functions=functions)
+        return self.replace(states=states, functions=functions, problem=None)
 
     @cached_property
     def decomposed_functions(
@@ -930,13 +935,15 @@ class Regime:
 
         Returns:
             A new regime carrying the engine's additions, whose declarations
-            are the ones this regime was written with.
+            are the ones this regime was written with. It holds no problem
+            unless `other_slots` names one.
 
         Raises:
             RegimeInitializationError: If the engine mapping rewrites a
                 stakeholder's declared utility, replaces a declaration object,
                 or does not reproduce what the resulting regime decomposes to.
         """
+        other_slots.setdefault("problem", None)
         declaration = self.functions.get("utility")
         engine_functions = self._restore_floor_sources(engine_functions)
         expected_function_names = frozenset(engine_functions)

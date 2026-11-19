@@ -19,7 +19,8 @@ Closed form at the couple's cells in the first period, with an outside value of
   the mutual-consent couple never does.
 """
 
-from collections.abc import Mapping
+import dataclasses
+from collections.abc import Callable, Mapping
 
 import jax.numpy as jnp
 import numpy as np
@@ -43,6 +44,7 @@ from lcm import (
     categorical,
     fixed_transition,
 )
+from lcm.exceptions import RegimeInitializationError
 from lcm.exits import ExitRule
 from lcm.result import SimulationResult
 from lcm.shocks import GaussHermite, Normal, Product, ShockGroup
@@ -96,6 +98,14 @@ def _outside(wealth: ContinuousState) -> FloatND:
 
 def _wealth() -> LinSpacedGrid:
     return LinSpacedGrid(start=1.0, stop=2.0, n_points=2)
+
+
+def _reluctant_husband(wealth: ContinuousState) -> FloatND:
+    return 0.5 * wealth
+
+
+def _variant_household() -> CollectiveUtility:
+    return CollectiveUtility(utilities={"f": _wife, "m": _reluctant_husband})
 
 
 def _household(*, skill: bool) -> CollectiveUtility:
@@ -329,17 +339,12 @@ def test_simulated_rows_name_regimes_not_problems(
 
 
 @pytest.mark.parametrize("regime_name", _COUPLES)
-def test_a_finalized_holder_keeps_its_problem(
-    *,
-    shared: Model,
-    shared_regimes: dict[RegimeName, Regime],
-    regime_name: RegimeName,
+def test_a_finalized_holder_holds_no_problem(
+    *, shared: Model, regime_name: RegimeName
 ) -> None:
-    """Finalization derives each regime anew, and the derived regime still holds
-    the problem it was declared with."""
-    assert (
-        shared.user_regimes[regime_name].problem is shared_regimes[regime_name].problem
-    )
+    """Finalization writes the model's own slots into each regime, so a finalized
+    regime declares its slots itself and no longer holds the problem."""
+    assert shared.user_regimes[regime_name].problem is None
 
 
 @pytest.fixture(scope="module")
@@ -358,13 +363,10 @@ def rebuilt(without_skill: Model) -> Model:
 
 
 @pytest.mark.parametrize("regime_name", _COUPLES)
-def test_rebuilt_holders_keep_their_problem(
-    *, without_skill: Model, rebuilt: Model, regime_name: RegimeName
+def test_a_model_rebuilt_from_finalized_holders_holds_no_problem(
+    *, rebuilt: Model, regime_name: RegimeName
 ) -> None:
-    assert (
-        rebuilt.user_regimes[regime_name].problem
-        is without_skill.user_regimes[regime_name].problem
-    )
+    assert rebuilt.user_regimes[regime_name].problem is None
 
 
 @pytest.mark.parametrize("regime_name", _COUPLES)
@@ -379,4 +381,86 @@ def test_finalized_regimes_rebuild_the_model(
         np.asarray(
             without_skill.solve(params=_PARAMS, log_level="off").values[0][regime_name]
         ),
+    )
+
+
+_REPLACE_APIS = {
+    "dataclasses.replace": dataclasses.replace,
+    "Regime.replace": Regime.replace,
+}
+
+
+@pytest.mark.parametrize("replace", _REPLACE_APIS.values(), ids=_REPLACE_APIS)
+def test_a_couple_given_a_variant_of_its_problem_is_refused(
+    replace: Callable[..., Regime],
+) -> None:
+    """The variant keeps every object of the couple's problem, its solver
+    included, except the utility, which the couple carries from its first
+    problem."""
+    couple = _couple_problem(last=False, skill=True)
+    holder = Regime(problem=couple, exit=_dissolution(rule=MutualConsent(), skill=True))
+    variant = dataclasses.replace(couple, functions={"utility": _variant_household()})
+    with pytest.raises(
+        RegimeInitializationError, match=r"but this one also declares \['functions'\]"
+    ):
+        replace(holder, problem=variant)
+
+
+@pytest.fixture(scope="module")
+def variant_solution() -> SolutionResult:
+    """`couple_m` holds a variant of the couples' problem with another husband."""
+    regimes = _shared_regimes(skill=True)
+    couple = regimes["couple_u"].problem
+    assert couple is not None
+    regimes["couple_m"] = Regime(
+        problem=dataclasses.replace(
+            couple, functions={"utility": _variant_household()}
+        ),
+        exit=_dissolution(rule=MutualConsent(), skill=True),
+    )
+    return _model(regimes=regimes, skill=True).solve(params=_PARAMS, log_level="off")
+
+
+@pytest.fixture(scope="module")
+def variant_twin_solution() -> SolutionResult:
+    regimes = _twin_regimes()
+    regimes["couple_m"] = regimes["couple_m"].replace(
+        functions={"utility": _variant_household()}
+    )
+    return _model(regimes=regimes, skill=True).solve(params=_PARAMS, log_level="off")
+
+
+@pytest.mark.parametrize(
+    ("period", "regime_name"),
+    [(0, name) for name in _COUPLES] + [(1, name) for name in _LAST_PERIOD],
+)
+def test_a_holder_of_a_variant_problem_solves_like_the_variant_s_twin(
+    *,
+    variant_solution: SolutionResult,
+    variant_twin_solution: SolutionResult,
+    period: int,
+    regime_name: RegimeName,
+) -> None:
+    np.testing.assert_array_equal(
+        np.asarray(variant_solution.values[period][regime_name]),
+        np.asarray(variant_twin_solution.values[period][regime_name]),
+    )
+
+
+def test_a_holder_of_a_variant_problem_has_the_variant_s_twin_s_fingerprint(
+    *, variant_solution: SolutionResult, variant_twin_solution: SolutionResult
+) -> None:
+    assert (
+        variant_solution.metadata.model_fingerprint
+        == variant_twin_solution.metadata.model_fingerprint
+    )
+
+
+def test_the_variant_problem_changes_the_couple_s_value(
+    *, variant_solution: SolutionResult, twin_solution: SolutionResult
+) -> None:
+    """The variant's husband values the couple less than the first problem's."""
+    assert not np.array_equal(
+        np.asarray(variant_solution.values[0]["couple_m"]),
+        np.asarray(twin_solution.values[0]["couple_m"]),
     )

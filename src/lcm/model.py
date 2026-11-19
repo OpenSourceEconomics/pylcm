@@ -1266,6 +1266,13 @@ class Model:
                 conditions name the members. At most one composite state.
 
         """
+        # Building rewrites regime slots, and a rewritten regime no longer carries
+        # its problem's objects: the model takes each holder as the regime that
+        # declares those objects itself.
+        regimes = {
+            name: regime if regime.problem is None else regime.replace(problem=None)
+            for name, regime in regimes.items()
+        }
         regimes, shocks, self._node_axis_adapter = adapt_declaration(
             regimes=regimes, shocks=shocks
         )

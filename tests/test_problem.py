@@ -7,8 +7,10 @@ lowering, validation — sees what a regime declaring the same slots by hand giv
 """
 
 import dataclasses
+from collections.abc import Callable
 from types import MappingProxyType
 
+import cloudpickle
 import jax.numpy as jnp
 import pytest
 
@@ -87,6 +89,10 @@ def _wife(wealth: ContinuousState) -> FloatND:
 
 def _husband(wealth: ContinuousState) -> FloatND:
     return wealth
+
+
+def _other_utility(*, wealth: ContinuousState, work: DiscreteAction) -> FloatND:
+    return 2.0 * wealth - work
 
 
 def _shock_sum(*, x: ContinuousState, y: ContinuousState) -> FloatND:
@@ -204,13 +210,19 @@ def test_every_slot_has_a_declaration_that_differs_from_its_default() -> None:
     assert tuple(next(iter(slot)) for slot in _DECLARED_SLOTS) == _PROBLEM_SLOTS
 
 
+@pytest.mark.parametrize("borrows_solver", [False, True])
 @pytest.mark.parametrize(
     "declared", _DECLARED_SLOTS, ids=[next(iter(slot)) for slot in _DECLARED_SLOTS]
 )
 def test_a_problem_slot_declared_beside_the_problem_is_refused(
-    declared: RegimeReplacement,
+    *, declared: RegimeReplacement, borrows_solver: bool
 ) -> None:
-    holder: RegimeReplacement = {"problem": _problem()}
+    """Handing the regime its problem's own solver changes nothing: the slot it
+    declares is still not the problem's."""
+    problem = _problem()
+    holder: RegimeReplacement = {"problem": problem}
+    if borrows_solver:
+        holder["solver"] = problem.solver
     holder.update(declared)
     with pytest.raises(
         RegimeInitializationError,
@@ -233,6 +245,155 @@ def test_a_holder_handed_its_problem_s_solver_still_takes_the_other_slots() -> N
     """The solver's identity alone does not mark a regime as already lowered."""
     problem = _problem()
     assert Regime(problem=problem, solver=problem.solver).functions is problem.functions
+
+
+_REPLACE_APIS = {
+    "dataclasses.replace": dataclasses.replace,
+    "Regime.replace": Regime.replace,
+}
+_DECLARATIONS = {
+    name: value for slot in _DECLARED_SLOTS for name, value in slot.items()
+}
+_SLOTS_THE_PROBLEM_DECLARES = (
+    "states",
+    "state_transitions",
+    "actions",
+    "functions",
+    "constraints",
+)
+
+
+def _variant(*, first: Problem, slot: str) -> Problem:
+    """The problem with one slot declared anew; every other slot, the solver
+    included, is the very object the problem holds."""
+    second = dataclasses.replace(first, **{slot: _DECLARATIONS[slot]})
+    assert second.solver is first.solver
+    return second
+
+
+@pytest.mark.parametrize("replace", _REPLACE_APIS.values(), ids=_REPLACE_APIS)
+@pytest.mark.parametrize("slot", _SLOTS_THE_PROBLEM_DECLARES)
+def test_a_holder_given_a_problem_that_declares_a_slot_anew_is_refused(
+    *, slot: str, replace: Callable[..., Regime]
+) -> None:
+    """The holder carries the first problem's declaration of the slot, which is
+    not the second problem's."""
+    first = _problem()
+    holder = Regime(problem=first)
+    with pytest.raises(
+        RegimeInitializationError, match=rf"but this one also declares \['{slot}'\]"
+    ):
+        replace(holder, problem=_variant(first=first, slot=slot))
+
+
+@pytest.mark.parametrize("replace", _REPLACE_APIS.values(), ids=_REPLACE_APIS)
+@pytest.mark.parametrize(
+    "slot",
+    [
+        name
+        for name in _PROBLEM_SLOTS
+        # The joint transition declared here names no node, which a holder
+        # refuses on its own; the refusals above and below cover the slot.
+        if name not in {*_SLOTS_THE_PROBLEM_DECLARES, "solver", "joint_transitions"}
+    ],
+)
+def test_a_holder_given_a_problem_that_declares_a_default_slot_takes_its_objects(
+    *, slot: str, replace: Callable[..., Regime]
+) -> None:
+    """Where the holder carries a default, it takes the second problem's objects,
+    as a regime constructed to hold the second problem does."""
+    first = _problem()
+    second = _variant(first=first, slot=slot)
+    replaced = replace(Regime(problem=first), problem=second)
+    assert replaced.problem is second
+    for name in _PROBLEM_SLOTS:
+        assert getattr(replaced, name) is getattr(second, name)
+
+
+def test_the_slots_of_a_holder_are_partitioned_by_what_its_problem_declares() -> None:
+    """The two tests above split the problem slots but the solver and the joint
+    transitions between them."""
+    problem = _problem()
+    assert {
+        name
+        for name in _PROBLEM_SLOTS
+        if getattr(problem, name) != getattr(Regime(), name)
+    } == set(_SLOTS_THE_PROBLEM_DECLARES)
+
+
+@pytest.mark.parametrize(
+    "declared", _DECLARED_SLOTS, ids=[next(iter(slot)) for slot in _DECLARED_SLOTS]
+)
+def test_a_holder_declares_a_problem_slot_only_after_letting_go_of_its_problem(
+    declared: RegimeReplacement,
+) -> None:
+    holder = Regime(problem=_problem())
+    with pytest.raises(
+        RegimeInitializationError,
+        match=rf"but this one also declares \['{next(iter(declared))}'\]",
+    ):
+        holder.replace(**declared)
+
+
+def test_a_holder_that_lets_go_of_its_problem_declares_its_own_slot() -> None:
+    problem = _problem()
+    own = Regime(problem=problem).replace(
+        problem=None, functions={"utility": _other_utility}
+    )
+    assert (own.problem, own.functions["utility"], own.states) == (
+        None,
+        _other_utility,
+        problem.states,
+    )
+
+
+@pytest.mark.parametrize(
+    "change",
+    [{}, {"exit": _dissolution(MutualConsent())}, {"description": "renamed"}],
+    ids=["nothing", "exit", "description"],
+)
+@pytest.mark.parametrize("replace", _REPLACE_APIS.values(), ids=_REPLACE_APIS)
+def test_a_holder_whose_own_fields_change_keeps_its_problem_and_its_objects(
+    *, change: RegimeReplacement, replace: Callable[..., Regime]
+) -> None:
+    problem = _collective_problem()
+    holder = Regime(problem=problem, exit=_dissolution(Unilateral()))
+    replaced = replace(holder, **change)
+    for name in [*_PROBLEM_SLOTS, "problem"]:
+        assert getattr(replaced, name) is getattr(holder, name)
+
+
+def test_a_detached_holder_keeps_the_objects_and_may_hold_the_problem_again() -> None:
+    problem = _problem()
+    detached = Regime(problem=problem).replace(problem=None)
+    reattached = detached.replace(problem=problem)
+    assert (detached.problem, reattached.problem) == (None, problem)
+    for name in _PROBLEM_SLOTS:
+        assert getattr(detached, name) is getattr(problem, name)
+        assert getattr(reattached, name) is getattr(problem, name)
+
+
+def test_an_equal_default_solver_beside_a_problem_is_the_problem_s() -> None:
+    problem = _problem()
+    assert Regime(problem=problem, solver=GridSearch()).solver is problem.solver
+
+
+@pytest.mark.parametrize("replace", _REPLACE_APIS.values(), ids=_REPLACE_APIS)
+def test_an_unpickled_holder_keeps_its_problem_and_refuses_another(
+    replace: Callable[..., Regime],
+) -> None:
+    restored = cloudpickle.loads(cloudpickle.dumps(Regime(problem=_problem())))
+    same = replace(restored, description="restored")
+    assert same.problem is restored.problem
+    for name in _PROBLEM_SLOTS:
+        assert getattr(same, name) is getattr(restored.problem, name)
+    second = dataclasses.replace(
+        restored.problem, functions={"utility": _other_utility}
+    )
+    with pytest.raises(
+        RegimeInitializationError, match=r"but this one also declares \['functions'\]"
+    ):
+        replace(restored, problem=second)
 
 
 @pytest.mark.parametrize("slot", [*_PROBLEM_SLOTS, "problem"])
@@ -272,6 +433,27 @@ def test_a_consumption_savings_regime_cannot_hold_a_problem() -> None:
     ):
         ConsumptionSavingsRegime(
             problem=_problem(),
+            liquid=LiquidMargin(
+                state="assets",
+                action="consumption",
+                resources="resources",
+                post_decision_state="savings",
+            ),
+        )
+
+
+def test_a_consumption_savings_regime_with_its_problem_s_objects_is_refused() -> None:
+    solver = GridSearch()
+    problem = dataclasses.replace(_problem(), solver=solver)
+    with pytest.raises(
+        RegimeInitializationError,
+        match="A ConsumptionSavingsRegime cannot hold a Problem",
+    ):
+        ConsumptionSavingsRegime(
+            problem=problem,
+            solver=solver,
+            actions=problem.actions,
+            functions=problem.functions,
             liquid=LiquidMargin(
                 state="assets",
                 action="consumption",
@@ -326,6 +508,22 @@ def test_a_joint_normal_problem_lowers_like_its_hand_declared_twin(slot: str) ->
         states={"joint": joint}, functions={"utility": _shock_sum}
     ).lower_joint_normal_processes()
     assert tuple(getattr(held, slot)) == tuple(getattr(twin, slot))
+
+
+def test_the_joint_normal_lowering_of_a_holder_holds_no_problem() -> None:
+    """The lowered regime carries generated states and functions, not the
+    problem's objects."""
+    joint = JointNormalIIDProcess(
+        states=("x", "y"),
+        n_points=3,
+        gauss_hermite=True,
+        mean=(0.0, 0.0),
+        cov=((1.0, 0.0), (0.0, 1.0)),
+    )
+    held = Regime(
+        problem=Problem(states={"joint": joint}, functions={"utility": _shock_sum})
+    )
+    assert held.lower_joint_normal_processes().problem is None
 
 
 def test_a_dict_passed_to_a_problem_does_not_reach_it_afterwards() -> None:

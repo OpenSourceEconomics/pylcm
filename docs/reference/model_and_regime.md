@@ -288,9 +288,19 @@ model declares for them. Initial conditions, edges, results and parameters name 
 never problems, so the parameters of a problem's functions stay per regime. A regime
 that declares its slots itself owns a problem no other regime shares.
 
+Each problem slot of a holder is either left at its default, and then takes the
+problem's object, or is the problem's object already. `holder.replace(exit=...)` or
+`holder.replace(description=...)` therefore keeps the problem and its objects. Replacing
+a slot of a holder is refused, and so is giving a holder another problem whose objects
+differ from those the holder carries, such as a copy of its problem with one slot
+changed. Construct a new `Regime(problem=...)` for another problem, or pass
+`problem=None` beside the slots a regime declares itself. A regime the model derives by
+rewriting slots, such as each of `model.user_regimes`, holds no problem.
+
 Three declarations are refused with `RegimeInitializationError`:
 
-- a regime that holds a problem and also declares one of its slots;
+- a regime that holds a problem and declares one of its slots with anything other than
+  the default or the problem's own object;
 - a `ConsumptionSavingsRegime` or `NestedConsumptionSavingsRegime` that holds a problem,
   since its margin declarations belong to its own problem;
 - a problem with a `ValueDependentConstraint`, which compares action values and so is a
