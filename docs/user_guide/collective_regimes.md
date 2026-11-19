@@ -226,6 +226,185 @@ the decision; it is clipped to the candidates' range. A household that separates
 where the projections put it at the selected settlement and receives the adjustments
 evaluated there.
 
+## Renegotiating a bargaining state before dissolving
+
+A settlement shifts what the members get if they separate. Under limited commitment the
+members shift what they get if they **stay**: a member who would rather leave is offered
+a better position inside the household. Declare that position as an ordered discrete
+state of the couple, for example a Pareto weight on a grid, and name it in
+`Unilateral(renegotiate=Renegotiate(state=...))` (the
+[reference](../reference/model_and_regime.md#api-current-exits) has the contract):
+
+```python
+from lcm import (
+    DiscreteGrid,
+    Exit,
+    ExitTarget,
+    ParetoObjective,
+    Renegotiate,
+    Unilateral,
+    fixed_transition,
+)
+
+
+def her_weight(*, weight):
+    return weight
+
+
+def his_weight(*, weight):
+    return 1.0 - weight
+
+
+couple = Regime(
+    states={
+        "wealth": couple_wealth,
+        "weight": DiscreteGrid(values=jnp.linspace(0.1, 0.9, 9)),
+    },
+    state_transitions={
+        "wealth": next_couple_wealth,
+        "weight": fixed_transition("weight"),
+    },
+    actions={"consumption": consumption},
+    functions={
+        "utility": CollectiveUtility(
+            utilities={"f": her_utility, "m": his_utility},
+            objective=ParetoObjective(weights={"f": her_weight, "m": his_weight}),
+        )
+    },
+    exit=Exit(
+        rule=Unilateral(renegotiate=Renegotiate(state="weight")),
+        targets={
+            "f": ExitTarget(
+                regime="single_f", projection={"wealth": half_of_couple_wealth}
+            ),
+            "m": ExitTarget(
+                regime="single_m", projection={"wealth": half_of_couple_wealth}
+            ),
+        },
+    ),
+)
+```
+
+The state's grid order is the direction of the bargaining: moving to a higher node
+favours the first stakeholder in `utilities` (`f` here), moving to a lower node the
+second. Here the higher node is the larger weight on her utility, so the grid and the
+objective agree; the engine reads only the order of the nodes, not what the objective
+does with them.
+
+At every node of the state the household's optimum is computed ignoring the exit, with
+all other states held at their current values. Each member's value at that optimum is
+compared with the member's outside value. A member accepts a node when its value there
+is above its outside value, or equal to it under the default `tie="stay"`; `tie="leave"`
+makes an indifferent member refuse. A node at which the household has no feasible action
+is accepted by nobody. Starting from the household's current node:
+
+1. If both members accept it, the household stays there and acts at its optimum.
+1. If both refuse it, the household separates.
+1. If exactly one refuses, the state moves one node at a time toward that member. The
+   household stays at the first node both members accept, and acts at that node's
+   optimum.
+1. The walk ends in separation instead if it reaches the end of the grid first, or a
+   node the other member refuses. A node further along that both would accept does not
+   reopen the path.
+
+The outside values are those at the household's current states, its current node
+included. They are read once and do not move along the walk, so a projection that read
+the bargaining state would see the current node, not the node being tried. A household
+that separates goes where the exit's targets put it, as without renegotiation; it needs
+a feasible action in every destination, and without one the cell has no value. Where the
+exit's `available` does not hold, nothing is renegotiated and the household stays at its
+current node.
+
+The node the household stays at is its state for the rest of the period: it supplies the
+action, each member's value, and the state the laws of motion read. In a regime that
+continues, declare the bargaining state's law as `fixed_transition` so that the node
+also carries into next period; any other law, or a joint transition that updates the
+state, is refused when the model is built. A simulated row therefore shows the
+renegotiated node, both in the period it moved and in the next one.
+
+What renegotiation requires:
+
+- a regime with exactly two stakeholders;
+- a state declared on an ordered `DiscreteGrid`: a grid declared by its `values`, or by
+  a `@categorical(ordered=True)` class. An unordered or continuous state, or a name that
+  is not a state, is refused;
+- the rule `Unilateral`, comparing at the optimum: `compares` is `"optimum"` by default
+  with `renegotiate`, and `compares="each_action"` is refused.
+
+The search runs on the grid's nodes. Renegotiation does not solve for a continuous
+weight at which a member is exactly indifferent; refine the grid where that point
+matters. `model.lookup_policy` refuses a period in which the regime can renegotiate,
+because it cannot report a changed state or a separation; read the decision from
+`model.simulate`.
+
+## Several regimes, one action problem
+
+Couples that face the same budget, preferences and laws of motion can still differ in
+how they may end the match, one dissolving unilaterally and another only by mutual
+consent, or in where they go next period. Each is its own regime, because initial
+conditions, edges and results name regimes. Declare what they have in common once, as an
+[`lcm.Problem`](../reference/model_and_regime.md#api-problem), and let each regime hold
+it:
+
+```python
+from lcm import Exit, ExitTarget, MutualConsent, Problem, Regime, Unilateral
+
+
+household = Problem(
+    states={"wealth": couple_wealth},
+    state_transitions={"wealth": next_couple_wealth},
+    actions={"consumption": consumption},
+    functions={
+        "utility": CollectiveUtility(utilities={"f": her_utility, "m": his_utility})
+    },
+)
+
+
+def dissolution(rule):
+    return Exit(
+        rule=rule,
+        targets={
+            member: ExitTarget(
+                regime=f"single_{member}",
+                projection={"wealth": half_of_couple_wealth},
+            )
+            for member in ("f", "m")
+        },
+    )
+
+
+regimes = {
+    "couple_unilateral": Regime(problem=household, exit=dissolution(Unilateral())),
+    "couple_mutual": Regime(problem=household, exit=dissolution(MutualConsent())),
+    # ... the singles, which may share a problem of their own
+}
+```
+
+A `Problem` takes the `Regime` slots that declare an action problem, from `states` to
+`certainty_equivalent`, with the same types and defaults. A regime that holds it, a
+**holder**, declares none of those slots: it takes the problem's own objects and adds
+its `exit` and `description`. The model declares each holder's edges by regime name, so
+holders may differ there as well. A holder builds and solves exactly like a regime that
+declares the same slots itself, and its value follows from its own exit and edges.
+
+Parameters stay per regime: the problem's functions appear under each holder's name in
+`get_params_template()`, here once under `couple_unilateral` and once under
+`couple_mutual`, and are set separately.
+
+`RegimeInitializationError` refuses
+
+- a holder that declares a problem slot with anything other than the default or the
+  problem's own object, and `holder.replace(...)` of such a slot; replacing its `exit`
+  or `description` keeps the problem;
+- a `ConsumptionSavingsRegime` or `NestedConsumptionSavingsRegime` that holds a problem;
+- a problem with a `ValueDependentConstraint`: that constraint compares action values,
+  so it is a rule of a regime, which then declares its slots itself.
+
+`model.problems` maps each regime name to the problem it was given, or `None` for a
+regime that declares its slots itself. Two regimes share a problem when they map to the
+same object. The finalized regimes in `model.user_regimes` hold no problem, so a model
+built from them names none.
+
 ## Entering a household in a role
 
 Where nothing is decided on landing — marriage arrives with a probability and both
