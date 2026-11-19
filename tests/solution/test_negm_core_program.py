@@ -249,7 +249,7 @@ def _keeper_then_per_node_loop(
 
 def test_the_graph_publishes_the_keeper_and_the_outer_sweep(
     *, captured: tuple[_NEGMPeriodKernel, OracleContext]
-):
+) -> None:
     kernel, _ = captured
     graph = core_program_graph(kernel=kernel)
 
@@ -277,7 +277,7 @@ def test_the_graph_publishes_the_keeper_and_the_outer_sweep(
 
 def test_the_keeper_program_is_the_inner_keepers_program_under_a_new_name(
     *, captured: tuple[_NEGMPeriodKernel, OracleContext]
-):
+) -> None:
     kernel, _ = captured
     keeper = core_program_graph(kernel=kernel)["keeper"]
     inner = core_program_graph(kernel=kernel.keeper_kernel)["main"]
@@ -290,7 +290,7 @@ def test_the_keeper_program_is_the_inner_keepers_program_under_a_new_name(
 
 def test_the_sweep_publishes_the_value_and_the_stacked_carry_on_the_durable_axis(
     *, captured: tuple[_NEGMPeriodKernel, OracleContext]
-):
+) -> None:
     """Every carry row leads with the durable axis; the candidate axis replicates."""
     kernel, _ = captured
     value_role, carry_roles = cast(
@@ -313,7 +313,7 @@ def test_the_sweep_publishes_the_value_and_the_stacked_carry_on_the_durable_axis
 
 def test_the_sweep_declares_the_keepers_value_and_carry_as_internal_inputs(
     *, captured: tuple[_NEGMPeriodKernel, OracleContext]
-):
+) -> None:
     """The sweep names the keeper's outputs; the keeper publishes them by label."""
     kernel, _ = captured
     graph = core_program_graph(kernel=kernel)
@@ -330,7 +330,7 @@ def test_the_sweep_declares_the_keepers_value_and_carry_as_internal_inputs(
 
 def test_the_sweep_builder_binds_the_first_node_and_the_sweeps_own_inputs(
     *, captured: tuple[_NEGMPeriodKernel, OracleContext]
-):
+) -> None:
     """Keeper outputs reach the sweep only through the declared internal edge."""
     kernel, context = captured
     arguments = cast(
@@ -354,7 +354,7 @@ def test_the_sweep_builder_binds_the_first_node_and_the_sweeps_own_inputs(
     )
 
 
-def test_the_sweep_transport_keys_live_in_an_engine_only_namespace():
+def test_the_sweep_transport_keys_live_in_an_engine_only_namespace() -> None:
     """No name a model can declare is reserved for the sweep's own inputs.
 
     Public regime, function, state, and action names cannot contain the `__`
@@ -369,7 +369,7 @@ def test_the_sweep_transport_keys_live_in_an_engine_only_namespace():
 
 def test_the_kernel_returns_a_public_output_with_the_stacked_continuation(
     *, captured: tuple[_NEGMPeriodKernel, OracleContext]
-):
+) -> None:
     kernel, context = captured
     output = _call(kernel=kernel, context=context)
 
@@ -392,8 +392,8 @@ _WIDTHS = [1, 2, 3, 5, _N_OUTER]
 
 @pytest.mark.parametrize("width", _WIDTHS)
 def test_the_compiled_sweep_value_agrees_with_the_per_node_loop(
-    *, captured, width: int
-):
+    *, captured: tuple[_NEGMPeriodKernel, OracleContext], width: int
+) -> None:
     """The value is the exact maximum over candidates, so it agrees to a few ULP.
 
     The sweep and the per-node loop evaluate the same operations in the same
@@ -413,8 +413,8 @@ def test_the_compiled_sweep_value_agrees_with_the_per_node_loop(
 
 @pytest.mark.parametrize("width", _WIDTHS)
 def test_the_compiled_sweep_carry_rows_agree_with_the_per_node_loop(
-    *, captured, width: int
-):
+    *, captured: tuple[_NEGMPeriodKernel, OracleContext], width: int
+) -> None:
     """Under x64, block width preserves every carry row's support exactly.
 
     NaN and infinity placement is representation-level support metadata: a
@@ -463,7 +463,9 @@ def test_the_compiled_sweep_carry_rows_agree_with_the_per_node_loop(
 
 
 @pytest.mark.parametrize("width", [1, 2, 3, 5, 7, _N_OUTER])
-def test_block_width_leaves_every_periods_solved_values_within_ulp(*, width: int):
+def test_block_width_leaves_every_periods_solved_values_within_ulp(
+    *, width: int
+) -> None:
     """The parent-read differential: block width is not observable in any period.
 
     Every earlier period reads the sweep's carry through its valid prefix, so a
@@ -507,7 +509,7 @@ def _fixed_flat_params() -> FlatParams:
 
 def test_fixed_params_bind_into_the_sweep_the_keeper_and_the_shift(
     *, captured: tuple[_NEGMPeriodKernel, OracleContext]
-):
+) -> None:
     kernel, _ = captured
     bound = kernel.with_fixed_params(fixed_flat_params=_fixed_flat_params())
     graph = core_program_graph(kernel=bound)
@@ -523,7 +525,7 @@ def test_fixed_params_bind_into_the_sweep_the_keeper_and_the_shift(
     assert bound.coh_shift_func.keywords["final_age_alive"] == 30.0
 
 
-def test_periods_sharing_one_inner_core_share_one_sweep_callable():
+def test_periods_sharing_one_inner_core_share_one_sweep_callable() -> None:
     """An age-invariant regime's periods carry one sweep callable, fixed params or not.
 
     Sharing the callable is what lets the periods share a compiled program: the
@@ -548,7 +550,7 @@ def test_periods_sharing_one_inner_core_share_one_sweep_callable():
 
 def test_a_replay_lowers_the_same_programs_the_solve_ran(
     *, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-):
+) -> None:
     monkeypatch.setenv("LCM_CAPTURE_PERIOD", f"{_REGIME}@{_PERIOD}")
     monkeypatch.setenv("LCM_CAPTURE_DIR", str(tmp_path))
     solution = negm_kinked_toy.build_model().solve(params=_PARAMS, log_level="off")

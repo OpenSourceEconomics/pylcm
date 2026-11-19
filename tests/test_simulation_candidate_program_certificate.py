@@ -1371,7 +1371,7 @@ def test_donation_argument_adapter_is_in_the_reviewed_source_inventory(
     *,
     source: RepositoryRelativePath,
     clean_corridor_sources: tuple[RepositoryRelativePath, ...],
-):
+) -> None:
     """The sole-marginal adapter and its installation are independently sealed."""
     assert source in clean_corridor_sources
 
@@ -1551,7 +1551,7 @@ def test_live_simulation_program_sources_are_certified(
     *,
     source: RepositoryRelativePath,
     clean_corridor_sources: tuple[RepositoryRelativePath, ...],
-):
+) -> None:
     """Declaration, argument binding, resolution, and dispatch are live obligations."""
     assert source in clean_corridor_sources
 
@@ -1587,7 +1587,7 @@ def test_program_mutation_is_rejected_after_byte_seals_are_refreshed(
     clean_corridor_sources: tuple[RepositoryRelativePath, ...],
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-):
+) -> None:
     """Each transport defect fails its own semantic corridor after byte resealing."""
     root = Path(__file__).parents[1]
     sources = clean_corridor_sources
