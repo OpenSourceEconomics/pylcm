@@ -392,7 +392,9 @@ def _nested_parameter(value: _Static) -> _Static:
 
 
 def _checked_context(context: JaxprEqnContext) -> JaxprEqnContext:
-    if not context.cur_abstract_mesh.empty:
+    configs = dict(zip(jax_config.jaxpr_eqn_ctx_names(), context.configs, strict=True))
+    mesh = configs.get("abstract_mesh_context_manager")
+    if not isinstance(mesh, AbstractMesh) or not mesh.empty:
         raise ExecutionPlanningError(
             "Validator stage has an unsupported nonempty mesh context."
         )
