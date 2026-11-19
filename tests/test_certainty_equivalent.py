@@ -64,7 +64,7 @@ from lcm.typing import (
 from lcm_examples.epstein_zin import get_model, get_params
 
 
-def test_power_certainty_equivalent_transform_and_inverse_are_inverses():
+def test_power_certainty_equivalent_transform_and_inverse_are_inverses() -> None:
     """`inverse(transform(x)) == x` for positive values."""
     ce = PowerMean()
     x = jnp.array([0.5, 1.0, 2.0, 7.5])
@@ -75,14 +75,14 @@ def test_power_certainty_equivalent_transform_and_inverse_are_inverses():
     np.testing.assert_allclose(roundtrip, x, rtol=1e-6)
 
 
-def test_power_certainty_equivalent_param_names():
+def test_power_certainty_equivalent_param_names() -> None:
     """The power CE declares exactly the `risk_aversion` runtime param."""
     assert PowerMean().param_names == frozenset({"risk_aversion"})
 
 
 def test_power_mean_aggregate_stays_finite_for_small_values_high_risk_aversion(
     x64_enabled: None,
-):
+) -> None:
     """`aggregate` returns the finite power mean where naive transform overflows.
 
     With `risk_aversion > 1` and continuation values near the borrowing
@@ -111,7 +111,7 @@ def test_power_mean_aggregate_stays_finite_for_small_values_high_risk_aversion(
 
 def test_power_mean_aggregate_matches_naive_form_on_well_scaled_values(
     x64_enabled: None,
-):
+) -> None:
     """On well-scaled values the fused aggregation equals `g⁻¹(Σ w·g(v))`."""
     ce = PowerMean()
     values = jnp.array([0.5, 1.0, 2.0, 4.0])
@@ -127,7 +127,7 @@ def test_power_mean_aggregate_matches_naive_form_on_well_scaled_values(
     np.testing.assert_allclose(np.asarray(aggregated), np.asarray(naive), rtol=1e-10)
 
 
-def test_power_mean_aggregate_log_limit_is_geometric_mean(x64_enabled: None):
+def test_power_mean_aggregate_log_limit_is_geometric_mean(x64_enabled: None) -> None:
     """At `risk_aversion = 1` the aggregation is the weighted geometric mean."""
     ce = PowerMean()
     values = jnp.array([1.0, 2.0, 4.0])
@@ -141,7 +141,7 @@ def test_power_mean_aggregate_log_limit_is_geometric_mean(x64_enabled: None):
     np.testing.assert_allclose(np.asarray(aggregated), geometric, rtol=1e-10)
 
 
-def test_quasi_arithmetic_mean_param_names_union_over_both_callables():
+def test_quasi_arithmetic_mean_param_names_union_over_both_callables() -> None:
     """`param_names` is the union of transform and inverse args minus `value`."""
 
     def g(*, value: FloatND, theta: FloatND) -> FloatND:
@@ -154,7 +154,7 @@ def test_quasi_arithmetic_mean_param_names_union_over_both_callables():
     assert ce.param_names == frozenset({"theta", "offset"})
 
 
-def test_quasi_arithmetic_mean_rejects_callable_without_value_arg():
+def test_quasi_arithmetic_mean_rejects_callable_without_value_arg() -> None:
     """Both callables must take the value array via an argument named `value`."""
 
     def g(v: FloatND) -> FloatND:
@@ -328,7 +328,7 @@ def _make_model(
     )
 
 
-def test_regime_accepts_certainty_equivalent():
+def test_regime_accepts_certainty_equivalent() -> None:
     """A non-terminal grid-search regime may declare a certainty equivalent."""
     model = _make_model(
         alive_kwargs={"certainty_equivalent": PowerMean()},
@@ -337,7 +337,7 @@ def test_regime_accepts_certainty_equivalent():
     assert model.user_regimes["alive"].certainty_equivalent is not None
 
 
-def test_terminal_regime_rejects_certainty_equivalent():
+def test_terminal_regime_rejects_certainty_equivalent() -> None:
     """Terminal regimes have no continuation to aggregate."""
     with pytest.raises(RegimeInitializationError, match=r"[Tt]erminal"):
         _make_model(
@@ -346,7 +346,7 @@ def test_terminal_regime_rejects_certainty_equivalent():
         )
 
 
-def test_terminal_regime_rejects_the_linear_certainty_equivalent():
+def test_terminal_regime_rejects_the_linear_certainty_equivalent() -> None:
     """A terminal regime is rejected even for the expected-utility default.
 
     The linear default is waved past the composition rules, but having no
@@ -361,7 +361,7 @@ def test_terminal_regime_rejects_the_linear_certainty_equivalent():
         )
 
 
-def test_dcegm_rejects_certainty_equivalent():
+def test_dcegm_rejects_certainty_equivalent() -> None:
     """DC-EGM's Euler inversion assumes expected utility; the guard names GridSearch."""
     dcegm = DCEGM(
         savings_grid=LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
@@ -377,7 +377,7 @@ def test_dcegm_rejects_certainty_equivalent():
         )
 
 
-def test_nbegm_with_taste_shocks_rejects_certainty_equivalent():
+def test_nbegm_with_taste_shocks_rejects_certainty_equivalent() -> None:
     """Epstein-Zin and extreme-value taste shocks do not compose.
 
     The taste-shock logsum is not invariant under the certainty-equivalent
@@ -413,7 +413,7 @@ _NBEGM_FUNCTIONS: dict[str, FunctionEntry] = {
 }
 
 
-def test_nbegm_rejects_a_non_power_mean_certainty_equivalent():
+def test_nbegm_rejects_a_non_power_mean_certainty_equivalent() -> None:
     """NBEGM implements the Epstein-Zin recursion for `PowerMean` only.
 
     The endogenous-grid kernels read the power mean's `risk_aversion` parameter
@@ -442,7 +442,7 @@ def test_nbegm_rejects_a_non_power_mean_certainty_equivalent():
         )
 
 
-def test_nbegm_certainty_equivalent_requires_the_epstein_zin_aggregator():
+def test_nbegm_certainty_equivalent_requires_the_epstein_zin_aggregator() -> None:
     """NBEGM with a certainty equivalent needs a `CESAggregator` aggregator.
 
     The Euler inversion and period value read the aggregator's intertemporal
@@ -464,7 +464,7 @@ def test_nbegm_certainty_equivalent_requires_the_epstein_zin_aggregator():
         )
 
 
-def test_nbegm_certainty_equivalent_requires_a_ride_along_route():
+def test_nbegm_certainty_equivalent_requires_a_ride_along_route() -> None:
     """A zero-ride NBEGM regime cannot declare a certainty equivalent.
 
     The single-liquid-state smooth route solves the additive expected-utility
@@ -487,7 +487,7 @@ def test_nbegm_certainty_equivalent_requires_a_ride_along_route():
         )
 
 
-def test_nbegm_certainty_equivalent_rejects_a_jump_breakpoint():
+def test_nbegm_certainty_equivalent_rejects_a_jump_breakpoint() -> None:
     """EZ NBEGM covers smooth and pure-kink budgets; a jump is rejected at build.
 
     The unified jump-and-kink candidate step assumes the additive aggregator,
@@ -569,7 +569,7 @@ def test_nbegm_certainty_equivalent_rejects_a_jump_breakpoint():
         )
 
 
-def test_nbegm_certainty_equivalent_rejects_a_varying_elasticity_flow():
+def test_nbegm_certainty_equivalent_rejects_a_varying_elasticity_flow() -> None:
     """A flow that is not a single power of consumption is refused.
 
     The Epstein-Zin Euler inversion is closed-form only for `q = A c^phi` with
@@ -641,8 +641,8 @@ def test_nbegm_certainty_equivalent_rejects_a_varying_elasticity_flow():
 
 
 def test_nbegm_certainty_equivalent_accepts_a_single_power_flow_in_float32(
-    x64_disabled,
-):
+    x64_disabled: None,
+) -> None:
     """A genuinely single-power flow builds under 32-bit precision.
 
     The elasticity probe differentiates the flow with `jax.grad`, whose
@@ -719,7 +719,7 @@ def test_nbegm_certainty_equivalent_accepts_a_single_power_flow_in_float32(
     assert template["alive"]["certainty_equivalent"] == {"risk_aversion": "float"}
 
 
-def test_nbegm_certainty_equivalent_rejects_a_negative_flow():
+def test_nbegm_certainty_equivalent_rejects_a_negative_flow() -> None:
     """A flow that is negative at the probe points is refused.
 
     The Epstein-Zin recursion requires a strictly positive period flow
@@ -791,7 +791,7 @@ def test_nbegm_certainty_equivalent_rejects_a_negative_flow():
         _check_probes(model)
 
 
-def test_nbegm_certainty_equivalent_rejects_a_liquid_reading_continuation():
+def test_nbegm_certainty_equivalent_rejects_a_liquid_reading_continuation() -> None:
     """EZ NBEGM rejects a continuation that depends on the current liquid state.
 
     When a next-period state law (or the regime transition) reads the current
@@ -866,7 +866,7 @@ def test_nbegm_certainty_equivalent_rejects_a_liquid_reading_continuation():
         )
 
 
-def test_params_template_contains_certainty_equivalent_params():
+def test_params_template_contains_certainty_equivalent_params() -> None:
     """CE params surface under the pseudo-function name `certainty_equivalent`."""
     model = _make_model(
         alive_kwargs={"certainty_equivalent": PowerMean()},
@@ -876,7 +876,7 @@ def test_params_template_contains_certainty_equivalent_params():
     assert template["alive"]["certainty_equivalent"] == {"risk_aversion": "float"}
 
 
-def test_certainty_equivalent_name_collision_with_function_is_rejected():
+def test_certainty_equivalent_name_collision_with_function_is_rejected() -> None:
     """A function named `certainty_equivalent` collides with the pseudo-function."""
 
     def certainty_equivalent(wealth: ContinuousState) -> FloatND:
@@ -900,7 +900,7 @@ def test_certainty_equivalent_name_collision_with_function_is_rejected():
         )
 
 
-def test_nonlinear_certainty_equivalent_changes_solved_values():
+def test_nonlinear_certainty_equivalent_changes_solved_values() -> None:
     """With `risk_aversion = 2`, solved values differ from expected utility."""
     ez_model = get_model(certainty_equivalent=PowerMean())
     eu_model = get_model(certainty_equivalent=None)
@@ -915,7 +915,7 @@ def test_nonlinear_certainty_equivalent_changes_solved_values():
     )
 
 
-def test_zero_risk_aversion_reduces_to_expected_utility():
+def test_zero_risk_aversion_reduces_to_expected_utility() -> None:
     """`risk_aversion = 0` makes the power CE the linear expectation."""
     ez_model = get_model(certainty_equivalent=PowerMean())
     eu_model = get_model(certainty_equivalent=None)
@@ -946,7 +946,7 @@ def _utility_dead_stateless() -> FloatND:
 @pytest.mark.parametrize("risk_aversion", [0.5, 2.0, 3.0])
 def test_stateless_target_is_transformed_before_the_regime_expectation(
     risk_aversion: float,
-):
+) -> None:
     """A stateless target reached with probability 1 contributes its own value.
 
     `QuasiArithmeticMean` is `CE = g^-1(sum_r p_r * E_w[g(V'_r)])`, so `transform`
@@ -1090,7 +1090,7 @@ def _reference_backward_induction(
     return V_alive, policy_c[0]
 
 
-def test_power_mean_log_limit_is_geometric_mean():
+def test_power_mean_log_limit_is_geometric_mean() -> None:
     """At `risk_aversion = 1` the power-mean transform pair is `log`/`exp`."""
     ce = PowerMean()
     x = jnp.array([0.5, 1.0, 2.0, 7.5])
@@ -1106,7 +1106,7 @@ def test_power_mean_log_limit_is_geometric_mean():
 
 
 @pytest.mark.parametrize("risk_aversion", [0.5, 1.0])
-def test_epstein_zin_solved_values_match_numpy_reference(risk_aversion: float):
+def test_epstein_zin_solved_values_match_numpy_reference(risk_aversion: float) -> None:
     """The solved alive-V equals an independent numpy backward induction.
 
     `risk_aversion = 1` exercises the geometric-mean (log) limit of the
@@ -1148,7 +1148,7 @@ def _minimal_nnbegm() -> NNBEGM:
     )
 
 
-def test_nnbegm_rejects_a_non_power_mean_certainty_equivalent():
+def test_nnbegm_rejects_a_non_power_mean_certainty_equivalent() -> None:
     """N-NB-EGM's inner solve runs the NBEGM kernels, so the same CE contract binds.
 
     The nested solver inherits the Epstein-Zin recursion from its inner NBEGM,
@@ -1174,7 +1174,7 @@ def test_nnbegm_rejects_a_non_power_mean_certainty_equivalent():
         )
 
 
-def test_nnbegm_certainty_equivalent_requires_the_epstein_zin_aggregator():
+def test_nnbegm_certainty_equivalent_requires_the_epstein_zin_aggregator() -> None:
     """N-NB-EGM with a certainty equivalent needs a `CESAggregator`, like NBEGM.
 
     The inner Euler inversion and period value read the aggregator's
@@ -1301,7 +1301,7 @@ def test_power_mean_aggregate_matches_reference_at_float64_scales(
     x64_enabled: None,
     risk_aversion: float,
     scale: float,
-):
+) -> None:
     """The power mean of a tiny positive lottery equals its high-precision value."""
     values = (scale, 2.0 * scale)
     weights = (0.9, 0.1)
@@ -1322,7 +1322,7 @@ def test_power_mean_aggregate_matches_reference_at_float32_scales(
     x64_disabled: None,
     risk_aversion: float,
     scale: float,
-):
+) -> None:
     """The float32 power mean of a tiny positive lottery stays at its exact value."""
     values = (scale, 2.0 * scale)
     weights = (0.9, 0.1)
@@ -1396,7 +1396,7 @@ def test_power_mean_aggregate_keeps_a_tiny_anchor_mass_at_float64(
     anchor_weight: float,
     anchor_position: str,
     execution: str,
-):
+) -> None:
     """A near-zero weight on the lowest value still gives the exact power mean."""
     values, weights = _tiny_anchor_lottery(
         n_nodes=n_nodes,
@@ -1426,7 +1426,7 @@ def test_power_mean_aggregate_keeps_a_tiny_anchor_mass_at_float32(
     anchor_weight: float,
     anchor_position: str,
     execution: str,
-):
+) -> None:
     """The float32 aggregation keeps a near-zero anchor mass too."""
     values, weights = _tiny_anchor_lottery(
         n_nodes=n_nodes,
@@ -1445,7 +1445,9 @@ def test_power_mean_aggregate_keeps_a_tiny_anchor_mass_at_float32(
     np.testing.assert_allclose(got, expected, rtol=5e-5, atol=0.0)
 
 
-def test_power_mean_aggregate_at_a_float64_witness_anchor_weight(x64_enabled: None):
+def test_power_mean_aggregate_at_a_float64_witness_anchor_weight(
+    x64_enabled: None,
+) -> None:
     """`(1e-50, 1)` at weights `(1e-20, 1)` and risk aversion 8 is `7.1969e-48`."""
     got = _aggregate_power_mean(
         values=(1e-50, 1.0),
@@ -1456,7 +1458,9 @@ def test_power_mean_aggregate_at_a_float64_witness_anchor_weight(x64_enabled: No
     np.testing.assert_allclose(got, 7.196856730011521e-48, rtol=1e-12, atol=0.0)
 
 
-def test_power_mean_aggregate_at_a_float32_witness_anchor_weight(x64_disabled: None):
+def test_power_mean_aggregate_at_a_float32_witness_anchor_weight(
+    x64_disabled: None,
+) -> None:
     """`(1e-8, 1)` at weights `(1e-8, 1)` and risk aversion 8 is `1.3895e-7`."""
     got = _aggregate_power_mean(
         values=(1e-8, 1.0),
@@ -1467,7 +1471,7 @@ def test_power_mean_aggregate_at_a_float32_witness_anchor_weight(x64_disabled: N
     np.testing.assert_allclose(got, 1.3894954943731376e-7, rtol=5e-5, atol=0.0)
 
 
-def test_power_mean_aggregate_is_geometric_mean_at_unit_risk_aversion():
+def test_power_mean_aggregate_is_geometric_mean_at_unit_risk_aversion() -> None:
     """At `risk_aversion = 1` the power mean is the weighted geometric mean."""
     got = PowerMean().aggregate(
         values=jnp.array([1.0, 9.0]),
@@ -1480,7 +1484,7 @@ def test_power_mean_aggregate_is_geometric_mean_at_unit_risk_aversion():
 @pytest.mark.parametrize("risk_aversion", [1.0 - 1e-6, 1.0 + 1e-6])
 def test_power_mean_aggregate_is_continuous_around_unit_risk_aversion(
     risk_aversion: float,
-):
+) -> None:
     """Just off `risk_aversion = 1` the power mean is still the geometric mean."""
     got = PowerMean().aggregate(
         values=jnp.array([1.0, 9.0]),
@@ -1490,7 +1494,7 @@ def test_power_mean_aggregate_is_continuous_around_unit_risk_aversion(
     np.testing.assert_allclose(float(got), 3.0, rtol=1e-5)
 
 
-def test_power_mean_aggregate_is_linear_expectation_at_zero_risk_aversion():
+def test_power_mean_aggregate_is_linear_expectation_at_zero_risk_aversion() -> None:
     """At `risk_aversion = 0` the power mean is the probability-weighted mean."""
     got = PowerMean().aggregate(
         values=jnp.array([1.0, 9.0]),
@@ -1500,7 +1504,7 @@ def test_power_mean_aggregate_is_linear_expectation_at_zero_risk_aversion():
     np.testing.assert_allclose(float(got), 7.0, rtol=1e-6)
 
 
-def test_power_mean_aggregate_drops_zero_weight_entries():
+def test_power_mean_aggregate_drops_zero_weight_entries() -> None:
     """A zero-probability branch leaves the certainty equivalent unchanged."""
     kept = PowerMean().aggregate(
         values=jnp.array([1.0, 9.0]),
@@ -1515,7 +1519,7 @@ def test_power_mean_aggregate_drops_zero_weight_entries():
     np.testing.assert_allclose(float(padded), float(kept), rtol=1e-12)
 
 
-def test_power_mean_aggregate_is_homogeneous_of_degree_one():
+def test_power_mean_aggregate_is_homogeneous_of_degree_one() -> None:
     """Rescaling the lottery by `k > 0` rescales the certainty equivalent by `k`."""
     weights = jnp.array([0.3, 0.7])
     params = {"risk_aversion": jnp.asarray(6.0)}
@@ -1528,7 +1532,7 @@ def test_power_mean_aggregate_is_homogeneous_of_degree_one():
     np.testing.assert_allclose(float(scaled), 1e-12 * float(unit), rtol=1e-5)
 
 
-def test_certainty_equivalent_subclass_must_supply_an_aggregation():
+def test_certainty_equivalent_subclass_must_supply_an_aggregation() -> None:
     """Aggregating the continuation lottery is part of the interface, not an extra.
 
     A subclass that declares only its parameter names cannot be instantiated,
@@ -1547,7 +1551,7 @@ def test_certainty_equivalent_subclass_must_supply_an_aggregation():
 
 
 @pytest.mark.parametrize("overridden", ["transform", "inverse"])
-def test_power_mean_rejects_a_custom_transform_or_inverse(overridden: str):
+def test_power_mean_rejects_a_custom_transform_or_inverse(overridden: str) -> None:
     """`PowerMean` aggregates the power transform; a custom pair needs the base class.
 
     Its stable aggregation is specific to `v^(1-risk_aversion)`, so accepting
@@ -1561,7 +1565,7 @@ def test_power_mean_rejects_a_custom_transform_or_inverse(overridden: str):
         PowerMean(**{overridden: g})
 
 
-def test_power_mean_aggregate_is_zero_at_a_zero_valued_node(x64_enabled: None):
+def test_power_mean_aggregate_is_zero_at_a_zero_valued_node(x64_enabled: None) -> None:
     """A zero-valued branch drives the power mean to zero above unit risk aversion.
 
     With `risk_aversion = 3` the transform `v^-2` sends the zero branch to
@@ -1574,7 +1578,9 @@ def test_power_mean_aggregate_is_zero_at_a_zero_valued_node(x64_enabled: None):
     np.testing.assert_allclose(got, 0.0, atol=0.0)
 
 
-def test_power_mean_aggregate_is_zero_at_an_underflowed_node(x64_disabled: None):
+def test_power_mean_aggregate_is_zero_at_an_underflowed_node(
+    x64_disabled: None,
+) -> None:
     """A float32 branch that underflows to zero yields a zero certainty equivalent."""
     got = _aggregate_power_mean(
         values=(1e-50, 1.0), weights=(0.5, 0.5), risk_aversion=3.0, dtype=jnp.float32
@@ -1582,7 +1588,7 @@ def test_power_mean_aggregate_is_zero_at_an_underflowed_node(x64_disabled: None)
     np.testing.assert_allclose(got, 0.0, atol=0.0)
 
 
-def test_power_mean_aggregate_is_nan_for_a_zero_mass_lottery():
+def test_power_mean_aggregate_is_nan_for_a_zero_mass_lottery() -> None:
     """A lottery carrying no probability mass has no certainty equivalent.
 
     The linear-expectation path reports the same undefined aggregate, so a
@@ -1598,7 +1604,7 @@ def test_power_mean_aggregate_is_nan_for_a_zero_mass_lottery():
 
 
 @pytest.mark.parametrize("bad_weight", [jnp.nan, jnp.inf])
-def test_power_mean_aggregate_propagates_a_non_finite_weight(bad_weight: float):
+def test_power_mean_aggregate_propagates_a_non_finite_weight(bad_weight: float) -> None:
     """A malformed node weight makes the whole aggregate NaN rather than dropping."""
     got = PowerMean().aggregate(
         values=jnp.array([1.0, 9.0]),
@@ -1610,7 +1616,7 @@ def test_power_mean_aggregate_propagates_a_non_finite_weight(bad_weight: float):
 
 def test_power_mean_aggregate_has_finite_gradients_at_a_dead_zero_valued_node(
     x64_enabled: None,
-):
+) -> None:
     """A zero-weight branch at value zero leaves every gradient finite.
 
     A target regime reached with probability zero is ordinary — a survival
@@ -1638,7 +1644,7 @@ def test_power_mean_aggregate_has_finite_gradients_at_a_dead_zero_valued_node(
     )
 
 
-def test_power_mean_aggregate_normalizes_a_non_unit_mass_lottery():
+def test_power_mean_aggregate_normalizes_a_non_unit_mass_lottery() -> None:
     """Scaling every weight by a constant leaves the certainty equivalent unchanged.
 
     Up to rounding: the scaled weights sum to a different total, so the two results
@@ -1657,7 +1663,7 @@ def test_power_mean_aggregate_normalizes_a_non_unit_mass_lottery():
 @pytest.mark.parametrize("risk_aversion", [1.0 - 1e-6, 1.0, 1.0 + 1e-6])
 def test_power_mean_aggregate_is_continuous_across_unit_risk_aversion_off_unit_mass(
     risk_aversion: float,
-):
+) -> None:
     """A lottery whose weights miss unit mass stays continuous in risk aversion."""
     got = PowerMean().aggregate(
         values=jnp.array([1.0, 9.0]),
@@ -1675,7 +1681,7 @@ def _power_inverse(*, value: FloatND, risk_aversion: FloatND) -> FloatND:
     return value ** (1.0 / (1.0 - risk_aversion))
 
 
-def test_solve_with_a_generic_quasi_arithmetic_mean_matches_the_power_mean():
+def test_solve_with_a_generic_quasi_arithmetic_mean_matches_the_power_mean() -> None:
     """A hand-written power transform on a `Regime` solves to the `PowerMean` values."""
     generic_model = get_model(
         certainty_equivalent=QuasiArithmeticMean(
@@ -1696,7 +1702,7 @@ def test_solve_with_a_generic_quasi_arithmetic_mean_matches_the_power_mean():
             )
 
 
-def test_quasi_arithmetic_mean_aggregate_normalizes_a_non_unit_mass_lottery():
+def test_quasi_arithmetic_mean_aggregate_normalizes_a_non_unit_mass_lottery() -> None:
     """Scaling every weight by a constant leaves the generic mean unchanged."""
 
     def g(*, value: FloatND, theta: FloatND) -> FloatND:
@@ -1716,7 +1722,7 @@ def test_quasi_arithmetic_mean_aggregate_normalizes_a_non_unit_mass_lottery():
     np.testing.assert_allclose(float(scaled), float(unit), rtol=1e-12)
 
 
-def test_quasi_arithmetic_mean_aggregate_is_transform_sum_inverse():
+def test_quasi_arithmetic_mean_aggregate_is_transform_sum_inverse() -> None:
     """A generic quasi-arithmetic mean aggregates as `g⁻¹(Σ w · g(v))`.
 
     Each callable receives exactly the runtime parameters its own signature
@@ -1908,7 +1914,7 @@ def test_solved_values_are_equivariant_to_rescaling_the_model(
     *,
     x64_enabled: None,
     risk_aversion: float,
-):
+) -> None:
     """Scaling a homogeneous model by `k > 0` scales its solved values by `k`."""
     _assert_solved_values_are_equivariant(
         make_model=_make_scale_equivariant_model,
@@ -1923,7 +1929,7 @@ def test_solved_values_are_equivariant_to_rescaling_the_model_float32(
     *,
     x64_disabled: None,
     risk_aversion: float,
-):
+) -> None:
     """The float32 solve is equivariant too, at scales that overflow the naive route."""
     _assert_solved_values_are_equivariant(
         make_model=_make_scale_equivariant_model,
@@ -1938,7 +1944,7 @@ def test_solved_values_are_equivariant_with_a_stateless_target_regime(
     *,
     x64_enabled: None,
     risk_aversion: float,
-):
+) -> None:
     """A lottery mixing a stateless and a stateful target aggregates equivariantly."""
     _assert_solved_values_are_equivariant(
         make_model=_make_mixed_target_model,
@@ -1953,7 +1959,7 @@ def test_solved_values_are_equivariant_with_a_stateless_target_regime_float32(
     *,
     x64_disabled: None,
     risk_aversion: float,
-):
+) -> None:
     """The mixed stateless/stateful lottery is equivariant at float32 too."""
     _assert_solved_values_are_equivariant(
         make_model=_make_mixed_target_model,
@@ -1963,7 +1969,7 @@ def test_solved_values_are_equivariant_with_a_stateless_target_regime_float32(
     )
 
 
-def test_linear_expectation_aggregate_is_the_mass_normalized_mean():
+def test_linear_expectation_aggregate_is_the_mass_normalized_mean() -> None:
     """`LinearExpectation` aggregates a lottery to its probability-weighted mean."""
     got = LinearExpectation().aggregate(
         values=jnp.array([1.0, 9.0]),
@@ -1974,7 +1980,7 @@ def test_linear_expectation_aggregate_is_the_mass_normalized_mean():
     np.testing.assert_allclose(float(got), 7.0, rtol=1e-6)
 
 
-def test_linear_expectation_takes_no_runtime_parameters():
+def test_linear_expectation_takes_no_runtime_parameters() -> None:
     """The plain expectation has nothing to parameterize."""
     assert LinearExpectation().param_names == frozenset()
 
@@ -1995,7 +2001,7 @@ def test_linear_expectation_annihilates_a_zero_weight_infinity() -> None:
     np.testing.assert_allclose(np.asarray(got), 2.0)
 
 
-def test_linear_expectation_solves_to_the_same_values_as_the_generic_route():
+def test_linear_expectation_solves_to_the_same_values_as_the_generic_route() -> None:
     """The engine's per-target reduction agrees with the reference aggregation.
 
     A regime declaring `LinearExpectation` is reduced target by target, which
@@ -2028,7 +2034,7 @@ def test_power_mean_aggregate_matches_its_own_transform_and_inverse(
     *,
     x64_enabled: None,
     risk_aversion: float,
-):
+) -> None:
     """The anchored form agrees with the pair it is the stable evaluation of.
 
     `PowerMean.transform` and `PowerMean.inverse` define the mean; `aggregate`
@@ -2088,14 +2094,14 @@ def _make_stacked_model(
     )
 
 
-def test_default_certainty_equivalent_is_the_linear_expectation():
+def test_default_certainty_equivalent_is_the_linear_expectation() -> None:
     """A regime that declares nothing aggregates the continuation linearly."""
     model = _make_stacked_model(model_kwargs={}, working_kwargs={}, retired_kwargs={})
     assert model.user_regimes["working"].certainty_equivalent == LinearExpectation()
     assert model.user_regimes["retired"].certainty_equivalent == LinearExpectation()
 
 
-def test_model_level_certainty_equivalent_reaches_every_non_terminal_regime():
+def test_model_level_certainty_equivalent_reaches_every_non_terminal_regime() -> None:
     """One model-level declaration serves all regimes with a continuation."""
     model = _make_stacked_model(
         model_kwargs={"certainty_equivalent": PowerMean()},
@@ -2106,7 +2112,7 @@ def test_model_level_certainty_equivalent_reaches_every_non_terminal_regime():
     assert model.user_regimes["retired"].certainty_equivalent == PowerMean()
 
 
-def test_model_level_certainty_equivalent_is_withheld_from_terminal_regimes():
+def test_model_level_certainty_equivalent_is_withheld_from_terminal_regimes() -> None:
     """A terminal regime has no continuation, so it receives no aggregation."""
     model = _make_stacked_model(
         model_kwargs={"certainty_equivalent": PowerMean()},
@@ -2116,7 +2122,7 @@ def test_model_level_certainty_equivalent_is_withheld_from_terminal_regimes():
     assert model.user_regimes["dead"].certainty_equivalent is None
 
 
-def test_regime_level_certainty_equivalents_replace_the_model_level_one():
+def test_regime_level_certainty_equivalents_replace_the_model_level_one() -> None:
     """Declaring one in every regime with a continuation ignores the model level."""
     model = _make_stacked_model(
         model_kwargs={"certainty_equivalent": PowerMean()},
@@ -2127,7 +2133,7 @@ def test_regime_level_certainty_equivalents_replace_the_model_level_one():
     assert model.user_regimes["retired"].certainty_equivalent == LinearExpectation()
 
 
-def test_declaring_a_certainty_equivalent_in_only_some_regimes_is_rejected():
+def test_declaring_a_certainty_equivalent_in_only_some_regimes_is_rejected() -> None:
     """The certainty equivalent is declared once for the model, or once per regime.
 
     Declaring it in some regimes and leaving others on the model-level value
@@ -2142,7 +2148,7 @@ def test_declaring_a_certainty_equivalent_in_only_some_regimes_is_rejected():
         )
 
 
-def test_power_mean_applies_a_batched_risk_aversion_per_row(x64_enabled: None):
+def test_power_mean_applies_a_batched_risk_aversion_per_row(x64_enabled: None) -> None:
     """A per-row risk aversion governs its own row, not a lottery node."""
     values = jnp.array([[1.0, 4.0], [1.0, 4.0]])
     weights = jnp.array([0.5, 0.5])
@@ -2207,7 +2213,9 @@ class _CompleteHalvedLinearExpectation(LinearExpectation):
         )
 
 
-def test_a_subclass_changing_only_the_ordinary_mean_is_rejected(x64_enabled: None):
+def test_a_subclass_changing_only_the_ordinary_mean_is_rejected(
+    x64_enabled: None,
+) -> None:
     """Redefining `aggregate` alone leaves two means that disagree.
 
     A subclass that states a different mean but inherits its parent's scaled
@@ -2226,7 +2234,7 @@ def test_a_subclass_changing_only_the_ordinary_mean_is_rejected(x64_enabled: Non
 
 def test_dcegm_rejects_a_linear_subclass_with_changed_complete_semantics(
     x64_enabled: None,
-):
+) -> None:
     """A continuation solver must not silently substitute plain expectation."""
     dcegm = DCEGM(
         savings_grid=LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
@@ -2242,7 +2250,7 @@ def test_dcegm_rejects_a_linear_subclass_with_changed_complete_semantics(
         )
 
 
-def test_quasi_arithmetic_mean_aggregate_propagates_a_negative_weight():
+def test_quasi_arithmetic_mean_aggregate_propagates_a_negative_weight() -> None:
     """A negative probability is malformed, not a node that cannot occur.
 
     Reading it as dead would drop it and publish the surviving nodes' mean —
@@ -2260,7 +2268,7 @@ def test_quasi_arithmetic_mean_aggregate_propagates_a_negative_weight():
     assert jnp.isnan(got)
 
 
-def test_quasi_arithmetic_mean_gradient_is_finite_at_an_impossible_node():
+def test_quasi_arithmetic_mean_gradient_is_finite_at_an_impossible_node() -> None:
     """A node that cannot occur perturbs nothing, whatever `transform` is unbounded at.
 
     The stand-in transformed in place of an impossible node's value is taken
@@ -2282,7 +2290,7 @@ def test_quasi_arithmetic_mean_gradient_is_finite_at_an_impossible_node():
     np.testing.assert_allclose(np.asarray(got), np.array([0.0, 1.0]), atol=1e-6)
 
 
-def test_quasi_arithmetic_mean_aggregate_still_drops_an_impossible_node():
+def test_quasi_arithmetic_mean_aggregate_still_drops_an_impossible_node() -> None:
     """A weight of exactly zero remains a null event, whatever value stands there."""
     got = QuasiArithmeticMean(
         transform=lambda value: value, inverse=lambda value: value
@@ -2359,7 +2367,9 @@ def _exact_linear_mean(*, dtype: DTypeLike, exponent: int) -> float:
     ],
     ids=["linear", "identity_quasi"],
 )
-def test_a_node_too_rare_to_flatten_still_carries_its_value(mean) -> None:
+def test_a_node_too_rare_to_flatten_still_carries_its_value(
+    mean: CertaintyEquivalent,
+) -> None:
     """A node whose probability no single scale can state still reaches the mean.
 
     Its probability is the product of two rare factors, so it sits further below
@@ -2474,7 +2484,9 @@ def test_a_mean_that_states_both_reductions_is_accepted(x64_enabled: None) -> No
     ],
     ids=["linear", "identity_quasi"],
 )
-def test_differentiating_a_scaled_lottery_fails_loudly(mean) -> None:
+def test_differentiating_a_scaled_lottery_fails_loudly(
+    mean: CertaintyEquivalent,
+) -> None:
     """A scaled reduction refuses to be differentiated rather than reporting zero.
 
     A weight that travels as `(coefficient, shift)` does so because no ordinary

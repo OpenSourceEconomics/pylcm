@@ -178,7 +178,7 @@ def _non_float_bytes_and_float_masks(
     return out
 
 
-def _max_ulp_over_finite_floats(*, left, right) -> int:
+def _max_ulp_over_finite_floats(*, left: SolutionResult, right: SolutionResult) -> int:
     """Largest ULP distance between two results' finite float entries."""
     worst = 0
     right_arrays = _published_arrays(right)
