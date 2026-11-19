@@ -5,8 +5,8 @@
     "marriage_market": "62184a7ccff4ffc64dec75ae0287fdbd9752437b645bc57e4c40edf5f8378f75",
     "multi_regime_normal": "1e8901a80a4ec8bcc3231a98d568e754e3db63e17950c7f3f2840a7107c0fe16",
     "n_nbegm_toy": "32720f186a560b68ddd15ea162ba6c9e8e3f916aadfb37eda02342022a7a9e6b",
-    "nbegm_ride_along_toy": "ebd1673d93182222b439d8e3e69f9666e4a5ab1c7e6b3dd78518147985ef8d03",
-    "nbegm_stochastic_node_toy": "13592540586e42035f9542c69552312d16df880d756ba4ee53ffedec09dfacb1",
+    "nbegm_ride_along_toy": "9c6f9bc82aaa455646f09c395dec944b405cedc856712f776dde7609971033a7",
+    "nbegm_stochastic_node_toy": "fd9b863fff7696d5bed96c4e32895b714badf3b88ed71035c81e9ae814ab961a",
     "negm_kinked_toy": "69a31c27d06d29351395391d5ee08996d72e27536d96e943150333735c755889"
   },
   "64": {
@@ -15,8 +15,8 @@
     "marriage_market": "eca2d508a61987e020f4c4383facb5ebf11c592fd2a1c0fc84bb0aa0afd134c9",
     "multi_regime_normal": "c7dd5c89e8a44f053db38db8649e3752c9d23c51483be823dac68b302436a8e6",
     "n_nbegm_toy": "d3a1397f8be018dbe059a0b5d2404ad0b21c529f9f082694a1d64ddd86dbe387",
-    "nbegm_ride_along_toy": "fe92b5302222ccc9bfc44c703a6b9258a865669b76314a5b915aedc44685beb9",
-    "nbegm_stochastic_node_toy": "ddf5218f7a9a60f79c8901b8454c51b4a6e8ae0b4ffd894b7905b157bcd7ffd6",
+    "nbegm_ride_along_toy": "72ddd38e0091416489801d73fc4854579d24f57a096022bedabea0c16520a9b5",
+    "nbegm_stochastic_node_toy": "6e80ebdb09148bef9010c320ec1e2c1a84a26976e461ed928fe70166af4b0cfd",
     "negm_kinked_toy": "32e54740f6386633c66670dab5683c876ff68402a8ac2a4b29559cd4a528c547"
   }
 }

@@ -261,7 +261,6 @@ _JAX_PJIT_FUNCTION_TYPE = type(jnp.exp)
 # arity, or the ufunc's identity element.
 type _UfuncStaticProperty = Callable[..., Array] | bool | int | float | None
 # The qualified name, executable bytes and bound arguments of a JAX ufunc method.
-type _SealedUfuncPartial = tuple[str, types.CodeType, tuple[Callable[..., Array], ...]]
 _JAX_UFUNC_TYPE = type(jnp.maximum)
 _JAX_CUSTOM_JVP_TYPE = jax.custom_jvp
 _JAX_PUBLIC_NUMERIC_MODULES = (
@@ -326,20 +325,6 @@ _JAX_NUMERIC_PJIT_FUNCTIONS = tuple(
         "Mapping[str, _UfuncStaticProperty]", vars(ufunc)["_ufunc__static_props"]
     ).values()
     if type(value) is _JAX_PJIT_FUNCTION_TYPE
-)
-# JAX builds some ufunc methods, such as the `accumulate` of `jnp.maximum`, by
-# partially applying a private implementation. Like the captured pjit functions, they
-# are sealed by package versions, the implementation's identity and its executable
-# bytes, not by walking the private helpers that implementation calls.
-_JAX_UFUNC_PARTIALS = tuple(
-    (value, value.func, value.func.__code__)
-    for ufunc in _JAX_NUMPY_UFUNCS
-    for value in cast(
-        "Mapping[str, _UfuncStaticProperty]", vars(ufunc)["_ufunc__static_props"]
-    ).values()
-    if type(value) is functools.partial
-    and type(value.func) is types.FunctionType
-    and not value.keywords
 )
 _JAX_NUMERIC_SCALAR_TYPES = tuple(
     value
@@ -1750,19 +1735,11 @@ class _SemanticHasher:
                 self.frame(label="user-jax-pjit")
                 self.visit(value=function)
         elif kind == "jax-ufunc":
-            state = vars(value)
-            properties = state.get("_ufunc__static_props")
-            if type(properties) is not dict:
-                raise TypeError("A JAX ufunc has no exact static-properties mapping.")
+            # A captured public ufunc is sealed by its identity and the package
+            # versions; its private method table is JAX's implementation.
             self.frame(
                 label="native-callable-name",
-                payload=str(state.get("__name__", "")).encode(),
-            )
-            self.visit(
-                value={
-                    name: _seal_captured_ufunc_partial(prop)
-                    for name, prop in properties.items()
-                }
+                payload=str(vars(value).get("__name__", "")).encode(),
             )
         elif kind == "numpy-array-function":
             self._visit_numpy_array_function(value)
@@ -2847,28 +2824,6 @@ def _is_captured_jax_pjit(value: _Reachable) -> bool:
         value is candidate and function is captured_function and code is captured_code
         for candidate, captured_function, captured_code in _JAX_NUMERIC_PJIT_FUNCTIONS
     )
-
-
-def _seal_captured_ufunc_partial(
-    value: _UfuncStaticProperty,
-) -> _UfuncStaticProperty | _SealedUfuncPartial:
-    """Replace an unchanged captured partial method by its sealed identity.
-
-    Anything else, a partial changed since import included, is returned as is and
-    hashed through its complete semantics.
-    """
-    for candidate, function, code in _JAX_UFUNC_PARTIALS:
-        if (
-            value is candidate
-            and candidate.func is function
-            and function.__code__ is code
-        ):
-            return (
-                f"{function.__module__}.{function.__qualname__}",
-                code,
-                candidate.args,
-            )
-    return value
 
 
 def _native_numeric_versions() -> tuple[tuple[str, str], ...]:
