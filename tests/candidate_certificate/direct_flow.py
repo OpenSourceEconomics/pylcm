@@ -697,7 +697,7 @@ _SOURCE_SEALS = {
     SIMULATION_PROGRAM_TYPES_SOURCE: "677a3c49f34ceb56f9f6de970c98535384f907fa8ea6bff6e936e35dee388b81",
     SIMULATION_RUNTIME_SOURCE: "87865ad0c4cfabca80937c118015ca5b16dcff9af62004144ff5b638b0cecedb",
     LOGSUM_SOURCE: "e12061dd4f0f0176324182a2eb875cb6ebe4b97174091c597d46a622df93ff1b",
-    ARGMAX_SOURCE: "4f90ea10ea15558701da18fcfdf0d56e0e7e999afcf576f3d2d6c4d1bfeba916",
+    ARGMAX_SOURCE: "a5d3827e40abd625f0a8bef92d2998a5daa965dc4b8de4526c006bd3525b5f81",
     COLLECTIVE_SOURCE: "21fdbb0f9c9fef7ae8f54a4f9ff57159a4ec74ba462ee0e43c2b3eab5b6b6eae",
     MAX_Q_SOURCE: "62e5010e5f535ed3731218a5549167d6f5ea332b145d2dcece88d492949fd78c",
     PROCESSING_SOURCE: "977fcbd9b314e331ac7b84d3189400baa09681c9c0bee840e47f21660919a3a1",
@@ -9706,7 +9706,9 @@ return (jax.lax.bitcast_convert_type(_reverse_negative_bits(best_key), values.dt
     raise ValueError(msg)
 integer = jnp.dtype(f'int{values.dtype.itemsize * 8}')
 bits = jax.lax.bitcast_convert_type(values, integer)
-return jax.lax.optimization_barrier(_reverse_negative_bits(bits))
+if values.shape[-1:] == (1,):
+    return jax.lax.optimization_barrier(_reverse_negative_bits(bits))
+return _reverse_negative_bits(bits)
 """
     expected_float_reverse_bits = r"""magnitude_mask = jnp.iinfo(bits.dtype).max
 return bits ^ bits >> bits.dtype.itemsize * 8 - 1 & magnitude_mask
