@@ -663,12 +663,14 @@ def _solve_arm(
     scale: float = 1.0,
     fails: bool = False,
     chunk: int | None = None,
+    runtime_checks: bool = False,
 ) -> _Arm:
     """Build and solve `model` with stored or point outside reads.
 
     `scale` multiplies every stored value as it is read, `fails` expects the solve
-    to raise `ExecutionPlanningError`, and `chunk` fixes the source cells per chunk
-    of every query kernel whose model leaves that width to the engine.
+    to raise `ExecutionPlanningError`, `chunk` fixes the source cells per chunk of
+    every query kernel whose model leaves that width to the engine, and
+    `runtime_checks` is passed to the solve.
     """
     arm = _Arm()
     read = outside_values.read_outside_value
@@ -723,10 +725,14 @@ def _solve_arm(
         )
         if fails:
             with pytest.raises(ExecutionPlanningError) as raised:
-                built.solve(params=params or {}, log_level="off", runtime_checks=False)
+                built.solve(
+                    params=params or {},
+                    log_level="off",
+                    runtime_checks=runtime_checks,
+                )
             return replace(arm, failure=str(raised.value))
         solution = built.solve(
-            params=params or {}, log_level="off", runtime_checks=False
+            params=params or {}, log_level="off", runtime_checks=runtime_checks
         )
     arm.values.update(
         {
@@ -972,6 +978,258 @@ def test_a_failed_stored_cell_fails_only_the_read_that_takes_it(
     assert failed[True].failure == failed[False].failure
     assert "unresolved numerical status" in failed[True].failure
     _assert_agree(got=stored.values, expected=point.values)
+
+
+def _signed(code: IntND) -> FloatND:
+    """The `_Luck` code 0 as -1 and 1 as +1."""
+    return 2.0 * code - 1.0
+
+
+def _seen_source_utility_codes(*, wealth: FloatND, seen: IntND) -> FloatND:
+    return 1.0 + wealth + 0.1 * _signed(seen)
+
+
+def _two_seen_source_utility(
+    *, wealth: FloatND, seen: FloatND, other: FloatND
+) -> FloatND:
+    return 1.0 + wealth + 0.1 * seen + 0.05 * other
+
+
+def _root_payoff(*, wealth: FloatND, seen: FloatND) -> FloatND:
+    return 2.0 + wealth + jnp.sqrt(seen)
+
+
+def _root_payoff_codes(*, wealth: FloatND, seen: IntND) -> FloatND:
+    return 2.0 + wealth + jnp.sqrt(_signed(seen))
+
+
+def _two_root_payoff(*, wealth: FloatND, seen: FloatND, other: FloatND) -> FloatND:
+    return 2.0 + wealth + jnp.sqrt(seen) + 0.2 * other
+
+
+def _hidden_root_payoff(*, wealth: FloatND, seen: FloatND, unseen: FloatND) -> FloatND:
+    return 2.0 + wealth + jnp.sqrt(seen) + unseen**2
+
+
+def _absolute_root_payoff(*, wealth: FloatND, seen: FloatND) -> FloatND:
+    return 2.0 + wealth + jnp.sqrt(jnp.abs(seen))
+
+
+def _positive_seen(seen: FloatND) -> BoolND:
+    return seen > 0
+
+
+def _seen_past_two(seen: FloatND) -> BoolND:
+    return seen > 2
+
+
+def _seen_past_minus_two(seen: FloatND) -> BoolND:
+    return seen > -2
+
+
+def _kept_pair(
+    *, case: str = "normal", available: Callable[..., BoolND] = _positive_seen
+) -> Model:
+    """A source may leave for a destination where `available` holds; it observes
+    `seen`, which the destination keeps as an axis of its table.
+
+    `seen` takes -1 and +1 with mass 1/2 each, as two Gauss-Hermite nodes or as the
+    codes of `_Luck`; the destination's payoff is NaN at -1 and `3 + wealth` at +1.
+    The cases vary that model:
+
+    - "normal": as described
+    - "categorical": `seen` is a `Discrete` shock
+    - "zero mass": `seen` is a `Discrete` shock whose bad category has probability 0
+    - "two kept": the source also observes `other`, +/-1 with mass 1/2, which adds
+      `0.2 * other` to the destination's payoff
+    - "hidden": the destination also integrates `unseen`, which the source does not
+      observe and which adds `unseen**2`, of mean 0.25
+    - "finite": the destination's payoff is finite at -1 too
+    """
+    codes = case in {"categorical", "zero mass"}
+    seen = (
+        ShockGroup(
+            shocks={
+                "seen": Discrete(
+                    categories=_Luck,
+                    probs=(0.0, 1.0) if case == "zero mass" else (0.5, 0.5),
+                )
+            }
+        )
+        if codes
+        else _gauss(name="seen", n=2, sigma=1.0)
+    )
+    shocks = {"seen": seen}
+    observes = destination_shocks = ("seen",)
+    source_utility = _seen_source_utility_codes if codes else _source_utility
+    destination_utility = _root_payoff_codes if codes else _root_payoff
+    if case == "two kept":
+        shocks["other"] = _gauss(name="other", n=2, sigma=1.0)
+        observes = destination_shocks = ("seen", "other")
+        source_utility, destination_utility = (
+            _two_seen_source_utility,
+            _two_root_payoff,
+        )
+    elif case == "hidden":
+        shocks["unseen"] = _gauss(name="unseen", n=2, sigma=_UNSEEN_SIGMA)
+        destination_shocks = ("seen", "unseen")
+        destination_utility = _hidden_root_payoff
+    elif case == "finite":
+        destination_utility = _absolute_root_payoff
+    return Model(
+        regimes={
+            "source": Regime(
+                states={"wealth": _wealth_grid()},
+                functions={"utility": source_utility},
+                shocks=observes,
+                exit=Exit(
+                    targets={
+                        "self": ExitTarget(
+                            regime="destination", projection={"wealth": _wealth}
+                        )
+                    },
+                    rule=Unilateral(),
+                    observes=observes,
+                    available=available,
+                ),
+            ),
+            "destination": Regime(
+                states={"wealth": _wealth_grid()},
+                functions={"utility": destination_utility},
+                shocks=destination_shocks,
+            ),
+        },
+        shocks=shocks,
+        regime_id_class=_Pair,
+        n_periods=1,
+        edges={},
+        initial_nodes=InitialNodes(by_period={0: ("source", "destination")}),
+        execution_config=ExecutionConfig(device_memory_bytes=None),
+    )
+
+
+# Each case: the model, the solve's runtime checks, and the source's value at
+# wealth 0 in closed form.
+_KEPT_NODE_CASES: dict[str, tuple[Callable[[], Model], bool, float]] = {
+    "positive mass": (_kept_pair, False, 1.95),
+    "categorical": (partial(_kept_pair, case="categorical"), False, 1.95),
+    "zero mass": (partial(_kept_pair, case="zero mass"), False, 3.0),
+    "zero mass, runtime checks": (partial(_kept_pair, case="zero mass"), True, 3.0),
+    "two kept groups": (partial(_kept_pair, case="two kept"), False, 1.95),
+    "hidden group": (partial(_kept_pair, case="hidden"), False, 2.075),
+    "read never made": (partial(_kept_pair, available=_seen_past_two), False, 1.0),
+    "finite": (partial(_kept_pair, case="finite"), True, 1.95),
+}
+
+
+@pytest.mark.parametrize(
+    ("model", "runtime_checks", "intercept"),
+    list(_KEPT_NODE_CASES.values()),
+    ids=list(_KEPT_NODE_CASES),
+)
+def test_a_failed_kept_node_fails_no_read_of_another_node(
+    *,
+    model: Callable[[], Model],
+    runtime_checks: bool,
+    intercept: float,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The source may leave only at `seen = +1`, and in "read never made" nowhere, so
+    it never reads the destination's failed node at `seen = -1`.
+
+    Where it may leave, leaving for `3 + wealth` beats staying; elsewhere it stays
+    for `1 + wealth + 0.1 * seen`. Its value is the closed form `intercept + wealth`
+    in both routes, and the stored solve gives the point solve's values.
+    """
+    point = _solve_arm(
+        model=model,
+        stored=False,
+        runtime_checks=runtime_checks,
+        monkeypatch=monkeypatch,
+    )
+    stored = _solve_arm(
+        model=model, stored=True, runtime_checks=runtime_checks, monkeypatch=monkeypatch
+    )
+    assert (bool(stored.tables), point.tables) == (True, set())
+    np.testing.assert_array_almost_equal(
+        point.values["0/source"],
+        intercept + np.linspace(0, 1, 3),
+        decimal=DECIMAL_PRECISION,
+    )
+    _assert_agree(got=stored.values, expected=point.values)
+
+
+def test_a_read_that_takes_a_failed_kept_node_fails_in_both_routes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The source may leave at `seen = -1`, where the destination's payoff is NaN."""
+    failed = {
+        stored: _solve_arm(
+            model=partial(_kept_pair, available=_seen_past_minus_two),
+            stored=stored,
+            monkeypatch=monkeypatch,
+            fails=True,
+        )
+        for stored in (False, True)
+    }
+    assert bool(failed[True].tables)
+    assert failed[True].failure == failed[False].failure
+    assert "unresolved numerical status" in failed[True].failure
+
+
+@pytest.mark.parametrize("case", ["normal", "two kept"])
+def test_a_table_marks_only_the_failed_kept_node_nan(
+    *, case: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The destination's table is NaN at `seen = -1` and its problem's value
+    `3 + wealth + 0.2 * other` at `seen = +1`; `other` and `seen` are the table's
+    kept axes in that order.
+    """
+    values, support, _ = _solve_with_table(
+        model=_kept_pair(case=case),
+        reader="source",
+        target="destination",
+        monkeypatch=monkeypatch,
+    )
+    wealth = np.linspace(0, 1, 3)
+    other = np.asarray([-1.0, 1.0]) if case == "two kept" else np.zeros(())
+    expected = np.stack(
+        np.broadcast_arrays(np.nan, 3.0 + np.add.outer(wealth, 0.2 * other)), axis=-1
+    )
+    assert support.all()
+    np.testing.assert_array_almost_equal(values, expected, decimal=DECIMAL_PRECISION)
+
+
+def test_a_failed_law_fails_every_kept_node(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every payoff is finite but the draw frame's law fails, so the source's read
+    at `seen = +1` fails too.
+    """
+    kept_answer = InformationQueryCell._kept_answer
+
+    # keyword-only-exempt: primary-argument=self
+    def failed_law(
+        self: InformationQueryCell,
+        *,
+        answers: PolicyAnswer,
+        factors: FloatND,
+        frame: CurrentIIDDrawFrame,
+    ) -> PolicyAnswer:
+        return kept_answer(
+            self,
+            answers=answers,
+            factors=factors,
+            frame=frame._replace(valid=jnp.zeros_like(frame.valid)),
+        )
+
+    monkeypatch.setattr(InformationQueryCell, "_kept_answer", failed_law)
+    failed = _solve_arm(
+        model=partial(_kept_pair, case="finite"),
+        stored=True,
+        monkeypatch=monkeypatch,
+        fails=True,
+    )
+    assert bool(failed.tables)
+    assert "unresolved numerical status" in failed.failure
 
 
 @categorical(ordered=False)

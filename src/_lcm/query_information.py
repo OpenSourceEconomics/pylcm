@@ -1228,8 +1228,9 @@ class InformationQueryCell:
 
     The answer then holds one value and one support flag per node of each kept
     group, in plan order: the value integrates the other groups at that node, with
-    the kept groups reduced to their mass. Only a query without ancestors, draws or
-    observation axes keeps groups.
+    the kept groups reduced to their mass, and is NaN at a node that fails its
+    integrity check. Only a query without ancestors, draws or observation axes keeps
+    groups.
     """
     outside: OutsideTable | None = None
     """The table a stored outside read gathers its value from, instead of
@@ -2393,6 +2394,10 @@ class InformationQueryCell:
         order. Their weighted terms take the other groups' factors at each row and
         each kept group's mass once, as a pinned group's representatives do. Every
         row's landings count once.
+
+        Integrity is per kept node: a node any of whose rows fails its check, and
+        every node when the frame's law fails, is NaN. The integrity flag stays true,
+        as a scalar like the absent branch's.
         """
         plan = cast("CurrentIIDPlan", _plan(node=self.node))
         values, actions, support, valid, landings = answers
@@ -2410,14 +2415,21 @@ class InformationQueryCell:
             values=values[at],
         )
         shape = self._kept_shape()
+        integrity = jnp.all((frame.valid & valid)[at], axis=1).reshape(
+            (*shape, *((1,) * (values.ndim - 1)))
+        )
         present = jnp.all(~is_represented_zero(factors), axis=0).astype(jnp.int32)
         return (
-            jnp.sum(terms, axis=1).reshape((*shape, *values.shape[1:])),
+            jnp.where(
+                integrity,
+                jnp.sum(terms, axis=1).reshape((*shape, *values.shape[1:])),
+                jnp.nan,
+            ),
             actions,
             jnp.all((copies.reshape(rows.shape) == 0) | support[at], axis=1).reshape(
                 shape
             ),
-            jnp.all(frame.valid) & jnp.all(valid),
+            jnp.asarray(a=True),
             sum_counts(counts=_scaled_counts(counts=landings, copies=present), axis=0),
         )
 
