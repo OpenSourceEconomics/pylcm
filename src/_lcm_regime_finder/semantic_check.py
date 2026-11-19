@@ -2338,6 +2338,25 @@ def _check_capture(original: dict, normalized: dict, fail, unknown) -> None:
         if cell.get("structural_roles", {}) != structural_roles: fail("original solver coordinate roles changed", cell=cell["id"])
         solver = payload_digest(declaration["solver"]) if declaration.get("solver") is not None else None
         if cell.get("solver_identity") != solver: fail("original solver identity changed", cell=cell["id"])
+        # The pooling kind and the stored-value count read these cell fields.
+        operators = {key: payload_digest(declaration[key]) if declaration.get(key) is not None else None
+                     for key in ("koopmans_aggregator", "certainty_equivalent", "pareto_objective", "taste_shocks")}
+        if cell.get("operators") != operators: fail("original decision operators changed", cell=cell["id"])
+        if cell.get("stakeholders") != declaration.get("stakeholders"): fail("original stakeholders changed", cell=cell["id"])
+        exit_declaration = declaration.get("exit")
+        if cell.get("exit_identity") != (payload_digest(exit_declaration) if exit_declaration is not None else None):
+            fail("original exit identity changed", cell=cell["id"])
+        def renegotiated(value):
+            if short(value) == "Renegotiate": return {fields(value).get("state")}
+            children = value.values() if isinstance(value, dict) else value if isinstance(value, list) else ()
+            return set().union(*(renegotiated(child) for child in children))
+        if cell.get("renegotiated_states") != sorted(renegotiated(exit_declaration)):
+            fail("original renegotiated exit state changed", cell=cell["id"])
+        if exit_declaration is not None:
+            exits = [relation for relation in normalized.get("relations", []) if relation.get("kind") == "exit"
+                     and relation.get("source") == cell["id"] and relation.get("targets") == [] and relation.get("original") == exit_declaration]
+            if len(exits) != 1 or exits[0].get("observes") != fields(exit_declaration).get("observes", []):
+                fail("original exit information changed", cell=cell["id"])
         if cell.get("report_tags", []) != contract.get("report_tags", {}).get(regime, []): fail("reporting tag contract changed", cell=cell["id"])
         if start_pairs is not None and cell.get("admissible_start") != ((period, regime) in start_pairs): fail("admissible original start changed", cell=cell["id"])
         if set(cell.get("states", {})) != set(declaration.get("states", {})): fail("original state axes omitted", cell=cell.get("id"))

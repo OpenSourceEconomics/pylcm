@@ -110,6 +110,24 @@ intended economic meaning, or that the recursion has finite values and attained 
 Those remain premises of the model. Several decisions can belong to one economic
 interval; see [economic time and computational periods](period_time.md).
 
+### Collective models
+
+In a model with collective regimes, the checker holds to these rules:
+
+- A collective regime pools only with regimes that have the same stakeholders, so never
+  with a single-agent regime.
+- Regimes pool only when their exits are equal: the same rule, tie, comparison,
+  renegotiation and settlement, the same targets with the same roles, the same observed
+  shocks and the same availability.
+- Work and storage count one action value and one stored value per stakeholder, as the
+  solve computes them.
+- The state an exit's `Renegotiate` moves stays in its regime whole: it is kept in every
+  period and never split into status lanes, because renegotiation compares the stay
+  values at its codes within the period.
+
+A regime that holds a `Problem` leaves the result `UNRESOLVED`: the checker keeps every
+coordinate of the problem's regimes and does not interpret the shared problem.
+
 ### Which layout is recommended?
 
 `result.recommendation` is the curve point that minimizes a linear cost model. If no

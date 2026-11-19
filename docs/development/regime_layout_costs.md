@@ -14,8 +14,12 @@ described in [Dependency facts](regime_facts.md).
 
 ## The family
 
-- **Dense regimes** (:126-146). Nonterminal regimes of one kind (stage, solver,
-  aggregator and certainty equivalent) pool according to their taste shocks:
+- **Dense regimes** (:126-146). Nonterminal regimes of one kind pool according to their
+  taste shocks. A regime's kind is its stage, solver, aggregator, certainty equivalent,
+  Pareto objective, stakeholders and exit (rule, tie, comparison, renegotiation,
+  settlement, targets with their roles, observed shocks and availability), so a
+  collective regime never pools with a single-agent one, and regimes with different
+  exits never pool:
 
   - Regimes without taste shocks pool together.
   - A regime with taste shocks stays alone.
@@ -26,7 +30,10 @@ described in [Dependency facts](regime_facts.md).
 
 - **Statuses, fibres and lanes** (:181-229).
 
-  - A status is a categorical state.
+  - A status is a categorical state. The state an exit's `Renegotiate` moves is not a
+    status of that regime: the value at one of its codes reads the stay values at the
+    others within the period, so it is an ordinary state there, live in every period,
+    never split into lanes and never carried as a status.
   - A fibre is a regime and a period, with one value for each of the regime's statuses.
   - A lane is a regime with one value for each status, across periods.
 
@@ -41,8 +48,10 @@ described in [Dependency facts](regime_facts.md).
   - an ordinary state by its largest grid;
   - an action by its largest grid.
 
-  A block pays `|T_B| · |X_B| · |A_B|` evaluations and `|T_B| · |X_B|` stored values,
-  where `T_B` is the set of the block's own periods.
+  A block pays `|T_B| · |X_B| · |S_B| · |A_B|` evaluations and `|T_B| · |X_B| · |S_B|`
+  stored values, where `T_B` is the set of the block's own periods and `S_B` the
+  stakeholders of its regimes (one for a single-agent regime): a collective regime
+  stores one value and computes one action value per stakeholder.
 
 - **Layouts** (:594-617). The lanes of a dense regime are partitioned into groups, which
   stay fixed for all periods. Each group's active periods are cut into intervals. Each

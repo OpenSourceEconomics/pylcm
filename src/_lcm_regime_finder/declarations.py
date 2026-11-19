@@ -39,6 +39,13 @@ def short(value):
     return label.rsplit(".", 1)[-1] if isinstance(label, str) else ""
 
 
+def renegotiated_states(value):
+    """Return the states a `Renegotiate` anywhere in an exit declaration moves."""
+    if short(value) == "Renegotiate": return [fields(value).get("state")]
+    children = value.values() if isinstance(value, dict) else value if isinstance(value, list) else ()
+    return sorted({state for child in children for state in renegotiated_states(child)})
+
+
 def plain(value):
     if isinstance(value, list): return [plain(x) for x in value]
     if not isinstance(value, dict): return value
@@ -839,6 +846,12 @@ def normalize_declarations(snapshot,production_contract=None):
               'structural_roles':{k:copy.deepcopy(declaration[k]) for k in ('liquid','outer_continuous') if declaration.get(k) is not None},
               'solver_identity':normal.value_digest(declaration['solver']) if declaration.get('solver') is not None else None,
               'operators':{k:(normal.value_digest(declaration[k]) if declaration.get(k) is not None else None) for k in ('koopmans_aggregator','certainty_equivalent','pareto_objective','taste_shocks')},
+              # A collective regime stores one value per stakeholder; the whole
+              # exit is part of the regime's problem, and a renegotiated state
+              # links its own codes within the period.
+              'stakeholders':copy.deepcopy(declaration.get('stakeholders')),
+              'exit_identity':normal.value_digest(declaration['exit']) if declaration.get('exit') is not None else None,
+              'renegotiated_states':renegotiated_states(declaration.get('exit')),
               'role':contract.get('roles',{}).get(name,declaration.get('semantic_role')),
               'ownership':None,'terminal':True,'admissible_start':key in start_set,
               'report_tags':list(contract.get('report_tags',{}).get(name,[])),
@@ -1111,7 +1124,8 @@ def normalize_declarations(snapshot,production_contract=None):
             references(declaration.get(key) or {},pointer(fp,key),'exit' if key=='exit' else 'value_read')
             if key=='exit' and declaration.get(key) is not None:
                 value=declaration[key]
-                normal.relation('exit',cell['id'],[],pointer(fp,key),callbacks=[normal.callback(value,pointer(fp,key))],original=copy.deepcopy(value))
+                normal.relation('exit',cell['id'],[],pointer(fp,key),callbacks=[normal.callback(value,pointer(fp,key))],original=copy.deepcopy(value),
+                                observes=copy.deepcopy((fields(value) or {}).get('observes',[])))
         declared_source_law=fields(laws.get(name,{})) or {}
         gate_rows=[(phase,_transition_gates(declared_source_law,'gated_edges','arrivals','participation')) for phase in ('solve','simulation')] if not declaration_gates else [(phase,declaration_gates.get((phase,period,name),{})) for phase in ('solve','simulation')]
         for gate_phase,target,gate in ((phase,target,gate) for phase,mapping in gate_rows for target,gate in mapping.items()):

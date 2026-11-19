@@ -190,14 +190,17 @@ def live_states(
 ) -> tuple[dict[str, set[str]], dict[str, dict[str, list[str]]]]:
     """Return each cell's live states and why each is live.
 
-    A state is live if a current consumer reads it, or if a live state of a
-    possible successor is updated from it.
+    A state is live if a current consumer reads it, if the cell's exit
+    renegotiates it, or if a live state of a possible successor is updated from it.
     """
     live: dict[str, set[str]] = {}
     reasons: dict[str, dict[str, list[str]]] = {}
     for cid, cell in facts.cells.items():
+        renegotiated = set(cell["states"]) & set(cell.get("renegotiated_states", ())) - set(facts.constants[cid])
         live[cid] = set(cell["states"]) & current_reads(facts, cell) - set(facts.constants[cid])
         reasons[cid] = {name: ["current/phase/required-output consumer"] for name in live[cid]}
+        reasons[cid].update({name: ["same-period exit renegotiation"] for name in renegotiated - live[cid]})
+        live[cid] |= renegotiated
     changed = True
     while changed:
         guard()
@@ -260,7 +263,8 @@ def fibre_live(
     with the released statuses free at once (Remark "Reads must be joint"): the
     statuses start fixed at the point and are released in name order whenever
     the release adds no read of the released status. A status left fixed is live.
-    Statuses in `ordinary` are never fixed: the fibre is their union.
+    Statuses in `ordinary` are never fixed: the fibre is their union. A state the
+    cell's exit renegotiates is always live.
     """
     key = (cell["id"], tuple(sorted(point.items())), ordinary)
     if key in memo:
@@ -305,7 +309,8 @@ def fibre_live(
         trial = {k: v for k, v in fixed.items() if k != name}
         if name not in needs(trial):
             fixed = trial
-    memo[key] = (needs(fixed) | set(fixed)) & set(cell["states"]) - set(facts.constants[cell["id"]])
+    renegotiated = set(cell.get("renegotiated_states", ()))
+    memo[key] = (needs(fixed) | set(fixed) | renegotiated) & set(cell["states"]) - set(facts.constants[cell["id"]])
     return memo[key]
 
 
@@ -572,9 +577,15 @@ class FactsBudgetError(RuntimeError):
 
 
 def status_axes(facts: Facts, cell: Record) -> tuple[tuple[str, tuple[int, ...]], ...]:
-    """Return the cell's status axes: its categorical states with several codes."""
+    """Return the cell's status axes: its categorical states with several codes.
+
+    A state the cell's exit renegotiates is no status: the value at one of its
+    codes reads the stay values at the others within the period.
+    """
     axes = []
     for name, domain_id in cell["states"].items():
+        if name in cell.get("renegotiated_states", ()):
+            continue
         domain = facts.domains[domain_id]
         codes = domain.get("codes", [])
         if domain.get("kind") == "categorical" and len(codes) > 1 and len(codes) == len(domain.get("values", [])):

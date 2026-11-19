@@ -33,9 +33,11 @@ class _Model:
         regimes: dict[str, Record] = {}
         for cell in self.cells.values():
             ops = cell.get("operators", {})
+            # Stakeholders and the whole exit are part of a regime's kind.
             r = regimes.setdefault(cell["regime"], {"terminal": True, "choice": False, "law": ops.get("taste_shocks"),
                                                     "kind": repr([cell.get("stage"), cell.get("solver_identity"),
-                                                                  sorted((k, v) for k, v in ops.items() if k != "taste_shocks")])})
+                                                                  sorted((k, v) for k, v in ops.items() if k != "taste_shocks"),
+                                                                  cell.get("stakeholders"), cell.get("exit_identity")])})
             r["terminal"] = r["terminal"] and cell["terminal"]
             r["choice"] = r["choice"] or any(self.domains[d].get("kind") == "categorical" for d in cell["actions"].values())
         out: list[tuple[str, ...]] = [(n,) for n, r in regimes.items() if r["terminal"]]
@@ -102,6 +104,8 @@ def literal_price(model: _Model, members: tuple[str, ...], fibres: list[Fibre]) 
     live = set().union(*(model.live(f) for f in fibres))
     statuses = {n for cid, _ in fibres for n in model.axes[cid]}
     rows = len({c["regime"] for c in cells}) if len(members) > 1 else 1
+    # One stored value and one action value per stakeholder of a collective regime.
+    rows *= max(len(c.get("stakeholders") or ()) for c in cells) or 1
     for name in live:
         if name in statuses:
             rows *= len({repr(model.value(members, f, name)) for f in fibres})
@@ -176,6 +180,7 @@ def check_layouts(declarations: Record, facts: Facts, result: Record, guard: Cal
         lanes[home[regime]][(regime, tuple((n, c) for n, c in point if n not in contracted))].append((cid, point))
     if result["original_count"] != sum(prod(model.size(d) for d in c["states"].values())
                                        * prod(model.size(d) for d in c["actions"].values())
+                                       * (len(c.get("stakeholders") or ()) or 1)
                                        for c in model.cells.values()):
         errors.append("original count differs from the model as written")
     ev0 = 0
@@ -193,7 +198,7 @@ def check_layouts(declarations: Record, facts: Facts, result: Record, guard: Cal
                         values.setdefault(name, set()).update(map(repr, domain["values"]))
                     else:
                         sizes[kind, name] = max(sizes.get((kind, name), 0), model.size(did))
-        label = len(members) if len(members) > 1 else 1
+        label = (len(members) if len(members) > 1 else 1) * (max(len(c.get("stakeholders") or ()) for c in member_cells) or 1)
         periods = len({c["period"] for c in member_cells})
         ev0 += periods * label * prod(len(v) for v in values.values()) * prod(sizes.values())
     if result["dense_count"] != ev0:

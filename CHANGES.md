@@ -5,6 +5,22 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
+### The regime finder keeps collective regimes, exits and renegotiation apart
+
+- `find_regimes` pools a collective regime only with regimes of the same stakeholders,
+  and pools regimes only when their exits are equal (rule, tie, comparison,
+  renegotiation, settlement, targets with roles, observed shocks and availability). The
+  normalized cells carry the stakeholders, the exit's identity and the renegotiated
+  states, and the independent source check verifies them and the cells' operators.
+- Work and storage count one action value and one stored value per stakeholder, as the
+  solve does.
+- The state an exit's `Renegotiate` moves is an ordinary, always-live state of its
+  regime: it is never contracted, split into lanes or carried as a status.
+- The exit relation records the shocks the exit observes. A layout search that would
+  have to link two cells of one period inside one dense regime ends `UNRESOLVED` with a
+  plain reason rather than an internal error. See
+  [Check a regime graph](docs/user_guide/regime_checker.md#collective-models).
+
 ### Exit rules compare at the optimum and settle before separation
 
 - `Unilateral(compares=...)` and `MutualConsent(compares=...)` say where each member's
