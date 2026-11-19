@@ -1639,7 +1639,11 @@ def test_power_mean_aggregate_has_finite_gradients_at_a_dead_zero_valued_node(
 
 
 def test_power_mean_aggregate_normalizes_a_non_unit_mass_lottery():
-    """Scaling every weight by a constant leaves the certainty equivalent unchanged."""
+    """Scaling every weight by a constant leaves the certainty equivalent unchanged.
+
+    Up to rounding: the scaled weights sum to a different total, so the two results
+    may differ in their last bits.
+    """
     params = {"risk_aversion": jnp.asarray(3.0)}
     unit = PowerMean().aggregate(
         values=jnp.array([1.0, 9.0]), weights=jnp.array([0.25, 0.75]), params=params
@@ -1647,7 +1651,7 @@ def test_power_mean_aggregate_normalizes_a_non_unit_mass_lottery():
     scaled = PowerMean().aggregate(
         values=jnp.array([1.0, 9.0]), weights=jnp.array([2.5, 7.5]), params=params
     )
-    np.testing.assert_allclose(float(scaled), float(unit), rtol=1e-12)
+    np.testing.assert_array_max_ulp(np.asarray(scaled), np.asarray(unit), maxulp=2)
 
 
 @pytest.mark.parametrize("risk_aversion", [1.0 - 1e-6, 1.0, 1.0 + 1e-6])
