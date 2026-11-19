@@ -45,12 +45,10 @@ from _lcm.probability import (
 )
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.reachability import PhaseName
-from _lcm.regime_building import lottery_contraction as _contraction_switch
 from _lcm.regime_building.lottery_contraction import (
     LotteryContraction,
     LotteryContractionSource,
     plan_lottery_contraction,
-    prepared_key,
 )
 from _lcm.regime_building.next_state import (
     get_next_state_function_for_solution,
@@ -3452,6 +3450,9 @@ class _LinearProcessEdgeExtension(_ProcessEdgeExtension):
                 )
                 read = target.read(
                     next_values=next_regime_to_V_arr[target_name],
+                    prepared=_prepared_table(
+                        continuation=target, next_regime_to_V_arr=next_regime_to_V_arr
+                    ),
                     states_actions_params=params,
                     marginals=marginals,
                     weights=weights,
@@ -3897,15 +3898,8 @@ class _ComputeCE:
                 co_map_next_names=self.co_map_next_names,
                 n_stakeholders=self.n_stakeholders,
                 reduces_per_target=self.reduces_per_target,
-                prepared=(
-                    None
-                    if continuation.lottery_contraction is None
-                    else next_regime_to_V_arr.get(
-                        prepared_key(
-                            target=target_regime_name,
-                            contraction=continuation.lottery_contraction,
-                        )
-                    )
+                prepared=_prepared_table(
+                    continuation=continuation, next_regime_to_V_arr=next_regime_to_V_arr
                 ),
             )
             landing_counts.extend(read.landing_counts)
@@ -4118,41 +4112,43 @@ def prepare_contracted_values(
 ) -> Mapping[str, PytreeValue]:
     """Return `arguments` with each contracted target of `function` prepared once.
 
-    Prototype for the query and outside-table programs: called before their loops,
-    so the contracted table is built once per program call rather than per chunk.
-    Only the `_ComputeCE` continuations of `function` itself are prepared; any
-    other reader of the same leaf contracts `raw` in place.
-
-    Raises:
-        UnsupportedOperationError: The switch is "inline" and `function` contracts
-            a draw: inside these programs' loops the table is rebuilt per lane,
-            row and action, terabytes on a modest grid.
+    Every query program, solved, outside-table or simulated, calls it before its
+    loops and lane maps, so each reader's table is built once per call; inside a
+    lane-mapped guard it would be built once per lane, row and action. A
+    continuation, including an edge extension's corner, reads its table under
+    `LotteryContraction.key`; one without its key contracts the raw array in
+    place, as the ordinary kernels do.
     """
-    switch = _contraction_switch.QUERY_CONTRACTION
-    if switch == "off":
-        return arguments
     compute_CE = getattr(function, "compute_CE", None)
     values = arguments.get("next_regime_to_V_arr")
     if not isinstance(compute_CE, _ComputeCE) or not isinstance(values, Mapping):
         return arguments
-    prepared = dict(values)
-    for target, continuation in compute_CE.continuations.items():
-        contraction = continuation.lottery_contraction
-        leaf = values.get(target)
-        if contraction is None or target in skip or leaf is None:
-            continue
-        if switch != "hoisted":
-            msg = (
-                f"QUERY_CONTRACTION={switch!r} contracts the continuation toward "
-                f"'{target}' inside a query or outside-table program's loops; "
-                'use "hoisted" or "off".'
-            )
-            raise UnsupportedOperationError(msg)
-        prepared[prepared_key(target=target, contraction=contraction)] = contraction(
+    prepared = {
+        contraction.key: contraction(
             values=cast("FloatND", leaf),
             states_actions_params=cast("QAndFKwargs", arguments),
         )
-    return {**arguments, "next_regime_to_V_arr": MappingProxyType(prepared)}
+        for target, continuation in compute_CE.continuations.items()
+        if (contraction := continuation.lottery_contraction) is not None
+        and target not in skip
+        and (leaf := values.get(target)) is not None
+    }
+    if not prepared:
+        return arguments
+    return {
+        **arguments,
+        "next_regime_to_V_arr": MappingProxyType({**values, **prepared}),
+    }
+
+
+def _prepared_table(
+    *,
+    continuation: _TargetContinuation,
+    next_regime_to_V_arr: Mapping[RegimeName, FloatND],
+) -> FloatND | None:
+    """The continuation's contracted table prepared ahead of the loops, if any."""
+    contraction = continuation.lottery_contraction
+    return None if contraction is None else next_regime_to_V_arr.get(contraction.key)
 
 
 def _participation_value_and_integrity(
@@ -4287,9 +4283,21 @@ class _TargetContinuation:
         Returns:
             The array `next_V` reads: `values` itself without a contraction.
 
+        Raises:
+            UnsupportedOperationError: The calling program prepares the tables and
+                supplied none under this reader's key.
+
         """
         if self.lottery_contraction is None:
             return values
+        if self.lottery_contraction.prepared_by_caller:
+            msg = (
+                "A query reader of regime "
+                f"'{self.lottery_contraction.target}' finds no table under "
+                f"'{self.lottery_contraction.key}'. Built here, inside the "
+                "query's lane maps, it would be rebuilt per lane, row and action."
+            )
+            raise UnsupportedOperationError(msg)
         return self.lottery_contraction(
             values=values, states_actions_params=states_actions_params
         )
@@ -4845,7 +4853,6 @@ def _build_target_continuation(
                 v_interpolation_info=v_interpolation_info,
                 bundle=bundle,
                 co_map_state_names=co_map_state_names,
-                n_stakeholders=n_stakeholders,
                 count_raise_landings=count_raise_landings,
             ),
         )
@@ -5199,18 +5206,16 @@ def _contracts_despite_counting_or_members(
     v_interpolation_info: VInterpolationInfo,
     bundle: MappingProxyType[TransitionFunctionName, TransitionFunction],
     co_map_state_names: tuple[StateName, ...],
-    n_stakeholders: int | None,
     count_raise_landings: bool,
 ) -> bool:
-    """Whether a landing-counting or collective continuation may still contract.
+    """Whether a continuation may contract although it counts landings.
 
-    Prototype: with `QUERY_CONTRACTION` on, a counting request plans no counter
-    when the target has no raise-rule grid (and, ungated, no fallback check), and
-    a collective continuation contracts per member, the stakeholder axis riding
-    along. Off, both keep every draw enumerated, as shipped.
+    A counting request plans no counter when the target has no raise-rule grid
+    (and, ungated, no fallback check), so such a continuation contracts; one whose
+    target counts raise-rule landings reads them on the nodes and keeps its draws.
+    A collective continuation contracts per member, the stakeholder axis riding
+    along.
     """
-    if _contraction_switch.QUERY_CONTRACTION == "off":
-        return n_stakeholders is None and not count_raise_landings
     return not count_raise_landings or not _raise_rule_grids(
         v_interpolation_info=v_interpolation_info,
         state_names=tuple(
@@ -5239,10 +5244,10 @@ def _contract_target_lotteries(
 ]:
     """Return one target's contraction and the inputs the continuation is built on.
 
-    Only an ordinary reader qualifies: a gated, collective, landing-counting or
-    participation-querying continuation reads its nodes as nodes, so its draws
-    keep their axes. Without a
-    contraction the inputs come back unchanged.
+    Only an ordinary reader qualifies: a gated or participation-querying
+    continuation, or one counting the landings on its target's raise-rule grids,
+    reads its nodes as nodes, so its draws keep their axes. Without a contraction
+    the inputs come back unchanged.
     """
     unchanged = (None, bundle, transition_plans, v_interpolation_info)
     if (

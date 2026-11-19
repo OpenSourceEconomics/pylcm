@@ -130,7 +130,6 @@ from _lcm.reachability import (
     build_model_reachability,
     candidate_targets_from_transition,
 )
-from _lcm.regime_building import lottery_contraction
 from _lcm.regime_building.age_normalization import (
     AgeGridSchedule,
     PeriodizedEconFunction,
@@ -5212,15 +5211,27 @@ def _prepare_numerical_solution_phase(  # noqa: PLR0915 - native route admission
                 law=laws[regime_name],
                 counts_raise_landings=counts_raise_landings,
                 current_values_on_nodes=True,
+                current_shock_names=_current_shock_names(
+                    current_iid_bindings=current_iid_bindings,
+                    has_exit=any(
+                        (
+                            user_regimes
+                            if period_regimes is None
+                            else period_regimes.by_period.get(period, user_regimes)
+                        )[regime_name].exit
+                        is not None
+                        for period in regimes_to_active_periods[regime_name]
+                    ),
+                ),
             ),
         )
         grouped_Q_and_F = decision_Q_and_F()
         Q_and_F_functions = grouped_Q_and_F.by_period
         # Queries receive parent coordinates outside the source's own preflight.
         # Their counters must not change the ordinary solver's Q/F contract.
-        # Prototype: a query evaluates the regime at projected states, which for a
-        # process may lie off its nodes, so a process draw reading its own current
-        # value stays enumerated there.
+        # A query evaluates the regime at projected states, which for a process
+        # may lie off its nodes, so a process draw reading its own current value
+        # stays enumerated there.
         solve_source = decision_Q_and_F.keywords["lottery_contraction_source"]
         # A query evaluates the whole grid and reads every continuation whole, so
         # it takes no co-mapped state; publication keeps each device's slice.
@@ -5237,9 +5248,15 @@ def _prepare_numerical_solution_phase(  # noqa: PLR0915 - native route admission
                 active_periods=query_periods,
                 count_raise_landings=True,
                 lottery_contraction_source=(
-                    dataclass_replace(solve_source, current_values_on_nodes=False)
+                    dataclass_replace(
+                        solve_source,
+                        current_values_on_nodes=False,
+                        prepared_by_caller=True,
+                        current_shock_names=_current_shock_names(
+                            current_iid_bindings=current_iid_bindings
+                        ),
+                    )
                     if solve_source is not None
-                    and lottery_contraction.QUERY_CONTRACTION != "off"
                     else solve_source
                 ),
                 co_map_state_names=invariant_bindings,
@@ -6631,15 +6648,36 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
                     gated_continuations=gated_continuations,
                 ),
                 current_values_on_nodes=False,
+                current_shock_names=_current_shock_names(
+                    current_iid_bindings=current_iid_bindings,
+                    has_exit=any(
+                        solver_context.user_regimes_at(period=period)[regime_name].exit
+                        is not None
+                        for period in regimes_to_active_periods[regime_name]
+                    ),
+                ),
             ),
         )
         Q_and_F_functions = decision_Q_and_F().by_period
         # Typed queries may receive parent coordinates outside this source's
         # stored grid. Keep their original landing counters separate from the
         # ordinary simulation reducers, whose Q/F output remains a pair.
+        simulation_source = decision_Q_and_F.keywords["lottery_contraction_source"]
         query_Q_and_F_functions = (
             decision_Q_and_F(
-                active_periods=query_periods, count_raise_landings=True
+                active_periods=query_periods,
+                count_raise_landings=True,
+                lottery_contraction_source=(
+                    dataclass_replace(
+                        simulation_source,
+                        prepared_by_caller=True,
+                        current_shock_names=_current_shock_names(
+                            current_iid_bindings=current_iid_bindings
+                        ),
+                    )
+                    if simulation_source is not None
+                    else simulation_source
+                ),
             ).by_period
             if query_periods
             else MappingProxyType({})
@@ -10192,6 +10230,7 @@ def _lottery_contraction_source(
     law: RegimeLaw,
     counts_raise_landings: bool,
     current_values_on_nodes: bool,
+    current_shock_names: frozenset[ReferenceName],
 ) -> LotteryContractionSource | None:
     """Return what the source contributes to contracting its draws, or `None`.
 
@@ -10210,6 +10249,27 @@ def _lottery_contraction_source(
         action_names=frozenset(action_names),
         rebound_targets=frozenset(law.participation),
         current_values_on_nodes=current_values_on_nodes,
+        current_shock_names=current_shock_names,
+    )
+
+
+def _current_shock_names(
+    *,
+    current_iid_bindings: Mapping[ShockGroupName, ShockBinding],
+    has_exit: bool = True,
+) -> frozenset[ReferenceName]:
+    """Return the regime's current shocks a query binds after building its tables.
+
+    A query binds them per information row inside its loops. An exit's root query
+    reads the regime's own Q, so with `has_exit` false its ordinary Q, read by no
+    query, gets none.
+    """
+    if not has_exit:
+        return frozenset()
+    return frozenset(
+        name
+        for binding in current_iid_bindings.values()
+        for name in binding.group.shocks
     )
 
 

@@ -62,6 +62,7 @@ from _lcm.policy_queries import (
     _row_batch,
     map_lanes,
     query_value_reads,
+    with_contracted_tables,
 )
 from _lcm.query_information import (
     FrameCodes,
@@ -365,20 +366,11 @@ class OutsideValueTable:
         """
         node = self.definitions[self.key]
         arguments = query_arguments[self.key]
-        fixed = {
-            name: value for name, value in arguments.items() if name != _PROJECTION
-        }
-        from _lcm.regime_building.Q_and_F import (  # noqa: PLC0415
-            prepare_contracted_values,
-        )
-
-        # Prototype hoist: contracted tables once per call, before `map_lanes`.
-        fixed = dict(
-            prepare_contracted_values(
-                function=node.context.Q_and_F_functions.get(node.read.period),
-                arguments=fixed,
-                skip=frozenset(node.gated_channels),
-            )
+        fixed = with_contracted_tables(
+            node=node,
+            arguments={
+                name: value for name, value in arguments.items() if name != _PROJECTION
+            },
         )
         projection = cast("Mapping[str, PytreeValue]", arguments[_PROJECTION])
         live = jnp.asarray(a=True)

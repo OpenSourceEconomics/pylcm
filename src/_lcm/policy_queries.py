@@ -775,6 +775,12 @@ class ScalarPolicyQueries:
             },
             roots=(self.root,),
         )
+        prepared = {
+            name: with_contracted_tables(node=self.definitions[name], arguments=fixed)
+            for name, fixed in arguments.items()
+        }
+        if any(prepared[name] is not fixed for name, fixed in arguments.items()):
+            arguments = prepared
         answers = {}
         for name in order:
             node = self.definitions[name]
@@ -1398,19 +1404,9 @@ class _QueryChunks:
         **tables: FloatND | BoolND,
     ) -> _ChunkOutput:
         """Run every chunk; `tables` holds the tables the stored reads take."""
-        from _lcm.regime_building.Q_and_F import (  # noqa: PLC0415
-            prepare_contracted_values,
-        )
-
-        # Prototype hoist: each step's contracted tables are built once here,
-        # outside the chunk loop, per reader.
         query_arguments = {
             name: (
-                prepare_contracted_values(
-                    function=core.node.context.Q_and_F_functions.get(core.period),
-                    arguments=arguments,
-                    skip=frozenset(core.node.gated_channels),
-                )
+                with_contracted_tables(node=core.node, arguments=arguments)
                 if (core := self.cores.get(name)) is not None
                 else arguments
             )
@@ -1922,6 +1918,25 @@ class _RawQueryEvaluation:
         return _evaluate_query_action(
             node=self.node, period=self.period, arguments=arguments
         )
+
+
+def with_contracted_tables(
+    *, node: QueryNode, arguments: Mapping[str, PytreeValue]
+) -> Mapping[str, PytreeValue]:
+    """Return `arguments` with the contracted tables `node`'s problem reads.
+
+    Called before a query's lanes are mapped, so each table is built once per
+    call rather than once per lane under the query's guard.
+    """
+    from _lcm.regime_building.Q_and_F import (  # noqa: PLC0415
+        prepare_contracted_values,
+    )
+
+    return prepare_contracted_values(
+        function=node.context.Q_and_F_functions.get(node.read.period),
+        arguments=arguments,
+        skip=frozenset(node.gated_channels),
+    )
 
 
 def _row_batch(*, chunk_size: int) -> int:

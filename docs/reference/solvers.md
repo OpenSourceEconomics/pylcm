@@ -53,14 +53,27 @@ maximizes the Q the solve maximized, cancelling values included. Where one is, t
 simulated choice can differ from the solve's by more than a tie with cancelling values,
 even at a node.
 
-A regime with a gated edge or a value constraint contracts nothing in either phase. The
-internal participation and exit queries, which count their landings on the nodes, also
-keep every draw enumerated.
+The contraction applies in every kernel of a regime that declares it: the ordinary one,
+the exit, consent and participation queries that solve a regime with an exit, and a
+collective regime's, where each member's value is contracted on its own. A query
+evaluates its regime at projected states, so, like the simulation, it keeps a process
+draw whose probabilities read the current value enumerated. It binds the current
+shocks per row after building its tables, so it also keeps a draw whose probabilities
+read a current shock, directly or through a helper. An exit's query reads its regime's
+own kernel, so a regime with an exit keeps such a draw there too; a regime without one
+sums it. A query also keeps every draw toward a target whose `off_grid="raise"`
+landings it counts on the nodes.
 
-The contraction is off by default. Its table is built inside the kernel's tile loops,
-and on GPU the compiler does not hoist it out of them, so it is rebuilt for every cell,
-action and subject tile. A period solved in a few wide tiles gains, while one split into
-many narrow tiles, as fixed `axis_widths` or unbudgeted widths can force, loses.
+A regime with a gated edge or a value constraint contracts nothing in either phase.
+
+The contraction is off by default, and off it leaves every program unchanged. The
+ordinary kernel builds its table inside its tile loops, and on GPU the compiler does not
+hoist it out of them, so it is rebuilt for every cell, action and subject tile. A period
+solved in a few wide tiles gains, while one split into many narrow tiles, as fixed
+`axis_widths` or unbudgeted widths can force, loses. A query builds each table once per
+call, before its loops, and so trades compile time and host memory for solve time: in a
+model with exits and collective regimes, whose queries each prepare their own tables,
+compile time and host memory rise while each period can solve faster.
 
 ## Capability table
 

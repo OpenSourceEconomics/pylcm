@@ -200,24 +200,33 @@ class GridSearch(Solver):
     other than the drawn state itself, and no law reads the draw, so it only
     selects a slice of the target's value function. Its expectation is then the
     same at every action, and the solve takes it once per kernel call instead of
-    once per state-action candidate. `False` keeps every draw a node axis of the
-    continuation. Values agree with the per-candidate expectation to rounding
-    relative to the largest next-period value magnitude across the draws, not
-    relative to the expectation itself: with large cancelling values, either
-    summation order can lose a small term. The simulation and
-    `Model.lookup_policy` contract the same draws as the solve, except a process
-    draw whose weights read the subject's own value: a simulated value may lie
-    between the process's nodes, so this draw stays enumerated in the simulation
-    for every subject, even one on a node. With cancelling values, the simulated
-    choice can then differ from the solve's by more than a tie. A regime with a
-    gated edge or a value constraint contracts in neither phase, and the
-    internal participation and exit queries, which count their landings, keep
-    every draw enumerated.
+    once per state-action candidate. This holds in every kernel: the ordinary
+    one, the exit, consent and participation queries that solve a regime with an
+    exit, and a collective regime's, per member. `False` keeps every draw a node
+    axis of the continuation and leaves every program unchanged. Values agree
+    with the per-candidate expectation to rounding relative to the largest
+    next-period value magnitude across the draws, not relative to the expectation
+    itself: with large cancelling values, either summation order can lose a small
+    term. The simulation and `Model.lookup_policy` contract the same draws as the
+    solve, except a process draw whose weights read the subject's own value: a
+    simulated value may lie between the process's nodes, so this draw stays
+    enumerated in the simulation for every subject, even one on a node. A query
+    evaluates its regime at projected states, so it keeps that draw enumerated in
+    the solve as well. With cancelling values, the simulated choice can differ
+    from the solve's by more than a tie where only the solve contracts it. A
+    regime with a gated edge or a value constraint contracts in neither phase,
+    nor does a continuation toward a target reached through a participation
+    check, and a query keeps every draw toward a target whose `off_grid="raise"`
+    landings it counts.
 
-    Off by default: the table is built inside the kernel's tile loops, and on GPU
-    the compiler does not hoist it, so it is rebuilt for every cell, action and
-    subject tile. A period solved in a few wide tiles gains; one split into many
-    narrow tiles, as fixed `axis_widths` or unbudgeted widths can force, loses.
+    Off by default: the ordinary kernel builds the table inside its tile loops,
+    and on GPU the compiler does not hoist it, so it is rebuilt for every cell,
+    action and subject tile. A period solved in a few wide tiles gains; one split
+    into many narrow tiles, as fixed `axis_widths` or unbudgeted widths can force,
+    loses. A query builds each table once per call, before its loops, and so
+    trades compile time and host memory for solve time: in a model with exits
+    and collective regimes, whose queries each prepare their own tables, compile
+    time and host memory rise while each period can solve faster.
     """
 
     @property

@@ -5,6 +5,21 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
+### `GridSearch(lottery_contraction=True)` contracts in exits and collective regimes
+
+- With the option on, the eligible draws are summed into the next-period value also in
+  regimes with an exit, which their exit and consent queries solve, and in collective
+  regimes, each member's value on its own. A query builds each table once per call,
+  before its loops. Values agree with enumerating the draws to rounding: the tests bound
+  the gap by 16 units in the last place at the largest value magnitude. Compile time and
+  host memory can rise and device peak can fall. A query keeps the draws toward a target
+  whose `off_grid="raise"` landings it counts, and a draw whose probabilities read a
+  current shock, which it binds per row after building its tables. A regime with an
+  exit, whose query reads its own kernel, now keeps such a draw enumerated there too;
+  before, the option summed it in that kernel, inside the query's loops. With the option
+  off, the default, every program is unchanged. See
+  [Grid-search lottery contraction](docs/reference/solvers.md#grid-search-lottery-contraction).
+
 ### The regime finder keeps collective regimes, exits and renegotiation apart
 
 - `find_regimes` pools a collective regime only with regimes of the same stakeholders,
