@@ -41,6 +41,21 @@ class _ConsumerAddressInputs(TypedDict):
     path: tuple[str | int, ...]
 
 
+class _ArtifactAddressOverrides(TypedDict, total=False):
+    kind: ValueArtifactKind
+    period: int
+    regime: RegimeName
+    target_regime: RegimeName | None
+
+
+class _ConsumerAddressOverrides(TypedDict, total=False):
+    source_period: int
+    source_regime: RegimeName
+    core_key: str
+    channel: ValueInputChannel
+    path: tuple[str | int, ...]
+
+
 def _mesh() -> jax.sharding.Mesh:
     return jax.sharding.Mesh(np.asarray(jax.devices()), ("device",))
 
@@ -189,7 +204,9 @@ def test_addresses_are_immutable_and_same_artifact_can_feed_multiple_paths() -> 
         ({"target_regime": "working"}, "cannot name"),
     ],
 )
-def test_regime_value_address_fails_closed(*, kwargs, message) -> None:
+def test_regime_value_address_fails_closed(
+    *, kwargs: _ArtifactAddressOverrides, message: str
+) -> None:
     values: _ArtifactAddressInputs = {
         "kind": ValueArtifactKind.REGIME_VALUE,
         "period": 3,
@@ -219,7 +236,12 @@ def test_gated_continuation_requires_an_edge_target() -> None:
         ({"path": (-1,)}, ValueError, "negative index"),
     ],
 )
-def test_consumer_address_fails_closed(*, replacement, error, message) -> None:
+def test_consumer_address_fails_closed(
+    *,
+    replacement: _ConsumerAddressOverrides,
+    error: type[TypeError | ValueError],
+    message: str,
+) -> None:
     kwargs: _ConsumerAddressInputs = {
         "source_period": 2,
         "source_regime": "working",
@@ -301,7 +323,9 @@ def test_resolver_rejects_misclassified_or_incompatible_layouts() -> None:
         (jnp.zeros((4,), dtype=jnp.int32), TypeError, "dtype"),
     ],
 )
-def test_apply_rejects_wrong_stored_metadata(*, value, error, message) -> None:
+def test_apply_rejects_wrong_stored_metadata(
+    *, value: jax.Array, error: type[TypeError | ValueError], message: str
+) -> None:
     transfer = _resolve_aligned()
 
     with pytest.raises(error, match=message):
