@@ -491,9 +491,9 @@ def test_simulation_with_contraction_chooses_and_moves_as_without() -> None:
     pd.testing.assert_frame_equal(
         on[discrete].reset_index(drop=True), off[discrete].reset_index(drop=True)
     )
-    expected = off["value"].to_numpy(dtype=float)
+    expected = off["value"].to_numpy()
     assert_agrees_to_ulp(
-        got=on["value"].to_numpy(dtype=float),
+        got=on["value"].to_numpy(),
         expected=expected,
         n_ulp=16,
         operand_magnitude=float(np.max(np.abs(expected[np.isfinite(expected)]))),
