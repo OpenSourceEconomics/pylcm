@@ -93,6 +93,12 @@ MODELS = {
 
 @pytest.fixture(params=sorted(MODELS), scope="module")
 def backends(request: pytest.FixtureRequest) -> dict[str, Facts]:
+    if sys.platform == "darwin" and request.param == "stochastic_volatility":
+        pytest.skip(
+            "On the macOS runner the dense backend reads more than the metadata "
+            "backend for this model (relation L0, axis uncertainty); the cause is "
+            "unknown and the comparisons hold on Linux."
+        )
     declarations = MODELS[request.param]()
     return {
         name: make_facts(name, declarations, LIMITS, _no_budget)
@@ -100,15 +106,7 @@ def backends(request: pytest.FixtureRequest) -> dict[str, Facts]:
     }
 
 
-def test_metadata_reads_cover_dense_reads(
-    backends: dict[str, Facts], request: pytest.FixtureRequest
-) -> None:
-    if sys.platform == "darwin" and "stochastic_volatility" in request.node.name:
-        pytest.skip(
-            "On the macOS runner the dense backend reads more than the metadata "
-            "backend at relation L0, axis uncertainty, for this model; the cause "
-            "is unknown and the comparison holds on Linux."
-        )
+def test_metadata_reads_cover_dense_reads(backends: dict[str, Facts]) -> None:
     metadata, dense = backends["metadata"], backends["dense"]
     for cell in dense.cells.values():
         assert current_reads(dense, cell) <= current_reads(metadata, cell), cell["id"]
