@@ -27,15 +27,12 @@ import time
 from . import _gpu_mem
 
 # Timed warm calls behind every `track_execution_time` here, which reports their
-# median. CollectiveHouseholdConstruct's and CollectiveHouseholdSolve's
-# setup_cache collect them per commit, shared by track_execution_time and
-# track_peak_cpu_mem: build once, one cold call, then this many timed warm
-# calls -- not one independent build+warm cycle per metric (mirrors
-# bench_mahler_yum.py's MahlerYumBudgetedGpu). The parameterized
-# CollectiveHouseholdSimulate and ReferenceChainSolve below time them in
-# process, after `setup`'s cold call, and keep ASV-native `peakmem_execution`:
-# sharing their setup across params would need the subprocess CLI in
-# `_gpu_mem` to accept parameters.
+# median. The construct, solve and simulate classes collect them in `setup_cache`,
+# once per commit and shared by every metric of the class: build once, one cold
+# call, then this many timed warm calls -- not one independent build+warm cycle
+# per metric (mirrors bench_mahler_yum.py's MahlerYumBudgetedGpu). The
+# parameterized ReferenceChainSolve below times them in process, after `setup`'s
+# cold call, and keeps ASV-native `peakmem_execution`.
 _WARM_SAMPLES = 3
 
 _N_PERIODS = 6
@@ -47,9 +44,8 @@ _WEALTH_N_POINTS = 40
 _CONSUMPTION_N_POINTS = 40
 
 # `_gpu_mem` drives a wrapped class with NO arguments, so a parameterized
-# workload has to name the single point its device-memory companion measures.
-# Both pick the largest case, which is the one a device peak is interesting for.
-_GPU_N_SUBJECTS = 100_000
+# workload has to name the single point its device-memory companion measures:
+# the largest case, which is the one a device peak is interesting for.
 _GPU_DEPTH = 8
 
 
@@ -185,59 +181,21 @@ class CollectiveHouseholdSolve:
     track_compilation_time.unit = "seconds"
 
 
-class CollectiveHouseholdSimulate:
-    """Forward simulation, over cohort sizes.
+class _SimulateCohort:
+    """One cohort size, as `_gpu_mem`'s measurement subprocess drives it."""
 
-    Participation checks route each original subject before its final action.
-    A cohort-size term that grew faster than linearly would show up between
-    these points.
-    """
+    n_subjects: int
 
-    version = "2"
-    timeout = 900
-    # 10,000 (the intermediate point) added little coverage over the two
-    # endpoints in the PR#440 benchmark review's measured run (warm
-    # simulation ~337/355/354 ms at 1,000/10,000/100,000) and cost 3m24s;
-    # dropped rather than kept as a third routine point.
-    params = [1_000, 100_000]
-    param_names = ["n_subjects"]
-
-    def _build(self, n_subjects):
+    def setup_for_gpu_measurement(self):
         from lcm_examples import collective_household
 
-        print(
-            f"CollectiveHouseholdSimulate: build model ({n_subjects} subjects)",
-            flush=True,
-        )
         self.model, self.model_params = _make_model()
-        print("CollectiveHouseholdSimulate: solve model", flush=True)
         self.period_to_regime_to_V_arr = self.model.solve(
             params=self.model_params, log_level="off", runtime_checks=False
         )
-        print("CollectiveHouseholdSimulate: create initial conditions", flush=True)
         self.initial_conditions = collective_household.get_initial_conditions(
-            n_subjects=n_subjects, model=self.model
+            n_subjects=self.n_subjects, model=self.model
         )
-        print(
-            "CollectiveHouseholdSimulate: model and initial conditions ready",
-            flush=True,
-        )
-
-    def setup(self, n_subjects):
-        self._build(n_subjects)
-        print("CollectiveHouseholdSimulate: first simulation", flush=True)
-        start = time.perf_counter()
-        self.execute_for_measurement()
-        self._compile_time = time.perf_counter() - start
-        print(
-            "CollectiveHouseholdSimulate: setup complete; "
-            f"first simulation {self._compile_time:.6f}s",
-            flush=True,
-        )
-
-    def setup_for_gpu_measurement(self, n_subjects=_GPU_N_SUBJECTS):
-        self._build(n_subjects)
-        print("CollectiveHouseholdSimulate: cold simulation for GPU memory", flush=True)
 
     def execute_for_measurement(self):
         self.model.simulate(
@@ -249,34 +207,96 @@ class CollectiveHouseholdSimulate:
             seed=0,
         )
 
-    def track_execution_time(self, n_subjects):
-        return statistics.median(
-            _gpu_mem.warm_call_seconds(
-                execute=self.execute_for_measurement, warm_samples=_WARM_SAMPLES
-            )
-        )
 
-    # Replaces ASV-native `time_execution`, which ASV timed with its own repeat
-    # statistics; this is the median of `_WARM_SAMPLES` warm calls, so its
-    # history shows a step at the rename.
+class _Simulate1000(_SimulateCohort):
+    n_subjects = 1_000
+
+
+class _Simulate100000(_SimulateCohort):
+    n_subjects = 100_000
+
+
+_SIMULATE_COHORTS = {1_000: "_Simulate1000", 100_000: "_Simulate100000"}
+
+type _CohortMeasurements = dict[int, dict[str, float | list[float]]]
+
+
+class _SimulateMeasurements:
+    """Measure every cohort once per commit, for every metric below.
+
+    Each cohort runs in one isolated subprocess: build and solve, one cold
+    simulation (first-call seconds, host peak, device peak), then
+    `_WARM_SAMPLES` timed warm simulations. The first simulation of a cohort
+    takes minutes, so no metric pays for one of its own.
+    """
+
+    def setup_cache(self) -> _CohortMeasurements:
+        return {
+            n_subjects: _gpu_mem.measure_combined_with_warm_samples_and_gpu_peak(
+                bench_module="benchmarks.asv.bench_collective_household",
+                bench_class=bench_class,
+                warm_samples=_WARM_SAMPLES,
+            )
+            for n_subjects, bench_class in _SIMULATE_COHORTS.items()
+        }
+
+    # Two first simulations and their warm calls, one after the other.
+    setup_cache.timeout = 3600
+
+
+class CollectiveHouseholdSimulate(_SimulateMeasurements):
+    """Forward simulation, over cohort sizes.
+
+    Participation checks route each original subject before its final action.
+    A cohort-size term that grew faster than linearly would show up between
+    these points.
+    """
+
+    # Version bumped: the shared `setup_cache` replaces one build, solve and
+    # first simulation per metric and cohort, and `track_peak_cpu_mem` replaces
+    # ASV-native `peakmem_execution`.
+    version = "3"
+    # 10,000 (the intermediate point) added little coverage over the two
+    # endpoints in the PR#440 benchmark review's measured run (warm
+    # simulation ~337/355/354 ms at 1,000/10,000/100,000) and cost 3m24s;
+    # dropped rather than kept as a third routine point.
+    params = list(_SIMULATE_COHORTS)
+    param_names = ["n_subjects"]
+
+    # keyword-only-exempt: library-callback=asv
+    def track_execution_time(
+        self, cache: _CohortMeasurements, n_subjects: int
+    ) -> float:
+        return statistics.median(cache[n_subjects]["warm_samples"])
+
     track_execution_time.unit = "seconds"
 
-    def peakmem_execution(self, n_subjects):
-        self.execute_for_measurement()
+    # keyword-only-exempt: library-callback=asv
+    def track_peak_cpu_mem(self, cache: _CohortMeasurements, n_subjects: int) -> float:
+        return cache[n_subjects]["peak_cpu_mem"]
 
-    def teardown(self, n_subjects):
-        _clear_gpu_memory()
+    track_peak_cpu_mem.unit = "bytes"
 
-    def track_compilation_time(self, n_subjects):
-        return self._compile_time
+    # keyword-only-exempt: library-callback=asv
+    def track_compilation_time(
+        self, cache: _CohortMeasurements, n_subjects: int
+    ) -> float:
+        return cache[n_subjects]["compilation_time"]
 
     track_compilation_time.unit = "seconds"
 
 
-class CollectiveHouseholdSimulateGpuPeakMem(_gpu_mem.GpuPeakMem):
-    bench_module = "benchmarks.asv.bench_collective_household"
-    bench_class = "CollectiveHouseholdSimulate"
-    version = "2"
+class CollectiveHouseholdSimulateGpuPeakMem(_SimulateMeasurements):
+    """Device peak of the largest cohort's build, solve and first simulation."""
+
+    # Version bumped: read from the shared `setup_cache` instead of a cold run
+    # of its own.
+    version = "3"
+
+    def track_gpu_peak_mem(self, cache: _CohortMeasurements) -> float:
+        return cache[max(cache)]["peak_gpu_mem_automatic_solve_simulate"]
+
+    track_gpu_peak_mem.unit = "bytes"
 
 
 class ReferenceChainSolve:

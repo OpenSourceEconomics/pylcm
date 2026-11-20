@@ -79,21 +79,8 @@ def test_solve_still_tracks_compilation_time(monkeypatch: pytest.MonkeyPatch) ->
     assert instance.track_compilation_time(cache) == 1.5
 
 
-@pytest.mark.parametrize(
-    ("benchmark_class", "param"),
-    [
-        (bench_collective_household.CollectiveHouseholdSimulate, 1_000),
-        (bench_collective_household.ReferenceChainSolve, 1),
-    ],
-)
-def test_parameterized_classes_track_the_median_warm_call(
-    *,
+def test_reference_chain_tracks_the_median_warm_call(
     monkeypatch: pytest.MonkeyPatch,
-    benchmark_class: type[
-        bench_collective_household.CollectiveHouseholdSimulate
-        | bench_collective_household.ReferenceChainSolve
-    ],
-    param: int,
 ) -> None:
     """Execution time is the median of the shared warm-call timer, as elsewhere."""
     calls = []
@@ -105,9 +92,10 @@ def test_parameterized_classes_track_the_median_warm_call(
         return [3.0, 1.0, 2.0]
 
     monkeypatch.setattr(_gpu_mem, "warm_call_seconds", _fake_warm_call_seconds)
+    benchmark_class = bench_collective_household.ReferenceChainSolve
     instance = benchmark_class()
 
-    assert instance.track_execution_time(param) == 2.0
+    assert instance.track_execution_time(1) == 2.0
     assert calls == [
         (instance.execute_for_measurement, bench_collective_household._WARM_SAMPLES)
     ]
@@ -115,48 +103,56 @@ def test_parameterized_classes_track_the_median_warm_call(
     assert not hasattr(benchmark_class, "time_execution")
 
 
-@pytest.mark.parametrize(
-    ("method", "n_subjects"),
-    [
-        (method, n_subjects)
-        for method in (
-            "peakmem_execution",
-            "track_compilation_time",
-            "track_execution_time",
-        )
-        for n_subjects in (1_000, 100_000)
-    ]
-    + [("track_gpu_peak_mem", None)],
-)
-def test_every_cohort_reaches_benchmark_setup(
-    *,
+def test_every_simulate_metric_reads_one_measurement_per_cohort(
     monkeypatch: pytest.MonkeyPatch,
-    method: str,
-    n_subjects: int | None,
 ) -> None:
-    """ASV sets up every cohort's measurements and the GPU peak-memory probe."""
-    benchmark_class = (
-        bench_collective_household.CollectiveHouseholdSimulateGpuPeakMem
-        if n_subjects is None
-        else bench_collective_household.CollectiveHouseholdSimulate
+    """Each cohort is measured once; no metric runs a simulation of its own."""
+    measured: list[tuple[str, str]] = []
+
+    def _fake_measure(
+        *, bench_module: str, bench_class: str, warm_samples: int
+    ) -> dict[str, float | list[float]]:
+        measured.append((bench_module, bench_class))
+        n_subjects = getattr(bench_collective_household, bench_class).n_subjects
+        return {
+            "compilation_time": 10.0 * n_subjects,
+            "peak_cpu_mem": 20.0 * n_subjects,
+            "peak_gpu_mem_automatic_solve_simulate": 30.0 * n_subjects,
+            "warm_samples": [3.0 * n_subjects, 1.0 * n_subjects, 2.0 * n_subjects][
+                :warm_samples
+            ],
+        }
+
+    monkeypatch.setattr(
+        _gpu_mem, "measure_combined_with_warm_samples_and_gpu_peak", _fake_measure
     )
-    instance = benchmark_class()
-    calls: list[tuple[int, ...]] = []
+    simulate = bench_collective_household.CollectiveHouseholdSimulate()
+    gpu_peak = bench_collective_household.CollectiveHouseholdSimulateGpuPeakMem()
 
-    def setup(*params: int) -> None:
-        calls.append(params)
+    cache = simulate.setup_cache()
 
-    monkeypatch.setattr(instance, "setup", setup)
-    func = getattr(instance, method)
-    benchmark = Benchmark(method, func, [func, instance])
-    if n_subjects is not None:
-        benchmark.set_param_idx(
-            bench_collective_household.CollectiveHouseholdSimulate.params.index(
-                n_subjects
-            )
+    module = "benchmarks.asv.bench_collective_household"
+    assert measured == [(module, "_Simulate1000"), (module, "_Simulate100000")]
+    assert simulate.params == [1_000, 100_000]
+    for n_subjects in simulate.params:
+        assert simulate.track_compilation_time(cache, n_subjects) == 10.0 * n_subjects
+        assert simulate.track_peak_cpu_mem(cache, n_subjects) == 20.0 * n_subjects
+        assert simulate.track_execution_time(cache, n_subjects) == 2.0 * n_subjects
+    assert gpu_peak.track_gpu_peak_mem(cache) == 30.0 * 100_000
+    assert not hasattr(simulate, "peakmem_execution")
+
+
+def test_the_simulate_classes_share_one_cache() -> None:
+    """ASV keys a cache by its producer, so one producer means one measurement."""
+    keys = {
+        Benchmark(
+            "track", benchmark_class.setup_cache, [benchmark_class()]
+        ).setup_cache_key
+        for benchmark_class in (
+            bench_collective_household.CollectiveHouseholdSimulate,
+            bench_collective_household.CollectiveHouseholdSimulateGpuPeakMem,
         )
+    }
 
-    assert (benchmark.do_setup(), calls) == (
-        False,
-        [()] if n_subjects is None else [(n_subjects,)],
-    )
+    assert len(keys) == 1
+    assert None not in keys
