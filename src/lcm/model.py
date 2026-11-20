@@ -58,6 +58,7 @@ from _lcm.model_graph import (
     ModelGraph,
     bind_edge_laws,
     collect_declared_transitions,
+    complete_role_fallbacks,
     demanded_exit_function_paths,
     naming_cells_without_edges,
     prepare_graph,
@@ -383,6 +384,7 @@ from lcm.koopmans_aggregation import LinearAggregator
 from lcm.lowering import LoweredPeriodCandidate, PeriodCandidate
 from lcm.period_capture import CapturedPeriodReplay, PeriodCapture
 from lcm.phased import Phased
+from lcm.problem import Problem
 from lcm.processes import (
     LogNormalIIDProcess,
     NormalIIDProcess,
@@ -562,6 +564,7 @@ class _PickledModel(TypedDict):
     ]
     pruned_variables: MappingProxyType[RegimeName, frozenset[str]]
     _user_regimes: MappingProxyType[RegimeName, FinalizedUserRegime]
+    _problems: NotRequired[MappingProxyType[RegimeName, Problem | None]]
     regime_names_to_ids: RegimeNamesToIds
     _execution: ResolvedExecution
     reachability: ModelReachability
@@ -1021,6 +1024,19 @@ class Model:
     shock groups included."""
 
     @property
+    def problems(self) -> MappingProxyType[RegimeName, Problem | None]:
+        """Return the problem each regime was given, by regime name.
+
+        `None` for a regime that held no problem. Regimes that share a problem map
+        to the same object. Read from the regimes passed to the constructor, since
+        the finalized regimes in `user_regimes` hold no problem; a model built from
+        those regimes therefore names none. Enters no fingerprint.
+        """
+        return self._problems
+
+    _problems: MappingProxyType[RegimeName, Problem | None]
+
+    @property
     def _node_state_names(self) -> frozenset[StateName]:
         """Name the internal node states of adapted shocks; empty without them."""
         if self._node_axis_adapter is None:
@@ -1265,6 +1281,16 @@ class Model:
                 conditions name the members. At most one composite state.
 
         """
+        self._problems = MappingProxyType(
+            {name: regime.problem for name, regime in regimes.items()}
+        )
+        # Building rewrites regime slots, and a rewritten regime no longer carries
+        # its problem's objects: the model takes each holder as the regime that
+        # declares those objects itself.
+        regimes = {
+            name: regime if regime.problem is None else regime.replace(problem=None)
+            for name, regime in regimes.items()
+        }
         regimes, shocks, self._node_axis_adapter = adapt_declaration(
             regimes=regimes, shocks=shocks
         )
@@ -1584,6 +1610,9 @@ class Model:
             ages=self._time,
             active_periods_by_regime=schedules.context_periods_by_regime,
         )
+        # A `Transition.roles` gate falls back to its target at the identity, over
+        # the states pruning and the post-decision split leave the target.
+        laws = complete_role_fallbacks(laws=laws, regimes=pruned_regimes)
         # Removal is regime-local; initialization preserves names another regime keeps.
         self._post_decision_state_names = frozenset(
             name for unread in post_decision_states.values() for name in unread
@@ -2234,6 +2263,7 @@ class Model:
             simulation_output_dtypes=self.simulation_output_dtypes,
         )
         state["_regimes"] = self._regimes
+        state["_problems"] = self._problems
         state["_constructor_inputs"] = self._constructor_inputs
         state["_declaration_preparation"] = self._declaration_preparation
         state["_initial_generation_key"] = self._initial_generation_key
@@ -2266,6 +2296,9 @@ class Model:
         )
         self._param_name_candidates = state.get(
             "_param_name_candidates", _get_param_name_candidates(self._user_regimes)
+        )
+        self._problems = state.get(
+            "_problems", MappingProxyType(dict.fromkeys(self._user_regimes))
         )
         self._post_decision_state_names = state.get(
             "_post_decision_state_names", frozenset()
@@ -4406,7 +4439,7 @@ class Model:
             period not in self._regimes[name].simulation.exit_queries
             or self._regimes[name].simulation.exit_queries[period].full is None
             for name, declaration in self._user_regimes.items()
-            if declaration.exits
+            if declaration.exit is not None
             for period in self._regimes[name].simulation.programs.decision
             if (self._time.exact_values[period], name) in self._graph.visited_nodes
         ):
@@ -5363,6 +5396,8 @@ class Model:
                 taste shocks has no feasible action, as `simulate` refuses it. A
                 regime without actions returns the value negative infinity there
                 instead.
+            UnsupportedOperationError: An active renegotiating exit needs changed
+                current states and routed destinations; use `simulate` instead.
 
         """
         self._check_identity_runtime()
@@ -5378,6 +5413,7 @@ class Model:
         _fail_if_policy_lookup_unsupported(
             regime=regime,
             regime_name=regime_name,
+            period=period,
             solver=self._user_regimes[regime_name].solver,
             keep_intermediates=keep_intermediates,
         )
@@ -6675,10 +6711,20 @@ def _fail_if_policy_lookup_unsupported(
     *,
     regime: Regime,
     regime_name: RegimeName,
+    period: int,
     solver: Solver,
     keep_intermediates: tuple[Intermediate, ...],
 ) -> None:
     """Raise when policy lookup cannot reproduce the regime's simulated decision."""
+    exit_plan = regime.simulation.exit_queries.get(period)
+    if exit_plan is not None and exit_plan.full is not None:
+        queries = exit_plan.full
+        if queries.definitions[queries.root].state_updates:
+            raise UnsupportedOperationError(
+                "Renegotiating exits require the routed simulate decision; "
+                "policy lookup cannot return changed states and "
+                "separation destinations."
+            )
     if regime.simulation.current_iid_draw_plan is not None:
         raise UnsupportedOperationError(
             "Current IID policy queries require an explicit observation or "

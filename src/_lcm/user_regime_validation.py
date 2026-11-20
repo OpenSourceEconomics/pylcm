@@ -44,7 +44,7 @@ from _lcm.utils.functools import is_user_function
 from lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
 from lcm.decoupled import Decoupled
 from lcm.exceptions import RegimeInitializationError
-from lcm.exits import Consent, Exit
+from lcm.exits import Consent, Exit, MutualConsent, Unilateral
 from lcm.grids import DiscreteGrid
 from lcm.koopmans_aggregation import CESAggregator, LinearAggregator
 from lcm.phased import Phased
@@ -152,38 +152,144 @@ def validate_exit_targets(
     *, regimes: Mapping[RegimeName, Regime], laws: RegimeLaws
 ) -> None:
     """Bind declared destinations to real policy roles and complete phase states."""
-    from _lcm.exits import exits_for_phase  # noqa: PLC0415 - phase validator cycle
+    from _lcm.exits import exit_for_phase  # noqa: PLC0415 - phase validator cycle
 
     for source, regime in regimes.items():
         for phase in ("solve", "simulate"):
-            for name, declaration in exits_for_phase(
-                exits=regime.exits, phase=phase
-            ).items():
-                for target in declaration.targets.values():
-                    context = f"Exit {source}.{name}"
-                    if target.regime not in regimes:
-                        raise RegimeInitializationError(
-                            f"{context} names unknown destination {target.regime!r}."
-                        )
-                    destination = regimes[target.regime]
-                    if target.role not in (destination.stakeholders or (None,)):
-                        raise RegimeInitializationError(
-                            f"{context} has invalid destination role {target.role!r}."
-                        )
-                    _validate_exit_projection(
-                        context=context,
-                        projection=target.projection,
-                        destination=destination,
-                        law=laws[target.regime],
-                        phase=phase,
+            declaration = exit_for_phase(declaration=regime.exit, phase=phase)
+            if declaration is None:
+                continue
+            _validate_renegotiation(
+                declaration=declaration, regime=regime, law=laws[source], phase=phase
+            )
+            _validate_optimum_comparison(declaration=declaration, regime=regime)
+            _validate_settlement(declaration=declaration, regime=regime)
+            for target in declaration.targets.values():
+                context = f"Exit of {source}"
+                if target.regime not in regimes:
+                    raise RegimeInitializationError(
+                        f"{context} names unknown destination {target.regime!r}."
                     )
-                _validate_counterparty(
-                    declaration=declaration,
-                    context=f"Exit {source}.{name} counterparty",
-                    regimes=regimes,
-                    laws=laws,
+                destination = regimes[target.regime]
+                if target.role not in (destination.stakeholders or (None,)):
+                    raise RegimeInitializationError(
+                        f"{context} has invalid destination role {target.role!r}."
+                    )
+                _validate_exit_projection(
+                    context=context,
+                    projection=target.projection,
+                    destination=destination,
+                    law=laws[target.regime],
                     phase=phase,
                 )
+            _validate_counterparty(
+                declaration=declaration,
+                context=f"Exit of {source}, counterparty",
+                regimes=regimes,
+                laws=laws,
+                phase=phase,
+            )
+
+
+def _validate_renegotiation(
+    *, declaration: Exit, regime: Regime, law: RegimeLaw, phase: Phase
+) -> None:
+    """Require the ordered two-member domain before native queries are built."""
+    if (
+        not isinstance(declaration.rule, Unilateral)
+        or declaration.rule.renegotiate is None
+    ):
+        return
+    if len(regime.stakeholders or ()) != 2:  # noqa: PLR2004 - directional two-member rule
+        raise RegimeInitializationError(
+            "Renegotiate requires two collective stakeholders."
+        )
+    spec = normalize_regime_phases(regime, law=law)
+    grid = getattr(
+        spec, "solution" if phase == "solve" else "simulation"
+    ).grid_states.get(declaration.rule.renegotiate.state)
+    if not isinstance(grid, DiscreteGrid):
+        raise RegimeInitializationError(
+            "Renegotiate must name a declared discrete grid state."
+        )
+    if not grid.ordered:
+        raise RegimeInitializationError("Renegotiate needs an ordered discrete state.")
+    state = declaration.rule.renegotiate.state
+    phase_spec = getattr(spec, "solution" if phase == "solve" else "simulation")
+    transition = phase_spec.state_transitions.get(state)
+    laws = transition.values() if isinstance(transition, Mapping) else (transition,)
+    if any(
+        value is not None and not isinstance(value, _IdentityTransition)
+        for value in laws
+    ):
+        raise RegimeInitializationError(
+            "Renegotiate carries its selected node: declare "
+            f"fixed_transition('{state}') for its state law."
+        )
+    if any(
+        state in kernel.outputs
+        for kernels in phase_spec.joint_transitions.values()
+        for kernel in kernels.values()
+    ):
+        raise RegimeInitializationError(
+            "Renegotiate carries its selected node through fixed_transition, "
+            "not through a joint state update."
+        )
+
+
+def _validate_optimum_comparison(*, declaration: Exit, regime: Regime) -> None:
+    """Require a deterministic household optimum for a rule that compares there."""
+    from _lcm.exits import compares_at_optimum  # noqa: PLC0415 - phase validator cycle
+
+    if compares_at_optimum(declaration.rule) and regime.taste_shocks is not None:
+        raise RegimeInitializationError(
+            "An exit rule that compares at the household optimum needs a regime "
+            "without taste shocks."
+        )
+
+
+def _validate_settlement(*, declaration: Exit, regime: Regime) -> None:
+    """Require two members, a target that reads the settlement and a free name."""
+    rule = declaration.rule
+    if not isinstance(rule, MutualConsent) or rule.settle is None:
+        return
+    name = rule.settle.name
+    if len(regime.stakeholders or ()) != 2:  # noqa: PLR2004 - directional two-member rule
+        raise RegimeInitializationError(
+            "Settlement requires two collective stakeholders."
+        )
+    # The author's names and the engine's: a household's `utility` is bound as
+    # `utility_<s>` per stakeholder, and a settlement may shadow neither.
+    taken = {
+        *regime.states,
+        *regime.actions,
+        *regime.functions,
+        *regime.decomposed_functions,
+    }
+    if name in taken:
+        raise RegimeInitializationError(
+            f"Settlement {name!r} has the name of a state, action or function of the "
+            "regime."
+        )
+    callbacks = [
+        function
+        for target in declaration.targets.values()
+        for function in (
+            *cast("Mapping[str, UserFunction]", target.projection).values(),
+            *(
+                ()
+                if target.utility_adjustment is None
+                else (target.utility_adjustment,)
+            ),
+        )
+    ]
+    if not any(
+        name in inspect.signature(function).parameters for function in callbacks
+    ):
+        raise RegimeInitializationError(
+            f"Settlement {name!r} is read by no exit-target projection or utility "
+            "adjustment."
+        )
 
 
 def _validate_counterparty(
@@ -285,33 +391,12 @@ def validate_regime(regime: Regime) -> None:
 
 
 def _validate_exits(regime: Regime) -> None:
-    """Require a complete benchmark for the source's actual stakeholder layout."""
-    if not regime.exits:
+    """Require a destination for each of the source's stakeholders."""
+    if regime.exit is None:
         return
-    from lcm.exits import Consent, Exit  # noqa: PLC0415 - Regime imports this validator
-
     expected = set(regime.stakeholders or ("self",))
-    if errors := path_segment_name_errors(kind="Exit", names=regime.exits):
-        raise RegimeInitializationError(errors[0])
-    for name, declaration in regime.exits.items():
-        if not isinstance(declaration, Exit):
-            raise RegimeInitializationError(
-                f"Exit {name!r} must be an Exit declaration."
-            )
-        if set(declaration.targets) != expected:
-            raise RegimeInitializationError(
-                f"Exit {name!r} targets must name {sorted(expected)!r}."
-            )
-    if (
-        sum(
-            isinstance(declaration.rule, str | Consent)
-            for declaration in regime.exits.values()
-        )
-        > 1
-    ):
-        raise RegimeInitializationError(
-            "More than one built-in exit requires an explicit custom multi-exit rule."
-        )
+    if set(regime.exit.targets) != expected:
+        raise RegimeInitializationError(f"Exit targets must name {sorted(expected)!r}.")
 
 
 # keyword-only-exempt: primary-argument=regime

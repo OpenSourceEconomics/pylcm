@@ -743,7 +743,7 @@ def resolve_phase_process_grids(
                 action_partitions=phase.action_partitions,
             )
             required = (
-                jax.sharding.SingleDeviceSharding(devices[0])
+                jax.sharding.make_single_device_sharding(devices[0])
                 if plan is None
                 else jax.sharding.NamedSharding(plan.mesh, jax.sharding.PartitionSpec())
             )
@@ -1818,7 +1818,7 @@ def place_template_on_regime_devices[Template](
     )
     state_order = tuple(states)
     replicated = (
-        jax.sharding.SingleDeviceSharding(devices[0])
+        jax.sharding.make_single_device_sharding(devices[0])
         if plan is None
         else jax.NamedSharding(plan.mesh, jax.P())
     )

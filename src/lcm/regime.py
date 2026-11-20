@@ -13,7 +13,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from functools import cached_property
 from types import MappingProxyType
-from typing import ClassVar, Literal, TypedDict, Unpack, cast
+from typing import TYPE_CHECKING, ClassVar, Literal, TypedDict, Unpack, cast
 
 from beartype import beartype
 
@@ -54,6 +54,19 @@ from lcm.transition import (
     StochasticTransition,
 )
 from lcm.typing import UserFunction
+
+if TYPE_CHECKING:
+    from lcm.problem import Problem
+
+    type _ProblemClass = type[Problem]
+else:
+    # `lcm.problem` imports this module; `lcm.__init__` binds `Problem` by
+    # calling `_bind_forward_refs`, so the class is not yet resolvable when that
+    # call is checked.
+    type _ProblemClass = object
+
+# Evaluated only when a call is checked, after `Problem` is bound.
+type _HeldProblem = Problem
 
 # One `Regime.states` value; `None` masks a model-level state of the same name.
 type StateEntry = (
@@ -105,10 +118,11 @@ class _SlotsBesideFunctions(TypedDict, total=False):
     solver: _solvers.Solver
     taste_shocks: ExtremeValueTasteShocks | None
     shocks: tuple[ShockGroupName, ...]
-    exits: Mapping[str, Exit]
+    exit: Exit | None
     koopmans_aggregator: UserFunction | Phased | Decoupled | None
     certainty_equivalent: CertaintyEquivalent | None
     description: str
+    problem: _HeldProblem | None
 
 
 class RegimeReplacement(_SlotsBesideFunctions, total=False):
@@ -329,11 +343,23 @@ class Regime:
     groups carry an axis and which are integrated out.
     """
 
-    exits: Mapping[str, Exit] = field(default_factory=lambda: MappingProxyType({}))
-    """Named current-period choices to mapped destination policies."""
+    exit: Exit | None = None
+    """Current-period move to mapped destination policies, before the action."""
 
     description: str = ""
     """Description of the regime."""
+
+    problem: _HeldProblem | None = field(default=None, repr=False)
+    """The action problem this regime holds, which other regimes may hold too.
+
+    A regime that holds a problem declares none of the problem's slots and takes
+    the problem's own objects for them; it adds only `exit` and `description`.
+    A slot that is neither the default nor the problem's object, such as one
+    passed to `replace` or carried over from another problem, is refused. To
+    declare a slot of its own, a regime passes `problem=None`. A regime derived
+    by rewriting slots, such as a joint-normal lowering or the model's
+    finalized regime, holds no problem.
+    """
 
     stakeholders: tuple[str, ...] | None = field(init=False, default=None)
     """Names of the stakeholders whose individual values this regime carries.
@@ -458,6 +484,11 @@ class Regime:
         object.__setattr__(self, name, value)
 
     def __post_init__(self) -> None:
+        if self.problem is not None:
+            from lcm.problem import lowered_slots  # noqa: PLC0415 - lcm.problem imports this module
+
+            for name in lowered_slots(regime=self):
+                object.__setattr__(self, name, getattr(self.problem, name))
         if len(set(self.shocks)) != len(self.shocks) or any(
             not name.isidentifier()
             or path_segment_name_errors(kind="Shock group", names=(name,))
@@ -485,7 +516,6 @@ class Regime:
         self._make_field_immutable(name="derived_categoricals")
         self._make_field_immutable(name="value_constraints")
         self._make_field_immutable(name="same_period_refs")
-        self._make_field_immutable(name="exits")
 
     def _lower_value_dependent_declarations(self) -> None:
         """Derive the engine-facing views of the collective declarations.
@@ -515,7 +545,7 @@ class Regime:
 
         Returns:
             This regime when it declares no joint process; otherwise a new
-            regime holding the lowered states and functions.
+            regime holding the lowered states and functions and no problem.
 
         Raises:
             RegimeInitializationError: If a generated name collides with a
@@ -532,7 +562,7 @@ class Regime:
             | frozenset(self.constraints)
             | frozenset(self.state_transitions),
         )
-        return self.replace(states=states, functions=functions)
+        return self.replace(states=states, functions=functions, problem=None)
 
     @cached_property
     def decomposed_functions(
@@ -905,13 +935,15 @@ class Regime:
 
         Returns:
             A new regime carrying the engine's additions, whose declarations
-            are the ones this regime was written with.
+            are the ones this regime was written with. It holds no problem
+            unless `other_slots` names one.
 
         Raises:
             RegimeInitializationError: If the engine mapping rewrites a
                 stakeholder's declared utility, replaces a declaration object,
                 or does not reproduce what the resulting regime decomposes to.
         """
+        other_slots.setdefault("problem", None)
         declaration = self.functions.get("utility")
         engine_functions = self._restore_floor_sources(engine_functions)
         expected_function_names = frozenset(engine_functions)
@@ -1085,3 +1117,13 @@ def _resolve_phase_variant(
     if isinstance(value, Phased):
         value = value.solve if phase == "solve" else value.simulate
     return cast("UserFunction", value)
+
+
+def _bind_forward_refs(*, problem_cls: _ProblemClass) -> None:
+    """Bind `Problem` into this module's globals.
+
+    `Regime.problem` and `RegimeReplacement` name `Problem`, whose module imports
+    this one. `lcm.__init__` calls this helper once `Problem` is loaded, so the
+    annotations resolve when beartype checks a call.
+    """
+    globals()["Problem"] = problem_cls

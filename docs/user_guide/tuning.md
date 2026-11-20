@@ -449,9 +449,11 @@ allocator. It takes one of three values:
 - `"device"`, the default: the budget is the smallest selected device's allocator pool
   limit, less `device_memory_headroom_fraction`. GPUs and TPUs report a pool limit, so
   there the planner picks the widest widths that fit. A CPU reports none, so on CPU the
-  default is unbudgeted. The default needs a preallocated pool, which is JAX's default:
-  without preallocation the allocator grows its pool in separate regions and the limit
-  does not promise one contiguous block. If you set
+  default is unbudgeted. A pool that may grow past its first region counts with that
+  region only, three quarters of what the device reports unless you fix the share with
+  `XLA_CLIENT_MEM_FRACTION`. The default needs a preallocated pool, which is JAX's
+  default: without preallocation the allocator grows its pool in separate regions and
+  the limit does not promise one contiguous block. If you set
   `XLA_PYTHON_CLIENT_PREALLOCATE=false` (to share a GPU on demand, say), pass an integer
   or `None`; the default is refused there unless
   `XLA_PYTHON_CLIENT_ALLOCATOR=cuda_async` is set. Processes sharing a GPU can instead

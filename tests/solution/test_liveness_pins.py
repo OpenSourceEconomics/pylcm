@@ -59,7 +59,7 @@ from tests.test_models.n_nbegm_toy import build_model as _build_nnbegm_model
 
 def _metadata(*, model: Model) -> dict[tuple[str, int, str], _ProgramExecutionMetadata]:
     """Every declared program's metadata, with an aligned one-device plan."""
-    sharding = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    sharding = jax.sharding.make_single_device_sharding(jax.devices()[0])
     result: dict[tuple[str, int, str], _ProgramExecutionMetadata] = {}
     for regime_name, regime in model._regimes.items():
         for period, kernel in regime.solution.period_kernels.items():

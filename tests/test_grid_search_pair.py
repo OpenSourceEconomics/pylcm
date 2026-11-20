@@ -17,6 +17,7 @@ from typing_extensions import TypedDict
 
 from _lcm.continuation import ContinuationPayload
 from _lcm.engine import StateActionSpace
+from _lcm.policy_queries import OUTSIDE_PROGRAM
 from _lcm.time import TimeAxis
 from _lcm.typing import (
     FlatParams,
@@ -106,6 +107,7 @@ def _kernel(
         "streamed": execution_disposition == "planned",
         "execution_disposition": execution_disposition,
         "disposition_reason": disposition_reason,
+        "outside_programs": [],
         "collective": collective,
         "has_taste_shocks": has_taste_shocks,
     }
@@ -622,6 +624,25 @@ def test_query_metadata_uses_the_full_root_without_action_streaming() -> None:
         "streamed": False,
         "execution_disposition": "planned",
         "disposition_reason": None,
+        "outside_programs": [],
+    }
+
+
+def test_query_metadata_names_the_stored_outside_table_programs() -> None:
+    """A reader's table programs belong to its graph and are named in its row."""
+    kernel = _full_metadata_kernel()
+    for label in ("single_m", "single_f"):
+        kernel.programs[OUTSIDE_PROGRAM + label] = _metadata_program(
+            disposition="dense", action_reduction=True
+        )
+    assert _kernel_execution_metadata(kernel) == {
+        "streamed": False,
+        "execution_disposition": "planned",
+        "disposition_reason": None,
+        "outside_programs": [
+            OUTSIDE_PROGRAM + "single_f",
+            OUTSIDE_PROGRAM + "single_m",
+        ],
     }
 
 
@@ -654,6 +675,7 @@ def test_query_metadata_preserves_the_sole_main_action_reduction() -> None:
         "streamed": True,
         "execution_disposition": "planned",
         "disposition_reason": None,
+        "outside_programs": [],
     }
 
 
@@ -714,7 +736,9 @@ assert query_regimes
 assert ("couple", 1) in query_sites
 routes = _route_metadata(model)
 _assert_scenario_identity(spec=spec, routes=routes)
-exit_owners = {name for name, regime in model.user_regimes.items() if regime.exits}
+exit_owners = {
+    name for name, regime in model.user_regimes.items() if regime.exit is not None
+}
 participation_owners = {
     name for name, transition in model.declared_transitions["solve"].items()
     if transition.participation

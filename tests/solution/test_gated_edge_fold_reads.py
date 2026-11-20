@@ -81,7 +81,7 @@ def _program_metadata(
 
 def _aligned_transfer(*, read: ValueRead) -> ResolvedValueTransfer:
     """Resolve one declared read as the aligned transfer of a one-device solve."""
-    sharding = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    sharding = jax.sharding.make_single_device_sharding(jax.devices()[0])
     return ResolvedValueTransfer(
         target=read.target,
         source=read.source,

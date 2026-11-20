@@ -396,7 +396,7 @@ def test_an_aligned_read_keeps_the_original_array() -> None:
     """A destination layout already satisfied by the source needs no owned copy."""
     read = _read(unit="alive")
     stored = jax.device_put(
-        jnp.arange(3), jax.sharding.SingleDeviceSharding(jax.devices()[0])
+        jnp.arange(3), jax.sharding.make_single_device_sharding(jax.devices()[0])
     )
     owner = PeriodSimulationReads(
         period=0,
@@ -524,7 +524,7 @@ def test_an_aligned_read_never_invokes_the_allocation_callback() -> None:
 
     read = _read(unit="alive")
     stored = jax.device_put(
-        jnp.arange(3), jax.sharding.SingleDeviceSharding(jax.devices()[0])
+        jnp.arange(3), jax.sharding.make_single_device_sharding(jax.devices()[0])
     )
     owner = PeriodSimulationReads(
         period=0,

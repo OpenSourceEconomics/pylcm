@@ -135,7 +135,7 @@ def _reserved(
 def test_assembly_reserves_one_full_destination_per_cell(
     *, codes: int, blocked_axis: int, dtype: str
 ) -> None:
-    sharding = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    sharding = jax.sharding.make_single_device_sharding(jax.devices()[0])
     programs, template, names = _blocked_cell(
         codes=codes, blocked_axis=blocked_axis, dtype=dtype, sharding=sharding
     )
@@ -144,7 +144,7 @@ def test_assembly_reserves_one_full_destination_per_cell(
 
 
 def test_an_unbound_complete_output_gets_no_assembly_reservation() -> None:
-    sharding = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    sharding = jax.sharding.make_single_device_sharding(jax.devices()[0])
     programs, template, names = _blocked_cell(
         codes=8, blocked_axis=0, dtype="float32", sharding=sharding, bound=False
     )
@@ -152,7 +152,7 @@ def test_an_unbound_complete_output_gets_no_assembly_reservation() -> None:
 
 
 def test_assembly_adds_to_the_internal_producer_reservations_once() -> None:
-    sharding = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    sharding = jax.sharding.make_single_device_sharding(jax.devices()[0])
     programs, template, names = _blocked_cell(
         codes=8, blocked_axis=0, dtype="float32", sharding=sharding
     )

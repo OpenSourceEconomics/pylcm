@@ -18,11 +18,11 @@ enumerating both actions directly.
 """
 
 import logging
-from collections.abc import Callable, Mapping
-from typing import ClassVar
+from collections.abc import Callable
 
 import jax.numpy as jnp
 import numpy as np
+import pandas as pd
 import pytest
 
 from _lcm.utils.logging import LogLevel
@@ -44,14 +44,15 @@ from lcm import (
     categorical,
 )
 from lcm.exceptions import OffGridStateError
-from lcm.exits import Exit, ExitTarget, RuleResult
+from lcm.exits import Exit, ExitTarget, Unilateral
+from lcm.result import SimulationResult
+from lcm.solver_api import SolutionResult
 from lcm.transition import StochasticTransition
 from lcm.typing import (
     BoolND,
     ContinuousState,
     DiscreteAction,
     FloatND,
-    IntND,
     ScalarInt,
 )
 
@@ -124,35 +125,6 @@ def _identity(wage: ContinuousState) -> ContinuousState:
     return wage
 
 
-class _StrictParticipation:
-    """Keep the household's best action among those the wife strictly prefers."""
-
-    reads_outside_values: ClassVar[bool] = True
-
-    def __call__(
-        self,
-        *,
-        Q_f: FloatND,
-        Q_m: FloatND,
-        exit_payoffs: Mapping[str, Mapping[str, FloatND]],
-        alternative_ids: IntND,
-        pareto_weights: Mapping[str, FloatND],
-    ) -> RuleResult:
-        q_f, q_m = Q_f.reshape(-1), Q_m.reshape(-1)
-        kept = (
-            jnp.isfinite(q_f)
-            & jnp.isfinite(q_m)
-            & (q_f > exit_payoffs["dissolve"]["f"])
-        )
-        objective = pareto_weights["f"] * jnp.where(
-            pareto_weights["f"] == 0, 0.0, q_f
-        ) + pareto_weights["m"] * jnp.where(pareto_weights["m"] == 0, 0.0, q_m)
-        stay = jnp.argmax(jnp.where(kept, objective, -jnp.inf))
-        return RuleResult(
-            action=alternative_ids[jnp.where(jnp.any(kept), stay, q_f.size)]
-        )
-
-
 def _has_policy_support(pair_support: BoolND) -> BoolND:
     return pair_support
 
@@ -214,19 +186,17 @@ def _build_model(
                         utilities={"f": _PAIR_F[payoff_name], "m": _pair_m}
                     )
                 },
-                exits={
-                    "dissolve": Exit(
-                        targets={
-                            "f": ExitTarget(
-                                regime="alone_f", projection={"wage": _identity}
-                            ),
-                            "m": ExitTarget(
-                                regime="alone_m", projection={"wage": _identity}
-                            ),
-                        },
-                        rule=_StrictParticipation(),
-                    )
-                },
+                exit=Exit(
+                    targets={
+                        "f": ExitTarget(
+                            regime="alone_f", projection={"wage": _identity}
+                        ),
+                        "m": ExitTarget(
+                            regime="alone_m", projection={"wage": _identity}
+                        ),
+                    },
+                    rule=Unilateral(tie="leave"),
+                ),
             ),
             "alone_f": Regime(
                 states={"wage": wage_grid}, functions={"utility": _outside_f}
@@ -305,7 +275,9 @@ def _landings(*, payoff_name: str) -> np.ndarray:
     return np.asarray(points, dtype=dtype)
 
 
-def _simulate(*, payoff_name: str, wages: np.ndarray, enable_jit: bool = True):
+def _simulate(
+    *, payoff_name: str, wages: np.ndarray, enable_jit: bool = True
+) -> tuple[SolutionResult, pd.DataFrame]:
     model = _build_model(payoff_name=payoff_name, enable_jit=enable_jit)
     solution = model.solve(params=_PARAMS, log_level="off")
     n_subjects = wages.shape[0]
@@ -327,7 +299,9 @@ def _simulate(*, payoff_name: str, wages: np.ndarray, enable_jit: bool = True):
     )
 
 
-def test_simulate_routes_an_empty_landing_between_feasible_nodes_to_the_fallback():
+def test_simulate_routes_an_empty_landing_between_feasible_nodes_to_the_fallback() -> (
+    None
+):
     """A household landing at wage 2 has no feasible pair action and takes its route.
 
     Both nodes of the cell around wage 2 are feasible, but at wage 2 the wife's
@@ -337,7 +311,7 @@ def test_simulate_routes_an_empty_landing_between_feasible_nodes_to_the_fallback
     assert panel["regime_name"].tolist() == ["alone_m"]
 
 
-def test_simulate_carries_the_projected_state_into_the_fallback():
+def test_simulate_carries_the_projected_state_into_the_fallback() -> None:
     """The fallback leg's identity projection keeps the realised wage."""
     _, panel = _simulate(payoff_name="bowl", wages=np.array([2.0]))
     assert panel["wage"].tolist() == [2.0]
@@ -347,7 +321,7 @@ def test_simulate_carries_the_projected_state_into_the_fallback():
 @pytest.mark.parametrize("enable_jit", [True, False], ids=["jit", "eager"])
 def test_simulated_regime_matches_the_enumerated_reference(
     *, payoff_name: str, enable_jit: bool
-):
+) -> None:
     """Every landing goes where enumerating `pair`'s actions at it says it goes."""
     wages = _landings(payoff_name=payoff_name)
     _, panel = _simulate(payoff_name=payoff_name, wages=wages, enable_jit=enable_jit)
@@ -359,7 +333,9 @@ def test_simulated_regime_matches_the_enumerated_reference(
 
 
 @pytest.mark.parametrize("payoff_name", ["bowl", "ramp"])
-def test_generated_landings_reach_both_sides_of_the_boundary(*, payoff_name: str):
+def test_generated_landings_reach_both_sides_of_the_boundary(
+    *, payoff_name: str
+) -> None:
     """The generated class holds feasible and empty landings alike."""
     wages = _landings(payoff_name=payoff_name)
     assert {_reference_regime(payoff_name=payoff_name, wage=w) for w in wages} == {
@@ -372,7 +348,7 @@ def test_generated_landings_reach_both_sides_of_the_boundary(*, payoff_name: str
     strict=True,
     reason="A participation fallback is not recorded in `dissolution_fallbacks`.",
 )
-def test_every_dissolution_route_is_recorded_with_its_state_and_route():
+def test_every_dissolution_route_is_recorded_with_its_state_and_route() -> None:
     """The rerouted household is recorded with subject, period, state and route."""
     model = _build_model(payoff_name="bowl")
     solution = model.solve(params=_PARAMS, log_level="off")
@@ -404,7 +380,9 @@ def _clip_state_fallback_model() -> Model:
     )
 
 
-def _simulate_at_wage_two(*, model: Model, log_level: LogLevel = "off"):
+def _simulate_at_wage_two(
+    *, model: Model, log_level: LogLevel = "off"
+) -> SimulationResult:
     solution = model.solve(params=_PARAMS, log_level="off")
     return model.simulate(
         params=_PARAMS,
@@ -419,7 +397,7 @@ def _simulate_at_wage_two(*, model: Model, log_level: LogLevel = "off"):
     )
 
 
-def test_a_rerouted_state_follows_the_fallback_grid_clip_rule():
+def test_a_rerouted_state_follows_the_fallback_grid_clip_rule() -> None:
     """Wage 2 is empty in `pair`; doubled to 4, `alone_m` clips it to its top node."""
     result = _simulate_at_wage_two(model=_clip_state_fallback_model())
     panel = result.to_dataframe().query("period == 1")
@@ -430,7 +408,7 @@ def test_a_rerouted_state_follows_the_fallback_grid_clip_rule():
 
 def test_debug_transition_counts_name_the_regime_a_rerouted_household_acted_in(
     caplog: pytest.LogCaptureFixture,
-):
+) -> None:
     """The household rerouted at period 1 acted in `alone_m`, then stays there."""
     with caplog.at_level(logging.DEBUG, logger="lcm"):
         _simulate_at_wage_two(model=_clip_state_fallback_model(), log_level="debug")
@@ -452,7 +430,7 @@ def _bend_middle_up(wage: ContinuousState) -> ContinuousState:
     return wage + 2.0 * (wage - 1.0) * (3.0 - wage)
 
 
-def test_an_off_grid_rerouted_state_is_refused_at_the_period_it_acts_in():
+def test_an_off_grid_rerouted_state_is_refused_at_the_period_it_acts_in() -> None:
     """Wage 2 is empty in `pair` at period 1; its route lands off `alone_m`'s grid."""
     model = _build_model(
         payoff_name="bowl",
@@ -565,7 +543,7 @@ def _two_source_model() -> Model:
     )
 
 
-def _simulate_two_sources(*, log_level: LogLevel = "off"):
+def _simulate_two_sources(*, log_level: LogLevel = "off") -> SimulationResult:
     model = _two_source_model()
     params = {
         name: {"koopmans_aggregator": {"discount_factor": 1.0}}
@@ -587,7 +565,7 @@ def _simulate_two_sources(*, log_level: LogLevel = "off"):
     )
 
 
-def test_a_mixed_batch_reaches_each_fallback_at_its_own_clipped_state():
+def test_a_mixed_batch_reaches_each_fallback_at_its_own_clipped_state() -> None:
     """One decision in `x` sends rows to two fallbacks, each clipped by its own grid.
 
     Wages 1 and 3 are feasible in `x` and stay; 1.75 (from `s1`) doubles to 3.5,
@@ -610,7 +588,7 @@ def test_a_mixed_batch_reaches_each_fallback_at_its_own_clipped_state():
 
 def test_a_mixed_batch_counts_each_off_grid_landing_once_at_its_own_fallback(
     caplog: pytest.LogCaptureFixture,
-):
+) -> None:
     """The realised off-grid count for each fallback holds only its own row.
 
     The other row's wage is off each fallback's grid too, so a count that did not

@@ -45,6 +45,8 @@ class _KernelExecution(TypedDict):
     streamed: bool
     execution_disposition: str
     disposition_reason: str | None
+    # The programs tabulating the destinations of the kernel's stored outside reads.
+    outside_programs: list[str]
 
 
 class _KernelRow(_KernelExecution):
@@ -275,6 +277,7 @@ _KERNEL_ROUTE_FIELDS = (
     "streamed",
     "execution_disposition",
     "disposition_reason",
+    "outside_programs",
     "collective",
     "has_taste_shocks",
 )
@@ -668,6 +671,7 @@ def _route_identity(routes: _RouteMetadata) -> dict[str, JSONValue]:
             "streamed",
             "execution_disposition",
             "disposition_reason",
+            "outside_programs",
         }
         kernels.append(
             {

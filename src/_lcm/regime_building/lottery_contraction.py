@@ -123,6 +123,22 @@ class LotteryContractionSource:
     process draw whose weights read that value then keeps its axis there.
     """
 
+    prepared_by_caller: bool = False
+    """Whether every program calling the regime builds each table ahead of its loops.
+
+    The query programs do: inside their lane maps a table built by its reader
+    would be rebuilt per lane, row and action, so a reader there that finds none
+    refuses to build it.
+    """
+
+    current_shock_names: frozenset[ReferenceName] = frozenset()
+    """Current shocks a caller binds per information row after building its tables.
+
+    A query program builds each table before its loops, so a draw whose weights
+    read one of them keeps its axis there. Set on the query sources and on the
+    ordinary source of a regime with an exit, whose root query reads that Q.
+    """
+
 
 @dataclass(frozen=True, kw_only=True, eq=False)
 class ContractedLottery:
@@ -222,8 +238,34 @@ class ContractedLottery:
 class LotteryContraction:
     """Every draw contracted into one target's value array."""
 
+    target: RegimeName
+    """The target whose value array the draws are summed into."""
+
     lotteries: tuple[ContractedLottery, ...]
     """The contracted draws, in the target's law order."""
+
+    prepared_by_caller: bool = False
+    """Whether the calling program supplies the table.
+
+    See `LotteryContractionSource.prepared_by_caller`.
+    """
+
+    @property
+    def key(self) -> str:
+        """Name of this table when it is prepared beside the raw value arrays.
+
+        Built from what fixes the table: the target and, per summed draw, its
+        state, its axis and the inputs its weights read. It enters a traced
+        program's tree structure, so it is the same in every process and build.
+        Two readers of one argument mapping that share it build the same table:
+        every reader of a mapping has one source regime and period, whose
+        function pool fixes the weights given their inputs.
+        """
+        return f"__contracted__{self.target}" + "".join(
+            f"__{lottery.state_name}@{lottery.axis}"
+            f"({','.join(lottery.weight_arg_names)})"
+            for lottery in self.lotteries
+        )
 
     def __call__(
         self, *, values: FloatND, states_actions_params: QAndFKwargs
@@ -398,7 +440,15 @@ def plan_lottery_contraction(
         )
         is not None
     )
-    return LotteryContraction(lotteries=lotteries) if lotteries else None
+    return (
+        LotteryContraction(
+            target=target_regime_name,
+            lotteries=lotteries,
+            prepared_by_caller=source.prepared_by_caller,
+        )
+        if lotteries
+        else None
+    )
 
 
 def _plan_one_lottery(
@@ -443,7 +493,9 @@ def _plan_one_lottery(
         transition_plans=transition_plans,
     )
     weight_arg_names = tuple(inspect.signature(weights).parameters)
-    cell_inputs = (set(source.state_grids) | source.action_names) - {state_name}
+    cell_inputs = (
+        set(source.state_grids) | source.action_names | source.current_shock_names
+    ) - {state_name}
     if any(
         name in cell_inputs or name.startswith("next_") for name in weight_arg_names
     ):

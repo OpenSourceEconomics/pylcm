@@ -251,7 +251,7 @@ def _inventories(
     PlannedInputLiveness[tuple[int, RegimeName], _Artifact],
 ]:
     device = jax.devices()[0]
-    sharding = jax.sharding.SingleDeviceSharding(device)
+    sharding = jax.sharding.make_single_device_sharding(device)
 
     def footprint(*, shape: tuple[int, ...], item_bytes: int) -> ArtifactFootprint:
         return layout_footprint(sharding=sharding, shape=shape, item_bytes=item_bytes)

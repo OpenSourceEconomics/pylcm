@@ -931,14 +931,13 @@ def gated_source_periods(
 ) -> MappingProxyType[tuple[RegimeName, RegimeName], tuple[int, ...]]:
     """Per `(source, target)` edge, the demanded source periods that use a gate.
 
-    A gate holds wherever its target is reached: solve gates count at valued
-    nodes and simulation gates at visited nodes, provided the selected phase
-    graph contains the gated edge. A gated edge folds and reads its fallbacks
-    only after those periods.
+    A gate holds wherever its target is reached, including a source read only
+    by a policy query, provided the selected phase graph contains the edge.
+    A gated edge folds and reads its fallbacks only after those periods.
     """
     periods: dict[tuple[RegimeName, RegimeName], set[int]] = {}
     for source, gated in schedules.gated_edges_by_regime.items():
-        for period in schedules.coverage_by_regime[source]:
+        for period in schedules.context_periods_by_regime[source]:
             for phase in ("solution", "simulation"):
                 selected = (
                     schedules.support_by_phase[phase].get(source, {}).get(period, ())

@@ -113,6 +113,16 @@ Model(
   separator `__` and cannot start or end with `_`. `edges` is reserved as a regime, function
   and argument name
 
+**Shared problems:** `Problem` takes the thirteen action-problem slots of `Regime`
+(`states` through `certainty_equivalent`), and `Regime(problem=..., exit=...,
+description=...)` holds one. At construction the holder takes the problem's own objects
+for those slots and is from then on the regime that declares them itself: same values,
+same fingerprint. Several regimes may hold one problem and differ in their exits and
+edges; parameters stay per regime. Refused with `RegimeInitializationError`: a problem
+slot declared beside `problem`, a `ConsumptionSavingsRegime` or
+`NestedConsumptionSavingsRegime` holding a problem, and a `ValueDependentConstraint` in
+a `Problem`. Nothing in the engine shares work between holders.
+
 ### Model Creation
 
 ```python
@@ -307,6 +317,13 @@ Model(
 )
 ```
 
+- `Transition(roles={"couple": "f"})` is the plain edge from a singleton source into a
+  collective target: the row continues as stakeholder `f`, and a landing with no
+  feasible action raises `NoFeasibleActionError`. It is lowered into the always-open
+  gate whose fallback is the target itself in that role, so the source has a gated
+  source's scope. Refused at build, naming source, target and role: a non-collective
+  target, an unknown role, a collective source, a target the transition never reaches,
+  a target with a gate or participation check as well.
 - **The transition key is always the GATE-OPEN target.** An edge that may dissolve a
   couple is keyed by the *continuing* collective regime. Keying it by the singleton
   would send both partners there whenever the couple stays together.
@@ -321,7 +338,7 @@ Model(
 - A gate predicate reads target states, params, `period` and `age`, never a value: an
   argument named `V_target`, `V_target_<s>` or `D_target` raises `GateReadsValueError`
   when the `Gate` is declared, and `Gate` takes no `references`. A move decided by
-  comparing values is an `Exit` in the source's `Regime(exits=...)` (current period) or
+  comparing values is an `Exit` in the source's `Regime(exit=...)` (current period) or
   a `ParticipationCheck` in `Transition(participation=...)` with named `ParticipationRead`s (on
   landing). The Boolean-dtype requirement is checked **at evaluation**, i.e. on the
   first `solve()`, not at build.

@@ -531,6 +531,13 @@ ini_options.filterwarnings = [
   # the dtype-invariant test modules, which opt out via a local
   # `pytestmark` filter.
   "error:Explicitly requested dtype.*:UserWarning",
+  # A deprecated name in JAX's public modules warns through
+  # `jax._src.deprecations.deprecation_getattr` with a message of the form
+  # "jax.<dotted name> is deprecated...", attributed to the module that reads
+  # the name. Downstream projects that turn every warning into an error fail
+  # on such a read in PyLCM, so PyLCM's own modules and tests must not make
+  # one. The module field leaves out reads made by third-party libraries.
+  'error:jax\.\S+ is deprecated:DeprecationWarning:(_?lcm|tests)(\.|$)',
 ]
 
 [tool.coverage.run]

@@ -1,29 +1,34 @@
 """Current-period exits and the mapped policy problems they read."""
 
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Literal, cast
+from typing import Literal
 
-import jax
 from beartype import beartype
-from jax import Array
-from jaxtyping import Int
 
 from _lcm.beartype_conf import REGIME_CONF
+from _lcm.grids.base import Grid
+from _lcm.grids.continuous import ContinuousGrid
 from _lcm.utils.containers import ensure_containers_are_immutable
 from _lcm.utils.error_messages import path_segment_name_errors
-from lcm.exceptions import RegimeInitializationError
+from lcm.exceptions import GridInitializationError, RegimeInitializationError
 from lcm.phased import Phased
+from lcm.shocks import MonteCarlo, QuasiMonteCarlo
 from lcm.typing import RegimeName, StateName, UserFunction
 
 type ExitRole = str
-type _RuleAction = Int[Array, "..."] | int
 
 
 @beartype(conf=REGIME_CONF)
 @dataclass(frozen=True, kw_only=True)
 class ExitTarget:
-    """A destination's Participating policy at projected current states."""
+    """A destination regime and the current states a mover lands at.
+
+    The payoff of leaving is the value of the destination's problem at the projected
+    states, without the destination's own exit: a subject moves at most once per
+    period, and a mover acts in that problem. Under `Consent` the target is the
+    formed couple, which applies its own rule for staying.
+    """
 
     regime: RegimeName
     """Actual destination regime."""
@@ -62,33 +67,150 @@ class Consent:
     counterparty: Counterparty
 
 
-@jax.tree_util.register_dataclass
+@beartype(conf=REGIME_CONF)
 @dataclass(frozen=True, kw_only=True)
-class RuleResult:
-    """A custom rule's selected stable global alternative identifier."""
+class Renegotiate:
+    """Move a discrete state toward the refusing member before separation.
 
-    action: _RuleAction
-    """Integer ID; native consumption checks scalar shape and declared support."""
+    Increasing node order favors the first stakeholder; decreasing order favors
+    the second. Stop at the first mutually willing node, or separate when the
+    other member refuses or the path reaches the edge of the declared grid.
+    """
+
+    state: StateName
+    """Declared discrete grid state whose selected node carries forward."""
+
+    def __post_init__(self) -> None:
+        _validate_names(kind="Renegotiated state", names=(self.state,))
 
 
-type ExitRule = Literal["unilateral", "mutual"] | Consent | Callable[..., RuleResult]
+@beartype(conf=REGIME_CONF)
+@dataclass(frozen=True, kw_only=True)
+class Settlement:
+    """A division on separation that the members can shift before a mutual-consent exit.
+
+    Exit-target projections and utility adjustments read the settlement under
+    `name`. When exactly one member wants to leave at the default, the other member
+    accepts separation where its outside value is at least its stay value:
+
+    - if it does so at the default, which every destination supports, the pair
+      separates at the default;
+    - otherwise the settlement moves to the nearest candidate in favour of that
+      member at which it accepts, and the pair separates there if the member who
+      wants to leave still gains, and stays otherwise.
+    """
+
+    name: str
+    """Argument name under which projections and utility adjustments read it."""
+    candidates: Grid
+    """Ordered candidate values; increasing order favours the first stakeholder."""
+    default: UserFunction
+    """The division by law: reads what the exit's `available` may read.
+
+    Its value is clipped to the range of the candidates.
+    """
+
+    def __post_init__(self) -> None:
+        _validate_names(kind="Settlement", names=(self.name,))
+        if not isinstance(self.candidates, ContinuousGrid):
+            raise RegimeInitializationError(
+                "Settlement candidates must be an ordered one-dimensional continuous "
+                f"grid, got {type(self.candidates).__name__}."
+            )
+        try:
+            self.candidates.to_jax()
+        except GridInitializationError as error:
+            raise RegimeInitializationError(
+                "Settlement candidates need points fixed when the exit is declared."
+            ) from error
+
+
+@beartype(conf=REGIME_CONF)
+@dataclass(frozen=True, kw_only=True)
+class Unilateral:
+    """Any member can end the match: it continues only if every member is willing."""
+
+    tie: Literal["stay", "leave"] = "stay"
+    """What a member exactly indifferent between staying and the exit does."""
+    compares: Literal["each_action", "optimum"] | None = field(
+        default=None, metadata={"fingerprint_omit_if_default": True}
+    )
+    """Where each member's stay value is compared with its outside value.
+
+    - `"each_action"`: at every stay action; the household keeps its best action
+      that passes the rule.
+    - `"optimum"`: at the household's unconstrained optimum only.
+    - `None`: `"optimum"` with `renegotiate`, `"each_action"` otherwise.
+    """
+    renegotiate: Renegotiate | None = field(
+        default=None, metadata={"fingerprint_omit_if_default": True}
+    )
+    """Discrete adjustment attempted before the current-period exit."""
+
+    def __post_init__(self) -> None:
+        _fail_if_adjusted_each_action(
+            compares=self.compares, adjusted=self.renegotiate is not None
+        )
+
+
+@beartype(conf=REGIME_CONF)
+@dataclass(frozen=True, kw_only=True)
+class MutualConsent:
+    """The match ends only if every member is unwilling to stay."""
+
+    tie: Literal["stay", "leave"] = "stay"
+    """What a member exactly indifferent between staying and the exit does."""
+    compares: Literal["each_action", "optimum"] | None = field(
+        default=None, metadata={"fingerprint_omit_if_default": True}
+    )
+    """Where each member's stay value is compared with its outside value.
+
+    - `"each_action"`: at every stay action; the household keeps its best action
+      that passes the rule.
+    - `"optimum"`: at the household's unconstrained optimum only.
+    - `None`: `"optimum"` with `settle`, `"each_action"` otherwise.
+    """
+    settle: Settlement | None = field(
+        default=None, metadata={"fingerprint_omit_if_default": True}
+    )
+    """Division on separation that the members can shift before the exit.
+
+    It needs no shift when the member who does not want to leave is exactly
+    indifferent at the default, which happens only under `tie="stay"`.
+    """
+
+    def __post_init__(self) -> None:
+        _fail_if_adjusted_each_action(
+            compares=self.compares, adjusted=self.settle is not None
+        )
+
+
+type ExitRule = Unilateral | MutualConsent | Consent
 
 
 @beartype(conf=REGIME_CONF)
 @dataclass(frozen=True, kw_only=True)
 class Exit:
-    """One named current-period move, separate from scheduled next-period edges."""
+    """The regime's current-period move, separate from scheduled next-period edges."""
 
     targets: Mapping[ExitRole, ExitTarget]
     """One destination per source stakeholder, or self for a singleton."""
     rule: ExitRule
-    """Dissolution rule, strict consent, or a traceable declared callable."""
+    """Built-in dissolution rule or strict formation consent."""
     available: UserFunction | None = None
     """State/parameter/observed-shock predicate, evaluated before benchmarks."""
     observes: tuple[str, ...] = ()
     """Target information observed at this choice, in addition to source reads."""
-    _reads_outside_values: bool | None = field(init=False, repr=False)
-    """Snapshot the custom rule's explicit DAG declaration into model identity."""
+    nodes: MonteCarlo | QuasiMonteCarlo | None = None
+    """Draws replacing the product of this choice's rows the stay problem ignores.
+
+    The shock groups the regime's own stay problem reads keep their declared
+    nodes. Every other group of the choice, observed target information
+    included, is drawn `n` times from its law at the current state, and the
+    same draws serve every kept row. `None` integrates over the full product.
+
+    The rule serves the regime's whole exit choice when it is solved.
+    """
 
     def __post_init__(self) -> None:
         if not self.targets:
@@ -97,13 +219,6 @@ class Exit:
         _validate_names(kind="Observed shock", names=self.observes)
         if len(set(self.observes)) != len(self.observes):
             raise RegimeInitializationError("Exit observes must name each shock once.")
-        object.__setattr__(
-            self,
-            "_reads_outside_values",
-            _rule_reads_outside_values(cast("Callable[..., RuleResult]", self.rule))
-            if callable(self.rule)
-            else None,
-        )
         object.__setattr__(
             self, "targets", ensure_containers_are_immutable(self.targets)
         )
@@ -134,23 +249,19 @@ def _freeze_projection(
     return ensure_containers_are_immutable(projection)
 
 
+def _fail_if_adjusted_each_action(
+    *, compares: Literal["each_action", "optimum"] | None, adjusted: bool
+) -> None:
+    if adjusted and compares == "each_action":
+        raise RegimeInitializationError(
+            "An adjustment before the exit compares at the optimum; "
+            "compares='each_action' cannot be combined with renegotiate or settle."
+        )
+
+
 def _validate_names(*, kind: str, names: tuple[str, ...]) -> None:
     errors = path_segment_name_errors(kind=kind, names=names)
     if errors or any(not name.isidentifier() for name in names):
         raise RegimeInitializationError(
             "; ".join(errors) or f"{kind} names must be ordinary identifiers."
         )
-
-
-def _rule_reads_outside_values(rule: Callable[..., RuleResult]) -> bool:
-    """Read authored metadata through only the engine's categorical adapters."""
-    from _lcm.regime_building.value_adapter import ValueAdapter  # noqa: PLC0415
-
-    while isinstance(rule, ValueAdapter):
-        rule = cast("Callable[..., RuleResult]", rule.func)
-    declared = getattr(rule, "reads_outside_values", None)
-    if type(declared) is not bool:
-        raise RegimeInitializationError(
-            "A callable exit rule must declare Boolean reads_outside_values."
-        )
-    return declared

@@ -33,8 +33,14 @@ _POOL_LIMIT = 48_000_000_000
 
 @pytest.fixture(autouse=True)
 def _preallocated_pool(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Model a preallocated device pool, whatever the test environment sets."""
+    """Model a preallocated device pool, whatever the test environment sets.
+
+    The pool is fixed at a share of the device, so its reported limit is one
+    contiguous region.
+    """
     monkeypatch.setenv("XLA_PYTHON_CLIENT_PREALLOCATE", "true")
+    monkeypatch.setenv("XLA_CLIENT_MEM_FRACTION", "0.75")
+    monkeypatch.delenv("XLA_PYTHON_CLIENT_MEM_FRACTION", raising=False)
     monkeypatch.delenv("XLA_PYTHON_CLIENT_ALLOCATOR", raising=False)
     monkeypatch.delenv("TF_GPU_ALLOCATOR", raising=False)
 
@@ -373,6 +379,37 @@ def test_the_default_budget_is_the_device_pool_limit_less_the_headroom() -> None
 
     assert resolved.device_memory_bytes == _POOL_LIMIT - math.ceil(0.15 * _POOL_LIMIT)
     assert resolved.budget_source == "device"
+
+
+def test_a_pool_that_grows_past_its_first_region_is_limited_to_that_region(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A growing pool serves one buffer from its first region at most.
+
+    Without a fixed share JAX reserves three quarters of the limit it reports and
+    grows in further regions, so the limit does not promise one contiguous block.
+    """
+    monkeypatch.delenv("XLA_CLIENT_MEM_FRACTION")
+
+    limits = visible_device_pool_limits(
+        devices=(_FakeMemoryStatsDevice(device_id=0, bytes_limit=_POOL_LIMIT),)
+    )
+
+    assert dict(limits) == {0: 36_000_000_000}
+
+
+def test_a_pool_without_preallocation_keeps_its_reported_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without preallocation JAX reports the first region's share itself."""
+    monkeypatch.delenv("XLA_CLIENT_MEM_FRACTION")
+    monkeypatch.setenv("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
+
+    limits = visible_device_pool_limits(
+        devices=(_FakeMemoryStatsDevice(device_id=0, bytes_limit=_POOL_LIMIT),)
+    )
+
+    assert dict(limits) == {0: _POOL_LIMIT}
 
 
 def test_the_default_budget_takes_the_smallest_selected_device_limit() -> None:

@@ -444,16 +444,17 @@ def _kernel_execution_metadata(kernel: PeriodKernel) -> _KernelExecution:
     graph_provider = getattr(kernel, "core_programs", None)
     if callable(graph_provider):
         programs = graph_provider()
+        outside_programs: list[str] = []
         if tuple(programs) == ("main",):
             program = programs["main"]
         else:
             authority = kernel
+            query_module = sys.modules.get("_lcm.policy_queries")
             custody_module = sys.modules.get("_lcm.participation_publication")
             if type(kernel) is getattr(
                 custody_module, "_BorrowedParticipationKernel", None
             ):
                 base = getattr(kernel, "base", None)
-                query_module = sys.modules.get("_lcm.policy_queries")
                 if type(base) is not getattr(query_module, "_PolicyQueryKernel", None):
                     raise RuntimeError(
                         "GridSearch benchmark needs a native Full query custody base."
@@ -465,6 +466,14 @@ def _kernel_execution_metadata(kernel: PeriodKernel) -> _KernelExecution:
             context = getattr(authority, "root_context", None)
             program = programs.get("_chunks")
             schedule = getattr(getattr(program, "function", None), "schedule", ())
+            # A stored outside read's destination table is one program of the
+            # reader's graph, run before its chunk loop; the row names each one.
+            outside_prefix = getattr(query_module, "OUTSIDE_PROGRAM", None)
+            outside_programs = sorted(
+                name
+                for name in programs
+                if outside_prefix is not None and name.startswith(outside_prefix)
+            )
             if (
                 getattr(read, "kind", None) != "Full"
                 or getattr(read, "target", None)
@@ -478,6 +487,7 @@ def _kernel_execution_metadata(kernel: PeriodKernel) -> _KernelExecution:
                     "_chunks",
                     "_finish",
                     *(() if authority is kernel else ("_participation_surfaces",)),
+                    *outside_programs,
                 }
             ):
                 raise RuntimeError(
@@ -498,6 +508,7 @@ def _kernel_execution_metadata(kernel: PeriodKernel) -> _KernelExecution:
             "streamed": streamed,
             "execution_disposition": disposition,
             "disposition_reason": program.disposition_reason,
+            "outside_programs": outside_programs,
         }
 
     streamed = getattr(kernel, "streamed_core", None) is not None
@@ -505,6 +516,7 @@ def _kernel_execution_metadata(kernel: PeriodKernel) -> _KernelExecution:
         "streamed": streamed,
         "execution_disposition": "planned" if streamed else "legacy-unplanned",
         "disposition_reason": None if streamed else "legacy_adapter",
+        "outside_programs": [],
     }
 
 
@@ -722,11 +734,11 @@ def _sharding_descriptor(*, array: Array, jax: ModuleType) -> dict[str, JSONValu
             ],
             "memory_kind": sharding.memory_kind,
         }
-    if isinstance(sharding, jax.sharding.SingleDeviceSharding):
+    if jax.sharding.is_single_device_sharding(sharding):
         devices = tuple(sharding.device_set)
         if len(devices) != 1:
             raise RuntimeError(
-                "SingleDeviceSharding unexpectedly names more than one device."
+                "A single-device sharding unexpectedly names more than one device."
             )
         device = devices[0]
         return {

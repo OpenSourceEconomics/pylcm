@@ -14,8 +14,8 @@ initializes a backend.
 
 import json
 import subprocess
-import sys
 from pathlib import Path
+from shutil import which
 from typing import TypedDict
 
 import jax
@@ -161,8 +161,10 @@ def _run_in_four_device_process(*, entry_point: str) -> _GatedReport:
         "sys.stdout.write('@@' + json.dumps("
         f"entry(decimal={tests.conftest.DECIMAL_PRECISION!r})) + '@@')"
     )
-    completed = subprocess.run(  # noqa: S603
-        [sys.executable, "-c", code],
+    pixi = which("pixi")
+    assert pixi is not None, "The isolated topology check requires the Pixi runner."
+    completed = subprocess.run(  # noqa: S603 - fixed source on the locked project runner
+        [pixi, "run", "--locked", "-e", "tests-cpu", "python", "-c", code],
         capture_output=True,
         text=True,
         check=False,

@@ -73,7 +73,7 @@ def _describe_and_drop() -> tuple[
     described = abstract_program_inputs(
         program=program,
         transfers=(),
-        execution_sharding=jax.sharding.SingleDeviceSharding(jax.devices()[0]),
+        execution_sharding=jax.sharding.make_single_device_sharding(jax.devices()[0]),
     )
     return weakref.ref(original), weakref.ref(program), weakref.ref(described)
 
@@ -97,7 +97,7 @@ def test_numerical_argument_identity_agrees_for_arrays_and_descriptors(
     weak: bool,
 ) -> None:
     original = jnp.asarray(3.0) if weak else jnp.asarray(3.0, dtype=jnp.float32)
-    layout = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    layout = jax.sharding.make_single_device_sharding(jax.devices()[0])
     original = jax.device_put(original, layout)
     assert original.weak_type is weak
     concrete = _program({"payload": (original,), "scalar": original})
@@ -179,7 +179,7 @@ def test_host_metadata_keeps_jax_dtype_and_weak_type_without_upload(
     *, monkeypatch: pytest.MonkeyPatch, value: PytreeValue
 ) -> None:
     expected = jax.eval_shape(lambda item: item, value)
-    layout = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    layout = jax.sharding.make_single_device_sharding(jax.devices()[0])
     program = _program({"payload": value, "scalar": value})
 
     def forbidden[Ignored](*_args: Ignored, **_kwargs: Ignored) -> Never:

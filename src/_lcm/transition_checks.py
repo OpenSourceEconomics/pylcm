@@ -4009,7 +4009,9 @@ def _evaluate_state_probability_law(
         live=live, arguments=argument_buffers, devices=memory.subject_devices
     )
     output_sharding = simulation_value_sharding(
-        stored_sharding=jax.sharding.SingleDeviceSharding(memory.subject_devices[0]),
+        stored_sharding=jax.sharding.make_single_device_sharding(
+            memory.subject_devices[0]
+        ),
         devices=(memory.subject_devices[0],),
     )
     executable = memory.producers.admit_producer(
@@ -4051,7 +4053,9 @@ def _evaluate_admitted_transition_producer(
         live=live, arguments=argument_buffers, devices=memory.subject_devices
     )
     output_sharding = simulation_value_sharding(
-        stored_sharding=jax.sharding.SingleDeviceSharding(memory.subject_devices[0]),
+        stored_sharding=jax.sharding.make_single_device_sharding(
+            memory.subject_devices[0]
+        ),
         devices=(memory.subject_devices[0],),
     )
     executable = memory.producers.admit_producer(

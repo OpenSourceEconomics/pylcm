@@ -65,6 +65,8 @@ Public inspection attributes include:
 
 - `ages`, `n_periods`, and `regime_names_to_ids`;
 - `user_regimes`, the finalized declarations in user vocabulary;
+- `problems`, the [`Problem`](#api-problem) each regime was given, or `None`, by regime
+  name;
 - `edges`, the edges exactly as declared, `Transition` laws included;
 - `initial_nodes`, a normalized immutable `InitialNodes` whose `by_age` or `by_period`
   mapping contains exact coordinates and sorted, unique tuples of regime names;
@@ -234,8 +236,9 @@ A general regime declares:
 | `shocks`                | Model-level IID shock groups; read as `x` or, from transitions, as `next_x`   |
 | `koopmans_aggregator`   | Optional regime-level continuation aggregator, `Phased` or `Decoupled`        |
 | `certainty_equivalent`  | Optional regime-level lottery reduction                                       |
-| `exits`                 | Named current-period moves with mapped policy queries                         |
+| `exit`                  | Current-period move with mapped policy queries                                |
 | `description`           | Human-readable description                                                    |
+| `problem`               | Optional shared [`Problem`](#api-problem) in place of the slots above `exit`  |
 
 Use `Regime.replace(...)` to derive a modified immutable declaration.
 
@@ -270,12 +273,85 @@ required by EGM-family solvers. See
 [Consumption-saving regimes and margins](consumption_savings.md). Collective fields on
 `Regime` are documented separately in [Collective regimes](collective_regimes.md).
 
+(api-problem)=
+
+## `Problem`
+
+A `Problem` is an action problem: states, actions, constraints, functions and laws of
+motion, valued with next period's regimes and with nothing from the current period. Its
+fields are the thirteen `Regime` slots from `states` to `certainty_equivalent` in the
+table above, each with the same type and default.
+
+Several regimes may hold one problem with `Regime(problem=...)`. A regime that holds a
+problem declares none of the problem's slots: it takes the problem's own objects for
+them and adds only its `exit` and `description`. Holding the same problem means the same
+declaration, not the same value: holders may differ in their exits and in the edges the
+model declares for them. Initial conditions, edges, results and parameters name regimes,
+never problems, so the parameters of a problem's functions stay per regime. A regime
+that declares its slots itself owns a problem no other regime shares.
+
+Each problem slot of a holder is either left at its default, and then takes the
+problem's object, or is the problem's object already. `holder.replace(exit=...)` or
+`holder.replace(description=...)` therefore keeps the problem and its objects. Replacing
+a slot of a holder is refused, and so is giving a holder another problem whose objects
+differ from those the holder carries, such as a copy of its problem with one slot
+changed. Construct a new `Regime(problem=...)` for another problem, or pass
+`problem=None` beside the slots a regime declares itself. A regime the model derives by
+rewriting slots, such as each of `model.user_regimes`, holds no problem. Ask the model
+instead: `model.problems` maps each regime name to the problem the regime was given, and
+two regimes share a problem when they map to the same object. A model built from another
+model's `user_regimes` therefore knows no problems.
+
+Three declarations are refused with `RegimeInitializationError`:
+
+- a regime that holds a problem and declares one of its slots with anything other than
+  the default or the problem's own object;
+- a `ConsumptionSavingsRegime` or `NestedConsumptionSavingsRegime` that holds a problem,
+  since its margin declarations belong to its own problem;
+- a problem with a `ValueDependentConstraint`, which compares action values and so is a
+  regime's rule rather than part of a problem.
+
+Two couples that hold one problem and differ in their exit:
+
+```python
+import lcm
+
+household = lcm.Problem(
+    states={"wealth": lcm.LinSpacedGrid(start=1.0, stop=2.0, n_points=2)},
+    functions={"utility": lcm.CollectiveUtility(utilities={"f": wife, "m": husband})},
+)
+
+
+def dissolution(rule):
+    return lcm.Exit(
+        rule=rule,
+        targets={
+            member: lcm.ExitTarget(
+                regime=f"single_{member}",
+                projection={"wealth": lcm.fixed_transition("wealth")},
+            )
+            for member in ("f", "m")
+        },
+    )
+
+
+regimes = {
+    "couple_unilateral": lcm.Regime(
+        problem=household, exit=dissolution(lcm.Unilateral())
+    ),
+    "couple_mutual": lcm.Regime(
+        problem=household, exit=dissolution(lcm.MutualConsent())
+    ),
+}
+```
+
 (api-current-exits)=
 
 ## Current-period exits
 
-`Regime(exits={name: Exit(...)})` declares a move before the period's action. Scheduled
-next-period transitions remain in `Model(edges=...)`.
+`Regime(exit=Exit(...))` declares a move before the period's action. A regime has at
+most one exit; its parameters live under `exit`. Scheduled next-period transitions
+remain in `Model(edges=...)`.
 
 - `Exit(targets=..., rule=..., available=None, observes=())` names each source
   stakeholder's destination. A singleton uses the key `"self"`.
@@ -283,26 +359,110 @@ next-period transitions remain in `Model(edges=...)`.
   real destination and maps its complete current state. A collective destination
   requires its stakeholder `role`. The adjustment reads source states and parameters and
   enters the exit payoff once. A projection may use `Phased(solve=..., simulate=...)`
-  settlements; it does not change information.
+  settlements; it does not change information. A projection names every state its
+  destination declares, model-level ones included. Where the destination does not read a
+  model-level state and pruning drops it, the projection onto it is dropped as well, as
+  a law of motion toward that destination is, so the same projection builds either way.
 - `Consent(counterparty=Counterparty(regime=..., role=..., projection=...))` compares
   each party's payoff at the destination's common Participating policy strictly against
-  that party's Raw stay value. Equality keeps the original state.
-- Built-in `rule="unilateral"` or `"mutual"` declares dissolution participation. A
-  callable rule explicitly declares Boolean `reads_outside_values` metadata and returns
-  `RuleResult(action=...)`, a scalar integer global alternative ID.
+  that party's Raw stay value. Equality keeps the original state. The counterparty's
+  projection follows the same rule as a target's.
+- Built-in `rule=Unilateral()` keeps the match only if every member is willing to stay;
+  `rule=MutualConsent()` ends it only if every member is unwilling. A member is willing
+  when its stay value is above its exit payoff, or equal to it under the default
+  `tie="stay"`; `tie="leave"` makes an indifferent member leave. Among the kept stay
+  actions the household takes its Pareto-weighted argmax; with none kept, the exit is
+  taken.
+- `compares` says where that comparison is made. `"each_action"` tests every stay
+  action, as just described. `"optimum"` tests only the household's unconstrained
+  optimum: `Unilateral` separates when any member refuses there, `MutualConsent` when
+  every member does, and a household that stays acts at its optimum. Where the exit is
+  not available the household stays at its optimum; with no feasible action and the exit
+  available it separates. A separation needs a feasible action in every destination
+  where the exit puts its member; without one the cell has no value, as under
+  `"each_action"`. The default `None` is `"optimum"` with `renegotiate` or `settle` and
+  `"each_action"` otherwise; `"each_action"` together with either is refused.
 
-A custom rule can request `Q_<stakeholder>` (`Q_self` for a singleton), `exit_payoffs`
-(exit name to member to value), `availability`, `alternative_ids`, `pareto_weights`, and
-ordinary named source states, helpers and parameters. Stay IDs follow the flattened
-C-order action product; exit IDs follow in declaration order. Invalid IDs are errors.
-Custom multi-exit choices use one shared authored rule; competing rules do not define an
-arbitration order.
+A subject moves at most once per period, so an exit payoff is the value of the
+destination's problem at the projected state, without the destination's own exit. The
+destination's rule for leaving does not constrain that value, and two regimes may exit
+into each other. A formation by `Consent` is the exception: the formed couple applies
+its own rule for staying, and the outside values that rule compares are again problem
+values. A mover acts in the problem its move was priced at, the formed couple's
+Participating policy after consent and the destination's problem otherwise. A regime
+with an available exit that needs no consent, entered in one period both by consent or a
+participation check and by another exit, would act in two different problems; the model
+refuses it when it is built.
+
+A `ParticipationRead(kind="Participating")` of a regime with an exit compares the
+outside values of that exit the same way, as problem values.
+
+`Unilateral(renegotiate=Renegotiate(state="mu"))` first optimizes the Raw stay policy at
+every node of the ordered discrete state. It supports a collective pair: increasing node
+order favors the first stakeholder in the utility mapping, decreasing order the second.
+If both accept the incumbent, it stays. If one refuses, walk one node toward that member
+and stop at the first node both accept. Simultaneous refusal, reaching the grid edge or
+encountering the other member's refusal separates the pair; a later feasible island does
+not reopen the path. Equality follows the rule's `tie`. Outside payoffs use the original
+source's settlement, without moving that benchmark along the candidate grid.
+
+`MutualConsent(settle=Settlement(name="share", candidates=grid, default=f))` lets a pair
+of members shift the division on separation before deciding. Every exit target's
+projection functions and utility adjustment may read the settlement as the argument
+`name`; a settlement no target reads, and a name that is a state, action, function or
+shock of the source, are refused when the model is built. `candidates` is a continuous
+grid with fixed points; increasing values favour the first stakeholder. `default` reads
+what `available` reads and is clipped to the candidates' range. With `O_i(s)` member
+`i`'s outside value at settlement `s` (its destination's problem value at the
+projections evaluated with `s`, plus its adjustment evaluated with `s`), `W_i` its value
+at the household optimum and `d` the default:
+
+1. A member refuses to stay when `O_i(d)` is above `W_i`, or equal to it under
+   `tie="leave"`.
+1. Nobody refuses: stay at the optimum. Both refuse: separate at `d`.
+1. Exactly one refuses and the other member is exactly indifferent at `d`,
+   `O_i(d) = W_i`, which happens only under `tie="stay"`. If every destination is
+   supported at `d`, separate at `d` under the exit ID, landings and adjustments of `d`:
+   no shift is needed to compensate that member.
+1. Otherwise, with exactly one refusing: among the candidates strictly on the other
+   member's side of `d`, take the one nearest `d` at which that member accepts
+   separation, `O_i(s) >= W_i` whatever `tie` says. Separate there if the member who
+   wants to leave still gains under `tie`; otherwise, or without such a candidate, stay
+   at the optimum.
+
+The engine does not check that the accepting member's outside value rises in that
+member's direction; the rule takes the nearest accepting candidate. A member whose
+projection does not read the settlement is read once, and only its adjustment varies; a
+candidate read whose projections land on the destination's grid takes the stored table.
+A household that separates lands at the projections evaluated with the selected
+settlement and receives the adjustments evaluated with it. The settlement is not a
+column of the simulated output; the landing states and values carry it. Two members
+only; a shifted settlement is searched on the candidates, never between them; a default
+that is random and unobserved at the decision cannot be declared.
+
+An outside policy can have a gated transition into the next period. Its nominal target
+components and each projected personal fallback enter as explicit future value reads;
+the gate is applied at the landing point. This also holds when the outside regime is
+only queried and publishes no own Full value bank.
+
+The selected node supplies the action and spouse values and becomes the current state
+used by forward transitions. Declare `fixed_transition("mu")` when the state continues,
+so its selected node is also next period's node. A conflicting state law or joint update
+is refused. The feature uses the declared finite grid; it does not solve for continuous
+indifference. Other same-period Full recursion remains forbidden. Use `Model.simulate`
+for the routed decision: `lookup_policy` refuses an active renegotiating exit because it
+cannot return changed state and separation destinations.
 
 `available` reads states, parameters and observed shocks, and precedes unsafe benchmark
 evaluation. `observes` adds target information available at the exit choice. Hidden
 target shocks are priced before the source choice and revealed when a mover executes the
-destination's Participating action. Partial observation of a correlated group is
-refused; see the adopted [IID and exit contract](../development/iid-exits-redesign.md).
+destination's action. Partial observation of a correlated group is refused; see the
+adopted [IID and exit contract](../development/iid-exits-redesign.md).
+
+When `available` reads nothing but discrete shocks of one group that the stay problem
+does not read, as an offer flag does, the solve enumerates that group's nodes where the
+exit is available and one node where it is not, weighted by the whole mass of those
+nodes at the value of staying; the values equal the full enumeration's to rounding.
 
 When an exit observes every shock of a target group, all of that group's quadrature rows
 are the same physical point, so the target's policy is evaluated once and that answer is
@@ -313,12 +473,37 @@ fully observed group of the caller's own shocks whose continuous law (`Normal`,
 example a spread read from a state that the exit changes, naming what would have to be
 implemented to support it.
 
-The cells of a query chunk and the rows of an information support run as batched lanes.
-A lane whose exit is unavailable is still computed and then discarded; its target reads
-its first grid point instead of the projected state, so a projection that is meaningless
-when the exit is unavailable cannot reach user functions there.
+When solving, an outside value is read from a table rather than evaluated again, where
+the model build can prove that the read lands on the table's nodes:
 
-Native current-period exits use each queried regime's declared `GridSearch` solver.
+- the destination is solved in that period, with `GridSearch`, on a grid that is fixed
+  when the model is built and not specialized to the period's age;
+- every projected state is provably a point of the destination's grid: the projection
+  returns a source state unchanged between identical grids, or each of its finitely many
+  inputs (grid points of the source's states, the period, its age, codes of a discrete
+  shock) lands on a grid point;
+- each shock group of the destination is either observed whole by the exit, on the
+  destination's own nodes, or not observed at all.
+
+The source regime tabulates the destination's problem value at every point of its grid
+and every node of the observed groups, integrating the others, once per period; each
+read gathers from that table. A cell whose problem fails its numerical checks fails only
+the reads that take it. A read the build cannot prove aligned, for example a projection
+that reads a parameter or a continuous shock, or lands between grid points, is evaluated
+at its exact point; no stored value is interpolated. An outside read of a destination
+solved with an endogenous-grid method is refused when the model is built. Simulation
+always evaluates the destination at each subject's realized state and shocks.
+
+The cells of a query chunk and the rows of an information support run as batched lanes.
+Unless `ExecutionConfig(axis_widths={"query_cell": ...})` fixes the chunk, it holds as
+many cells as fill one step with the rows of the widest query it evaluates rather than
+reads from a table, and at least 64. A lane whose exit is unavailable is still computed
+and then discarded; its target reads its first grid point instead of the projected
+state, so a projection that is meaningless when the exit is unavailable cannot reach
+user functions there.
+
+Native current-period exits use each queried regime's declared `GridSearch` solver,
+whether the regime is evaluated at a point or tabulated for stored reads.
 Endogenous-grid query reconstruction is not implemented. Query admission also refuses
 invariant or co-mapped state layouts, action partitioning, stored Full-value references
 and runtime-bound query status adapters.
@@ -388,14 +573,21 @@ state of the referenced regime from the landed target state, and `stakeholder` s
 collective reference's exact role. The `reads` mapping key is the argument name the
 predicate receives.
 
-- `kind="Raw"` and `kind="Participating"` reconstruct their canonical `GridSearch`
-  action problems at the projected state, including the common action for a collective
-  regime. `field="value"` reads the selected value; `field="support"` reads Boolean
-  policy support. A read's `observes` adds the referenced physical shocks visible for
-  this comparison to the decision's declared information.
-- `kind="IntegratedFull"` reads the stored, shock-integrated Full value representation
-  at the projected state. It exposes only `field="value"`, with empty `observes`; policy
-  reconstruction, realized information and support are unavailable from this read.
+- `kind="Raw"` reads the referenced regime's problem: its action problem without its
+  exit.
+- `kind="Participating"` reads the same problem with the referenced regime's exit
+  applied as a rule for staying, without the move; an exit by `Consent` is not applied.
+- `kind="IntegratedFull"` reads the regime's value: the stored, shock-integrated Full
+  value at the projected state, moves included.
+
+`Raw` and `Participating` reconstruct their canonical `GridSearch` action problems at
+the projected state, including the common action for a collective regime.
+`field="value"` reads the selected value; `field="support"` reads Boolean policy
+support. A read's `observes` adds the referenced physical shocks visible for this
+comparison to the decision's declared information. `IntegratedFull` exposes only
+`field="value"`, with empty `observes`; policy reconstruction, realized information and
+support are unavailable from it. `Participating` is slated for removal once a regime's
+value can be read at observed shocks.
 
 (api-extreme-value-taste-shocks)=
 

@@ -23,7 +23,7 @@ def test_weak_binding_shares_one_allocation_and_releases_call_owners(
     *, shape: tuple[int, ...], fails: bool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Real weak originals and their distinct normalized copy survive the body."""
-    target = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    target = jax.sharding.make_single_device_sharding(jax.devices()[0])
     source = jax.device_put(jnp.full(shape, 2.0), target)
     assert source.weak_type
     assert source.committed
@@ -102,7 +102,7 @@ def test_weak_binding_matches_actual_compiled_promotion_and_detects_raw_bypass()
     None
 ):
     """Skipping declared strong binding changes the real arithmetic result dtype."""
-    target = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    target = jax.sharding.make_single_device_sharding(jax.devices()[0])
     source = jax.device_put(jnp.asarray(2.0), target)
     lower_dtype = jnp.float32 if jax.config.x64_enabled else jnp.float16
     other = jax.device_put(jnp.asarray(0.25, dtype=lower_dtype), target)
@@ -130,7 +130,7 @@ def test_weak_binding_matches_actual_compiled_promotion_and_detects_raw_bypass()
 
 
 def test_declared_internal_weak_value_uses_the_same_strong_binding() -> None:
-    target = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    target = jax.sharding.make_single_device_sharding(jax.devices()[0])
     source = jax.device_put(jnp.asarray(3.0), target)
     adapter = make_eager_core(
         program=internal_eager_program(function=lambda produced: produced),
@@ -146,7 +146,7 @@ def test_declared_internal_weak_value_uses_the_same_strong_binding() -> None:
 
 @pytest.mark.parametrize("mismatch", ["shape", "dtype"])
 def test_weak_binding_never_repairs_invalid_shape_or_dtype(*, mismatch: str) -> None:
-    target = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    target = jax.sharding.make_single_device_sharding(jax.devices()[0])
     source = jax.device_put(jnp.asarray(3.0), target)
 
     def forbidden(*, value: ValueND) -> ValueND:

@@ -211,7 +211,13 @@ mutation matrix is that demonstration.
   `tests/test_simulation_candidate_program_certificate.py` and
   `tests/test_uniform_process_grid_certificate.py` on one fp64 Linux lane only. They are
   source-only campaigns: they parse and hash, they run no model, and so they carry no
-  platform signal worth paying for four times.
+  platform signal worth paying for four times. For the same reason the campaign runs on
+  a pull request only when it changes a certified source, anything under
+  `tests/candidate_certificate/`, a test file the lane runs, `pixi.lock`, `cpu.yml` or
+  the gate `tests/ci/certificate_campaign_gate.py`; the gate reads the certified sources
+  from `sources.json`, so a newly sealed file is covered without a workflow edit. On
+  other pull requests the job succeeds without installing anything. Pushes to `main`, a
+  weekly schedule (which starts this job alone) and manual runs always run it.
 - **`tests-certified`** runs the slow certified numerical batteries, including
   `tests/solution/test_nbegm_multi_discrete_agreement.py`.
 - Every general lane keeps `tests/test_source_certificate_portability.py`, whose four

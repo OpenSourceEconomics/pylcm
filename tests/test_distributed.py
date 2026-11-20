@@ -7,7 +7,7 @@ from collections.abc import Callable, Mapping
 from fractions import Fraction
 from pathlib import Path
 from types import MappingProxyType
-from typing import cast
+from typing import Unpack, cast
 
 import jax
 import numpy as np
@@ -66,9 +66,11 @@ from lcm.regime import Regime as UserRegime
 from lcm.result import SimulationResult
 from lcm.typing import RegimeName, ScalarFloat, ScalarInt
 from tests import conftest as test_config
+from tests.conftest import AttachResolvedOutputLayoutKwargs
 from tests.simulation._profile_comparison import (
     assert_values_agree as assert_agrees_to_ulp,
 )
+from tests.solution._callback_types import RunPeriodKernelKwargs, RunPeriodKernelResult
 
 _STAY_AGES = AgeRange(exclusive_stop=4)
 _EXIT_AGES = AgeRange(exclusive_stop=5)
@@ -111,7 +113,7 @@ _skip_pytest_parallel = pytest.mark.skipif(
 )
 
 
-def test_importing_this_module_after_jax_init_leaves_the_platform_unpinned():
+def test_importing_this_module_after_jax_init_leaves_the_platform_unpinned() -> None:
     """The CPU-topology pin is atomic: all of it applies, or none of it.
 
     Once any JAX backend is initialized, this module's four-CPU-device pin
@@ -193,10 +195,14 @@ def _make_correct_distributed_model(
         },
     )
 
-    def retirement_utility_with_type2(*, wealth, type1, type2):
+    def retirement_utility_with_type2(
+        *, wealth: ScalarFloat, type1: ScalarInt, type2: ScalarInt
+    ) -> ScalarFloat:
         return (wealth * 0.5) * type1 * type2
 
-    def retirement_utility_without_type2(*, wealth, type1):
+    def retirement_utility_without_type2(
+        *, wealth: ScalarFloat, type1: ScalarInt
+    ) -> ScalarFloat:
         return (wealth * 0.5) * type1
 
     retirement_utility = (
@@ -473,16 +479,20 @@ def _make_one_axis_collective_model(*, distributed: bool) -> Model:
         high: ScalarInt
         highest: ScalarInt
 
-    def utility_f(*, wealth, consumption, type1):
+    def utility_f(
+        *, wealth: ScalarFloat, consumption: ScalarFloat, type1: ScalarInt
+    ) -> ScalarFloat:
         return jnp.log(consumption) + 0.01 * wealth + 0.1 * type1
 
-    def utility_m(*, wealth, consumption, type1):
+    def utility_m(
+        *, wealth: ScalarFloat, consumption: ScalarFloat, type1: ScalarInt
+    ) -> ScalarFloat:
         return 1.1 * jnp.log(consumption) + 0.02 * wealth + 0.2 * type1
 
-    def terminal_f(*, wealth, type1):
+    def terminal_f(*, wealth: ScalarFloat, type1: ScalarInt) -> ScalarFloat:
         return 0.5 * wealth + 0.1 * type1
 
-    def terminal_m(*, wealth, type1):
+    def terminal_m(*, wealth: ScalarFloat, type1: ScalarInt) -> ScalarFloat:
         return 0.4 * wealth + 0.2 * type1
 
     return Model(
@@ -521,7 +531,7 @@ def _make_one_axis_collective_model(*, distributed: bool) -> Model:
 
 
 @pytest.fixture
-def correct_distributed_model():
+def correct_distributed_model() -> Model:
     return _make_correct_distributed_model()
 
 
@@ -595,7 +605,7 @@ def _make_wrong_distributed_model() -> Model:
 
 
 @_skip_pytest_parallel
-def test_solution_running_on_multiple_cpus(correct_distributed_model):
+def test_solution_running_on_multiple_cpus(correct_distributed_model: Model) -> None:
     """Test that distribution over multiple CPU's works for solution."""
 
     period_to_regime_to_V_arr = correct_distributed_model.solve(
@@ -607,7 +617,7 @@ def test_solution_running_on_multiple_cpus(correct_distributed_model):
 
 
 @_skip_pytest_parallel
-def test_distributed_solve_matches_single_device_per_type():
+def test_distributed_solve_matches_single_device_per_type() -> None:
     """Keep each type's values within one ULP at the array's scale.
 
     Sharding the permanent type axes changes the compiled program's shape.
@@ -716,7 +726,9 @@ def _compiled_solve_kernel_hlo(
 
 @_skip_pytest_parallel
 @pytest.mark.parametrize("cell_width", [1, 3])
-def test_distributed_solve_kernel_does_not_all_gather_continuation_v(*, cell_width):
+def test_distributed_solve_kernel_does_not_all_gather_continuation_v(
+    *, cell_width: int
+) -> None:
     """The backward-induction kernel reads only its device-local continuation V.
 
     `type1`/`type2` never transition, so a regime's continuation depends only on
@@ -733,7 +745,9 @@ def test_distributed_solve_kernel_does_not_all_gather_continuation_v(*, cell_wid
 
 @_skip_pytest_parallel
 @pytest.mark.parametrize("regime_name", ["working_life", "retirement"])
-def test_sharded_coordinates_are_outside_the_cell_product(*, regime_name):
+def test_sharded_coordinates_are_outside_the_cell_product(
+    *, regime_name: RegimeName
+) -> None:
     """Both terminal and mixed fixed/moving state axes keep native placement."""
     model = _make_correct_distributed_model(move_type2=True, cell_width=3)
     kernel = next(iter(model._regimes[regime_name].solution.period_kernels.values()))
@@ -746,15 +760,17 @@ def test_sharded_coordinates_are_outside_the_cell_product(*, regime_name):
 @_skip_pytest_parallel
 @pytest.mark.parametrize("cell_width", [1, 3, None])
 def test_terminal_cell_tiling_does_not_gather_coordinates_or_outputs(
-    *, cell_width, monkeypatch
-):
+    *, cell_width: int | None, monkeypatch: pytest.MonkeyPatch
+) -> None:
     model = _make_correct_distributed_model(
         distribute_type2=False, cell_width=cell_width
     )
     observed = []
     original_attach = backward_induction._attach_resolved_output_layout
 
-    def capture_terminal(**kwargs):
+    def capture_terminal(
+        **kwargs: Unpack[AttachResolvedOutputLayoutKwargs],
+    ) -> backward_induction.PlannedCore:
         core = original_attach(**kwargs)
         if "action_product" not in core.tile_widths:
             hlo = cast("jax.stages.Compiled", core.compiled).as_text()
@@ -821,8 +837,8 @@ def test_mixed_outer_state_axes_preserve_values(
 
 @_skip_pytest_parallel
 def test_planned_solve_rejects_a_replicated_output_injected_after_kernel_call(
-    *, monkeypatch
-):
+    *, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A planned V cannot be repaired after the GridSearch adapter returns.
 
     The injection happens after the adapter's full-output assertion.  The
@@ -833,7 +849,9 @@ def test_planned_solve_rejects_a_replicated_output_injected_after_kernel_call(
     original_run_period_kernel = backward_induction._run_period_kernel
     replicated_outputs: list[str] = []
 
-    def emit_replicated_V(**kwargs):
+    def emit_replicated_V(
+        **kwargs: Unpack[RunPeriodKernelKwargs],
+    ) -> RunPeriodKernelResult:
         output = original_run_period_kernel(**kwargs)
         value = jnp.asarray(output.value)
         if isinstance(value.sharding, NamedSharding):
@@ -860,7 +878,9 @@ def test_planned_solve_rejects_a_replicated_output_injected_after_kernel_call(
 
 
 @_skip_pytest_parallel
-def test_grid_search_aot_output_layout_is_native_local_and_deduplicated(monkeypatch):
+def test_grid_search_aot_output_layout_is_native_local_and_deduplicated(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Real AOT GridSearch outputs are born sharded without repair or collectives."""
     model = _make_correct_distributed_model(distribute_type2=False, exact_layout=True)
     working_kernels = model._regimes["working_life"].solution.period_kernels
@@ -883,7 +903,9 @@ def test_grid_search_aot_output_layout_is_native_local_and_deduplicated(monkeypa
     captured = []
     original_attach = backward_induction._attach_resolved_output_layout
 
-    def capture_planned_core(**kwargs):
+    def capture_planned_core(
+        **kwargs: Unpack[AttachResolvedOutputLayoutKwargs],
+    ) -> backward_induction.PlannedCore:
         core = original_attach(**kwargs)
         if hasattr(core, "layout"):
             captured.append(core)
@@ -933,7 +955,9 @@ def test_grid_search_aot_output_layout_is_native_local_and_deduplicated(monkeypa
 
 
 @_skip_pytest_parallel
-def test_grid_search_same_mesh_rank_specific_value_input_stays_aligned(monkeypatch):
+def test_grid_search_same_mesh_rank_specific_value_input_stays_aligned(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """A target keeps its own rank-specific spec on a shared execution mesh."""
     model = _make_correct_distributed_model(
         distribute_type2=False,
@@ -943,7 +967,9 @@ def test_grid_search_same_mesh_rank_specific_value_input_stays_aligned(monkeypat
     captured = []
     original_attach = backward_induction._attach_resolved_output_layout
 
-    def capture_planned_core(**kwargs):
+    def capture_planned_core(
+        **kwargs: Unpack[AttachResolvedOutputLayoutKwargs],
+    ) -> backward_induction.PlannedCore:
         core = original_attach(**kwargs)
         if hasattr(core, "layout"):
             captured.append(core)
@@ -1027,19 +1053,21 @@ def _make_two_source_distributed_model() -> Model:
         high: ScalarInt
         highest: ScalarInt
 
-    def working_utility(*, wealth, consumption, type1):
+    def working_utility(
+        *, wealth: ScalarFloat, consumption: ScalarFloat, type1: ScalarInt
+    ) -> ScalarFloat:
         return (jnp.log(consumption) + wealth * 0.001) * type1
 
-    def next_wealth(*, wealth, consumption):
+    def next_wealth(*, wealth: ScalarFloat, consumption: ScalarFloat) -> ScalarFloat:
         return wealth - consumption
 
-    def to_retirement(age):
+    def to_retirement(age: ScalarInt) -> ScalarInt:
         return jnp.where(age >= 4, RegimeId.retirement, RegimeId.working_life)
 
-    def to_retirement_b(age):
+    def to_retirement_b(age: ScalarInt) -> ScalarInt:
         return jnp.where(age >= 4, RegimeId.retirement, RegimeId.working_life_b)
 
-    def retirement_utility(*, wealth, type1):
+    def retirement_utility(*, wealth: ScalarFloat, type1: ScalarInt) -> ScalarFloat:
         return (wealth * 0.5) * type1
 
     working = UserRegime(
@@ -1078,7 +1106,9 @@ def test_two_sources_reading_one_target_share_one_planned_transfer(
     captured = []
     original_attach = backward_induction._attach_resolved_output_layout
 
-    def capture_planned_core(**kwargs):
+    def capture_planned_core(
+        **kwargs: Unpack[AttachResolvedOutputLayoutKwargs],
+    ) -> backward_induction.PlannedCore:
         core = original_attach(**kwargs)
         if hasattr(core, "layout"):
             captured.append(core)
@@ -1107,7 +1137,9 @@ def test_one_source_reading_a_target_leaves_its_transfer_unshared(
     captured = []
     original_attach = backward_induction._attach_resolved_output_layout
 
-    def capture_planned_core(**kwargs):
+    def capture_planned_core(
+        **kwargs: Unpack[AttachResolvedOutputLayoutKwargs],
+    ) -> backward_induction.PlannedCore:
         core = original_attach(**kwargs)
         if hasattr(core, "layout"):
             captured.append(core)
@@ -1124,7 +1156,7 @@ def test_one_source_reading_a_target_leaves_its_transfer_unshared(
 
 
 @_skip_pytest_parallel
-def test_value_transfer_copies_a_named_target_onto_a_single_device_source():
+def test_value_transfer_copies_a_named_target_onto_a_single_device_source() -> None:
     """A sharded value read by a single-device core is copied onto that device."""
     # A regime that prunes a sharded state runs on one device, so a model does
     # reach this direction. This check pins the catalogue entry itself, so the
@@ -1133,7 +1165,7 @@ def test_value_transfer_copies_a_named_target_onto_a_single_device_source():
         jax.make_mesh((4,), ("type1",)),
         PartitionSpec("type1"),
     )
-    source_sharding = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    source_sharding = jax.sharding.make_single_device_sharding(jax.devices()[0])
 
     resolved = backward_induction._resolve_value_transfer_layout(
         stored_sharding=target_sharding,
@@ -1144,7 +1176,7 @@ def test_value_transfer_copies_a_named_target_onto_a_single_device_source():
 
 
 @_skip_pytest_parallel
-def test_collective_grid_search_value_has_planned_state_layout():
+def test_collective_grid_search_value_has_planned_state_layout() -> None:
     """Collective V keeps its stakeholder axis replicated.
 
     Values agree across differently fused device topologies to dtype-scale rounding;
@@ -1186,7 +1218,9 @@ def test_collective_grid_search_value_has_planned_state_layout():
 
 
 @_skip_pytest_parallel
-def test_solve_returns_eagerly_materialised_V_arrs(correct_distributed_model):
+def test_solve_returns_eagerly_materialised_V_arrs(
+    correct_distributed_model: Model,
+) -> None:
     """Every V_arr shard is materialised before `solve()` returns.
 
     Backward induction must drain the device-side compute graph before
@@ -1204,7 +1238,9 @@ def test_solve_returns_eagerly_materialised_V_arrs(correct_distributed_model):
 
 
 @_skip_pytest_parallel
-def test_simulate_returns_eagerly_materialised_V_arrs(correct_distributed_model):
+def test_simulate_returns_eagerly_materialised_V_arrs(
+    correct_distributed_model: Model,
+) -> None:
     """Every V_arr in the `SimulationResult` is materialised before `simulate()`
     returns.
 
@@ -1231,7 +1267,7 @@ def test_simulate_returns_eagerly_materialised_V_arrs(correct_distributed_model)
 
 
 @_skip_pytest_parallel
-def test_simulation_running_on_multiple_cpus(correct_distributed_model):
+def test_simulation_running_on_multiple_cpus(correct_distributed_model: Model) -> None:
     """Test that distribution over multiple CPU's works for simulation."""
 
     res = correct_distributed_model.simulate(
@@ -1256,8 +1292,8 @@ def test_simulation_running_on_multiple_cpus(correct_distributed_model):
 
 @_skip_pytest_parallel
 def test_save_load_preserves_sharding_and_dataframe(
-    *, correct_distributed_model, tmp_path
-):
+    *, correct_distributed_model: Model, tmp_path: Path
+) -> None:
     """`save` / `load` round-trip preserves per-shard data and DataFrame output.
 
     Arrays must travel through the on-disk format without an implicit
@@ -1297,7 +1333,7 @@ def test_save_load_preserves_sharding_and_dataframe(
 
 
 @_skip_pytest_parallel
-def test_compiled_simulation_running_on_multiple_cpus():
+def test_compiled_simulation_running_on_multiple_cpus() -> None:
     """Compiled simulate functions run on multi-device-sharded inputs.
 
     With distributed grids the
@@ -1326,7 +1362,7 @@ def test_compiled_simulation_running_on_multiple_cpus():
 
 
 @_skip_pytest_parallel
-def test_model_error_if_grid_product_exceeds_devices():
+def test_model_error_if_grid_product_exceeds_devices() -> None:
     """Building the model raises when its distributed grids outnumber the devices.
 
     The planner assigns every regime its devices while the model is built, so a
@@ -1338,7 +1374,9 @@ def test_model_error_if_grid_product_exceeds_devices():
 
 
 @_skip_pytest_parallel
-def test_simulation_pads_non_device_multiple_subject_count(correct_distributed_model):
+def test_simulation_pads_non_device_multiple_subject_count(
+    correct_distributed_model: Model,
+) -> None:
     """A subject count that is not a multiple of the device count simulates cleanly.
 
     Distributed grids shard subjects across devices, which needs the leading axis to
@@ -1367,9 +1405,9 @@ def test_simulation_pads_non_device_multiple_subject_count(correct_distributed_m
 @pytest.mark.parametrize("subject_batch_size", [3, 4])
 def test_distributed_simulation_with_subject_batching_matches_single_pass(
     *,
-    correct_distributed_model,
-    subject_batch_size,
-):
+    correct_distributed_model: Model,
+    subject_batch_size: int,
+) -> None:
     """Chunked simulate under distributed grids equals the single-pass result.
 
     The value-function arrays stay sharded across the devices throughout; each
@@ -1403,7 +1441,7 @@ def test_distributed_simulation_with_subject_batching_matches_single_pass(
 
 
 @_skip_pytest_parallel
-def test_distributed_simulation_pads_subjects_to_a_chunk_multiple():
+def test_distributed_simulation_pads_subjects_to_a_chunk_multiple() -> None:
     """A chunk size that does not divide the subject count simulates cleanly.
 
     Under distributed grids the chunk size is rounded up to a device multiple
@@ -1499,7 +1537,7 @@ def _make_partially_distributed_model(*, distributed: bool) -> Model:
 
 
 @pytest.fixture
-def partially_distributed_model():
+def partially_distributed_model() -> Model:
     """Return the mixed-layout model used by solve and transfer tests."""
     return _make_partially_distributed_model(distributed=True)
 
@@ -1507,14 +1545,16 @@ def partially_distributed_model():
 @_skip_pytest_parallel
 def test_solve_with_partial_distribution_returns_correct_shardings(
     *,
-    partially_distributed_model,
-    monkeypatch,
-):
+    partially_distributed_model: Model,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """A single-device target is copied as a replicated source-mesh input."""
     captured = []
     original_attach = backward_induction._attach_resolved_output_layout
 
-    def capture_planned_core(**kwargs):
+    def capture_planned_core(
+        **kwargs: Unpack[AttachResolvedOutputLayoutKwargs],
+    ) -> backward_induction.PlannedCore:
         core = original_attach(**kwargs)
         if hasattr(core, "layout"):
             captured.append(core)
@@ -1548,7 +1588,7 @@ def test_solve_with_partial_distribution_returns_correct_shardings(
     assert transfer.source.core_key == "main"
     assert transfer.source.channel is ValueInputChannel.NEXT_REGIME_VALUE
     assert transfer.source.path == ("retirement",)
-    assert isinstance(transfer.stored_sharding, jax.sharding.SingleDeviceSharding)
+    assert jax.sharding.is_single_device_sharding(transfer.stored_sharding)
     assert isinstance(transfer.source_sharding, NamedSharding)
     assert transfer.source_sharding.spec == PartitionSpec()
     assert transfer.source_sharding.is_fully_replicated
@@ -1581,7 +1621,7 @@ def test_solve_with_partial_distribution_returns_correct_shardings(
             )
 
 
-def test_execution_config_cannot_shard_an_action():
+def test_execution_config_cannot_shard_an_action() -> None:
     """The model rejects an action name as a requested state device axis."""
 
     @categorical(ordered=False)
@@ -1619,7 +1659,7 @@ def test_execution_config_cannot_shard_an_action():
 
 
 @_skip_pytest_parallel
-def test_v_array_has_nan_keeps_reduction_sharded_on_distributed_input():
+def test_v_array_has_nan_keeps_reduction_sharded_on_distributed_input() -> None:
     """`v_array_has_nan` returns a mesh-replicated scalar, not a single-device one.
 
     The reduction stays inside `@jax.jit` so XLA partitions it across the V-array's
@@ -1640,7 +1680,7 @@ def test_v_array_has_nan_keeps_reduction_sharded_on_distributed_input():
 
 
 @_skip_pytest_parallel
-def test_v_array_has_inf_keeps_reduction_sharded_on_distributed_input():
+def test_v_array_has_inf_keeps_reduction_sharded_on_distributed_input() -> None:
     """`v_array_has_inf` returns a mesh-replicated scalar, not a single-device one."""
     mesh = jax.make_mesh((4,), ("dev",))
     sharded = jax.device_put(
@@ -1676,19 +1716,21 @@ def _make_two_source_partially_distributed_model() -> Model:
         high: ScalarInt
         highest: ScalarInt
 
-    def working_utility(*, wealth, consumption, type1):
+    def working_utility(
+        *, wealth: ScalarFloat, consumption: ScalarFloat, type1: ScalarInt
+    ) -> ScalarFloat:
         return (jnp.log(consumption) + wealth * 0.001) * type1
 
-    def next_wealth(*, wealth, consumption):
+    def next_wealth(*, wealth: ScalarFloat, consumption: ScalarFloat) -> ScalarFloat:
         return wealth - consumption
 
-    def to_retirement(age):
+    def to_retirement(age: ScalarInt) -> ScalarInt:
         return jnp.where(age >= 4, RegimeId.retirement, RegimeId.working_life)
 
-    def to_retirement_b(age):
+    def to_retirement_b(age: ScalarInt) -> ScalarInt:
         return jnp.where(age >= 4, RegimeId.retirement, RegimeId.working_life_b)
 
-    def retirement_utility(*, wealth):
+    def retirement_utility(*, wealth: ScalarFloat) -> ScalarFloat:
         return wealth * 0.5
 
     working = UserRegime(

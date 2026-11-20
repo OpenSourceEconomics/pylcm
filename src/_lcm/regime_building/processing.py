@@ -156,6 +156,7 @@ from _lcm.regime_building.diagnostics import _build_compute_intermediates_per_pe
 from _lcm.regime_building.finalize import FinalizedUserRegime
 from _lcm.regime_building.fixed_components import FixedComponentLaw
 from _lcm.regime_building.gated_edges import (
+    EDGE_PERIOD_CONTEXT_ARGS,
     CompiledEdgeFold,
     ResolvedGatedEdge,
     ResolvedStakeholderRoute,
@@ -1160,7 +1161,7 @@ def _ordinary_query_helper_roots(
                 for name, function in root_functions(
                     regime_name=regime_name, regime=user_regime, laws=laws, phase=phase
                 ).items()
-                if not name.startswith("exits__")
+                if not name.startswith("exit__")
             )
             for phase in ("solve", "simulate")
         }
@@ -1518,6 +1519,11 @@ class _CanonicalRegimeBuilder:
             period_regimes=self.period_regimes,
             state_action_space=self.state_action_spaces[regime_name],
             submesh_device_ids=self.placement.devices_for(regime_name=regime_name),
+            regimes_on_other_devices=frozenset(
+                name
+                for name, ids in self.placement.device_ids_by_regime.items()
+                if ids != self.placement.devices_for(regime_name=regime_name)
+            ),
             axis_widths=self._widths_for(regime_name=regime_name),
             sharded_state_names=self.sharded_state_names_by_regime[regime_name],
             ages=self.ages,
@@ -1740,6 +1746,13 @@ class _CanonicalRegimeBuilder:
             )
             canonical_regimes[regime_name] = regime
             simulation_builds[regime_name] = simulation_build
+        # Policy reads need the gated combiners built from this first pass.
+        if not gated_continuations_by_source and any(
+            law.gated_edges for law in self.laws.values()
+        ):
+            return _with_declared_continuation_reads(
+                canonical_regimes=canonical_regimes, solution_builds=solution_builds
+            )
         return self._finish_model_reads(
             canonical_regimes=canonical_regimes,
             solution_builds=solution_builds,
@@ -1769,7 +1782,7 @@ class _CanonicalRegimeBuilder:
                 canonical_regimes=declared, contexts=solution_contexts
             )
         if not any(
-            regime.exits
+            regime.exit is not None
             or (
                 regime.stakeholders is not None
                 and any(solution_builds[name].context.current_iid_plans.values())
@@ -3272,10 +3285,12 @@ def _fail_if_collective_regime_targets_unsupported(
                     f"{target_regime.stakeholders}), but every transition "
                     "target of a collective regime must be a collective regime "
                     "with the identical `stakeholders` tuple (and a singleton "
-                    "regime cannot target a collective one). Per-stakeholder "
-                    "routing across these layouts requires a `GatedEdge` or "
-                    "a `ParticipationCheck` with explicit stakeholder routes "
-                    "for this target."
+                    "regime cannot target a collective one). A singleton source "
+                    "names the role it enters this target in with "
+                    "`Transition(roles=...)`; other per-stakeholder routing "
+                    "across these layouts requires a `Gate` or a "
+                    "`ParticipationCheck` with explicit stakeholder routes for "
+                    "this target."
                 )
                 raise NotImplementedError(msg)
 
@@ -3549,7 +3564,13 @@ def _fail_if_gated_edges_invalid(
                         regime_to_v_interpolation_info=regime_to_v_interpolation_info,
                         projection_phase="simulate",
                     )
-            _fail_if_duplicate_fallback_regimes(prefix=prefix, edge=edge)
+            _fail_if_duplicate_fallback_regimes(
+                prefix=prefix,
+                edge=edge,
+                target_state_names=simulate_variables_from_regime(
+                    user_regime=representative_user_regimes[target_name]
+                ).state_names,
+            )
             _fail_if_gated_edge_references_inactive(
                 prefix=prefix,
                 source_name=regime_name,
@@ -3714,34 +3735,67 @@ def _fail_if_gated_edge_references_inactive(
             raise ModelInitializationError(msg)
 
 
-def _fail_if_duplicate_fallback_regimes(*, prefix: str, edge: GatedEdge) -> None:
-    """Reject an edge whose legs share a fallback regime.
+def _fail_if_duplicate_fallback_regimes(
+    *, prefix: str, edge: GatedEdge, target_state_names: Collection[StateName]
+) -> None:
+    """Reject an edge whose legs share a fallback regime they may write apart.
 
     `route_gated_edges`
     (`_lcm.simulation.gated_routing`) writes EVERY leg's own projected
     fallback state into `leg.fallback.regime`'s per-subject state slot, one
     leg at a time, masked by `subjects_in_regime` — never keyed by leg. If
-    two legs of the SAME edge name the same fallback regime (even with
-    different projections, e.g. two stakeholders both falling back to a
-    shared regime name), the second leg's write silently overwrites the
+    two legs of the SAME edge name the same fallback regime with different
+    projections, the second leg's write silently overwrites the
     first's for every subject in the source regime, regardless of which leg
     `_select_own_leg` would actually select for a given row — a genuine data
     corruption, not merely an unused branch. A singleton source (exactly one
     leg) can never trigger this; only a multi-leg (collective) source can.
+
+    Two legs write the same value exactly when their references name the same
+    stakeholder and the same projection function per state, and no such
+    function reads a parameter: a parameter is qualified by the leg's route
+    (`_route_fallback_with_qualified_params`), so each leg may bind its own
+    value, while every other argument is the target's realized state or the
+    period context, the same for both legs. Such legs may share the regime.
     """
-    # The write is per phase: the fold reads the solve references and the
-    # router writes into the simulate ones, so two legs colliding in EITHER
-    # set is the corruption this rejects.
-    duplicates: list[RegimeName] = []
-    for phase_regimes in (
-        [leg.solve_fallback.regime for leg in edge.legs.values()],
-        [leg.simulate_fallback.regime for leg in edge.legs.values()],
+    # The check is per phase: the fold reads the solve references and the
+    # router writes into the simulate ones, so each phase's references are
+    # compared with the same phase's only.
+    duplicates: set[RegimeName] = set()
+    params_read: dict[StateName, list[str]] = {}
+    declarations_differ = False
+    for phase_refs in (
+        [leg.solve_fallback for leg in edge.legs.values()],
+        [leg.simulate_fallback for leg in edge.legs.values()],
     ):
-        seen: set[RegimeName] = set()
-        for regime_name in phase_regimes:
-            if regime_name in seen and regime_name not in duplicates:
-                duplicates.append(regime_name)
-            seen.add(regime_name)
+        first_by_regime: dict[RegimeName, ProjectedRegimeValue] = {}
+        for ref in phase_refs:
+            if ref.regime not in first_by_regime:
+                first_by_regime[ref.regime] = ref
+                continue
+            first = first_by_regime[ref.regime]
+            same = (
+                first.stakeholder == ref.stakeholder
+                and first.projection.keys() == ref.projection.keys()
+                and all(first.projection[s] is f for s, f in ref.projection.items())
+            )
+            reads = {
+                state_name: params
+                for state_name, projection in ref.projection.items()
+                if (
+                    params := [
+                        arg
+                        for arg in get_union_of_args([projection])
+                        if arg not in target_state_names
+                        and arg not in EDGE_PERIOD_CONTEXT_ARGS
+                    ]
+                )
+            }
+            if same and not reads:
+                continue
+            duplicates.add(ref.regime)
+            declarations_differ |= not same
+            params_read.update(reads)
     if duplicates:
         msg = (
             f"{prefix}two or more legs share the same fallback regime "
@@ -3750,9 +3804,20 @@ def _fail_if_duplicate_fallback_regimes(*, prefix: str, edge: GatedEdge) -> None
             "per-subject slot; legs sharing a fallback regime would have "
             "one leg's write silently overwrite the other's for every "
             "subject, regardless of which leg is actually selected. Give "
-            "each leg its own fallback regime."
+            "each leg its own fallback regime. Legs may share one only where "
+            "their fallbacks name the same stakeholder and the same "
+            "projection function for every state, and none of those "
+            "functions reads a parameter (any argument other than the "
+            "target's states, `period` and `age`)"
         )
-        raise ModelInitializationError(msg)
+        if not declarations_differ:
+            reads_text = "; ".join(
+                f"the projection for {state_name!r} reads the parameter "
+                f"{', '.join(map(repr, params))}"
+                for state_name, params in params_read.items()
+            )
+            msg += f"; here {reads_text}, which each leg binds under its own route"
+        raise ModelInitializationError(f"{msg}.")
 
 
 def _fail_if_target_stakeholder_invalid(
@@ -4710,6 +4775,7 @@ def _prepare_solution_phase(
     period_regimes: PeriodRegimes | None = None,
     state_action_space: StateActionSpace,
     submesh_device_ids: tuple[int, ...],
+    regimes_on_other_devices: frozenset[RegimeName],
     axis_widths: MappingProxyType[str, int],
     sharded_state_names: frozenset[StateName],
     ages: TimeAxis,
@@ -4806,6 +4872,7 @@ def _prepare_solution_phase(
         period_regimes=period_regimes,
         state_action_space=state_action_space,
         submesh_device_ids=submesh_device_ids,
+        regimes_on_other_devices=regimes_on_other_devices,
         axis_widths=axis_widths,
         sharded_state_names=sharded_state_names,
         ages=ages,
@@ -4859,6 +4926,7 @@ def _prepare_numerical_solution_phase(  # noqa: PLR0915 - native route admission
     period_regimes: PeriodRegimes | None = None,
     state_action_space: StateActionSpace,
     submesh_device_ids: tuple[int, ...],
+    regimes_on_other_devices: frozenset[RegimeName],
     axis_widths: MappingProxyType[str, int],
     sharded_state_names: frozenset[StateName],
     ages: TimeAxis,
@@ -5143,15 +5211,55 @@ def _prepare_numerical_solution_phase(  # noqa: PLR0915 - native route admission
                 law=laws[regime_name],
                 counts_raise_landings=counts_raise_landings,
                 current_values_on_nodes=True,
+                current_shock_names=_current_shock_names(
+                    current_iid_bindings=current_iid_bindings,
+                    has_exit=any(
+                        (
+                            user_regimes
+                            if period_regimes is None
+                            else period_regimes.by_period.get(period, user_regimes)
+                        )[regime_name].exit
+                        is not None
+                        for period in regimes_to_active_periods[regime_name]
+                    ),
+                ),
             ),
         )
         grouped_Q_and_F = decision_Q_and_F()
         Q_and_F_functions = grouped_Q_and_F.by_period
         # Queries receive parent coordinates outside the source's own preflight.
         # Their counters must not change the ordinary solver's Q/F contract.
+        # A query evaluates the regime at projected states, which for a process
+        # may lie off its nodes, so a process draw reading its own current value
+        # stays enumerated there.
+        solve_source = decision_Q_and_F.keywords["lottery_contraction_source"]
+        # A query evaluates the whole grid and reads every continuation whole, so
+        # it takes no co-mapped state; publication keeps each device's slice.
+        query_periods = _query_periods_without_co_map(
+            query_periods=query_periods,
+            co_map_state_names=co_map_state_names,
+            regime_name=regime_name,
+            active_periods=regimes_to_active_periods[regime_name],
+            user_regimes=user_regimes,
+            period_regimes=period_regimes,
+        )
         query_Q_and_F_functions = (
             decision_Q_and_F(
-                active_periods=query_periods, count_raise_landings=True
+                active_periods=query_periods,
+                count_raise_landings=True,
+                lottery_contraction_source=(
+                    dataclass_replace(
+                        solve_source,
+                        current_values_on_nodes=False,
+                        prepared_by_caller=True,
+                        current_shock_names=_current_shock_names(
+                            current_iid_bindings=current_iid_bindings
+                        ),
+                    )
+                    if solve_source is not None
+                    else solve_source
+                ),
+                co_map_state_names=invariant_bindings,
             ).by_period
             if query_periods
             else MappingProxyType({})
@@ -5220,6 +5328,7 @@ def _prepare_numerical_solution_phase(  # noqa: PLR0915 - native route admission
         Q_and_F_functions=Q_and_F_functions,
         grids=all_grids[regime_name],
         submesh_device_ids=submesh_device_ids,
+        regimes_on_other_devices=regimes_on_other_devices,
         sharded_state_names=sharded_state_names,
         action_partitions=action_partitions,
         axis_widths=axis_widths,
@@ -6539,15 +6648,36 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
                     gated_continuations=gated_continuations,
                 ),
                 current_values_on_nodes=False,
+                current_shock_names=_current_shock_names(
+                    current_iid_bindings=current_iid_bindings,
+                    has_exit=any(
+                        solver_context.user_regimes_at(period=period)[regime_name].exit
+                        is not None
+                        for period in regimes_to_active_periods[regime_name]
+                    ),
+                ),
             ),
         )
         Q_and_F_functions = decision_Q_and_F().by_period
         # Typed queries may receive parent coordinates outside this source's
         # stored grid. Keep their original landing counters separate from the
         # ordinary simulation reducers, whose Q/F output remains a pair.
+        simulation_source = decision_Q_and_F.keywords["lottery_contraction_source"]
         query_Q_and_F_functions = (
             decision_Q_and_F(
-                active_periods=query_periods, count_raise_landings=True
+                active_periods=query_periods,
+                count_raise_landings=True,
+                lottery_contraction_source=(
+                    dataclass_replace(
+                        simulation_source,
+                        prepared_by_caller=True,
+                        current_shock_names=_current_shock_names(
+                            current_iid_bindings=current_iid_bindings
+                        ),
+                    )
+                    if simulation_source is not None
+                    else simulation_source
+                ),
             ).by_period
             if query_periods
             else MappingProxyType({})
@@ -10016,6 +10146,36 @@ def _get_vmap_params(
     return tuple(arg for arg in all_args if arg not in non_vmap)
 
 
+def _query_periods_without_co_map(
+    *,
+    query_periods: tuple[int, ...],
+    co_map_state_names: tuple[StateName, ...],
+    regime_name: RegimeName,
+    active_periods: tuple[int, ...],
+    user_regimes: Mapping[RegimeName, UserRegime],
+    period_regimes: PeriodRegimes | None,
+) -> tuple[int, ...]:
+    """Return the periods whose Q/F a query evaluates.
+
+    A regime that co-maps a state adds the periods in which it has an exit, as
+    `SolverBuildContext.user_regimes_at` resolves it: an exit's root is a query
+    too, so it reads the state's whole axis there.
+    """
+    if not co_map_state_names:
+        return query_periods
+    exit_periods = (
+        period
+        for period in active_periods
+        if (
+            user_regimes
+            if period_regimes is None
+            else period_regimes.by_period.get(period, user_regimes)
+        )[regime_name].exit
+        is not None
+    )
+    return tuple(sorted({*query_periods, *exit_periods}))
+
+
 def _co_map_state_names(
     *,
     state_names: tuple[StateName, ...],
@@ -10070,6 +10230,7 @@ def _lottery_contraction_source(
     law: RegimeLaw,
     counts_raise_landings: bool,
     current_values_on_nodes: bool,
+    current_shock_names: frozenset[ReferenceName],
 ) -> LotteryContractionSource | None:
     """Return what the source contributes to contracting its draws, or `None`.
 
@@ -10088,6 +10249,27 @@ def _lottery_contraction_source(
         action_names=frozenset(action_names),
         rebound_targets=frozenset(law.participation),
         current_values_on_nodes=current_values_on_nodes,
+        current_shock_names=current_shock_names,
+    )
+
+
+def _current_shock_names(
+    *,
+    current_iid_bindings: Mapping[ShockGroupName, ShockBinding],
+    has_exit: bool = True,
+) -> frozenset[ReferenceName]:
+    """Return the regime's current shocks a query binds after building its tables.
+
+    A query binds them per information row inside its loops. An exit's root query
+    reads the regime's own Q, so with `has_exit` false its ordinary Q, read by no
+    query, gets none.
+    """
+    if not has_exit:
+        return frozenset()
+    return frozenset(
+        name
+        for binding in current_iid_bindings.values()
+        for name in binding.group.shocks
     )
 
 
@@ -10477,6 +10659,7 @@ def _build_Q_and_F_per_period(
                 ),
                 gated_continuations=period_gated_continuations,
                 count_raise_landings=count_raise_landings,
+                lottery_contraction_source=lottery_contraction_source,
             )
             continue
         built[key] = get_Q_and_F(

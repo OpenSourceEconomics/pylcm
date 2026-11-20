@@ -490,7 +490,7 @@ def substitute_gated_edge_continuations(
             ),
             shared_sharding=(
                 simulation_value_sharding(
-                    stored_sharding=jax.sharding.SingleDeviceSharding(
+                    stored_sharding=jax.sharding.make_single_device_sharding(
                         subject_devices[0]
                     ),
                     devices=subject_devices,

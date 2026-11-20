@@ -1379,7 +1379,7 @@ def _reference_shardings(
         )
         return MappingProxyType(
             {
-                address: jax.sharding.SingleDeviceSharding(host)
+                address: jax.sharding.make_single_device_sharding(host)
                 for address in template.leaves
             }
         )
@@ -1429,7 +1429,7 @@ def _leaf_layout(
     position = {device: index for index, device in enumerate(devices)}
     if not sharding.device_set <= set(devices):
         return {"kind": "outside_selection"}
-    if isinstance(sharding, jax.sharding.SingleDeviceSharding):
+    if jax.sharding.is_single_device_sharding(sharding):
         (device,) = sharding.device_set
         return {
             "kind": "single_device",
@@ -1474,7 +1474,7 @@ def _sharding_from_layout(
         msg = f"Memory kind {memory_kind!r} is not a string."
         raise ValueError(msg)
     if layout.get("kind") == "single_device":
-        return jax.sharding.SingleDeviceSharding(
+        return jax.sharding.make_single_device_sharding(
             devices[_device_position(value=layout["device"], devices=devices)],
             memory_kind=memory_kind,
         )

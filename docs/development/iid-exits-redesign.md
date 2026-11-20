@@ -145,8 +145,10 @@ Persistent states and transition-local draws retain their timing.
 
 Every policy query returns the values of one common selected action. `Raw`,
 `Participating` and `Full` are distinct query identities, and only a regime's own
-occupants and publication read `Full`. Exit targets read `Participating`. Same-period
-query consumers belong to the query DAG and buffer lifetime graph.
+occupants and publication read `Full`. A consent target reads `Participating`; every
+other exit target, including a formed couple's own, reads `Raw`
+([ADR 0002](../adr/0002-regimes-share-problems-and-read-stored-outside-values.md)).
+Same-period query consumers belong to the query DAG and buffer lifetime graph.
 
 Ordinary feasibility precedes participation. Dissolution participation is weak,
 formation consent is strict, zero-weight members retain vetoes, and stable global action

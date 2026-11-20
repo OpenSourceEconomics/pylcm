@@ -782,7 +782,7 @@ def _restore_array_tree(*, input_dir: Path) -> Mapping[str, ArrayTree]:
                 if device_name not in devices:
                     msg = f"Saved CPU device {device_name} is unavailable"
                     raise ValueError(msg)
-                restored_sharding = jax.sharding.SingleDeviceSharding(
+                restored_sharding = jax.sharding.make_single_device_sharding(
                     devices[device_name]
                 )
             else:
