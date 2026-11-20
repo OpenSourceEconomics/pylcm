@@ -1,5 +1,6 @@
 """Current exits choose with caller information and act once after revelation."""
 
+import math
 from functools import partial
 from types import MappingProxyType
 from typing import Unpack, cast
@@ -9,13 +10,22 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from jax.extend.core import ClosedJaxpr, Jaxpr
 from numpy.testing import assert_array_almost_equal
 from pandas.testing import assert_frame_equal
 
+from _lcm.current_iid import _draw_base_value
+from _lcm.execution.workspace_planning import BOOTSTRAP_TILE_WIDTH_CAP
 from _lcm.params.edges import regime_kernel_params
 from _lcm.regime_building import processing
 from _lcm.simulation.chunk_profiles import profile_simulation_chunk
-from _lcm.simulation.exits import ExitRoute, route_original_subjects
+from _lcm.simulation.exits import (
+    ExitRoute,
+    OriginalExitOutput,
+    ParticipatingExitOutput,
+    _BatchedExitDecision,
+    route_original_subjects,
+)
 from _lcm.simulation.host_operations import ProfiledSimulationOperations
 from _lcm.simulation.random_address import (
     RandomAddress,
@@ -58,7 +68,7 @@ from lcm.shocks import (
 )
 from lcm.taste_shocks import ExtremeValueTasteShocks
 from lcm.typing import BoolND, FloatND, IntND, RegimeName, ScalarInt
-from tests.conftest import DECIMAL_PRECISION
+from tests.conftest import DECIMAL_PRECISION, assert_agrees_to_ulp
 from tests.simulation._callback_types import HostDispatch, RuntimeDispatch
 from tests.simulation.test_aot_collective_and_gated import _capture_compiled_dispatches
 from tests.simulation.test_current_iid_overrides import (
@@ -1472,3 +1482,126 @@ def test_forward_query_context_retains_actual_simulation_q_and_helpers() -> None
     assert_array_almost_equal(
         context.functions["utility"](), 2.0, decimal=DECIMAL_PRECISION
     )
+
+
+_SCALE = 3.0
+
+# Subject counts below, at and just above one block of subjects evaluated together,
+# and one spanning three blocks with a padded remainder.
+_SUBJECT_COUNTS = (
+    BOOTSTRAP_TILE_WIDTH_CAP - 1,
+    BOOTSTRAP_TILE_WIDTH_CAP,
+    BOOTSTRAP_TILE_WIDTH_CAP + 1,
+    2 * BOOTSTRAP_TILE_WIDTH_CAP + 2,
+)
+
+
+def _branching_subject(
+    *,
+    x: FloatND,
+    threefry_key: jax.Array,
+    rbg_key: jax.Array,
+    empty: FloatND,
+    scale: FloatND,
+) -> ParticipatingExitOutput:
+    """One subject whose untaken branch is undefined: a log of a negative number.
+
+    `empty` is a per-subject array without elements, such as a roster no subject
+    fills; it is read and published with nothing but its shape.
+    """
+    taken = x > 0
+    value = jax.lax.cond(taken, lambda: jnp.log(x) * scale, lambda: -x) + jnp.sum(empty)
+    physical = {
+        "uniform": _draw_base_value(key=threefry_key, uniform=True),
+        "normal": _draw_base_value(key=rbg_key, uniform=False),
+    }
+    answer = (value, taken.astype(jnp.int32), taken, ~taken, jnp.ones((), jnp.int32))
+    frame = (physical, {}, {}, {}, {}, {}, taken, {})
+    return answer, frame, {"value": value, "empty": empty * scale}
+
+
+def _published(
+    output: OriginalExitOutput | ParticipatingExitOutput,
+) -> dict[str, jax.Array]:
+    answer, frame = output[0], output[1]
+    return {
+        "decision_value": jnp.asarray(answer[0]),
+        "action_index": jnp.asarray(answer[1]),
+        "support": jnp.asarray(answer[2]),
+        "uniform": jnp.asarray(frame[0]["uniform"]),
+        "normal": jnp.asarray(frame[0]["normal"]),
+    }
+
+
+def _subject_rows(*, n_subjects: int, rbg: bool) -> dict[str, jax.Array]:
+    threefry = jax.random.split(jax.random.key(0), n_subjects)
+    return {
+        "x": jnp.linspace(-1.0, 1.0, n_subjects),
+        "threefry_key": threefry,
+        # A key implementation other than threefry carries the scalar-dispatch axis.
+        "rbg_key": (
+            jax.random.split(jax.random.key(1, impl="rbg"), n_subjects)[:, None]
+            if rbg
+            else threefry
+        ),
+        "empty": jnp.zeros((n_subjects, 0)),
+    }
+
+
+def _decide_batched(rows: dict[str, jax.Array]) -> dict[str, jax.Array]:
+    decision = _BatchedExitDecision(body=_branching_subject)
+    return _published(jax.vmap(partial(decision, scale=jnp.asarray(_SCALE)))(**rows))
+
+
+def _decide_one_subject(row: dict[str, jax.Array]) -> dict[str, jax.Array]:
+    return _published(_branching_subject(**row, scale=jnp.asarray(_SCALE)))
+
+
+def _decide_one_by_one(rows: dict[str, jax.Array]) -> dict[str, jax.Array]:
+    return jax.lax.map(_decide_one_subject, rows)
+
+
+def _scan_lengths(*, jaxpr: Jaxpr) -> list[int]:
+    """Return the trip count of every scan in a jaxpr and in its nested jaxprs."""
+    lengths = []
+    for equation in jaxpr.eqns:
+        if equation.primitive.name == "scan":
+            lengths.append(int(equation.params["length"]))
+        for param in equation.params.values():
+            for inner in param if isinstance(param, tuple) else (param,):
+                if isinstance(inner, ClosedJaxpr):
+                    lengths.extend(_scan_lengths(jaxpr=inner.jaxpr))
+                elif isinstance(inner, Jaxpr):
+                    lengths.extend(_scan_lengths(jaxpr=inner))
+    return lengths
+
+
+@pytest.mark.parametrize("n_subjects", _SUBJECT_COUNTS)
+def test_exit_decision_loops_over_blocks_not_subjects(n_subjects: int) -> None:
+    """Batched subjects run vectorized in blocks; no loop steps once per subject."""
+    rows = _subject_rows(n_subjects=n_subjects, rbg=False)
+    traced = jax.make_jaxpr(_decide_batched)(rows)
+    assert max(_scan_lengths(jaxpr=traced.jaxpr), default=1) <= math.ceil(
+        n_subjects / BOOTSTRAP_TILE_WIDTH_CAP
+    )
+
+
+@pytest.mark.parametrize("output", ["action_index", "support", "uniform", "normal"])
+@pytest.mark.parametrize("n_subjects", _SUBJECT_COUNTS)
+def test_exit_decision_choices_and_draws_match_one_subject_at_a_time(
+    *, n_subjects: int, output: str
+) -> None:
+    """Branch choices and both key implementations' draws are each subject's own."""
+    rows = _subject_rows(n_subjects=n_subjects, rbg=True)
+    got = jax.jit(_decide_batched)(rows)[output]
+    expected = jax.jit(_decide_one_by_one)(rows)[output]
+    np.testing.assert_array_equal(got, expected)
+
+
+@pytest.mark.parametrize("n_subjects", _SUBJECT_COUNTS)
+def test_exit_decision_values_match_one_subject_at_a_time(n_subjects: int) -> None:
+    """The taken branch's value reaches each subject; the untaken branch's never."""
+    rows = _subject_rows(n_subjects=n_subjects, rbg=True)
+    got = jax.jit(_decide_batched)(rows)["decision_value"]
+    expected = jax.jit(_decide_one_by_one)(rows)["decision_value"]
+    assert_agrees_to_ulp(got=got, expected=expected, n_ulp=4)

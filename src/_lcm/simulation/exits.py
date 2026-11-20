@@ -24,6 +24,7 @@ from _lcm.execution.core_program import (
     CoreExecutionRequirements,
     CoreProgram,
 )
+from _lcm.execution.workspace_planning import BOOTSTRAP_TILE_WIDTH_CAP
 from _lcm.regime_building.collective import NO_ROLE
 from _lcm.shock_overrides import CurrentIIDOverride, supplied_group_values
 from _lcm.shock_registry import ShockBinding, law_input_validity
@@ -571,8 +572,9 @@ class OriginalExitDecision:
                     else chosen[query]
                 )
 
-                # Keep inactive projections behind a scalar condition; vmap's
-                # select conversion must not be used here.
+                # A subject that does not land here takes the neutral payload. Batched
+                # over subjects the condition becomes a select, so the projection is
+                # evaluated for every subject of a block and discarded where unused.
                 def project(*, query: str = query) -> dict[str, FloatND | IntND]:
                     return dict(
                         self.queries.project(
@@ -867,7 +869,7 @@ def _frame_output(*, frame: CurrentIIDDrawFrame) -> ExitFramePayload:
 
 
 @dataclass(frozen=True, kw_only=True)
-class _SequentialExitDecision:
+class _BatchedExitDecision:
     """Give JAX's positional batching boundary one explicit argument tree."""
 
     body: Callable[..., OriginalExitOutput | ParticipatingExitOutput]
@@ -875,20 +877,77 @@ class _SequentialExitDecision:
     def __call__(
         self, **arguments: PytreeValue
     ) -> OriginalExitOutput | ParticipatingExitOutput:
-        """Retain scalar conditions through the outer subject vmap."""
-        return jax.custom_batching.sequential_vmap(
+        """Evaluate one subject; batched, evaluate subjects in vectorized blocks."""
+        decision = jax.custom_batching.custom_vmap(
             partial(_evaluate_exit_decision, body=self.body)
-        )(arguments)
+        )
+        decision.def_vmap(partial(_evaluate_exit_decision_blocks, body=self.body))
+        return decision(arguments)
 
 
-# keyword-only-exempt: library-callback=jax.custom_batching.sequential_vmap
+# keyword-only-exempt: library-callback=jax.custom_batching.custom_vmap
 def _evaluate_exit_decision(
     arguments: Mapping[str, PytreeValue],
     *,
     body: Callable[..., OriginalExitOutput | ParticipatingExitOutput],
 ) -> OriginalExitOutput | ParticipatingExitOutput:
-    """Evaluate one canonical subject body after sequential batching."""
+    """Evaluate one canonical subject body."""
     return body(**arguments)
+
+
+# keyword-only-exempt: library-callback=jax.custom_batching.custom_vmap.def_vmap
+def _evaluate_exit_decision_blocks(
+    axis_size: int,
+    in_batched: list[PytreeValue],
+    arguments: Mapping[str, PytreeValue],
+    *,
+    body: Callable[..., OriginalExitOutput | ParticipatingExitOutput],
+) -> tuple[OriginalExitOutput | ParticipatingExitOutput, PytreeValue]:
+    """Vectorize the body over blocks of subjects and loop over the blocks.
+
+    Vectorized, the body's per-subject scalar conditions become selects: every
+    branch runs for each subject of a block and only the taken branch's result
+    reaches that subject. Draws read each subject's own key, and a key
+    implementation that needs scalar dispatch keeps its own per-subject loop.
+
+    A block holds at most `BOOTSTRAP_TILE_WIDTH_CAP` subjects, so the workspace of
+    the selects stays bounded whatever tile width the planner admits; the compiled
+    program's memory profile still decides that admission. Blocks are balanced and
+    the last one is padded with copies of the last subject, which are dropped, so
+    the body is traced once. Every reshape names its sizes, so a per-subject array
+    without elements keeps its shape through the blocks.
+    """
+    leaves, treedef = jax.tree.flatten(arguments)
+    flags = jax.tree.leaves(in_batched[0])
+    n_blocks = -(-axis_size // BOOTSTRAP_TILE_WIDTH_CAP)
+    width = -(-axis_size // n_blocks)
+    n_padding = n_blocks * width - axis_size
+
+    def evaluate_subject(
+        rows: list[PytreeValue],
+    ) -> OriginalExitOutput | ParticipatingExitOutput:
+        supplied = iter(rows)
+        merged = [
+            next(supplied) if batched else leaf
+            for leaf, batched in zip(leaves, flags, strict=True)
+        ]
+        return body(**jax.tree.unflatten(treedef, merged))
+
+    rows = [leaf for leaf, batched in zip(leaves, flags, strict=True) if batched]
+    if n_blocks == 1:
+        out = jax.vmap(evaluate_subject)(rows)
+    else:
+        blocks = [
+            jnp.concatenate([leaf, jnp.repeat(leaf[-1:], n_padding, axis=0)]).reshape(
+                n_blocks, width, *leaf.shape[1:]
+            )
+            for leaf in rows
+        ]
+        out = jax.tree.map(
+            lambda leaf: leaf.reshape(n_blocks * width, *leaf.shape[2:])[:axis_size],
+            jax.lax.map(jax.vmap(evaluate_subject), blocks),
+        )
+    return out, jax.tree.map(lambda _: True, out)
 
 
 def exit_policy_program(
@@ -1018,11 +1077,9 @@ def exit_policy_program(
     )
     return CoreProgram(
         name=name,
-        # Sequential batching keeps unavailable benchmark/projection arithmetic
-        # behind scalar conditions instead of converting them to eager selects.
         function=_SubjectTiled(
             func=with_signature(
-                _SequentialExitDecision(body=body),
+                _BatchedExitDecision(body=body),
                 args=list(signature(body).parameters),
                 enforce=False,
             ),
