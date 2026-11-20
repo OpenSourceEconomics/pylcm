@@ -7,7 +7,7 @@ unsupported families (Gauss-Hermite IID, Rouwenhorst) must be rejected at constr
 """
 
 import functools
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 
 import jax.numpy as jnp
 import numpy as np
@@ -43,6 +43,7 @@ from lcm.typing import (
     Period,
     RegimeName,
     ScalarInt,
+    UserParams,
 )
 from tests.conftest import DECIMAL_PRECISION
 
@@ -108,7 +109,9 @@ def _alive_edges(*, final_age_alive: int) -> dict[RegimeName, Transition]:
     }
 
 
-def _income_process(*, sigma_low: float, sigma_high: float, n_points: int = 5):
+def _income_process(
+    *, sigma_low: float, sigma_high: float, n_points: int = 5
+) -> NormalIIDProcess:
     return NormalIIDProcess(
         n_points=n_points,
         gauss_hermite=False,
@@ -150,7 +153,7 @@ def _get_model(*, sigma_low: float, sigma_high: float, n_periods: int = 5) -> Mo
     )
 
 
-def _params():
+def _params() -> UserParams:
     return {
         "discount_factor": 0.95,
         "alive": {"next_wealth": {"interest_rate": 0.03}},
@@ -188,7 +191,7 @@ def _uncertainty_axis_maxdiff(
     return m
 
 
-def test_conditioned_model_solves():
+def test_conditioned_model_solves() -> None:
     """The milestone: the state-conditioned model builds and solves, V finite."""
     V = _solve(sigma_low=0.05, sigma_high=0.30)
     assert V is not None
@@ -196,13 +199,13 @@ def test_conditioned_model_solves():
         assert np.all(np.isfinite(np.asarray(leaf)))
 
 
-def test_equal_sigma_makes_uncertainty_irrelevant():
+def test_equal_sigma_makes_uncertainty_irrelevant() -> None:
     """Degeneracy: if both regimes share sigma, the conditioning collapses and the value
     is *exactly* independent of the uncertainty state."""
     assert _uncertainty_axis_maxdiff(_solve(sigma_low=0.30, sigma_high=0.30)) == 0.0
 
 
-def test_higher_uncertainty_changes_value():
+def test_higher_uncertainty_changes_value() -> None:
     """Conditioning is live: distinct per-regime sigmas make the value depend on the
     uncertainty state (the precautionary response flows through the transition CDF)."""
     assert _uncertainty_axis_maxdiff(_solve(sigma_low=0.02, sigma_high=0.60)) > 1e-3
@@ -210,7 +213,7 @@ def test_higher_uncertainty_changes_value():
 
 def _simulate_income_by_uncertainty(
     *, sigma_low: float, sigma_high: float, n: int = 4000
-):
+) -> tuple[np.ndarray, np.ndarray]:
     """Simulate `n` agents, half starting `low`, half `high`; return income by regime.
 
     `uncertainty` is absorbing, so each half stays in its regime for the whole path and
@@ -242,7 +245,7 @@ def _simulate_income_by_uncertainty(
     return low, high
 
 
-def test_simulated_shock_variance_follows_the_conditioned_sigma():
+def test_simulated_shock_variance_follows_the_conditioned_sigma() -> None:
     """The simulated draw uses the sigma the time-t conditioning state selects.
 
     A draw that kept the scalar node-placing sigma would simulate both categories at
@@ -259,7 +262,7 @@ def test_simulated_shock_variance_follows_the_conditioned_sigma():
     assert low.std() / high.std() == pytest.approx(sigma_low / sigma_high, rel=0.2)
 
 
-def test_equal_sigma_simulates_one_law():
+def test_equal_sigma_simulates_one_law() -> None:
     """Degeneracy in simulation: equal sigmas leave both regimes the same spread."""
     low, high = _simulate_income_by_uncertainty(sigma_low=0.25, sigma_high=0.25)
     assert low.std() == pytest.approx(high.std(), rel=0.15)
@@ -307,7 +310,7 @@ def _ar1_model(*, sigma_low: float, sigma_high: float) -> Model:
     )
 
 
-def test_ar1_simulated_innovation_std_follows_the_conditioned_sigma():
+def test_ar1_simulated_innovation_std_follows_the_conditioned_sigma() -> None:
     """An AR(1) draw scales its innovation by the sigma the time-t state selects.
 
     For an AR(1) the level variance mixes rho and sigma, so the discriminating statistic
@@ -388,7 +391,7 @@ def _get_switching_model(*, sigma_low: float, sigma_high: float) -> Model:
     )
 
 
-def test_simulated_sigma_tracks_the_conditioning_state_THROUGH_TIME():
+def test_simulated_sigma_tracks_the_conditioning_state_THROUGH_TIME() -> None:
     """The gather must read the CURRENT period's `uncertainty`, not a frozen one.
 
     Every other simulate test here rides `next_uncertainty`, which is ABSORBING: each
@@ -442,7 +445,9 @@ def test_simulated_sigma_tracks_the_conditioning_state_THROUGH_TIME():
     assert high.std() == pytest.approx(sigma_high, rel=0.15)
 
 
-def _model_with_income(income_proc) -> Model:
+def _model_with_income(
+    income_proc: NormalIIDProcess | TauchenAR1Process | RouwenhorstAR1Process,
+) -> Model:
     """Build the same alive/dead model with a swapped-in income process."""
     alive = Regime(
         states={
@@ -470,7 +475,7 @@ def _model_with_income(income_proc) -> Model:
     )
 
 
-def test_gauss_hermite_state_conditioned_rejected():
+def test_gauss_hermite_state_conditioned_rejected() -> None:
     """Gauss-Hermite placement with StateConditioned is rejected.
 
     Its nodes scale with sigma, so a conditioned sigma would bin one law on a quadrature
@@ -486,7 +491,7 @@ def test_gauss_hermite_state_conditioned_rejected():
         _model_with_income(income).solve(params=_params(), log_level="debug")
 
 
-def test_rouwenhorst_state_conditioned_rejected():
+def test_rouwenhorst_state_conditioned_rejected() -> None:
     """Rouwenhorst with StateConditioned is rejected.
 
     Its transition depends on rho only, so fixing the nodes leaves sigma no channel.
@@ -501,7 +506,7 @@ def test_rouwenhorst_state_conditioned_rejected():
         _model_with_income(income).solve(params=_params(), log_level="debug")
 
 
-def test_unknown_conditioning_state_rejected():
+def test_unknown_conditioning_state_rejected() -> None:
     """`on` naming a non-existent (or non-discrete) state raises a clear error."""
     income = NormalIIDProcess(
         n_points=5,
@@ -522,7 +527,7 @@ class UncertaintyReversed:
     low: ScalarInt
 
 
-def test_cross_regime_code_map_mismatch_rejected():
+def test_cross_regime_code_map_mismatch_rejected() -> None:
     """F4: the sigma array is ordered by the TARGET grid but indexed by the SOURCE code.
 
     Those agree only if every regime maps the conditioning categories to the same
@@ -539,7 +544,7 @@ def test_cross_regime_code_map_mismatch_rejected():
         )
 
 
-def test_matching_code_maps_accepted():
+def test_matching_code_maps_accepted() -> None:
     """The same categorical in every regime is the normal, allowed case."""
     all_grids = {
         "alive": {"uncertainty": DiscreteGrid(category_class=Uncertainty)},
@@ -551,7 +556,7 @@ def test_matching_code_maps_accepted():
     )
 
 
-def test_gauss_hermite_tauchen_state_conditioned_rejected():
+def test_gauss_hermite_tauchen_state_conditioned_rejected() -> None:
     """F6: the GH rejection is blanket, as documented — Tauchen included, not just IID.
 
     GH nodes are placed from the *grid* sigma, so a conditioned sigma would bin one law
@@ -568,7 +573,7 @@ def test_gauss_hermite_tauchen_state_conditioned_rejected():
         _model_with_income(income).solve(params=_params(), log_level="debug")
 
 
-def test_runtime_grid_param_rejected():
+def test_runtime_grid_param_rejected() -> None:
     """A grid parameter left for runtime is rejected on a conditioned process.
 
     The conditioned branch is chosen *before* the runtime-parameter mechanism, so
@@ -586,7 +591,7 @@ def test_runtime_grid_param_rejected():
         _model_with_income(income).solve(params=_params(), log_level="debug")
 
 
-def test_runtime_grid_param_on_supplied_nodes_names_the_public_constructor():
+def test_runtime_grid_param_on_supplied_nodes_names_the_public_constructor() -> None:
     """The refusal tells the user to pass the parameter to `on_nodes`."""
     income = TauchenAR1Process.on_nodes(
         nodes=np.array([-1.0, 0.0, 1.0]),
@@ -626,7 +631,7 @@ def _dead_regime() -> Regime:
     )
 
 
-def test_model_level_conditioning_state_survives_pruning():
+def test_model_level_conditioning_state_survives_pruning() -> None:
     """A model-level state read only as a conditioner survives broadcast pruning.
 
     `state_conditioned.on` is grid metadata rather than a user function, so the
@@ -654,7 +659,7 @@ def test_model_level_conditioning_state_survives_pruning():
     assert "uncertainty" in model.pruned_variables["dead"]  # pruned: nothing reads it
 
 
-def test_conditioning_only_state_is_not_reported_unused():
+def test_conditioning_only_state_is_not_reported_unused() -> None:
     """A state read only through `state_conditioned` counts as used.
 
     The generated weights function takes the conditioning state as an argument, so it
@@ -687,25 +692,27 @@ def test_conditioning_only_state_is_not_reported_unused():
     assert model is not None
 
 
-def _conditioned_income(**kwargs) -> NormalIIDProcess:
+def _conditioned_income(*, n_points: int, n_std: float) -> NormalIIDProcess:
     """A conditioned IID income process with the grid geometry under test."""
     return NormalIIDProcess(
         gauss_hermite=False,
         sigma=StateConditioned(on="uncertainty", by={"low": 0.1, "high": 0.3}),
-        **kwargs,
+        mu=0.0,
+        n_points=n_points,
+        n_std=n_std,
     )
 
 
 @pytest.mark.parametrize(
-    "kwargs",
+    "n_std",
     [
         # `n_std` is NOT required to be positive by the process itself, so a sign slip
         # silently reverses the axis rather than failing.
-        pytest.param({"n_points": 5, "n_std": -3.0}, id="descending-neg-n_std"),
-        pytest.param({"n_points": 5, "n_std": 0.0}, id="collapsed-n_std-0"),
+        pytest.param(-3.0, id="descending-neg-n_std"),
+        pytest.param(0.0, id="collapsed-n_std-0"),
     ],
 )
-def test_non_increasing_node_axis_rejected(kwargs):
+def test_non_increasing_node_axis_rejected(n_std: float) -> None:
     """A node axis that is finite but not strictly increasing is rejected.
 
     The row bins on node midpoints, so only a strictly increasing axis makes the CDF
@@ -720,18 +727,18 @@ def test_non_increasing_node_axis_rejected(kwargs):
     here are reachable from the public constructor; the same slip via `sigma` is not,
     since a conditioned process derives it from `state_conditioned.by`.
     """
-    income = _conditioned_income(mu=0.0, **kwargs)
+    income = _conditioned_income(n_points=5, n_std=n_std)
     with pytest.raises(ModelInitializationError, match="strictly increasing"):
         _model_with_income(income).solve(params=_params(), log_level="debug")
 
 
-def test_singleton_node_axis_rejected():
+def test_singleton_node_axis_rejected() -> None:
     """One node leaves no midpoint edges, so a singleton axis is rejected.
 
     The row assembler would return an empty (shape `(0,)`) vector rather than the only
     coherent one-state row `[1.0]`.
     """
-    income = _conditioned_income(n_points=1, mu=0.0, n_std=3.0)
+    income = _conditioned_income(n_points=1, n_std=3.0)
     with pytest.raises(ModelInitializationError, match="at least 2 nodes"):
         _model_with_income(income).solve(params=_params(), log_level="debug")
 
@@ -793,7 +800,12 @@ def _cond_income(
     )
 
 
-def _cross_regime_alive(*, income_proc, uncertainty_law, local_uncertainty):
+def _cross_regime_alive(
+    *,
+    income_proc: NormalIIDProcess,
+    uncertainty_law: Callable[..., FloatND],
+    local_uncertainty: bool,
+) -> Regime:
     """An alive regime with income `income_proc`; `uncertainty` local or model-level."""
     states = {
         "wealth": LinSpacedGrid(start=1.0, stop=30.0, n_points=6),
@@ -819,7 +831,7 @@ def next_wealth_no_income(
     return (1 + interest_rate) * (wealth - consumption)
 
 
-def _cross_params():
+def _cross_params() -> UserParams:
     return {
         "discount_factor": 0.95,
         "young": {"next_wealth": {"interest_rate": 0.03}},
@@ -827,7 +839,7 @@ def _cross_params():
     }
 
 
-def test_cross_regime_regime_local_conditioner_builds_and_solves():
+def test_cross_regime_regime_local_conditioner_builds_and_solves() -> None:
     """A regime-local conditioner used only via a target's process counts as used.
 
     Source income is unconditioned, target income conditioned, and `uncertainty` has an
@@ -860,7 +872,7 @@ def test_cross_regime_regime_local_conditioner_builds_and_solves():
         assert np.all(np.isfinite(np.asarray(leaf)))
 
 
-def test_cross_regime_model_level_conditioner_survives_pruning():
+def test_cross_regime_model_level_conditioner_survives_pruning() -> None:
     """A model-level conditioner used only via a reachable target's process survives.
 
     The pruner keeps it in every source reaching the process (young, old) and may prune
@@ -900,7 +912,7 @@ def test_cross_regime_model_level_conditioner_survives_pruning():
         assert np.all(np.isfinite(np.asarray(leaf)))
 
 
-def test_cross_regime_draw_uses_the_target_spec_at_the_time_t_state():
+def test_cross_regime_draw_uses_the_target_spec_at_the_time_t_state() -> None:
     """A cross-regime draw reads the target's spec, indexed by the time-t state.
 
     Income is conditioned only in `old`, and `uncertainty` is absorbing so each subject
@@ -956,7 +968,7 @@ def test_cross_regime_draw_uses_the_target_spec_at_the_time_t_state():
     assert high.std() == pytest.approx(sigma_high, rel=0.15)
 
 
-def test_conditioned_process_the_source_lacks_is_rejected():
+def test_conditioned_process_the_source_lacks_is_rejected() -> None:
     """A conditioned process cannot be entered at its unconditional law.
 
     An ordinary IID draw does not depend on any current value, so a source that never
@@ -998,7 +1010,7 @@ def test_conditioned_process_the_source_lacks_is_rejected():
         )
 
 
-def test_conditioned_process_may_be_entered_with_an_explicit_law():
+def test_conditioned_process_may_be_entered_with_an_explicit_law() -> None:
     """A source that declares where entrants land may still reach the process.
 
     Refusing the unconditional row does not refuse entry itself: an entry law names the
@@ -1107,7 +1119,9 @@ def next_work_regime(*, period: Period, survival_prob: float) -> FloatND:
     return jnp.array([survival, 1 - survival])
 
 
-def _education_model(log_wage_process) -> Model:
+def _education_model(
+    log_wage_process: TauchenAR1Process | TauchenNormalMixtureAR1Process,
+) -> Model:
     """A working/dead model whose log wage is a process next to fixed `education`.
 
     Three working ages: the wage law enters the first one's value through the
@@ -1154,7 +1168,9 @@ _EDUCATION_PARAMS = {
 }
 
 
-def _working_values_by_education(log_wage_process) -> dict[str, list[np.ndarray]]:
+def _working_values_by_education(
+    log_wage_process: TauchenAR1Process | TauchenNormalMixtureAR1Process,
+) -> dict[str, list[np.ndarray]]:
     """Solve and return, per education category, the working value of each period."""
     values = (
         _education_model(log_wage_process)
@@ -1169,12 +1185,38 @@ def _working_values_by_education(log_wage_process) -> dict[str, list[np.ndarray]
     }
 
 
-def _tauchen(**law) -> TauchenAR1Process:
-    return TauchenAR1Process(n_points=5, gauss_hermite=False, n_std=2.0, **law)
+def _tauchen(
+    *,
+    mu: float | StateConditioned,
+    rho: float | StateConditioned,
+    sigma: float | StateConditioned,
+) -> TauchenAR1Process:
+    return TauchenAR1Process(
+        n_points=5, gauss_hermite=False, n_std=2.0, mu=mu, rho=rho, sigma=sigma
+    )
 
 
-def _mixture(**law) -> TauchenNormalMixtureAR1Process:
-    return TauchenNormalMixtureAR1Process(n_points=5, n_std=2.0, **law)
+def _mixture(
+    *,
+    mu: float | StateConditioned,
+    rho: float | StateConditioned,
+    p1: float | StateConditioned,
+    mu1: float | StateConditioned,
+    sigma1: float | StateConditioned,
+    mu2: float | StateConditioned,
+    sigma2: float | StateConditioned,
+) -> TauchenNormalMixtureAR1Process:
+    return TauchenNormalMixtureAR1Process(
+        n_points=5,
+        n_std=2.0,
+        mu=mu,
+        rho=rho,
+        p1=p1,
+        mu1=mu1,
+        sigma1=sigma1,
+        mu2=mu2,
+        sigma2=sigma2,
+    )
 
 
 @pytest.mark.parametrize(
@@ -1182,7 +1224,9 @@ def _mixture(**law) -> TauchenNormalMixtureAR1Process:
     [("mu",), ("rho",), ("sigma",), ("mu", "rho", "sigma")],
     ids="-".join,
 )
-def test_conditioned_tauchen_solves_each_category_under_its_own_law(conditioned):
+def test_conditioned_tauchen_solves_each_category_under_its_own_law(
+    conditioned: tuple[str, ...],
+) -> None:
     """Each category's value is the one under that category's law on the same nodes."""
     fixed = {"mu": 0.2, "rho": 0.9, "sigma": 0.3}
     field = {"mu": "mu", "rho": "rho", "sigma": "sigma1"}
@@ -1206,7 +1250,9 @@ def test_conditioned_tauchen_solves_each_category_under_its_own_law(conditioned)
             )
 
 
-def test_conditioned_mixture_component_solves_the_widest_category_under_its_law():
+def test_conditioned_mixture_component_solves_the_widest_category_under_its_law() -> (
+    None
+):
     """The category that places the nodes has the value of its unconditioned law."""
     got = _working_values_by_education(
         _mixture(**_WAGE_LAW["low"] | {"sigma1": _by_education("sigma1")})
@@ -1218,7 +1264,7 @@ def test_conditioned_mixture_component_solves_the_widest_category_under_its_law(
         )
 
 
-def test_mixture_conditioned_on_equal_values_solves_the_unconditioned_law():
+def test_mixture_conditioned_on_equal_values_solves_the_unconditioned_law() -> None:
     """Every parameter conditioned on one value per category is that scalar law."""
     law = _WAGE_LAW["middle"]
     got = _working_values_by_education(
@@ -1237,7 +1283,7 @@ def test_mixture_conditioned_on_equal_values_solves_the_unconditioned_law():
             )
 
 
-def test_mixture_conditioned_in_every_parameter_solves():
+def test_mixture_conditioned_in_every_parameter_solves() -> None:
     """A mixture with every parameter conditioned solves to finite values."""
     got = _working_values_by_education(
         _mixture(**{name: _by_education(name) for name in _WAGE_LAW["low"]})
@@ -1247,7 +1293,7 @@ def test_mixture_conditioned_in_every_parameter_solves():
             assert np.isfinite(values).all()
 
 
-def test_simulated_ar1_follows_the_conditioned_intercept_and_persistence():
+def test_simulated_ar1_follows_the_conditioned_intercept_and_persistence() -> None:
     """A draw's conditional mean is `mu + rho * y` at the category's own values."""
     n_per_education, start = 3000, 1.0
     n = 3 * n_per_education
@@ -1276,7 +1322,7 @@ def test_simulated_ar1_follows_the_conditioned_intercept_and_persistence():
         assert wages.mean() == pytest.approx(law["mu"] + law["rho"] * start, abs=0.01)
 
 
-def test_conditioned_parameter_under_gauss_hermite_is_rejected():
+def test_conditioned_parameter_under_gauss_hermite_is_rejected() -> None:
     """Gauss-Hermite nodes belong to one law, so no parameter can be conditioned."""
     process = TauchenAR1Process(
         n_points=5, gauss_hermite=True, mu=_by_education("mu"), rho=0.9, sigma=0.1
