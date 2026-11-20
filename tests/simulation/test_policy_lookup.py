@@ -14,6 +14,7 @@ import pytest
 
 import lcm
 import lcm.solvers
+from _lcm.execution.execution_plan import visible_device_pool_limits
 from _lcm.typing import JSONValue
 from lcm import AgeGrid, DiscreteGrid, Model, PolicyLookup, Regime, categorical
 from lcm.exceptions import ExecutionPlanningError, InvalidSimulationInputError
@@ -475,10 +476,9 @@ def test_restored_budgeted_lookup_has_analytic_last_decision_policy(
     assert producer.execution_devices == consumer.execution_devices
     limits = {}
     for device_id in consumer.execution_devices:
-        stats = devices[device_id].memory_stats()
-        assert stats is not None
-        assert stats.get("bytes_limit", 0) > 0
-        limits[device_id] = stats["bytes_limit"]
+        limit = visible_device_pool_limits(devices=(devices[device_id],))[device_id]
+        assert limit is not None
+        limits[device_id] = limit
     effective = min(limit - ceil(0.15 * limit) for limit in limits.values())
     summaries = [
         record.getMessage()

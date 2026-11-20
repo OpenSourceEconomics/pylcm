@@ -19,6 +19,7 @@ from types import MappingProxyType
 from typing import Literal, Protocol, runtime_checkable
 
 import jax
+from jaxlib import xla_client
 
 from _lcm.execution.core_program import CoreProgram
 from _lcm.execution.value_transfer import TransferCost, TransferOperationClass
@@ -652,6 +653,10 @@ def visible_device_pool_limits(
 ) -> MappingProxyType[int, int | None]:
     """Return each device's allocator pool limit in bytes, by device id.
 
+    The limit is the largest contiguous region the pool holds: a pool that grows
+    past its first region reports the size it may grow to, and contributes only
+    the first region's share of it.
+
     The query is tolerant because reporting is backend-specific: a device whose
     backend returns no counters, omits `bytes_limit`, reports a limit of 0 (an
     on-demand pool such as the async allocator's), or fails the query
@@ -679,7 +684,30 @@ def _pool_limit_bytes(*, device: SupportsMemoryStats) -> int | None:
     if stats is None:
         return None
     limit = stats.get("bytes_limit")
-    return limit if isinstance(limit, int) and limit > 0 else None
+    if not isinstance(limit, int) or limit <= 0:
+        return None
+    return int(limit * _first_region_share())
+
+
+def _first_region_share() -> float:
+    """Return the share of a reported pool limit that forms its first region.
+
+    JAX's GPU allocator follows the policy `"<share>+"` unless the environment
+    fixes the pool's share of the device. With preallocation it then reserves
+    that share and reports the size the pool may grow to in further regions.
+    One buffer is served from one region, so bytes above the first region do
+    not extend what a single compiled program can allocate. Without
+    preallocation the reported limit is the share itself.
+    """
+    options = xla_client.generate_pjrt_gpu_plugin_options()
+    policy = options.get("memory_fraction_policy")
+    if (
+        options.get("preallocate", True)
+        and isinstance(policy, str)
+        and policy.endswith("+")
+    ):
+        return float(policy.removesuffix("+"))
+    return 1.0
 
 
 def execution_over_visible_devices() -> ResolvedExecution:
