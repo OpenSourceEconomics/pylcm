@@ -275,8 +275,8 @@ Gradients of simulated statistics are not meaningful in models with discrete cho
 no rule carries a derivative guarantee.
 
 All rules support finite unit-root or explosive persistence on these fixed nodes. They
-also support a `StateConditioned` innovation scale. Quadrature target clipping is part
-of that transition rule; it does not change the model's `off_grid` policy.
+also support `StateConditioned` parameters. Quadrature target clipping is part of that
+transition rule; it does not change the model's `off_grid` policy.
 
 The selected rule changes Bellman integration and `simulated_draws="nodes"`. It does
 **not** change `simulated_draws="continuous"`: that mode still draws a normal innovation
@@ -353,9 +353,9 @@ working = Regime(
    `None`).
 1. Runtime params follow the same hierarchy as other params (see
    [Parameters](parameters.md)).
-1. A shock whose size depends on a discrete state is declared with `StateConditioned`,
+1. A process whose law depends on a discrete state is declared with `StateConditioned`,
    and is then fixed at build time (see
-   [State-Conditioned Shock Size](#state-conditioned-shock-size)).
+   [State-Conditioned Process Parameters](#state-conditioned-process-parameters)).
 
 ## Runtime Parameters
 
@@ -520,13 +520,13 @@ with the target grid, integrated shock support, conditioners and retained draws.
 can cost more memory than direct enumeration on small source grids; the runtime and
 peak-memory benefit require a paired comparison of otherwise equivalent models.
 
-(state-conditioned-shock-size)=
+(state-conditioned-process-parameters)=
 
-## State-Conditioned Shock Size
+## State-Conditioned Process Parameters
 
-The size of a shock often depends on where the subject currently is: earnings
-innovations are more variable out of work than in it, returns more variable in a
-high-volatility regime. Declare that with `StateConditioned` on the process.
+The law of a process often depends on where the subject currently is: earnings
+innovations are more variable out of work than in it, wages drift and persist
+differently by education. Declare that with `StateConditioned` on the process.
 
 ```python
 from lcm import DiscreteGrid, NormalIIDProcess, StateConditioned, categorical
@@ -551,8 +551,8 @@ income_shock = NormalIIDProcess(
 )
 ```
 
-`on` names a `DiscreteGrid` state the regime carries, and `by` gives the innovation
-standard deviation for each of its categories. The regime declares both:
+`on` names a `DiscreteGrid` state the regime carries, and `by` gives the parameter's
+value for each of its categories. The regime declares both:
 
 ```python
 working = Regime(
@@ -575,29 +575,43 @@ working = Regime(
 `StateConditioned` is written in place of the parameter it conditions, so which
 parameter varies is explicit and there is no way to give that parameter twice.
 
-A discretized process has one axis in the value function, so every category has to share
-one set of nodes. Those nodes are placed from the widest value in `by` — the narrowest
-axis that still covers every category. The per-category values never move the nodes;
-they enter only the transition probabilities. To widen the axis beyond that, raise
-`n_std`.
+Several parameters of one process can be conditioned, all on the same state and with the
+same categories:
 
-Only `sigma` can be conditioned today, and only for the processes whose transition
-probabilities carry it: the CDF-binned `NormalIIDProcess` and `TauchenAR1Process`. A
-Rouwenhorst transition depends on `rho` alone, so fixing the nodes would leave a
-conditioned `sigma` no channel at all, and the model refuses to build.
+```python
+wage = TauchenAR1Process(
+    n_points=7,
+    gauss_hermite=False,
+    n_std=3.0,
+    mu=StateConditioned(on="education", by={"low": 0.0, "high": 0.1}),
+    rho=StateConditioned(on="education", by={"low": 0.8, "high": 0.9}),
+    sigma=StateConditioned(on="education", by={"low": 0.3, "high": 0.2}),
+)
+```
+
+Each category must give a valid law on its own; a category whose `rho` has no stationary
+distribution is refused, as it is for an unconditioned process. `n_std` is always a
+scalar.
+
+A discretized process has one axis in the value function, so every category has to share
+one set of nodes. Each category's own law places its own nodes; the shared nodes are
+evenly spaced from the lowest to the highest of them. When one category's nodes already
+cover all the others — as when only `sigma` is conditioned — those nodes are used as
+they are. The per-category values otherwise enter only the transition probabilities. To
+widen the axis, raise `n_std`.
 
 ### The conditioning value is dated t
 
-Writing $s_t$ for the time-$t$ value of `on` and $\sigma_{s_t}$ for `by[s_t]`, an AR(1)
-process transitions as
+Writing $s_t$ for the time-$t$ value of `on`, an AR(1) process with every parameter
+conditioned transitions as
 
 ```{math}
-y_{t+1} \mid y_t, s_t \sim N(\mu + \rho y_t,\ \sigma_{s_t}^2),
+y_{t+1} \mid y_t, s_t \sim N(\mu_{s_t} + \rho_{s_t} y_t,\ \sigma_{s_t}^2),
 ```
 
-with an IID process dropping the $\rho y_t$ term. The variance of the innovation
-realized between $t$ and $t+1$ is therefore set by where the subject is at $t$ — the
-employment status they are leaving, not the one they arrive in.
+with an IID process dropping the $\rho y_t$ term. The law of the innovation realized
+between $t$ and $t+1$ is therefore set by where the subject is at $t$ — the employment
+status they are leaving, not the one they arrive in.
 
 When a process is declared in more than one regime, the values in force are the ones
 declared by the regime being *entered*, selected by the conditioning state at $t$. Two
@@ -613,15 +627,16 @@ parameters. Give every parameter at construction.
 
 ### Which processes support it
 
-Conditioning rides in the transition CDF, so it is available exactly where `sigma` sits
-there:
+Conditioning rides in the transition CDF, so it is available where the row is a CDF
+binned on nodes that any law can use:
 
-| Process                                  | Supported                                 |
-| ---------------------------------------- | ----------------------------------------- |
-| `NormalIIDProcess(gauss_hermite=False)`  | yes                                       |
-| `TauchenAR1Process(gauss_hermite=False)` | yes                                       |
-| Either with `gauss_hermite=True`         | no — the nodes scale with `sigma`         |
-| `RouwenhorstAR1Process`                  | no — its transition depends on `rho` only |
+| Process                                  | Conditioned parameters                              |
+| ---------------------------------------- | --------------------------------------------------- |
+| `NormalIIDProcess(gauss_hermite=False)`  | `mu`, `sigma`                                       |
+| `TauchenAR1Process(gauss_hermite=False)` | `mu`, `rho`, `sigma`, also built by `on_nodes`      |
+| `TauchenNormalMixtureAR1Process`         | `mu`, `rho`, `p1`, `mu1`, `sigma1`, `mu2`, `sigma2` |
+| Either normal one, `gauss_hermite=True`  | none — the nodes are a quadrature rule for one law  |
+| `RouwenhorstAR1Process`                  | none — its transition belongs to its own nodes      |
 
 Anything else raises at model build.
 

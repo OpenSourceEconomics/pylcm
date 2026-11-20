@@ -122,6 +122,7 @@ from _lcm.processes.state_conditioned import (
     conditioned_row,
     gather_sigma,
     sigma_array_by_code,
+    tauchen_mixture_row,
 )
 from _lcm.reachability import (
     ModelReachability,
@@ -193,7 +194,12 @@ from _lcm.simulation.programs import (
     build_simulation_programs,
 )
 from lcm.grids import DiscreteGrid, IrregSpacedGrid
-from lcm.processes import NormalIIDProcess, RouwenhorstAR1Process, TauchenAR1Process
+from lcm.processes import (
+    NormalIIDProcess,
+    RouwenhorstAR1Process,
+    TauchenAR1Process,
+    TauchenNormalMixtureAR1Process,
+)
 from lcm.shocks import ShockGroupName
 from lcm.state_conditioned import StateConditioned
 from lcm.typing import Phase
@@ -8877,28 +8883,31 @@ def _get_discrete_markov_next_function(
 def _process_family(grid: _ContinuousStochasticProcess) -> Family:
     """Map a supported process to its state-conditioned family.
 
-    Only families whose transition CDF carries `sigma` can express a fixed-node,
-    state-conditioned `sigma`: CDF-binned `NormalIIDProcess` and `TauchenAR1Process`.
-    Gauss-Hermite IID (nodes scale with `sigma`) and Rouwenhorst (`rho`-only
-    transition) are rejected at construction.
+    Only families whose row is a CDF binned on nodes any law can use admit a
+    state-conditioned parameter: CDF-binned `NormalIIDProcess`, `TauchenAR1Process`
+    and `TauchenNormalMixtureAR1Process`. Gauss-Hermite nodes and a Rouwenhorst
+    transition belong to one law and are rejected at construction.
     """
     if isinstance(grid, NormalIIDProcess | TauchenAR1Process) and grid.gauss_hermite:
-        # Gauss-Hermite nodes are placed from the process's own scalar sigma, so a
-        # state-conditioned sigma would bin a different law on a quadrature rule chosen
-        # for another one.
+        # Gauss-Hermite nodes are a quadrature rule for one law, so a
+        # state-conditioned parameter would bin a different law on a rule chosen for
+        # another one.
         msg = (
-            "state-conditioned sigma is not supported for Gauss-Hermite node placement "
-            "(the nodes are built from the grid sigma); use gauss_hermite=False "
-            "(CDF binning)."
+            "a state-conditioned parameter is not supported for Gauss-Hermite node "
+            "placement (the nodes are a quadrature rule for one law); use "
+            "gauss_hermite=False (CDF binning)."
         )
         raise ModelInitializationError(msg)
     if isinstance(grid, NormalIIDProcess):
         return "iid_normal"
     if isinstance(grid, TauchenAR1Process):
         return "tauchen"
+    if isinstance(grid, TauchenNormalMixtureAR1Process):
+        return "tauchen_mixture"
     msg = (
-        "state-conditioned sigma is only supported for CDF-binned NormalIIDProcess "
-        f"and TauchenAR1Process; got {type(grid).__name__}."
+        "a state-conditioned parameter is only supported for CDF-binned "
+        "NormalIIDProcess, TauchenAR1Process and TauchenNormalMixtureAR1Process; "
+        f"got {type(grid).__name__}."
     )
     raise ModelInitializationError(msg)
 
@@ -9085,18 +9094,20 @@ def _get_conditioned_weights_func(
     """Build the direct-CDF weights function for a state-conditioned process.
 
     The transition row is computed directly at the time-$t$ value on the fixed common
-    nodes, which the process's own scalar `sigma` places, with the per-category `sigma`
-    gathered by the conditioning state's integer code. No precomputed row is
-    interpolated. Under `off_grid="clip_lookup"` or `"clip_state"` a value beyond
-    the nodes reads the row of its nearest edge node.
+    nodes, with every conditioned parameter's per-category value gathered by the
+    conditioning state's integer code. No precomputed row is interpolated. Under
+    `off_grid="clip_lookup"` or `"clip_state"` a value beyond the nodes reads the row
+    of its nearest edge node.
     """
     conditioning_grid, family = _validate_conditioned_process(
         name=name, grid=grid, sc=sc, grids=grids
     )
     nodes = grid.get_gridpoints()
-    sigma_by_code = sigma_array_by_code(cond_grid=conditioning_grid, by=sc.by)
-    fixed = dict(grid.params)
-    mu_fixed, rho_fixed = fixed["mu"], fixed.get("rho")
+    by_code = {
+        param: sigma_array_by_code(cond_grid=conditioning_grid, by=declaration.by)
+        for param, declaration in grid.conditioned_params
+    }
+    fixed = {param: value for param, value in grid.params.items() if param != "n_std"}
 
     args = {name: "ContinuousState", sc.on: "DiscreteState"}
 
@@ -9104,21 +9115,26 @@ def _get_conditioned_weights_func(
 
     @with_signature(args=args, return_annotation="FloatND", enforce=False)
     def weights_func_conditioned(*a: FloatND, **kwargs: FloatND) -> Float1D:  # noqa: ARG001
-        sigma = gather_sigma(sigma_by_code=sigma_by_code, code=kwargs[sc.on])
+        law = fixed | {
+            param: gather_sigma(sigma_by_code=values, code=kwargs[sc.on])
+            for param, values in by_code.items()
+        }
         from_value = (
             jnp.clip(kwargs[name], nodes[0], nodes[-1]) if clip else kwargs[name]
         )
         if isinstance(grid, _TauchenOnNodesProcess):
             return grid.compute_transition_row(
-                from_value, rho=fixed["rho"], sigma=sigma, mu=mu_fixed
+                from_value, rho=law["rho"], sigma=law["sigma"], mu=law["mu"]
             )
+        if family == "tauchen_mixture":
+            return tauchen_mixture_row(nodes=nodes, from_value=from_value, **law)
         return conditioned_row(
             family=family,
             nodes=nodes,
-            sigma=sigma,
+            sigma=law["sigma"],
             from_value=from_value,
-            mu=mu_fixed,
-            rho=rho_fixed,
+            mu=law["mu"],
+            rho=law.get("rho"),
         )
 
     return weights_func_conditioned

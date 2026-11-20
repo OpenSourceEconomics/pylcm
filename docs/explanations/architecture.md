@@ -186,7 +186,7 @@ _lcm/processes/
 ├── ar1_on_nodes.py      ← _TauchenOnNodesProcess, built by TauchenAR1Process.on_nodes
 ├── joint_normal.py      ← covariance factorization for JointNormalIIDProcess
 ├── grid_resolution.py   ← admission of a support only runtime params fix
-└── state_conditioned.py ← direct-CDF rows when a shock parameter varies with a state
+└── state_conditioned.py ← direct-CDF rows when a process parameter varies with a state
 ```
 
 The ABCs (`Grid`, `_ContinuousStochasticProcess`, etc.) are used by internal code but

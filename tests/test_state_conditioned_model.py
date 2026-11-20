@@ -28,8 +28,10 @@ from lcm import (
     RouwenhorstAR1Process,
     StochasticTransition,
     TauchenAR1Process,
+    TauchenNormalMixtureAR1Process,
     Transition,
     categorical,
+    fixed_transition,
 )
 from lcm.exceptions import ModelInitializationError
 from lcm.processes import StateConditioned
@@ -38,9 +40,11 @@ from lcm.typing import (
     ContinuousState,
     DiscreteState,
     FloatND,
+    Period,
     RegimeName,
     ScalarInt,
 )
+from tests.conftest import DECIMAL_PRECISION
 
 
 @categorical(ordered=False)
@@ -1034,3 +1038,248 @@ def test_conditioned_process_may_be_entered_with_an_explicit_law():
     V = model.solve(params=_cross_params(), log_level="debug").values
     for leaf in _value_arrays(V):
         assert np.all(np.isfinite(np.asarray(leaf)))
+
+
+@categorical(ordered=True)
+class Education:
+    low: ScalarInt
+    middle: ScalarInt
+    high: ScalarInt
+
+
+@categorical(ordered=False)
+class WorkRegimeId:
+    working: ScalarInt
+    dead: ScalarInt
+
+
+_WAGE_LAW = {
+    "low": {
+        "mu": 0.10,
+        "rho": 0.90,
+        "p1": 0.8,
+        "mu1": 0.0,
+        "sigma1": 0.10,
+        "mu2": -0.2,
+        "sigma2": 0.40,
+    },
+    "middle": {
+        "mu": 0.20,
+        "rho": 0.93,
+        "p1": 0.85,
+        "mu1": 0.0,
+        "sigma1": 0.08,
+        "mu2": -0.2,
+        "sigma2": 0.35,
+    },
+    "high": {
+        "mu": 0.35,
+        "rho": 0.95,
+        "p1": 0.9,
+        "mu1": 0.0,
+        "sigma1": 0.07,
+        "mu2": -0.1,
+        "sigma2": 0.30,
+    },
+}
+
+
+def _by_education(param: str) -> StateConditioned:
+    return StateConditioned(
+        on="education", by={edu: law[param] for edu, law in _WAGE_LAW.items()}
+    )
+
+
+def next_wealth_from_wage(
+    *, wealth: ContinuousState, consumption: ContinuousAction, log_wage: ContinuousState
+) -> ContinuousState:
+    return wealth - consumption + jnp.exp(log_wage)
+
+
+def utility_by_education(
+    *, consumption: ContinuousAction, education: DiscreteState
+) -> FloatND:
+    return jnp.log(consumption) + 0.1 * education
+
+
+def next_work_regime(*, period: Period, survival_prob: float) -> FloatND:
+    survival = jnp.where(period <= 1, survival_prob, 0.0)
+    return jnp.array([survival, 1 - survival])
+
+
+def _education_model(log_wage_process) -> Model:
+    """A working/dead model whose log wage is a process next to fixed `education`.
+
+    Three working ages: the wage law enters the first one's value through the
+    second one's, which depends on the wage.
+    """
+    ages = AgeGrid(start=60, inclusive_stop=63, step="1Y")
+    working = Regime(
+        states={
+            "education": DiscreteGrid(category_class=Education),
+            "log_wage": log_wage_process,
+            "wealth": LinSpacedGrid(start=1, stop=50, n_points=10),
+        },
+        state_transitions={
+            "education": fixed_transition("education"),
+            "wealth": next_wealth_from_wage,
+        },
+        actions={"consumption": LinSpacedGrid(start=1, stop=50, n_points=20)},
+        constraints={"wealth_constraint": wealth_constraint},
+        functions={"utility": utility_by_education},
+    )
+    return Model(
+        regimes={
+            "working": working,
+            "dead": Regime(functions={"utility": lambda: 0.0}),
+        },
+        edges={
+            "working": Transition(
+                targets={
+                    "working": ages.exact_values[:2],
+                    "dead": ages.exact_values[:-1],
+                },
+                law=StochasticTransition(func=next_work_regime),
+            )
+        },
+        ages=ages,
+        regime_id_class=WorkRegimeId,
+        initial_nodes={ages.exact_values[0]: "working"},
+    )
+
+
+_EDUCATION_PARAMS = {
+    "working": {"discount_factor": 0.95},
+    "edges": {"working": {"survival_prob": 0.9}},
+}
+
+
+def _working_values_by_education(log_wage_process) -> dict[str, list[np.ndarray]]:
+    """Solve and return, per education category, the working value of each period."""
+    values = (
+        _education_model(log_wage_process)
+        .solve(params=_EDUCATION_PARAMS, log_level="off")
+        .values
+    )
+    working = [np.asarray(v["working"]) for v in values.values() if "working" in v]
+    # `education` is the only axis with three points.
+    return {
+        edu: [np.take(v, code, axis=v.shape.index(3)) for v in working]
+        for code, edu in enumerate(_WAGE_LAW)
+    }
+
+
+def _tauchen(**law) -> TauchenAR1Process:
+    return TauchenAR1Process(n_points=5, gauss_hermite=False, n_std=2.0, **law)
+
+
+def _mixture(**law) -> TauchenNormalMixtureAR1Process:
+    return TauchenNormalMixtureAR1Process(n_points=5, n_std=2.0, **law)
+
+
+@pytest.mark.parametrize(
+    "conditioned",
+    [("mu",), ("rho",), ("sigma",), ("mu", "rho", "sigma")],
+    ids="-".join,
+)
+def test_conditioned_tauchen_solves_each_category_under_its_own_law(conditioned):
+    """Each category's value is the one under that category's law on the same nodes."""
+    fixed = {"mu": 0.2, "rho": 0.9, "sigma": 0.3}
+    field = {"mu": "mu", "rho": "rho", "sigma": "sigma1"}
+    process = _tauchen(
+        **fixed | {name: _by_education(field[name]) for name in conditioned}
+    )
+    got = _working_values_by_education(process)
+    for edu, law in _WAGE_LAW.items():
+        scalar = fixed | {name: law[field[name]] for name in conditioned}
+        expected = _working_values_by_education(
+            TauchenAR1Process.on_nodes(
+                nodes=process.get_gridpoints(),
+                mu=scalar["mu"],
+                rho=scalar["rho"],
+                sigma=scalar["sigma"],
+            )
+        )
+        for got_period, expected_period in zip(got[edu], expected[edu], strict=True):
+            np.testing.assert_allclose(
+                got_period, expected_period, rtol=10.0**-DECIMAL_PRECISION
+            )
+
+
+def test_conditioned_mixture_component_solves_the_widest_category_under_its_law():
+    """The category that places the nodes has the value of its unconditioned law."""
+    got = _working_values_by_education(
+        _mixture(**_WAGE_LAW["low"] | {"sigma1": _by_education("sigma1")})
+    )
+    expected = _working_values_by_education(_mixture(**_WAGE_LAW["low"]))
+    for got_period, expected_period in zip(got["low"], expected["low"], strict=True):
+        np.testing.assert_allclose(
+            got_period, expected_period, rtol=10.0**-DECIMAL_PRECISION
+        )
+
+
+def test_mixture_conditioned_on_equal_values_solves_the_unconditioned_law():
+    """Every parameter conditioned on one value per category is that scalar law."""
+    law = _WAGE_LAW["middle"]
+    got = _working_values_by_education(
+        _mixture(
+            **{
+                name: StateConditioned(on="education", by=dict.fromkeys(_WAGE_LAW, v))
+                for name, v in law.items()
+            }
+        )
+    )
+    expected = _working_values_by_education(_mixture(**law))
+    for edu in _WAGE_LAW:
+        for got_period, expected_period in zip(got[edu], expected[edu], strict=True):
+            np.testing.assert_allclose(
+                got_period, expected_period, rtol=10.0**-DECIMAL_PRECISION
+            )
+
+
+def test_mixture_conditioned_in_every_parameter_solves():
+    """A mixture with every parameter conditioned solves to finite values."""
+    got = _working_values_by_education(
+        _mixture(**{name: _by_education(name) for name in _WAGE_LAW["low"]})
+    )
+    for periods in got.values():
+        for values in periods:
+            assert np.isfinite(values).all()
+
+
+def test_simulated_ar1_follows_the_conditioned_intercept_and_persistence():
+    """A draw's conditional mean is `mu + rho * y` at the category's own values."""
+    n_per_education, start = 3000, 1.0
+    n = 3 * n_per_education
+    process = _tauchen(mu=_by_education("mu"), rho=_by_education("rho"), sigma=0.1)
+    panel = (
+        _education_model(process)
+        .simulate(
+            params=_EDUCATION_PARAMS,
+            log_level="off",
+            initial_conditions={
+                "education": jnp.repeat(jnp.arange(3), n_per_education),
+                "log_wage": jnp.full(n, start),
+                "wealth": jnp.full(n, 20.0),
+                "age": jnp.full(n, 60.0),
+                "regime_id": jnp.full(n, WorkRegimeId.working),
+            },
+            seed=11,
+        )
+        .to_dataframe()
+    )
+    drawn = panel[(panel["age"] == 61) & panel["log_wage"].notna()]
+    for edu, law in _WAGE_LAW.items():
+        wages = drawn[drawn["education"] == edu]["log_wage"].to_numpy()
+        assert wages.size > 1000
+        # Standard error 0.1 / sqrt(2700); the categories' means are 0.1 apart.
+        assert wages.mean() == pytest.approx(law["mu"] + law["rho"] * start, abs=0.01)
+
+
+def test_conditioned_parameter_under_gauss_hermite_is_rejected():
+    """Gauss-Hermite nodes belong to one law, so no parameter can be conditioned."""
+    process = TauchenAR1Process(
+        n_points=5, gauss_hermite=True, mu=_by_education("mu"), rho=0.9, sigma=0.1
+    )
+    with pytest.raises(ModelInitializationError, match="Gauss-Hermite"):
+        _education_model(process)

@@ -8,6 +8,7 @@ sigma genuinely moving the kernel on fixed nodes, and analytic conditional momen
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from scipy.stats import norm
 
 from _lcm.processes.state_conditioned import (
     conditioned_row,
@@ -16,7 +17,14 @@ from _lcm.processes.state_conditioned import (
     sigma_array_by_code,
     tauchen_row,
 )
-from lcm import DiscreteGrid, NormalIIDProcess, TauchenAR1Process, categorical
+from _lcm.regime_building.processing import _get_weights_func_for_process
+from lcm import (
+    DiscreteGrid,
+    NormalIIDProcess,
+    TauchenAR1Process,
+    TauchenNormalMixtureAR1Process,
+    categorical,
+)
 from lcm.exceptions import GridInitializationError
 from lcm.processes import StateConditioned
 from lcm.typing import ScalarInt
@@ -318,3 +326,194 @@ def test_conditioned_sigma_places_nodes_for_tauchen_too():
         sigma=StateConditioned(on="uncertainty", by={"low": 0.1, "high": 0.4}),
     )
     assert p.sigma == pytest.approx(0.4)
+
+
+def _on_uncertainty(*, low: float, high: float) -> StateConditioned:
+    return StateConditioned(on="uncertainty", by={"low": low, "high": high})
+
+
+def _tauchen(**law) -> TauchenAR1Process:
+    return TauchenAR1Process(n_points=7, gauss_hermite=False, n_std=3.0, **law)
+
+
+def test_conditioned_parameters_keep_their_declarations():
+    """Every conditioned parameter is listed by name, in the order of the fields."""
+    mu, rho = _on_uncertainty(low=0.1, high=0.3), _on_uncertainty(low=0.9, high=0.5)
+    process = _tauchen(mu=mu, rho=rho, sigma=0.2)
+    assert process.conditioned_params == (("rho", rho), ("mu", mu))
+    assert process.state_conditioned == rho
+
+
+def test_unconditioned_process_declares_no_conditioned_parameters():
+    """A scalar law carries no conditioning."""
+    assert _tauchen(mu=0.1, rho=0.9, sigma=0.2).conditioned_params == ()
+
+
+def test_only_sigma_conditioned_keeps_the_widest_categorys_nodes_exactly():
+    """With `sigma` alone conditioned, the nodes are the widest category's own."""
+    conditioned = _tauchen(mu=0.1, rho=0.9, sigma=_on_uncertainty(low=0.2, high=0.5))
+    widest = _tauchen(mu=0.1, rho=0.9, sigma=0.5)
+    np.testing.assert_array_equal(
+        np.asarray(conditioned.get_gridpoints()), np.asarray(widest.get_gridpoints())
+    )
+
+
+def test_conditioned_nodes_span_every_categorys_own_nodes():
+    """The nodes run evenly from the lowest to the highest category node."""
+    conditioned = _tauchen(
+        mu=_on_uncertainty(low=0.1, high=1.5),
+        rho=_on_uncertainty(low=0.9, high=0.5),
+        sigma=0.2,
+    )
+    low = _tauchen(mu=0.1, rho=0.9, sigma=0.2).get_gridpoints()
+    high = _tauchen(mu=1.5, rho=0.5, sigma=0.2).get_gridpoints()
+    expected = jnp.linspace(
+        jnp.minimum(low[0], high[0]), jnp.maximum(low[-1], high[-1]), 7
+    )
+    np.testing.assert_array_equal(
+        np.asarray(conditioned.get_gridpoints()), np.asarray(expected)
+    )
+
+
+def test_conditioned_parameters_must_share_their_conditioning_state():
+    """One process is conditioned on one state."""
+    with pytest.raises(GridInitializationError, match="same state"):
+        _tauchen(
+            mu=_on_uncertainty(low=0.1, high=0.3),
+            rho=StateConditioned(on="health", by={"low": 0.9, "high": 0.5}),
+            sigma=0.2,
+        )
+
+
+def test_conditioned_parameters_must_name_the_same_categories():
+    """Every conditioned parameter gives a value for the same categories."""
+    with pytest.raises(GridInitializationError, match="same categories"):
+        _tauchen(
+            mu=_on_uncertainty(low=0.1, high=0.3),
+            rho=StateConditioned(on="uncertainty", by={"low": 0.9, "mid": 0.5}),
+            sigma=0.2,
+        )
+
+
+def test_each_categorys_law_is_checked_like_a_scalar_law():
+    """A category whose persistence has no stationary law is refused."""
+    with pytest.raises(GridInitializationError, match="no stationary distribution"):
+        _tauchen(mu=0.0, rho=_on_uncertainty(low=-1.5, high=0.5), sigma=0.2)
+
+
+def test_processes_conditioned_on_different_values_are_different_laws():
+    """Two declarations that agree only in their widest value are not one law."""
+    first = _tauchen(mu=0.0, rho=0.9, sigma=_on_uncertainty(low=0.1, high=0.5))
+    second = _tauchen(mu=0.0, rho=0.9, sigma=_on_uncertainty(low=0.3, high=0.5))
+    assert first.has_same_law_as(first)
+    assert not first.has_same_law_as(second)
+
+
+def _conditioned_row_at(*, process, code: int, from_value: float) -> np.ndarray:
+    weights = _get_weights_func_for_process(
+        name="income",
+        grid=process,
+        grids={"uncertainty": DiscreteGrid(category_class=Uncertainty)},
+    )
+    return np.asarray(
+        weights(income=jnp.asarray(from_value), uncertainty=jnp.int32(code))
+    )
+
+
+@pytest.mark.parametrize("code", [0, 1])
+def test_iid_row_uses_the_conditioned_mean(code):
+    """The row of a category bins a normal centred on that category's `mu`."""
+    process = NormalIIDProcess(
+        n_points=7,
+        gauss_hermite=False,
+        n_std=3.0,
+        mu=_on_uncertainty(low=-0.2, high=0.4),
+        sigma=0.3,
+    )
+    expected = iid_normal_row(
+        nodes=process.get_gridpoints(), mu=(-0.2, 0.4)[code], sigma=0.3
+    )
+    np.testing.assert_allclose(
+        _conditioned_row_at(process=process, code=code, from_value=0.0),
+        np.asarray(expected),
+        atol=_ROW_ATOL,
+    )
+
+
+@pytest.mark.parametrize("code", [0, 1])
+def test_tauchen_row_uses_the_conditioned_intercept_and_persistence(code):
+    """The row of a category is the AR(1) row at that category's `mu` and `rho`."""
+    process = _tauchen(
+        mu=_on_uncertainty(low=0.1, high=0.3),
+        rho=_on_uncertainty(low=0.9, high=0.5),
+        sigma=0.2,
+    )
+    expected = tauchen_row(
+        nodes=process.get_gridpoints(),
+        mu=(0.1, 0.3)[code],
+        rho=(0.9, 0.5)[code],
+        sigma=0.2,
+        from_value=0.7,
+    )
+    np.testing.assert_allclose(
+        _conditioned_row_at(process=process, code=code, from_value=0.7),
+        np.asarray(expected),
+        atol=_ROW_ATOL,
+    )
+
+
+_MIXTURE_BY_CODE = (
+    {
+        "mu": 0.10,
+        "rho": 0.90,
+        "p1": 0.8,
+        "mu1": 0.0,
+        "sigma1": 0.10,
+        "mu2": -0.2,
+        "sigma2": 0.40,
+    },
+    {
+        "mu": 0.35,
+        "rho": 0.95,
+        "p1": 0.9,
+        "mu1": 0.0,
+        "sigma1": 0.07,
+        "mu2": -0.1,
+        "sigma2": 0.30,
+    },
+)
+
+
+@pytest.mark.parametrize("code", [0, 1])
+def test_mixture_row_uses_every_conditioned_parameter(code):
+    """The row of a category bins that category's mixture at the node midpoints."""
+    by = {
+        name: _on_uncertainty(
+            low=_MIXTURE_BY_CODE[0][name], high=_MIXTURE_BY_CODE[1][name]
+        )
+        for name in _MIXTURE_BY_CODE[0]
+    }
+    process = TauchenNormalMixtureAR1Process(
+        n_points=7,
+        n_std=2.0,
+        mu=by["mu"],
+        rho=by["rho"],
+        p1=by["p1"],
+        mu1=by["mu1"],
+        sigma1=by["sigma1"],
+        mu2=by["mu2"],
+        sigma2=by["sigma2"],
+    )
+    from_value = 1.5
+    law = _MIXTURE_BY_CODE[code]
+    nodes = np.asarray(process.get_gridpoints(), dtype=np.float64)
+    innovation = (nodes[:-1] + nodes[1:]) / 2 - law["mu"] - law["rho"] * from_value
+    cdf = law["p1"] * norm.cdf(innovation, law["mu1"], law["sigma1"]) + (
+        1 - law["p1"]
+    ) * norm.cdf(innovation, law["mu2"], law["sigma2"])
+    expected = np.diff(np.concatenate([[0.0], cdf, [1.0]]))
+    np.testing.assert_allclose(
+        _conditioned_row_at(process=process, code=code, from_value=from_value),
+        expected,
+        atol=_ROW_ATOL,
+    )

@@ -5,6 +5,22 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
+### `StateConditioned` conditions any law parameter of a CDF-binned process
+
+- `StateConditioned` is accepted for `mu` and `sigma` of `NormalIIDProcess`, for `mu`,
+  `rho` and `sigma` of `TauchenAR1Process` (also built by `on_nodes`), and for `mu`,
+  `rho`, `p1`, `mu1`, `sigma1`, `mu2` and `sigma2` of `TauchenNormalMixtureAR1Process`.
+  Several parameters of one process may be conditioned, on the same state and the same
+  categories. Each category's law is validated as the unconditioned process is. `n_std`
+  stays a scalar.
+- The shared nodes run evenly from the lowest to the highest node of any category's own
+  law. When one category's nodes span the rest, as with a conditioned `sigma` alone,
+  they are that category's nodes, bitwise.
+- Two processes that differ only in their conditioned values no longer compare as the
+  same law.
+- See
+  [State-conditioned process parameters](docs/user_guide/continuous_stochastic_processes.md#state-conditioned-process-parameters).
+
 ### `GridSearch(lottery_contraction=True)` contracts in exits and collective regimes
 
 - With the option on, the eligible draws are summed into the next-period value also in
