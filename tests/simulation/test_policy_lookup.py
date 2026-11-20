@@ -2,10 +2,11 @@
 
 import json
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from functools import partial
 from math import ceil, log, prod
 from pathlib import Path
+from typing import NotRequired, TypedDict, Unpack, cast
 
 import jax
 import jax.numpy as jnp
@@ -19,8 +20,17 @@ from _lcm.typing import JSONValue
 from lcm import AgeGrid, DiscreteGrid, Model, PolicyLookup, Regime, categorical
 from lcm.exceptions import ExecutionPlanningError, InvalidSimulationInputError
 from lcm.persistence import load_solution, save_solution
-from lcm.solver_api import SolutionSource, ValueStore
-from lcm.typing import DiscreteAction, FloatND, ScalarInt, StateName
+from lcm.solver_api import SolutionResult, SolutionSource, ValueStore
+from lcm.typing import (
+    ActionName,
+    DiscreteAction,
+    FloatND,
+    Intermediate,
+    RegimeName,
+    ScalarInt,
+    StateName,
+    UserParams,
+)
 from lcm_examples.mortality import LaborSupply
 from tests.test_models.deterministic.discrete import get_model as get_discrete_model
 from tests.test_models.deterministic.discrete import (
@@ -42,51 +52,73 @@ N_PERIODS = 5
 LAST_ALIVE_PERIOD = N_PERIODS - 2
 WEALTH = jnp.array([5.0, 20.0, 40.0, 70.0])
 
+type Solved = tuple[Model, UserParams, SolutionResult]
+
+
+class _LookupOptions(TypedDict, total=False):
+    action_grids: Mapping[ActionName, jax.Array] | None
+    keep_intermediates: tuple[Intermediate, ...]
+
+
+class _LookupArguments(_LookupOptions):
+    period: int
+    regime_name: NotRequired[RegimeName]
+    states: Mapping[StateName, jax.Array]
+
 
 @pytest.fixture(scope="module")
-def solved():
+def solved() -> Solved:
     model = get_model(n_periods=N_PERIODS)
     params = get_params(n_periods=N_PERIODS)
     solution = model.solve(params=params, log_level="off")
     return model, params, solution
 
 
-def _lookup(solved, **kwargs):
+def _lookup(solved: Solved, **kwargs: Unpack[_LookupArguments]) -> PolicyLookup:
     model, params, solution = solved
+    kwargs.setdefault("regime_name", "working_life")
     return model.lookup_policy(
         params=params,
         solution=solution,
-        **{"regime_name": "working_life", **kwargs},
+        **kwargs,
     )
 
 
-def test_lookup_policy_returns_a_policy_lookup(solved):
+def test_lookup_policy_returns_a_policy_lookup(solved: Solved) -> None:
     got = _lookup(solved, period=0, states={"wealth": WEALTH})
     assert isinstance(got, PolicyLookup)
 
 
-def test_lookup_policy_last_alive_period_consumes_largest_feasible_grid_point(solved):
+def test_lookup_policy_last_alive_period_consumes_largest_feasible_grid_point(
+    solved: Solved,
+) -> None:
     """With a zero continuation, retiring and eating all feasible wealth is best."""
     got = _lookup(solved, period=LAST_ALIVE_PERIOD, states={"wealth": WEALTH})
+    assert got.actions is not None
     grid = np.asarray(DEFAULT_CONSUMPTION_GRID.to_jax())
     expected_c = np.array([grid[grid <= w].max() for w in np.asarray(WEALTH)])
     np.testing.assert_allclose(got.actions["consumption"], expected_c, rtol=1e-6)
 
 
-def test_lookup_policy_last_alive_period_value_is_log_consumption(solved):
+def test_lookup_policy_last_alive_period_value_is_log_consumption(
+    solved: Solved,
+) -> None:
     got = _lookup(solved, period=LAST_ALIVE_PERIOD, states={"wealth": WEALTH})
     grid = np.asarray(DEFAULT_CONSUMPTION_GRID.to_jax())
     expected_v = np.log([grid[grid <= w].max() for w in np.asarray(WEALTH)])
     np.testing.assert_allclose(got.value, expected_v, rtol=1e-5)
 
 
-def test_lookup_policy_last_alive_period_retires(solved):
+def test_lookup_policy_last_alive_period_retires(solved: Solved) -> None:
     got = _lookup(solved, period=LAST_ALIVE_PERIOD, states={"wealth": WEALTH})
+    assert got.actions is not None
     np.testing.assert_array_equal(got.actions["labor_supply"], LaborSupply.retire)
 
 
 @pytest.mark.parametrize("column", ["consumption", "labor_supply", "value"])
-def test_lookup_policy_equals_what_simulate_records(*, solved, column):
+def test_lookup_policy_equals_what_simulate_records(
+    *, solved: Solved, column: str
+) -> None:
     """At every simulated (period, subject), the lookup reproduces simulate's row."""
     model, params, solution = solved
     df = model.simulate(
@@ -105,9 +137,10 @@ def test_lookup_policy_equals_what_simulate_records(*, solved, column):
     for period, rows in alive.groupby("period"):
         lookup = _lookup(
             solved,
-            period=int(period),
+            period=int(cast("int", period)),
             states={"wealth": jnp.asarray(rows["wealth"].to_numpy())},
         )
+        assert lookup.actions is not None
         values = lookup.value if column == "value" else lookup.actions[column]
         got.append(np.asarray(values, dtype=float))
         expected.append(rows[column].to_numpy(dtype=float))
@@ -115,17 +148,22 @@ def test_lookup_policy_equals_what_simulate_records(*, solved, column):
 
 
 @pytest.mark.parametrize("branch", [LaborSupply.work, LaborSupply.retire])
-def test_lookup_policy_restricted_action_grid_fixes_the_branch(*, solved, branch):
+def test_lookup_policy_restricted_action_grid_fixes_the_branch(
+    *, solved: Solved, branch: ScalarInt
+) -> None:
     got = _lookup(
         solved,
         period=0,
         states={"wealth": WEALTH},
         action_grids={"labor_supply": jnp.array([branch], dtype=jnp.int32)},
     )
+    assert got.actions is not None
     np.testing.assert_array_equal(got.actions["labor_supply"], branch)
 
 
-def test_lookup_policy_max_over_branches_equals_unconditional_value(solved):
+def test_lookup_policy_max_over_branches_equals_unconditional_value(
+    solved: Solved,
+) -> None:
     branch_values = [
         _lookup(
             solved,
@@ -136,13 +174,15 @@ def test_lookup_policy_max_over_branches_equals_unconditional_value(solved):
         for code in (LaborSupply.work, LaborSupply.retire)
     ]
     unconditional = _lookup(solved, period=0, states={"wealth": WEALTH}).value
-    np.testing.assert_allclose(np.maximum(*branch_values), unconditional)
+    np.testing.assert_allclose(
+        np.maximum(branch_values[0], branch_values[1]), unconditional
+    )
 
 
 @pytest.mark.parametrize("period", [1, N_PERIODS - 1])
 def test_lookup_policy_without_states_or_actions_returns_one_row_of_value(
-    *, solved, period
-):
+    *, solved: Solved, period: int
+) -> None:
     """`dead` has neither states nor actions: its empty query is one row of zero."""
     got = _lookup(solved, regime_name="dead", period=period, states={})
     assert (got.value.shape, np.asarray(got.value).tolist()) == ((1,), [0.0])
@@ -159,7 +199,7 @@ def utility_of_labor_supply(labor_supply: DiscreteAction) -> FloatND:
 
 
 @pytest.fixture(scope="module")
-def solved_stateless():
+def solved_stateless() -> Solved:
     """`choose` has one action and no states; it is followed by the terminal `dead`."""
     model = Model(
         regimes={
@@ -178,7 +218,9 @@ def solved_stateless():
     return model, params, model.solve(params=params, log_level="off")
 
 
-def _lookup_stateless(solved_stateless, **kwargs):
+def _lookup_stateless(
+    solved_stateless: Solved, **kwargs: Unpack[_LookupOptions]
+) -> PolicyLookup:
     model, params, solution = solved_stateless
     return model.lookup_policy(
         params=params,
@@ -191,10 +233,11 @@ def _lookup_stateless(solved_stateless, **kwargs):
 
 
 def test_lookup_policy_without_states_returns_one_row_of_actions_and_value(
-    solved_stateless,
-):
+    solved_stateless: Solved,
+) -> None:
     """Working (utility 1) beats retiring (1/4); `dead` adds a zero continuation."""
     got = _lookup_stateless(solved_stateless)
+    assert got.actions is not None
     assert (
         np.asarray(got.actions["labor_supply"]).tolist(),
         np.asarray(got.value).tolist(),
@@ -202,8 +245,8 @@ def test_lookup_policy_without_states_returns_one_row_of_actions_and_value(
 
 
 def test_lookup_policy_without_states_returns_one_row_of_action_values(
-    solved_stateless,
-):
+    solved_stateless: Solved,
+) -> None:
     """`Q` holds each labor supply's utility in grid order, all feasible, in one row."""
     got = _lookup_stateless(solved_stateless, keep_intermediates=("Q", "F"))
     assert (np.asarray(got.Q).tolist(), np.asarray(got.F).tolist()) == (
@@ -212,22 +255,24 @@ def test_lookup_policy_without_states_returns_one_row_of_action_values(
     )
 
 
-def test_lookup_policy_rejects_an_unknown_regime(solved):
+def test_lookup_policy_rejects_an_unknown_regime(solved: Solved) -> None:
     with pytest.raises(InvalidSimulationInputError, match="retired"):
         _lookup(solved, regime_name="retired", period=0, states={"wealth": WEALTH})
 
 
-def test_lookup_policy_rejects_a_period_the_regime_is_not_active_in(solved):
+def test_lookup_policy_rejects_a_period_the_regime_is_not_active_in(
+    solved: Solved,
+) -> None:
     with pytest.raises(InvalidSimulationInputError, match="period 4"):
         _lookup(solved, period=N_PERIODS - 1, states={"wealth": WEALTH})
 
 
-def test_lookup_policy_rejects_missing_state(solved):
+def test_lookup_policy_rejects_missing_state(solved: Solved) -> None:
     with pytest.raises(InvalidSimulationInputError, match="wealth"):
         _lookup(solved, period=0, states={})
 
 
-def test_lookup_policy_rejects_a_discrete_state_code_off_the_grid():
+def test_lookup_policy_rejects_a_discrete_state_code_off_the_grid() -> None:
     model = get_discrete_model(n_periods=4)
     params = get_discrete_params(n_periods=4)
     solution = model.solve(params=params, log_level="off")
@@ -241,7 +286,7 @@ def test_lookup_policy_rejects_a_discrete_state_code_off_the_grid():
         )
 
 
-def test_lookup_policy_rejects_fractional_discrete_state_codes():
+def test_lookup_policy_rejects_fractional_discrete_state_codes() -> None:
     """Codes between the categories `0`, `1`, `2` are refused, not truncated."""
     model = get_discrete_model(n_periods=4)
     params = get_discrete_params(n_periods=4)
@@ -256,7 +301,7 @@ def test_lookup_policy_rejects_fractional_discrete_state_codes():
         )
 
 
-def test_lookup_policy_takes_discrete_state_codes_of_any_integer_dtype():
+def test_lookup_policy_takes_discrete_state_codes_of_any_integer_dtype() -> None:
     """Codes built as the default integer dtype give the rows of `int32` codes."""
     model = get_discrete_model(n_periods=4)
     params = get_discrete_params(n_periods=4)
@@ -279,7 +324,7 @@ def test_lookup_policy_takes_discrete_state_codes_of_any_integer_dtype():
     assert rows(jnp.asarray([0, 1])) == rows(jnp.asarray([0, 1], dtype=jnp.int32))
 
 
-def test_lookup_policy_rejects_an_unknown_action_grid(solved):
+def test_lookup_policy_rejects_an_unknown_action_grid(solved: Solved) -> None:
     with pytest.raises(InvalidSimulationInputError, match="leisure"):
         _lookup(
             solved,
@@ -289,7 +334,9 @@ def test_lookup_policy_rejects_an_unknown_action_grid(solved):
         )
 
 
-def test_lookup_policy_rejects_params_the_solution_was_not_solved_with(solved):
+def test_lookup_policy_rejects_params_the_solution_was_not_solved_with(
+    solved: Solved,
+) -> None:
     model, _, solution = solved
     with pytest.raises(InvalidSimulationInputError, match="params_fingerprint"):
         model.lookup_policy(
@@ -301,7 +348,9 @@ def test_lookup_policy_rejects_params_the_solution_was_not_solved_with(solved):
         )
 
 
-def test_lookup_policy_above_range_continuous_state_equals_simulate(solved):
+def test_lookup_policy_above_range_continuous_state_equals_simulate(
+    solved: Solved,
+) -> None:
     """A continuous state above its grid is extrapolated as simulate does."""
     model, params, solution = solved
     wealth = jnp.array([450.0, 600.0])
@@ -318,6 +367,7 @@ def test_lookup_policy_above_range_continuous_state_equals_simulate(solved):
     ).to_dataframe(use_categorical_codes=True)
     first = df.query("period == 0")
     got = _lookup(solved, period=0, states={"wealth": wealth})
+    assert got.actions is not None
     np.testing.assert_allclose(
         np.column_stack([got.actions["consumption"], got.value]),
         first[["consumption", "value"]].to_numpy(dtype=float),
@@ -325,7 +375,7 @@ def test_lookup_policy_above_range_continuous_state_equals_simulate(solved):
 
 
 @pytest.mark.parametrize("sigma", [0.5, 2.0])
-def test_state_grid_scales_shock_nodes_with_runtime_sigma(sigma):
+def test_state_grid_scales_shock_nodes_with_runtime_sigma(sigma: float) -> None:
     """Gauss-Hermite income nodes are the unit-sigma nodes times the runtime sigma."""
     model = build_shock_model()
     params = build_shock_params()
@@ -337,23 +387,25 @@ def test_state_grid_scales_shock_nodes_with_runtime_sigma(sigma):
     np.testing.assert_allclose(got, sigma * np.asarray(unit), rtol=1e-6)
 
 
-def test_state_grid_rejects_an_unknown_state(solved):
+def test_state_grid_rejects_an_unknown_state(solved: Solved) -> None:
     model, params, _ = solved
     with pytest.raises(InvalidSimulationInputError, match="income"):
         model.state_grid(params=params, regime_name="working_life", state_name="income")
 
 
-def test_solution_result_is_public_in_lcm_solvers(solved):
+def test_solution_result_is_public_in_lcm_solvers(solved: Solved) -> None:
     _, _, solution = solved
     assert isinstance(solution, lcm.solvers.SolutionResult)
 
 
-def test_state_names_is_the_value_function_axis_order(solved):
+def test_state_names_is_the_value_function_axis_order(solved: Solved) -> None:
     model, _, _ = solved
     assert model.state_names(regime_name="working_life") == ("wealth",)
 
 
-def test_value_array_indexed_in_state_names_order_matches_lookup(solved):
+def test_value_array_indexed_in_state_names_order_matches_lookup(
+    solved: Solved,
+) -> None:
     """V at grid node k of each state, in `state_names` order, is the lookup's V."""
     model, params, solution = solved
     nodes = {
@@ -375,21 +427,23 @@ def test_value_array_indexed_in_state_names_order_matches_lookup(solved):
 
 
 @pytest.fixture(scope="module")
-def solved_two_states():
+def solved_two_states() -> Solved:
     model = build_shock_model()
     params = build_shock_params()
     solution = model.solve(params=params, log_level="off")
     return model, params, solution
 
 
-def _nodes_in_state_names_order(*, model, params):
+def _nodes_in_state_names_order(
+    *, model: Model, params: UserParams
+) -> dict[StateName, jax.Array]:
     return {
         name: model.state_grid(params=params, regime_name="alive", state_name=name)
         for name in model.state_names(regime_name="alive")
     }
 
 
-def test_value_array_shape_follows_state_names_order(solved_two_states):
+def test_value_array_shape_follows_state_names_order(solved_two_states: Solved) -> None:
     """Two states on grids of different sizes: V's shape is their sizes in order."""
     model, params, solution = solved_two_states
     nodes = _nodes_in_state_names_order(model=model, params=params)
@@ -398,8 +452,8 @@ def test_value_array_shape_follows_state_names_order(solved_two_states):
 
 
 def test_value_array_indexed_in_state_names_order_matches_lookup_two_states(
-    solved_two_states,
-):
+    solved_two_states: Solved,
+) -> None:
     model, params, solution = solved_two_states
     nodes = _nodes_in_state_names_order(model=model, params=params)
     index = (2, 1)
@@ -417,7 +471,9 @@ def test_value_array_indexed_in_state_names_order_matches_lookup_two_states(
     assert not np.isclose(V[index], V[index[::-1]], rtol=1e-5)
 
 
-def test_lookup_policy_under_a_device_budget_has_analytic_last_decision_policy():
+def test_lookup_policy_under_a_device_budget_has_analytic_last_decision_policy() -> (
+    None
+):
     """A budgeted model looks up the analytic final-decision policy and value."""
     grid = lcm.LinSpacedGrid(start=1, stop=3, n_points=3)
     model = get_model(
@@ -452,7 +508,7 @@ def test_restored_budgeted_lookup_has_analytic_last_decision_policy(
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
     record_property: Callable[[str, JSONValue], None],
-):
+) -> None:
     """Restored public lookup owns its live inputs under the real device budget."""
     assert jax.default_backend() == "gpu"
     dtype = np.dtype("float64" if jax.config.x64_enabled else "float32")
@@ -593,7 +649,9 @@ _OWNER_PERIODS = 16
 _OWNER_POINTS = 32768
 
 
-def _restored_owner_fixture(*, tmp_path: Path, archive_state: StateName):
+def _restored_owner_fixture(
+    *, tmp_path: Path, archive_state: StateName
+) -> tuple[SolutionResult, UserParams, Callable[[int | None], Model], int]:
     """Solve unbudgeted, save, release the producer and reload the archive.
 
     Returns the restored result, its parameters, a budgeted-consumer factory and
@@ -618,7 +676,7 @@ def _restored_owner_fixture(*, tmp_path: Path, archive_state: StateName):
         assert isinstance(restored.values, ValueStore)
         jax.block_until_ready(restored.values.materialize())
 
-    def build_budgeted(budget: int | None):
+    def build_budgeted(budget: int | None) -> Model:
         return build(
             execution_config=lcm.ExecutionConfig(
                 device_memory_bytes=budget, device_memory_headroom_fraction=0.0
@@ -628,7 +686,9 @@ def _restored_owner_fixture(*, tmp_path: Path, archive_state: StateName):
     return restored, params, build_budgeted, payload
 
 
-def _final_decision_lookup(*, model, params, restored):
+def _final_decision_lookup(
+    *, model: Model, params: UserParams, restored: SolutionResult
+) -> PolicyLookup:
     result = model.lookup_policy(
         params=params,
         solution=restored,
@@ -636,6 +696,7 @@ def _final_decision_lookup(*, model, params, restored):
         regime_name="working_life",
         states={"wealth": jnp.array([2.0])},
     )
+    assert result.actions is not None
     jax.block_until_ready((result.value, dict(result.actions)))
     return result
 
@@ -643,7 +704,7 @@ def _final_decision_lookup(*, model, params, restored):
 @pytest.mark.parametrize("archive_state", ["cold", "warm"])
 def test_restored_budgeted_lookup_refuses_when_cache_and_view_exceed_budget(
     *, tmp_path: Path, archive_state: StateName
-):
+) -> None:
     """A budget below archive cache plus resolved view refuses the lookup.
 
     The restored result keeps its archive cache (`S`) while lookup resolves a
@@ -660,7 +721,7 @@ def test_restored_budgeted_lookup_refuses_when_cache_and_view_exceed_budget(
 
 def test_restored_budgeted_lookup_refuses_after_other_consumers_add_views(
     tmp_path: Path,
-):
+) -> None:
     """Views that other models leave on the result count against a later lookup.
 
     Let `S` be the restored value payload, at least fifteen wealth-grid-sized
@@ -678,6 +739,7 @@ def test_restored_budgeted_lookup_refuses_after_other_consumers_add_views(
     )
     consumer = build_budgeted(4 * payload)
     first = _final_decision_lookup(model=consumer, params=params, restored=restored)
+    assert first.actions is not None
     np.testing.assert_allclose(
         [
             first.actions["consumption"][0],
@@ -698,7 +760,7 @@ def test_restored_budgeted_lookup_refuses_after_other_consumers_add_views(
 @pytest.mark.parametrize("archive_state", ["cold", "warm"])
 def test_restored_lookup_under_a_generous_budget_has_analytic_policy_on_repeat(
     *, tmp_path: Path, archive_state: StateName
-):
+) -> None:
     """A budget far above every retained owner returns the analytic policy twice.
 
     All successors of the final decision are dead with utility zero; c <= wealth
@@ -712,11 +774,10 @@ def test_restored_lookup_under_a_generous_budget_has_analytic_policy_on_repeat(
         _final_decision_lookup(model=consumer, params=params, restored=restored)
         for _ in range(2)
     ]
-    np.testing.assert_allclose(
-        [
+    rows = []
+    for r in got:
+        assert r.actions is not None
+        rows.append(
             [r.actions["consumption"][0], r.actions["labor_supply"][0], r.value[0]]
-            for r in got
-        ],
-        [[2.0, 1.0, log(2)]] * 2,
-        rtol=1e-5,
-    )
+        )
+    np.testing.assert_allclose(rows, [[2.0, 1.0, log(2)]] * 2, rtol=1e-5)
