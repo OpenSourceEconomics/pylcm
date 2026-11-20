@@ -93,7 +93,7 @@ normal densities at state nodes, computed in log space), or `"innovation_quadrat
 clipped to endpoints). For innovation quadrature, supply `n_quadrature` (default 9), or
 both `innovation_nodes` and `innovation_weights` arrays. Explicit weights are normalized
 finite nonnegative masses with positive total. Quadrature configuration is static, not a
-process parameter. All rules accept `StateConditioned` scales. Continuous simulation
+process parameter. All rules accept `StateConditioned` parameters. Continuous simulation
 retains the normal law; node simulation uses the selected matrix.
 
 Process-law values (`mu`, `sigma`, `rho`, `n_std`, `start`/`stop`, mixture parameters,
@@ -107,7 +107,10 @@ is an ambiguous declaration and is rejected.
 `StateConditioned` lets process parameters depend on a categorical state. Use it when
 one named process changes distribution across observable states without changing the
 model's state vocabulary. The conditioning categories and parameter leaves must align
-with the declared categorical grid.
+with the declared categorical grid. `mu` and `sigma` of a CDF-binned `NormalIIDProcess`,
+`mu`, `rho` and `sigma` of a CDF-binned `TauchenAR1Process`, and `mu`, `rho` and the
+mixture parameters of `TauchenNormalMixtureAR1Process` accept it; several parameters of
+one process must share the conditioning state and its categories. `n_std` is a scalar.
 
 An IID process used as a state carries an axis in a regime only when the regime reads
 its current value. A regime whose state transitions read it only as `next_<state>`

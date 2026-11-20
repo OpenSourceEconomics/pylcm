@@ -117,22 +117,37 @@ class _ContinuousStochasticProcess(ContinuousGrid):
     """
 
     state_conditioned: StateConditioned | None = field(init=False, default=None)
-    """The conditioning declaration, when `sigma` was given as one.
+    """The first conditioning declaration, naming the state the process reads.
 
     Not an argument of its own: conditioning is expressed on the parameter it
     applies to, as `sigma=StateConditioned(...)`, which is what makes a scalar and
-    a conditioned `sigma` mutually exclusive by construction. `__post_init__` moves
-    the declaration here and leaves `sigma` holding the scalar that places the
-    nodes.
+    a conditioned value of one parameter mutually exclusive by construction. Every
+    conditioned parameter of a process names the same state and categories, so this
+    declaration's `on` and categories hold for all of them.
+    """
 
-    The per-category values enter only the transition CDF, evaluated directly at
-    the time-$t$ value. Available for the CDF-binned IID normal and Tauchen AR(1)
-    processes, whose transition CDFs carry `sigma`. A Rouwenhorst transition depends
-    on `rho` alone, so fixing the nodes would leave `sigma` no channel at all.
+    conditioned_params: tuple[tuple[str, StateConditioned], ...] = field(
+        init=False, default=(), metadata={"fingerprint_omit_if_default": True}
+    )
+    """Each conditioned parameter's name and declaration, in field order.
+
+    `__post_init__` moves the declarations here and leaves each parameter holding
+    the largest of its per-category values. The nodes are common to all categories:
+    they span every category's own nodes. The per-category values enter the
+    transition row, evaluated directly at the time-$t$ value, and the simulated
+    draw. Available for the processes whose nodes are spaced evenly or supplied
+    (the CDF-binned IID normal, Tauchen AR(1) and Tauchen normal-mixture AR(1));
+    Gauss-Hermite nodes and a Rouwenhorst transition belong to one law.
     """
 
     _NON_PARAM_FIELDS: ClassVar[frozenset[str]] = frozenset(
-        {"n_points", "state_conditioned", "simulated_draws", "off_grid"}
+        {
+            "n_points",
+            "state_conditioned",
+            "conditioned_params",
+            "simulated_draws",
+            "off_grid",
+        }
     )
     """Dataclass field names that are not distribution parameters.
 
@@ -151,7 +166,7 @@ class _ContinuousStochasticProcess(ContinuousGrid):
             raise GridInitializationError(msg)
         _validate_off_grid(self.off_grid)
         self._store_law_values_as_floats()
-        self._resolve_conditioned_sigma()
+        self._resolve_conditioned_params()
 
     def has_same_law_as(self, other: _ContinuousStochasticProcess) -> bool:
         """Return whether `other` declares this law, whatever its draw mode.
@@ -159,8 +174,10 @@ class _ContinuousStochasticProcess(ContinuousGrid):
         `simulated_draws` only chooses how a simulation realizes the law, so two
         declarations differing in it alone describe one process.
         """
-        return replace(self, simulated_draws="continuous") == replace(
-            other, simulated_draws="continuous"
+        return (
+            replace(self, simulated_draws="continuous")
+            == replace(other, simulated_draws="continuous")
+            and self.conditioned_params == other.conditioned_params
         )
 
     def _store_law_values_as_floats(self) -> None:
@@ -186,30 +203,64 @@ class _ContinuousStochasticProcess(ContinuousGrid):
                 raise GridInitializationError(msg)
             object.__setattr__(self, name, float(value))
 
-    def _resolve_conditioned_sigma(self) -> None:
-        """Split a conditioned `sigma` into its declaration and its node-placing value.
+    def _resolve_conditioned_params(self) -> None:
+        """Move every conditioned parameter's declaration to `conditioned_params`.
 
-        A conditioned process bins every category on one set of nodes, so the axis has
-        to cover the widest of them. That value is not free information, which is why
-        it is read off `by` rather than asked for separately.
+        Each parameter keeps the largest of its per-category values, so the process
+        still holds one scalar per parameter. Every category's law is then built on
+        its own, which applies the checks a scalar law gets.
         """
-        declaration = getattr(self, "sigma", None)
-        if not isinstance(declaration, StateConditioned):
+        declared = tuple(
+            (name, value)
+            for name in self._param_field_names
+            if isinstance(value := getattr(self, name), StateConditioned)
+        )
+        if not declared:
             return
-        values = tuple(declaration.by.values())
-        unusable = {
-            category: value
-            for category, value in declaration.by.items()
-            if not math.isfinite(value) or value <= 0.0
-        }
-        if not values or unusable:
-            msg = (
-                f"a conditioned `sigma` needs finite positive values for every "
-                f"category, but got {unusable or declaration.by}."
-            )
-            raise GridInitializationError(msg)
-        object.__setattr__(self, "state_conditioned", declaration)
-        object.__setattr__(self, "sigma", max(values))
+        first = declared[0][1]
+        for name, declaration in declared:
+            positive = name.startswith("sigma")
+            unusable = {
+                category: value
+                for category, value in declaration.by.items()
+                if not math.isfinite(value) or (positive and value <= 0.0)
+            }
+            if not declaration.by or unusable:
+                msg = (
+                    f"a conditioned `{name}` needs finite "
+                    f"{'positive ' if positive else ''}values for every category, "
+                    f"but got {unusable or declaration.by}."
+                )
+                raise GridInitializationError(msg)
+            if declaration.on != first.on:
+                msg = (
+                    "the conditioned parameters of one process must name the same "
+                    f"state, but `{declared[0][0]}` is conditioned on '{first.on}' "
+                    f"and `{name}` on '{declaration.on}'."
+                )
+                raise GridInitializationError(msg)
+            if set(declaration.by) != set(first.by):
+                msg = (
+                    "the conditioned parameters of one process must name the same "
+                    f"categories, but `{declared[0][0]}` names {sorted(first.by)} "
+                    f"and `{name}` names {sorted(declaration.by)}."
+                )
+                raise GridInitializationError(msg)
+            object.__setattr__(self, name, max(declaration.by.values()))
+        object.__setattr__(self, "state_conditioned", first)
+        object.__setattr__(self, "conditioned_params", declared)
+        for category in first.by:
+            self.law_of(category)
+
+    def law_of(self, category: str) -> Self:
+        """Return the unconditioned process holding `category`'s parameter values."""
+        return replace(
+            self,
+            **{
+                name: declaration.by[category]
+                for name, declaration in self.conditioned_params
+            },
+        )
 
     @property
     def _param_field_names(self) -> tuple[str, ...]:
@@ -264,7 +315,20 @@ class _ContinuousStochasticProcess(ContinuousGrid):
         """
         if not self.is_fully_specified:
             return jnp.full(self.n_points, jnp.nan)
-        return self.compute_gridpoints(**self.params)
+        if self.state_conditioned is None:
+            return self.compute_gridpoints(**self.params)
+        # ponytail: every call rebuilds each category's law; cache the nodes if
+        # model building shows it.
+        grids = [
+            self.law_of(category).get_gridpoints()
+            for category in self.state_conditioned.by
+        ]
+        low = min(float(grid[0]) for grid in grids)
+        high = max(float(grid[-1]) for grid in grids)
+        for grid in grids:
+            if float(grid[0]) == low and float(grid[-1]) == high:
+                return grid
+        return jnp.linspace(low, high, self.n_points)
 
     def get_transition_probs(self) -> FloatND:
         """Get the transition probabilities at the gridpoints.
@@ -321,11 +385,11 @@ def _validate_gauss_hermite_grid(
 def _mixture_cdf(
     *,
     x: FloatND,
-    p1: ScalarFloat,
-    mu1: ScalarFloat,
-    sigma1: ScalarFloat,
-    mu2: ScalarFloat,
-    sigma2: ScalarFloat,
+    p1: float | ScalarFloat,
+    mu1: float | ScalarFloat,
+    sigma1: float | ScalarFloat,
+    mu2: float | ScalarFloat,
+    sigma2: float | ScalarFloat,
 ) -> FloatND:
     """Evaluate the CDF of a two-component normal mixture.
 
