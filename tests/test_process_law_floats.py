@@ -262,7 +262,7 @@ def test_conditioned_law_is_float_and_code_ordered_in_both_builders(
 
     assert type(declaration.by["low"]) is float
     assert type(declaration.by["high"]) is float
-    assert type(process.sigma) is float
+    assert process.sigma is declaration
     assert process.state_conditioned is declaration
 
     expected = code_ordered_scales(categories=("low", "high"), codes=(0, 1), by=mapping)
