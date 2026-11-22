@@ -1933,7 +1933,9 @@ def install_exit_policy_queries(
         # ponytail: linear scan over a regime's distinct structures; index them by
         # a hashable digest if a regime ever carries more than a handful.
         groups: list[
-            tuple[_Structure, int, dict[tuple[str, int], Callable[..., PytreeValue]]]
+            tuple[
+                _Structure, int, dict[tuple[str, int, int], Callable[..., PytreeValue]]
+            ]
         ] = []
         traced_at: dict[int, int] = {}
         for period in kernels:

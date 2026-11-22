@@ -422,6 +422,84 @@ def test_halving_the_chunk_doubles_the_support_rows_per_step(
     assert max(narrow) == max(wide) // 2
 
 
+def _narrowed_step(
+    *, halvings: int, monkeypatch: pytest.MonkeyPatch
+) -> tuple[tuple[int, int, int], dict[str, np.ndarray]]:
+    """Solve with every exit kernel narrowed `halvings` times.
+
+    Returns single_f's period-0 chunk, support rows per step and compiled step
+    workspace in bytes, and every value.
+    """
+    sharing = policy_queries._PolicyQueryKernel.sharing
+    call = policy_queries._PolicyQueryKernel.__call__
+    steps = {}
+
+    # keyword-only-exempt: primary-argument=self
+    def narrowed(
+        self: policy_queries._PolicyQueryKernel,
+        *,
+        functions: dict[tuple[str, int, int], Callable[..., PytreeValue]],
+    ) -> policy_queries._PolicyQueryKernel:
+        kernel = self
+        for _ in range(halvings):
+            kernel = kernel.narrow_workspace()
+            assert isinstance(kernel, policy_queries._PolicyQueryKernel)
+        return sharing(kernel, functions=functions)
+
+    def capture(
+        self: policy_queries._PolicyQueryKernel, **kwargs: PytreeValue
+    ) -> KernelOutput:
+        cores = cast(
+            "Mapping[str, Callable[..., PytreeValue]]", kwargs["compiled_cores"]
+        )
+        compiled = cores["_chunks"].compiled  # ty: ignore[unresolved-attribute]
+        chunks = cast("policy_queries._QueryChunks", self.programs["_chunks"].function)
+        steps[(self.root_context.regime_name, self.period)] = (
+            self.chunk_size,
+            max(core.row_batch for core in chunks.cores.values()),
+            compiled.memory_analysis().temp_size_in_bytes,
+        )
+        return call(self, **kwargs)  # ty: ignore[invalid-argument-type]
+
+    with monkeypatch.context() as patch:
+        patch.setattr(policy_queries._PolicyQueryKernel, "sharing", narrowed)
+        patch.setattr(policy_queries._PolicyQueryKernel, "__call__", capture)
+        values = _values(_model(n_match=256))
+    return steps[("single_f", 0)], values
+
+
+def test_narrowing_halves_the_step_and_its_workspace_keeping_the_values(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Each narrowing halves the lanes a step evaluates, first through the chunk and
+    then, at one source cell, through the support rows.
+
+    The compiled step workspace falls with the halved chunk and with every halving
+    of the rows, and ends below half the planned one. Partitioning the same lanes
+    differently moves values by a few ULP at most.
+    """
+    monkeypatch.setattr(policy_queries, "_ROW_BATCH", 16)
+    monkeypatch.setattr(policy_queries, "_STEP_LANES", 1024)
+    planned, expected = _narrowed_step(halvings=0, monkeypatch=monkeypatch)
+    steps = {0: planned}
+    for halvings in (1, 2, 3, 5):
+        steps[halvings], values = _narrowed_step(
+            halvings=halvings, monkeypatch=monkeypatch
+        )
+        _assert_same_values(got=values, expected=expected)
+    assert {halvings: step[:2] for halvings, step in steps.items()} == {
+        0: (4, 256),
+        1: (2, 256),
+        2: (1, 256),
+        3: (1, 128),
+        5: (1, 32),
+    }
+    workspace = {halvings: step[2] for halvings, step in steps.items()}
+    assert workspace[1] < workspace[0]
+    assert workspace[5] < workspace[3] < workspace[2]
+    assert workspace[5] < workspace[0] / 2
+
+
 def _scalar_lanes(
     *,
     function: Callable[[PytreeValue], PytreeValue],

@@ -467,6 +467,9 @@ def _tabulate(
         key=key,
         reader=kernel.root_context.regime_name,
         width=kernel.chunk_size,
+        row_batch=policy_queries._row_batch(
+            chunk_size=kernel.chunk_size, halvings=kernel.halvings
+        ),
     )
     # The reader's kernel binds its fixed parameters into every argument builder.
     builder = cast("outside_values._TableArguments", program.argument_builder)

@@ -59,7 +59,6 @@ from _lcm.policy_queries import (
     _query_landing_checks,
     _query_landing_totals,
     _QueryArguments,
-    _row_batch,
     map_lanes,
     query_value_reads,
     with_contracted_tables,
@@ -182,6 +181,7 @@ def outside_value_program(
     key: str,
     reader: RegimeName,
     width: int,
+    row_batch: int,
 ) -> CoreProgram:
     """Declare the program that tabulates an aligned read's destination problem.
 
@@ -192,6 +192,7 @@ def outside_value_program(
         key: The query key of that root.
         reader: The regime whose period kernel runs the program.
         width: The grid cells evaluated together per step.
+        row_batch: The support rows evaluated together in each of those cells.
 
     Returns:
         A planned program returning the values, the support and the reached-landing
@@ -215,7 +216,9 @@ def outside_value_program(
     kept = tuple(groups.index(group) for group in read.groups)
     base, value_reads = _node_inputs(node=node, period=node.read.period)
     name = OUTSIDE_PROGRAM + read.label
-    table = OutsideValueTable(key=key, definitions=definitions, kept=kept, width=width)
+    table = OutsideValueTable(
+        key=key, definitions=definitions, kept=kept, width=width, row_batch=row_batch
+    )
     values, support = table.shapes()
     dtype = jnp.asarray(0.0).dtype
     return CoreProgram(
@@ -229,9 +232,9 @@ def outside_value_program(
                 key=key, reads=value_reads, regime=reader, core_key=name
             )
         ),
-        # The width is bound by the function, not its arguments: a narrowed table
+        # The widths are bound by the function, not its arguments: a narrowed table
         # takes the same arguments and must not share one executable.
-        compiler_options=(("query_chunk", width),),
+        compiler_options=(("query_chunk", width), ("query_rows", row_batch)),
         output_roles=(
             StateAxesLeading(state_names=(), shape=values, dtype=dtype),
             StateAxesLeading(state_names=(), shape=support, dtype=jnp.bool_),
@@ -326,6 +329,8 @@ class OutsideValueTable:
     """Plan columns of the groups kept as axes, in plan order."""
     width: int
     """Grid cells evaluated together per step."""
+    row_batch: int
+    """Support rows evaluated together in each of those cells."""
 
     def shapes(self) -> tuple[tuple[int, ...], tuple[int, ...]]:
         """The shapes of the values and of the support.
@@ -390,7 +395,7 @@ class OutsideValueTable:
                     fixed=fixed,
                     projection_operands=projection,
                     information_arguments=MappingProxyType({}),
-                    row_batch=_row_batch(chunk_size=self.width),
+                    row_batch=self.row_batch,
                     kept=self.kept,
                 )(live=live, source=point, dependencies={})
                 if information
