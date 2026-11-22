@@ -908,3 +908,9 @@ edge's own target states — never from a union over unrelated regimes. See
 See [the resource contract](../development/collective_resource_contract.md) for the
 workloads these declarations are benchmarked on and which axis each cost is allowed to
 grow along.
+
+A simulation decides an exit for a block of subjects at once. Every projection and
+adjustment of the exit, including each settlement candidate's, is evaluated for every
+subject of the block and discarded where the subject does not take that branch. An exit
+whose projections are expensive and rarely taken therefore pays for them on every
+subject.
