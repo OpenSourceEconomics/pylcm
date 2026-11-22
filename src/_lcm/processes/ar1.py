@@ -9,7 +9,7 @@ scaled-density and innovation-quadrature helpers serve the supplied-node rules.
 from abc import abstractmethod
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Literal, cast
+from typing import Literal
 
 import jax
 import jax.numpy as jnp
@@ -44,8 +44,8 @@ class _AR1Process(_ContinuousStochasticProcess):
 
     def __post_init__(self) -> None:
         super().__post_init__()
-        if self.rho is not None:
-            self.fail_if_nonstationary_rho(rho=cast("float", self.rho))
+        if isinstance(self.rho, float):
+            self.fail_if_nonstationary_rho(rho=self.rho)
 
     def fail_if_nonstationary_rho(self, *, rho: float | FloatND) -> None:
         """Reject persistence that cannot place a stationary grid at entry."""

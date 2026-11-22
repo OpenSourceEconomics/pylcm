@@ -131,8 +131,9 @@ class _ContinuousStochasticProcess(ContinuousGrid):
     )
     """Each conditioned parameter's name and declaration, in field order.
 
-    `__post_init__` moves the declarations here and leaves each parameter holding
-    the largest of its per-category values. The nodes are common to all categories:
+    Each such parameter itself holds its declaration, so the process carries no
+    scalar for it; `law_of` gives one category's law. The nodes are common to all
+    categories:
     they span every category's own nodes. The per-category values enter the
     transition row, evaluated directly at the time-$t$ value, and the simulated
     draw. Available for the processes whose nodes are spaced evenly or supplied
@@ -174,10 +175,8 @@ class _ContinuousStochasticProcess(ContinuousGrid):
         `simulated_draws` only chooses how a simulation realizes the law, so two
         declarations differing in it alone describe one process.
         """
-        return (
-            replace(self, simulated_draws="continuous")
-            == replace(other, simulated_draws="continuous")
-            and self.conditioned_params == other.conditioned_params
+        return replace(self, simulated_draws="continuous") == replace(
+            other, simulated_draws="continuous"
         )
 
     def _store_law_values_as_floats(self) -> None:
@@ -204,11 +203,10 @@ class _ContinuousStochasticProcess(ContinuousGrid):
             object.__setattr__(self, name, float(value))
 
     def _resolve_conditioned_params(self) -> None:
-        """Move every conditioned parameter's declaration to `conditioned_params`.
+        """List every conditioned parameter's declaration in `conditioned_params`.
 
-        Each parameter keeps the largest of its per-category values, so the process
-        still holds one scalar per parameter. Every category's law is then built on
-        its own, which applies the checks a scalar law gets.
+        Every category's law is then built on its own, which applies the checks a
+        scalar law gets.
         """
         declared = tuple(
             (name, value)
@@ -246,7 +244,6 @@ class _ContinuousStochasticProcess(ContinuousGrid):
                     f"and `{name}` names {sorted(declaration.by)}."
                 )
                 raise GridInitializationError(msg)
-            object.__setattr__(self, name, max(declaration.by.values()))
         object.__setattr__(self, "state_conditioned", first)
         object.__setattr__(self, "conditioned_params", declared)
         for category in first.by:
@@ -275,14 +272,15 @@ class _ContinuousStochasticProcess(ContinuousGrid):
 
         Every fixed law value is a Python `float`, so each consumer downstream —
         `compute_gridpoints`, `compute_transition_probs`, the regime-building
-        runtime closures — receives a floating scalar.
+        runtime closures — receives a floating scalar. A conditioned parameter has
+        no single value and is left out; `law_of` gives one category's parameters.
 
         """
         return MappingProxyType(
             {
-                name: jnp.asarray(getattr(self, name))
+                name: jnp.asarray(value)
                 for name in self._param_field_names
-                if getattr(self, name) is not None
+                if isinstance(value := getattr(self, name), float)
             }
         )
 
@@ -319,16 +317,18 @@ class _ContinuousStochasticProcess(ContinuousGrid):
             return self.compute_gridpoints(**self.params)
         # ponytail: every call rebuilds each category's law; cache the nodes if
         # model building shows it.
-        grids = [
-            self.law_of(category).get_gridpoints()
-            for category in self.state_conditioned.by
-        ]
-        low = min(float(grid[0]) for grid in grids)
-        high = max(float(grid[-1]) for grid in grids)
+        grids = jnp.stack(
+            [
+                self.law_of(category).get_gridpoints()
+                for category in self.state_conditioned.by
+            ]
+        )
+        low, high = grids[:, 0].min(), grids[:, -1].max()
+        nodes = jnp.linspace(low, high, self.n_points)
+        # A category whose own nodes already span the range supplies them exactly.
         for grid in grids:
-            if float(grid[0]) == low and float(grid[-1]) == high:
-                return grid
-        return jnp.linspace(low, high, self.n_points)
+            nodes = jnp.where((grid[0] == low) & (grid[-1] == high), grid, nodes)
+        return nodes
 
     def get_transition_probs(self) -> FloatND:
         """Get the transition probabilities at the gridpoints.

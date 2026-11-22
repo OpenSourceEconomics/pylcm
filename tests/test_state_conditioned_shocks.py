@@ -5,6 +5,9 @@ math at the nodes, rows built directly at the time-t value rather than interpola
 sigma genuinely moving the kernel on fixed nodes, and analytic conditional moments.
 """
 
+from dataclasses import replace
+
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -230,7 +233,6 @@ def test_conditioned_sigma_places_nodes_from_the_widest_category() -> None:
     explicit = NormalIIDProcess(
         n_points=7, gauss_hermite=False, mu=0.0, sigma=0.5, n_std=3.0
     )
-    assert conditioned.sigma == pytest.approx(0.5)
     np.testing.assert_allclose(
         np.asarray(conditioned.get_gridpoints()), np.asarray(explicit.get_gridpoints())
     )
@@ -321,15 +323,21 @@ def test_conditioned_sigma_rejects_an_unusable_category_value(
 
 def test_conditioned_sigma_places_nodes_for_tauchen_too() -> None:
     """Node placement from the widest value is not specific to the IID family."""
-    p = TauchenAR1Process(
+    by = {"low": 0.1, "high": 0.4}
+    conditioned = TauchenAR1Process(
         n_points=7,
         gauss_hermite=False,
         rho=0.9,
         mu=0.0,
         n_std=3.0,
-        sigma=StateConditioned(on="uncertainty", by={"low": 0.1, "high": 0.4}),
+        sigma=StateConditioned(on="uncertainty", by=by),
     )
-    assert p.sigma == pytest.approx(0.4)
+    widest = TauchenAR1Process(
+        n_points=7, gauss_hermite=False, rho=0.9, mu=0.0, n_std=3.0, sigma=0.4
+    )
+    np.testing.assert_array_equal(
+        np.asarray(conditioned.get_gridpoints()), np.asarray(widest.get_gridpoints())
+    )
 
 
 def _on_uncertainty(*, low: float, high: float) -> StateConditioned:
@@ -533,3 +541,52 @@ def test_mixture_row_uses_every_conditioned_parameter(code: int) -> None:
         expected,
         atol=_ROW_ATOL,
     )
+
+
+def test_conditioned_parameter_reads_back_as_its_declaration() -> None:
+    """A conditioned parameter holds its declaration, and no scalar stands in for it."""
+    sigma = _on_uncertainty(low=0.2, high=0.5)
+    process = _tauchen(mu=0.1, rho=0.9, sigma=sigma)
+    assert process.sigma == sigma
+    assert set(process.params) == {"mu", "rho", "n_std"}
+
+
+def test_changing_the_draw_mode_keeps_the_conditioning() -> None:
+    """A copy differing in `simulated_draws` conditions the same parameters."""
+    process = _tauchen(mu=0.1, rho=0.9, sigma=_on_uncertainty(low=0.2, high=0.5))
+    copy = replace(process, simulated_draws="nodes")
+    assert copy.conditioned_params == process.conditioned_params
+
+
+def test_conditioned_nodes_can_be_built_inside_a_compiled_function() -> None:
+    """The common nodes are the same whether built eagerly or under `jax.jit`."""
+    process = _tauchen(
+        mu=_on_uncertainty(low=0.1, high=1.5),
+        rho=_on_uncertainty(low=0.9, high=0.5),
+        sigma=0.2,
+    )
+    np.testing.assert_array_equal(
+        np.asarray(jax.jit(process.get_gridpoints)()),
+        np.asarray(process.get_gridpoints()),
+    )
+
+
+@pytest.mark.parametrize(
+    "p1", [1.4, -0.1, StateConditioned(on="uncertainty", by={"low": 0.3, "high": 1.4})]
+)
+def test_mixture_weight_outside_the_unit_interval_is_refused(
+    p1: float | StateConditioned,
+) -> None:
+    """The first component's probability lies between zero and one in every law."""
+    with pytest.raises(GridInitializationError, match="p1"):
+        TauchenNormalMixtureAR1Process(
+            n_points=7,
+            n_std=2.0,
+            mu=0.0,
+            rho=0.9,
+            p1=p1,
+            mu1=0.0,
+            sigma1=0.1,
+            mu2=0.0,
+            sigma2=0.2,
+        )

@@ -140,8 +140,7 @@ class NormalIIDProcess(_IIDProcess):
     """Standard deviation of the distribution.
 
     A `StateConditioned` here conditions the innovation scale on a discrete state
-    of the same regime; `__post_init__` then leaves this holding the largest value
-    in `by`.
+    of the same regime.
     """
 
     n_std: float | None = None
@@ -386,8 +385,7 @@ class TauchenAR1Process(_AR1Process):
     """Standard deviation of the innovation.
 
     A `StateConditioned` here conditions the innovation scale on a discrete state
-    of the same regime; `__post_init__` then leaves this holding the largest value
-    in `by`.
+    of the same regime.
     """
 
     mu: float | StateConditioned | None = None
@@ -656,6 +654,12 @@ class TauchenNormalMixtureAR1Process(_AR1Process):
 
     sigma2: float | StateConditioned | None = None
     """Standard deviation of the second mixture component."""
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if isinstance(self.p1, float) and not 0.0 <= self.p1 <= 1.0:
+            msg = f"`p1` is a probability and must lie in [0, 1], but got {self.p1}."
+            raise GridInitializationError(msg)
 
     @staticmethod
     def _innovation_variance(
