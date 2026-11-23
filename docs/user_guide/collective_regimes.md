@@ -393,9 +393,10 @@ Parameters stay per regime: the problem's functions appear under each holder's n
 
 `RegimeInitializationError` refuses
 
-- a holder that declares a problem slot with anything other than the default or the
-  problem's own object, and `holder.replace(...)` of such a slot; replacing its `exit`
-  or `description` keeps the problem;
+- a holder that is passed a problem slot beside its problem, unless the slot is the
+  problem's own object, and `holder.replace(...)` of such a slot or of the problem; a
+  value equal to the `Regime` default is refused like any other, and replacing the
+  `exit` or `description` keeps the problem;
 - a `ConsumptionSavingsRegime` or `NestedConsumptionSavingsRegime` that holds a problem;
 - a problem with a `ValueDependentConstraint`: that constraint compares action values,
   so it is a rule of a regime, which then declares its slots itself.

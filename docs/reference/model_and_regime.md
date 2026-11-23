@@ -290,12 +290,13 @@ model declares for them. Initial conditions, edges, results and parameters name 
 never problems, so the parameters of a problem's functions stay per regime. A regime
 that declares its slots itself owns a problem no other regime shares.
 
-Each problem slot of a holder is either left at its default, and then takes the
-problem's object, or is the problem's object already. `holder.replace(exit=...)` or
-`holder.replace(description=...)` therefore keeps the problem and its objects. Replacing
-a slot of a holder is refused, and so is giving a holder another problem whose objects
-differ from those the holder carries, such as a copy of its problem with one slot
-changed. Construct a new `Regime(problem=...)` for another problem, or pass
+A holder is passed no problem slot beside its problem, or one that is the problem's
+object already. Any other object is refused, a value equal to the `Regime` default
+included, so an explicit argument is never silently replaced. `holder.replace(exit=...)`
+or `holder.replace(description=...)` therefore keeps the problem and its objects.
+Replacing a slot of a holder is refused, and so is giving a holder another problem whose
+objects differ from those the holder carries, such as a copy of its problem with one
+slot changed. Construct a new `Regime(problem=...)` for another problem, or pass
 `problem=None` beside the slots a regime declares itself. A regime the model derives by
 rewriting slots, such as each of `model.user_regimes`, holds no problem. Ask the model
 instead: `model.problems` maps each regime name to the problem the regime was given, and

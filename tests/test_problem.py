@@ -254,13 +254,6 @@ _REPLACE_APIS = {
 _DECLARATIONS = {
     name: value for slot in _DECLARED_SLOTS for name, value in slot.items()
 }
-_SLOTS_THE_PROBLEM_DECLARES = (
-    "states",
-    "state_transitions",
-    "actions",
-    "functions",
-    "constraints",
-)
 
 
 def _variant(*, first: Problem, slot: str) -> Problem:
@@ -272,7 +265,12 @@ def _variant(*, first: Problem, slot: str) -> Problem:
 
 
 @pytest.mark.parametrize("replace", _REPLACE_APIS.values(), ids=_REPLACE_APIS)
-@pytest.mark.parametrize("slot", _SLOTS_THE_PROBLEM_DECLARES)
+@pytest.mark.parametrize(
+    "slot",
+    # The joint transition declared here names no node, which a holder
+    # refuses on its own.
+    [name for name in _PROBLEM_SLOTS if name not in {"solver", "joint_transitions"}],
+)
 def test_a_holder_given_a_problem_that_declares_a_slot_anew_is_refused(
     *, slot: str, replace: Callable[..., Regime]
 ) -> None:
@@ -284,41 +282,6 @@ def test_a_holder_given_a_problem_that_declares_a_slot_anew_is_refused(
         RegimeInitializationError, match=rf"but this one also declares \['{slot}'\]"
     ):
         replace(holder, problem=_variant(first=first, slot=slot))
-
-
-@pytest.mark.parametrize("replace", _REPLACE_APIS.values(), ids=_REPLACE_APIS)
-@pytest.mark.parametrize(
-    "slot",
-    [
-        name
-        for name in _PROBLEM_SLOTS
-        # The joint transition declared here names no node, which a holder
-        # refuses on its own; the refusals above and below cover the slot.
-        if name not in {*_SLOTS_THE_PROBLEM_DECLARES, "solver", "joint_transitions"}
-    ],
-)
-def test_a_holder_given_a_problem_that_declares_a_default_slot_takes_its_objects(
-    *, slot: str, replace: Callable[..., Regime]
-) -> None:
-    """Where the holder carries a default, it takes the second problem's objects,
-    as a regime constructed to hold the second problem does."""
-    first = _problem()
-    second = _variant(first=first, slot=slot)
-    replaced = replace(Regime(problem=first), problem=second)
-    assert replaced.problem is second
-    for name in _PROBLEM_SLOTS:
-        assert getattr(replaced, name) is getattr(second, name)
-
-
-def test_the_slots_of_a_holder_are_partitioned_by_what_its_problem_declares() -> None:
-    """The two tests above split the problem slots but the solver and the joint
-    transitions between them."""
-    problem = _problem()
-    assert {
-        name
-        for name in _PROBLEM_SLOTS
-        if getattr(problem, name) != getattr(Regime(), name)
-    } == set(_SLOTS_THE_PROBLEM_DECLARES)
 
 
 @pytest.mark.parametrize(
@@ -373,9 +336,22 @@ def test_a_detached_holder_keeps_the_objects_and_may_hold_the_problem_again() ->
         assert getattr(reattached, name) is getattr(problem, name)
 
 
-def test_an_equal_default_solver_beside_a_problem_is_the_problem_s() -> None:
-    problem = _problem()
-    assert Regime(problem=problem, solver=GridSearch()).solver is problem.solver
+@pytest.mark.parametrize(
+    "default",
+    [{"solver": GridSearch()}, {"functions": {}}, {"states": {}}],
+    ids=["solver", "functions", "states"],
+)
+def test_a_default_or_reset_slot_passed_beside_a_problem_is_refused(
+    default: RegimeReplacement,
+) -> None:
+    """An explicit value is a declaration even when it equals the `Regime` default."""
+    holder: RegimeReplacement = {"problem": _problem()}
+    holder.update(default)
+    with pytest.raises(
+        RegimeInitializationError,
+        match=rf"but this one also declares \['{next(iter(default))}'\]",
+    ):
+        Regime(**holder)
 
 
 @pytest.mark.parametrize("replace", _REPLACE_APIS.values(), ids=_REPLACE_APIS)

@@ -125,53 +125,48 @@ class Problem:
             )
 
 
-def lowered_slots(*, regime: Regime) -> tuple[str, ...]:
-    """Return the slots a regime takes from the problem it holds.
+# The slots a regime that holds a problem takes from it.
+PROBLEM_SLOTS = tuple(declaration.name for declaration in dataclasses.fields(Problem))
 
-    Each problem slot of a regime that holds a problem is either still the
-    `Regime` default, and then takes the problem's object, or already is the
-    problem's object, as after `replace` of a holder that changes only its
-    `exit` or `description`. Anything else, an object carried over from
-    another problem included, is a declaration of the regime's own.
+
+def fail_if_holder_declares_a_problem_slot(
+    *,
+    kind: type[Regime],
+    passed: Mapping[str, object],  # noqa: PAN001 - `Regime.__init__` types the arguments; identity alone is read here
+) -> None:
+    """Refuse a problem slot passed beside the problem it would come from.
+
+    A regime that holds a problem takes every problem slot from it. A slot
+    passed beside the problem is accepted only when it already is the problem's
+    object, as after `replace` of a holder that changes only its `exit` or
+    `description`. Any other object is a declaration of the regime's own, even
+    one equal to the `Regime` default or carried over from another problem.
 
     Args:
-        regime: A regime, with or without a `problem`.
-
-    Returns:
-        The names of the problem's slots, or an empty tuple when the regime
-        holds no problem.
+        kind: The class being constructed.
+        passed: The keyword arguments of the construction.
 
     Raises:
-        RegimeInitializationError: If the regime is a specialized regime, or if one
-            of its problem slots is neither the default nor the problem's object.
+        RegimeInitializationError: If the class is a specialized regime, or if a
+            problem slot is passed that is not the problem's object.
     """
-    problem = regime.problem
-    if problem is None:
-        return ()
-    if type(regime) is not Regime:
+    problem = passed.get("problem")
+    if not isinstance(problem, Problem):
+        return
+    if kind is not Regime:
         raise RegimeInitializationError(
-            f"A {type(regime).__name__} cannot hold a Problem: its margin "
+            f"A {kind.__name__} cannot hold a Problem: its margin "
             "declarations belong to its own problem. Declare its slots itself."
         )
-    slots = tuple(declaration.name for declaration in dataclasses.fields(Problem))
-    defaults = {
-        declaration.name: declaration.default
-        if declaration.default is not dataclasses.MISSING
-        else declaration.default_factory()  # ty: ignore[call-non-callable]
-        for declaration in dataclasses.fields(Regime)
-        if declaration.name in slots
-    }
     declared = [
         name
-        for name in slots
-        if getattr(regime, name) is not getattr(problem, name)
-        and getattr(regime, name) != defaults[name]
+        for name in PROBLEM_SLOTS
+        if name in passed and passed[name] is not getattr(problem, name)
     ]
     if declared:
         raise RegimeInitializationError(
             "A regime that holds a problem declares none of the problem's slots, "
-            f"but this one also declares {declared}: each is neither left at its "
-            "default nor the problem's own object. Declare them on the Problem, or "
-            "pass `problem=None` and declare the slots on the regime."
+            f"but this one also declares {declared}: each is passed beside the "
+            "problem and is not the problem's own object. Declare them on the "
+            "Problem, or pass `problem=None` and declare the slots on the regime."
         )
-    return slots
