@@ -200,7 +200,12 @@ def demanded_query_order(
     dependencies: Mapping[str, tuple[str, ...]],
     roots: tuple[str, ...],
 ) -> tuple[str, ...]:
-    """Expand demanded roots and reject typed cycles and Full publication reads."""
+    """Expand demanded roots and reject typed cycles and reads deeper than one step.
+
+    A query never reads a Full publication. A Participating query, a rule for staying
+    applied within one step, reads Raw queries only: problem values, never another
+    rule for staying.
+    """
     graph: dict[str, tuple[str, ...]] = {}
     pending = list(reversed(roots))
     while pending:
@@ -214,6 +219,16 @@ def demanded_query_order(
                 raise ValueError(f"Undeclared policy query {upstream!r}.")
             if reads[upstream].kind is QueryKind.FULL:
                 raise ValueError(f"Query {name!r} cannot read Full query {upstream!r}.")
+            if (
+                reads[name].kind is QueryKind.PARTICIPATING
+                and reads[upstream].kind is QueryKind.PARTICIPATING
+            ):
+                raise ValueError(
+                    f"Participating query {name!r} cannot read Participating query "
+                    f"{upstream!r}: a rule for staying reads the problem values of "
+                    "its targets only, so two such rules cannot chain within one "
+                    "step."
+                )
         graph[name] = dependencies[name]
         pending.extend(reversed(dependencies[name]))
     try:

@@ -158,6 +158,25 @@ def test_query_cycles_and_foreign_full_reads_refuse() -> None:
         )
 
 
+def test_participating_query_reading_a_participating_query_refuses() -> None:
+    """A rule for staying reads problem values only, never another rule for staying."""
+    reads = {
+        "couple_participating": _read(kind=QueryKind.PARTICIPATING, target="couple"),
+        "single_participating": _read(kind=QueryKind.PARTICIPATING, target="single"),
+        "single_raw": _read(kind=QueryKind.RAW, target="single"),
+    }
+    with pytest.raises(ValueError, match="Participating query 'single_participating'"):
+        demanded_query_order(
+            reads=reads,
+            dependencies={
+                "couple_participating": ("single_participating",),
+                "single_participating": ("single_raw",),
+                "single_raw": (),
+            },
+            roots=("couple_participating",),
+        )
+
+
 def test_context_identity_preserves_roles_information_and_operand_paths() -> None:
     """Equal mapped values do not identify differently bound policy contexts."""
     read = _read(kind=QueryKind.RAW, target="single")

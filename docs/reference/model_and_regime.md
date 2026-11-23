@@ -313,11 +313,12 @@ destination's problem at the projected state, without the destination's own exit
 destination's rule for leaving does not constrain that value, and two regimes may exit
 into each other. A formation by `Consent` is the exception: the formed couple applies
 its own rule for staying, and the outside values that rule compares are again problem
-values. A mover acts in the problem its move was priced at, the formed couple's
-Participating policy after consent and the destination's problem otherwise. A regime
-with an available exit that needs no consent, entered in one period both by consent and
-by another exit, would act in two different problems; the model refuses it when it is
-built.
+values. Within one step (one stage of one period), a rule for staying that is read
+through such a value reads problem values only; a longer chain is refused. A mover acts
+in the problem its move was priced at, the formed couple's Participating policy after
+consent and the destination's problem otherwise. A regime with an available exit that
+needs no consent, entered in one period both by consent and by another exit, would act
+in two different problems; the model refuses it when it is built.
 
 `Unilateral(renegotiate=Renegotiate(state="mu"))` first optimizes the Raw stay policy at
 every node of the ordered discrete state. It supports a collective pair: increasing node
