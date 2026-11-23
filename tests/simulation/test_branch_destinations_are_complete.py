@@ -11,6 +11,8 @@ different roles: the miniature below sends the wife's closed branch into a
 declares — and the husband's into a singleton, where he occupies none.
 """
 
+from types import MappingProxyType
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -29,6 +31,7 @@ from lcm import (
     categorical,
     fixed_transition,
 )
+from lcm.result import SimulationResult
 from lcm.transition import StochasticTransition
 from lcm.typing import BoolND, ContinuousState, FloatND, ScalarInt
 
@@ -145,7 +148,7 @@ _PARAMS = {
 }
 
 
-def _simulate(*, wage: float):
+def _simulate(*, wage: float) -> tuple[SimulationResult, MappingProxyType[str, int]]:
     """Two rows — the wife and the husband of one household — at `wage`."""
     model = _make_model()
     solution = model.solve(params=_PARAMS, log_level="off")

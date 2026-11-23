@@ -98,7 +98,7 @@ EXPECTED_V_COUPLE = ((3.0, 2.0), (-np.inf, -np.inf))
 EXPECTED_D_COUPLE = (False, True)
 
 
-def test_participation_mask_uses_the_reference_regime_period_t_grid():
+def test_participation_mask_uses_the_reference_regime_period_t_grid() -> None:
     """Only the couple whose wife's outside option beats her stake dissolves."""
     dissolution = _dissolution_flags(later_ceiling=TIGHTENED_CEILING)
     np.testing.assert_array_equal(
@@ -106,7 +106,7 @@ def test_participation_mask_uses_the_reference_regime_period_t_grid():
     )
 
 
-def test_participation_masked_couple_publishes_its_household_argmax_value():
+def test_participation_masked_couple_publishes_its_household_argmax_value() -> None:
     """The sustained cell publishes `(3, 2)`, the dissolved one `(-inf, -inf)`."""
     solution = _solve(later_ceiling=TIGHTENED_CEILING).values
     aaae(
@@ -116,7 +116,7 @@ def test_participation_masked_couple_publishes_its_household_argmax_value():
     )
 
 
-def test_participation_mask_ignores_the_reference_regime_later_grid():
+def test_participation_mask_ignores_the_reference_regime_later_grid() -> None:
     """Whether the reference grid tightens later leaves period 0's mask alone."""
     tightening = _dissolution_flags(later_ceiling=TIGHTENED_CEILING)
     invariant = _dissolution_flags(later_ceiling=INITIAL_CEILING)
@@ -130,8 +130,8 @@ def test_participation_mask_ignores_the_reference_regime_later_grid():
     [(0, (0.0, 200.0)), (1, (0.0, 20.0))],
 )
 def test_reference_value_function_is_tabulated_on_that_periods_own_nodes(
-    *, period, expected
-):
+    *, period: int, expected: tuple[float, float]
+) -> None:
     """The reference regime pays `2 * wealth` on whichever nodes its age has."""
     solution = _solve(later_ceiling=TIGHTENED_CEILING).values
     aaae(

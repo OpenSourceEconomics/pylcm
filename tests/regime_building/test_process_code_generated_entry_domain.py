@@ -18,6 +18,7 @@ instead. All oracle quantities are exact dyadics.
 
 import jax.numpy as jnp
 import numpy as np
+import pandas as pd
 import pytest
 
 from lcm import (
@@ -72,7 +73,7 @@ class GatedRegime:
 _NODES = (-2.0, -1.0, 0.0, 1.0, 2.0)
 
 
-def _process():
+def _process() -> NormalIIDProcess:
     return NormalIIDProcess(
         n_points=5,
         mu=0.0,
@@ -210,7 +211,9 @@ def _model(*, route: str, code: bool, on_node: bool, enable_jit: bool) -> Model:
     )
 
 
-def _simulate(*, route: str, code: bool, on_node: bool, enable_jit: bool):
+def _simulate(
+    *, route: str, code: bool, on_node: bool, enable_jit: bool
+) -> pd.DataFrame:
     model = _model(route=route, code=code, on_node=on_node, enable_jit=enable_jit)
     params = {
         name: (
@@ -241,7 +244,7 @@ def _simulate(*, route: str, code: bool, on_node: bool, enable_jit: bool):
 @pytest.mark.parametrize("route", ["entry_law", "closed_gate"])
 def test_generated_off_node_value_is_refused_before_code_read(
     *, route: str, enable_jit: bool
-):
+) -> None:
     # A producer known at build may be refused there; a produced value is refused
     # with a project-typed node-domain error, never rounded to a code or left to
     # fail through an unrelated indexing exception.
@@ -260,7 +263,7 @@ def test_generated_off_node_value_is_refused_before_code_read(
 @pytest.mark.parametrize("route", ["entry_law", "closed_gate"])
 def test_generated_exact_node_keeps_code_reads_supported(
     *, route: str, enable_jit: bool
-):
+) -> None:
     panel = _simulate(route=route, code=True, on_node=True, enable_jit=enable_jit)
     destination = "target" if route == "entry_law" else "fallback"
     assert panel["regime_name"].tolist() == [destination]
@@ -272,7 +275,7 @@ def test_generated_exact_node_keeps_code_reads_supported(
 @pytest.mark.parametrize("route", ["entry_law", "closed_gate"])
 def test_generated_off_node_value_remains_supported_without_code_reads(
     *, route: str, enable_jit: bool
-):
+) -> None:
     panel = _simulate(route=route, code=False, on_node=False, enable_jit=enable_jit)
     destination = "target" if route == "entry_law" else "fallback"
     assert panel["regime_name"].tolist() == [destination]

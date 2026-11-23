@@ -22,9 +22,13 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.engine import Regime as EngineRegime
 from _lcm.simulation.simulate import simulate
+from _lcm.typing import PeriodToRegimeToVArr
 from _lcm.utils.logging import get_logger
 from lcm.exceptions import InvalidInitialConditionsError
+from lcm.result import SimulationResult
+from lcm.typing import RegimeName
 from tests.regime_building.test_collective_regime_simulate import _solve_dissolution
 from tests.simulation.test_runtime_helpers import bind_eager_simulation
 
@@ -33,7 +37,9 @@ from tests.simulation.test_runtime_helpers import bind_eager_simulation
 _NO_ROLE = -1
 
 
-def _simulate_cohort(*, own_member, wages=(1.0, 2.0, 3.0)):
+def _simulate_cohort(
+    *, own_member: list[int] | None, wages: tuple[float, ...] = (1.0, 2.0, 3.0)
+) -> tuple[SimulationResult, PeriodToRegimeToVArr]:
     """Simulate the dissolution miniature with one role per subject."""
     ages, regimes, regime_names_to_ids, flat_params, solution = _solve_dissolution()
     initial_conditions = {
@@ -58,7 +64,7 @@ def _simulate_cohort(*, own_member, wages=(1.0, 2.0, 3.0)):
     ), solution
 
 
-def _role_ids(regimes) -> dict[str, int]:
+def _role_ids(regimes: MappingProxyType[RegimeName, EngineRegime]) -> dict[str, int]:
     """The model-wide role vocabulary, read off the processed regimes."""
     return dict(regimes["married"].member_names_to_ids)
 

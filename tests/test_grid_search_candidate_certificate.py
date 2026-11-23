@@ -427,7 +427,7 @@ def test_feasibility_summary_rejects_changed_native_values() -> None:
     assert _feasibility_summary_errors(ast.parse(changed))
 
 
-def test_build_period_kernels_passes_the_whole_action_name_tuple():
+def test_build_period_kernels_passes_the_whole_action_name_tuple() -> None:
     """Both solve builders receive the state-action space's own action names.
 
     Anything that filtered, sliced or rebuilt the tuple here would shrink the
@@ -459,7 +459,7 @@ def test_build_period_kernels_passes_the_whole_action_name_tuple():
     assert entries["action_names"] == "action_names"
 
 
-def test_native_argument_builder_splats_the_whole_action_mapping():
+def test_native_argument_builder_splats_the_whole_action_mapping() -> None:
     """The sole lowering/runtime builder splats the complete action mapping."""
     tree = _parse("src/_lcm/solution/grid_search.py")
     builder = _definition(tree=tree, qualname="_GridSearchArgumentBuilder.__call__")
@@ -467,7 +467,7 @@ def test_native_argument_builder_splats_the_whole_action_mapping():
     assert "state_action_space.actions" in _splatted_chains(node=builder)
 
 
-def test_period_kernel_runtime_uses_the_declared_argument_builder():
+def test_period_kernel_runtime_uses_the_declared_argument_builder() -> None:
     """Runtime calls the exact builder stored in the native program declaration."""
     tree = _parse("src/_lcm/solution/grid_search.py")
     kernel = _definition(tree=tree, qualname="_GridSearchPeriodKernel.__call__")
@@ -479,7 +479,7 @@ def test_period_kernel_runtime_uses_the_declared_argument_builder():
     )
 
 
-def test_actions_are_product_mapped_over_the_whole_action_tuple():
+def test_actions_are_product_mapped_over_the_whole_action_tuple() -> None:
     """`Q_and_F` is product-mapped over the action-name tuple itself."""
     tree = _parse("src/_lcm/regime_building/max_Q_over_a.py")
     builder = _definition(tree=tree, qualname="get_max_Q_over_a")
@@ -488,7 +488,7 @@ def test_actions_are_product_mapped_over_the_whole_action_tuple():
     assert _chain(_keyword(call=call, name="variables")) == "action_names"
 
 
-def test_the_action_product_map_is_unbatched():
+def test_the_action_product_map_is_unbatched() -> None:
     """Every action axis carries batch size 0, so no chunk boundary can drop one.
 
     Batching splits an axis into blocks; a block-shaped reduction that missed a
@@ -514,7 +514,9 @@ def test_the_action_product_map_is_unbatched():
         ("_HardMaxArgmaxQOverA.__call__", "argmax_and_max"),
     ],
 )
-def test_the_singleton_reduction_covers_every_action_axis(*, kernel: str, reducer: str):
+def test_the_singleton_reduction_covers_every_action_axis(
+    *, kernel: str, reducer: str
+) -> None:
     """The singleton value is a full reduction: masked, and over no named axis.
 
     A reduction with no `axis=` covers the whole action product. An `axis=` here
@@ -539,7 +541,7 @@ def test_the_singleton_reduction_covers_every_action_axis(*, kernel: str, reduce
 )
 def test_the_collective_reduction_treats_every_feasibility_axis_as_an_action(
     kernel: str,
-):
+) -> None:
     """Both collective reductions scalarize over `tuple(range(F_arr.ndim))`.
 
     The feasibility array carries one axis per action and no member axis,
@@ -559,7 +561,7 @@ def test_the_collective_reduction_treats_every_feasibility_axis_as_an_action(
     assert assigned == ["tuple(range(F_arr.ndim))"]
 
 
-def test_the_taste_shock_reduction_covers_every_action_axis():
+def test_the_taste_shock_reduction_covers_every_action_axis() -> None:
     """Continuous axes are maximized out and every remaining axis is smoothed.
 
     With taste shocks the discrete axes are aggregated by `logsum` rather than
@@ -588,14 +590,14 @@ def test_the_taste_shock_reduction_covers_every_action_axis():
     )
 
 
-def test_no_obligation_rests_on_an_undeclared_source():
+def test_no_obligation_rests_on_an_undeclared_source() -> None:
     """The AST-derived obligations equal the generated inventory exactly."""
     parsed = set(derive_source_paths(Path(__file__)))
 
     assert parsed == set(CERTIFIED_SOURCES)
 
 
-def test_q_and_f_arrays_reach_full_reducers_without_candidate_transformation():
+def test_q_and_f_arrays_reach_full_reducers_without_candidate_transformation() -> None:
     """The universal bound is a route-local data-flow proof, not a value sample.
 
     Literal parses add the shared singleton and collective reducer definitions to
@@ -694,13 +696,13 @@ def test_action_grid_admission_has_a_literal_inventory_obligation() -> None:
     assert isinstance(_parse("src/_lcm/simulation/action_grids.py"), ast.Module)
 
 
-def test_eager_dependencies_are_literal_certificate_obligations():
+def test_eager_dependencies_are_literal_certificate_obligations() -> None:
     """Include the live eager placement and physical-layout dependencies."""
     assert isinstance(_parse("src/_lcm/execution/eager_core.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/execution/runtime_sharding.py"), ast.Module)
 
 
-def test_copy_and_chunk_dependencies_are_literal_certificate_obligations():
+def test_copy_and_chunk_dependencies_are_literal_certificate_obligations() -> None:
     """Inventory each new live dependency in the reviewed copy/profile corridor."""
     assert isinstance(
         _parse("src/_lcm/execution/abstract_program_inputs.py"), ast.Module
@@ -733,7 +735,7 @@ def test_copy_and_chunk_dependencies_are_literal_certificate_obligations():
     assert isinstance(_parse("src/lcm/_solver_api/stores.py"), ast.Module)
 
 
-def test_native_value_dependencies_are_literal_certificate_obligations():
+def test_native_value_dependencies_are_literal_certificate_obligations() -> None:
     """The exact single-array native reader participates in budgeted value replay."""
     assert isinstance(_parse("src/_lcm/solution/native_values.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/persistence/solution.py"), ast.Module)
@@ -742,7 +744,7 @@ def test_native_value_dependencies_are_literal_certificate_obligations():
 _STRUCTURAL_BLUEPRINT_SOURCE = "src/_lcm/solution/structural_blueprints.py"
 
 
-def test_structural_blueprint_store_is_a_certified_corridor_source():
+def test_structural_blueprint_store_is_a_certified_corridor_source() -> None:
     """Warm solves bind stored blueprints only through a sealed store and key."""
     assert isinstance(_parse("src/_lcm/solution/structural_blueprints.py"), ast.Module)
     result = verify_direct_candidate_flow(repo_root=_SRC_ROOT.parent)
@@ -757,7 +759,9 @@ def test_structural_blueprint_store_is_a_certified_corridor_source():
         "structural_blueprint:schema_drops_dtype",
     ],
 )
-def test_structural_blueprint_mutation_is_rejected(*, tmp_path: Path, mutation: str):
+def test_structural_blueprint_mutation_is_rejected(
+    *, tmp_path: Path, mutation: str
+) -> None:
     """A mutated blueprint store or key derivation fails the direct-flow proof."""
     root = _SRC_ROOT.parent
     spec = supplemental_direct_flow_mutation_specs(repo_root=root)[mutation]
@@ -862,7 +866,7 @@ def test_unresealed_counter_reservation_mutation_fails_the_byte_seal(
     )
 
 
-def test_streamed_reducer_sources_are_literal_certificate_obligations():
+def test_streamed_reducer_sources_are_literal_certificate_obligations() -> None:
     """The generated inventory owns every live streamed transport helper."""
     assert isinstance(_parse("src/_lcm/execution/core_program.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/execution/value_transfer.py"), ast.Module)
@@ -907,7 +911,7 @@ def test_streamed_reducer_sources_are_literal_certificate_obligations():
     assert isinstance(_parse("src/_lcm/execution/workspace_planning.py"), ast.Module)
 
 
-def test_direct_flow_certificate_names_every_supported_route():
+def test_direct_flow_certificate_names_every_supported_route() -> None:
     """The universal proof names every dense and streamed choice route."""
     result = verify_direct_candidate_flow(repo_root=_SRC_ROOT.parent)
 
@@ -926,7 +930,7 @@ def test_direct_flow_certificate_names_every_supported_route():
     }
 
 
-def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate():
+def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate() -> None:
     """Synchronized controls attack both taste corridors and their deep helpers."""
     names = set(direct_flow_mutation_specs(repo_root=_SRC_ROOT.parent))
     required = {
@@ -1227,7 +1231,7 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate():
     )
 
 
-def test_certified_sources_are_read_as_utf_8_whatever_the_platform_default_is():
+def test_certified_sources_are_read_as_utf_8_whatever_the_platform_default_is() -> None:
     """The structural reads name their encoding rather than taking the locale's.
 
     House style puts literal `—`, `→` and `μ` in source files, and a platform
@@ -1257,7 +1261,9 @@ def test_certified_sources_are_read_as_utf_8_whatever_the_platform_default_is():
     assert set(recorded) == {"utf-8"}
 
 
-def test_certified_source_hashes_ignore_checkout_newline_convention(tmp_path: Path):
+def test_certified_source_hashes_ignore_checkout_newline_convention(
+    tmp_path: Path,
+) -> None:
     """LF and CRLF worktrees represent the same sealed Python source."""
     source = tmp_path / "source.py"
     source.write_bytes(b"def f():\n    return 1\n")
@@ -1272,7 +1278,7 @@ def test_certified_source_hashes_ignore_checkout_newline_convention(tmp_path: Pa
 
 def test_direct_flow_source_seals_ignore_checkout_newline_convention(
     monkeypatch: pytest.MonkeyPatch,
-):
+) -> None:
     """A Windows CRLF checkout satisfies the same direct-flow source seals."""
     original = Path.read_bytes
     certified = set(CERTIFIED_SOURCES)
@@ -1526,7 +1532,7 @@ def _dedup_params(model: Model) -> _ModelParams:
     return params
 
 
-def _simulate_dedup_model(*, model: Model, params: _ModelParams):
+def _simulate_dedup_model(*, model: Model, params: _ModelParams) -> pd.DataFrame:
     """Run both same-shaped decision regimes through the public runtime path."""
     result = model.simulate(
         params=_supplied_params(params=params),
@@ -1642,7 +1648,7 @@ def masked_collective_model() -> Model:
 @pytest.mark.parametrize(("work", "consumption"), _CANDIDATES)
 def test_every_declared_candidate_can_be_the_only_feasible_one(
     *, unique_feasible_model: Model, work: float, consumption: float
-):
+) -> None:
     """Constraining the search to one candidate publishes that candidate's value.
 
     A candidate the search never evaluates leaves the feasibility mask empty,
@@ -1661,7 +1667,7 @@ def test_every_declared_candidate_can_be_the_only_feasible_one(
 @pytest.mark.parametrize(("work", "consumption"), _CANDIDATES)
 def test_every_declared_candidate_can_win_the_maximization(
     *, unique_maximizer_model: Model, work: float, consumption: float
-):
+) -> None:
     """With everything feasible, the search finds whichever candidate peaks.
 
     The utility peaks at exactly zero on the named candidate and is strictly
@@ -1681,7 +1687,7 @@ def test_every_declared_candidate_can_win_the_maximization(
 @pytest.mark.parametrize(("work", "consumption"), _CANDIDATES)
 def test_every_declared_candidate_can_be_the_household_choice(
     *, collective_model: Model, work: float, consumption: float
-):
+) -> None:
     """The collective reduction reads each member's own value at the candidate.
 
     The collective path scalarizes and argmaxes on its own code, so exhausting
@@ -1739,7 +1745,7 @@ def _simulate_acting(
 @pytest.mark.parametrize(("work", "consumption"), _CANDIDATES)
 def test_simulation_routes_to_every_declared_candidate(
     *, unique_feasible_model: Model, work: float, consumption: float
-):
+) -> None:
     """Simulation publishes the one candidate the constraint admits.
 
     Simulation maximizes with `get_argmax_and_max_Q_over_a`, a different callable from
@@ -1763,7 +1769,7 @@ def test_simulation_routes_to_every_declared_candidate(
 @pytest.mark.parametrize(("work", "consumption"), _CANDIDATES)
 def test_simulation_routes_a_household_to_every_declared_candidate(
     *, collective_model: Model, work: float, consumption: float
-):
+) -> None:
     """The collective simulate reduction reaches every candidate too.
 
     `collective_argmax_and_readout` is a third reduction, distinct from both the
@@ -1893,7 +1899,7 @@ def _ranked_materialization_model() -> Model:
 def test_dropping_a_discrete_grid_code_changes_every_public_candidate_view(
     *,
     monkeypatch: pytest.MonkeyPatch,
-):
+) -> None:
     """The discrete-grid materializer is behaviorally live before Q_and_F."""
     baseline = _simulate_materialization_case(model=_ranked_materialization_model())
     original = DiscreteGrid.to_jax
@@ -1919,7 +1925,7 @@ def test_dropping_a_discrete_grid_code_changes_every_public_candidate_view(
 def test_dropping_a_linear_grid_point_changes_every_public_candidate_view(
     *,
     monkeypatch: pytest.MonkeyPatch,
-):
+) -> None:
     """The continuous-grid materializer is behaviorally live before Q_and_F."""
     baseline = _simulate_materialization_case(model=_ranked_materialization_model())
     original = LinSpacedGrid.to_jax
@@ -2030,7 +2036,7 @@ def test_public_runtime_action_points_reach_every_candidate_view(
     *,
     point_source: Literal["array", "series", "fixed"],
     target_choice: float,
-):
+) -> None:
     """Array, Series, and fixed public points all complete the candidate menu."""
     observed = _simulate_runtime_action_model(
         point_source=point_source,
@@ -2051,7 +2057,7 @@ def _reference_for_mask(
 
 def test_singleton_solve_matches_reference_over_every_nonempty_feasibility_mask(
     masked_singleton_model: Model,
-):
+) -> None:
     """Singleton solve agrees with the scalar oracle on every mask and ordering.
 
     Sweeping the ordering as well as the mask puts each candidate in the winning
@@ -2070,7 +2076,7 @@ def test_singleton_solve_matches_reference_over_every_nonempty_feasibility_mask(
 
 def test_singleton_simulate_matches_reference_over_every_nonempty_feasibility_mask(
     masked_singleton_model: Model,
-):
+) -> None:
     """Singleton simulation agrees with the scalar oracle on every mask and ordering."""
     for ranks in _RANK_VECTORS:
         for mask in _NONEMPTY_FEASIBILITY_MASKS:
@@ -2178,7 +2184,7 @@ def _simulate_taste_mask_case(
     return {name: period_0[name].to_numpy().tolist() for name in period_0.columns}
 
 
-def test_runtime_dedup_keeps_same_shaped_regime_reducers_distinct():
+def test_runtime_dedup_keeps_same_shaped_regime_reducers_distinct() -> None:
     """Different bound Q/F objects cannot share one compiled argmax program."""
     model = _build_dedup_collision_model()
     period_0 = _simulate_dedup_model(model=model, params=_dedup_params(model))
@@ -2189,7 +2195,7 @@ def test_runtime_dedup_keeps_same_shaped_regime_reducers_distinct():
 
 def test_collapsing_plain_callable_dedup_keys_changes_the_published_candidate(
     monkeypatch: pytest.MonkeyPatch,
-):
+) -> None:
     """The synchronized dedup-key defect is visible on the public runtime path."""
     model = _build_dedup_collision_model()
     params = _dedup_params(model)
@@ -2227,7 +2233,7 @@ def test_collapsing_plain_callable_dedup_keys_changes_the_published_candidate(
     assert observed != [(0, 1.0), (1, 3.0)]
 
 
-def test_padded_heterogeneous_candidates_remain_subject_aligned():
+def test_padded_heterogeneous_candidates_remain_subject_aligned() -> None:
     """Padding and trimming preserve each subject's selected candidate."""
     model = _build_dedup_collision_model(subject_width=2)
     result = model.simulate(
@@ -2257,7 +2263,7 @@ def test_padded_heterogeneous_candidates_remain_subject_aligned():
     assert enriched["consumption"].to_numpy().tolist() == [1.0, 3.0, 1.0]
 
 
-def test_additional_targets_preserve_unbatched_selected_candidates():
+def test_additional_targets_preserve_unbatched_selected_candidates() -> None:
     """Computed targets cannot overwrite an already published action column."""
     model = _build_dedup_collision_model()
     result = model.simulate(
@@ -2366,7 +2372,7 @@ def _simulate_zero_weight_fold(model: Model) -> tuple[list[int], list[int], list
     )
 
 
-def test_zero_weight_fold_average_preserves_the_public_candidate():
+def test_zero_weight_fold_average_preserves_the_public_candidate() -> None:
     """The zero-mass shock nodes contribute nothing to the selected policy."""
     observed = _simulate_zero_weight_fold(_build_zero_weight_fold_model())
     assert observed == ([1], [1], [1])
@@ -2375,7 +2381,7 @@ def test_zero_weight_fold_average_preserves_the_public_candidate():
 def test_negating_kernel_output_reverses_the_public_candidate(
     *,
     monkeypatch: pytest.MonkeyPatch,
-):
+) -> None:
     """The solved-value transport into backward induction is behaviorally live."""
     model = _build_zero_weight_fold_model()
     baseline = _simulate_zero_weight_fold(model)
@@ -2423,7 +2429,7 @@ def _simulate_seeded_taste_routing(*, model: Model) -> tuple[list[int], list[int
     return raw, period_0["work"].to_numpy().tolist()
 
 
-def test_seeded_taste_keys_preserve_subject_identity_across_batching():
+def test_seeded_taste_keys_preserve_subject_identity_across_batching() -> None:
     """A fixed subject keeps its taste draw under chunking and runtime dispatch."""
     unbatched, chunked = (
         _simulate_seeded_taste_routing(
@@ -2445,7 +2451,7 @@ def test_seeded_taste_keys_preserve_subject_identity_across_batching():
 
 def test_reassigning_taste_keys_changes_the_public_candidate(
     monkeypatch: pytest.MonkeyPatch,
-):
+) -> None:
     """The synchronized key-permutation attack is behaviorally live."""
     model = _build_model(
         utility=_ranked_utility,
@@ -2473,7 +2479,7 @@ def test_reassigning_taste_keys_changes_the_public_candidate(
 
 def test_taste_shock_solve_matches_reference_for_every_candidate_and_support(
     masked_taste_shock_model: Model,
-):
+) -> None:
     """The logsum retains every candidate over singleton through full supports."""
     covered: set[int] = set()
     for ranks in _RANK_VECTORS:
@@ -2495,7 +2501,7 @@ def test_taste_shock_solve_matches_reference_for_every_candidate_and_support(
 
 def test_taste_shock_simulate_matches_reference_for_every_candidate_and_support(
     masked_taste_shock_model: Model,
-):
+) -> None:
     """Seeded Gumbel-max preserves every flat index and its unshocked value."""
     covered: set[int] = set()
     for ranks in _RANK_VECTORS:
@@ -2520,7 +2526,7 @@ def test_taste_shock_simulate_matches_reference_for_every_candidate_and_support(
 
 def test_taste_shock_runtime_simulation_preserves_the_selected_flat_index(
     masked_taste_shock_runtime_model: Model,
-):
+) -> None:
     """Runtime simulation publishes the selected candidate."""
     mask = (False, False, False, False, True, False)
     ranks = (-3.0, -2.0, -1.0, 0.0, 2.0, 1.0)
@@ -2540,7 +2546,7 @@ def test_taste_shock_runtime_simulation_preserves_the_selected_flat_index(
 
 def test_taste_shock_simulation_applies_candidate_distinct_noise(
     masked_taste_shock_model: Model,
-):
+) -> None:
     """Controlled noise can move the discrete winner while preserving its Q value."""
     mask = (True, False, False, False, True, False)
     ranks = (2.0, 0.0, -1.0, -2.0, 1.5, -3.0)
@@ -2562,7 +2568,7 @@ def test_taste_shock_simulation_applies_candidate_distinct_noise(
 
 def test_collective_solve_matches_reference_over_every_nonempty_feasibility_mask(
     masked_collective_model: Model,
-):
+) -> None:
     """Collective solve selects the same strict winner for both members."""
     for ranks in _RANK_VECTORS:
         for mask in _NONEMPTY_FEASIBILITY_MASKS:
@@ -2581,7 +2587,7 @@ def test_collective_solve_matches_reference_over_every_nonempty_feasibility_mask
 @pytest.mark.slow
 def test_collective_simulate_matches_reference_over_every_nonempty_feasibility_mask(
     masked_collective_model: Model,
-):
+) -> None:
     """Collective simulation agrees on action and each member's value."""
     for ranks in _RANK_VECTORS:
         for mask in _NONEMPTY_FEASIBILITY_MASKS:
@@ -2641,7 +2647,7 @@ def _simulation_fold_masking_the_last_action_cell(
     )
 
 
-def test_masking_the_only_simulate_candidate_raises():
+def test_masking_the_only_simulate_candidate_raises() -> None:
     """Hiding the sole feasible candidate triggers the native empty-action guard."""
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(
@@ -2665,7 +2671,7 @@ def test_masking_the_only_simulate_candidate_raises():
             )
 
 
-def test_masking_one_simulate_candidate_leaves_the_others_alone():
+def test_masking_one_simulate_candidate_leaves_the_others_alone() -> None:
     """The simulate mask removes one cell, not the simulation.
 
     A broken simulate reduction could refuse every candidate and make the
@@ -2742,7 +2748,7 @@ def _solve_with_the_last_action_cell_dropped(
         )
 
 
-def test_dropping_one_candidate_is_visible_to_the_sweep():
+def test_dropping_one_candidate_is_visible_to_the_sweep() -> None:
     """Hiding one cell of the action product turns the sweep red on that cell.
 
     Without this the sweep's green would only say that nothing raised. The
@@ -2756,7 +2762,7 @@ def test_dropping_one_candidate_is_visible_to_the_sweep():
     assert bool(jnp.all(jnp.isneginf(V_arr)))
 
 
-def test_dropping_one_candidate_leaves_every_other_candidate_alone():
+def test_dropping_one_candidate_leaves_every_other_candidate_alone() -> None:
     """The mask removes one cell, not the solve.
 
     A patch that broke the search outright would publish `-inf` everywhere and
@@ -2774,7 +2780,7 @@ def test_dropping_one_candidate_leaves_every_other_candidate_alone():
     )
 
 
-def test_solve_completion_owner_is_a_literal_certificate_dependency():
+def test_solve_completion_owner_is_a_literal_certificate_dependency() -> None:
     """Authenticate the live owner in the solve transport certificate inventory."""
     assert isinstance(_parse("src/_lcm/execution/pending_work.py"), ast.Module)
 

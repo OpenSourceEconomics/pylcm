@@ -50,7 +50,11 @@ from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.processing import process_regimes
 from _lcm.regime_law import RegimeLawDeclaration, RegimeLaws
 from _lcm.solution.backward_induction import solve
-from _lcm.typing import FlatParams
+from _lcm.typing import (
+    FlatParams,
+    PeriodToRegimeToSimulationPolicy,
+    PeriodToRegimeToVArr,
+)
 from _lcm.utils.logging import get_logger
 from lcm import (
     AgeRange,
@@ -311,7 +315,11 @@ def _flat_params_for_ir_model() -> FlatParams:
 
 def _solve_ir_model(
     *, married_first: bool = False, with_value_constraints: bool = True
-):
+) -> tuple[
+    PeriodToRegimeToVArr,
+    PeriodToRegimeToSimulationPolicy,
+    dict[int, dict[RegimeName, BoolND]],
+]:
     ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
     flat_params = dict(_flat_params_for_ir_model())
     if not with_value_constraints:
@@ -361,7 +369,7 @@ _EXPECTED_D_MARRIED = np.array([False, True, False])
 _EXPECTED_V_MARRIED_UNCONSTRAINED = np.array([[3.0, 0.5], [4.0, 2.0], [6.0, 3.0]])
 
 
-def test_ir_constraints_mask_actions_and_publish_dissolution_flag():
+def test_ir_constraints_mask_actions_and_publish_dissolution_flag() -> None:
     """EKL eq. 11 end-to-end: binding IR, empty-mask dissolution, slack cells."""
     solution, _sim_policies, dissolution_flags = _solve_ir_model()
 
@@ -386,7 +394,7 @@ def test_ir_constraints_mask_actions_and_publish_dissolution_flag():
     assert "single_m" not in dissolution_flags[0]
 
 
-def test_ir_constraint_binds_relative_to_unconstrained_solve():
+def test_ir_constraint_binds_relative_to_unconstrained_solve() -> None:
     """The masked household argmax differs from the unconstrained one at w=1."""
     constrained, _, _ = _solve_ir_model()
     unconstrained, _, unconstrained_dissolution = _solve_ir_model(
@@ -405,7 +413,7 @@ def test_ir_constraint_binds_relative_to_unconstrained_solve():
     )
 
 
-def test_within_period_topological_order_overrides_dict_order():
+def test_within_period_topological_order_overrides_dict_order() -> None:
     """Married declared FIRST in the regimes dict still reads the singles' V."""
     solution, _, dissolution_flags = _solve_ir_model(married_first=True)
     np.testing.assert_allclose(
@@ -416,7 +424,7 @@ def test_within_period_topological_order_overrides_dict_order():
     )
 
 
-def test_ir_model_via_public_model_api():
+def test_ir_model_via_public_model_api() -> None:
     """The same model through public `Model(...)` + `solve()` (V values only)."""
     ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
     model = Model(
@@ -445,7 +453,7 @@ def test_ir_model_via_public_model_api():
 # Genuine projection + interpolation at off-grid projected coordinates
 
 
-def test_projection_maps_states_and_reference_v_is_interpolated_off_grid():
+def test_projection_maps_states_and_reference_v_is_interpolated_off_grid() -> None:
     """A non-identity projection lands between the reference regime's grid points.
 
     single_f: wage grid {1, 3}, V_f(w) = 2w - 1 -> {1, 5}.
@@ -607,7 +615,7 @@ def test_projection_maps_states_and_reference_v_is_interpolated_off_grid():
 # On-path -inf vs the dissolution flag (no value constraints involved)
 
 
-def test_on_path_minus_inf_value_is_not_dissolution():
+def test_on_path_minus_inf_value_is_not_dissolution() -> None:
     """-inf utility with a NONEMPTY mask is not dissolution; an EMPTY mask is.
 
     Wage grid {1, 2, 3}; the non-terminal couple has an ordinary constraint
@@ -718,7 +726,7 @@ def _minimal_collective_kwargs() -> _CollectiveKwargs:
     }
 
 
-def test_value_constraints_on_singleton_regime_are_rejected():
+def test_value_constraints_on_singleton_regime_are_rejected() -> None:
     with pytest.raises(RegimeInitializationError, match="value_constraints"):
         Regime(
             **_minimal_collective_kwargs(),
@@ -729,7 +737,7 @@ def test_value_constraints_on_singleton_regime_are_rejected():
         )
 
 
-def test_value_constraints_on_a_terminal_collective_regime_are_accepted():
+def test_value_constraints_on_a_terminal_collective_regime_are_accepted() -> None:
     """A household's last period is a participation decision like any other.
 
     The predicate reads each partner's terminal payoff as `Q_<s>`, and a cell
@@ -800,7 +808,7 @@ def _process_ir_variant(regimes: dict[str, Regime], *, laws: RegimeLaws) -> None
     )
 
 
-def test_same_period_ref_to_unknown_regime_is_rejected():
+def test_same_period_ref_to_unknown_regime_is_rejected() -> None:
     regimes = _make_ir_regimes()
     regimes["married"] = _married_with_refs(
         {
@@ -888,7 +896,7 @@ def _cycle_regimes() -> dict[str, Regime]:
     }
 
 
-def test_same_period_ref_cycle_is_rejected_at_build():
+def test_same_period_ref_cycle_is_rejected_at_build() -> None:
     """Two collective regimes reading each other's same-period V form a cycle."""
     regimes = _cycle_regimes()
     with pytest.raises(ModelInitializationError, match="form a cycle"):
@@ -905,7 +913,7 @@ class CycleRegimeId:
     terminal_b: ScalarInt
 
 
-def test_same_period_ref_cycle_between_unrequired_regimes_does_not_fail():
+def test_same_period_ref_cycle_between_unrequired_regimes_does_not_fail() -> None:
     """A reference cycle among regimes no required problem solves is not checked."""
     ir_regimes = _make_ir_regimes()
     model = Model(
@@ -926,7 +934,7 @@ def test_same_period_ref_cycle_between_unrequired_regimes_does_not_fail():
     assert model.reachability.nodes == {(0, "single_f"), (1, "single_f_terminal")}
 
 
-def test_same_period_ref_to_collective_regime_requires_member():
+def test_same_period_ref_to_collective_regime_requires_member() -> None:
     """Reading a collective reference V without naming a member is rejected."""
     regimes = _make_ir_regimes()
     # Point the f-reference at the married regime itself is a cycle; use a second
@@ -972,7 +980,7 @@ def test_same_period_ref_to_collective_regime_requires_member():
         _process_ir_variant(regimes, laws=laws)
 
 
-def test_same_period_ref_to_singleton_regime_rejects_member():
+def test_same_period_ref_to_singleton_regime_rejects_member() -> None:
     regimes = _make_ir_regimes()
     regimes["married"] = _married_with_refs(
         {
@@ -990,7 +998,7 @@ def test_same_period_ref_to_singleton_regime_rejects_member():
         _process_ir_variant(regimes, laws=_laws(regimes))
 
 
-def test_same_period_ref_projection_must_cover_reference_states():
+def test_same_period_ref_projection_must_cover_reference_states() -> None:
     regimes = _make_ir_regimes()
     regimes["married"] = _married_with_refs(
         {
@@ -1004,7 +1012,7 @@ def test_same_period_ref_projection_must_cover_reference_states():
         _process_ir_variant(regimes, laws=_laws(regimes))
 
 
-def test_same_period_ref_requires_reference_covered_in_same_periods():
+def test_same_period_ref_requires_reference_covered_in_same_periods() -> None:
     """The reference regime must be solved in every period the reader is solved."""
     regimes = _make_ir_regimes()
     # Married is solved in periods 0 AND 1, while single_f stays period-0 only.

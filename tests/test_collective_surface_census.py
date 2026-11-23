@@ -108,7 +108,7 @@ def _census() -> tuple[frozenset[str], frozenset[str]]:
     return frozenset(reaching), frozenset(not_reaching)
 
 
-def test_sources_are_read_as_utf_8_whatever_the_platform_default_is():
+def test_sources_are_read_as_utf_8_whatever_the_platform_default_is() -> None:
     """The census decodes every source as UTF-8, not as the locale's codec.
 
     House style puts literal `—`, `→` and `μ` in source files, and a platform
@@ -130,7 +130,7 @@ def test_sources_are_read_as_utf_8_whatever_the_platform_default_is():
     assert set(recorded) == {"utf-8"}
 
 
-def test_module_names_are_posix_whatever_the_platform_separator_is():
+def test_module_names_are_posix_whatever_the_platform_separator_is() -> None:
     """A module's census name uses `/`, so the pinned set is platform-independent.
 
     The pinned set is written with forward slashes. A name built from the
@@ -145,14 +145,14 @@ def test_module_names_are_posix_whatever_the_platform_separator_is():
     )
 
 
-def test_the_engine_level_set_is_exactly_the_pinned_one():
+def test_the_engine_level_set_is_exactly_the_pinned_one() -> None:
     """No module joins or leaves the below-`Model` set without saying so here."""
     _reaching, not_reaching = _census()
 
     assert not_reaching == _ENGINE_LEVEL_MODULES
 
 
-def test_most_of_the_surface_is_covered_through_the_public_route():
+def test_most_of_the_surface_is_covered_through_the_public_route() -> None:
     """The engine-level set is the minority, not the way the feature is tested."""
     reaching, not_reaching = _census()
 
@@ -171,7 +171,9 @@ def test_most_of_the_surface_is_covered_through_the_public_route():
         ("collective_utility = 1", False),
     ],
 )
-def test_the_census_reads_syntax_not_text(*, source: PythonSource, expected: bool):
+def test_the_census_reads_syntax_not_text(
+    *, source: PythonSource, expected: bool
+) -> None:
     """The detector answers both ways, so a negative census means something."""
     assert _exercises_the_surface(source) is expected
 
@@ -187,7 +189,7 @@ def test_the_census_reads_syntax_not_text(*, source: PythonSource, expected: boo
 )
 def test_reaching_model_is_a_call_not_a_mention(
     *, source: PythonSource, expected: bool
-):
+) -> None:
     """A public route calls `Model`."""
     assert _reaches_public_model(source=source) is expected
 
@@ -284,7 +286,7 @@ _ENGINE_VOCABULARY_MODULES = frozenset(
 )
 
 
-def test_no_test_writes_what_a_declaration_decomposes_to():
+def test_no_test_writes_what_a_declaration_decomposes_to() -> None:
     """There is one way to write a collective regime, and it is the economics.
 
     A test that constructed the decomposed form would be pinning a second
@@ -305,7 +307,7 @@ def test_no_test_writes_what_a_declaration_decomposes_to():
     assert offenders == {}
 
 
-def test_the_engine_vocabulary_exemption_is_still_earned():
+def test_the_engine_vocabulary_exemption_is_still_earned() -> None:
     """An exempt module that stops writing the engine's vocabulary leaves the list."""
     unearned = sorted(
         module

@@ -88,7 +88,7 @@ def _couple(
     )
 
 
-def test_a_none_body_takes_the_utility_already_present_under_its_name():
+def test_a_none_body_takes_the_utility_already_present_under_its_name() -> None:
     """`utilities={"f": None}` means f's utility is the regime's `utility_f`."""
     regime = _couple(
         functions={
@@ -100,7 +100,7 @@ def test_a_none_body_takes_the_utility_already_present_under_its_name():
     assert regime.decomposed_functions["utility_f"] is _u_f
 
 
-def test_a_none_body_may_still_arrive_from_the_model_level():
+def test_a_none_body_may_still_arrive_from_the_model_level() -> None:
     """A delegated body supplied by the model reaches the household that named it.
 
     Completeness is a property of the merged regime, so a bare `Regime` whose
@@ -131,7 +131,7 @@ def test_a_none_body_may_still_arrive_from_the_model_level():
     assert model.user_regimes["couple"].decomposed_functions["utility_f"] is _u_f
 
 
-def test_a_none_body_with_nothing_to_delegate_to_is_refused_by_name():
+def test_a_none_body_with_nothing_to_delegate_to_is_refused_by_name() -> None:
     """A member left undeclared everywhere names the entry that is missing."""
     couple = _couple(
         functions={"utility": CollectiveUtility(utilities={"f": None, "m": _u_m})}
@@ -155,7 +155,7 @@ def test_a_none_body_with_nothing_to_delegate_to_is_refused_by_name():
         )
 
 
-def test_the_utilities_keys_fix_the_member_order():
+def test_the_utilities_keys_fix_the_member_order() -> None:
     """Member order follows the declaration, not the `functions` order."""
     regime = _couple(
         functions={
@@ -167,7 +167,7 @@ def test_the_utilities_keys_fix_the_member_order():
     assert regime.member_axis == ("f", "m")
 
 
-def test_a_members_utility_may_differ_between_the_two_phases():
+def test_a_members_utility_may_differ_between_the_two_phases() -> None:
     """A `Phased` body declares what solve prices and what simulation realizes.
 
     Written as the FIRST entry: the declaration's own annotation is what has to
@@ -182,13 +182,13 @@ def test_a_members_utility_may_differ_between_the_two_phases():
     assert regime.decomposed_functions["utility_m"] is body
 
 
-def test_a_household_with_no_members_is_refused_where_it_is_written():
+def test_a_household_with_no_members_is_refused_where_it_is_written() -> None:
     """`utilities={}` names no household, and the declaration says so itself."""
     with pytest.raises(RegimeInitializationError, match=r"(?i)at least one member"):
         CollectiveUtility(utilities={})
 
 
-def test_a_phased_member_utility_solves_and_simulates_its_own_variant():
+def test_a_phased_member_utility_solves_and_simulates_its_own_variant() -> None:
     """The two phases of a `Phased` body reach the engine as declared."""
     couple = _couple(
         functions={
@@ -237,17 +237,17 @@ def _single(*, utility: UserFunction) -> Regime:
     )
 
 
-def test_a_plain_utility_declares_the_single_member_self():
+def test_a_plain_utility_declares_the_single_member_self() -> None:
     """A regime with a plain utility function has exactly one member, `"self"`."""
     assert _single(utility=_u_f).members == ("self",)
 
 
-def test_a_plain_utility_declares_no_member_axis():
+def test_a_plain_utility_declares_no_member_axis() -> None:
     """A regime with a plain utility function carries no member axis."""
     assert _single(utility=_u_f).member_axis is None
 
 
-def test_a_household_declares_its_utilities_keys_as_members():
+def test_a_household_declares_its_utilities_keys_as_members() -> None:
     """A household's members are its `utilities` keys, in the order written."""
     regime = _couple(
         functions={"utility": CollectiveUtility(utilities={"m": _u_m, "f": _u_f})}
@@ -256,7 +256,7 @@ def test_a_household_declares_its_utilities_keys_as_members():
     assert regime.members == ("m", "f")
 
 
-def test_a_households_member_axis_is_its_members():
+def test_a_households_member_axis_is_its_members() -> None:
     """A household's member axis names its members in the order written."""
     regime = _couple(
         functions={"utility": CollectiveUtility(utilities={"m": _u_m, "f": _u_f})}
@@ -265,7 +265,7 @@ def test_a_households_member_axis_is_its_members():
     assert regime.member_axis == ("m", "f")
 
 
-def test_a_household_member_named_self_is_refused_where_it_is_written():
+def test_a_household_member_named_self_is_refused_where_it_is_written() -> None:
     """`"self"` is the single member of a plain utility, so no household names it."""
     with pytest.raises(RegimeInitializationError, match=r"'self'"):
         CollectiveUtility(utilities={"self": _u_f, "m": _u_m})

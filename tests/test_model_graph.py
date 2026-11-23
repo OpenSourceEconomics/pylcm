@@ -225,7 +225,9 @@ def test_scalar_probability_mapping_cannot_extend_declared_graph() -> None:
         )
 
 
-def test_scalar_probability_mapping_naming_fewer_targets_than_supplied_is_refused():
+def test_scalar_probability_mapping_naming_fewer_targets_than_supplied_is_refused() -> (
+    None
+):
     """Reject supplied `targets` that a per-target law does not name.
 
     A per-target law names its destinations, so a supplied destination without a

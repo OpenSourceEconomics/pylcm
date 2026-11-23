@@ -22,6 +22,8 @@ from lcm import (
     categorical,
     fixed_transition,
 )
+from lcm.result import SimulationResult
+from lcm.solver_api import SolutionResult
 from lcm.transition import StochasticTransition
 from lcm.typing import (
     BoolND,
@@ -265,7 +267,7 @@ def _solve_and_simulate(
     gate_open: bool,
     action_sensitive: bool = False,
     split_context: bool = False,
-):
+) -> tuple[SolutionResult, SimulationResult]:
     model = _make_model(
         gate_open=gate_open,
         action_sensitive=action_sensitive,
@@ -293,7 +295,7 @@ def _leaf_paths(*, node: _TemplateNode, prefix: tuple[str, ...] = ()) -> set[str
     return {"__".join(prefix)}
 
 
-def test_period_and_age_are_engine_context_not_gated_edge_parameters():
+def test_period_and_age_are_engine_context_not_gated_edge_parameters() -> None:
     """Gated-edge context names do not create user parameters."""
     model = _make_model(gate_open=True)
 
@@ -302,7 +304,7 @@ def test_period_and_age_are_engine_context_not_gated_edge_parameters():
     }
 
 
-def test_gate_and_gate_reference_use_target_period_context():
+def test_gate_and_gate_reference_use_target_period_context() -> None:
     """Solve and simulation evaluate an open gate in the target period."""
     solution, simulation = _solve_and_simulate(gate_open=True)
 
@@ -314,7 +316,7 @@ def test_gate_and_gate_reference_use_target_period_context():
     assert bool(simulation.raw_results["target"][1].in_regime.all())
 
 
-def test_period_only_gate_and_age_only_projections_receive_context():
+def test_period_only_gate_and_age_only_projections_receive_context() -> None:
     """Each context name is bound when edge callables declare it alone."""
     solution, simulation = _solve_and_simulate(
         gate_open=True,
@@ -329,7 +331,7 @@ def test_period_only_gate_and_age_only_projections_receive_context():
     assert bool(simulation.raw_results["target"][1].in_regime.all())
 
 
-def test_fallback_projection_uses_target_period_context():
+def test_fallback_projection_uses_target_period_context() -> None:
     """A closed gate projects fallback states in the target period."""
     solution, simulation = _solve_and_simulate(gate_open=False)
 
@@ -347,7 +349,7 @@ def test_fallback_projection_uses_target_period_context():
     )
 
 
-def test_simulation_prices_source_actions_with_target_period_context():
+def test_simulation_prices_source_actions_with_target_period_context() -> None:
     """Simulation's source action responds to the target-period gated fold."""
     solution, simulation = _solve_and_simulate(
         gate_open=True,

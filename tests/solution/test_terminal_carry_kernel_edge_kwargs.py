@@ -93,7 +93,7 @@ class MixedRegimeId:
     saver_terminal: ScalarInt
 
 
-def test_gated_edge_source_solves_beside_an_endogenous_grid_regime():
+def test_gated_edge_source_solves_beside_an_endogenous_grid_regime() -> None:
     """A gated-edge source keeps its value when the model also runs `EGM`.
 
     The endogenous-grid branch neither transitions into nor references the
@@ -120,7 +120,7 @@ def test_gated_edge_source_solves_beside_an_endogenous_grid_regime():
     )
 
 
-def test_gated_edge_source_solves_on_its_own():
+def test_gated_edge_source_solves_on_its_own() -> None:
     """The gated-edge branch alone folds the move value against the stay value.
 
     Fixes the value the mixed model has to reproduce, and shows the gate is

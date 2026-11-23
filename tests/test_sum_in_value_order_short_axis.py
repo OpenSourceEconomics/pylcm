@@ -29,12 +29,12 @@ def _sort_primitive_count(*, n_entries: int) -> int:
 
 
 @pytest.mark.parametrize("n_entries", [1, 2])
-def test_a_short_permutable_axis_carries_no_sort(n_entries: int):
+def test_a_short_permutable_axis_carries_no_sort(n_entries: int) -> None:
     """One or two entries reduce without a sort primitive in the jaxpr."""
     assert _sort_primitive_count(n_entries=n_entries) == 0
 
 
-def test_a_longer_permutable_axis_still_sorts():
+def test_a_longer_permutable_axis_still_sorts() -> None:
     """Three entries keep the sort — the check above is not vacuous."""
     assert _sort_primitive_count(n_entries=3) > 0
 
@@ -49,7 +49,9 @@ def test_a_longer_permutable_axis_still_sorts():
         (float("inf"), -1.0),
     ],
 )
-def test_a_two_entry_sum_is_identical_in_either_order(pair: tuple[float, float]):
+def test_a_two_entry_sum_is_identical_in_either_order(
+    pair: tuple[float, float],
+) -> None:
     """Swapping two contributions cannot move a bit, so the sort buys nothing."""
     first, second = pair
     forward = sum_in_value_order(values=jnp.asarray([first, second]), axis=0)
@@ -57,7 +59,7 @@ def test_a_two_entry_sum_is_identical_in_either_order(pair: tuple[float, float])
     assert np.asarray(forward).tobytes() == np.asarray(reverse).tobytes()
 
 
-def test_a_short_axis_agrees_with_the_sorted_reduction():
+def test_a_short_axis_agrees_with_the_sorted_reduction() -> None:
     """The short-circuit publishes exactly what the sorted reduction published."""
     values = jnp.asarray([[3.0, -1.0], [2.5, 7.25]])
     got = sum_in_value_order(values=values, axis=0)
@@ -66,6 +68,8 @@ def test_a_short_axis_agrees_with_the_sorted_reduction():
 
 
 @pytest.mark.parametrize("entries", [(jnp.nan, 1.0), (1.0, jnp.nan)])
-def test_a_nan_entry_poisons_the_sum_from_either_side(entries: tuple[float, float]):
+def test_a_nan_entry_poisons_the_sum_from_either_side(
+    entries: tuple[float, float],
+) -> None:
     """A NaN reaches the result whichever side of the two-entry axis it sits on."""
     assert bool(jnp.isnan(sum_in_value_order(values=jnp.asarray(entries), axis=0)))

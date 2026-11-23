@@ -28,13 +28,17 @@ import numpy as np
 import pytest
 
 from _lcm.simulation.simulate import simulate
+from _lcm.typing import PeriodToRegimeToVArr
 from _lcm.utils.logging import get_logger
 from lcm.exceptions import InvalidInitialConditionsError
+from lcm.result import SimulationResult
 from tests.regime_building.test_collective_regime_simulate import _solve_dissolution
 from tests.simulation.test_runtime_helpers import bind_eager_simulation
 
 
-def _simulate_dissolution_cohort(*, own_member: str | None):
+def _simulate_dissolution_cohort(
+    *, own_member: str | None
+) -> tuple[SimulationResult, PeriodToRegimeToVArr]:
     """Simulate the 3-subject dissolution miniature with one role for every row."""
     ages, regimes, regime_names_to_ids, flat_params, solution = _solve_dissolution()
     conditions = {
@@ -59,7 +63,7 @@ def _simulate_dissolution_cohort(*, own_member: str | None):
     ), solution
 
 
-def test_synthetic_dissolution_reverts_to_own_role_single_regime_for_m():
+def test_synthetic_dissolution_reverts_to_own_role_single_regime_for_m() -> None:
     """`own_member="m"` routes the dissolved row to `single_m`, not `single_f`.
 
     D=True only at wage=2 (hand-verified in `test_gated_edges_collective_solve.py`
@@ -92,7 +96,7 @@ def test_synthetic_dissolution_reverts_to_own_role_single_regime_for_m():
     )
 
 
-def test_synthetic_dissolution_without_a_role_is_refused():
+def test_synthetic_dissolution_without_a_role_is_refused() -> None:
     """Simulating this cohort without a role is refused, not defaulted.
 
     `married`'s legs are declared in member order `("f", "m")`, and
@@ -104,7 +108,7 @@ def test_synthetic_dissolution_without_a_role_is_refused():
         _simulate_dissolution_cohort(own_member=None)
 
 
-def test_two_independent_synthetic_populations_each_revert_correctly():
+def test_two_independent_synthetic_populations_each_revert_correctly() -> None:
     """A women-role run and a men-role run each dissolution-revert to their own single.
 
     Both runs share the identical input population (same wages, same solved

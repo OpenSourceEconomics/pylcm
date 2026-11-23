@@ -23,6 +23,8 @@ the opposite. A flow closed under simulate therefore chooses `switch`; a collect
 flow built from the solve pool would choose `stay`.
 """
 
+from collections.abc import Mapping
+
 import jax.numpy as jnp
 import pandas as pd
 
@@ -35,7 +37,8 @@ from lcm import (
     Regime,
     categorical,
 )
-from lcm.typing import DiscreteAction, FloatND, ScalarInt
+from lcm.regime import FunctionEntry, StateTransitionEntry
+from lcm.typing import DiscreteAction, FloatND, FunctionName, ScalarInt, StateName
 
 
 @categorical(ordered=True)
@@ -96,7 +99,11 @@ PARAMS = {"discount_factor": 0.95}
 IC = pd.DataFrame({"regime_name": "live", "age": 0, "stock": ["bad"] * 8})
 
 
-def _simulate(*, live_functions, state_transitions) -> pd.DataFrame:
+def _simulate(
+    *,
+    live_functions: Mapping[FunctionName, FunctionEntry],
+    state_transitions: Mapping[StateName, StateTransitionEntry],
+) -> pd.DataFrame:
     live = Regime(
         state_transitions=state_transitions,
         states={"stock": DiscreteGrid(category_class=Stock)},
@@ -134,7 +141,7 @@ def _simulate(*, live_functions, state_transitions) -> pd.DataFrame:
     )
 
 
-def test_collective_flow_reads_the_simulate_variant_of_a_phased_chosen_stock():
+def test_collective_flow_reads_the_simulate_variant_of_a_phased_chosen_stock() -> None:
     """A `Phased` `new_stock` read by a member utility uses the SIMULATE variant.
 
     A collective branch that built the flow from the SOLVE pool while its helpers came
@@ -159,7 +166,7 @@ def test_collective_flow_reads_the_simulate_variant_of_a_phased_chosen_stock():
     )
 
 
-def test_collective_flow_reads_the_simulate_variant_of_a_phased_helper():
+def test_collective_flow_reads_the_simulate_variant_of_a_phased_helper() -> None:
     """The collective flow is closed: a `Phased` HELPER under `new_stock` is simulate.
 
     Complements the chosen-stock case: here `new_stock` is a single bare function and

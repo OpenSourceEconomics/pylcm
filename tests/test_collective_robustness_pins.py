@@ -64,7 +64,7 @@ class GateRegimeId:
     fallback: ScalarInt  # code 2
 
 
-def test_regime_weights_keep_the_values_they_were_declared_with():
+def test_regime_weights_keep_the_values_they_were_declared_with() -> None:
     """A regime's Pareto weights are its own; the declaring dict cannot rewrite them."""
     declared_weights = {"f": 0.25, "m": 0.75}
     regime = Regime(
@@ -84,14 +84,14 @@ def test_regime_weights_keep_the_values_they_were_declared_with():
     assert objective.weights == {"f": 0.25, "m": 0.75}
 
 
-def test_mock_regime_carries_no_gated_edges():
+def test_mock_regime_carries_no_gated_edges() -> None:
     """A regime-shaped object carries no gated edges: they live on the source's law."""
     assert not hasattr(MockRegime(), "gated_edges")
 
 
 def test_saved_collective_result_lacking_member_metadata_names_the_field(
     tmp_path: Path,
-):
+) -> None:
     """Reading a saved collective result fails by naming the metadata it lacks.
 
     A result written without the per-regime member mapping cannot say
@@ -112,7 +112,7 @@ def test_saved_collective_result_lacking_member_metadata_names_the_field(
         SimulationResult.load(directory=directory).to_dataframe()
 
 
-def test_gather_at_the_household_argmax_over_no_action_axis_keeps_every_cell():
+def test_gather_at_the_household_argmax_over_no_action_axis_keeps_every_cell() -> None:
     """With no action axis to reduce, every cell's value is its own gathered value."""
     q = jnp.asarray([[1.0, 2.0], [3.0, 4.0]])
     argmax_flat, _ = argmax_and_max(a=q, axis=(), initial=-jnp.inf)
@@ -122,7 +122,7 @@ def test_gather_at_the_household_argmax_over_no_action_axis_keeps_every_cell():
     assert_array_equal(gathered, q)
 
 
-def test_non_integral_categorical_coordinate_is_rejected():
+def test_non_integral_categorical_coordinate_is_rejected() -> None:
     """A value between two categories is not a state, so reading V there fails.
 
     A genuine categorical axis holds one value per category, and a coordinate
@@ -135,7 +135,7 @@ def test_non_integral_categorical_coordinate_is_rejected():
         find_coordinate(health=jnp.asarray(0.5))
 
 
-def test_participation_reading_a_dissolution_flag_is_rejected_at_build():
+def test_participation_reading_a_dissolution_flag_is_rejected_at_build() -> None:
     """A participation check reading `D_target` is rejected while it is declared.
 
     No regime publishes a dissolution flag for a participation check to read, and no
@@ -152,7 +152,7 @@ def test_participation_reading_a_dissolution_flag_is_rejected_at_build():
         )
 
 
-def test_the_route_type_is_exported_and_the_edge_type_is_not():
+def test_the_route_type_is_exported_and_the_edge_type_is_not() -> None:
     """A route is written; an edge is derived, so only the route is public.
 
     The comparison needs the defining module's object on one side, which is why

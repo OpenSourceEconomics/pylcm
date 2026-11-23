@@ -28,6 +28,7 @@ from lcm import (
     Transition,
     categorical,
 )
+from lcm.result import SimulationResult
 from lcm.transition import StochasticTransition
 from lcm.typing import BoolND, DiscreteAction, DiscreteState, FloatND, ScalarInt
 
@@ -197,7 +198,7 @@ def _simulate(
     coordinates: tuple[int, ...],
     roles: tuple[str, ...],
     runtime_checks: bool,
-):
+) -> SimulationResult:
     solution = model.solve(params=_PARAMS, log_level="off")
     role_ids = model.member_names_to_ids
     return model.simulate(
@@ -219,7 +220,7 @@ def _simulate(
     )
 
 
-def _period_one_panel(*, result) -> list[tuple[int, str, int, int]]:
+def _period_one_panel(*, result: SimulationResult) -> list[tuple[int, str, int, int]]:
     panel = result.to_dataframe(use_categorical_codes=True)
     rows = panel.loc[panel["period"] == 1].sort_values("subject_id")
     return list(
@@ -238,7 +239,7 @@ def _period_one_panel(*, result) -> list[tuple[int, str, int, int]]:
 @pytest.mark.parametrize("runtime_checks", [False, True], ids=["unchecked", "checked"])
 def test_each_leg_projects_from_the_original_target_state(
     *, member_order: tuple[str, ...], enable_jit: bool, runtime_checks: bool
-):
+) -> None:
     model = _build_model(
         member_order=member_order,
         regime_order=("source", "a", "b"),
@@ -271,7 +272,7 @@ def test_declaration_and_row_orders_leave_the_panel_unchanged(
     regime_order: tuple[str, ...],
     self_destination: int,
     reverse_rows: bool,
-):
+) -> None:
     coordinates = _COORDINATES[::-1] if reverse_rows else _COORDINATES
     roles = _ROLES[::-1] if reverse_rows else _ROLES
     model = _build_model(

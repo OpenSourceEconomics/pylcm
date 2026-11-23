@@ -34,37 +34,37 @@ def _period_data(*, V_arr: jnp.ndarray) -> PeriodRegimeSimulationData:
     )
 
 
-def test_a_singleton_regimes_value_array_is_one_value_per_subject():
+def test_a_singleton_regimes_value_array_is_one_value_per_subject() -> None:
     """A rank-1 `V_arr` with one entry per subject is accepted."""
     data = _period_data(V_arr=jnp.zeros(_N_SUBJECTS))
     assert data.V_arr.shape == (_N_SUBJECTS,)
 
 
-def test_a_collective_regimes_value_array_carries_a_trailing_role_axis():
+def test_a_collective_regimes_value_array_carries_a_trailing_role_axis() -> None:
     """A rank-2 `V_arr` of subjects by members is accepted."""
     data = _period_data(V_arr=jnp.zeros((_N_SUBJECTS, _N_MEMBERS)))
     assert data.V_arr.shape == (_N_SUBJECTS, _N_MEMBERS)
 
 
-def test_a_value_array_with_more_than_one_trailing_axis_is_rejected():
+def test_a_value_array_with_more_than_one_trailing_axis_is_rejected() -> None:
     """A rank-3 `V_arr` names no axis a simulated record has."""
     with pytest.raises(ValueError, match="V_arr"):
         _period_data(V_arr=jnp.zeros((_N_SUBJECTS, _N_MEMBERS, 3)))
 
 
-def test_a_value_array_whose_leading_axis_is_not_subjects_is_rejected():
+def test_a_value_array_whose_leading_axis_is_not_subjects_is_rejected() -> None:
     """`V_arr`'s first axis must match the per-subject `in_regime` mask."""
     with pytest.raises(ValueError, match="V_arr"):
         _period_data(V_arr=jnp.zeros(_N_SUBJECTS + 1))
 
 
-def test_a_scalar_value_array_is_rejected():
+def test_a_scalar_value_array_is_rejected() -> None:
     """A 0-d `V_arr` carries no subject axis at all."""
     with pytest.raises(ValueError, match="V_arr"):
         _period_data(V_arr=jnp.zeros(()))
 
 
-def test_the_record_still_populates_every_declared_field():
+def test_the_record_still_populates_every_declared_field() -> None:
     """The guard reads only fields the dataclass declares, so it cannot go stale."""
     names = {field.name for field in dataclasses.fields(PeriodRegimeSimulationData)}
     assert {"V_arr", "in_regime"} <= names

@@ -13,6 +13,7 @@ value from the same cells:
   them, since the compiler vectorizes the read differently per width.
 """
 
+from collections.abc import Callable
 from types import MappingProxyType
 
 import jax
@@ -50,7 +51,7 @@ NEXT_WEALTH = jnp.array([0.3, 2.0, 3.7, -0.5, 4.6, 1.0])
 NEXT_HEALTH = jnp.array([-0.2, 1.0, 0.9, 0.1, -1.3, 0.0])
 
 
-def _base_interpolator():
+def _base_interpolator() -> Callable[..., FloatND]:
     return get_V_interpolator(
         v_interpolation_info=V_INTERPOLATION_INFO,
         state_prefix="next_",
@@ -68,7 +69,7 @@ def _member_values(n_members: int) -> FloatND:
     return jnp.asarray(values, dtype=jnp.result_type(float))
 
 
-def _read(*, interpolator, next_V_arr: FloatND) -> FloatND:
+def _read(*, interpolator: Callable[..., FloatND], next_V_arr: FloatND) -> FloatND:
     """Read at every landing, one landing per call as the continuation does."""
     return jax.vmap(
         lambda work, wealth, health: interpolator(
@@ -112,7 +113,7 @@ def _traced_read(n_members: int) -> ClosedJaxpr:
     )(_member_values(n_members))
 
 
-def test_collective_read_gathers_as_often_for_three_members_as_for_one():
+def test_collective_read_gathers_as_often_for_three_members_as_for_one() -> None:
     """The landing is located once; every member is read from its cells."""
     one = _traced_read(1)
     three = _traced_read(3)
@@ -124,7 +125,7 @@ def test_collective_read_gathers_as_often_for_three_members_as_for_one():
 @pytest.mark.parametrize("n_members", [1, 2, 3])
 def test_each_member_reads_its_slice_as_a_singleton(
     n_members: int,
-):
+) -> None:
     """Member `s`'s value is the singleton read of `next_V_arr[..., s]`."""
     next_V_arr = _member_values(n_members)
     base = _base_interpolator()

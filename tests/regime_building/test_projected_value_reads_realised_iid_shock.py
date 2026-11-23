@@ -29,6 +29,7 @@ from typing import Literal
 
 import jax.numpy as jnp
 import numpy as np
+import pandas as pd
 import pytest
 
 from lcm import (
@@ -47,6 +48,7 @@ from lcm import (
     categorical,
 )
 from lcm.exceptions import RegimeInitializationError
+from lcm.solver_api import SolutionResult
 from lcm.transition import StochasticTransition
 from lcm.typing import (
     BoolND,
@@ -202,13 +204,15 @@ _PARAMS = {
 }
 
 
-def _solve(*, enable_jit: bool, spelling: Spelling):
+def _solve(*, enable_jit: bool, spelling: Spelling) -> SolutionResult:
     return _build_model(enable_jit=enable_jit, spelling=spelling).solve(
         params=_PARAMS, log_level="off"
     )
 
 
-def _simulate(*, enable_jit: bool, spelling: Spelling, n_subjects: int = 64):
+def _simulate(
+    *, enable_jit: bool, spelling: Spelling, n_subjects: int = 64
+) -> pd.DataFrame:
     model = _build_model(enable_jit=enable_jit, spelling=spelling)
     solution = model.solve(params=_PARAMS, log_level="off")
     result = model.simulate(
@@ -235,10 +239,10 @@ _SPELLING = pytest.mark.parametrize("spelling", ["value", "code"])
 @_ENABLE_JIT
 def test_value_constraint_reads_the_node_in_solve(
     *, enable_jit: bool, spelling: Spelling
-):
+) -> None:
     """At every node the couple works: the wife holds the oracle plus the bracket."""
     solution = _solve(enable_jit=enable_jit, spelling=spelling)
-    V = np.asarray(solution.values.materialize()[1]["married"])
+    V = np.asarray(solution.values.materialize()[1]["married"])  # ty: ignore[unresolved-attribute]
     expected = np.stack([_oracle(_NODES) + _BRACKET, np.zeros(5)], axis=-1)
     np.testing.assert_allclose(V, expected, atol=1e-4)
 
@@ -247,7 +251,7 @@ def test_value_constraint_reads_the_node_in_solve(
 @_ENABLE_JIT
 def test_simulated_couples_read_their_realised_shock(
     *, enable_jit: bool, spelling: Spelling
-):
+) -> None:
     """Every simulated couple works, so each read matched its own realised shock."""
     panel = _simulate(enable_jit=enable_jit, spelling=spelling).query(
         "regime_name == 'married'"
@@ -256,7 +260,7 @@ def test_simulated_couples_read_their_realised_shock(
     assert panel["work"].tolist() == ["on"] * len(panel)
 
 
-def test_continuous_draws_are_off_node_and_span_both_signs():
+def test_continuous_draws_are_off_node_and_span_both_signs() -> None:
     """The draws are realised values, not nodes, of both signs."""
     shocks = _simulate(enable_jit=True, spelling="value")["wage_shock_f"].to_numpy()
     assert (shocks < -0.5).any()
@@ -264,7 +268,7 @@ def test_continuous_draws_are_off_node_and_span_both_signs():
     assert not np.isin(shocks, _NODES).any()
 
 
-def test_node_draws_reach_every_node():
+def test_node_draws_reach_every_node() -> None:
     """Node draws land on each of the five nodes, so every position is read."""
     shocks = _simulate(enable_jit=True, spelling="code", n_subjects=512)[
         "wage_shock_f"
@@ -272,7 +276,7 @@ def test_node_draws_reach_every_node():
     np.testing.assert_array_equal(np.unique(shocks), _NODES)
 
 
-def test_a_code_read_of_a_process_drawn_between_nodes_is_refused():
+def test_a_code_read_of_a_process_drawn_between_nodes_is_refused() -> None:
     """A continuously drawn shock has no node position in simulation."""
     with pytest.raises(RegimeInitializationError, match="simulated_draws='nodes'"):
         _build_model(enable_jit=False, spelling="code", draws="continuous")

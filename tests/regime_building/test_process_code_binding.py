@@ -45,6 +45,7 @@ from lcm.typing import (
     DiscreteAction,
     DiscreteState,
     FloatND,
+    RegimeName,
     ScalarInt,
     UserFunction,
 )
@@ -90,7 +91,9 @@ class LandingRegime:
     fallback: ScalarInt
 
 
-def _process(*, mu: float, n_points: int = 5, sigma: float = 1.0, n_std: float = 2.0):
+def _process(
+    *, mu: float, n_points: int = 5, sigma: float = 1.0, n_std: float = 2.0
+) -> NormalIIDProcess:
     return NormalIIDProcess(
         n_points=n_points,
         gauss_hermite=False,
@@ -101,7 +104,7 @@ def _process(*, mu: float, n_points: int = 5, sigma: float = 1.0, n_std: float =
     )
 
 
-def _cubic(x):
+def _cubic[T: (float, FloatND)](x: T) -> T:
     return x * x * x + 2.0 * x + 5.0
 
 
@@ -190,7 +193,9 @@ def _normal_node_weights() -> tuple[float, ...]:
     return tuple(right - left for left, right in pairwise(cuts))
 
 
-def _route_values(*, reverse: bool, enable_jit: bool):
+def _route_values(
+    *, reverse: bool, enable_jit: bool
+) -> Mapping[int, Mapping[RegimeName, FloatND]]:
     params = {
         "young": {"koopmans_aggregator": {"discount_factor": 1.0}},
         "married": {},
@@ -204,7 +209,7 @@ def _route_values(*, reverse: bool, enable_jit: bool):
 @pytest.mark.parametrize("enable_jit", [False, True], ids=["eager", "jit"])
 def test_constraint_projection_reads_the_declaring_regimes_nodes(
     *, reverse: bool, enable_jit: bool
-):
+) -> None:
     """At every married node, only work is feasible, worth `cubic(z) + 0.25`."""
     values = _route_values(reverse=reverse, enable_jit=enable_jit)
     expected = np.array([[_cubic(z) + BRACKET, 0.0] for z in NODES])
@@ -215,7 +220,7 @@ def test_constraint_projection_reads_the_declaring_regimes_nodes(
 @pytest.mark.parametrize("enable_jit", [False, True], ids=["eager", "jit"])
 def test_gate_and_fallback_read_the_landing_targets_nodes(
     *, reverse: bool, enable_jit: bool
-):
+) -> None:
     """The gate opens at target positions 3 and 4, where it adds the surplus."""
     values = _route_values(reverse=reverse, enable_jit=enable_jit)
     expected = sum(
@@ -227,7 +232,7 @@ def test_gate_and_fallback_read_the_landing_targets_nodes(
     )
 
 
-def test_process_code_is_not_a_parameter_of_a_projection_or_gate():
+def test_process_code_is_not_a_parameter_of_a_projection_or_gate() -> None:
     model = _route_model(reverse=False, enable_jit=False)
     assert "z_code" not in str(model.get_params_template())
 
@@ -258,7 +263,7 @@ _GRID_CASES = [
 @pytest.mark.parametrize("enable_jit", [False, True], ids=["eager", "jit"])
 def test_one_callable_in_two_regimes_reads_each_regimes_positions(
     *, case: tuple[int, float, float, float, float], reverse: bool, enable_jit: bool
-):
+) -> None:
     count, mean_a, mean_b, sigma, n_std = case
     entries = [
         (
@@ -300,7 +305,7 @@ def _zero_utility() -> FloatND:
     return jnp.asarray(0.0)
 
 
-def test_an_age_specialized_reader_of_a_process_code_is_refused():
+def test_an_age_specialized_reader_of_a_process_code_is_refused() -> None:
     """An age-specialized function cannot read a process state's node position."""
     with pytest.raises(RegimeInitializationError, match=r"age-specialized.*z_code"):
         Model(
@@ -328,7 +333,7 @@ def test_an_age_specialized_reader_of_a_process_code_is_refused():
         )
 
 
-def test_a_foreign_continuous_process_does_not_refuse_a_local_code_read():
+def test_a_foreign_continuous_process_does_not_refuse_a_local_code_read() -> None:
     """Regime `b` draws `z` continuously but never reads its position."""
     continuous = NormalIIDProcess(
         n_points=5, gauss_hermite=False, mu=0.0, sigma=1.0, n_std=2.0
@@ -351,7 +356,7 @@ def test_a_foreign_continuous_process_does_not_refuse_a_local_code_read():
     np.testing.assert_array_equal(values.values[0]["a"], np.arange(5, dtype=float))
 
 
-def test_phased_process_on_different_nodes_is_refused():
+def test_phased_process_on_different_nodes_is_refused() -> None:
     with pytest.raises(
         RegimeInitializationError, match="solve and simulate laws differ"
     ):
@@ -460,20 +465,20 @@ def _terminal_couple_values(model: Model) -> np.ndarray:
 @pytest.mark.parametrize("enable_jit", [False, True], ids=["eager", "jit"])
 def test_fixed_process_law_reads_the_same_positions_wherever_it_is_fixed(
     *, binding: Literal["constructor", "model_fixed"], enable_jit: bool
-):
+) -> None:
     """A law fixed by `fixed_params` means what the constructor value means."""
     model = _couple_model(binding=binding, enable_jit=enable_jit)
     expected = np.column_stack((_COUPLE_NODES + _SURPLUS, np.zeros(3)))
     np.testing.assert_array_equal(_terminal_couple_values(model), expected)
 
 
-def test_model_fixed_process_law_value_projection():
+def test_model_fixed_process_law_value_projection() -> None:
     model = _couple_model(binding="model_fixed", enable_jit=False, read_code=False)
     expected = np.column_stack((_COUPLE_NODES + _SURPLUS, np.zeros(3)))
     np.testing.assert_array_equal(_terminal_couple_values(model), expected)
 
 
-def test_runtime_process_law_refuses_a_code_projection():
+def test_runtime_process_law_refuses_a_code_projection() -> None:
     with pytest.raises(
         RegimeInitializationError,
         match=r"z_code.*fix the parameters of `z` at construction",
@@ -500,7 +505,7 @@ def _only_model(functions: Mapping[str, UserFunction]) -> Model:
     )
 
 
-def test_a_function_named_like_a_process_code_is_refused():
+def test_a_function_named_like_a_process_code_is_refused() -> None:
     with pytest.raises(
         RegimeInitializationError,
         match=r"'z_code' in regime 'only'.*collides with the code",
@@ -513,12 +518,12 @@ def test_a_function_named_like_a_process_code_is_refused():
         )
 
 
-def test_utility_process_code_is_not_a_parameter():
+def test_utility_process_code_is_not_a_parameter() -> None:
     template = _only_model({"utility": _position_payoff}).get_params_template()
     assert "z_code" not in str(template)
 
 
-def test_utility_process_code_reads_positions():
+def test_utility_process_code_reads_positions() -> None:
     model = _only_model({"utility": _position_payoff})
     values = model.solve(params={"only": {}}, log_level="off").values
     np.testing.assert_array_equal(values[0]["only"], np.arange(5, dtype=float))
@@ -624,7 +629,7 @@ def _landing_source_values(*, model: Model, runtime: bool) -> np.ndarray:
     return np.asarray(solution.values[0]["source"])
 
 
-def test_gate_reads_the_landing_value_of_a_fixed_process():
+def test_gate_reads_the_landing_value_of_a_fixed_process() -> None:
     """The gate opens only at node 1, so `E[V] = (1 + 1 + 5) / 3`."""
     model = _landing_model(runtime=False, edge="gate-read")
     np.testing.assert_allclose(
@@ -635,18 +640,18 @@ def test_gate_reads_the_landing_value_of_a_fixed_process():
     )
 
 
-def test_gate_reading_a_runtime_process_value_at_its_landing_is_refused():
+def test_gate_reading_a_runtime_process_value_at_its_landing_is_refused() -> None:
     with pytest.raises(ModelInitializationError, match="parameterized at runtime"):
         _landing_model(runtime=True, edge="gate-read")
 
 
-def test_participation_landing_in_a_runtime_process_is_refused():
+def test_participation_landing_in_a_runtime_process_is_refused() -> None:
     """A participation check enumerates the landed process by node; runtime has none."""
     with pytest.raises(ModelInitializationError, match="parameterized at runtime"):
         _landing_model(runtime=True, edge="participation")
 
 
-def test_gate_not_reading_a_runtime_process_keeps_it_supported():
+def test_gate_not_reading_a_runtime_process_keeps_it_supported() -> None:
     """The gate refusal is scoped to the process it reads; open, so E[V] = 5."""
     model = _landing_model(runtime=True, edge="gate-no-read")
     np.testing.assert_allclose(

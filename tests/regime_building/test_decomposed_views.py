@@ -54,21 +54,21 @@ _REFERENCE = ProjectedRegimeValue(
 )
 
 
-def test_a_collective_utility_becomes_one_entry_per_member():
+def test_a_collective_utility_becomes_one_entry_per_member() -> None:
     """Each member's body lands under the name the engine reads."""
     raw = {"utility": CollectiveUtility(utilities={"f": _u_f, "m": _u_m})}
 
     assert dict(decompose_functions(raw)) == {"utility_f": _u_f, "utility_m": _u_m}
 
 
-def test_the_declaration_object_never_reaches_the_engine():
+def test_the_declaration_object_never_reaches_the_engine() -> None:
     """Nothing under `"utility"` survives decomposition."""
     raw = {"utility": CollectiveUtility(utilities={"f": _u_f, "m": _u_m})}
 
     assert "utility" not in decompose_functions(raw)
 
 
-def test_a_delegated_body_is_taken_from_the_entry_it_delegates_to():
+def test_a_delegated_body_is_taken_from_the_entry_it_delegates_to() -> None:
     """A `None` body means the regime's own `utility_<s>` is that utility."""
     raw = {
         "utility": CollectiveUtility(utilities={"f": None, "m": _u_m}),
@@ -78,7 +78,7 @@ def test_a_delegated_body_is_taken_from_the_entry_it_delegates_to():
     assert decompose_functions(raw)["utility_f"] is _u_f
 
 
-def test_member_entries_follow_the_declaration_not_the_mapping():
+def test_member_entries_follow_the_declaration_not_the_mapping() -> None:
     """The household's own order survives however the entries arrived."""
     raw = {
         "utility_m": _u_m,
@@ -88,14 +88,14 @@ def test_member_entries_follow_the_declaration_not_the_mapping():
     assert list(decompose_functions(raw)) == ["utility_f", "utility_m"]
 
 
-def test_a_regime_declaring_no_household_is_left_alone():
+def test_a_regime_declaring_no_household_is_left_alone() -> None:
     """A singleton regime's functions pass through unchanged."""
     raw = {"utility": _u_f, "helper": _budget}
 
     assert decompose_functions(raw) is raw
 
 
-def test_decomposing_functions_twice_changes_nothing():
+def test_decomposing_functions_twice_changes_nothing() -> None:
     """The transformation is idempotent, so a second engine stage is safe."""
     raw = {"utility": CollectiveUtility(utilities={"f": _u_f, "m": _u_m})}
     once = decompose_functions(raw)
@@ -103,7 +103,7 @@ def test_decomposing_functions_twice_changes_nothing():
     assert dict(decompose_functions(once)) == dict(once)
 
 
-def test_a_phased_member_body_reaches_the_engine_whole():
+def test_a_phased_member_body_reaches_the_engine_whole() -> None:
     """The phase split happens downstream, so the container survives intact."""
     body = Phased(solve=_u_m, simulate=_u_m_simulate)
     raw = {"utility": CollectiveUtility(utilities={"m": body, "f": _u_f})}
@@ -111,7 +111,7 @@ def test_a_phased_member_body_reaches_the_engine_whole():
     assert decompose_functions(raw)["utility_m"] is body
 
 
-def test_a_value_dependent_constraint_leaves_the_ordinary_constraints():
+def test_a_value_dependent_constraint_leaves_the_ordinary_constraints() -> None:
     """What stays is what is evaluated before the action values exist."""
     raw = {
         "budget": _budget,
@@ -123,7 +123,7 @@ def test_a_value_dependent_constraint_leaves_the_ordinary_constraints():
     assert dict(decompose_constraints(raw)) == {"budget": _budget}
 
 
-def test_decomposing_constraints_twice_changes_nothing():
+def test_decomposing_constraints_twice_changes_nothing() -> None:
     """The transformation is idempotent."""
     raw = {
         "budget": _budget,

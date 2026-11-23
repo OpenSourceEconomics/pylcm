@@ -7,6 +7,7 @@ functions. Only a direct read of a `next_` name stays refused.
 """
 
 from collections.abc import Callable, Mapping
+from typing import Literal
 
 import jax
 import jax.numpy as jnp
@@ -240,8 +241,8 @@ HELPER_CASES = [
 
 @pytest.mark.parametrize(("helper_name", "helper_depth"), HELPER_CASES)
 def test_gate_argument_is_a_free_parameter_whatever_the_source_calls_a_helper(
-    *, helper_name, helper_depth
-):
+    *, helper_name: str, helper_depth: int
+) -> None:
     model = build_model(helper_name=helper_name, helper_depth=helper_depth)
     assert leaf_paths(tree=model.get_params_template()["edges"]) == {
         ("src", "target", "predicate", "h")
@@ -257,8 +258,8 @@ def test_gate_argument_is_a_free_parameter_whatever_the_source_calls_a_helper(
     ],
 )
 def test_gated_values_follow_the_gate_threshold(
-    *, helper_name, helper_depth, threshold, terminal_value
-):
+    *, helper_name: str, helper_depth: int, threshold: float, terminal_value: float
+) -> None:
     """Source values are `1+z` plus the discounted continuation, exactly.
 
     With discount 1/2 and terminal values 1 or 1/2 every value is a dyadic
@@ -290,7 +291,7 @@ def test_gated_values_follow_the_gate_threshold(
     )
 
 
-def test_gate_reading_a_next_name_directly_is_refused():
+def test_gate_reading_a_next_name_directly_is_refused() -> None:
     with pytest.raises(InvalidNameError, match="next_y"):
         build_model(helper_name="h", helper_depth=1, gate=gate_reading_next_y)
 
@@ -315,8 +316,12 @@ def test_gate_reading_a_next_name_directly_is_refused():
     ],
 )
 def test_projection_argument_is_a_free_parameter_whatever_the_source_calls_a_helper(
-    *, helper_name, helper_depth, role, leaf
-):
+    *,
+    helper_name: str,
+    helper_depth: int,
+    role: Literal["reference", "route"],
+    leaf: set[tuple[str, ...]],
+) -> None:
     """A projection runs on the target too; its `h` is its own parameter."""
     model = build_model(
         helper_name=helper_name,
@@ -331,7 +336,9 @@ def test_projection_argument_is_a_free_parameter_whatever_the_source_calls_a_hel
 
 
 @pytest.mark.parametrize("role", ["reference", "route"])
-def test_projection_reading_a_next_name_directly_is_refused(role):
+def test_projection_reading_a_next_name_directly_is_refused(
+    role: Literal["reference", "route"],
+) -> None:
     with pytest.raises(InvalidNameError, match="next_y"):
         build_model(
             helper_name="source_helper",
@@ -346,13 +353,13 @@ def test_projection_reading_a_next_name_directly_is_refused(role):
         )
 
 
-def test_edge_law_reading_a_next_name_through_a_source_helper_is_refused():
+def test_edge_law_reading_a_next_name_through_a_source_helper_is_refused() -> None:
     """The law runs on the source, before any target law; it may not reach `next_y`."""
     with pytest.raises(InvalidNameError, match="next_y"):
         build_model(helper_name="h", helper_depth=1, law=always_through_h)
 
 
-def test_gate_parameter_beside_an_unknown_leaf_is_refused():
+def test_gate_parameter_beside_an_unknown_leaf_is_refused() -> None:
     model = build_model(helper_name="source_helper", helper_depth=1)
     with pytest.raises(InvalidParamsError, match="extra"):
         model.solve(

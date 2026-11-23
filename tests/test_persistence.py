@@ -16,6 +16,7 @@ from _lcm import variables as _variables
 from _lcm.engine import PeriodRegimeSimulationData
 from _lcm.persistence import snapshots as _snapshot_module
 from _lcm.persistence.io import _get_platform
+from _lcm.utils.logging import LogLevel
 from lcm import (
     AgeGrid,
     DeterministicTransition,
@@ -33,7 +34,14 @@ from lcm.persistence import load_legacy_solution, load_solution, save_solution
 from lcm.regime import Regime as UserRegime
 from lcm.result import SimulationResult as _PublicSimulationResult
 from lcm.solver_api import SolutionResult, ValueStore
-from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
+from lcm.typing import (
+    ContinuousAction,
+    ContinuousState,
+    FloatND,
+    ScalarInt,
+    UserInitialConditions,
+    UserParams,
+)
 
 
 def test_forward_refs_bound_after_import() -> None:
@@ -59,7 +67,7 @@ def _retired_utility(wealth: ContinuousState) -> FloatND:
     return jnp.log(wealth)
 
 
-def _build_tiny_model(*, enable_jit: bool):
+def _build_tiny_model(*, enable_jit: bool) -> tuple[Model, UserParams]:
     def utility(*, consumption: ContinuousAction, wealth: ContinuousState) -> FloatND:
         return jnp.log(consumption + wealth)
 
@@ -151,7 +159,7 @@ def test_solve_publishes_only_periods_that_hold_a_demanded_node(
     assert set(solution.values) == {0, 1, 2}
 
 
-def _initial_conditions():
+def _initial_conditions() -> UserInitialConditions:
     return {
         "wealth": jnp.array([2.0, 3.0]),
         "age": jnp.array([0.0, 0.0]),
@@ -191,7 +199,7 @@ def _save_cpu_checkpoint(
         period_to_regime_to_V_arr=MappingProxyType(
             {0: MappingProxyType({"working": values})}
         ),
-        ages=model.ages,
+        ages=model.ages,  # ty: ignore[invalid-argument-type]
         simulation_output_dtypes={},
     )
     result._subject_rows = subject_rows
@@ -275,12 +283,12 @@ def test_a_checkpoint_with_an_unavailable_saved_device_is_refused(
 
 
 @pytest.fixture
-def model_and_params():
+def model_and_params() -> tuple[Model, UserParams]:
     return _build_tiny_model(enable_jit=False)
 
 
 @pytest.fixture
-def solved(model_and_params):
+def solved(model_and_params: tuple[Model, UserParams]) -> SolutionResult:
     model, params = model_and_params
     return model.solve(params=params, log_level="debug")
 
@@ -288,7 +296,9 @@ def solved(model_and_params):
 # -- save_solution / load_solution ---------------------------------------------------
 
 
-def test_save_and_load_solution_roundtrip(*, tmp_path, solved):
+def test_save_and_load_solution_roundtrip(
+    *, tmp_path: Path, solved: SolutionResult
+) -> None:
     path = tmp_path / "solution.lcm"
     save_solution(solution=solved, path=path)
 
@@ -306,7 +316,9 @@ def test_save_and_load_solution_roundtrip(*, tmp_path, solved):
             )
 
 
-def test_save_solution_missing_parent_dir(*, tmp_path, solved):
+def test_save_solution_missing_parent_dir(
+    *, tmp_path: Path, solved: SolutionResult
+) -> None:
     path = tmp_path / "nonexistent" / "solution.lcm"
     with pytest.raises(FileNotFoundError):
         save_solution(solution=solved, path=path)
@@ -343,7 +355,9 @@ def test_legacy_value_only_archive_requires_the_explicit_migration_reader(
 # -- debug snapshots ------------------------------------------------------------------
 
 
-def test_solve_debug_persists_snapshot(*, tmp_path, model_and_params):
+def test_solve_debug_persists_snapshot(
+    *, tmp_path: Path, model_and_params: tuple[Model, UserParams]
+) -> None:
     model, params = model_and_params
     period_to_regime_to_V_arr = model.solve(
         params=params, log_level="debug", log_path=tmp_path
@@ -363,7 +377,9 @@ def test_solve_debug_persists_snapshot(*, tmp_path, model_and_params):
             )
 
 
-def test_simulate_debug_persists_snapshot(*, tmp_path, model_and_params):
+def test_simulate_debug_persists_snapshot(
+    *, tmp_path: Path, model_and_params: tuple[Model, UserParams]
+) -> None:
     model, params = model_and_params
     period_to_regime_to_V_arr = model.solve(params=params, log_level="debug")
 
@@ -384,8 +400,11 @@ def test_simulate_debug_persists_snapshot(*, tmp_path, model_and_params):
 
 
 def test_simulate_debug_persists_snapshot_from_a_loaded_solution(
-    *, tmp_path, model_and_params, solved
-):
+    *,
+    tmp_path: Path,
+    model_and_params: tuple[Model, UserParams],
+    solved: SolutionResult,
+) -> None:
     """A simulation consuming a solution read back from disk still writes its snapshot.
 
     A loaded solution's value store reads lazily from the archive and holds handles
@@ -413,7 +432,9 @@ def test_simulate_debug_persists_snapshot_from_a_loaded_solution(
     assert snapshot.result.solution is None
 
 
-def test_simulate_with_solve_debug_persists_snapshot(*, tmp_path, model_and_params):
+def test_simulate_with_solve_debug_persists_snapshot(
+    *, tmp_path: Path, model_and_params: tuple[Model, UserParams]
+) -> None:
     model, params = model_and_params
     model.simulate(
         params=params,
@@ -431,7 +452,7 @@ def test_simulate_with_solve_debug_persists_snapshot(*, tmp_path, model_and_para
     assert snapshot.result is not None
 
 
-def test_simulate_debug_persists_snapshot_with_compiled_runtime(tmp_path):
+def test_simulate_debug_persists_snapshot_with_compiled_runtime(tmp_path: Path) -> None:
     """Debug snapshots serialize canonical regimes after compiled runtime dispatch."""
     model, params = _build_tiny_model(enable_jit=True)
     model.simulate(
@@ -451,8 +472,12 @@ def test_simulate_debug_persists_snapshot_with_compiled_runtime(tmp_path):
 @pytest.mark.parametrize("log_level", ["off", "warning", "progress"])
 @pytest.mark.parametrize("runtime_checks", [False, True])
 def test_solve_no_persistence_when_not_debug(
-    *, tmp_path, model_and_params, log_level, runtime_checks
-):
+    *,
+    tmp_path: Path,
+    model_and_params: tuple[Model, UserParams],
+    log_level: LogLevel,
+    runtime_checks: bool,
+) -> None:
     model, params = model_and_params
     model.solve(
         params=params,
@@ -464,7 +489,9 @@ def test_solve_no_persistence_when_not_debug(
     assert len(list(tmp_path.iterdir())) == 0
 
 
-def test_simulate_no_persistence_when_not_debug(*, tmp_path, model_and_params):
+def test_simulate_no_persistence_when_not_debug(
+    *, tmp_path: Path, model_and_params: tuple[Model, UserParams]
+) -> None:
     model, params = model_and_params
     period_to_regime_to_V_arr = model.solve(params=params, log_level="debug")
 
@@ -479,7 +506,9 @@ def test_simulate_no_persistence_when_not_debug(*, tmp_path, model_and_params):
     assert len(list(tmp_path.iterdir())) == 0
 
 
-def test_log_keep_n_latest_deletes_old_snapshots(*, tmp_path, model_and_params):
+def test_log_keep_n_latest_deletes_old_snapshots(
+    *, tmp_path: Path, model_and_params: tuple[Model, UserParams]
+) -> None:
     model, params = model_and_params
 
     for _ in range(5):
@@ -494,7 +523,9 @@ def test_log_keep_n_latest_deletes_old_snapshots(*, tmp_path, model_and_params):
     assert dirs[2].name == "solve_snapshot_005"
 
 
-def test_snapshot_contains_environment_files(*, tmp_path, model_and_params):
+def test_snapshot_contains_environment_files(
+    *, tmp_path: Path, model_and_params: tuple[Model, UserParams]
+) -> None:
     model, params = model_and_params
     model.solve(params=params, log_level="debug", log_path=tmp_path)
 
@@ -514,7 +545,9 @@ def test_snapshot_contains_environment_files(*, tmp_path, model_and_params):
     assert "pixi install --frozen" in reproduce
 
 
-def test_snapshot_contains_pixi_lock_and_pyproject(*, tmp_path, model_and_params):
+def test_snapshot_contains_pixi_lock_and_pyproject(
+    *, tmp_path: Path, model_and_params: tuple[Model, UserParams]
+) -> None:
     model, params = model_and_params
     model.solve(params=params, log_level="debug", log_path=tmp_path)
 
@@ -524,7 +557,9 @@ def test_snapshot_contains_pixi_lock_and_pyproject(*, tmp_path, model_and_params
     assert (snap_dir / "pixi.lock").exists()
 
 
-def test_snapshot_contains_h5_arrays(*, tmp_path, model_and_params):
+def test_snapshot_contains_h5_arrays(
+    *, tmp_path: Path, model_and_params: tuple[Model, UserParams]
+) -> None:
     model, params = model_and_params
     model.solve(params=params, log_level="debug", log_path=tmp_path)
 
@@ -535,8 +570,11 @@ def test_snapshot_contains_h5_arrays(*, tmp_path, model_and_params):
 
 
 def test_load_snapshot_warns_on_platform_mismatch(
-    *, tmp_path, model_and_params, caplog
-):
+    *,
+    tmp_path: Path,
+    model_and_params: tuple[Model, UserParams],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     model, params = model_and_params
     model.solve(params=params, log_level="debug", log_path=tmp_path)
 
@@ -550,7 +588,9 @@ def test_load_snapshot_warns_on_platform_mismatch(
     assert "environment may not match" in caplog.text
 
 
-def test_load_snapshot_with_exclude(*, tmp_path, model_and_params):
+def test_load_snapshot_with_exclude(
+    *, tmp_path: Path, model_and_params: tuple[Model, UserParams]
+) -> None:
     model, params = model_and_params
     model.solve(params=params, log_level="debug", log_path=tmp_path)
 
@@ -563,7 +603,9 @@ def test_load_snapshot_with_exclude(*, tmp_path, model_and_params):
     assert snapshot.params is not None
 
 
-def test_solve_snapshot_round_trip(*, tmp_path, model_and_params):
+def test_solve_snapshot_round_trip(
+    *, tmp_path: Path, model_and_params: tuple[Model, UserParams]
+) -> None:
     model, params = model_and_params
     period_to_regime_to_V_arr = model.solve(
         params=params, log_level="debug", log_path=tmp_path

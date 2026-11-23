@@ -59,6 +59,7 @@ from lcm.typing import (
     Period,
     ScalarInt,
     UserFunction,
+    UserParams,
 )
 from tests.collective_fixtures import DISCOUNT_FACTOR, Work
 from tests.conftest import DECIMAL_PRECISION
@@ -69,7 +70,7 @@ type TemplateNode = str | Mapping[str, TemplateNode]
 _EDGE = ("single_f", "married_terminal")
 
 
-def test_gate_scalar_parameter_is_a_model_parameter():
+def test_gate_scalar_parameter_is_a_model_parameter() -> None:
     """A scalar the gate predicate reads is listed and used at the supplied value.
 
     A marriage premium of 1.5 lifts both partners' married values above their
@@ -98,7 +99,7 @@ def test_gate_scalar_parameter_is_a_model_parameter():
     )
 
 
-def test_gate_ref_projection_scalar_parameter_is_a_model_parameter():
+def test_gate_ref_projection_scalar_parameter_is_a_model_parameter() -> None:
     """A scalar a gate reference's projection reads is listed and used.
 
     A weight of 0.5 has the husband value his single life halfway between the
@@ -133,7 +134,7 @@ def test_gate_ref_projection_scalar_parameter_is_a_model_parameter():
     )
 
 
-def test_leg_fallback_projection_scalar_parameter_is_a_model_parameter():
+def test_leg_fallback_projection_scalar_parameter_is_a_model_parameter() -> None:
     """A scalar a route fallback's projection reads is listed and used.
 
     The husband refuses at the high wage, so the wife falls back on her single
@@ -166,7 +167,7 @@ def test_leg_fallback_projection_scalar_parameter_is_a_model_parameter():
     )
 
 
-def test_gated_edge_template_holds_each_declaration_path():
+def test_gated_edge_template_holds_each_declaration_path() -> None:
     """Every edge callable's parameter sits at its declaration path, nowhere else."""
     model = _build_model(
         probability=_marry_at_meeting_rate,
@@ -188,7 +189,7 @@ def test_gated_edge_template_holds_each_declaration_path():
     }
 
 
-def test_source_regime_template_holds_no_edge_entry():
+def test_source_regime_template_holds_no_edge_entry() -> None:
     """The source regime's branch names no target, law or gate entry."""
     model = _build_model(
         probability=_marry_at_meeting_rate,
@@ -201,7 +202,7 @@ def test_source_regime_template_holds_no_edge_entry():
     )
 
 
-def test_phased_fallback_template_nests_each_phase_under_its_name():
+def test_phased_fallback_template_nests_each_phase_under_its_name() -> None:
     """A `Phased` fallback's two projections each own the parameters they read."""
     model = _build_model(
         gate=_consent_gate,
@@ -235,7 +236,9 @@ def test_phased_fallback_template_nests_each_phase_under_its_name():
         pytest.param(None, id="edges-source-level"),
     ],
 )
-def test_gated_edge_values_do_not_depend_on_the_level_supplying_them(edge_branch):
+def test_gated_edge_values_do_not_depend_on_the_level_supplying_them(
+    edge_branch: UserParams | None,
+) -> None:
     """The edge callables read the same values from every level, so solve agrees.
 
     The reference supplies each value at the model level. The declaration path
@@ -270,7 +273,7 @@ def test_gated_edge_values_do_not_depend_on_the_level_supplying_them(edge_branch
     )
 
 
-def test_engine_edge_namespace_holds_exactly_the_template_slots():
+def test_engine_edge_namespace_holds_exactly_the_template_slots() -> None:
     """`flat_params["edges"][source]` keys are the template's edge paths, joined."""
     model = _build_model(
         probability=_marry_at_meeting_rate,
@@ -295,7 +298,7 @@ def test_engine_edge_namespace_holds_exactly_the_template_slots():
     }
 
 
-def test_source_regime_flat_params_hold_no_edge_key():
+def test_source_regime_flat_params_hold_no_edge_key() -> None:
     """The source regime's flat params carry its own functions' parameters only."""
     model = _build_model(
         probability=_marry_at_meeting_rate,
@@ -315,7 +318,7 @@ def test_source_regime_flat_params_hold_no_edge_key():
     assert not [key for key in flat_params["single_f"] if "married_terminal" in key]
 
 
-def test_simulate_binder_names_the_user_path_of_a_missing_edge_slot():
+def test_simulate_binder_names_the_user_path_of_a_missing_edge_slot() -> None:
     """A gate parameter missing from the edge namespace is reported by its path."""
     qname = "married_terminal__predicate__marriage_premium"
     provenance = EdgeArgProvenance(
@@ -355,7 +358,9 @@ def test_simulate_binder_names_the_user_path_of_a_missing_edge_slot():
         pytest.param({"marriage_premium": 1.5}, id="source-regime-level"),
     ],
 )
-def test_edge_parameter_under_the_source_regime_names_the_edges_path(regime_params):
+def test_edge_parameter_under_the_source_regime_names_the_edges_path(
+    regime_params: UserParams,
+) -> None:
     """A gate parameter written under the source regime is refused with its path."""
     model = _build_model(
         gate=_consent_gate_with_premium,
@@ -373,7 +378,7 @@ def test_edge_parameter_under_the_source_regime_names_the_edges_path(regime_para
         )
 
 
-def test_series_valued_gate_parameter_converts_and_solves():
+def test_series_valued_gate_parameter_converts_and_solves() -> None:
     """An age-indexed Series for a gate parameter is read at the fold's age.
 
     The premium is 1.5 at every age, so the solution equals the scalar case:

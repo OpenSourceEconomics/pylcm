@@ -392,7 +392,9 @@ class Mutation:
 def remove_kwonly_arg(
     *, func_name: FunctionName, arg_name: ReferenceName
 ) -> Callable[..., None]:
-    def mutate(*, q_tree, p_tree, others):
+    def mutate(
+        *, q_tree: ast.Module, p_tree: ast.Module, others: dict[str, ast.Module]
+    ) -> None:
         _ = p_tree, others
         func = functions(q_tree)[func_name]
         index = next(
@@ -407,7 +409,9 @@ def remove_kwonly_arg(
 def remove_call_keyword(
     *, callee: str, keyword: str, occurrence: int = 0
 ) -> Callable[..., None]:
-    def mutate(*, q_tree, p_tree, others):
+    def mutate(
+        *, q_tree: ast.Module, p_tree: ast.Module, others: dict[str, ast.Module]
+    ) -> None:
         _ = q_tree, others
         call = call_named(node=p_tree, name=callee)[occurrence]
         before = len(call.keywords)
@@ -424,7 +428,9 @@ def replace_assignment(
     func_name: FunctionName = "get_Q_and_F_collective",
     occurrence: int = 0,
 ) -> Callable[..., None]:
-    def mutate(*, q_tree, p_tree, others):
+    def mutate(
+        *, q_tree: ast.Module, p_tree: ast.Module, others: dict[str, ast.Module]
+    ) -> None:
         _ = p_tree, others
         func = functions(q_tree)[func_name]
         replacement = ast.parse(expression, mode="eval").body
@@ -450,7 +456,9 @@ def replace_call_keyword_in(
     behaviour it changes.
     """
 
-    def mutate(*, q_tree, p_tree, others):
+    def mutate(
+        *, q_tree: ast.Module, p_tree: ast.Module, others: dict[str, ast.Module]
+    ) -> None:
         _ = p_tree, others
         func = functions(q_tree)[func_name]
         call = call_named(node=func, name=callee)[0]
@@ -471,7 +479,9 @@ def replace_call_keyword_in_collective(
     )
 
 
-def drop_age_specialization(*, q_tree, p_tree, others):
+def drop_age_specialization(
+    *, q_tree: ast.Module, p_tree: ast.Module, others: dict[str, ast.Module]
+) -> None:
     _ = q_tree, others
     func = functions(p_tree)["_build_Q_and_F_per_period"]
     call = call_named(node=func, name="get_Q_and_F_collective")[0]
@@ -479,7 +489,9 @@ def drop_age_specialization(*, q_tree, p_tree, others):
     kw.value = ast.Name(id="continuation_functions", ctx=ast.Load())
 
 
-def inject_hidden_builder(*, q_tree, p_tree, others):
+def inject_hidden_builder(
+    *, q_tree: ast.Module, p_tree: ast.Module, others: dict[str, ast.Module]
+) -> None:
     _ = q_tree, p_tree
     tree = others["_lcm/regime_building/max_Q_over_a.py"]
     branch = next(
@@ -613,7 +625,7 @@ def mutation_catalog() -> list[Mutation]:
 
 
 @pytest.fixture(scope="module")
-def production_trees():
+def production_trees() -> tuple[ast.Module, ast.Module, dict[str, ast.Module]]:
     return (
         parse(SRC / "_lcm/regime_building/Q_and_F.py"),
         parse(SRC / "_lcm/regime_building/processing.py"),
@@ -621,7 +633,9 @@ def production_trees():
     )
 
 
-def test_the_production_source_satisfies_the_class_invariant(production_trees):
+def test_the_production_source_satisfies_the_class_invariant(
+    production_trees: tuple[ast.Module, ast.Module, dict[str, ast.Module]],
+) -> None:
     """Guard the guard: the invariant must hold on the unmodified tree."""
     q_tree, p_tree, others = production_trees
     check_class_invariant(q_tree=q_tree, processing_tree=p_tree, other_trees=others)
@@ -631,11 +645,13 @@ def test_the_production_source_satisfies_the_class_invariant(production_trees):
     "mutation", mutation_catalog(), ids=lambda mutation: mutation.name
 )
 def test_every_member_of_the_counterexample_class_is_rejected(
-    *, mutation, production_trees
-):
+    *,
+    mutation: Mutation,
+    production_trees: tuple[ast.Module, ast.Module, dict[str, ast.Module]],
+) -> None:
     """Each mutation is one way a collective path can drop or misroute a phase role."""
     q_tree, p_tree, others = (copy.deepcopy(tree) for tree in production_trees)
     mutation.apply(q_tree=q_tree, p_tree=p_tree, others=others)
 
     with pytest.raises((AssertionError, KeyError, StopIteration)):
-        check_class_invariant(q_tree=q_tree, processing_tree=p_tree, other_trees=others)
+        check_class_invariant(q_tree=q_tree, processing_tree=p_tree, other_trees=others)  # ty: ignore[invalid-argument-type]

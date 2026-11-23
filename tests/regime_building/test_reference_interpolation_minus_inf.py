@@ -38,7 +38,7 @@ from lcm import LinSpacedGrid, NormalIIDProcess
 _V_ARR = jnp.array([0.0, 5.0, -jnp.inf, 15.0, 20.0])
 
 
-def test_map_coordinates_exact_node_next_to_minus_inf_is_finite():
+def test_map_coordinates_exact_node_next_to_minus_inf_is_finite() -> None:
     """Kernel-level: querying exactly at an on-grid finite node stays finite."""
     # Coordinate 1.0 is exactly node index 1 (value 5.0); its zero-weight
     # neighbor (index 2) is -inf.
@@ -47,7 +47,7 @@ def test_map_coordinates_exact_node_next_to_minus_inf_is_finite():
     np.testing.assert_allclose(float(result), 5.0)
 
 
-def test_map_coordinates_pure_minus_inf_node_stays_minus_inf():
+def test_map_coordinates_pure_minus_inf_node_stays_minus_inf() -> None:
     # Querying exactly at the -inf node itself (weight 1.0 there, 0.0 on its
     # finite neighbor) must still read -inf, not annihilate it: the guard
     # only zeroes a ZERO-weight term, never a genuine positive-weight -inf.
@@ -55,7 +55,7 @@ def test_map_coordinates_pure_minus_inf_node_stays_minus_inf():
     assert float(result) == -jnp.inf
 
 
-def test_ordinary_interpolator_mode_finite_node_next_to_minus_inf_is_finite():
+def test_ordinary_interpolator_mode_finite_node_next_to_minus_inf_is_finite() -> None:
     """Same scenario through the production `get_V_interpolator` entry point.
 
     This is the reader used whenever a same-period reference / fallback V has
@@ -84,7 +84,9 @@ def test_ordinary_interpolator_mode_finite_node_next_to_minus_inf_is_finite():
     assert bool(Q_own >= result) is True
 
 
-def test_process_aware_interpolator_mode_finite_node_next_to_minus_inf_is_finite():
+def test_process_aware_interpolator_mode_finite_node_next_to_minus_inf_is_finite() -> (
+    None
+):
     """Same scenario for a non-folded process axis (`interpolate_process_axes=True`).
 
     This is the mode a same-period reference / gate / fallback reader
@@ -121,7 +123,7 @@ def test_process_aware_interpolator_mode_finite_node_next_to_minus_inf_is_finite
 @pytest.mark.parametrize("coordinate", [1.5, 2.5])
 def test_genuine_fractional_neighbor_of_minus_inf_still_propagates_minus_inf(
     coordinate: float,
-):
+) -> None:
     """Sanity: a GENUINE (non-zero-weight) mixture with `-inf` still is `-inf`.
 
     The zero-safe guard must not silently mask an actual positive-mass

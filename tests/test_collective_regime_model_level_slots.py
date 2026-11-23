@@ -22,7 +22,7 @@ from tests.collective_fixtures import (
 from tests.conftest import DECIMAL_PRECISION
 
 
-def test_collective_utilities_may_come_from_the_model_level_slot():
+def test_collective_utilities_may_come_from_the_model_level_slot() -> None:
     """Per-member utilities declared on the model solve the collective regime.
 
     Model-level `functions=` accepts exactly what the regime slot accepts, so a
@@ -51,7 +51,7 @@ def test_collective_utilities_may_come_from_the_model_level_slot():
     aaae(solution[0]["couple"], TWO_MEMBER_V_PERIOD_0, decimal=DECIMAL_PRECISION)
 
 
-def test_collective_discrete_action_may_come_from_the_model_level_slot():
+def test_collective_discrete_action_may_come_from_the_model_level_slot() -> None:
     """A discrete action declared on the model solves the collective regime.
 
     The household argmax runs over the discrete-action product, and the action

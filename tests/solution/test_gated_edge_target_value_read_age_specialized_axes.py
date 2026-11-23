@@ -25,6 +25,7 @@ from lcm import (
     Transition,
     categorical,
 )
+from lcm.result import SimulationResult
 from lcm.typing import BoolND, ContinuousState, FloatND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
 
@@ -95,7 +96,7 @@ def test_gated_continuation_is_unchanged_by_which_grid_the_routing_gate_reads() 
     )
 
 
-def _simulate(model: Model):
+def _simulate(model: Model) -> SimulationResult:
     """Solve, then simulate two savers from age 0."""
     solution = model.solve(
         params={"discount_factor": _DISCOUNT_FACTOR}, log_level="off"

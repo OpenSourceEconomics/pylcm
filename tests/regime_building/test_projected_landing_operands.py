@@ -37,6 +37,7 @@ from lcm.typing import (
     ContinuousState,
     FloatND,
     ScalarInt,
+    UserFunction,
 )
 from tests.conftest import DECIMAL_PRECISION
 
@@ -86,7 +87,7 @@ def _closed_above_one(x: ContinuousState) -> BoolND:
     return x > 1.0
 
 
-def _projection_model(projection) -> Model:
+def _projection_model(projection: UserFunction) -> Model:
     """A source whose gate is closed at its landing, so the fallback pays.
 
     The fallback regime is worth `V(x) = x`, so with `projection = x**2` the
@@ -144,7 +145,7 @@ _PROJECTION_PARAMS = {
 }
 
 
-def test_a_curved_fallback_projection_is_priced_where_the_source_lands():
+def test_a_curved_fallback_projection_is_priced_where_the_source_lands() -> None:
     """The closed branch is worth `V(pi(landing))`, not the pullback's blend.
 
     Source utility is `-2 * saving` and the action lands at `0.5`, so the
@@ -160,7 +161,7 @@ def test_a_curved_fallback_projection_is_priced_where_the_source_lands():
     )
 
 
-def test_the_simulated_row_lands_where_the_solved_value_priced_it():
+def test_the_simulated_row_lands_where_the_solved_value_priced_it() -> None:
     """Simulation realizes `pi(0.5) = 0.25`, the coordinate solve was priced at.
 
     Solve and simulation evaluate one operator, so the state the row arrives in
@@ -187,7 +188,7 @@ def test_the_simulated_row_lands_where_the_solved_value_priced_it():
     aaae(landed["x"].to_numpy(), [0.25], decimal=DECIMAL_PRECISION)
 
 
-def test_an_affine_projection_is_left_exactly_where_it_was():
+def test_an_affine_projection_is_left_exactly_where_it_was() -> None:
     """A straight projection commutes with interpolation, so nothing moves.
 
     With `pi(x) = x / 2` the pullback surface `[0, 0.5, 1]` interpolates at

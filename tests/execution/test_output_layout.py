@@ -1,6 +1,7 @@
 """Tests for logical-output layout planning."""
 
 import functools
+from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import cast
@@ -18,6 +19,9 @@ from _lcm.execution.core_program import (
 )
 from _lcm.execution.output_layout import (
     VALUE,
+    OutputRole,
+    OutputRoleLeaf,
+    OutputRoleTree,
     PlannedCore,
     ResolvedOutputLayout,
     StateAxesLeading,
@@ -31,13 +35,14 @@ from _lcm.solution.backward_induction import (
     _lowering_key,
     _publish_kernel_value,
 )
+from lcm.typing import BoolND, FloatND
 
 
 @dataclass(frozen=True)
 class _GraphKernel:
     program: CoreProgram
 
-    def core_programs(self):
+    def core_programs(self) -> Mapping[str, CoreProgram]:
         return {"main": self.program}
 
 
@@ -58,7 +63,7 @@ def _wrong_output_sharding() -> jax.NamedSharding:
     return jax.NamedSharding(mesh, jax.P())
 
 
-def _template(*, collective: bool = False):
+def _template(*, collective: bool = False) -> FloatND:
     shape = (len(jax.devices()), 3, 2) if collective else (len(jax.devices()), 3)
     spec = jax.P("kind", None, None) if collective else jax.P("kind", None)
     return jax.device_put(
@@ -76,7 +81,7 @@ def _state_mask() -> StateAxesLeading:
     )
 
 
-def test_resolver_maps_singleton_value_to_exact_template_sharding():
+def test_resolver_maps_singleton_value_to_exact_template_sharding() -> None:
     template = _template()
 
     resolved = resolve_output_layout(
@@ -94,7 +99,7 @@ def test_resolver_maps_singleton_value_to_exact_template_sharding():
     assert resolved.expected_leaves[0].shape == template.shape
 
 
-def test_resolver_drops_collective_member_axis_from_state_leaf_spec():
+def test_resolver_drops_collective_member_axis_from_state_leaf_spec() -> None:
     template = _template(collective=True)
 
     resolved = resolve_output_layout(
@@ -109,7 +114,7 @@ def test_resolver_drops_collective_member_axis_from_state_leaf_spec():
         "tuple[jax.NamedSharding, jax.NamedSharding]", resolved.out_shardings
     )
     assert value_sharding == template.sharding
-    assert mask_sharding.mesh == template.sharding.mesh
+    assert mask_sharding.mesh == template.sharding.mesh  # ty: ignore[unresolved-attribute]
     assert mask_sharding.spec == jax.P("kind", None)
     assert resolved.expected_value_shape == template.shape
     assert resolved.expected_value_dtype == template.dtype
@@ -117,7 +122,7 @@ def test_resolver_drops_collective_member_axis_from_state_leaf_spec():
     assert resolved.expected_leaves[1].dtype == jnp.bool_
 
 
-def test_collective_template_may_omit_replicated_member_spec_entry():
+def test_collective_template_may_omit_replicated_member_spec_entry() -> None:
     template = jax.device_put(
         jnp.zeros((len(jax.devices()), 3, 2)),
         jax.NamedSharding(mesh=_mesh(), spec=jax.P("kind", None)),
@@ -138,7 +143,7 @@ def test_collective_template_may_omit_replicated_member_spec_entry():
     assert mask_sharding.spec == jax.P("kind", None)
 
 
-def test_explicit_roles_resolve_a_single_device_layout():
+def test_explicit_roles_resolve_a_single_device_layout() -> None:
     template = jnp.zeros((2, 3))
 
     resolved = resolve_output_layout(
@@ -151,7 +156,7 @@ def test_explicit_roles_resolve_a_single_device_layout():
     assert resolved.out_shardings == template.sharding
 
 
-def test_terminal_carry_decorator_delegates_grid_search_program_roles():
+def test_terminal_carry_decorator_delegates_grid_search_program_roles() -> None:
     program = CoreProgram(
         name="main",
         function=lambda x: x,
@@ -175,7 +180,7 @@ def test_terminal_carry_decorator_delegates_grid_search_program_roles():
         (StateAxesLeading(state_names=("kind",)), VALUE),
     ],
 )
-def test_resolver_rejects_malformed_role_trees(roles):
+def test_resolver_rejects_malformed_role_trees(roles: OutputRoleTree) -> None:
     match = "explicit" if isinstance(roles, StateAxesLeading) else "exactly one VALUE"
     with pytest.raises(ValueError, match=match):
         resolve_output_layout(
@@ -186,7 +191,7 @@ def test_resolver_rejects_malformed_role_trees(roles):
         )
 
 
-def test_compilation_key_tracks_layout_tree_and_shardings():
+def test_compilation_key_tracks_layout_tree_and_shardings() -> None:
     first = resolve_output_layout(
         core_key="main",
         value_template=_template(),
@@ -255,7 +260,7 @@ def test_lowering_key_reads_the_program_identity_not_the_bound_callable() -> Non
     ) != _lowering_key(program_identity=other_identity, layout_key=("layout",))
 
 
-def test_role_tree_output_mismatch_fails_during_lowering():
+def test_role_tree_output_mismatch_fails_during_lowering() -> None:
     resolved = resolve_output_layout(
         core_key="main",
         value_template=_template(collective=True),
@@ -271,7 +276,7 @@ def test_role_tree_output_mismatch_fails_during_lowering():
         ).lower(jnp.zeros((len(jax.devices()), 3)))
 
 
-def test_assert_output_layout_rejects_post_run_repair_need():
+def test_assert_output_layout_rejects_post_run_repair_need() -> None:
     resolved = resolve_output_layout(
         core_key="main",
         value_template=_template(),
@@ -290,7 +295,7 @@ def test_assert_output_layout_rejects_post_run_repair_need():
         assert_output_layout(output=replicated, layout=resolved)
 
 
-def test_assert_output_layout_rejects_wrong_absolute_value_shape():
+def test_assert_output_layout_rejects_wrong_absolute_value_shape() -> None:
     template = _template()
     resolved = resolve_output_layout(
         core_key="main",
@@ -308,7 +313,7 @@ def test_assert_output_layout_rejects_wrong_absolute_value_shape():
         assert_output_layout(output=wrong_shape, layout=resolved)
 
 
-def test_assert_output_layout_rejects_wrong_absolute_value_dtype():
+def test_assert_output_layout_rejects_wrong_absolute_value_dtype() -> None:
     template = _template()
     resolved = resolve_output_layout(
         core_key="main",
@@ -326,7 +331,7 @@ def test_assert_output_layout_rejects_wrong_absolute_value_dtype():
         assert_output_layout(output=wrong_dtype, layout=resolved)
 
 
-def test_assert_output_layout_rejects_coherent_wrong_collective_shape():
+def test_assert_output_layout_rejects_coherent_wrong_collective_shape() -> None:
     template = _template(collective=True)
     resolved = resolve_output_layout(
         core_key="main",
@@ -361,7 +366,9 @@ def test_assert_output_layout_rejects_coherent_wrong_collective_shape():
         jnp.zeros((len(jax.devices()), 2), dtype=bool),
     ],
 )
-def test_assert_output_layout_rejects_malformed_state_leaf(mask):
+def test_assert_output_layout_rejects_malformed_state_leaf(
+    mask: FloatND | BoolND,
+) -> None:
     template = _template(collective=True)
     resolved = resolve_output_layout(
         core_key="main",
@@ -375,7 +382,7 @@ def test_assert_output_layout_rejects_malformed_state_leaf(mask):
         assert_output_layout(output=(template, mask), layout=resolved)
 
 
-def test_published_value_placement_is_asserted_not_repaired():
+def test_published_value_placement_is_asserted_not_repaired() -> None:
     """A value leaving a compiled core off its planned placement is refused."""
     template = _template()
     replicated = jax.device_put(
@@ -399,7 +406,9 @@ def test_published_value_placement_is_asserted_not_repaired():
         _publish_kernel_value(value=replicated, compiled_cores={"main": core})
 
 
-def _state_axes_roles():
+def _state_axes_roles() -> tuple[
+    OutputRole, StateAxesLeading, StateAxesLeading, StateAxesLeading
+]:
     return (
         VALUE,
         StateAxesLeading(state_names=("kind",)),
@@ -408,7 +417,8 @@ def _state_axes_roles():
     )
 
 
-def test_state_axes_leading_role_places_named_state_prefix_and_replicates_the_rest():
+def test_state_axes_leading_role_places_named_state_prefix_and_replicates_the_rest(
+) -> None:  # fmt: skip
     template = _template()
 
     resolved = resolve_output_layout(
@@ -418,7 +428,7 @@ def test_state_axes_leading_role_places_named_state_prefix_and_replicates_the_re
         output_roles=_state_axes_roles(),
     )
 
-    mesh = template.sharding.mesh
+    mesh = template.sharding.mesh  # ty: ignore[unresolved-attribute]
     assert resolved.out_shardings == (
         template.sharding,
         jax.NamedSharding(mesh=mesh, spec=jax.P("kind")),
@@ -433,7 +443,7 @@ def test_state_axes_leading_role_places_named_state_prefix_and_replicates_the_re
     )
 
 
-def _carry_roles():
+def _carry_roles() -> tuple[OutputRole, EGMCarry]:
     """Role tree shaped like a published carry; `None` marks rows it does not carry."""
     _, carry = _carry_core(value=_template())
     roles = [
@@ -445,7 +455,7 @@ def _carry_roles():
     return (VALUE, jax.tree.unflatten(jax.tree.structure(carry), roles))
 
 
-def _carry_core(*, value):
+def _carry_core(*, value: FloatND) -> tuple[FloatND, EGMCarry]:
     rows = jnp.zeros((value.shape[0], 4), dtype=value.dtype)
     return (
         value,
@@ -460,7 +470,8 @@ def _carry_core(*, value):
     )
 
 
-def test_a_registered_pytree_of_roles_with_none_leaves_resolves_lowers_and_runs():
+def test_a_registered_pytree_of_roles_with_none_leaves_resolves_lowers_and_runs(
+) -> None:  # fmt: skip
     """A carry publishes as its own pytree; `None` marks the rows it does not carry."""
     template = _template()
     resolved = resolve_output_layout(
@@ -477,7 +488,8 @@ def test_a_registered_pytree_of_roles_with_none_leaves_resolves_lowers_and_runs(
     assert carry_shardings.breakpoints is None
     assert carry_shardings.policy is None
     assert carry_shardings.taste_shock_scale == jax.NamedSharding(
-        mesh=template.sharding.mesh, spec=jax.P()
+        mesh=template.sharding.mesh,  # ty: ignore[unresolved-attribute]
+        spec=jax.P(),
     )
     assert tuple(leaf.label for leaf in resolved.expected_leaves) == (
         "value",
@@ -499,7 +511,7 @@ def test_a_registered_pytree_of_roles_with_none_leaves_resolves_lowers_and_runs(
     assert_output_layout(output=output, layout=resolved)
 
 
-def test_lowered_leaf_metadata_mismatch_names_the_offending_leaf():
+def test_lowered_leaf_metadata_mismatch_names_the_offending_leaf() -> None:
     template = _template()
     roles = (VALUE, StateAxesLeading(state_names=("kind",), dtype=jnp.int32))
     resolved = resolve_output_layout(
@@ -530,7 +542,9 @@ def test_lowered_leaf_metadata_mismatch_names_the_offending_leaf():
         StateAxesLeading(state_names=("kind",)),
     ],
 )
-def test_resolver_requires_exactly_one_value_leaf_in_the_first_position(roles):
+def test_resolver_requires_exactly_one_value_leaf_in_the_first_position(
+    roles: OutputRoleTree,
+) -> None:
     match = "explicit" if isinstance(roles, StateAxesLeading) else "exactly one VALUE"
     with pytest.raises(ValueError, match=match):
         resolve_output_layout(
@@ -541,7 +555,7 @@ def test_resolver_requires_exactly_one_value_leaf_in_the_first_position(roles):
         )
 
 
-def test_resolver_rejects_a_state_axes_leading_role_naming_an_unknown_state():
+def test_resolver_rejects_a_state_axes_leading_role_naming_an_unknown_state() -> None:
     with pytest.raises(ValueError, match="outside"):
         resolve_output_layout(
             core_key="main",
@@ -551,8 +565,8 @@ def test_resolver_rejects_a_state_axes_leading_role_naming_an_unknown_state():
         )
 
 
-def test_compilation_key_tracks_declared_leaf_metadata():
-    def resolve(role):
+def test_compilation_key_tracks_declared_leaf_metadata() -> None:
+    def resolve(role: OutputRoleLeaf) -> ResolvedOutputLayout:
         return resolve_output_layout(
             core_key="main",
             value_template=_template(),
@@ -572,7 +586,7 @@ def test_compilation_key_tracks_declared_leaf_metadata():
     )
 
 
-def test_assert_value_leaf_layout_checks_only_the_value_leaf():
+def test_assert_value_leaf_layout_checks_only_the_value_leaf() -> None:
     template = _template()
     resolved = resolve_output_layout(
         core_key="main",

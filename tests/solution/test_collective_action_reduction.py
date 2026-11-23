@@ -120,7 +120,7 @@ def _reduce_blocks(
     return COLLECTIVE_HARD_MAX_REDUCTION.finalize(accumulator=accumulator)
 
 
-def test_collective_hard_max_matches_scalar_oracle_for_arbitrary_block_order():
+def test_collective_hard_max_matches_scalar_oracle_for_arbitrary_block_order() -> None:
     objectives = np.array(
         [
             [[4.0, 9.0, 9.0, 2.0, np.nan], [8.0, -2.0, 6.0, 8.0, 1.0]],
@@ -167,7 +167,7 @@ def test_collective_hard_max_matches_scalar_oracle_for_arbitrary_block_order():
         assert_array_equal(result.any_feasible, expected[3])
 
 
-def test_collective_hard_max_ties_use_one_global_winner_for_every_member():
+def test_collective_hard_max_ties_use_one_global_winner_for_every_member() -> None:
     objectives = jnp.array([[3.0, 6.0, 6.0, 1.0]])
     member_values = jnp.array([[[100.0, 0.0], [2.0, 90.0], [7.0, 8.0], [0.0, 120.0]]])
     feasible = jnp.ones_like(objectives, dtype=bool)
@@ -240,7 +240,9 @@ def test_collective_hard_max_matches_dense_signed_zero_and_keeps_one_winner(
     assert_array_equal(result.any_feasible, jnp.array([True]))
 
 
-def test_collective_hard_max_distinguishes_all_infeasible_from_feasible_minus_inf():
+def test_collective_hard_max_distinguishes_all_infeasible_from_feasible_minus_inf() -> (
+    None
+):
     result = _reduce_blocks(
         objectives=jnp.array([[-jnp.inf, 4.0], [-jnp.inf, 8.0]]),
         member_values=jnp.array([[[-3.0, 2.0], [4.0, 5.0]], [[7.0, 9.0], [8.0, 1.0]]]),
@@ -258,7 +260,7 @@ def test_collective_hard_max_distinguishes_all_infeasible_from_feasible_minus_in
     assert_array_equal(result.any_feasible, jnp.array([True, False]))
 
 
-def test_collective_hard_max_preserves_dense_action_zero_nan_readout():
+def test_collective_hard_max_preserves_dense_action_zero_nan_readout() -> None:
     objectives = np.array([[10.0, 12.0, np.nan, 7.0]], dtype=np.float32)
     feasible = np.array([[False, True, True, True]])
     action_ids = np.array([0, 7, 12, 3], dtype=np.int32)
@@ -288,7 +290,7 @@ def test_collective_hard_max_preserves_dense_action_zero_nan_readout():
         assert_array_equal(result.any_feasible, expected[3])
 
 
-def test_collective_hard_max_supports_jit_vmap_and_int32_global_ids():
+def test_collective_hard_max_supports_jit_vmap_and_int32_global_ids() -> None:
     action_ids = jnp.array([30, 2, 17], dtype=jnp.int32)
 
     # keyword-only-exempt: library-callback=jax.vmap
@@ -332,7 +334,9 @@ def test_collective_hard_max_supports_jit_vmap_and_int32_global_ids():
     assert_array_equal(result.any_feasible, jnp.array([True, True]))
 
 
-def test_collective_hard_max_identity_is_not_matched_against_a_reduced_maximum():
+def test_collective_hard_max_identity_is_not_matched_against_a_reduced_maximum() -> (
+    None
+):
     """The household winner and its objective come out of one reduction."""
     objectives = jnp.array([[-1650.6389, -14.865698, -14.989168, -7401.933]])
     member_values = jnp.stack([objectives, objectives + 1.0], axis=-1)

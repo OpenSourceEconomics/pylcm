@@ -16,7 +16,7 @@ from tests.collective_fixtures import (
 from tests.conftest import DECIMAL_PRECISION
 
 
-def test_stateless_collective_target_enters_the_continuation():
+def test_stateless_collective_target_enters_the_continuation() -> None:
     """A target regime carrying no state contributes `beta * V_target`.
 
     The `couple` regime chooses work or leisure over a two-point wage grid and

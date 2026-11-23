@@ -72,7 +72,7 @@ SOLO_PARAMS = {
 }
 
 
-def test_to_dataframe_orders_member_columns_by_declared_members():
+def test_to_dataframe_orders_member_columns_by_declared_members() -> None:
     """Per-member value columns follow the regime's `members` order.
 
     The household declares `members=("wife", "husband")`, which fixes the
@@ -102,7 +102,7 @@ def test_to_dataframe_orders_member_columns_by_declared_members():
     ]
 
 
-def test_to_dataframe_places_additional_target_after_states_and_actions():
+def test_to_dataframe_places_additional_target_after_states_and_actions() -> None:
     """An additional target sits in the trailing block, whatever it is called.
 
     A computed target is not a value column: `value_of_leisure` is one of the
@@ -134,7 +134,7 @@ def test_to_dataframe_places_additional_target_after_states_and_actions():
     ]
 
 
-def test_model_rejects_a_state_named_like_a_member_value_column():
+def test_model_rejects_a_state_named_like_a_member_value_column() -> None:
     """`value_<member>` is reserved for the member's published value.
 
     A collective regime with members `("f", "m")` publishes `value_f` and
@@ -147,7 +147,9 @@ def test_model_rejects_a_state_named_like_a_member_value_column():
         _make_collective_model_with_colliding_state()
 
 
-def test_model_rejects_a_singleton_state_named_like_another_regimes_value_column():
+def test_model_rejects_a_singleton_state_named_like_another_regimes_value_column() -> (
+    None
+):
     """`value_<member>` is reserved across the model, not within one regime.
 
     The published frame is a single table over every regime, so a singleton
@@ -161,7 +163,9 @@ def test_model_rejects_a_singleton_state_named_like_another_regimes_value_column
 
 
 @pytest.mark.parametrize("missing_column", ["subject_id", "period", "regime_name"])
-def test_reorder_columns_requires_the_row_identifying_columns(missing_column):
+def test_reorder_columns_requires_the_row_identifying_columns(
+    missing_column: str,
+) -> None:
     """Every published frame identifies its rows, so those columns are required.
 
     `subject_id`, `period` and `regime_name` are present in every result and are

@@ -149,7 +149,7 @@ def _couple_laws() -> RegimeLaws:
     )
 
 
-def test_nonterminal_collective_regime_solves_with_continuation():
+def test_nonterminal_collective_regime_solves_with_continuation() -> None:
     """Kernel-level: finalize -> process -> backward induction, two periods."""
     laws = _couple_laws()
     ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
@@ -217,7 +217,7 @@ def test_nonterminal_collective_regime_solves_with_continuation():
     assert not np.allclose(np.asarray(V_0[0]), [58.5, 0.0])
 
 
-def test_nonterminal_collective_full_model_solve_matches_kernel_level():
+def test_nonterminal_collective_full_model_solve_matches_kernel_level() -> None:
     """Model-level: the same two regimes through public Model(...) + solve()."""
     ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
     model = Model(
@@ -257,7 +257,7 @@ def _next_mood(mood: DiscreteState) -> FloatND:  # noqa: ARG001
     return jnp.array([0.5, 0.5])
 
 
-def test_nonterminal_collective_stochastic_state_expectation_is_per_member():
+def test_nonterminal_collective_stochastic_state_expectation_is_per_member() -> None:
     """A Markov state's expectation is taken per member slice.
 
     Adds an IID binary `mood` state (probabilities 1/2 each) whose realization
@@ -376,7 +376,7 @@ def test_nonterminal_collective_stochastic_state_expectation_is_per_member():
     np.testing.assert_allclose(np.asarray(V_0), expected_period_0, rtol=1e-6)
 
 
-def test_collective_model_simulates_end_to_end_via_public_model_api():
+def test_collective_model_simulates_end_to_end_via_public_model_api() -> None:
     """A collective regime simulates end to end through the public model API.
 
     The full recomputed-argmax mechanics (both members tracked, values
@@ -411,7 +411,7 @@ def test_collective_model_simulates_end_to_end_via_public_model_api():
     )
 
 
-def test_nonterminal_collective_regime_with_singleton_target_is_rejected():
+def test_nonterminal_collective_regime_with_singleton_target_is_rejected() -> None:
     """Routing a collective regime toward a singleton target needs a gated edge."""
 
     def _utility_single(wage: ContinuousState) -> FloatND:
@@ -471,7 +471,7 @@ def test_nonterminal_collective_regime_with_singleton_target_is_rejected():
         )
 
 
-def test_collective_regime_with_taste_shocks_is_rejected():
+def test_collective_regime_with_taste_shocks_is_rejected() -> None:
     """EV1 taste shocks on a collective regime are out of scope."""
     with pytest.raises(NotImplementedError, match="taste shocks"):
         Regime(
@@ -487,7 +487,7 @@ def test_collective_regime_with_taste_shocks_is_rejected():
         )
 
 
-def test_collective_regime_with_certainty_equivalent_is_rejected():
+def test_collective_regime_with_certainty_equivalent_is_rejected() -> None:
     """A nonlinear certainty equivalent on a collective regime is out of scope."""
     with pytest.raises(NotImplementedError, match="certainty equivalent"):
         Regime(

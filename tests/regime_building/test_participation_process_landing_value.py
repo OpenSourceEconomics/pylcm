@@ -7,6 +7,7 @@ Every participation check below keeps the target only at node 1, so the source v
 keeps the target at positions 1 and 2 and pays a cubic at 2.
 """
 
+from collections.abc import Callable
 from math import erf, sqrt
 
 import jax.numpy as jnp
@@ -77,17 +78,22 @@ def _read_predicate(*, V_target: FloatND, V_alt: FloatND) -> BoolND:
     return V_target > V_alt
 
 
-def _uniform():
+def _uniform() -> UniformIIDProcess:
     return UniformIIDProcess(n_points=3, start=-1.0, stop=1.0, simulated_draws="nodes")
 
 
-def _tauchen():
+def _tauchen() -> TauchenAR1Process:
     return TauchenAR1Process.on_nodes(
         nodes=np.array(NODES), rho=0.0, sigma=1.0, simulated_draws="nodes"
     )
 
 
-def _model(*, process, case: str, enable_jit: bool = False) -> Model:
+def _model(
+    *,
+    process: Callable[[], UniformIIDProcess | TauchenAR1Process],
+    case: str,
+    enable_jit: bool = False,
+) -> Model:
     fallback_projection = _node_at if case == "code-fallback" else _identity
     reads = {}
     predicate = _value_predicate
@@ -168,7 +174,11 @@ _PARAMS = {
     ids=["uniform-iid", "tauchen-ar1"],
 )
 def test_participation_reads_the_landing_process_node_value(
-    *, process, weights: tuple[float, float, float], case: str, enable_jit: bool
+    *,
+    process: Callable[[], UniformIIDProcess | TauchenAR1Process],
+    weights: tuple[float, float, float],
+    case: str,
+    enable_jit: bool,
 ) -> None:
     model = _model(process=process, case=case, enable_jit=enable_jit)
     values = model.solve(params=_PARAMS, log_level="off")

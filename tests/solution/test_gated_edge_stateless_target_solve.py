@@ -21,7 +21,14 @@ from lcm import (
     categorical,
 )
 from lcm.regime import Regime
-from lcm.typing import BoolND, ContinuousState, DiscreteAction, FloatND, ScalarInt
+from lcm.typing import (
+    BoolND,
+    ContinuousState,
+    DiscreteAction,
+    FloatND,
+    ScalarInt,
+    UserFunction,
+)
 from tests.conftest import DECIMAL_PRECISION
 
 _BETA = 0.9
@@ -74,7 +81,9 @@ def _closed_by_age(age: FloatND) -> BoolND:
     return age < 0
 
 
-def _build_model(*, gate, enable_jit: bool, reads_value: bool = True) -> Model:
+def _build_model(
+    *, gate: UserFunction, enable_jit: bool, reads_value: bool = True
+) -> Model:
     """Decide the landing on the target's value on landing, or by a state-only gate."""
     routes = {
         "only": MemberRoute(
@@ -144,7 +153,11 @@ def _build_model(*, gate, enable_jit: bool, reads_value: bool = True) -> Model:
     ids=["open", "closed", "state-closed"],
 )
 def test_stateless_gated_target_pays_the_branch_its_gate_selects(
-    *, gate, reads_value: bool, landing_value: float, enable_jit: bool
+    *,
+    gate: UserFunction,
+    reads_value: bool,
+    landing_value: float,
+    enable_jit: bool,
 ) -> None:
     """The source's value discounts the target when accepted, else the fallback.
 

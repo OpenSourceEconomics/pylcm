@@ -15,7 +15,7 @@ from _lcm.solution.action_streaming import (
     build_streaming_ev1_max_Q_over_a,
     build_streaming_max_Q_over_a,
 )
-from lcm.typing import ActionName
+from lcm.typing import ActionName, BoolND, FloatND, IntND
 
 
 def _direct_scalar_oracle(
@@ -60,8 +60,10 @@ def _direct_scalar_oracle(
 @pytest.mark.parametrize("block_width", [1, 2, 3, 4, 8])
 def test_streaming_one_action_matches_direct_oracle_for_arbitrary_block_widths(
     block_width: int,
-):
-    def Q_and_F(*, choice, state, offset):
+) -> None:
+    def Q_and_F(
+        *, choice: FloatND, state: FloatND, offset: FloatND
+    ) -> tuple[FloatND, BoolND]:
         return -((choice - state) ** 2) + offset, choice != 2
 
     choice = np.array([-1.0, 0.5, 2.0, 3.5, 5.0], dtype=np.float32)
@@ -90,8 +92,10 @@ def test_streaming_one_action_matches_direct_oracle_for_arbitrary_block_widths(
 @pytest.mark.parametrize("block_width", [2, 5, 7, 20])
 def test_streaming_multiple_actions_uses_canonical_row_major_global_ids(
     block_width: int,
-):
-    def Q_and_F(*, hours, saving, target):
+) -> None:
+    def Q_and_F(
+        *, hours: FloatND, saving: FloatND, target: FloatND
+    ) -> tuple[FloatND, BoolND]:
         value = -jnp.abs(hours + saving - target)
         feasible = (hours != 1) | (saving >= 20)
         return value, feasible
@@ -121,8 +125,9 @@ def test_streaming_multiple_actions_uses_canonical_row_major_global_ids(
     assert_array_equal(result.any_feasible, expected[2])
 
 
-def test_streaming_ties_use_smallest_global_id_across_blocks_and_partial_final_block():
-    def Q_and_F(*, first, second):
+def test_streaming_ties_use_smallest_global_id_across_blocks_and_partial_final_block(
+) -> None:  # fmt: skip
+    def Q_and_F(*, first: IntND, second: IntND) -> tuple[FloatND, BoolND]:
         value = jnp.where(
             ((first == 0) & (second == 30)) | ((first == 1) & (second == 10)),
             9.0,
@@ -145,8 +150,10 @@ def test_streaming_ties_use_smallest_global_id_across_blocks_and_partial_final_b
     assert_array_equal(result.any_feasible, np.ones((), dtype=bool))
 
 
-def test_streaming_distinguishes_feasible_negative_infinity_from_all_infeasible():
-    def Q_and_F(*, choice, row):
+def test_streaming_distinguishes_feasible_negative_infinity_from_all_infeasible() -> (
+    None
+):
+    def Q_and_F(*, choice: IntND, row: IntND) -> tuple[FloatND, BoolND]:
         value = jnp.where(choice == 0, -jnp.inf, 5.0)
         feasible = jnp.where(row == 0, choice == 0, jnp.zeros((), dtype=bool))
         return value, feasible
@@ -170,7 +177,7 @@ def test_streaming_distinguishes_feasible_negative_infinity_from_all_infeasible(
 def test_streaming_preserves_grid_search_feasible_nan_identity_quirk(
     block_width: int,
 ) -> None:
-    def Q_and_F(*, choice):
+    def Q_and_F(*, choice: FloatND) -> tuple[FloatND, BoolND]:
         value = jnp.where(choice == 2, jnp.nan, choice + 10.0)
         feasible = choice != 0
         return value, feasible
@@ -195,8 +202,8 @@ def test_streaming_preserves_grid_search_feasible_nan_identity_quirk(
     assert_array_equal(result.any_feasible, expected[2])
 
 
-def test_streaming_no_action_product_is_the_identity_and_is_jittable():
-    def Q_and_F(*, state, feasible):
+def test_streaming_no_action_product_is_the_identity_and_is_jittable() -> None:
+    def Q_and_F(*, state: FloatND, feasible: BoolND) -> tuple[FloatND, BoolND]:
         return state * 2, feasible
 
     streamed = build_streaming_max_Q_over_a(
@@ -217,8 +224,8 @@ def test_streaming_no_action_product_is_the_identity_and_is_jittable():
     assert_array_equal(infeasible.any_feasible, np.zeros((), dtype=bool))
 
 
-def test_q_and_f_sees_scalar_action_cells_and_never_the_full_action_product():
-    def Q_and_F(*, first, second):
+def test_q_and_f_sees_scalar_action_cells_and_never_the_full_action_product() -> None:
+    def Q_and_F(*, first: FloatND, second: FloatND) -> tuple[FloatND, BoolND]:
         assert first.ndim == 0
         assert second.ndim == 0
         return first + second, jnp.ones((), dtype=bool)
@@ -240,7 +247,7 @@ def test_q_and_f_sees_scalar_action_cells_and_never_the_full_action_product():
 
 
 @pytest.mark.parametrize("block_width", [0, -2])
-def test_streaming_rejects_non_positive_block_width(block_width: int):
+def test_streaming_rejects_non_positive_block_width(block_width: int) -> None:
     with pytest.raises(ValueError, match="block_width must be positive"):
         build_streaming_max_Q_over_a(
             Q_and_F=lambda: (jnp.float32(0), jnp.ones((), dtype=bool)),

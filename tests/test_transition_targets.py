@@ -32,8 +32,8 @@ from lcm import (
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.regime import Regime
 from lcm.solver_api import ResultRetention
-from lcm.transition import ModelEdges, PhaseEdges
-from lcm.typing import BoolND, ContinuousState, FloatND, ScalarInt
+from lcm.transition import AgeSelector, ModelEdges, PhaseEdges
+from lcm.typing import BoolND, ContinuousState, FloatND, RegimeName, ScalarInt
 
 # Four ages: transitions happen out of ages 0, 1 and 2.
 _AGES = AgeGrid(start=0, inclusive_stop=3, step="Y")
@@ -56,7 +56,7 @@ _EXIT_LAW = {
 }
 
 
-def test_per_target_law_without_targets_derives_each_destination_and_its_ages():
+def test_per_target_law_without_targets_derives_each_destination_and_its_ages() -> None:
     """Each target is reached at exactly the ages whose case names it."""
     model = _model(
         Transition(
@@ -77,7 +77,7 @@ def test_per_target_law_without_targets_derives_each_destination_and_its_ages():
     }
 
 
-def test_plain_per_target_law_reaches_its_targets_at_every_non_final_age():
+def test_plain_per_target_law_reaches_its_targets_at_every_non_final_age() -> None:
     """A law with no age schedule names its targets out of every non-final age."""
     model = _model(Transition(law=_EXIT_LAW))
     assert dict(model.graph.edges.simulate["alive"]) == {
@@ -86,7 +86,7 @@ def test_plain_per_target_law_reaches_its_targets_at_every_non_final_age():
     }
 
 
-def test_supplied_targets_equal_to_the_derived_ones_are_accepted():
+def test_supplied_targets_equal_to_the_derived_ones_are_accepted() -> None:
     """Spelling out the derived destinations changes nothing."""
     model = _model(
         Transition(targets={"retired": (0, 1, 2), "dead": (0, 1, 2)}, law=_EXIT_LAW)
@@ -107,7 +107,9 @@ def test_supplied_targets_equal_to_the_derived_ones_are_accepted():
         pytest.param({"retired": (0, 1, 2, 3), "dead": (0, 1, 2, 3)}, id="final-age"),
     ],
 )
-def test_supplied_targets_that_also_select_the_final_age_are_accepted(targets):
+def test_supplied_targets_that_also_select_the_final_age_are_accepted(
+    targets: Mapping[RegimeName, AgeSelector],
+) -> None:
     """No transition leaves the final age, so selecting it changes no destination."""
     model = _model(Transition(targets=targets, law=_EXIT_LAW))
     assert dict(model.graph.edges.solve["alive"]) == {
@@ -130,7 +132,9 @@ def test_supplied_targets_that_also_select_the_final_age_are_accepted(targets):
         ),
     ],
 )
-def test_supplied_targets_that_differ_from_the_derived_ones_are_refused(targets):
+def test_supplied_targets_that_differ_from_the_derived_ones_are_refused(
+    targets: Mapping[RegimeName, AgeSelector],
+) -> None:
     """The error names both the supplied and the derived destinations."""
     with pytest.raises(
         ModelInitializationError, match=r"(?s)'alive'.*supplied.*derived"
@@ -138,7 +142,7 @@ def test_supplied_targets_that_differ_from_the_derived_ones_are_refused(targets)
         _model(Transition(targets=targets, law=_EXIT_LAW))
 
 
-def test_age_schedule_names_each_target_at_the_ages_its_edge_fires():
+def test_age_schedule_names_each_target_at_the_ages_its_edge_fires() -> None:
     """A target active only from age 2 is named only by the case for age 1."""
     model = _model_with_edges(
         edges={
@@ -162,7 +166,7 @@ def test_age_schedule_names_each_target_at_the_ages_its_edge_fires():
         "gate-fallback-at-fewer-ages",
     ],
 )
-def test_supplied_targets_narrower_than_the_law_are_refused(case):
+def test_supplied_targets_narrower_than_the_law_are_refused(case: str) -> None:
     """A law with no age schedule names its targets out of every non-final age.
 
     Supplied targets that name fewer ages disagree with it, whether or not the
@@ -174,13 +178,13 @@ def test_supplied_targets_narrower_than_the_law_are_refused(case):
         _model_with_edges(edges=_narrowed_edges(case))
 
 
-def test_law_over_all_targets_still_requires_targets():
+def test_law_over_all_targets_still_requires_targets() -> None:
     """A function returning a regime code names no target, so it needs `targets`."""
     with pytest.raises(RegimeInitializationError, match="targets"):
         Transition(law=_always_dead)
 
 
-def test_gate_fallbacks_join_the_derived_targets_at_the_gated_ages():
+def test_gate_fallbacks_join_the_derived_targets_at_the_gated_ages() -> None:
     """A route's fallback regime is reached wherever its gated target is."""
     model = _model(
         Transition(
@@ -203,7 +207,7 @@ def test_gate_fallbacks_join_the_derived_targets_at_the_gated_ages():
     }
 
 
-def test_gate_on_a_target_the_law_never_reaches_is_refused():
+def test_gate_on_a_target_the_law_never_reaches_is_refused() -> None:
     """A gate belongs to a destination of its own `Transition`."""
     with pytest.raises(
         ModelInitializationError,
@@ -217,7 +221,7 @@ def test_gate_on_a_target_the_law_never_reaches_is_refused():
         )
 
 
-def test_gate_declared_in_one_phase_only_is_refused():
+def test_gate_declared_in_one_phase_only_is_refused() -> None:
     """A target reached in both phases is gated in both or in neither."""
     law = {
         "couple": StochasticTransition(func=_survive),

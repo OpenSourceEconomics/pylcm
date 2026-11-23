@@ -35,6 +35,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.engine import Regime as EngineRegime
 from _lcm.regime_building.collective import NO_ROLE
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.gated_edges import ResolvedMemberRoute
@@ -49,6 +50,7 @@ from _lcm.simulation.gated_routing import (
 )
 from _lcm.simulation.simulate import simulate
 from _lcm.solution.backward_induction import solve
+from _lcm.typing import FlatRegimeParams, PeriodToRegimeToVArr, RegimeNamesToIds
 from _lcm.utils.logging import get_logger
 from lcm import (
     AgeRange,
@@ -76,6 +78,7 @@ from lcm.typing import (
     ContinuousState,
     DiscreteAction,
     FloatND,
+    Int1D,
     RegimeName,
     ScalarInt,
 )
@@ -97,7 +100,7 @@ class Work:
     work: ScalarInt  # code 1
 
 
-def test_target_absent_at_next_period_is_still_a_legitimate_no_op():
+def test_target_absent_at_next_period_is_still_a_legitimate_no_op() -> None:
     """Negative control: the TARGET (not a reference) missing at period+1 stays
     a silent no-op -- the legitimate repeating/one-shot boundary case, which
     the missing-reference guard must leave alone. Mirrors
@@ -233,7 +236,7 @@ def _shared_fallback_laws() -> dict[RegimeName, RegimeLawDeclaration | Transitio
     }
 
 
-def test_two_legs_sharing_a_fallback_regime_is_rejected_at_construction():
+def test_two_legs_sharing_a_fallback_regime_is_rejected_at_construction() -> None:
     """Two legs of one edge sharing a fallback regime are rejected at build.
 
     Accepting the model would let `single_shared`'s stored state come out
@@ -264,7 +267,8 @@ def _never_arrives(wage: ContinuousState) -> BoolND:
     return wage < 0.0
 
 
-def test_two_participation_routes_sharing_a_fallback_regime_each_land_their_own_row():
+def test_two_participation_routes_sharing_a_fallback_regime_each_land_their_own_row(
+) -> None:  # fmt: skip
     """Participation routes may share a fallback: each member lands at its projection.
 
     A participation check's fallback landing is keyed by the route a row's role selects,
@@ -331,7 +335,7 @@ def test_two_participation_routes_sharing_a_fallback_regime_each_land_their_own_
     np.testing.assert_array_equal(landed["wage"], [1.0, 3.0, 2.0, 2.0])
 
 
-def test_dissolution_fixture_has_distinct_fallbacks_and_still_constructs():
+def test_dissolution_fixture_has_distinct_fallbacks_and_still_constructs() -> None:
     """Negative control: `_make_dissolution_regimes` (single_f / single_m,
     DISTINCT fallback regimes) is exactly the EKL-shaped topology and must
     keep constructing without the new guard firing.
@@ -386,7 +390,9 @@ def _leg(source_member: str | None) -> ResolvedMemberRoute:
     )
 
 
-def _outcomes(*, legs, roles):
+def _outcomes(
+    *, legs: tuple[ResolvedMemberRoute, ...], roles: list[int]
+) -> tuple[Int1D, Int1D, Int1D]:
     """Read the per-row outcomes of `legs` for a cohort carrying `roles`."""
     return _per_row_leg_outcomes(
         legs=legs,
@@ -396,7 +402,7 @@ def _outcomes(*, legs, roles):
     )
 
 
-def test_each_row_falls_back_to_the_regime_of_the_leg_it_owns():
+def test_each_row_falls_back_to_the_regime_of_the_leg_it_owns() -> None:
     """A mixed cohort reads one fallback regime per row, not one per call.
 
     The wife's leg lands in `single_f` and the husband's in `single_m`, so a
@@ -413,7 +419,8 @@ def test_each_row_falls_back_to_the_regime_of_the_leg_it_owns():
     )
 
 
-def test_a_row_keeps_its_role_on_the_open_branch_and_drops_it_on_the_closed_one():
+def test_a_row_keeps_its_role_on_the_open_branch_and_drops_it_on_the_closed_one(
+) -> None:  # fmt: skip
     """The open branch leaves the row a member; the closed branch does not.
 
     The legs above stay collective when the gate opens and land in singleton
@@ -431,7 +438,7 @@ def test_a_row_keeps_its_role_on_the_open_branch_and_drops_it_on_the_closed_one(
     np.testing.assert_array_equal(np.asarray(closed_role), [NO_ROLE, NO_ROLE])
 
 
-def test_a_singleton_sources_sole_leg_answers_for_every_row():
+def test_a_singleton_sources_sole_leg_answers_for_every_row() -> None:
     """A role-less leg is every row's own, whatever role the rows carry.
 
     This is what keeps per-row selection scoped to collective sources: a
@@ -503,7 +510,13 @@ def _all_collective_laws() -> dict[RegimeName, RegimeLawDeclaration | Transition
     }
 
 
-def _solve_all_collective():
+def _solve_all_collective() -> tuple[
+    AgeGrid,
+    MappingProxyType[RegimeName, EngineRegime],
+    RegimeNamesToIds,
+    MappingProxyType[RegimeName, FlatRegimeParams],
+    PeriodToRegimeToVArr,
+]:
     ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
     regimes_dict = _make_all_collective_regimes()
     regimes, regime_names_to_ids = _solve_and_process(
@@ -533,7 +546,7 @@ def _solve_all_collective():
     return ages, regimes, regime_names_to_ids, flat_params, solution
 
 
-def test_to_dataframe_all_collective_result_has_no_scalar_value_column():
+def test_to_dataframe_all_collective_result_has_no_scalar_value_column() -> None:
     """An all-collective result's dataframe has per-member value columns.
 
     Every populated regime here is collective, so `_process_regime` never writes
@@ -601,7 +614,7 @@ def _stateless_collective_laws() -> dict[RegimeName, RegimeLawDeclaration | Tran
     }
 
 
-def test_stateless_collective_regime_simulate_carries_subject_axis():
+def test_stateless_collective_regime_simulate_carries_subject_axis() -> None:
     """A stateless collective regime's simulated V_arr carries the subject axis.
 
     `argmax_and_max_Q_over_a` has no per-subject state array to vmap over, so it
@@ -662,7 +675,7 @@ def test_stateless_collective_regime_simulate_carries_subject_axis():
     assert period_0.in_regime.shape == (n_subjects,)
 
 
-def test_stateless_collective_without_any_action_finalizes():
+def test_stateless_collective_without_any_action_finalizes() -> None:
     """A collective regime needs no action at all to be complete.
 
     The household argmax runs over whatever action product the regime declares,
@@ -693,7 +706,7 @@ def test_stateless_collective_without_any_action_finalizes():
     assert dict(finalized["couple"].actions) == {}
 
 
-def test_stateful_collective_regime_simulate_shape_is_byte_identical():
+def test_stateful_collective_regime_simulate_shape_is_byte_identical() -> None:
     """Regression pin: a STATEFUL collective regime (has its own state axis,
     e.g. `_make_couple_regimes`'s `wage`) already carries the subject axis
     from its per-subject state arrays, and the stateless-collective branch

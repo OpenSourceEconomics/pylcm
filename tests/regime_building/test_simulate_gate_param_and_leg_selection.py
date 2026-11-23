@@ -36,6 +36,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.engine import Regime as EngineRegime
 from _lcm.regime_building.collective import NO_ROLE
 from _lcm.regime_building.Q_and_F import SAME_PERIOD_V_ARG
 from _lcm.regime_law import RegimeLawDeclaration
@@ -46,6 +47,7 @@ from _lcm.simulation.gated_routing import (
 )
 from _lcm.simulation.simulate import _initial_own_member
 from _lcm.solution.backward_induction import solve
+from _lcm.typing import FlatRegimeParams, PeriodToRegimeToVArr, RegimeNamesToIds
 from _lcm.utils.logging import get_logger
 from lcm import (
     AgeRange,
@@ -67,6 +69,7 @@ from lcm.typing import (
     ContinuousState,
     DiscreteAction,
     FloatND,
+    Int1D,
     RegimeName,
     ScalarInt,
 )
@@ -163,7 +166,12 @@ def _make_f3_laws() -> dict[RegimeName, RegimeLawDeclaration | Transition]:
     }
 
 
-def _solve_f3_fixture():
+def _solve_f3_fixture() -> tuple[
+    MappingProxyType[RegimeName, EngineRegime],
+    RegimeNamesToIds,
+    MappingProxyType[RegimeName, FlatRegimeParams],
+    PeriodToRegimeToVArr,
+]:
     regimes_dict = _make_f3_regimes()
     regimes, regime_names_to_ids = _solve_and_process(
         regimes_dict=regimes_dict,
@@ -193,7 +201,7 @@ def _solve_f3_fixture():
     return regimes, regime_names_to_ids, flat_params, solution
 
 
-def test_stateless_gated_target_routes_without_vmap_axis_size_error():
+def test_stateless_gated_target_routes_without_vmap_axis_size_error() -> None:
     """A stateless gated target routes without a vmap axis-size error.
 
     Such a target's evaluator accepts no batched arg at all, so a bare
@@ -252,7 +260,7 @@ def test_stateless_gated_target_routes_without_vmap_axis_size_error():
     np.testing.assert_array_equal(np.asarray(routed_ids), [target_id] * n_subjects)
 
 
-def test_vmap_without_axis_size_fails_for_a_stateless_target():
+def test_vmap_without_axis_size_fails_for_a_stateless_target() -> None:
     """The axis-size argument is what makes the test above pass, not luck.
 
     Runs the bare call (`jax.vmap(f)(batched)`, no `axis_size`) on the SAME
@@ -278,7 +286,7 @@ def test_vmap_without_axis_size_fails_for_a_stateless_target():
     evaluator = src.gated_edges["stateless_target"].simulate_gate_evaluator_at(period=1)
     static = {SAME_PERIOD_V_ARG: same_period_mappings["stateless_target"]}
 
-    def _call_one_subject(one_subject_kwargs):
+    def _call_one_subject(one_subject_kwargs: dict[str, FloatND]) -> BoolND:
         return evaluator(**one_subject_kwargs, **static)
 
     # The same body, verbatim except for the missing `axis_size`.
@@ -298,13 +306,21 @@ def test_vmap_without_axis_size_fails_for_a_stateless_target():
 # A seeded role is checked against the starting regime's own members.
 
 
-def _dissolution_setup():
+def _dissolution_setup() -> tuple[
+    MappingProxyType[RegimeName, EngineRegime], RegimeNamesToIds
+]:
     """The two-member dissolution miniature, as canonical regimes."""
     _ages, regimes, regime_names_to_ids, *_rest = _solve_dissolution()
     return regimes, regime_names_to_ids
 
 
-def _seed(*, regimes, regime_names_to_ids, regime_name, role):
+def _seed(
+    *,
+    regimes: MappingProxyType[RegimeName, EngineRegime],
+    regime_names_to_ids: RegimeNamesToIds,
+    regime_name: RegimeName,
+    role: int | None,
+) -> Int1D:
     """Read the seeded roles of a one-subject cohort starting in `regime_name`."""
     return _initial_own_member(
         initial_conditions=MappingProxyType(
@@ -320,7 +336,7 @@ def _seed(*, regimes, regime_names_to_ids, regime_name, role):
     )
 
 
-def test_a_one_member_collective_source_rejects_a_role_it_does_not_have():
+def test_a_one_member_collective_source_rejects_a_role_it_does_not_have() -> None:
     """A single-leg collective source refuses a role that is not its own.
 
     Its sole leg carries `source_member="f"`, so the router would match
@@ -341,7 +357,7 @@ def test_a_one_member_collective_source_rejects_a_role_it_does_not_have():
         )
 
 
-def test_a_collective_source_accepts_a_role_it_does_have():
+def test_a_collective_source_accepts_a_role_it_does_have() -> None:
     """The refusal does not over-fire onto a role the regime declares.
 
     Without this control the check above could be refusing every seed into a
@@ -360,7 +376,7 @@ def test_a_collective_source_accepts_a_role_it_does_have():
     np.testing.assert_array_equal(np.asarray(seeded), [role])
 
 
-def test_a_cohort_starting_singleton_needs_no_role():
+def test_a_cohort_starting_singleton_needs_no_role() -> None:
     """A row starting in a singleton regime occupies none, and says so.
 
     This keeps the requirement scoped to where legs actually differ: a

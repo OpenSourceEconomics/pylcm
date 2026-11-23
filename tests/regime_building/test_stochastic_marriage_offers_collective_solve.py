@@ -50,6 +50,7 @@ from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.processing import process_regimes
 from _lcm.regime_law import RegimeLaws
 from _lcm.solution.backward_induction import solve
+from _lcm.typing import PeriodToRegimeToSimulationPolicy, PeriodToRegimeToVArr
 from _lcm.utils.logging import get_logger
 from lcm import (
     AgeRange,
@@ -74,6 +75,7 @@ from lcm.typing import (
     DiscreteAction,
     DiscreteState,
     FloatND,
+    RegimeName,
     ScalarInt,
     UserFunction,
 )
@@ -312,7 +314,13 @@ def _offer_laws(regimes: dict[str, Regime]) -> RegimeLaws:
 _EXPECTED_V_SINGLE_F_PERIOD_0 = np.array([2.7575, 5.42])
 
 
-def _solve_offer_regimes(*, enable_jit: bool = False):
+def _solve_offer_regimes(
+    *, enable_jit: bool = False
+) -> tuple[
+    PeriodToRegimeToVArr,
+    PeriodToRegimeToSimulationPolicy,
+    dict[int, dict[RegimeName, BoolND]],
+]:
     ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
     user_regimes = _make_offer_regimes()
     laws = _offer_laws(user_regimes)
@@ -360,7 +368,7 @@ def _solve_offer_regimes(*, enable_jit: bool = False):
     )
 
 
-def test_stochastic_marriage_offer_forms_couple_via_kernel():
+def test_stochastic_marriage_offer_forms_couple_via_kernel() -> None:
     """Kernel-level: process_regimes -> backward_induction.solve, real path.
 
     The single's continuation, at each education level, is the offer-
@@ -372,7 +380,7 @@ def test_stochastic_marriage_offer_forms_couple_via_kernel():
     np.testing.assert_allclose(V_single_f, _EXPECTED_V_SINGLE_F_PERIOD_0, rtol=1e-6)
 
 
-def test_stochastic_marriage_offer_matches_public_model_api():
+def test_stochastic_marriage_offer_matches_public_model_api() -> None:
     """Model-level: the same topology through the public `Model(...).solve()`."""
 
     @categorical(ordered=False)
@@ -398,7 +406,7 @@ def test_stochastic_marriage_offer_matches_public_model_api():
     )
 
 
-def test_stochastic_marriage_offer_matches_under_jit():
+def test_stochastic_marriage_offer_matches_under_jit() -> None:
     """The jitted kernel path folds and averages the same offer draw."""
     solution, _sim, _dissolution = _solve_offer_regimes(enable_jit=True)
     np.testing.assert_allclose(
@@ -468,7 +476,7 @@ def _make_job_offer_regimes() -> dict[str, Regime]:
 _EXPECTED_V_JOB_PERIOD_0 = np.array([4.23, 8.23])
 
 
-def test_job_offer_gates_feasible_actions_and_solves():
+def test_job_offer_gates_feasible_actions_and_solves() -> None:
     """A drawn discrete job-offer state gates action feasibility (EKL eq. 24)."""
     ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
     model = Model(

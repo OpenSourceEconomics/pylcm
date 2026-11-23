@@ -526,7 +526,9 @@ def test_hard_max_with_carry_publishes_the_empty_state_of_an_infeasible_cell() -
     )
 
 
-def test_hard_max_with_carry_identity_is_not_matched_against_a_reduced_maximum():
+def test_hard_max_with_carry_identity_is_not_matched_against_a_reduced_maximum() -> (
+    None
+):
     """The winning candidate and its value come out of one reduction."""
     values = jnp.array([[-1650.6389, -14.865698, -14.989168, -7401.933]])
 

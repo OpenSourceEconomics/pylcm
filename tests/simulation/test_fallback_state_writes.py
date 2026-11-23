@@ -31,6 +31,7 @@ import numpy as np
 from numpy.testing import assert_array_almost_equal as aaae
 
 from _lcm.certainty_equivalent import LinearExpectation
+from _lcm.engine import Regime as EngineRegime
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.processing import process_regimes
 from _lcm.regime_law import RegimeLawDeclaration
@@ -39,7 +40,8 @@ from _lcm.simulation.gated_routing import (
     substitute_gated_edge_continuations,
 )
 from _lcm.solution.backward_induction import solve
-from _lcm.typing import StatesPerRegime
+from _lcm.solution.contract import BackwardInductionResult
+from _lcm.typing import FlatRegimeParams, RegimeNamesToIds, StatesPerRegime
 from _lcm.utils.logging import get_logger
 from lcm import (
     AgeGrid,
@@ -59,6 +61,7 @@ from lcm import (
     fixed_transition,
 )
 from lcm.koopmans_aggregation import LinearAggregator
+from lcm.result import SimulationResult
 from lcm.transition import StochasticTransition
 from lcm.typing import (
     BoolND,
@@ -122,7 +125,7 @@ class RegimeId:
     single_m_terminal: ScalarInt
 
 
-def test_gate_open_household_keeps_the_wifes_fallback_slot_it_never_entered():
+def test_gate_open_household_keeps_the_wifes_fallback_slot_it_never_entered() -> None:
     """Only a household the consent gate turned away is given a wife's regime.
 
     The three households enter the edge at wages 1, 2 and 3, and the gate
@@ -137,7 +140,9 @@ def test_gate_open_household_keeps_the_wifes_fallback_slot_it_never_entered():
     )
 
 
-def test_gate_open_household_keeps_the_husbands_fallback_slot_it_never_entered():
+def test_gate_open_household_keeps_the_husbands_fallback_slot_it_never_entered() -> (
+    None
+):
     """Every leg of the edge writes the households the gate turned away.
 
     The husband's leg owns a fallback regime of its own and is subject to the
@@ -151,7 +156,9 @@ def test_gate_open_household_keeps_the_husbands_fallback_slot_it_never_entered()
     )
 
 
-def test_dissolving_household_starts_its_fallback_regime_at_the_projected_career():
+def test_dissolving_household_starts_its_fallback_regime_at_the_projected_career() -> (
+    None
+):
     """A dissolving wife enters `single_f` at the career her leg projects.
 
     `single_f` declares `career` as a carried state — imputed while the regime
@@ -234,7 +241,7 @@ def _route_three_households() -> StatesPerRegime:
     return routed_states
 
 
-def _simulate_three_households():
+def _simulate_three_households() -> SimulationResult:
     """Solve and simulate the model whose `single_f` carries a career state."""
     married = _make_laws(carrying_fallback=True)["married"]
     assert isinstance(married, Transition)
@@ -278,7 +285,14 @@ def _simulate_three_households():
     )
 
 
-def _solve_kernel_level(*, carrying_fallback: bool):
+def _solve_kernel_level(
+    *, carrying_fallback: bool
+) -> tuple[
+    MappingProxyType[RegimeName, EngineRegime],
+    RegimeNamesToIds,
+    MappingProxyType[RegimeName, FlatRegimeParams],
+    BackwardInductionResult,
+]:
     """Compile and solve the model, returning the pieces the router needs."""
     regimes_dict = _make_regimes(carrying_fallback=carrying_fallback)
     declared = _make_laws(carrying_fallback=carrying_fallback)

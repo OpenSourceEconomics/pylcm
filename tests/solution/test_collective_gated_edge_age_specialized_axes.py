@@ -46,6 +46,7 @@ from lcm import (
     categorical,
     fixed_transition,
 )
+from lcm.result import SimulationResult
 from lcm.typing import (
     BoolND,
     ContinuousState,
@@ -479,7 +480,7 @@ def _build_dissolution_model() -> Model:
     )
 
 
-def _simulate_gate_ref(model: Model):
+def _simulate_gate_ref(model: Model) -> SimulationResult:
     """Solve, then simulate two couples from age 0 as the wife's row."""
     solution = model.solve(
         params={"discount_factor": _DISCOUNT_FACTOR}, log_level="off"
@@ -494,7 +495,7 @@ def _simulate_gate_ref(model: Model):
     )
 
 
-def _simulate_dissolution(model: Model):
+def _simulate_dissolution(model: Model) -> SimulationResult:
     """Solve, then simulate two couples from age 0."""
     params = {"discount_factor": _DISCOUNT_FACTOR, "floor_f": _FLOOR_F}
     solution = model.solve(params=params, log_level="off")

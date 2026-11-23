@@ -96,7 +96,7 @@ class AgeSpecializedRegimeId:
     annuity: ScalarInt
 
 
-def test_leg_fallback_projection_must_cover_a_carried_state_of_its_regime():
+def test_leg_fallback_projection_must_cover_a_carried_state_of_its_regime() -> None:
     """A leg's fallback projection owes a coordinate on the regime's `career`.
 
     `fallback` carries `career` per subject once simulation runs, so a leg
@@ -110,7 +110,8 @@ def test_leg_fallback_projection_must_cover_a_carried_state_of_its_regime():
         _build_model(fallback_projects_career=False, gate_ref_projects_career=False)
 
 
-def test_gate_ref_projection_must_cover_only_the_reference_value_functions_axes():
+def test_gate_ref_projection_must_cover_only_the_reference_value_functions_axes(
+) -> None:  # fmt: skip
     """A gate reference may not project a state its regime does not solve on.
 
     The gate reads `fallback`'s value function, whose only axis is `wage` —
@@ -124,7 +125,8 @@ def test_gate_ref_projection_must_cover_only_the_reference_value_functions_axes(
         _build_model(fallback_projects_career=True, gate_ref_projects_career=True)
 
 
-def test_fallback_covering_a_carried_state_and_read_covering_solve_states_solves():
+def test_fallback_covering_a_carried_state_and_read_covering_solve_states_solves(
+) -> None:  # fmt: skip
     """The fallback owes `career`, the read must not name it, and both hold here.
 
     Gate open at wage 2 (src_exit pays 0), closed at wage 1 (fallback pays the
@@ -150,7 +152,8 @@ def test_fallback_covering_a_carried_state_and_read_covering_solve_states_solves
     np.testing.assert_array_equal(landed["career"].iloc[:1], [2.0])
 
 
-def test_leg_fallback_projection_must_cover_an_age_specialized_state_of_its_regime():
+def test_leg_fallback_projection_must_cover_an_age_specialized_state_of_its_regime(
+) -> None:  # fmt: skip
     """A leg's fallback projection owes a coordinate on an age-varying state.
 
     `annuity` holds `principal` on a grid whose ceiling moves with age. That
@@ -164,7 +167,7 @@ def test_leg_fallback_projection_must_cover_an_age_specialized_state_of_its_regi
         _build_age_specialized_model(fallback_projects_principal=False)
 
 
-def test_leg_fallback_projection_covering_an_age_specialized_state_builds():
+def test_leg_fallback_projection_covering_an_age_specialized_state_builds() -> None:
     """A projection onto an age-varying state is a complete one.
 
     Supplying the coordinate the previous test says is owed leaves nothing
@@ -175,7 +178,7 @@ def test_leg_fallback_projection_covering_an_age_specialized_state_builds():
     assert set(model.regime_names_to_ids) == {"src", "src_exit", "annuity"}
 
 
-def test_same_period_ref_reader_names_the_state_a_short_projection_omits():
+def test_same_period_ref_reader_names_the_state_a_short_projection_omits() -> None:
     """A reader built below `Model` refuses a short projection by name.
 
     `Model` rejects an incomplete projection before any kernel is built, so a
@@ -202,7 +205,7 @@ def test_same_period_ref_reader_names_the_state_a_short_projection_omits():
         )
 
 
-def test_fallback_state_projector_names_the_state_a_short_projection_omits():
+def test_fallback_state_projector_names_the_state_a_short_projection_omits() -> None:
     """A projector built below `Model` refuses a short projection by name.
 
     The simulate-side projector owes a coordinate on every state a routed row

@@ -65,7 +65,7 @@ def _predicate(*, z: FloatND, z_code: DiscreteState) -> BoolND:
     return (z > 5.0) & (z_code == 1)
 
 
-def _process(*, continuous: bool):
+def _process(*, continuous: bool) -> TauchenAR1Process:
     return TauchenAR1Process.on_nodes(
         nodes=np.array([-1.0, 0.0, 1.0]),
         rho=0.5,

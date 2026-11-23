@@ -63,7 +63,7 @@ _DISCOUNT_FACTOR = 0.9
 _PROJECTION_MODEL_V_PERIOD_0 = ((2.8, 3.8), (4.7, 6.6))
 
 
-def test_broadcast_state_read_by_an_incoming_gate_survives_in_the_target():
+def test_broadcast_state_read_by_an_incoming_gate_survives_in_the_target() -> None:
     """A model-level state a gated edge's gate reads is kept by the edge's target.
 
     The gate is evaluated pointwise on the target regime's grid, so the target
@@ -79,7 +79,7 @@ def test_broadcast_state_read_by_an_incoming_gate_survives_in_the_target():
     }
 
 
-def test_target_state_read_only_by_an_incoming_projection_counts_as_used():
+def test_target_state_read_only_by_an_incoming_projection_counts_as_used() -> None:
     """A target state a gate reference projects through is a used variable.
 
     The projection maps the target regime's own state cell into the reference

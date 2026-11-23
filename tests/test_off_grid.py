@@ -5,7 +5,7 @@ from collections.abc import Callable, Mapping
 from fractions import Fraction
 from functools import partial
 from types import MappingProxyType
-from typing import Literal, Unpack, cast
+from typing import Literal, TypedDict, Unpack, cast
 
 import jax
 import jax.numpy as jnp
@@ -14,9 +14,12 @@ import pandas as pd
 import pytest
 
 from _lcm import transition_checks
+from _lcm.engine import Regime as EngineRegime
+from _lcm.engine import SimulationPhase, SolutionPhase
 from _lcm.grids.continuous import _clip_grid_value
 from _lcm.off_grid import count_off_grid
 from _lcm.params.edges import regime_kernel_params
+from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.regime_building.V import (
     VInterpolationInfo,
     _get_coordinate_finder,
@@ -30,7 +33,15 @@ from _lcm.simulation.memory import SimulationMemory
 from _lcm.simulation.residency import measure_buffer_footprint
 from _lcm.simulation.transitions import _clip_next_states
 from _lcm.solution.feasibility import BoundedResult, BoundInputStatus
-from _lcm.typing import EconFunctionArg, EconFunctionKwargs, PytreeValue
+from _lcm.time import TimeAxis
+from _lcm.transition_checks import _ValidationSummary
+from _lcm.typing import (
+    EconFunctionArg,
+    EconFunctionKwargs,
+    FlatParams,
+    PytreeValue,
+    RegimeTransitionFunction,
+)
 from benchmarks.asv._compile_counters import count_compile_requests
 from lcm import (
     AgeGrid,
@@ -82,6 +93,7 @@ from lcm.typing import (
     ContinuousAction,
     ContinuousState,
     DiscreteState,
+    Float1D,
     FloatND,
     IntND,
     OffGrid,
@@ -94,6 +106,22 @@ from lcm.typing import (
 from tests.conftest import DECIMAL_PRECISION
 from tests.regime_building._shock_average import average_over_shock
 from tests.simulation.test_entry_operation_reuse import _HostCompilation
+
+
+class _OffGridTargetCountsKwargs(TypedDict):
+    """The keywords `transition_checks._off_grid_target_counts` is called with."""
+
+    regime: EngineRegime
+    phase: SolutionPhase | SimulationPhase
+    target: RegimeName
+    law: RegimeTransitionFunction
+    points: Mapping[StateName, Float1D]
+    target_axes: Mapping[StateName, FloatND | IntND]
+    period: int
+    flat_params: FlatParams
+    ages: TimeAxis
+    summary: _ValidationSummary | None
+    process_grid_resolver: ProcessGridResolver | None
 
 
 @categorical(ordered=False)
@@ -625,7 +653,7 @@ def test_non_debug_solve_does_not_materialize_count_only_off_grid_diagnostics(
 ) -> None:
     """Below `"debug"`, a non-raise grid is neither counted nor reported."""
 
-    def reject_count_sweep(**_kwargs) -> None:
+    def reject_count_sweep(**_kwargs: Unpack[_OffGridTargetCountsKwargs]) -> None:
         pytest.fail("A non-debug solve expanded an optional off-grid diagnostic grid")
 
     monkeypatch.setattr(

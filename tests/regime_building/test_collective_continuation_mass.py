@@ -68,7 +68,7 @@ LEAVE_PROBABILITY = -0.5
 EXPECTED_TWIN_V = {"f": (3808.0, 3840.0), "m": (7616.0, 7680.0)}
 
 
-def test_collective_continuation_prices_each_member_as_its_singleton_twin():
+def test_collective_continuation_prices_each_member_as_its_singleton_twin() -> None:
     """Every member slice of a collective value equals its singleton twin's.
 
     The single outgoing edge carries the regime's whole unit mass, so each twin's
@@ -157,7 +157,7 @@ def test_collective_regime_selection_refuses_a_negative_probability(
         model.solve(params=_two_target_params(), log_level=log_level)
 
 
-def test_two_target_model_with_a_distribution_has_a_finite_last_source_period():
+def test_two_target_model_with_a_distribution_has_a_finite_last_source_period() -> None:
     """With probabilities 0.5 and 0.5 the source's last period solves to finite values.
 
     At age 1 the source reaches its terminal target with probability one, so the

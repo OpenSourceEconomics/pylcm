@@ -30,6 +30,8 @@ from lcm import (
     categorical,
     fixed_transition,
 )
+from lcm.result import SimulationResult
+from lcm.solver_api import SolutionResult
 from lcm.transition import StochasticTransition
 from lcm.typing import BoolND, ContinuousState, FloatND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
@@ -163,7 +165,7 @@ _PARAMS = {
 }
 
 
-def _simulate(*, model: Model, solution):
+def _simulate(*, model: Model, solution: SolutionResult) -> SimulationResult:
     """Two subjects, one on each side of the gate."""
     return model.simulate(
         params=_PARAMS,

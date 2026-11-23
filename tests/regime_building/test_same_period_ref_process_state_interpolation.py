@@ -51,12 +51,13 @@ import jax.numpy as jnp
 import numpy as np
 
 from _lcm.certainty_equivalent import LinearExpectation
+from _lcm.engine import Regime as EngineRegime
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.processing import process_regimes
 from _lcm.regime_law import RegimeLaws
 from _lcm.simulation.simulate import simulate
 from _lcm.solution.backward_induction import solve
-from _lcm.typing import FlatParams
+from _lcm.typing import FlatParams, PeriodToRegimeToVArr
 from _lcm.utils.logging import get_logger
 from lcm import (
     AgeRange,
@@ -310,7 +311,12 @@ def _flat_params() -> FlatParams:
     )
 
 
-def _build_and_solve():
+def _build_and_solve() -> tuple[
+    MappingProxyType[RegimeName, EngineRegime],
+    FlatParams,
+    PeriodToRegimeToVArr,
+    dict[int, dict[RegimeName, BoolND]],
+]:
     user_regimes = _make_regimes()
     laws = _laws(user_regimes)
     finalized = finalize_regimes(
@@ -344,7 +350,7 @@ def _build_and_solve():
     return regimes, flat_params, solution, dissolution_flags
 
 
-def test_same_period_ref_solves_with_a_nonfolded_process_reference():
+def test_same_period_ref_solves_with_a_nonfolded_process_reference() -> None:
     """(a) The model SOLVES: an integer lookup on the process axis would raise."""
     _regimes, _flat_params, solution, dissolution_flags = _build_and_solve()
 
@@ -355,7 +361,7 @@ def test_same_period_ref_solves_with_a_nonfolded_process_reference():
     np.testing.assert_array_equal(D_married, [False, False])
 
 
-def test_same_period_ref_value_matches_hand_computed_interpolation():
+def test_same_period_ref_value_matches_hand_computed_interpolation() -> None:
     """(b) The married regime reads exactly the hand-computed interpolated V_ref.
 
     `_TARGET` was computed independently (via `_solve_shock_ref_only` +
@@ -385,7 +391,7 @@ def test_same_period_ref_value_matches_hand_computed_interpolation():
     assert not np.isclose(_TARGET[0], _TARGET[1])
 
 
-def test_same_period_ref_process_interpolation_reproduced_at_simulate():
+def test_same_period_ref_process_interpolation_reproduced_at_simulate() -> None:
     """Simulate-side: the same reader is shared by `argmax_and_max_Q_over_a`.
 
     Households placed directly into `married` (bypassing any routing) at

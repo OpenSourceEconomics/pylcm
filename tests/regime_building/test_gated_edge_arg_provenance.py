@@ -45,7 +45,7 @@ values for the contested name (`_PROJ_SRC_SHIFT` != `_PROJ_TARGET_SHIFT`,
 """
 
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import replace
 from inspect import signature
 from types import MappingProxyType
@@ -55,6 +55,7 @@ import numpy as np
 import pytest
 
 from _lcm.certainty_equivalent import LinearExpectation
+from _lcm.engine import Regime as InternalRegime
 from _lcm.params.edges import regime_kernel_params
 from _lcm.regime_building.collective import NO_ROLE
 from _lcm.regime_building.finalize import finalize_regimes
@@ -83,6 +84,14 @@ from _lcm.simulation.gated_routing import (
     substitute_gated_edge_continuations,
 )
 from _lcm.solution.backward_induction import solve
+from _lcm.typing import (
+    FlatParams,
+    FlatRegimeParams,
+    ParamsLeaf,
+    PeriodToRegimeToVArr,
+    RegimeNamesToIds,
+    StateName,
+)
 from _lcm.utils.dispatchers import productmap
 from _lcm.utils.functools import get_union_of_args
 from _lcm.utils.logging import get_logger
@@ -177,7 +186,7 @@ def _process(
     regimes_dict: Mapping[str, Regime],
     laws: Mapping[RegimeName, RegimeLawDeclaration | Transition],
     ages: AgeGrid,
-):
+) -> tuple[MappingProxyType[RegimeName, InternalRegime], RegimeNamesToIds]:
     """Finalize and process the regimes under their bound laws."""
     regime_names_to_ids = MappingProxyType(
         {name: jnp.int32(i) for i, name in enumerate(regimes_dict)}
@@ -202,7 +211,13 @@ def _process(
     return regimes, regime_names_to_ids
 
 
-def _solve_fixture(*, spec: _Spec, flat_params):
+def _solve_fixture(
+    *, spec: _Spec, flat_params: FlatParams
+) -> tuple[
+    MappingProxyType[RegimeName, InternalRegime],
+    RegimeNamesToIds,
+    PeriodToRegimeToVArr,
+]:
     regimes_dict, laws = spec
     regimes, regime_names_to_ids = _process(
         regimes_dict=regimes_dict, laws=laws, ages=_AGES
@@ -220,9 +235,14 @@ def _solve_fixture(*, spec: _Spec, flat_params):
     return regimes, regime_names_to_ids, solution
 
 
-def _same_period_mappings(*, regimes, flat_params, solution):
+def _same_period_mappings(
+    *,
+    regimes: MappingProxyType[RegimeName, InternalRegime],
+    flat_params: FlatParams,
+    solution: PeriodToRegimeToVArr,
+) -> MappingProxyType[RegimeName, MappingProxyType[RegimeName, FloatND]]:
     base_state_action_spaces = {
-        name: regime.solution.state_action_space(regime_params=flat_params[name])
+        name: regime.solution.state_action_space(regime_params=flat_params[name])  # ty: ignore[invalid-argument-type]
         for name, regime in regimes.items()
     }
     _substituted, mappings = substitute_gated_edge_continuations(
@@ -250,7 +270,11 @@ _PROJ_SRC_SHIFT = 1.0
 _PROJ_TARGET_SHIFT = 9.0
 
 
-def _target_bound_call(*, func, kwargs):
+def _target_bound_call(
+    *,
+    func: Callable[..., MappingProxyType[StateName, FloatND]],
+    kwargs: Mapping[str, ParamsLeaf | FlatRegimeParams],
+) -> MappingProxyType[StateName, FloatND]:
     """A projector call bound from the TARGET namespace, for contrast.
 
     A local copy of a `_call_with_accepted_kwargs` helper of the form
@@ -334,7 +358,7 @@ def _make_projector_regimes() -> _Spec:
     return _split({"src": src, "target": target, "fallback": fallback})
 
 
-def _projector_flat_params():
+def _projector_flat_params() -> FlatParams:
     return MappingProxyType(
         {
             "src": MappingProxyType(
@@ -355,7 +379,7 @@ def _projector_flat_params():
     )
 
 
-def test_simulate_projector_equals_the_solve_folds_projected_coordinate():
+def test_simulate_projector_equals_the_solve_folds_projected_coordinate() -> None:
     """The simulate projector lands on the coordinate the solve fold projected.
 
     The fold's `Wbar` (gate closed everywhere, `V_fallback(z) = z`) IS the
@@ -372,8 +396,8 @@ def test_simulate_projector_equals_the_solve_folds_projected_coordinate():
     projector = regimes["src"].gated_edges["target"].legs[0].fallback_state_projector
 
     # The two namespaces genuinely disagree about `shift`.
-    assert float(flat_params["edges"]["src"][_PROJ_SHIFT_QNAME]) != float(
-        flat_params["target"][_PROJ_SHIFT_QNAME]
+    assert float(flat_params["edges"]["src"][_PROJ_SHIFT_QNAME]) != float(  # ty: ignore[invalid-argument-type, not-subscriptable]
+        flat_params["target"][_PROJ_SHIFT_QNAME]  # ty: ignore[invalid-argument-type]
     )
 
     # What SOLVE projected, read off the fold's own output: Wbar on the target's
@@ -389,9 +413,9 @@ def test_simulate_projector_equals_the_solve_folds_projected_coordinate():
     # router's own binding.
     target_states = {"x": jnp.array([0.0, 1.0])}
     simulated = projector(
-        **{name: target_states[name] for name in projector.arg_provenance.states},
+        **{name: target_states[name] for name in projector.arg_provenance.states},  # ty: ignore[unresolved-attribute]
         **bind_provenance_params(
-            provenance=projector.arg_provenance,
+            provenance=projector.arg_provenance,  # ty: ignore[unresolved-attribute]
             flat_params=flat_params,
             source_name="src",
             target_name="target",
@@ -418,7 +442,12 @@ def test_simulate_projector_equals_the_solve_folds_projected_coordinate():
     )
 
 
-def _same_period_wbar(*, regimes, flat_params, solution):
+def _same_period_wbar(
+    *,
+    regimes: MappingProxyType[RegimeName, InternalRegime],
+    flat_params: FlatParams,
+    solution: PeriodToRegimeToVArr,
+) -> FloatND:
     """The edge's `Wbar` at the target's own nodes, from the production fold.
 
     The substituted leaf is the edge's stacked operand channels, which the
@@ -432,7 +461,7 @@ def _same_period_wbar(*, regimes, flat_params, solution):
     )
     edge = regimes["src"].gated_edges["target"]
     target_nodes = regimes["target"].solution.state_action_space(
-        regime_params=flat_params["target"]
+        regime_params=flat_params["target"]  # ty: ignore[invalid-argument-type]
     )
     supplied = {
         **{name: jnp.asarray(grid) for name, grid in target_nodes.states.items()},
@@ -471,7 +500,7 @@ def _same_period_wbar(*, regimes, flat_params, solution):
             for reader in edge_fold.projected_readers
             for arg in reader.state_args
         },
-        other_values={
+        other_values={  # ty: ignore[invalid-argument-type]
             arg: engine_values[arg]
             for reader in edge_fold.projected_readers
             for arg in reader.other_args
@@ -488,7 +517,12 @@ def _same_period_wbar(*, regimes, flat_params, solution):
     )
 
 
-def _same_period_channels(*, regimes, flat_params, solution):
+def _same_period_channels(
+    *,
+    regimes: MappingProxyType[RegimeName, InternalRegime],
+    flat_params: FlatParams,
+    solution: PeriodToRegimeToVArr,
+) -> FloatND:
     """The edge's stacked operand channels on the target grid."""
     substituted, _mappings = substitute_gated_edge_continuations(
         regime=regimes["src"],
@@ -497,7 +531,7 @@ def _same_period_channels(*, regimes, flat_params, solution):
         period=0,
         next_regime_to_V_arr=solution[1],
         base_state_action_spaces={
-            name: regime.solution.state_action_space(regime_params=flat_params[name])
+            name: regime.solution.state_action_space(regime_params=flat_params[name])  # ty: ignore[invalid-argument-type]
             for name, regime in regimes.items()
         },
         period_to_regime_to_V_arr=solution,
@@ -506,7 +540,7 @@ def _same_period_channels(*, regimes, flat_params, solution):
     return substituted["target"]
 
 
-def test_router_writes_the_fold_consistent_fallback_state():
+def test_router_writes_the_fold_consistent_fallback_state() -> None:
     """The router writes the fold-consistent fallback state.
 
     The end of the causal chain the equality above pins: the row enters the
@@ -726,7 +760,7 @@ def _identity_x_to_z(x: ContinuousState) -> FloatND:
 _FALLBACK_POINTS = (0.0, 0.25, 1.0)
 
 
-def test_leg_fallback_reader_reads_the_fallback_regimes_own_runtime_grid():
+def test_leg_fallback_reader_reads_the_fallback_regimes_own_runtime_grid() -> None:
     """The leg-fallback reader reads the FALLBACK regime's own runtime grid.
 
     The fourth consumer of `_build_same_period_ref_reader`, and the one that runs
@@ -863,7 +897,7 @@ def _identity_x_wage(wage: ContinuousState) -> ContinuousState:
     return wage
 
 
-def test_e2_same_period_ref_reads_the_reference_regimes_own_runtime_grid():
+def test_e2_same_period_ref_reads_the_reference_regimes_own_runtime_grid() -> None:
     """A same-period ref reads the REFERENCE regime's own runtime grid.
 
     The one consumer of `_build_same_period_ref_reader` that lives inside a
@@ -940,7 +974,7 @@ def test_e2_same_period_ref_reads_the_reference_regimes_own_runtime_grid():
     )
     same_period_V = MappingProxyType({"single_f": solution[0]["single_f"]})
 
-    def _ref_value(points) -> float:
+    def _ref_value(points: tuple[float, float]) -> float:
         return float(
             reader(
                 wage=jnp.asarray(1.0),
@@ -1044,7 +1078,7 @@ def _make_leg_fallback_target_helper_regimes() -> _Spec:
     return _split({"src": src, "target": target, "fallback": fallback})
 
 
-def test_leg_fallback_projection_naming_a_target_helper_is_rejected():
+def test_leg_fallback_projection_naming_a_target_helper_is_rejected() -> None:
     """A leg-fallback projection naming a target helper is refused at construction.
 
     The projection would otherwise evaluate the helper's `target_scale` from the
@@ -1229,7 +1263,7 @@ def _make_own_param_named_like_target_helper_param_regimes() -> _Spec:
     return _split({"src": src, "target": target, "fallback": fallback})
 
 
-def test_gate_param_named_like_a_target_helper_param_builds_as_a_source_param():
+def test_gate_param_named_like_a_target_helper_param_builds_as_a_source_param() -> None:
     """A gate that reads a target state and its own parameter builds, and binds that
     parameter from the source under the gate's declaration path, even though a
     target helper reads a parameter of the same name."""
@@ -1240,7 +1274,7 @@ def test_gate_param_named_like_a_target_helper_param_builds_as_a_source_param():
     )
     source_qnames = sorted(
         qname
-        for namespace, qname in evaluator.arg_provenance.params.values()
+        for namespace, qname in evaluator.arg_provenance.params.values()  # ty: ignore[unresolved-attribute]
         if namespace == SOURCE_PARAMS
     )
     assert source_qnames == ["target__predicate__target_scale"]
@@ -1314,7 +1348,7 @@ def _make_threshold_shadow_regimes() -> _Spec:
     return _split({"src": src, "target": target, "fallback": fallback})
 
 
-def test_gate_arg_shadowed_by_state_only_target_node_is_rejected():
+def test_gate_arg_shadowed_by_state_only_target_node_is_rejected() -> None:
     """A gate arg naming a STATE-ONLY target node must be rejected.
 
     The node reads only the target state `x`, yet `concatenate_functions` would
@@ -1442,8 +1476,8 @@ def _make_gate_param_aliases_target_state_regimes(
 
 @pytest.mark.parametrize("source_supplies_x_param", [False, True])
 def test_gate_reading_a_target_state_solves_beside_a_source_param_of_its_name(
-    source_supplies_x_param,
-):
+    *, source_supplies_x_param: bool
+) -> None:
     """A gate reading target state `x` solves, whatever the source's own params.
 
     With `source_supplies_x_param=True` the source utility reads a parameter
@@ -1623,7 +1657,7 @@ def test_gate_arguments_spelled_like_engine_names_are_bound_apart_from_them(
     assert set(signature(qualified).parameters) == expected
 
 
-def test_target_state_aliasing_the_engine_v_arg_is_rejected():
+def test_target_state_aliasing_the_engine_v_arg_is_rejected() -> None:
     """A target STATE named `SAME_PERIOD_V_ARG` is rejected: it would share one
     fold leaf with the engine value mapping."""
     flat_params = MappingProxyType(

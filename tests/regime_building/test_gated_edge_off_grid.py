@@ -14,13 +14,17 @@ integer or a half-integer rather than a tolerance-bounded approximation.
 """
 
 import logging
-from collections.abc import Callable
-from typing import Literal
+from collections.abc import Callable, Mapping
+from typing import Literal, NotRequired, TypedDict, Unpack
 
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.continuation import ContinuationPayload
+from _lcm.engine import StateActionSpace
+from _lcm.time import TimeAxis
+from _lcm.typing import FlatParams, PytreeValue
 from lcm import (
     AgeGrid,
     ByAge,
@@ -47,6 +51,7 @@ from lcm.exceptions import (
     ModelInitializationError,
     OffGridStateError,
 )
+from lcm.solver_api import KernelOutput
 from lcm.transition import StochasticTransition
 from lcm.typing import (
     BoolND,
@@ -55,9 +60,26 @@ from lcm.typing import (
     DiscreteState,
     FloatND,
     OffGrid,
+    RegimeName,
     ScalarInt,
 )
 from tests.conftest import DECIMAL_PRECISION
+
+
+class _KernelCallKwargs(TypedDict):
+    """The keyword arguments the backward loop hands a period kernel."""
+
+    compiled_cores: Mapping[str, Callable[..., PytreeValue]]
+    state_action_space: StateActionSpace
+    next_regime_to_V_arr: Mapping[RegimeName, FloatND]
+    next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload]
+    flat_params: FlatParams
+    period: int
+    ages: TimeAxis
+    logger: logging.Logger
+    same_period_regime_to_V_arr: NotRequired[Mapping[RegimeName, FloatND] | None]
+    edge_regime_to_V_arr: NotRequired[Mapping[RegimeName, FloatND] | None]
+
 
 # Nodes 0, 1, 2. The gate opens strictly above 1.0, so the cell [1, 2] straddles
 # it and is where gating on the nodes and gating at the landing point differ.
@@ -118,7 +140,7 @@ def _params() -> dict[str, dict[str, dict[str, float]]]:
 
 def _make_model(
     *,
-    saving_grid=_SAVING,
+    saving_grid: IrregSpacedGrid = _SAVING,
     off_grid: Literal["pointwise", "reject"] = "pointwise",
     fallback_off_grid: OffGrid = "extrapolate",
     project_outside_hull: bool = False,
@@ -914,7 +936,7 @@ def test_nonterminal_participation_prices_its_actual_future_continuation() -> No
 
 
 def test_actual_participation_publisher_borrows_its_declared_future_native_input(
-    *, monkeypatch
+    *, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The source really reads the original later buffer through its dated alias."""
     from _lcm.execution.value_transfer import ValueArtifactKind  # noqa: PLC0415
@@ -932,7 +954,9 @@ def test_actual_participation_publisher_borrows_its_declared_future_native_input
     publish = _BorrowedParticipationKernel.__call__
     consume = _PolicyQueryKernel.__call__
 
-    def observe_publish(self, **arguments):
+    def observe_publish(
+        self: _BorrowedParticipationKernel, **arguments: Unpack[_KernelCallKwargs]
+    ) -> KernelOutput:
         output = publish(self, **arguments)
         payload = output.continuations[PARTICIPATION_CONTINUATION]
         assert isinstance(payload, ParticipationContinuation)
@@ -943,7 +967,9 @@ def test_actual_participation_publisher_borrows_its_declared_future_native_input
         published.append((payload, original))
         return output
 
-    def observe_consume(self, **arguments):
+    def observe_consume(
+        self: _PolicyQueryKernel, **arguments: Unpack[_KernelCallKwargs]
+    ) -> KernelOutput:
         if arguments["period"] == 0:
             payload, original = published[0]
             source_payload = arguments["next_regime_to_continuation"]["target"]
@@ -988,7 +1014,7 @@ def test_actual_participation_publisher_borrows_its_declared_future_native_input
 
 @pytest.mark.parametrize("corruption", ["missing", "wrong_date"])
 def test_participation_source_refuses_a_missing_or_wrong_date_payload(
-    *, monkeypatch, corruption: str
+    *, monkeypatch: pytest.MonkeyPatch, corruption: str
 ) -> None:
     """A failed actual source reader cannot commit or free its borrowed origin."""
     from _lcm.participation_continuation import (  # noqa: PLC0415
@@ -999,7 +1025,9 @@ def test_participation_source_refuses_a_missing_or_wrong_date_payload(
     invoke = _PolicyQueryKernel.__call__
     borrowed = []
 
-    def corrupt_source(self, **arguments):
+    def corrupt_source(
+        self: _PolicyQueryKernel, **arguments: Unpack[_KernelCallKwargs]
+    ) -> KernelOutput:
         if arguments["period"] == 0:
             payload = arguments["next_regime_to_continuation"]["target"]
             assert isinstance(payload, ParticipationContinuation)
@@ -1479,7 +1507,7 @@ def _extra_origin_participation_model() -> Model:
 
 
 def test_participation_borrows_a_distinct_fallback_future_original(
-    *, monkeypatch
+    *, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Extra native custody preserves the original that reverses the source rank."""
     from _lcm.execution.value_transfer import ValueArtifactKind  # noqa: PLC0415
@@ -1497,7 +1525,9 @@ def test_participation_borrows_a_distinct_fallback_future_original(
     publish = _BorrowedParticipationKernel.__call__
     consume = _PolicyQueryKernel.__call__
 
-    def observe_publish(self, **arguments):
+    def observe_publish(
+        self: _BorrowedParticipationKernel, **arguments: Unpack[_KernelCallKwargs]
+    ) -> KernelOutput:
         output = publish(self, **arguments)
         if self.template.regime == "target" and arguments["period"] == 1:
             payload = output.continuations[PARTICIPATION_CONTINUATION]
@@ -1531,7 +1561,9 @@ def test_participation_borrows_a_distinct_fallback_future_original(
             published.append((payload, original, tuple(names)))
         return output
 
-    def observe_consume(self, **arguments):
+    def observe_consume(
+        self: _PolicyQueryKernel, **arguments: Unpack[_KernelCallKwargs]
+    ) -> KernelOutput:
         if self.root_context.regime_name == "source" and arguments["period"] == 0:
             published_payload, original, names = published[0]
             payload = arguments["next_regime_to_continuation"]["target"]

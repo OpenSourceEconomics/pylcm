@@ -504,7 +504,7 @@ def _age_specialized_model() -> Model:
     def feasible(*, consumption: ContinuousAction, wealth: ContinuousState) -> BoolND:
         return consumption <= wealth
 
-    def cap_of_age(age: float):
+    def cap_of_age(age: float) -> Callable[..., BoolND]:
         def wealth_cap(
             *, consumption: ContinuousAction, wealth: ContinuousState
         ) -> BoolND:

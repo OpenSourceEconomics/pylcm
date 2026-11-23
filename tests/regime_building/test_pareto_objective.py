@@ -38,6 +38,7 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
     StateName,
+    UserFunction,
     UserParamsNode,
 )
 from tests.conftest import DECIMAL_PRECISION
@@ -104,8 +105,8 @@ def _build_model(
     objective: ParetoObjective | None,
     states: dict[StateName, StateEntry] | None = None,
     state_transitions: dict[StateName, StateTransitionEntry] | None = None,
-    utility_f=_utility_f,
-    utility_m=_utility_m,
+    utility_f: UserFunction = _utility_f,
+    utility_m: UserFunction = _utility_m,
 ) -> Model:
     couple = Regime(
         states=states or {},

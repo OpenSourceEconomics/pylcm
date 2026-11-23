@@ -31,6 +31,7 @@ from lcm import (
     categorical,
 )
 from lcm.exceptions import NoFeasibleActionError
+from lcm.result import SimulationResult
 from lcm.transition import StochasticTransition
 from lcm.typing import BoolND, ContinuousState, DiscreteAction, FloatND, ScalarInt
 
@@ -161,7 +162,9 @@ def build_chain_model(
     )
 
 
-def simulate_chain(*, model: Model, wages: np.ndarray, runtime_checks: bool):
+def simulate_chain(
+    *, model: Model, wages: np.ndarray, runtime_checks: bool
+) -> SimulationResult:
     params = {
         name: {"koopmans_aggregator": {"discount_factor": 1.0}}
         if name == "source"
@@ -188,7 +191,7 @@ def simulate_chain(*, model: Model, wages: np.ndarray, runtime_checks: bool):
 _EMPTY_WAGES = np.linspace(1.5, 2.0, 9)
 
 
-def test_reference_finds_no_action_in_b_across_the_empty_interval():
+def test_reference_finds_no_action_in_b_across_the_empty_interval() -> None:
     assert all(
         reference_action(wage=float(wage), constrained=True) is None
         for wage in _EMPTY_WAGES
@@ -205,7 +208,7 @@ def test_a_closed_branch_does_not_borrow_another_gates_route(
     runtime_checks: bool,
     wage: float,
     gate_order: tuple[str, ...],
-):
+) -> None:
     model = build_chain_model(
         order=("source", "a", "b", "c"),
         close_a=True,
@@ -223,7 +226,7 @@ def test_a_closed_branch_does_not_borrow_another_gates_route(
 @pytest.mark.parametrize("reverse_rows", [False, True])
 def test_a_mixed_cohort_does_not_borrow_another_gates_route(
     *, gate_order: tuple[str, ...], reverse_rows: bool
-):
+) -> None:
     wages = np.concatenate(([1.0, 3.0], _EMPTY_WAGES))
     if reverse_rows:
         wages = wages[::-1].copy()
@@ -238,7 +241,7 @@ def test_a_mixed_cohort_does_not_borrow_another_gates_route(
 
 
 @pytest.mark.parametrize("enable_jit", [False, True], ids=["eager", "jit"])
-def test_an_open_branch_into_b_still_takes_its_own_route(*, enable_jit: bool):
+def test_an_open_branch_into_b_still_takes_its_own_route(*, enable_jit: bool) -> None:
     """The gate into `b` opens; the empty landing takes `b`'s fallback `c`."""
     model = build_chain_model(
         order=("source", "a", "b", "c"),

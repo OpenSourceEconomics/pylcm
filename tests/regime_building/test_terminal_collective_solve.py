@@ -48,7 +48,7 @@ def _utility_m(*, wage: FloatND, work: DiscreteAction) -> FloatND:
     return 2.0 * consumption
 
 
-def test_terminal_collective_regime_solves_with_member_axis():
+def test_terminal_collective_regime_solves_with_member_axis() -> None:
     regime = Regime(
         states={"wage": LinSpacedGrid(start=10.0, stop=40.0, n_points=2)},
         actions={"work": DiscreteGrid(category_class=Work)},

@@ -1,6 +1,6 @@
 """Canonical runtime-bound transport survives actual solver and subject evaluations."""
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from functools import partial
 from types import MappingProxyType
 from typing import Never, TypedDict, Unpack, cast
@@ -28,17 +28,20 @@ from _lcm.simulation.program_types import SUBJECT_WIDTH_KEYWORD
 from _lcm.simulation.programs import _SubjectTiled
 from _lcm.simulation.simulate import _canonical_Q_at_actions, _read_external_replay
 from _lcm.simulation.transitions import create_regime_state_action_space
+from _lcm.solution.action_reduction import HardMaxResult
 from _lcm.solution.action_streaming import (
     build_partitioned_streaming_max_Q_over_a,
     build_streaming_collective_max_Q_over_a,
     build_streaming_ev1_max_Q_over_a,
     build_streaming_max_Q_over_a,
 )
+from _lcm.solution.collective_action_reduction import CollectiveHardMaxResult
 from _lcm.solution.feasibility import (
     BoundedResult,
     BoundInputStatus,
     CountedGridSearch,
 )
+from _lcm.solution.logsumexp_action_reduction import LogSumExpResult
 from _lcm.typing import (
     ConstraintFunction,
     ConstraintFunctionsMapping,
@@ -1170,7 +1173,19 @@ def test_bounded_action_streams_match_the_unbounded_stream(
         np.testing.assert_array_equal(np.asarray(got), np.asarray(want))
 
 
-def _marked_stream(*, route: str, bounded: bool, block_width: int):
+type _MarkedStreamResult = (
+    HardMaxResult
+    | LogSumExpResult
+    | CollectiveHardMaxResult
+    | BoundedResult[HardMaxResult]
+    | BoundedResult[LogSumExpResult]
+    | BoundedResult[CollectiveHardMaxResult]
+)
+
+
+def _marked_stream(
+    *, route: str, bounded: bool, block_width: int
+) -> Callable[[FloatND], _MarkedStreamResult]:
     """Build one action stream whose utility carries a single rounding marker."""
     kernel = _marked_kernel(route=route, bounded=bounded)
     work = jnp.asarray([0.0, 1.0])
@@ -1205,7 +1220,7 @@ def _marked_stream(*, route: str, bounded: bool, block_width: int):
             axis_name="owners",
         )
 
-        def run_partitioned(income: FloatND):
+        def run_partitioned(income: FloatND) -> _MarkedStreamResult:
             return jax.vmap(
                 lambda _: partitioned(
                     next_regime_to_V_arr=MappingProxyType({}),
@@ -1220,7 +1235,7 @@ def _marked_stream(*, route: str, bounded: bool, block_width: int):
 
         return run_partitioned
 
-    def run(income: FloatND):
+    def run(income: FloatND) -> _MarkedStreamResult:
         return stream(
             next_regime_to_V_arr=MappingProxyType({}),
             period=jnp.int32(0),

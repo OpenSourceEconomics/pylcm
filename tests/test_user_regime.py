@@ -50,6 +50,7 @@ from lcm.grids import IrregSpacedGrid
 from lcm.regime import (
     ActionEntry,
     FunctionEntry,
+    RegimeReplacement,
     StateEntry,
     StateTransitionEntry,
     StochasticTransition,
@@ -64,6 +65,7 @@ from lcm.typing import (
     DiscreteState,
     FloatND,
     FunctionName,
+    RegimeName,
     ScalarInt,
     StateName,
     UserFunction,
@@ -71,11 +73,13 @@ from lcm.typing import (
 from tests.conftest import DECIMAL_PRECISION
 
 
-def utility(consumption):
+def utility(consumption: ContinuousAction) -> FloatND:
     return consumption
 
 
-def next_wealth(*, wealth, consumption):
+def next_wealth(
+    *, wealth: ContinuousState, consumption: ContinuousAction
+) -> ContinuousState:
     return wealth - consumption
 
 
@@ -83,7 +87,7 @@ WEALTH_GRID = LinSpacedGrid(start=1, stop=10, n_points=5)
 CONSUMPTION_GRID = LinSpacedGrid(start=1, stop=5, n_points=5)
 
 
-def test_regime_name_does_not_contain_separator():
+def test_regime_name_does_not_contain_separator() -> None:
     """Regime name validation happens at Model level, not Regime level."""
 
     @categorical(ordered=False)
@@ -113,7 +117,7 @@ def test_regime_name_does_not_contain_separator():
         )
 
 
-def test_function_name_does_not_contain_separator():
+def test_function_name_does_not_contain_separator() -> None:
     with pytest.raises(RegimeInitializationError, match=QNAME_DELIMITER):
         UserRegime(
             states={"wealth": WEALTH_GRID},
@@ -123,7 +127,7 @@ def test_function_name_does_not_contain_separator():
         )
 
 
-def test_state_name_does_not_contain_separator():
+def test_state_name_does_not_contain_separator() -> None:
     with pytest.raises(RegimeInitializationError, match=QNAME_DELIMITER):
         UserRegime(
             functions={"utility": utility},
@@ -150,7 +154,7 @@ def _invalid_names_match(*, kind: str, name: str) -> str:
 
 
 @pytest.mark.parametrize("name", INVALID_SEGMENT_NAMES)
-def test_regime_name_must_be_a_valid_path_segment(name):
+def test_regime_name_must_be_a_valid_path_segment(name: RegimeName) -> None:
     """A regime name with `__` or a leading/trailing `_` is rejected by `Model`."""
     regime_id = categorical(ordered=False)(
         type("RegimeId", (), {"__annotations__": {name: ScalarInt, "dead": ScalarInt}})
@@ -176,7 +180,7 @@ def test_regime_name_must_be_a_valid_path_segment(name):
 
 
 @pytest.mark.parametrize("name", INVALID_SEGMENT_NAMES)
-def test_state_name_must_be_a_valid_path_segment(name):
+def test_state_name_must_be_a_valid_path_segment(name: StateName) -> None:
     """A state name with `__` or a leading/trailing `_` is rejected by `Regime`."""
     with pytest.raises(
         RegimeInitializationError,
@@ -191,7 +195,7 @@ def test_state_name_must_be_a_valid_path_segment(name):
 
 
 @pytest.mark.parametrize("name", INVALID_SEGMENT_NAMES)
-def test_action_name_must_be_a_valid_path_segment(name):
+def test_action_name_must_be_a_valid_path_segment(name: ActionName) -> None:
     """An action name with `__` or a leading/trailing `_` is rejected by `Regime`."""
     with pytest.raises(
         RegimeInitializationError,
@@ -206,7 +210,7 @@ def test_action_name_must_be_a_valid_path_segment(name):
 
 
 @pytest.mark.parametrize("name", INVALID_SEGMENT_NAMES)
-def test_function_name_must_be_a_valid_path_segment(name):
+def test_function_name_must_be_a_valid_path_segment(name: FunctionName) -> None:
     """A function name with `__` or a leading/trailing `_` is rejected by `Regime`."""
     with pytest.raises(
         RegimeInitializationError,
@@ -221,7 +225,7 @@ def test_function_name_must_be_a_valid_path_segment(name):
 
 
 @pytest.mark.parametrize("name", INVALID_SEGMENT_NAMES)
-def test_constraint_name_must_be_a_valid_path_segment(name):
+def test_constraint_name_must_be_a_valid_path_segment(name: FunctionName) -> None:
     """A constraint name with `__` or a leading/trailing `_` is rejected by `Regime`."""
     with pytest.raises(
         RegimeInitializationError,
@@ -237,7 +241,7 @@ def test_constraint_name_must_be_a_valid_path_segment(name):
 
 
 @pytest.mark.parametrize("name", INVALID_SEGMENT_NAMES)
-def test_member_name_must_be_a_valid_path_segment(name):
+def test_member_name_must_be_a_valid_path_segment(name: str) -> None:
     """A member with `__` or a leading/trailing `_` is rejected by `Regime`."""
     with pytest.raises(
         RegimeInitializationError,
@@ -255,7 +259,7 @@ def test_member_name_must_be_a_valid_path_segment(name):
 
 
 @pytest.mark.parametrize("name", INVALID_SEGMENT_NAMES)
-def test_route_key_must_be_a_valid_path_segment(name):
+def test_route_key_must_be_a_valid_path_segment(name: str) -> None:
     """A route key with `__` or a leading/trailing `_` is rejected by `Model`."""
     with pytest.raises(
         RegimeInitializationError,
@@ -265,7 +269,7 @@ def test_route_key_must_be_a_valid_path_segment(name):
 
 
 @pytest.mark.parametrize("name", INVALID_SEGMENT_NAMES)
-def test_participation_read_key_must_be_a_valid_path_segment(name):
+def test_participation_read_key_must_be_a_valid_path_segment(name: str) -> None:
     """A participation-read key with `__` or a leading/trailing `_` is rejected."""
     with pytest.raises(RegimeInitializationError, match=re.escape(repr(name))):
         _participation_model(read_key=name)
@@ -311,7 +315,7 @@ def test_parameter_argument_name_must_be_a_valid_path_segment(
         "simulate",
     ],
 )
-def test_entry_names_of_edge_declarations_are_valid_path_segments(name):
+def test_entry_names_of_edge_declarations_are_valid_path_segments(name: str) -> None:
     """The field names pylcm puts into a parameter path obey the user naming rule."""
     assert path_segment_name_errors(kind="Entry", names=[name]) == []
 
@@ -499,11 +503,13 @@ _PARAMETER_CARRIERS: dict[
 }
 
 
-def _aggregator(*, utility, CE, discount_factor):
+def _aggregator(*, utility: FloatND, CE: FloatND, discount_factor: FloatND) -> FloatND:
     return utility + discount_factor * CE
 
 
-def test_phased_aggregator_missing_a_phase_is_rejected_once_the_regime_has_a_law():
+def test_phased_aggregator_missing_a_phase_is_rejected_once_the_regime_has_a_law() -> (
+    None
+):
     """A non-terminal regime needs a Koopmans aggregator in both phases.
 
     Whether the regime is terminal comes from its law, so the regime itself
@@ -554,13 +560,15 @@ def test_phased_aggregator_missing_a_phase_is_rejected_once_the_regime_has_a_law
         "mismatched fixed transition",
     ],
 )
-def test_regime_local_declaration_errors_raise_at_construction(*, regime_kwargs, match):
+def test_regime_local_declaration_errors_raise_at_construction(
+    *, regime_kwargs: RegimeReplacement, match: str
+) -> None:
     """Errors that need no law are raised when the regime is constructed."""
     with pytest.raises(RegimeInitializationError, match=match):
         UserRegime(**regime_kwargs)
 
 
-def test_terminal_regime_creation():
+def test_terminal_regime_creation() -> None:
     """A regime bound to no outgoing law is terminal and can have states and utility."""
     regime = UserRegime(
         functions={"utility": lambda wealth: wealth * 0.5},
@@ -571,7 +579,7 @@ def test_terminal_regime_creation():
     assert law.terminal is True
 
 
-def test_terminal_regime_with_actions():
+def test_terminal_regime_with_actions() -> None:
     """Terminal regime can have actions for final decisions."""
     regime = UserRegime(
         functions={"utility": lambda wealth, bequest_share: wealth * bequest_share},
@@ -584,7 +592,7 @@ def test_terminal_regime_with_actions():
     assert "bequest_share" in regime.actions
 
 
-def test_non_terminal_regime_has_transition():
+def test_non_terminal_regime_has_transition() -> None:
     """A regime bound to a transition law is non-terminal."""
     regime = UserRegime(
         functions={"utility": utility},
@@ -597,7 +605,7 @@ def test_non_terminal_regime_has_transition():
     assert law.terminal is False
 
 
-def test_terminal_regime_can_be_created_without_states():
+def test_terminal_regime_can_be_created_without_states() -> None:
     """Terminal regime can be created without states (e.g., death state)."""
     regime = UserRegime(
         functions={"utility": lambda: 0},
@@ -609,7 +617,7 @@ def test_terminal_regime_can_be_created_without_states():
     assert regime.states == {}
 
 
-def test_regime_has_no_activity_argument():
+def test_regime_has_no_activity_argument() -> None:
     """Where a regime is solved comes only from the model's edges."""
     with pytest.raises(TypeError, match="active"):
         UserRegime(
@@ -630,7 +638,7 @@ def _finalize(regime: UserRegime, *, law: RegimeLawDeclaration) -> UserRegime:
     )["regime"]
 
 
-def test_regime_requires_utility_in_functions():
+def test_regime_requires_utility_in_functions() -> None:
     """Regime must have 'utility' in the functions dict."""
     regime = UserRegime(
         functions={"helper": lambda: 1},
@@ -640,27 +648,27 @@ def test_regime_requires_utility_in_functions():
         _finalize(regime, law=None)
 
 
-def test_identity_transition_call():
+def test_identity_transition_call() -> None:
     """Identity transition returns the state value unchanged."""
     identity = _IdentityTransition(state_name="wealth", annotation=ContinuousState)
     result = identity(wealth=jnp.array(42.0))
     assert result == jnp.array(42.0)
 
 
-def test_identity_transition_discrete():
+def test_identity_transition_discrete() -> None:
     """Identity transition works for discrete states."""
     identity = _IdentityTransition(state_name="education", annotation=DiscreteState)
     result = identity(education=jnp.array(1, dtype=jnp.int32))
     assert result == jnp.array(1, dtype=jnp.int32)
 
 
-def test_identity_transition_name():
+def test_identity_transition_name() -> None:
     """Identity transition has the correct __name__."""
     identity = _IdentityTransition(state_name="wealth", annotation=ContinuousState)
     assert identity.__name__ == "next_wealth"
 
 
-def test_identity_transition_signature():
+def test_identity_transition_signature() -> None:
     """Identity transition has a proper signature with annotation."""
     identity = _IdentityTransition(state_name="wealth", annotation=ContinuousState)
     sig = inspect.signature(identity)
@@ -669,7 +677,7 @@ def test_identity_transition_signature():
     assert sig.return_annotation is ContinuousState
 
 
-def test_identity_transition_annotations():
+def test_identity_transition_annotations() -> None:
     """Identity transition exposes __annotations__ for dags discovery."""
     identity = _IdentityTransition(state_name="education", annotation=DiscreteState)
     assert identity.__annotations__ == {
@@ -678,13 +686,13 @@ def test_identity_transition_annotations():
     }
 
 
-def test_identity_transition_is_auto_identity():
+def test_identity_transition_is_auto_identity() -> None:
     """Identity transition is flagged as auto-generated."""
     identity = _IdentityTransition(state_name="x", annotation=ContinuousState)
     assert identity._is_auto_identity is True
 
 
-def test_get_all_functions_includes_identity_for_fixed_discrete_state():
+def test_get_all_functions_includes_identity_for_fixed_discrete_state() -> None:
     """Fixed discrete states get identity transitions with DiscreteState annotation."""
 
     @categorical(ordered=False)
@@ -704,7 +712,7 @@ def test_get_all_functions_includes_identity_for_fixed_discrete_state():
     assert identity_func.__annotations__["return"] is DiscreteState
 
 
-def test_get_all_functions_includes_identity_for_fixed_continuous_state():
+def test_get_all_functions_includes_identity_for_fixed_continuous_state() -> None:
     """Fixed continuous states get identity transitions with correct annotation."""
     regime = UserRegime(
         functions={"utility": lambda wealth: wealth},
@@ -718,7 +726,7 @@ def test_get_all_functions_includes_identity_for_fixed_continuous_state():
     assert identity_func.__annotations__["return"] is ContinuousState
 
 
-def test_state_grid_without_explicit_transition_raises():
+def test_state_grid_without_explicit_transition_raises() -> None:
     """Non-terminal regime with a state missing from state_transitions is rejected."""
     regime = UserRegime(
         functions={"utility": utility},
@@ -731,7 +739,7 @@ def test_state_grid_without_explicit_transition_raises():
         _finalize(regime, law=lambda: 0)
 
 
-def test_state_grid_with_fixed_transition_is_accepted():
+def test_state_grid_with_fixed_transition_is_accepted() -> None:
     """A fixed state declared via `fixed_transition` is valid."""
     regime = UserRegime(
         functions={"utility": utility},
@@ -743,7 +751,7 @@ def test_state_grid_with_fixed_transition_is_accepted():
     assert "wealth" in regime.states
 
 
-def test_state_grid_with_transition_callable_is_accepted():
+def test_state_grid_with_transition_callable_is_accepted() -> None:
     """State with a transition function in state_transitions is valid."""
     regime = UserRegime(
         functions={"utility": utility},
@@ -755,7 +763,7 @@ def test_state_grid_with_transition_callable_is_accepted():
     assert "wealth" in regime.states
 
 
-def test_action_grid_without_transition_is_accepted():
+def test_action_grid_without_transition_is_accepted() -> None:
     """Action grid with default UNSET transition is valid."""
     regime = UserRegime(
         functions={"utility": utility},
@@ -772,7 +780,9 @@ def test_action_grid_without_transition_is_accepted():
     [LinSpacedGrid, IrregSpacedGrid],
     ids=["LinSpacedGrid", "IrregSpacedGrid"],
 )
-def test_state_grid_unset_error_with_different_grid_types(grid_cls):
+def test_state_grid_unset_error_with_different_grid_types(
+    grid_cls: type[LinSpacedGrid | IrregSpacedGrid],
+) -> None:
     """Missing state_transitions entry error works for various grid types."""
     if grid_cls is LinSpacedGrid:
         grid = LinSpacedGrid(start=1, stop=10, n_points=5)
@@ -789,7 +799,7 @@ def test_state_grid_unset_error_with_different_grid_types(grid_cls):
         _finalize(regime, law=lambda: 0)
 
 
-def test_discrete_state_grid_without_explicit_transition_raises():
+def test_discrete_state_grid_without_explicit_transition_raises() -> None:
     """Discrete state grid missing from state_transitions is rejected."""
 
     @categorical(ordered=False)
@@ -807,7 +817,7 @@ def test_discrete_state_grid_without_explicit_transition_raises():
         _finalize(regime, law=lambda: 0)
 
 
-def test_collect_state_transitions_missing_state_raises():
+def test_collect_state_transitions_missing_state_raises() -> None:
     """collect_state_transitions raises RegimeInitializationError for missing state."""
 
     states = MappingProxyType({"wealth": LinSpacedGrid(start=1, stop=10, n_points=5)})
@@ -817,7 +827,7 @@ def test_collect_state_transitions_missing_state_raises():
         collect_state_transitions(states=states, state_transitions={})
 
 
-def test_regime_with_fixed_states_only():
+def test_regime_with_fixed_states_only() -> None:
     """A regime whose every state is fixed (all `fixed_transition` laws) builds."""
 
     @categorical(ordered=False)
@@ -978,7 +988,7 @@ def _guard_model(
     )
 
 
-def test_model_refuses_a_value_grid_hidden_by_fixed_component_factoring():
+def test_model_refuses_a_value_grid_hidden_by_fixed_component_factoring() -> None:
     """Factoring a Markov state into fixed components cannot hide a value grid."""
     with pytest.raises(RegimeInitializationError, match=r"values=\.\.\."):
         _guard_model(
@@ -995,7 +1005,7 @@ def test_model_refuses_a_value_grid_hidden_by_fixed_component_factoring():
 )
 def test_model_refuses_value_grids_behind_a_fixed_component_in_every_scope(
     *, scope: _GuardScope, values: tuple[int, ...] | tuple[float, ...]
-):
+) -> None:
     """A value grid behind a fixed component is refused in a regime and at model level.
 
     Fixed-component factoring replaces the declared grid with category grids before
@@ -1015,7 +1025,7 @@ def test_model_refuses_value_grids_behind_a_fixed_component_in_every_scope(
 )
 def test_value_grid_state_without_fixed_component_reaches_utility_as_values(
     *, values: tuple[int, ...] | tuple[float, ...]
-):
+) -> None:
     """`u = wealth` on a value-grid state solves to the values, not the codes `0, 1`.
 
     The state is fixed, the regime lives two periods with discount factor 0.9, and
@@ -1039,7 +1049,7 @@ def test_value_grid_state_without_fixed_component_reaches_utility_as_values(
 @pytest.mark.parametrize("scope", ["regime", "model"])
 def test_model_keeps_category_grids_in_every_declaration_slot(
     *, location: _GuardLocation, scope: _GuardScope
-):
+) -> None:
     """The category declaration in each refused slot still builds a model."""
     model = _guard_model(
         grid=DiscreteGrid(category_class=_GuardCategory),

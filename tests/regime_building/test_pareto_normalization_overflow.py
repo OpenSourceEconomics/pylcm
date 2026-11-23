@@ -38,14 +38,14 @@ def _equal_weights_at(value: float) -> dict[str, float]:
     return _normalized({"f": value, "m": value})
 
 
-def test_weights_at_the_format_maximum_normalize_to_one_half():
+def test_weights_at_the_format_maximum_normalize_to_one_half() -> None:
     """Two equal admissible weights share the household equally, however large."""
     weights = _equal_weights_at(_working_float_max())
 
     aaae(weights["f"], 0.5, decimal=DECIMAL_PRECISION)
 
 
-def test_weights_at_the_format_maximum_select_the_intended_action():
+def test_weights_at_the_format_maximum_select_the_intended_action() -> None:
     """The normalized weighting picks the action the intended weights pick.
 
     With payoffs `A = (1, 0)` and `B = (0, 2)`, weights of one half each rank
@@ -62,7 +62,7 @@ def test_weights_at_the_format_maximum_select_the_intended_action():
     assert chosen == 1
 
 
-def test_ordinary_weights_are_unchanged_by_the_scale_safe_path():
+def test_ordinary_weights_are_unchanged_by_the_scale_safe_path() -> None:
     """Rescaling must not move a declaration the old path already handled."""
     weights = _equal_weights_at(2.0)
 
@@ -70,7 +70,9 @@ def test_ordinary_weights_are_unchanged_by_the_scale_safe_path():
 
 
 @pytest.mark.parametrize(("name", "expected"), [("f", 0.75), ("m", 0.25)])
-def test_unequal_weights_keep_their_declared_ratio(*, name, expected):
+def test_unequal_weights_keep_their_declared_ratio(
+    *, name: str, expected: float
+) -> None:
     """Normalization preserves the ratio the modeller declared."""
     weights = _normalized({"f": 3.0, "m": 1.0})
 
@@ -79,8 +81,8 @@ def test_unequal_weights_keep_their_declared_ratio(*, name, expected):
 
 @pytest.mark.parametrize("n_members", range(2, 9))
 def test_equal_weights_at_the_format_maximum_share_evenly_at_any_household_size(
-    n_members,
-):
+    n_members: int,
+) -> None:
     """`n` members declared equal each take `1/n`, at any household size.
 
     The raw total leaves the working format from two members upward, so
@@ -97,7 +99,9 @@ def test_equal_weights_at_the_format_maximum_share_evenly_at_any_household_size(
 
 
 @pytest.mark.parametrize("order", list(itertools.permutations(range(3))))
-def test_relabelling_the_household_leaves_every_share_untouched(order):
+def test_relabelling_the_household_leaves_every_share_untouched(
+    order: tuple[int, ...],
+) -> None:
     """A member's share depends on her declared weight, not on her position.
 
     Member names are economically inert, so declaring the same three
@@ -119,7 +123,7 @@ def test_relabelling_the_household_leaves_every_share_untouched(order):
     )
 
 
-def test_weights_far_below_overflow_are_left_exactly_where_they_were():
+def test_weights_far_below_overflow_are_left_exactly_where_they_were() -> None:
     """A declaration whose raw total is representable keeps its plain ratio.
 
     Weights of `max/8` and `max/16` sum to a finite total, so rescaling must

@@ -75,7 +75,7 @@ class _CoupleRegimeId:
     widowed: ScalarInt
 
 
-def test_declaring_non_terminal_members_constructs():
+def test_declaring_non_terminal_members_constructs() -> None:
     """A non-terminal collective regime constructs.
 
     Declaring `members` and binding a regime transition law is accepted: the
@@ -102,7 +102,7 @@ def test_declaring_non_terminal_members_constructs():
     assert not law.terminal
 
 
-def test_terminal_members_without_per_member_utility_is_rejected():
+def test_terminal_members_without_per_member_utility_is_rejected() -> None:
     """A collective regime must carry a body for every member it names.
 
     A household may leave a member's body to arrive from the model level,
@@ -142,7 +142,7 @@ def test_terminal_members_without_per_member_utility_is_rejected():
         )
 
 
-def test_singleton_default_is_untouched():
+def test_singleton_default_is_untouched() -> None:
     """A regime that declares no members is a plain singleton regime.
 
     Omitting `members` leaves the field `None` and construction takes the
@@ -161,6 +161,6 @@ def test_singleton_default_is_untouched():
     assert regime.member_axis is None
 
 
-def test_members_is_not_a_constructor_parameter():
+def test_members_is_not_a_constructor_parameter() -> None:
     """A regime's members are declared in its utility, and only there."""
     assert "member_axis" not in inspect.signature(Regime).parameters

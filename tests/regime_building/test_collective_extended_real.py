@@ -21,7 +21,7 @@ asserts a value that comes out `nan`.
 import contextlib
 import inspect
 import itertools
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Generator, Mapping
 from fractions import Fraction
 
 # Helpers for the FMA / bit-exactness regression tests.
@@ -73,7 +73,7 @@ from lcm.typing import DiscreteAction, FloatND, ScalarInt, UserFunction
 
 
 @contextlib.contextmanager
-def _x64(*, enabled: bool):
+def _x64(*, enabled: bool) -> Generator[None]:
     """Scope `jax_enable_x64` and restore it (x64 is OFF by default in this env)."""
     previous = jax.config.jax_enable_x64
     jax.config.update("jax_enable_x64", enabled)
@@ -135,7 +135,7 @@ def _raw_corner_sum_interpolator(
 # `zero_safe_weighted_term` / `zero_safe_average` — the centralized primitives
 
 
-def test_zero_safe_weighted_term_annihilates_minus_inf_at_zero_weight():
+def test_zero_safe_weighted_term_annihilates_minus_inf_at_zero_weight() -> None:
     weight = jnp.array([0.0, 1.0, 0.5])
     value = jnp.array([-jnp.inf, 3.0, 4.0])
     result = zero_safe_weighted_term(
@@ -145,7 +145,7 @@ def test_zero_safe_weighted_term_annihilates_minus_inf_at_zero_weight():
     np.testing.assert_allclose(np.asarray(result), [0.0, 3.0, 2.0])
 
 
-def test_zero_safe_weighted_term_matches_naive_product_when_no_zero_weight():
+def test_zero_safe_weighted_term_matches_naive_product_when_no_zero_weight() -> None:
     # No weight is exactly zero -> byte-identical to the naive product.
     weight = jnp.array([0.2, 1.0, 0.5])
     value = jnp.array([-jnp.inf, 3.0, jnp.inf])
@@ -156,7 +156,7 @@ def test_zero_safe_weighted_term_matches_naive_product_when_no_zero_weight():
     np.testing.assert_array_equal(np.asarray(result), np.asarray(naive))
 
 
-def test_zero_safe_average_ignores_a_zero_weight_minus_inf_node():
+def test_zero_safe_average_ignores_a_zero_weight_minus_inf_node() -> None:
     values = jnp.array([-jnp.inf, 3.0, 5.0])
     weights = jnp.array([0.0, 0.5, 0.5])
     result = zero_safe_average(a=values, weights=weights, shifts=None)
@@ -164,7 +164,7 @@ def test_zero_safe_average_ignores_a_zero_weight_minus_inf_node():
     np.testing.assert_allclose(float(result), 4.0)
 
 
-def test_a_coefficient_cannot_be_supplied_to_the_average_without_its_scale():
+def test_a_coefficient_cannot_be_supplied_to_the_average_without_its_scale() -> None:
     """`shifts` is required, so no call can leave the scale question unasked.
 
     A weight that came from `scaled_joint_weight` means nothing without the
@@ -176,7 +176,7 @@ def test_a_coefficient_cannot_be_supplied_to_the_average_without_its_scale():
     assert parameter.default is inspect.Parameter.empty
 
 
-def test_zero_safe_average_weighs_nodes_by_probability_not_by_coefficient():
+def test_zero_safe_average_weighs_nodes_by_probability_not_by_coefficient() -> None:
     """Nodes on different scales are weighed by `coefficient * 2**-shift`.
 
     `scaled_joint_weight` returns one scale per NODE, so two coefficients say
@@ -197,7 +197,7 @@ def test_zero_safe_average_weighs_nodes_by_probability_not_by_coefficient():
     assert float(result) != 4.0
 
 
-def test_zero_safe_average_matches_jnp_average_on_the_finite_path():
+def test_zero_safe_average_matches_jnp_average_on_the_finite_path() -> None:
     # No zero weight, no +-inf value -> BYTE-IDENTICAL to jnp.average.
     #
     # Value masking leaves the multiply FMA-contractible into the reduction, so
@@ -216,8 +216,9 @@ def test_zero_safe_average_matches_jnp_average_on_the_finite_path():
 
 @pytest.mark.parametrize("use_x64", [False, True], ids=["float32", "float64"])
 def test_zero_safe_average_is_bit_identical_to_jnp_average_on_the_positive_path(
-    use_x64,
-):
+    *,
+    use_x64: bool,
+) -> None:
     """The all-positive path is BIT-IDENTICAL to `jnp.average`, not within a ULP.
 
     On this counterexample both weights are strictly positive, so the zero guard
@@ -266,7 +267,7 @@ def test_zero_safe_average_is_bit_identical_to_jnp_average_on_the_positive_path(
             assert guarded_bits != old_bits
 
 
-def test_zero_safe_average_is_exact_where_ties_actually_arise():
+def test_zero_safe_average_is_exact_where_ties_actually_arise() -> None:
     """A degenerate p=[1, 0] mixture must be EXACT, not merely close.
 
     This is the path that matters for the argmax: exact ties arise structurally
@@ -285,7 +286,9 @@ def test_zero_safe_average_is_exact_where_ties_actually_arise():
     assert np.asarray(result).view(np.uint32) == np.float32(2.5).view(np.uint32)
 
 
-def test_zero_safe_average_axis_reduction_matches_jnp_average_on_the_finite_path():
+def test_zero_safe_average_axis_reduction_matches_jnp_average_on_the_finite_path() -> (
+    None
+):
     """The axis reduction is now BYTE-IDENTICAL to `jnp.average` on the positive path.
 
     "Mathematically equal, not byte-identical" describes the product-masking
@@ -315,14 +318,14 @@ def test_zero_safe_average_axis_reduction_matches_jnp_average_on_the_finite_path
     assert int(np.sum(_bits(old) != _bits(naive))) > 0
 
 
-def test_zero_safe_average_raises_eagerly_on_concretely_zero_total_weight():
+def test_zero_safe_average_raises_eagerly_on_concretely_zero_total_weight() -> None:
     values = jnp.array([1.0, 2.0])
     weights = jnp.array([0.0, 0.0])
     with pytest.raises(ValueError, match="total weight is exactly zero"):
         zero_safe_average(a=values, weights=weights, shifts=None)
 
 
-def test_zero_safe_average_does_not_reverse_a_nontied_action():
+def test_zero_safe_average_does_not_reverse_a_nontied_action() -> None:
     """The ULP drift must not flip a NON-TIED discrete-action choice.
 
     The concrete reversal at stake. With nodes `[-3.9480734, 2.623802]`
@@ -388,7 +391,7 @@ def _value_ordered_mixture(
     return _sum_regime_mixture(mixture_terms=terms, like=v[0])
 
 
-def test_sum_regime_mixture_is_zero_mass_safe():
+def test_sum_regime_mixture_is_zero_mass_safe() -> None:
     """The load-bearing GUARANTEE: a zero-prob target with a -inf continuation -> 0.
 
     An unreached regime-transition target carries probability exactly 0; its
@@ -405,7 +408,9 @@ def test_sum_regime_mixture_is_zero_mass_safe():
     assert float(result) == pytest.approx(1.45, abs=1e-6)
 
 
-def test_value_ordered_mixture_lands_on_the_exact_side_where_left_fold_did_not():
+def test_value_ordered_mixture_lands_on_the_exact_side_where_left_fold_did_not() -> (
+    None
+):
     """Canonical contribution ordering crosses to the exact-policy side.
 
     On a pinned 5-target float64 fixture the exact mixture is above a representable
@@ -453,7 +458,7 @@ def test_value_ordered_mixture_lands_on_the_exact_side_where_left_fold_did_not()
     assert (value_ordered > alternative) != (left_fold > alternative)
 
 
-def test_sum_regime_mixture_is_independent_of_target_declaration_order():
+def test_sum_regime_mixture_is_independent_of_target_declaration_order() -> None:
     """The sorted reduction is invariant to target permutation.
 
     A left fold changes a pinned-fixture policy under a mere target permutation on
@@ -479,7 +484,9 @@ def test_sum_regime_mixture_is_independent_of_target_declaration_order():
             assert got == base
 
 
-def test_sum_regime_mixture_accuracy_scales_with_summand_magnitude_not_result_ulp():
+def test_sum_regime_mixture_accuracy_scales_with_summand_magnitude_not_result_ulp() -> (
+    None
+):
     """The error bound is summand-scale, NOT a fixed few result-ULP.
 
     Under cancellation (sum|p_r*V_r| >> |sum p_r*V_r|) the reduction is hundreds of
@@ -518,7 +525,7 @@ def test_sum_regime_mixture_accuracy_scales_with_summand_magnitude_not_result_ul
     assert abs(got - exact) <= 1e-15 + 1e-14 * summand_scale
 
 
-def test_sum_regime_mixture_weights_the_target_axis_not_the_member_axis():
+def test_sum_regime_mixture_weights_the_target_axis_not_the_member_axis() -> None:
     """At the COLLECTIVE site each per-target continuation is a MEMBER vector,
     so stacking gives values (K, S) while the scalar regime probabilities stack to
     (K,). The reduction must weight the TARGET axis (axis 0)
@@ -535,7 +542,7 @@ def test_sum_regime_mixture_weights_the_target_axis_not_the_member_axis():
     assert [float(x) for x in out] == pytest.approx([3.0, 1.0])
 
 
-def test_sum_regime_mixture_is_zero_mass_safe_on_the_member_axis():
+def test_sum_regime_mixture_is_zero_mass_safe_on_the_member_axis() -> None:
     """A zero-probability target with an admissible -inf member vector
     contributes exactly 0 across ALL members, and does not leak -inf through
     a misaligned broadcast (which would return [-inf, 0])."""
@@ -548,7 +555,9 @@ def test_sum_regime_mixture_is_zero_mass_safe_on_the_member_axis():
     assert [float(x) for x in out] == pytest.approx([1.0, 2.0])
 
 
-def test_sum_regime_mixture_collective_allows_unequal_target_and_member_counts():
+def test_sum_regime_mixture_collective_allows_unequal_target_and_member_counts() -> (
+    None
+):
     """K != S must not raise -- a misaligned trailing-axis broadcast crashes with
     a ValueError when K=3, S=2."""
     terms = [
@@ -635,7 +644,7 @@ def _alpha_rename_mixture(
     return f(w, v)[0, 0]
 
 
-def test_sum_regime_mixture_is_invariant_to_alpha_renaming_of_the_regimes():
+def test_sum_regime_mixture_is_invariant_to_alpha_renaming_of_the_regimes() -> None:
     """The value-ordered reduction is BIT-invariant to a pure alpha-renaming of
     the regimes, where a name-sort is not.
 
@@ -685,7 +694,7 @@ def test_sum_regime_mixture_is_invariant_to_alpha_renaming_of_the_regimes():
     assert old_policy == {True, False}
 
 
-def test_map_coordinates_is_bit_identical_to_the_raw_corner_sum_off_grid():
+def test_map_coordinates_is_bit_identical_to_the_raw_corner_sum_off_grid() -> None:
     """The real interpolation path is bit-exact vs the raw `w*v` corner sum.
 
     `map_coordinates` weights each corner via `zero_safe_weighted_term`; off-grid,
@@ -735,7 +744,7 @@ def test_map_coordinates_is_bit_identical_to_the_raw_corner_sum_off_grid():
 # `_weighted_sum` — the household Pareto scalarization
 
 
-def test_weighted_sum_zero_weight_minus_inf_member_stays_finite():
+def test_weighted_sum_zero_weight_minus_inf_member_stays_finite() -> None:
     # Member "f" is excluded (weight 0); its Q is -inf (an admissible
     # on-path value, e.g. a feasible zero-consumption action). The
     # scalarization must equal m's Q alone, not nan.
@@ -749,7 +758,7 @@ def test_weighted_sum_zero_weight_minus_inf_member_stays_finite():
     np.testing.assert_allclose(np.asarray(objective), [1.0, 5.0, 3.0])
 
 
-def test_zero_pareto_weight_with_minus_inf_does_not_flip_the_argmax():
+def test_zero_pareto_weight_with_minus_inf_does_not_flip_the_argmax() -> None:
     """A zero-weighted member's `-inf` must not corrupt the household argmax.
 
     Without the guard, `objective = 0.0 * Q_f + 1.0 * Q_m`. At action 0, where
@@ -781,7 +790,7 @@ def test_zero_pareto_weight_with_minus_inf_does_not_flip_the_argmax():
     assert values["f"] == pytest.approx(0.0)
 
 
-def test_zero_pareto_weight_minus_inf_batched_over_states():
+def test_zero_pareto_weight_minus_inf_batched_over_states() -> None:
     # Same repro as above, but batched over two state cells with a different
     # true optimum in each, to guard against an axis-handling regression.
     q_f = jnp.array([[-jnp.inf, 0.0, 0.0], [0.0, -jnp.inf, 0.0]])
@@ -805,7 +814,7 @@ def test_zero_pareto_weight_minus_inf_batched_over_states():
 # all-infeasible (empty-mask) marker.
 
 
-def test_onpath_minus_inf_with_a_feasible_action_leaves_dissolution_false():
+def test_onpath_minus_inf_with_a_feasible_action_leaves_dissolution_false() -> None:
     member_Q = {
         "f": jnp.array([-jnp.inf, 0.0, 0.0]),
         "m": jnp.array([1.0, 5.0, 3.0]),
@@ -821,7 +830,7 @@ def test_onpath_minus_inf_with_a_feasible_action_leaves_dissolution_false():
     assert bool(jnp.isfinite(values["m"]))
 
 
-def test_empty_feasible_mask_sets_dissolution_true():
+def test_empty_feasible_mask_sets_dissolution_true() -> None:
     member_Q = {
         "f": jnp.array([-jnp.inf, 0.0, 0.0]),
         "m": jnp.array([1.0, 5.0, 3.0]),
@@ -886,30 +895,30 @@ def _build_terminal_regime(
     return regime
 
 
-def test_a_household_with_no_members_is_rejected():
+def test_a_household_with_no_members_is_rejected() -> None:
     """A `CollectiveUtility` naming nobody is not a household."""
     with pytest.raises(RegimeInitializationError, match="at least one member"):
         _build_terminal_regime(utilities={})
 
 
-def test_non_finite_weight_is_rejected():
+def test_non_finite_weight_is_rejected() -> None:
     with pytest.raises(RegimeInitializationError, match="finite"):
         _build_terminal_regime(
             objective=ParetoObjective(weights={"f": float("nan"), "m": 0.5})
         )
 
 
-def test_negative_weight_is_rejected():
+def test_negative_weight_is_rejected() -> None:
     with pytest.raises(RegimeInitializationError, match="non-negative"):
         _build_terminal_regime(objective=ParetoObjective(weights={"f": -0.1, "m": 1.1}))
 
 
-def test_all_zero_weights_are_rejected():
+def test_all_zero_weights_are_rejected() -> None:
     with pytest.raises(RegimeInitializationError, match="positive total"):
         _build_terminal_regime(objective=ParetoObjective(weights={"f": 0.0, "m": 0.0}))
 
 
-def test_a_single_zero_weight_with_a_positive_total_is_allowed():
+def test_a_single_zero_weight_with_a_positive_total_is_allowed() -> None:
     # A zero weight is a deliberate exclusion, not an error, as long as the
     # total remains positive.
     regime = _build_terminal_regime(

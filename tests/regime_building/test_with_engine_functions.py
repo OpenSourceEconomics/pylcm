@@ -73,7 +73,7 @@ def _declaring_regime() -> Regime:
     )
 
 
-def test_the_declaration_survives_the_write_back():
+def test_the_declaration_survives_the_write_back() -> None:
     """What the author wrote is still there after the engine adds to it."""
     regime = _declaring_regime()
     engine_functions = {**regime.decomposed_functions, "resources": _resources}
@@ -83,7 +83,7 @@ def test_the_declaration_survives_the_write_back():
     assert written.functions["utility"] is regime.functions["utility"]
 
 
-def test_an_engine_addition_reaches_the_decomposed_view():
+def test_an_engine_addition_reaches_the_decomposed_view() -> None:
     """The composed function is what the next stage reads off the regime."""
     regime = _declaring_regime()
     engine_functions = {**regime.decomposed_functions, "resources": _resources}
@@ -93,7 +93,7 @@ def test_an_engine_addition_reaches_the_decomposed_view():
     assert written.decomposed_functions["resources"] is _resources
 
 
-def test_a_members_own_body_is_not_written_into_the_raw_slot():
+def test_a_members_own_body_is_not_written_into_the_raw_slot() -> None:
     """A synthesized entry belongs to the declaration, not beside it."""
     regime = _declaring_regime()
     engine_functions = {**regime.decomposed_functions, "resources": _resources}
@@ -103,7 +103,7 @@ def test_a_members_own_body_is_not_written_into_the_raw_slot():
     assert "utility_f" not in written.functions
 
 
-def test_rewriting_a_members_body_is_refused():
+def test_rewriting_a_members_body_is_refused() -> None:
     """A member's utility is hers to declare; the engine may not swap it."""
     regime = _declaring_regime()
     engine_functions = {**regime.decomposed_functions, "utility_m": _other_u_m}
@@ -112,7 +112,7 @@ def test_rewriting_a_members_body_is_refused():
         regime.with_engine_functions(engine_functions=engine_functions)
 
 
-def test_replacing_the_declaration_itself_is_refused():
+def test_replacing_the_declaration_itself_is_refused() -> None:
     """Handing back a plain `utility` would silently dissolve the household."""
     regime = _declaring_regime()
     engine_functions = {**regime.decomposed_functions, "utility": _u_f}
@@ -121,7 +121,7 @@ def test_replacing_the_declaration_itself_is_refused():
         regime.with_engine_functions(engine_functions=engine_functions)
 
 
-def test_dropping_a_member_is_refused():
+def test_dropping_a_member_is_refused() -> None:
     """The write-back must reproduce what the regime decomposes to, in full."""
     regime = _declaring_regime()
     engine_functions = {
@@ -134,7 +134,7 @@ def test_dropping_a_member_is_refused():
         regime.with_engine_functions(engine_functions=engine_functions)
 
 
-def test_a_delegated_body_may_be_updated_because_it_is_the_regimes_own():
+def test_a_delegated_body_may_be_updated_because_it_is_the_regimes_own() -> None:
     """A `None` member's body is the regime's own, so the engine may compose it."""
     regime = _couple(
         functions={
@@ -149,7 +149,7 @@ def test_a_delegated_body_may_be_updated_because_it_is_the_regimes_own():
     assert written.decomposed_functions["utility_m"] is _other_u_m
 
 
-def test_a_singleton_regime_is_written_back_wholesale():
+def test_a_singleton_regime_is_written_back_wholesale() -> None:
     """With no declaration to protect, the engine mapping is the mapping."""
     regime = _couple(functions={"utility": _u_f, "helper": _resources})
     engine_functions = {"utility": _u_f, "resources": _resources}
