@@ -39,9 +39,11 @@ class StateConditioned:
 
     an IID process dropping the $\rho y_t$ term. Several parameters of one process may
     be conditioned, all on the same state and the same categories. The row is binned on
-    one set of nodes that spans every category's own nodes. Standing where the scalar
-    would go, it says which parameter is conditioned and leaves no way to give that
-    parameter twice.
+    one set of nodes that spans every category's own nodes, so a category whose own
+    nodes cover only part of that range is resolved more coarsely than by a process of
+    its own; the user guide describes how to standardize the state instead. Standing
+    where the scalar would go, it says which parameter is conditioned and leaves no way
+    to give that parameter twice.
 
     The conditioning value is dated $t$, so the law of the innovation realized
     between $t$ and $t+1$ is set by where the subject is at $t$. The mapping it is read

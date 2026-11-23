@@ -600,6 +600,47 @@ cover all the others — as when only `sigma` is conditioned — those nodes are
 they are. The per-category values otherwise enter only the transition probabilities. To
 widen the axis, raise `n_std`.
 
+### What the shared nodes cost
+
+The shared nodes are a limitation of the design, not a neutral choice. A category whose
+own nodes cover only part of the shared range has its law binned on fewer effective
+nodes than `n_points` suggests, and on nodes that are not centred on it. The model
+builds and solves without complaint, and its results differ from those of a model that
+gives the category its own process. Two categories with far-apart means and a small
+`sigma` are the extreme case: almost all of each category's probability sits on one
+outer node.
+
+What to do depends on the process:
+
+- **An IID innovation.** Declare a `Normal` shock on quadrature nodes instead of a
+  discretized process (see [Shock timing](#shock-timing-is-read-off-the-model)). The
+  nodes are those of the standard normal and are scaled by each category's `sigma`, so
+  nothing is shared.
+
+- **A persistent process whose conditioning state never changes for a subject**, such as
+  education. Standardize the state, which is common practice. With
+  $m_s = \mu_s / (1 - \rho_s)$ and $v_s = \sigma_s / \sqrt{1 - \rho_s^2}$ the long-run
+  mean and standard deviation of category $s$, carry $z_t = (y_t - m_s) / v_s$ as the
+  process state, which follows
+
+  ```{math}
+  z_{t+1} \mid z_t, s \sim N(\rho_s z_t,\ 1 - \rho_s^2),
+  ```
+
+  and compute $y_t = m_s + v_s z_t$ in a regime function of the conditioning state and
+  $z_t$. Every category's own nodes are then the same, running from $-$`n_std` to
+  `n_std`, so each category's transition probabilities are those of its own process. A
+  process with further parameters standardizes the same way, with its own long-run mean
+  and standard deviation.
+
+- **A persistent process whose conditioning state changes over time**, such as a
+  volatility regime. Standardizing does not apply, because the scale of $z_t$ would
+  change with the category. The shared nodes are the right axis here; raise `n_points`
+  until the narrowest category is resolved well enough.
+
+Nodes that differ by category within one model are not supported. Nothing in the design
+rules them out, but standardizing covers the cases that need them.
+
 ### The conditioning value is dated t
 
 Writing $s_t$ for the time-$t$ value of `on`, an AR(1) process with every parameter
