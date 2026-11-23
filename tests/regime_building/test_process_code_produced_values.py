@@ -27,8 +27,6 @@ from lcm import (
     MemberRoute,
     Model,
     NormalIIDProcess,
-    ParticipationCheck,
-    ParticipationRead,
     ProjectedRegimeValue,
     Regime,
     Transition,
@@ -143,14 +141,6 @@ def _closed_by_code(z_code: DiscreteState) -> BoolND:
     return z_code < 0
 
 
-def _has_policy_support(target_support: BoolND) -> BoolND:
-    return target_support
-
-
-def _landed_z(z: ContinuousState) -> ContinuousState:
-    return z
-
-
 def _off_middle_node(z_code: DiscreteState) -> BoolND:
     return z_code != 2
 
@@ -235,8 +225,9 @@ def _gate_model(*, on_node: bool, enable_jit: bool) -> Model:
 def _dissolution_model(*, on_node: bool, enable_jit: bool) -> Model:
     """Collective source landing in `a`, which has no policy at the middle node.
 
-    The participation check decides the landing by `a`'s policy support; the off-node
-    model's `f` route projects back into `a`, which reads `z_code`.
+    The gate closes the landing exactly where `a` has no feasible action, the middle
+    node; the off-node model's `f` route projects back into `a`, which reads
+    `z_code`.
     """
     work = DiscreteGrid(category_class=Work)
     routes = {
@@ -252,21 +243,6 @@ def _dissolution_model(*, on_node: bool, enable_jit: bool) -> Model:
             target_member="m",
             fallback=ProjectedRegimeValue(regime="b", projection={"z": _project_one}),
         ),
-    }
-    participation = {
-        "a": ParticipationCheck(
-            predicate=_has_policy_support,
-            reads={
-                "target_support": ParticipationRead(
-                    regime="a",
-                    member="f",
-                    kind="Participating",
-                    field="support",
-                    projection={"z": _landed_z},
-                )
-            },
-            routes=routes,
-        )
     }
     return Model(
         regimes={
@@ -295,7 +271,7 @@ def _dissolution_model(*, on_node: bool, enable_jit: bool) -> Model:
         edges={
             "source": Transition(
                 law=ByAge(cases={0: {"a": StochasticTransition(func=_prob_one)}}),
-                participation=participation,
+                gates={"a": Gate(predicate=_off_middle_node, routes=routes)},
             )
         },
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),

@@ -1,8 +1,9 @@
-"""Every route of a participation check projects from the household's original landing.
+"""Every route of a gate projects from the household's original landing.
 
-A collective source decides its participation check in `a` with two routes: `f` falls
-back to `a` itself at a projected coordinate, `m` falls back to the singleton `b` at its
-own coordinate. Rows landing where `a` has no policy support take their own route. The
+A collective source gates its edge into `a` with two routes: `f` falls back to `a`
+itself at a projected coordinate, `m` falls back to the singleton `b` at its own
+coordinate. The gate closes where `a` has no feasible action, and rows landing there
+take their own route. The
 `m` route must read the state the household arrived with, not the state the `f` route
 just wrote back into `a`, so the outcome does not depend on the order the routes or the
 regimes are declared in.
@@ -19,10 +20,9 @@ from lcm import (
     ByAge,
     CollectiveUtility,
     DiscreteGrid,
+    Gate,
     MemberRoute,
     Model,
-    ParticipationCheck,
-    ParticipationRead,
     ProjectedRegimeValue,
     Regime,
     Transition,
@@ -80,10 +80,6 @@ def _feasible(*, x: DiscreteState) -> BoolND:
     return x != 1
 
 
-def _has_policy_support(*, target_support: BoolND) -> BoolND:
-    return target_support
-
-
 def _certain(*, x: DiscreteState) -> FloatND:
     return 1.0 + 0.0 * x
 
@@ -131,18 +127,9 @@ def _build_model(
         edges={
             "source": Transition(
                 law=ByAge(cases={0: {"a": StochasticTransition(func=_certain)}}),
-                participation={
-                    "a": ParticipationCheck(
-                        predicate=_has_policy_support,
-                        reads={
-                            "target_support": ParticipationRead(
-                                regime="a",
-                                member="f",
-                                kind="Participating",
-                                field="support",
-                                projection={"x": _identity},
-                            )
-                        },
+                gates={
+                    "a": Gate(
+                        predicate=_feasible,
                         routes={
                             "f": MemberRoute(
                                 target_member="f",

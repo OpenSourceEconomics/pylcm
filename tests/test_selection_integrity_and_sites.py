@@ -31,12 +31,11 @@ from lcm import (
     AgeRange,
     ByAge,
     DeterministicTransition,
+    Gate,
     LinSpacedGrid,
     MemberRoute,
     Model,
     NormalIIDProcess,
-    ParticipationCheck,
-    ParticipationRead,
     ProjectedRegimeValue,
     Regime,
     StochasticTransition,
@@ -266,8 +265,8 @@ def _prob_one(age: FloatND) -> FloatND:
     return jnp.ones_like(age, dtype=float)
 
 
-def _numeric_gate(*, V_target: FloatND, V_reference: FloatND) -> FloatND:
-    return V_target - V_reference + 0.5
+def _numeric_gate(wealth: ContinuousState) -> FloatND:
+    return wealth + 0.5
 
 
 def _identity(wealth: ContinuousState) -> ContinuousState:
@@ -280,8 +279,8 @@ def _numeric_gate_model() -> Model:
             "source": Transition(
                 targets={"target": 40, "fallback": 40},
                 law=ByAge(cases={40: {"target": StochasticTransition(func=_prob_one)}}),
-                participation={
-                    "target": ParticipationCheck(
+                gates={
+                    "target": Gate(
                         predicate=_numeric_gate,
                         routes={
                             "self": MemberRoute(
@@ -290,18 +289,6 @@ def _numeric_gate_model() -> Model:
                                     projection={"wealth": _identity},
                                 )
                             )
-                        },
-                        reads={
-                            "V_target": ParticipationRead(
-                                kind="Raw",
-                                regime="target",
-                                projection={"wealth": _identity},
-                            ),
-                            "V_reference": ParticipationRead(
-                                kind="Raw",
-                                regime="reference",
-                                projection={"wealth": _identity},
-                            ),
                         },
                     )
                 },
@@ -323,7 +310,10 @@ def test_a_numeric_gate_output_fails_with_logging_off() -> None:
     """A gate returning floats instead of booleans is refused."""
     with pytest.raises(
         InvalidFunctionOutputError,
-        match=r"^A participation predicate '.*' returned dtype 'float(32|64)'",
+        match=(
+            r"^The gate of the edge into regime 'target', function '.*' "
+            r"returned dtype 'float(32|64)'"
+        ),
     ):
         _numeric_gate_model().solve(params=_PARAMS, log_level="off")
 

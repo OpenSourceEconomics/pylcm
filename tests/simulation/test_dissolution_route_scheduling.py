@@ -6,10 +6,10 @@ schedules have to hold for that:
 
 - A fallback runs after every target it serves, whatever order the regimes are
   declared in, so any acyclic arrangement of targets and fallbacks simulates.
-- A participation check may name its own target as the fallback, at a projected
-  state. A household landing where the target has no policy support then decides
-  in the same regime at the projected state, and its period's row records that
-  decision.
+- A gate may name its own target as the fallback, at a projected state. A
+  household landing where the gate closes, which here is where the target has no
+  feasible action, then decides in the same regime at the projected state, and its
+  period's row records that decision.
 """
 
 from itertools import permutations
@@ -24,11 +24,10 @@ from lcm import (
     ByAge,
     CollectiveUtility,
     DiscreteGrid,
+    Gate,
     IrregSpacedGrid,
     MemberRoute,
     Model,
-    ParticipationCheck,
-    ParticipationRead,
     ProjectedRegimeValue,
     Regime,
     Transition,
@@ -165,10 +164,6 @@ def _feasible_below_the_middle(*, wage: ContinuousState) -> BoolND:
     return wage < 1.5
 
 
-def _has_policy_support(*, target_support: BoolND) -> BoolND:
-    return target_support
-
-
 def _certain(*, wage: ContinuousState) -> FloatND:
     return 1.0 + 0.0 * wage
 
@@ -189,28 +184,19 @@ def _self_route_model(
     projection: UserFunction = _project_to_three,
     off_grid: Literal["extrapolate", "clip_state"] = "extrapolate",
 ) -> Model:
-    """The participation check into `a` falls back to `a`, projecting the wage to 3."""
+    """The gate into `a` closes where `a` is empty and falls back to `a` itself.
+
+    The gate reads the same state-only restriction as `a`'s constraint, so it
+    closes exactly where `a` has no feasible action, and the route projects the
+    wage to 3 (or to `projection`).
+    """
     route = MemberRoute(
         target_member="f",
         fallback=ProjectedRegimeValue(
             regime="a", member="f", projection={"wage": projection}
         ),
     )
-    participation = {
-        "a": ParticipationCheck(
-            predicate=_has_policy_support,
-            reads={
-                "target_support": ParticipationRead(
-                    regime="a",
-                    member="f",
-                    kind="Participating",
-                    field="support",
-                    projection={"wage": _identity},
-                )
-            },
-            routes={"only": route},
-        )
-    }
+    gates = {"a": Gate(predicate=feasible, routes={"only": route})}
     grid = IrregSpacedGrid(points=np.array([1.0, 2.0, 3.0]))
     a_grid = IrregSpacedGrid(points=np.array([1.0, 2.0, 3.0]), off_grid=off_grid)
     return Model(
@@ -234,7 +220,7 @@ def _self_route_model(
         edges={
             "source": Transition(
                 law=ByAge(cases={0: {"a": StochasticTransition(func=_certain)}}),
-                participation=participation,
+                gates=gates,
             )
         },
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),

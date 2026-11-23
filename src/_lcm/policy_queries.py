@@ -17,7 +17,13 @@ import jax.numpy as jnp
 from dags import with_signature
 from jax.core import Tracer
 
-from _lcm.current_iid import CurrentIIDDrawFrame
+from _lcm.current_iid import (
+    CURRENT_IID_ARGUMENT,
+    CURRENT_IID_NODES_ARGUMENT,
+    CURRENT_IID_ROWS_ARGUMENT,
+    CurrentIIDDrawFrame,
+    CurrentIIDPlan,
+)
 from _lcm.dtypes import Code, as_canonical_float, as_code
 from _lcm.engine import StateActionSpace
 from _lcm.execution.core_program import (
@@ -49,7 +55,6 @@ from _lcm.regime_building.Q_and_F import (
 from _lcm.solution.contract import ContinuationPayload, PeriodKernel, SolverBuildContext
 from _lcm.solution.grid_search import (
     GridSearch,
-    _GridSearchArgumentBuilder,
     grid_search_query_inputs,
 )
 from _lcm.solution.landing_counts import (
@@ -111,13 +116,17 @@ _FLAT_OPERAND_PATH_LENGTH = 2
 
 
 class QueryKind(StrEnum):
-    """Action problems and explicitly distinct nonpublishing participation readers."""
+    """The action problem a query reads.
+
+    - `RAW` ⇒ the target's problem without its exit
+    - `PARTICIPATING` ⇒ that problem with the target's exit applied as a rule for
+      staying, without the move
+    - `FULL` ⇒ the target's problem with its exit
+    """
 
     RAW = "Raw"
     PARTICIPATING = "Participating"
     FULL = "Full"
-    PARTICIPATION = "Participation"
-    INTEGRATED_FULL = "IntegratedFull"
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -205,13 +214,6 @@ def demanded_query_order(
                 raise ValueError(f"Undeclared policy query {upstream!r}.")
             if reads[upstream].kind is QueryKind.FULL:
                 raise ValueError(f"Query {name!r} cannot read Full query {upstream!r}.")
-            if (
-                reads[upstream].kind is QueryKind.INTEGRATED_FULL
-                and reads[name].kind is not QueryKind.PARTICIPATION
-            ):
-                raise ValueError(
-                    "Only a participation comparison may read IntegratedFull."
-                )
         graph[name] = dependencies[name]
         pending.extend(reversed(dependencies[name]))
     try:
@@ -282,14 +284,8 @@ class QueryNode:
     """Equivalent producing contexts whose guarded availability is combined."""
     observation_counts: tuple[int, ...] = ()
     """Declared original row count of each target-only observation group."""
-    operand_builder: CoreArgumentBuilder | None = None
-    """Explicit numeric operands for a nonpublishing participation/value reader."""
-    operand_value_reads: tuple[ValueRead, ...] = ()
-    """Absolute native value authority of that reader's dynamic operands."""
     own_raw: str | None = None
     """Explicit own-outside producer of a singleton Consent comparison."""
-    answer_shape: tuple[int, ...] | None = None
-    """Source-owned payoff tuple when it differs from the physical context."""
     sample: tuple[MonteCarlo | QuasiMonteCarlo, tuple[int, ...]] | None = None
     """Draw rule of an occupant's rows and the plan positions kept as a product.
 
@@ -374,40 +370,6 @@ class QueryNode:
             raise ValueError("A query's target differs from its canonical Q/F owner.")
         if self.read.kind is QueryKind.RAW and self.participation is not None:
             raise ValueError("Raw queries cannot impose dissolution participation.")
-        self._validate_reader_contract()
-
-    def _validate_reader_contract(self) -> None:
-        """Keep nonpublishing numeric readers out of policy action entrypoints."""
-        consumer = self.read.kind in {
-            QueryKind.PARTICIPATION,
-            QueryKind.INTEGRATED_FULL,
-        }
-        if consumer:
-            if self.operand_builder is None or self.decision is None:
-                raise ValueError(
-                    "A participation reader needs explicit operands and a rule."
-                )
-            if self.participation is not None:
-                raise ValueError(
-                    "A participation reader cannot define action participation."
-                )
-            if self.read.kind is QueryKind.INTEGRATED_FULL and self.inputs:
-                raise ValueError("An integrated value reader cannot read policies.")
-        elif (
-            self.operand_builder is not None
-            or self.operand_value_reads
-            or self.answer_shape is not None
-        ):
-            raise ValueError("Policy queries must use their canonical Q/F operands.")
-        object.__setattr__(self, "operand_value_reads", tuple(self.operand_value_reads))
-        if self.answer_shape is not None:
-            shape = tuple(self.answer_shape)
-            if any(
-                isinstance(size, bool) or not isinstance(size, int) or size < 0
-                for size in shape
-            ):
-                raise ValueError("A reader answer shape needs nonnegative dimensions.")
-            object.__setattr__(self, "answer_shape", shape)
 
     def __repr__(self) -> str:
         """Name the read only; `jax.jit` stringifies callables holding a node."""
@@ -419,8 +381,6 @@ class QueryNode:
     @property
     def value_shape(self) -> tuple[int, ...]:
         """Return the answer owner's tuple shape, independent of physical laws."""
-        if self.answer_shape is not None:
-            return self.answer_shape
         member_axis = self.context.member_axis
         return () if member_axis is None else (len(member_axis),)
 
@@ -443,17 +403,13 @@ def gated_query_targets(
 def _node_inputs(
     *, node: QueryNode, period: int
 ) -> tuple[CoreArgumentBuilder, tuple[ValueRead, ...]]:
-    """Keep value-reader operands separate from canonical policy action inputs.
+    """Return a query's argument builder and the continuation values it reads.
 
     A stored outside read takes its value from its destination's table, so it
     reads only the clock and its law's operands, and no continuation.
     """
-    if node.operand_builder is not None:
-        return node.operand_builder, node.operand_value_reads
     if node.outside_value is not None:
-        from _lcm.participation_queries import _ParticipationArguments  # noqa: PLC0415
-
-        return _ParticipationArguments(
+        return _OutsideReadArguments(
             period=period, plan=node.context.current_iid_plans.get(period)
         ), ()
     builder, reads = grid_search_query_inputs(context=node.context, period=period)
@@ -474,6 +430,36 @@ def _node_inputs(
     )
 
 
+@dataclass(frozen=True, kw_only=True)
+class _OutsideReadArguments:
+    """A stored outside read's operands: the clock and its law's current draws.
+
+    The read gathers its value from the destination's table, so it takes no
+    target action bank and no continuation.
+    """
+
+    period: int
+    plan: CurrentIIDPlan | None
+
+    def __call__(
+        self, context: CoreBuildContext
+    ) -> Mapping[str, PytreeValue | ShapeDtypePytree]:
+        if context.ages is None:
+            raise ValueError("A stored outside read needs its actual economic age.")
+        arguments: dict[str, PytreeValue | ShapeDtypePytree] = {
+            "period": jnp.int32(self.period),
+            "age": context.ages.values[self.period],
+        }
+        if self.plan is not None:
+            arguments[CURRENT_IID_ARGUMENT] = {
+                name: dict(context.flat_params.get(name, {}))
+                for name, _, _ in self.plan.bindings
+            }
+            arguments[CURRENT_IID_NODES_ARGUMENT] = self.plan.node_operands
+            arguments[CURRENT_IID_ROWS_ARGUMENT] = self.plan.indices
+        return MappingProxyType(arguments)
+
+
 # Values at one common action, stable ID, support, integrity, reached-landing counts.
 type PolicyAnswer = tuple[FloatND, IntND, BoolND, BoolND, IntND]
 
@@ -485,8 +471,6 @@ type StayTable = tuple[FloatND, BoolND, BoolND, IntND]
 
 
 def _query_landing_checks(*, node: QueryNode) -> tuple[LandingCheck, ...]:
-    if node.read.kind in {QueryKind.PARTICIPATION, QueryKind.INTEGRATED_FULL}:
-        return ()
     return getattr(
         node.context.Q_and_F_functions[node.read.period], "landing_checks", ()
     )
@@ -528,7 +512,7 @@ class ScalarPolicyQueries:
 
     - Full for an original occupant's choice.
     - For a mover's once-only action, the kind its move was priced at: Participating
-      after a consent move or a participation entry, Raw after any other exit.
+      after a consent move, Raw after any other exit.
     """
     period: int
     """Exact computational period of the phase-specific Q/F declarations."""
@@ -721,8 +705,8 @@ class ScalarPolicyQueries:
     def _node_value_reads(self) -> tuple[tuple[str, ValueRead], ...]:
         """Each node's continuation reads, walked once per graph for every core key.
 
-        Nested participation graphs share query instances, so the walk is linear in the
-        distinct graphs rather than in the paths through them.
+        Nested graphs share query instances, so the walk is linear in the distinct
+        graphs rather than in the paths through them.
         """
         return tuple(
             (name, read)
@@ -1279,9 +1263,6 @@ def _admit_node(*, node: QueryNode, period: int) -> None:
         raise UnsupportedOperationError(
             "A policy query needs its exact solve phase/period."
         )
-    if node.read.kind is QueryKind.INTEGRATED_FULL:
-        _fail_if_projection_incomplete(node=node, reader="A stored-value reader")
-        return
     _admit_query_solver(context=context, period=period)
     if period not in context.Q_and_F_functions:
         raise ValueError("The target action problem is inactive at this period.")
@@ -1608,41 +1589,12 @@ def _sample_draws(*, node: QueryNode) -> FloatND:
 
 
 def query_parameter_namespaces(*, builder: CoreArgumentBuilder) -> frozenset[str]:
-    """Name fixed parameter roots read by native and participation queries."""
-    from _lcm.participation_publication import _PublicationArguments  # noqa: PLC0415
-    from _lcm.participation_queries import (  # noqa: PLC0415
-        ParticipationSourceArguments,
-        _IntegratedArguments,
-        _ParticipationArguments,
-    )
-
-    while isinstance(builder, _PublicationArguments):
-        builder = builder.base
-    if isinstance(builder, _GridSearchArgumentBuilder):
-        return frozenset(
-            name
-            for plan in builder.participation_queries.values()
-            for node in plan.queries.definitions.values()
-            for name in _query_node_parameter_namespaces(node=node, information=False)
-        ) | (
-            frozenset(name for name, _, _ in builder.current_iid_plan.bindings)
-            if builder.participation_queries and builder.current_iid_plan is not None
-            else frozenset()
-        )
-    if isinstance(builder, ParticipationSourceArguments):
-        return query_parameter_namespaces(builder=builder.base) | frozenset(
-            name
-            for plan in builder.plans.values()
-            for node in plan.queries.definitions.values()
-            for name in _query_node_parameter_namespaces(node=node, information=False)
-        )
-    if isinstance(builder, _ParticipationArguments):
+    """Name fixed parameter roots read by queries."""
+    if isinstance(builder, _OutsideReadArguments):
         return frozenset(
             name
             for name, _, _ in (() if builder.plan is None else builder.plan.bindings)
         )
-    if isinstance(builder, _IntegratedArguments):
-        return frozenset({builder.owner}) if builder.helper_names else frozenset()
     # The chunk loop runs every query of the period with its own arguments.
     queries = (
         tuple(builder.builders.values())
@@ -1667,35 +1619,14 @@ def _query_node_parameter_namespaces(
     *, node: QueryNode, information: bool
 ) -> frozenset[str]:
     """Mirror the node's action/law and exact producing projection operands."""
-    from _lcm.participation_queries import _ParticipationArguments  # noqa: PLC0415
-
-    plan = (
-        node.context.current_iid_plans.get(node.read.period)
-        if node.operand_builder is None
-        else node.operand_builder.plan
-        if isinstance(node.operand_builder, _ParticipationArguments)
-        else None
-    )
+    plan = node.context.current_iid_plans.get(node.read.period)
     names = {name for name, _, _ in (() if plan is None else plan.bindings)} | {
         path[0]
         for path in node.read.operand_paths.values()
         if len(path) == _FLAT_OPERAND_PATH_LENGTH and isinstance(path[0], str)
     }
     if not information:
-        if node.operand_builder is None:
-            names.add(node.context.regime_name)
-            names.update(
-                name
-                for plan in node.context.participation_queries.get(
-                    node.read.period, {}
-                ).values()
-                for child in plan.queries.definitions.values()
-                for name in _query_node_parameter_namespaces(
-                    node=child, information=False
-                )
-            )
-        else:
-            names.update(query_parameter_namespaces(builder=node.operand_builder))
+        names.add(node.context.regime_name)
     return frozenset(names)
 
 
@@ -2321,22 +2252,6 @@ def _active_query_cell(
         projection_operands=projection_operands,
     )
     context = node.context
-    if node.read.kind in {QueryKind.PARTICIPATION, QueryKind.INTEGRATED_FULL}:
-        operands = {**arguments, **dependencies}
-        decision = node.decision
-        if decision is None:
-            raise ValueError("A participation reader needs its declared decision rule.")
-        answer = decision(
-            **{name: operands[name] for name in inspect.signature(decision).parameters}
-        )
-        _validate_decision_answer(node=node, answer=answer)
-        return (
-            answer[0],
-            answer[1],
-            live & answer[2],
-            ~live | (answer[3] & _mapped_query_valid(node=node, mapped=mapped)),
-            answer[4],
-        )
     q, feasible, valid, landing_counts = (
         stay_table(
             node=node,
@@ -2583,11 +2498,6 @@ def _query_action(
         evaluated = _evaluate_query_action(node=node, period=period, arguments=inputs)
     parts = evaluated.parts
     q, ordinary = parts.Q, parts.F
-    continuation_valid = (
-        jnp.asarray(a=True)
-        if parts.continuation_valid is None
-        else parts.continuation_valid
-    )
     # Participation consumes this Q before it decides keep: its rejection cannot
     # erase a continuation landing already needed by an ordinarily feasible action.
     landings = jnp.where(
@@ -2602,9 +2512,7 @@ def _query_action(
         raise TypeError("Canonical query feasibility must be boolean.")
     if ordinary.ndim != 0:
         raise ValueError("Canonical query feasibility must be scalar per action.")
-    valid = (~ordinary | continuation_valid) & ~jnp.any(
-        ordinary & jnp.any(jnp.isnan(q))
-    )
+    valid = ~jnp.any(ordinary & jnp.any(jnp.isnan(q)))
     for status in evaluated.bound_status:
         for flag in status:
             valid &= ~jnp.any(flag)

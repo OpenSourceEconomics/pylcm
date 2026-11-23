@@ -1,20 +1,16 @@
-"""A participation check's own functions contribute parameters under `params["edges"]`.
+"""A gated edge's own functions contribute parameters under `params["edges"]`.
 
-A participation check is declared with four kinds of user callable: the selection
-probability, the decision predicate, one projection per typed read, and one
-projection per route fallback. Each is an ordinary DAG function, so every scalar
-it reads beyond the values and states the engine wires in is a model parameter.
-Its slot is its declaration path under `params["edges"][source][target]`, it is
-listed by `get_params_template()`, and the value the user supplies for it is
-what the solved model uses.
+A gated edge is declared with three kinds of user callable: the selection
+probability, the gate predicate, and one projection per route fallback. Each is an
+ordinary DAG function, so every scalar it reads beyond the states the engine wires
+in is a model parameter. Its slot is its declaration path under
+`params["edges"][source][target]`, it is listed by `get_params_template()`, and the
+value the user supplies for it is what the solved model uses.
 
-The topology is a mutual-consent edge. A single woman reaches a married couple
-only if both partners prefer marriage to their own single life (the participation
-predicate), each partner's single life is valued by an `IntegratedFull` read at a
-projected wage,
-and a woman whose proposal is refused falls back to her own single value, also
-read at a projected wage. Wages live on the two-point grid $\\{1, 2\\}$ and every
-value below is exact on it.
+The topology is a gated marriage edge. A single woman reaches a married couple
+where the gate opens at her wage, and a woman whose gate closes falls back to her
+own single value, read at a projected wage. Wages live on the two-point grid
+$\\{1, 2\\}$ and every value below is exact on it.
 """
 
 from collections.abc import Callable, Mapping
@@ -36,11 +32,10 @@ from _lcm.typing import FlatParams
 from lcm import (
     CollectiveUtility,
     DiscreteGrid,
+    Gate,
     LinSpacedGrid,
     MemberRoute,
     Model,
-    ParticipationCheck,
-    ParticipationRead,
     Phased,
     ProjectedRegimeValue,
     Regime,
@@ -73,16 +68,13 @@ _EDGE = ("single_f", "married_terminal")
 def test_gate_scalar_parameter_is_a_model_parameter() -> None:
     """A scalar the gate predicate reads is listed and used at the supplied value.
 
-    A marriage premium of 1.5 lifts both partners' married values above their
-    single ones at every wage, so the gate is open throughout and the wife's
+    A marriage premium of 1.5 opens the gate at every wage, so the wife's
     continuation is her married value everywhere:
     `V = wage + 0.95 * V_married_f = [1 + 0.95*2, 2 + 0.95*4] = [2.9, 5.8]`.
-    Without the premium the husband refuses at the high wage and the value there
-    is 4.85 instead.
+    A premium of 0.25 would close it at both wages.
     """
     model = _build_model(
-        gate=_consent_gate_with_premium,
-        husband_reference_projection=_wage_itself,
+        gate=_gate_with_premium,
         wife_fallback=_wife_fallback(projection=_wage_itself),
     )
     assert (*_EDGE, "predicate", "marriage_premium") in _leaf_paths(
@@ -99,53 +91,17 @@ def test_gate_scalar_parameter_is_a_model_parameter() -> None:
     )
 
 
-def test_gate_ref_projection_scalar_parameter_is_a_model_parameter() -> None:
-    """A scalar a gate reference's projection reads is listed and used.
-
-    A weight of 0.5 has the husband value his single life halfway between the
-    couple's own wage and the top of the wage grid, which raises his outside
-    option enough to refuse at both wages. The wife then takes her own fallback
-    everywhere: `V = wage + 0.95 * 1.5 * wage = [2.425, 4.85]`. At a weight of
-    zero he would accept at the low wage and the value there would be 2.9.
-    """
-    model = _build_model(
-        gate=_consent_gate,
-        husband_reference_projection=_husband_reference_wage,
-        wife_fallback=_wife_fallback(projection=_wage_itself),
-    )
-    assert (
-        *_EDGE,
-        "reads",
-        "V_single_m_ref",
-        "wage",
-        "husband_reference_weight",
-    ) in _leaf_paths(model.get_params_template()["edges"])
-    solution = model.solve(
-        params={
-            "discount_factor": DISCOUNT_FACTOR,
-            "husband_reference_weight": 0.5,
-        },
-        log_level="debug",
-    ).values
-    aaae(
-        np.asarray(solution[0]["single_f"]),
-        np.array([2.425, 4.85]),
-        decimal=DECIMAL_PRECISION,
-    )
-
-
 def test_leg_fallback_projection_scalar_parameter_is_a_model_parameter() -> None:
     """A scalar a route fallback's projection reads is listed and used.
 
-    The husband refuses at the high wage, so the wife falls back on her single
+    The gate closes at the high wage, so the wife falls back on her single
     value there. A weight of 0.4 has her read it at
     `2 - 0.4 * (2 - 1) = 1.6`, worth `1.5 * 1.6 = 2.4`, giving
     `V = [2.9, 2 + 0.95 * 2.4] = [2.9, 4.28]`. At a weight of zero she would
     read it at her own wage, worth 3.0, and the value there would be 4.85.
     """
     model = _build_model(
-        gate=_consent_gate,
-        husband_reference_projection=_wage_itself,
+        gate=_gate_open_at_the_low_wage,
         wife_fallback=_wife_fallback(projection=_wife_fallback_wage),
     )
     assert (
@@ -171,20 +127,12 @@ def test_gated_edge_template_holds_each_declaration_path() -> None:
     """Every edge callable's parameter sits at its declaration path, nowhere else."""
     model = _build_model(
         probability=_marry_at_meeting_rate,
-        gate=_consent_gate_with_premium,
-        husband_reference_projection=_husband_reference_wage,
+        gate=_gate_with_premium,
         wife_fallback=_wife_fallback(projection=_wife_fallback_wage),
     )
     assert _leaf_paths(model.get_params_template()["edges"]) == {
         (*_EDGE, "meeting_rate"),
         (*_EDGE, "predicate", "marriage_premium"),
-        (
-            *_EDGE,
-            "reads",
-            "V_single_m_ref",
-            "wage",
-            "husband_reference_weight",
-        ),
         (*_EDGE, "routes", "f", "fallback", "wage", "wife_fallback_weight"),
     }
 
@@ -193,8 +141,7 @@ def test_source_regime_template_holds_no_edge_entry() -> None:
     """The source regime's branch names no target, law or gate entry."""
     model = _build_model(
         probability=_marry_at_meeting_rate,
-        gate=_consent_gate_with_premium,
-        husband_reference_projection=_husband_reference_wage,
+        gate=_gate_with_premium,
         wife_fallback=_wife_fallback(projection=_wife_fallback_wage),
     )
     assert not {"married_terminal", "single_f_terminal", "next_regime", "gate"} & set(
@@ -205,8 +152,7 @@ def test_source_regime_template_holds_no_edge_entry() -> None:
 def test_phased_fallback_template_nests_each_phase_under_its_name() -> None:
     """A `Phased` fallback's two projections each own the parameters they read."""
     model = _build_model(
-        gate=_consent_gate,
-        husband_reference_projection=_wage_itself,
+        gate=_gate_open_at_the_low_wage,
         wife_fallback=Phased(
             solve=_wife_fallback(projection=_wife_fallback_wage),
             simulate=_wife_fallback(projection=_wife_realized_wage),
@@ -226,9 +172,6 @@ def test_phased_fallback_template_nests_each_phase_under_its_name() -> None:
             {
                 "meeting_rate": 1.0,
                 "predicate": {"marriage_premium": 0.25},
-                "reads": {
-                    "V_single_m_ref": {"wage": {"husband_reference_weight": 0.1}}
-                },
                 "routes": {"f": {"fallback": {"wage": {"wife_fallback_weight": 0.4}}}},
             },
             id="declaration-path",
@@ -247,14 +190,12 @@ def test_gated_edge_values_do_not_depend_on_the_level_supplying_them(
     """
     model = _build_model(
         probability=_marry_at_meeting_rate,
-        gate=_consent_gate_with_premium,
-        husband_reference_projection=_husband_reference_wage,
+        gate=_gate_with_premium,
         wife_fallback=_wife_fallback(projection=_wife_fallback_wage),
     )
     values = {
         "meeting_rate": 1.0,
         "marriage_premium": 0.25,
-        "husband_reference_weight": 0.1,
         "wife_fallback_weight": 0.4,
     }
     reference = model.solve(
@@ -277,8 +218,7 @@ def test_engine_edge_namespace_holds_exactly_the_template_slots() -> None:
     """`flat_params["edges"][source]` keys are the template's edge paths, joined."""
     model = _build_model(
         probability=_marry_at_meeting_rate,
-        gate=_consent_gate_with_premium,
-        husband_reference_projection=_husband_reference_wage,
+        gate=_gate_with_premium,
         wife_fallback=_wife_fallback(projection=_wife_fallback_wage),
     )
     flat_params = model._process_params(
@@ -286,14 +226,12 @@ def test_engine_edge_namespace_holds_exactly_the_template_slots() -> None:
             "discount_factor": DISCOUNT_FACTOR,
             "meeting_rate": 1.0,
             "marriage_premium": 0.25,
-            "husband_reference_weight": 0.1,
             "wife_fallback_weight": 0.4,
         }
     )
     assert set(edge_params(flat_params, source="single_f")) == {
         "married_terminal__meeting_rate",
         "married_terminal__predicate__marriage_premium",
-        ("married_terminal__reads__V_single_m_ref__wage__husband_reference_weight"),
         "married_terminal__routes__f__fallback__wage__wife_fallback_weight",
     }
 
@@ -302,8 +240,7 @@ def test_source_regime_flat_params_hold_no_edge_key() -> None:
     """The source regime's flat params carry its own functions' parameters only."""
     model = _build_model(
         probability=_marry_at_meeting_rate,
-        gate=_consent_gate_with_premium,
-        husband_reference_projection=_husband_reference_wage,
+        gate=_gate_with_premium,
         wife_fallback=_wife_fallback(projection=_wife_fallback_wage),
     )
     flat_params = model._process_params(
@@ -311,7 +248,6 @@ def test_source_regime_flat_params_hold_no_edge_key() -> None:
             "discount_factor": DISCOUNT_FACTOR,
             "meeting_rate": 1.0,
             "marriage_premium": 0.25,
-            "husband_reference_weight": 0.1,
             "wife_fallback_weight": 0.4,
         }
     )
@@ -363,8 +299,7 @@ def test_edge_parameter_under_the_source_regime_names_the_edges_path(
 ) -> None:
     """A gate parameter written under the source regime is refused with its path."""
     model = _build_model(
-        gate=_consent_gate_with_premium,
-        husband_reference_projection=_wage_itself,
+        gate=_gate_with_premium,
         wife_fallback=_wife_fallback(projection=_wage_itself),
     )
     with pytest.raises(
@@ -385,8 +320,7 @@ def test_series_valued_gate_parameter_converts_and_solves() -> None:
     `V = [2.9, 5.8]`.
     """
     model = _build_model(
-        gate=_consent_gate_with_premium_by_period,
-        husband_reference_projection=_wage_itself,
+        gate=_gate_with_premium_by_period,
         wife_fallback=_wife_fallback(projection=_wage_itself),
     )
     premium = pd.Series(
@@ -413,12 +347,11 @@ def test_series_valued_gate_parameter_converts_and_solves() -> None:
 
 @categorical(ordered=False)
 class _RegimeId:
-    """Regime ids of the mutual-consent model."""
+    """Regime ids of the gated marriage model."""
 
     single_f: ScalarInt
     married_terminal: ScalarInt
     single_f_terminal: ScalarInt
-    single_m_terminal: ScalarInt
 
 
 # The one continuous state every regime carries.
@@ -461,17 +394,14 @@ def _wife_fallback(*, projection: UserFunction) -> ProjectedRegimeValue:
 def _build_model(
     *,
     gate: UserFunction,
-    husband_reference_projection: UserFunction,
     wife_fallback: ProjectedRegimeValue | Phased,
     probability: Callable[..., FloatND] | None = None,
 ) -> Model:
-    """Build the mutual-consent model around the edge callables given.
+    """Build the gated marriage model around the edge callables given.
 
     Args:
-        gate: The edge's boolean consent predicate.
-        husband_reference_projection: Wage at which the husband's single value is
-            read for the gate.
-        wife_fallback: Where the wife lands when consent fails, for both phases
+        gate: The edge's boolean gate predicate, on the couple's wage.
+        wife_fallback: Where the wife lands when the gate closes, for both phases
             or `Phased` per phase.
         probability: Probability with which the single woman meets the couple;
             certainty when `None`.
@@ -485,34 +415,10 @@ def _build_model(
             func=_marry_for_sure if probability is None else probability
         )
     }
-    single_f_participation = {
-        "married_terminal": ParticipationCheck(
+    single_f_gates = {
+        "married_terminal": Gate(
             predicate=gate,
             routes={"f": MemberRoute(target_member="f", fallback=wife_fallback)},
-            reads={
-                "V_target_f": ParticipationRead(
-                    kind="IntegratedFull",
-                    regime="married_terminal",
-                    member="f",
-                    projection={"wage": _wage_itself},
-                ),
-                "V_target_m": ParticipationRead(
-                    kind="IntegratedFull",
-                    regime="married_terminal",
-                    member="m",
-                    projection={"wage": _wage_itself},
-                ),
-                "V_single_f_ref": ParticipationRead(
-                    kind="IntegratedFull",
-                    regime="single_f_terminal",
-                    projection={"wage": _wage_itself},
-                ),
-                "V_single_m_ref": ParticipationRead(
-                    kind="IntegratedFull",
-                    regime="single_m_terminal",
-                    projection={"wage": husband_reference_projection},
-                ),
-            },
         )
     }
     single_f = Regime(
@@ -534,83 +440,39 @@ def _build_model(
         states={"wage": _WAGE},
         functions={"utility": _utility_single_f_terminal},
     )
-    single_m_terminal = Regime(
-        states={"wage": _WAGE},
-        functions={"utility": _utility_single_m_terminal},
-    )
     return Model(
         regimes={
             "single_f": single_f,
             "married_terminal": married_terminal,
             "single_f_terminal": single_f_terminal,
-            "single_m_terminal": single_m_terminal,
         },
         ages=_AGES,
         regime_id_class=_RegimeId,
         initial_nodes={0: "single_f"},
-        edges={
-            "single_f": Transition(
-                law=single_f_law, participation=single_f_participation
-            )
-        },
+        edges={"single_f": Transition(law=single_f_law, gates=single_f_gates)},
     )
 
 
-def _consent_gate(
-    *,
-    V_target_f: FloatND,
-    V_target_m: FloatND,
-    V_single_f_ref: FloatND,
-    V_single_m_ref: FloatND,
+def _gate_open_at_the_low_wage(wage: ContinuousState) -> BoolND:
+    """Marriage happens at the low wage only."""
+    return wage < 1.5
+
+
+def _gate_with_premium(*, wage: ContinuousState, marriage_premium: float) -> BoolND:
+    """Marriage happens where the wage plus a premium reaches 2.5."""
+    return wage + marriage_premium >= 2.5
+
+
+def _gate_with_premium_by_period(
+    *, wage: ContinuousState, marriage_premium: FloatND, period: Period
 ) -> BoolND:
-    """Marriage happens only if both partners strictly prefer it."""
-    return (V_target_f > V_single_f_ref) & (V_target_m > V_single_m_ref)
-
-
-def _consent_gate_with_premium(
-    *,
-    V_target_f: FloatND,
-    V_target_m: FloatND,
-    V_single_f_ref: FloatND,
-    V_single_m_ref: FloatND,
-    marriage_premium: float,
-) -> BoolND:
-    """Both partners value marriage at its value plus a common premium."""
-    return ((V_target_f + marriage_premium) > V_single_f_ref) & (
-        (V_target_m + marriage_premium) > V_single_m_ref
-    )
-
-
-def _consent_gate_with_premium_by_period(
-    *,
-    V_target_f: FloatND,
-    V_target_m: FloatND,
-    V_single_f_ref: FloatND,
-    V_single_m_ref: FloatND,
-    marriage_premium: FloatND,
-    period: Period,
-) -> BoolND:
-    """Both partners value marriage at its value plus the premium of the period."""
-    premium = marriage_premium[period]
-    return ((V_target_f + premium) > V_single_f_ref) & (
-        (V_target_m + premium) > V_single_m_ref
-    )
+    """Marriage happens where the wage plus the period's premium reaches 2.5."""
+    return wage + marriage_premium[period] >= 2.5
 
 
 def _wage_itself(wage: ContinuousState) -> ContinuousState:
     """Read the referenced regime at the couple's own wage."""
     return wage
-
-
-def _husband_reference_wage(
-    *, wage: ContinuousState, husband_reference_weight: float
-) -> ContinuousState:
-    """Wage at which the husband values single life.
-
-    A weight of zero is the couple's own wage; a weight of one is the top of the
-    wage grid, where single life is worth most to him.
-    """
-    return wage + husband_reference_weight * (_WAGE_HIGH - wage)
 
 
 def _wife_fallback_wage(
@@ -639,11 +501,6 @@ def _utility_single_f(*, wage: ContinuousState, work: DiscreteAction) -> FloatND
 def _utility_single_f_terminal(wage: ContinuousState) -> FloatND:
     """Terminal single-life payoff of the woman: 1.5 per unit of wage."""
     return 1.5 * wage
-
-
-def _utility_single_m_terminal(wage: ContinuousState) -> FloatND:
-    """Terminal single-life payoff of the man: 0.5 at the low wage, 3.0 at the high."""
-    return jnp.where(wage < 1.5, 0.5, 3.0)
 
 
 def _utility_married_f(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:

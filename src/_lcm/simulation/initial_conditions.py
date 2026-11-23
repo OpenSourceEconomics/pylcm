@@ -1311,13 +1311,6 @@ def _initial_own_member(
                 for plan in regime.simulation.exit_queries.values()
             )
         }
-        | {
-            source
-            for regime in regimes.values()
-            for plan in regime.simulation.exit_queries.values()
-            for source, entry in plan.participation.items()
-            if len(entry.target_roles) > 1
-        }
     )
     reachability = next(iter(regimes.values())).simulation.reachability
     starts_needing_a_role = {

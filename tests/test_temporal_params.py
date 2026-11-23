@@ -1118,13 +1118,9 @@ def _fallback() -> FloatND:
     return jnp.asarray(2.0)
 
 
-def _gate(*, V_target: FloatND, threshold: FloatND) -> BoolND:
-    return V_target >= threshold
-
-
-def _done_value() -> lcm.ParticipationRead:
-    """The terminal `done` regime's stored value, read by its participation check."""
-    return lcm.ParticipationRead(kind="IntegratedFull", regime="done", projection={})
+def _gate(*, threshold: FloatND) -> BoolND:
+    """Open while the threshold stays at or below `done`'s value of 8."""
+    return threshold <= 8.0
 
 
 @pytest.mark.parametrize(("threshold", "expected"), [(5.0, 4.0), (10.0, 1.0)])
@@ -1143,10 +1139,9 @@ def test_temporal_gate_requires_and_reads_target_period(
         edges={
             "work": lcm.Transition(
                 law={"done": lcm.StochasticTransition(func=_one)},
-                participation={
-                    "done": lcm.ParticipationCheck(
+                gates={
+                    "done": lcm.Gate(
                         predicate=lcm.time_varying_params("threshold")(_gate),
-                        reads={"V_target": _done_value()},
                         routes={
                             "only": lcm.MemberRoute(
                                 fallback=lcm.ProjectedRegimeValue(
@@ -1249,14 +1244,8 @@ def test_edge_temporal_coverage_follows_the_declaring_phase(
         assert frame["regime_name"].tolist() == ["work", "done"]
 
 
-@pytest.mark.parametrize("reference", [False, True])
 @pytest.mark.parametrize("missing", [False, True])
-def test_temporal_gate_projection_reads_target_period(
-    *, reference: bool, missing: bool
-) -> None:
-    def compare(*, V_target: FloatND, V_reference: FloatND) -> BoolND:
-        return V_target >= V_reference
-
+def test_temporal_gate_projection_reads_target_period(*, missing: bool) -> None:
     projection = {"wealth": lcm.time_varying_params("wage")(_flow)}
     model = lcm.Model(
         n_periods=2,
@@ -1273,23 +1262,9 @@ def test_temporal_gate_projection_reads_target_period(
         edges={
             "work": lcm.Transition(
                 law={"done": lcm.StochasticTransition(func=_one)},
-                participation={
-                    "done": lcm.ParticipationCheck(
-                        predicate=compare if reference else _gate,
-                        reads={
-                            "V_target": _done_value(),
-                            **(
-                                {
-                                    "V_reference": lcm.ParticipationRead(
-                                        kind="IntegratedFull",
-                                        regime="fallback",
-                                        projection=projection,
-                                    )
-                                }
-                                if reference
-                                else {}
-                            ),
-                        },
+                gates={
+                    "done": lcm.Gate(
+                        predicate=_gate,
                         routes={
                             "only": lcm.MemberRoute(
                                 fallback=lcm.ProjectedRegimeValue(
@@ -1301,10 +1276,7 @@ def test_temporal_gate_projection_reads_target_period(
                 },
             )
         },
-        fixed_params={
-            "discount_factor": 0.5,
-            **({} if reference else {"threshold": 10.0}),
-        },
+        fixed_params={"discount_factor": 0.5, "threshold": 10.0},
     )
     params = {
         "wage": lcm.TimeVarying(
@@ -1317,9 +1289,7 @@ def test_temporal_gate_projection_reads_target_period(
             model.solve(params=params, log_level="off")
     else:
         solution = model.solve(params=params, log_level="off")
-        np.testing.assert_allclose(
-            solution.values[0]["work"], 4.0 if reference else 1.5
-        )
+        np.testing.assert_allclose(solution.values[0]["work"], 1.5)
 
 
 def _weighted_log(*, consumption: ContinuousAction, weight: FloatND) -> FloatND:

@@ -240,7 +240,6 @@ _DURABLE_FIELD_NAMES = MappingProxyType(
     {
         ("lcm.collective.MemberRoute", "target_member"): "target_stakeholder",
         ("lcm.collective.ProjectedRegimeValue", "member"): "stakeholder",
-        ("lcm.participation.ParticipationRead", "member"): "stakeholder",
     }
 )
 # Every regime declaration was hashed with these two empty slots, so they stay in
@@ -1157,7 +1156,6 @@ def _project_user_regime_declaration(
                     and not (
                         name in {"output_only_functions", "shocks"} and value == ()
                     )
-                    and not (name == "participation" and not value)
                 }
             ),
         }

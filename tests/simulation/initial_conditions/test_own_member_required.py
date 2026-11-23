@@ -1,7 +1,7 @@
-"""Routing a collective source's participation check needs the simulated row's own role.
+"""Routing a collective regime's exit needs the simulated row's own role.
 
-A collective regime declares one dissolution leg per member, and each leg
-sends the dissolving row into *that* member's own continuing regime under
+A collective regime declares one exit target per member, and each target
+sends the leaving row into *that* member's own continuing regime under
 *that* member's own state projection. A `simulate()` call over a collective
 source therefore has to say which role its population carries: a cohort routed
 without one would follow a single partner's dissolution path for every row —
@@ -11,9 +11,9 @@ each divorced husband simulated as his wife, with her regime and her state.
 and a subject starting in a collective regime must carry one wherever a route
 it can still reach differs by role. A row keeps its role across an ordinary
 regime transition, so that question is asked over the start's forward closure:
-a two-leg edge the cohort runs into later demands a seed, and one in a regime
-the cohort can never arrive at demands nothing. A singleton source declares a
-single leg carrying no role at all, so a cohort starting there needs none
+a two-target exit the cohort runs into later demands a seed, and one in a regime
+the cohort can never arrive at demands nothing. A singleton source's consented
+exit gives its row the role it enters with, so a cohort starting there needs none
 either, and both unseeded cases simulate unchanged.
 """
 
@@ -23,47 +23,46 @@ import pytest
 
 from lcm import (
     AgeGrid,
-    AgeRange,
-    ByAge,
     CollectiveUtility,
+    Consent,
+    Counterparty,
     DiscreteGrid,
-    MemberRoute,
+    InitialNodes,
+    LinSpacedGrid,
     Model,
-    ParticipationCheck,
-    ParticipationRead,
-    ProjectedRegimeValue,
     Regime,
-    StochasticTransition,
-    Transition,
     categorical,
     fixed_transition,
 )
 from lcm.exceptions import InvalidInitialConditionsError
+from lcm.exits import Exit, ExitTarget
 from lcm.result import SimulationResult
 from lcm.solver_api import ResultRetention, SolutionResult
-from lcm.typing import RegimeName, ScalarInt
+from lcm.typing import (
+    ContinuousState,
+    DiscreteAction,
+    FloatND,
+    RegimeName,
+    ScalarInt,
+)
 from tests.collective_fixtures import (
     make_couple_initial_conditions,
     make_two_member_model,
 )
 from tests.conftest import assert_agrees_to_ulp
 from tests.regime_building.test_collective_regime_simulate import (
-    _BETA,
     _DISSOLUTION_PARAMS,
     _WAGE_3,
     DissolutionRegimeId,
     Work,
-    _consent_gate,
     _identity_wage,
-    _make_consent_regimes,
     _make_dissolution_regimes,
-    _participation_support,
-    _prob_one,
     _u_zero_collective,
 )
 
-# The three wage nodes the dissolution miniature is solved on. Its participation
-# mask empties at wage 2 alone, so exactly the middle subject dissolves.
+# The three wage nodes the dissolution miniature is solved on. The exit of
+# `married_ir` leaves no action both members accept at wage 2 alone, so exactly
+# the middle subject dissolves.
 DISSOLUTION_WAGES = (1.0, 2.0, 3.0)
 
 # Which subject of `DISSOLUTION_WAGES` leaves the collective regime.
@@ -79,87 +78,76 @@ CONSENT_WAGES = (1.0, 2.0)
 # Which consent-model subject reaches the collective target.
 CONSENT_MARRIED_MEMBERSHIP = (True, False)
 
-# The married couple's scheduled law and participation support decision keep it
-# together while participation is supported; a dissolving row continues in its own
-# member's single regime under the identity wage projection.
-MARRIED_DISSOLUTION_LAW = {"married_ir": StochasticTransition(func=_prob_one)}
-MARRIED_DISSOLUTION_PARTICIPATION = {
-    "married_ir": ParticipationCheck(
-        predicate=_participation_support,
-        reads={
-            "target_support": ParticipationRead(
-                regime="married_ir",
-                member="f",
-                kind="Participating",
-                field="support",
-                projection={"wage": _identity_wage},
-            )
-        },
-        routes={
-            "f": MemberRoute(
-                target_member="f",
-                fallback=ProjectedRegimeValue(
-                    regime="single_f", projection={"wage": _identity_wage}
-                ),
-            ),
-            "m": MemberRoute(
-                target_member="m",
-                fallback=ProjectedRegimeValue(
-                    regime="single_m", projection={"wage": _identity_wage}
-                ),
-            ),
-        },
-    )
+# The edges of the dissolution miniature: the couple meets its own exit in
+# `married_ir`, whose targets send each member to that member's single regime.
+DISSOLUTION_EDGES = {
+    "married": {"married_ir": 0},
+    "married_ir": {"married_terminal": 1},
+    "single_f": {"single_f_terminal": 1},
+    "single_m": {"single_m_terminal": 1},
 }
 
-# The single woman's scheduled law and participation consent decision admit marriage
-# when both partners prefer the couple to single life; otherwise she keeps her single
-# value.
-SINGLE_F_CONSENT_LAW = ByAge(
-    cases={
-        AgeRange(exclusive_stop=1): {
-            "married_terminal": StochasticTransition(func=_prob_one)
-        }
-    }
-)
-SINGLE_F_CONSENT_PARTICIPATION = {
-    "married_terminal": ParticipationCheck(
-        predicate=_consent_gate,
-        routes={
-            "f": MemberRoute(
-                target_member="f",
-                fallback=ProjectedRegimeValue(
-                    regime="single_f_terminal",
-                    projection={"wage": _identity_wage},
+# Grid of the two consent-model wages.
+_WAGE_2 = LinSpacedGrid(start=1.0, stop=2.0, n_points=2)
+
+
+def _u_single_f(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
+    return wage * work
+
+
+def _u_single_m(wage: ContinuousState) -> FloatND:
+    return jnp.where(wage < 1.5, 0.5, 5.0)
+
+
+def _u_married_f(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
+    return 2.0 * wage + 0.0 * work
+
+
+def _u_married_m(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
+    return wage + 0.0 * work
+
+
+def _make_consent_regimes() -> dict[RegimeName, Regime]:
+    """Return a singleton `single_f` whose consented exit enters `married`.
+
+    She marries where both partners' married values strictly exceed their single
+    ones: at wage 1 (`2 > 1` and `1 > 0.5`), not at wage 2 (`2 < 5` for him).
+    """
+    return {
+        "single_f": Regime(
+            states={"wage": _WAGE_2},
+            actions={"work": DiscreteGrid(category_class=Work)},
+            functions={"utility": _u_single_f},
+            exit=Exit(
+                targets={
+                    "self": ExitTarget(
+                        regime="married",
+                        role="f",
+                        projection={"wage": _identity_wage},
+                    )
+                },
+                rule=Consent(
+                    counterparty=Counterparty(
+                        regime="single_m",
+                        role="m",
+                        projection={"wage": _identity_wage},
+                    )
                 ),
-            )
-        },
-        reads={
-            "V_target_f": ParticipationRead(
-                regime="married_terminal",
-                member="f",
-                kind="Participating",
-                projection={"wage": _identity_wage},
             ),
-            "V_target_m": ParticipationRead(
-                regime="married_terminal",
-                member="m",
-                kind="Participating",
-                projection={"wage": _identity_wage},
-            ),
-            "V_single_f_ref": ParticipationRead(
-                kind="Raw",
-                regime="single_f_terminal",
-                projection={"wage": _identity_wage},
-            ),
-            "V_single_m_ref": ParticipationRead(
-                kind="Raw",
-                regime="single_m_terminal",
-                projection={"wage": _identity_wage},
-            ),
-        },
-    )
-}
+        ),
+        "single_m": Regime(
+            states={"wage": _WAGE_2}, functions={"utility": _u_single_m}
+        ),
+        "married": Regime(
+            states={"wage": _WAGE_2},
+            actions={"work": DiscreteGrid(category_class=Work)},
+            functions={
+                "utility": CollectiveUtility(
+                    utilities={"f": _u_married_f, "m": _u_married_m}
+                )
+            },
+        ),
+    }
 
 
 @categorical(ordered=False)
@@ -167,33 +155,23 @@ class ConsentRegimeId:
     """Regime ids of the singleton-source consent model."""
 
     single_f: ScalarInt
-    single_f_terminal: ScalarInt
-    single_m_terminal: ScalarInt
-    married_terminal: ScalarInt
+    single_m: ScalarInt
+    married: ScalarInt
 
 
 @pytest.fixture(scope="module")
 def dissolution_model_and_solution() -> tuple[Model, SolutionResult]:
     """Solve the two-leg collective dissolution miniature once.
 
-    `married` carries the members `("f", "m")` and a dissolution edge whose
-    legs send the wife to `single_f` and the husband to `single_m`.
+    `married` carries the members `("f", "m")` into `married_ir`, whose exit
+    sends the wife to `single_f` and the husband to `single_m`.
     """
     model = Model(
         regimes=_make_dissolution_regimes(),
         ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         regime_id_class=DissolutionRegimeId,
         initial_nodes={0: "married"},
-        edges={
-            "married": Transition(
-                targets={"married_ir": 0, "single_f": 0, "single_m": 0},
-                law=ByAge(cases={AgeRange(exclusive_stop=1): MARRIED_DISSOLUTION_LAW}),
-                participation=MARRIED_DISSOLUTION_PARTICIPATION,
-            ),
-            "married_ir": {"married_terminal": 1},
-            "single_f": {"single_f_terminal": 1},
-            "single_m": {"single_m_terminal": (0, 1, 2)},
-        },
+        edges=DISSOLUTION_EDGES,
     )
     solution = model.solve(params=_DISSOLUTION_PARAMS, log_level="off")
     return model, solution
@@ -203,23 +181,17 @@ def dissolution_model_and_solution() -> tuple[Model, SolutionResult]:
 def consent_model_and_solution() -> tuple[Model, SolutionResult]:
     """Solve the singleton-source consent miniature once.
 
-    `single_f` is a singleton whose gated edge into the collective
-    `married_terminal` declares one leg, and that leg carries no role.
+    `single_f` is a singleton whose consented exit enters the collective
+    `married` as its member `f`; the exit itself names the role.
     """
     model = Model(
         regimes=_make_consent_regimes(),
-        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
+        n_periods=1,
         regime_id_class=ConsentRegimeId,
-        initial_nodes={0: "single_f"},
-        edges={
-            "single_f": Transition(
-                targets={"married_terminal": 0, "single_f_terminal": 0},
-                law=SINGLE_F_CONSENT_LAW,
-                participation=SINGLE_F_CONSENT_PARTICIPATION,
-            )
-        },
+        initial_nodes=InitialNodes(by_period={0: "single_f"}),
+        edges={},
     )
-    solution = model.solve(params={"discount_factor": _BETA}, log_level="off")
+    solution = model.solve(params={}, log_level="off")
     return model, solution
 
 
@@ -255,8 +227,8 @@ def test_named_own_role_routes_the_dissolving_row_to_its_own_leg(
 ) -> None:
     """An all-husbands cohort dissolves into `single_m`, never into `single_f`.
 
-    The role selects the leg, and the leg selects the continuing regime, so the
-    wife's leg stays empty for a cohort that declared itself the husbands.
+    The role selects the exit target, and the target selects the continuing
+    regime, so the wife's stays empty for a cohort that declared itself the husbands.
     """
     result = _simulate_dissolution_cohort(
         setup=dissolution_model_and_solution, own_member="m"
@@ -271,19 +243,19 @@ def test_named_own_role_routes_the_dissolving_row_to_its_own_leg(
 def test_singleton_source_needs_no_own_role(
     consent_model_and_solution: tuple[Model, SolutionResult],
 ) -> None:
-    """A cohort starting single routes through its gated edge with no role seeded.
+    """A cohort starting single enters the couple through its exit with no role seeded.
 
-    The role decides between one member's leg and another's, and a
-    singleton source has only the one leg, so requiring a role there would
-    refuse a model that is perfectly well specified.
+    The role decides between one member's exit target and another's, and a
+    singleton source's consented exit names the role it enters with, so requiring
+    a role there would refuse a model that is perfectly well specified.
     """
     model, solution = consent_model_and_solution
 
     result = model.simulate(
-        params={"discount_factor": _BETA},
+        params={},
         initial_conditions={
             "wage": jnp.asarray(CONSENT_WAGES),
-            "age": jnp.zeros(len(CONSENT_WAGES)),
+            "period": jnp.zeros(len(CONSENT_WAGES), dtype=jnp.int32),
             "regime_id": jnp.full(
                 len(CONSENT_WAGES),
                 model.regime_names_to_ids["single_f"],
@@ -296,7 +268,7 @@ def test_singleton_source_needs_no_own_role(
     )
 
     np.testing.assert_array_equal(
-        np.asarray(result.raw_results["married_terminal"][1].in_regime),
+        np.asarray(result.raw_results["married"][0].in_regime),
         np.asarray(CONSENT_MARRIED_MEMBERSHIP),
     )
 
@@ -304,8 +276,8 @@ def test_singleton_source_needs_no_own_role(
 def test_collective_source_with_no_role_dependent_route_needs_no_own_role() -> None:
     """A collective cohort whose model declares no multi-leg edge simulates unseeded.
 
-    Nothing in such a model reads the role: there is no gated edge whose legs
-    differ by member, so no route, regime or state projection can turn on
+    Nothing in such a model reads the role: there is no exit or gated edge whose
+    targets differ by member, so no route, regime or state projection can turn on
     it. Demanding a seed there would refuse a well specified model over a
     column that decides nothing.
     """
@@ -373,11 +345,11 @@ class UnreachableRoleRoutingRegimeId:
 
 
 def _make_unreachable_role_routing_regimes() -> dict[RegimeName, Regime]:
-    """Add a collective start that cannot reach the two-leg dissolution edge.
+    """Add a collective start that cannot reach the two-target dissolution exit.
 
     `alone` carries the same members as `married` and runs out into its own
     terminal regime. Its only outgoing edge leads to `alone_terminal`, so no
-    path leads from it to `married` and none of `married`'s legs can ever
+    path leads from it to `married_ir` and none of its exit targets can ever
     select on a role a subject started in `alone` with.
     """
     alone = Regime(
@@ -409,9 +381,9 @@ def _make_unreachable_role_routing_regimes() -> dict[RegimeName, Regime]:
 def test_a_start_that_cannot_reach_a_role_dependent_route_needs_no_own_role() -> None:
     """A collective cohort is seeded for its own routes, not the model's.
 
-    The role a subject starts with selects among the legs of a gated edge it
-    can actually arrive at. A collective regime elsewhere in the model whose
-    edge does distinguish roles decides nothing for a cohort that can never
+    The role a subject starts with selects among the targets of an exit it can
+    actually arrive at. A collective regime elsewhere in the model whose
+    exit does distinguish roles decides nothing for a cohort that can never
     reach it, so demanding a seed on its account refuses a well specified
     model over a column that would go unread.
     """
@@ -420,17 +392,7 @@ def test_a_start_that_cannot_reach_a_role_dependent_route_needs_no_own_role() ->
         ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         regime_id_class=UnreachableRoleRoutingRegimeId,
         initial_nodes={0: ("alone", "married")},
-        edges={
-            "alone": {"alone_terminal": 0},
-            "married": Transition(
-                targets={"married_ir": 0, "single_f": 0, "single_m": 0},
-                law=ByAge(cases={AgeRange(exclusive_stop=1): MARRIED_DISSOLUTION_LAW}),
-                participation=MARRIED_DISSOLUTION_PARTICIPATION,
-            ),
-            "married_ir": {"married_terminal": 1},
-            "single_f": {"single_f_terminal": 1},
-            "single_m": {"single_m_terminal": (0, 1, 2)},
-        },
+        edges={"alone": {"alone_terminal": 0}, **DISSOLUTION_EDGES},
     )
     solution = model.solve(params=_DISSOLUTION_PARAMS, log_level="off")
     result = model.simulate(
@@ -472,12 +434,12 @@ class ReachableRoleRoutingRegimeId:
 def test_a_start_that_runs_into_a_role_dependent_route_still_needs_an_own_role() -> (
     None
 ):
-    """A role is demanded wherever a subject can still arrive at a two-leg edge.
+    """A role is demanded wherever a subject can still arrive at a two-target exit.
 
     A row keeps the role it started with across an ordinary regime transition,
     so a collective start that declares no role-dependent route of its own but
     runs into a regime that does is exactly the case the seed answers. Reading
-    only the start regime's own edges would let such a cohort simulate with
+    only the start regime's own exit would let such a cohort simulate with
     every row following one partner's dissolution path.
     """
     prelude = Regime(
@@ -497,13 +459,7 @@ def test_a_start_that_runs_into_a_role_dependent_route_still_needs_an_own_role()
         initial_nodes={0: "prelude"},
         edges={
             "prelude": {"married": 0},
-            "married": Transition(
-                targets={"married_ir": 1, "single_f": 1, "single_m": 1},
-                law=ByAge(
-                    cases={AgeRange(start=1, exclusive_stop=2): MARRIED_DISSOLUTION_LAW}
-                ),
-                participation=MARRIED_DISSOLUTION_PARTICIPATION,
-            ),
+            "married": {"married_ir": 1},
             "married_ir": {"married_terminal": 2},
             "single_f": {"single_f_terminal": 2},
             "single_m": {"single_m_terminal": 2},
@@ -530,18 +486,13 @@ def test_a_start_that_runs_into_a_role_dependent_route_still_needs_an_own_role()
 
 @pytest.fixture(scope="module")
 def current_exit_model_and_solution() -> tuple[Model, SolutionResult]:
-    """Start in the actual current-exit actor without an incoming participation rule."""
+    """Start in the actual current-exit actor."""
     model = Model(
         regimes=_make_dissolution_regimes(),
         ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         regime_id_class=DissolutionRegimeId,
         initial_nodes={1: "married_ir"},
-        edges={
-            "married": {"married_ir": 0},
-            "married_ir": {"married_terminal": 1},
-            "single_f": {"single_f_terminal": 1},
-            "single_m": {"single_m_terminal": 1},
-        },
+        edges=DISSOLUTION_EDGES,
     )
     solution = model.solve(
         params=_DISSOLUTION_PARAMS,

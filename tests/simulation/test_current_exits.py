@@ -71,10 +71,6 @@ from lcm.typing import BoolND, FloatND, IntND, RegimeName, ScalarInt
 from tests.conftest import DECIMAL_PRECISION, assert_agrees_to_ulp
 from tests.simulation._callback_types import HostDispatch, RuntimeDispatch
 from tests.simulation.test_aot_collective_and_gated import _capture_compiled_dispatches
-from tests.simulation.test_current_iid_overrides import (
-    _participation_initial,
-    _participation_model,
-)
 from tests.solution.test_public_exit_queries import _household, _rule_model
 
 
@@ -360,35 +356,6 @@ def test_exit_source_observations_keep_discrete_codes_and_labels(
     assert source_codes.dtype == jnp.int32
     np.testing.assert_array_equal(source_codes, [0, 1, -1])
     assert frame.loc[frame["subject_id"] == 2, "source__offer"].isna().all()
-
-
-@pytest.mark.coverage(backends=("cpu",), precisions="both")
-def test_participation_fallback_rows_keep_the_observed_current_shock() -> None:
-    """Rejected entry rows retain the low offer used by their participation check."""
-    frame = (
-        _participation_model(observed=True)
-        .simulate(
-            params={"discount_factor": 0.5},
-            initial_conditions=_participation_initial(),
-            shock_paths={
-                "offer": PhysicalValues(
-                    values=jnp.asarray([[1, 0], [0, 1], [1, 0]], dtype=jnp.int32)
-                )
-            },
-            seed=17,
-            log_level="off",
-            runtime_checks=False,
-        )
-        .to_dataframe(use_categorical_codes=True)
-    )
-    landed = frame.loc[frame["period"] == 1].sort_values("subject_id")
-    np.testing.assert_array_equal(
-        landed["regime_name"], ["fallback", "target", "fallback"]
-    )
-    assert_array_almost_equal(
-        landed["value"], [4.0, 4.0, 2.0], decimal=DECIMAL_PRECISION
-    )
-    np.testing.assert_array_equal(landed["offer"], [0, 1, 0])
 
 
 def _target(*, offer: ScalarInt, choice: ScalarInt) -> FloatND:

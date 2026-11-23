@@ -23,6 +23,8 @@ from _lcm_regime_finder.model_snapshot import read_model
 from _lcm_regime_finder.records import JSONValue
 from lcm import (
     CollectiveUtility,
+    Consent,
+    Counterparty,
     DiscreteGrid,
     ExecutionConfig,
     Exit,
@@ -51,7 +53,6 @@ from tests import test_transition_roles as transition_roles
 from tests.collective_fixtures import make_two_member_model
 from tests.regime_building import test_gate_shared_fallback as gate_fallback
 from tests.regime_finder import native_conditional_current_shocks as observed_offer
-from tests.simulation import test_query_only_participation_actors as value_readers
 from tests.solution import test_mutual_consent_settlement as settlement
 from tests.solution import test_renegotiation as renegotiation
 
@@ -234,6 +235,86 @@ def _equal_exit_couples() -> Model:
     return _twin_model(regimes)
 
 
+@categorical(ordered=False)
+class _ValueReaderRegimes:
+    source: ScalarInt
+    formation: ScalarInt
+    counterparty: ScalarInt
+    done: ScalarInt
+    couple_done: ScalarInt
+    target: ScalarInt
+
+
+def _one() -> float:
+    return 1.0
+
+
+def _three() -> float:
+    return 3.0
+
+
+def _five() -> float:
+    return 5.0
+
+
+def _seven() -> float:
+    return 7.0
+
+
+def _eight() -> float:
+    return 8.0
+
+
+def _ten() -> float:
+    return 10.0
+
+
+def _twenty() -> float:
+    return 20.0
+
+
+def _value_reader_model() -> Model:
+    """A single forms a couple under `Consent`, reading the couple's member values."""
+    return Model(
+        regimes={
+            "source": Regime(
+                functions={"utility": _one},
+                exit=Exit(
+                    targets={
+                        "self": ExitTarget(regime="formation", role="f", projection={})
+                    },
+                    rule=Consent(
+                        counterparty=Counterparty(
+                            regime="counterparty", role="m", projection={}
+                        )
+                    ),
+                ),
+            ),
+            "formation": Regime(
+                functions={
+                    "utility": CollectiveUtility(utilities={"f": _eight, "m": _seven})
+                }
+            ),
+            "counterparty": Regime(functions={"utility": _three}),
+            "done": Regime(functions={"utility": _five}),
+            "couple_done": Regime(
+                functions={
+                    "utility": CollectiveUtility(utilities={"f": _ten, "m": _twenty})
+                }
+            ),
+            "target": Regime(functions={"utility": _five}),
+        },
+        n_periods=2,
+        regime_id_class=_ValueReaderRegimes,
+        initial_nodes=InitialNodes(by_period={0: "source"}),
+        edges={
+            "source": {"done": Periods(values=(0,))},
+            "formation": {"couple_done": Periods(values=(0,))},
+            "counterparty": {"target": Periods(values=(0,))},
+        },
+    )
+
+
 _MODELS: dict[str, Callable[[], Model]] = {
     "roles": lambda: transition_roles.build_model(edge_form="roles"),
     "plain": lambda: transition_roles.build_model(edge_form="plain"),
@@ -251,7 +332,7 @@ _MODELS: dict[str, Callable[[], Model]] = {
     "settle": lambda: settlement._settlement_model(division="transfer"),
     "survivor_gate": lambda: gate_fallback.build_model(route_form="survivor"),
     "shared_fallback": lambda: gate_fallback.build_model(route_form="both_phases"),
-    "value_reader": lambda: value_readers.household_model(target_payoff=5, budget=None),
+    "value_reader": lambda: _value_reader_model(),
 }
 
 

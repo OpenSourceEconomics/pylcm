@@ -6,11 +6,10 @@ title: Collective regimes
 
 Two small household models. The first isolates the shared argmax: one action, two
 members who value it differently. The second adds what makes a household more than a
-joint utility function — a participation rule reading each partner's outside option in
-the *same* period, and a participation check on landing routing each partner somewhere
-different when the household ends. Both use two- and three-point grids and one binary
-action, so every value below can be recomputed by hand; the grids are curated for
-exposition and tests, not calibrated.
+joint utility function — an exit whose rule reads each partner's outside option in the
+*same* period and sends each partner somewhere different when the household ends. Both
+use two- and three-point grids and one binary action, so every value below can be
+recomputed by hand; the grids are curated for exposition and tests, not calibrated.
 
 [View source on GitHub](https://github.com/OpenSourceEconomics/pylcm/blob/main/src/lcm_examples/collective_regimes.py)
 
@@ -109,66 +108,26 @@ solution.values[1]["married_with_participation"]
  [6.  3. ]]
 ```
 
-`married` reaches age 1 through a `ParticipationCheck` keyed by
-`married_with_participation` — the branch where the decision is **open** and the couple
-keeps going. Its predicate reads, on landing, whether the couple's participating policy
-has support at that wage. Each member's route names the role they take inside the
-surviving couple and the singleton value they fall back to when the decision shuts. The
-law reaches `married_with_participation` from age 0 only.
+`married` reaches `married_with_participation` at age 1 through a plain edge, and the
+decision to dissolve is that regime's own exit:
 
 ```python
 edges = {
-    "married": Transition(
-        law=ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "married_with_participation": StochasticTransition(
-                        func=probability_one
-                    )
-                }
-            }
-        ),
-        participation={
-            "married_with_participation": ParticipationCheck(
-                predicate=has_policy_support,
-                reads={
-                    "target_support": ParticipationRead(
-                        regime="married_with_participation",
-                        member="f",
-                        kind="Participating",
-                        field="support",
-                        projection={"wage": identity_wage},
-                    )
-                },
-                routes={
-                    "f": MemberRoute(
-                        target_member="f",
-                        fallback=ProjectedRegimeValue(
-                            regime="single_f",
-                            projection={"wage": identity_wage},
-                        ),
-                    ),
-                    # ... and the mirror image for m into single_m
-                },
-            )
-        },
-    ),
+    "married": {"married_with_participation": 0},
     "married_with_participation": {"married_terminal": 1},
 }
 ```
 
-Keying this edge by `single_f` would send both partners into `single_f` whenever the
-household survives, which is why the key is the couple; see
-[the open-branch rule](../user_guide/collective_regimes.md#the-key-is-always-the-open-branch).
-`married` produces no flow utility of its own, so its value is the routed continuation
-discounted at 0.95: `(1.9, 0.95)` at wage 1 and `(5.7, 2.85)` at wage 3, against `f`'s
-fallback `0.95 × 5.5 = 5.225` at the middle node.
+`married` produces no flow utility of its own, so its value is the continuation
+discounted at 0.95: `(1.9, 0.95)` at wage 1, `(5.7, 2.85)` at wage 3, and at the middle
+node the dissolved values net of the divorce cost,
+`(0.95 × 5.0, 0.95 × 0.8) = (4.75, 0.76)`.
 
 ## Simulating one role at a time
 
 Member identity is per subject. Every subject here starts inside a collective regime, so
-each declares a role in `initial_conditions`, and that role decides which fallback its
-row takes if the household dissolves:
+each declares a role in `initial_conditions`, and that role decides which exit target
+its row takes if the household dissolves:
 
 ```python
 import jax.numpy as jnp
@@ -196,8 +155,8 @@ result.to_dataframe()
 0           0       0                     married               f    NaN    1.900     0.95   1.0  leisure    0
 1           0       1  married_with_participation               f    NaN    2.000     1.00   1.0     work    1
 2           0       2            married_terminal               f    NaN    0.000     0.00   1.0  leisure    2
-3           1       0                     married               f    NaN    5.225     0.95   2.0  leisure    0
-4           1       1                    single_f             NaN    5.5      NaN      NaN   2.0      NaN    1
+3           1       0                     married               f    NaN    4.750     0.76   2.0  leisure    0
+4           1       1                    single_f             NaN    5.0      NaN      NaN   2.0      NaN    1
 5           2       0                     married               f    NaN    5.700     2.85   3.0  leisure    0
 6           2       1  married_with_participation               f    NaN    6.000     3.00   3.0     work    1
 7           2       2            married_terminal               f    NaN    0.000     0.00   3.0  leisure    2

@@ -1144,7 +1144,6 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate() 
         "period_replay:shared_resolver_bypassed",
         "value_access:grid_reachable_targets_dropped",
         "value_access:grid_gated_kind_bypassed",
-        "value_access:grid_same_period_shifted",
         "value_access:grid_edge_reference_omitted",
         "value_access:grid_program_declarations_dropped",
         "value_access:grid_consumer_path_rebound",
@@ -1203,10 +1202,10 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate() 
         for name in names
         if not name.startswith(("simulation_adapter:", "public_shell:"))
     }
-    assert len(original_names) == 377
+    assert len(original_names) == 376
     assert (
         hashlib.sha256(("\n".join(sorted(original_names)) + "\n").encode()).hexdigest()
-        == "a7dcf2eee8dc0f47b9c31d4a4e3851ad3ea0a148db4dc69b4aa87c52ce00ccdd"
+        == "39e2aff2d982dde0ee2c6486eb9f1f783c5fe6648eeb35ed06d0e1303e55af69"
     )
     historical_names = {
         name
@@ -1217,17 +1216,17 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate() 
             ("simulation_adapter:initial_physical_", "public_shell:")
         )
     }
-    assert len(historical_names) == 395
+    assert len(historical_names) == 394
     assert (
         hashlib.sha256(
             ("\n".join(sorted(historical_names)) + "\n").encode()
         ).hexdigest()
-        == "40801992863a849eda722b5822328d10700786d5366eaa5e622fc54c0e79a2a9"
+        == "2f8d45afccfc746ab2fc3ad14505c7f087d4571092e83dedf2ce6dfc3780ff3b"
     )
-    assert len(names) == 412
+    assert len(names) == 411
     assert (
         hashlib.sha256(("\n".join(sorted(names)) + "\n").encode()).hexdigest()
-        == "9fb909fe5a8960c34b9caf1989c87152d2a56251ee9f824cab7509d2427880c9"
+        == "ce4f0914b5cf4530600d46264ffe50b13254137d44de1abe78b5f787c9957612"
     )
 
 

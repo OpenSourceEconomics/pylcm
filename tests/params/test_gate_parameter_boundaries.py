@@ -21,8 +21,6 @@ from lcm import (
     LinSpacedGrid,
     MemberRoute,
     Model,
-    ParticipationCheck,
-    ParticipationRead,
     ProjectedRegimeValue,
     Regime,
     StochasticTransition,
@@ -74,8 +72,8 @@ def below_half(y: ContinuousState) -> BoolND:
     return y < 0.5
 
 
-def gate_with_free_x(*, V_target: FloatND, x: float) -> BoolND:
-    return V_target >= x
+def gate_with_free_x(x: float) -> BoolND:
+    return jnp.asarray(1.0) >= x
 
 
 def routes() -> dict[str, MemberRoute]:
@@ -246,17 +244,7 @@ def source_name_gate_model(*, declare_pruned_source_x: bool) -> Model:
         edges={
             "src": Transition(
                 law=ByAge(cases={0: {"target": StochasticTransition(func=certain)}}),
-                participation={
-                    "target": ParticipationCheck(
-                        predicate=gate_with_free_x,
-                        reads={
-                            "V_target": ParticipationRead(
-                                kind="IntegratedFull", regime="target", projection={}
-                            )
-                        },
-                        routes=routes(),
-                    )
-                },
+                gates={"target": Gate(predicate=gate_with_free_x, routes=routes())},
             )
         },
     )
@@ -269,7 +257,7 @@ def test_gate_free_param_is_not_a_source_only_declared_state(
 ) -> None:
     """A name only the source declares stays the gate's own free parameter.
 
-    The gate opens when the target's value 1 reaches `x`, giving 1 + 0.9 * 1;
+    The gate opens when 1 reaches `x`, giving the target's 1 + 0.9 * 1;
     otherwise the fallback's 0.5 gives 1 + 0.9 * 0.5.
     """
     model = source_name_gate_model(declare_pruned_source_x=declare_pruned_source_x)

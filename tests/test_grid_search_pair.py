@@ -694,7 +694,7 @@ def test_query_metadata_does_not_unwrap_an_unknown_custody_lookalike() -> None:
 
 
 def test_collective_scenario_constructs_public_query_metadata(tmp_path: Path) -> None:
-    """A public household exposes Full graphs and declared exits/participation."""
+    """A public household exposes Full graphs and the declared exits."""
     code = """
 import sys
 from math import prod
@@ -717,7 +717,6 @@ sys.path.insert(0, str(target_src))
 lcm, version_shim = _import_lcm_with_version_shim(target_src=target_src)
 assert lcm.__version__ == version_shim["version"]
 
-from _lcm.participation_publication import _BorrowedParticipationKernel
 from _lcm.policy_queries import QueryKind, _PolicyQueryKernel
 
 spec = SCENARIOS["collective-gs-vd"]
@@ -726,8 +725,6 @@ assert isinstance(params, dict)
 query_sites = set()
 for name, regime in model._regimes.items():
     for period, kernel in regime.solution.period_kernels.items():
-        if type(kernel) is _BorrowedParticipationKernel:
-            kernel = kernel.base
         if isinstance(kernel, _PolicyQueryKernel):
             assert kernel.definitions[kernel.root].read.kind is QueryKind.FULL
             query_sites.add((name, period))
@@ -739,12 +736,9 @@ _assert_scenario_identity(spec=spec, routes=routes)
 exit_owners = {
     name for name, regime in model.user_regimes.items() if regime.exit is not None
 }
-participation_owners = {
-    name for name, transition in model.declared_transitions["solve"].items()
-    if transition.participation
-}
-assert exit_owners and participation_owners
-assert (exit_owners | participation_owners) <= set(routes["gs_vd_regimes"])
+# Dissolution is the couple's exit, formation each single's consent exit.
+assert exit_owners == {"couple", "single_f", "single_m"}
+assert exit_owners <= set(routes["gs_vd_regimes"])
 query_rows = [
     row for row in routes["kernels"]
     if (row["regime"], row["period"]) in query_sites

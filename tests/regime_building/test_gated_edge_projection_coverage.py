@@ -7,13 +7,11 @@ need different coordinates of the regime it names:
   a per-subject row there. The row occupies every state the regime carries in
   simulation, carried states (`Phased(solve=..., simulate=Grid)`) included, so
   the projection owes a landing point on each of them.
-- a GATE REFERENCE only READS that regime's value function. Its axes are the
-  regime's solve states, and a carried state is none of them, so a coordinate
-  on one would have nothing to index.
+- the solve-side reader only READS that regime's value function, whose axes are
+  the regime's solve states.
 
-Both properties are pinned on the same reference regime, `fallback`, which
-carries `career` in simulation but solves on `wage` alone: the projection that
-the leg owes is exactly the one the gate reference may not declare.
+The leg's property is pinned on the reference regime `fallback`, which carries
+`career` in simulation but solves on `wage` alone.
 
 A state whose grid is declared with `AgeSpecializedGrid` is a state its regime
 carries in simulation like any other — the marker says only that the grid's
@@ -44,8 +42,6 @@ from lcm import (
     LinSpacedGrid,
     MemberRoute,
     Model,
-    ParticipationCheck,
-    ParticipationRead,
     Phased,
     ProjectedRegimeValue,
     Regime,
@@ -107,33 +103,17 @@ def test_leg_fallback_projection_must_cover_a_carried_state_of_its_regime() -> N
     with pytest.raises(
         ModelInitializationError, match=re.escape("(['career', 'wage']); got ['wage']")
     ):
-        _build_model(fallback_projects_career=False, gate_ref_projects_career=False)
+        _build_model(fallback_projects_career=False)
 
 
-def test_gate_ref_projection_must_cover_only_the_reference_value_functions_axes(
-) -> None:  # fmt: skip
-    """A gate reference may not project a state its regime does not solve on.
-
-    The gate reads `fallback`'s value function, whose only axis is `wage` —
-    `career` has no axis there to index. Supplying a coordinate for it is
-    rejected at model build, naming `wage` alone as what the reference needs.
-    """
-    with pytest.raises(
-        ModelInitializationError,
-        match=re.escape("(['wage']); got ['career', 'wage']"),
-    ):
-        _build_model(fallback_projects_career=True, gate_ref_projects_career=True)
-
-
-def test_fallback_covering_a_carried_state_and_read_covering_solve_states_solves(
-) -> None:  # fmt: skip
-    """The fallback owes `career`, the read must not name it, and both hold here.
+def test_fallback_covering_a_carried_state_solves() -> None:
+    """The fallback owes `career`, and supplying it builds, solves and simulates.
 
     Gate open at wage 2 (src_exit pays 0), closed at wage 1 (fallback pays the
     wage), so src's value is `wage + 0.5 * (1, 0)`. A subject routed to the
     fallback lands with career `2 * wage`.
     """
-    model = _build_model(fallback_projects_career=True, gate_ref_projects_career=False)
+    model = _build_model(fallback_projects_career=True)
     solution = model.solve(params={"discount_factor": 0.5}, log_level="off")
     np.testing.assert_array_equal(solution.values[0]["src"], [1.5, 2.0])
     frame = model.simulate(
@@ -304,15 +284,12 @@ def _build_age_specialized_model(*, fallback_projects_principal: bool) -> Model:
     )
 
 
-def _build_model(
-    *, fallback_projects_career: bool, gate_ref_projects_career: bool
-) -> Model:
+def _build_model(*, fallback_projects_career: bool) -> Model:
     """Build the source-and-fallback model at the given projection coverage.
 
     Args:
         fallback_projects_career: Whether the leg's fallback projection supplies
             a coordinate for the carried `career` state.
-        gate_ref_projects_career: Whether the gate reference's projection does.
 
     Returns:
         The built model.
@@ -321,9 +298,6 @@ def _build_model(
     fallback_projection = {"wage": _identity_wage}
     if fallback_projects_career:
         fallback_projection["career"] = _project_career
-    gate_ref_projection = {"wage": _identity_wage}
-    if gate_ref_projects_career:
-        gate_ref_projection["career"] = _project_career
 
     src = Regime(
         states={"wage": _WAGE},
@@ -365,22 +339,15 @@ def _build_model(
                         }
                     }
                 ),
-                participation={
-                    "src_exit": ParticipationCheck(
-                        predicate=_gate,
+                gates={
+                    "src_exit": Gate(
+                        predicate=_wage_gate,
                         routes={
                             "only": MemberRoute(
                                 fallback=ProjectedRegimeValue(
                                     regime="fallback",
                                     projection=fallback_projection,
                                 )
-                            )
-                        },
-                        reads={
-                            "V_fallback_ref": ParticipationRead(
-                                kind="IntegratedFull",
-                                regime="fallback",
-                                projection=gate_ref_projection,
                             )
                         },
                     )
@@ -399,13 +366,8 @@ def _prob_one(age: FloatND) -> FloatND:
     return jnp.ones_like(age, dtype=float)
 
 
-def _gate(*, V_fallback_ref: FloatND, wage: ContinuousState) -> BoolND:
-    """The edge stays open above a wage, reading the fallback's value too."""
-    return (wage > _GATE_THRESHOLD) | (V_fallback_ref < 0.0)
-
-
 def _wage_gate(wage: ContinuousState) -> BoolND:
-    """The edge stays open above a wage, reading no other regime's value."""
+    """The edge stays open above a wage."""
     return wage > _GATE_THRESHOLD
 
 

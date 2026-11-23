@@ -19,11 +19,10 @@ from lcm import (
     AgeRange,
     AgeSpecializedGrid,
     ByAge,
+    Gate,
     LinSpacedGrid,
     MemberRoute,
     Model,
-    ParticipationCheck,
-    ParticipationRead,
     ProjectedRegimeValue,
     Regime,
     StochasticTransition,
@@ -326,8 +325,8 @@ def _prob_one(age: FloatND) -> FloatND:
     return jnp.ones_like(age, dtype=float)
 
 
-def _gate(*, V_target: FloatND, V_reference: FloatND) -> BoolND:
-    return V_target > V_reference
+def _wealth_is_positive(wealth: ContinuousState) -> BoolND:
+    return wealth > 0.0
 
 
 def _identity(wealth: ContinuousState) -> ContinuousState:
@@ -335,6 +334,10 @@ def _identity(wealth: ContinuousState) -> ContinuousState:
 
 
 def _gated_model(*, phased_fallback: bool) -> Model:
+    """Gate the target on wealth; a closed gate lands in `fallback`.
+
+    With `phased_fallback`, the solve leg prices the closed gate at `priced`.
+    """
     fallback = (
         Phased(
             solve=ProjectedRegimeValue(
@@ -348,20 +351,9 @@ def _gated_model(*, phased_fallback: bool) -> Model:
         else ProjectedRegimeValue(regime="fallback", projection={"wealth": _identity})
     )
     law = ByAge(cases={40: {"target": StochasticTransition(func=_prob_one)}})
-    participation = {
-        "target": ParticipationCheck(
-            predicate=_gate,
-            reads={
-                name: ParticipationRead(
-                    kind="IntegratedFull",
-                    regime=regime,
-                    projection={"wealth": _identity},
-                )
-                for name, regime in (
-                    ("V_target", "target"),
-                    ("V_reference", "reference"),
-                )
-            },
+    gates = {
+        "target": Gate(
+            predicate=_wealth_is_positive,
             routes={"only": MemberRoute(fallback=fallback)},
         )
     }
@@ -379,56 +371,31 @@ def _gated_model(*, phased_fallback: bool) -> Model:
         edges=Phased(
             solve={
                 "source": Transition(
-                    targets={"target": 40, "priced": 40},
-                    law=law,
-                    participation=participation,
+                    targets={"target": 40, "priced": 40}, law=law, gates=gates
                 )
             },
             simulate={
                 "source": Transition(
-                    targets={"target": 40, "fallback": 40},
-                    law=law,
-                    participation=participation,
+                    targets={"target": 40, "fallback": 40}, law=law, gates=gates
                 )
             },
         )
         if phased_fallback
         else {
             "source": Transition(
-                targets={"target": 40, "fallback": 40},
-                law=law,
-                participation=participation,
+                targets={"target": 40, "fallback": 40}, law=law, gates=gates
             )
         },
     )
 
 
-def test_participation_reads_and_fallbacks_are_demanded_at_the_landing_age() -> None:
-    """The check's reference is only valued; the fallback is also a landing."""
+def test_gate_fallbacks_are_demanded_at_the_landing_age() -> None:
+    """A gate's fallback is a landing at the age its target is landed on."""
     reachability = _gated_model(phased_fallback=False).reachability
     assert (reachability.nodes, reachability.visited_nodes) == (
-        frozenset(
-            {(40, "source"), (45, "target"), (45, "reference"), (45, "fallback")}
-        ),
+        frozenset({(40, "source"), (45, "target"), (45, "fallback")}),
         frozenset({(40, "source"), (45, "target"), (45, "fallback")}),
     )
-
-
-def test_a_phased_fallback_prices_one_regime_and_lands_in_another() -> None:
-    """The solve leg is priced only; the simulate leg is a physical landing.
-
-    The participation check prices the solve leg by a query of `priced` at the landing
-    age, so `priced` is active in the solution phase without becoming a stored node.
-    """
-    reachability = _gated_model(phased_fallback=True).reachability
-    assert (reachability.nodes, reachability.visited_nodes) == (
-        frozenset(
-            {(40, "source"), (45, "target"), (45, "reference"), (45, "fallback")}
-        ),
-        frozenset({(40, "source"), (45, "target"), (45, "fallback")}),
-    )
-    assert "priced" in reachability.solution.active_regimes_by_period[1]
-    assert "priced" not in reachability.simulation.active_regimes_by_period[1]
 
 
 def test_simulate_visits_only_visited_pairs_with_zero_node_regimes() -> None:

@@ -162,7 +162,6 @@ from lcm.initial_nodes import UserInitialNodes as _UserInitialNodes  # noqa: E40
 from lcm.koopmans_aggregation import CESAggregator, LinearAggregator  # noqa: E402
 from lcm.lowering import LoweredPeriodCandidate, PeriodCandidate  # noqa: E402
 from lcm.model import Model  # noqa: E402
-from lcm.participation import ParticipationCheck, ParticipationRead  # noqa: E402
 from lcm.persistence import (  # noqa: E402
     SimulateSnapshot,
     SolveSnapshot,
@@ -297,8 +296,6 @@ __all__ = [
     "NormalMixtureIIDProcess",
     "OuterContinuousMargin",
     "ParetoObjective",
-    "ParticipationCheck",
-    "ParticipationRead",
     "PeriodCandidate",
     "PeriodRange",
     "PeriodSpecializedFunction",

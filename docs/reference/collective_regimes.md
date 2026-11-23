@@ -239,11 +239,9 @@ in the target fold's context. It reads target states, params, `period` and `age`
 A gate routes on states, never on a value. A predicate argument named `V_target`,
 `V_target_<s>` or `D_target` raises `GateReadsValueError`, a
 `RegimeInitializationError`, when the `Gate` is constructed. A move decided by comparing
-values is declared where its comparison is made:
-
-- in the current period, as an `Exit` of the source regime in `Regime(exit=...)`;
-- on landing, as a `ParticipationCheck` in `Transition(participation=...)`, whose
-  `reads` name each value the predicate compares.
+values is an `Exit` in `Regime(exit=...)` of the regime that decides: formation with a
+`Consent` rule on the single's regime, dissolution with `Unilateral` or `MutualConsent`
+on the household's.
 
 At the end of each period's solve, the engine folds one gated continuation per declared
 edge and source member $s$ on the target regime's grid,

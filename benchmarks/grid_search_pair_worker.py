@@ -543,6 +543,7 @@ def _route_metadata(model: Model) -> _RouteMetadata:
         transition = transitions.get(regime_name)
         if (
             regime.gated_edges
+            or getattr(declaration, "exit", None) is not None
             or getattr(declaration, "exits", {})
             or getattr(transition, "participation", {})
         ):

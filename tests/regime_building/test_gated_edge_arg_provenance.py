@@ -15,8 +15,8 @@ The three provenances an edge-side callable mixes, all in one signature:
    param the SOLVE-side fold needs from that edge namespace, so this is not a
    preference between two merges — it is what makes simulate evaluate the same
    object solve folded.
-3. Each REFERENCE regime's own interpolation grid, for a leg fallback's
-   or a participation read's read of that regime's V.
+3. Each REFERENCE regime's own interpolation grid, for a leg fallback's read of
+   that regime's V.
 
 Covered here:
 
@@ -34,14 +34,10 @@ Covered here:
   PARAMS resolve against the reference regime's own namespace
   (`SAME_PERIOD_PARAMS_ARG`).
 
-Value-reading gates and their references are retired in favour of
-`ParticipationCheck`; their parameter namespaces are pinned in
-`tests/params/test_gate_reads_on_the_target_domain.py`.
-
 Fixture discipline: every one of these is only a repro if the two candidate
 bindings genuinely disagree, so each fixture gives the two regimes DIFFERENT
-values for the contested name (`_PROJ_SRC_SHIFT` != `_PROJ_TARGET_SHIFT`,
-`_REF_POINTS` != `_SRC_POINTS`) and asserts the disagreement itself.
+values for the contested name (`_PROJ_SRC_SHIFT` != `_PROJ_TARGET_SHIFT`) and
+asserts the disagreement itself.
 """
 
 import re
@@ -100,9 +96,6 @@ from lcm import (
     IrregSpacedGrid,
     LinSpacedGrid,
     MemberRoute,
-    Model,
-    ParticipationCheck,
-    ParticipationRead,
     ProjectedRegimeValue,
     Regime,
     Transition,
@@ -585,106 +578,6 @@ def test_router_writes_the_fold_consistent_fallback_state() -> None:
     )
     assert not np.allclose(
         np.asarray(states["fallback"]["z"]), [_REALIZED_X + _PROJ_TARGET_SHIFT]
-    )
-
-
-# A REFERENCE regime's runtime irregular grid.
-
-# The reference regime's own points, and the SOURCE's identically named ones.
-# Both regimes declare a runtime-points `IrregSpacedGrid`, so both flat-param
-# mappings carry a key literally named `x__points` / `z__points`.
-_REF_POINTS = (0.0, 1.0)
-_SRC_POINTS = (0.0, 10.0)
-
-
-def _gate_ref_only(ref_v: FloatND) -> BoolND:
-    """`V_ref` read at the projected coordinate 0.6, on the REFERENCE's grid.
-
-    `V_ref(x) = x`, so on the reference's own points (0, 1) the read is 0.6 and
-    the decision OPENS; on the source's identically named (0, 10) the coordinate
-    collapses to 0.06 and it CLOSES.
-    """
-    return ref_v > 0.5
-
-
-def _project_realized(x: ContinuousState) -> FloatND:
-    return jnp.full_like(jnp.asarray(x, dtype=float), _REALIZED_X)
-
-
-@categorical(ordered=False)
-class _RefGridRegimeId:
-    src: ScalarInt
-    target: ScalarInt
-    refregime: ScalarInt
-    fallback: ScalarInt
-
-
-def _u_zero_x(x: ContinuousState) -> FloatND:
-    return 0.0 * x
-
-
-def test_participation_read_uses_the_reference_regimes_own_runtime_grid() -> None:
-    """A participation read interpolates on the REFERENCE regime's own runtime points.
-
-    The source declares an identically named runtime grid on (0, 10). Read on the
-    reference's own (0, 1), `V_ref(0.6) = 0.6` opens the decision and the source
-    earns `0.95 * V_target(0.6) = 0.57`; read on the source's points the
-    coordinate collapses to 0.06, closing it onto the zero-valued fallback.
-    """
-    grid = LinSpacedGrid(start=0.0, stop=1.0, n_points=2)
-    model = Model(
-        regimes={
-            "src": Regime(
-                states={"x": IrregSpacedGrid(n_points=2)},
-                state_transitions={"x": _next_x_offgrid},
-                actions={"work": DiscreteGrid(category_class=Work)},
-                functions={"utility": _u_src},
-            ),
-            "target": Regime(states={"x": grid}, functions={"utility": _u_identity}),
-            "refregime": Regime(
-                states={"x": IrregSpacedGrid(n_points=2)},
-                functions={"utility": _u_identity},
-            ),
-            "fallback": Regime(states={"x": grid}, functions={"utility": _u_zero_x}),
-        },
-        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
-        regime_id_class=_RefGridRegimeId,
-        initial_nodes={0: "src"},
-        edges={
-            "src": Transition(
-                law=ByAge(cases={0: {"target": StochasticTransition(func=_prob_one)}}),
-                participation={
-                    "target": ParticipationCheck(
-                        predicate=_gate_ref_only,
-                        reads={
-                            "ref_v": ParticipationRead(
-                                kind="IntegratedFull",
-                                regime="refregime",
-                                projection={"x": _project_realized},
-                            )
-                        },
-                        routes={
-                            "only": MemberRoute(
-                                fallback=ProjectedRegimeValue(
-                                    regime="fallback", projection={"x": _identity_x}
-                                )
-                            )
-                        },
-                    )
-                },
-            )
-        },
-    )
-    solution = model.solve(
-        params={
-            "discount_factor": _BETA,
-            "src": {"x": {"points": jnp.asarray(_SRC_POINTS)}},
-            "refregime": {"x": {"points": jnp.asarray(_REF_POINTS)}},
-        },
-        log_level="off",
-    )
-    np.testing.assert_allclose(
-        np.asarray(solution.values[0]["src"]), [_BETA * _REALIZED_X] * 2, rtol=1e-6
     )
 
 

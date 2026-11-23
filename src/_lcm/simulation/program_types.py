@@ -170,34 +170,6 @@ class SimulationPrograms:
     )
     """Final actors' Participating decisions after once-only routing/revelation."""
 
-    participation_entry: MappingProxyType[tuple[int, RegimeName], CoreProgram] = (
-        dataclasses.field(default_factory=lambda: MappingProxyType({}))
-    )
-    """Actual participation date and incoming source to its Boolean routing program."""
-
-    @property
-    def participation_families(self) -> tuple[Mapping[int, CoreProgram], ...]:
-        """Expose each real incoming graph to native inventory independently."""
-        return tuple(
-            {
-                period: program
-                for (period, incoming), program in self.participation_entry.items()
-                if incoming == source
-            }
-            for source in dict.fromkeys(
-                source for _, source in self.participation_entry
-            )
-        )
-
-    def participation_program(self, *, family: str, period: int) -> CoreProgram:
-        """Resolve the explicitly named incoming source, without target coercion."""
-        prefix = "participation_entry:"
-        if not family.startswith(prefix):
-            raise ValueError(
-                f"Not an incoming participation program family: {family!r}."
-            )
-        return self.participation_entry[period, family.removeprefix(prefix)]
-
     grouping: SubjectGroupingRoute | None = None
     """The invariant state forward simulation groups subjects by, or `None`."""
 

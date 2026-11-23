@@ -2,7 +2,7 @@
 
 A felicity (under grid search and every endogenous-grid family), a constraint,
 a next state, a regime-transition probability, a stochastic weight, an exit
-utility adjustment, exit availability, a gate or participation predicate, a
+utility adjustment, exit availability, a gate predicate, a
 fallback projection, a joint-transition output or probability, a current-IID
 law parameter and a borrowing floor may each return `0`, `0.0`, `True` or an
 array. Each solves and simulates to the same values as its array-returning
@@ -30,7 +30,6 @@ from lcm import (
     LinSpacedGrid,
     MemberRoute,
     Model,
-    ParticipationCheck,
     ProjectedRegimeValue,
     Regime,
     StochasticTransition,
@@ -761,16 +760,13 @@ def _ten_plus_wealth(*, wealth: ContinuousState) -> FloatND:
     return wealth + 10.0
 
 
-def _gate_model(
-    *, predicate: UserFunction, fallback: UserFunction = _stay, gated: bool = False
-) -> Model:
+def _gate_model(*, predicate: UserFunction, fallback: UserFunction = _stay) -> Model:
     route = MemberRoute(
         fallback=ProjectedRegimeValue(
             regime="fallback", projection={"wealth": fallback}
         )
     )
     gates = {"target": Gate(predicate=predicate, routes={"self": route})}
-    checks = {"target": ParticipationCheck(predicate=predicate, routes={"self": route})}
     return Model(
         regimes={
             "source": Regime(
@@ -792,8 +788,7 @@ def _gate_model(
             "source": Transition(
                 targets={"target": 40, "fallback": 40},
                 law=ByAge(cases={40: {"target": StochasticTransition(func=_certain)}}),
-                gates=gates if gated else {},
-                participation={} if gated else checks,
+                gates=gates,
             )
         },
     )
@@ -819,20 +814,16 @@ def _gated_landings(model: Model) -> pd.DataFrame:
     return landed[["regime_name", "wealth"]].reset_index(drop=True)
 
 
-_GATE_KINDS = pytest.mark.parametrize("gated", [False, True], ids=["check", "gate"])
-
-
-@_GATE_KINDS
 @pytest.mark.parametrize("value", [0, 1])
 @pytest.mark.parametrize("form", _BOOLEAN_FORMS)
-def test_constant_landing_predicate(*, gated: bool, value: int, form: str) -> None:
-    """A gate or participation predicate `True` or `False` admits or diverts."""
+def test_constant_landing_predicate(*, value: int, form: str) -> None:
+    """A gate predicate `True` or `False` admits or diverts."""
     raw = _constant(form=form, value=value)
 
     def predicate() -> BoolND:
         return raw  # ty: ignore[invalid-return-type]
 
-    model = _gate_model(predicate=predicate, gated=gated)
+    model = _gate_model(predicate=predicate)
     np.testing.assert_array_equal(
         _gated_values(model), [10.0, 11.0, 12.0] if value else [0.0, 1.0, 2.0]
     )
@@ -841,11 +832,10 @@ def test_constant_landing_predicate(*, gated: bool, value: int, form: str) -> No
     np.testing.assert_array_equal(landed["wealth"], [0.0, 1.0, 2.0])
 
 
-@_GATE_KINDS
 @pytest.mark.parametrize(
     "form", ["python_int", "python_float", "int_array", "float_array"]
 )
-def test_constant_gated_fallback_projection(*, gated: bool, form: str) -> None:
+def test_constant_gated_fallback_projection(*, form: str) -> None:
     """A fallback projecting every subject to wealth `2` lands there at 2.0."""
     raw = _constant(form=form, value=2)
 
@@ -855,7 +845,7 @@ def test_constant_gated_fallback_projection(*, gated: bool, form: str) -> None:
     def never() -> BoolND:
         return jnp.asarray(a=False)
 
-    model = _gate_model(predicate=never, fallback=projection, gated=gated)
+    model = _gate_model(predicate=never, fallback=projection)
     np.testing.assert_array_equal(_gated_values(model), [2.0] * 3)
     landed = _gated_landings(model)
     assert list(landed["regime_name"]) == ["fallback"] * 3
@@ -1162,16 +1152,15 @@ def test_numeric_constraint_is_refused(*, form: str) -> None:
         model.solve(params=_PARAMS, log_level="off")
 
 
-@_GATE_KINDS
 @pytest.mark.parametrize("form", ["python_int", "int_array"])
-def test_numeric_landing_predicate_is_refused(*, gated: bool, form: str) -> None:
-    """A gate or participation predicate `1` is refused rather than read as true."""
+def test_numeric_landing_predicate_is_refused(*, form: str) -> None:
+    """A gate predicate `1` is refused rather than read as true."""
     raw = _constant(form=form, value=1)
 
     def predicate() -> BoolND:
         return raw  # ty: ignore[invalid-return-type]
 
-    model = _gate_model(predicate=predicate, gated=gated)
+    model = _gate_model(predicate=predicate)
     with pytest.raises(
         InvalidFunctionOutputError,
         match=r"returned dtype 'int(32|64)', but must return a Boolean",

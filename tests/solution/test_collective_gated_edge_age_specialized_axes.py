@@ -1,31 +1,17 @@
-"""A collective participation reads its period-`t` operands on period `t`'s axes.
-
-A collective source declares one route per member, and a collective target
-has a Participating policy support that no singleton regime has. Both enlarge
-what one participation check closes over: pricing reads every route's own fallback
-grid and every participation read's, and simulation queries the target's support at
-the realized landing. Each of those grids must be the one its regime was solved
-on in the period whose arrays are being read.
+"""A collective regime counts its infeasible households on each period's own axes.
 
 An `AgeSpecializedGrid` is what makes two periods distinguishable. It holds
 `n_points` fixed while the bounds move with age, so every array keeps its shape
 at every age and no shape check can separate the periods — only the coordinate a
-value maps to, and through it the gate, which is a discrete branch.
+value maps to, and through it the feasibility of a household, which is discrete.
 
-Two models, one per collective-only object:
-
-- `_build_gate_ref_model` puts the moving grid on a participation read and gives the
-  two members different outside options, so a wrongly-aged read moves both
-  components of the source's value.
-- `_build_dissolution_model` puts it on the collective TARGET, whose support the
-  participation reads, so a wrongly-aged read maps the realized state onto a different
-  node and dissolves a household that has a feasible action.
+`_build_pair_model` puts the moving grid on a collective regime `pair` whose
+constraint empties its feasible set below a floor, so a wrongly-aged count reports
+a different number of households with no feasible action.
 """
 
 import jax.numpy as jnp
-import numpy as np
 import pytest
-from numpy.testing import assert_array_almost_equal as aaae
 
 from lcm import (
     AgeGrid,
@@ -34,18 +20,13 @@ from lcm import (
     CollectiveUtility,
     DiscreteGrid,
     LinSpacedGrid,
-    MemberRoute,
     Model,
-    ParticipationCheck,
-    ParticipationRead,
-    ProjectedRegimeValue,
     Regime,
     StochasticTransition,
     Transition,
     categorical,
     fixed_transition,
 )
-from lcm.result import SimulationResult
 from lcm.typing import (
     BoolND,
     ContinuousState,
@@ -53,40 +34,27 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
-from tests.conftest import DECIMAL_PRECISION
 
 _DISCOUNT_FACTOR = 0.5
 
-# Both models let one grid's ceiling drop once, so its three nodes are
-# `[0, 4, 8]` at age 1 and `[0, 2, 4]` at age 2.
+# The grid's ceiling drops once, so its three nodes are `[0, 4, 8]` at age 1 and
+# `[0, 2, 4]` at age 2.
 _CEILING_EARLY = 8.0
 _CEILING_LATE = 4.0
 
-# The balance the couple carries into the target regime: the top node of age 2's
-# grid, and the MIDDLE node of age 1's.
+# The amount the couple carries into `pair`: the top node of age 2's grid, and the
+# MIDDLE node of age 1's.
 _ENTRY = 4.0
 
-_ANNUITY_GRID = LinSpacedGrid(start=0.0, stop=8.0, n_points=3)
-_OUTSIDE_BASE_F = 100.0
-_OUTSIDE_BASE_M = 200.0
+_TERMINAL_GRID = LinSpacedGrid(start=0.0, stop=8.0, n_points=3)
 
-# The husband's felicity premium in the target regime, so the two member
-# components of every folded quantity differ.
+# The husband's felicity premium in `pair`, so the two member components differ.
 _M_BONUS = 10.0
 
-# The gate keeps the account open only where the rating index clears this.
-_INDEX_HURDLE = 3.0
-
-# The wife's participation floor in the dissolution model. Her felicity is `w`,
-# so the household's feasible set empties exactly where `w < 3`: the support is
-# `[False, True, True]` on age 1's `[0, 4, 8]` and `[False, False, True]` on age
-# 2's `[0, 2, 4]`.
+# The wife's participation floor. Her felicity is `w`, so the household's feasible
+# set empties exactly where `w < 3`: the support is `[False, True, True]` on age 1's
+# `[0, 4, 8]` and `[False, False, True]` on age 2's `[0, 2, 4]`.
 _FLOOR_F = 3.0
-
-# The couple's value at the age at which it leaves, per member. The gate is
-# open at the entry point on the period's OWN axes, so each member discounts
-# the target's own component: `0.5 * 4` and `0.5 * (10 + 4)`.
-_EXPECTED_COUPLE_V_AT_AGE_1 = np.array([2.0, 7.0])
 
 
 @categorical(ordered=True)
@@ -98,126 +66,20 @@ class _Effort:
 
 
 @categorical(ordered=False)
-class _GateRefRegimeId:
-    """Regime ids of the couple / account / index / annuity model."""
-
-    couple: ScalarInt
-    account: ScalarInt
-    index: ScalarInt
-    annuity_f: ScalarInt
-    annuity_m: ScalarInt
-
-
-@categorical(ordered=False)
-class _DissolutionRegimeId:
-    """Regime ids of the couple / pair / singles model."""
+class _PairRegimeId:
+    """Regime ids of the couple / pair model."""
 
     couple: ScalarInt
     pair: ScalarInt
     pair_terminal: ScalarInt
-    single_f: ScalarInt
-    single_m: ScalarInt
-
-
-def test_collective_source_gate_ref_is_read_at_its_own_period_axes() -> None:
-    """Both members of an age-1 couple are worth `(2, 7)`.
-
-    At age 2 the index's grid is `[0, 2, 4]`, so a level of `4` is its top node
-    and worth `4` — above the hurdle of `3`, so the gate stays open and each
-    member's continuation is the account's own component. Measuring that
-    level against the index's age-1 grid `[0, 4, 8]` instead places it on the
-    MIDDLE node, worth `2`, which shuts the gate and hands the two members
-    their separate annuities, `(52, 102)`.
-    """
-    model = _build_gate_ref_model()
-    solution = model.solve(
-        params={"discount_factor": _DISCOUNT_FACTOR}, log_level="debug"
-    )
-    aaae(
-        np.asarray(solution.values[1]["couple"]),
-        _EXPECTED_COUPLE_V_AT_AGE_1,
-        decimal=DECIMAL_PRECISION,
-    )
-
-
-def test_simulated_collective_source_gate_ref_is_read_at_its_own_period_axes() -> None:
-    """A simulated age-1 couple is worth `(2, 7)` per member.
-
-    Simulation rebuilds the gated continuation from the stored value functions
-    rather than reusing the solved one, so it owes backward induction's folded
-    value on every leg of the collective source.
-    """
-    model = _build_gate_ref_model()
-    result = _simulate_gate_ref(model)
-    simulated = result.to_dataframe().query("regime_name == 'couple' and period == 1")
-    aaae(
-        simulated[["value_f", "value_m"]].to_numpy(),
-        np.tile(_EXPECTED_COUPLE_V_AT_AGE_1, (2, 1)),
-        decimal=DECIMAL_PRECISION,
-    )
-
-
-def test_simulated_collective_gate_routes_the_couple_by_its_own_period_gate() -> None:
-    """A couple leaving at age 1 continues in `account`, the open gate's target.
-
-    Routing recomputes the gate at the realized candidate state from the age-2
-    arrays, so it reads the index at a level of `4` on age 2's `[0, 2, 4]` and
-    clears the hurdle. Reading that level against the index's age-1 grid
-    `[0, 4, 8]` instead lands on the middle node, worth `2`, and would send the
-    row to its own leg's fallback annuity. Which regime the row occupies is a
-    discrete outcome, so it separates the two reads without any tolerance.
-    """
-    model = _build_gate_ref_model()
-    result = _simulate_gate_ref(model)
-    routed = result.to_dataframe().query("period == 2")
-    np.testing.assert_array_equal(
-        routed["regime_name"].to_numpy(), np.full(2, "account")
-    )
-
-
-def test_collective_dissolution_participation_routes_by_its_own_period_support() -> (
-    None
-):
-    """A couple with a feasible action stays in `pair` rather than dissolving.
-
-    `pair` is feasible at age 2 exactly where `w >= 3` on its own `[0, 2, 4]`
-    grid, so a realized `w` of `4` is its top node and has policy support.
-    Measuring that `w` against `pair`'s age-1 grid `[0, 4, 8]` would place it on
-    the middle node and dissolve the household into the two single regimes.
-    """
-    model = _build_dissolution_model()
-    result = _simulate_dissolution(model)
-    routed = result.to_dataframe().query("period == 2")
-    np.testing.assert_array_equal(routed["regime_name"].to_numpy(), np.full(2, "pair"))
-
-
-def test_collective_dissolution_participation_prices_support_at_its_own_period() -> (
-    None
-):
-    """Both members of an age-1 couple are worth `(2, 7)` under a support read.
-
-    The source prices the same age-2 participation check that simulation settles.
-    Pinning the priced value here is what makes the routing assertion above a statement
-    about routing alone rather than about a continuation that moved with it.
-    """
-    model = _build_dissolution_model()
-    solution = model.solve(
-        params={"discount_factor": _DISCOUNT_FACTOR, "floor_f": _FLOOR_F},
-        log_level="debug",
-    )
-    aaae(
-        np.asarray(solution.values[1]["couple"]),
-        _EXPECTED_COUPLE_V_AT_AGE_1,
-        decimal=DECIMAL_PRECISION,
-    )
 
 
 def test_empty_counts_use_households_and_the_periods_own_grid(
     *,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Participation rejects households, counted on each age's current nodes."""
-    model = _build_dissolution_model()
+    """Infeasible households are counted on each age's current nodes."""
+    model = _build_pair_model()
     model.solve(
         params={"discount_factor": _DISCOUNT_FACTOR, "floor_f": _FLOOR_F},
         log_level="warning",
@@ -233,147 +95,16 @@ def test_empty_counts_use_households_and_the_periods_own_grid(
     ]
 
 
-def _build_gate_ref_model() -> Model:
-    r"""Build a couple whose participation reads an index on an age-varying grid.
-
-    Topology over ages 0-3: `couple` is collective (`members=("f", "m")`),
-    active at ages 0 and 1, and stays put at age 0, so it leaves for `account` at
-    age 1 only. `account` is collective too, active at ages 1 and 2, and holds
-    `balance` on the age-invariant grid `[0, 4]`. `index` and the two annuities
-    are active from age 1 on; the index's `level` grid runs to the age's ceiling,
-    so its nodes move with age, while the annuities' do not.
-
-    Hand computation, $\beta = 0.5$:
-
-    - `index` pays out its level, so its value is its own grid: `[0, 4, 8]` at
-      age 1 and `[0, 2, 4]` at age 2.
-    - `account` pays the balance to the wife and `10 +` the balance to the
-      husband, so its value is `[[0, 10], [4, 14]]`.
-    - `annuity_f` pays $100 + \text{principal}$ and `annuity_m` pays
-      $200 + \text{principal}$ on `[0, 4, 8]`, so their values are
-      `[100, 104, 108]` and `[200, 204, 208]`.
-    - The age-2 participation reads the index at a level equal to the balance: `0` at
-      balance `0` and `4` at balance `4`. Only the latter clears the hurdle of `3`, so
-      the participation check is refused at balance `0` and accepted at balance `4`.
-    - The couple enters at balance `4`, the top node of the account's grid, so
-      its age-1 value is $(0, 0) + 0.5 \cdot (4, 14) = (2, 7)$.
-
-    Returns:
-        The model, which `{"discount_factor": 0.5}` solves.
-
-    """
-    couple = Regime(
-        state_transitions={"balance": {"account": _entry_amount}},
-        actions={"effort": DiscreteGrid(category_class=_Effort)},
-        functions={
-            "utility": CollectiveUtility(
-                utilities={"f": _no_felicity, "m": _no_felicity}
-            )
-        },
-    )
-    account = Regime(
-        states={"balance": LinSpacedGrid(start=0.0, stop=4.0, n_points=2)},
-        actions={"effort": DiscreteGrid(category_class=_Effort)},
-        functions={
-            "utility": CollectiveUtility(
-                utilities={"f": _account_felicity_f, "m": _account_felicity_m}
-            )
-        },
-    )
-    index = Regime(
-        states={
-            "level": AgeSpecializedGrid(build=_moving_grid, signature=_moving_ceiling)
-        },
-        functions={"utility": _index_felicity},
-    )
-    annuity_f = Regime(
-        states={"principal": _ANNUITY_GRID},
-        functions={"utility": _annuity_felicity_f},
-    )
-    annuity_m = Regime(
-        states={"principal": _ANNUITY_GRID},
-        functions={"utility": _annuity_felicity_m},
-    )
-    staying_put = StochasticTransition(func=_probability_of_staying_put)
-    leaving = StochasticTransition(func=_probability_of_leaving)
-    return Model(
-        regimes={
-            "couple": couple,
-            "account": account,
-            "index": index,
-            "annuity_f": annuity_f,
-            "annuity_m": annuity_m,
-        },
-        ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
-        regime_id_class=_GateRefRegimeId,
-        initial_nodes={0: "couple"},
-        edges={
-            "couple": Transition(
-                targets={
-                    "couple": 0,
-                    "account": (0, 1),
-                    "annuity_f": (0, 1),
-                    "annuity_m": (0, 1),
-                },
-                law=ByAge(
-                    cases={
-                        0: {"couple": staying_put, "account": leaving},
-                        1: {"account": leaving},
-                    }
-                ),
-                participation={
-                    "account": ParticipationCheck(
-                        predicate=_index_clears_the_hurdle,
-                        reads={
-                            "index_value": ParticipationRead(
-                                kind="IntegratedFull",
-                                regime="index",
-                                projection={"level": _level_from_balance},
-                            )
-                        },
-                        routes={
-                            "f": MemberRoute(
-                                target_member="f",
-                                fallback=ProjectedRegimeValue(
-                                    regime="annuity_f",
-                                    projection={"principal": _principal_from_balance},
-                                ),
-                            ),
-                            "m": MemberRoute(
-                                target_member="m",
-                                fallback=ProjectedRegimeValue(
-                                    regime="annuity_m",
-                                    projection={"principal": _principal_from_balance},
-                                ),
-                            ),
-                        },
-                    ),
-                },
-            )
-        },
-    )
-
-
-def _build_dissolution_model() -> Model:
-    r"""Build a couple whose participation reads a collective target's policy support.
+def _build_pair_model() -> Model:
+    r"""Build a couple that moves into a collective `pair` on an age-varying grid.
 
     Topology over ages 0-3: `couple` is collective, active at ages 0 and 1, and
     leaves for the collective `pair` at age 1 only. `pair` is active at ages 1
     and 2 and holds `w` on the age-varying grid, so its own nodes move with age.
-    `pair_terminal` closes the lifecycle at zero felicity, and the two singles are
-    the legs' fallbacks on the age-invariant grid `[0, 4, 8]`.
+    `pair_terminal` closes the lifecycle at zero felicity.
 
-    Hand computation, $\beta = 0.5$:
-
-    - `pair` pays `w` to the wife and `10 + w` to the husband, and its
-      continuation is zero, so $Q_f = w$. Her participation constraint
-      $w \ge 3$ therefore empties the household's feasible set exactly where
-      `w < 3`: the support is `[False, True, True]` on age 1's `[0, 4, 8]` and
-      `[False, False, True]` on age 2's `[0, 2, 4]`.
-    - `pair`'s own value is $(w, 10 + w)$ where it has support.
-    - `single_f` pays $100 + s$ and `single_m` pays $200 + s$ on `[0, 4, 8]`.
-    - The couple enters at `w = 4`, the top node of `pair`'s age-2 grid, so its
-      age-1 value is $(0, 0) + 0.5 \cdot (4, 14) = (2, 7)$.
+    `pair` pays `w` to the wife and `10 + w` to the husband, and her participation
+    constraint $w \ge 3$ empties the household's feasible set exactly where `w < 3`.
 
     Returns:
         The model, which `{"discount_factor": 0.5, "floor_f": 3.0}` solves.
@@ -400,7 +131,7 @@ def _build_dissolution_model() -> Model:
         constraints={"ir_f": _wife_participates},
     )
     pair_terminal = Regime(
-        states={"w": _ANNUITY_GRID},
+        states={"w": _TERMINAL_GRID},
         actions={"effort": DiscreteGrid(category_class=_Effort)},
         functions={
             "utility": CollectiveUtility(
@@ -408,121 +139,26 @@ def _build_dissolution_model() -> Model:
             )
         },
     )
-    single_f = Regime(
-        states={"s": _ANNUITY_GRID},
-        functions={"utility": _single_felicity_f},
-    )
-    single_m = Regime(
-        states={"s": _ANNUITY_GRID},
-        functions={"utility": _single_felicity_m},
-    )
     staying_put = StochasticTransition(func=_probability_of_staying_put)
     leaving = StochasticTransition(func=_probability_of_leaving)
     return Model(
-        regimes={
-            "couple": couple,
-            "pair": pair,
-            "pair_terminal": pair_terminal,
-            "single_f": single_f,
-            "single_m": single_m,
-        },
+        regimes={"couple": couple, "pair": pair, "pair_terminal": pair_terminal},
         ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
-        regime_id_class=_DissolutionRegimeId,
+        regime_id_class=_PairRegimeId,
         initial_nodes={0: "couple"},
         edges={
             "couple": Transition(
-                targets={
-                    "couple": 0,
-                    "pair": (0, 1),
-                    "single_f": (0, 1),
-                    "single_m": (0, 1),
-                },
+                targets={"couple": 0, "pair": (0, 1)},
                 law=ByAge(
                     cases={
                         0: {"couple": staying_put, "pair": leaving},
                         1: {"pair": leaving},
                     }
                 ),
-                participation={
-                    "pair": ParticipationCheck(
-                        predicate=_household_has_support,
-                        reads={
-                            "pair_support": ParticipationRead(
-                                regime="pair",
-                                member="f",
-                                kind="Participating",
-                                field="support",
-                                projection={"w": _same_w},
-                            )
-                        },
-                        routes={
-                            "f": MemberRoute(
-                                target_member="f",
-                                fallback=ProjectedRegimeValue(
-                                    regime="single_f",
-                                    projection={"s": _single_state_from_w},
-                                ),
-                            ),
-                            "m": MemberRoute(
-                                target_member="m",
-                                fallback=ProjectedRegimeValue(
-                                    regime="single_m",
-                                    projection={"s": _single_state_from_w},
-                                ),
-                            ),
-                        },
-                    ),
-                },
             ),
             "pair": {"pair_terminal": (1, 2)},
         },
     )
-
-
-def _simulate_gate_ref(model: Model) -> SimulationResult:
-    """Solve, then simulate two couples from age 0 as the wife's row."""
-    solution = model.solve(
-        params={"discount_factor": _DISCOUNT_FACTOR}, log_level="off"
-    )
-    return model.simulate(
-        params={"discount_factor": _DISCOUNT_FACTOR},
-        initial_conditions=_initial_conditions(
-            n_subjects=2, regime_id=_GateRefRegimeId.couple, model=model
-        ),
-        solution=solution,
-        log_level="debug",
-    )
-
-
-def _simulate_dissolution(model: Model) -> SimulationResult:
-    """Solve, then simulate two couples from age 0."""
-    params = {"discount_factor": _DISCOUNT_FACTOR, "floor_f": _FLOOR_F}
-    solution = model.solve(params=params, log_level="off")
-    return model.simulate(
-        params=params,
-        initial_conditions=_initial_conditions(
-            n_subjects=2, regime_id=_DissolutionRegimeId.couple, model=model
-        ),
-        solution=solution,
-        log_level="debug",
-    )
-
-
-def _initial_conditions(
-    *, n_subjects: int, regime_id: ScalarInt, model: Model
-) -> dict[str, FloatND]:
-    """Seed every subject as the wife of a couple at age 0.
-
-    The couple carries no state, so the role is the whole of what a row starts
-    with beyond its regime.
-    """
-    return {
-        "age": jnp.zeros(n_subjects),
-        "regime_id": jnp.full(n_subjects, regime_id, dtype=jnp.int32),
-        "own_member": jnp.full(
-            n_subjects, model.member_names_to_ids["f"], dtype=jnp.int32
-        ),
-    }
 
 
 def _moving_ceiling(age: float) -> float:
@@ -546,7 +182,7 @@ def _probability_of_leaving(age: FloatND) -> FloatND:
 
 
 def _entry_amount() -> ContinuousState:
-    """The amount the couple carries into the regime it leaves for."""
+    """The amount the couple carries into `pair`."""
     return jnp.asarray(_ENTRY)
 
 
@@ -560,16 +196,6 @@ def _no_felicity_on_w(*, w: ContinuousState, effort: DiscreteAction) -> FloatND:
     return 0.0 * w + 0.0 * effort
 
 
-def _account_felicity_f(*, balance: ContinuousState, effort: DiscreteAction) -> FloatND:
-    """The account pays out its balance to the wife."""
-    return balance + 0.0 * effort
-
-
-def _account_felicity_m(*, balance: ContinuousState, effort: DiscreteAction) -> FloatND:
-    """The account pays the husband a premium on top of the balance."""
-    return _M_BONUS + balance + 0.0 * effort
-
-
 def _pair_felicity_f(*, w: ContinuousState, effort: DiscreteAction) -> FloatND:
     """The pair pays out `w` to the wife."""
     return w + 0.0 * effort
@@ -580,61 +206,6 @@ def _pair_felicity_m(*, w: ContinuousState, effort: DiscreteAction) -> FloatND:
     return _M_BONUS + w + 0.0 * effort
 
 
-def _index_felicity(level: ContinuousState) -> FloatND:
-    """The index pays out its level."""
-    return level
-
-
-def _annuity_felicity_f(principal: ContinuousState) -> FloatND:
-    """The wife's annuity pays a base amount plus the principal rolled in."""
-    return _OUTSIDE_BASE_F + principal
-
-
-def _annuity_felicity_m(principal: ContinuousState) -> FloatND:
-    """The husband's annuity pays a higher base amount plus the principal."""
-    return _OUTSIDE_BASE_M + principal
-
-
-def _single_felicity_f(s: ContinuousState) -> FloatND:
-    """The wife's single regime pays a base amount plus her carried state."""
-    return _OUTSIDE_BASE_F + s
-
-
-def _single_felicity_m(s: ContinuousState) -> FloatND:
-    """The husband's single regime pays a higher base amount plus his state."""
-    return _OUTSIDE_BASE_M + s
-
-
-def _index_clears_the_hurdle(index_value: FloatND) -> BoolND:
-    """The account stays open only where the index's value clears the hurdle."""
-    return index_value > _INDEX_HURDLE
-
-
-def _household_has_support(pair_support: BoolND) -> BoolND:
-    """The couple continues wherever the target household has a feasible action."""
-    return pair_support
-
-
-def _same_w(w: ContinuousState) -> ContinuousState:
-    """The participation reads the target household at its landing `w`."""
-    return w
-
-
 def _wife_participates(*, w: ContinuousState, floor_f: FloatND) -> BoolND:
     """The pair is feasible only where the wife's payout clears her floor."""
     return w >= floor_f
-
-
-def _level_from_balance(balance: ContinuousState) -> ContinuousState:
-    """The index is read at a level equal to the account's balance."""
-    return balance
-
-
-def _principal_from_balance(balance: ContinuousState) -> ContinuousState:
-    """A closed account rolls its whole balance into the annuity's principal."""
-    return balance
-
-
-def _single_state_from_w(w: ContinuousState) -> ContinuousState:
-    """A dissolved household carries `w` into each member's single regime."""
-    return w

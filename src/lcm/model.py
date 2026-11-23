@@ -323,7 +323,6 @@ from _lcm.typing import (
     InitialConditions,
     ParamsLeaf,
     ParamsTemplate,
-    PeriodToRegimeToParticipationSurfaces,
     PeriodToRegimeToSimulationPolicy,
     PeriodToRegimeToVArr,
     PytreeByPeriod,
@@ -355,7 +354,6 @@ from _lcm.value_grid_inputs import (
 from _lcm.variables import carried_state_grids, from_regime, get_grids
 from lcm._solver_api.authority import _ArrayCopier
 from lcm._solver_api.contract import ArtifactContractValue
-from lcm._solver_api.entries import _LazyEntry
 from lcm.ages import AgeGrid
 from lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
 from lcm.composite_state import CompositeState
@@ -514,7 +512,6 @@ type _ResolvedSolution = tuple[
     PeriodToRegimeToVArr,
     PeriodToRegimeToSimulationPolicy,
     _PeriodToRegimeToReplayReader,
-    PeriodToRegimeToParticipationSurfaces,
 ]
 
 
@@ -607,7 +604,6 @@ def _simulation_programs(
             programs.policy_prepare,
             programs.exit_full,
             programs.exit_participating,
-            *programs.participation_families,
         ):
             yield from family.values()
 
@@ -1548,7 +1544,6 @@ class Model:
                 name: bind_regime_law(
                     transition,
                     gated_edges=prepared_graph.laws[name].gated_edges,
-                    participation=prepared_graph.laws[name].participation,
                 )
                 for name, transition in demanded_transitions.items()
             }
@@ -3435,7 +3430,6 @@ class Model:
             engine_view.values,  # noqa: PD011
             engine_view.simulation_policies,
             external_readers,
-            engine_view.participation_surfaces,
         )
 
     def _consume_foreign_solution(
@@ -3467,9 +3461,6 @@ class Model:
                         f"{self._execution.device_memory_cap_note()}"
                     )
             self._fail_if_another_instances_result(solution=solution)
-        participation_surfaces = _materialize_participation_surfaces(
-            surfaces=solution._participation_surfaces  # noqa: SLF001
-        )
         solution = self._snapshot_solution_envelope(
             solution=solution, array_copier=array_copier, native_values=native_values
         )
@@ -3524,7 +3515,6 @@ class Model:
             values,
             policies,
             external_readers,
-            participation_surfaces,
         )
 
     def _check_solution_result_structure(
@@ -4733,7 +4723,6 @@ class Model:
                         period_to_regime_to_V_arr,
                         period_to_regime_to_sim_policy,
                         period_to_regime_to_replay_reader,
-                        participation_surfaces,
                     ) = self._resolve_solution_result(
                         solution=solution,
                         flat_params=flat_params,
@@ -4745,7 +4734,6 @@ class Model:
                 period_to_regime_to_V_arr = None
                 period_to_regime_to_sim_policy = None
                 period_to_regime_to_replay_reader = None
-                participation_surfaces = None
             with solve_phase(name="simulation_inputs", logger=log, call_id=call_id):
                 if entry_allocations is not None:
                     entry_allocations.update_solution(
@@ -4754,7 +4742,6 @@ class Model:
                             period_to_regime_to_V_arr,
                             period_to_regime_to_sim_policy,
                             period_to_regime_to_replay_reader,
-                            participation_surfaces,
                         ),
                     )
                 initial_conditions = split_initial_conditions(
@@ -4929,7 +4916,6 @@ class Model:
                 period_to_regime_to_V_arr = MappingProxyType({})
                 period_to_regime_to_sim_policy = MappingProxyType({})
                 period_to_regime_to_replay_reader = MappingProxyType({})
-                participation_surfaces = MappingProxyType({})
             elif solution is None:
                 solve_params = (
                     flat_params
@@ -4968,7 +4954,6 @@ class Model:
                         period_to_regime_to_V_arr,
                         period_to_regime_to_sim_policy,
                         period_to_regime_to_replay_reader,
-                        participation_surfaces,
                     ) = self._resolve_solution_result(
                         solution=solution,
                         flat_params=flat_params,
@@ -4981,7 +4966,6 @@ class Model:
                     period_to_regime_to_V_arr is None
                     or period_to_regime_to_sim_policy is None
                     or period_to_regime_to_replay_reader is None
-                    or participation_surfaces is None
                 ):
                     raise AssertionError(
                         "Simulation solution inputs were not resolved."
@@ -4993,7 +4977,6 @@ class Model:
                             period_to_regime_to_V_arr,
                             period_to_regime_to_sim_policy,
                             period_to_regime_to_replay_reader,
-                            participation_surfaces,
                         ),
                     )
                     entry_allocations.publish(stage="initial", tree=initial_conditions)
@@ -5038,7 +5021,6 @@ class Model:
                         flat_params=flat_params,
                         values=period_to_regime_to_V_arr,
                         policies=period_to_regime_to_sim_policy,
-                        participation_surfaces=participation_surfaces,
                         ages=self._time,
                         initial_conditions=initial_conditions,
                         regime_names_to_ids=self.regime_names_to_ids,
@@ -5100,7 +5082,6 @@ class Model:
                 period_to_regime_to_V_arr=period_to_regime_to_V_arr,
                 period_to_regime_to_sim_policy=period_to_regime_to_sim_policy,
                 period_to_regime_to_replay_reader=period_to_regime_to_replay_reader,
-                participation_surfaces=participation_surfaces,
                 ages=self._time,
                 simulation_output_dtypes=self.simulation_output_dtypes,
                 seed=seed,
@@ -5541,7 +5522,7 @@ class Model:
         )
         if allocations is not None:
             allocations.update_solution(solution=solution, resolved_inputs=resolved)
-        V_arrs, sim_policies, replay_readers, _ = resolved
+        V_arrs, sim_policies, replay_readers = resolved
         if self._owned_component_values(solution=solution) is not None:
             # A block-major result keeps its values on the host; its value
             # store assembles each value the lookup reads, when it reads it.
@@ -7415,39 +7396,6 @@ def _map_lookup_arrays(
 def _leading_rows(*, array: jax.Array, n_rows: int) -> jax.Array:
     """Return the leading `n_rows` rows of `array`."""
     return array[:n_rows]
-
-
-def _materialize_participation_surfaces(
-    *, surfaces: Mapping[int, Mapping[RegimeName, Mapping[str, FloatND | _LazyEntry]]]
-) -> PeriodToRegimeToParticipationSurfaces:
-    """Load a result's stored participation surfaces, which participation replay reads.
-
-    A surface the result does not carry stays absent: participation replay refuses where
-    it would read one.
-    """
-    # ponytail: surfaces load eagerly outside the budgeted copier; route them
-    # through `array_copier` if they ever rival a value function in size.
-    return MappingProxyType(
-        {
-            period: MappingProxyType(
-                {
-                    regime: MappingProxyType(
-                        {
-                            name: cast(
-                                "FloatND",
-                                surface.materialize()
-                                if isinstance(surface, _LazyEntry)
-                                else surface,
-                            )
-                            for name, surface in by_name.items()
-                        }
-                    )
-                    for regime, by_name in by_regime.items()
-                }
-            )
-            for period, by_regime in surfaces.items()
-        }
-    )
 
 
 def _exact_envelope_capacity_hint(*, solver: Solver | None) -> str:

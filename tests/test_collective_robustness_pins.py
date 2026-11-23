@@ -4,12 +4,10 @@ Each test pins one property a user meets through the documented API: a
 declaration that stays immutable, a mapping every regime-shaped object carries,
 a saved artifact that fails by naming what it lacks, a kernel that does not
 collapse an array when it has nothing to reduce, a coordinate that never blends
-two categories, a declaration rejected where the user can still act on it, and
-the two names an edge cannot be declared without.
+two categories, and the two names an edge cannot be declared without.
 """
 
 from pathlib import Path
-from types import MappingProxyType
 
 import cloudpickle
 import jax.numpy as jnp
@@ -21,47 +19,21 @@ from _lcm.regime_building.argmax import argmax_and_max
 from _lcm.regime_building.collective import _gather_along_actions
 from _lcm.regime_building.V import _get_identity_coordinate
 from lcm import (
-    AgeGrid,
-    AgeRange,
-    ByAge,
     CollectiveUtility,
     DiscreteGrid,
-    LinSpacedGrid,
-    Model,
     ParetoObjective,
     Regime,
-    Transition,
-    categorical,
-    fixed_transition,
 )
-from lcm.collective import MemberRoute, ProjectedRegimeValue
+from lcm.collective import MemberRoute
 from lcm.exceptions import PyLCMError
-from lcm.participation import ParticipationCheck
 from lcm.result import SimulationResult
-from lcm.transition import StochasticTransition
-from lcm.typing import BoolND, ContinuousState, DiscreteAction, FloatND, ScalarInt
+from lcm.typing import DiscreteAction, FloatND
 from tests.collective_fixtures import (
     Work,
     make_couple_initial_conditions,
     make_two_member_model,
 )
 from tests.mock_regime import MockRegime
-
-# Lifecycle of the gated-edge model: the source is active at age 0, both
-# terminal regimes from age 1 on.
-GATE_AGES = AgeGrid(start=0, inclusive_stop=2, step="Y")
-
-# The gated-edge model's only state.
-GATE_WAGE_GRID = LinSpacedGrid(start=1.0, stop=2.0, n_points=2)
-
-
-@categorical(ordered=False)
-class GateRegimeId:
-    """Regime ids of the model whose participation reads a dissolution flag."""
-
-    source: ScalarInt  # code 0
-    target: ScalarInt  # code 1
-    fallback: ScalarInt  # code 2
 
 
 def test_regime_weights_keep_the_values_they_were_declared_with() -> None:
@@ -135,23 +107,6 @@ def test_non_integral_categorical_coordinate_is_rejected() -> None:
         find_coordinate(health=jnp.asarray(0.5))
 
 
-def test_participation_reading_a_dissolution_flag_is_rejected_at_build() -> None:
-    """A participation check reading `D_target` is rejected while it is declared.
-
-    No regime publishes a dissolution flag for a participation check to read, and no
-    argument to `solve` or `simulate` can supply one; a decision about whether
-    the target can act reads its typed policy support instead.
-    """
-    with pytest.raises((PyLCMError, NotImplementedError), match="D_target"):
-        Model(
-            regimes=_make_singleton_target_dissolution_gate_regimes(),
-            ages=GATE_AGES,
-            regime_id_class=GateRegimeId,
-            initial_nodes={0: "source"},
-            edges={"source": _make_dissolution_gate_transition()},
-        )
-
-
 def test_the_route_type_is_exported_and_the_edge_type_is_not() -> None:
     """A route is written; an edge is derived, so only the route is public.
 
@@ -178,66 +133,6 @@ def _drop_member_metadata(*, directory: Path) -> None:
         cloudpickle.dump(metadata, fh)
 
 
-def _make_singleton_target_dissolution_gate_regimes() -> MappingProxyType[str, Regime]:
-    """Build regimes whose participation reads a singleton target's dissolution flag.
-
-    Returns:
-        Immutable mapping of the three regime names to regimes: the gated
-        `source`, the singleton `target` its edge routes into, and the
-        `fallback` the closed branch reads.
-
-    """
-    source = Regime(
-        states={"wage": GATE_WAGE_GRID},
-        state_transitions={"wage": fixed_transition("wage")},
-        actions={"work": DiscreteGrid(category_class=Work)},
-        functions={"utility": _wage_utility},
-    )
-    target = Regime(
-        states={"wage": GATE_WAGE_GRID},
-        functions={"utility": _terminal_wage_utility},
-    )
-    fallback = Regime(
-        states={"wage": GATE_WAGE_GRID},
-        functions={"utility": _fallback_wage_utility},
-    )
-    return MappingProxyType({"source": source, "target": target, "fallback": fallback})
-
-
-def _make_dissolution_gate_transition() -> Transition:
-    """Build the source's transition: a dissolution-read participation check at age 0.
-
-    Returns:
-        The `Transition` choosing between `target`, through a participation reading
-        the target's dissolution flag, and the never-entered `fallback`.
-
-    """
-    return Transition(
-        targets={"target": 0, "fallback": 0},
-        law=ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "target": StochasticTransition(func=_enters_target),
-                    "fallback": StochasticTransition(func=_never_entered),
-                }
-            }
-        ),
-        participation={
-            "target": ParticipationCheck(
-                predicate=_no_dissolution,
-                routes={
-                    "only": MemberRoute(
-                        fallback=ProjectedRegimeValue(
-                            regime="fallback",
-                            projection={"wage": _identity_wage},
-                        ),
-                    )
-                },
-            )
-        },
-    )
-
-
 def _wife_payoff(work: DiscreteAction) -> FloatND:
     """Wife's payoff: 10 for working, nothing otherwise."""
     return 10.0 * work
@@ -246,38 +141,3 @@ def _wife_payoff(work: DiscreteAction) -> FloatND:
 def _husband_payoff(work: DiscreteAction) -> FloatND:
     """Husband's payoff: 5 for her leisure, nothing otherwise."""
     return 5.0 * (1.0 - work)
-
-
-def _no_dissolution(D_target: BoolND) -> BoolND:
-    """Participation check accepted exactly where the target has not dissolved."""
-    return ~D_target
-
-
-def _identity_wage(wage: ContinuousState) -> ContinuousState:
-    """Projection onto the fallback regime's own wage state."""
-    return wage
-
-
-def _wage_utility(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
-    """Source payoff: the wage when working, nothing otherwise."""
-    return wage * work
-
-
-def _terminal_wage_utility(wage: ContinuousState) -> FloatND:
-    """Target payoff: the wage itself."""
-    return wage
-
-
-def _fallback_wage_utility(wage: ContinuousState) -> FloatND:
-    """Fallback payoff: a tenth of the wage."""
-    return 0.1 * wage
-
-
-def _enters_target() -> FloatND:
-    """Regime transition: the source enters `target` with probability one."""
-    return jnp.asarray(1.0)
-
-
-def _never_entered() -> FloatND:
-    """Regime transition: `fallback` is reached through the edge, never directly."""
-    return jnp.asarray(0.0)

@@ -118,7 +118,6 @@ from _lcm.simulation.memory import (
     run_simulation_producer,
 )
 from _lcm.simulation.operand_placement import place_simulation_arguments
-from _lcm.simulation.participation_routing import record_participation_entries
 from _lcm.simulation.period_inputs import (
     GATE_FOLD,
     GATE_ROUTE,
@@ -213,7 +212,6 @@ from _lcm.typing import (
     FlatParams,
     FlatRegimeParams,
     InitialConditions,
-    PeriodToRegimeToParticipationSurfaces,
     PeriodToRegimeToSimulationPolicy,
     PRNGKeyND,
     QAndFArg,
@@ -280,9 +278,6 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
     ages: TimeAxis,
     simulation_output_dtypes: Mapping[str, pd.CategoricalDtype],
     period_to_regime_to_sim_policy: PeriodToRegimeToSimulationPolicy | None = None,
-    participation_surfaces: PeriodToRegimeToParticipationSurfaces = MappingProxyType(
-        {}
-    ),
     period_to_regime_to_replay_reader: _PeriodToRegimeToReplayReader = (
         MappingProxyType({})
     ),
@@ -647,7 +642,6 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
                             period_to_regime_to_sim_policy=(
                                 period_to_regime_to_sim_policy
                             ),
-                            participation_surfaces=participation_surfaces,
                             period_to_regime_to_replay_reader=(
                                 period_to_regime_to_replay_reader
                             ),
@@ -753,7 +747,6 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
                         regime_ids_to_names=regime_ids_to_names,
                         period_to_regime_to_V_arr=values,
                         period_to_regime_to_sim_policy=period_to_regime_to_sim_policy,
-                        participation_surfaces=participation_surfaces,
                         period_to_regime_to_replay_reader=(
                             period_to_regime_to_replay_reader
                         ),
@@ -1090,7 +1083,6 @@ class SubjectChunkKwargs(TypedDict):
     logger: logging.Logger
     initial_own_member: Int1D
     period_to_regime_to_sim_policy: NotRequired[PeriodToRegimeToSimulationPolicy | None]
-    participation_surfaces: NotRequired[PeriodToRegimeToParticipationSurfaces]
     period_to_regime_to_replay_reader: NotRequired[_PeriodToRegimeToReplayReader]
     device_ids: NotRequired[tuple[int, ...]]
     memory: NotRequired[SimulationMemory | None]
@@ -1147,9 +1139,6 @@ def _subject_chunk_periods(  # noqa: PLR0915
     logger: logging.Logger,
     initial_own_member: Int1D,
     period_to_regime_to_sim_policy: PeriodToRegimeToSimulationPolicy | None = None,
-    participation_surfaces: PeriodToRegimeToParticipationSurfaces = MappingProxyType(
-        {}
-    ),
     period_to_regime_to_replay_reader: _PeriodToRegimeToReplayReader = (
         MappingProxyType({})
     ),
@@ -1333,13 +1322,10 @@ def _subject_chunk_periods(  # noqa: PLR0915
             states=states,
             regime_ids=subject_regime_ids,
             roles=own_member,
-            entered_through=entered_through,
-            source_roles=source_roles,
             regime_names_to_ids=regime_names_to_ids,
             flat_params=flat_params,
             ages=ages,
             values=period_to_regime_to_V_arr,
-            surfaces=participation_surfaces,
             owner=owner,
             key=key,
             subject_slice=subject_slice,
@@ -1350,7 +1336,6 @@ def _subject_chunk_periods(  # noqa: PLR0915
             taste_key=taste_key,
             taste_addresses=taste_addresses,
             current_iid_overrides=current_iid_overrides,
-            process_code_reads=process_code_reads,
         )
         # Current exits are simultaneous. The scheduled transition accumulators
         # start from final acting membership, after every original choice froze.
@@ -2802,7 +2787,6 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
         # states replace it.
         if node_axis_inputs is None:
             new_subject_regime_ids = draw_next_regimes()
-        drawn_arrival_ids = new_subject_regime_ids
         # A subject's raw codes are checked against the regime it was drawn to
         # before a gate can read a value at them or reroute the subject.
         if validation_enabled(logger):
@@ -2913,33 +2897,6 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
                     },
                     subject_outputs=True,
                 )
-        participation_targets = tuple(
-            target
-            for target in realization_targets_next_period
-            if period + 1 in regimes[target].simulation.exit_queries
-            and regime_name
-            in regimes[target].simulation.exit_queries[period + 1].participation
-        )
-        if participation_targets and new_entered_through is not None:
-            new_entered_through = run_simulation_operation(
-                memory=memory,
-                function=record_participation_entries,
-                arguments={
-                    "drawn_ids": drawn_arrival_ids,
-                    "routed_ids": new_subject_regime_ids,
-                    "holders": subject_ids_in_regime,
-                    "entries": new_entered_through,
-                },
-                static_arguments={
-                    "source_id": int(regime_names_to_ids[regime_name]),
-                    "target_ids": tuple(
-                        int(regime_names_to_ids[target])
-                        for target in participation_targets
-                    ),
-                },
-                subject_arg_names=("drawn_ids", "routed_ids", "holders", "entries"),
-                subject_outputs=True,
-            )
         states = clip_next_states(
             states=next_states,
             regimes=regimes,

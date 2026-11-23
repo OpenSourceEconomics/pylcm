@@ -1,8 +1,8 @@
-"""A participation reads a process landing as the node's value, not its position.
+"""A gate reads a process landing as the node's value, not its position.
 
 Source, target and fallback carry one process on nodes [-1, 0, 1]. Target utility
 is `z**3 + 2z + 5` (2, 5, 8 at the nodes), fallback utility is `6 + z` (5, 6, 7).
-Every participation check below keeps the target only at node 1, so the source value is
+Every gate below keeps the target only at node 1, so the source value is
 `p(-1) * 5 + p(0) * 6 + p(1) * 8`. A landing read at its position 0, 1, 2 instead
 keeps the target at positions 1 and 2 and pays a cubic at 2.
 """
@@ -17,10 +17,9 @@ import pytest
 from lcm import (
     AgeGrid,
     ByAge,
+    Gate,
     MemberRoute,
     Model,
-    ParticipationCheck,
-    ParticipationRead,
     ProjectedRegimeValue,
     Regime,
     TauchenAR1Process,
@@ -74,10 +73,6 @@ def _code_predicate(z_code: DiscreteState) -> BoolND:
     return z_code == 2
 
 
-def _read_predicate(*, V_target: FloatND, V_alt: FloatND) -> BoolND:
-    return V_target > V_alt
-
-
 def _uniform() -> UniformIIDProcess:
     return UniformIIDProcess(n_points=3, start=-1.0, stop=1.0, simulated_draws="nodes")
 
@@ -95,22 +90,7 @@ def _model(
     enable_jit: bool = False,
 ) -> Model:
     fallback_projection = _node_at if case == "code-fallback" else _identity
-    reads = {}
-    predicate = _value_predicate
-    if case == "code-predicate":
-        predicate = _code_predicate
-    elif case in {"code-read", "integrated-read"}:
-        predicate = _read_predicate
-        reads = {
-            "V_target": ParticipationRead(
-                kind="IntegratedFull" if case == "integrated-read" else "Raw",
-                regime="target",
-                projection={"z": _identity},
-            ),
-            "V_alt": ParticipationRead(
-                kind="Raw", regime="fallback", projection={"z": _node_at}
-            ),
-        }
+    predicate = _code_predicate if case == "code-predicate" else _value_predicate
     return Model(
         regimes={
             "source": Regime(states={"z": process()}, functions={"utility": _zero}),
@@ -121,10 +101,9 @@ def _model(
             "source": Transition(
                 targets={"target": 0, "fallback": 0},
                 law=ByAge(cases={0: {"target": StochasticTransition(func=_one)}}),
-                participation={
-                    "target": ParticipationCheck(
+                gates={
+                    "target": Gate(
                         predicate=predicate,
-                        reads=reads,
                         routes={
                             "only": MemberRoute(
                                 fallback=ProjectedRegimeValue(
@@ -160,20 +139,14 @@ _PARAMS = {
 @pytest.mark.parametrize("enable_jit", [False, True], ids=["eager", "jit"])
 @pytest.mark.parametrize(
     "case",
-    [
-        "value-predicate",
-        "code-predicate",
-        "code-read",
-        "integrated-read",
-        "code-fallback",
-    ],
+    ["value-predicate", "code-predicate", "code-fallback"],
 )
 @pytest.mark.parametrize(
     ("process", "weights"),
     [(_uniform, (1 / 3, 1 / 3, 1 / 3)), (_tauchen, _tauchen_weights())],
     ids=["uniform-iid", "tauchen-ar1"],
 )
-def test_participation_reads_the_landing_process_node_value(
+def test_a_gate_reads_the_landing_process_node_value(
     *,
     process: Callable[[], UniformIIDProcess | TauchenAR1Process],
     weights: tuple[float, float, float],
@@ -188,7 +161,7 @@ def test_participation_reads_the_landing_process_node_value(
     )
 
 
-def test_participation_into_a_runtime_parameterized_process_is_refused() -> None:
+def test_a_gate_into_a_runtime_parameterized_process_is_refused() -> None:
     def runtime() -> UniformIIDProcess:
         return UniformIIDProcess(n_points=3, start=-1.0, simulated_draws="nodes")
 

@@ -2,7 +2,7 @@
 
 pylcm's forward simulation tracks INDIVIDUALS, not households: a married
 individual's row carries its own state plus a DRAWN (synthetic) partner
-block. On dissolution (`~gate`), the row must revert to
+block. On dissolution (the household's own exit), the row must revert to
 `single_<own role>` with its OWN projected state — the leg whose
 `source_member` matches the row's own role. A cohort that names no role
 is refused rather than routed through some declared leg.
@@ -16,8 +16,8 @@ it rather than the only expressible one; a mixed cohort is exercised in
 
 Reuses the dissolution miniature from `test_collective_regime_simulate.py`
 (`_make_dissolution_regimes` / `_solve_dissolution`): a collective `married` regime
-with members `("f", "m")`, a dissolution edge with two legs (`"f" ->
-single_f`, `"m" -> single_m`), and a value-constraint IR mask that empties
+with members `("f", "m")`, an exit with one target per member (`"f" ->
+single_f`, `"m" -> single_m`), and a participation constraint that empties
 (`D=True`) at `wage=2` on the `WAGE_3 = {1, 2, 3}` grid.
 """
 
@@ -86,12 +86,12 @@ def test_synthetic_dissolution_reverts_to_own_role_single_regime_for_m() -> None
     # The row's own projected state (identity wage projection) is correct.
     np.testing.assert_array_equal(np.asarray(single_m.states["wage"])[1], 2.0)
 
-    # And its value matches the solved single_m array at that same grid point
-    # (WAGE_3 = {1, 2, 3}, index 1 = wage=2.0) -- ground truth independently
-    # verified by test_gated_edges_collective_solve.py's IR miniature.
+    # And its value is the solved single_m array at that same grid point
+    # (WAGE_3 = {1, 2, 3}, index 1 = wage=2.0) less the dissolution cost
+    # `delta_m = 0.2` that the household's own exit pays on the way out.
     np.testing.assert_allclose(
         np.asarray(single_m.V_arr)[1],
-        np.asarray(solution[1]["single_m"])[1],
+        np.asarray(solution[1]["single_m"])[1] - 0.2,
         rtol=1e-6,
     )
 

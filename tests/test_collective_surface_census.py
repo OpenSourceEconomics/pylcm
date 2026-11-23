@@ -39,10 +39,13 @@ _ENGINE_LEVEL_MODULES = frozenset(
         "tests/regime_building/test_collective_extended_real.py",
         "tests/regime_building/test_decomposed_views.py",
         "tests/regime_building/test_gate_reads_value_error.py",
+        "tests/regime_building/test_gated_edge_arg_provenance.py",
         "tests/regime_building/test_simulate_gate_param_and_leg_selection.py",
+        "tests/regime_building/test_simulate_guards.py",
         "tests/regime_building/test_terminal_collective_solve.py",
         "tests/regime_building/test_with_engine_functions.py",
         "tests/simulation/test_leg_projector_vmap.py",
+        "tests/test_collective_robustness_pins.py",
     }
 )
 

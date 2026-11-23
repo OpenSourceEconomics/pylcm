@@ -275,8 +275,8 @@ class Gate:
     different member structure stays rejected.
 
     A gate never reads a value. A move decided by comparing values is an `Exit`
-    declared as the source regime's `exit=`, or a `ParticipationCheck` in the
-    `Transition`'s `participation` when the comparison is made on landing.
+    of the regime that decides: formation is an `Exit` with a `Consent` rule on
+    the source, dissolution the household's own exit.
     """
 
     predicate: UserFunction
@@ -321,12 +321,9 @@ class Gate:
                 f"The gate predicate reads {value_operands}, a value of its "
                 "target regime. A gate routes on the target's states and "
                 "parameters only. Declare a move decided by comparing values "
-                "in the current period as an `Exit` in the source regime's "
-                "`exit=`, priced at the target's participating policy. Keep "
-                "a comparison made on landing in the next period at that "
-                "landing date with a `ParticipationCheck` in the `Transition`'s "
-                "`participation`, which reads values through explicit "
-                "`ParticipationRead`s."
+                "as an `Exit` of the regime that decides: formation as an "
+                "`Exit` with a `Consent` rule on the source regime, dissolution "
+                "as the household regime's own `Exit`."
             )
             raise GateReadsValueError(msg)
         object.__setattr__(self, "routes", ensure_containers_are_immutable(self.routes))

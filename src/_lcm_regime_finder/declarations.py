@@ -241,7 +241,7 @@ def declaration_graph(source,regimes,times,starts,coordinate_kind):
         for name,edge in edge_source.items():
             if name not in regimes:raise DeclarationError('Edge source is absent from declarations')
             if short(edge)=='Transition':
-                ef=fields(edge);declared=ef.get('targets');gate_map=_transition_gates(ef,'gates','arrivals','participation')
+                ef=fields(edge);declared=ef.get('targets');gate_map=_transition_gates(ef,'gates','arrivals')
                 for period in range(n-1):
                     law=schedule_law(ef.get('law'),phase,period,times,coordinate_kind)
                     named=[law] if isinstance(law,str) else list(law) if isinstance(law,dict) and 'kind' not in law else None
@@ -977,7 +977,7 @@ def normalize_declarations(snapshot,production_contract=None):
         if short(value)=='Phased':
             side='solve' if phase=='solve' else 'simulate'
             yield from query_references(fields(value).get(side),pointer(pointer(path,'fields'),side),phase)
-        elif short(value) in {'ProjectedRegimeValue','ArrivalRead','ParticipationRead','ExitTarget','Counterparty'}:
+        elif short(value) in {'ProjectedRegimeValue','ArrivalRead','ExitTarget','Counterparty'}:
             yield value,path
         elif isinstance(value,dict):
             for key,child in value.items():yield from query_references(child,pointer(path,key),phase)
@@ -1072,7 +1072,7 @@ def normalize_declarations(snapshot,production_contract=None):
                 for side,p in [('solve','solve'),('simulate','simulation')]:
                     if phase in {'both',p}:references(fields(value).get(side),pointer(pointer(path,'fields'),side),kind,ownership,p,offset,origin,incoming_source)
                 return
-            if short(value) in {'ProjectedRegimeValue','ArrivalRead','ParticipationRead','ExitTarget','Counterparty'}:
+            if short(value) in {'ProjectedRegimeValue','ArrivalRead','ExitTarget','Counterparty'}:
                 f=fields(value);target=f.get('regime');tid=by_pair.get((period+offset,target))
                 if tid is None:
                     # The reference can price a separately declared owner's
@@ -1120,7 +1120,7 @@ def normalize_declarations(snapshot,production_contract=None):
                 normal.relation('exit',cell['id'],[],pointer(fp,key),callbacks=[normal.callback(value,pointer(fp,key))],original=copy.deepcopy(value),
                                 observes=copy.deepcopy((fields(value) or {}).get('observes',[])))
         declared_source_law=fields(laws.get(name,{})) or {}
-        gate_rows=[(phase,_transition_gates(declared_source_law,'gated_edges','arrivals','participation')) for phase in ('solve','simulation')] if not declaration_gates else [(phase,declaration_gates.get((phase,period,name),{})) for phase in ('solve','simulation')]
+        gate_rows=[(phase,_transition_gates(declared_source_law,'gated_edges','arrivals')) for phase in ('solve','simulation')] if not declaration_gates else [(phase,declaration_gates.get((phase,period,name),{})) for phase in ('solve','simulation')]
         for gate_phase,target,gate in ((phase,target,gate) for phase,mapping in gate_rows for target,gate in mapping.items()):
             # A declaration may carry a gate for a route used only at later
             # dates. Ownership is an incidence of an admitted incoming edge,
@@ -1135,7 +1135,7 @@ def normalize_declarations(snapshot,production_contract=None):
             callbacks=[normal.callback(gf[predicate_slot],pointer(gp,predicate_slot))] if gf.get(predicate_slot) is not None else []
             # Gate/arrival predicates and settlement projections see the landing
             # target grid. Their authority remains the particular incoming leg.
-            normal.relation('arrival' if short(gate) in {'ArrivalDecision','ParticipationCheck'} else 'gate',tid,[tid],normal.source_path(gate,gp),gate_phase,
+            normal.relation('arrival' if short(gate)=='ArrivalDecision' else 'gate',tid,[tid],normal.source_path(gate,gp),gate_phase,
                             callbacks=callbacks,produces=[],incoming_source=cell['id'],ownership={'source_regime':name,'target_regime':target},
                             observes=gf.get('observes',[]),original=copy.deepcopy(gate))
             references(gf.get('references',gf.get('reads',gf.get('gate_refs',{}))),pointer(gp,'references'),'value_read',

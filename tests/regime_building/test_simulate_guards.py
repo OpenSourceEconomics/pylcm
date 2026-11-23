@@ -62,8 +62,6 @@ from lcm import (
     LinearExpectation,
     LinSpacedGrid,
     MemberRoute,
-    Model,
-    ParticipationCheck,
     ProjectedRegimeValue,
     Regime,
     Transition,
@@ -84,8 +82,6 @@ from lcm.typing import (
 )
 from tests.conftest import bind_laws
 from tests.regime_building.test_collective_regime_simulate import (
-    _dissolution_laws,
-    _make_dissolution_regimes,
     _solve_and_process,
     _solve_dissolution,
 )
@@ -103,12 +99,9 @@ class Work:
 def test_target_absent_at_next_period_is_still_a_legitimate_no_op() -> None:
     """Negative control: the TARGET (not a reference) missing at period+1 stays
     a silent no-op -- the legitimate repeating/one-shot boundary case, which
-    the missing-reference guard must leave alone. Mirrors
-    the occupied boundary in the public counterpart
-    `test_repeating_participation_boundary.py`,
-    `test_public_repeating_participation_stops_at_the_sources_last_supported_date`.
-    This kernel control supplies an empty `period_to_regime_to_V_arr` for
-    period+1 (no target, hence no references either), which must not raise.
+    the missing-reference guard must leave alone. This kernel control supplies
+    an empty `period_to_regime_to_V_arr` for period+1 (no target, hence no
+    references either), which must not raise.
     """
     _ages, regimes, _ids, flat_params, solution = _solve_dissolution()
     married = regimes["married"]
@@ -254,109 +247,6 @@ def test_two_legs_sharing_a_fallback_regime_is_rejected_at_construction() -> Non
             ages=ages,
             regime_names=list(regimes_dict),
         )
-
-
-@categorical(ordered=False)
-class _SharedFallbackId:
-    married: ScalarInt
-    married_ir: ScalarInt
-    single_shared: ScalarInt
-
-
-def _never_arrives(wage: ContinuousState) -> BoolND:
-    return wage < 0.0
-
-
-def test_two_participation_routes_sharing_a_fallback_regime_each_land_their_own_row(
-) -> None:  # fmt: skip
-    """Participation routes may share a fallback: each member lands at its projection.
-
-    A participation check's fallback landing is keyed by the route a row's role selects,
-    not written per fallback regime, so the guard a gated edge needs does not apply.
-    With the participation check always rejected, `f` lands in `single_shared` at its
-    wage and `m` at `4 - wage`, in solve and in simulation.
-    """
-    routes = {
-        "f": MemberRoute(
-            target_member="f",
-            fallback=ProjectedRegimeValue(
-                regime="single_shared", projection={"wage": _identity_wage}
-            ),
-        ),
-        "m": MemberRoute(
-            target_member="m",
-            fallback=ProjectedRegimeValue(
-                regime="single_shared", projection={"wage": _reverse_wage}
-            ),
-        ),
-    }
-    model = Model(
-        regimes=_make_shared_fallback_regimes(),
-        edges={
-            "married": Transition(
-                law=ByAge(
-                    cases={
-                        AgeRange(exclusive_stop=1): {
-                            "married_ir": StochasticTransition(func=_prob_one)
-                        }
-                    }
-                ),
-                targets={"married_ir": 0, "single_shared": 0},
-                participation={
-                    "married_ir": ParticipationCheck(
-                        predicate=_never_arrives, routes=routes
-                    )
-                },
-            )
-        },
-        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
-        regime_id_class=_SharedFallbackId,
-        initial_nodes={0: "married"},
-    )
-    params = {"discount_factor": 1.0}
-    solution = model.solve(params=params, log_level="off")
-    np.testing.assert_array_equal(
-        solution.values[0]["married"], [[1.0, 3.0], [2.0, 2.0], [3.0, 1.0]]
-    )
-    frame = model.simulate(
-        params=params,
-        solution=solution,
-        initial_conditions={
-            "age": jnp.zeros(4),
-            "wage": jnp.array([1.0, 1.0, 2.0, 2.0]),
-            "own_member": jnp.array([0, 1, 0, 1], dtype=jnp.int32),
-            "regime_id": jnp.full(4, _SharedFallbackId.married, dtype=jnp.int32),
-        },
-        seed=0,
-        log_level="off",
-    ).to_dataframe()
-    landed = frame.loc[frame["period"] == 1].sort_values("subject_id")
-    assert landed["regime_name"].tolist() == ["single_shared"] * 4
-    np.testing.assert_array_equal(landed["wage"], [1.0, 3.0, 2.0, 2.0])
-
-
-def test_dissolution_fixture_has_distinct_fallbacks_and_still_constructs() -> None:
-    """Negative control: `_make_dissolution_regimes` (single_f / single_m,
-    DISTINCT fallback regimes) is exactly the EKL-shaped topology and must
-    keep constructing without the new guard firing.
-    """
-    ages = AgeGrid(start=0, inclusive_stop=3, step="Y")
-    regimes_dict = _make_dissolution_regimes()
-    laws = _dissolution_laws()
-    married_participation = bind_laws({"married": laws["married"]})[
-        "married"
-    ].participation["married_ir"]
-    fallback_regimes = [
-        route.solve_fallback.regime for route in married_participation.routes.values()
-    ]
-    assert len(fallback_regimes) == len(set(fallback_regimes))
-    # Must not raise.
-    _solve_and_process(
-        regimes_dict=regimes_dict,
-        laws=laws,
-        ages=ages,
-        regime_names=list(regimes_dict),
-    )
 
 
 # Which leg a row follows, and where both of that leg's branches leave it, is

@@ -9,7 +9,7 @@ import platform
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import make_dataclass
 from types import MappingProxyType, ModuleType
-from typing import TYPE_CHECKING, NotRequired, cast
+from typing import TYPE_CHECKING, NotRequired, Protocol, cast
 
 import jax
 import jax.numpy as jnp
@@ -48,6 +48,7 @@ from _lcm.regime_law import RegimeLawDeclaration, RegimeLaws, bind_regime_law
 from _lcm.simulation.runtime import SimulationDispatchContext
 from _lcm.typing import (
     ArgumentTree,
+    DataclassInstance,
     PytreeValue,
     RegimeName,
     ShapeDtypePytree,
@@ -120,7 +121,7 @@ def invariance_tolerances(reference: np.ndarray) -> tuple[float, float]:
     return rtol, rtol * scale
 
 
-def pytest_addoption(parser):
+def pytest_addoption(parser: pytest.Parser) -> None:
     """Register the --precision option for controlling JAX floating point precision."""
     parser.addoption(
         "--precision",
@@ -179,7 +180,7 @@ def pytest_addoption(parser):
     pytest_policy.add_options(parser)
 
 
-def pytest_configure(config):
+def pytest_configure(config: pytest.Config) -> None:
     """Configure JAX precision based on the --precision flag."""
     global X64_ENABLED, DECIMAL_PRECISION  # noqa: PLW0603
 
@@ -350,7 +351,9 @@ def pytest_ignore_collect(
 
 
 # keyword-only-exempt: library-callback=pytest.hookspec.pytest_collection_modifyitems
-def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]):
+def pytest_collection_modifyitems(
+    config: pytest.Config, items: list[pytest.Item]
+) -> None:
     """Mark the whole `tests/solution/` battery `slow`.
 
     These tests AOT-compile heavy JAX models; four in parallel exhaust a small CI
@@ -626,7 +629,7 @@ def resident_mebibytes() -> float | None:
 
 
 @functools.cache
-def _malloc_trim():
+def _malloc_trim() -> Callable[[int], int] | None:
     """The C library's arena-trimming entry point, or `None` if it has none."""
     name = ctypes.util.find_library("c")
     if name is None:
@@ -650,7 +653,7 @@ def return_free_heap_to_os() -> bool:
     return True
 
 
-def should_release_compiled_programs(*, config) -> bool:
+def should_release_compiled_programs(*, config: pytest.Config) -> bool:
     """Return whether a teardown drops JAX's compiled-program cache.
 
     Releasing is the default, because the unbounded worker is the failure that
@@ -667,8 +670,26 @@ def should_release_compiled_programs(*, config) -> bool:
     return not config.getoption("--keep-compiled-programs")
 
 
+class _ReleaseSession(Protocol):
+    """The session state a release reads and writes."""
+
+    _lcm_mib_at_last_release: float
+
+
+class _FinishedItem(Protocol):
+    """The parts of a finished test item a release reads."""
+
+    @property
+    def config(self) -> pytest.Config: ...
+
+    @property
+    def session(self) -> _ReleaseSession: ...
+
+
 # keyword-only-exempt: library-callback=pytest.hookspec.pytest_runtest_teardown
-def pytest_runtest_teardown(item, nextitem):
+def pytest_runtest_teardown(
+    item: _FinishedItem, nextitem: _FinishedItem | None
+) -> None:
     """Release compiled programs at module boundaries, and periodically within one.
 
     A worker's resident memory grows with every distinct program it has
@@ -761,7 +782,7 @@ def bind_laws(
     """Bind each regime's declared law the way `Model(edges=...)` binds it.
 
     `declared` maps every regime to its law between regimes, `None` for a terminal
-    regime, or to a `Transition` whose gates and participation checks travel with it.
+    regime, or to a `Transition` whose gates travel with it.
     """
     return MappingProxyType(
         {
@@ -772,7 +793,6 @@ def bind_laws(
                         target: gated_edge_from_gate(gate)
                         for target, gate in law.gates.items()
                     },
-                    participation=law.participation,
                 )
                 if isinstance(law, Transition)
                 else bind_regime_law(law)
@@ -804,13 +824,12 @@ def build_prepared_structure(
         declared_transitions={name: law.transition for name, law in laws.items()},
         code_by_name={name: code for code, name in enumerate(laws)},
     )
-    # Lowering keeps the law; source-owned gates and participation checks stay attached.
+    # Lowering keeps the law; source-owned gates stay attached.
     bound = MappingProxyType(
         {
             name: bind_regime_law(
                 transition,
                 gated_edges=laws[name].gated_edges,
-                participation=laws[name].participation,
             )
             for name, transition in lowered.items()
         }
@@ -841,7 +860,6 @@ def build_prepared_structure(
                         )
                         for target, edge in law.gated_edges.items()
                     },
-                    participation=law.participation,
                 ),
             )
             for name, law in bound.items()
@@ -856,13 +874,13 @@ def build_prepared_structure(
 
 
 @pytest.fixture(scope="session")
-def binary_category_class():
+def binary_category_class() -> type[DataclassInstance]:
     cls = make_dataclass(
         "BinaryCategoryClass", [("cat0", ScalarInt), ("cat1", ScalarInt)]
     )
     type.__setattr__(cls, "cat0", jnp.int32(0))
     type.__setattr__(cls, "cat1", jnp.int32(1))
-    return cls
+    return cast("type[DataclassInstance]", cls)
 
 
 @pytest.fixture(name="x64_disabled")

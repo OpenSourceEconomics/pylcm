@@ -44,14 +44,13 @@ from lcm import (
     Decoupled,
     DeterministicTransition,
     DiscreteGrid,
+    Gate,
     InitialNodes,
     JointTransition,
     LinSpacedGrid,
     MemberRoute,
     Model,
     ParetoObjective,
-    ParticipationCheck,
-    ParticipationRead,
     Periods,
     Phased,
     ProjectedRegimeValue,
@@ -74,7 +73,7 @@ from lcm.exceptions import (
 )
 from lcm.regime import Regime as UserRegime
 from lcm.regime import StochasticTransition
-from lcm.solver_api import ResultRetention, SolutionResult
+from lcm.solver_api import SolutionResult
 from lcm.solvers import DCEGM, RFCEnvelope
 from lcm.transition import AgeSpecializedFunction, TransitionLaw
 from lcm.typing import (
@@ -2017,7 +2016,8 @@ def test_dcegm_continuation_reads_nan_at_an_off_grid_child_code() -> None:
 
 
 # A gated edge decides its branch only at a cell the ordinary constraints allow, so
-# a law leaving the grid there is refused whatever the gate reads.
+# a law leaving the grid there is refused whatever the gate reads, even a gate that
+# would close exactly at the off-grid code.
 
 
 @categorical(ordered=True)
@@ -2050,15 +2050,12 @@ def _invalid_when_working(code: int) -> UserFunction:
     return law
 
 
-def _window_gate(*, center: float, width: float) -> UserFunction:
-    def gate(V_target: FloatND) -> BoolND:
-        return jnp.abs(V_target - center) < width
-
-    return gate
+def _always_open() -> BoolND:
+    return jnp.asarray(a=True)
 
 
-def _threshold_gate(V_target: FloatND) -> BoolND:
-    return V_target > -5.0
+def _open_on_grid(kind: DiscreteState) -> BoolND:
+    return (kind >= 0) & (kind <= 1)
 
 
 def _project_kind(kind: DiscreteState) -> DiscreteState:
@@ -2093,16 +2090,9 @@ def _gated_model(
         edges={
             "source": Transition(
                 law="target",
-                participation={
-                    "target": ParticipationCheck(
+                gates={
+                    "target": Gate(
                         predicate=gate,
-                        reads={
-                            "V_target": ParticipationRead(
-                                kind="Raw",
-                                regime="target",
-                                projection={"kind": fixed_transition("kind")},
-                            )
-                        },
                         routes={
                             "self": MemberRoute(
                                 fallback=ProjectedRegimeValue(
@@ -2122,19 +2112,23 @@ def _gated_model(
 
 
 _PARAMS_ONE: UserParams = {"discount_factor": 1.0}
-_WINDOWS = [(0.0, 5.0), (0.0, 0.5), (1.0, 2.0), (-2.0, 3.0)]
+# Gates open at every on-grid landing code: one constant, one closed exactly where a
+# code leaves the grid.
+_OPEN_GATES = pytest.mark.parametrize(
+    "gate", [_always_open, _open_on_grid], ids=["always-open", "open-on-grid"]
+)
 _BAD_CODES = [-1, 2, 3]
 
 
 @pytest.mark.parametrize("enable_jit", [False, True])
-@pytest.mark.parametrize(("center", "width"), _WINDOWS)
+@_OPEN_GATES
 @pytest.mark.parametrize("bad_code", _BAD_CODES)
-def test_off_grid_law_behind_a_value_gate_is_refused(
-    *, bad_code: int, center: float, width: float, enable_jit: bool
+def test_off_grid_law_behind_a_gate_is_refused(
+    *, bad_code: int, gate: UserFunction, enable_jit: bool
 ) -> None:
-    """A finite-window gate on `V_target` cannot hide the off-grid code of `a = 1`."""
+    """A gate on the landing code cannot hide the off-grid code of `a = 1`."""
     model = _gated_model(
-        gate=_window_gate(center=center, width=width),
+        gate=gate,
         law=_invalid_when_working(bad_code),
         enable_jit=enable_jit,
     )
@@ -2144,20 +2138,24 @@ def test_off_grid_law_behind_a_value_gate_is_refused(
             r"^In regime 'source' at age 0 \(period 0\), "
             r"the law 'next_kind' to regime 'target' leaves its grid "
             r"at the feasible cell \{'kind': 'low', 'a': 'high'\}\. "
-            r"It returns a code outside 0\.\.1\.$"
+            r"It returns a code outside 0\.\.1\."
+            r" A gated edge cannot exclude that cell, since an off-grid code has no "
+            r"value to decide with\. Declare the restriction that rules the cell out "
+            r"as an ordinary constraint \(in `constraints`\), or keep the law on its "
+            r"grid\.$"
         ),
     ):
         model.solve(params=_PARAMS_ONE, log_level="off", runtime_checks=True)
 
 
 @pytest.mark.parametrize("enable_jit", [False, True])
-@pytest.mark.parametrize(("center", "width"), _WINDOWS)
-def test_on_grid_law_behind_a_value_gate_solves(
-    *, center: float, width: float, enable_jit: bool
+@_OPEN_GATES
+def test_on_grid_law_behind_a_gate_solves(
+    *, gate: UserFunction, enable_jit: bool
 ) -> None:
     """Two actions: `Q(0) = 0`, `Q(1) = 20` at either code."""
     got = _gated_model(
-        gate=_window_gate(center=center, width=width),
+        gate=gate,
         law=_kind_stays,
         enable_jit=enable_jit,
     ).solve(params=_PARAMS_ONE, log_level="off", runtime_checks=True)
@@ -2171,7 +2169,7 @@ def test_ordinarily_excluded_off_grid_action_behind_a_gate_solves(
 ) -> None:
     """An ordinary constraint excluding `a = 1` keeps its off-grid code unread."""
     got = _gated_model(
-        gate=_window_gate(center=0.0, width=5.0),
+        gate=_open_on_grid,
         law=_invalid_when_working(bad_code),
         enable_jit=enable_jit,
         forbid_working=True,
@@ -2180,12 +2178,12 @@ def test_ordinarily_excluded_off_grid_action_behind_a_gate_solves(
 
 
 @pytest.mark.parametrize("enable_jit", [False, True])
-def test_simulation_only_off_grid_law_behind_a_value_gate_is_refused(
+def test_simulation_only_off_grid_law_behind_a_gate_is_refused(
     *, enable_jit: bool
 ) -> None:
     """The simulate phase's law is checked before any subject is rerouted."""
     model = _gated_model(
-        gate=_threshold_gate,
+        gate=_open_on_grid,
         law=Phased(solve=_kind_stays, simulate=_invalid_when_working(2)),
         enable_jit=enable_jit,
     )
@@ -2195,18 +2193,22 @@ def test_simulation_only_off_grid_law_behind_a_value_gate_is_refused(
             r"^In regime 'source' at age 0 \(period 0\), "
             r"the law 'next_kind' to regime 'target' leaves its grid "
             r"at the feasible cell \{'kind': 'low', 'a': 'high'\}\. "
-            r"It returns a code outside 0\.\.1\.$"
+            r"It returns a code outside 0\.\.1\."
+            r" A gated edge cannot exclude that cell, since an off-grid code has no "
+            r"value to decide with\. Declare the restriction that rules the cell out "
+            r"as an ordinary constraint \(in `constraints`\), or keep the law on its "
+            r"grid\.$"
         ),
     ):
         model.solve(params=_PARAMS_ONE, log_level="off", runtime_checks=True)
 
 
 @pytest.mark.parametrize("enable_jit", [False, True])
-def test_on_grid_phased_law_behind_a_value_gate_simulates_to_the_target(
+def test_on_grid_phased_law_behind_a_gate_simulates_to_the_target(
     *, enable_jit: bool
 ) -> None:
     model = _gated_model(
-        gate=_threshold_gate,
+        gate=_open_on_grid,
         law=Phased(solve=_kind_stays, simulate=_kind_stays),
         enable_jit=enable_jit,
     )
@@ -2259,16 +2261,9 @@ def _between_nodes_model(
         return jnp.where(bad, bad_code, kind).astype(jnp.int32)
 
     kind = DiscreteGrid(category_class=_TwoCodes)
-    participation = {
-        "target": ParticipationCheck(
-            predicate=_threshold_gate,
-            reads={
-                "V_target": ParticipationRead(
-                    kind="Raw",
-                    regime="target",
-                    projection={"kind": fixed_transition("kind")},
-                )
-            },
+    gates = {
+        "target": Gate(
+            predicate=_open_on_grid,
             routes={
                 "self": MemberRoute(
                     fallback=ProjectedRegimeValue(
@@ -2307,9 +2302,7 @@ def _between_nodes_model(
         },
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         edges={
-            "source": Transition(law="target", participation=participation)
-            if gated
-            else {"target": 0}
+            "source": Transition(law="target", gates=gates) if gated else {"target": 0}
         },
         initial_nodes={0: "source"},
         regime_id_class=_SourceTargetFallback,
@@ -2424,7 +2417,11 @@ def test_a_grid_node_inside_the_window_is_refused_before_the_solve(
             r"^In regime 'source' at age 0 \(period 0\), "
             r"the law 'next_kind' to regime 'target' leaves its grid "
             r"at the feasible cell \{'kind': 'low', 'wealth': 0\.5, "
-            r"'a': 'high'\}\. It returns a code outside 0\.\.1\.$"
+            r"'a': 'high'\}\. It returns a code outside 0\.\.1\."
+            r" A gated edge cannot exclude that cell, since an off-grid code has no "
+            r"value to decide with\. Declare the restriction that rules the cell out "
+            r"as an ordinary constraint \(in `constraints`\), or keep the law on its "
+            r"grid\.$"
         ),
     ):
         model.solve(params=_PARAMS_ONE, log_level="off", runtime_checks=True)
@@ -2850,8 +2847,8 @@ def test_collective_regime_reads_the_values_of_a_value_grid(
     )
 
 
-def _gate_at_high_income(*, income: DiscreteState, V_target: FloatND) -> BoolND:
-    return (income >= 2.0) & (V_target > -1.0)
+def _gate_at_high_income(*, income: DiscreteState) -> BoolND:
+    return income >= 2.0
 
 
 def _project_income_down(*, income: DiscreteState) -> DiscreteState:
@@ -2879,15 +2876,8 @@ def _gated_income_model(*, values: bool, enable_jit: bool) -> Model:
             ("fallback", _twice_income),
         )
     }
-    participation = ParticipationCheck(
+    gate = Gate(
         predicate=convert(_gate_at_high_income),
-        reads={
-            "V_target": ParticipationRead(
-                kind="Raw",
-                regime="target",
-                projection={"income": fixed_transition("income")},
-            )
-        },
         routes={
             "self": MemberRoute(
                 fallback=ProjectedRegimeValue(
@@ -2904,9 +2894,7 @@ def _gated_income_model(*, values: bool, enable_jit: bool) -> Model:
     return Model(
         regimes={"source": _income_regime(values=values), **terminal},
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
-        edges={
-            "source": Transition(law="target", participation={"target": participation})
-        },
+        edges={"source": Transition(law="target", gates={"target": gate})},
         initial_nodes={0: "source"},
         regime_id_class=_SourceTargetFallback,
         enable_jit=enable_jit,
@@ -2923,86 +2911,6 @@ def test_gated_edge_reads_and_projects_the_values_of_a_value_grid(
         expected=_gated_income_model(values=False, enable_jit=enable_jit),
         regime_id=_SourceTargetFallback.source,
     )
-
-
-def test_nonmonotone_participation_window_keeps_only_the_middle_value() -> None:
-    """The Boolean window keeps the middle even though every fallback pays more."""
-    income = _income_grid(values=True)
-    model = Model(
-        regimes={
-            "source": _income_regime(values=True),
-            "target": UserRegime(
-                states={"income": income},
-                functions={"utility": _income_utility_terminal},
-            ),
-            "fallback": UserRegime(
-                states={"income": income}, functions={"utility": _twice_income}
-            ),
-        },
-        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
-        edges={
-            "source": Transition(
-                law="target",
-                participation={
-                    "target": ParticipationCheck(
-                        predicate=_window_gate(center=0.5, width=0.2),
-                        reads={
-                            "V_target": ParticipationRead(
-                                kind="Raw",
-                                regime="target",
-                                projection={"income": fixed_transition("income")},
-                            )
-                        },
-                        routes={
-                            "self": MemberRoute(
-                                fallback=ProjectedRegimeValue(
-                                    regime="fallback",
-                                    projection={"income": fixed_transition("income")},
-                                )
-                            )
-                        },
-                    )
-                },
-            )
-        },
-        initial_nodes={0: "source"},
-        regime_id_class=_SourceTargetFallback,
-    )
-    params: UserParams = {"discount_factor": 0.5}
-    solution = model.solve(
-        params=params,
-        retention=ResultRetention.VALUES,
-        log_level="off",
-        runtime_checks=True,
-    )
-    # Income values [1, 2, 4] give target [.25, .5, 1] and fallback [2, 4, 8].
-    # Source flow [1, 2, 4] plus half the selected continuation is [2, 2.25, 8].
-    np.testing.assert_array_equal(solution.values[1]["target"], [0.25, 0.5, 1.0])
-    np.testing.assert_array_equal(solution.values[1]["fallback"], [2.0, 4.0, 8.0])
-    np.testing.assert_array_equal(solution.values[0]["source"], [2.0, 2.25, 8.0])
-    frame = model.simulate(
-        params=params,
-        initial_conditions={
-            "income": jnp.asarray([0, 1, 2], dtype=jnp.int32),
-            "age": jnp.zeros(3),
-            "regime_id": jnp.full(3, _SourceTargetFallback.source, dtype=jnp.int32),
-        },
-        use_categorical_codes=True,
-        solution=solution,
-        seed=3,
-        log_level="off",
-        runtime_checks=True,
-    ).to_dataframe(use_categorical_codes=True)
-    source = frame.loc[frame["period"] == 0].sort_values("subject_id")
-    landed = frame.loc[frame["period"] == 1].sort_values("subject_id")
-    np.testing.assert_array_equal(source["subject_id"], [0, 1, 2])
-    np.testing.assert_array_equal(source["value"], [2.0, 2.25, 8.0])
-    np.testing.assert_array_equal(landed["subject_id"], [0, 1, 2])
-    np.testing.assert_array_equal(landed["income"], [0, 1, 2])
-    np.testing.assert_array_equal(
-        landed["regime_name"], ["fallback", "target", "fallback"]
-    )
-    np.testing.assert_array_equal(landed["value"], [2.0, 0.5, 8.0])
 
 
 def _income_after_event(*, draw: Int1D, income: DiscreteState) -> DiscreteState:

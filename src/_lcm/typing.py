@@ -7,15 +7,14 @@ they are re-exported here so engine-internal code can import everything from
 `_lcm.typing`.
 """
 
-from collections.abc import Hashable, Iterable, Mapping, Sequence
-from dataclasses import Field, dataclass
+from collections.abc import Hashable, Mapping, Sequence
+from dataclasses import Field
 from types import MappingProxyType
 from typing import (
     TYPE_CHECKING,
     ClassVar,
     Literal,
     Protocol,
-    cast,
     runtime_checkable,
 )
 
@@ -126,31 +125,6 @@ type EconFunctionKwargs = Mapping[ReferenceName, EconFunctionArg]
 type ValueTemplate = FloatND | jax.ShapeDtypeStruct
 
 
-@dataclass(frozen=True, kw_only=True)
-class ParticipationQueryArguments:
-    """Declared dynamic Q operands for each incoming target's dated query graph."""
-
-    by_target: Mapping[RegimeName, Mapping[str, QAndFKwargs]]
-
-    def __post_init__(self) -> None:
-        """Freeze query-name/argument bindings while retaining numeric leaves."""
-        object.__setattr__(
-            self,
-            "by_target",
-            MappingProxyType(
-                {
-                    target: MappingProxyType(
-                        {
-                            name: MappingProxyType(dict(arguments))
-                            for name, arguments in queries.items()
-                        }
-                    )
-                    for target, queries in self.by_target.items()
-                }
-            ),
-        )
-
-
 # A static workspace width the execution plan tiles a kernel's loop with, passed
 # as a keyword such as `_lcm_cell_width`. It sizes the compiled program, so it is
 # a Python `int` and never traced.
@@ -163,7 +137,6 @@ type QAndFArg = (
     EconFunctionArg
     | Mapping[RegimeName, FloatND]
     | Mapping[RegimeName, Mapping[QualifiedName, ParamsLeaf]]
-    | ParticipationQueryArguments
     | StaticWidth
 )
 type QAndFKwargs = Mapping[ReferenceName, QAndFArg]
@@ -395,39 +368,6 @@ else:
     type PytreeChild = object
 
 
-def _flatten_participation_arguments(
-    arguments: ParticipationQueryArguments,
-) -> tuple[tuple[PytreeChild, ...], None]:
-    """Expose the dynamic query operands under their declared field name."""
-    return (cast("PytreeChild", arguments.by_target),), None
-
-
-def _flatten_participation_arguments_with_keys(
-    arguments: ParticipationQueryArguments,
-) -> tuple[tuple[tuple[jax.tree_util.GetAttrKey, PytreeChild], ...], None]:
-    children, metadata = _flatten_participation_arguments(arguments)
-    return ((jax.tree_util.GetAttrKey("by_target"), children[0]),), metadata
-
-
-# keyword-only-exempt: library-callback=jax.tree_util.register_pytree_with_keys
-def _unflatten_participation_arguments(
-    metadata: None, children: Iterable[PytreeChild]
-) -> ParticipationQueryArguments:
-    """Rebuild JAX's abstract placeholders outside the checked runtime boundary."""
-    del metadata
-    (by_target,) = children
-    arguments = object.__new__(ParticipationQueryArguments)
-    object.__setattr__(arguments, "by_target", by_target)
-    return arguments
-
-
-jax.tree_util.register_pytree_with_keys(
-    ParticipationQueryArguments,
-    _flatten_participation_arguments_with_keys,
-    _unflatten_participation_arguments,
-    _flatten_participation_arguments,
-)
-
 if TYPE_CHECKING:
     from _lcm.egm.nested_floor import PreparedNestedFloor
 else:
@@ -527,10 +467,6 @@ type SimulationPolicy = (
 # absent — callers must not assume the full regime keyset.
 type PeriodToRegimeToSimulationPolicy = MappingProxyType[
     int, MappingProxyType[RegimeName, SimulationPolicy]
-]
-# Stored participation surfaces by period, publishing regime and payload leaf name.
-type PeriodToRegimeToParticipationSurfaces = MappingProxyType[
-    int, MappingProxyType[RegimeName, MappingProxyType[str, FloatND]]
 ]
 
 

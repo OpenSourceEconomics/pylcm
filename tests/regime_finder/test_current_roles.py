@@ -1,20 +1,18 @@
-"""Canonical PR630 names retain the same source-owned query/settlement data.
+"""The current `Transition` declaration: roles are read as their lowered gate.
 
-Source authority: pylcm555c2c0ffc979118130341a9210b5922a0e8125b,
-lcm/participation.py ParticipationRead/ParticipationCheck and Transition.participation.
+A declaration spec is read before `Transition.roles` is lowered, so the finder
+refuses a spec's `roles`; a constructed model reads each role as the always-open
+gate it is lowered into.
 """
 
 import pytest
-from copy import deepcopy
 from _lcm_regime_finder.declarations import normalize_declarations
 from _lcm_regime_finder.production import MetadataAnalysis
 from _lcm_regime_finder.semantic_check import check_semantics
-from tests.regime_finder.test_round5_query_admission import spec, record, reference
-from tests.regime_finder.test_round4_semantic import captured_gate_graph
+from tests.regime_finder.test_round5_query_admission import spec, record
 from importlib import import_module
 from _lcm_regime_finder.records import JSONValue, SemanticCheck
 from tests.regime_finder.test_declaration_ingestion import (
-    json_entries,
     json_member,
     json_rows,
 )
@@ -37,10 +35,8 @@ def bind_types[Value: JSONValue](raw: Value) -> Value:
         tag = raw.get("type", "")
         assert isinstance(tag, str)
         label = tag.split(".")[-1]
-        if label in {"ParticipationRead", "ParticipationCheck", "Transition"}:
-            canonical = (
-                "lcm.transition." if label == "Transition" else "lcm.participation."
-            ) + label
+        if label == "Transition":
+            canonical = "lcm.transition." + label
             raw["type"] = canonical
             module, class_name = canonical.rsplit(".", 1)
             raw["canonical_type_source"] = inspect_authority(
@@ -54,26 +50,6 @@ def bind_types[Value: JSONValue](raw: Value) -> Value:
     return raw
 
 
-def current_spec() -> dict[str, JSONValue]:
-    raw = spec()
-    regimes = json_member(raw, "regimes")
-    for name in regimes:
-        json_member(regimes, name, "fields").pop("exit", None)
-    read = reference("Q", "ParticipationRead")
-    json_member(read, "fields").update(kind="Raw", field="support", observes=["x"])
-    gate = record(
-        "ParticipationCheck",
-        predicate=record("callable"),
-        reads={"policy": read},
-        observes=["x"],
-        routes={"self": record("MemberRoute", fallback=reference("R"))},
-    )
-    json_member(raw, "edges")["A"] = record(
-        "Transition", law="B", participation={"B": gate}
-    )
-    return raw
-
-
 def analyze(
     raw: dict[str, JSONValue],
 ) -> tuple[dict[str, JSONValue], dict[str, JSONValue], SemanticCheck]:
@@ -82,100 +58,6 @@ def analyze(
     analysis = MetadataAnalysis(normalized, facts_backend="metadata").run()
     checked = check_semantics(raw, normalized, analysis)
     return normalized, analysis, checked
-
-
-def test_canonical_transition_preserves_settlement_and_query() -> None:
-    normalized, _, checked = analyze(current_spec())
-    assert ({c["regime"] for c in json_rows(normalized, "cells")}) == ({"A", "B", "R"})
-    assert ({q["regime"] for q in json_entries(normalized, "query_owners")}) == ({"Q"})
-    assert (checked["status"]) != ("FAIL"), checked
-    gates = [
-        r
-        for r in json_rows(normalized, "relations")
-        if r["kind"] in {"arrival", "gate"}
-    ]
-    assert gates
-    assert all(r["observes"] == ["x"] for r in gates)
-
-
-def test_independent_check_rejects_erased_modern_gate() -> None:
-    raw = current_spec()
-    normalized, analysis, _ = analyze(raw)
-    bad = deepcopy(normalized)
-    bad["relations"] = [
-        r for r in json_rows(bad, "relations") if r["kind"] not in {"arrival", "gate"}
-    ]
-    assert (check_semantics(raw, bad, analysis)["status"]) == ("FAIL")
-
-
-def test_independent_check_rejects_changed_modern_read() -> None:
-    raw = current_spec()
-    normalized, analysis, _ = analyze(raw)
-    bad = deepcopy(normalized)
-    relation = next(
-        r for r in json_rows(bad, "relations") if r["kind"] == "policy_query"
-    )
-    relation["read_field"] = "value"
-    assert (check_semantics(raw, bad, analysis)["status"]) == ("FAIL")
-
-
-def test_native_graph_canonical_participation_is_not_omitted() -> None:
-    raw = captured_gate_graph()
-    law = json_member(raw, "graph", "fields", "laws", "source", "fields")
-    law["participation"] = law.pop("gated_edges")
-    for gate in json_entries(law, "participation"):
-        gate["type"] = "lcm.participation.ParticipationCheck"
-        fields = json_member(gate, "fields")
-        fields["predicate"] = fields.pop("gate")
-        fields["reads"] = fields.pop("gate_refs")
-        fields["routes"] = fields.pop("legs")
-    normalized, analysis, checked = analyze(raw)
-    assert any(
-        r["kind"] in {"arrival", "gate"} for r in json_rows(normalized, "relations")
-    )
-    assert (checked["status"]) != ("FAIL"), checked
-    bad = deepcopy(normalized)
-    bad["relations"] = [
-        r for r in json_rows(bad, "relations") if r["kind"] not in {"arrival", "gate"}
-    ]
-    assert (check_semantics(raw, bad, analysis)["status"]) == ("FAIL")
-
-
-def test_modern_spelling_without_source_authority_is_refused() -> None:
-    from _lcm_regime_finder.declarations import DeclarationError
-
-    raw = current_spec()
-    with pytest.raises(DeclarationError, match="canonical class source"):
-        normalize_declarations(raw)
-
-
-def test_changed_class_source_is_refused_by_both_sides() -> None:
-    from _lcm_regime_finder.declarations import DeclarationError
-
-    raw = bind_types(current_spec())
-    normalized, analysis, _ = analyze(raw)
-    bad = deepcopy(raw)
-    json_member(
-        bad, "edges", "A", "fields", "participation", "B", "canonical_type_source"
-    )["source_sha256"] = "0" * 64
-    with pytest.raises(DeclarationError, match="canonical class source"):
-        normalize_declarations(bad)
-    result = check_semantics(bad, normalized, analysis)
-    assert (result["status"]) == ("FAIL")
-    assert any(
-        e["kind"] == "original participation class authority changed"
-        for e in result["errors"]
-    )
-
-
-def test_duplicate_gate_and_participation_target_is_refused() -> None:
-    from _lcm_regime_finder.declarations import DeclarationError
-
-    raw = bind_types(current_spec())
-    fields = json_member(raw, "edges", "A", "fields")
-    fields["gates"] = deepcopy(fields["participation"])
-    with pytest.raises(DeclarationError, match="conflicting"):
-        normalize_declarations(raw)
 
 
 def roles_spec() -> dict[str, JSONValue]:

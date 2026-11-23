@@ -546,6 +546,6 @@ def test_a_target_with_both_a_role_and_a_gate_is_refused() -> None:
 
 
 def test_a_plain_edge_into_a_collective_target_points_at_roles() -> None:
-    """Without `roles`, a gate or a participation check, the edge stays refused."""
+    """Without `roles` or a gate, the edge stays refused."""
     with pytest.raises(NotImplementedError, match=r"members.*roles="):
         _model_with_edges(_edges_with_single(single=Transition(law=_marriage_law())))

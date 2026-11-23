@@ -2076,7 +2076,7 @@ def _original_schedule(source, dates):
                     elif isinstance(law, str): targets = [law]
                     elif isinstance(law, dict) and "kind" not in law: targets = list(law)
                     else: raise ValueError("Original numerical routing law lacks declared targets")
-                gate_map = _independent_gate_map(data, "gates", "arrivals", "participation")
+                gate_map = _independent_gate_map(data, "gates", "arrivals")
             elif isinstance(entry, dict) and "kind" not in entry:
                 targets = [target for target, selector in entry.items() if selects(selector, period)]
                 gate_map = {}
@@ -2103,12 +2103,11 @@ def _original_schedule(source, dates):
 def _independent_gate_map(payload, *keys):
     pairs = [(target, value) for key in keys for target, value in payload.get(key, {}).items()]
     if len({target for target, _ in pairs}) != len(pairs):
-        raise ValueError("Original target has conflicting participation/gate declarations")
+        raise ValueError("Original target has conflicting gate/arrival declarations")
     return dict(pairs)
 
 
 def _check_current_type_sources(original, fail):
-    from .current_api_contract import matches_authority
     pending = [original]
     while pending:
         value = pending.pop()
@@ -2121,10 +2120,6 @@ def _check_current_type_sources(original, fail):
             label = tag.split(".")[-1]
             if label == "Transition" and value.get("fields", {}).get("roles"):
                 fail("original transition roles are not read", declaration_type=tag)
-            required = label in ("ParticipationRead", "ParticipationCheck") or (label == "Transition" and bool(value.get("fields", {}).get("participation")))
-            if required:
-                if not matches_authority(name=tag, observed=value.get("canonical_type_source")):
-                    fail("original participation class authority changed", declaration_type=tag)
             pending.extend(value.values())
 
 
@@ -2557,7 +2552,7 @@ def _check_capture(original: dict, normalized: dict, fail, unknown) -> None:
     def refs(value, phase=None):
         if short(value) == "Phased" and phase is not None:
             yield from refs(fields(value).get("solve" if phase == "solve" else "simulate"), phase)
-        elif short(value) in {"ProjectedRegimeValue", "ArrivalRead", "ParticipationRead", "ExitTarget", "Counterparty"}:
+        elif short(value) in {"ProjectedRegimeValue", "ArrivalRead", "ExitTarget", "Counterparty"}:
             yield value
         elif isinstance(value, dict):
             for child in value.values(): yield from refs(child, phase)
@@ -2576,7 +2571,7 @@ def _check_capture(original: dict, normalized: dict, fail, unknown) -> None:
         if short(value) == "Phased":
             side = "solve" if phase == "solve" else "simulate"
             yield from reference_locations(fields(value).get(side), ptr(ptr(path, "fields"), side), phase)
-        elif short(value) in {"ProjectedRegimeValue", "ArrivalRead", "ParticipationRead", "ExitTarget", "Counterparty"}:
+        elif short(value) in {"ProjectedRegimeValue", "ArrivalRead", "ExitTarget", "Counterparty"}:
             yield value, path
         elif isinstance(value, dict):
             for key, child in value.items(): yield from reference_locations(child, ptr(path, key), phase)
@@ -2667,7 +2662,7 @@ def _check_capture(original: dict, normalized: dict, fail, unknown) -> None:
                     check_reference(raw, cell["id"], phase, "exit" if key == "exit" else "value_read")
     for cell in cells.values():
         native_law = fields(laws.get(cell["regime"]))
-        declared_gates = _independent_gate_map(native_law, "gated_edges", "arrivals", "participation")
+        declared_gates = _independent_gate_map(native_law, "gated_edges", "arrivals")
         gate_records = [(target_regime, side, selected(gate, side, cell["period"] + 1))
                         for target_regime, gate in declared_gates.items() for side in ("solve", "simulation")]
         if original_schedule:

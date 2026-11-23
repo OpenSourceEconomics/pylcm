@@ -2,7 +2,6 @@
 
 import logging
 from collections.abc import Callable, Mapping
-from types import MappingProxyType
 from typing import cast
 
 import jax
@@ -25,23 +24,13 @@ from _lcm.simulation.exit_replay import (
     _query_reached_landing_totals,
     exit_bindings,
 )
-from _lcm.simulation.exits import participation_entry_routes, route_original_subjects
+from _lcm.simulation.exits import route_original_subjects
 from _lcm.simulation.forward_program_profiles import (
     PreparedDecisionProfile,
     _concrete_widths,
     _profile_program,
 )
 from _lcm.simulation.operand_placement import subject_operand_sharding
-from _lcm.simulation.participation_routing import (
-    ordinary_exit_rows,
-    participation_frame_bases,
-    participation_route_codes,
-    pending_participation_rows,
-)
-from _lcm.simulation.participation_values import (
-    ParticipationSurfaces,
-    participation_replay_context,
-)
 from _lcm.simulation.random_address import draw_window_keys
 from _lcm.simulation.taste_stream import draw_taste_shock_keys
 from _lcm.simulation.value_placement import simulation_value_sharding
@@ -67,7 +56,7 @@ type _RouteOutput = tuple[
 ]
 
 
-def profile_exit_period(  # noqa: C901, PLR0912, PLR0915 - retain replay's ordered owner walk
+def profile_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner walk
     *,
     inventory: ChunkProfileInventory,
     regimes: Mapping[RegimeName, Regime],
@@ -75,12 +64,9 @@ def profile_exit_period(  # noqa: C901, PLR0912, PLR0915 - retain replay's order
     states: _Carrier,
     regime_ids: jax.ShapeDtypeStruct,
     roles: jax.ShapeDtypeStruct,
-    entered_through: jax.ShapeDtypeStruct,
-    source_roles: jax.ShapeDtypeStruct,
     regime_names_to_ids: RegimeNamesToIds,
     flat_params: FlatParams,
     values: Mapping[int, Mapping[str, jax.Array | jax.ShapeDtypeStruct]],
-    surfaces: ParticipationSurfaces = MappingProxyType({}),
     ages: TimeAxis,
     key: jax.ShapeDtypeStruct,
     taste_key: jax.ShapeDtypeStruct | None,
@@ -97,7 +83,7 @@ def profile_exit_period(  # noqa: C901, PLR0912, PLR0915 - retain replay's order
 ]:
     """Compile independent exit frontiers before adopting their ordered profiles.
 
-    Full and incoming decisions read the original carrier. Revealed decisions
+    Full decisions read the original carrier. Revealed decisions
     read their routed outputs, so their wave starts only after those compiled
     output layouts and the resulting bases are known. The ordered inventory
     adopts actual compiled outputs and complete reports from the shared cache.
@@ -182,31 +168,20 @@ def profile_exit_period(  # noqa: C901, PLR0912, PLR0915 - retain replay's order
     ) -> tuple[ShapeDtypePytree, ...]:
         regime = actors[name]
         plan = regime.simulation.exit_queries[period]
-        queries = (
-            plan.participation[family.removeprefix("participation_entry:")].queries
-            if family.startswith("participation_entry:")
-            else plan.full
-            if family == "exit_full"
-            else plan.participating[name]
-        )
+        queries = plan.full if family == "exit_full" else plan.participating[name]
         if queries is None:
             raise ExecutionPlanningError("An incoming-only actor has no Full program.")
         context = queries.definitions[queries.root].context
         arguments = queries.arguments(
-            context=participation_replay_context(
-                queries=queries,
-                values=values,
-                surfaces=surfaces,
-                context=CoreBuildContext(
-                    state_action_space=context.state_action_space,
-                    next_regime_to_V_arr=values.get(period + 1, {}),
-                    next_regime_to_continuation={},
-                    flat_params=flat_params,
-                    period=period,
-                    ages=ages,
-                    same_period_regime_to_V_arr=values.get(period, {}),
-                    edge_regime_to_V_arr=values.get(period + 1, {}),
-                ),
+            context=CoreBuildContext(
+                state_action_space=context.state_action_space,
+                next_regime_to_V_arr=values.get(period + 1, {}),
+                next_regime_to_continuation={},
+                flat_params=flat_params,
+                period=period,
+                ages=ages,
+                same_period_regime_to_V_arr=values.get(period, {}),
+                edge_regime_to_V_arr=values.get(period + 1, {}),
             ),
             fixed_flat_params=plan.fixed_flat_params,
         )
@@ -227,13 +202,7 @@ def profile_exit_period(  # noqa: C901, PLR0912, PLR0915 - retain replay's order
             **({"held_bases": bases} if bases is not None else {}),
             **({"produced": produced} if produced is not None else {}),
         }
-        program = (
-            regime.simulation.programs.participation_program(
-                family=family, period=period
-            )
-            if family.startswith("participation_entry:")
-            else getattr(regime.simulation.programs, family)[period]
-        )
+        program = getattr(regime.simulation.programs, family)[period]
         if wave is not None:
             # The prepass discards these lowered-only descriptors. Ordered
             # profiling below uses the compiled executable's actual layouts.
@@ -294,21 +263,6 @@ def profile_exit_period(  # noqa: C901, PLR0912, PLR0915 - retain replay's order
     projections = {}
     adjustments = {}
     routes = []
-    pending_entries = {
-        (name, source): inventory.operation(
-            function=pending_participation_rows,
-            arguments={
-                "regime_ids": regime_ids,
-                "entered_through": entered_through,
-                "source_id": codes[source],
-                "target_id": codes[name],
-            },
-            subject_arg_names=("regime_ids", "entered_through"),
-            subject_outputs=True,
-        )
-        for name, regime in actors.items()
-        for source in regime.simulation.exit_queries[period].participation
-    }
     full_holders = {}
     for name, regime in actors.items():
         queries = regime.simulation.exit_queries[period].full
@@ -323,23 +277,8 @@ def profile_exit_period(  # noqa: C901, PLR0912, PLR0915 - retain replay's order
                 subject_outputs=True,
             ),
         )
-        incoming = tuple(
-            pending
-            for (target, _), pending in pending_entries.items()
-            if target == name
-        )
-        if incoming:
-            holders = cast(
-                "jax.ShapeDtypeStruct",
-                inventory.operation(
-                    function=ordinary_exit_rows,
-                    arguments={"holders": holders, "pending": incoming},
-                    subject_arg_names=("holders", "pending"),
-                    subject_outputs=True,
-                ),
-            )
         full_holders[name] = holders
-    if full_holders or pending_entries:
+    if full_holders:
         with _compilation_wave(
             max_compilation_workers=max_compilation_workers, logger=logger
         ) as wave:
@@ -349,14 +288,6 @@ def profile_exit_period(  # noqa: C901, PLR0912, PLR0915 - retain replay's order
                     family="exit_full",
                     columns=states,
                     holders=holders,
-                    wave=wave,
-                )
-            for (name, source), holders in pending_entries.items():
-                native(
-                    name=name,
-                    family=f"participation_entry:{source}",
-                    columns=states,
-                    holders=cast("jax.ShapeDtypeStruct", holders),
                     wave=wave,
                 )
     for name, regime in actors.items():
@@ -401,55 +332,6 @@ def profile_exit_period(  # noqa: C901, PLR0912, PLR0915 - retain replay's order
                     )
                 )
     decisions = {name: answer[1] for name, (answer, _) in originals.items()}
-    participation_frames, participation_pending = {}, {}
-    for (name, source), holders in pending_entries.items():
-        entry = actors[name].simulation.exit_queries[period].participation[source]
-        output = native(
-            name=name,
-            family=f"participation_entry:{source}",
-            columns=states,
-            holders=cast("jax.ShapeDtypeStruct", holders),
-        )
-        answer, frame = cast("_Answer", output[0]), cast("_Frame", output[1])
-        check(
-            answer=answer,
-            frame=frame,
-            holders=cast("jax.ShapeDtypeStruct", holders),
-            landings=bool(entry.queries.landing_checks),
-        )
-        edge = f"{name}:{source}"
-        participation_frames[edge], participation_pending[edge] = frame, holders
-        entry_routes, route_codes, addresses = participation_entry_routes(
-            regimes=regimes,
-            target=name,
-            source=source,
-            entry=entry,
-            first_code=min((-1, *(route[2] for route in routes if route[0] == name)))
-            - 1,
-        )
-        routes.extend(tuple(route) for route in entry_routes)
-        projected = cast("Mapping[str, ShapeDtypePytree]", output[2])
-        adjustments_for_entry = cast("Mapping[str, ShapeDtypePytree]", output[3])
-        for address, query in addresses.items():
-            projections[address], adjustments[address] = (
-                projected[query],
-                adjustments_for_entry[query],
-            )
-        decisions[name] = cast(
-            "jax.ShapeDtypeStruct",
-            inventory.operation(
-                function=participation_route_codes,
-                arguments={
-                    "original": decisions[name],
-                    "incoming": answer[1],
-                    "pending": holders,
-                    "source_roles": source_roles,
-                },
-                static_arguments={"codes": route_codes},
-                subject_arg_names=("original", "incoming", "pending", "source_roles"),
-                subject_outputs=True,
-            ),
-        )
     final_ids, final_roles, final_states, moved, paid = cast(
         "_RouteOutput",
         inventory.operation(
@@ -501,41 +383,6 @@ def profile_exit_period(  # noqa: C901, PLR0912, PLR0915 - retain replay's order
         subject_arg_names=("regime_ids", "availability"),
         subject_outputs=True,
     )
-    if participation_frames:
-        bases, produced = cast(
-            "tuple[ShapeDtypePytree, ShapeDtypePytree]",
-            inventory.operation(
-                function=participation_frame_bases,
-                arguments={
-                    "bases": bases,
-                    "produced": produced,
-                    "incoming_bases": {
-                        edge: frame[2] for edge, frame in participation_frames.items()
-                    },
-                    "incoming_available": {
-                        edge: frame[7] for edge, frame in participation_frames.items()
-                    },
-                    "pending": participation_pending,
-                },
-                static_arguments={
-                    "physical_names": tuple(
-                        (
-                            edge,
-                            tuple(cast("Mapping[str, jax.ShapeDtypeStruct]", frame[0])),
-                        )
-                        for edge, frame in participation_frames.items()
-                    )
-                },
-                subject_arg_names=(
-                    "bases",
-                    "produced",
-                    "incoming_bases",
-                    "incoming_available",
-                    "pending",
-                ),
-                subject_outputs=True,
-            ),
-        )
     moving_holders = {}
     for name in actors:
         holders = cast(
@@ -594,11 +441,6 @@ def profile_exit_period(  # noqa: C901, PLR0912, PLR0915 - retain replay's order
         reporting_sources = {name} | {
             source for source, target, *_ in routes if target == name
         }
-        entry_actors = tuple(
-            (f"{actor}:{source}", actor)
-            for actor, source in pending_entries
-            if actor in reporting_sources
-        )
         prepared[name] = cast(
             "PreparedDecisionProfile",
             inventory.operation(
@@ -625,19 +467,9 @@ def profile_exit_period(  # noqa: C901, PLR0912, PLR0915 - retain replay's order
                         for source, (_, original) in originals.items()
                         if source in reporting_sources
                     },
-                    "entry_physical": {
-                        edge: participation_frames[edge][0] for edge, _ in entry_actors
-                    },
-                    "entry_available": {
-                        edge: participation_frames[edge][7] for edge, _ in entry_actors
-                    },
-                    "entry_pending": {
-                        edge: participation_pending[edge] for edge, _ in entry_actors
-                    },
                 },
                 static_arguments={
                     "actor_name": name,
-                    "entry_actors": entry_actors,
                     "categorical_names": tuple(
                         shock
                         for binding in bindings.values()
@@ -664,9 +496,6 @@ def profile_exit_period(  # noqa: C901, PLR0912, PLR0915 - retain replay's order
                     "original_regime_ids",
                     "original_physical",
                     "original_available",
-                    "entry_physical",
-                    "entry_available",
-                    "entry_pending",
                 ),
                 subject_outputs=True,
             ),

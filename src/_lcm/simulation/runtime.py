@@ -1020,9 +1020,7 @@ def execute_simulation_program(
         "exit_participating": programs.exit_participating,
     }
     return programs.executor.dispatch(
-        program=programs.participation_program(family=family, period=period)
-        if family.startswith("participation_entry:")
-        else families[family][period],
+        program=families[family][period],
         arguments=arguments,
         period=period,
         n_subjects=n_subjects,

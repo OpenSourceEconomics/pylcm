@@ -27,8 +27,6 @@ from lcm import (
     MemberRoute,
     Model,
     NormalIIDProcess,
-    ParticipationCheck,
-    ParticipationRead,
     Phased,
     ProjectedRegimeValue,
     Regime,
@@ -488,21 +486,13 @@ def _gate_without_process_read() -> BoolND:
     return jnp.ones((), dtype=bool)
 
 
-def _participation_on_landing_value(V_target: FloatND) -> BoolND:
-    return V_target > 0.0
-
-
-def _landed_z(z: ContinuousState) -> ContinuousState:
-    return z
-
-
 def _landing_model(
-    *, runtime: bool, edge: Literal["gate-read", "gate-no-read", "participation"]
+    *, runtime: bool, edge: Literal["gate-read", "gate-no-read"]
 ) -> Model:
     """Source and target carry one uniform process on nodes [-1, 0, 1].
 
     The edge is a state `Gate` whose predicate reads the landed process or reads
-    nothing, or a `ParticipationCheck` reading the target's value at the landing.
+    nothing.
     """
     shock = UniformIIDProcess(
         n_points=3, start=-1.0, stop=None if runtime else 1.0, simulated_draws="nodes"
@@ -510,37 +500,19 @@ def _landing_model(
     route = MemberRoute(fallback=ProjectedRegimeValue(regime="fallback", projection={}))
     targets = {"target": 0, "fallback": 0}
     law = ByAge(cases={0: {"target": StochasticTransition(func=_one)}})
-    transition = (
-        Transition(
-            targets=targets,
-            law=law,
-            gates={
-                "target": Gate(
-                    predicate=(
-                        _gate_on_landing_value
-                        if edge == "gate-read"
-                        else _gate_without_process_read
-                    ),
-                    routes={"only": route},
-                )
-            },
-        )
-        if edge != "participation"
-        else Transition(
-            targets=targets,
-            law=law,
-            participation={
-                "target": ParticipationCheck(
-                    predicate=_participation_on_landing_value,
-                    reads={
-                        "V_target": ParticipationRead(
-                            kind="Raw", regime="target", projection={"z": _landed_z}
-                        )
-                    },
-                    routes={"only": route},
-                )
-            },
-        )
+    transition = Transition(
+        targets=targets,
+        law=law,
+        gates={
+            "target": Gate(
+                predicate=(
+                    _gate_on_landing_value
+                    if edge == "gate-read"
+                    else _gate_without_process_read
+                ),
+                routes={"only": route},
+            )
+        },
     )
     return Model(
         regimes={
@@ -582,12 +554,6 @@ def test_gate_reads_the_landing_value_of_a_fixed_process() -> None:
 def test_gate_reading_a_runtime_process_value_at_its_landing_is_refused() -> None:
     with pytest.raises(ModelInitializationError, match="parameterized at runtime"):
         _landing_model(runtime=True, edge="gate-read")
-
-
-def test_participation_landing_in_a_runtime_process_is_refused() -> None:
-    """A participation check enumerates the landed process by node; runtime has none."""
-    with pytest.raises(ModelInitializationError, match="parameterized at runtime"):
-        _landing_model(runtime=True, edge="participation")
 
 
 def test_gate_not_reading_a_runtime_process_keeps_it_supported() -> None:

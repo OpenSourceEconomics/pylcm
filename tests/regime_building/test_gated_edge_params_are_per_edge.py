@@ -16,11 +16,10 @@ from lcm import (
     AgeRange,
     ByAge,
     DiscreteGrid,
+    Gate,
     LinSpacedGrid,
     MemberRoute,
     Model,
-    ParticipationCheck,
-    ParticipationRead,
     ProjectedRegimeValue,
     Regime,
     Transition,
@@ -81,9 +80,9 @@ def _identity_x(x: ContinuousState) -> ContinuousState:
     return x
 
 
-def _gate(*, V_target: FloatND, marriage_bonus: float) -> BoolND:
-    """Opens where the target beats a bonus the SOURCE supplies as a parameter."""
-    return V_target > marriage_bonus
+def _gate(*, x: ContinuousState, marriage_bonus: float) -> BoolND:
+    """Opens where the landing state beats a bonus the SOURCE supplies."""
+    return x > marriage_bonus
 
 
 def _build_model(*, with_bystander: bool) -> Model:
@@ -117,16 +116,9 @@ def _build_model(*, with_bystander: bool) -> Model:
                 law=ByAge(
                     cases={40: {"target": StochasticTransition(func=_certain_target)}}
                 ),
-                participation={
-                    "target": ParticipationCheck(
+                gates={
+                    "target": Gate(
                         predicate=_gate,
-                        reads={
-                            "V_target": ParticipationRead(
-                                kind="IntegratedFull",
-                                regime="target",
-                                projection={"x": _identity_x},
-                            )
-                        },
                         routes={
                             "only": MemberRoute(
                                 fallback=ProjectedRegimeValue(

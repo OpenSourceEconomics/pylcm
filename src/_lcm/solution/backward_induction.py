@@ -163,7 +163,6 @@ from _lcm.params.edges import (
     is_gated_cell_slot,
     regime_kernel_params,
 )
-from _lcm.participation_continuation import participation_surface_leaves
 from _lcm.persistence.solution import (
     DiskPolicyEntry,
     DiskValueEntry,
@@ -700,9 +699,6 @@ def solve(  # noqa: C901, PLR0912, PLR0915
     retained_continuations: dict[ArtifactRef, ArtifactPayload] = {}
     replay_artifacts: dict[ArtifactRef, ArtifactPayload] = {}
     auxiliary_artifacts: dict[ArtifactRef, ArtifactPayload] = {}
-    participation_surfaces: dict[
-        int, MappingProxyType[RegimeName, MappingProxyType[str, FloatND]]
-    ] = {}
 
     # Async diagnostics accumulators: per-period NaN/Inf flags (and the
     # debug min/max/mean trio) live here as device-side scalars during
@@ -1452,30 +1448,6 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                         retained_continuations[
                             ArtifactRef(period=period, regime=regime_name, key=key)
                         ] = jax.block_until_ready(jax.device_put(payload, host_device))
-                period_participation_surfaces = {
-                    regime_name: surfaces
-                    for regime_name, payload in period_continuations.items()
-                    if (surfaces := participation_surface_leaves(payload))
-                }
-                if period_participation_surfaces:
-                    # Replay prices participation checks with the solve's own plans, so
-                    # it reads these surfaces under every retention, like values.
-                    participation_host = jax.devices("cpu")[0]
-                    participation_surfaces[period] = MappingProxyType(
-                        {
-                            regime_name: MappingProxyType(
-                                {
-                                    name: jax.block_until_ready(
-                                        jax.device_put(surface, participation_host)
-                                    )
-                                    for name, surface in surfaces.items()
-                                }
-                            )
-                            for regime_name, surfaces in (
-                                period_participation_surfaces.items()
-                            )
-                        }
-                    )
                 if retain_all_artifacts:
                     assert host_device is not None  # noqa: S101
                     for (
@@ -1571,7 +1543,6 @@ def solve(  # noqa: C901, PLR0912, PLR0915
         retained_continuations=ArtifactStore(retained_continuations),
         replay_artifacts=ArtifactStore(replay_artifacts),
         auxiliary_artifacts=ArtifactStore(auxiliary_artifacts),
-        participation_surfaces=MappingProxyType(participation_surfaces),
     )
 
 
@@ -2171,7 +2142,7 @@ def _roll_continuation_inputs(
 
     Constant-schema carries keep their template key set and update the entries solved
     this period. Date-specific carries keep only this period's actual publications, so
-    an undemanded participation check cannot retain another date's operands.
+    an undemanded reader cannot retain another period's operands.
 
     Returns:
         Tuple of the rolled V mapping and the rolled carry mapping.
@@ -4362,7 +4333,7 @@ def _workspace_chunk(*, regime: Regime, period: int) -> int | None:
     `None` for a kernel that has no chunk to narrow.
     """
     kernel = regime.solution.period_kernels[period]
-    # A participation kernel keeps the chunked kernel it borrows as its base.
+    # A wrapping kernel keeps the chunked kernel it wraps as its base.
     while not hasattr(kernel, "chunk_size") and hasattr(kernel, "base"):
         kernel = getattr(kernel, "base")  # noqa: B009
     chunk = getattr(kernel, "chunk_size", None)

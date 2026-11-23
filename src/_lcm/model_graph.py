@@ -48,7 +48,6 @@ from lcm.exceptions import (
     RegimeInitializationError,
 )
 from lcm.exits import Consent, Exit
-from lcm.participation import ParticipationCheck
 from lcm.phased import Phased
 from lcm.regime import Regime
 from lcm.transition import (
@@ -577,9 +576,6 @@ def bind_edge_laws(
                 gated_edges=_declared_gated_edges(
                     source=name, declared=declared, resolved=resolved
                 ),
-                participation=_declared_participation(
-                    source=name, declared=declared, resolved=resolved
-                ),
             )
             for name in regimes
         }
@@ -763,7 +759,7 @@ def _derived_target_ages(
                 return None
             for name in names:
                 selected.setdefault(name, set()).add(ages.exact_values[period])
-    for target, gate in {**transition.gates, **transition.participation}.items():
+    for target, gate in transition.gates.items():
         for route in gate.routes.values():
             for fallback in {
                 (
@@ -849,38 +845,6 @@ def _declared_gated_edges(
     )
 
 
-def _declared_participation(
-    *,
-    source: RegimeName,
-    declared: Mapping[Side, PhaseEdges],
-    resolved: Mapping[Side, ResolvedEdges],
-) -> MappingProxyType[RegimeName, ParticipationCheck]:
-    """Retain the incoming edge's typed decision through both actual phases."""
-    by_side = {}
-    for side in _PHASE_SIDES:
-        declaration = declared[side].get(source)
-        participation = (
-            declaration.participation if isinstance(declaration, Transition) else {}
-        )
-        reached = resolved[side].get(source, {})
-        if set(participation) - set(reached):
-            raise ModelInitializationError(
-                f"ParticipationCheck of {source!r} names an unscheduled {side} target."
-            )
-        by_side[side] = participation
-    solve, simulate = by_side["solve"], by_side["simulate"]
-    for target in solve.keys() | simulate.keys():
-        shared = target in resolved["solve"].get(source, {}) and target in resolved[
-            "simulate"
-        ].get(source, {})
-        if shared and solve.get(target) != simulate.get(target):
-            raise ModelInitializationError(
-                f"ParticipationCheck of {source!r} into {target!r} differs by phase; "
-                "declare differing settlements with Phased fallback projections."
-            )
-    return MappingProxyType({**simulate, **solve})
-
-
 def _with_roles_as_gates(
     *, declared: Mapping[Side, DeclaredModelEdges], regimes: Mapping[RegimeName, Regime]
 ) -> dict[Side, DeclaredModelEdges]:
@@ -961,10 +925,9 @@ def _fail_if_role_invalid(
     entry = (
         f"`Transition.roles` of '{source}' gives target '{target}' the role '{role}'"
     )
-    if target in transition.gates or target in transition.participation:
-        declared = "Gate" if target in transition.gates else "ParticipationCheck"
+    if target in transition.gates:
         raise ModelInitializationError(
-            f"{entry}, and the transition declares both a role and a `{declared}` "
+            f"{entry}, and the transition declares both a role and a `Gate` "
             f"for '{target}'. A role is the always-open gate; declare one of them."
         )
     member_axis = regimes[source].member_axis
@@ -972,7 +935,7 @@ def _fail_if_role_invalid(
         raise ModelInitializationError(
             f"{entry}, but '{source}' is collective (members={member_axis}): "
             "each of its rows already carries a role. Route a collective source "
-            "into another layout with a `Gate` or a `ParticipationCheck`."
+            "into another layout with a `Gate`."
         )
     if target not in regimes:
         return
@@ -1205,7 +1168,6 @@ def bind_graph_support(
                 )
                 fallbacks = _gate_fallbacks(
                     gated_edges=source_law.gated_edges,
-                    participation=source_law.participation,
                     targets=targets[side],
                     side=side,
                 )
@@ -1279,7 +1241,6 @@ def bind_graph_support(
         result[source] = bind_regime_law(
             bound,
             gated_edges=source_law.gated_edges,
-            participation=source_law.participation,
         )
     return MappingProxyType(result), MappingProxyType(dropped)
 
@@ -1517,21 +1478,14 @@ def _gate_fallbacks(
     gated_edges: Mapping[RegimeName, GatedEdge],
     targets: tuple[RegimeName, ...],
     side: Side,
-    participation: Mapping[RegimeName, ParticipationCheck] = MappingProxyType({}),
 ) -> tuple[RegimeName, ...]:
     """The gate-closed regimes of the gated targets among `targets`, for one side."""
     return tuple(
         dict.fromkeys(
             (leg.solve_fallback if side == "solve" else leg.simulate_fallback).regime
-            for target, routes in (
-                *((target, edge.legs) for target, edge in gated_edges.items()),
-                *(
-                    (target, decision.routes)
-                    for target, decision in participation.items()
-                ),
-            )
+            for target, edge in gated_edges.items()
             if target in targets
-            for leg in routes.values()
+            for leg in edge.legs.values()
         )
     )
 

@@ -37,8 +37,8 @@ averaging over the draw at every state-action candidate. Values agree with the
 per-candidate expectation to rounding relative to the largest next-period value
 magnitude across the draws, not relative to the expectation itself: with large
 cancelling values, either summation order can lose a small term. The contraction applies
-only under the linear expectation, and not to a target reached through a participation
-check or to a stochastic process whose nodes come from runtime parameters. A next-period
+only under the linear expectation, and not to a stochastic process whose nodes come
+from runtime parameters. A next-period
 value of `+inf` is outside the supported domain: where one meets an infeasible `-inf`
 across draws, the contracted read is `-inf`, while per-draw enumeration gives NaN.
 
@@ -54,7 +54,7 @@ simulated choice can differ from the solve's by more than a tie with cancelling 
 even at a node.
 
 The contraction applies in every kernel of a regime that declares it: the ordinary one,
-the exit, consent and participation queries that solve a regime with an exit, and a
+the exit and consent queries that solve a regime with an exit, and a
 collective regime's, where each member's value is contracted on its own. A query
 evaluates its regime at projected states, so, like the simulation, it keeps a process
 draw whose probabilities read the current value enumerated. It binds the current

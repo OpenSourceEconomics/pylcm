@@ -34,10 +34,7 @@ from _lcm.beartype_conf import REGIME_CONF
 
 if TYPE_CHECKING:
     from _lcm.current_iid import CurrentIIDPlan
-    from _lcm.participation_queries import ParticipationQueryPlan
 else:
-    # Participation query construction imports the engine before solver contexts finish.
-    type ParticipationQueryPlan = object
     # The innovation registry reaches this solver through the public Regime facade.
     type CurrentIIDPlan = object
 from _lcm.constraints.routes import (
@@ -198,8 +195,8 @@ class GridSearch(Solver):
     selects a slice of the target's value function. Its expectation is then the
     same at every action, and the solve takes it once per kernel call instead of
     once per state-action candidate. This holds in every kernel: the ordinary
-    one, the exit, consent and participation queries that solve a regime with an
-    exit, and a collective regime's, per member. `False` keeps every draw a node
+    one, the exit and consent queries that solve a regime with an exit, and a
+    collective regime's, per member. `False` keeps every draw a node
     axis of the continuation and leaves every program unchanged. Values agree
     with the per-candidate expectation to rounding relative to the largest
     next-period value magnitude across the draws, not relative to the expectation
@@ -211,10 +208,8 @@ class GridSearch(Solver):
     evaluates its regime at projected states, so it keeps that draw enumerated in
     the solve as well. With cancelling values, the simulated choice can differ
     from the solve's by more than a tie where only the solve contracts it. A
-    regime with a gated edge contracts in neither phase,
-    nor does a continuation toward a target reached through a participation
-    check, and a query keeps every draw toward a target whose `off_grid="raise"`
-    landings it counts.
+    regime with a gated edge contracts in neither phase, and a query keeps every
+    draw toward a target whose `off_grid="raise"` landings it counts.
 
     Off by default: the ordinary kernel builds the table inside its tile loops,
     and on GPU the compiler does not hoist it, so it is rebuilt for every cell,
@@ -782,12 +777,6 @@ def grid_search_query_inputs(
         target_regimes=targets,
         edge_reference_regimes=references,
         edge_target_regimes=context.edge_target_regimes,
-        participation_queries=context.participation_queries.get(
-            period, MappingProxyType({})
-        ),
-        participation_surfaces=context.participation_surfaces.get(
-            period, MappingProxyType({})
-        ),
     )
     reads = _value_reads(
         regime_name=context.regime_name,
@@ -796,36 +785,6 @@ def grid_search_query_inputs(
         edge_reference_regimes=references,
         edge_target_regimes=context.edge_target_regimes,
     )
-    if builder.participation_surfaces:
-        from _lcm.participation_queries import plan_surface_address  # noqa: PLC0415
-
-        # A participation target's value enters as the source's stored surface, read
-        # through the same continuation leaf an ordinary value read fills.
-        reads = tuple(
-            replace(
-                read,
-                target=plan_surface_address(
-                    plan=builder.participation_surfaces[str(read.source.path[0])]
-                ),
-            )
-            if read.source.channel is ValueInputChannel.NEXT_REGIME_VALUE
-            and read.source.path[0] in builder.participation_surfaces
-            else read
-            for read in reads
-        )
-    if builder.participation_queries:
-        from _lcm.participation_queries import (  # noqa: PLC0415
-            participation_source_value_reads,
-        )
-
-        reads = (
-            *reads,
-            *participation_source_value_reads(
-                plans=builder.participation_queries,
-                source=context.regime_name,
-                period=period,
-            ),
-        )
     return builder, reads
 
 
@@ -938,43 +897,19 @@ class _GridSearchArgumentBuilder:
     """The period targets whose next-period values the program reads."""
     edge_reference_regimes: tuple[RegimeName, ...] = ()
     edge_target_regimes: tuple[RegimeName, ...] = ()
-    participation_queries: Mapping[RegimeName, ParticipationQueryPlan] = field(
-        default_factory=lambda: MappingProxyType({})
-    )
-    participation_surfaces: Mapping[RegimeName, ParticipationQueryPlan] = field(
-        default_factory=lambda: MappingProxyType({}),
-        metadata={"fingerprint_omit_if_default": True},
-    )
-    """Participation targets read from the source's stored participation surface, by
-    the plan whose decision that surface stores."""
 
     def __call__(
         self, context: CoreBuildContext
     ) -> Mapping[ReferenceName, PytreeValue | ShapeDtypePytree]:
         """Return the exact kwargs shared by lowering and the runtime call."""
-        if self.participation_queries:
-            from _lcm.participation_queries import (  # noqa: PLC0415
-                ParticipationSourceArguments,
-            )
-
-            return ParticipationSourceArguments(
-                base=replace(self, participation_queries=MappingProxyType({})),
-                plans=self.participation_queries,
-            )(context)
         state_action_space = cast("StateActionSpace", context.state_action_space)
         next_regime_to_V_arr = context.next_regime_to_V_arr
         flat_params = cast("FlatParams", context.flat_params)
         ages = cast("TimeAxis", context.ages)
         raw_next_regime_to_V_arr = next_regime_to_V_arr
-        surfaces = self._participation_surface_values(context=context)
         next_regime_to_V_arr = self._with_edge_substitution(
             next_regime_to_V_arr=MappingProxyType(
-                {
-                    name: surfaces[name]
-                    if name in surfaces
-                    else raw_next_regime_to_V_arr[name]
-                    for name in self.target_regimes
-                }
+                {name: raw_next_regime_to_V_arr[name] for name in self.target_regimes}
             ),
             edge_regime_to_V_arr=context.edge_regime_to_V_arr,
         )
@@ -1005,41 +940,7 @@ class _GridSearchArgumentBuilder:
                 flat_params=flat_params,
             )
         )
-        if surfaces:
-            from _lcm.participation_queries import (  # noqa: PLC0415
-                PARTICIPATION_SURFACE_ARGUMENTS,
-                surface_reader_arguments,
-            )
-
-            arguments[PARTICIPATION_SURFACE_ARGUMENTS] = surface_reader_arguments(
-                plans={name: self.participation_surfaces[name] for name in surfaces},
-                context=context,
-            )
         return MappingProxyType(arguments)
-
-    def _participation_surface_values(
-        self, *, context: CoreBuildContext
-    ) -> dict[RegimeName, ValueTemplate]:
-        """Read each surfaced participation target from its check's operands."""
-        if not self.participation_surfaces:
-            return {}
-        from _lcm.participation_queries import (  # noqa: PLC0415
-            _ParticipationBuildContext,
-            plan_surface_address,
-        )
-
-        if not isinstance(context, _ParticipationBuildContext):
-            msg = (
-                f"Regime '{self.regime_name}' reads stored participation surfaces, "
-                "which "
-                "only a participation reader's operands carry."
-            )
-            raise ExecutionPlanningError(msg)
-        return {
-            name: context.participation_values[plan_surface_address(plan=plan)]
-            for name, plan in self.participation_surfaces.items()
-            if name in self.target_regimes
-        }
 
     def _with_edge_substitution(
         self,

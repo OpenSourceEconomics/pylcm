@@ -14,16 +14,11 @@ from lcm import (
     ByAge,
     DeterministicTransition,
     LinSpacedGrid,
-    MemberRoute,
     Model,
-    ParticipationCheck,
-    ParticipationRead,
     Phased,
-    ProjectedRegimeValue,
     StochasticTransition,
     Transition,
     categorical,
-    fixed_transition,
 )
 from lcm.exceptions import (
     InvalidRegimeTransitionProbabilitiesError,
@@ -32,7 +27,7 @@ from lcm.exceptions import (
 from lcm.initial_nodes import UserInitialNodes
 from lcm.regime import Regime
 from lcm.transition import ModelEdges
-from lcm.typing import BoolND, ContinuousState, FloatND, RegimeName, ScalarInt
+from lcm.typing import RegimeName, ScalarInt
 from tests.test_models import n_nbegm_toy
 
 
@@ -363,109 +358,6 @@ def test_graph_destination_order_preserves_nnbegm_phase_invariance() -> None:
     )
     assert model.graph.edges.solve == model.graph.edges.simulate
     assert model.graph.solution.targets(period=0, source="alive") == ("alive", "dead")
-
-
-@categorical(ordered=False)
-class _DormantGateRegimeId:
-    source: ScalarInt
-    other: ScalarInt
-    target: ScalarInt
-    reference: ScalarInt
-    fallback: ScalarInt
-    terminal: ScalarInt
-
-
-def test_value_only_source_age_does_not_activate_dormant_simulation_participation() -> (
-    None
-):
-    """A participation check at one source age owes no reads at a value-only age."""
-    grid = LinSpacedGrid(start=0.0, stop=1.0, n_points=2)
-
-    def identity(x: ContinuousState) -> ContinuousState:
-        return x
-
-    def gate(*, V_reference: FloatND) -> BoolND:
-        return V_reference >= 0.0
-
-    one = StochasticTransition(func=lambda: jnp.asarray(1.0))
-    zero = StochasticTransition(func=lambda: jnp.asarray(0.0))
-    participation = {
-        "target": ParticipationCheck(
-            predicate=gate,
-            reads={
-                "V_reference": ParticipationRead(
-                    kind="IntegratedFull",
-                    regime="reference",
-                    projection={"x": identity},
-                )
-            },
-            routes={
-                "only": MemberRoute(
-                    fallback=ProjectedRegimeValue(
-                        regime="fallback", projection={"x": identity}
-                    )
-                )
-            },
-        )
-    }
-    solve_law = ByAge(cases={0: {"source": one, "target": zero}, 1: {"terminal": one}})
-    simulate_law = ByAge(cases={0: {"target": one}})
-    source = Regime(
-        states={"x": grid},
-        state_transitions={"x": fixed_transition("x")},
-        functions={"utility": lambda x: 0.0 * x},
-    )
-    terminal = Regime(
-        states={"x": grid},
-        functions={"utility": identity},
-    )
-    model = Model(
-        regimes={
-            "source": source,
-            "other": Regime(
-                states={"x": grid},
-                state_transitions={"x": fixed_transition("x")},
-                functions={"utility": lambda x: 0.0 * x},
-            ),
-            "target": terminal,
-            "reference": Regime(
-                states={"x": grid},
-                state_transitions={"x": fixed_transition("x")},
-                functions={"utility": identity},
-            ),
-            "fallback": terminal,
-            "terminal": terminal,
-        },
-        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
-        regime_id_class=_DormantGateRegimeId,
-        initial_nodes=((0, "source"), (1, "other")),
-        edges=Phased(
-            solve={
-                "source": Transition(
-                    targets={"source": 0, "target": 0, "fallback": 0, "terminal": 1},
-                    law=solve_law,
-                    participation=participation,
-                ),
-                "other": {"target": 1},
-                "reference": {"terminal": 1},
-            },
-            simulate={
-                "source": Transition(
-                    targets={"target": 0, "fallback": 0},
-                    law=simulate_law,
-                    participation=participation,
-                ),
-                "other": {"terminal": 1},
-            },
-        ),
-        enable_jit=False,
-    )
-    assert (1, "source") in model.graph.nodes
-    assert (1, "source") not in model.graph.visited_nodes
-    assert (1, "reference") in model.graph.nodes
-    assert (2, "reference") not in model.graph.nodes
-    solution = model.solve(params={"discount_factor": 1.0}, log_level="debug")
-    assert set(solution.values[2]) == {"target", "terminal"}
 
 
 def test_required_age_without_an_edge_out_names_the_missing_edge() -> None:

@@ -32,8 +32,6 @@ from lcm import (
     LinSpacedGrid,
     MemberRoute,
     Model,
-    ParticipationCheck,
-    ParticipationRead,
     Phased,
     ProjectedRegimeValue,
     Transition,
@@ -268,13 +266,6 @@ def test_route_key_must_be_a_valid_path_segment(name: str) -> None:
         _gated_edge_model(route_key=name)
 
 
-@pytest.mark.parametrize("name", INVALID_SEGMENT_NAMES)
-def test_participation_read_key_must_be_a_valid_path_segment(name: str) -> None:
-    """A participation-read key with `__` or a leading/trailing `_` is rejected."""
-    with pytest.raises(RegimeInitializationError, match=re.escape(repr(name))):
-        _participation_model(read_key=name)
-
-
 @pytest.mark.parametrize(
     "callable_kind",
     [
@@ -282,8 +273,6 @@ def test_participation_read_key_must_be_a_valid_path_segment(name: str) -> None:
         "regime_transition_law",
         "probability",
         "gate",
-        "participation_predicate",
-        "participation_read_projection",
         "fallback_projection",
     ],
 )
@@ -308,7 +297,6 @@ def test_parameter_argument_name_must_be_a_valid_path_segment(
     "name",
     [
         "predicate",
-        "reads",
         "routes",
         "fallback",
         "solve",
@@ -342,10 +330,6 @@ def _gate_open(*, wage: ContinuousState, scale: float) -> BoolND:
     return wage >= scale
 
 
-def _participation_open(*, V_target: FloatND, scale: float) -> BoolND:
-    return V_target >= scale
-
-
 def _project_wage(*, wage: ContinuousState, scale: float) -> ContinuousState:
     return scale * wage
 
@@ -375,35 +359,6 @@ def _gated_edge_model(
     )
 
 
-def _participation_model(
-    *,
-    read_key: str = "outside_value",
-    predicate: UserFunction = _participation_open,
-    read_projection: UserFunction = _project_wage,
-) -> Model:
-    """Build a singleton source whose check into `target` reads two values."""
-    return _edge_model(
-        participation={
-            "target": ParticipationCheck(
-                predicate=predicate,
-                reads={
-                    "V_target": ParticipationRead(
-                        kind="IntegratedFull",
-                        regime="target",
-                        projection={"wage": _identity_wage},
-                    ),
-                    read_key: ParticipationRead(
-                        kind="IntegratedFull",
-                        regime="outside",
-                        projection={"wage": read_projection},
-                    ),
-                },
-                routes={"only": _outside_route(projection=_project_wage)},
-            )
-        },
-    )
-
-
 def _outside_route(*, projection: UserFunction) -> MemberRoute:
     return MemberRoute(
         fallback=ProjectedRegimeValue(regime="outside", projection={"wage": projection})
@@ -415,7 +370,6 @@ def _edge_model(
     utility: UserFunction = _wage_utility,
     probability: Callable[..., FloatND] = _probability_one,
     gates: dict[str, Gate] | None = None,
-    participation: dict[str, ParticipationCheck] | None = None,
 ) -> Model:
     source = UserRegime(
         states={"wage": _WAGE_GRID},
@@ -435,7 +389,6 @@ def _edge_model(
                 targets={"target": 0, "outside": 0},
                 law={"target": StochasticTransition(func=probability)},
                 gates=gates or {},
-                participation=participation or {},
             )
         },
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
@@ -488,14 +441,6 @@ _PARAMETER_CARRIERS: dict[
         lambda func: _gated_edge_model(probability=func),
     ),
     "gate": (_gate_open, lambda func: _gated_edge_model(gate=func)),
-    "participation_predicate": (
-        _participation_open,
-        lambda func: _participation_model(predicate=func),
-    ),
-    "participation_read_projection": (
-        _project_wage,
-        lambda func: _participation_model(read_projection=func),
-    ),
     "fallback_projection": (
         _project_wage,
         lambda func: _gated_edge_model(fallback_projection=func),

@@ -26,7 +26,6 @@ from typing import cast, no_type_check
 
 import jax.numpy as jnp
 from dags import get_annotations, get_free_arguments
-from dags.signature import rename_arguments
 
 from _lcm.dtypes import name_of
 from _lcm.gated_edge import GatedEdge
@@ -47,7 +46,6 @@ from lcm.exceptions import (
     RegimeInitializationError,
 )
 from lcm.grids import DiscreteGrid
-from lcm.participation import ParticipationCheck, ParticipationRead
 from lcm.phased import Phased
 from lcm.processes import JointNormalIIDProcess
 from lcm.regime import (
@@ -629,7 +627,7 @@ def _adapt_regime_law(
     value_grids_by_regime: Mapping[RegimeName, Mapping[StateOrActionName, AdapterGrid]],
     adapters: AdapterMemo,
 ) -> RegimeLaw:
-    """Adapt the source law and target-dated gate and participation callbacks."""
+    """Adapt the source law and target-dated gate callbacks."""
     transition = (
         law.transition
         if isinstance(law.transition, str)
@@ -651,131 +649,14 @@ def _adapt_regime_law(
         )
         for target, edge in law.gated_edges.items()
     }
-    participation = {
-        target: _adapt_participation(
-            declaration=declaration,
-            value_grids=value_grids_by_regime[target],
-            adapters=adapters,
-        )
-        for target, declaration in law.participation.items()
-    }
-    if (
-        transition is law.transition
-        and all(gated_edges[target] is edge for target, edge in law.gated_edges.items())
-        and all(
-            participation[target] is declaration
-            for target, declaration in law.participation.items()
-        )
+    if transition is law.transition and all(
+        gated_edges[target] is edge for target, edge in law.gated_edges.items()
     ):
         return law
     return dataclasses.replace(
         law,
         transition=transition,
         gated_edges=MappingProxyType(gated_edges),
-        participation=MappingProxyType(participation),
-    )
-
-
-@dataclass(frozen=True, kw_only=True, eq=False)
-class _AdaptedParticipationPredicate:
-    """Canonical predicate reader plus the private names of its declared reads.
-
-    The declaration keeps its public read keys. Only the callback's input channel is
-    renamed before value adaptation, and the participation check lowerer reconnects that
-    channel to its query operands without rebuilding the retained adapter.
-    """
-
-    function: UserFunction
-    read_aliases: MappingProxyType[str, str]
-
-    def __post_init__(self) -> None:
-        for name in ("__module__", "__name__", "__qualname__", "__doc__"):
-            value = getattr(self.function, name, None)
-            if value is not None:
-                object.__setattr__(self, name, value)
-        object.__setattr__(self, "__signature__", inspect.signature(self.function))
-        object.__setattr__(self, "__annotations__", get_annotations(self.function))
-        object.__setattr__(self, "__lcm_source__", self.function)
-
-    @no_type_check
-    def __call__(self, **kwargs: EconFunctionArg) -> ValueND:
-        return self.function(**kwargs)
-
-
-def _adapt_participation(
-    *,
-    declaration: ParticipationCheck,
-    value_grids: Mapping[StateOrActionName, AdapterGrid],
-    adapters: AdapterMemo,
-) -> ParticipationCheck:
-    """Read landing values and encode projected read and settlement states."""
-    predicate = declaration.predicate
-    # Keep explicit read operands separate from same-spelled physical inputs.
-    # Adapt the actual reader here, with the canonical bindings and shared memo,
-    # so process-code admission sees exactly the adapter the lowerer will use.
-    if any(
-        name in value_grids
-        or (
-            name.endswith(CODE_SUFFIX) and name.removesuffix(CODE_SUFFIX) in value_grids
-        )
-        for name in declaration.reads
-    ):
-        occupied = set(inspect.signature(predicate).parameters) | set(value_grids)
-        aliases = {}
-        for index, name in enumerate(declaration.reads):
-            alias = f"_lcm_participation_declared_read_{index}"
-            while alias in occupied:
-                alias += "_"
-            aliases[name] = alias
-            occupied.add(alias)
-        predicate = _AdaptedParticipationPredicate(
-            function=adapt_user_function(
-                func=rename_arguments(predicate, mapper=aliases),
-                value_grids=value_grids,
-                encode=None,
-                adapters=adapters,
-            ),
-            read_aliases=MappingProxyType(aliases),
-        )
-    else:
-        predicate = adapt_user_function(
-            func=declaration.predicate,
-            value_grids=value_grids,
-            encode=None,
-            adapters=adapters,
-        )
-    reads = {
-        name: cast(
-            "ParticipationRead",
-            _adapt_reference(
-                reference=read, value_grids=value_grids, adapters=adapters
-            ),
-        )
-        for name, read in declaration.reads.items()
-    }
-    fallbacks = {
-        name: _adapt_reference(
-            reference=route.fallback, value_grids=value_grids, adapters=adapters
-        )
-        for name, route in declaration.routes.items()
-    }
-    if (
-        predicate is declaration.predicate
-        and all(reads[name] is read for name, read in declaration.reads.items())
-        and all(
-            fallbacks[name] is route.fallback
-            for name, route in declaration.routes.items()
-        )
-    ):
-        return declaration
-    return dataclasses.replace(
-        declaration,
-        predicate=predicate,
-        reads=reads,
-        routes={
-            name: dataclasses.replace(route, fallback=fallbacks[name])
-            for name, route in declaration.routes.items()
-        },
     )
 
 

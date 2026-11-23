@@ -249,7 +249,7 @@ it:
 
 | Role                                                                                                                                    | Returns                                                        |
 | --------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
-| Constraint, gate, participation predicate, exit availability                                                                            | A Boolean, e.g. `wealth > 0` or `work == 1`                    |
+| Constraint, gate, exit availability                                                                                                     | A Boolean, e.g. `wealth > 0` or `work == 1`                    |
 | Law of a discrete state, regime selector                                                                                                | An integer code, or a Boolean for the codes 0 and 1            |
 | Utility, law of a continuous state, transition probability, joint-transition weight or output, exit utility adjustment, borrowing bound | A number: an integer or a float, read at the model's precision |
 
@@ -315,12 +315,9 @@ into each other. A formation by `Consent` is the exception: the formed couple ap
 its own rule for staying, and the outside values that rule compares are again problem
 values. A mover acts in the problem its move was priced at, the formed couple's
 Participating policy after consent and the destination's problem otherwise. A regime
-with an available exit that needs no consent, entered in one period both by consent or a
-participation check and by another exit, would act in two different problems; the model
-refuses it when it is built.
-
-A `ParticipationRead(kind="Participating")` of a regime with an exit compares the
-outside values of that exit the same way, as problem values.
+with an available exit that needs no consent, entered in one period both by consent and
+by another exit, would act in two different problems; the model refuses it when it is
+built.
 
 `Unilateral(renegotiate=Renegotiate(state="mu"))` first optimizes the Raw stay policy at
 every node of the ordered discrete state. It supports a collective pair: increasing node
@@ -438,81 +435,6 @@ then integrate each member's selected value. Stored values retain the member axi
 carry no current-shock axis. This also applies to collective regimes without exits.
 Collective EV1 tastes and custom source selectors combined with source EV1 tastes are
 explicitly refused.
-
-(api-participation-checks)=
-
-## Scheduled participation checks
-
-Attach `ParticipationCheck(predicate=..., routes=..., reads=..., observes=())` to an
-incoming `Transition(participation={target_name: ...})` in `Model(edges=...)`. It
-belongs to that incoming source, scheduled target, original source role and actual
-participation period. The scheduled transition produces the landing state before the
-comparison, and the final regime acts after it. Initial occupants and subjects arriving
-through another edge cannot borrow this decision or its fallback. A scheduled target
-cannot declare both a `Gate` and a `ParticipationCheck`.
-
-The check is the per-period limited-commitment participation constraint. It also
-re-checks a continuing household on its scheduled self-transition: on a couple → couple
-edge, a failed check is a divorce.
-
-`predicate` returns a scalar Boolean from the landed target's states and helpers,
-parameters, and the explicitly named `reads`. Declare every value operand, including
-`V_target`, with a `ParticipationRead`. `D_target` is refused; request typed policy
-support instead. The predicate's threshold, window or other comparison determines
-acceptance; it is not replaced by a maximization over the compared values. Acceptance
-also requires the target's Participating policy to have support. `observes` names the
-target physical shocks visible at this comparison.
-
-`routes` maps every original source member to a
-[`MemberRoute`](collective_regimes.md#api-member-route); a singleton has its single
-route. On acceptance, `target_member` selects the role in the scheduled target. On
-rejection, `fallback` names the destination, role and complete state projection from the
-landed target state. A collective destination requires its exact member name; a
-singleton has no member role. A `Phased(solve=..., simulate=...)` fallback prices the
-source decision using the solve settlement and routes simulation using the simulate
-settlement. The incoming source and role remain attached to this settlement, so another
-edge's fallback cannot replace it.
-
-Participation callbacks use the target's actual participation `period` and `age`. Their
-runtime parameters belong under `params["edges"][source][target]`: the predicate uses
-`["predicate"]`, read projections use `["reads"][read_name][state]`, and fallback
-projections use `["routes"][source_role]["fallback"]`, with a phase key for a phased
-fallback. Use `model.get_params_template()` for the complete paths. Queried regime
-functions and target helpers retain their own regime parameter namespaces; temporal
-values are selected for the participation date, rather than the incoming source's
-decision date.
-
-A source prices its next participation check exactly at every landing. A participation
-check at a later date is taken again at each landing from a stored per-period surface of
-its branches and operands, each interpolated between grid nodes: exact where landings
-fall on nodes, approximate between them; see
-[Participation checks over several periods](../user_guide/collective_regimes.md#participation-check-depth).
-
-(api-participation-reads)=
-
-### `ParticipationRead`
-
-`ParticipationRead(regime=..., projection=..., kind=..., member=None, field="value", observes=())`
-names the represented object supplied to the predicate. `projection` provides every
-state of the referenced regime from the landed target state, and `member` selects a
-collective reference's exact role. The `reads` mapping key is the argument name the
-predicate receives.
-
-- `kind="Raw"` reads the referenced regime's problem: its action problem without its
-  exit.
-- `kind="Participating"` reads the same problem with the referenced regime's exit
-  applied as a rule for staying, without the move; an exit by `Consent` is not applied.
-- `kind="IntegratedFull"` reads the regime's value: the stored, shock-integrated Full
-  value at the projected state, moves included.
-
-`Raw` and `Participating` reconstruct their canonical `GridSearch` action problems at
-the projected state, including the common action for a collective regime.
-`field="value"` reads the selected value; `field="support"` reads Boolean policy
-support. A read's `observes` adds the referenced physical shocks visible for this
-comparison to the decision's declared information. `IntegratedFull` exposes only
-`field="value"`, with empty `observes`; policy reconstruction, realized information and
-support are unavailable from it. `Participating` is slated for removal once a regime's
-value can be read at observed shocks.
 
 (api-extreme-value-taste-shocks)=
 

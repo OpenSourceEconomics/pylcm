@@ -105,11 +105,11 @@ def _simulate_and_observe(  # noqa: C901, PLR0915 - keep scoped observers at the
     *,
     monkeypatch: pytest.MonkeyPatch,
     max_compilation_workers: int,
-    participation: bool = False,
+    exits: bool = False,
 ) -> _Observation:
     """Simulate a fresh budgeted model, recording chunk planning's lowerings,
     compiles, published forward executables and plan."""
-    if participation:
+    if exits:
         model = household.get_model(
             n_periods=3,
             wealth_n_points=3,
@@ -227,9 +227,7 @@ def _simulate_and_observe(  # noqa: C901, PLR0915 - keep scoped observers at the
         self: SimulationRuntime, **call: Unpack[RuntimePreparation]
     ) -> CompiledSimulationProgram:
         entry = prepare_abstract(self, **call)
-        if planning[0] and call["program"].name.startswith(
-            ("simulate_exit_", "simulate_participation_entry:")
-        ):
+        if planning[0] and call["program"].name.startswith("simulate_exit_"):
             keys = [key for key, cached in self.cache.items() if cached is entry]
             assert len(keys) == 1
             assert dict(entry.widths) == dict(call["widths"])
@@ -240,9 +238,7 @@ def _simulate_and_observe(  # noqa: C901, PLR0915 - keep scoped observers at the
         self: ChunkProfileInventory, **call: Unpack[InventoryCompiled]
     ) -> ShapeDtypePytree:
         output = inventory_compiled(self, **call)
-        if planning[0] and call["name"].startswith(
-            ("core:exit_", "core:participation_entry:")
-        ):
+        if planning[0] and call["name"].startswith("core:exit_"):
             inventory_exits.append((id(call["executable"]), id(call["memory"])))
         return output
 
@@ -406,7 +402,7 @@ def exit_observed() -> dict[int, _Observation]:
             workers: _simulate_and_observe(
                 monkeypatch=monkeypatch,
                 max_compilation_workers=workers,
-                participation=True,
+                exits=True,
             )
             for workers in _WORKERS
         }
@@ -417,13 +413,9 @@ def exit_observed() -> dict[int, _Observation]:
 def test_exit_programs_compile_off_the_calling_thread(
     *, exit_observed: dict[int, _Observation], workers: int
 ) -> None:
-    """Full, incoming and revealed decisions compile without blocking lowering."""
+    """Full and revealed decisions compile without blocking lowering."""
     observation = exit_observed[workers]
-    expected = {
-        "simulate_exit_full",
-        "simulate_participation_entry",
-        "simulate_exit_participating",
-    }
+    expected = {"simulate_exit_full", "simulate_exit_participating"}
     exits = [
         (name, on_caller, text)
         for name, on_caller, text in observation["program_compiles"]
@@ -455,11 +447,7 @@ def test_exit_profiles_reuse_the_exact_published_executable_and_report(
     assert Counter(observed["inventory_exits"]) == Counter(
         (executable, memory) for _, executable, memory in observed["prepared"]
     )
-    assert families == {
-        "simulate_exit_full",
-        "simulate_exit_participating",
-        "simulate_participation_entry",
-    }
+    assert families == {"simulate_exit_full", "simulate_exit_participating"}
 
 
 @pytest.mark.slow
@@ -576,7 +564,7 @@ def test_exit_frontiers_refuse_compile_and_report_failures(  # noqa: C901, PLR09
                 _ExitCompileError, match="exit frontier compile failed"
             ) as raised:
                 _simulate_and_observe(
-                    monkeypatch=patch, max_compilation_workers=1, participation=True
+                    monkeypatch=patch, max_compilation_workers=1, exits=True
                 )
             assert any(
                 "while compiling" in note and "exit_full" in note
@@ -587,7 +575,7 @@ def test_exit_frontiers_refuse_compile_and_report_failures(  # noqa: C901, PLR09
                 ExecutionPlanningError, match="not an allocation record"
             ):
                 _simulate_and_observe(
-                    monkeypatch=patch, max_compilation_workers=1, participation=True
+                    monkeypatch=patch, max_compilation_workers=1, exits=True
                 )
             assert refused
             assert not refused.intersection(cached)

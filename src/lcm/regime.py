@@ -356,9 +356,7 @@ class Regime:
     shocks, nonlinear certainty equivalents, and non-GridSearch solvers on a
     collective regime raise `NotImplementedError`.
 
-    A participation `Exit` prices the current outside alternatives; a landing
-    `ParticipationCheck` selects its route's fallback when the destination has
-    no participating policy.
+    A participation `Exit` prices the current outside alternatives.
 
     Two things to know before simulating one:
 

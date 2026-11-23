@@ -135,8 +135,7 @@ class RegimeSchedules:
         PhaseKey, MappingProxyType[RegimeName, MappingProxyType[int, tuple[str, ...]]]
     ] = MappingProxyType({})
     """Per phase, per source regime, the regimes whose next-age value a gated
-    edge or participation reads at each period: the solve fallbacks in the solution
-    phase, plus each participation check's integrated reads."""
+    edge reads at each period: the solve fallbacks in the solution phase."""
 
     landings_by_regime: MappingProxyType[
         RegimeName, MappingProxyType[int, tuple[str, ...]]
@@ -167,14 +166,6 @@ class RegimeSchedules:
 
     exit_acting_nodes: frozenset[tuple[int, RegimeName]] = frozenset()
     """Potential final regimes acting once after an original subject exits."""
-
-    participation_queries_by_phase: MappingProxyType[
-        PhaseKey,
-        MappingProxyType[
-            RegimeName, MappingProxyType[int, tuple[tuple[str, str], ...]]
-        ],
-    ] = MappingProxyType({})
-    """Next-date typed contexts demanded by each scheduled incoming edge."""
 
     @property
     def query_periods_by_phase(
@@ -345,9 +336,6 @@ def resolve_regime_schedules(
         PhaseKey, dict[RegimeName, MappingProxyType[int, tuple[str, ...]]]
     ] = {phase: {} for phase in _PHASES}
     landings: dict[RegimeName, MappingProxyType[int, tuple[str, ...]]] = {}
-    participation_queries: dict[
-        PhaseKey, dict[RegimeName, MappingProxyType[int, tuple[tuple[str, str], ...]]]
-    ] = {phase: {} for phase in _PHASES}
     law_by_period_by_regime: dict[RegimeName, MappingProxyType[int, CaseLaw]] = {}
     for name, regime_law in laws.items():
         transition = regime_law.transition
@@ -403,82 +391,21 @@ def resolve_regime_schedules(
                     for period, law in side_by_period.items()
                 }
             )
-            participation_queries[phase][name] = MappingProxyType(
-                {
-                    period: tuple(
-                        dict.fromkeys(
-                            query
-                            for target in targets
-                            if (decision := regime_law.participation.get(target))
-                            is not None
-                            for query in (
-                                (target, "Participating"),
-                                *(
-                                    (read.regime, read.kind)
-                                    for read in decision.reads.values()
-                                    if read.kind != "IntegratedFull"
-                                ),
-                                *(
-                                    (
-                                        route.solve_fallback.regime
-                                        if phase == "solution"
-                                        else route.simulate_fallback.regime,
-                                        "Participating",
-                                    )
-                                    for route in decision.routes.values()
-                                ),
-                            )
-                        )
-                    )
-                    for period, targets in support[phase][name].items()
-                }
-            )
         gated = regime_law.gated_edges
         solution_support = support["solution"][name]
         simulation_support = support["simulation"][name]
         value_reads["solution"][name] = MappingProxyType(
             {
-                period: (
-                    *_fallbacks(gated_edges=gated, targets=targets, side="solve"),
-                    *(
-                        read.regime
-                        for target in targets
-                        if (decision := regime_law.participation.get(target))
-                        is not None
-                        for read in decision.reads.values()
-                        if read.kind == "IntegratedFull"
-                    ),
-                )
+                period: _fallbacks(gated_edges=gated, targets=targets, side="solve")
                 for period, targets in solution_support.items()
             }
         )
         value_reads["simulation"][name] = MappingProxyType(
-            {
-                period: (
-                    *(
-                        read.regime
-                        for target in targets
-                        if (decision := regime_law.participation.get(target))
-                        is not None
-                        for read in decision.reads.values()
-                        if read.kind == "IntegratedFull"
-                    ),
-                )
-                for period, targets in simulation_support.items()
-            }
+            dict.fromkeys(simulation_support, ())
         )
         landings[name] = MappingProxyType(
             {
-                period: (
-                    *_fallbacks(gated_edges=gated, targets=targets, side="simulate"),
-                    *(
-                        route.simulate_fallback.regime
-                        for target in targets
-                        if (decision := regime_law.participation.get(target))
-                        is not None
-                        for route in decision.routes.values()
-                    ),
-                )
+                period: _fallbacks(gated_edges=gated, targets=targets, side="simulate")
                 for period, targets in simulation_support.items()
             }
         )
@@ -499,12 +426,6 @@ def resolve_regime_schedules(
         law_by_period_by_regime=MappingProxyType(law_by_period_by_regime),
         gated_edges_by_regime=MappingProxyType(
             {name: regime_law.gated_edges for name, regime_law in laws.items()}
-        ),
-        participation_queries_by_phase=MappingProxyType(
-            {
-                phase: MappingProxyType(by_regime)
-                for phase, by_regime in participation_queries.items()
-            }
         ),
     )
 
@@ -759,21 +680,9 @@ def resolve_demand(  # noqa: C901 - shared fixed point for occupancy, values and
                 )
             queried[phase].add((period, name, kind))
             query_work.extend(
-                (
-                    *(
-                        ("solution", period + 1, target, target_kind)
-                        for target, target_kind in (
-                            schedules.participation_queries_by_phase.get("solution", {})
-                            .get(name, {})
-                            .get(period, ())
-                        )
-                    ),
-                    *(
-                        (phase, period, target, target_kind)
-                        for target, target_kind in policy_reads_by_phase.get(
-                            phase, {}
-                        ).get((period, name, kind), ())
-                    ),
+                (phase, period, target, target_kind)
+                for target, target_kind in policy_reads_by_phase.get(phase, {}).get(
+                    (period, name, kind), ()
                 )
             )
             # Actual Q/F reads next-period Full continuation, even when no
@@ -810,21 +719,9 @@ def resolve_demand(  # noqa: C901 - shared fixed point for occupancy, values and
             )
         done.add((period, name))
         query_work.extend(
-            (
-                *(
-                    (required_phase, period + 1, target, target_kind)
-                    for target, target_kind in (
-                        schedules.participation_queries_by_phase.get(required_phase, {})
-                        .get(name, {})
-                        .get(period, ())
-                    )
-                ),
-                *(
-                    (required_phase, period, target, kind)
-                    for target, kind in policy_reads_by_phase.get(
-                        required_phase, {}
-                    ).get((period, name, "Full"), ())
-                ),
+            (required_phase, period, target, kind)
+            for target, kind in policy_reads_by_phase.get(required_phase, {}).get(
+                (period, name, "Full"), ()
             )
         )
         if physical:
@@ -957,13 +854,9 @@ def _read_kinds(
     pair: str,
     here: str,
 ) -> dict[RegimeName, str]:
-    """Name what each stored value read of one pair is, for a missing-law error.
-
-    A read that is neither a gated fallback nor a target is a participation check's
-    IntegratedFull read.
-    """
+    """Name what each stored value read of one pair is, for a missing-law error."""
     return {
-        **dict.fromkeys(reads, f"a participation read of {pair}"),
+        **dict.fromkeys(reads, f"a value read of {pair}"),
         **dict.fromkeys(
             _fallbacks(gated_edges=gated, targets=targets, side="solve"),
             f"a fallback of {pair}",

@@ -33,7 +33,6 @@ from lcm.typing import (
     UserInitialConditions,
     UserParams,
 )
-from tests.test_demand_worklists import GatedId, _gated_model
 
 _DISCOUNT = 0.5
 
@@ -148,21 +147,6 @@ def _multi_root_model(*, budgeted: bool) -> Model:
                 "realized": {"end": 1},
             },
         ),
-    )
-
-
-def _gated_value_only_model(*, budgeted: bool) -> Model:
-    """A participation read is solved by value only; the solve fallback is queried."""
-    model = _gated_model(phased_fallback=True)
-    if not budgeted:
-        return model
-    return Model(
-        edges=model.edges,
-        regimes=model.user_regimes,
-        ages=model.ages,
-        regime_id_class=GatedId,
-        initial_nodes={40: "source"},
-        execution_config=_config(budgeted=True),
     )
 
 
@@ -298,21 +282,6 @@ _CASES: Mapping[str, _ForwardCase] = {
         # V_source(w) = w + (1 + 1.5 w) / 2 at w = 0 and w = 1.
         "source_values": (0.5, 2.25),
         "paths": {"realized": 1, "end": 2},
-    },
-    "gated_value_only_references": {
-        "build": _gated_value_only_model,
-        "starts": ((40.0, "source"),),
-        "params": {"discount_factor": 0.9},
-        "forward": {(0, "source"), (1, "target"), (1, "fallback")},
-        # The participation check prices the `priced` solve leg by a query, not a stored
-        # value.
-        "value_only": {(1, "reference")},
-        # It is terminal and reads its utility `w`.
-        "value_only_values": {(1, "reference"): (0.0, 1.0)},
-        "source_values": None,
-        # The participation check compares equal values, so every subject takes the
-        # fallback.
-        "paths": {"source": 0, "fallback": 1},
     },
 }
 

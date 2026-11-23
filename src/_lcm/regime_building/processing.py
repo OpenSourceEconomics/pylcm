@@ -952,7 +952,6 @@ def prepare_regime_builder(
                     regime_name
                 ],
                 edge_params_template=regime_to_edge_params_template[regime_name],
-                participation_targets=frozenset(laws[regime_name].participation),
             )
             for regime_name in user_regimes
         }
@@ -1730,21 +1729,13 @@ class _CanonicalRegimeBuilder:
         solution_builds: Mapping[RegimeName, _SolutionBuild],
         simulation_builds: Mapping[RegimeName, _SimulationBuild],
     ) -> MappingProxyType[RegimeName, Regime]:
-        """Install the original identity/read/participation/exit declarations."""
+        """Install the original identity/read/exit declarations."""
         declared = _with_declared_continuation_reads(
             canonical_regimes=canonical_regimes, solution_builds=solution_builds
         )
         solution_contexts = {
             name: build.context for name, build in solution_builds.items()
         }
-        if any(law.participation for law in self.laws.values()):
-            from _lcm.participation_queries import (  # noqa: PLC0415 - all canonical action contexts must exist first
-                install_participation_source_queries,
-            )
-
-            solution_contexts = install_participation_source_queries(
-                canonical_regimes=declared, contexts=solution_contexts
-            )
         if not any(
             regime.exit is not None
             or (
@@ -1752,8 +1743,6 @@ class _CanonicalRegimeBuilder:
                 and any(solution_builds[name].context.current_iid_plans.values())
             )
             for name, regime in self.representative_user_regimes.items()
-        ) and not any(
-            context.participation_queries for context in solution_contexts.values()
         ):
             return declared
         from _lcm.exit_queries import install_exit_policy_queries  # noqa: PLC0415
@@ -1763,14 +1752,6 @@ class _CanonicalRegimeBuilder:
             contexts=solution_contexts,
             value_periods_by_regime=self.value_periods_by_regime,
         )
-        if any(context.participation_queries for context in solution_contexts.values()):
-            from _lcm.participation_publication import (  # noqa: PLC0415 - requires complete canonical query graphs
-                install_participation_publishers,
-            )
-
-            declared = install_participation_publishers(
-                canonical_regimes=declared, contexts=solution_contexts
-            )
         from _lcm.simulation.exits import (  # noqa: PLC0415
             install_exit_simulation_queries,
         )
@@ -1778,14 +1759,6 @@ class _CanonicalRegimeBuilder:
         simulation_contexts = {
             name: build.context for name, build in simulation_builds.items()
         }
-        if any(context.participation_queries for context in solution_contexts.values()):
-            from _lcm.participation_queries import (  # noqa: PLC0415 - both actual flow and pricing contexts exist
-                install_participation_replay_sources,
-            )
-
-            simulation_contexts = install_participation_replay_sources(
-                contexts=simulation_contexts, pricing_contexts=solution_contexts
-            )
         return install_exit_simulation_queries(
             canonical_regimes=declared,
             contexts=simulation_contexts,
@@ -3202,7 +3175,7 @@ def _fail_if_collective_regime_targets_unsupported(
     source expects every target leaf to carry the identical trailing
     member axis, and a singleton source expects none. Per-member
     routing across member layouts (dissolution into `single_f`/`single_m`,
-    marriage formation) requires a declared gated edge or typed participation check.
+    marriage formation) requires a declared gated edge.
     Each returns a continuation in the original source's member layout.
     An ordinary non-terminal transition whose reachable target declares a
     different `member_axis` tuple is rejected here. Both-`None` (the singleton default)
@@ -3228,14 +3201,11 @@ def _fail_if_collective_regime_targets_unsupported(
                 continue
             if user_regime.member_axis is None and target_regime.member_axis is None:
                 continue
-            # Declared gates and participation checks return source-owned continuation
-            # values through explicit member routes. Ordinary transitions still
-            # require identical layouts; declaration of another target grants
-            # no exemption to this one.
-            if (
-                target_regime_name in laws[regime_name].gated_edges
-                or target_regime_name in laws[regime_name].participation
-            ):
+            # Declared gates return source-owned continuation values through
+            # explicit member routes. Ordinary transitions still require
+            # identical layouts; declaration of another target grants no
+            # exemption to this one.
+            if target_regime_name in laws[regime_name].gated_edges:
                 continue
             if user_regime.member_axis != target_regime.member_axis:
                 msg = (
@@ -3248,9 +3218,8 @@ def _fail_if_collective_regime_targets_unsupported(
                     "regime cannot target a collective one). A singleton source "
                     "names the role it enters this target in with "
                     "`Transition(roles=...)`; other per-member routing "
-                    "across these layouts requires a `Gate` or a "
-                    "`ParticipationCheck` with explicit member routes for "
-                    "this target."
+                    "across these layouts requires a `Gate` with explicit "
+                    "member routes for this target."
                 )
                 raise NotImplementedError(msg)
 
@@ -3348,64 +3317,6 @@ def _fail_if_gated_edges_invalid(
                 prefix=prefix,
                 edge=edge,
                 target=representative_user_regimes[target_name],
-            )
-        _fail_if_participation_invalid(
-            regime_name=regime_name,
-            laws=laws,
-            user_regimes=user_regimes,
-            representative_user_regimes=representative_user_regimes,
-            regime_to_v_interpolation_info=regime_to_v_interpolation_info,
-        )
-
-
-def _fail_if_participation_invalid(
-    *,
-    regime_name: RegimeName,
-    laws: RegimeLaws,
-    user_regimes: Mapping[RegimeName, UserRegime],
-    representative_user_regimes: Mapping[RegimeName, FinalizedUserRegime],
-    regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
-) -> None:
-    """Validate one source's participation fallbacks and reads like a gated edge's.
-
-    A participation check's fallbacks are the same consumer as a gated edge's leg
-    fallbacks, and its reads project from the same target grid; both owe the
-    same coverage.
-
-    Raises:
-        ModelInitializationError: On the first violated declaration.
-    """
-    for target_name, decision in laws[regime_name].participation.items():
-        prefix = f"Regime {regime_name!r}, participation check into {target_name!r}: "
-        for route_name, route in decision.routes.items():
-            phases: tuple[
-                tuple[Literal["solve", "simulate"], ProjectedRegimeValue], ...
-            ] = (
-                (
-                    ("solve", route.solve_fallback),
-                    ("simulate", route.simulate_fallback),
-                )
-                if route.fallback_is_phased
-                else (("simulate", route.solve_fallback),)
-            )
-            for phase, fallback in phases:
-                label = f"({phase}) " if route.fallback_is_phased else ""
-                _fail_if_ref_invalid(
-                    prefix=f"{prefix}route '{route_name}': fallback {label}",
-                    ref=fallback,
-                    user_regimes=user_regimes,
-                    representative_user_regimes=representative_user_regimes,
-                    regime_to_v_interpolation_info=regime_to_v_interpolation_info,
-                    projection_phase=phase,
-                )
-        for read_name, read in decision.reads.items():
-            _fail_if_ref_invalid(
-                prefix=f"{prefix}reads['{read_name}'] ",
-                ref=read,
-                user_regimes=user_regimes,
-                representative_user_regimes=representative_user_regimes,
-                regime_to_v_interpolation_info=regime_to_v_interpolation_info,
-                projection_phase="solve",
             )
 
 
@@ -3625,15 +3536,16 @@ def _fail_if_ref_invalid(
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     projection_phase: Literal["solve", "simulate"],
 ) -> None:
-    """Reject an edge fallback / participation read with an invalid endpoint.
+    """Reject an edge fallback with an invalid endpoint.
 
     `projection_phase` says which of the reference regime's state sets the
     projection owes a coordinate function for, and the two consumers of a
     `ProjectedRegimeValue` answer that differently:
 
-    - `"solve"` — a participation read only reads the reference regime's value
-      function, whose axes are that regime's solve states. A coordinate on a
-      state the solve grid has no axis for would have nothing to index.
+    - `"solve"` — the solve side of a `Phased` fallback only reads the reference
+      regime's value function, whose axes are that regime's solve states. A
+      coordinate on a state the solve grid has no axis for would have nothing to
+      index.
     - `"simulate"` — a LEG FALLBACK additionally writes the dissolved
       member's next-period row into the fallback regime, and forward
       simulation carries every one of that regime's simulate states per
@@ -4686,7 +4598,6 @@ def _prepare_numerical_solution_phase(  # noqa: PLR0915 - native route admission
         regime_params_template=regime_params_template,
         granular_param_expansions=granular_param_expansions,
         edge_params_template=edge_params_template,
-        participation_targets=frozenset(laws[regime_name].participation),
     )
 
     routing_functions, routing_constraints = _canonical_constraint_routing_inputs(
@@ -4877,7 +4788,6 @@ def _prepare_numerical_solution_phase(  # noqa: PLR0915 - native route admission
                 solver=solver,
                 state_grids=state_grids[regime_name],
                 action_names=state_action_space.action_names,
-                law=laws[regime_name],
                 counts_raise_landings=counts_raise_landings,
                 current_values_on_nodes=True,
                 current_shock_names=_current_shock_names(
@@ -6005,7 +5915,6 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
         regime_params_template=regime_params_template,
         granular_param_expansions=granular_param_expansions,
         edge_params_template=edge_params_template,
-        participation_targets=frozenset(law.participation),
     )
 
     routing = _route_constraints(
@@ -6285,7 +6194,6 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
                 solver=solver,
                 state_grids=state_grids[regime_name],
                 action_names=state_action_space.action_names,
-                law=law,
                 counts_raise_landings=_counts_raise_landings(
                     gated_continuations=gated_continuations
                 ),
@@ -8286,7 +8194,6 @@ def _engine_flat_param_names(
     regime_params_template: RegimeParamsTemplate,
     granular_param_expansions: MappingProxyType[FunctionName, tuple[str, ...]],
     edge_params_template: EdgeParamsTemplate,
-    participation_targets: frozenset[RegimeName],
 ) -> frozenset[str]:
     """Return the regime's flat param names in the engine's binding vocabulary.
 
@@ -8294,10 +8201,8 @@ def _engine_flat_param_names(
     by their per-target spellings (`<target>__<law>__<param>`); everything
     else passes through unchanged. A source's kernels evaluate its
     regime-transition law, so its law's edge slots join the vocabulary under
-    their `flat_params["edges"][source]` keys. Declared participation predicate and
-    projection slots join them: native participation queries read these source-owned
-    edge parameters at their actual destination date. Legacy Gate slots stay
-    excluded because their fold binds them separately on the target's grid.
+    their `flat_params["edges"][source]` keys. Gate slots stay excluded because
+    their fold binds them separately on the target's grid.
     """
     names: set[str] = set()
     for name in get_flat_param_names(regime_params_template):
@@ -8309,15 +8214,8 @@ def _engine_flat_param_names(
             )
         else:
             names.add(name)
-    return (
-        frozenset(names)
-        | _law_param_names(edge_params_template=edge_params_template)
-        | frozenset(
-            name
-            for name in get_flat_param_names(edge_params_template)
-            if is_gated_cell_slot(name)
-            and tree_path_from_qname(name)[0] in participation_targets
-        )
+    return frozenset(names) | _law_param_names(
+        edge_params_template=edge_params_template
     )
 
 
@@ -9867,7 +9765,6 @@ def _lottery_contraction_source(
     solver: Solver,
     state_grids: MappingProxyType[StateName, Grid],
     action_names: tuple[ActionName, ...],
-    law: RegimeLaw,
     counts_raise_landings: bool,
     current_values_on_nodes: bool,
     current_shock_names: frozenset[ReferenceName],
@@ -9887,7 +9784,6 @@ def _lottery_contraction_source(
     return LotteryContractionSource(
         state_grids=state_grids,
         action_names=frozenset(action_names),
-        rebound_targets=frozenset(law.participation),
         current_values_on_nodes=current_values_on_nodes,
         current_shock_names=current_shock_names,
     )

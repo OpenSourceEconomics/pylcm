@@ -31,7 +31,6 @@ from _lcm.time import ModelTime, TimeAxis, coordinate_kind
 from _lcm.typing import EconFunctionArg, PytreeValue, StateName
 from lcm.collective import Gate
 from lcm.exceptions import RegimeInitializationError
-from lcm.participation import ParticipationCheck
 from lcm.phased import Phased
 from lcm.typing import (
     AgeLabel,
@@ -252,11 +251,6 @@ class Transition:
     )
     """One `Gate` per value-dependent destination, keyed by that destination."""
 
-    participation: Mapping[RegimeName, ParticipationCheck] = field(
-        default_factory=lambda: MappingProxyType({})
-    )
-    """Typed participation checks attached to actual scheduled incoming edges."""
-
     roles: Mapping[RegimeName, str] = field(
         default_factory=lambda: MappingProxyType({})
     )
@@ -270,7 +264,7 @@ class Transition:
     phases. A row landing where the target has no feasible action raises
     `NoFeasibleActionError`, as on any plain edge.
 
-    A target takes a role, a `Gate` or a `ParticipationCheck`, never two of them.
+    A target takes a role or a `Gate`, never both.
     """
 
     def __post_init__(self) -> None:
@@ -297,15 +291,7 @@ class Transition:
             object.__setattr__(self, "targets", MappingProxyType(dict(self.targets)))
         object.__setattr__(self, "law", snapshot_transition_containers(self.law))
         object.__setattr__(self, "gates", MappingProxyType(dict(self.gates)))
-        object.__setattr__(
-            self, "participation", MappingProxyType(dict(self.participation))
-        )
         object.__setattr__(self, "roles", MappingProxyType(dict(self.roles)))
-        if self.gates.keys() & self.participation.keys():
-            raise RegimeInitializationError(
-                "A scheduled target cannot declare both a Gate and a "
-                "ParticipationCheck."
-            )
 
 
 @overload

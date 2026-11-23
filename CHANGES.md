@@ -14,7 +14,7 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   marker: equal to `members` for a household and `None` otherwise.
 - Renamed: `Regime.stakeholders` to `Regime.member_axis`, `StakeholderRoute` to
   `MemberRoute`, its `target_stakeholder` to `target_member`, the `stakeholder` field of
-  `ProjectedRegimeValue` and `ParticipationRead` to `member`,
+  `ProjectedRegimeValue` to `member`,
   `Model.stakeholder_names_to_ids` to `Model.member_names_to_ids`, the initial condition
   and published column `own_stakeholder` to `own_member`, and the solver API's
   `AxisRole.STAKEHOLDER` (axis `"stakeholder"`) to `AxisRole.MEMBER` (axis `"member"`).
@@ -36,6 +36,27 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 - Values, model fingerprints and saved results of models without a
   `ValueDependentConstraint` are unchanged.
 - The `ReferenceChainSolve` benchmark is removed with the feature it measured.
+
+### `ParticipationCheck` is removed
+
+- `ParticipationCheck`, `ParticipationRead` and `Transition(participation=...)` are gone,
+  with no replacement under those names. A move decided by comparing values is an `Exit`
+  of the regime that decides:
+  - formation is an `Exit` of the single's regime toward the household, with
+    `rule=Consent(counterparty=Counterparty(...))`: the single moves when both she and the
+    counterparty, read at her projected state, prefer the household;
+  - dissolution is the household's own `Exit`, with `rule=Unilateral(...)` or
+    `rule=MutualConsent(...)`;
+  - a move that depends only on states, or on nothing, is a `Gate`.
+- These checks can no longer be written: a value compared with a threshold, a parameter
+  or a third regime's value; a comparison between the members of one household; and a
+  read of next period's integrated value.
+- `lcm_examples.collective_household` forms couples with `Consent` and dissolves them
+  with the couple's `Unilateral` exit; its values change. Values, model fingerprints and
+  saved results of models without a participation check are unchanged. A saved solution
+  that holds participation surfaces no longer loads; solve the model again.
+- The `bench_collective_household` benchmarks measure the new example; their earlier
+  history measured the participation-check form.
 
 ### `GridSearch(lottery_contraction=True)` contracts in exits and collective regimes
 
@@ -100,7 +121,7 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   identically to it, and refuses a landing without a feasible action with
   `NoFeasibleActionError`, as a plain edge does. A role on a non-collective target, an
   unknown role, a role on a collective source, a role on a target the transition never
-  reaches, and a role beside a gate or participation check on the same target raise
+  reaches, and a role beside a gate on the same target raise
   `ModelInitializationError`. See
   [Regime transitions](docs/reference/transitions.md#api-regime-transitions).
 - Two routes of one gate may share a fallback regime when, in each phase, they name the
@@ -133,8 +154,7 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   solves on several devices, with stored and with point reads, as on one device. In
   an exit period each of the reader's devices computes the whole grid of that state
   and holds every next-period value that carries it whole, then keeps its own slice
-  of the reader's value; other periods still compute only each device's slice. A
-  participation check on such a state is still refused.
+  of the reader's value; other periods still compute only each device's slice.
 - A budgeted simulation of a regime with a current-period exit and a gated edge builds
   when the gate's fallback regime declares its states in an order other than the sorted
   one.
@@ -216,10 +236,9 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 - Each role's returned dtype is checked when the function is first evaluated in
   `solve()`, and a mismatch raises the new `InvalidFunctionOutputError`, naming the
   function:
-  - constraints, gates, participation predicates and exit availability return a
-    Boolean. An integer `0`/`1`, which gates,
-    participation predicates and exit availability accepted before, is refused; write
-    the comparison, e.g. `work == 1`;
+  - constraints, gates and exit availability return a Boolean. An integer `0`/`1`, which
+    gates and exit availability accepted before, is refused; write the comparison, e.g.
+    `work == 1`;
   - laws of discrete states, deterministic regime selectors and projections onto a
     discrete state return an integer code, or a Boolean for the codes 0 and 1. A float
     is refused rather than truncated onto a code;
@@ -375,19 +394,6 @@ unchanged. The solvers keep the derivative rules they use themselves.
   set it since `fold=` was removed, so it was always empty. A custom solver that read it
   must drop the read.
 
-### Arrival decisions are participation checks
-
-- Breaking API: `lcm.ArrivalDecision` is renamed `lcm.ParticipationCheck`,
-  `lcm.ArrivalRead` is `lcm.ParticipationRead`, and `Transition(arrivals=...)` is
-  `Transition(participation=...)`. The construct also re-checks continuing couples
-  (couple → couple, where failure means divorce); it is the per-period limited-commitment
-  participation constraint. There are no aliases; see
-  [Arrival → participation check](docs/user_guide/migrating_dated_regimes.md#arrival-participation-check).
-- The read-projection parameter path `params["edges"][source][target]["references"]`
-  is now `["reads"]`, named after `ParticipationCheck.reads`.
-- `SOLUTION_FORMAT_VERSION` is 3: archives store participation surfaces under renamed
-  manifest keys, and version-2 archives no longer load.
-
 ### EGM regimes refuse fixed-node processes entering utility
 
 - An endogenous-grid regime (`DCEGM`, `NBEGM`, `NEGM`, `NNBEGM`) whose `utility` reads
@@ -446,8 +452,7 @@ unchanged. The solvers keep the derivative rules they use themselves.
 - A `Gate` predicate naming `V_target`, `V_target_<s>` or `D_target` raises the new
   `lcm.exceptions.GateReadsValueError` when the gate is declared, and
   `Gate(references=...)` raises `TypeError`. Declare a value comparison made in the
-  current period as an `Exit` in `Regime(exit=...)`, and one made on landing as a
-  `ParticipationCheck` with named `ParticipationRead`s in `Transition(participation=...)`; see
+  current period as an `Exit` in `Regime(exit=...)`; see
   [Gates route on states only](docs/user_guide/migrating_dated_regimes.md#gates-route-on-states-only).
 - `solve()` no longer publishes a `DISSOLUTION_FLAG` replay artifact, and
   `simulate(solution=...)` reads none. A household landing in a gated target cell where

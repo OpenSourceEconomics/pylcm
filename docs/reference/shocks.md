@@ -193,8 +193,6 @@ on movers. Source-only names keep their unqualified names. In dataframes, missin
 observations and later periods without that realization contain NaN. Discrete reports
 use the declared labels, or category codes with `use_categorical_codes=True`. Raw
 categorical report arrays retain their integer dtype and use `-1` for missing codes.
-Scheduled participation checks retain their actual observed entry-frame draws on
-fallback rows too; `source__<name>` refers to the actor evaluated by that current check.
 
 `shock_paths` supplies draws rather than recovering a missing observation. Tagged
 `BaseInnovations` hold the underlying innovation across a move; a state-dependent law
@@ -213,8 +211,7 @@ composed with ...") when a regime reading such a group also uses:
 - action partitions above one (`ExecutionConfig(action_partitions=...)`);
 - a `Decoupled` decision;
 - invariant state blocks (`ExecutionConfig(invariant_block_widths=...)`);
-- a gated value channel: gated edges out of or into the regime, or participation reads
-  of it;
+- a gated value channel: gated edges out of or into the regime;
 - a sharded discrete state whose law is the identity (a co-mapped state).
 
 `Model.lookup_policy` raises `UnsupportedOperationError` for such a regime: a current

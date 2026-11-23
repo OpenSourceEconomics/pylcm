@@ -1304,20 +1304,14 @@ def _wealth_utility(wealth: ContinuousState) -> FloatND:
     return wealth
 
 
-def _couple_is_better(*, V_target_f: FloatND, V_target_m: FloatND) -> BoolND:
-    return V_target_f >= V_target_m
-
-
-def test_a_typed_participation_source_refuses_unrepresented_decoupled_selection() -> (
-    None
-):
-    """A native source query must not rank actions by the reported value."""
+def test_an_exit_source_refuses_unrepresented_decoupled_selection() -> None:
+    """A native exit query must not rank actions by the reported value."""
 
     @lcm.categorical(ordered=False)
-    class ParticipationRegimeId:
+    class ExitRegimeId:
         alive: ScalarInt
-        couple: ScalarInt
         alone: ScalarInt
+        end: ScalarInt
 
     def source_utility(*, wealth: ContinuousState, effort: ContinuousAction) -> FloatND:
         return wealth + effort
@@ -1340,56 +1334,33 @@ def test_a_typed_participation_source_refuses_unrepresented_decoupled_selection(
                     koopmans_aggregator=lcm.Decoupled(
                         objective=opposite_objective, value=additive
                     ),
-                ),
-                "couple": lcm.Regime(
-                    states={"wealth": wealth},
-                    functions={
-                        "utility": lcm.CollectiveUtility(
-                            utilities={"f": _wealth_utility, "m": _wealth_utility}
-                        )
-                    },
+                    exit=lcm.Exit(
+                        targets={
+                            "self": lcm.ExitTarget(
+                                regime="alone", projection={"wealth": _stay}
+                            )
+                        },
+                        rule=lcm.Unilateral(),
+                    ),
                 ),
                 "alone": lcm.Regime(
+                    states={"wealth": wealth},
+                    state_transitions={"wealth": _stay},
+                    functions={"utility": _wealth_utility},
+                    # Declared per regime, since `alive` declares its own.
+                    koopmans_aggregator=additive,
+                ),
+                "end": lcm.Regime(
                     states={"wealth": wealth},
                     functions={"utility": _wealth_utility},
                 ),
             },
             ages=lcm.AgeGrid(start=0, inclusive_stop=1, step="Y"),
-            regime_id_class=ParticipationRegimeId,
-            initial_nodes=lcm.InitialNodes(by_age={0.0: "alive"}),
+            regime_id_class=ExitRegimeId,
+            initial_nodes=lcm.InitialNodes(by_age={0.0: ("alive", "alone")}),
             edges={
-                "alive": lcm.Transition(
-                    law="couple",
-                    participation={
-                        "couple": lcm.ParticipationCheck(
-                            predicate=_couple_is_better,
-                            reads={
-                                "V_target_f": lcm.ParticipationRead(
-                                    regime="couple",
-                                    member="f",
-                                    kind="Raw",
-                                    field="value",
-                                    projection={"wealth": _stay},
-                                ),
-                                "V_target_m": lcm.ParticipationRead(
-                                    regime="couple",
-                                    member="m",
-                                    kind="Raw",
-                                    field="value",
-                                    projection={"wealth": _stay},
-                                ),
-                            },
-                            routes={
-                                "self": lcm.MemberRoute(
-                                    target_member="f",
-                                    fallback=lcm.ProjectedRegimeValue(
-                                        regime="alone", projection={"wealth": _stay}
-                                    ),
-                                )
-                            },
-                        )
-                    },
-                )
+                "alive": lcm.Transition(law="end"),
+                "alone": lcm.Transition(law="end"),
             },
             enable_jit=False,
         )

@@ -1473,8 +1473,8 @@ def acting_kinds(
                 f"Regime {owner!r} is entered in period {period} by moves priced at "
                 f"different problems ({readings}). A regime with an available exit "
                 "that needs no consent cannot be entered in one period both by "
-                "consent or a participation check, which read it with its exit, and "
-                "by another exit, which reads it without."
+                "consent, which reads it with its exit, and by another exit, which "
+                "reads it without."
             )
     return MappingProxyType(
         {
@@ -1944,13 +1944,9 @@ def install_exit_policy_queries(
                 and period not in value_periods_by_regime.get(owner, ())
             ):
                 continue
-            if (
-                context.participation_queries.get(period)
-                or context.user_regimes_at(period=period)[owner].exit is not None
-                or (
-                    context.member_axis is not None
-                    and context.current_iid_plans.get(period) is not None
-                )
+            if context.user_regimes_at(period=period)[owner].exit is not None or (
+                context.member_axis is not None
+                and context.current_iid_plans.get(period) is not None
             ):
                 kernel = lower_exit_queries(
                     contexts=contexts,
@@ -2105,7 +2101,6 @@ def _context_structure(*, node: QueryNode) -> _Structure:
         ),
         id(context.Q_and_F_functions[period]),
         id(declaration),
-        id(context.participation_queries.get(period)),
         declaration.exit is not None
         and _exit_is_statically_unavailable(
             predicate=declaration.exit.available, period=period, ages=context.ages

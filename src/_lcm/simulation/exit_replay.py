@@ -13,9 +13,6 @@ from _lcm.current_iid import CurrentIIDDrawFrame, CurrentIIDDrawPlan
 from _lcm.engine import Regime
 from _lcm.execution.core_program import CoreBuildContext
 from _lcm.execution.value_transfer import ValueArtifactKind
-from _lcm.grids.continuous import ContinuousGrid
-from _lcm.off_grid import count_off_grid, off_grid_message
-from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.regime_building.collective import NO_ROLE
 from _lcm.shock_registry import ShockBinding
 from _lcm.simulation.chunk_operations import regime_mask
@@ -31,24 +28,10 @@ from _lcm.simulation.exits import (
     ParticipatingExitOutput,
     PreparedExitDecision,
     apply_retained_state_updates,
-    participation_entry_routes,
     route_original_subjects,
 )
 from _lcm.simulation.memory import SimulationMemory, run_simulation_operation
-from _lcm.simulation.participation_routing import (
-    ordinary_exit_rows,
-    participation_frame_bases,
-    participation_route_codes,
-    pending_participation_rows,
-)
-from _lcm.simulation.participation_values import (
-    ParticipationSurfaces,
-    is_participation_surface,
-    participation_replay_context,
-    stored_participation_surface,
-)
 from _lcm.simulation.runtime import SimulationRuntime, execute_simulation_program
-from _lcm.simulation.shock_paths import fail_if_a_held_process_code_is_off_node
 from _lcm.simulation.subject_groups import SubjectRows
 from _lcm.simulation.taste_stream import prepare_decision_taste_keys
 from _lcm.simulation.unit_executor import SimulationUnitExecutor
@@ -58,10 +41,8 @@ from _lcm.time import TimeAxis
 from _lcm.typing import (
     ArrayTree,
     FlatParams,
-    ParticipationQueryArguments,
     PRNGKeyND,
     PytreeValue,
-    QAndFKwargs,
     RegimeNamesToIds,
     StatesPerRegime,
 )
@@ -69,11 +50,10 @@ from _lcm.utils.counts import sum_counts
 from lcm.exceptions import (
     ExecutionPlanningError,
     NoFeasibleActionError,
-    OffGridStateError,
     ShockDeclarationError,
 )
 from lcm.shocks import Discrete, ShockName
-from lcm.typing import BoolND, FloatND, IntND, RegimeName, StateName
+from lcm.typing import BoolND, FloatND, IntND, RegimeName
 
 if TYPE_CHECKING:
     from _lcm.policy_queries import PolicyAnswer, ScalarPolicyQueries
@@ -89,22 +69,19 @@ type _FinalDecisionOutput = tuple[
 ]
 
 
-def prepare_exit_period(  # noqa: C901, PLR0912, PLR0915 - retain replay's ordered owner walk
+def prepare_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner walk
     *,
     regimes: Mapping[RegimeName, Regime],
     period: int,
     states: StatesPerRegime,
     regime_ids: IntND,
     roles: IntND,
-    entered_through: IntND | None = None,
-    source_roles: IntND | None = None,
     regime_names_to_ids: RegimeNamesToIds,
     flat_params: FlatParams,
     ages: TimeAxis,
     values: Mapping[int, Mapping[RegimeName, FloatND]],
     owner: PeriodSimulationReads,
     key: PRNGKeyND,
-    surfaces: ParticipationSurfaces = MappingProxyType({}),
     subject_slice: slice | SubjectRows,
     original_n_subjects: int,
     memory: SimulationMemory | None,
@@ -112,9 +89,6 @@ def prepare_exit_period(  # noqa: C901, PLR0912, PLR0915 - retain replay's order
     taste_key: PRNGKeyND | None = None,
     taste_addresses: Mapping[
         tuple[int, RegimeName], tuple[int, ...]
-    ] = MappingProxyType({}),
-    process_code_reads: Mapping[
-        RegimeName, Mapping[StateName, _ContinuousStochasticProcess]
     ] = MappingProxyType({}),
 ) -> tuple[StatesPerRegime, IntND, IntND, Mapping[RegimeName, PreparedExitDecision]]:
     """Choose at entry, route simultaneously, reveal, then prepare final actions."""
@@ -172,23 +146,6 @@ def prepare_exit_period(  # noqa: C901, PLR0912, PLR0915 - retain replay's order
     adjustments = {}
     routes = []
     state_updates = []
-    pending_entries = {}
-    for name, regime in actors.items():
-        for source in regime.simulation.exit_queries[period].participation:
-            if entered_through is None or source_roles is None:
-                continue
-            pending_entries[name, source] = run_simulation_operation(
-                memory=memory,
-                function=pending_participation_rows,
-                arguments={
-                    "regime_ids": regime_ids,
-                    "entered_through": entered_through,
-                    "source_id": regime_names_to_ids[source],
-                    "target_id": regime_names_to_ids[name],
-                },
-                subject_arg_names=("regime_ids", "entered_through"),
-                subject_outputs=True,
-            )
     for name, regime in actors.items():
         plan = regime.simulation.exit_queries[period]
         if plan.full is None:
@@ -196,19 +153,6 @@ def prepare_exit_period(  # noqa: C901, PLR0912, PLR0915 - retain replay's order
         holders = regime_mask(
             regime_ids=regime_ids, regime_id=regime_names_to_ids[name], memory=memory
         )
-        incoming = tuple(
-            pending
-            for (target, _), pending in pending_entries.items()
-            if target == name
-        )
-        if incoming:
-            holders = run_simulation_operation(
-                memory=memory,
-                function=ordinary_exit_rows,
-                arguments={"holders": holders, "pending": incoming},
-                subject_arg_names=("holders", "pending"),
-                subject_outputs=True,
-            )
         arguments = _query_arguments(
             plan=plan,
             queries=plan.full,
@@ -217,7 +161,6 @@ def prepare_exit_period(  # noqa: C901, PLR0912, PLR0915 - retain replay's order
             period=period,
             ages=ages,
             values=values,
-            surfaces=surfaces,
             owner=owner,
             unit=name,
             family="exit_full",
@@ -296,129 +239,6 @@ def prepare_exit_period(  # noqa: C901, PLR0912, PLR0915 - retain replay's order
                     )
                 )
     decisions = {name: record[0][1] for name, record in originals.items()}
-    participation_frames = {}
-    participation_pending = {}
-    for (name, source), holders in pending_entries.items():
-        regime = actors[name]
-        plan = regime.simulation.exit_queries[period]
-        entry = plan.participation[source]
-        queries = entry.queries
-        family = f"participation_entry:{source}"
-        output = _dispatch(
-            regime=regime,
-            family=family,
-            period=period,
-            arguments={
-                "states": states[name],
-                "keys": keys,
-                "overrides": overrides,
-                "query_arguments": _query_arguments(
-                    plan=plan,
-                    queries=queries,
-                    states=states[name],
-                    flat_params=flat_params,
-                    period=period,
-                    ages=ages,
-                    values=values,
-                    surfaces=surfaces,
-                    owner=owner,
-                    unit=name,
-                    family=family,
-                    regime=regime,
-                ),
-                "_holders": holders,
-                "taste_keys": {queries.root: taste_banks[name]}
-                if name in taste_banks
-                else {},
-                "group_params": {
-                    group: dict(flat_params.get(group, {})) for group in bindings
-                },
-            },
-            n_subjects=regime_ids.size,
-            memory=memory,
-            roots=(
-                states,
-                regime_ids,
-                roles,
-                originals,
-                keys,
-                taste_banks,
-                projected,
-                adjustments,
-                overrides,
-                decisions,
-                participation_frames,
-            ),
-        )
-        answer, frame_payload, entry_projections, entry_adjustments = cast(
-            "OriginalExitOutput", output
-        )
-        frame = CurrentIIDDrawFrame(*frame_payload)
-        # Every fallback is priced for every arriving row, so a fallback regime
-        # reading a process's node position must receive a node from each one.
-        root = queries.definitions[queries.root]
-        for member, query in root.exit_targets.get(1, {}).items():
-            fallback = queries.definitions[query].read.target
-            _fail_if_a_fallback_lands_off_a_raise_grid(
-                fallback=regimes[fallback],
-                fallback_name=fallback,
-                regime_name=name,
-                period=period,
-                states=entry_projections[query],
-                holders=holders,
-            )
-            if process_code_reads.get(fallback):
-                fail_if_a_held_process_code_is_off_node(
-                    states=entry_projections[query],
-                    processes=process_code_reads[fallback],
-                    holders=holders,
-                    where=f"projected by route '{member}' of the participation check "
-                    f"from regime '{source}' into regime '{name}' onto its fallback "
-                    f"regime '{fallback}' at period {period}",
-                    memory=memory,
-                )
-        _check_answer(
-            queries=queries,
-            answer=answer,
-            frame=frame,
-            holders=holders,
-            memory=memory,
-            regime_name=name,
-            period=period,
-            states=states[name],
-        )
-        edge = f"{name}:{source}"
-        participation_frames[edge], participation_pending[edge] = frame, holders
-        next_code = (
-            min((-1, *(route.identifier for route in routes if route.source == name)))
-            - 1
-        )
-        entry_routes, codes, addresses = participation_entry_routes(
-            regimes=regimes,
-            target=name,
-            source=source,
-            entry=entry,
-            first_code=next_code,
-        )
-        routes.extend(entry_routes)
-        for address, query in addresses.items():
-            projected[address], adjustments[address] = (
-                entry_projections[query],
-                entry_adjustments[query],
-            )
-        decisions[name] = run_simulation_operation(
-            memory=memory,
-            function=participation_route_codes,
-            arguments={
-                "original": decisions[name],
-                "incoming": answer[1],
-                "pending": holders,
-                "source_roles": source_roles,
-            },
-            static_arguments={"codes": tuple(codes)},
-            subject_arg_names=("original", "incoming", "pending", "source_roles"),
-            subject_outputs=True,
-        )
     final_ids, final_roles, final_states, moved, paid = run_simulation_operation(
         memory=memory,
         function=route_original_subjects,
@@ -482,38 +302,6 @@ def prepare_exit_period(  # noqa: C901, PLR0912, PLR0915 - retain replay's order
         subject_outputs=True,
     )
     prepared = {}
-    if participation_frames:
-        bases, produced = run_simulation_operation(
-            memory=memory,
-            function=participation_frame_bases,
-            arguments={
-                "bases": bases,
-                "produced": produced,
-                "incoming_bases": {
-                    edge: frame.held_bases
-                    for edge, frame in participation_frames.items()
-                },
-                "incoming_available": {
-                    edge: frame.information_available
-                    for edge, frame in participation_frames.items()
-                },
-                "pending": participation_pending,
-            },
-            static_arguments={
-                "physical_names": tuple(
-                    (edge, tuple(frame.physical))
-                    for edge, frame in participation_frames.items()
-                )
-            },
-            subject_arg_names=(
-                "bases",
-                "produced",
-                "incoming_bases",
-                "incoming_available",
-                "pending",
-            ),
-            subject_outputs=True,
-        )
     for name, regime in actors.items():
         plan = regime.simulation.exit_queries[period]
         queries = plan.participating[name]
@@ -538,7 +326,6 @@ def prepare_exit_period(  # noqa: C901, PLR0912, PLR0915 - retain replay's order
             period=period,
             ages=ages,
             values=values,
-            surfaces=surfaces,
             owner=owner,
             unit=name,
             family="exit_participating",
@@ -615,17 +402,11 @@ def prepare_exit_period(  # noqa: C901, PLR0912, PLR0915 - retain replay's order
         reporting_sources = {name} | {
             route.source for route in routes if route.target == name
         }
-        entry_actors = tuple(
-            (f"{actor}:{source}", actor)
-            for actor, source in pending_entries
-            if actor in reporting_sources
-        )
         selected = run_simulation_operation(
             memory=memory,
             function=_final_decision,
             static_arguments={
                 "actor_name": name,
-                "entry_actors": entry_actors,
                 "categorical_names": tuple(
                     shock
                     for binding in bindings.values()
@@ -664,17 +445,6 @@ def prepare_exit_period(  # noqa: C901, PLR0912, PLR0915 - retain replay's order
                     for source, (_, original) in originals.items()
                     if source in reporting_sources
                 },
-                "entry_physical": {
-                    edge: participation_frames[edge].physical
-                    for edge, _ in entry_actors
-                },
-                "entry_available": {
-                    edge: participation_frames[edge].information_available
-                    for edge, _ in entry_actors
-                },
-                "entry_pending": {
-                    edge: participation_pending[edge] for edge, _ in entry_actors
-                },
             },
             subject_arg_names=(
                 "moved",
@@ -689,9 +459,6 @@ def prepare_exit_period(  # noqa: C901, PLR0912, PLR0915 - retain replay's order
                 "original_regime_ids",
                 "original_physical",
                 "original_available",
-                "entry_physical",
-                "entry_available",
-                "entry_pending",
             ),
             subject_outputs=True,
         )
@@ -723,12 +490,6 @@ def exit_bindings(
         for queries in (
             regime.simulation.exit_queries[period].full,
             *regime.simulation.exit_queries[period].participating.values(),
-            *(
-                entry.queries
-                for entry in regime.simulation.exit_queries[
-                    period
-                ].participation.values()
-            ),
         )
         if queries is not None
         for node in queries.definitions.values()
@@ -749,7 +510,6 @@ def _query_arguments(
     values: Mapping[int, Mapping[RegimeName, FloatND]],
     owner: PeriodSimulationReads,
     unit: RegimeName,
-    surfaces: ParticipationSurfaces = MappingProxyType({}),
     family: str,
     regime: Regime,
 ) -> _QueryArguments:
@@ -759,45 +519,32 @@ def _query_arguments(
         {
             name: dict(row)
             for name, row in queries.arguments(
-                context=participation_replay_context(
-                    queries=queries,
-                    values=values,
-                    surfaces=surfaces,
-                    context=CoreBuildContext(
-                        state_action_space=replace(
-                            context.state_action_space,
-                            states=MappingProxyType(dict(states)),
-                        ),
-                        next_regime_to_V_arr=values.get(period + 1, {}),
-                        next_regime_to_continuation={},
-                        flat_params=flat_params,
-                        period=period,
-                        ages=ages,
-                        same_period_regime_to_V_arr=values.get(period, {}),
-                        edge_regime_to_V_arr=values.get(period + 1, {}),
+                context=CoreBuildContext(
+                    state_action_space=replace(
+                        context.state_action_space,
+                        states=MappingProxyType(dict(states)),
                     ),
+                    next_regime_to_V_arr=values.get(period + 1, {}),
+                    next_regime_to_continuation={},
+                    flat_params=flat_params,
+                    period=period,
+                    ages=ages,
+                    same_period_regime_to_V_arr=values.get(period, {}),
+                    edge_regime_to_V_arr=values.get(period + 1, {}),
                 ),
                 fixed_flat_params=plan.fixed_flat_params,
             ).items()
         },
     )
-    program = (
-        regime.simulation.programs.participation_program(family=family, period=period)
-        if family.startswith("participation_entry:")
-        else getattr(regime.simulation.programs, family)[period]
-    )
+    program = getattr(regime.simulation.programs, family)[period]
     for read in program.requirements.value_reads:
-        if is_participation_surface(address=read.target):
-            stored = stored_participation_surface(
-                address=read.target, surfaces=surfaces
-            )
-        elif read.target.kind is ValueArtifactKind.REGIME_VALUE:
+        if read.target.kind is ValueArtifactKind.REGIME_VALUE:
             stored = values[read.target.period][read.target.regime]
         else:
             raise ExecutionPlanningError(
                 "Exit replay needs canonical regime-value query operands."
             )
-        array = owner.read(unit=unit, read=read, value=cast("jax.Array", stored))
+        array = owner.read(unit=unit, read=read, value=stored)
         _set_read(arguments=arguments, path=read.source.path, array=array)
     return arguments
 
@@ -817,15 +564,6 @@ def _replace_query_read(
     if not path:
         return array
     step, *remaining = path
-    if isinstance(node, ParticipationQueryArguments) and step == "by_target":
-        return ParticipationQueryArguments(
-            by_target=cast(
-                "Mapping[str, Mapping[str, QAndFKwargs]]",
-                _replace_query_read(
-                    node=node.by_target, path=tuple(remaining), array=array
-                ),
-            )
-        )
     if isinstance(node, Mapping) and isinstance(step, str) and step in node:
         return {
             **node,
@@ -834,8 +572,7 @@ def _replace_query_read(
             ),
         }
     raise ExecutionPlanningError(
-        "A GridSearch query value read needs its declared mapping/participation field "
-        "path."
+        "A GridSearch query value read needs its declared mapping field path."
     )
 
 
@@ -877,49 +614,6 @@ def _dispatch(
         )
     finally:
         executor.close()
-
-
-def _fail_if_a_fallback_lands_off_a_raise_grid(
-    *,
-    fallback: Regime,
-    fallback_name: RegimeName,
-    regime_name: RegimeName,
-    period: int,
-    states: Mapping[str, FloatND | IntND],
-    holders: BoolND,
-) -> None:
-    """Refuse a participation fallback landing off a grid declared `off_grid="raise"`.
-
-    A `clip_state` grid's landing is clipped where the fallback is projected.
-    """
-    axes = fallback.solution.period_state_axes
-    for state, values in states.items():
-        grid = fallback.simulation.grids.get(state)
-        if (
-            not isinstance(grid, ContinuousGrid)
-            or isinstance(grid, _ContinuousStochasticProcess)
-            or grid.off_grid != "raise"
-        ):
-            continue
-        points = None if axes is None else axes.get(period, {}).get(state)
-        count = int(
-            count_off_grid(
-                values=jnp.asarray(values),
-                points=grid.to_jax() if points is None else jnp.asarray(points),
-                feasible=holders,
-            )
-        )
-        if count:
-            raise OffGridStateError(
-                off_grid_message(
-                    count=count,
-                    regime=regime_name,
-                    target=fallback_name,
-                    period=period,
-                    state=state,
-                    phase="participation fallback",
-                )
-            )
 
 
 def _answer_status(
@@ -1056,10 +750,6 @@ def _final_decision(
     regime_names_to_ids: RegimeNamesToIds,
     original_physical: Mapping[RegimeName, Mapping[ShockName, FloatND | IntND]],
     original_available: Mapping[RegimeName, Mapping[ShockName, BoolND]],
-    entry_physical: Mapping[str, Mapping[ShockName, FloatND | IntND]],
-    entry_available: Mapping[str, Mapping[ShockName, BoolND]],
-    entry_pending: Mapping[str, BoolND],
-    entry_actors: tuple[tuple[str, RegimeName], ...],
     actor_name: RegimeName,
     categorical_names: tuple[ShockName, ...],
     member_ids: tuple[int, ...],
@@ -1077,30 +767,9 @@ def _final_decision(
         for name, value in source_physical.items()
     }
     reported_shocks = dict(physical)
-    original_frames = tuple(
-        (
-            source,
-            observations,
-            ordinary_exit_rows(
-                holders=original_regime_ids == regime_names_to_ids[source],
-                pending=tuple(
-                    entry_pending[edge]
-                    for edge, actor in entry_actors
-                    if actor == source
-                ),
-            ),
-            original_available[source],
-        )
-        for source, observations in original_physical.items()
-    )
-    entry_frames = tuple(
-        (actor, entry_physical[edge], entry_pending[edge], entry_available[edge])
-        for edge, actor in entry_actors
-    )
-    for source, observations, original_rows, availability in (
-        *original_frames,
-        *entry_frames,
-    ):
+    for source, observations in original_physical.items():
+        original_rows = original_regime_ids == regime_names_to_ids[source]
+        availability = original_available[source]
         for name, value in observations.items():
             if source == actor_name and name in physical:
                 continue

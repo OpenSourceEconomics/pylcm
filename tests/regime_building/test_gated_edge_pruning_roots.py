@@ -1,6 +1,6 @@
 """A gated edge's reads keep the target regime's variables alive.
 
-A gated edge is declared on the SOURCE regime but its gate and its gate-reference
+A gated edge is declared on the SOURCE regime but its gate and its fallback
 projections are evaluated on the TARGET regime's grid. The target regime's own
 DAG therefore never mentions them, and any check that walks one regime in
 isolation misses the read: a broadcast variable the gate needs is pruned out from
@@ -18,11 +18,10 @@ from lcm import (
     AgeRange,
     ByAge,
     DiscreteGrid,
+    Gate,
     LinSpacedGrid,
     MemberRoute,
     Model,
-    ParticipationCheck,
-    ParticipationRead,
     ProjectedRegimeValue,
     Regime,
     Transition,
@@ -54,13 +53,11 @@ _BONUS_GRID = LinSpacedGrid(start=0.0, stop=1.0, n_points=2)
 _DISCOUNT_FACTOR = 0.9
 
 # `worker`'s period-0 value function of the projection model, indexed
-# (wage, bonus). Gate-open cells take `retired`'s value, gate-closed cells
-# `outside`'s: with `V_target = 1.5 * wage` and the reference read at the
-# projected wage `1 + bonus` of `V_outside = 2 * wage`, the gate
-# `V_target > V_outside_ref` is open at (wage=2, bonus=0) alone, so the folded
-# continuation is ((2, 2), (3, 4)). Working dominates everywhere, hence
-# `V = wage + bonus + 0.9 * continuation`.
-_PROJECTION_MODEL_V_PERIOD_0 = ((2.8, 3.8), (4.7, 6.6))
+# (wage, bonus). Gate-open cells take `retired`'s value `1.5 * wage`, gate-closed
+# cells `outside`'s value `2 * wage` read at the projected wage `1 + bonus`. The
+# gate is open at wage 2 alone, so the folded continuation is ((2, 4), (3, 3)).
+# Working dominates everywhere, hence `V = wage + bonus + 0.9 * continuation`.
+_PROJECTION_MODEL_V_PERIOD_0 = ((2.8, 5.6), (4.7, 5.7))
 
 
 def test_broadcast_state_read_by_an_incoming_gate_survives_in_the_target() -> None:
@@ -80,9 +77,9 @@ def test_broadcast_state_read_by_an_incoming_gate_survives_in_the_target() -> No
 
 
 def test_target_state_read_only_by_an_incoming_projection_counts_as_used() -> None:
-    """A target state a gate reference projects through is a used variable.
+    """A target state a gate's fallback projects through is a used variable.
 
-    The projection maps the target regime's own state cell into the reference
+    The projection maps the target regime's own state cell into the fallback
     regime's coordinates, so a target state read there is a decision input of
     the model and the target regime may declare it without declaring a second
     consumer.
@@ -127,32 +124,17 @@ def _make_model_with_a_gate_reading_a_broadcast_state() -> Model:
                         }
                     }
                 ),
-                participation={
-                    "retired": ParticipationCheck(
+                gates={
+                    "retired": Gate(
                         predicate=_gate_reading_bonus,
                         routes={
-                            "self": MemberRoute(
+                            "only": MemberRoute(
                                 target_member=None,
                                 fallback=ProjectedRegimeValue(
                                     regime="outside",
                                     projection={"wage": _project_wage_identically},
                                 ),
                             )
-                        },
-                        reads={
-                            "V_target": ParticipationRead(
-                                kind="IntegratedFull",
-                                regime="retired",
-                                projection={
-                                    "wage": _project_wage_identically,
-                                    "bonus": _project_bonus_identically,
-                                },
-                            ),
-                            "V_outside_ref": ParticipationRead(
-                                kind="IntegratedFull",
-                                regime="outside",
-                                projection={"wage": _project_wage_identically},
-                            ),
                         },
                     )
                 },
@@ -172,11 +154,11 @@ def _make_model_with_a_gate_reading_a_broadcast_state() -> Model:
 
 
 def _make_model_with_a_projection_reading_a_target_state() -> Model:
-    """Build the lifecycle whose gate-reference projection reads `bonus`.
+    """Build the lifecycle whose fallback projection reads `bonus`.
 
     `bonus` is declared on `worker` and on `retired` directly. `worker`'s
     utility reads it; in `retired` its only consumer is the projection under
-    which the incoming edge's gate reference reads `outside`'s value.
+    which the incoming edge's closed gate lands in `outside`.
     """
     worker = Regime(
         states={"wage": _WAGE_GRID, "bonus": _BONUS_GRID},
@@ -195,32 +177,17 @@ def _make_model_with_a_projection_reading_a_target_state() -> Model:
                         }
                     }
                 ),
-                participation={
-                    "retired": ParticipationCheck(
-                        predicate=_gate_comparing_values,
+                gates={
+                    "retired": Gate(
+                        predicate=_gate_reading_wage,
                         routes={
-                            "self": MemberRoute(
+                            "only": MemberRoute(
                                 target_member=None,
                                 fallback=ProjectedRegimeValue(
                                     regime="outside",
-                                    projection={"wage": _project_wage_identically},
+                                    projection={"wage": _project_wage_from_bonus},
                                 ),
                             )
-                        },
-                        reads={
-                            "V_target": ParticipationRead(
-                                kind="IntegratedFull",
-                                regime="retired",
-                                projection={
-                                    "wage": _project_wage_identically,
-                                    "bonus": _project_bonus_identically,
-                                },
-                            ),
-                            "V_outside_ref": ParticipationRead(
-                                kind="IntegratedFull",
-                                regime="outside",
-                                projection={"wage": _project_wage_from_bonus},
-                            ),
                         },
                     )
                 },
@@ -248,7 +215,7 @@ def _make_retired_regime(*, states: dict[str, LinSpacedGrid]) -> Regime:
 
 
 def _make_outside_regime() -> Regime:
-    """Build the reference regime the gate-closed branch falls back to."""
+    """Build the regime the gate-closed branch falls back to."""
     return Regime(
         states={"wage": _WAGE_GRID},
         functions={"utility": _utility_outside},
@@ -283,26 +250,20 @@ def _next_wage(wage: ContinuousState) -> ContinuousState:
 
 
 def _project_wage_identically(wage: ContinuousState) -> ContinuousState:
-    """Read the reference regime at the same wage the target cell sits on."""
+    """Land in the fallback regime at the same wage the target cell sits on."""
     return wage
 
 
-def _project_bonus_identically(bonus: ContinuousState) -> ContinuousState:
-    return bonus
-
-
 def _project_wage_from_bonus(bonus: ContinuousState) -> ContinuousState:
-    """Read the reference regime at the wage the target cell's bonus buys."""
+    """Land in the fallback regime at the wage the target cell's bonus buys."""
     return 1.0 + bonus
 
 
-def _gate_reading_bonus(
-    *, V_target: FloatND, V_outside_ref: FloatND, bonus: ContinuousState
-) -> BoolND:
-    """Retirement is open when it beats the outside option and a bonus is due."""
-    return (V_target > V_outside_ref) & (bonus > 0.5)
+def _gate_reading_bonus(bonus: ContinuousState) -> BoolND:
+    """Retirement is open when a bonus is due."""
+    return bonus > 0.5
 
 
-def _gate_comparing_values(*, V_target: FloatND, V_outside_ref: FloatND) -> BoolND:
-    """Retirement is open when it beats the outside option."""
-    return V_target > V_outside_ref
+def _gate_reading_wage(wage: ContinuousState) -> BoolND:
+    """Retirement is open at the high wage."""
+    return wage > 1.5

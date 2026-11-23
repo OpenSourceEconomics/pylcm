@@ -28,13 +28,12 @@ NATIVE_SCHEDULE_TYPES = frozenset(name for name in NATIVE_INPUT_TYPES
     if name.startswith(('_lcm.regime_building.schedules.', '_lcm.regime_building.transition_support.'))
     or name == 'lcm.transition.StochasticTransition')
 
-_PARTICIPATION_FILE = "7bf165d61b9817985dcf5917a2d0732ef94e7432e405a388aa8c39a949cfb14e"
-_TRANSITION_FILE = '6cc5139b91c6e767001fa22cfb124d7a626b180d05c71e505c253dd004239b61'
+_TRANSITION_FILE = '21377ac0c3c6776731b8e1e81df7ff946fea30d9a764f61a09d2dd0f2eb29b45'
 # Schedule files whose `_PeriodDispatch` and `_ProbabilityConstant` are identical.
 # The second counts every period a gated source reads in `gated_source_periods`.
 _SCHEDULES_FILES = (
     'b9b26eacf800b5be94f84ba493e4f4686b9ac5b81610303a2ac38b8a1bee8d27',
-    '17fa0aa33334177df6e8a390ccc26637867e99ff48172cf6293980297162475b',
+    '942e052249b47aaf489e1539e68d6d688fd5cc72210704a0506e4d003a66df77',
 )
 _AUTHORITIES = {
     '_lcm.regime_building.schedules._PeriodDispatch': (
@@ -65,7 +64,7 @@ _AUTHORITIES = {
     ),
     '_lcm.regime_building.value_adapter.ValueAdapter': (
         ('bc46eb4aa3919573fa3252f4521a3c01f14ca6b5ff62e31e7c93b34f3ea21718',
-         ('6ae3b430fb49df9cbe15b5c6d109903f695aaca023aacc42a02781bf0c4a3ffd',)),
+         ('bcfc407bc416489188d2e259c9b9f8927e5d3d73562dc7a3e5ba7536ec95d35b',)),
         ('46d796380a1afe65bf0c94fe9264db510394599c4a34f2adcfd949e94849c5b5',
          ('030fdfaf3842033b43ba4544c9f245c14e44ad24633f352b746100751f0f8e32',)),
     ),
@@ -81,25 +80,17 @@ _AUTHORITIES = {
         '8a528a29ed7f27c87d1bebd2de6fe42276af2cedc8d986758ef2cc8988f57e4f',
         ('17dcfe8cc029b7160ab93846ad05d942b08f57162b7ec0eefc25105d020926a8',),
     ),
-    "lcm.participation.ParticipationRead": (
-        "89f7727400c91fe8de17013e818ec7e282bf8e45f01ab8b8bb2fc7861441386b",
-        (_PARTICIPATION_FILE,),
-    ),
-    "lcm.participation.ParticipationCheck": (
-        "4d322b537c61804b4d0097a0cb643f8a323cc4af16afada1dfba2ec297aa9857",
-        (_PARTICIPATION_FILE,),
-    ),
-    # The finder reads `targets`, `law`, `gates`, `arrivals` and `participation` of
-    # this class; `validate_original_types` refuses a non-empty `roles`.
+    # The finder reads `targets`, `law`, `gates` and `arrivals` of this class;
+    # `validate_original_types` refuses a non-empty `roles`.
     "lcm.transition.Transition": (
-        "917d6898db9f4f5a574480a6769e8a9b654e341ba4577e5ee071546106e7ddc1",
+        "85e9189755386570441396a705374fbc715afc8e03e53d2c8ede1f7116036ec5",
         (_TRANSITION_FILE,),
     ),
 }
 
 _NATIVE_CALL_SOURCES = MappingProxyType({
     '_lcm.regime_building.value_adapter.ValueAdapter': frozenset({
-        ('6ae3b430fb49df9cbe15b5c6d109903f695aaca023aacc42a02781bf0c4a3ffd',
+        ('bcfc407bc416489188d2e259c9b9f8927e5d3d73562dc7a3e5ba7536ec95d35b',
          '9f680db35e88630edd31b3d42d0abaebd3e82e72fa11aa07d9292a4c6dacca55'),
         ('030fdfaf3842033b43ba4544c9f245c14e44ad24633f352b746100751f0f8e32',
          '991053e32d97e7ea21bf0cb93648389d63d2cb6133e858de90074786457ed618'),
@@ -542,7 +533,7 @@ def inspect_native_first_array_return(
         return None
     try:
         source = Path(filename).read_bytes().replace(b'\r\n', b'\n')
-        if hashlib.sha256(source).hexdigest() != '92bd61b989e1259c67723f8d98e55f8e6b2a5fd4e4f42c9e017a63f80cd1c248':
+        if hashlib.sha256(source).hexdigest() != 'a1c756ad5c8e2049cdfe0026ac2716b427781b2cd80ac6d8f821b7ed6bb69289':
             return None
         evaluator = _native_array_alias_evaluator(alias, native_typing, source, filename, name='ValueND', dtype_name='Shaped')
         if evaluator is None:
@@ -806,11 +797,6 @@ def validate_original_types(value):
                 "gate, so the regime finder does not read `roles`. Analyze the constructed "
                 "Model, whose bound law carries each role as its always-open gate, or "
                 "declare that gate under `gates`.")
-        modern = name.rsplit(".", 1)[-1] in {"ParticipationRead", "ParticipationCheck"}
-        modern_transition = name.rsplit(".", 1)[-1] == "Transition" and bool(value.get("fields", {}).get("participation"))
-        if modern or modern_transition:
-            if not matches_authority(name=name, observed=value.get("canonical_type_source")):
-                raise ValueError("Current participation declaration lacks verified canonical class source: " + name)
         for child in value.values():
             validate_original_types(child)
     elif isinstance(value, list):
@@ -823,9 +809,9 @@ def gate_maps(data, *names):
     for name in names:
         values = data.get(name, {})
         if not isinstance(values, dict):
-            raise ValueError("A transition participation/gate mapping is not captured")
+            raise ValueError("A transition gate mapping is not captured")
         if result.keys() & values.keys():
-            raise ValueError("A scheduled target has conflicting gate/participation declarations")
+            raise ValueError("A scheduled target has conflicting gate/arrival declarations")
         result.update(values)
     return result
 
@@ -846,7 +832,7 @@ def inspect_native_floatnd_alias(value: object) -> dict[str, JSONValue] | None:
     try:
         source, file_hash = _source_file(filename)
         _, array_hash = _source_file(array_filename)
-        if (file_hash not in {'92bd61b989e1259c67723f8d98e55f8e6b2a5fd4e4f42c9e017a63f80cd1c248',
+        if (file_hash not in {'a1c756ad5c8e2049cdfe0026ac2716b427781b2cd80ac6d8f821b7ed6bb69289',
                              '5335c3c4cdfdcc48c231bd7ba3e44285d93be331242d77404d7778f977fe6c99'}
                 or array_hash != 'e63908f56c995f24cbed97d9ba820c8b5fd98bc0301dfb4095cde3ab7d5dd1e4'):
             return None

@@ -3,7 +3,7 @@
 Both public producer routes create z=0.25 after valid initial inputs:
 
 * an authored entry law from a source that does not carry z;
-* a forced closed participation check's fallback projection, after node-valued
+* a forced closed gate's fallback projection, after node-valued
   candidate draws.
 
 There is no node at 0.25 on (-2, -1, 0, 1, 2). A code-reading destination must
@@ -25,11 +25,10 @@ from lcm import (
     AgeGrid,
     ByAge,
     DiscreteGrid,
+    Gate,
     MemberRoute,
     Model,
     NormalIIDProcess,
-    ParticipationCheck,
-    ParticipationRead,
     ProjectedRegimeValue,
     Regime,
     Transition,
@@ -124,12 +123,8 @@ def _project_zero(z: ContinuousState) -> ContinuousState:
     return 0.0 * z
 
 
-def _closed(V_target: FloatND) -> BoolND:
-    return V_target < 0.0
-
-
-def _landed_z(z: ContinuousState) -> ContinuousState:
-    return z
+def _closed() -> BoolND:
+    return jnp.zeros((), dtype=bool)
 
 
 def _prob_one(age: FloatND) -> FloatND:
@@ -178,16 +173,9 @@ def _model(*, route: str, code: bool, on_node: bool, enable_jit: bool) -> Model:
             "source": Transition(
                 targets={"landing": 0, "fallback": 0},
                 law=ByAge(cases={0: {"landing": StochasticTransition(func=_prob_one)}}),
-                participation={
-                    "landing": ParticipationCheck(
+                gates={
+                    "landing": Gate(
                         predicate=_closed,
-                        reads={
-                            "V_target": ParticipationRead(
-                                kind="Raw",
-                                regime="landing",
-                                projection={"z": _landed_z},
-                            )
-                        },
                         routes={
                             "only": MemberRoute(
                                 fallback=ProjectedRegimeValue(

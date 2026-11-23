@@ -117,13 +117,12 @@ the source, the target and the role for
 - a target that is not collective, or a role it has no member of;
 - a source that is itself collective;
 - a target the transition never reaches;
-- a target that also has a gate or a participation check.
+- a target that also has a gate.
 
-A singleton source reaching a collective target with neither a role, a gate nor a
-participation check is refused. A role is lowered into the always-open gate whose
-fallback is the target itself in the same role, so its source has the scope of a gated
-source: `GridSearch`, no taste shocks, no `Decoupled` aggregator and a certainty
-equivalent that aggregates linearly.
+A singleton source reaching a collective target with neither a role nor a gate is
+refused. A role is lowered into the always-open gate whose fallback is the target itself
+in the same role, so its source has the scope of a gated source: `GridSearch`, no taste
+shocks, no `Decoupled` aggregator and a certainty equivalent that aggregates linearly.
 
 The targetless factories `@deterministic_transition()` and `@stochastic_transition()`
 produce the same wrappers for state and regime laws and preserve DAG signatures.
@@ -165,8 +164,7 @@ path of an edge-declared callable is its declaration path under `params["edges"]
 ```text
 params["edges"][source][arg]                       # a law over all targets
 params["edges"][source][target][arg]               # a per-target cell, gated or not
-params["edges"][source][target]["predicate"][arg]  # the target's Gate or ParticipationCheck
-params["edges"][source][target]["reads"][read][state][arg]  # a ParticipationRead projection
+params["edges"][source][target]["predicate"][arg]  # the target's Gate
 params["edges"][source][target]["routes"][route]["fallback"][state][arg]
 params["edges"][source][target]["routes"][route]["fallback"]["solve" | "simulate"][state][arg]
 ```

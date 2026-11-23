@@ -8,20 +8,14 @@ import numpy as np
 import pytest
 
 from lcm import (
-    ByPeriod,
     CollectiveUtility,
     DiscreteGrid,
     ExecutionConfig,
     InitialNodes,
     LinSpacedGrid,
-    MemberRoute,
     Model,
-    ParticipationCheck,
-    ParticipationRead,
     Periods,
-    ProjectedRegimeValue,
     Regime,
-    Transition,
     categorical,
 )
 from lcm.exceptions import OffGridStateError
@@ -275,131 +269,6 @@ def test_original_row_reordering_and_equal_mass_splitting_preserve_checked_value
         )
     )
     np.testing.assert_array_almost_equal(actual, expected, decimal=DECIMAL_PRECISION)
-
-
-@categorical(ordered=False)
-class _ParticipationRegimes:
-    parent: ScalarInt
-    source: ScalarInt
-    destination: ScalarInt
-    fallback: ScalarInt
-
-
-def _zero() -> float:
-    return 0.0
-
-
-def _wealth(wealth: FloatND) -> FloatND:
-    return wealth
-
-
-def _square_wealth(wealth: FloatND) -> FloatND:
-    return wealth * wealth
-
-
-def _keep_participation(V_source: FloatND) -> BoolND:
-    return V_source >= -1000.0
-
-
-@pytest.mark.parametrize("off_grid", [False, True])
-def test_participation_pricing_preserves_nested_actual_landing_identity(
-    *, off_grid: bool
-) -> None:
-    """Safe source nodes do not excuse an off-grid actual parent participation check."""
-    model = Model(
-        regimes={
-            "parent": Regime(
-                states={
-                    "wealth": LinSpacedGrid(
-                        start=2 if off_grid else 0,
-                        stop=3 if off_grid else 1,
-                        n_points=2,
-                    )
-                },
-                functions={"utility": _zero},
-                state_transitions={"wealth": _wealth},
-            ),
-            "source": Regime(
-                states={
-                    "wealth": LinSpacedGrid(
-                        start=0, stop=1, n_points=2, off_grid="extrapolate"
-                    )
-                },
-                actions={"action": DiscreteGrid(values=jnp.asarray([0, 1]))},
-                functions={"utility": _female},
-                state_transitions={"wealth": _square_wealth},
-                shocks=("innovation",),
-            ),
-            "destination": Regime(
-                states={
-                    "wealth": LinSpacedGrid(
-                        start=0, stop=1, n_points=2, off_grid="raise"
-                    )
-                },
-                functions={"utility": _terminal},
-            ),
-            "fallback": Regime(functions={"utility": _zero}),
-        },
-        regime_id_class=_ParticipationRegimes,
-        n_periods=3,
-        initial_nodes=InitialNodes(by_period={0: "parent"}),
-        edges={
-            "parent": Transition(
-                targets={
-                    "source": Periods(values=(0,)),
-                    "fallback": Periods(values=(0,)),
-                },
-                law=ByPeriod(cases={0: "source"}),
-                participation={
-                    "source": ParticipationCheck(
-                        predicate=_keep_participation,
-                        reads={
-                            "V_source": ParticipationRead(
-                                kind="Raw",
-                                regime="source",
-                                projection={"wealth": _wealth},
-                            )
-                        },
-                        routes={
-                            "self": MemberRoute(
-                                fallback=ProjectedRegimeValue(
-                                    regime="fallback", projection={}
-                                )
-                            )
-                        },
-                    )
-                },
-            ),
-            "source": {"destination": Periods(values=(1,))},
-        },
-        shocks={
-            "innovation": ShockGroup(
-                shocks={"eps": Normal(mu=0.0, sigma=1.0)},
-                nodes=UserNodes(
-                    nodes=np.asarray([[-1.0], [1.0]]), weights=np.asarray([0.5, 0.5])
-                ),
-            )
-        },
-    )
-    if off_grid:
-        with pytest.raises(OffGridStateError) as raised:
-            model.solve(
-                params={"discount_factor": 0.5}, log_level="off", runtime_checks=False
-            )
-        # Report the nested producer at t=1 rather than its parent t=0.
-        message = str(raised.value)
-        assert "regime='source'" in message
-        assert "target='destination'" in message
-        assert "state='wealth'" in message
-        assert "period=1" in message
-    else:
-        solution = model.solve(
-            params={"discount_factor": 0.5}, log_level="off", runtime_checks=False
-        )
-        # Source Q=w+1+E eps+(.5)(2w²); parent pays half that same native query.
-        np.testing.assert_array_almost_equal(
-            solution.values[0]["parent"], [0.5, 1.5], decimal=DECIMAL_PRECISION
-        )
 
 
 @pytest.mark.parametrize("case", ["on_grid", "zero_mass_off_grid"])

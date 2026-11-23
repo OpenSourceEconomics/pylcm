@@ -1,9 +1,9 @@
-"""Canonical collective policy, participation check, and own-role simulation fixtures.
+"""Canonical collective policy, formation, dissolution and own-role simulation fixtures.
 
 The joint policy chooses one common action and publishes both member values.
-Source-owned participation checks run after the scheduled landing and before the
-final actor's action. Current participation exits retain threshold-only slack
-and pay each member's full single payoff when the kept set is empty.
+A single forms the household through its own `Exit` under `Consent`; a household
+dissolves through its own `Exit`, which retains threshold-only slack and pays each
+member's single payoff net of the cost when no stay action is kept.
 
 A fixed population keeps each original subject and its own current role;
 settling a household does not create another subject for its other member.
@@ -31,13 +31,14 @@ from lcm import (
     AgeRange,
     ByAge,
     CollectiveUtility,
+    Consent,
+    Counterparty,
     DiscreteGrid,
     ExecutionConfig,
+    Gate,
     LinSpacedGrid,
     MemberRoute,
     Model,
-    ParticipationCheck,
-    ParticipationRead,
     ProjectedRegimeValue,
     Regime,
     Transition,
@@ -62,6 +63,7 @@ from lcm.typing import (
     FloatND,
     RegimeName,
     ScalarInt,
+    UserFunction,
 )
 from tests.conftest import bind_laws, build_prepared_structure
 from tests.simulation.test_runtime_helpers import bind_eager_simulation
@@ -367,73 +369,50 @@ def _u_married_m(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
     return wage + 0.0 * work  # {1, 2}
 
 
-def _consent_gate(
-    *,
-    V_target_f: FloatND,
-    V_target_m: FloatND,
-    V_single_f_ref: FloatND,
-    V_single_m_ref: FloatND,
-) -> BoolND:
-    return (V_target_f > V_single_f_ref) & (V_target_m > V_single_m_ref)
-
-
 def _consent_laws() -> dict[RegimeName, RegimeLawDeclaration | Transition]:
     """Return the law of every regime of `_make_consent_regimes`.
 
     `None` marks a terminal regime.
     """
     return {
-        "single_f": Transition(
-            law=ByAge(
-                cases={
-                    AgeRange(exclusive_stop=1): {
-                        "married_terminal": StochasticTransition(func=_prob_one)
-                    }
-                }
-            ),
-            participation={
-                "married_terminal": ParticipationCheck(
-                    predicate=_consent_gate,
-                    routes={
-                        "f": MemberRoute(
-                            target_member="f",
-                            fallback=ProjectedRegimeValue(
-                                regime="single_f_terminal",
-                                projection={"wage": _identity_wage},
-                            ),
-                        )
-                    },
-                    reads={
-                        "V_target_f": ParticipationRead(
-                            regime="married_terminal",
-                            member="f",
-                            kind="Participating",
-                            projection={"wage": _identity_wage},
-                        ),
-                        "V_target_m": ParticipationRead(
-                            regime="married_terminal",
-                            member="m",
-                            kind="Participating",
-                            projection={"wage": _identity_wage},
-                        ),
-                        "V_single_f_ref": ParticipationRead(
-                            kind="Raw",
-                            regime="single_f_terminal",
-                            projection={"wage": _identity_wage},
-                        ),
-                        "V_single_m_ref": ParticipationRead(
-                            kind="Raw",
-                            regime="single_m_terminal",
-                            projection={"wage": _identity_wage},
-                        ),
-                    },
-                )
-            },
-        ),
+        "single_f": _single_f_law(),
         "single_f_terminal": None,
         "single_m_terminal": None,
         "married_terminal": None,
     }
+
+
+def _single_f_law() -> ByAge:
+    """`single_f` lands in `single_f_terminal`, whose own exit decides the marriage."""
+    return ByAge(
+        cases={
+            AgeRange(exclusive_stop=1): {
+                "single_f_terminal": StochasticTransition(func=_prob_one)
+            }
+        }
+    )
+
+
+def _formation_exit(
+    *,
+    target_projection: dict[str, UserFunction],
+    counterparty_projection: dict[str, UserFunction],
+) -> Exit:
+    """She marries only if both her and his married values beat their single ones."""
+    return Exit(
+        targets={
+            "self": ExitTarget(
+                regime="married_terminal", role="f", projection=target_projection
+            )
+        },
+        rule=Consent(
+            counterparty=Counterparty(
+                regime="single_m_terminal",
+                role="m",
+                projection=counterparty_projection,
+            )
+        ),
+    )
 
 
 def _make_consent_regimes() -> dict[str, Regime]:
@@ -446,6 +425,10 @@ def _make_consent_regimes() -> dict[str, Regime]:
     single_f_terminal = Regime(
         states={"wage": _WAGE_2},
         functions={"utility": _u_single_f_terminal},
+        exit=_formation_exit(
+            target_projection={"wage": _identity_wage},
+            counterparty_projection={"wage": _identity_wage},
+        ),
     )
     single_m_terminal = Regime(
         states={"wage": _WAGE_2},
@@ -503,9 +486,9 @@ def _solve_consent() -> _Solved:
 def test_consent_routing_simulate_matches_gate_exactly() -> None:
     """wage=1 clears mutual consent (marries); wage=2 does not (stays single).
 
-    Gate at wage=1: (V_married_f=2 > V_single_f_ref=1.5) & (V_married_m=1 >
-    V_single_m_ref=0.5) -> OPEN. Gate at wage=2: (4 > 3) & (2 > 3) -> the
-    husband's outside option beats marriage -> CLOSED (unanimity).
+    Consent at wage=1: (V_married_f=2 > V_single_f=1.5) & (V_married_m=1 >
+    V_single_m=0.5) -> she moves. At wage=2: (4 > 3) & (2 > 3) -> the husband's
+    single value beats marriage -> she stays (both must consent).
     """
     ages, regimes, regime_names_to_ids, flat_params, solution = _solve_consent()
     initial_conditions = MappingProxyType(
@@ -534,8 +517,8 @@ def test_consent_routing_simulate_matches_gate_exactly() -> None:
     period_0 = result.raw_results["single_f"][0]
     np.testing.assert_allclose(np.asarray(period_0.V_arr), [2.9, 4.85], rtol=1e-6)
 
-    # wage=1 -> married_terminal (gate open); wage=2 -> single_f_terminal
-    # (gate closed, the source's own — sole — leg fallback).
+    # wage=1 -> married_terminal (both consent); wage=2 -> stays in
+    # single_f_terminal (he refuses).
     married = result.raw_results["married_terminal"][1]
     single_f_term = result.raw_results["single_f_terminal"][1]
     np.testing.assert_array_equal(np.asarray(married.in_regime), [True, False])
@@ -621,15 +604,11 @@ def _dissolution_cost_m(delta_m: FloatND) -> FloatND:
     return -delta_m
 
 
-def _participation_support(*, target_support: BoolND) -> BoolND:
-    return target_support
-
-
 def _married_dissolution_transition() -> Transition:
-    """Return the source-owned participation check into `married_ir` after age 0.
+    """Return `married`'s move into `married_ir` after age 0.
 
-    The edge's member routes fall back to `single_f` / `single_m`, so
-    `married` reaches all three at age 0.
+    Whether the household stays is decided by `married_ir`'s own `Exit`, whose
+    member targets are `single_f` / `single_m`.
     """
     return Transition(
         law=ByAge(
@@ -638,37 +617,7 @@ def _married_dissolution_transition() -> Transition:
                     "married_ir": StochasticTransition(func=_prob_one)
                 }
             }
-        ),
-        participation={
-            "married_ir": ParticipationCheck(
-                predicate=_participation_support,
-                reads={
-                    "target_support": ParticipationRead(
-                        regime="married_ir",
-                        member="f",
-                        kind="Participating",
-                        field="support",
-                        projection={"wage": _identity_wage},
-                    )
-                },
-                routes={
-                    "f": MemberRoute(
-                        target_member="f",
-                        fallback=ProjectedRegimeValue(
-                            regime="single_f",
-                            projection={"wage": _identity_wage},
-                        ),
-                    ),
-                    "m": MemberRoute(
-                        target_member="m",
-                        fallback=ProjectedRegimeValue(
-                            regime="single_m",
-                            projection={"wage": _identity_wage},
-                        ),
-                    ),
-                },
-            )
-        },
+        )
     )
 
 
@@ -820,12 +769,12 @@ def _solve_dissolution() -> _Solved:
 
 
 def test_dissolution_edge_routes_the_row_to_its_own_roles_single_regime() -> None:
-    """D=True at wage=2 (the IR mask empties there, see solve test).
+    """The household's own exit dissolves it at wage=2, where no stay action is kept.
 
     The cohort declares itself the wives, so the dissolving household's row is
-    routed to that role's leg ("f" -> `single_f`) instead of `married_ir` — a
+    routed to that role's target ("f" -> `single_f`) instead of `married_ir` — a
     real regime membership change, not merely a value-side fold. wage=1 and
-    wage=3 stay married (`married_ir`, D=False there).
+    wage=3 stay married (`married_ir`).
     """
     ages, regimes, regime_names_to_ids, flat_params, solution = _solve_dissolution()
     np.testing.assert_allclose(
@@ -866,10 +815,9 @@ def test_dissolution_edge_routes_the_row_to_its_own_roles_single_regime() -> Non
     # docstring's scope fence.
     np.testing.assert_array_equal(np.asarray(single_m.in_regime), [False, False, False])
 
-    # The dissolved household's (wage=2) value under its routed regime matches
-    # the IR miniature's single fallback exactly (hand-computed in
-    # test_gated_edges_collective_solve.py): V_single_f(wage=2) = 5.5.
-    np.testing.assert_allclose(np.asarray(single_f.V_arr)[1], 5.5, rtol=1e-6)
+    # The dissolved household's (wage=2) wife reports her single value net of
+    # the exit's cost: V_single_f(wage=2) - delta_f = 5.5 - 0.5 = 5.
+    np.testing.assert_allclose(np.asarray(single_f.V_arr)[1], 5.0, rtol=1e-6)
     # The still-married households keep their married_ir value.
     np.testing.assert_allclose(np.asarray(married_ir.V_arr)[0], [2.0, 1.0], rtol=1e-6)
     np.testing.assert_allclose(np.asarray(married_ir.V_arr)[2], [6.0, 3.0], rtol=1e-6)
@@ -915,13 +863,13 @@ def _simulate_directly_in_married_ir(*, wages: list[float]) -> SimulationResult:
     )
 
 
-def test_empty_participation_publishes_the_exit_payoffs_net_of_costs() -> None:
+def test_an_empty_stay_set_publishes_the_exit_payoffs_net_of_costs() -> None:
     """Without a kept stay action each member gets the outside value minus the cost."""
     _, _, _, _, values = _solve_dissolution()
     np.testing.assert_allclose(values[1]["married_ir"][1], [5.0, 0.8], rtol=1e-6)
 
 
-def test_initial_households_with_empty_participation_take_their_own_exit() -> None:
+def test_initial_households_with_no_kept_stay_action_take_their_own_exit() -> None:
     """An initial wife exits the empty wage cell under her current policy."""
     result = _simulate_directly_in_married_ir(wages=[1.0, 2.0, 3.0])
     np.testing.assert_array_equal(
@@ -955,9 +903,10 @@ def test_value_masked_simulate_reports_the_solved_values_off_the_empty_cell() ->
 # through `map_coordinates` by coincidence, so this is the fixture that covers
 # the discrete case. Adapted from
 # `_make_consent_regimes` (Test 2 above) by adding a discrete `educ` state,
-# carried as-is (`fixed_transition`) and contributing 0 to every utility, so
-# the gate arithmetic and expected routing/values are IDENTICAL to
-# `test_consent_routing_simulate_matches_gate_exactly`.
+# carried as-is (`fixed_transition`) and contributing 0 to every utility, and by
+# routing with a state-only gate that is open exactly where the consent
+# miniature's spouses both marry, so the expected routing/values are IDENTICAL
+# to `test_consent_routing_simulate_matches_gate_exactly`.
 
 
 @categorical(ordered=True)
@@ -992,10 +941,15 @@ def _u_married_m_educ(
     return wage + 0.0 * work + 0.0 * educ  # {1, 2}
 
 
+def _low_wage(wage: ContinuousState) -> BoolND:
+    """Open the gate where the consent miniature's spouses both marry: wage=1."""
+    return wage < 1.5
+
+
 def _consent_discrete_axis_laws() -> dict[
     RegimeName, RegimeLawDeclaration | Transition
 ]:
-    """Return the law of every regime of the discrete-target-axis consent miniature.
+    """Return the law of every regime of the discrete-target-axis gate miniature.
 
     Its regimes come from `_make_consent_regimes_with_discrete_target_axis`; `None`
     marks a terminal regime.
@@ -1009,9 +963,9 @@ def _consent_discrete_axis_laws() -> dict[
                     }
                 }
             ),
-            participation={
-                "married_terminal": ParticipationCheck(
-                    predicate=_consent_gate,
+            gates={
+                "married_terminal": Gate(
+                    predicate=_low_wage,
                     routes={
                         "f": MemberRoute(
                             target_member="f",
@@ -1023,33 +977,6 @@ def _consent_discrete_axis_laws() -> dict[
                                 },
                             ),
                         )
-                    },
-                    reads={
-                        "V_target_f": ParticipationRead(
-                            regime="married_terminal",
-                            member="f",
-                            kind="Participating",
-                            projection={"wage": _identity_wage, "educ": _identity_educ},
-                        ),
-                        "V_target_m": ParticipationRead(
-                            regime="married_terminal",
-                            member="m",
-                            kind="Participating",
-                            projection={"wage": _identity_wage, "educ": _identity_educ},
-                        ),
-                        "V_single_f_ref": ParticipationRead(
-                            kind="Raw",
-                            regime="single_f_terminal",
-                            projection={
-                                "wage": _identity_wage,
-                                "educ": _identity_educ,
-                            },
-                        ),
-                        "V_single_m_ref": ParticipationRead(
-                            kind="Raw",
-                            regime="single_m_terminal",
-                            projection={"wage": _identity_wage},
-                        ),
                     },
                 )
             },
@@ -1137,8 +1064,8 @@ def test_consent_routing_simulate_with_discrete_target_axis_routes_correctly() -
     `vmap`-ped gate interpolator (`gated_routing._call_vmapped_with_accepted_kwargs`)
     is exercised at BOTH discrete indices, not just one — a discrete-axis
     lookup that silently read the wrong subject's index would flip a
-    subject's routing here. Wage=1 clears mutual consent (marries)
-    regardless of educ; wage=2 does not (stays single) regardless of educ —
+    subject's routing here. Wage=1 opens the gate (marries) regardless of
+    educ; wage=2 closes it (stays single) regardless of educ —
     `educ` contributes 0.0 to every utility, so its exact numeric routing and
     values are identical to `test_consent_routing_simulate_matches_gate_exactly`.
     """
@@ -1245,14 +1172,14 @@ _DISSOLUTION_PARAMS = {
 }
 
 
-def test_public_model_prices_the_actual_participation_routes() -> None:
-    """Participation discounts the kept policy or the full outside payoff once."""
+def test_public_model_prices_the_households_own_exit() -> None:
+    """`married` discounts the kept policy or the exit payoffs net of costs once."""
     result = _make_dissolution_model().solve(
         params=_DISSOLUTION_PARAMS, log_level="off"
     )
     np.testing.assert_allclose(
         result.values[0]["married"],
-        _BETA * np.array([[2.0, 1.0], [5.5, 1.0], [6.0, 3.0]]),
+        _BETA * np.array([[2.0, 1.0], [5.0, 0.8], [6.0, 3.0]]),
         rtol=1e-6,
     )
 
@@ -1270,12 +1197,12 @@ def test_public_model_solve_returns_labelled_values_for_every_demanded_period() 
 
 
 def test_public_model_simulate_routes_dissolution_edge_when_flags_supplied() -> None:
-    """End-to-end: a dissolution participation reading participation support simulates.
+    """End-to-end: the household's own exit dissolves it after landing.
 
     Reproduces `test_dissolution_edge_routes_the_row_to_its_own_roles_single_regime`
-    through the public `Model` API: wage=2 (empty participation) is routed to
-    `single_f` (the wife's leg, the role this cohort declares) instead of
-    `married_ir`; wage=1 and wage=3 (both members participate) stay married.
+    through the public `Model` API: wage=2 (no kept stay action) is routed to
+    `single_f` (the wife's target, the role this cohort declares) instead of
+    `married_ir`; wage=1 and wage=3 (both members stay) stay married.
     """
     model = _make_dissolution_model()
     solution = model.solve(params=_DISSOLUTION_PARAMS, log_level="debug")
@@ -1304,15 +1231,15 @@ def test_public_model_simulate_routes_dissolution_edge_when_flags_supplied() -> 
     np.testing.assert_array_equal(np.asarray(single_f.in_regime), [False, True, False])
     np.testing.assert_array_equal(np.asarray(single_m.in_regime), [False, False, False])
 
-    np.testing.assert_allclose(np.asarray(single_f.V_arr)[1], 5.5, rtol=1e-6)
+    np.testing.assert_allclose(np.asarray(single_f.V_arr)[1], 5.0, rtol=1e-6)
     np.testing.assert_allclose(np.asarray(married_ir.V_arr)[0], [2.0, 1.0], rtol=1e-6)
     np.testing.assert_allclose(np.asarray(married_ir.V_arr)[2], [6.0, 3.0], rtol=1e-6)
     assert np.all(np.isfinite(np.asarray(single_f.V_arr)[[0, 1, 2]]))
     assert np.all(np.isfinite(np.asarray(married_ir.V_arr)[[0, 2]]))
 
 
-def test_public_model_replays_participation_from_values_only() -> None:
-    """Current participation replay needs values, without a dissolution artifact."""
+def test_public_model_replays_the_households_exit_from_values_only() -> None:
+    """The household's exit replays from values, without a dissolution artifact."""
     model = _make_dissolution_model()
     solution = model.solve(
         params=_DISSOLUTION_PARAMS,
@@ -1338,7 +1265,7 @@ def test_public_model_replays_participation_from_values_only() -> None:
     )
     np.testing.assert_array_equal(result.raw_results["single_f"][1].in_regime, [True])
     np.testing.assert_allclose(
-        result.raw_results["single_f"][1].V_arr, [5.5], rtol=1e-6
+        result.raw_results["single_f"][1].V_arr, [5.0], rtol=1e-6
     )
 
 
@@ -1520,115 +1447,3 @@ def test_to_dataframe_singleton_only_value_column_is_unchanged() -> None:
     assert len(df) == 4  # 2 subjects x 2 periods, no routing/dissolution.
     assert df["value"].notna().all()
     assert pd.api.types.is_float_dtype(df["value"])
-
-
-# Test 8: regression — a REPEATING, self-looping, value-gated edge past the
-# source's own activity boundary. Every OTHER gated-edge test above has a
-# source active for exactly ONE period (a "one-shot" edge): the target is
-# always present at `period + 1`, so `gated_routing.py` never has to handle a
-# period whose target regime is not itself solved. `src` here is active over
-# TWO periods (ages 0 and 1) and declares a gated edge back to ITSELF — a
-# genuinely repeating self-loop. At `src`'s own last active period (age 1,
-# the activity boundary), the edge's target (`src` at age 2) does not exist:
-# `period_to_regime_to_V_arr[2]` (the sparse per-period solve output) has no
-# `"src"` entry, so an unconditional `period_solution[edge.target]` in
-# `build_same_period_mapping_for_fold` raises `KeyError: 'src'` there.
-
-_REPEAT_GATE_THRESHOLD = 2.0
-
-
-def _u_src_repeat(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
-    return wage + 0.0 * work
-
-
-def _u_src_exit(wage: ContinuousState) -> FloatND:
-    return 0.5 * wage
-
-
-def _u_src_fallback(wage: ContinuousState) -> FloatND:
-    return 0.1 * wage
-
-
-def _prob_stay(age: FloatND) -> FloatND:
-    return jnp.where(age < 1.0, 1.0, 0.0)
-
-
-def _prob_exit_boundary(age: FloatND) -> FloatND:
-    return jnp.where(age < 1.0, 0.0, 1.0)
-
-
-def _repeat_gate(V_target: FloatND) -> BoolND:
-    return V_target > _REPEAT_GATE_THRESHOLD
-
-
-def _repeating_self_loop_laws() -> dict[RegimeName, RegimeLawDeclaration | Transition]:
-    """Return the law of every regime of `_make_repeating_self_loop_regimes`.
-
-    `None` marks a terminal regime.
-    """
-    exit_cell = StochasticTransition(func=_prob_exit_boundary)
-    return {
-        "src": Transition(
-            law=ByAge.until(
-                stop_age_exclusive=2,
-                law={
-                    "src": StochasticTransition(func=_prob_stay),
-                    "src_exit": exit_cell,
-                },
-                then={"src_exit": exit_cell},
-            ),
-            participation={
-                "src": ParticipationCheck(
-                    predicate=_repeat_gate,
-                    reads={
-                        "V_target": ParticipationRead(
-                            regime="src",
-                            kind="IntegratedFull",
-                            projection={"wage": _identity_wage},
-                        )
-                    },
-                    routes={
-                        "only": MemberRoute(
-                            fallback=ProjectedRegimeValue(
-                                regime="src_fallback",
-                                projection={"wage": _identity_wage},
-                            ),
-                        )
-                    },
-                )
-            },
-        ),
-        "src_exit": None,
-        "src_fallback": None,
-    }
-
-
-def _make_repeating_self_loop_regimes() -> dict[str, Regime]:
-    """A source active over TWO periods with a repeating self-loop `GatedEdge`.
-
-    `src` is active for ages 0 and 1 (periods 0, 1) and declares a gated edge
-    back to ITSELF (`gated_edges={"src": ...}`). At period 0 the edge fires
-    normally — its target (`src` itself) is active at period 1. At period 1 —
-    `src`'s own last active period, the activity boundary — the edge's target
-    (`src` at period 2) does not exist: `src` is not solved past age 1. The
-    ordinary (ungated) regime transition routes a household past the
-    boundary into `src_exit` instead (`_prob_stay` / `_prob_exit_boundary`,
-    both keyed off age, sum to 1, and structurally declare BOTH `src` and
-    `src_exit` as reachable — the gated edge's target must be one of the
-    regime's declared transition targets).
-    """
-    src = Regime(
-        states={"wage": _WAGE_2},
-        state_transitions={"wage": fixed_transition("wage")},
-        actions={"work": DiscreteGrid(category_class=Work)},
-        functions={"utility": _u_src_repeat},
-    )
-    src_exit = Regime(
-        states={"wage": _WAGE_2},
-        functions={"utility": _u_src_exit},
-    )
-    src_fallback = Regime(
-        states={"wage": _WAGE_2},
-        functions={"utility": _u_src_fallback},
-    )
-    return {"src": src, "src_exit": src_exit, "src_fallback": src_fallback}

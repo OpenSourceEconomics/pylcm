@@ -6,12 +6,11 @@ pays for, and each cost is measured on its own axis here:
 - **model construction** — the phase scan, the lowering of the collective
   declarations, and the per-edge parameter discovery, with nothing compiled;
 - **cold compilation** — the first solve, which traces and compiles every
-  regime's kernels and its declared participation programs;
+  regime's kernels and its exit programs;
 - **warm solve** — the same solve with the compilation cache hot, which is what
   an estimation loop pays per parameter vector;
-- **simulation over cohort size** — participation checks route original subjects
-  before their final action each period, so this is where a cohort-size term
-  would show.
+- **simulation over cohort size** — exits route original subjects before their
+  final action each period, so this is where a cohort-size term would show.
 
 Host memory is tracked by `track_peak_cpu_mem` or `peakmem_*` and device memory
 by the `GpuPeakMem` companions, on the same workloads.
@@ -233,7 +232,7 @@ class _SimulateMeasurements:
 class CollectiveHouseholdSimulate(_SimulateMeasurements):
     """Forward simulation, over cohort sizes.
 
-    Participation checks route each original subject before its final action.
+    Exits route each original subject before its final action.
     A cohort-size term that grew faster than linearly would show up between
     these points.
     """

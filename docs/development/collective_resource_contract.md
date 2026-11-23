@@ -17,9 +17,9 @@ level.
 ## The workloads
 
 All of them are in `benchmarks/asv/bench_collective_household.py` and run over the
-marriage market of `lcm_examples.collective_household`: two singles who marry under
-mutual consent, a household that can dissolve in the current period, and a dissolution
-edge keyed by the continuing household.
+marriage market of `lcm_examples.collective_household`: a single who meets a partner
+marries through her exit when both consent, and the household dissolves through its own
+exit in the current period.
 
 `CollectiveHouseholdConstruct` and `CollectiveHouseholdSolve` publish their timing and
 host-memory numbers through `setup_cache`-backed `track_*` metrics, so one build and one
@@ -34,7 +34,7 @@ reads.
 | First-solve assembly        | `CollectiveHouseholdSolve.track_compilation_time`        | A whole first `solve()`: tracing, lowering, compiling-or-loading every kernel and fold, AND running the backward induction. See the note below. |
 | Warm solve                  | `CollectiveHouseholdSolve.track_execution_time`          | What an estimation loop pays per parameter vector.                                                                                              |
 | Host memory, solve          | `CollectiveHouseholdSolve.track_peak_cpu_mem`            | Resident peak while backward induction runs.                                                                                                    |
-| Simulation over cohort size | `CollectiveHouseholdSimulate`, `n_subjects ∈ {1e3, 1e5}` | Routing: one gate evaluation per edge per period over the whole population.                                                                     |
+| Simulation over cohort size | `CollectiveHouseholdSimulate`, `n_subjects ∈ {1e3, 1e5}` | Routing: each period's exit decisions and regime draws over the whole population.                                                               |
 | Device memory, simulation   | `CollectiveHouseholdSimulateGpuPeakMem`                  | Device peak while routing the cohort, at the larger of the two cohort sizes.                                                                    |
 
 ## The budgets

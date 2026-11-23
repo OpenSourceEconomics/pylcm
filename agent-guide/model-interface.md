@@ -83,9 +83,7 @@ Model(
   is its declaration path under `params["edges"]` — `[source][arg]` for a law over all
   targets, `[source][target][arg]` for a per-target cell (gated or not), and
   `[source][target]["predicate"][arg]`,
-  `[source][target]["routes"][route]["fallback"][state][arg]` for a target's `Gate` or
-  `ParticipationCheck`, and `[source][target]["reads"][read][state][arg]` for a
-  `ParticipationRead` projection.
+  `[source][target]["routes"][route]["fallback"][state][arg]` for a target's `Gate`.
   Values resolve from that path, `params["edges"][source][arg]` or the model level; a
   regime-level value never reaches an edge callable. Per-target state laws stay under
   their source regime.
@@ -303,7 +301,7 @@ Model(
   gate whose fallback is the target itself in that role, so the source has a gated
   source's scope. Refused at build, naming source, target and role: a non-collective
   target, an unknown role, a collective source, a target the transition never reaches,
-  a target with a gate or participation check as well.
+  a target with a gate as well.
 - **The transition key is always the GATE-OPEN target.** An edge that may dissolve a
   couple is keyed by the *continuing* collective regime. Keying it by the singleton
   would send both partners there whenever the couple stays together.
@@ -318,9 +316,9 @@ Model(
 - A gate predicate reads target states, params, `period` and `age`, never a value: an
   argument named `V_target`, `V_target_<s>` or `D_target` raises `GateReadsValueError`
   when the `Gate` is declared, and `Gate` takes no `references`. A move decided by
-  comparing values is an `Exit` in the source's `Regime(exit=...)` (current period) or
-  a `ParticipationCheck` in `Transition(participation=...)` with named `ParticipationRead`s (on
-  landing). The Boolean-dtype requirement is checked **at evaluation**, i.e. on the
+  comparing values is an `Exit` in `Regime(exit=...)` of the regime that decides:
+  formation with a `Consent` rule on the single's regime, dissolution with `Unilateral`
+  or `MutualConsent` on the household's. The Boolean-dtype requirement is checked **at evaluation**, i.e. on the
   first `solve()`, not at build.
 - `ParetoObjective(weights=...)` scalarizes the household; a weight may read the
   regime's states and `period`/`age`, never an action. Its other arguments become free
