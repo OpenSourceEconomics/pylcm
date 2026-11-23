@@ -1,1 +1,1 @@
-{"cpu_target_sha256": "68dad7c19326b46f46dc23a9e3a4b2a64d18efb152ee2e958417daf52917772d", "jax": "0.12.0.1", "jaxlib": "0.12.0.1", "machine": "x86_64", "system": "Linux", "xla_flags": []}
+{"cpu_target_sha256": "6a95a7beed87468ef1052b986be0d616c31757e91098456399c5fdfdbd3c07d9", "jax": "0.12.1", "jaxlib": "0.12.1", "machine": "x86_64", "system": "Linux", "xla_flags": []}
