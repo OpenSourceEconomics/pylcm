@@ -27,14 +27,14 @@ _Avoid_: initial values, start states
 
 **Regime**:
 What a subject is in during a period: a problem together with the rule for leaving
-it in that period. A subject is in exactly one regime per period. A regime that
-declares states, actions and functions itself owns a problem no other regime shares.
+it in that period. A subject is in exactly one regime per period. A regime declares
+its problem in its own slots.
 _Avoid_: visible regime, status, view
 
 **Problem**:
-An action problem: states, actions, constraints, functions and laws of motion,
-valued with next period's regimes and with nothing from the current period. Several
-regimes may share one problem.
+The action problem of a regime: its states, actions, constraints, functions and laws
+of motion, valued with next period's regimes and with nothing from the current
+period. It is part of the regime, not an object of its own.
 _Avoid_: hidden regime, stage, action regime
 
 **Member**:

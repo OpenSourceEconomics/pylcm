@@ -102,25 +102,6 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   regime does, instead of failing with incompatible devices. One-device solves are
   unchanged.
 
-### Regimes may share a `Problem`
-
-- `lcm.Problem` declares an action problem with the thirteen slots of `Regime` from
-  `states` to `certainty_equivalent`, and `Regime(problem=..., exit=...)` holds one. A
-  holder takes the problem's slots at construction and is then the regime that declares
-  them itself: same values, same fingerprint, parameters per regime. Several regimes may
-  hold one problem and differ in their exits and edges. A problem slot declared beside
-  `problem`, a `ConsumptionSavingsRegime` or `NestedConsumptionSavingsRegime` holding a
-  problem, and a `ValueDependentConstraint` in a `Problem` raise
-  `RegimeInitializationError`. See [`Problem`](docs/reference/model_and_regime.md#problem).
-- Every problem slot of a holder is its default or the problem's own object; anything
-  else is refused. A holder given a copy of its problem with one slot changed, or
-  constructed with its problem's solver beside slots of its own, is refused instead of
-  keeping the first problem's slots and solving the wrong problem. `replace` of a holder
-  that changes a slot needs `problem=None`, and the finalized regimes of a model hold no
-  problem.
-- `Model.problems` maps each regime name to the problem the regime was given, or `None`,
-  so regimes sharing a problem map to one object. It enters no fingerprint.
-
 ### Exits read the destination's problem
 
 - A subject moves at most once per period. An exit that needs no consent reads its

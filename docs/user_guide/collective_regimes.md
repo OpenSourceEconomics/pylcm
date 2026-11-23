@@ -337,74 +337,49 @@ matters. `model.lookup_policy` refuses a period in which the regime can renegoti
 because it cannot report a changed state or a separation; read the decision from
 `model.simulate`.
 
-## Several regimes, one action problem
+## Regimes that differ only in their exit
 
 Couples that face the same budget, preferences and laws of motion can still differ in
 how they may end the match, one dissolving unilaterally and another only by mutual
 consent, or in where they go next period. Each is its own regime, because initial
-conditions, edges and results name regimes. Declare what they have in common once, as an
-[`lcm.Problem`](../reference/model_and_regime.md#api-problem), and let each regime hold
-it:
+conditions, edges and results name regimes, and each declares its slots itself. Ordinary
+Python builds them from one definition:
 
 ```python
-from lcm import Exit, ExitTarget, MutualConsent, Problem, Regime, Unilateral
+from lcm import Exit, ExitTarget, MutualConsent, Regime, Unilateral
 
 
-household = Problem(
-    states={"wealth": couple_wealth},
-    state_transitions={"wealth": next_couple_wealth},
-    actions={"consumption": consumption},
-    functions={
-        "utility": CollectiveUtility(utilities={"f": her_utility, "m": his_utility})
-    },
-)
-
-
-def dissolution(rule):
-    return Exit(
-        rule=rule,
-        targets={
-            member: ExitTarget(
-                regime=f"single_{member}",
-                projection={"wealth": half_of_couple_wealth},
-            )
-            for member in ("f", "m")
+def couple(rule):
+    return Regime(
+        states={"wealth": couple_wealth},
+        state_transitions={"wealth": next_couple_wealth},
+        actions={"consumption": consumption},
+        functions={
+            "utility": CollectiveUtility(utilities={"f": her_utility, "m": his_utility})
         },
+        exit=Exit(
+            rule=rule,
+            targets={
+                member: ExitTarget(
+                    regime=f"single_{member}",
+                    projection={"wealth": half_of_couple_wealth},
+                )
+                for member in ("f", "m")
+            },
+        ),
     )
 
 
 regimes = {
-    "couple_unilateral": Regime(problem=household, exit=dissolution(Unilateral())),
-    "couple_mutual": Regime(problem=household, exit=dissolution(MutualConsent())),
-    # ... the singles, which may share a problem of their own
+    "couple_unilateral": couple(Unilateral()),
+    "couple_mutual": couple(MutualConsent()),
+    # ... the singles
 }
 ```
 
-A `Problem` takes the `Regime` slots that declare an action problem, from `states` to
-`certainty_equivalent`, with the same types and defaults. A regime that holds it, a
-**holder**, declares none of those slots: it takes the problem's own objects and adds
-its `exit` and `description`. The model declares each holder's edges by regime name, so
-holders may differ there as well. A holder builds and solves exactly like a regime that
-declares the same slots itself, and its value follows from its own exit and edges.
-
-Parameters stay per regime: the problem's functions appear under each holder's name in
-`get_params_template()`, here once under `couple_unilateral` and once under
-`couple_mutual`, and are set separately.
-
-`RegimeInitializationError` refuses
-
-- a holder that is passed a problem slot beside its problem, unless the slot is the
-  problem's own object, and `holder.replace(...)` of such a slot or of the problem; a
-  value equal to the `Regime` default is refused like any other, and replacing the
-  `exit` or `description` keeps the problem;
-- a `ConsumptionSavingsRegime` or `NestedConsumptionSavingsRegime` that holds a problem;
-- a problem with a `ValueDependentConstraint`: that constraint compares action values,
-  so it is a rule of a regime, which then declares its slots itself.
-
-`model.problems` maps each regime name to the problem it was given, or `None` for a
-regime that declares its slots itself. Two regimes share a problem when they map to the
-same object. The finalized regimes in `model.user_regimes` hold no problem, so a model
-built from them names none.
+Each regime's value follows from its own exit and edges. Parameters stay per regime: the
+couple's functions appear under each regime's name in `get_params_template()`, here once
+under `couple_unilateral` and once under `couple_mutual`, and are set separately.
 
 ## Entering a household in a role
 

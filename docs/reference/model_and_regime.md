@@ -65,8 +65,6 @@ Public inspection attributes include:
 
 - `ages`, `n_periods`, and `regime_names_to_ids`;
 - `user_regimes`, the finalized declarations in user vocabulary;
-- `problems`, the [`Problem`](#api-problem) each regime was given, or `None`, by regime
-  name;
 - `edges`, the edges exactly as declared, `Transition` laws included;
 - `initial_nodes`, a normalized immutable `InitialNodes` whose `by_age` or `by_period`
   mapping contains exact coordinates and sorted, unique tuples of regime names;
@@ -238,7 +236,6 @@ A general regime declares:
 | `certainty_equivalent`  | Optional regime-level lottery reduction                                       |
 | `exit`                  | Current-period move with mapped policy queries                                |
 | `description`           | Human-readable description                                                    |
-| `problem`               | Optional shared [`Problem`](#api-problem) in place of the slots above `exit`  |
 
 Use `Regime.replace(...)` to derive a modified immutable declaration.
 
@@ -272,79 +269,6 @@ equivalent because they have no continuation.
 required by EGM-family solvers. See
 [Consumption-saving regimes and margins](consumption_savings.md). Collective fields on
 `Regime` are documented separately in [Collective regimes](collective_regimes.md).
-
-(api-problem)=
-
-## `Problem`
-
-A `Problem` is an action problem: states, actions, constraints, functions and laws of
-motion, valued with next period's regimes and with nothing from the current period. Its
-fields are the thirteen `Regime` slots from `states` to `certainty_equivalent` in the
-table above, each with the same type and default.
-
-Several regimes may hold one problem with `Regime(problem=...)`. A regime that holds a
-problem declares none of the problem's slots: it takes the problem's own objects for
-them and adds only its `exit` and `description`. Holding the same problem means the same
-declaration, not the same value: holders may differ in their exits and in the edges the
-model declares for them. Initial conditions, edges, results and parameters name regimes,
-never problems, so the parameters of a problem's functions stay per regime. A regime
-that declares its slots itself owns a problem no other regime shares.
-
-A holder is passed no problem slot beside its problem, or one that is the problem's
-object already. Any other object is refused, a value equal to the `Regime` default
-included, so an explicit argument is never silently replaced. `holder.replace(exit=...)`
-or `holder.replace(description=...)` therefore keeps the problem and its objects.
-Replacing a slot of a holder is refused, and so is giving a holder another problem whose
-objects differ from those the holder carries, such as a copy of its problem with one
-slot changed. Construct a new `Regime(problem=...)` for another problem, or pass
-`problem=None` beside the slots a regime declares itself. A regime the model derives by
-rewriting slots, such as each of `model.user_regimes`, holds no problem. Ask the model
-instead: `model.problems` maps each regime name to the problem the regime was given, and
-two regimes share a problem when they map to the same object. A model built from another
-model's `user_regimes` therefore knows no problems.
-
-Three declarations are refused with `RegimeInitializationError`:
-
-- a regime that holds a problem and declares one of its slots with anything other than
-  the default or the problem's own object;
-- a `ConsumptionSavingsRegime` or `NestedConsumptionSavingsRegime` that holds a problem,
-  since its margin declarations belong to its own problem;
-- a problem with a `ValueDependentConstraint`, which compares action values and so is a
-  regime's rule rather than part of a problem.
-
-Two couples that hold one problem and differ in their exit:
-
-```python
-import lcm
-
-household = lcm.Problem(
-    states={"wealth": lcm.LinSpacedGrid(start=1.0, stop=2.0, n_points=2)},
-    functions={"utility": lcm.CollectiveUtility(utilities={"f": wife, "m": husband})},
-)
-
-
-def dissolution(rule):
-    return lcm.Exit(
-        rule=rule,
-        targets={
-            member: lcm.ExitTarget(
-                regime=f"single_{member}",
-                projection={"wealth": lcm.fixed_transition("wealth")},
-            )
-            for member in ("f", "m")
-        },
-    )
-
-
-regimes = {
-    "couple_unilateral": lcm.Regime(
-        problem=household, exit=dissolution(lcm.Unilateral())
-    ),
-    "couple_mutual": lcm.Regime(
-        problem=household, exit=dissolution(lcm.MutualConsent())
-    ),
-}
-```
 
 (api-current-exits)=
 

@@ -384,7 +384,6 @@ from lcm.koopmans_aggregation import LinearAggregator
 from lcm.lowering import LoweredPeriodCandidate, PeriodCandidate
 from lcm.period_capture import CapturedPeriodReplay, PeriodCapture
 from lcm.phased import Phased
-from lcm.problem import Problem
 from lcm.processes import (
     LogNormalIIDProcess,
     NormalIIDProcess,
@@ -564,7 +563,6 @@ class _PickledModel(TypedDict):
     ]
     pruned_variables: MappingProxyType[RegimeName, frozenset[str]]
     _user_regimes: MappingProxyType[RegimeName, FinalizedUserRegime]
-    _problems: NotRequired[MappingProxyType[RegimeName, Problem | None]]
     regime_names_to_ids: RegimeNamesToIds
     _execution: ResolvedExecution
     reachability: ModelReachability
@@ -1024,19 +1022,6 @@ class Model:
     shock groups included."""
 
     @property
-    def problems(self) -> MappingProxyType[RegimeName, Problem | None]:
-        """Return the problem each regime was given, by regime name.
-
-        `None` for a regime that held no problem. Regimes that share a problem map
-        to the same object. Read from the regimes passed to the constructor, since
-        the finalized regimes in `user_regimes` hold no problem; a model built from
-        those regimes therefore names none. Enters no fingerprint.
-        """
-        return self._problems
-
-    _problems: MappingProxyType[RegimeName, Problem | None]
-
-    @property
     def _node_state_names(self) -> frozenset[StateName]:
         """Name the internal node states of adapted shocks; empty without them."""
         if self._node_axis_adapter is None:
@@ -1281,16 +1266,6 @@ class Model:
                 conditions name the members. At most one composite state.
 
         """
-        self._problems = MappingProxyType(
-            {name: regime.problem for name, regime in regimes.items()}
-        )
-        # Building rewrites regime slots, and a rewritten regime no longer carries
-        # its problem's objects: the model takes each holder as the regime that
-        # declares those objects itself.
-        regimes = {
-            name: regime if regime.problem is None else regime.replace(problem=None)
-            for name, regime in regimes.items()
-        }
         regimes, shocks, self._node_axis_adapter = adapt_declaration(
             regimes=regimes, shocks=shocks
         )
@@ -2263,7 +2238,6 @@ class Model:
             simulation_output_dtypes=self.simulation_output_dtypes,
         )
         state["_regimes"] = self._regimes
-        state["_problems"] = self._problems
         state["_constructor_inputs"] = self._constructor_inputs
         state["_declaration_preparation"] = self._declaration_preparation
         state["_initial_generation_key"] = self._initial_generation_key
@@ -2296,9 +2270,6 @@ class Model:
         )
         self._param_name_candidates = state.get(
             "_param_name_candidates", _get_param_name_candidates(self._user_regimes)
-        )
-        self._problems = state.get(
-            "_problems", MappingProxyType(dict.fromkeys(self._user_regimes))
         )
         self._post_decision_state_names = state.get(
             "_post_decision_state_names", frozenset()

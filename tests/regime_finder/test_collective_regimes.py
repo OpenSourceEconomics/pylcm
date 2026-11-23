@@ -1,7 +1,7 @@
 """The regime finder on collective models: pooling, counts, renegotiation and exits.
 
-Every model is a constructed `Model` from the collective, exit, renegotiation, gate
-and shared-problem tests, or a few-line model of the same kind. The certificate
+Every model is a constructed `Model` from the collective, exit, renegotiation and
+gate tests, or a few-line model of the same kind. The certificate
 tests alter a genuine report the way an unsound finder would write it and check that
 the independent replay rejects it.
 """
@@ -24,15 +24,29 @@ from _lcm_regime_finder.records import JSONValue
 from lcm import (
     CollectiveUtility,
     DiscreteGrid,
+    ExecutionConfig,
     Exit,
     ExitTarget,
     InitialNodes,
+    LinSpacedGrid,
     Model,
+    MutualConsent,
+    Periods,
     Regime,
     Unilateral,
     categorical,
+    fixed_transition,
 )
-from lcm.typing import BoolND, DiscreteState, FloatND, RegimeName, ScalarInt
+from lcm.exits import ExitRule
+from lcm.shocks import GaussHermite, Normal, Product, ShockGroup
+from lcm.typing import (
+    BoolND,
+    ContinuousState,
+    DiscreteState,
+    FloatND,
+    RegimeName,
+    ScalarInt,
+)
 from tests import test_transition_roles as transition_roles
 from tests.collective_fixtures import make_two_member_model
 from tests.regime_building import test_gate_shared_fallback as gate_fallback
@@ -40,7 +54,6 @@ from tests.regime_finder import native_conditional_current_shocks as observed_of
 from tests.simulation import test_query_only_participation_actors as value_readers
 from tests.solution import test_mutual_consent_settlement as settlement
 from tests.solution import test_renegotiation as renegotiation
-from tests.solution import test_shared_problem as shared_problem
 
 BACKENDS: tuple[FactsBackendName, ...] = ("dense", "metadata")
 
@@ -106,11 +119,119 @@ def _role_model() -> Model:
     )
 
 
+@categorical(ordered=True)
+class _Skill:
+    low: ScalarInt
+    high: ScalarInt
+
+
+@categorical(ordered=False)
+class _Household:
+    couple_u: ScalarInt
+    couple_m: ScalarInt
+    single_f: ScalarInt
+    single_m: ScalarInt
+    couple_end: ScalarInt
+    single_end: ScalarInt
+
+
+def _twin_wife(*, wealth: ContinuousState, match: FloatND) -> FloatND:
+    return 3.0 * wealth + match
+
+
+def _twin_husband(*, wealth: ContinuousState, skill: DiscreteState) -> FloatND:
+    return wealth + skill
+
+
+def _twin_outside(wealth: ContinuousState) -> FloatND:
+    return 2.0 * wealth
+
+
+def _twin_regimes() -> dict[RegimeName, Regime]:
+    """Two couples that differ only in the rule of their exit, and their singles.
+
+    One couple dissolves unless both members are willing to stay, the other only
+    if neither is. The couples read a current shock and the model-level state
+    `skill`; every regime moves on to a terminal regime of its kind.
+    """
+
+    def couple(*, last: bool, rule: ExitRule | None) -> Regime:
+        return Regime(
+            states={"wealth": LinSpacedGrid(start=1.0, stop=2.0, n_points=2)},
+            state_transitions={} if last else {"wealth": fixed_transition("wealth")},
+            functions={
+                "utility": CollectiveUtility(
+                    utilities={"f": _twin_wife, "m": _twin_husband}
+                )
+            },
+            shocks=("match",),
+            exit=None
+            if rule is None
+            else Exit(
+                rule=rule,
+                targets={
+                    member: ExitTarget(
+                        regime=f"single_{member}",
+                        projection={
+                            "wealth": fixed_transition("wealth"),
+                            "skill": fixed_transition("skill"),
+                        },
+                    )
+                    for member in ("f", "m")
+                },
+            ),
+        )
+
+    def single(*, last: bool) -> Regime:
+        return Regime(
+            states={"wealth": LinSpacedGrid(start=1.0, stop=2.0, n_points=2)},
+            state_transitions={} if last else {"wealth": fixed_transition("wealth")},
+            functions={"utility": _twin_outside},
+        )
+
+    return {
+        "couple_u": couple(last=False, rule=Unilateral()),
+        "couple_m": couple(last=False, rule=MutualConsent()),
+        "single_f": single(last=False),
+        "single_m": single(last=False),
+        "couple_end": couple(last=True, rule=None),
+        "single_end": single(last=True),
+    }
+
+
+def _twin_model(regimes: Mapping[RegimeName, Regime]) -> Model:
+    """Build the two-period couples model with the model-level state `skill`."""
+    return Model(
+        regimes=regimes,
+        states={"skill": DiscreteGrid(category_class=_Skill)},
+        state_transitions={"skill": fixed_transition("skill")},
+        shocks={
+            "match": ShockGroup(
+                shocks={"match": Normal(mu=0.0, sigma=0.5)},
+                nodes=Product(match=GaussHermite(n=2)),
+            )
+        },
+        n_periods=2,
+        regime_id_class=_Household,
+        initial_nodes=InitialNodes(by_period={0: ("couple_u", "couple_m")}),
+        edges={
+            source: {target: Periods(values=(0,))}
+            for source, target in (
+                ("couple_u", "couple_end"),
+                ("couple_m", "couple_end"),
+                ("single_f", "single_end"),
+                ("single_m", "single_end"),
+            )
+        },
+        execution_config=ExecutionConfig(device_memory_bytes=None),
+    )
+
+
 def _equal_exit_couples() -> Model:
-    """The hand-declared twin couples, both dissolving under one rule."""
-    regimes = shared_problem._twin_regimes()
+    """The twin couples, both dissolving under one rule."""
+    regimes = _twin_regimes()
     regimes["couple_m"] = regimes["couple_u"]
-    return shared_problem._model(regimes=regimes, skill=True)
+    return _twin_model(regimes)
 
 
 _MODELS: dict[str, Callable[[], Model]] = {
@@ -118,13 +239,8 @@ _MODELS: dict[str, Callable[[], Model]] = {
     "plain": lambda: transition_roles.build_model(edge_form="plain"),
     "exact_gate": lambda: transition_roles.build_model(edge_form="exact_gate"),
     "hand_gate": lambda: transition_roles.build_model(edge_form="hand_gate"),
-    "twin": lambda: shared_problem._model(
-        regimes=shared_problem._twin_regimes(), skill=True
-    ),
+    "twin": lambda: _twin_model(_twin_regimes()),
     "equal_exits": _equal_exit_couples,
-    "shared": lambda: shared_problem._model(
-        regimes=shared_problem._shared_regimes(skill=True), skill=True
-    ),
     "renegotiate_1p": lambda: renegotiation._model(values=renegotiation._VALUES),
     "renegotiate_2p": lambda: renegotiation._model(
         values=renegotiation._VALUES, n_periods=2
@@ -493,16 +609,6 @@ def test_roles_equal_their_lowered_gate() -> None:
         for label in ("roles", "exact_gate")
     ]
     assert curves[0] == curves[1]
-
-
-def test_problem_holders_are_checked_as_the_regimes_declaring_their_slots() -> None:
-    """Holders of one `Problem` get the result of the hand-declared twin regimes."""
-    shared, twin = _report("shared", "dense"), _report("twin", "dense")
-    assert (shared["status"], shared["analysis"]["obligations"]) == ("COMPLETE", [])
-    assert (shared["layouts"]["dense_regimes"], shared["original_cost"]) == (
-        twin["layouts"]["dense_regimes"],
-        twin["original_cost"],
-    )
 
 
 def test_readers_of_a_collective_value_stay_unresolved() -> None:

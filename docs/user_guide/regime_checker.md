@@ -130,9 +130,6 @@ In a model with collective regimes, the checker holds to these rules:
   period and never split into status lanes, because renegotiation compares the stay
   values at its codes within the period.
 
-A regime that holds a `Problem` is checked as the regime that declares the problem's
-slots itself, with the same result: the model takes each holder's slots at construction.
-
 ### Which layout is recommended?
 
 `result.recommendation` is the curve point that minimizes a linear cost model. If no
