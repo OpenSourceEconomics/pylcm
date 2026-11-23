@@ -857,18 +857,37 @@ def test_failed_query_chunks_never_publish_and_drain(
     assert events == ["chunks", "drain"]
 
 
-def test_query_closure_narrows_by_halving_the_chunk() -> None:
-    """Narrowing halves the common chunk and refuses below one source cell."""
+def _lanes_per_step(kernel: queries._PolicyQueryKernel) -> int:
+    """Source cells times support rows that one step of the chunk loop evaluates."""
+    chunks = cast("queries._QueryChunks", kernel.programs["_chunks"].function)
+    return kernel.chunk_size * max(core.row_batch for core in chunks.cores.values())
+
+
+def test_query_closure_narrows_its_step_down_to_one_cell_of_minimal_rows() -> None:
+    """Each narrowing halves the lanes a step evaluates.
+
+    The chunk halves down to one source cell, then the support rows per step halve
+    down to `_ROW_BATCH`. A kernel at both floors refuses to narrow.
+    """
     kernel = (
         _native_model(enable_jit=True, chunk_size=2)
         ._regimes["root"]
         .solution.period_kernels[0]
     )
-    assert isinstance(kernel, queries._PolicyQueryKernel)
-    narrowed = kernel.narrow_workspace()
-    assert isinstance(narrowed, queries._PolicyQueryKernel)
-    assert narrowed.chunk_size == 1
-    assert narrowed.narrow_workspace() is None
+    steps = []
+    while isinstance(kernel, queries._PolicyQueryKernel):
+        steps.append((kernel.chunk_size, _lanes_per_step(kernel)))
+        kernel = kernel.narrow_workspace()
+    assert kernel is None
+    lanes = queries._STEP_LANES
+    assert steps == [
+        (2, lanes),
+        *(
+            (1, lanes >> k)
+            for k in range(1, (lanes // queries._ROW_BATCH).bit_length())
+        ),
+    ]
+    assert steps[-1] == (1, queries._ROW_BATCH)
 
 
 @pytest.mark.parametrize(

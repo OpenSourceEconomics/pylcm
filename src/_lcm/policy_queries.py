@@ -96,12 +96,15 @@ _OUTSIDE = "_lcm_query_outside"
 # Prefix of the program that tabulates a destination for the reader's stored reads.
 OUTSIDE_PROGRAM = "_outside:"
 # Support rows evaluated together per step, inside every lane of the cell batch.
-# A step evaluates chunk-times-row-batch lanes. Holding that product at
-# `_STEP_LANES` lets a narrowed chunk widen its rows: the per-step workspace stays
-# put while the step count, and with it the launch count, does not grow.
-# ponytail: a fixed lane target. Admission halves a chunk whose step outgrows the
-# budget, at one extra lowering each; derive the target from the budget if those
-# retries cost more compile time than they save.
+# A step evaluates chunk-times-row-batch lanes, and its workspace scales with that
+# product. A planned kernel holds the product at `_STEP_LANES`, whatever its
+# chunk, so a narrower planned chunk widens its rows and keeps the step count, and
+# with it the launch count, from growing. Each narrowing by admission halves the
+# product: it halves the chunk down to one source cell and, from there, the rows
+# down to `_ROW_BATCH`, where the kernel refuses to narrow further.
+# ponytail: a fixed lane target. Admission halves a step that outgrows the budget,
+# at one extra lowering each; derive the target from the budget if those retries
+# cost more compile time than they save.
 _ROW_BATCH = 64
 _STEP_LANES = 1048576
 _FLAT_OPERAND_PATH_LENGTH = 2
@@ -895,13 +898,14 @@ def build_policy_query_kernel(
     outside_tables: Mapping[str, tuple[Mapping[str, QueryNode], str]] = (
         MappingProxyType({})
     ),
+    halvings: int = 0,
 ) -> _PolicyQueryKernel:
     """Expand one genuine occupant root into a common-chunk native query loop.
 
     `outside_tables` maps the label of each stored outside read to its
     destination's bound Raw graph and that graph's root. The kernel tabulates each
     destination its stored reads take, once, before the chunk loop that gathers
-    from the tables.
+    from the tables. A step evaluates `_STEP_LANES` halved `halvings` times.
     """
     if isinstance(chunk_size, bool) or chunk_size < 1:
         raise ValueError("A native query chunk must be positive.")
@@ -909,6 +913,7 @@ def build_policy_query_kernel(
     root_space = root_context.state_action_space
     size = math.prod(value.size for value in root_space.states.values())
     chunk_size = min(chunk_size, size)
+    row_batch = _row_batch(chunk_size=chunk_size, halvings=halvings)
     bank_size = _get_padded_query_bank_size(size=size, chunk_size=chunk_size)
     stakeholders = root_context.stakeholders
     stakeholder_shape = () if stakeholders is None else (len(stakeholders),)
@@ -972,7 +977,7 @@ def build_policy_query_kernel(
             period=period,
             name=name,
             definitions=definitions,
-            row_batch=_row_batch(chunk_size=chunk_size),
+            row_batch=row_batch,
         )
         reads.extend(
             query_value_reads(
@@ -996,6 +1001,7 @@ def build_policy_query_kernel(
         outside_tables=outside_tables,
         reader=root_context.regime_name,
         width=chunk_size,
+        row_batch=row_batch,
     )
     # The chunk loop takes each table's values and support under these names.
     table_arguments = {
@@ -1048,9 +1054,10 @@ def build_policy_query_kernel(
                 host_buffers=host_buffers,
                 host_axis_names=("query_cell",),
             ),
-            # The chunk is bound by the function, not its arguments: halved chunks
-            # can pad to one bank shape and must not share one executable.
-            compiler_options=(("query_chunk", chunk_size),),
+            # The chunk and the rows per step are bound by the function, not its
+            # arguments: a narrowed kernel can pad to one bank shape and must not
+            # share one executable.
+            compiler_options=(("query_chunk", chunk_size), ("query_rows", row_batch)),
             output_roles=(
                 StateAxesLeading(state_names=(), shape=bank_shape, dtype=dtype),
                 StateAxesLeading(
@@ -1087,6 +1094,7 @@ def build_policy_query_kernel(
         root_context=root_context,
         period=period,
         outside_tables=outside_tables,
+        halvings=halvings,
     )
 
 
@@ -1096,6 +1104,7 @@ def _outside_programs(
     outside_tables: Mapping[str, tuple[Mapping[str, QueryNode], str]],
     reader: RegimeName,
     width: int,
+    row_batch: int,
 ) -> Mapping[str, CoreProgram]:
     """One program per destination table the stored reads take, by program name.
 
@@ -1113,7 +1122,12 @@ def _outside_programs(
         definitions, key = outside_tables[read.label]
         _admit_node(node=definitions[key], period=definitions[key].read.period)
         programs[name] = outside_value_program(
-            read=read, definitions=definitions, key=key, reader=reader, width=width
+            read=read,
+            definitions=definitions,
+            key=key,
+            reader=reader,
+            width=width,
+            row_batch=row_batch,
         )
     return MappingProxyType(programs)
 
@@ -1939,9 +1953,13 @@ def with_contracted_tables(
     )
 
 
-def _row_batch(*, chunk_size: int) -> int:
-    """Support rows per step for a chunk of `chunk_size` source cells."""
-    return max(_ROW_BATCH, _STEP_LANES // chunk_size)
+def _row_batch(*, chunk_size: int, halvings: int = 0) -> int:
+    """Support rows per step for a chunk of `chunk_size` source cells.
+
+    The step evaluates `_STEP_LANES` halved `halvings` times, and never fewer than
+    `_ROW_BATCH` rows.
+    """
+    return max(_ROW_BATCH, (_STEP_LANES >> halvings) // chunk_size)
 
 
 def map_lanes[T: PytreeValue, R: PytreeValue](
@@ -2726,18 +2744,23 @@ class _PolicyQueryKernel:
     chunk_size: int
     root_context: SolverBuildContext
     period: int
+    halvings: int
+    """How often admission halved the lanes a step evaluates."""
     fixed_flat_params: FlatParams = MappingProxyType({})
     outside_tables: Mapping[str, tuple[Mapping[str, QueryNode], str]] = (
         MappingProxyType({})
     )
     """Label of each stored outside read to its destination's bound Raw graph and
     that graph's root."""
-    shared_functions: dict[tuple[str, int], Callable[..., PytreeValue]] | None = None
-    """Program functions by name and chunk width, one dict per group of periods.
+    shared_functions: dict[tuple[str, int, int], Callable[..., PytreeValue]] | None = (
+        None
+    )
+    """Program functions by name, chunk width and support rows per step, one dict
+    per group of periods.
 
     Periods that trace the same programs hold the same dict and run its
     functions, so one lowering serves the group. The dict is mutable because a
-    narrowed period adds its width for the periods narrowed after it.
+    narrowed period adds its widths for the periods narrowed after it.
     """
 
     def core_programs(self) -> Mapping[str, CoreProgram]:
@@ -2745,9 +2768,10 @@ class _PolicyQueryKernel:
         return self.programs
 
     def sharing(
-        self, *, functions: dict[tuple[str, int], Callable[..., PytreeValue]]
+        self, *, functions: dict[tuple[str, int, int], Callable[..., PytreeValue]]
     ) -> Self:
         """Run the functions of the first period that entered `functions`."""
+        row_batch = _row_batch(chunk_size=self.chunk_size, halvings=self.halvings)
         return replace(
             self,
             shared_functions=functions,
@@ -2756,7 +2780,7 @@ class _PolicyQueryKernel:
                     name: replace(
                         program,
                         function=functions.setdefault(
-                            (name, self.chunk_size), program.function
+                            (name, self.chunk_size, row_batch), program.function
                         ),
                     )
                     for name, program in self.programs.items()
@@ -2765,8 +2789,15 @@ class _PolicyQueryKernel:
         )
 
     def narrow_workspace(self, *, halvings: int = 1) -> PeriodKernel | None:
-        """Halve the common chunk `halvings` times, refusing below one source cell."""
-        if self.chunk_size == 1:
+        """Halve the lanes a step evaluates `halvings` times.
+
+        The common chunk halves down to one source cell and, from there, the support
+        rows per step down to `_ROW_BATCH`. A kernel at both floors refuses.
+        """
+        if (
+            self.chunk_size == 1
+            and _row_batch(chunk_size=1, halvings=self.halvings) == _ROW_BATCH
+        ):
             return None
         candidate = build_policy_query_kernel(
             root_context=self.root_context,
@@ -2775,6 +2806,7 @@ class _PolicyQueryKernel:
             root=self.root,
             chunk_size=max(1, self.chunk_size >> halvings),
             outside_tables=self.outside_tables,
+            halvings=self.halvings + halvings,
         )
         candidate = candidate.with_fixed_params(
             fixed_flat_params=self.fixed_flat_params

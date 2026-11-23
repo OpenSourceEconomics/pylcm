@@ -393,9 +393,10 @@ Parameters stay per regime: the problem's functions appear under each holder's n
 
 `RegimeInitializationError` refuses
 
-- a holder that declares a problem slot with anything other than the default or the
-  problem's own object, and `holder.replace(...)` of such a slot; replacing its `exit`
-  or `description` keeps the problem;
+- a holder that is passed a problem slot beside its problem, unless the slot is the
+  problem's own object, and `holder.replace(...)` of such a slot or of the problem; a
+  value equal to the `Regime` default is refused like any other, and replacing the
+  `exit` or `description` keeps the problem;
 - a `ConsumptionSavingsRegime` or `NestedConsumptionSavingsRegime` that holds a problem;
 - a problem with a `ValueDependentConstraint`: that constraint compares action values,
   so it is a rule of a regime, which then declares its slots itself.
@@ -908,3 +909,9 @@ edge's own target states — never from a union over unrelated regimes. See
 See [the resource contract](../development/collective_resource_contract.md) for the
 workloads these declarations are benchmarked on and which axis each cost is allowed to
 grow along.
+
+A simulation decides an exit for a block of subjects at once. Every projection and
+adjustment of the exit, including each settlement candidate's, is evaluated for every
+subject of the block and discarded where the subject does not take that branch. An exit
+whose projections are expensive and rarely taken therefore pays for them on every
+subject.

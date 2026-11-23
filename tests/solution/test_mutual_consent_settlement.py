@@ -37,7 +37,7 @@ from lcm import (
     Unilateral,
     categorical,
 )
-from lcm.exceptions import RegimeInitializationError
+from lcm.exceptions import ExecutionPlanningError, RegimeInitializationError
 from lcm.exits import ExitRule
 from lcm.typing import BoolND, FloatND, IntND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION, assert_agrees_to_ulp
@@ -610,6 +610,119 @@ def test_settlement_values_agree_with_and_without_stored_outside_reads(
         n_ulp=16,
         operand_magnitude=float(np.max(np.abs(point))),
     )
+
+
+_INTERCEPTS = tuple(cell[1] for cell in _SETTLE_CELLS)
+
+
+@dataclass(frozen=True, kw_only=True)
+class _Poisoned:
+    """`_divided(member)`, but NaN at one candidate in the listed cells."""
+
+    member: int
+    cells: tuple[int, ...]
+    point: float
+
+    def __call__(self, *, case: IntND, share: FloatND) -> FloatND:
+        slope = 4.0 if self.member == 0 else -4.0
+        # Candidates are a quarter apart, so the band holds exactly one of them.
+        poisoned = jnp.isin(case, jnp.asarray(self.cells)) & (
+            jnp.abs(share - self.point) < 0.125
+        )
+        return jnp.where(
+            poisoned,
+            jnp.nan,
+            jnp.asarray(_INTERCEPTS)[case, self.member] + slope * share,
+        )
+
+
+def _with_poison(poison: _Poisoned) -> Callable[[Regime], Regime]:
+    member = ("f", "m")[poison.member]
+
+    def change(regime: Regime) -> Regime:
+        declaration = regime.exit
+        assert declaration is not None
+        return replace(
+            regime,
+            exit=replace(
+                declaration,
+                targets={
+                    **declaration.targets,
+                    member: replace(
+                        declaration.targets[member], utility_adjustment=poison
+                    ),
+                },
+            ),
+        )
+
+    return change
+
+
+# Cells in which a NaN at settlement 1.0 enters no comparison: nobody refuses (0),
+# both refuse at a default below 1.0 (1), the stayer f accepts nearer (2, 3), the
+# stayer m looks below the default (5, 6, 7), or the exit is not available (8).
+_UNCOMPARED_AT_ONE = (0, 1, 2, 3, 5, 6, 7, 8)
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+@pytest.mark.parametrize(
+    "poison",
+    [
+        _Poisoned(member=0, cells=_UNCOMPARED_AT_ONE, point=1.0),
+        _Poisoned(member=1, cells=_UNCOMPARED_AT_ONE, point=1.0),
+        # The leaver m's value matters at the selected settlement only.
+        _Poisoned(member=1, cells=(2,), point=0.5),
+        _Poisoned(member=1, cells=(4,), point=1.0),
+    ],
+    ids=("f-at-1", "m-at-1", "leaver-before-selected", "leaver-none-accepted"),
+)
+def test_settlement_ignores_a_nan_no_comparison_reads(*, poison: _Poisoned) -> None:
+    """A NaN outside value the selection never reads leaves every published value."""
+    model = _model_with(regime_change=_with_poison(poison))
+    np.testing.assert_array_almost_equal(
+        model.solve(params={}, log_level="off").values[0]["couple"],
+        _settled_values(tie="stay"),
+        decimal=DECIMAL_PRECISION,
+    )
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+def test_settlement_lands_members_past_a_nan_no_comparison_reads() -> None:
+    """Simulated members separate where the selection puts them despite the NaN."""
+    poison = _Poisoned(member=0, cells=_UNCOMPARED_AT_ONE, point=1.0)
+    frame = _simulate_every_cell(
+        model=_model_with(regime_change=_with_poison(poison)),
+        n_cells=len(_SETTLE_CELLS),
+    )
+    np.testing.assert_array_almost_equal(
+        _own_values(frame),
+        _settled_values(tie="stay").reshape(-1),
+        decimal=DECIMAL_PRECISION,
+    )
+
+
+@pytest.mark.parametrize(
+    "poison",
+    [
+        _Poisoned(member=0, cells=(2,), point=0.75),
+        _Poisoned(member=1, cells=(2,), point=0.75),
+        _Poisoned(member=0, cells=(2,), point=0.5),
+        _Poisoned(member=0, cells=(4,), point=1.0),
+        _Poisoned(member=0, cells=(9,), point=1.0),
+    ],
+    ids=(
+        "stayer-at-selected",
+        "leaver-at-selected",
+        "stayer-before-selected",
+        "stayer-none-accepted",
+        "at-default",
+    ),
+)
+def test_settlement_refuses_a_nan_the_selection_reads(*, poison: _Poisoned) -> None:
+    """A NaN at the selected settlement, or one the stayer compared, is unresolved."""
+    model = _model_with(regime_change=_with_poison(poison))
+    with pytest.raises(ExecutionPlanningError, match="unresolved numerical status"):
+        model.solve(params={}, log_level="off")
 
 
 def _model_with(*, regime_change: Callable[[Regime], Regime]) -> Model:

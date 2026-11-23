@@ -177,8 +177,13 @@ class _ExitReducer:
         operands: Mapping[ReferenceName, PytreeValue],
         targets: Mapping[ExitRole, tuple[str, int | None]] | None = None,
         adjustments: Mapping[ExitRole, Callable[..., PytreeValue]] | None = None,
-    ) -> tuple[dict[str, FloatND], BoolND, BoolND]:
-        """Each member's outside payoff, by default at the exit's own reads."""
+    ) -> tuple[dict[str, FloatND], BoolND, dict[str, BoolND]]:
+        """Each member's outside payoff, by default at the exit's own reads.
+
+        Also returns whether each member's payoff is resolved: true where the exit
+        is not available or the member has no read, else the read's status and a
+        payoff that is not NaN.
+        """
         targets = self.targets if targets is None else targets
         adjustments = self.adjustments if adjustments is None else adjustments
         declaration = cast("Exit", self.declaration)
@@ -187,11 +192,12 @@ class _ExitReducer:
             if self.available is None
             else _predicate(function=self.available, operands=operands)
         )
-        valid = jnp.asarray(a=True)
+        resolved = {}
         payoffs = {}
         for member in declaration.targets:
             if member not in targets:
                 payoffs[member] = jnp.asarray(-jnp.inf)
+                resolved[member] = jnp.asarray(a=True)
                 continue
             key, index = targets[member]
             answer = cast("PolicyAnswer", operands[key])
@@ -209,8 +215,8 @@ class _ExitReducer:
                     raise ValueError("Exit utility adjustment must be scalar.")
                 value = value + adjustment
             payoffs[member] = value
-            valid &= ~active | (answer[3] & ~jnp.isnan(value))
-        return payoffs, active, valid
+            resolved[member] = ~active | (answer[3] & ~jnp.isnan(value))
+        return payoffs, active, resolved
 
     def keep(self, **operands: PytreeValue) -> BoolND:
         """Apply built-in dissolution thresholds before the common stay argmax.
@@ -240,8 +246,8 @@ class _ExitReducer:
     def __call__(self, **operands: PytreeValue) -> PolicyAnswer:
         """Route weak dissolution or strict consent, preserving common tuple/ID."""
         stay = cast("PolicyAnswer", operands["answer"])
-        payoffs, active, valid = self._payoffs(operands=operands)
-        valid &= stay[3]
+        payoffs, active, resolved = self._payoffs(operands=operands)
+        valid = jnp.all(jnp.stack((*resolved.values(), stay[3])))
         if self.renegotiation is not None:
             return self._renegotiated(
                 operands=operands, payoffs=payoffs, active=active, valid=valid
@@ -319,7 +325,8 @@ class _ExitReducer:
         every member unwilling. Under a settlement the outside values are those at
         the default, and a pair in which exactly one member refuses separates where
         the settlement selects: at the default under the default's exit ID, or at a
-        candidate under that candidate's.
+        candidate under that candidate's. A candidate's outside value must be
+        resolved only where the selection reads it.
         """
         stay = cast("PolicyAnswer", operands["answer"])
         rule = cast("Unilateral | MutualConsent", cast("Exit", self.declaration).rule)
@@ -353,10 +360,16 @@ class _ExitReducer:
                     ),
                 )
             )
-            nearest, settles = self.settlement.select(
+            nearest, settles, decided = self.settlement.select(
                 inside=inside,
                 willing=willing,
                 outside=settled,
+                resolved=jnp.stack(
+                    tuple(
+                        jnp.stack(tuple(checked[member] for member in self.members))
+                        for _, _, checked in candidates
+                    )
+                ),
                 supported=jnp.stack(
                     (
                         eligible,
@@ -379,7 +392,7 @@ class _ExitReducer:
                 ),
             )
             settles &= active
-            valid &= jnp.all(jnp.stack(tuple(checked for _, _, checked in candidates)))
+            valid &= decided
             outside = jnp.where(settles, settled[nearest], outside)
             identifier = jnp.where(settles, self.n_actions + nearest, identifier)
         kept = jnp.where(active, stays & ~settles, stay[2])
@@ -1920,7 +1933,9 @@ def install_exit_policy_queries(
         # ponytail: linear scan over a regime's distinct structures; index them by
         # a hashable digest if a regime ever carries more than a handful.
         groups: list[
-            tuple[_Structure, int, dict[tuple[str, int], Callable[..., PytreeValue]]]
+            tuple[
+                _Structure, int, dict[tuple[str, int, int], Callable[..., PytreeValue]]
+            ]
         ] = []
         traced_at: dict[int, int] = {}
         for period in kernels:

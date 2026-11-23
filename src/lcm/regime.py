@@ -13,7 +13,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from functools import cached_property
 from types import MappingProxyType
-from typing import TYPE_CHECKING, ClassVar, Literal, TypedDict, Unpack, cast
+from typing import TYPE_CHECKING, ClassVar, Literal, Self, TypedDict, Unpack, cast
 
 from beartype import beartype
 
@@ -483,11 +483,23 @@ class Regime:
         value = ensure_containers_are_immutable(getattr(self, name))
         object.__setattr__(self, name, value)
 
+    def __new__(
+        cls,
+        **kwargs: object,  # noqa: PAN001 - `__init__` types the arguments; only which were passed is read here
+    ) -> Self:
+        """Check a holder's slots here, where the passed arguments are still known."""
+        from lcm.problem import (  # noqa: PLC0415 - lcm.problem imports this module
+            fail_if_holder_declares_a_problem_slot,
+        )
+
+        fail_if_holder_declares_a_problem_slot(kind=cls, passed=kwargs)
+        return super().__new__(cls)
+
     def __post_init__(self) -> None:
         if self.problem is not None:
-            from lcm.problem import lowered_slots  # noqa: PLC0415 - lcm.problem imports this module
+            from lcm.problem import PROBLEM_SLOTS  # noqa: PLC0415 - lcm.problem imports this module
 
-            for name in lowered_slots(regime=self):
+            for name in PROBLEM_SLOTS:
                 object.__setattr__(self, name, getattr(self.problem, name))
         if len(set(self.shocks)) != len(self.shocks) or any(
             not name.isidentifier()

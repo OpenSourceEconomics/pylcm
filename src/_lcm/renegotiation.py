@@ -87,9 +87,10 @@ class SettlementQueries:
         inside: Float1D,
         willing: Bool1D,
         outside: Float2D,
+        resolved: BoolND,
         supported: Bool1D,
         default: ScalarFloat,
-    ) -> tuple[IntND, BoolND]:
+    ) -> tuple[IntND, BoolND, BoolND]:
         """Return the accepted settlement and whether the pair separates there.
 
         Row 0 of `outside` and `supported` is the default and row `1 + k` candidate
@@ -105,6 +106,13 @@ class SettlementQueries:
 
         The pair separates there if the member who wants to leave still gains under
         `tie`, as it always does at the default.
+
+        Also returns whether every outside value the decision reads is resolved.
+        `resolved` holds this per candidate and member; the caller checks the
+        default's. A pair in which not exactly one member refuses reads no candidate.
+        Otherwise the decision reads the stayer's value at every supported candidate
+        on its side up to the accepted one, or all of them when none accepts, and the
+        leaver's value at the accepted one.
         """
         candidates = jnp.asarray(self.points)
         points = jnp.concatenate((jnp.reshape(default, (1,)), candidates))
@@ -122,9 +130,18 @@ class SettlementQueries:
             if self.tie == "stay"
             else outside[:, leaver] >= inside[leaver]
         )
-        nearest = jnp.argmin(jnp.where(accepts, jnp.abs(points - default), jnp.inf))
-        settles = (willing[0] ^ willing[1]) & jnp.any(accepts) & gains[nearest]
-        return nearest.astype(jnp.int32), settles
+        distance = jnp.abs(points - default)
+        ranked = jnp.where(accepts, distance, jnp.inf)
+        nearest = jnp.argmin(ranked)
+        one_refuses = willing[0] ^ willing[1]
+        settles = one_refuses & jnp.any(accepts) & gains[nearest]
+        rows = jnp.concatenate((jnp.ones((1, 2), dtype=bool), resolved))
+        compared = side & supported & (distance <= ranked[nearest])
+        decided = ~one_refuses | (
+            jnp.all(~compared | rows[:, stayer])
+            & (~jnp.any(accepts) | rows[nearest, leaver])
+        )
+        return nearest.astype(jnp.int32), settles, decided
 
 
 @dataclass(frozen=True, kw_only=True)
