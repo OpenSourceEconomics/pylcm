@@ -1,18 +1,16 @@
-"""Declarations a regime makes about collective and value-dependent choice.
+"""Declarations a regime makes about collective choice.
 
-Six objects, each declared inside a slot that already exists:
+Five objects, each declared inside a slot that already exists:
 `CollectiveUtility` and its `ParetoObjective` in a regime's
-`functions["utility"]`, a `ValueDependentConstraint` in its `constraints`, and a
-`Gate` with member routes in the `gates` of the source's `Transition` in
-`Model(edges=...)`.
-`ProjectedRegimeValue` is the common reference used by the last two — a
-reading of another regime's value in the same period.
+`functions["utility"]`, and a `Gate` with member routes in the `gates` of the
+source's `Transition` in `Model(edges=...)`. `ProjectedRegimeValue` is the
+reference a route's fallback names — a reading of another regime's value in the
+period a gated row lands in.
 """
 
 import inspect
 from collections.abc import Mapping
-from dataclasses import dataclass, field
-from types import MappingProxyType
+from dataclasses import dataclass
 from typing import Literal
 
 from beartype import beartype
@@ -89,35 +87,22 @@ class ParetoObjective:
 @beartype(conf=REGIME_CONF)
 @dataclass(frozen=True, kw_only=True)
 class ProjectedRegimeValue:
-    """Another regime's CURRENT-period value, read at mapped state coordinates.
+    """Another regime's value in the period a gated row lands in.
 
-    The reference regime is solved earlier in the same period — the solver
-    orders each period's active regimes topologically by these declarations —
-    and its value function is interpolated at the projected coordinates with
-    the machinery the continuation uses, but on the current period's arrays.
-    Reading the current period rather than the continuation is what a
-    within-period participation constraint needs: a couple's period-$t$
-    decision is checked against the values its members would have as singles in
-    that same period $t$.
-
-    Where the declaration sits fixes what its projection may read:
-
-    - inside `ValueDependentConstraint.references` it projects from the
-      DECLARING regime's state cell, receives that regime's `period` / `age`,
-      and may introduce no free parameters;
-    - inside a `Gate` route's `fallback` it projects from the TARGET regime's
-      grid, receives that target fold's `period` / `age`, and its free
-      arguments are collected as that edge's own parameters.
+    Declared as a `Gate` route's `fallback`. The reference regime's value
+    function in the target's period — already solved when the source decides —
+    is interpolated at the projected coordinates with the machinery the
+    continuation uses. The projection maps the TARGET regime's grid onto the
+    reference regime's states, receives that target fold's `period` / `age`,
+    and its free arguments are collected as that edge's own parameters.
     """
 
     regime: RegimeName
-    """Name of the reference regime whose same-period value is read.
+    """Name of the reference regime whose value is read.
 
-    Must be another regime of the model, active in every period the declaring
-    regime is active. No transition edge between the two is required — a
-    reference read works across otherwise unconnected regime "islands", which
-    is what lets a constraint compare this regime's value against a regime it
-    never transitions into.
+    Must be another regime of the model, active in every period the gated
+    target is reached. No transition edge into it is required — a reference read
+    works across otherwise unconnected regime "islands".
     """
 
     projection: Mapping[StateName, UserFunction]
@@ -205,42 +190,6 @@ class CollectiveUtility:
             )
         object.__setattr__(
             self, "utilities", ensure_containers_are_immutable(self.utilities)
-        )
-
-
-@beartype(conf=REGIME_CONF)
-@dataclass(frozen=True, kw_only=True)
-class ValueDependentConstraint:
-    """A feasibility constraint that may read values, not only states.
-
-    Declared inside the regime's `constraints`, beside the ordinary callables,
-    so there is one constraint slot rather than two. The regime's mask is the
-    AND of both kinds, and a cell whose mask is empty holds no viable
-    household.
-
-    A participation constraint is the motivating case: a couple's cell is
-    feasible only where each partner is at least as well off inside the
-    household as at the outside option that partner's own regime offers in the
-    same period.
-    """
-
-    predicate: UserFunction
-    """Returns `True` where the cell is feasible.
-
-    May read `Q_<s>` for each member of the declaring regime, each key of
-    this constraint's OWN `references`, and ordinary states, actions,
-    functions and parameters.
-    """
-
-    references: Mapping[str, ProjectedRegimeValue] = field(
-        default_factory=lambda: MappingProxyType({})
-    )
-    """The same-period reference values `predicate` reads, keyed by the name
-    each one enters the predicate under."""
-
-    def __post_init__(self) -> None:
-        object.__setattr__(
-            self, "references", ensure_containers_are_immutable(self.references)
         )
 
 

@@ -6993,8 +6993,6 @@ def _validate_sharded_state_capability(
             or type(regime.solver) is not GridSearch
             or regime.member_axis is not None
             or laws[regime_name].gated_edges
-            or regime.value_constraints
-            or regime.same_period_refs
             or regime.taste_shocks is not None
             or isinstance(regime.koopmans_aggregator, Decoupled)
         ):

@@ -2,8 +2,10 @@
 
 import dataclasses
 from dataclasses import replace
+from fractions import Fraction
+from pathlib import Path
 from types import MappingProxyType
-from typing import Unpack
+from typing import NotRequired, TypedDict, Unpack
 
 import jax
 import jax.numpy as jnp
@@ -12,8 +14,10 @@ import pytest
 from numpy.testing import assert_array_almost_equal
 
 from _lcm import shock_nodes
+from _lcm.dtypes import CanonicalArrayWriter
 from _lcm.execution.core_program import (
     CoreBuildContext,
+    MaterializedCoreProgram,
     core_program_graph,
     materialize_core_program,
 )
@@ -63,16 +67,18 @@ from lcm.shocks import (
     GaussHermite,
     LogNormal,
     MonteCarlo,
+    NodeSet,
     Normal,
     Product,
+    Realisation,
     ShockGroup,
+    ShockGroupName,
     Uniform,
     UserNodes,
 )
 from lcm.taste_shocks import ExtremeValueTasteShocks
 from lcm.typing import ContinuousState, DiscreteAction, FloatND, ScalarInt, UserParams
 from tests.conftest import DECIMAL_PRECISION
-from tests.simulation import test_aot_same_period_refs as reference
 from tests.simulation._callback_types import ChunkProfileInputs
 from tests.solution import test_decoupled
 from tests.solution import test_gated_edge_stateless_target_solve as gated
@@ -698,7 +704,7 @@ def test_raw_indefinite_correlation_cannot_hide_in_active_rounding() -> None:
         )
 
 
-def _scalar_core(*, model: Model, params: UserParams):
+def _scalar_core(*, model: Model, params: UserParams) -> MaterializedCoreProgram:
     """Materialize the same declared core and operands used by public solve."""
 
     solution = model._regimes["alive"].solution
@@ -734,6 +740,14 @@ def test_native_node_banks_are_declared_dynamic_operands() -> None:
         )
 
 
+class _ResolveNodesKwargs(TypedDict):
+    group: ShockGroup
+    group_name: ShockGroupName
+    age: Fraction
+    coordinate_kind: str
+    array_writer: NotRequired[CanonicalArrayWriter | None]
+
+
 def test_resolved_rule_algorithm_is_part_of_native_model_identity(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -742,7 +756,7 @@ def test_resolved_rule_algorithm_is_part_of_native_model_identity(
     first = _runtime_scale_model()
     resolve = shock_nodes.resolve_nodes
 
-    def changed_algorithm(**kwargs):
+    def changed_algorithm(**kwargs: Unpack[_ResolveNodesKwargs]) -> NodeSet:
         return replace(resolve(**kwargs), fingerprint="different-resolved-algorithm")
 
     monkeypatch.setattr(shock_nodes, "resolve_nodes", changed_algorithm)
@@ -1049,7 +1063,7 @@ def test_replay_reuses_physical_draw_for_decision_flow_and_transition() -> None:
 def test_all_period_node_banks_participate_in_native_budget_admission() -> None:
     """An individually small core cannot hide the model's retained support banks."""
 
-    def model(n_periods):
+    def model(n_periods: int) -> Model:
         regimes = {
             "alive": Regime(
                 functions={"utility": _squared_shock}, shocks=("innovation",)
@@ -1089,7 +1103,7 @@ def test_all_period_node_banks_participate_in_native_budget_admission() -> None:
         )
 
 
-def test_saved_replay_retains_its_physical_innovations(tmp_path) -> None:
+def test_saved_replay_retains_its_physical_innovations(tmp_path: Path) -> None:
     """A restored simulation has the exact physical data used by its native decision."""
 
     model = _runtime_scale_model()
@@ -1584,7 +1598,6 @@ def test_null_joint_events_do_not_poison_native_values(poison: float) -> None:
         "gated source",
         "gated open target",
         "gated fallback",
-        "same-period",
     ],
 )
 def test_current_iid_refuses_actual_uncomposed_reader_intersections(
@@ -1610,7 +1623,7 @@ def test_current_iid_refuses_actual_uncomposed_reader_intersections(
                 device_memory_bytes=None,
             )
         )
-    elif channel.startswith("gated"):
+    else:
         base = gated._build_model(
             gate=gated._closed_by_age, enable_jit=False, reads_value=False
         )
@@ -1620,11 +1633,6 @@ def test_current_iid_refuses_actual_uncomposed_reader_intersections(
             "gated open target": "stateless_target",
             "gated fallback": "stateless_fallback",
         }[channel]
-        execution = ExecutionConfig(device_memory_bytes=None)
-    else:
-        base = reference._make_participation_model()
-        regime_id_class = reference.ParticipationRegimeId
-        target = "single_f"
         execution = ExecutionConfig(device_memory_bytes=None)
     expected = "gated value channel" if channel.startswith("gated") else channel
     with pytest.raises(UnsupportedOperationError, match=f"Current IID.*{expected}"):
@@ -1736,7 +1744,7 @@ def test_public_group_correlation_cannot_label_a_collapsed_pivot_valid(
     if runtime:
         group = group.bind_correlation(correlation=matrix)
 
-    def evaluate():
+    def evaluate() -> Realisation:
         return group.transform(
             base_nodes=jnp.eye(3),
             params={"corr": jnp.asarray(matrix)} if runtime else {},

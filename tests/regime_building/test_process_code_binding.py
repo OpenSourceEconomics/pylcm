@@ -2,8 +2,8 @@
 
 A process state holds the value of a node, and an argument `z_code` receives that
 node's int32 position. The position belongs to the regime whose state is read:
-the declaring regime for its own functions, constraints and their projections,
-and the landing target for a gated edge's gate and fallbacks. Each
+the declaring regime for its own functions and constraints, and the landing
+target for a gated edge's gate and fallbacks. Each
 oracle below is a literal node table or payoff, never a production coordinate.
 """
 
@@ -34,7 +34,6 @@ from lcm import (
     Regime,
     Transition,
     UniformIIDProcess,
-    ValueDependentConstraint,
     categorical,
 )
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
@@ -71,12 +70,6 @@ class RouteRegime:
 class TwoRegimes:
     a: ScalarInt
     b: ScalarInt
-
-
-@categorical(ordered=False)
-class CoupleRegime:
-    couple: ScalarInt
-    single: ScalarInt
 
 
 @categorical(ordered=False)
@@ -121,15 +114,11 @@ def _wife(*, z: ContinuousState, work: DiscreteAction) -> FloatND:
 
 
 def _husband(*, z: ContinuousState, work: DiscreteAction) -> FloatND:
-    return 100.0 * (1.0 - work) + 0.0 * z
+    return 100.0 * work + 0.0 * z
 
 
 def _project_node(z_code: DiscreteState) -> ContinuousState:
     return jnp.asarray(NODES)[z_code]
-
-
-def _participates(*, Q_f: FloatND, V_ref: FloatND) -> BoolND:
-    return Q_f >= V_ref
 
 
 def _gate(z_code: DiscreteState) -> BoolND:
@@ -150,11 +139,6 @@ def _route_model(*, reverse: bool, enable_jit: bool) -> Model:
         states={"z": _process(mu=0.0)},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": CollectiveUtility(utilities={"f": _wife, "m": _husband})},
-        constraints={
-            "participation": ValueDependentConstraint(
-                predicate=_participates, references={"V_ref": reference}
-            )
-        },
     )
     single = Regime(
         states={"z": _process(mu=0.0)}, functions={"utility": _single_utility}
@@ -203,17 +187,6 @@ def _route_values(
     }
     model = _route_model(reverse=reverse, enable_jit=enable_jit)
     return model.solve(params=params, log_level="off").values
-
-
-@pytest.mark.parametrize("reverse", [False, True], ids=["source-first", "source-last"])
-@pytest.mark.parametrize("enable_jit", [False, True], ids=["eager", "jit"])
-def test_constraint_projection_reads_the_declaring_regimes_nodes(
-    *, reverse: bool, enable_jit: bool
-) -> None:
-    """At every married node, only work is feasible, worth `cubic(z) + 0.25`."""
-    values = _route_values(reverse=reverse, enable_jit=enable_jit)
-    expected = np.array([[_cubic(z) + BRACKET, 0.0] for z in NODES])
-    np.testing.assert_array_equal(values[1]["married"], expected)
 
 
 @pytest.mark.parametrize("reverse", [False, True], ids=["source-first", "source-last"])
@@ -376,35 +349,19 @@ def test_phased_process_on_different_nodes_is_refused() -> None:
         )
 
 
-_COUPLE_NODES = np.array([-1.0, 0.0, 1.0])
+_WORKER_NODES = np.array([-1.0, 0.0, 1.0])
 _SURPLUS = 0.25
 
 
-def _couple_wife(*, z: ContinuousState, work: DiscreteAction) -> FloatND:
-    return z + _SURPLUS * (2.0 * work - 1.0)
+def _worker_reads_code(*, z_code: DiscreteState, work: DiscreteAction) -> FloatND:
+    return jnp.asarray(_WORKER_NODES)[z_code] + _SURPLUS * work
 
 
-def _couple_husband(*, z: ContinuousState, work: DiscreteAction) -> FloatND:
-    return 10.0 * (1.0 - work) + 0.0 * z
+def _worker_reads_value(*, z: ContinuousState, work: DiscreteAction) -> FloatND:
+    return z + _SURPLUS * work
 
 
-def _couple_node_at_code(z_code: DiscreteState) -> ContinuousState:
-    return jnp.asarray(_COUPLE_NODES)[z_code]
-
-
-def _identity(z: ContinuousState) -> ContinuousState:
-    return z
-
-
-def _value_of(z: ContinuousState) -> FloatND:
-    return z
-
-
-def _participation(*, Q_f: FloatND, V_outside: FloatND) -> BoolND:
-    return Q_f >= V_outside
-
-
-def _couple_model(
+def _worker_model(
     *,
     binding: Literal["constructor", "model_fixed", "runtime"],
     enable_jit: bool,
@@ -418,47 +375,27 @@ def _couple_model(
         n_std=1.0,
         simulated_draws="nodes",
     )
-    couple = Regime(
+    worker = Regime(
         states={"z": shock},
         actions={"work": DiscreteGrid(category_class=Work)},
-        functions={
-            "utility": CollectiveUtility(
-                utilities={"f": _couple_wife, "m": _couple_husband}
-            )
-        },
-        constraints={
-            "participation_f": ValueDependentConstraint(
-                predicate=_participation,
-                references={
-                    "V_outside": ProjectedRegimeValue(
-                        regime="single",
-                        projection={
-                            "z": _couple_node_at_code if read_code else _identity
-                        },
-                    )
-                },
-            )
-        },
+        functions={"utility": _worker_reads_code if read_code else _worker_reads_value},
     )
-    single = Regime(states={"z": shock}, functions={"utility": _value_of})
     return Model(
-        regimes={"couple": couple, "single": single},
+        regimes={"only": worker},
         edges={},
         ages=AgeGrid(exact_values=(0,)),
-        initial_nodes={0: "couple"},
-        regime_id_class=CoupleRegime,
+        initial_nodes={0: "only"},
+        regime_id_class=OnlyRegime,
         fixed_params=(
-            {name: {"z": {"sigma": 1.0}} for name in ("couple", "single")}
-            if binding == "model_fixed"
-            else {}
+            {"only": {"z": {"sigma": 1.0}}} if binding == "model_fixed" else {}
         ),
         enable_jit=enable_jit,
     )
 
 
-def _terminal_couple_values(model: Model) -> np.ndarray:
-    solution = model.solve(params={"couple": {}, "single": {}}, log_level="off")
-    return np.asarray(solution.values[0]["couple"])
+def _terminal_worker_values(model: Model) -> np.ndarray:
+    solution = model.solve(params={"only": {}}, log_level="off")
+    return np.asarray(solution.values[0]["only"])
 
 
 @pytest.mark.parametrize("binding", ["constructor", "model_fixed"])
@@ -467,23 +404,25 @@ def test_fixed_process_law_reads_the_same_positions_wherever_it_is_fixed(
     *, binding: Literal["constructor", "model_fixed"], enable_jit: bool
 ) -> None:
     """A law fixed by `fixed_params` means what the constructor value means."""
-    model = _couple_model(binding=binding, enable_jit=enable_jit)
-    expected = np.column_stack((_COUPLE_NODES + _SURPLUS, np.zeros(3)))
-    np.testing.assert_array_equal(_terminal_couple_values(model), expected)
+    model = _worker_model(binding=binding, enable_jit=enable_jit)
+    np.testing.assert_array_equal(
+        _terminal_worker_values(model), _WORKER_NODES + _SURPLUS
+    )
 
 
-def test_model_fixed_process_law_value_projection() -> None:
-    model = _couple_model(binding="model_fixed", enable_jit=False, read_code=False)
-    expected = np.column_stack((_COUPLE_NODES + _SURPLUS, np.zeros(3)))
-    np.testing.assert_array_equal(_terminal_couple_values(model), expected)
+def test_model_fixed_process_law_value_read() -> None:
+    model = _worker_model(binding="model_fixed", enable_jit=False, read_code=False)
+    np.testing.assert_array_equal(
+        _terminal_worker_values(model), _WORKER_NODES + _SURPLUS
+    )
 
 
-def test_runtime_process_law_refuses_a_code_projection() -> None:
+def test_runtime_process_law_refuses_a_code_read() -> None:
     with pytest.raises(
         RegimeInitializationError,
         match=r"z_code.*fix the parameters of `z` at construction",
     ):
-        _couple_model(binding="runtime", enable_jit=False)
+        _worker_model(binding="runtime", enable_jit=False)
 
 
 def _authored_code_like_name(z: ContinuousState) -> FloatND:

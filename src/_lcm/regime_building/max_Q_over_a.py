@@ -416,9 +416,7 @@ class _HardMaxQOverA:
         if self.member_axis is not None:
             # Q_arr carries a trailing
             # member axis (the action product-map keeps it last);
-            # F_arr does not — where the regime declares value constraints
-            # F_arr already includes them, ANDed in by Q_and_F AFTER computing
-            # Q^s. Split Q_arr per member, take the household argmax
+            # F_arr does not. Split Q_arr per member, take the household argmax
             # of the scalarization over the masked action axes, and read
             # off each member's OWN value at that shared argmax. The
             # returned pair is the member value vector (re-stacked on

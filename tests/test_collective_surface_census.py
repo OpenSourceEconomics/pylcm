@@ -1,7 +1,7 @@
 """Which test modules exercise the collective / gated-edge surface, and how far.
 
-A module that declares a `CollectiveUtility`, a `ValueDependentConstraint` or a
-`Gate` can cover the feature at either of two altitudes.
+A module that declares a `CollectiveUtility` or a `Gate` can cover the feature
+at either of two altitudes.
 Most drive it through `Model`, so the public route the documentation describes
 is what runs. The rest call the engine directly — `process_regimes`, a bare
 `solve`, `route_gated_edges` — which is the right altitude for pinning a
@@ -39,8 +39,6 @@ _ENGINE_LEVEL_MODULES = frozenset(
         "tests/regime_building/test_collective_extended_real.py",
         "tests/regime_building/test_decomposed_views.py",
         "tests/regime_building/test_gate_reads_value_error.py",
-        "tests/regime_building/test_same_period_ref_process_state_interpolation.py",
-        "tests/regime_building/test_same_period_ref_projection_free_params.py",
         "tests/regime_building/test_simulate_gate_param_and_leg_selection.py",
         "tests/regime_building/test_terminal_collective_solve.py",
         "tests/regime_building/test_with_engine_functions.py",
@@ -65,12 +63,10 @@ def _reaches_public_model(*, source: PythonSource) -> bool:
 
 
 #: What a module writes when it exercises the collective / gated-edge surface.
-#: There is one vocabulary: a regime says who its members are, what a
-#: value-reading constraint is, and where a value-dependent transition routes,
-#: each in the slot it already has.
+#: There is one vocabulary: a regime says who its members are, and a transition
+#: where a value-dependent move routes, each in the slot it already has.
 _DECLARATIONS = (
     "CollectiveUtility",
-    "ValueDependentConstraint",
     "Gate",
 )
 
@@ -164,7 +160,6 @@ def test_most_of_the_surface_is_covered_through_the_public_route() -> None:
     [
         ("CollectiveUtility(utilities={})", True),
         ("lcm.CollectiveUtility(utilities={})", True),
-        ("ValueDependentConstraint(predicate=p)", True),
         ("Gate(predicate=g)", True),
         ('"""A docstring naming CollectiveUtility and members."""', False),
         ("# CollectiveUtility(utilities={}) commented out\nx = 1", False),
@@ -195,15 +190,13 @@ def test_reaching_model_is_a_call_not_a_mention(
 
 
 #: What a regime's declarations and its law decompose into. A model author never
-#: writes one: `members`, `member_axis`, `pareto_objective`, `value_constraints`
-#: and `same_period_refs` are read off a regime, `gated_edges` off the law the model
-#: binds for it, and `GatedEdge` is the engine's own form of an edge.
+#: writes one: `members`, `member_axis` and `pareto_objective` are read off a
+#: regime, `gated_edges` off the law the model binds for it, and `GatedEdge` is the
+#: engine's own form of an edge.
 _DECOMPOSED_NAMES = (
     "members",
     "member_axis",
     "pareto_objective",
-    "value_constraints",
-    "same_period_refs",
     "gated_edges",
 )
 

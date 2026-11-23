@@ -910,8 +910,11 @@ def _representative_regime(
             )
             if isinstance(value, _PostDecisionLowerBound)
             and callable(value.lower_bound)
-            else _representative_function(
-                value=value, function_cache=function_cache, period=period
+            else cast(
+                "ConstraintEntry",
+                _representative_function(
+                    value=value, function_cache=function_cache, period=period
+                ),
             )
         )
         for name, value in user_regime.constraints.items()

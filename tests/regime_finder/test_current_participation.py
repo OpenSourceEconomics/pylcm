@@ -58,7 +58,7 @@ def current_spec() -> dict[str, JSONValue]:
     raw = spec()
     regimes = json_member(raw, "regimes")
     for name in regimes:
-        json_member(regimes, name, "fields")["same_period_refs"] = {}
+        json_member(regimes, name, "fields").pop("exit", None)
     read = reference("Q", "ParticipationRead")
     json_member(read, "fields").update(kind="Raw", field="support", observes=["x"])
     gate = record(
@@ -82,16 +82,6 @@ def analyze(
     analysis = MetadataAnalysis(normalized, facts_backend="metadata").run()
     checked = check_semantics(raw, normalized, analysis)
     return normalized, analysis, checked
-
-
-def test_canonical_same_period_read_is_query_only() -> None:
-    raw = spec(reference_kind="ParticipationRead")
-    normalized, _, checked = analyze(raw)
-    assert ({c["regime"] for c in json_rows(normalized, "cells")}) == ({"A", "B"})
-    assert ({q["regime"] for q in json_entries(normalized, "query_owners")}) == (
-        {"Q", "R"}
-    )
-    assert (checked["status"]) != ("FAIL"), checked
 
 
 def test_canonical_transition_preserves_settlement_and_query() -> None:

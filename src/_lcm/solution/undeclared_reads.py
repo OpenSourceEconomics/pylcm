@@ -37,21 +37,13 @@ def undeclared_read_pins(
 ) -> tuple[ValueArtifactAddress, ...]:
     """Return the artifacts one regime-period may read without declaring them.
 
-    With `declares_no_reads` every reachable value, gated continuation,
-    reference value and continuation leaf of the next period is pinned, plus
-    every same-period reference value. Without it only the host-read leaves of
-    `HOST_READ_CONTINUATION_LEAVES` are pinned, for each reachable target whose
-    continuation publishes them. The last period reads no next period.
+    With `declares_no_reads` every reachable value, gated continuation, reference value
+    and continuation leaf of the next period is pinned. Without it only the host-read
+    leaves of `HOST_READ_CONTINUATION_LEAVES` are pinned, for each reachable target
+    whose continuation publishes them. The last period reads no next period.
     """
     regime = regimes[regime_name]
     artifacts: list[ValueArtifactAddress] = []
-    if declares_no_reads:
-        artifacts.extend(
-            ValueArtifactAddress(
-                kind=ValueArtifactKind.REGIME_VALUE, period=period, regime=reference
-            )
-            for reference in regime.same_period_ref_regimes
-        )
     reachability = regime.solution.reachability
     if period >= reachability.n_periods - 1:
         return tuple(dict.fromkeys(artifacts))

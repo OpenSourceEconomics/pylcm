@@ -64,7 +64,6 @@ class _RouteOverrides(TypedDict, total=False):
     has_taste_shocks: bool
     member_axis: tuple[str, ...] | None
     co_map_state_names: tuple[StateName, ...]
-    same_period_ref_regimes: tuple[RegimeName, ...]
     edge_reference_regimes: tuple[RegimeName, ...]
     edge_target_regimes: tuple[RegimeName, ...]
     enable_jit: bool
@@ -742,7 +741,6 @@ def _action_streaming_route_context(
     has_taste_shocks: bool = False,
     member_axis: tuple[str, ...] | None = None,
     co_map_state_names: tuple[StateName, ...] = (),
-    same_period_ref_regimes: tuple[RegimeName, ...] = (),
     edge_reference_regimes: tuple[RegimeName, ...] = (),
     edge_target_regimes: tuple[RegimeName, ...] = (),
     enable_jit: bool = True,
@@ -788,7 +786,6 @@ def _action_streaming_route_context(
         "co_map_v_arr_in_axes": tuple(
             MappingProxyType({"target": 0}) for _ in co_map_state_names
         ),
-        "same_period_ref_regimes": same_period_ref_regimes,
         "edge_reference_regimes": edge_reference_regimes,
         "edge_target_regimes": edge_target_regimes,
     }
@@ -827,14 +824,6 @@ def _width_collision_Q_and_F(
             },
             _ActionStreamingDisposition.STREAMED,
             id="gated-target-and-reference-without-co-map",
-        ),
-        pytest.param(
-            {
-                "member_axis": ("f", "m"),
-                "same_period_ref_regimes": ("reference",),
-            },
-            _ActionStreamingDisposition.DENSE_COLLECTIVE_RESOURCES,
-            id="collective-same-period-reference-without-co-map",
         ),
         pytest.param(
             {"Q_and_F": _width_collision_Q_and_F},
@@ -934,15 +923,6 @@ def _width_collision_Q_and_F(
             },
             _ActionStreamingDisposition.DENSE_CO_MAP_REFERENCE_CHANNEL,
             id="co-map-plus-gated-edge-reference",
-        ),
-        pytest.param(
-            {
-                "member_axis": ("f", "m"),
-                "co_map_state_names": ("kind", "region"),
-                "same_period_ref_regimes": ("reference",),
-            },
-            _ActionStreamingDisposition.DENSE_CO_MAP_REFERENCE_CHANNEL,
-            id="collective-co-map-plus-same-period-reference",
         ),
         pytest.param(
             {

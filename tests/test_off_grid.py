@@ -60,7 +60,6 @@ from lcm import (
     StateConditioned,
     StochasticTransition,
     Transition,
-    ValueDependentConstraint,
     categorical,
     fixed_transition,
 )
@@ -1724,7 +1723,6 @@ def _collective_model(
     rule: OffGrid,
     tail: float,
     threshold: float,
-    value_dependent: bool,
     enable_jit: bool = True,
 ) -> Model:
     """Two members with `Q = 1 - 2a`; action 0 lands at 1, action 1 at `tail`."""
@@ -1732,10 +1730,7 @@ def _collective_model(
     def landing(action: ContinuousAction) -> FloatND:
         return jnp.where(action == 0.0, 1.0, tail)
 
-    def participation(Q_alice: FloatND) -> BoolND:
-        return Q_alice >= threshold
-
-    def ordinary(action: ContinuousAction) -> BoolND:
+    def participates(action: ContinuousAction) -> BoolND:
         return (1.0 - 2.0 * action) >= threshold
 
     grid = LinSpacedGrid(start=0.0, stop=2.0, n_points=3, off_grid=rule)
@@ -1750,11 +1745,7 @@ def _collective_model(
                     )
                 },
                 state_transitions={"wealth": landing},
-                constraints={
-                    "participation": ValueDependentConstraint(predicate=participation)
-                    if value_dependent
-                    else ordinary
-                },
+                constraints={"participates": participates},
             ),
             "terminal": Regime(
                 states={"wealth": grid},
@@ -1779,16 +1770,14 @@ def _collective_model(
 @pytest.mark.parametrize("runtime_checks", [False, True])
 @pytest.mark.parametrize("enable_jit", [False, True])
 @pytest.mark.parametrize("tail", [-1.0, 3.0])
-@pytest.mark.parametrize("value_dependent", [False, True])
 def test_raise_omits_the_action_excluded_by_any_constraint(
-    *, runtime_checks: bool, enable_jit: bool, tail: float, value_dependent: bool
+    *, runtime_checks: bool, enable_jit: bool, tail: float
 ) -> None:
     """Only the participating action lands, on the grid, whatever excludes the other."""
     solution = _collective_model(
         rule="raise",
         tail=tail,
         threshold=0.0,
-        value_dependent=value_dependent,
         enable_jit=enable_jit,
     ).solve(
         params={"discount_factor": 1.0},
@@ -1799,31 +1788,9 @@ def test_raise_omits_the_action_excluded_by_any_constraint(
 
 
 @pytest.mark.parametrize("tail", [-1.0, 3.0])
-def test_kernel_and_preflight_refuse_the_same_landing_in_the_same_words(
-    tail: float,
-) -> None:
-    """The solve kernel's refusal names the count exactly as the preflight does."""
-    messages = []
-    for value_dependent in (True, False):
-        model = _collective_model(
-            rule="raise", tail=tail, threshold=-2.0, value_dependent=value_dependent
-        )
-        with pytest.raises(OffGridStateError) as error:
-            model.solve(params={"discount_factor": 1.0}, log_level="off")
-        messages.append(str(error.value))
-    expected = (
-        "Off-grid next states: regime='source', target='terminal', period=0, "
-        "state='wealth', phase='solve', count=3"
-    )
-    assert messages == [expected, expected]
-
-
-@pytest.mark.parametrize("tail", [-1.0, 3.0])
 def test_raise_refuses_a_participating_exterior_action(tail: float) -> None:
     """When both actions participate, the exterior landing is reached."""
-    model = _collective_model(
-        rule="raise", tail=tail, threshold=-2.0, value_dependent=True
-    )
+    model = _collective_model(rule="raise", tail=tail, threshold=-2.0)
     with pytest.raises(OffGridStateError, match=r"regime='source'.*state='wealth'"):
         model.solve(params={"discount_factor": 1.0}, log_level="off")
 
@@ -1833,21 +1800,21 @@ def test_raise_accepts_participating_landings_on_the_closed_endpoints(
     tail: float,
 ) -> None:
     """Landings exactly on the grid's endpoints are on the grid."""
-    solution = _collective_model(
-        rule="raise", tail=tail, threshold=-2.0, value_dependent=True
-    ).solve(params={"discount_factor": 1.0}, log_level="off")
+    solution = _collective_model(rule="raise", tail=tail, threshold=-2.0).solve(
+        params={"discount_factor": 1.0}, log_level="off"
+    )
     np.testing.assert_array_equal(solution.values[0]["source"], np.ones((3, 2)))
 
 
 @pytest.mark.parametrize("rule", ["extrapolate", "clip_lookup", "clip_state"])
-def test_checked_counts_never_include_the_value_excluded_action(
+def test_checked_counts_never_include_the_excluded_action(
     *, rule: OffGrid, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """No reported count for the source includes the action participation excludes."""
+    """No reported count for the source includes the action the constraint excludes."""
     with caplog.at_level("INFO"):
-        _collective_model(
-            rule=rule, tail=3.0, threshold=0.0, value_dependent=True
-        ).solve(params={"discount_factor": 1.0}, log_level="debug")
+        _collective_model(rule=rule, tail=3.0, threshold=0.0).solve(
+            params={"discount_factor": 1.0}, log_level="debug"
+        )
     counts = [
         int(message.rsplit("count=", maxsplit=1)[1])
         for record in caplog.records

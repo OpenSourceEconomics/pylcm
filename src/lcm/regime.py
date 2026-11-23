@@ -30,12 +30,7 @@ from _lcm.user_regime_validation import validate_regime
 from _lcm.utils.containers import ensure_containers_are_immutable
 from _lcm.utils.error_messages import path_segment_name_errors
 from lcm.certainty_equivalent import CertaintyEquivalent
-from lcm.collective import (
-    CollectiveUtility,
-    ParetoObjective,
-    ProjectedRegimeValue,
-    ValueDependentConstraint,
-)
+from lcm.collective import CollectiveUtility, ParetoObjective
 from lcm.decoupled import (
     Decoupled,
     resolve_koopmans_aggregator,
@@ -85,7 +80,7 @@ type FunctionEntry = UserFunction | Phased | CollectiveUtility | None
 
 # One `Regime.constraints` value; `None` masks a model-level constraint. `Phased`
 # passes the type check so the validator can reject it with an explanation.
-type ConstraintEntry = ConstraintLike | Phased | ValueDependentConstraint | None
+type ConstraintEntry = ConstraintLike | Phased | None
 
 
 class _SlotsBesideFunctions(TypedDict, total=False):
@@ -115,8 +110,8 @@ class RegimeReplacement(_SlotsBesideFunctions, total=False):
     """The slots `Regime.replace` may replace, each with its declared type.
 
     These are the slots a regime is constructed from. The derived slots
-    (`members`, `member_axis`, `pareto_objective`, `value_constraints` and
-    `same_period_refs`) are read off a regime and are not among them.
+    (`members`, `member_axis` and `pareto_objective`) are read off a regime and
+    are not among them.
     """
 
     functions: Mapping[FunctionName, FunctionEntry]
@@ -348,8 +343,7 @@ class Regime:
     member and one value function. A non-`None` tuple declares a
     *collective regime*: a couple (or other multi-party household) that solves
     one household argmax but reads off a per-member value at that common
-    argmax, with value-aware feasibility and value-gated regime routing
-    (consent / dissolution).
+    argmax, with value-gated regime routing (consent / dissolution).
 
     A collective regime's `decomposed_functions` view carries a
     per-member `utility_<s>` for each member `<s>`, together with a
@@ -362,10 +356,9 @@ class Regime:
     shocks, nonlinear certainty equivalents, and non-GridSearch solvers on a
     collective regime raise `NotImplementedError`.
 
-    A collective regime writes `-inf` where no action satisfies every
-    member's participation constraint. A participation `Exit` prices the
-    current outside alternatives; a landing `ParticipationCheck` selects its
-    route's fallback when the destination has no participating policy.
+    A participation `Exit` prices the current outside alternatives; a landing
+    `ParticipationCheck` selects its route's fallback when the destination has
+    no participating policy.
 
     Two things to know before simulating one:
 
@@ -391,68 +384,6 @@ class Regime:
     singleton regime.
     """
 
-    value_constraints: MappingProxyType[FunctionName, UserFunction] = field(
-        init=False, default_factory=lambda: MappingProxyType({})
-    )
-    """Value-aware feasibility predicates for a collective regime.
-
-    Derived from the `ValueDependentConstraint` entries of `constraints`,
-    which is where a model declares them — one constraint slot rather than two.
-
-    Each entry maps a constraint name to a predicate returning `True` where the
-    (state, action) combination is feasible. Unlike ordinary `constraints`
-    (which are evaluated before and independently of `Q`), a value constraint
-    is evaluated AFTER the per-member action values and may read, as named
-    arguments:
-
-    - `Q_<s>` for each member `<s>` — that member's own action value
-      `Q^s(x, a)` (felicity plus discounted continuation) at the cell;
-    - each key of `same_period_refs` — the reference regime's same-period value
-      interpolated at the projected state (e.g. the dissolved single's value);
-    - ordinary states, actions, regime functions, and parameters via the DAG
-      (a predicate's own parameter surfaces in the params template under the
-      constraint's name).
-
-    The final action mask is the AND of ordinary constraints and all value
-    constraints; the household argmax runs over the masked set. A state cell
-    whose mask is empty holds no viable household; where its members go is
-    declared by a participation `Exit` or by a `ParticipationCheck` reading the
-    household's policy support. A participation constraint takes the form
-    `Q_j >= V_single_j(pi_j(x)) - Delta_j` for each member `j`.
-
-    A TERMINAL collective regime may declare them too — a household's last
-    period is a participation decision like any other — with two differences
-    worth stating, because nothing in the arrays reveals them:
-
-    - `Q_<s>` is member `s`'s terminal payoff. There is no continuation,
-      so the value each partner weighs against the reference is what the cell
-      itself delivers.
-    - An empty feasible set has no participating policy. The participating value
-      remains `-inf`; an explicit participation `Exit` can price current outside
-      alternatives. A landing `ParticipationCheck` can read participating support
-      and choose the route's fallback. Solve publishes no dissolution flag.
-
-    Only collective regimes may declare value constraints at all: the
-    predicates read `Q_<s>`, which a singleton regime does not carry.
-    """
-
-    same_period_refs: MappingProxyType[str, ProjectedRegimeValue] = field(
-        init=False, default_factory=lambda: MappingProxyType({})
-    )
-    """Same-period cross-regime reference values read by `value_constraints`.
-
-    Derived from `ValueDependentConstraint.references`, which is where a
-    model declares them — local to the constraint that reads them.
-
-    Maps each reference-value name (the argument name under which the
-    interpolated value enters the predicates) to a `ProjectedRegimeValue` declaring
-    the reference regime, the state projection, and — for a collective
-    reference — the member. Reference regimes are solved earlier within
-    the same period (topological order; cycles are rejected at model build).
-    Only collective regimes that also declare `value_constraints` may declare
-    references.
-    """
-
     def _make_field_immutable(self, *, name: str) -> None:
         """Replace the named mapping field with its immutable form."""
         value = ensure_containers_are_immutable(getattr(self, name))
@@ -467,7 +398,7 @@ class Regime:
             raise RegimeInitializationError(
                 "shocks must contain unique ordinary group names."
             )
-        self._lower_value_dependent_declarations()
+        self._lower_collective_utility()
         self._fail_if_egm_solver_has_no_margin_declaration()
         # What depends on the law is validated once the model binds it from
         # `Model(edges=...)`; completeness (a `utility` entry, aggregator
@@ -484,24 +415,6 @@ class Regime:
         self._make_field_immutable(name="actions")
         self._make_field_immutable(name="constraints")
         self._make_field_immutable(name="derived_categoricals")
-        self._make_field_immutable(name="value_constraints")
-        self._make_field_immutable(name="same_period_refs")
-
-    def _lower_value_dependent_declarations(self) -> None:
-        """Derive the engine-facing views of the collective declarations.
-
-        `CollectiveUtility` and `ValueDependentConstraint` are declared inside
-        the slots a regime already has — `functions` and `constraints` — and
-        each one carries
-        several engine-side facts at once. Deriving those facts here, without
-        replacing the raw declarations, lets every later stage read the fields
-        and decomposed views it needs.
-
-        Nothing is derived for a regime that declares neither, so a regime
-        spelled out the long way passes through untouched.
-        """
-        self._lower_collective_utility()
-        self._lower_value_dependent_constraints()
 
     def lower_joint_normal_processes(self) -> Regime:
         """Return the regime the engine runs for its joint normal declarations.
@@ -645,14 +558,11 @@ class Regime:
     def decomposed_constraints(
         self,
     ) -> MappingProxyType[FunctionName, ConstraintLike | Phased | None]:
-        """`constraints` with every `ValueDependentConstraint` taken apart.
+        """`constraints` in the form the engine evaluates.
 
-        A value-dependent constraint's predicate belongs to
-        `value_constraints` and its projections to `same_period_refs`, so what
-        this view holds is the ordinary constraints alone — the ones evaluated
-        before and independently of the action values.
-
-        Deterministic and idempotent, like `decomposed_functions`.
+        A post-decision lower bound whose bound is a function names the target
+        that publishes it. Deterministic and idempotent, like
+        `decomposed_functions`.
         """
         return decompose_constraints(self.constraints)
 
@@ -678,34 +588,6 @@ class Regime:
         object.__setattr__(self, "member_axis", tuple(declaration.utilities))
         if declaration.objective is not None:
             object.__setattr__(self, "pareto_objective", declaration.objective)
-
-    def _lower_value_dependent_constraints(self) -> None:
-        """Derive predicates and references from value-dependent constraints."""
-        declarations = {
-            name: constraint
-            for name, constraint in self.constraints.items()
-            if isinstance(constraint, ValueDependentConstraint)
-        }
-        if not declarations:
-            return
-        value_constraints: dict[FunctionName, UserFunction] = {}
-        same_period_refs: dict[str, ProjectedRegimeValue] = {}
-        for name, declaration in declarations.items():
-            value_constraints[name] = declaration.predicate
-            for ref_name, reference in declaration.references.items():
-                existing = same_period_refs.get(ref_name)
-                if existing is not None and existing != reference:
-                    raise RegimeInitializationError(
-                        f"Two constraints of this regime read a reference value "
-                        f"named {ref_name!r} but declare different references "
-                        f"for it:\n  {existing}\n  {reference}\n"
-                        "One name is one reference; rename one of them."
-                    )
-                same_period_refs[ref_name] = reference
-        object.__setattr__(
-            self, "value_constraints", MappingProxyType(value_constraints)
-        )
-        object.__setattr__(self, "same_period_refs", MappingProxyType(same_period_refs))
 
     def _fail_if_egm_solver_has_no_margin_declaration(self) -> None:
         if self._accepts_margin_solver:
@@ -997,13 +879,11 @@ class Regime:
     def replace(self, **kwargs: Unpack[RegimeReplacement]) -> Regime:
         """Replace the attributes of the regime.
 
-        Replacing a slot that carries a `CollectiveUtility` or
-        `ValueDependentConstraint` replaces the declaration itself, and the
-        members and value constraints are derived again from what the new
-        slot says. `members`, `member_axis`, `pareto_objective`,
-        `value_constraints` and `same_period_refs` are those derived values, so
-        naming one here is an error: they are read off a regime, never written
-        to it.
+        Replacing a slot that carries a `CollectiveUtility` replaces the
+        declaration itself, and the members are derived again from what the
+        new slot says. `members`, `member_axis` and `pareto_objective` are those
+        derived values, so naming one here is an error: they are read off a
+        regime, never written to it.
 
         Args:
             **kwargs: Keyword arguments to replace the attributes of the regime.
@@ -1063,16 +943,14 @@ def decompose_functions(
 def decompose_constraints(
     constraints: Mapping[FunctionName, ConstraintEntry],
 ) -> MappingProxyType[FunctionName, ConstraintLike | Phased | None]:
-    """Drop the value-dependent declarations from a regime's constraints.
+    """Return a regime's constraints in the form the engine evaluates.
 
     Args:
         constraints: A regime's `constraints` as declared.
 
     Returns:
-        The ordinary constraints alone — the ones evaluated before and
-        independently of the action values. A value-dependent constraint's
-        predicate belongs to `value_constraints` and its projections to
-        `same_period_refs`, so neither appears here.
+        The same constraints, with every post-decision lower bound whose bound
+        is a function naming the target `<name>_lower` that publishes it.
     """
     return MappingProxyType(
         {
@@ -1083,7 +961,6 @@ def decompose_constraints(
                 else cast("ConstraintLike | Phased | None", constraint)
             )
             for name, constraint in constraints.items()
-            if not isinstance(constraint, ValueDependentConstraint)
         }
     )
 

@@ -64,7 +64,7 @@ own kernel, so a regime with an exit keeps such a draw there too; a regime witho
 sums it. A query also keeps every draw toward a target whose `off_grid="raise"`
 landings it counts on the nodes.
 
-A regime with a gated edge or a value constraint contracts nothing in either phase.
+A regime with a gated edge contracts nothing in either phase.
 
 The contraction is off by default, and off it leaves every program unchanged. The
 ordinary kernel builds its table inside its tile loops, and on GPU the compiler does not
@@ -224,9 +224,9 @@ This matrix uses exactly three disposition labels:
 | Singleton hard max | streamed | Action blocks feed the hard-max reduction. |
 | Collective hard max | deliberately dense | Dense action reduction preserves candidate identity, member readout, and dissolution; the streamed reference currently regresses the measured resource envelope. |
 | Singleton EV1 with at least one discrete action | deliberately dense | Dense action reduction preserves canonical floating-point reduction order and winner identity; the blocked reference does not yet preserve that contract. |
-| Same-period references, edge references, or gated targets without a co-mapped state | streamed | Each target artifact and its exact source argument path is declared; the resolved transfer supplies it as a dynamic input to the streamed solve core. |
+| Edge references or gated targets without a co-mapped state | streamed | Each target artifact and its exact source argument path is declared; the resolved transfer supplies it as a dynamic input to the streamed solve core. |
 | Ordinary co-mapped state route without a separate reference channel | streamed | Continuation leaves co-map with the state cell while actions stream. |
-| Co-mapped state plus a separate same-period or edge-reference channel | deliberately dense | The two data transports are not yet represented together by the streamed program. |
+| Co-mapped state plus a separate edge-reference channel | deliberately dense | The two data transports are not yet represented together by the streamed program. |
 | No action, or an action product containing at most one candidate | deliberately dense | Blocking a trivial product adds no useful execution choice. |
 | JIT disabled, including the raw execution path | deliberately dense | The action-streamed program is a JIT lowering route. |
 | Collective EV1 | unsupported | The action-streamed solve program has no collective EV1 reduction. |

@@ -1272,14 +1272,8 @@ def _finish_bank(*, shape: tuple[int, ...], size: int) -> _FinishBank:
     return _FinishBank(shape=shape, size=size)
 
 
-def _admit_node(
-    *, node: QueryNode, period: int, same_period_values: bool = False
-) -> None:
-    """Refuse an unrepresented action/status or information intersection.
-
-    `same_period_values` says the caller supplies the query date's stored values,
-    which a target's value-dependent constraint reads.
-    """
+def _admit_node(*, node: QueryNode, period: int) -> None:
+    """Refuse an unrepresented action/status or information intersection."""
     context = node.context
     if node.read.phase != "solve" or node.read.period != period:
         raise UnsupportedOperationError(
@@ -1300,10 +1294,6 @@ def _admit_node(
     if context.invariant_bindings or context.action_partitions != 1:
         raise UnsupportedOperationError(
             "This query closure needs an unblocked action problem."
-        )
-    if context.same_period_ref_regimes and not same_period_values:
-        raise UnsupportedOperationError(
-            "A query cannot price another root's stored Full value."
         )
     gated_targets = set(gated_query_targets(context=context, period=period))
     if set(node.gated_channels) != gated_targets:
@@ -2869,7 +2859,6 @@ class _PolicyQueryKernel:
         period: int,
         ages: TimeAxis,
         logger: logging.Logger,
-        same_period_regime_to_V_arr: Mapping[RegimeName, FloatND] | None = None,
         edge_regime_to_V_arr: Mapping[RegimeName, FloatND] | None = None,
     ) -> KernelOutput:
         """Tabulate the destinations of stored reads, run every chunk in one
@@ -2887,7 +2876,6 @@ class _PolicyQueryKernel:
             flat_params=flat_params,
             period=period,
             ages=ages,
-            same_period_regime_to_V_arr=same_period_regime_to_V_arr,
             edge_regime_to_V_arr=edge_regime_to_V_arr,
         )
         program = self.programs["_chunks"]

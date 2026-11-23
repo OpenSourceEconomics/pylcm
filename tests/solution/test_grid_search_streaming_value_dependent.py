@@ -45,7 +45,6 @@ from _lcm.solution.grid_search import (
 from _lcm.typing import ArgumentTree, PytreeValue, ValueTemplate
 from lcm import Model
 from lcm.typing import BoolND, FloatND, RegimeName, UserParams
-from tests.simulation.test_aot_same_period_refs import _make_participation_model
 from tests.solution.test_gated_edge_fold_reads import (
     _model as _gated_full_topology_model,
 )
@@ -126,11 +125,6 @@ def _aligned_transfer_plan(
     return tuple(result)
 
 
-def _participation_case() -> Model:
-    """Build the same-period participation fixture."""
-    return _make_participation_model()
-
-
 def _consent_case() -> Model:
     """Build the state-gated consent topology, whose leg falls back to a single."""
     return _gated_full_topology_model()
@@ -147,28 +141,10 @@ def _consent_case() -> Model:
     ),
     [
         pytest.param(
-            _participation_case,
-            "couple",
-            {
-                "couple": {
-                    "koopmans_aggregator": {"discount_factor": 0.95},
-                },
-                "couple_terminal": {},
-                "single_f": {
-                    "koopmans_aggregator": {"discount_factor": 0.95},
-                },
-                "single_f_terminal": {},
-            },
-            (("single_f",), (), ()),
-            CoreExecutionDisposition.PLANNED,
-            None,
-            id="same-period-reference",
-        ),
-        pytest.param(
             _consent_case,
             "single_f",
-            {"discount_factor": 0.95, "delta_f": 0.5, "delta_m": 0.2},
-            ((), ("single_f_p1",), ("married",)),
+            {"discount_factor": 0.95},
+            (("single_f_p1",), ("married",)),
             CoreExecutionDisposition.PLANNED,
             None,
             id="edge-reference-and-gated-target",
@@ -180,7 +156,7 @@ def test_value_dependent_model_declares_its_required_program_disposition(
     model_factory: Callable[[], Model],
     regime_name: RegimeName,
     params: UserParams,
-    expected_channels: tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]],
+    expected_channels: tuple[tuple[str, ...], tuple[str, ...]],
     expected_disposition: CoreExecutionDisposition,
     expected_reason: str | None,
 ) -> None:
@@ -192,7 +168,6 @@ def test_value_dependent_model_declares_its_required_program_disposition(
     )
 
     assert (
-        builder.same_period_ref_regimes,
         builder.edge_reference_regimes,
         builder.edge_target_regimes,
     ) == expected_channels
@@ -227,8 +202,6 @@ def _observable_Q_and_F(
     *,
     choice: jax.Array,
     next_regime_to_V_arr: Mapping[RegimeName, jax.Array],
-    same_period_regime_to_V_arr: Mapping[RegimeName, jax.Array],
-    same_period_regime_to_params: Mapping[RegimeName, Mapping[str, jax.Array]],
     edge_reference_regime_to_V_arr: Mapping[RegimeName, jax.Array],
     edge_reference_regime_to_params: Mapping[RegimeName, Mapping[str, jax.Array]],
 ) -> tuple[jax.Array, jax.Array]:
@@ -236,8 +209,6 @@ def _observable_Q_and_F(
     value = (
         choice
         + next_regime_to_V_arr["target"][0]
-        + same_period_regime_to_V_arr["reference"][0]
-        + same_period_regime_to_params["reference"]["offset"]
         + edge_reference_regime_to_V_arr["outside"][0]
         + edge_reference_regime_to_params["outside"]["offset"]
     )
@@ -264,10 +235,6 @@ def _observable_route() -> tuple[
         {
             "choice": jnp.asarray([0.0, 1.0, 2.0]),
             "next_regime_to_V_arr": {"target": jnp.asarray([10.0])},
-            "same_period_regime_to_V_arr": {"reference": jnp.asarray([20.0])},
-            "same_period_regime_to_params": {
-                "reference": {"offset": jnp.asarray(30.0)}
-            },
             "edge_reference_regime_to_V_arr": {"outside": jnp.asarray([40.0])},
             "edge_reference_regime_to_params": {
                 "outside": {"offset": jnp.asarray(50.0)}
@@ -293,7 +260,6 @@ def _observable_route() -> tuple[
                 regime_name="source",
                 period=0,
                 target_regimes=("target",),
-                same_period_ref_regimes=("reference",),
                 edge_reference_regimes=("outside",),
                 edge_target_regimes=("target",),
             ),
@@ -342,9 +308,7 @@ def test_value_dependent_reference_matches_dense_eager_jit_and_aot(width: int) -
 def _consent_edge_kwargs() -> Mapping[str, Mapping[str, ValueTemplate]]:
     """Build the gated-edge kernel argument of the consent fixture's source regime."""
     model = _gated_full_topology_model()
-    flat_params = model._process_params(
-        {"discount_factor": 0.95, "delta_f": 0.5, "delta_m": 0.2}
-    )
+    flat_params = model._process_params({"discount_factor": 0.95})
     _next_V, _next_continuation, next_edges = _build_continuation_templates(
         regimes=model._regimes,
         flat_params=flat_params,

@@ -1,7 +1,6 @@
 """The solve loop dispatches each period's regimes in dependency waves.
 
-On one device every wave holds one regime, so the dispatch order is today's:
-same-period references first, declaration order among independent regimes.
+The waves of a period are dispatched before any wave of the period before it.
 """
 
 from typing import Unpack
@@ -10,7 +9,6 @@ import pytest
 
 from _lcm.solution import backward_induction
 from lcm import AgeGrid, Model
-from lcm.typing import RegimeName
 from tests.regime_building.test_gated_edges_collective_solve import (
     EKLRegimeId,
     _make_full_topology_regimes,
@@ -38,66 +36,7 @@ def _model() -> Model:
 
 
 def _params() -> dict[str, float]:
-    return {"discount_factor": 0.95, "delta_f": 0.5, "delta_m": 0.2}
-
-
-def _record_dispatch_order(
-    *, monkeypatch: pytest.MonkeyPatch
-) -> tuple[list[tuple[int, RegimeName]], Model]:
-    """Solve `_model()` while recording each kernel dispatch's (period, regime)."""
-    order: list[tuple[int, RegimeName]] = []
-    real = backward_induction._run_period_kernel
-
-    def record(**kwargs: Unpack[RunPeriodKernelKwargs]) -> RunPeriodKernelResult:
-        order.append((kwargs["period"], kwargs["regime_name"]))
-        return real(**kwargs)
-
-    monkeypatch.setattr(backward_induction, "_run_period_kernel", record)
-    model = _model()
-    model.solve(params=_params(), log_level="off")
-    return order, model
-
-
-def _same_period_reference_pairs(
-    *, order: list[tuple[int, RegimeName]], model: Model
-) -> list[tuple[int, RegimeName, RegimeName]]:
-    """Return every (period, reader, reference) pair dispatched within `order`."""
-    positions = {key: index for index, key in enumerate(order)}
-    return [
-        (period, name, reference)
-        for (period, name) in order
-        for reference in model._regimes[name].same_period_ref_regimes
-        if (period, reference) in positions
-    ]
-
-
-def test_the_full_topology_model_has_same_period_references_to_order(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The full EKL topology model declares at least one same-period reference.
-
-    Guards the ordering assertion below against a vacuous pass: without a real
-    reference pair to check, `all()` over an empty sequence would pass no
-    matter how the waves were planned.
-    """
-    order, model = _record_dispatch_order(monkeypatch=monkeypatch)
-
-    assert len(_same_period_reference_pairs(order=order, model=model)) > 0
-
-
-def test_every_reference_is_dispatched_before_the_regime_that_reads_it(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Within a period, a same-period reference precedes its reader."""
-    order, model = _record_dispatch_order(monkeypatch=monkeypatch)
-    positions = {key: index for index, key in enumerate(order)}
-
-    assert all(
-        positions[(period, reference)] < positions[(period, name)]
-        for period, name, reference in _same_period_reference_pairs(
-            order=order, model=model
-        )
-    )
+    return {"discount_factor": 0.95}
 
 
 def test_periods_are_dispatched_strictly_backward(

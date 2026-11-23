@@ -24,7 +24,6 @@ import jax.numpy as jnp
 import pytest
 
 from _lcm.solution import backward_induction
-from _lcm.solution.feasibility import FeasibilityKernelOutput
 from _lcm.typing import RegimeName
 from lcm import (
     AgeGrid,
@@ -79,35 +78,6 @@ def recorded_dissolution_flags() -> Generator[dict[int, dict[RegimeName, BoolND]
     with pytest.MonkeyPatch.context() as monkeypatch:
         monkeypatch.setattr(backward_induction, "_run_period_kernel", recording)
         yield flags
-
-
-@contextmanager
-def recorded_feasibility_counts() -> Generator[
-    dict[int, dict[RegimeName, tuple[int, int]]]
-]:
-    """Record each kernel's `(empty, other -inf)` state-cell counts while a solve runs.
-
-    The first count is the kernel's own empty-feasible-set mask; the second counts
-    the cells whose value is infinite although some action is feasible. Together
-    they tell a dissolving cell from an on-path `-inf` value, which the value array
-    alone cannot.
-    """
-    counts: dict[int, dict[RegimeName, tuple[int, int]]] = {}
-    original = backward_induction._run_period_kernel
-
-    def recording(**kwargs: Unpack[_KernelKwargs]) -> KernelOutput:
-        output = original(**kwargs)
-        if isinstance(output, FeasibilityKernelOutput):
-            empty, other_inf = output.feasibility_counts
-            counts.setdefault(kwargs["period"], {})[kwargs["regime_name"]] = (
-                int(empty),
-                int(other_inf),
-            )
-        return output
-
-    with pytest.MonkeyPatch.context() as monkeypatch:
-        monkeypatch.setattr(backward_induction, "_run_period_kernel", recording)
-        yield counts
 
 
 @categorical(ordered=True)

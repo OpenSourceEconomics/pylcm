@@ -1913,7 +1913,7 @@ def _bind_participation(
                 raise UnsupportedOperationError(
                     "This query closure needs an unblocked action problem."
                 )
-            _admit_node(node=node, period=builder.period, same_period_values=True)
+            _admit_node(node=node, period=builder.period)
     return ParticipationQueryPlan(
         source=source,
         target=target,

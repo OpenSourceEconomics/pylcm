@@ -542,8 +542,7 @@ def _route_metadata(model: Model) -> _RouteMetadata:
         declaration = declarations.get(regime_name)
         transition = transitions.get(regime_name)
         if (
-            regime.same_period_ref_regimes
-            or regime.gated_edges
+            regime.gated_edges
             or getattr(declaration, "exits", {})
             or getattr(transition, "participation", {})
         ):

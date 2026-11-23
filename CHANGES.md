@@ -24,6 +24,19 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 - Values, model fingerprints and saved simulation results of models without a
   `CollectiveUtility` are unchanged.
 
+### `ValueDependentConstraint` is removed
+
+- `ValueDependentConstraint` is gone, and with it `Regime.value_constraints` and
+  `Regime.same_period_refs`: no predicate reads a member's action value `Q_<s>` or
+  another regime's value in the same period. A household that should not continue where
+  a member is better off alone declares that as an `Exit` of the household regime, whose
+  rule (`Unilateral` or `MutualConsent`) compares each member's stay value with her
+  outside value. A move that depends only on the landing state is a `Gate`.
+  `ProjectedRegimeValue` remains, as the fallback of a gate's route.
+- Values, model fingerprints and saved results of models without a
+  `ValueDependentConstraint` are unchanged.
+- The `ReferenceChainSolve` benchmark is removed with the feature it measured.
+
 ### `GridSearch(lottery_contraction=True)` contracts in exits and collective regimes
 
 - With the option on, the eligible draws are summed into the next-period value also in
@@ -203,8 +216,8 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 - Each role's returned dtype is checked when the function is first evaluated in
   `solve()`, and a mismatch raises the new `InvalidFunctionOutputError`, naming the
   function:
-  - constraints, `ValueDependentConstraint` predicates, gates, participation predicates
-    and exit availability return a Boolean. An integer `0`/`1`, which gates,
+  - constraints, gates, participation predicates and exit availability return a
+    Boolean. An integer `0`/`1`, which gates,
     participation predicates and exit availability accepted before, is refused; write
     the comparison, e.g. `work == 1`;
   - laws of discrete states, deterministic regime selectors and projections onto a
@@ -509,9 +522,7 @@ unchanged. The solvers keep the derivative rules they use themselves.
   choice is feasible raises `InvalidStateTransitionError` before the solve, naming the
   regime, period, law and cell; cells where no choice is feasible never count.
   `Model.validate_transitions` runs this check too. Feasibility here is the ordinary
-  constraints, in both phases: a value-dependent constraint or a gate that reads a
-  value cannot exclude a cell whose code is off the grid, since that code has no value.
-  Declare a value-free restriction as an ordinary constraint instead.
+  constraints, in both phases.
 - Behavior change: with `runtime_checks=False`, reading the value function at a code
   outside `0..n-1` gives NaN instead of the value at the nearest end node. This holds
   for category grids as well, which used to clamp silently. An integer value grid has
@@ -547,8 +558,8 @@ unchanged. The solvers keep the derivative rules they use themselves.
   stochastic law reads values and still returns probabilities in the order of
   `values`. Integer values arrive as int32, as codes do. A variable declared with values
   must carry the same values and tolerance in every regime. Regime transition laws,
-  gates and their projections, collective regimes (member utilities, Pareto
-  weights, value-dependent constraints and their projections), joint transitions
+  gates and their projections, collective regimes (member utilities and Pareto
+  weights), joint transitions
   and carried-state imputations read values too; a projection, a joint output and an
   imputation of a value-grid state return a value. A `functools.partial` reading a
   value grid asks only for the arguments it leaves free. Condition constraints that

@@ -162,8 +162,8 @@ def test_renamed_benchmark_carries_its_history(tmp_path: Path) -> None:
     machine_dir = tmp_path / "results" / "gpu-01"
     machine_dir.mkdir(parents=True)
     (machine_dir / "machine.json").write_text(json.dumps(_MACHINE), encoding="utf-8")
-    old = "bench_collective_household.ReferenceChainSolve.time_execution"
-    new = "bench_collective_household.ReferenceChainSolve.track_execution_time"
+    old = "bench_collective_household.CollectiveHouseholdSimulate.time_execution"
+    new = "bench_collective_household.CollectiveHouseholdSimulate.track_execution_time"
     path = _write_result(
         machine_dir=machine_dir,
         commit="aaaaaaaa",

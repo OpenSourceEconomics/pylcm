@@ -69,7 +69,7 @@ from lcm import (
     post_decision_lower_bound,
     ref,
 )
-from lcm.collective import CollectiveUtility, ParetoObjective, ValueDependentConstraint
+from lcm.collective import CollectiveUtility, ParetoObjective
 from lcm.exceptions import (
     InvalidValueFunctionError,
     OffGridStateError,
@@ -186,7 +186,7 @@ def _floor_landing_model(
     handwritten: bool,
     invalid: bool,
     budgeted: bool,
-    value_aware: bool,
+    household: bool,
     gated: bool = False,
     invariant: bool = False,
     raised: bool = True,
@@ -208,9 +208,6 @@ def _floor_landing_model(
 
     def terminal(*, wealth: FloatND, income: FloatND | IntND) -> FloatND:
         return wealth + 0.0 * income
-
-    def participation(*, Q_alice: FloatND) -> BoolND:
-        return Q_alice >= -jnp.inf
 
     def gate(*, wealth: FloatND) -> BoolND:
         return wealth >= -jnp.inf
@@ -239,7 +236,7 @@ def _floor_landing_model(
         Transition(
             targets={
                 "done": 0,
-                **({"fallback_alice": 0, "fallback_bob": 0} if value_aware else {}),
+                **({"fallback_alice": 0, "fallback_bob": 0} if household else {}),
             },
             law=ByAge(cases={0: {"done": StochasticTransition(func=certain)}}),
             gates={
@@ -247,16 +244,16 @@ def _floor_landing_model(
                     predicate=gate,
                     routes={
                         name: MemberRoute(
-                            target_member=name if value_aware else None,
+                            target_member=name if household else None,
                             fallback=ProjectedRegimeValue(
-                                regime=f"fallback_{name}" if value_aware else "done",
+                                regime=f"fallback_{name}" if household else "done",
                                 projection={
                                     "wealth": identity,
                                     "income": identity_income,
                                 },
                             ),
                         )
-                        for name in (("alice", "bob") if value_aware else ("only",))
+                        for name in (("alice", "bob") if household else ("only",))
                     },
                     off_grid="pointwise",
                 )
@@ -282,7 +279,7 @@ def _floor_landing_model(
                     "utility": CollectiveUtility(
                         utilities={"alice": utility, "bob": utility}
                     )
-                    if value_aware
+                    if household
                     else utility,
                     "resources": resources,
                     "savings": savings,
@@ -292,15 +289,6 @@ def _floor_landing_model(
                     "borrowing": ref("savings") >= ref("floor")
                     if handwritten
                     else post_decision_lower_bound(margin=LIQUID, lower=floor),
-                    **(
-                        {
-                            "participation": ValueDependentConstraint(
-                                predicate=participation
-                            )
-                        }
-                        if value_aware
-                        else {}
-                    ),
                 },
             ),
             "done": Regime(
@@ -317,7 +305,7 @@ def _floor_landing_model(
                     "utility": CollectiveUtility(
                         utilities={"alice": terminal, "bob": terminal}
                     )
-                    if value_aware
+                    if household
                     else terminal
                 },
             ),
@@ -334,14 +322,14 @@ def _floor_landing_model(
                     )
                     for name in ("alice", "bob")
                 }
-                if gated and value_aware
+                if gated and household
                 else {}
             ),
         },
         ages=AgeGrid(exact_values=(0, 1)),
         edges={"saving": edge},
         initial_nodes={0: "saving"},
-        regime_id_class=GatedRegimeId if gated and value_aware else TemporalRegimeId,
+        regime_id_class=GatedRegimeId if gated and household else TemporalRegimeId,
         execution_config=ExecutionConfig(
             device_memory_bytes=(1 << 28) if budgeted else None,
             invariant_block_widths={"income": 1} if invariant else {},
@@ -353,7 +341,7 @@ def _floor_landing_model(
 @pytest.mark.parametrize("handwritten", [False, True])
 @pytest.mark.parametrize("invalid", [False, True])
 @pytest.mark.parametrize("budgeted", [False, True])
-@pytest.mark.parametrize("value_aware", [False, True])
+@pytest.mark.parametrize("household", [False, True])
 def test_floor_integrity_precedes_reached_landing_errors(
     *,
     runtime_checks: bool,
@@ -361,7 +349,7 @@ def test_floor_integrity_precedes_reached_landing_errors(
     invalid: bool,
     budgeted: bool,
     monkeypatch: pytest.MonkeyPatch,
-    value_aware: bool,
+    household: bool,
 ) -> None:
     """
     Mandatory floor integrity is checked before reached off-grid landings are
@@ -373,7 +361,7 @@ def test_floor_integrity_precedes_reached_landing_errors(
         handwritten=handwritten,
         invalid=invalid,
         budgeted=budgeted,
-        value_aware=value_aware,
+        household=household,
     )
     error = InvalidValueFunctionError if invalid else OffGridStateError
     with pytest.raises(error, match=r"floor|state='wealth'"):
@@ -387,23 +375,22 @@ def test_floor_integrity_precedes_reached_landing_errors(
 @pytest.mark.parametrize("runtime_checks", [False, True])
 @pytest.mark.parametrize("handwritten", [False, True])
 @pytest.mark.parametrize("invalid", [False, True])
-@pytest.mark.parametrize("value_aware", [False, True])
+@pytest.mark.parametrize("household", [False, True])
 def test_gated_floor_integrity_precedes_reached_landing_errors(
     *,
     runtime_checks: bool,
     handwritten: bool,
     invalid: bool,
-    value_aware: bool,
+    household: bool,
 ) -> None:
     """
-    Actually gated landings retain own-floor integrity outside gate and
-    participation masks.
+    Actually gated landings retain own-floor integrity outside gate masks.
     """
     model = _floor_landing_model(
         handwritten=handwritten,
         invalid=invalid,
         budgeted=True,
-        value_aware=value_aware,
+        household=household,
         gated=True,
     )
     error = InvalidValueFunctionError if invalid else OffGridStateError
@@ -427,7 +414,7 @@ def test_invariant_codes_reduce_floor_integrity_before_landing_interpretation(
         handwritten=handwritten,
         invalid=True,
         budgeted=True,
-        value_aware=False,
+        household=False,
         invariant=True,
     )
     with pytest.raises(InvalidValueFunctionError, match="floor"):
@@ -455,7 +442,7 @@ def test_actual_invariant_dispatch_keeps_floor_integrity_across_code_outputs(
         handwritten=handwritten,
         invalid=invalid,
         budgeted=True,
-        value_aware=False,
+        household=False,
         invariant=True,
         raised=False,
     )

@@ -495,35 +495,31 @@ def test_job_offer_gates_feasible_actions_and_solves() -> None:
 # Scope fence: an endogenous / self-referential offer distribution (reading the
 # household's OWN solved value) is not representable through `StochasticTransition`
 # — it can only read states/actions/params through the ordinary DAG, never a
-# `Q_<s>` action value (that access is `value_constraints`-only). This pins
+# `Q_<s>` action value, which the engine hands to no user function. This pins
 # the natural failure mode rather than a bespoke check.
 
 
 def _self_referential_offer_probs(Q_f: FloatND) -> FloatND:  # noqa: ARG001
-    """Ill-formed: an offer distribution reading the household's own Q.
-
-    Reading `Q_<s>` is a `value_constraints`-only access.
-    """
+    """Ill-formed: an offer distribution reading the household's own Q."""
     return jnp.array([0.5, 0.5])
 
 
 def test_endogenous_offer_distribution_is_rejected() -> None:
     """A `Q_<s>`-conditioned (self-referential) offer distribution is unrepresentable.
 
-    `Q_<s>` is injected only into `value_constraints` predicates; an
-    ordinary state-transition / `StochasticTransition` function has no such
-    injection — it resolves through the regime's plain DAG (states, actions,
-    params, helper functions). `process_regimes` itself does not eagerly call
-    the transition closures, so the ill-formed `Q_f` argument is NOT caught at
-    build time: the DAG machinery falls back to treating the unresolved name
-    as an ordinary flat regime PARAMETER (`married_terminal__next_spouse_type
-    __Q_f`), so it surfaces only once `solve` actually invokes the closure and
-    finds no such parameter was supplied — a `KeyError` naming exactly the
-    missing (and unsuppliable-as-a-live-value) argument. There is no way to
-    bind it to the household's own in-solve `Q_f` array: the params dict can
-    only ever hold a caller-supplied CONSTANT, never the solved value, so the
-    "endogenous offer distribution" is unrepresentable through this
-    primitive — confirmed, not merely asserted, by this failure mode.
+    `Q_<s>` is injected into no user function; an ordinary state-transition /
+    `StochasticTransition` function resolves its arguments through the regime's
+    plain DAG (states, actions, params, helper functions). `process_regimes` itself
+    does not eagerly call the transition closures, so the ill-formed `Q_f` argument
+    is NOT caught at build time: the DAG machinery falls back to treating the
+    unresolved name as an ordinary flat regime PARAMETER
+    (`married_terminal__next_spouse_type __Q_f`), so it surfaces only once `solve`
+    actually invokes the closure and finds no such parameter was supplied — a
+    `KeyError` naming exactly the missing (and unsuppliable-as-a-live-value)
+    argument. There is no way to bind it to the household's own in-solve `Q_f`
+    array: the params dict can only ever hold a caller-supplied CONSTANT, never the
+    solved value, so the "endogenous offer distribution" is unrepresentable through
+    this primitive — confirmed, not merely asserted, by this failure mode.
     """
     regimes = _make_offer_regimes()
     regimes["single_f"] = regimes["single_f"].replace(

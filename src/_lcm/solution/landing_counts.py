@@ -1,12 +1,11 @@
 """Count a GridSearch solve's raw raise-rule landings in the pass that maximizes.
 
-A regime whose value constraints or gated edges decide, only once values are
-known, which actions and branches reach a landing has its `Q_and_F` return the
-raw `off_grid="raise"` landing counts of every action as a third output. The
-builders here carry those counts through the same reductions the value takes:
+A regime whose gated edges decide, only once values are known, which branches
+reach a landing has its `Q_and_F` return the raw `off_grid="raise"` landing
+counts of every action as a third output. The builders here carry those counts
+through the same reductions the value takes:
 
-- over the actions, summed where the feasibility mask keeps an action, value
-  constraints included;
+- over the actions, summed where the feasibility mask keeps an action;
 - through the state product, alongside the value;
 - over every state cell, into one saturating int32 total per check, which the period
   kernel reads and raises on.

@@ -38,11 +38,7 @@ from _lcm.regime_law import RegimeLaw, RegimeLaws
 from _lcm.typing import AgeValue, EconFunctionArg, FunctionName, RegimeName
 from _lcm.utils.ast_inspection import value_indexed_arrays
 from _lcm.utils.functools import is_user_function
-from lcm.collective import (
-    CollectiveUtility,
-    ProjectedRegimeValue,
-    ValueDependentConstraint,
-)
+from lcm.collective import CollectiveUtility, ProjectedRegimeValue
 from lcm.condition import Condition
 from lcm.decoupled import Decoupled
 from lcm.exceptions import (
@@ -901,14 +897,12 @@ def adapt_entry(  # noqa: PLR0911
 ) -> AdaptableEntry:
     """Adapt every user function inside one regime slot entry.
 
-    Walks `Phased` sides, per-target mappings, both functions of a `Decoupled`
-    Koopmans aggregator, the function of a `DeterministicTransition`, the
-    predicate and projections of a `ValueDependentConstraint`, the callables of
-    a `JointTransition`, the probability function of a `StochasticTransition`,
-    which is decoded only: it returns probabilities over codes, and every
-    function an `AgeSpecializedFunction` builds. With `adapters`, one authored
-    function gets one adapter wherever it appears, so a function shared by both
-    phases stays one function.
+    Walks `Phased` sides, per-target mappings, both functions of a `Decoupled` Koopmans
+    aggregator, the function of a `DeterministicTransition`, the callables of a
+    `JointTransition`, the probability function of a `StochasticTransition`, which is
+    decoded only: it returns probabilities over codes, and every function an
+    `AgeSpecializedFunction` builds. With `adapters`, one authored function gets one
+    adapter wherever it appears, so a function shared by both phases stays one function.
     """
     # Without value grids nothing changes. A grid declares no function. A
     # condition is a tree of names, not a function; the model refuses one that
@@ -930,10 +924,6 @@ def adapt_entry(  # noqa: PLR0911
     if isinstance(entry, AgeSpecializedFunction):
         return _adapt_age_specialized(
             entry=entry, value_grids=value_grids, encode=encode, adapters=adapters
-        )
-    if isinstance(entry, ValueDependentConstraint):
-        return _adapt_value_dependent_constraint(
-            entry=entry, value_grids=value_grids, adapters=adapters
         )
     if isinstance(entry, Phased):
         return _adapt_phased(
@@ -1061,32 +1051,6 @@ class AdaptedBuild:
                 "function cannot read. Read it in a plain function."
             )
         return func
-
-
-def _adapt_value_dependent_constraint(
-    *,
-    entry: ValueDependentConstraint,
-    value_grids: Mapping[StateOrActionName, AdapterGrid],
-    adapters: AdapterMemo,
-) -> ValueDependentConstraint:
-    """Adapt the predicate and the projections, keeping the entry if neither changes."""
-    predicate = adapt_user_function(
-        func=entry.predicate, value_grids=value_grids, encode=None, adapters=adapters
-    )
-    references = {
-        name: cast(
-            "ProjectedRegimeValue",
-            _adapt_reference(
-                reference=reference, value_grids=value_grids, adapters=adapters
-            ),
-        )
-        for name, reference in entry.references.items()
-    }
-    if predicate is entry.predicate and all(
-        references[name] is reference for name, reference in entry.references.items()
-    ):
-        return entry
-    return dataclasses.replace(entry, predicate=predicate, references=references)
 
 
 def _adapt_joint(

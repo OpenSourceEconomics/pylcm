@@ -268,22 +268,12 @@ booleans as array indices inside JIT. Use `jnp.int32(...)` to cast.
 
 A regime whose utility is a `CollectiveUtility` has **members** — the `utilities`
 keys, in insertion order, which fix the trailing axis of `V` and of every published
-array. Everything is declared in a slot that already exists: the regime's utility and
-constraints, and the `Transition` on its `Model(edges=...)` entry:
+array. Everything is declared in a slot that already exists: the regime's utility, and
+the `Transition` on its `Model(edges=...)` entry:
 
 ```python
 Regime(
     functions={"utility": CollectiveUtility(utilities={"f": u_f, "m": u_m})},
-    constraints={
-        "participation_f": ValueDependentConstraint(  # goes in `constraints`
-            predicate=participation_f,
-            references={
-                "V_alone_f": ProjectedRegimeValue(
-                    regime="single_f", projection={"wealth": half_of_wealth}
-                )
-            },
-        )
-    },
 )
 
 # The gate lives on the source's edges, beside the law, keyed by TARGET
@@ -335,17 +325,16 @@ Model(
 - `ParetoObjective(weights=...)` scalarizes the household; a weight may read the
   regime's states and `period`/`age`, never an action. Its other arguments become free
   parameters under the `pareto_objective` key. Omit it for equal weights.
-- A constraint-local projection may introduce **no** free parameter (refused when the
-  `Regime` is constructed); an edge projection's free arguments become that edge's
-  params, under `params["edges"][source][target]`.
+- An edge projection's free arguments become that edge's params, under
+  `params["edges"][source][target]`.
 - Member identity is **per row**: seed `initial_conditions["own_member"]`
   whenever the starting regime's forward closure contains a collective regime declaring
   a transition with more than one route. A row keeps its role across an ordinary regime
   transition, so a two-leg route it runs into later demands the seed, while one in a
   regime the cohort can never reach demands nothing. It is published as an
   `own_member` column, missing for singleton rows.
-- `GatedEdge`, `member_axis`, `value_constraints`, `same_period_refs` and `gated_edges`
-  are the **lowered** form these declarations decompose into. Write the declarations.
+- `GatedEdge`, `member_axis` and `gated_edges` are the **lowered** form these
+  declarations decompose into. Write the declarations.
 
 See `docs/user_guide/collective_regimes.md` and `docs/reference/collective_regimes.md`.
 

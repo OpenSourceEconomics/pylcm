@@ -366,20 +366,6 @@ def validate_regime(regime: Regime) -> None:
             "for a household declared with a `CollectiveUtility`. Omit it "
             "for a singleton regime."
         )
-    elif regime.value_constraints:
-        raise RegimeInitializationError(
-            "`value_constraints` are value-aware feasibility predicates for "
-            "a collective regime; they read the per-member action "
-            "values `Q_<s>`, which only exist for a household. "
-            "Use ordinary `constraints` for a singleton regime."
-        )
-    elif regime.same_period_refs:
-        raise RegimeInitializationError(
-            "`same_period_refs` declares same-period reference values for a "
-            "collective regime's `value_constraints`; it is only "
-            "meaningful for a household declared with a `CollectiveUtility`. "
-            "Omit it for a singleton regime."
-        )
 
     _validate_mapping_contents(regime)
     _validate_exits(regime)
@@ -466,8 +452,7 @@ def _validate_collective_regime(regime: Regime) -> None:
 
     Both the terminal and the non-terminal continuation cases are implemented.
     Checked here are the properties a bare `Regime` already
-    determines on its own: a non-empty, duplicate-free `members` tuple,
-    the regime-local `value_constraints` / `same_period_refs` grammar, and — if
+    determines on its own: a non-empty, duplicate-free `members` tuple, and — if
     `pareto_objective` is given — weight keys matching the member names,
     with every constant weight finite, non-negative, and a positive total (the
     zero-safe scalarization in `collective._weighted_sum` treats an exact-zero
@@ -519,7 +504,6 @@ def _validate_collective_regime(regime: Regime) -> None:
             "`solver=GridSearch()` for this regime."
         )
     error_messages: list[str] = []
-    error_messages.extend(_collective_value_constraint_errors(regime))
     error_messages.extend(_members_tuple_errors(members))
     error_messages.extend(path_segment_name_errors(kind="Member", names=members))
     error_messages.extend(_collective_weights_errors(regime=regime, members=members))
@@ -600,124 +584,6 @@ def _collective_weights_errors(
             ),
         )
     return ()
-
-
-def _collective_value_constraint_errors(regime: Regime) -> tuple[str, ...]:
-    """Collect the regime-local errors of `value_constraints` / `same_period_refs`.
-
-    Cross-regime properties — the reference regime's
-    existence, its member layout, projection coverage, co-activity, and
-    reference cycles — are validated at model processing, where the other
-    regimes are known.
-    """
-    members = cast("tuple[str, ...]", regime.member_axis)
-    error_messages: list[str] = []
-
-    if regime.same_period_refs and not regime.value_constraints:
-        error_messages.append(
-            "`same_period_refs` without `value_constraints` has no consumer: "
-            "the reference values are only readable by value-constraint "
-            "predicates. Declare the predicates, or drop the references."
-        )
-
-    error_messages.extend(
-        path_segment_name_errors(
-            kind="Value-constraint and reference-value",
-            names=[*regime.value_constraints, *regime.same_period_refs],
-        )
-    )
-
-    # The engine-facing names: a value constraint's own name is the key its
-    # declaration sits under, so reading the declared names would report
-    # every value constraint as colliding with itself.
-    taken = (
-        set(regime.decomposed_functions)
-        | set(regime.decomposed_constraints)
-        | set(regime.states)
-        | set(regime.actions)
-    )
-    colliding = sorted(
-        (set(regime.value_constraints) | set(regime.same_period_refs)) & taken
-    )
-    if colliding:
-        error_messages.append(
-            f"Value-constraint / reference-value name(s) {colliding} collide "
-            "with a function, constraint, state, or action of the regime. "
-            "Reference values enter the predicates as named arguments, so the "
-            "names must be unambiguous."
-        )
-
-    error_messages.extend(_reference_projection_free_param_errors(regime))
-
-    if regime.value_constraints:
-        shadowed_q = sorted({f"Q_{s}" for s in members} & taken)
-        if shadowed_q:
-            error_messages.append(
-                f"Name(s) {shadowed_q} are reserved for the per-member "
-                "action values that `value_constraints` predicates read; the "
-                "regime declares a function, constraint, state, or action of "
-                "the same name. Rename it."
-            )
-
-    return tuple(error_messages)
-
-
-def _reference_projection_free_param_errors(regime: Regime) -> tuple[str, ...]:
-    """Reject regime-level reference projections that introduce free parameters.
-
-    A `same_period_refs` projection resolves through the DECLARING regime's DAG
-    and additionally receives that regime's `period` / `age`. Anything else in
-    its signature is supplied by nothing: it never reaches the params template,
-    so the accepted model has no valid parameter assignment. (Inside a
-    `GatedEdge`, extra arguments ARE collected as the source regime's edge
-    parameters, so this rule is regime-level only.)
-
-    Args:
-        regime: The user regime whose references are checked.
-
-    Returns:
-        List of error messages, one per offending projection argument.
-
-    """
-    supplied = (
-        set(regime.decomposed_functions)
-        | set(regime.states)
-        | set(regime.actions)
-        | set(regime.decomposed_constraints)
-        | set(regime.derived_categoricals)
-        | {"period", "age"}
-        | {f"{name}_code" for name in _coded_variable_names(regime)}
-    )
-    return tuple(
-        f"The projection of reference {ref_name!r} for state "
-        f"'{state_name}' takes argument '{arg}', which the declaring regime "
-        "does not supply. A regime-level reference projection resolves through "
-        "this regime's own DAG and its period/age, and may not introduce a free "
-        "parameter: it would never appear in `get_params_template()`. Compute "
-        f"'{arg}' as a function of the regime, or declare it as a state or "
-        "action."
-        for ref_name, ref in regime.same_period_refs.items()
-        for state_name, func in ref.projection.items()
-        for arg in inspect.signature(func).parameters
-        if arg not in supplied
-    )
-
-
-def _coded_variable_names(regime: Regime) -> set[str]:
-    """Return the regime's variables whose code an argument `<name>_code` reads.
-
-    Those are its discrete states, actions and derived categoricals, and its
-    stochastic process states, on either side of `Phased`.
-    """
-    names: set[str] = set(regime.derived_categoricals)
-    for name, entry in {**dict(regime.states), **dict(regime.actions)}.items():
-        sides = (entry.solve, entry.simulate) if isinstance(entry, Phased) else (entry,)
-        if any(
-            isinstance(side, DiscreteGrid | _ContinuousStochasticProcess)
-            for side in sides
-        ):
-            names.add(name)
-    return names
 
 
 def _validate_gated_edges(*, regime: Regime, law: RegimeLaw) -> None:
@@ -1601,9 +1467,8 @@ def _joint_transition_grammar_errors(regime: Regime) -> tuple[str, ...]:  # noqa
 
     error_messages: list[str] = []
     # A joint node's name may not clash with anything already spoken for,
-    # and that is both what the author wrote and what the engine binds: a
-    # value constraint's own key is a live name, and so is each
-    # member's `utility_<s>`. Neither set contains the other.
+    # and that is both what the author wrote and what the engine binds: each
+    # member's `utility_<s>` is a live name the author never wrote.
     declared_names = (
         set(regime.states)
         | set(regime.actions)

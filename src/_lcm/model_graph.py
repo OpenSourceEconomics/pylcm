@@ -269,10 +269,6 @@ def prepare_graph(
         exit_targets_by_period=exit_targets,
         schedules=after,
         initial_nodes=initial_nodes,
-        same_period_refs_by_regime={
-            name: tuple(ref.regime for ref in regime.same_period_refs.values())
-            for name, regime in fixed_support.user_regimes.items()
-        },
         terminal_regimes=frozenset(name for name, law in laws.items() if law.terminal),
         ages=ages,
     )

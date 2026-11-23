@@ -44,7 +44,6 @@ from lcm import (
     ProjectedRegimeValue,
     Regime,
     Transition,
-    ValueDependentConstraint,
     categorical,
 )
 from lcm.transition import StochasticTransition
@@ -249,7 +248,6 @@ class Work:
 class RegimeId:
     source: ScalarInt
     pair: ScalarInt
-    alone_f: ScalarInt
     alone_m: ScalarInt
 
 
@@ -290,10 +288,6 @@ def _pair_m(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
     return 0.0 * wage + 0.0 * work
 
 
-def _outside_f(wage: ContinuousState) -> FloatND:
-    return _OUTSIDE_OPTION_F + 0.0 * wage
-
-
 def _outside_m(wage: ContinuousState) -> FloatND:
     return -100.0 + 0.0 * wage
 
@@ -302,8 +296,17 @@ def _identity(wage: ContinuousState) -> ContinuousState:
     return wage
 
 
-def _participation_f(*, Q_f: FloatND, V_alone_f: FloatND) -> BoolND:
-    return Q_f > V_alone_f
+def _bowl_beats_outside(wage: ContinuousState) -> BoolND:
+    return jnp.asarray(_bowl(wage) > _OUTSIDE_OPTION_F)
+
+
+def _ramp_beats_outside(wage: ContinuousState) -> BoolND:
+    return jnp.asarray(_ramp(wage) > _OUTSIDE_OPTION_F)
+
+
+# The wife's terminal payoff against her constant outside option, as a mask on the
+# wage the couple holds.
+_PAIR_F_FEASIBLE = {"bowl": _bowl_beats_outside, "ramp": _ramp_beats_outside}
 
 
 def _open_onto_pair(wage: ContinuousState) -> BoolND:
@@ -354,19 +357,7 @@ def _build_model(
                         utilities={"f": _PAIR_F[payoff_name], "m": _pair_m}
                     )
                 },
-                constraints={
-                    "participation_f": ValueDependentConstraint(
-                        predicate=_participation_f,
-                        references={
-                            "V_alone_f": ProjectedRegimeValue(
-                                regime="alone_f", projection={"wage": _identity}
-                            )
-                        },
-                    )
-                },
-            ),
-            "alone_f": Regime(
-                states={"wage": wage_grid}, functions={"utility": _outside_f}
+                constraints={"participation_f": _PAIR_F_FEASIBLE[payoff_name]},
             ),
             "alone_m": Regime(
                 states={"wage": wage_grid if fallback_grid is None else fallback_grid},
@@ -386,6 +377,5 @@ def _build_model(
 _PARAMS = {
     "source": {"koopmans_aggregator": {"discount_factor": 1.0}},
     "pair": {},
-    "alone_f": {},
     "alone_m": {},
 }

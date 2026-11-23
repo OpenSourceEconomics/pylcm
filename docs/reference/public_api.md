@@ -226,14 +226,13 @@ surfaces remain outside that top-level namespace:
 
 ## Collective regimes and value-dependent choice
 
-| Public name                                                                            | Canonical documentation                                  |
-| -------------------------------------------------------------------------------------- | -------------------------------------------------------- |
-| [`lcm.CollectiveUtility`](collective_regimes.md#api-collective-utility)                | One utility per member, one action                       |
-| [`lcm.ParetoObjective`](collective_regimes.md#api-pareto-objective)                    | Weighted household objective                             |
-| [`lcm.ValueDependentConstraint`](collective_regimes.md#api-value-dependent-constraint) | Constraint that reads member values                      |
-| [`lcm.Gate`](collective_regimes.md#api-gate)                                           | Value-dependent branch on the transition into one target |
-| [`lcm.MemberRoute`](collective_regimes.md#api-member-route)                            | One source member's route across it                      |
-| [`lcm.ProjectedRegimeValue`](collective_regimes.md#api-projected-regime-value)         | Another regime's value, projected                        |
+| Public name                                                                    | Canonical documentation                                  |
+| ------------------------------------------------------------------------------ | -------------------------------------------------------- |
+| [`lcm.CollectiveUtility`](collective_regimes.md#api-collective-utility)        | One utility per member, one action                       |
+| [`lcm.ParetoObjective`](collective_regimes.md#api-pareto-objective)            | Weighted household objective                             |
+| [`lcm.Gate`](collective_regimes.md#api-gate)                                   | Value-dependent branch on the transition into one target |
+| [`lcm.MemberRoute`](collective_regimes.md#api-member-route)                    | One source member's route across it                      |
+| [`lcm.ProjectedRegimeValue`](collective_regimes.md#api-projected-regime-value) | Another regime's value, projected                        |
 
 ## Solvers and configurations
 

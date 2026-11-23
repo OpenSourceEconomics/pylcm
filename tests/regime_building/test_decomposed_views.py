@@ -1,20 +1,14 @@
 """What the engine reads when a regime is written in the declaration vocabulary.
 
 A regime's `functions` and `constraints` are what the author wrote —
-declarations included. The two decomposed views are what the engine runs: one
-utility per member, and the ordinary constraints alone. The
-transformations are tested on raw mappings, because that is the input they
-exist to handle.
+declarations included. The decomposed function view is what the engine runs: one
+utility per member. The transformations are tested on raw mappings, because that
+is the input they exist to handle.
 """
 
 import jax.numpy as jnp
 
-from lcm import (
-    CollectiveUtility,
-    Phased,
-    ProjectedRegimeValue,
-    ValueDependentConstraint,
-)
+from lcm import CollectiveUtility, Phased
 from lcm.regime import decompose_constraints, decompose_functions
 from lcm.typing import ContinuousState, FloatND
 
@@ -37,21 +31,6 @@ def _u_m_simulate(wealth: ContinuousState) -> FloatND:
 def _budget(wealth: ContinuousState) -> FloatND:
     """An ordinary feasibility constraint."""
     return wealth > 0.0
-
-
-def _ir_f(*, Q_f: FloatND, V_alone_f: FloatND) -> FloatND:
-    """The first member's participation constraint."""
-    return Q_f >= V_alone_f
-
-
-def _identity_wealth(wealth: ContinuousState) -> FloatND:
-    """The projection carrying wealth into the reference regime unchanged."""
-    return wealth
-
-
-_REFERENCE = ProjectedRegimeValue(
-    regime="single_f", projection={"wealth": _identity_wealth}
-)
 
 
 def test_a_collective_utility_becomes_one_entry_per_member() -> None:
@@ -111,26 +90,9 @@ def test_a_phased_member_body_reaches_the_engine_whole() -> None:
     assert decompose_functions(raw)["utility_m"] is body
 
 
-def test_a_value_dependent_constraint_leaves_the_ordinary_constraints() -> None:
-    """What stays is what is evaluated before the action values exist."""
-    raw = {
-        "budget": _budget,
-        "ir_f": ValueDependentConstraint(
-            predicate=_ir_f, references={"V_alone_f": _REFERENCE}
-        ),
-    }
-
-    assert dict(decompose_constraints(raw)) == {"budget": _budget}
-
-
 def test_decomposing_constraints_twice_changes_nothing() -> None:
     """The transformation is idempotent."""
-    raw = {
-        "budget": _budget,
-        "ir_f": ValueDependentConstraint(
-            predicate=_ir_f, references={"V_alone_f": _REFERENCE}
-        ),
-    }
+    raw = {"budget": _budget}
     once = decompose_constraints(raw)
 
     assert dict(decompose_constraints(once)) == dict(once)

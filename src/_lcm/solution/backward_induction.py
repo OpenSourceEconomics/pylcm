@@ -868,12 +868,9 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                     generation=transfer_generation,
                 )
 
-                # Regimes declaring `same_period_refs` read other regimes' V of
-                # THIS period, so a reference regime is planned into an earlier wave
-                # than its reader. Independent regimes whose device sets are disjoint
-                # share a wave and dispatch back to back, which is what a submesh
-                # placement buys; regimes sharing a device keep one unit per wave, in
-                # declaration order among regimes without a reference.
+                # Regimes whose device sets are disjoint share a wave and dispatch
+                # back to back, which is what a submesh placement buys; regimes
+                # sharing a device keep one unit per wave, in declaration order.
                 waves = plan_period_waves(
                     nodes=tuple(
                         ScheduledNode(
@@ -881,12 +878,6 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                         )
                         for regime_name in active_regimes
                         for core_key in compiled_functions[(regime_name, period)]
-                    ),
-                    same_period_dependencies=MappingProxyType(
-                        {
-                            regime_name: regime.same_period_ref_regimes
-                            for regime_name, regime in active_regimes.items()
-                        }
                     ),
                     device_sets=MappingProxyType(
                         {
@@ -1672,11 +1663,7 @@ def _run_period_kernel(
     the artifacts it publishes on its keyed channels, which the loop reads through
     `consume_kernel_output` and accumulates where something consumes them.
 
-    A regime declaring `same_period_refs` additionally
-    receives the referenced regimes' V arrays of THIS period, read off
-    `period_solution` — the within-period topological order guarantees they were
-    solved earlier in this period's loop. a source
-    with gated edges receives its own rolled Wbar arrays, keyed by target
+    A source with gated edges receives its own rolled Wbar arrays, keyed by target
     regime name, which the grid-search kernel substitutes for the raw target V in
     `next_regime_to_V_arr`. Every other regime's adapter is called with the
     unchanged uniform signature.
@@ -1776,22 +1763,10 @@ def _run_period_kernel(
         logger=logger,
     )
 
-    same_period_kwargs: dict[
-        ReferenceName, MappingProxyType[RegimeName, ValueTemplate]
-    ] = {}
-    if regime.same_period_ref_regimes:
-        same_period_kwargs["same_period_regime_to_V_arr"] = MappingProxyType(
-            {
-                ref_regime_name: period_solution[ref_regime_name]
-                for ref_regime_name in regime.same_period_ref_regimes
-            }
-        )
-    same_period_kwargs.update(
-        _edge_kwargs(
-            regime=regime,
-            regime_name=regime_name,
-            next_edge_to_V_arr=next_edge_to_V_arr,
-        )
+    edge_kwargs = _edge_kwargs(
+        regime=regime,
+        regime_name=regime_name,
+        next_edge_to_V_arr=next_edge_to_V_arr,
     )
     started = time.perf_counter() if entry is not None else None
     output = period_kernel(
@@ -1805,7 +1780,7 @@ def _run_period_kernel(
         period=period,
         ages=ages,
         logger=logger,
-        **same_period_kwargs,
+        **edge_kwargs,
     )
     if entry is not None and started is not None:
         jax.block_until_ready(output.value)
@@ -4129,12 +4104,6 @@ def _scheduled_waves(
             ScheduledNode(period=period, regime=regime_name, program=core_key)
             for regime_name in active
             for core_key in program_keys_by_cell[(regime_name, period)]
-        ),
-        same_period_dependencies=MappingProxyType(
-            {
-                regime_name: regime.same_period_ref_regimes
-                for regime_name, regime in active.items()
-            }
         ),
         device_sets=MappingProxyType(
             {regime_name: device_ids_by_regime[regime_name] for regime_name in active}

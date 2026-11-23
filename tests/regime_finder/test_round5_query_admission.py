@@ -22,7 +22,7 @@ from tests.regime_finder.test_declaration_ingestion import (
     json_rows,
 )
 from tests.regime_finder.test_model_adapter import function, grid
-from tests.regime_finder.test_query_owners import policy_snapshot
+from tests.regime_finder.test_query_owners import exit_reading, policy_snapshot
 
 
 def record(kind: str, **fields: JSONValue) -> dict[str, JSONValue]:
@@ -42,8 +42,6 @@ def reference(
 def spec(
     *,
     names: tuple[RegimeName, RegimeName, RegimeName, RegimeName] = ("A", "B", "Q", "R"),
-    reference_kind: str = "ProjectedRegimeValue",
-    slot: str = "same_period_refs",
     dates: Sequence[float] | None = None,
 ) -> dict[str, JSONValue]:
     a, b, q, r = names
@@ -57,10 +55,8 @@ def spec(
     )
     regimes = {name: deepcopy(base) for name in names}
     for name in (a, b):
-        json_member(regimes[name], "fields")[slot] = {
-            "quoted": reference(q, reference_kind)
-        }
-    json_member(regimes[q], "fields")["same_period_refs"] = {"nested": reference(r)}
+        json_member(regimes[name], "fields")["exit"] = exit_reading(quoted=reference(q))
+    json_member(regimes[q], "fields")["exit"] = exit_reading(nested=reference(r))
     result: dict[str, JSONValue] = {
         "regimes": regimes,
         "n_periods": 3,
@@ -124,7 +120,6 @@ def test_projected_reads_and_native_exit_shapes_preserve_owner_kind(
                 if form == "exit":
                     for name in names[:2]:
                         declaration = json_member(raw, "regimes", name, "fields")
-                        declaration["same_period_refs"] = {}
                         target = reference(names[2], "ExitTarget")
                         json_member(target, "fields").update(
                             role="f", utility_adjustment=None
@@ -150,10 +145,10 @@ def test_projected_reads_and_native_exit_shapes_preserve_owner_kind(
 def test_phase_and_exact_fractional_date_are_preserved() -> None:
     raw = spec(dates=[20, 20.5, 21])
     for name in ("A", "B"):
-        json_member(raw, "regimes", name, "fields")["same_period_refs"] = {
-            "quoted": record("Phased", solve=reference("Q"), simulate=reference("R"))
-        }
-    json_member(raw, "regimes", "Q", "fields")["same_period_refs"] = {}
+        json_member(raw, "regimes", name, "fields")["exit"] = exit_reading(
+            quoted=record("Phased", solve=reference("Q"), simulate=reference("R"))
+        )
+    del json_member(raw, "regimes", "Q", "fields")["exit"]
     normalized, _, _ = _check_source(raw)
     owners = json_entries(normalized, "query_owners")
     assert ({(q["regime"], q["phase"]) for q in owners}) == (
@@ -197,9 +192,8 @@ def test_independent_checker_rejects_manufactured_physical_visit() -> None:
 
 def test_gate_read_is_query_but_explicit_fallback_is_physical() -> None:
     raw = spec()
-    for name in ("A", "B"):
-        json_member(raw, "regimes", name, "fields")["same_period_refs"] = {}
-    json_member(raw, "regimes", "Q", "fields")["same_period_refs"] = {}
+    for name in ("A", "B", "Q"):
+        del json_member(raw, "regimes", name, "fields")["exit"]
     gate = record(
         "Gate",
         predicate=function("def allowed(x):\n    return x > 0\n", ["x"]),
@@ -228,9 +222,9 @@ def test_unproved_fallback_type_is_not_invented_as_settlement() -> None:
 
 def test_nested_owned_reads_are_visible_to_topological_traversal() -> None:
     raw = policy_snapshot()
-    json_member(raw, "user_regimes", "query_partner", "fields")["same_period_refs"] = {
-        "nested": reference("unused_owner")
-    }
+    json_member(raw, "user_regimes", "query_partner", "fields")["exit"] = exit_reading(
+        nested=reference("unused_owner")
+    )
     normalized = normalize_declarations(raw)
     # Two equal reads remain two distinct owned incidences.
     owner = next(

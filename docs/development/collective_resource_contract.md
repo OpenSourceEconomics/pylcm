@@ -16,19 +16,16 @@ level.
 
 ## The workloads
 
-All of them are in `benchmarks/asv/bench_collective_household.py`. All but the last two
-run over the marriage market of `lcm_examples.collective_household`: two singles who
-marry under mutual consent, a household with a participation constraint on each partner,
-and a dissolution edge keyed by the continuing household. `ReferenceChainSolve` is not
-that model — it builds a synthetic chain of collective links with no gated edge, no
-consent and no dissolution, so that reference depth is the only thing varying.
+All of them are in `benchmarks/asv/bench_collective_household.py` and run over the
+marriage market of `lcm_examples.collective_household`: two singles who marry under
+mutual consent, a household that can dissolve in the current period, and a dissolution
+edge keyed by the continuing household.
 
 `CollectiveHouseholdConstruct` and `CollectiveHouseholdSolve` publish their timing and
 host-memory numbers through `setup_cache`-backed `track_*` metrics, so one build and one
-cold call are shared by every metric of that class. The two parameterized workloads
-cannot share a setup across parameters without the device-memory subprocess accepting
-parameters, so they time `track_execution_time` in process, as the median of warm calls
-after `setup`'s cold call, and keep ASV-native `peakmem_execution` for host memory.
+cold call are shared by every metric of that class. The simulation workloads measure
+each cohort once per commit in one shared `setup_cache`, which every simulation metric
+reads.
 
 | Workload                    | Class and metric                                         | What it isolates                                                                                                                                |
 | --------------------------- | -------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -39,7 +36,6 @@ after `setup`'s cold call, and keep ASV-native `peakmem_execution` for host memo
 | Host memory, solve          | `CollectiveHouseholdSolve.track_peak_cpu_mem`            | Resident peak while backward induction runs.                                                                                                    |
 | Simulation over cohort size | `CollectiveHouseholdSimulate`, `n_subjects ∈ {1e3, 1e5}` | Routing: one gate evaluation per edge per period over the whole population.                                                                     |
 | Device memory, simulation   | `CollectiveHouseholdSimulateGpuPeakMem`                  | Device peak while routing the cohort, at the larger of the two cohort sizes.                                                                    |
-| Transitive reference depth  | `ReferenceChainSolve`, `depth ∈ {1, 8}`                  | The closure a value constraint opens: link `k` reads link `k-1` in the same period.                                                             |
 
 ## The budgets
 

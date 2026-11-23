@@ -910,15 +910,12 @@ def normalize_declarations(snapshot,production_contract=None):
         # the decision aggregator from the truth variant. Perceived variants
         # enter only continuation kernels (and solve imputations).
         for phase in ('simulation',):
-            for kind,mapping in [('reward',{'utility':declaration.get('functions',{}).get('utility')}),('feasible',declaration.get('constraints',{})),
-                                 ('value_constraint',declaration.get('value_constraints',{}))]:
+            for kind,mapping in [('reward',{'utility':declaration.get('functions',{}).get('utility')}),('feasible',declaration.get('constraints',{}))]:
                 for output,value in mapping.items():
                     if value is not None:
                         selected=_select(value,phase,period,date)
-                        consumer_kind='value_constraint' if short(selected)=='ValueDependentConstraint' else kind
-                        if consumer_kind=='value_constraint' and short(selected)=='ValueDependentConstraint':selected=fields(selected).get('predicate')
-                        cell['consumers'].append({'kind':consumer_kind,'callback':normal.callback(selected,pointer(pointer(fp,'functions' if kind=='reward' else 'constraints' if kind=='feasible' else 'value_constraints'),output),phase), 'phase':phase})
-                        if consumer_kind=='feasible':
+                        cell['consumers'].append({'kind':kind,'callback':normal.callback(selected,pointer(pointer(fp,'functions' if kind=='reward' else 'constraints'),output),phase), 'phase':phase})
+                        if kind=='feasible':
                             # The native current-feasibility contract uses the
                             # truth callback in BOTH solve and simulation. Keep
                             # applicability separate from provider selection.
@@ -946,8 +943,8 @@ def normalize_declarations(snapshot,production_contract=None):
             record.update(arguments=names,reads=names,status='opaque',declaration_contract='pinned typed margin names')
             cell['consumers'].append({'kind':'structural_margin','callback':cid,'phase':'solve'})
         known_slots={'states','actions','functions','constraints','state_transitions','joint_transitions','derived_categoricals',
-                     'output_only_functions','koopmans_aggregator','certainty_equivalent','pareto_objective','value_constraints',
-                     'same_period_refs','exit','description','solver','taste_shocks','shocks','member_axis','liquid','outer_continuous',
+                     'output_only_functions','koopmans_aggregator','certainty_equivalent','pareto_objective',
+                     'exit','description','solver','taste_shocks','shocks','member_axis','liquid','outer_continuous',
                      'semantic_role','stage'}
         for slot,value in declaration.items():
             if slot not in known_slots and value is not None and value!={} and value!=[]:
@@ -1004,9 +1001,7 @@ def normalize_declarations(snapshot,production_contract=None):
                 'admission':'policy_query_only','storage':'not_asserted','dependencies':[]}
         query_owners[qid]=record
         fp=pointer(path,'fields') if raw.get('kind') in {'dataclass','object'} else path
-        keys=['same_period_refs','value_constraints','exit']
-        if not declaration.get('same_period_refs'):keys.append('constraints')
-        for key in keys:
+        for key in ('exit',):
             for reference,reference_path in query_references(declaration.get(key) or {},pointer(fp,key),phase):
                 name=fields(reference).get('regime')
                 if (period,name) in by_pair:
@@ -1118,9 +1113,7 @@ def normalize_declarations(snapshot,production_contract=None):
                 for k,v in value.items():references(v,pointer(path,k),kind,ownership,phase,offset,origin,incoming_source)
             elif isinstance(value,list):
                 for i,v in enumerate(value):references(v,pointer(path,i),kind,ownership,phase,offset,origin,incoming_source)
-        reference_keys=['same_period_refs','value_constraints','exit']
-        if not declaration.get('same_period_refs'):reference_keys.append('constraints')
-        for key in reference_keys:
+        for key in ('exit',):
             references(declaration.get(key) or {},pointer(fp,key),'exit' if key=='exit' else 'value_read')
             if key=='exit' and declaration.get(key) is not None:
                 value=declaration[key]

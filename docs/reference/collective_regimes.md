@@ -5,24 +5,22 @@ title: Collective regimes
 # Collective regimes
 
 A collective regime carries one value function per member and takes a single shared
-action for all of them. Two further capabilities travel with it: feasibility that reads
-values rather than only states, and a transition whose branch depends on values at the
-target regime.
+action for all of them. A further capability travels with it: a transition whose branch
+depends on the target regime.
 
-Six declarations express this, and each one goes inside an argument `Regime` or `Model`
+Five declarations express this, and each one goes inside an argument `Regime` or `Model`
 already has — a regime slot, or a `Transition` in `Model(edges=...)` — so a collective
 model has no extra constructor arguments to learn.
 
-| Declaration                | Where it is declared                                           | What it expresses                                   |
-| -------------------------- | -------------------------------------------------------------- | --------------------------------------------------- |
-| `CollectiveUtility`        | `functions={"utility": ...}`                                   | the regime's members and their flow utilities       |
-| `ParetoObjective`          | `CollectiveUtility(objective=...)`                             | how member action values are scalarized             |
-| `ValueDependentConstraint` | `constraints={"name": ...}`                                    | a feasibility predicate that may read values        |
-| `Gate`                     | `Transition(gates=...)` in `Model(edges=...)`, keyed by target | a transition into one target, gated on its state    |
-| `MemberRoute`              | `Gate(routes=...)`                                             | where one source member goes on each branch         |
-| `ProjectedRegimeValue`     | a constraint's `references` or a route's `fallback`            | another regime's current-period value, at a mapping |
+| Declaration            | Where it is declared                                           | What it expresses                                    |
+| ---------------------- | -------------------------------------------------------------- | ---------------------------------------------------- |
+| `CollectiveUtility`    | `functions={"utility": ...}`                                   | the regime's members and their flow utilities        |
+| `ParetoObjective`      | `CollectiveUtility(objective=...)`                             | how member action values are scalarized              |
+| `Gate`                 | `Transition(gates=...)` in `Model(edges=...)`, keyed by target | a transition into one target, gated on its state     |
+| `MemberRoute`          | `Gate(routes=...)`                                             | where one source member goes on each branch          |
+| `ProjectedRegimeValue` | a route's `fallback`                                           | another regime's value in the landing period, mapped |
 
-All six are frozen, keyword-only dataclasses defined in `src/lcm/collective.py` and
+All five are frozen, keyword-only dataclasses defined in `src/lcm/collective.py` and
 exported from `lcm`. A type violation on any of them raises `RegimeInitializationError`.
 
 For the modelling narrative — why a household declares its weights instead of summing
@@ -112,37 +110,6 @@ strictly positive total — is checked in two places, because a constant is know
 construction while a function of a parameter is not. See
 [Where each rule is enforced](#collective-where-enforced).
 
-(api-value-dependent-constraint)=
-
-## `ValueDependentConstraint`
-
-```python
-predicate: UserFunction
-references: Mapping[str, ProjectedRegimeValue] = field(
-    default_factory=lambda: MappingProxyType({})
-)
-```
-
-Declared inside `constraints`, beside the ordinary callables, so a regime has one
-constraint slot rather than two. The regime's mask is the AND of both kinds, and a state
-cell whose mask is empty carries the `-inf` sentinel.
-
-`predicate` returns `True` where the cell is feasible. It may read:
-
-- `Q_<s>` for each member of the declaring regime — that member's action value at the
-  candidate;
-- each key of **this constraint's own** `references`, bound to that reference's
-  interpolated value;
-- ordinary states, actions, functions and parameters.
-
-`references` maps the name a reference enters the predicate under to the
-`ProjectedRegimeValue` supplying it. Two constraints of one regime may share a reference
-name only if they declare the identical reference.
-
-A `ValueDependentConstraint` is only meaningful on a collective regime: `Q_<s>` exists
-only where members do. Declaring one on a singleton regime is rejected at `Regime`
-construction.
-
 (api-projected-regime-value)=
 
 ## `ProjectedRegimeValue`
@@ -153,37 +120,27 @@ projection: Mapping[StateName, UserFunction]
 member: str | None = None
 ```
 
-Another regime's **current-period** value, read at mapped state coordinates. The
-reference regime is solved earlier in the same period — the solver orders each period's
-solved regimes topologically by these declarations — and its value function is
-interpolated at the projected coordinates: linear on continuous axes, lookup on discrete
-axes.
+Another regime's value in the period a gated row lands in, read at mapped state
+coordinates. The reference regime's value function of that period is already solved when
+the source decides, and it is interpolated at the projected coordinates: linear on
+continuous axes, lookup on discrete axes.
 
-Reading the current period rather than the continuation is what a within-period
-participation constraint needs: a couple's period-$t$ decision is checked against the
-values its members would have as singles in that same period $t$.
-
-`regime` names another regime of the model. A reference read requires its value in every
-period the declaring regime is solved, so the reference regime is solved there too
-without being declared as a start. No transition edge between the two is required — a
-reference read works across otherwise unconnected regime islands.
+`regime` names another regime of the model. A fallback read requires its value in every
+period the gated target is reached, so the reference regime is solved there too without
+being declared as a start. No transition edge between the two is required — a reference
+read works across otherwise unconnected regime islands.
 
 `member` names whose value to read from a **collective** reference regime. It is
 required there and must be `None` for a singleton reference.
 
-Where the declaration sits fixes what its `projection` may read and which states it owes
-a coordinate function for:
-
-| Position                              | Projects from               | May introduce free params | Owes one coordinate per                          |
-| ------------------------------------- | --------------------------- | ------------------------- | ------------------------------------------------ |
-| `ValueDependentConstraint.references` | the DECLARING regime's cell | no                        | state of the reference regime's value function   |
-| `MemberRoute.fallback`                | the TARGET regime's grid    | yes, as edge params       | state the reference regime carries in simulation |
-
-The fallback owes the larger set because a route does not only price the closed branch,
-it writes the routed row into the fallback regime, and forward simulation carries every
-one of that regime's simulate states per subject. A state left unprojected would keep
-whatever the row held before the edge routed it there. The solve states are a subset, so
-the same projection still serves the fold's value read.
+The `projection` of a route's fallback projects from the TARGET regime's grid, may
+introduce free parameters, which become edge parameters, and owes one coordinate per
+state the reference regime carries in simulation. That is more than the value function's
+states, because a route does not only price the closed branch, it writes the routed row
+into the fallback regime, and forward simulation carries every one of that regime's
+simulate states per subject. A state left unprojected would keep whatever the row held
+before the edge routed it there. The solve states are a subset, so the same projection
+still serves the fold's value read.
 
 A `ProjectedRegimeValue` on an age-specialized reference regime is measured against the
 grid of the period whose value is being folded; see
@@ -324,8 +281,6 @@ checked at evaluation only fires once the model runs.
 | `normalization` is `"pointwise"` or `"none"`                                                                               | `ParetoObjective` construction                                    | `ValueError`                |
 | weight keys match the regime's members                                                                                     | `Regime` construction                                             | `RegimeInitializationError` |
 | a **constant** weight is finite and non-negative; the constants leave a positive total                                     | `Regime` construction                                             | `RegimeInitializationError` |
-| a `ValueDependentConstraint` on a singleton regime                                                                         | `Regime` construction                                             | `RegimeInitializationError` |
-| a regime-level reference projection introduces no free parameter                                                           | `Regime` construction                                             | `RegimeInitializationError` |
 | a gate's `predicate` reads no `V_target`, `V_target_<s>` or `D_target`                                                     | `Gate` construction                                               | `GateReadsValueError`       |
 | a gate's `predicate` is a plain callable, not a `StochasticTransition`                                                     | model build, binding the edge law to its source                   | `RegimeInitializationError` |
 | `routes` covers the source's member structure                                                                              | model build, binding the edge law to its source                   | `RegimeInitializationError` |
@@ -334,7 +289,6 @@ checked at evaluation only fires once the model runs.
 | the same three on the SOURCE regime of a gated transition                                                                  | model build, binding the edge law to its source                   | `NotImplementedError`       |
 | a reference or fallback regime exists, and `member` matches its structure                                                  | model build                                                       | `ModelInitializationError`  |
 | a projection covers exactly the states its position owes                                                                   | model build                                                       | `ModelInitializationError`  |
-| the same-period reference graph is acyclic                                                                                 | model build                                                       | `ModelInitializationError`  |
 | a predicate or projection argument names a node of the target's own DAG                                                    | model build                                                       | `ModelInitializationError`  |
 | `off_grid="reject"` on a target carrying a continuous state                                                                | model build                                                       | `ModelInitializationError`  |
 | an ungated transition between regimes of different member structure                                                        | model build                                                       | `NotImplementedError`       |
@@ -359,15 +313,10 @@ regime is active — not only the first time.
 
 ## Parameters
 
-Free arguments of these declarations reach `get_params_template()` in four places.
+Free arguments of these declarations reach `get_params_template()` in three places.
 
 **Per-member utilities** appear under `utility_<member>`, one entry per member, at the
 top level of the regime's template.
-
-**A value constraint's predicate** appears under the name the constraint has in
-`constraints`, at the top level of the regime's template branch — for example
-`template["couple"]["participation_f"]["slack"]`. Its `references` contribute nothing,
-because a regime-level reference projection may introduce no free parameter.
 
 **Pareto weights** appear under the pseudo-function key `pareto_objective`. Every
 member's weight reads one shared namespace, so a parameter named in two weights is one
@@ -492,19 +441,17 @@ which is what lets a row change household structure without mixing values across
 ## Derived engine views
 
 Each declaration above stays in the raw slot where the author wrote it. `Regime`
-construction derives stored, read-only fields from the declarations in `functions` and
-`constraints`. A `Gate` lives in a `Transition` in `Model(edges=...)`, so its derived
-fields belong to the law `Model` binds for the source, published as
-`model.graph.laws[source]`. The `decomposed_*` properties separately compute
-engine-facing views from the current raw declarations whenever they are read. Neither
-kind of output is a declaration route: none can be passed to `Regime(...)` or to
-`Regime.replace`.
+construction derives stored, read-only fields from the declaration in `functions`. A
+`Gate` lives in a `Transition` in `Model(edges=...)`, so its derived fields belong to
+the law `Model` binds for the source, published as `model.graph.laws[source]`. The
+`decomposed_*` properties separately compute engine-facing views from the current raw
+declarations whenever they are read. Neither kind of output is a declaration route: none
+can be passed to `Regime(...)` or to `Regime.replace`.
 
-| Declaration                | Construction-derived fields                              | On-access engine view                                                                                          |
-| -------------------------- | -------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| `CollectiveUtility`        | `members`, `member_axis`, `pareto_objective`             | `decomposed_functions`: nondelegated and already-supplied bodies; complete after successful model finalization |
-| `ValueDependentConstraint` | `value_constraints[name]`, `same_period_refs[reference]` | `decomposed_constraints`: ordinary constraints only                                                            |
-| `Gate`                     | `model.graph.laws[source].gated_edges[target]`           | `model.graph.laws[source].decomposed_transition[target]`: the law's cell for the target                        |
+| Declaration         | Construction-derived fields                    | On-access engine view                                                                                          |
+| ------------------- | ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `CollectiveUtility` | `members`, `member_axis`, `pareto_objective`   | `decomposed_functions`: nondelegated and already-supplied bodies; complete after successful model finalization |
+| `Gate`              | `model.graph.laws[source].gated_edges[target]` | `model.graph.laws[source].decomposed_transition[target]`: the law's cell for the target                        |
 
 The declaration objects themselves stay where the author wrote them, in `functions`,
 `constraints` and the `Model(edges=...)` transition. The engine reads the decomposed
@@ -517,7 +464,7 @@ of the public API: there is exactly one way to declare a gated edge, and it is a
 in `Transition(gates=...)`.
 
 Model code reads these fields; model *authors* do not need them. Declare a household
-with the six objects above.
+with the five objects above.
 
 ## See also
 

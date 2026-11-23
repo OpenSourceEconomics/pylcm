@@ -55,12 +55,6 @@ from lcm.phased import Phased
 from lcm.result import SimulationResult
 from lcm.transition import AgeCaseLaw, AgeSelector
 from lcm.typing import ContinuousState, FloatND, RegimeName, ScalarInt, UserAge
-from tests.regime_building.test_same_period_ref_period_axes import (
-    EXPECTED_V_COUPLE,
-)
-from tests.regime_building.test_same_period_ref_period_axes import (
-    _make_model as _make_outside_option_model,
-)
 from tests.test_admission_and_random_sites import _model as _admission_model
 from tests.test_demand_worklists import _phased_model
 
@@ -710,7 +704,6 @@ def test_simulate_does_not_resolve_demand_again(
         *,
         schedules: RegimeSchedules,
         initial_nodes: frozenset[tuple[UserAge, RegimeName]],
-        same_period_refs_by_regime: Mapping[RegimeName, tuple[RegimeName, ...]],
         terminal_regimes: frozenset[RegimeName],
         ages: TimeAxis,
     ) -> RegimeSchedules:
@@ -718,7 +711,6 @@ def test_simulate_does_not_resolve_demand_again(
         return original(
             schedules=schedules,
             initial_nodes=initial_nodes,
-            same_period_refs_by_regime=same_period_refs_by_regime,
             terminal_regimes=terminal_regimes,
             ages=ages,
         )
@@ -765,27 +757,6 @@ def test_a_dead_entrant_fails_at_every_age(age: float) -> None:
             log_level="off",
             seed=0,
         )
-
-
-def test_a_dissolved_cell_keeps_its_nonfinite_value_with_logging_off() -> None:
-    """The couple's dissolved cell stays `-inf`; nothing masks it to a number."""
-    values = _make_outside_option_model(
-        later_ceiling=10.0, initial_nodes={0: "couple"}
-    ).solve(
-        params={
-            "single_f": {"koopmans_aggregator": {"discount_factor": 0.0}},
-            "single_f_terminal": {},
-            "couple": {
-                "koopmans_aggregator": {"discount_factor": 0.0},
-                "participation_f": {"delta_f": 0.0},
-            },
-            "couple_terminal": {},
-        },
-        log_level="off",
-    )
-    np.testing.assert_array_equal(
-        np.asarray(values.values[0]["couple"]), np.asarray(EXPECTED_V_COUPLE)
-    )
 
 
 def test_a_solution_for_other_visits_is_refused() -> None:

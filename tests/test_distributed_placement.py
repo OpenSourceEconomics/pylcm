@@ -228,9 +228,6 @@ class _ProcessArguments(TypedDict, closed=True):
 
 class _WaveArguments(TypedDict, closed=True):
     nodes: Sequence[scheduler.ScheduledNode]
-    same_period_dependencies: Mapping[
-        scheduler.RegimeName, Sequence[scheduler.RegimeName]
-    ]
     device_sets: Mapping[scheduler.RegimeName, frozenset[int]]
 
 

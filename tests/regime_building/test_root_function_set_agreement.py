@@ -32,7 +32,6 @@ from lcm import (
     ProjectedRegimeValue,
     Regime,
     Transition,
-    ValueDependentConstraint,
     categorical,
     fixed_transition,
 )
@@ -123,7 +122,7 @@ def test_every_regime_and_phase_is_asked_for_its_roots(
 
 
 def test_the_root_set_names_every_slot_of_the_regime_that_carries_it() -> None:
-    """`couple_ir`'s roots name its value constraints, references and incoming gate.
+    """`couple_ir`'s roots name its utilities, regime transition and incoming gate.
 
     An incoming fallback is rooted once per phase, because the value an agent
     expects and the state a settlement realizes may be declared separately.
@@ -152,10 +151,6 @@ def test_the_root_set_names_every_slot_of_the_regime_that_carries_it() -> None:
         "__utility__utility_f",
         "__utility__utility_m",
         "__next_regime__couple_terminal",
-        "__value_constraint__ir_f",
-        "__value_constraint__ir_m",
-        "__same_period_ref__V_single_f_ref__wage",
-        "__same_period_ref__V_single_m_ref__wage",
         "__incoming_gate__couple",
         "__incoming_fallback__couple__f__solve__wage",
         "__incoming_fallback__couple__f__simulate__wage",
@@ -227,7 +222,7 @@ def _make_regimes() -> dict[str, Regime]:
 
     A collective `couple` reaches a collective `couple_ir` through both a raw
     per-target regime transition and a gated edge whose gate reads the target's
-    wage. `couple_ir` carries the value constraints and same-period references.
+    wage.
     """
     couple = Regime(
         states={"wage": _WAGE_GRID},
@@ -253,24 +248,6 @@ def _make_regimes() -> dict[str, Regime]:
             "utility": CollectiveUtility(
                 utilities={"f": _utility_collective, "m": _utility_collective}
             )
-        },
-        constraints={
-            "ir_f": ValueDependentConstraint(
-                predicate=_ir_f,
-                references={
-                    "V_single_f_ref": ProjectedRegimeValue(
-                        regime="single_f", projection={"wage": _identity_wage}
-                    )
-                },
-            ),
-            "ir_m": ValueDependentConstraint(
-                predicate=_ir_m,
-                references={
-                    "V_single_m_ref": ProjectedRegimeValue(
-                        regime="single_m", projection={"wage": _identity_wage}
-                    )
-                },
-            ),
         },
     )
     couple_terminal = Regime(
@@ -406,13 +383,3 @@ def _identity_wage(wage: ContinuousState) -> ContinuousState:
 def _above_the_lowest_wage(wage: ContinuousState) -> BoolND:
     """The edge is open above the lowest wage node."""
     return wage > 1.0
-
-
-def _ir_f(*, Q_f: FloatND, V_single_f_ref: FloatND, delta_f: FloatND) -> BoolND:
-    """The wife participates while the match beats her outside option."""
-    return Q_f >= V_single_f_ref - delta_f
-
-
-def _ir_m(*, Q_m: FloatND, V_single_m_ref: FloatND, delta_m: FloatND) -> BoolND:
-    """The husband participates while the match beats his outside option."""
-    return Q_m >= V_single_m_ref - delta_m

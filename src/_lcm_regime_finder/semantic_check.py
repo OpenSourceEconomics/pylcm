@@ -2417,15 +2417,10 @@ def _check_capture(original: dict, normalized: dict, fail, unknown) -> None:
                     expected_roots.append(("certainty_equivalent", "solve", selected(declaration["certainty_equivalent"], "solve", period)))
                 continue
             for kind, mapping in [("reward", {"utility": declaration.get("functions", {}).get("utility")}),
-                                  ("feasible", declaration.get("constraints", {})),
-                                  ("value_constraint", declaration.get("value_constraints", {}))]:
+                                  ("feasible", declaration.get("constraints", {}))]:
                 for value in mapping.values():
                     if value is None: continue
-                    value = selected(value, phase, period)
-                    actual_kind = kind
-                    if short(value) == "ValueDependentConstraint":
-                        actual_kind, value = "value_constraint", fields(value).get("predicate")
-                    expected_roots.append((actual_kind, phase, value))
+                    expected_roots.append((kind, phase, selected(value, phase, period)))
             for name in declaration.get("output_only_functions", []):
                 if name in declaration.get("functions", {}): expected_roots.append(("reporting", phase, selected(declaration["functions"][name], phase, period)))
             for name in ("koopmans_aggregator", "pareto_objective"):
@@ -2433,8 +2428,8 @@ def _check_capture(original: dict, normalized: dict, fail, unknown) -> None:
             if "discount_factor" in declaration.get("functions", {}): expected_roots.append(("discount", phase, selected(declaration["functions"]["discount_factor"], phase, period)))
         for value in structural_roles.values(): expected_roots.append(("structural_margin", "solve", value))
         supported_slots = {"states", "actions", "functions", "constraints", "state_transitions", "joint_transitions", "derived_categoricals",
-                           "output_only_functions", "koopmans_aggregator", "certainty_equivalent", "pareto_objective", "value_constraints",
-                           "same_period_refs", "exit", "description", "solver", "taste_shocks", "shocks", "member_axis", "liquid", "outer_continuous", "semantic_role", "stage"}
+                           "output_only_functions", "koopmans_aggregator", "certainty_equivalent", "pareto_objective",
+                           "exit", "description", "solver", "taste_shocks", "shocks", "member_axis", "liquid", "outer_continuous", "semantic_role", "stage"}
         for slot, value in declaration.items():
             if slot not in supported_slots and value is not None and value != {} and value != []:
                 expected_roots.append(("unresolved_declaration_slot", "both", value))
@@ -2592,9 +2587,7 @@ def _check_capture(original: dict, normalized: dict, fail, unknown) -> None:
         declaration = original_regimes[name]
         root = ptr(ptr(base, regime_key), name)
         root_fields = ptr(root, "fields") if raw.get("kind") in {"object", "dataclass"} else root
-        keys = ["same_period_refs", "value_constraints", "exit"]
-        if not declaration.get("same_period_refs"): keys.append("constraints")
-        for key in keys:
+        for key in ("exit",):
             location = ptr(root_fields, key) if key in fields(raw) else ptr(base, key)
             yield from reference_locations(declaration.get(key) or {}, location, phase)
     def demand(name, period, phase):
@@ -2668,9 +2661,7 @@ def _check_capture(original: dict, normalized: dict, fail, unknown) -> None:
             if relation.get("read_type") != read_type or relation.get("read_field") != data.get("field", "value") or relation.get("member") != data.get("member", data.get("role")) or relation.get("observes") != data.get("observes", []): fail("original reference information/read contract changed", relation=relation.get("id"))
     for cell in cells.values():
         declaration = original_regimes[cell["regime"]]
-        keys = ["same_period_refs", "value_constraints", "exit"]
-        if not declaration.get("same_period_refs"): keys.append("constraints")
-        for key in keys:
+        for key in ("exit",):
             for phase in ("solve", "simulation"):
                 for raw in refs(declaration.get(key) or {}, phase):
                     check_reference(raw, cell["id"], phase, "exit" if key == "exit" else "value_read")

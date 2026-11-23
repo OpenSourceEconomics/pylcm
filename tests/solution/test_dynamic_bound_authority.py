@@ -504,18 +504,8 @@ def test_nonterminal_action_evaluation_shares_flow_before_continuation(
         bound_specs=(_bound(),),
     )
     if collective:
-        empty = MappingProxyType({})
-        machinery = q_and_f_module._ValueConstraintMachinery(
-            reference_readers=empty,
-            reference_reader_args=empty,
-            evaluators=empty,
-            evaluator_args=empty,
-            q_value_index=empty,
-            engine_supplied_names=frozenset(),
-        )
         kernel = q_and_f_module._CollectiveQAndF(
             utilities_and_F=flow,
-            value_constraint_machinery=machinery,
             compute_CE=continuation,
             koopmans_aggregator=cast("EconFunction", W),
             build_W_kwargs=build_W_kwargs,

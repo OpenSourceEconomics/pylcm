@@ -1,8 +1,7 @@
 """Collective utilities, source participation checks and current participation rules.
 
 Current dissolution belongs to an own Exit; a separate participation check reads
-its Part support after landing. Non-exit value constraints retain their own
-projected references. The public declaration paths determine roles, phases,
+its Part support after landing. The public declaration paths determine roles, phases,
 parameter namespaces and the canonical policy problems the model evaluates.
 """
 
@@ -34,7 +33,6 @@ from lcm import (
     ProjectedRegimeValue,
     Regime,
     Transition,
-    ValueDependentConstraint,
     categorical,
     fixed_transition,
 )
@@ -43,9 +41,7 @@ from lcm.exits import Exit, ExitTarget, Unilateral
 from lcm.regime import RegimeReplacement
 from lcm.transition import PhaseTransitionLaw, StochasticTransition
 from lcm.typing import (
-    BoolND,
     FloatND,
-    FunctionName,
     RegimeName,
     ScalarInt,
     UserFunction,
@@ -73,8 +69,6 @@ from tests.regime_building.test_collective_regime_simulate import (
 class _Snapshot(TypedDict):
     member_axis: tuple[str, ...] | None
     pareto_objective: ParetoObjective | None
-    value_constraints: dict[FunctionName, UserFunction]
-    same_period_refs: dict[str, ProjectedRegimeValue]
     participation: dict[
         RegimeName,
         tuple[
@@ -141,30 +135,6 @@ def test_collective_utility_becomes_one_utility_function_per_member() -> None:
 
     assert regime.decomposed_functions["utility_f"] is _u_married_ir_f
     assert regime.decomposed_functions["utility_m"] is _u_married_ir_m
-
-
-def _reference_cap(*, V_single_f_ref: FloatND) -> BoolND:
-    return V_single_f_ref <= 6.0
-
-
-def test_value_dependent_constraint_keeps_its_references_local() -> None:
-    """A non-exit value cap keeps its projected reference local to its constraint."""
-    regime = _new_vocabulary_regimes()["married_ir"].replace(
-        exit=None,
-        constraints={
-            "reference_cap": ValueDependentConstraint(
-                predicate=_reference_cap,
-                references={
-                    "V_single_f_ref": ProjectedRegimeValue(
-                        regime="single_f", projection={"wage": _identity_wage}
-                    )
-                },
-            )
-        },
-    )
-    assert set(regime.value_constraints) == {"reference_cap"}
-    assert set(regime.same_period_refs) == {"V_single_f_ref"}
-    assert regime.same_period_refs["V_single_f_ref"].regime == "single_f"
 
 
 def test_value_dependent_transition_keeps_the_ordinary_transition_entry() -> None:
@@ -466,8 +436,6 @@ def _derived_snapshot(*, regime: Regime, law: RegimeLaw) -> _Snapshot:
     return {
         "member_axis": regime.member_axis,
         "pareto_objective": regime.pareto_objective,
-        "value_constraints": dict(regime.value_constraints),
-        "same_period_refs": dict(regime.same_period_refs),
         "participation": {
             target: (
                 decision.predicate,
@@ -496,8 +464,6 @@ def _expected_snapshots() -> dict[RegimeName, _Snapshot]:
     plain: _Snapshot = {
         "member_axis": None,
         "pareto_objective": None,
-        "value_constraints": {},
-        "same_period_refs": {},
         "participation": {},
         "exit": None,
     }
@@ -553,8 +519,8 @@ def test_the_declarations_determine_every_engine_facing_fact(
 ) -> None:
     """One regime's declarations fix the canonical facts the engine reads off it.
 
-    A gated regime, a value-constrained one, a plain collective one and a
-    singleton: between them they cover every shape a declaration can take. The
+    A regime with a participation check, one with an exit, a plain collective
+    one and a singleton: between them they cover every shape a declaration can take. The
     snapshot is the contract that survives any change to how the decomposition
     is performed, because it names what the decomposition must produce rather
     than how.
@@ -572,13 +538,11 @@ def test_the_declarations_determine_every_engine_facing_fact(
     [
         "member_axis",
         "pareto_objective",
-        "value_constraints",
-        "same_period_refs",
         "gated_edges",
     ],
 )
 def test_a_derived_slot_cannot_be_declared(slot: str) -> None:
-    """The five engine-facing slots are read off a regime, never written to it.
+    """The engine-facing slots are read off a regime, never written to it.
 
     Each is what one of the three declarations decomposes into, so naming one
     at construction would be a second way to say the same thing — and a way
@@ -599,8 +563,6 @@ def test_a_derived_slot_cannot_be_declared(slot: str) -> None:
     [
         "member_axis",
         "pareto_objective",
-        "value_constraints",
-        "same_period_refs",
         "gated_edges",
     ],
 )

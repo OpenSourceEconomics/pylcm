@@ -125,10 +125,6 @@ MemberRoute(
 )
 ```
 
-A `ValueDependentConstraint` reference projection instead owes one coordinate per state
-of the reference regime's *value function*, i.e. its solve states. The two sets differ
-only by the states a regime carries in simulation alone.
-
 ## Before using it
 
 Age specialization creates period-specific programs. Use it only when the economic

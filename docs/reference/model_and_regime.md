@@ -249,7 +249,7 @@ it:
 
 | Role                                                                                                                                    | Returns                                                        |
 | --------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
-| Constraint, `ValueDependentConstraint` predicate, gate, participation predicate, exit availability                                      | A Boolean, e.g. `wealth > 0` or `work == 1`                    |
+| Constraint, gate, participation predicate, exit availability                                                                            | A Boolean, e.g. `wealth > 0` or `work == 1`                    |
 | Law of a discrete state, regime selector                                                                                                | An integer code, or a Boolean for the codes 0 and 1            |
 | Utility, law of a continuous state, transition probability, joint-transition weight or output, exit utility adjustment, borrowing bound | A number: an integer or a float, read at the model's precision |
 

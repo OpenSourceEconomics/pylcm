@@ -115,7 +115,6 @@ from lcm.collective import (  # noqa: E402
     MemberRoute,
     ParetoObjective,
     ProjectedRegimeValue,
-    ValueDependentConstraint,
 )
 from lcm.composite_state import CompositeState  # noqa: E402
 from lcm.condition import Condition, implies, ref  # noqa: E402
@@ -328,7 +327,6 @@ __all__ = [
     "UniformIIDProcess",
     "Unilateral",
     "UnlabelledTimeParameterWarning",
-    "ValueDependentConstraint",
     "__version__",
     "affine_breakpoint",
     "case_boundary",

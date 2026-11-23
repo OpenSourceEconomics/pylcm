@@ -1,35 +1,20 @@
-"""A projected reference value reads the IID shock a household realises.
+"""A gate fallback that reads a shock's node position needs node draws.
 
-A young single, a couple and an older single carry the same `NormalIIDProcess` state
-`wage_shock_f`, and the young single moves into the couple through a state-only gate
-that is open at every landing. The older single's value is read through a projection in
-the couple's participation constraint, at the couple's own cell. A value read at the
-participation check itself is a `ParticipationCheck`, covered by
-`tests/regime_building/test_continuous_participation_physical_value.py`.
-
-A projection names the shock in either spelling:
+A young single moves into a couple through a state-only gate that is open at every
+landing, and the gate's fallback projects onto an older single's value. The projection
+names the shock in either spelling:
 
 - `wage_shock_f` receives the shock value the household holds;
 - `wage_shock_f_code` receives the int32 position of the node it stands on.
 
-The single's value is a cubic of the shock, so reading it at any coordinate
-other than the realised shock -- a node position read as a value, the shock's
-mean, another node -- moves it by at least one unit. The oracle is
-`numpy.interp` over the cubic at the quadrature nodes, which is what the
-single's terminal value function holds.
-
-The wife's household payoff brackets that oracle: working pays her the oracle
-plus `_BRACKET`, staying home the oracle minus `_BRACKET`, and the husband
-strongly prefers staying home. So the household works exactly when the reference
-read lies within `_BRACKET` of the oracle; it stays home when the read is too
-low; and it has no feasible action when the read is too high.
+A node position exists in simulation only when the shock is drawn on its nodes, so a
+model whose projection reads the position of a continuously drawn shock is refused.
 """
 
 from typing import Literal
 
 import jax.numpy as jnp
 import numpy as np
-import pandas as pd
 import pytest
 
 from lcm import (
@@ -44,11 +29,9 @@ from lcm import (
     ProjectedRegimeValue,
     Regime,
     Transition,
-    ValueDependentConstraint,
     categorical,
 )
 from lcm.exceptions import RegimeInitializationError
-from lcm.solver_api import SolutionResult
 from lcm.transition import StochasticTransition
 from lcm.typing import (
     BoolND,
@@ -98,11 +81,6 @@ def _cubic(shock: FloatND | np.ndarray) -> FloatND | np.ndarray:
 _NODE_VALUES = _cubic(_NODES)
 
 
-def _oracle(shock: np.ndarray) -> np.ndarray:
-    """The single's terminal value at a realised shock, linear between nodes."""
-    return np.interp(shock, _NODES, _NODE_VALUES)
-
-
 def _single_f_utility(wage_shock_f: ContinuousState) -> FloatND:
     return jnp.asarray(_cubic(wage_shock_f))
 
@@ -128,10 +106,6 @@ def _node_at_code(wage_shock_f_code: DiscreteState) -> ContinuousState:
 _PROJECTIONS = {"value": _identity, "code": _node_at_code}
 
 
-def _participation_f(*, Q_f: FloatND, V_single_f: FloatND) -> BoolND:
-    return Q_f >= V_single_f
-
-
 def _always_open(wage_shock_f: ContinuousState) -> BoolND:
     """Every landing enters the couple; the gate only routes the single's role."""
     return jnp.isfinite(wage_shock_f)
@@ -151,16 +125,6 @@ def _build_model(
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(utilities={"f": _married_f, "m": _married_m})
-        },
-        constraints={
-            "participation_f": ValueDependentConstraint(
-                predicate=_participation_f,
-                references={
-                    "V_single_f": ProjectedRegimeValue(
-                        regime="single_f", projection=projection
-                    )
-                },
-            )
         },
     )
     single_f = Regime(
@@ -195,85 +159,6 @@ def _build_model(
         initial_nodes={0: "young_f"},
         enable_jit=enable_jit,
     )
-
-
-_PARAMS = {
-    "young_f": {"koopmans_aggregator": {"discount_factor": 1.0}},
-    "married": {},
-    "single_f": {},
-}
-
-
-def _solve(*, enable_jit: bool, spelling: Spelling) -> SolutionResult:
-    return _build_model(enable_jit=enable_jit, spelling=spelling).solve(
-        params=_PARAMS, log_level="off"
-    )
-
-
-def _simulate(
-    *, enable_jit: bool, spelling: Spelling, n_subjects: int = 64
-) -> pd.DataFrame:
-    model = _build_model(enable_jit=enable_jit, spelling=spelling)
-    solution = model.solve(params=_PARAMS, log_level="off")
-    result = model.simulate(
-        params=_PARAMS,
-        initial_conditions={
-            "wage_shock_f": jnp.zeros(n_subjects),
-            "age": jnp.zeros(n_subjects),
-            "regime_id": jnp.full(
-                n_subjects, model.regime_names_to_ids["young_f"], jnp.int32
-            ),
-        },
-        solution=solution,
-        log_level="off",
-        seed=0,
-    )
-    return result.to_dataframe().query("period == 1").sort_values("subject_id")
-
-
-_ENABLE_JIT = pytest.mark.parametrize("enable_jit", [True, False], ids=["jit", "eager"])
-_SPELLING = pytest.mark.parametrize("spelling", ["value", "code"])
-
-
-@_SPELLING
-@_ENABLE_JIT
-def test_value_constraint_reads_the_node_in_solve(
-    *, enable_jit: bool, spelling: Spelling
-) -> None:
-    """At every node the couple works: the wife holds the oracle plus the bracket."""
-    solution = _solve(enable_jit=enable_jit, spelling=spelling)
-    V = np.asarray(solution.values.materialize()[1]["married"])  # ty: ignore[unresolved-attribute]
-    expected = np.stack([_oracle(_NODES) + _BRACKET, np.zeros(5)], axis=-1)
-    np.testing.assert_allclose(V, expected, atol=1e-4)
-
-
-@_SPELLING
-@_ENABLE_JIT
-def test_simulated_couples_read_their_realised_shock(
-    *, enable_jit: bool, spelling: Spelling
-) -> None:
-    """Every simulated couple works, so each read matched its own realised shock."""
-    panel = _simulate(enable_jit=enable_jit, spelling=spelling).query(
-        "regime_name == 'married'"
-    )
-    assert len(panel) > 0
-    assert panel["work"].tolist() == ["on"] * len(panel)
-
-
-def test_continuous_draws_are_off_node_and_span_both_signs() -> None:
-    """The draws are realised values, not nodes, of both signs."""
-    shocks = _simulate(enable_jit=True, spelling="value")["wage_shock_f"].to_numpy()
-    assert (shocks < -0.5).any()
-    assert (shocks > 0.5).any()
-    assert not np.isin(shocks, _NODES).any()
-
-
-def test_node_draws_reach_every_node() -> None:
-    """Node draws land on each of the five nodes, so every position is read."""
-    shocks = _simulate(enable_jit=True, spelling="code", n_subjects=512)[
-        "wage_shock_f"
-    ].to_numpy()
-    np.testing.assert_array_equal(np.unique(shocks), _NODES)
 
 
 def test_a_code_read_of_a_process_drawn_between_nodes_is_refused() -> None:

@@ -1,4 +1,4 @@
-"""Collective and value-dependent workloads: build, compile, solve, simulate.
+"""Collective household workloads: build, compile, solve, simulate.
 
 The declarations a collective regime makes cost something no singleton model
 pays for, and each cost is measured on its own axis here:
@@ -11,10 +11,7 @@ pays for, and each cost is measured on its own axis here:
   an estimation loop pays per parameter vector;
 - **simulation over cohort size** — participation checks route original subjects
   before their final action each period, so this is where a cohort-size term
-  would show;
-- **transitive reference depth** — a value constraint may read a regime that
-  itself reads another, and the solver orders each period's regimes by that
-  chain. Depth is the axis on which an accidental quadratic would appear.
+  would show.
 
 Host memory is tracked by `track_peak_cpu_mem` or `peakmem_*` and device memory
 by the `GpuPeakMem` companions, on the same workloads.
@@ -22,7 +19,6 @@ by the `GpuPeakMem` companions, on the same workloads.
 
 import gc
 import statistics
-import time
 
 from . import _gpu_mem
 
@@ -30,23 +26,13 @@ from . import _gpu_mem
 # median. The construct, solve and simulate classes collect them in `setup_cache`,
 # once per commit and shared by every metric of the class: build once, one cold
 # call, then this many timed warm calls -- not one independent build+warm cycle
-# per metric (mirrors bench_mahler_yum.py's MahlerYumBudgetedGpu). The
-# parameterized ReferenceChainSolve below times them in process, after `setup`'s
-# cold call, and keeps ASV-native `peakmem_execution`.
+# per metric (mirrors bench_mahler_yum.py's MahlerYumBudgetedGpu).
 _WARM_SAMPLES = 3
 
 _N_PERIODS = 6
 
-# Slack so wide that no participation constraint of the reference chain ever
-# binds: depth is the only thing that varies between its parameterizations.
-_CHAIN_SLACK = 1e9
 _WEALTH_N_POINTS = 40
 _CONSUMPTION_N_POINTS = 40
-
-# `_gpu_mem` drives a wrapped class with NO arguments, so a parameterized
-# workload has to name the single point its device-memory companion measures:
-# the largest case, which is the one a device peak is interesting for.
-_GPU_DEPTH = 8
 
 
 def _make_model():
@@ -297,252 +283,3 @@ class CollectiveHouseholdSimulateGpuPeakMem(_SimulateMeasurements):
         return cache[max(cache)]["peak_gpu_mem_automatic_solve_simulate"]
 
     track_gpu_peak_mem.unit = "bytes"
-
-
-class ReferenceChainSolve:
-    """Solve a chain of regimes each reading the previous one's value.
-
-    Link `k` carries a participation constraint whose reference is link `k-1`
-    in the SAME period, so the solver has to order each period's regimes by
-    that chain before it can solve any of them.
-
-    What depth actually varies is the ordering work and the number of regimes
-    built and compiled — `2 * depth` of them, a link and its terminal. It is
-    NOT the number of value arrays threaded into a decision: processing
-    deduplicates references by regime, and every link names exactly one
-    predecessor, so each link's kernel receives a single same-period array at
-    every depth.
-
-    Construction happens in `setup`, before the timer, so the tracked seconds
-    are a first solve with no model building in them.
-    """
-
-    version = "2"
-    timeout = 900
-    # Depths 2 and 4 (the intermediate points) had warm-solve ratios of
-    # 1.20/1.21 against the depth-1 baseline in the PR#440 benchmark
-    # review's measured run -- almost indistinguishable from depth-8's
-    # 1.21 -- and cost 2m29s; dropped rather than kept as routine points.
-    # Depth 1 (short chain) and depth 8 (genuinely transitive long chain)
-    # remain.
-    params = [1, 8]
-    param_names = ["depth"]
-
-    def _build(self, depth):
-        self.model, self.model_params = _make_reference_chain(depth=depth)
-
-    def setup(self, depth):
-        self._build(depth)
-        start = time.perf_counter()
-        self.execute_for_measurement()
-        self._compile_time = time.perf_counter() - start
-
-    def setup_for_gpu_measurement(self, depth=_GPU_DEPTH):
-        self._build(depth)
-
-    def execute_for_measurement(self):
-        self.model.solve(
-            params=self.model_params, log_level="off", runtime_checks=False
-        )
-
-    def track_execution_time(self, depth):
-        return statistics.median(
-            _gpu_mem.warm_call_seconds(
-                execute=self.execute_for_measurement, warm_samples=_WARM_SAMPLES
-            )
-        )
-
-    # Replaces ASV-native `time_execution`, which ASV timed with its own repeat
-    # statistics; this is the median of `_WARM_SAMPLES` warm calls, so its
-    # history shows a step at the rename.
-    track_execution_time.unit = "seconds"
-
-    def peakmem_execution(self, depth):
-        self.execute_for_measurement()
-
-    def teardown(self, depth):
-        _clear_gpu_memory()
-
-    def track_compilation_time(self, depth):
-        return self._compile_time
-
-    track_compilation_time.unit = "seconds"
-
-
-def _make_reference_chain(*, depth):
-    """Build `depth` collective regimes, each reading the previous one's value.
-
-    Link `k` carries a participation constraint whose reference is link `k-1`
-    in the SAME period, so the solver has to order the period's regimes by that
-    chain and carry each link's value array into the next one's decision. Link
-    0 has no reference, so the closure is exactly `depth - 1` edges deep.
-
-    The constraints are declared with enormous slack so no cell is ever ruled
-    out: the point is what the closure costs to resolve, not what it decides,
-    and a chain that emptied a feasible set would measure a different model at
-    each depth.
-
-    Args:
-        depth: Number of links in the chain.
-
-    Returns:
-        Tuple of the model and the params dict that solves it.
-
-    """
-    from lcm import AgeGrid, Model, categorical
-    from lcm.typing import ScalarInt
-
-    link_names = [f"link_{index}" for index in range(depth)]
-    terminal_names = [f"{name}_terminal" for name in link_names]
-    regime_id_class = categorical(ordered=False)(
-        type(
-            "ChainRegimeId",
-            (),
-            {
-                "__annotations__": dict.fromkeys(
-                    [*link_names, *terminal_names], ScalarInt
-                )
-            },
-        )
-    )
-
-    regimes = {}
-    params = {}
-    for index, (name, terminal_name) in enumerate(
-        zip(link_names, terminal_names, strict=True)
-    ):
-        reference_regime = link_names[index - 1] if index else None
-        regimes[name] = _chain_link(reference_regime=reference_regime)
-        regimes[terminal_name] = _chain_link_terminal()
-        params[name] = {"koopmans_aggregator": {"discount_factor": 0.95}}
-        if reference_regime is not None:
-            params[name]["participation_f"] = {"slack": _CHAIN_SLACK}
-            params[name]["participation_m"] = {"slack": _CHAIN_SLACK}
-        params[terminal_name] = {}
-
-    return (
-        Model(
-            regimes=_gpu_mem.with_lottery_contraction(regimes),
-            edges={
-                name: {terminal_name: (0,)}
-                for name, terminal_name in zip(link_names, terminal_names, strict=True)
-            },
-            ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
-            regime_id_class=regime_id_class,
-            initial_nodes={0: tuple(link_names)},
-            **_gpu_mem.default_budget_execution_kwargs(),
-        ),
-        params,
-    )
-
-
-def _chain_link(*, reference_regime):
-    """Build one collective link of the reference chain."""
-    from lcm import CollectiveUtility, Regime
-
-    kernels = _CHAIN_KERNELS
-    return Regime(
-        states={"wealth": _chain_wealth_grid()},
-        state_transitions={"wealth": kernels["next_wealth"]},
-        actions={"consumption": _chain_consumption_grid()},
-        functions={
-            "utility": CollectiveUtility(
-                utilities={"f": kernels["utility"], "m": kernels["utility"]}
-            )
-        },
-        constraints=_chain_constraints(reference_regime=reference_regime),
-    )
-
-
-def _chain_link_terminal():
-    """Build one link's terminal regime."""
-    from lcm import CollectiveUtility, Regime
-
-    kernels = _CHAIN_KERNELS
-    return Regime(
-        states={"wealth": _chain_wealth_grid()},
-        actions={"consumption": _chain_consumption_grid()},
-        functions={
-            "utility": CollectiveUtility(
-                utilities={"f": kernels["utility"], "m": kernels["utility"]}
-            )
-        },
-        constraints={"affordable": kernels["affordable"]},
-    )
-
-
-def _chain_constraints(*, reference_regime):
-    """Build one link's constraints, with or without a reference to the previous."""
-    from lcm import ProjectedRegimeValue, ValueDependentConstraint
-
-    kernels = _CHAIN_KERNELS
-    constraints = {"affordable": kernels["affordable"]}
-    if reference_regime is None:
-        return constraints
-    # The reference regime is collective, so each partner reads her or his own
-    # component of it, under a name of her or his own.
-    for member in ("f", "m"):
-        constraints[f"participation_{member}"] = ValueDependentConstraint(
-            predicate=kernels[f"participation_{member}"],
-            references={
-                f"reference_{member}": ProjectedRegimeValue(
-                    regime=reference_regime,
-                    projection={"wealth": kernels["identity"]},
-                    member=member,
-                )
-            },
-        )
-    return constraints
-
-
-def _chain_wealth_grid():
-    from lcm import LinSpacedGrid
-
-    return LinSpacedGrid(start=1.0, stop=20.0, n_points=_WEALTH_N_POINTS)
-
-
-def _chain_consumption_grid():
-    from lcm import LinSpacedGrid
-
-    return LinSpacedGrid(start=1.0, stop=20.0, n_points=_CONSUMPTION_N_POINTS)
-
-
-def _build_chain_kernels():
-    import jax.numpy as jnp
-
-    def utility(consumption):
-        return jnp.log(0.5 * consumption)
-
-    def affordable(*, wealth, consumption):
-        return consumption <= wealth
-
-    def next_wealth(*, wealth, consumption):
-        return wealth - consumption
-
-    def identity(wealth):
-        return wealth
-
-    def participation_f(*, Q_f, reference_f, slack):
-        return Q_f >= reference_f - slack
-
-    def participation_m(*, Q_m, reference_m, slack):
-        return Q_m >= reference_m - slack
-
-    return {
-        "utility": utility,
-        "affordable": affordable,
-        "next_wealth": next_wealth,
-        "identity": identity,
-        "participation_f": participation_f,
-        "participation_m": participation_m,
-    }
-
-
-# The model functions every link of the chain shares: one dict of module-level
-# closures, so two links built separately hold the SAME leaf callables and differ
-# only in their references and their terminal target. That keeps the model
-# definition honest about what varies with depth; it does not make the links share
-# a compiled program. The solve-side dedup unit is a per-regime core built inside
-# each regime's own `build_period_kernels` call, so each of the `2 * depth` links
-# lowers and compiles its own regardless.
-_CHAIN_KERNELS = _build_chain_kernels()

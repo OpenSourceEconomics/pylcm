@@ -83,8 +83,8 @@ def fail_if_invariant_blocking_route_is_unsupported(
     - a blocked state that is also sharded;
     - a state no regime declares;
     - a non-terminal regime carrying the state that is solved by another
-      solver, or declares taste shocks, members, gated edges or
-      same-period references, or carries the state on a non-discrete grid;
+      solver, or declares taste shocks, members or gated edges, or carries
+      the state on a non-discrete grid;
     - under the block-major schedule, no blocked state at all, or a regime
       that does not carry the blocked state on a discrete grid: each code is
       solved as one component, and a regime without the state would be solved
@@ -208,7 +208,6 @@ def _regime_failures(
         (regime.taste_shocks is not None, "declares taste shocks"),
         (regime.member_axis is not None, "is a collective regime"),
         (bool(law.gated_edges), "declares gated edges"),
-        (bool(regime.same_period_refs), "declares same-period references"),
         *(
             (
                 not isinstance(regime.states[name], DiscreteGrid),

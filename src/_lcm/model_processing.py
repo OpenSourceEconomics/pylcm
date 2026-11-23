@@ -624,7 +624,6 @@ def _validate_function_usage(
         direct.update(current_iid_helpers.get(name, frozenset()))
         direct.update(engine_function_names(regime))
         direct.update(regime.decomposed_constraints)
-        direct.update(regime.value_constraints)
         direct.update(regime.derived_categoricals)
         direct.add("utility")
         direct.update(
@@ -836,7 +835,6 @@ def _validate_all_variables_used(
     - the Koopmans aggregator, directly or through a regime function whose
       output it consumes at the Bellman step;
     - the regime transition;
-    - a value-constraint predicate or a `same_period_refs` projection;
     - the gate or fallback projections of a gated edge whose
       target is this regime — those are declared on the source regime but
       evaluated here, so this regime is where the state they read must live;

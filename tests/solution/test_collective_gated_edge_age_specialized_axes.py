@@ -42,7 +42,6 @@ from lcm import (
     Regime,
     StochasticTransition,
     Transition,
-    ValueDependentConstraint,
     categorical,
     fixed_transition,
 )
@@ -368,7 +367,7 @@ def _build_dissolution_model() -> Model:
 
     - `pair` pays `w` to the wife and `10 + w` to the husband, and its
       continuation is zero, so $Q_f = w$. Her participation constraint
-      $Q_f \ge 3$ therefore empties the household's feasible set exactly where
+      $w \ge 3$ therefore empties the household's feasible set exactly where
       `w < 3`: the support is `[False, True, True]` on age 1's `[0, 4, 8]` and
       `[False, False, True]` on age 2's `[0, 2, 4]`.
     - `pair`'s own value is $(w, 10 + w)$ where it has support.
@@ -398,7 +397,7 @@ def _build_dissolution_model() -> Model:
                 utilities={"f": _pair_felicity_f, "m": _pair_felicity_m}
             )
         },
-        constraints={"ir_f": ValueDependentConstraint(predicate=_wife_participates)},
+        constraints={"ir_f": _wife_participates},
     )
     pair_terminal = Regime(
         states={"w": _ANNUITY_GRID},
@@ -621,9 +620,9 @@ def _same_w(w: ContinuousState) -> ContinuousState:
     return w
 
 
-def _wife_participates(*, Q_f: FloatND, floor_f: FloatND) -> BoolND:
-    """The pair is feasible only where the wife's value clears her floor."""
-    return Q_f >= floor_f
+def _wife_participates(*, w: ContinuousState, floor_f: FloatND) -> BoolND:
+    """The pair is feasible only where the wife's payout clears her floor."""
+    return w >= floor_f
 
 
 def _level_from_balance(balance: ContinuousState) -> ContinuousState:

@@ -13,7 +13,7 @@ import inspect
 import logging
 from collections import defaultdict
 from collections.abc import Callable, Collection, Hashable, Iterable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from dataclasses import replace as dataclass_replace
 from itertools import product
 from math import prod as math_prod
@@ -315,6 +315,7 @@ from _lcm.variables import (
     get_grids,
     simulate_variables_from_regime,
 )
+from lcm.collective import ProjectedRegimeValue
 from lcm.exceptions import (
     ExecutionPlanningError,
     InvalidRegimeTransitionProbabilitiesError,
@@ -323,8 +324,8 @@ from lcm.exceptions import (
     UnsupportedOperationError,
 )
 from lcm.phased import Phased
-from lcm.regime import ProjectedRegimeValue, StateTransitionEntry
 from lcm.regime import Regime as UserRegime
+from lcm.regime import StateTransitionEntry
 from lcm.solver_api import (
     EGM_CONTINUATION,
     ArtifactKey,
@@ -798,20 +799,6 @@ def prepare_regime_builder(
         }
     )
 
-    # Same-period reference declarations are a
-    # cross-regime contract — validate it (existence, member layout,
-    # projection coverage, co-activity) and reject reference cycles before any
-    # kernel is built.
-    _fail_if_same_period_refs_invalid(
-        user_regimes=user_regimes,
-        regime_to_v_interpolation_info=regime_to_v_interpolation_info,
-        regimes_to_active_periods=regimes_to_active_periods,
-    )
-    _fail_if_same_period_ref_cycle(
-        user_regimes=user_regimes,
-        regimes_to_active_periods=regimes_to_active_periods,
-    )
-
     # Gated-edge declarations are a cross-regime
     # contract — validate endpoints, member layout, and projection coverage
     # before any kernel is built.
@@ -1244,7 +1231,6 @@ class _PreparedCanonicalSolution:
     """Source metadata shared by genuine solve and simulation phase assembly."""
 
     solution: _PreparedSolutionPhase
-    value_aware_feasibility: _ValueAwareFeasibility
     invariant_bindings: tuple[StateName, ...]
     gated_continuations: Mapping[RegimeName, GatedContinuationSchedule]
 
@@ -1431,12 +1417,6 @@ class _CanonicalRegimeBuilder:
         # regime, which is what the downstream builds branch on.
         member_axis = user_regime.member_axis
         pareto_weights = _resolve_pareto_weights(user_regime=user_regime, spec=spec)
-        # The (deduplicated, order-preserving) regimes
-        # whose same-period V this regime reads; drives the within-period
-        # topological solve order and the kernel's same-period V threading.
-        same_period_ref_regimes = tuple(
-            dict.fromkeys(ref.regime for ref in user_regime.same_period_refs.values())
-        )
         # A gated edge's leg fallbacks are read where
         # the SOURCE lands, inside the source's own kernel — but the value
         # they name belongs to the period the source lands IN. Backward
@@ -1444,15 +1424,6 @@ class _CanonicalRegimeBuilder:
         # no ordering constraint, only their own grid params threaded to
         # the kernel beside the rolled V arrays.
         edge_reference_regimes = _edge_reference_regimes(law=self.laws[regime_name])
-        # One resolution, both phases: the value-aware feasibility mask the
-        # solved value function applied is the mask the simulated argmax
-        # chooses under, so the two phases share the object rather than each
-        # re-deriving it from the user spec.
-        value_aware_feasibility = _resolve_value_aware_feasibility(
-            user_regime=user_regime,
-            user_regimes=self.representative_user_regimes,
-            regime_params_template=regime_params_template,
-        )
         invariant_bindings = bound_state_names(
             user_regime=user_regime,
             law=self.laws[regime_name],
@@ -1532,10 +1503,8 @@ class _CanonicalRegimeBuilder:
             solver=user_regime.solver,
             continuation_demanded=regime_name in self.egm_continuation_targets,
             has_taste_shocks=user_regime.taste_shocks is not None,
-            value_aware_feasibility=value_aware_feasibility,
             member_axis=member_axis,
             pareto_weights=pareto_weights,
-            same_period_ref_regimes=same_period_ref_regimes,
             edge_reference_regimes=edge_reference_regimes,
             edge_target_regimes=tuple(self.laws[regime_name].gated_edges),
             invariant_bindings=invariant_bindings,
@@ -1547,7 +1516,6 @@ class _CanonicalRegimeBuilder:
         )
         return _PreparedCanonicalSolution(
             solution=solution,
-            value_aware_feasibility=value_aware_feasibility,
             invariant_bindings=invariant_bindings,
             gated_continuations=gated_continuations,
         )
@@ -1571,9 +1539,7 @@ class _CanonicalRegimeBuilder:
         ]
         member_axis = user_regime.member_axis
         pareto_weights = prepared.solution.pareto_weights
-        same_period_ref_regimes = prepared.solution.context.same_period_ref_regimes
         edge_reference_regimes = prepared.solution.context.edge_reference_regimes
-        value_aware_feasibility = prepared.value_aware_feasibility
         invariant_bindings = prepared.invariant_bindings
         gated_continuations = prepared.gated_continuations
         solution = solution_build.phase
@@ -1652,7 +1618,6 @@ class _CanonicalRegimeBuilder:
             has_taste_shocks=user_regime.taste_shocks is not None,
             solver=solution_build.solver,
             certainty_equivalent=user_regime.certainty_equivalent,
-            value_aware_feasibility=value_aware_feasibility,
             member_axis=member_axis,
             pareto_weights=pareto_weights,
             post_decision_shocks=self.post_decision_shocks.get(
@@ -1682,7 +1647,6 @@ class _CanonicalRegimeBuilder:
             certainty_equivalent=user_regime.certainty_equivalent,
             member_axis=member_axis,
             member_names_to_ids=member_names_to_ids,
-            same_period_ref_regimes=same_period_ref_regimes,
             edge_reference_regimes=edge_reference_regimes,
         )
         return regime, simulation_build
@@ -3291,201 +3255,6 @@ def _fail_if_collective_regime_targets_unsupported(
                 raise NotImplementedError(msg)
 
 
-@dataclass(frozen=True)
-class _ValueAwareFeasibility:
-    """A regime's value-aware feasibility declarations in engine vocabulary.
-
-    Both phases apply the identical mask: the solved value function excludes
-    an action, so the simulated argmax must not be able to pick it. Resolving
-    the declarations once and handing the same object to both phase builders
-    is what makes that structural rather than a synchronization duty.
-
-    A singleton regime declares neither (`Regime.__post_init__` rejects both
-    unless `member_axis` is set), so both mappings are empty there.
-    """
-
-    value_constraints: ConstraintFunctionsMapping = MappingProxyType({})
-    """Immutable mapping of value-constraint names to predicates whose params
-    are renamed to their qualified names."""
-
-    same_period_refs: MappingProxyType[str, ResolvedProjectedRegimeValue] = (
-        MappingProxyType({})
-    )
-    """Immutable mapping of reference-value names to resolved same-period
-    reference declarations."""
-
-
-def _resolve_value_aware_feasibility(
-    *,
-    user_regime: UserRegime,
-    user_regimes: Mapping[RegimeName, UserRegime],
-    regime_params_template: RegimeParamsTemplate,
-) -> _ValueAwareFeasibility:
-    """Resolve one regime's value-aware feasibility declarations for both phases.
-
-    Value-constraint predicates carry user params exactly like ordinary
-    constraints, so they are renamed to their qnames; the user's same-period
-    reference declarations become the engine-side form (the member name
-    becomes the index on the reference V's trailing member axis).
-
-    Args:
-        user_regime: The finalized user regime whose declarations are resolved.
-        user_regimes: Mapping of regime names to finalized user regimes, read
-            for each reference regime's member layout.
-        regime_params_template: The regime's parameter template, supplying the
-            qname prefix of each predicate's params.
-
-    Returns:
-        The regime's value constraints and resolved same-period references.
-
-    """
-    return _ValueAwareFeasibility(
-        value_constraints=MappingProxyType(
-            {
-                name: _rename_params_to_qnames(
-                    func=func,
-                    regime_params_template=regime_params_template,
-                    param_key=name,
-                )
-                for name, func in user_regime.value_constraints.items()
-            }
-        ),
-        same_period_refs=_resolve_same_period_refs(
-            user_regime=user_regime, user_regimes=user_regimes
-        ),
-    )
-
-
-def _resolve_same_period_refs(
-    *,
-    user_regime: UserRegime,
-    user_regimes: Mapping[RegimeName, UserRegime],
-) -> MappingProxyType[str, ResolvedProjectedRegimeValue]:
-    """Resolve a regime's user `ProjectedRegimeValue` declarations to the engine form.
-
-    The declarations were validated by
-    `_fail_if_same_period_refs_invalid`, so the reference regime exists and its
-    member naming is consistent; here the named member becomes the
-    index on the reference V's trailing member axis (`None` for a
-    singleton reference).
-    """
-    resolved: dict[str, ResolvedProjectedRegimeValue] = {}
-    for ref_name, ref in user_regime.same_period_refs.items():
-        ref_member_axis = user_regimes[ref.regime].member_axis
-        member_index = (
-            None
-            if ref_member_axis is None
-            else ref_member_axis.index(cast("str", ref.member))
-        )
-        resolved[ref_name] = ResolvedProjectedRegimeValue(
-            regime=ref.regime,
-            projection=ref.projection,
-            member_index=member_index,
-            member=ref.member,
-        )
-    return MappingProxyType(resolved)
-
-
-def _fail_if_same_period_refs_invalid(
-    *,
-    user_regimes: Mapping[RegimeName, UserRegime],
-    regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
-    regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
-) -> None:
-    """Validate every `same_period_refs` declaration against the other regimes.
-
-    Checks, per reference: the reference regime
-    exists; a collective reference names one of its members while a
-    singleton reference names none; the projection covers exactly the reference
-    regime's solve states (the coordinates its V is interpolated over); and the
-    reference regime is active in every period the declaring regime is active
-    (its same-period V must exist whenever the reader solves).
-
-    Raises:
-        ModelInitializationError: On the first violated declaration, naming the
-            regime, the reference, and the violated property.
-
-    """
-    for regime_name, user_regime in user_regimes.items():
-        for ref_name, ref in user_regime.same_period_refs.items():
-            prefix = (
-                f"Regime {regime_name!r}, reference {ref_name!r} "
-                f"(reference regime '{ref.regime}'): "
-            )
-            target_regime = user_regimes.get(ref.regime)
-            if target_regime is None:
-                msg = (
-                    f"{prefix}the reference regime is not part of the model. "
-                    f"Known regimes: {sorted(user_regimes)}."
-                )
-                raise ModelInitializationError(msg)
-            if target_regime.member_axis is None:
-                if ref.member is not None:
-                    msg = (
-                        f"{prefix}names member '{ref.member}', but "
-                        "the reference regime is a singleton — its V carries "
-                        "no member axis. Drop the `member`."
-                    )
-                    raise ModelInitializationError(msg)
-            elif ref.member is None:
-                msg = (
-                    f"{prefix}the reference regime is collective "
-                    f"(members={target_regime.member_axis}), so the "
-                    "reference must name WHOSE value to read via "
-                    "`member=...`."
-                )
-                raise ModelInitializationError(msg)
-            elif ref.member not in target_regime.member_axis:
-                msg = (
-                    f"{prefix}names member '{ref.member}', which is "
-                    "not one of the reference regime's members "
-                    f"{target_regime.member_axis}."
-                )
-                raise ModelInitializationError(msg)
-            # A reader solved at no age never reads its reference, so neither
-            # the projection nor the reference's periods are required.
-            if regimes_to_active_periods[regime_name]:
-                _fail_if_same_period_ref_unreadable(
-                    prefix=prefix,
-                    ref=ref,
-                    reader_periods=regimes_to_active_periods[regime_name],
-                    reference_periods=regimes_to_active_periods[ref.regime],
-                    reference_states=regime_to_v_interpolation_info[
-                        ref.regime
-                    ].state_names,
-                )
-
-
-def _fail_if_same_period_ref_unreadable(
-    *,
-    prefix: str,
-    ref: ProjectedRegimeValue,
-    reader_periods: tuple[int, ...],
-    reference_periods: tuple[int, ...],
-    reference_states: Collection[str],
-) -> None:
-    """Reject a projection or a reference schedule the reader cannot read."""
-    expected_states = set(reference_states)
-    if set(ref.projection) != expected_states:
-        msg = (
-            f"{prefix}the projection must supply exactly one coordinate "
-            "function per state of the reference regime "
-            f"({sorted(expected_states)}); got "
-            f"{sorted(ref.projection)}."
-        )
-        raise ModelInitializationError(msg)
-    missing_periods = sorted(set(reader_periods) - set(reference_periods))
-    if missing_periods:
-        msg = (
-            f"{prefix}the reference regime must be solved in every "
-            "period the declaring regime is solved, but it is not "
-            "solved in period(s) "
-            f"{missing_periods}. A same-period reference V that was "
-            "never solved cannot be read."
-        )
-        raise ModelInitializationError(msg)
-
-
 def _fail_if_gated_edges_invalid(
     *,
     user_regimes: Mapping[RegimeName, UserRegime],
@@ -3924,72 +3693,6 @@ def _fail_if_ref_invalid(
             f"{sorted(ref.projection)}."
         )
         raise ModelInitializationError(msg)
-
-
-def _fail_if_same_period_ref_cycle(
-    *,
-    user_regimes: Mapping[RegimeName, UserRegime],
-    regimes_to_active_periods: Mapping[RegimeName, tuple[int, ...]],
-) -> None:
-    """Reject cyclic `same_period_refs` among the regimes solved in one period.
-
-    Within one period, a regime's value constraints read reference regimes
-    solved EARLIER in that period, so the references among the regimes solved
-    in that period must be acyclic (a self-reference is a one-node cycle). A
-    regime no required problem solves at a period adds no reference there.
-    Depth-first three-color search; the error names one offending cycle.
-    """
-    references = {
-        regime_name: tuple(
-            dict.fromkeys(ref.regime for ref in user_regime.same_period_refs.values())
-        )
-        for regime_name, user_regime in user_regimes.items()
-    }
-    for period in sorted(
-        {p for periods in regimes_to_active_periods.values() for p in periods}
-    ):
-        graph = {
-            regime_name: successors
-            for regime_name, successors in references.items()
-            if period in regimes_to_active_periods.get(regime_name, ())
-        }
-        search = _SamePeriodRefSearch(graph=MappingProxyType(graph))
-        for regime_name in graph:
-            search.visit(regime_name)
-
-
-@dataclass(frozen=True)
-class _SamePeriodRefSearch:
-    """Depth-first three-color search over the same-period reference graph."""
-
-    graph: MappingProxyType[RegimeName, tuple[RegimeName, ...]]
-    """Each regime's reference regimes, in declaration order."""
-    visiting: set[RegimeName] = field(default_factory=set)
-    """Regimes on the current search path."""
-    done: set[RegimeName] = field(default_factory=set)
-    """Regimes whose reachable references are known to be acyclic."""
-    stack: list[RegimeName] = field(default_factory=list)
-    """The current search path, root first, which names a cycle when one closes."""
-
-    def visit(self, node: RegimeName) -> None:
-        if node in self.done or node not in self.graph:
-            return
-        if node in self.visiting:
-            cycle = [*self.stack[self.stack.index(node) :], node]
-            msg = (
-                "`same_period_refs` declarations form a cycle: "
-                f"{' -> '.join(cycle)}. Within a period, a reference regime "
-                "must be solved before the regime that reads its value, so "
-                "the reference graph must be acyclic."
-            )
-            raise ModelInitializationError(msg)
-        self.visiting.add(node)
-        self.stack.append(node)
-        for successor in self.graph[node]:
-            self.visit(successor)
-        self.stack.pop()
-        self.visiting.discard(node)
-        self.done.add(node)
 
 
 def _period_to_state_nodes(
@@ -4780,10 +4483,8 @@ def _prepare_solution_phase(
     solver: Solver,
     continuation_demanded: bool,
     has_taste_shocks: bool,
-    value_aware_feasibility: _ValueAwareFeasibility,
     member_axis: tuple[str, ...] | None = None,
     pareto_weights: ParetoWeights | None = None,
-    same_period_ref_regimes: tuple[RegimeName, ...] = (),
     edge_reference_regimes: tuple[RegimeName, ...] = (),
     edge_target_regimes: tuple[RegimeName, ...] = (),
     invariant_bindings: tuple[StateName, ...] = (),
@@ -4825,15 +4526,6 @@ def _prepare_solution_phase(
                         for law in laws.values()
                     ),
                     "gated value channel",
-                ),
-                (
-                    bool(same_period_ref_regimes)
-                    or any(
-                        ref.regime == regime_name
-                        for other in user_regimes.values()
-                        for ref in other.same_period_refs.values()
-                    ),
-                    "same-period value channel",
                 ),
             )
             if active
@@ -4877,10 +4569,8 @@ def _prepare_solution_phase(
         solver=solver,
         continuation_demanded=continuation_demanded,
         has_taste_shocks=has_taste_shocks,
-        value_aware_feasibility=value_aware_feasibility,
         member_axis=member_axis,
         pareto_weights=pareto_weights,
-        same_period_ref_regimes=same_period_ref_regimes,
         edge_reference_regimes=edge_reference_regimes,
         edge_target_regimes=edge_target_regimes,
         invariant_bindings=invariant_bindings,
@@ -4931,10 +4621,8 @@ def _prepare_numerical_solution_phase(  # noqa: PLR0915 - native route admission
     solver: Solver,
     continuation_demanded: bool,
     has_taste_shocks: bool,
-    value_aware_feasibility: _ValueAwareFeasibility,
     member_axis: tuple[str, ...] | None = None,
     pareto_weights: ParetoWeights | None = None,
-    same_period_ref_regimes: tuple[RegimeName, ...] = (),
     edge_reference_regimes: tuple[RegimeName, ...] = (),
     edge_target_regimes: tuple[RegimeName, ...] = (),
     invariant_bindings: tuple[StateName, ...] = (),
@@ -4982,15 +4670,6 @@ def _prepare_numerical_solution_phase(  # noqa: PLR0915 - native route admission
                         for law in laws.values()
                     ),
                     "gated value channel",
-                ),
-                (
-                    bool(same_period_ref_regimes)
-                    or any(
-                        ref.regime == regime_name
-                        for other in user_regimes.values()
-                        for ref in other.same_period_refs.values()
-                    ),
-                    "same-period value channel",
                 ),
             )
             if active
@@ -5058,8 +4737,7 @@ def _prepare_numerical_solution_phase(  # noqa: PLR0915 - native route admission
     co_map_state_names: tuple[StateName, ...] = ()
     co_map_v_arr_in_axes: tuple[MappingProxyType[RegimeName, int | None], ...] = ()
     counts_raise_landings = _counts_raise_landings(
-        value_aware_feasibility=value_aware_feasibility,
-        gated_continuations=gated_continuations,
+        gated_continuations=gated_continuations
     )
 
     period_to_state_nodes = _period_to_state_nodes(
@@ -5088,25 +4766,22 @@ def _prepare_numerical_solution_phase(  # noqa: PLR0915 - native route admission
             # The collective terminal kernel builds one
             # `U^s`-and-`F` per member and stacks the utilities on a trailing
             # member axis. Separate builder so the singleton path is untouched.
-            Q_and_F_functions = _build_terminal_collective_Q_and_F_per_period(
-                bound_specs=tuple(
-                    bound for bound in post_decision_bounds if bound.kind == "dag"
-                ),
-                n_periods=ages.n_periods,
-                flat_param_names=flat_param_names,
-                functions=core.functions,
-                constraints=core.constraints,
-                members=member_axis,
-                value_constraints=value_aware_feasibility.value_constraints,
-                same_period_refs=value_aware_feasibility.same_period_refs,
-                regime_to_v_interpolation_info=regime_to_v_interpolation_info,
-                period_to_regime_v_interp=period_to_regime_v_interp,
+            Q_and_F_functions = MappingProxyType(
+                dict.fromkeys(
+                    range(ages.n_periods),
+                    get_Q_and_F_terminal_collective(
+                        bound_specs=tuple(
+                            bound
+                            for bound in post_decision_bounds
+                            if bound.kind == "dag"
+                        ),
+                        flat_param_names=flat_param_names,
+                        functions=core.functions,
+                        constraints=core.constraints,
+                        members=member_axis,
+                    ),
+                )
             )
-            # A value constraint makes that builder read a same-period reference
-            # grid, which moves with age, so it compiles one closure per period.
-            # Without one every period shares a single closure.
-            if value_aware_feasibility.value_constraints:
-                decision_group_key = _PerPeriodGroupKey(label="terminal-collective")
         else:
             terminal_func = get_Q_and_F_terminal(
                 bound_specs=tuple(
@@ -5195,8 +4870,6 @@ def _prepare_numerical_solution_phase(  # noqa: PLR0915 - native route admission
             objective_aggregator=core.objective_aggregator,
             certainty_equivalent=certainty_equivalent,
             member_axis=member_axis,
-            value_constraints=value_aware_feasibility.value_constraints,
-            same_period_refs=value_aware_feasibility.same_period_refs,
             grid_schedule=grid_schedule,
             gated_continuations=gated_continuations,
             count_raise_landings=counts_raise_landings,
@@ -5358,7 +5031,6 @@ def _prepare_numerical_solution_phase(  # noqa: PLR0915 - native route admission
         members=user_regimes[regime_name].members,
         member_axis=member_axis,
         pareto_weights=pareto_weights,
-        same_period_ref_regimes=same_period_ref_regimes,
         edge_reference_regimes=edge_reference_regimes,
         edge_target_regimes=edge_target_regimes,
     )
@@ -5618,18 +5290,6 @@ def _finish_solution_phase(
     )
 
 
-@dataclass(frozen=True, kw_only=True)
-class _PerPeriodGroupKey:
-    """Grouping key of a builder that compiles one object per period."""
-
-    label: str
-    """Name of the grouping this key stands for."""
-
-    def __call__(self, *, period: int) -> Hashable:
-        """Return a key putting every period in a group of its own."""
-        return (self.label, period)
-
-
 def _simulated_periods(
     *,
     phase_reachability: PhaseReachability,
@@ -5853,7 +5513,6 @@ class _TerminalCarryPeriodKernel:
         period: int,
         ages: TimeAxis,
         logger: logging.Logger,
-        same_period_regime_to_V_arr: Mapping[RegimeName, FloatND] | None = None,
         edge_regime_to_V_arr: Mapping[RegimeName, FloatND] | None = None,
     ) -> KernelOutput:
         """Run the base kernel, then add the regime's carry to its continuations.
@@ -5871,10 +5530,7 @@ class _TerminalCarryPeriodKernel:
             period=period,
             ages=ages,
             logger=logger,
-            **_edge_and_same_period_kwargs(
-                edge_regime_to_V_arr=edge_regime_to_V_arr,
-                same_period_regime_to_V_arr=same_period_regime_to_V_arr,
-            ),
+            **_supplied_edge_kwargs(edge_regime_to_V_arr=edge_regime_to_V_arr),
         )
         if not isinstance(output, KernelOutput):
             msg = (
@@ -5903,25 +5559,21 @@ class _TerminalCarryPeriodKernel:
         )
 
 
-def _edge_and_same_period_kwargs(
+def _supplied_edge_kwargs(
     *,
     edge_regime_to_V_arr: Mapping[RegimeName, FloatND] | None,
-    same_period_regime_to_V_arr: Mapping[RegimeName, FloatND] | None,
 ) -> MappingProxyType[ReferenceName, Mapping[RegimeName, FloatND]]:
-    """Relay only the optional kernel arguments the caller actually supplied.
+    """Relay the optional edge argument only when the caller supplied it.
 
-    The solve loop passes `edge_regime_to_V_arr` to a source with
-    gated edges and `same_period_regime_to_V_arr` to one declaring
-    `same_period_refs`, and neither to any other regime. A decorator around a
-    period kernel forwards what it was handed rather than always naming both,
-    so a base kernel whose signature declares neither is called exactly as the
-    solve loop would have called it directly.
+    The solve loop passes `edge_regime_to_V_arr` to a source with gated edges
+    and to no other regime. A decorator around a period kernel forwards what it
+    was handed rather than always naming it, so a base kernel whose signature
+    does not declare it is called exactly as the solve loop would have called
+    it directly.
     """
     kwargs: dict[ReferenceName, Mapping[RegimeName, FloatND]] = {}
     if edge_regime_to_V_arr is not None:
         kwargs["edge_regime_to_V_arr"] = edge_regime_to_V_arr
-    if same_period_regime_to_V_arr is not None:
-        kwargs["same_period_regime_to_V_arr"] = same_period_regime_to_V_arr
     return MappingProxyType(kwargs)
 
 
@@ -6241,7 +5893,6 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
     has_taste_shocks: bool,
     solver: Solver,
     certainty_equivalent: CertaintyEquivalent | None,
-    value_aware_feasibility: _ValueAwareFeasibility,
     member_axis: tuple[str, ...] | None = None,
     pareto_weights: ParetoWeights | None = None,
     post_decision_shocks: Mapping[StateName, _IIDProcess] = MappingProxyType({}),
@@ -6311,11 +5962,6 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
             gets the synthesized intrinsic budget constraint.
         certainty_equivalent: Nonlinear certainty equivalent declared by the
             regime, or `None`.
-        value_aware_feasibility: The regime's value constraints and resolved
-            same-period references — the SAME object the solve phase was
-            built with, so the simulate-phase Q_and_F masks exactly the
-            actions the solved value function excluded and the simulated
-            argmax can never pick one of them. Empty for a singleton regime.
         member_axis: Ordered member names for a collective regime, or
             `None` (the singleton default).
         pareto_weights: The household's Pareto weight evaluator; required (and
@@ -6498,19 +6144,21 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
         per_subject_route = None
         realized_validation_probs = None
         if collective:
-            Q_and_F_functions = _build_terminal_collective_Q_and_F_per_period(
-                bound_specs=tuple(
-                    bound for bound in post_decision_bounds if bound.kind == "dag"
-                ),
-                n_periods=ages.n_periods,
-                flat_param_names=flat_param_names,
-                functions=functions,
-                constraints=constraints,
-                members=member_axis,
-                value_constraints=value_aware_feasibility.value_constraints,
-                same_period_refs=value_aware_feasibility.same_period_refs,
-                regime_to_v_interpolation_info=regime_to_v_interpolation_info,
-                period_to_regime_v_interp=period_to_regime_v_interp,
+            Q_and_F_functions = MappingProxyType(
+                dict.fromkeys(
+                    range(ages.n_periods),
+                    get_Q_and_F_terminal_collective(
+                        bound_specs=tuple(
+                            bound
+                            for bound in post_decision_bounds
+                            if bound.kind == "dag"
+                        ),
+                        flat_param_names=flat_param_names,
+                        functions=functions,
+                        constraints=constraints,
+                        members=member_axis,
+                    ),
+                )
             )
         else:
             terminal_func = get_Q_and_F_terminal(
@@ -6628,8 +6276,6 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
             objective_aggregator=core.objective_aggregator,
             certainty_equivalent=certainty_equivalent,
             member_axis=member_axis,
-            value_constraints=value_aware_feasibility.value_constraints,
-            same_period_refs=value_aware_feasibility.same_period_refs,
             continuation_functions=solve_functions,
             grid_schedule=grid_schedule,
             gated_continuations=gated_continuations,
@@ -6641,8 +6287,7 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
                 action_names=state_action_space.action_names,
                 law=law,
                 counts_raise_landings=_counts_raise_landings(
-                    value_aware_feasibility=value_aware_feasibility,
-                    gated_continuations=gated_continuations,
+                    gated_continuations=gated_continuations
                 ),
                 current_values_on_nodes=False,
                 current_shock_names=_current_shock_names(
@@ -10206,17 +9851,15 @@ def _co_map_state_names(
 
 def _counts_raise_landings(
     *,
-    value_aware_feasibility: _ValueAwareFeasibility,
     gated_continuations: Mapping[RegimeName, GatedContinuationSchedule],
 ) -> bool:
     """Return whether the source counts its raise-rule landings inside the kernel.
 
-    A value constraint or a gated edge decides which actions and branches a
-    landing is reached through only once the values are known, so these sources
-    count their landings inside the solve kernel, where both are, rather than in
-    the preflight, where neither is.
+    A gated edge decides which branch a landing is reached through only once the
+    values are known, so such a source counts its landings inside the solve
+    kernel, where they are, rather than in the preflight, where they are not.
     """
-    return bool(value_aware_feasibility.value_constraints) or bool(gated_continuations)
+    return bool(gated_continuations)
 
 
 def _lottery_contraction_source(
@@ -10337,83 +9980,6 @@ def _build_period_state_axes(
     )
 
 
-def _build_terminal_collective_Q_and_F_per_period(
-    *,
-    n_periods: int,
-    bound_specs: tuple[PostDecisionBoundSpec, ...] = (),
-    flat_param_names: frozenset[QualifiedName],
-    functions: EconFunctionsMapping,
-    constraints: ConstraintFunctionsMapping,
-    members: tuple[str, ...],
-    value_constraints: ConstraintFunctionsMapping,
-    same_period_refs: MappingProxyType[str, ResolvedProjectedRegimeValue],
-    regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
-    period_to_regime_v_interp: (
-        MappingProxyType[int, MappingProxyType[RegimeName, VInterpolationInfo]] | None
-    ),
-) -> MappingProxyType[int, QAndFFunction]:
-    """Build the terminal collective Q-and-F closure(s), one per period if needed.
-
-    A terminal kernel reads no continuation, so without value constraints every
-    period's closure is the same object and one build serves the model. A
-    same-period reference is different: it interpolates the referenced regime's
-    value on the grid that regime is tabulated on AT THIS period, which moves
-    with age wherever the reference carries an `AgeSpecializedGrid`. Those
-    models get one closure per period.
-
-    Args:
-        n_periods: Number of periods in the model.
-        flat_param_names: Frozenset of flat parameter names for the regime.
-        functions: Immutable mapping of function names to internal user
-            functions; carries `utility_<s>` per member.
-        constraints: Immutable mapping of constraint names to internal user
-            functions.
-        members: Ordered member names.
-        value_constraints: Value-aware feasibility predicates, params already
-            renamed to qnames.
-        same_period_refs: Resolved same-period reference declarations.
-        regime_to_v_interpolation_info: Representative per-regime interpolation
-            info (the age-invariant fallback).
-        period_to_regime_v_interp: Per-period interpolation info built from the
-            age-specialized grid schedule, or `None`.
-
-    Returns:
-        Immutable mapping of period index to the terminal Q-and-F closure.
-    """
-    if not value_constraints:
-        shared = get_Q_and_F_terminal_collective(
-            bound_specs=bound_specs,
-            flat_param_names=flat_param_names,
-            functions=functions,
-            constraints=constraints,
-            members=members,
-        )
-        return MappingProxyType(dict.fromkeys(range(n_periods), shared))
-
-    # `continuation_info(p)` answers for period `p + 1`, so this period's own
-    # grids are `continuation_info(period - 1)` — the same offset the
-    # non-terminal collective builder uses for its references.
-    continuation_info = continuation_info_lookup(
-        period_to_regime_v_interp=period_to_regime_v_interp,
-        regime_to_v_interpolation_info=regime_to_v_interpolation_info,
-    )
-    return MappingProxyType(
-        {
-            period: get_Q_and_F_terminal_collective(
-                bound_specs=bound_specs,
-                flat_param_names=flat_param_names,
-                functions=functions,
-                constraints=constraints,
-                members=members,
-                value_constraints=value_constraints,
-                same_period_refs=same_period_refs,
-                same_period_v_interpolation_info=continuation_info(period - 1),
-            )
-            for period in range(n_periods)
-        }
-    )
-
-
 @dataclass(frozen=True, kw_only=True)
 class _GroupedQAndF:
     """A regime's per-period Q-and-F closures beside the key that grouped them."""
@@ -10447,10 +10013,6 @@ def _build_Q_and_F_per_period(
     ) = None,
     co_map_state_names: tuple[StateName, ...] = (),
     member_axis: tuple[str, ...] | None = None,
-    value_constraints: ConstraintFunctionsMapping = MappingProxyType({}),
-    same_period_refs: MappingProxyType[str, ResolvedProjectedRegimeValue] = (
-        MappingProxyType({})
-    ),
     continuation_functions: EconFunctionsMapping | None = None,
     grid_schedule: AgeGridSchedule | None = None,
     gated_continuations: Mapping[RegimeName, GatedContinuationSchedule] = (
@@ -10497,10 +10059,6 @@ def _build_Q_and_F_per_period(
             `None` (the singleton default). When set, the per-period closures
             come from `get_Q_and_F_collective` (per-member continuation,
             trailing member axis on Q); only the solve site passes this.
-        value_constraints: Value-aware feasibility predicates, params
-            already renamed; only used for collective regimes.
-        same_period_refs: Resolved same-period reference declarations;
-            only used for collective regimes.
         continuation_functions: Solve-phase pool the continuation sub-DAG resolves
             against; `None` in the solve phase, where it coincides with `functions`.
         grid_schedule: Concrete age-specialized grid schedule, or `None`.
@@ -10627,16 +10185,8 @@ def _build_Q_and_F_per_period(
                 transition_plans=transition_plans,
                 compute_regime_transition_probs=compute_regime_transition_probs,
                 regime_to_v_interpolation_info=continuation_info(representative_period),
-                # A same-period reference reads a regime's value at THIS period,
-                # so it is interpolated on that regime's period-`t` grid, while
-                # `continuation_info(p)` answers for period `p + 1`.
-                same_period_v_interpolation_info=continuation_info(
-                    representative_period - 1
-                ),
                 members=member_axis,
                 co_map_state_names=co_map_state_names,
-                value_constraints=value_constraints,
-                same_period_refs=same_period_refs,
                 # Thread the flow/continuation phase split, exactly as the singleton
                 # branch below, so the collective simulator builds current flow and
                 # continuation from the SAME pool. Mixing them — current flow from

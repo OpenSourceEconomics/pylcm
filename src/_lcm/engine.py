@@ -586,8 +586,8 @@ class SolutionPhase:
     )
     """Whether the solve kernels count this regime's raw raise-rule landings.
 
-    Set for a regime whose value constraints or gated edges decide, only once
-    values are known, which actions and branches reach a landing. The kernel
+    Set for a regime whose gated edges decide, only once values are known,
+    which branches reach a landing. The kernel
     counts those landings in the pass that takes the maximum, so the
     transition preflight leaves the regime alone.
     """
@@ -1540,16 +1540,6 @@ class Regime:
     kernel — at the value of the period the source lands in. The rolled V
     mapping already carries that array; these names are what pick it out and
     thread each reference regime's OWN grid params beside it.
-    """
-
-    same_period_ref_regimes: tuple[RegimeName, ...] = ()
-    """Regimes whose SAME-period V this regime's solve kernel reads, or empty.
-
-    Non-empty only for a collective regime declaring
-    `same_period_refs`. The backward-induction loop orders each period's active
-    regimes topologically by these edges (references solved first) and passes
-    the referenced regimes' freshly solved V arrays into this regime's kernel
-    call. Empty for every other regime — the default path is unchanged.
     """
 
     gated_edges: MappingProxyType[RegimeName, ResolvedGatedEdge] = MappingProxyType({})

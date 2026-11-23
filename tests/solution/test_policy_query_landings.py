@@ -1,18 +1,12 @@
 """Canonical typed policy queries retain reached-landing diagnostics."""
 
-from collections.abc import Mapping
 from fractions import Fraction
-from typing import Literal, cast
+from typing import Literal
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from _lcm.current_iid import CurrentIIDDrawPlan
-from _lcm.execution.core_program import CoreBuildContext
-from _lcm.policy_queries import ScalarPolicyQueries, _PolicyQueryKernel
-from _lcm.typing import PytreeValue
 from lcm import (
     ByPeriod,
     CollectiveUtility,
@@ -28,11 +22,10 @@ from lcm import (
     ProjectedRegimeValue,
     Regime,
     Transition,
-    ValueDependentConstraint,
     categorical,
 )
 from lcm.exceptions import OffGridStateError
-from lcm.shocks import Normal, PhysicalValues, ShockGroup, UserNodes
+from lcm.shocks import Normal, ShockGroup, UserNodes
 from lcm.typing import BoolND, FloatND, IntND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
 
@@ -93,10 +86,7 @@ def reference_values(  # noqa: C901 - independent literal finite oracle keeps th
                 # beta=1/2, terminal member values=2*wealth.
                 q_f = Fraction(wealth + action + eps + landing)
                 q_m = Fraction(wealth + action - eps + landing)
-                feasible = q_f >= -1000 and (
-                    case != "infeasible_off_grid" or action == 0
-                )
-                if not feasible:
+                if case == "infeasible_off_grid" and action != 0:
                     continue
                 if not 0 <= landing <= 1:
                     raise ReachedLandingError((wealth, eps, action, landing))
@@ -127,12 +117,8 @@ def _terminal(wealth: FloatND) -> FloatND:
     return 2.0 * wealth
 
 
-def _admit_all(Q_f: FloatND) -> BoolND:
-    return Q_f >= -1000.0
-
-
-def _admit_zero(*, Q_f: FloatND, action: IntND) -> BoolND:
-    return (Q_f >= -1000.0) & (action == 0)
+def _admit_zero(action: IntND) -> BoolND:
+    return action == 0
 
 
 def _on_grid(action: IntND) -> FloatND:
@@ -181,13 +167,9 @@ def _model(
                 functions={
                     "utility": CollectiveUtility(utilities={"f": _female, "m": _male})
                 },
-                constraints={
-                    "admissible_value": ValueDependentConstraint(
-                        predicate=_admit_zero
-                        if case == "infeasible_off_grid"
-                        else _admit_all
-                    )
-                },
+                constraints={"admissible_action": _admit_zero}
+                if case == "infeasible_off_grid"
+                else {},
                 state_transitions={"wealth": landing},
                 shocks=("innovation",),
             ),
@@ -461,64 +443,3 @@ def test_physical_replay_keeps_checked_landing_counts_after_query_reduction(
             2 * source["wealth"] + 4,
             decimal=DECIMAL_PRECISION,
         )
-
-
-def test_scalar_physical_query_retains_nonempty_actual_landing_lane() -> None:
-    """The real physical frame reaches the count lane before any transition guard."""
-    model = _model(case="zero_mass_off_grid", enable_jit=True)
-    params = {"discount_factor": 0.5}
-    solution = model.solve(params=params, log_level="off", runtime_checks=False)
-    flat_params, _generation = model._prepare_call(params=params, runtime_checks=False)
-    kernel = model._regimes["source"].solution.period_kernels[0]
-    assert isinstance(kernel, _PolicyQueryKernel)
-    scalar = ScalarPolicyQueries(
-        definitions=kernel.definitions, root=kernel.root, period=0
-    )
-    assert scalar.landing_checks == (("source", 0, "destination", "wealth"),)
-    plan = kernel.definitions[kernel.root].context.current_iid_plans[0]
-    assert plan is not None
-    draw = CurrentIIDDrawPlan(
-        bindings={name: binding for name, binding, _ in plan.bindings}
-    )
-    arguments = cast(
-        "Mapping[str, Mapping[str, PytreeValue]]",
-        scalar.arguments(
-            context=CoreBuildContext(
-                state_action_space=kernel.root_context.state_action_space,
-                next_regime_to_V_arr=solution.values[1],
-                next_regime_to_continuation={},
-                flat_params=flat_params,
-                period=0,
-                ages=kernel.root_context.ages,
-            ),
-            fixed_flat_params=kernel.fixed_flat_params,
-        ),
-    )
-    evaluate = jax.jit(scalar)
-    for eps, expected_value, expected_count in (
-        (-0.5, (2.0, 3.0), 0),
-        (0.5, (5.0, 4.0), 2),
-    ):
-        frame = draw.realise(
-            keys={"eps": jax.random.key(123)},
-            group_params={"innovation": {}},
-            arguments={
-                "wealth": jnp.asarray(0.5),
-                "period": jnp.int32(0),
-                "age": jnp.int32(0),
-            },
-            overrides={"eps": PhysicalValues(values=jnp.asarray(eps))},
-        )
-        answer = evaluate(
-            states={"wealth": jnp.asarray(0.5)}, arguments=arguments, frame=frame
-        )
-        # At a=1: landing=1 or3, Q=(.5+1±eps)+(.5)(2*landing).
-        # Both original admissible actions count at the positive physical draw.
-        np.testing.assert_array_almost_equal(
-            answer[0], expected_value, decimal=DECIMAL_PRECISION
-        )
-        assert int(answer[1]) == 1
-        assert bool(answer[2])
-        assert bool(answer[3])
-        assert answer[4].dtype == jnp.int32
-        np.testing.assert_array_equal(answer[4], [expected_count])

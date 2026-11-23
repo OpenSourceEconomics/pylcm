@@ -15,8 +15,8 @@ The three provenances an edge-side callable mixes, all in one signature:
    param the SOLVE-side fold needs from that edge namespace, so this is not a
    preference between two merges — it is what makes simulate evaluate the same
    object solve folded.
-3. Each REFERENCE regime's own interpolation grid, for a leg fallback's,
-   same-period reference's or participation read's read of that regime's V.
+3. Each REFERENCE regime's own interpolation grid, for a leg fallback's
+   or a participation read's read of that regime's V.
 
 Covered here:
 
@@ -61,7 +61,6 @@ from _lcm.regime_building.collective import NO_ROLE
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.gated_edges import (
     SOURCE_PARAMS,
-    ResolvedProjectedRegimeValue,
     _fence_edge_consumer,
     _with_qualified_params,
 )
@@ -73,10 +72,8 @@ from _lcm.regime_building.Q_and_F import (
     EDGE_REF_V_ARG,
     SAME_PERIOD_PARAMS_ARG,
     SAME_PERIOD_V_ARG,
-    _build_same_period_ref_reader,
     evaluate_projected_readers,
 )
-from _lcm.regime_building.V import create_v_interpolation_info
 from _lcm.regime_law import RegimeLawDeclaration
 from _lcm.simulation.gated_routing import (
     bind_provenance_params,
@@ -98,7 +95,6 @@ from _lcm.utils.logging import get_logger
 from lcm import (
     AgeRange,
     ByAge,
-    CollectiveUtility,
     DiscreteGrid,
     Gate,
     IrregSpacedGrid,
@@ -110,7 +106,6 @@ from lcm import (
     ProjectedRegimeValue,
     Regime,
     Transition,
-    ValueDependentConstraint,
     categorical,
 )
 from lcm.ages import AgeGrid
@@ -763,7 +758,7 @@ _FALLBACK_POINTS = (0.0, 0.25, 1.0)
 def test_leg_fallback_reader_reads_the_fallback_regimes_own_runtime_grid() -> None:
     """The leg-fallback reader reads the FALLBACK regime's own runtime grid.
 
-    The fourth consumer of `_build_same_period_ref_reader`, and the one that runs
+    A consumer of `_build_same_period_ref_reader`, the one that runs
     at SOLVE time inside `get_edge_fold`. With the gate closed everywhere, `Wbar`
     IS this reader's output: `V_fallback(pi(x)) = pi(x) = x`, exactly, whatever
     the fallback's grid spacing — but only if the reader interpolated on the
@@ -794,210 +789,6 @@ def test_leg_fallback_reader_reads_the_fallback_regimes_own_runtime_grid() -> No
     # Wbar = V_fallback(x) = x on the target's {0, 1} grid — exact only because
     # the read used the fallback's own irregular points.
     np.testing.assert_allclose(wbar, [0.0, 1.0], atol=1e-6)
-
-
-# The ORDINARY same-period ref (the reader's fourth consumer, and the only one
-# that runs inside a regime's own compiled kernel).
-
-# The reference regime `single_f`'s own points, and the READING regime's
-# identically named ones. Both declare a state `wage` on a runtime irregular
-# grid, so both flat-param mappings carry a key literally named `wage__points`.
-_SINGLE_POINTS = (0.0, 10.0)
-_MARRIED_POINTS = (0.0, 1.0)
-
-
-def _u_wage(wage: ContinuousState) -> FloatND:
-    return wage
-
-
-def _u_married_f(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
-    return 5.0 + 0.0 * wage * work
-
-
-def _u_married_m(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
-    return 0.0 * wage * work
-
-
-def _ir_f(*, Q_f: FloatND, V_single_f_ref: FloatND) -> BoolND:
-    """`Q_f = 5` against the reference value read at the married node.
-
-    At the married node `wage = 1.0`, projected onto `single_f`'s own points
-    (0, 10), the read is coordinate 0.1 -> `V_single_f = 1.0`, so the constraint
-    holds and the cell is feasible. Read on the MARRIED regime's identically
-    named points (0, 1) instead, the same value lands on coordinate 1.0 ->
-    `V_single_f = 10.0`, the mask empties, and the cell publishes `V = -inf`.
-    Two very different models, one qname.
-    """
-    return Q_f >= V_single_f_ref
-
-
-def _project_wage(wage: ContinuousState) -> ContinuousState:
-    return wage
-
-
-def _make_e2_ref_grid_regimes() -> _Spec:
-    single_f = (
-        Regime(
-            states={"wage": IrregSpacedGrid(n_points=2)},
-            functions={"utility": _u_wage},
-        ),
-        None,
-    )
-    married = (
-        Regime(
-            states={"wage": IrregSpacedGrid(n_points=2)},
-            state_transitions={"wage": _identity_x_wage},
-            actions={"work": DiscreteGrid(category_class=Work)},
-            functions={
-                "utility": CollectiveUtility(
-                    utilities={"f": _u_married_f, "m": _u_married_m}
-                )
-            },
-            constraints={
-                "ir_f": ValueDependentConstraint(
-                    predicate=_ir_f,
-                    references={
-                        "V_single_f_ref": ProjectedRegimeValue(
-                            regime="single_f", projection={"wage": _project_wage}
-                        )
-                    },
-                )
-            },
-        ),
-        ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "married_terminal": StochasticTransition(func=_prob_one)
-                }
-            }
-        ),
-    )
-    married_terminal = (
-        Regime(
-            states={"wage": IrregSpacedGrid(n_points=2)},
-            actions={"work": DiscreteGrid(category_class=Work)},
-            functions={
-                "utility": CollectiveUtility(
-                    utilities={"f": _u_married_m, "m": _u_married_m}
-                )
-            },
-        ),
-        None,
-    )
-    return _split(
-        {
-            "single_f": single_f,
-            "married": married,
-            "married_terminal": married_terminal,
-        }
-    )
-
-
-def _identity_x_wage(wage: ContinuousState) -> ContinuousState:
-    return wage
-
-
-def test_e2_same_period_ref_reads_the_reference_regimes_own_runtime_grid() -> None:
-    """A same-period ref reads the REFERENCE regime's own runtime grid.
-
-    The one consumer of `_build_same_period_ref_reader` that lives inside a
-    regime's own compiled kernel, which is why its reference-grid params could
-    not simply be added to that kernel's arguments: they belong to ANOTHER
-    regime's namespace, and the kernel is splatted with only its own. They ride
-    in `SAME_PERIOD_PARAMS_ARG` beside the same-period V arrays instead.
-
-    A missing-argument error for `__same_period_ref__wage__points` is what an
-    unsupplied prefixed param produces. This topology solves instead, and the
-    number proves WHICH namespace won: the reference regime's points, not the
-    reading regime's
-    identically named ones (which would empty the mask — the assertion below is
-    the difference between a feasible cell and a dissolved household).
-    """
-    ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
-    regimes_dict, laws = _make_e2_ref_grid_regimes()
-    flat_params = MappingProxyType(
-        {
-            "single_f": MappingProxyType({"wage__points": jnp.asarray(_SINGLE_POINTS)}),
-            "married": MappingProxyType(
-                {
-                    "koopmans_aggregator__discount_factor": jnp.asarray(_BETA),
-                    "wage__points": jnp.asarray(_MARRIED_POINTS),
-                }
-            ),
-            "married_terminal": MappingProxyType(
-                {"wage__points": jnp.asarray(_MARRIED_POINTS)}
-            ),
-        }
-    )
-    # The two namespaces genuinely disagree about the contested qname.
-    assert not np.array_equal(
-        np.asarray(flat_params["single_f"]["wage__points"]),
-        np.asarray(flat_params["married"]["wage__points"]),
-    )
-
-    regimes, _ids = _process(regimes_dict=regimes_dict, laws=laws, ages=ages)
-    _bi_result = solve(
-        program_fingerprint="test_gated_edge_arg_provenance",
-        flat_params=flat_params,
-        ages=ages,
-        regimes=regimes,
-        logger=get_logger(log_level="off"),
-        enable_jit=False,
-    )
-    solution = _bi_result.value_functions
-
-    # V_single_f = wage on ITS OWN points (0, 10).
-    np.testing.assert_allclose(np.asarray(solution[0]["single_f"]), [0.0, 10.0])
-
-    # At married's node wage = 1.0 the reference read is 1.0 (coordinate 0.1 on
-    # single_f's points) -> `5 >= 1` holds -> feasible, V_f = 5.
-    # Had the read used married's own points, it would have been 10.0 -> `5 >=
-    # 10` fails -> empty mask -> V_f = -inf.
-    V_married = np.asarray(solution[0]["married"])
-    np.testing.assert_allclose(V_married[1, 0], 5.0)
-    assert np.isfinite(V_married[1, 0])
-
-    # The fixture is only a repro if the contested binding actually decides the
-    # outcome, so exercise the production reader itself on the SAME solved
-    # `V_single_f` and vary ONLY which regime's points resolve its grid.
-    reader = _build_same_period_ref_reader(
-        ref=ResolvedProjectedRegimeValue(
-            regime="single_f",
-            projection={"wage": _project_wage},
-            member_index=None,
-        ),
-        v_interpolation_info=create_v_interpolation_info(
-            user_regime=regimes_dict["single_f"]
-        ),
-        functions=MappingProxyType({}),
-        deterministic_transitions=MappingProxyType({}),
-    )
-    same_period_V = MappingProxyType({"single_f": solution[0]["single_f"]})
-
-    def _ref_value(points: tuple[float, float]) -> float:
-        return float(
-            reader(
-                wage=jnp.asarray(1.0),
-                **{
-                    SAME_PERIOD_V_ARG: same_period_V,
-                    SAME_PERIOD_PARAMS_ARG: MappingProxyType(
-                        {
-                            "single_f": MappingProxyType(
-                                {"wage__points": jnp.asarray(points)}
-                            )
-                        }
-                    ),
-                },
-            )
-        )
-
-    assert _ref_value(_SINGLE_POINTS) == 1.0  # the reference regime's own grid
-    assert _ref_value(_MARRIED_POINTS) == 10.0  # the reading regime's — the bug
-    # ...and 10.0 is exactly the value that empties the mask (`5 >= 10` fails),
-    # so the finite solved value above is the reference regime's grid winning and
-    # nothing else.
-    assert _ref_value(_MARRIED_POINTS) > 5.0
-    assert _ref_value(_SINGLE_POINTS) <= 5.0
 
 
 # A gate or projection that names a TARGET regime function would have that

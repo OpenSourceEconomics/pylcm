@@ -1468,7 +1468,7 @@ def _build_landing_reader(
         # The value belongs to the period the source LANDS in, which
         # backward induction has already solved and rolled forward, so it
         # arrives on the edge-reference channel rather than the
-        # same-period one the value constraints read.
+        # same-period one the edge's fold reads.
         v_mapping_arg=EDGE_REF_V_ARG,
         params_mapping_arg=EDGE_REF_PARAMS_ARG,
     )

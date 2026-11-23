@@ -6,19 +6,17 @@ title: Households and value-dependent choice
 
 A single decision maker maximizes her own value. A household does not: it takes one
 action for two people, it is only viable while both of them want it, and whether it
-forms or ends depends on what each member would be worth outside it. Three declarations
-cover that, and each goes in a slot an ordinary model already has.
+forms or ends depends on what each member would be worth outside it. Two declarations
+cover the household itself, and each goes in a slot an ordinary model already has.
 
-| Declaration                | Goes in                 | Says                                                            |
-| -------------------------- | ----------------------- | --------------------------------------------------------------- |
-| `CollectiveUtility`        | `functions["utility"]`  | who the members are, and how their action values are traded off |
-| `ValueDependentConstraint` | `constraints`           | where the cell is feasible, reading values as well as states    |
-| `Gate`                     | `Transition(gates=...)` | which branch within a target, from the landing state            |
+| Declaration         | Goes in                 | Says                                                            |
+| ------------------- | ----------------------- | --------------------------------------------------------------- |
+| `CollectiveUtility` | `functions["utility"]`  | who the members are, and how their action values are traded off |
+| `Gate`              | `Transition(gates=...)` | which branch within a target, from the landing state            |
 
-`ProjectedRegimeValue` reads another regime's value in the *same* period, for a value
-constraint's comparison and for a route's fallback. A move decided by comparing values
-is not a `Gate`: it is a participation `Exit` of the source regime, or a
-`ParticipationCheck` evaluated on landing.
+`ProjectedRegimeValue` reads another regime's value in the *same* period, for a route's
+fallback. A move decided by comparing values is not a `Gate`: it is a participation
+`Exit` of the source regime, or a `ParticipationCheck` evaluated on landing.
 
 The complete worked model is `lcm_examples.collective_household`. This page walks
 through the pieces; the exact declaration contracts are in
@@ -87,73 +85,6 @@ Normalization is `"pointwise"` by default, which rescales the declared weights t
 one wherever the objective is evaluated, so a state-dependent weight cannot change the
 scale of the household's objective from cell to cell. `normalization="none"` uses the
 weights as written, for a scalarization whose level is itself meant to vary.
-
-## Participation: a constraint that reads values
-
-A household is feasible only where each partner is at least as well off inside it as
-alone. "Alone" is that partner's own regime, in the *same* period — not next period's
-continuation. `ProjectedRegimeValue` reads it, and `ValueDependentConstraint` compares
-against it:
-
-```python
-from lcm import ProjectedRegimeValue, ValueDependentConstraint
-
-
-def participation_f(*, Q_f, V_alone_f, slack):
-    return Q_f >= V_alone_f - slack
-
-
-constraints = {
-    "affordable": consumption_within_wealth,
-    "participation_f": ValueDependentConstraint(
-        predicate=participation_f,
-        references={
-            "V_alone_f": ProjectedRegimeValue(
-                regime="single_f",
-                projection={"wealth": half_of_couple_wealth},
-            )
-        },
-    ),
-}
-```
-
-The predicate may read `Q_<s>` for each member, each key of its **own** `references`,
-and ordinary states, actions, functions and parameters. `projection` owes one entry per
-state of the *referenced* regime; the value is interpolated at the resulting
-coordinates. A constraint-local projection may not introduce free parameters — that is
-checked when the `Regime` is constructed, naming the reference, the projection and the
-offending argument.
-
-The regime's mask is the AND of the ordinary constraints and the value-dependent ones. A
-cell whose mask is empty carries the `-inf` sentinel: there is no viable household
-there. Where its members go instead is declared on the regime as a participation `Exit`,
-or on the incoming edge as a `ParticipationCheck` reading the household's policy
-support.
-
-A value constraint cannot excuse a discrete law that leaves its grid. Such a law sends a
-state to a code outside `0..n-1`, and an off-grid code has no value to compare with. The
-transition check therefore counts every cell the ordinary constraints allow, in the
-solve and the simulation, and raises `InvalidStateTransitionError` where a law leaves
-its grid there. When a restriction does not read a value, declare it as an ordinary
-constraint beside the value-dependent one:
-
-```python
-def rest_only(*, work):
-    return work == 0
-
-
-def participation_f(*, Q_f):
-    return Q_f >= 0.0
-
-
-constraints = {
-    "rest_only": rest_only,  # value-free: an ordinary constraint
-    "participation_f": ValueDependentConstraint(predicate=participation_f),
-}
-```
-
-Written as one predicate, `(work == 0) & (Q_f >= 0.0)`, the same restriction is refused
-when only `work == 1` sends a discrete state off its grid.
 
 ## Dissolving in the current period: where the members compare
 
@@ -868,7 +799,6 @@ Everything lands where the declaration is:
 ```python
 template["couple"]["utility_f"]["crra"]  # a member's own utility
 template["couple"]["pareto_objective"]["weight_f"]  # the objective's free arguments
-template["couple"]["participation_f"]["slack"]  # a value constraint's predicate
 template["edges"]["single_f"]["couple"]["predicate"]["bonus"]  # one gate's predicate
 ```
 

@@ -845,7 +845,6 @@ def _decision_value_reads(
         regime_name=context.regime_name,
         period=period,
         target_regimes=target_regimes,
-        same_period_ref_regimes=context.same_period_ref_regimes,
         edge_reference_regimes=_edge_reference_regimes_for_targets(
             context=context, target_regimes=target_regimes
         ),

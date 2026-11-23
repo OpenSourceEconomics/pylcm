@@ -62,7 +62,6 @@ from lcm import (
     piece,
     ref,
 )
-from lcm.collective import ValueDependentConstraint
 from lcm.consumption_savings_regime import (
     ConsumptionSavingsRegime,
     LiquidMargin,
@@ -1848,99 +1847,8 @@ def test_off_grid_output_of_a_source_only_markov_draw_is_refused(
 # phase it checks.
 
 
-@categorical(ordered=False)
-class _SourceTerminal:
-    source: ScalarInt
-    terminal: ScalarInt
-
-
-def _pair_flow(*, kind: DiscreteState, a: DiscreteAction) -> FloatND:
-    return 1.0 - 2.0 * a + 0.0 * kind
-
-
-def _pair_terminal(*, kind: DiscreteState) -> FloatND:
-    return 0.0 * kind
-
-
-def _kind_leaves_when_working(
-    *, kind: DiscreteState, a: DiscreteAction
-) -> DiscreteState:
-    return jnp.where(a == 1, 2, kind).astype(jnp.int32)
-
-
 def _rest_only(*, a: DiscreteAction) -> BoolND:
     return a == 0
-
-
-def _participation_model(*, rest_as_ordinary: bool) -> Model:
-    """`Q_alice = 1 - 2a`; only `a = 1` sends `kind` to code 2, off `{0, 1}`.
-
-    The restriction `a == 0` sits inside the value constraint, as in the review's
-    `(a == 0) & (Q_f >= 0)`, or beside it as an ordinary constraint.
-    """
-
-    def participation(*, Q_alice: FloatND, a: DiscreteAction) -> BoolND:
-        return ((a == 0) | rest_as_ordinary) & (Q_alice >= 0.0)
-
-    constraints = {"participation": ValueDependentConstraint(predicate=participation)}
-    if rest_as_ordinary:
-        constraints["rest_only"] = _rest_only
-    return Model(
-        regimes={
-            "source": UserRegime(
-                states={"kind": DiscreteGrid(category_class=_TwoCodes)},
-                actions={"a": DiscreteGrid(category_class=_TwoCodes)},
-                functions={
-                    "utility": CollectiveUtility(
-                        utilities={"alice": _pair_flow, "bob": _pair_flow}
-                    )
-                },
-                state_transitions={"kind": _kind_leaves_when_working},
-                constraints=constraints,
-            ),
-            "terminal": UserRegime(
-                states={"kind": DiscreteGrid(category_class=_TwoCodes)},
-                functions={
-                    "utility": CollectiveUtility(
-                        utilities={"alice": _pair_terminal, "bob": _pair_terminal}
-                    )
-                },
-            ),
-        },
-        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
-        edges={"source": {"terminal": 0}},
-        initial_nodes={0: "source"},
-        regime_id_class=_SourceTerminal,
-    )
-
-
-def test_value_constraint_cannot_excuse_an_off_grid_law() -> None:
-    """`a = 1` is feasible by the ordinary constraints, and its code is off the grid.
-
-    An off-grid code has no value, so the value constraint cannot decide that
-    cell; the error names the ordinary constraint as the remedy.
-    """
-    with pytest.raises(InvalidStateTransitionError, match="ordinary constraint"):
-        _participation_model(rest_as_ordinary=False).validate_transitions(
-            params={"discount_factor": 1.0}
-        )
-
-
-@pytest.mark.parametrize("runtime_checks", [False, True])
-def test_ordinary_restriction_beside_a_value_constraint_solves(
-    *, runtime_checks: bool
-) -> None:
-    """Declared as an ordinary constraint, `a == 0` excludes the off-grid action."""
-    model = _participation_model(rest_as_ordinary=True)
-    model.validate_transitions(params={"discount_factor": 1.0})
-    got = model.solve(
-        params={"discount_factor": 1.0},
-        log_level="off",
-        runtime_checks=runtime_checks,
-    )
-    np.testing.assert_array_equal(
-        np.asarray(got.values[0]["source"]), [[1.0, 1.0], [1.0, 1.0]]
-    )
 
 
 def _impute_low() -> DiscreteState:
@@ -2870,12 +2778,6 @@ def _weight_f(*, income: DiscreteState) -> FloatND:
     return income**2 / 100.0
 
 
-def _participation_at_income(
-    *, Q_f: FloatND, a: DiscreteAction, income: DiscreteState
-) -> BoolND:
-    return (a == 0) | (Q_f >= 2.0 * income - 3.0)
-
-
 def _couple_regime(*, values: bool, terminal: bool) -> UserRegime:
     convert = _as_declared if values else _on_codes
     if terminal:
@@ -2901,11 +2803,6 @@ def _couple_regime(*, values: bool, terminal: bool) -> UserRegime:
                     "m": convert(_income_utility_m),
                 },
                 objective=ParetoObjective(weights={"f": convert(_weight_f), "m": 0.5}),
-            )
-        },
-        constraints={
-            "participation": ValueDependentConstraint(
-                predicate=convert(_participation_at_income)
             )
         },
     )
@@ -2945,7 +2842,7 @@ def _couple_model(*, values: bool, enable_jit: bool) -> Model:
 def test_collective_regime_reads_the_values_of_a_value_grid(
     *, enable_jit: bool
 ) -> None:
-    """A household's utilities, weights, value constraint and law read values."""
+    """A household's utilities, weights and law read values."""
     _assert_identical_solutions_and_simulations(
         got=_couple_model(values=True, enable_jit=enable_jit),
         expected=_couple_model(values=False, enable_jit=enable_jit),

@@ -63,8 +63,6 @@ from _lcm.regime_building.ndimage import map_coordinates
 from _lcm.regime_building.Q_and_F import (
     EDGE_REF_PARAMS_ARG,
     EDGE_REF_V_ARG,
-    SAME_PERIOD_PARAMS_ARG,
-    SAME_PERIOD_V_ARG,
     _get_feasibility,
 )
 from _lcm.simulation import chunk_operations, population_operations
@@ -1723,14 +1721,11 @@ def _referenced_value_kwargs(
 ) -> dict[ReferenceName, QAndFArg]:
     """Build the value mappings one regime's kernel reads beside its own grids.
 
-    Two channels, each empty for a regime that declares nothing on it, and each
-    carrying the referenced value together with the reference regime's OWN
-    params — the split the solve-side grid-search kernel makes, so both phases
-    read one operator:
-
-    - a value constraint's same-period reference, at THIS period's value;
-    - a gated edge's leg fallbacks, read where the row
-      lands and therefore at the value of the period it lands IN.
+    One channel, empty for a regime that declares no gated edge: a gated edge's
+    leg fallbacks, read where the row lands and therefore at the value of the
+    period it lands IN. It carries the referenced value together with the
+    reference regime's OWN params — the split the solve-side grid-search kernel
+    makes, so both phases read one operator.
 
     Args:
         regime: The canonical regime being simulated.
@@ -1743,17 +1738,6 @@ def _referenced_value_kwargs(
 
     """
     kwargs: dict[ReferenceName, QAndFArg] = {}
-    if regime.same_period_ref_regimes:
-        this_period_V = period_to_regime_to_V_arr.get(period, MappingProxyType({}))
-        kwargs[SAME_PERIOD_V_ARG] = MappingProxyType(
-            {ref: this_period_V[ref] for ref in regime.same_period_ref_regimes}
-        )
-        kwargs[SAME_PERIOD_PARAMS_ARG] = MappingProxyType(
-            {
-                ref: regime_kernel_params(flat_params, regime_name=ref)
-                for ref in regime.same_period_ref_regimes
-            }
-        )
     # The same per-period set the AOT lowering consults, so a compiled
     # program's pytree and this call's arguments name the same channels — and
     # only the regimes this period's edges land in, since an edge whose target

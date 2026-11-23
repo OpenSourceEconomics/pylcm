@@ -274,7 +274,6 @@ def test_two_cores_of_one_regime_form_a_single_dispatch_unit() -> None:
             ScheduledNode(period=0, regime="acting", program="main"),
             ScheduledNode(period=0, regime="acting", program="replay"),
         ),
-        same_period_dependencies=MappingProxyType({"acting": ()}),
         device_sets=MappingProxyType({"acting": frozenset({0})}),
     )
 

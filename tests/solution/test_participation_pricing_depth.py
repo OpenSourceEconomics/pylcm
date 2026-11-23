@@ -88,7 +88,6 @@ class _PolicyQueryKwargs(TypedDict):
     period: int
     ages: TimeAxis
     logger: logging.Logger
-    same_period_regime_to_V_arr: NotRequired[Mapping[RegimeName, FloatND] | None]
     edge_regime_to_V_arr: NotRequired[Mapping[RegimeName, FloatND] | None]
 
 

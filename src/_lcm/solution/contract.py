@@ -556,18 +556,6 @@ class SolverBuildContext:
     thread each reference regime's OWN grid params beside it.
     """
 
-    same_period_ref_regimes: tuple[RegimeName, ...] = ()
-    """Reference regimes whose SAME-period V this regime's kernels read.
-
-    Non-empty only for a collective regime declaring
-    `same_period_refs`. The grid-search kernel then accepts the extra call
-    argument `same_period_regime_to_V_arr` (the mapping of these regimes to
-    their current-period V arrays, supplied by the solve loop after solving
-    them earlier in the same period) and includes matching zero templates in
-    its lowering arguments. Empty for every other regime, whose kernel
-    signatures are unchanged.
-    """
-
     def place_on_regime_devices[Template](self, *, template: Template) -> Template:
         """Return a continuation template placed like this regime's stored values.
 

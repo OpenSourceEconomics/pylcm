@@ -215,7 +215,6 @@ composed with ...") when a regime reading such a group also uses:
 - invariant state blocks (`ExecutionConfig(invariant_block_widths=...)`);
 - a gated value channel: gated edges out of or into the regime, or participation reads
   of it;
-- a same-period value channel: `same_period_refs` from or to the regime;
 - a sharded discrete state whose law is the identity (a co-mapped state).
 
 `Model.lookup_policy` raises `UnsupportedOperationError` for such a regime: a current

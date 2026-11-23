@@ -99,7 +99,6 @@ from _lcm.time import TimeAxis
 from _lcm.transition_plans import SupportOrigin
 from _lcm.typing import (
     FlatParams,
-    FlatRegimeParams,
     LandingCheck,
     PytreeValue,
     QAndFArg,
@@ -128,8 +127,6 @@ _CELL_WIDTH_KEYWORD = "_lcm_cell_width"
 _CORE_RUNTIME_ARG_NAMES = frozenset(
     {
         "next_regime_to_V_arr",
-        "same_period_regime_to_V_arr",
-        "same_period_regime_to_params",
         "edge_reference_regime_to_V_arr",
         "edge_reference_regime_to_params",
         "period",
@@ -214,7 +211,7 @@ class GridSearch(Solver):
     evaluates its regime at projected states, so it keeps that draw enumerated in
     the solve as well. With cancelling values, the simulated choice can differ
     from the solve's by more than a tie where only the solve contracts it. A
-    regime with a gated edge or a value constraint contracts in neither phase,
+    regime with a gated edge contracts in neither phase,
     nor does a continuation toward a target reached through a participation
     check, and a query keeps every draw toward a target whose `off_grid="raise"`
     landings it counts.
@@ -735,9 +732,7 @@ def _classify_action_streaming(
         )
     elif not context.state_action_space.action_names or math.prod(action_extents) <= 1:
         disposition = _ActionStreamingDisposition.DENSE_TRIVIAL_ACTION_PRODUCT
-    elif context.co_map_state_names and (
-        context.same_period_ref_regimes or context.edge_reference_regimes
-    ):
+    elif context.co_map_state_names and context.edge_reference_regimes:
         disposition = _ActionStreamingDisposition.DENSE_CO_MAP_REFERENCE_CHANNEL
     elif any(
         has_objective_profile(Q_and_F=Q_and_F)
@@ -785,7 +780,6 @@ def grid_search_query_inputs(
         current_iid_plan=context.current_iid_plans.get(period),
         regime_name=context.regime_name,
         target_regimes=targets,
-        same_period_ref_regimes=context.same_period_ref_regimes,
         edge_reference_regimes=references,
         edge_target_regimes=context.edge_target_regimes,
         participation_queries=context.participation_queries.get(
@@ -799,7 +793,6 @@ def grid_search_query_inputs(
         regime_name=context.regime_name,
         period=period,
         target_regimes=targets,
-        same_period_ref_regimes=context.same_period_ref_regimes,
         edge_reference_regimes=references,
         edge_target_regimes=context.edge_target_regimes,
     )
@@ -856,7 +849,6 @@ def _value_reads(
     regime_name: RegimeName,
     period: int,
     target_regimes: tuple[RegimeName, ...],
-    same_period_ref_regimes: tuple[RegimeName, ...],
     edge_reference_regimes: tuple[RegimeName, ...],
     edge_target_regimes: tuple[RegimeName, ...],
 ) -> tuple[ValueRead, ...]:
@@ -886,20 +878,6 @@ def _value_reads(
                 path=(target_regime,),
             )
         )
-    reads.extend(
-        _value_read(
-            regime_name=regime_name,
-            period=period,
-            target=ValueArtifactAddress(
-                kind=ValueArtifactKind.REGIME_VALUE,
-                period=period,
-                regime=reference_regime,
-            ),
-            channel=ValueInputChannel.SAME_PERIOD_VALUE,
-            path=(reference_regime,),
-        )
-        for reference_regime in same_period_ref_regimes
-    )
     reads.extend(
         _value_read(
             regime_name=regime_name,
@@ -958,7 +936,6 @@ class _GridSearchArgumentBuilder:
     """Current joint support whose group parameters are shared model operands."""
     target_regimes: tuple[RegimeName, ...]
     """The period targets whose next-period values the program reads."""
-    same_period_ref_regimes: tuple[RegimeName, ...] = ()
     edge_reference_regimes: tuple[RegimeName, ...] = ()
     edge_target_regimes: tuple[RegimeName, ...] = ()
     participation_queries: Mapping[RegimeName, ParticipationQueryPlan] = field(
@@ -1022,21 +999,6 @@ class _GridSearchArgumentBuilder:
             }
             arguments[CURRENT_IID_NODES_ARGUMENT] = self.current_iid_plan.node_operands
             arguments[CURRENT_IID_ROWS_ARGUMENT] = self.current_iid_plan.indices
-        if self.same_period_ref_regimes:
-            # Only the declared references: a participation check's date carries every
-            # stored value its source reads, which is not this program's operand tree.
-            available = (
-                raw_next_regime_to_V_arr
-                if context.same_period_regime_to_V_arr is None
-                else context.same_period_regime_to_V_arr
-            )
-            reference_values = MappingProxyType(
-                {name: available[name] for name in self.same_period_ref_regimes}
-            )
-            arguments["same_period_regime_to_V_arr"] = _value_argument(reference_values)
-            arguments["same_period_regime_to_params"] = self._same_period_params(
-                flat_params=flat_params
-            )
         arguments.update(
             self._edge_reference_args(
                 next_regime_to_V_arr=raw_next_regime_to_V_arr,
@@ -1131,17 +1093,6 @@ class _GridSearchArgumentBuilder:
                 }
             ),
         }
-
-    def _same_period_params(
-        self, *, flat_params: FlatParams
-    ) -> MappingProxyType[RegimeName, FlatRegimeParams]:
-        """Return each same-period reference regime's own flat parameters."""
-        return MappingProxyType(
-            {
-                name: regime_kernel_params(flat_params, regime_name=name)
-                for name in self.same_period_ref_regimes
-            }
-        )
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)
@@ -1240,7 +1191,7 @@ class _GridSearchPeriodKernel:
             ),
         )
 
-    def __call__(  # noqa: C901 - validate native output roles before publication
+    def __call__(
         self,
         *,
         compiled_cores: Mapping[str, Callable[..., PytreeValue]],
@@ -1251,15 +1202,13 @@ class _GridSearchPeriodKernel:
         period: int,
         ages: TimeAxis,
         logger: logging.Logger,  # noqa: ARG002
-        same_period_regime_to_V_arr: Mapping[RegimeName, FloatND] | None = None,
         edge_regime_to_V_arr: Mapping[RegimeName, FloatND] | None = None,
     ) -> KernelOutput:
         """Evaluate the grid search and assemble the `KernelOutput`.
 
-        `same_period_regime_to_V_arr` is passed by the solve loop only for a
-        regime declaring `same_period_refs`; `edge_regime_to_V_arr` only for
-        a regime with gated edges (substituted into
-        `next_regime_to_V_arr` before the core call). Every other kernel keeps
+        `edge_regime_to_V_arr` is passed by the solve loop only for a regime
+        with gated edges (substituted into `next_regime_to_V_arr` before the
+        core call). Every other kernel keeps
         the uniform `PeriodKernel` call signature.
 
         A regime solved one invariant code at a time is handed exactly one of
@@ -1273,16 +1222,6 @@ class _GridSearchPeriodKernel:
                 space=state_action_space, binding=program.invariant_binding
             )
         argument_builder = cast("_GridSearchArgumentBuilder", program.argument_builder)
-        if (
-            argument_builder.same_period_ref_regimes
-            and same_period_regime_to_V_arr is None
-        ):
-            msg = (
-                f"Regime '{argument_builder.regime_name}' declares same_period_refs "
-                f"on {argument_builder.same_period_ref_regimes} but the solve loop "
-                "passed no same-period V arrays."
-            )
-            raise RuntimeError(msg)
         arguments = program.argument_builder(
             CoreBuildContext(
                 state_action_space=state_action_space,
@@ -1292,7 +1231,6 @@ class _GridSearchPeriodKernel:
                 period=period,
                 ages=ages,
                 edge_regime_to_V_arr=edge_regime_to_V_arr,
-                same_period_regime_to_V_arr=same_period_regime_to_V_arr,
             )
         )
         out = compiled_cores[core_key](**arguments)

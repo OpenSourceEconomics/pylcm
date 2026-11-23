@@ -70,9 +70,7 @@ SCENARIOS = MappingProxyType(
         ),
         "collective-gs-vd": ScenarioSpec(
             name="collective-gs-vd",
-            description=(
-                "Collective household with value-dependent constraints and edges."
-            ),
+            description=("Collective household with value-dependent edges."),
             topology="selected-backend",
             expected_collective=True,
             expected_head_streamed=False,

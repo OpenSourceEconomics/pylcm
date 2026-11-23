@@ -691,7 +691,6 @@ def resolve_demand(  # noqa: C901 - shared fixed point for occupancy, values and
     *,
     schedules: RegimeSchedules,
     initial_nodes: frozenset[tuple[UserAge, RegimeName]],
-    same_period_refs_by_regime: Mapping[RegimeName, tuple[RegimeName, ...]],
     terminal_regimes: frozenset[RegimeName],
     ages: TimeAxis,
     policy_reads_by_phase: Mapping[
@@ -708,8 +707,8 @@ def resolve_demand(  # noqa: C901 - shared fixed point for occupancy, values and
     - a visit (H) requires the pair's value, its realized successors and gated
       landings as visits, and the values the realized routing reads;
     - a value (S) requires the values its backward problem reads: perceived
-      continuation targets, solve fallbacks and same-period
-      references. Realized routes out of a value-only pair are not followed.
+      continuation targets and solve fallbacks. Realized routes out of a
+      value-only pair are not followed.
 
     Every required pair must be an available problem: a terminal regime, or a
     nonterminal one with a law at a non-final age. The returned schedules
@@ -785,10 +784,6 @@ def resolve_demand(  # noqa: C901 - shared fixed point for occupancy, values and
                     *support["solution"].get(name, {}).get(period, ()),
                     *value_reads["solution"].get(name, {}).get(period, ()),
                 )
-            )
-            work.extend(
-                (False, period, target, f"a stored reference of {kind}[{name}]")
-                for target in same_period_refs_by_regime.get(name, ())
             )
             continue
         physical, period, name, requester = work.popleft()
@@ -870,18 +865,6 @@ def resolve_demand(  # noqa: C901 - shared fixed point for occupancy, values and
             reads = (
                 *support["solution"].get(name, {}).get(period, ()),
                 *value_reads["solution"].get(name, {}).get(period, ()),
-            )
-            work.extend(
-                (
-                    False,
-                    period,
-                    reference,
-                    (
-                        f"a same-period reference of ({ages.exact_values[period]}, "
-                        f"'{name}')"
-                    ),
-                )
-                for reference in same_period_refs_by_regime.get(name, ())
             )
         targets = (
             support["simulation" if physical else "solution"]

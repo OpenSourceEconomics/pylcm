@@ -243,6 +243,12 @@ _DURABLE_FIELD_NAMES = MappingProxyType(
         ("lcm.participation.ParticipationRead", "member"): "stakeholder",
     }
 )
+# Every regime declaration was hashed with these two empty slots, so they stay in
+# its record at their empty values and no model's durable fingerprint moves.
+_DURABLE_EMPTY_REGIME_FIELDS = (
+    ("value_constraints", MappingProxyType({})),
+    ("same_period_refs", MappingProxyType({})),
+)
 
 
 def _anchored_module_closure(
@@ -1116,8 +1122,11 @@ def _project_user_regime_declaration(
         fields = vars(regime).items()
     elif dataclasses.is_dataclass(regime) and not isinstance(regime, type):
         fields = (
-            (declaration.name, getattr(regime, declaration.name))
-            for declaration in dataclasses.fields(cast("DataclassInstance", regime))
+            *(
+                (declaration.name, getattr(regime, declaration.name))
+                for declaration in dataclasses.fields(cast("DataclassInstance", regime))
+            ),
+            *_DURABLE_EMPTY_REGIME_FIELDS,
         )
     else:
         msg = "A model fingerprint requires a dataclass user-regime declaration."

@@ -40,7 +40,7 @@ from lcm import (
     post_decision_lower_bound,
     ref,
 )
-from lcm.collective import CollectiveUtility, ValueDependentConstraint
+from lcm.collective import CollectiveUtility
 from lcm.exceptions import InvalidFunctionOutputError, InvalidValueFunctionError
 from lcm.exits import Unilateral
 from lcm.regime import StateTransitionEntry
@@ -1089,37 +1089,6 @@ def test_constant_current_iid_law_parameters(*, form: str) -> None:
     np.testing.assert_array_equal(np.asarray(values), 1.0)
 
 
-@pytest.mark.parametrize("form", _BOOLEAN_FORMS)
-def test_constant_value_dependent_constraint(*, form: str) -> None:
-    """A value-dependent predicate `True` admits every cell."""
-    raw = _constant(form=form, value=1)
-
-    def participation(*, Q_f: FloatND) -> BoolND:  # noqa: ARG001
-        return raw  # ty: ignore[invalid-return-type]
-
-    base, params = make_stateless_collective_target_model()
-    couple = base.user_regimes["couple"]
-    model = Model(
-        regimes={
-            "couple": couple.replace(
-                constraints={
-                    **dict(couple.constraints),
-                    "participation": ValueDependentConstraint(predicate=participation),
-                }
-            ),
-            "couple_terminal": base.user_regimes["couple_terminal"],
-        },
-        ages=AGES,
-        regime_id_class=CoupleRegimeId,
-        initial_nodes={0: "couple"},
-        edges={"couple": {"couple_terminal": 0}},
-    )
-    values = model.solve(params=params, log_level="off").values
-    np.testing.assert_allclose(
-        values[0]["couple"], STATELESS_TARGET_V_PERIOD_0, rtol=1e-6
-    )
-
-
 # What each role refuses: a predicate refuses numbers, a discrete code refuses
 # floats and a float role refuses Booleans. Only the returned dtype is checked.
 
@@ -1284,33 +1253,6 @@ def test_numeric_constraint_under_endogenous_grids_is_refused() -> None:
 
     with pytest.raises(InvalidFunctionOutputError, match="must return a Boolean"):
         _constrained_nbegm_values(allowed)
-
-
-def test_numeric_value_dependent_constraint_is_refused() -> None:
-    """A value-dependent predicate `1` is a number, not a Boolean."""
-
-    def participation(*, Q_f: FloatND) -> BoolND:  # noqa: ARG001
-        return jnp.asarray(1)
-
-    base, params = make_stateless_collective_target_model()
-    couple = base.user_regimes["couple"]
-    model = Model(
-        regimes={
-            "couple": couple.replace(
-                constraints={
-                    **dict(couple.constraints),
-                    "participation": ValueDependentConstraint(predicate=participation),
-                }
-            ),
-            "couple_terminal": base.user_regimes["couple_terminal"],
-        },
-        ages=AGES,
-        regime_id_class=CoupleRegimeId,
-        initial_nodes={0: "couple"},
-        edges={"couple": {"couple_terminal": 0}},
-    )
-    with pytest.raises(InvalidFunctionOutputError, match="must return a Boolean"):
-        model.solve(params=params, log_level="off")
 
 
 @pytest.mark.parametrize(

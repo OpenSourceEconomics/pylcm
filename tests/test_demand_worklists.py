@@ -17,6 +17,7 @@ from _lcm.regime_building.transition_support import (
 from lcm import (
     AgeGrid,
     AgeRange,
+    AgeSpecializedGrid,
     ByAge,
     LinSpacedGrid,
     MemberRoute,
@@ -34,9 +35,6 @@ from lcm.exceptions import ModelInitializationError
 from lcm.initial_nodes import UserInitialNodes
 from lcm.phased import Phased
 from lcm.typing import AgeLabel, BoolND, ContinuousState, FloatND, RegimeName, ScalarInt
-from tests.regime_building.test_same_period_ref_period_axes import (
-    _make_model as _make_outside_option_model,
-)
 
 _WEALTH = LinSpacedGrid(start=0.0, stop=1.0, n_points=2)
 _PARAMS = {"discount_factor": 0.9}
@@ -433,26 +431,6 @@ def test_a_phased_fallback_prices_one_regime_and_lands_in_another() -> None:
     assert "priced" not in reachability.simulation.active_regimes_by_period[1]
 
 
-def test_a_local_outside_option_demands_its_island_by_value_only() -> None:
-    """A same-period reference and its own continuation are solved, not visited."""
-    reachability = _make_outside_option_model(
-        later_ceiling=10.0, initial_nodes={0: "couple"}
-    ).reachability
-    assert (reachability.nodes, reachability.visited_nodes) == (
-        frozenset(
-            {
-                (0, "couple"),
-                (1, "couple_terminal"),
-                (0, "single_f"),
-                (1, "single_f"),
-                (1, "single_f_terminal"),
-                (2, "single_f_terminal"),
-            }
-        ),
-        frozenset({(0, "couple"), (1, "couple_terminal")}),
-    )
-
-
 def test_simulate_visits_only_visited_pairs_with_zero_node_regimes() -> None:
     """Subjects starting at a start stay on visited pairs; unused regimes are empty."""
     model = _phased_model({0: "source"})
@@ -473,17 +451,48 @@ def test_simulate_visits_only_visited_pairs_with_zero_node_regimes() -> None:
     assert visited == frozenset({(0, "source"), (1, "realized"), (2, "end")})
 
 
+@categorical(ordered=False)
+class AgedId:
+    single: ScalarInt
+    single_terminal: ScalarInt
+
+
+def _is_first_age(age: float) -> bool:
+    return age < 0.5
+
+
+def _aged_wealth_grid(age: float) -> LinSpacedGrid:
+    return LinSpacedGrid(
+        start=0.0, stop=100.0 if _is_first_age(age) else 10.0, n_points=2
+    )
+
+
 def test_an_unreached_regime_with_an_age_specialized_grid_builds_and_solves() -> None:
     """An age-varying grid of a regime solved at no age needs no age to resolve."""
-    model = _make_outside_option_model(
-        later_ceiling=10.0, initial_nodes={2: "single_f_terminal"}
+    model = Model(
+        regimes={
+            "single": Regime(
+                states={
+                    "wealth": AgeSpecializedGrid(
+                        build=_aged_wealth_grid, signature=_is_first_age
+                    )
+                },
+                state_transitions={"wealth": fixed_transition("wealth")},
+                functions={"utility": _utility},
+            ),
+            "single_terminal": _terminal(),
+        },
+        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
+        regime_id_class=AgedId,
+        initial_nodes={2: "single_terminal"},
+        edges={"single": {"single": 0, "single_terminal": 1}},
     )
     # Only the terminal root is demanded, so no regime reads a parameter.
     values = model.solve(params={}, log_level="off").values
     solved = {
         (period, name) for period, by_regime in values.items() for name in by_regime
     }
-    assert solved == {(2, "single_f_terminal")}
+    assert solved == {(2, "single_terminal")}
 
 
 def _probabilities() -> FloatND:

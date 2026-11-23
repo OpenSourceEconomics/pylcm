@@ -54,7 +54,6 @@ from lcm import (
     Periods,
     Regime,
     Unilateral,
-    ValueDependentConstraint,
     categorical,
 )
 from lcm.exceptions import ExecutionPlanningError, OffGridStateError
@@ -511,7 +510,6 @@ def _solve_with_table(
         period: int,
         ages: TimeAxis,
         logger: logging.Logger,
-        same_period_regime_to_V_arr: Mapping[RegimeName, FloatND] | None = None,
         edge_regime_to_V_arr: Mapping[RegimeName, FloatND] | None = None,
     ) -> KernelOutput:
         if self.root_context.regime_name == reader and self.period == 0:
@@ -522,7 +520,6 @@ def _solve_with_table(
                 flat_params=flat_params,
                 period=period,
                 ages=ages,
-                same_period_regime_to_V_arr=same_period_regime_to_V_arr,
                 edge_regime_to_V_arr=edge_regime_to_V_arr,
             )
             tables.append(
@@ -538,7 +535,6 @@ def _solve_with_table(
             period=period,
             ages=ages,
             logger=logger,
-            same_period_regime_to_V_arr=same_period_regime_to_V_arr,
             edge_regime_to_V_arr=edge_regime_to_V_arr,
         )
 
@@ -1261,18 +1257,12 @@ def _poor_at_the_top_m(*, wealth: FloatND, work: IntND) -> FloatND:
     return 1.0 + 0.5 * _poor_at_the_top(wealth=wealth, work=work)
 
 
-def _admit_all(Q_f: FloatND) -> BoolND:
-    return Q_f >= -1000.0
-
-
 def _leaving_destination(
     *, collective: bool, landing: Callable[..., FloatND]
 ) -> Regime:
     """The destination works for its next wealth by `landing`; it stays at wealth
     0 and 0.5 and is so poor at wealth 1 that it leaves there for `elsewhere`.
-
-    A `collective` destination keeps every action by a value constraint, so it
-    counts its landings in its kernel rather than in the preflight.
+    A `collective` destination is a household of two.
     """
     members = ("f", "m") if collective else ("self",)
     return Regime(
@@ -1285,9 +1275,6 @@ def _leaving_destination(
             if collective
             else _poor_at_the_top
         },
-        constraints={"admit_all": ValueDependentConstraint(predicate=_admit_all)}
-        if collective
-        else {},
         state_transitions={"wealth": landing},
         exit=Exit(
             targets={
@@ -1367,17 +1354,16 @@ def _refusal(
 _BETA = {"discount_factor": 0.9}
 
 
-@pytest.mark.parametrize("collective", [False, True], ids=["preflight", "kernel"])
+@pytest.mark.parametrize("collective", [False, True], ids=["single", "household"])
 def test_a_landing_past_the_grid_where_the_destination_leaves_fails_both_modes(
     *, collective: bool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The destination's stay problem at wealth 1 lands past its raise-rule grid,
     and the destination leaves there; the source reads it only at wealth 0.5.
 
-    The destination's own solve refuses that landing: a plain destination in the
-    preflight, a destination with a value constraint in its kernel, which counts
-    the stay problem's landings where it leaves too. So both modes refuse alike,
-    and the table's check over the whole grid refuses nothing more.
+    The destination's own solve refuses that landing, a single and a household
+    alike, so both modes refuse alike, and the table's check over the whole grid
+    refuses nothing more.
     """
     model = partial(_leaving_model, collective=collective)
     point = _refusal(model=model, stored=False, monkeypatch=monkeypatch)
@@ -1387,7 +1373,7 @@ def test_a_landing_past_the_grid_where_the_destination_leaves_fails_both_modes(
     assert "state='wealth', phase='solve'" in point
 
 
-@pytest.mark.parametrize("collective", [False, True], ids=["preflight", "kernel"])
+@pytest.mark.parametrize("collective", [False, True], ids=["single", "household"])
 def test_the_leaving_destination_on_the_grid_solves_both_modes_alike(
     *, collective: bool, monkeypatch: pytest.MonkeyPatch
 ) -> None:

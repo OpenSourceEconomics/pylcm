@@ -20,8 +20,6 @@ from lcm import (
     AgeGrid,
     AgeRange,
     ByAge,
-    CollectiveUtility,
-    DiscreteGrid,
     Gate,
     LinSpacedGrid,
     MemberRoute,
@@ -32,7 +30,6 @@ from lcm import (
     Regime,
     StochasticTransition,
     Transition,
-    ValueDependentConstraint,
     categorical,
     fixed_transition,
 )
@@ -48,17 +45,6 @@ from lcm.typing import (
     ScalarInt,
     UserFacingRegimeParamsTemplate,
     UserFunction,
-)
-from tests.regime_building.test_same_period_ref_period_axes import (
-    COUPLE_GRID,
-    Work,
-    _couple_utility_f,
-    _couple_utility_m,
-    _participation_f,
-    _project_wealth,
-    _single_utility,
-    _zero_collective_utility,
-    _zero_utility,
 )
 
 _WEALTH = LinSpacedGrid(start=0.0, stop=1.0, n_points=2)
@@ -239,72 +225,6 @@ def _solve_fallback_without_law(initial_nodes: UserInitialNodes) -> Model:
     )
 
 
-@categorical(ordered=False)
-class _CoupleId:
-    single_f: ScalarInt
-    single_f_terminal: ScalarInt
-    couple: ScalarInt
-    couple_terminal: ScalarInt
-
-
-def _same_period_reference_without_law(initial_nodes: UserInitialNodes) -> Model:
-    """The couple reads the single value at age 0, where single has no law."""
-    single_grid = LinSpacedGrid(start=0.0, stop=100.0, n_points=2)
-    return Model(
-        regimes={
-            "single_f": Regime(
-                states={"wealth": single_grid},
-                state_transitions={"wealth": fixed_transition("wealth")},
-                functions={"utility": _single_utility},
-            ),
-            "single_f_terminal": Regime(
-                states={"wealth": single_grid},
-                functions={"utility": _zero_utility},
-            ),
-            "couple": Regime(
-                states={"wealth": COUPLE_GRID},
-                state_transitions={"wealth": fixed_transition("wealth")},
-                actions={"work": DiscreteGrid(category_class=Work)},
-                functions={
-                    "utility": CollectiveUtility(
-                        utilities={"f": _couple_utility_f, "m": _couple_utility_m}
-                    )
-                },
-                constraints={
-                    "participation_f": ValueDependentConstraint(
-                        predicate=_participation_f,
-                        references={
-                            "V_single_f": ProjectedRegimeValue(
-                                regime="single_f",
-                                projection={"wealth": _project_wealth},
-                            )
-                        },
-                    )
-                },
-            ),
-            "couple_terminal": Regime(
-                states={"wealth": COUPLE_GRID},
-                actions={"work": DiscreteGrid(category_class=Work)},
-                functions={
-                    "utility": CollectiveUtility(
-                        utilities={
-                            "f": _zero_collective_utility,
-                            "m": _zero_collective_utility,
-                        }
-                    )
-                },
-            ),
-        },
-        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
-        regime_id_class=_CoupleId,
-        initial_nodes=initial_nodes,
-        edges={
-            "single_f": {"single_f_terminal": 1},
-            "couple": {"couple_terminal": 0},
-        },
-    )
-
-
 # Each match names the kind of read, the requesting pair and the missing pair,
 # in any order.
 @pytest.mark.parametrize(
@@ -330,15 +250,6 @@ def test_a_required_value_read_without_a_law_names_its_kind(
     """A participation read or valuation fallback lacking a law is named as such."""
     with pytest.raises(ModelInitializationError, match=match):
         build({40: "source"})
-
-
-def test_a_same_period_reference_without_a_law_names_its_kind() -> None:
-    """A same-period outside option lacking a law names the reading pair."""
-    with pytest.raises(
-        ModelInitializationError,
-        match=r"same-period reference of \(0, 'couple'\) requires 'single_f' at age 0",
-    ):
-        _same_period_reference_without_law({0: "couple"})
 
 
 @pytest.mark.parametrize(

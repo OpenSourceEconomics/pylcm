@@ -184,13 +184,11 @@ class ExecutionConfig:
 
     A state every regime prunes leaves no axis to spread and is refused.
 
-    A discrete state always qualifies. A continuous state qualifies only on a
-    narrow route: it must be the sole sharded state, a model-level
-    `LinSpacedGrid` retained in every regime, solved everywhere with
-    `GridSearch` under a singleton hard-max, and the regimes must carry no
-    members, gated edges, value constraints, same-period references or
-    taste shocks. Model construction checks every requirement and the error
-    lists what a rejected model violates.
+    A discrete state always qualifies. A continuous state qualifies only on a narrow
+    route: it must be the sole sharded state, a model-level `LinSpacedGrid` retained in
+    every regime, solved everywhere with `GridSearch` under a singleton hard-max, and
+    the regimes must carry no members, gated edges or taste shocks. Model construction
+    checks every requirement and the error lists what a rejected model violates.
     """
 
     axis_widths: Mapping[NonEmptyName, _AxisWidth] = field(default_factory=dict)
@@ -253,13 +251,12 @@ class ExecutionConfig:
     code is a runtime operand of one shared executable per regime-period, and
     the published result has the unblocked solve's layout.
 
-    Only width 1 and one state are supported. Model construction refuses,
-    before anything is lowered, a state that is not provably invariant, a
-    sharded state, a state no regime declares, and regimes the route does not
-    serve: another solver, taste shocks, collective regimes, gated edges,
-    same-period references, edge-reference reads and a non-discrete grid for
-    the state. Terminal regimes, which read no continuation, are solved
-    unblocked.
+    Only width 1 and one state are supported. Model construction refuses, before
+    anything is lowered, a state that is not provably invariant, a sharded state, a
+    state no regime declares, and regimes the route does not serve: another solver,
+    taste shocks, collective regimes, gated edges, edge-reference reads and a
+    non-discrete grid for the state. Terminal regimes, which read no continuation, are
+    solved unblocked.
 
     When the simulate phase provably keeps the state fixed too, and no regime
     declares taste shocks, gated edges or a policy replay, `simulate` groups
@@ -358,12 +355,11 @@ class ExecutionConfig:
     The action block width is capped so that every device owns at least one
     block where the product allows it.
 
-    A count of one is the ordinary route. Model construction refuses, before
-    anything is lowered, a count larger than the visible devices or the
-    action product, a regime that does not exist, and regimes the route does
-    not serve: terminal regimes, another solver, taste shocks, collective
-    regimes, gated edges, same-period references, a discrete sharded state,
-    and a fixed action width that leaves a device without a block.
+    A count of one is the ordinary route. Model construction refuses, before anything is
+    lowered, a count larger than the visible devices or the action product, a regime
+    that does not exist, and regimes the route does not serve: terminal regimes, another
+    solver, taste shocks, collective regimes, gated edges, a discrete sharded state, and
+    a fixed action width that leaves a device without a block.
     """
 
     devices: (

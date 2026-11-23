@@ -47,7 +47,6 @@ from lcm import (
     ProjectedRegimeValue,
     Regime,
     Transition,
-    ValueDependentConstraint,
     categorical,
     fixed_transition,
 )
@@ -121,14 +120,6 @@ def _consent_gate(
 ) -> BoolND:
     # EKL eq. 27: strict, unanimous mutual consent.
     return (V_target_f > V_single_f_ref) & (V_target_m > V_single_m_ref)
-
-
-def _ir_f(*, Q_f: FloatND, V_single_f_ref: FloatND, delta_f: FloatND) -> BoolND:
-    return Q_f >= V_single_f_ref - delta_f
-
-
-def _ir_m(*, Q_m: FloatND, V_single_m_ref: FloatND, delta_m: FloatND) -> BoolND:
-    return Q_m >= V_single_m_ref - delta_m
 
 
 def _consent_source() -> Regime:
@@ -480,9 +471,9 @@ def test_edge_leg_naming_a_missing_target_member_is_rejected() -> None:
 #
 # `_make_full_topology_regimes` / `_full_topology_transitions` /
 # `_with_full_topology_laws` are the topology tests/solution imports (fold reads,
-# liveness pins, period replay/waves, release log): state-gated consent edges and
-# value constraints in `married`. The test here dissolves `married` through a
-# current-period participation exit instead.
+# liveness pins, period replay/waves, release log): state-gated consent edges into
+# `married`. The test here dissolves `married` through a current-period
+# participation exit instead.
 
 
 @categorical(ordered=False)
@@ -528,24 +519,6 @@ def _make_full_topology_regimes() -> dict[str, Regime]:
                 utilities={"f": _u_married_ir_f, "m": _u_married_ir_m}
             )
         },
-        constraints={
-            "ir_f": ValueDependentConstraint(
-                predicate=_ir_f,
-                references={
-                    "V_single_f_ref": ProjectedRegimeValue(
-                        regime="single_f_p1", projection={"wage": _identity_wage}
-                    )
-                },
-            ),
-            "ir_m": ValueDependentConstraint(
-                predicate=_ir_m,
-                references={
-                    "V_single_m_ref": ProjectedRegimeValue(
-                        regime="single_m_p1", projection={"wage": _identity_wage}
-                    )
-                },
-            ),
-        },
     )
     married_terminal = Regime(
         states={"wage": _WAGE3},
@@ -577,9 +550,9 @@ def _consent_where_marriage_pays_both(wage: ContinuousState) -> BoolND:
     """Mutual consent of the mini-EKL topology, stated on the landing wage.
 
     On the wage grid {1, 2, 3} marriage pays both partners strictly more than
-    their single references only at wage 3: (V_married_f, V_married_m) is
-    (2, 1), (-inf, -inf), (6, 3) against references (1.5, 1), (5.5, 1),
-    (1.5, 1). A gate routes on states, so the comparison is written as the wage
+    their single references (1.5, 1), (5.5, 1), (1.5, 1) only at wage 3, where
+    it pays (6, 3): the husband gains nothing at wage 1, the wife nothing at
+    wage 2. A gate routes on states, so the comparison is written as the wage
     set where it holds.
     """
     return wage > 2.5

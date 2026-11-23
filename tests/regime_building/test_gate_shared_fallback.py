@@ -289,7 +289,7 @@ def test_an_accepted_gate_model_keeps_its_values() -> None:
         initial_nodes={0: ("single_f", "single_m")},
     )
     solution = model.solve(
-        params={"discount_factor": 0.95, "delta_f": 0.5, "delta_m": 0.2},
+        params={"discount_factor": 0.95},
         log_level="off",
     )
     aaae(

@@ -219,8 +219,8 @@ quadrature-node position. Read the physical value `<shock>` instead. The codes o
 `Discrete` shocks and of process states remain readable.
 
 A group read only by `GridSearch` regimes is not yet composed with action partitions, a
-`Decoupled` decision, invariant state blocks, gated or same-period value channels, or
-co-mapped sharded states, and `Model.lookup_policy` refuses a regime that reads it. See
+`Decoupled` decision, invariant state blocks, gated value channels, or co-mapped sharded
+states, and `Model.lookup_policy` refuses a regime that reads it. See
 [Combinations not yet composed with current shocks](../reference/shocks.md#current-iid-refusals)
 for the full list. Keep such a shock as an IID process state where the model needs one
 of these.

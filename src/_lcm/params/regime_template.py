@@ -56,7 +56,7 @@ from _lcm.typing import (
 )
 from _lcm.utils.error_messages import path_segment_name_errors
 from _lcm.utils.functools import get_union_of_args, is_user_function
-from lcm.collective import Gate
+from lcm.collective import Gate, ProjectedRegimeValue
 from lcm.decoupled import (
     koopmans_aggregator_variants,
     resolve_koopmans_aggregator,
@@ -65,8 +65,8 @@ from lcm.exceptions import InvalidNameError, ModelInitializationError
 from lcm.grids import DiscreteGrid, IrregSpacedGrid
 from lcm.participation import ParticipationCheck
 from lcm.phased import Phased
-from lcm.regime import ProjectedRegimeValue, StateTransitionEntry
 from lcm.regime import Regime as UserRegime
+from lcm.regime import StateTransitionEntry
 from lcm.shocks import Discrete, ShockGroup, ShockGroupName
 from lcm.transition import (
     ByAge,
@@ -947,13 +947,6 @@ def _wired_names(user_regime: UserRegime) -> frozenset[ReferenceName]:
         # (the stacked per-member utilities), exactly like `E_next_V` —
         # so the name must not surface as a user-facing param.
         variables.add("utility")
-        # Value-constraint predicates read the
-        # engine-computed per-member action values `Q_<s>` and the
-        # interpolated same-period reference values (keyed by the
-        # `same_period_refs` names) as named arguments — engine-wired, never
-        # user-facing params.
-        variables.update(f"Q_{s}" for s in user_regime.member_axis)
-        variables.update(user_regime.same_period_refs)
     # `<name>_code` reads the code of the discrete variable `<name>`.
     variables.update(
         f"{name}_code"
@@ -1359,7 +1352,6 @@ def _fail_if_joint_support_reads_runtime_names(
         *user_regime.actions,
         *user_regime.decomposed_functions,
         *user_regime.constraints,
-        *user_regime.value_constraints,
         "CE",
     }
     inputs = {
@@ -1917,10 +1909,6 @@ def _collect_all_functions_for_template(
         for name, func in user_regime.decomposed_constraints.items()
         if func is not None
     }
-    # Value-constraint predicates carry user params exactly like ordinary
-    # constraints; their engine-wired `Q_<s>` / reference-value arguments are
-    # excluded via `variables`.
-    result |= dict(user_regime.value_constraints)
     # A carried state contributes its `solve` variant as a derived function
     # under the state's name (solve-phase imputation), so its parameters
     # surface in the template. Its law of motion is its regular
