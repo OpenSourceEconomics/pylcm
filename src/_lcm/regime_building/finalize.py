@@ -4,7 +4,7 @@
 runs: model-level `derived_categoricals` are merged in, the model-level
 Koopmans aggregator and certainty equivalent are injected into non-terminal
 regimes that declare none, and completeness is validated (a
-`utility` entry — a per-stakeholder `utility_<s>` and at least one discrete
+`utility` entry — a per-member `utility_<s>` and at least one discrete
 action for a collective regime — state-transition coverage, no state/action
 overlap, distributed-grid rules). The result is a plain
 `lcm.regime.Regime`, still in user vocabulary — coarse laws, `Phased`
@@ -123,10 +123,10 @@ def finalize_regimes(
     # The published frame is one table over every regime, so the names its
     # collective regimes claim are reserved for all of them.
     reserved_value_columns = frozenset(
-        f"value_{stakeholder}"
+        f"value_{member}"
         for regime in user_regimes.values()
-        if regime.stakeholders is not None
-        for stakeholder in regime.stakeholders
+        if regime.member_axis is not None
+        for member in regime.member_axis
     )
     if value_grids_by_regime is None:
         value_grids_by_regime = bind_reading_regimes(
@@ -348,7 +348,7 @@ def _with_adapted_household(
 ) -> UserRegime:
     """Return the regime whose household declares the bodies the engine runs.
 
-    A stakeholder's adapted utility is then one object in the declaration and in
+    A member's adapted utility is then one object in the declaration and in
     the engine's functions, and the Pareto weights read values.
     """
     declaration = user_regime.functions.get("utility")

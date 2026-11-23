@@ -19,12 +19,12 @@ from lcm import (
     DeterministicTransition,
     Gate,
     LinSpacedGrid,
+    MemberRoute,
     Model,
     ParticipationCheck,
     ParticipationRead,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     StochasticTransition,
     Transition,
     categorical,
@@ -78,9 +78,9 @@ def gate_with_free_x(*, V_target: FloatND, x: float) -> BoolND:
     return V_target >= x
 
 
-def routes() -> dict[str, StakeholderRoute]:
+def routes() -> dict[str, MemberRoute]:
     return {
-        "only": StakeholderRoute(
+        "only": MemberRoute(
             fallback=ProjectedRegimeValue(regime="fallback", projection={})
         )
     }

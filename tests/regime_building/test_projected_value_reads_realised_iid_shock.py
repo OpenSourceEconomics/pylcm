@@ -37,11 +37,11 @@ from lcm import (
     CollectiveUtility,
     DiscreteGrid,
     Gate,
+    MemberRoute,
     Model,
     NormalIIDProcess,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     Transition,
     ValueDependentConstraint,
     categorical,
@@ -176,8 +176,8 @@ def _build_model(
                     "married": Gate(
                         predicate=_always_open,
                         routes={
-                            "only": StakeholderRoute(
-                                target_stakeholder="f",
+                            "only": MemberRoute(
+                                target_member="f",
                                 fallback=ProjectedRegimeValue(
                                     regime="single_f", projection=projection
                                 ),

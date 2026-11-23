@@ -179,7 +179,7 @@ def _save_cpu_checkpoint(
         actions=MappingProxyType({"consumption": jax.device_put(jnp.ones(2), cpu)}),
         states=MappingProxyType({"wealth": jax.device_put(jnp.array([2.0, 3.0]), cpu)}),
         in_regime=jax.device_put(jnp.array([True, True]), cpu),
-        own_stakeholder=jax.device_put(jnp.array([-1, -1], dtype=jnp.int32), cpu),
+        own_member=jax.device_put(jnp.array([-1, -1], dtype=jnp.int32), cpu),
         nested_policy_fallback=jax.device_put(jnp.array([False, False]), cpu),
     )
     result = _PublicSimulationResult(

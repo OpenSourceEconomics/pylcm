@@ -1,6 +1,6 @@
 """A collective participation reads its period-`t` operands on period `t`'s axes.
 
-A collective source declares one route per stakeholder, and a collective target
+A collective source declares one route per member, and a collective target
 has a Participating policy support that no singleton regime has. Both enlarge
 what one participation check closes over: pricing reads every route's own fallback
 grid and every participation read's, and simulation queries the target's support at
@@ -15,7 +15,7 @@ value maps to, and through it the gate, which is a discrete branch.
 Two models, one per collective-only object:
 
 - `_build_gate_ref_model` puts the moving grid on a participation read and gives the
-  two stakeholders different outside options, so a wrongly-aged read moves both
+  two members different outside options, so a wrongly-aged read moves both
   components of the source's value.
 - `_build_dissolution_model` puts it on the collective TARGET, whose support the
   participation reads, so a wrongly-aged read maps the realized state onto a different
@@ -34,12 +34,12 @@ from lcm import (
     CollectiveUtility,
     DiscreteGrid,
     LinSpacedGrid,
+    MemberRoute,
     Model,
     ParticipationCheck,
     ParticipationRead,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     StochasticTransition,
     Transition,
     ValueDependentConstraint,
@@ -70,7 +70,7 @@ _ANNUITY_GRID = LinSpacedGrid(start=0.0, stop=8.0, n_points=3)
 _OUTSIDE_BASE_F = 100.0
 _OUTSIDE_BASE_M = 200.0
 
-# The husband's felicity premium in the target regime, so the two stakeholder
+# The husband's felicity premium in the target regime, so the two member
 # components of every folded quantity differ.
 _M_BONUS = 10.0
 
@@ -83,8 +83,8 @@ _INDEX_HURDLE = 3.0
 # 2's `[0, 2, 4]`.
 _FLOOR_F = 3.0
 
-# The couple's value at the age at which it leaves, per stakeholder. The gate is
-# open at the entry point on the period's OWN axes, so each stakeholder discounts
+# The couple's value at the age at which it leaves, per member. The gate is
+# open at the entry point on the period's OWN axes, so each member discounts
 # the target's own component: `0.5 * 4` and `0.5 * (10 + 4)`.
 _EXPECTED_COUPLE_V_AT_AGE_1 = np.array([2.0, 7.0])
 
@@ -120,13 +120,13 @@ class _DissolutionRegimeId:
 
 
 def test_collective_source_gate_ref_is_read_at_its_own_period_axes() -> None:
-    """Both stakeholders of an age-1 couple are worth `(2, 7)`.
+    """Both members of an age-1 couple are worth `(2, 7)`.
 
     At age 2 the index's grid is `[0, 2, 4]`, so a level of `4` is its top node
     and worth `4` — above the hurdle of `3`, so the gate stays open and each
-    stakeholder's continuation is the account's own component. Measuring that
+    member's continuation is the account's own component. Measuring that
     level against the index's age-1 grid `[0, 4, 8]` instead places it on the
-    MIDDLE node, worth `2`, which shuts the gate and hands the two stakeholders
+    MIDDLE node, worth `2`, which shuts the gate and hands the two members
     their separate annuities, `(52, 102)`.
     """
     model = _build_gate_ref_model()
@@ -141,7 +141,7 @@ def test_collective_source_gate_ref_is_read_at_its_own_period_axes() -> None:
 
 
 def test_simulated_collective_source_gate_ref_is_read_at_its_own_period_axes() -> None:
-    """A simulated age-1 couple is worth `(2, 7)` per stakeholder.
+    """A simulated age-1 couple is worth `(2, 7)` per member.
 
     Simulation rebuilds the gated continuation from the stored value functions
     rather than reusing the solved one, so it owes backward induction's folded
@@ -194,7 +194,7 @@ def test_collective_dissolution_participation_routes_by_its_own_period_support()
 def test_collective_dissolution_participation_prices_support_at_its_own_period() -> (
     None
 ):
-    """Both stakeholders of an age-1 couple are worth `(2, 7)` under a support read.
+    """Both members of an age-1 couple are worth `(2, 7)` under a support read.
 
     The source prices the same age-2 participation check that simulation settles.
     Pinning the priced value here is what makes the routing assertion above a statement
@@ -236,7 +236,7 @@ def test_empty_counts_use_households_and_the_periods_own_grid(
 def _build_gate_ref_model() -> Model:
     r"""Build a couple whose participation reads an index on an age-varying grid.
 
-    Topology over ages 0-3: `couple` is collective (`stakeholders=("f", "m")`),
+    Topology over ages 0-3: `couple` is collective (`members=("f", "m")`),
     active at ages 0 and 1, and stays put at age 0, so it leaves for `account` at
     age 1 only. `account` is collective too, active at ages 1 and 2, and holds
     `balance` on the age-invariant grid `[0, 4]`. `index` and the two annuities
@@ -332,15 +332,15 @@ def _build_gate_ref_model() -> Model:
                             )
                         },
                         routes={
-                            "f": StakeholderRoute(
-                                target_stakeholder="f",
+                            "f": MemberRoute(
+                                target_member="f",
                                 fallback=ProjectedRegimeValue(
                                     regime="annuity_f",
                                     projection={"principal": _principal_from_balance},
                                 ),
                             ),
-                            "m": StakeholderRoute(
-                                target_stakeholder="m",
+                            "m": MemberRoute(
+                                target_member="m",
                                 fallback=ProjectedRegimeValue(
                                     regime="annuity_m",
                                     projection={"principal": _principal_from_balance},
@@ -449,22 +449,22 @@ def _build_dissolution_model() -> Model:
                         reads={
                             "pair_support": ParticipationRead(
                                 regime="pair",
-                                stakeholder="f",
+                                member="f",
                                 kind="Participating",
                                 field="support",
                                 projection={"w": _same_w},
                             )
                         },
                         routes={
-                            "f": StakeholderRoute(
-                                target_stakeholder="f",
+                            "f": MemberRoute(
+                                target_member="f",
                                 fallback=ProjectedRegimeValue(
                                     regime="single_f",
                                     projection={"s": _single_state_from_w},
                                 ),
                             ),
-                            "m": StakeholderRoute(
-                                target_stakeholder="m",
+                            "m": MemberRoute(
+                                target_member="m",
                                 fallback=ProjectedRegimeValue(
                                     regime="single_m",
                                     projection={"s": _single_state_from_w},
@@ -519,8 +519,8 @@ def _initial_conditions(
     return {
         "age": jnp.zeros(n_subjects),
         "regime_id": jnp.full(n_subjects, regime_id, dtype=jnp.int32),
-        "own_stakeholder": jnp.full(
-            n_subjects, model.stakeholder_names_to_ids["f"], dtype=jnp.int32
+        "own_member": jnp.full(
+            n_subjects, model.member_names_to_ids["f"], dtype=jnp.int32
         ),
     }
 
@@ -636,5 +636,5 @@ def _principal_from_balance(balance: ContinuousState) -> ContinuousState:
 
 
 def _single_state_from_w(w: ContinuousState) -> ContinuousState:
-    """A dissolved household carries `w` into each stakeholder's single regime."""
+    """A dissolved household carries `w` into each member's single regime."""
     return w

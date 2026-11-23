@@ -5,6 +5,25 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
+### Every regime has members
+
+- The parties of a regime whose values are tracked are its **members**; the word
+  "stakeholder" is gone from the API. `Regime.members` is always a tuple: the
+  `utilities` keys of a `CollectiveUtility`, in the order written, and `("self",)` for a
+  regime declared with a plain utility function. `Regime.member_axis` is the household
+  marker: equal to `members` for a household and `None` otherwise.
+- Renamed: `Regime.stakeholders` to `Regime.member_axis`, `StakeholderRoute` to
+  `MemberRoute`, its `target_stakeholder` to `target_member`, the `stakeholder` field of
+  `ProjectedRegimeValue` and `ParticipationRead` to `member`,
+  `Model.stakeholder_names_to_ids` to `Model.member_names_to_ids`, the initial condition
+  and published column `own_stakeholder` to `own_member`, and the solver API's
+  `AxisRole.STAKEHOLDER` (axis `"stakeholder"`) to `AxisRole.MEMBER` (axis `"member"`).
+  Error messages and documentation say "member" throughout.
+- `CollectiveUtility` refuses a member named `"self"`, which is reserved for the single
+  member of a regime declared with a plain utility function.
+- Values, model fingerprints and saved simulation results of models without a
+  `CollectiveUtility` are unchanged.
+
 ### `GridSearch(lottery_contraction=True)` contracts in exits and collective regimes
 
 - With the option on, the eligible draws are summed into the next-period value also in
@@ -22,12 +41,12 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ### The regime finder keeps collective regimes, exits and renegotiation apart
 
-- `find_regimes` pools a collective regime only with regimes of the same stakeholders,
+- `find_regimes` pools a collective regime only with regimes of the same members,
   and pools regimes only when their exits are equal (rule, tie, comparison,
   renegotiation, settlement, targets with roles, observed shocks and availability). The
-  normalized cells carry the stakeholders, the exit's identity and the renegotiated
+  normalized cells carry the members, the exit's identity and the renegotiated
   states, and the independent source check verifies them and the cells' operators.
-- Work and storage count one action value and one stored value per stakeholder, as the
+- Work and storage count one action value and one stored value per member, as the
   solve does.
 - The state an exit's `Renegotiate` moves is an ordinary, always-live state of its
   regime: it is never contracted, split into lanes or carried as a status.
@@ -63,7 +82,7 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 ### A singleton source enters a collective target in a declared role
 
 - `Transition(roles={"couple": "f"})` declares that a row moving from a singleton source
-  into the collective regime `couple` continues there as its stakeholder `f`. It replaces
+  into the collective regime `couple` continues there as its member `f`. It replaces
   the hand-written always-open `Gate` with a never-taken fallback, solves and simulates
   identically to it, and refuses a landing without a feasible action with
   `NoFeasibleActionError`, as a plain edge does. A role on a non-collective target, an
@@ -72,7 +91,7 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   `ModelInitializationError`. See
   [Regime transitions](docs/reference/transitions.md#api-regime-transitions).
 - Two routes of one gate may share a fallback regime when, in each phase, they name the
-  same stakeholder and the same parameter-free projection function per state, so both
+  same member and the same parameter-free projection function per state, so both
   write the same row; any other sharing is refused as before, the message now naming a
   parameter where only that stands in the way.
 
@@ -547,7 +566,7 @@ unchanged. The solvers keep the derivative rules they use themselves.
   stochastic law reads values and still returns probabilities in the order of
   `values`. Integer values arrive as int32, as codes do. A variable declared with values
   must carry the same values and tolerance in every regime. Regime transition laws,
-  gates and their projections, collective regimes (stakeholder utilities, Pareto
+  gates and their projections, collective regimes (member utilities, Pareto
   weights, value-dependent constraints and their projections), joint transitions
   and carried-state imputations read values too; a projection, a joint output and an
   imputation of a value-grid state return a value. A `functools.partial` reading a
@@ -676,7 +695,7 @@ unchanged. The solvers keep the derivative rules they use themselves.
 - `SolutionResult.value_array(period=..., regime=...)` returns an xarray `DataArray`
   named `V` with one dimension per state axis, the resolved grid nodes as coordinates,
   discrete states labelled as categoricals in declaration order (`use_categorical_codes=True` for
-  integer codes), and a `stakeholder` dimension for collective regimes. It wraps the
+  integer codes), and a `member` dimension for collective regimes. It wraps the
   stored value without a host copy; `.sel(...)` selects a curve or surface by name before
   any table is built. `SolutionResult.value_frame(...)` returns the same values as a long
   pandas DataFrame with state columns followed by `V`. Both survive saving and loading.
@@ -933,7 +952,7 @@ unchanged. The solvers keep the derivative rules they use themselves.
   simulation diagnostics; the second returns a one-dimensional boolean mask in caller
   order, `True` exactly for the subjects admitting a jointly feasible action combination
   on the declared action grids. Malformed inputs raise from both, and so does a
-  collective start without the `own_stakeholder` declaration `simulate` demands, so a
+  collective start without the `own_member` declaration `simulate` demands, so a
   population the methods accept is one `simulate` accepts. The checks take no
   `log_level`; at present they run in one eager pass on one device without device-memory
   admission or subject padding, which does not affect the verdict.

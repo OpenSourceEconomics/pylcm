@@ -17,12 +17,12 @@ from lcm import (
     ByAge,
     CollectiveUtility,
     DiscreteGrid,
+    MemberRoute,
     Model,
     ParticipationCheck,
     ParticipationRead,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     Transition,
     ValueDependentConstraint,
     categorical,
@@ -107,7 +107,7 @@ def _model(
                             "V_target_f": ParticipationRead(
                                 kind=target_kind,
                                 regime="married",
-                                stakeholder="f",
+                                member="f",
                                 projection={},
                             ),
                             "V_single": ParticipationRead(
@@ -115,9 +115,7 @@ def _model(
                             ),
                         },
                         routes={
-                            "only": StakeholderRoute(
-                                target_stakeholder="f", fallback=single
-                            )
+                            "only": MemberRoute(target_member="f", fallback=single)
                         },
                     )
                 },

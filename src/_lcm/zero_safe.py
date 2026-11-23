@@ -246,7 +246,7 @@ def sum_in_value_order(*, values: FloatND, axis: int = 0) -> FloatND:
     """Sum `values` after canonicalising the floating-point reduction order.
 
     Floating-point addition is not associative.  When the entries are keyed by
-    economically inert identifiers (regime labels, stakeholder names), reducing in
+    economically inert identifiers (regime labels, member names), reducing in
     declaration order can therefore make a value — and even a strict argmax — depend
     on those identifiers.  Sorting the NUMERIC contributions before the sum makes the
     reduction order a function of the contribution multiset alone.

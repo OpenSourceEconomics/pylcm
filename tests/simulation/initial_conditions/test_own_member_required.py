@@ -1,13 +1,13 @@
 """Routing a collective source's participation check needs the simulated row's own role.
 
-A collective regime declares one dissolution leg per stakeholder, and each leg
-sends the dissolving row into *that* stakeholder's own continuing regime under
-*that* stakeholder's own state projection. A `simulate()` call over a collective
+A collective regime declares one dissolution leg per member, and each leg
+sends the dissolving row into *that* member's own continuing regime under
+*that* member's own state projection. A `simulate()` call over a collective
 source therefore has to say which role its population carries: a cohort routed
 without one would follow a single partner's dissolution path for every row —
 each divorced husband simulated as his wife, with her regime and her state.
 
-`initial_conditions["own_stakeholder"]` names that role, one entry per subject,
+`initial_conditions["own_member"]` names that role, one entry per subject,
 and a subject starting in a collective regime must carry one wherever a route
 it can still reach differs by role. A row keeps its role across an ordinary
 regime transition, so that question is asked over the start's forward closure:
@@ -27,12 +27,12 @@ from lcm import (
     ByAge,
     CollectiveUtility,
     DiscreteGrid,
+    MemberRoute,
     Model,
     ParticipationCheck,
     ParticipationRead,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     StochasticTransition,
     Transition,
     categorical,
@@ -44,7 +44,7 @@ from lcm.solver_api import ResultRetention, SolutionResult
 from lcm.typing import RegimeName, ScalarInt
 from tests.collective_fixtures import (
     make_couple_initial_conditions,
-    make_two_stakeholder_model,
+    make_two_member_model,
 )
 from tests.conftest import assert_agrees_to_ulp
 from tests.regime_building.test_collective_regime_simulate import (
@@ -81,7 +81,7 @@ CONSENT_MARRIED_MEMBERSHIP = (True, False)
 
 # The married couple's scheduled law and participation support decision keep it
 # together while participation is supported; a dissolving row continues in its own
-# stakeholder's single regime under the identity wage projection.
+# member's single regime under the identity wage projection.
 MARRIED_DISSOLUTION_LAW = {"married_ir": StochasticTransition(func=_prob_one)}
 MARRIED_DISSOLUTION_PARTICIPATION = {
     "married_ir": ParticipationCheck(
@@ -89,21 +89,21 @@ MARRIED_DISSOLUTION_PARTICIPATION = {
         reads={
             "target_support": ParticipationRead(
                 regime="married_ir",
-                stakeholder="f",
+                member="f",
                 kind="Participating",
                 field="support",
                 projection={"wage": _identity_wage},
             )
         },
         routes={
-            "f": StakeholderRoute(
-                target_stakeholder="f",
+            "f": MemberRoute(
+                target_member="f",
                 fallback=ProjectedRegimeValue(
                     regime="single_f", projection={"wage": _identity_wage}
                 ),
             ),
-            "m": StakeholderRoute(
-                target_stakeholder="m",
+            "m": MemberRoute(
+                target_member="m",
                 fallback=ProjectedRegimeValue(
                     regime="single_m", projection={"wage": _identity_wage}
                 ),
@@ -126,8 +126,8 @@ SINGLE_F_CONSENT_PARTICIPATION = {
     "married_terminal": ParticipationCheck(
         predicate=_consent_gate,
         routes={
-            "f": StakeholderRoute(
-                target_stakeholder="f",
+            "f": MemberRoute(
+                target_member="f",
                 fallback=ProjectedRegimeValue(
                     regime="single_f_terminal",
                     projection={"wage": _identity_wage},
@@ -137,13 +137,13 @@ SINGLE_F_CONSENT_PARTICIPATION = {
         reads={
             "V_target_f": ParticipationRead(
                 regime="married_terminal",
-                stakeholder="f",
+                member="f",
                 kind="Participating",
                 projection={"wage": _identity_wage},
             ),
             "V_target_m": ParticipationRead(
                 regime="married_terminal",
-                stakeholder="m",
+                member="m",
                 kind="Participating",
                 projection={"wage": _identity_wage},
             ),
@@ -176,7 +176,7 @@ class ConsentRegimeId:
 def dissolution_model_and_solution() -> tuple[Model, SolutionResult]:
     """Solve the two-leg collective dissolution miniature once.
 
-    `married` carries the stakeholders `("f", "m")` and a dissolution edge whose
+    `married` carries the members `("f", "m")` and a dissolution edge whose
     legs send the wife to `single_f` and the husband to `single_m`.
     """
     model = Model(
@@ -223,7 +223,7 @@ def consent_model_and_solution() -> tuple[Model, SolutionResult]:
     return model, solution
 
 
-@pytest.mark.parametrize("expected_in_message", ["own_stakeholder", "married"])
+@pytest.mark.parametrize("expected_in_message", ["own_member", "married"])
 def test_collective_source_without_an_own_role_is_refused(
     *,
     dissolution_model_and_solution: tuple[Model, SolutionResult],
@@ -236,7 +236,7 @@ def test_collective_source_without_an_own_role_is_refused(
     """
     with pytest.raises(InvalidInitialConditionsError, match=expected_in_message):
         _simulate_dissolution_cohort(
-            setup=dissolution_model_and_solution, own_stakeholder=None
+            setup=dissolution_model_and_solution, own_member=None
         )
 
 
@@ -259,7 +259,7 @@ def test_named_own_role_routes_the_dissolving_row_to_its_own_leg(
     wife's leg stays empty for a cohort that declared itself the husbands.
     """
     result = _simulate_dissolution_cohort(
-        setup=dissolution_model_and_solution, own_stakeholder="m"
+        setup=dissolution_model_and_solution, own_member="m"
     )
 
     np.testing.assert_array_equal(
@@ -273,7 +273,7 @@ def test_singleton_source_needs_no_own_role(
 ) -> None:
     """A cohort starting single routes through its gated edge with no role seeded.
 
-    The role decides between one stakeholder's leg and another's, and a
+    The role decides between one member's leg and another's, and a
     singleton source has only the one leg, so requiring a role there would
     refuse a model that is perfectly well specified.
     """
@@ -305,11 +305,11 @@ def test_collective_source_with_no_role_dependent_route_needs_no_own_role() -> N
     """A collective cohort whose model declares no multi-leg edge simulates unseeded.
 
     Nothing in such a model reads the role: there is no gated edge whose legs
-    differ by stakeholder, so no route, regime or state projection can turn on
+    differ by member, so no route, regime or state projection can turn on
     it. Demanding a seed there would refuse a well specified model over a
     column that decides nothing.
     """
-    model, params = make_two_stakeholder_model()
+    model, params = make_two_member_model()
 
     result = model.simulate(
         params=params,
@@ -325,7 +325,7 @@ def test_collective_source_with_no_role_dependent_route_needs_no_own_role() -> N
 
 
 def _simulate_dissolution_cohort(
-    *, setup: tuple[Model, SolutionResult], own_stakeholder: str | None
+    *, setup: tuple[Model, SolutionResult], own_member: str | None
 ) -> SimulationResult:
     """Simulate the dissolution miniature's three-subject cohort at one role."""
     model, solution = setup
@@ -341,11 +341,11 @@ def _simulate_dissolution_cohort(
             ),
             **(
                 {}
-                if own_stakeholder is None
+                if own_member is None
                 else {
-                    "own_stakeholder": jnp.full(
+                    "own_member": jnp.full(
                         len(DISSOLUTION_WAGES),
-                        model.stakeholder_names_to_ids[own_stakeholder],
+                        model.member_names_to_ids[own_member],
                         dtype=jnp.int32,
                     )
                 }
@@ -375,7 +375,7 @@ class UnreachableRoleRoutingRegimeId:
 def _make_unreachable_role_routing_regimes() -> dict[RegimeName, Regime]:
     """Add a collective start that cannot reach the two-leg dissolution edge.
 
-    `alone` carries the same stakeholders as `married` and runs out into its own
+    `alone` carries the same members as `married` and runs out into its own
     terminal regime. Its only outgoing edge leads to `alone_terminal`, so no
     path leads from it to `married` and none of `married`'s legs can ever
     select on a role a subject started in `alone` with.
@@ -563,8 +563,8 @@ def test_current_exit_requires_an_actual_source_member_role(
         "regime_id": jnp.asarray([model.regime_names_to_ids["married_ir"]]),
     }
     if role is not None:
-        initial_conditions["own_stakeholder"] = jnp.asarray([role], dtype=jnp.int32)
-    with pytest.raises(InvalidInitialConditionsError, match="own_stakeholder"):
+        initial_conditions["own_member"] = jnp.asarray([role], dtype=jnp.int32)
+    with pytest.raises(InvalidInitialConditionsError, match="own_member"):
         model.simulate(
             params=_DISSOLUTION_PARAMS,
             initial_conditions=initial_conditions,
@@ -594,7 +594,7 @@ def test_current_exit_settles_the_named_original_source_member(
             "wage": jnp.asarray([2.0]),
             "age": jnp.asarray([1.0]),
             "regime_id": jnp.asarray([model.regime_names_to_ids["married_ir"]]),
-            "own_stakeholder": jnp.asarray([model.stakeholder_names_to_ids[role]]),
+            "own_member": jnp.asarray([model.member_names_to_ids[role]]),
         },
         solution=solution,
         log_level="off",

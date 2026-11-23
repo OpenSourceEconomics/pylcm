@@ -839,9 +839,7 @@ def test_retained_dissolution_result_replay_matches_automatic_solve() -> None:
         "wage": jnp.asarray([1.0, 2.0, 3.0]),
         "age": jnp.zeros(3),
         "regime_id": jnp.full(3, model.regime_names_to_ids["married"], dtype=jnp.int32),
-        "own_stakeholder": jnp.full(
-            3, model.stakeholder_names_to_ids["f"], dtype=jnp.int32
-        ),
+        "own_member": jnp.full(3, model.member_names_to_ids["f"], dtype=jnp.int32),
     }
 
     direct = model.simulate(
@@ -1733,7 +1731,7 @@ def test_value_frame_rejects_colliding_column_names(
 
 
 def test_value_frame_scalar_and_collective() -> None:
-    """Scalar values have one row and collective values identify stakeholders."""
+    """Scalar values have one row and collective values identify members."""
 
     @categorical(ordered=False)
     class Household:
@@ -1759,7 +1757,7 @@ def test_value_frame_scalar_and_collective() -> None:
     result = model.solve(params={}, log_level="off")
     assert result.value_frame(period=0, regime="alone").to_dict("list") == {"V": [7.0]}
     assert result.value_frame(period=0, regime="couple").to_dict("list") == {
-        "stakeholder": ["f", "m"],
+        "member": ["f", "m"],
         "V": [3.0, 5.0],
     }
     with pytest.raises(KeyError):
@@ -1768,7 +1766,7 @@ def test_value_frame_scalar_and_collective() -> None:
 
 @pytest.mark.parametrize("collective", [False, True])
 @pytest.mark.parametrize("categorical_state", [False, True])
-def test_value_frame_preserves_state_named_stakeholder(
+def test_value_frame_preserves_state_named_member(
     *, collective: bool, categorical_state: bool
 ) -> None:
     """The collective axis is appended after the ordinary state axes."""
@@ -1782,8 +1780,8 @@ def test_value_frame_preserves_state_named_stakeholder(
         low: ScalarInt
         high: ScalarInt
 
-    def utility(*, stakeholder: FloatND | IntND) -> FloatND:
-        return stakeholder.astype(float)
+    def utility(*, member: FloatND | IntND) -> FloatND:
+        return member.astype(float)
 
     grid = (
         DiscreteGrid(Kind)
@@ -1795,7 +1793,7 @@ def test_value_frame_preserves_state_named_stakeholder(
     model = Model(
         regimes={
             "alive": Regime(
-                states={"stakeholder": grid},
+                states={"member": grid},
                 functions={
                     "utility": (
                         CollectiveUtility(utilities={"f": utility, "m": utility})
@@ -1814,7 +1812,7 @@ def test_value_frame_preserves_state_named_stakeholder(
     axes = result.metadata.value_schemas[0, "alive"].named_axes
     assert axes[0].role is AxisRole.STATE
     if collective:
-        assert axes[-1].role is AxisRole.STAKEHOLDER
+        assert axes[-1].role is AxisRole.MEMBER
         np.testing.assert_array_equal(
             result.value(period=0, regime="alive"),
             np.repeat(np.asarray(coordinates)[:, None], 2, axis=1),
@@ -1823,7 +1821,7 @@ def test_value_frame_preserves_state_named_stakeholder(
             result.value_frame(period=0, regime="alive")
     else:
         frame = result.value_frame(period=0, regime="alive", use_categorical_codes=True)
-        np.testing.assert_array_equal(frame["stakeholder"], coordinates)
+        np.testing.assert_array_equal(frame["member"], coordinates)
         np.testing.assert_array_equal(frame["V"], coordinates)
 
 
@@ -1880,8 +1878,8 @@ def test_value_frame_uses_resolved_grid_coordinates(*, grid_kind: str) -> None:
         )
 
 
-def test_value_frame_keeps_stakeholders_beside_an_action_named_stakeholder() -> None:
-    """A maximized-out action named `stakeholder` leaves the role labels intact."""
+def test_value_frame_keeps_members_beside_an_action_named_member() -> None:
+    """A maximized-out action named `member` leaves the role labels intact."""
 
     @categorical(ordered=False)
     class Choice:
@@ -1892,16 +1890,16 @@ def test_value_frame_keeps_stakeholders_beside_an_action_named_stakeholder() -> 
     class Alive:
         alive: ScalarInt
 
-    def utility_f(*, stakeholder: ScalarInt) -> FloatND:
-        return 3.0 + stakeholder
+    def utility_f(*, member: ScalarInt) -> FloatND:
+        return 3.0 + member
 
-    def utility_m(*, stakeholder: ScalarInt) -> FloatND:
-        return 5.0 + stakeholder
+    def utility_m(*, member: ScalarInt) -> FloatND:
+        return 5.0 + member
 
     model = Model(
         regimes={
             "alive": Regime(
-                actions={"stakeholder": DiscreteGrid(Choice)},
+                actions={"member": DiscreteGrid(Choice)},
                 functions={
                     "utility": CollectiveUtility(
                         utilities={"f": utility_f, "m": utility_m}
@@ -1917,7 +1915,7 @@ def test_value_frame_keeps_stakeholders_beside_an_action_named_stakeholder() -> 
     result = model.solve(params={}, log_level="off")
     # Household means are 4 and 5, so action 1 wins with payoffs 4 and 6.
     assert result.value_frame(period=0, regime="alive").to_dict("list") == {
-        "stakeholder": ["f", "m"],
+        "member": ["f", "m"],
         "V": [4.0, 6.0],
     }
 
@@ -1926,8 +1924,8 @@ def _choice_from_action(*, choice: ScalarInt) -> ScalarInt:
     return choice
 
 
-def _choice_from_stakeholder(*, stakeholder: ScalarInt) -> ScalarInt:
-    return stakeholder
+def _choice_from_member(*, member: ScalarInt) -> ScalarInt:
+    return member
 
 
 def _collective_utility_f(*, wealth: FloatND, selected: ScalarInt) -> FloatND:
@@ -1939,14 +1937,14 @@ def _collective_utility_m(*, wealth: FloatND, selected: ScalarInt) -> FloatND:
 
 
 def _assert_collective_frame_matches_reference(
-    *, result: SolutionResult, stakeholder_names: tuple[str, ...]
+    *, result: SolutionResult, member_names: tuple[str, ...]
 ) -> None:
-    expected = expected_collective_rows(stakeholder_names=stakeholder_names)
+    expected = expected_collective_rows(member_names=member_names)
     schema = result.metadata.value_schemas[0, "alive"]
-    assert schema.axis_names == ("wealth", "stakeholder")
+    assert schema.axis_names == ("wealth", "member")
     assert tuple(axis.role for axis in schema.named_axes) == (
         AxisRole.STATE,
-        AxisRole.STAKEHOLDER,
+        AxisRole.MEMBER,
     )
     assert dict(schema.categorical_domains) == {}
     np.testing.assert_array_equal(
@@ -1959,33 +1957,33 @@ def _assert_collective_frame_matches_reference(
         )
         assert frame.to_dict("list") == {
             "wealth": [row[0] for row in expected],
-            "stakeholder": [row[1] for row in expected],
+            "member": [row[1] for row in expected],
             "V": [row[2] for row in expected],
         }
 
 
 @pytest.mark.parametrize(
-    ("action_name", "ordered", "retention", "stakeholder_names"),
+    ("action_name", "ordered", "retention", "member_names"),
     [
         pytest.param(
             "choice", False, ResultRetention.VALUES, ("f", "m"), id="ordinary-action"
         ),
         pytest.param(
-            "stakeholder",
+            "member",
             False,
             ResultRetention.VALUES,
             ("f", "m"),
             id="colliding-action-unordered-values",
         ),
         pytest.param(
-            "stakeholder",
+            "member",
             True,
             ResultRetention.VALUES_AND_REPLAY,
             ("m", "f"),
             id="colliding-action-ordered-replay-reversed-roles",
         ),
         pytest.param(
-            "stakeholder",
+            "member",
             False,
             ResultRetention.ALL_PERSISTABLE_ARTIFACTS,
             ("f", "m"),
@@ -1993,12 +1991,12 @@ def _assert_collective_frame_matches_reference(
         ),
     ],
 )
-def test_value_frame_categorical_action_does_not_relabel_stakeholders(
+def test_value_frame_categorical_action_does_not_relabel_members(
     *,
     action_name: ActionName,
     ordered: bool,
     retention: ResultRetention,
-    stakeholder_names: tuple[str, ...],
+    member_names: tuple[str, ...],
     tmp_path: Path,
 ) -> None:
     """Rows match a scalar reference whatever the action's name, order or retention."""
@@ -2020,12 +2018,12 @@ def test_value_frame_categorical_action_does_not_relabel_stakeholders(
                 actions={action_name: DiscreteGrid(Choice)},
                 functions={
                     "selected": (
-                        _choice_from_stakeholder
-                        if action_name == "stakeholder"
+                        _choice_from_member
+                        if action_name == "member"
                         else _choice_from_action
                     ),
                     "utility": CollectiveUtility(
-                        utilities={name: utilities[name] for name in stakeholder_names}
+                        utilities={name: utilities[name] for name in member_names}
                     ),
                 },
             )
@@ -2039,7 +2037,7 @@ def test_value_frame_categorical_action_does_not_relabel_stakeholders(
     restored = load_solution(path=result.save(path=tmp_path / "collective"))
     for candidate in (result, restored):
         _assert_collective_frame_matches_reference(
-            result=candidate, stakeholder_names=stakeholder_names
+            result=candidate, member_names=member_names
         )
     assert_frame_equal(
         result.value_frame(period=0, regime="alive"),
@@ -2048,10 +2046,10 @@ def test_value_frame_categorical_action_does_not_relabel_stakeholders(
 
 
 @pytest.mark.parametrize("ordered", [False, True])
-def test_value_frame_categorical_state_named_stakeholder_keeps_its_domain(
+def test_value_frame_categorical_state_named_member_keeps_its_domain(
     *, ordered: bool, tmp_path: Path
 ) -> None:
-    """An ordinary state called `stakeholder` retains labels, codes and ordering."""
+    """An ordinary state called `member` retains labels, codes and ordering."""
 
     @categorical(ordered=ordered)
     class Kind:
@@ -2062,13 +2060,13 @@ def test_value_frame_categorical_state_named_stakeholder_keeps_its_domain(
     class Alive:
         alive: ScalarInt
 
-    def utility(*, stakeholder: ScalarInt) -> FloatND:
-        return 1.0 + 2.0 * stakeholder
+    def utility(*, member: ScalarInt) -> FloatND:
+        return 1.0 + 2.0 * member
 
     model = Model(
         regimes={
             "alive": Regime(
-                states={"stakeholder": DiscreteGrid(Kind)},
+                states={"member": DiscreteGrid(Kind)},
                 functions={"utility": utility},
             )
         },
@@ -2082,18 +2080,18 @@ def test_value_frame_categorical_state_named_stakeholder_keeps_its_domain(
     for candidate in (result, restored):
         schema = candidate.metadata.value_schemas[0, "alive"]
         assert schema.named_axes[0].role is AxisRole.STATE
-        assert set(schema.categorical_domains) == {"stakeholder"}
+        assert set(schema.categorical_domains) == {"member"}
         frame = candidate.value_frame(period=0, regime="alive")
         assert frame.to_dict("list") == {
-            "stakeholder": ["low", "high"],
+            "member": ["low", "high"],
             "V": [1.0, 3.0],
         }
-        assert tuple(frame["stakeholder"].cat.categories) == ("low", "high")
-        assert frame["stakeholder"].cat.ordered is ordered
+        assert tuple(frame["member"].cat.categories) == ("low", "high")
+        assert frame["member"].cat.ordered is ordered
         codes = candidate.value_frame(
             period=0, regime="alive", use_categorical_codes=True
         )
-        assert codes.to_dict("list") == {"stakeholder": [0, 1], "V": [1.0, 3.0]}
+        assert codes.to_dict("list") == {"member": [0, 1], "V": [1.0, 3.0]}
 
 
 def _reference_value_frame(
@@ -2215,10 +2213,10 @@ def test_value_array_scalar_regime_has_no_dimensions() -> None:
     assert (array.dims, float(array)) == ((), 7.0)
 
 
-def test_value_array_collective_regime_labels_stakeholders() -> None:
-    """A collective regime's trailing dimension is labelled by stakeholder."""
+def test_value_array_collective_regime_labels_members() -> None:
+    """A collective regime's trailing dimension is labelled by member."""
     result = _solve_scalar_and_collective_model()
-    curve = result.value_array(period=0, regime="couple").sel(stakeholder="m")
+    curve = result.value_array(period=0, regime="couple").sel(member="m")
     assert float(curve) == 5.0
 
 

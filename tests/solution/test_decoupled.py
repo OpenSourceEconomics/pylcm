@@ -1366,22 +1366,22 @@ def test_a_typed_participation_source_refuses_unrepresented_decoupled_selection(
                             reads={
                                 "V_target_f": lcm.ParticipationRead(
                                     regime="couple",
-                                    stakeholder="f",
+                                    member="f",
                                     kind="Raw",
                                     field="value",
                                     projection={"wealth": _stay},
                                 ),
                                 "V_target_m": lcm.ParticipationRead(
                                     regime="couple",
-                                    stakeholder="m",
+                                    member="m",
                                     kind="Raw",
                                     field="value",
                                     projection={"wealth": _stay},
                                 ),
                             },
                             routes={
-                                "self": lcm.StakeholderRoute(
-                                    target_stakeholder="f",
+                                "self": lcm.MemberRoute(
+                                    target_member="f",
                                     fallback=lcm.ProjectedRegimeValue(
                                         regime="alone", projection={"wealth": _stay}
                                     ),

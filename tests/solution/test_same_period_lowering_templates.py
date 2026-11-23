@@ -6,7 +6,7 @@ route its continuation into that very regime through a `GatedEdge`. The two read
 are different objects: the same-period slot takes the reference regime's value
 array of THIS period, while the continuation slot takes the gated object ``Wbar``
 folded on the target's grid. For a collective source into a singleton target the
-two even differ in rank — ``Wbar`` carries the source's trailing stakeholder axis
+two even differ in rank — ``Wbar`` carries the source's trailing member axis
 — so lowering the same-period slot against ``Wbar`` compiles a program the solve
 loop can never call.
 """
@@ -30,10 +30,10 @@ from lcm import (
     DiscreteGrid,
     Gate,
     LinSpacedGrid,
+    MemberRoute,
     Model,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     StochasticTransition,
     Transition,
     ValueDependentConstraint,
@@ -50,7 +50,7 @@ _DISCOUNT_FACTOR = 0.5
 _WAGE = LinSpacedGrid(start=1.0, stop=2.0, n_points=2)
 _WAGE_FLOOR = 1.5
 
-# `couple`'s period-0 value per (wage node, stakeholder). See `_build_model`.
+# `couple`'s period-0 value per (wage node, member). See `_build_model`.
 _EXPECTED_COUPLE_V = np.array([[5.5, 0.75], [6.0, -4.0]])
 
 
@@ -173,12 +173,12 @@ def _build_model() -> Model:
     single_gate = Gate(
         predicate=_wage_clears_the_floor,
         routes={
-            "f": StakeholderRoute(
+            "f": MemberRoute(
                 fallback=ProjectedRegimeValue(
                     regime="outside_f", projection={"wage": _identity_wage}
                 )
             ),
-            "m": StakeholderRoute(
+            "m": MemberRoute(
                 fallback=ProjectedRegimeValue(
                     regime="outside_m", projection={"wage": _identity_wage}
                 )

@@ -46,12 +46,12 @@ from lcm import (
     CollectiveUtility,
     ExecutionConfig,
     LinSpacedGrid,
+    MemberRoute,
     Model,
     ParticipationCheck,
     ParticipationRead,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     categorical,
 )
 from lcm.exits import Exit, ExitTarget, Unilateral
@@ -152,22 +152,22 @@ def get_model(
             reads={
                 "target_support": ParticipationRead(
                     regime="couple",
-                    stakeholder="f",
+                    member="f",
                     kind="Participating",
                     field="support",
                     projection={"wealth": _identity_wealth},
                 )
             },
             routes={
-                "f": StakeholderRoute(
-                    target_stakeholder="f",
+                "f": MemberRoute(
+                    target_member="f",
                     fallback=ProjectedRegimeValue(
                         regime="single_f",
                         projection={"wealth": _half_of_couple_wealth},
                     ),
                 ),
-                "m": StakeholderRoute(
-                    target_stakeholder="m",
+                "m": MemberRoute(
+                    target_member="m",
                     fallback=ProjectedRegimeValue(
                         regime="single_m",
                         projection={"wealth": _half_of_couple_wealth},
@@ -230,8 +230,8 @@ def get_model(
         "couple": ParticipationCheck(
             predicate=_mutual_consent,
             routes={
-                "her": StakeholderRoute(
-                    target_stakeholder="f",
+                "her": MemberRoute(
+                    target_member="f",
                     fallback=ProjectedRegimeValue(
                         regime="single_f",
                         projection={"wealth": _half_of_couple_wealth},
@@ -241,13 +241,13 @@ def get_model(
             reads={
                 "V_target_f": ParticipationRead(
                     regime="couple",
-                    stakeholder="f",
+                    member="f",
                     kind="Participating",
                     projection={"wealth": _identity_wealth},
                 ),
                 "V_target_m": ParticipationRead(
                     regime="couple",
-                    stakeholder="m",
+                    member="m",
                     kind="Participating",
                     projection={"wealth": _identity_wealth},
                 ),
@@ -301,8 +301,8 @@ def get_model(
         "couple": ParticipationCheck(
             predicate=_mutual_consent,
             routes={
-                "his": StakeholderRoute(
-                    target_stakeholder="m",
+                "his": MemberRoute(
+                    target_member="m",
                     fallback=ProjectedRegimeValue(
                         regime="single_m",
                         projection={"wealth": _half_of_couple_wealth},
@@ -312,13 +312,13 @@ def get_model(
             reads={
                 "V_target_f": ParticipationRead(
                     regime="couple",
-                    stakeholder="f",
+                    member="f",
                     kind="Participating",
                     projection={"wealth": _identity_wealth},
                 ),
                 "V_target_m": ParticipationRead(
                     regime="couple",
-                    stakeholder="m",
+                    member="m",
                     kind="Participating",
                     projection={"wealth": _identity_wealth},
                 ),
@@ -444,7 +444,7 @@ def get_initial_conditions(
 
     Returns:
         Dict of the `wealth`, `age` and `regime_id` columns `simulate()` takes.
-        No `own_stakeholder`: the whole cohort starts in a singleton regime, so
+        No `own_member`: the whole cohort starts in a singleton regime, so
         nobody occupies a household role yet, and each subject is given one by
         the route it takes on entering the couple.
 

@@ -55,11 +55,11 @@ from lcm import (
     ExecutionConfig,
     Gate,
     LinSpacedGrid,
+    MemberRoute,
     Model,
     PeriodSpecializedFunction,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     Transition,
     categorical,
     fixed_transition,
@@ -243,8 +243,8 @@ def _floor_landing_model(
                 "done": Gate(
                     predicate=gate,
                     routes={
-                        name: StakeholderRoute(
-                            target_stakeholder=name if value_aware else None,
+                        name: MemberRoute(
+                            target_member=name if value_aware else None,
                             fallback=ProjectedRegimeValue(
                                 regime=f"fallback_{name}" if value_aware else "done",
                                 projection={
@@ -666,12 +666,12 @@ def test_household_action_owner_keeps_integrity_outside_pareto_weights(
         constraints=MappingProxyType(
             {"borrowing": cast("ConstraintFunction", borrowing)}
         ),
-        stakeholders=("a", "b"),
+        members=("a", "b"),
         bound_specs=(_bound(),),
     )
     weights = build_pareto_weights(
         objective=ParetoObjective(weights={"a": 1.0, "b": 0.0}),
-        stakeholders=("a", "b"),
+        members=("a", "b"),
         state_names=frozenset({"income"}),
     )
     builder = get_streaming_max_Q_over_a if streamed else get_max_Q_over_a
@@ -680,7 +680,7 @@ def test_household_action_owner_keeps_integrity_outside_pareto_weights(
         batch_sizes={"income": 1},
         action_names=("consumption",),
         state_names=("income",),
-        stakeholders=("a", "b"),
+        member_axis=("a", "b"),
         pareto_weights=weights,
         return_feasibility=True,
     )
@@ -1185,7 +1185,7 @@ def _marked_stream(*, route: str, bounded: bool, block_width: int):
             Q_and_F=kernel,
             action_names=action_names,
             block_width=block_width,
-            stakeholders=("a", "b"),
+            members=("a", "b"),
             weights={"a": 1.0, "b": 0.5},
         )
     elif route == "ev1":
@@ -1264,7 +1264,7 @@ def _marked_kernel(*, route: str, bounded: bool) -> QAndFFunction:
                 }
             ),
             constraints=constraints,
-            stakeholders=("a", "b"),
+            members=("a", "b"),
             bound_specs=bound_specs,
         )
     return get_Q_and_F_terminal(

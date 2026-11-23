@@ -23,12 +23,12 @@ from lcm import (
     ByAge,
     DiscreteGrid,
     LinSpacedGrid,
+    MemberRoute,
     Model,
     ParticipationCheck,
     Phased,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     StochasticTransition,
     Transition,
     categorical,
@@ -203,7 +203,7 @@ def test_unrelated_ordinary_draw_keeps_its_own_route_and_state() -> None:
     np.testing.assert_array_equal(landed["regime_name"].to_numpy(), expected)
     aaae(landed["wage"], np.asarray(wages), decimal=DECIMAL_PRECISION)
     np.testing.assert_array_equal(
-        landed["own_stakeholder"].astype("string").fillna("none").to_numpy(),
+        landed["own_member"].astype("string").fillna("none").to_numpy(),
         np.where(offered & consent, "f", "none"),
     )
     for regime, expected_value in (
@@ -258,7 +258,7 @@ def _dual_model(*, edge_order: tuple[RegimeName, RegimeName]) -> Model:
         name: ParticipationCheck(
             predicate=_gate_always_open,
             routes={
-                "only": StakeholderRoute(
+                "only": MemberRoute(
                     fallback=ProjectedRegimeValue(
                         regime=fallback, projection={"wage": _identity_wage}
                     )
@@ -407,7 +407,7 @@ def test_phased_law_prices_perceived_participation_and_settles_realized_draws() 
     np.testing.assert_array_equal(landed["regime_name"].to_numpy(), expected)
     aaae(landed["wage"], np.asarray(wages), decimal=DECIMAL_PRECISION)
     np.testing.assert_array_equal(
-        landed["own_stakeholder"].astype("string").fillna("none").to_numpy(),
+        landed["own_member"].astype("string").fillna("none").to_numpy(),
         np.where(offered & consent, "f", "none"),
     )
     for regime, expected_value in (

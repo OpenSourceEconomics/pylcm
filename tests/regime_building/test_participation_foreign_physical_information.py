@@ -13,12 +13,12 @@ import pytest
 from lcm import (
     AgeGrid,
     ByAge,
+    MemberRoute,
     Model,
     ParticipationCheck,
     ParticipationRead,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     Transition,
     categorical,
 )
@@ -105,7 +105,7 @@ def _model(
                             )
                         },
                         routes={
-                            "only": StakeholderRoute(
+                            "only": MemberRoute(
                                 fallback=ProjectedRegimeValue(
                                     regime="fallback", projection={}
                                 )

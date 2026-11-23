@@ -11,11 +11,11 @@ from lcm import (
     ExecutionConfig,
     Gate,
     LinSpacedGrid,
+    MemberRoute,
     Model,
     ParticipationCheck,
     ParticipationRead,
     ProjectedRegimeValue,
-    StakeholderRoute,
     StochasticTransition,
     Transition,
     categorical,
@@ -77,7 +77,7 @@ def _closed_by_age(age: FloatND) -> BoolND:
 def _build_model(*, gate, enable_jit: bool, reads_value: bool = True) -> Model:
     """Decide the landing on the target's value on landing, or by a state-only gate."""
     routes = {
-        "only": StakeholderRoute(
+        "only": MemberRoute(
             fallback=ProjectedRegimeValue(regime="stateless_fallback", projection={})
         )
     }

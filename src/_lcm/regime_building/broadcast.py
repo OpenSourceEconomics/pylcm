@@ -639,7 +639,7 @@ def root_functions(
     every name it transitively reads is a genuine input of the regime. The
     roots are
 
-    - `utility`, or one `utility_<stakeholder>` per stakeholder of a
+    - `utility`, or one `utility_<member>` per member of a
       collective regime;
     - every derived-categorical function;
     - every constraint;
@@ -726,8 +726,8 @@ def _valuation_roots(
         for name, func in regime.decomposed_functions.items()
     }
     utility_names = (
-        tuple(f"utility_{stakeholder}" for stakeholder in regime.stakeholders)
-        if regime.stakeholders is not None
+        tuple(f"utility_{member}" for member in regime.member_axis)
+        if regime.member_axis is not None
         else ("utility",)
     )
     roots = {
@@ -1517,9 +1517,9 @@ def _names_the_household_writes(*, user_regime: UserRegime) -> frozenset[str]:
     """Return the function names this regime's household supplies for itself.
 
     A collective regime declares `utility` as a household, and with it a body
-    for every stakeholder it does not delegate. Those names are the household's
+    for every member it does not delegate. Those names are the household's
     and a model-level entry under one of them belongs to the other regimes. A
-    stakeholder the household *does* delegate is left out, which is exactly how
+    member the household *does* delegate is left out, which is exactly how
     a model-level body reaches her.
     """
     declaration = user_regime.functions.get("utility")
@@ -1529,8 +1529,8 @@ def _names_the_household_writes(*, user_regime: UserRegime) -> frozenset[str]:
         {
             "utility",
             *(
-                f"utility_{stakeholder}"
-                for stakeholder, body in declaration.utilities.items()
+                f"utility_{member}"
+                for member, body in declaration.utilities.items()
                 if body is not None
             ),
         }

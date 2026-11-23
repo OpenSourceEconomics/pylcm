@@ -78,7 +78,7 @@ def test_ordinary_interpolator_mode_finite_node_next_to_minus_inf_is_finite():
     np.testing.assert_allclose(float(result), 5.0)
 
     # The IR (interim-ratification-style) comparison stays feasible: an
-    # own-stakeholder Q of 6 dominating the reference of 5 must compare
+    # own-member Q of 6 dominating the reference of 5 must compare
     # `True`, not `nan >= 5 == False`.
     Q_own = jnp.array(6.0)
     assert bool(Q_own >= result) is True

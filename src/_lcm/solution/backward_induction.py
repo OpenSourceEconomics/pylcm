@@ -2621,7 +2621,7 @@ def _build_continuation_templates(
       regimes, in the key order reused every period;
     - the gated-edge template holds an abstract `Wbar` per declared edge,
       shaped like the target regime's V state grid plus the source regime's
-      stakeholder axis (a singleton source: the target grid alone). Empty for
+      member axis (a singleton source: the target grid alone). Empty for
       models without gated edges, so the default path only gains an empty third
       mapping.
     """

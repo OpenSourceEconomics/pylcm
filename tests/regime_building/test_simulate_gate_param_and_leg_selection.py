@@ -16,15 +16,15 @@ arguments ("vmap wrapped function must be passed at least one argument
 containing an array or axis_size must be specified"), so `axis_size` is
 threaded explicitly from the population size.
 
-**A row's seeded role is checked against ITS OWN regime's stakeholders, not
+**A row's seeded role is checked against ITS OWN regime's members, not
 against the model-wide vocabulary.** Roles are model-wide integer codes, so a
 code being defined says nothing about whether the regime a row starts in has
 that role — and the router picks a row's leg by matching the role, with the
 first declared leg answering for a row that matches none. Checking the seed
 per regime is what makes that match total. Arity does not decide it either:
-the validator accepts a ONE-element `stakeholders` tuple, and `processing.py`'s
-`leg_order = [(s, s) for s in source_stakeholders]` gives that sole leg
-`source_stakeholder="f"`, not `None`, so a single-leg collective source is
+the validator accepts a ONE-element `members` tuple, and `processing.py`'s
+`leg_order = [(s, s) for s in source_member_axis]` gives that sole leg
+`source_member="f"`, not `None`, so a single-leg collective source is
 exactly as exposed as a two-leg one.
 """
 
@@ -44,7 +44,7 @@ from _lcm.simulation.gated_routing import (
     route_gated_edges,
     substitute_gated_edge_continuations,
 )
-from _lcm.simulation.simulate import _initial_own_stakeholder
+from _lcm.simulation.simulate import _initial_own_member
 from _lcm.solution.backward_induction import solve
 from _lcm.utils.logging import get_logger
 from lcm import (
@@ -53,9 +53,9 @@ from lcm import (
     DiscreteGrid,
     Gate,
     LinSpacedGrid,
+    MemberRoute,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     Transition,
     categorical,
 )
@@ -149,7 +149,7 @@ def _make_f3_laws() -> dict[RegimeName, RegimeLawDeclaration | Transition]:
                 "stateless_target": Gate(
                     predicate=_stateless_gate,
                     routes={
-                        "only": StakeholderRoute(
+                        "only": MemberRoute(
                             fallback=ProjectedRegimeValue(
                                 regime="stateless_fallback", projection={}
                             )
@@ -240,10 +240,10 @@ def test_stateless_gated_target_routes_without_vmap_axis_size_error():
         new_subject_regime_ids=jnp.array([target_id] * n_subjects, dtype=jnp.int32),
         subjects_in_regime=jnp.array([True] * n_subjects),
         flat_params=flat_params,
-        own_stakeholder=jnp.full_like(
+        own_member=jnp.full_like(
             jnp.array([True] * n_subjects), NO_ROLE, dtype=jnp.int32
         ),
-        new_own_stakeholder=jnp.full_like(
+        new_own_member=jnp.full_like(
             jnp.array([True] * n_subjects), NO_ROLE, dtype=jnp.int32
         ),
     )
@@ -295,24 +295,24 @@ def test_vmap_without_axis_size_fails_for_a_stateless_target():
     assert np.asarray(result).shape == (4,)
 
 
-# A seeded role is checked against the starting regime's own stakeholders.
+# A seeded role is checked against the starting regime's own members.
 
 
 def _dissolution_setup():
-    """The two-stakeholder dissolution miniature, as canonical regimes."""
+    """The two-member dissolution miniature, as canonical regimes."""
     _ages, regimes, regime_names_to_ids, *_rest = _solve_dissolution()
     return regimes, regime_names_to_ids
 
 
 def _seed(*, regimes, regime_names_to_ids, regime_name, role):
     """Read the seeded roles of a one-subject cohort starting in `regime_name`."""
-    return _initial_own_stakeholder(
+    return _initial_own_member(
         initial_conditions=MappingProxyType(
             {
                 "regime_id": jnp.asarray(
                     [regime_names_to_ids[regime_name]], dtype=jnp.int32
                 ),
-                **({} if role is None else {"own_stakeholder": jnp.asarray([role])}),
+                **({} if role is None else {"own_member": jnp.asarray([role])}),
             }
         ),
         regimes=regimes,
@@ -320,16 +320,16 @@ def _seed(*, regimes, regime_names_to_ids, regime_name, role):
     )
 
 
-def test_a_one_stakeholder_collective_source_rejects_a_role_it_does_not_have():
+def test_a_one_member_collective_source_rejects_a_role_it_does_not_have():
     """A single-leg collective source refuses a role that is not its own.
 
-    Its sole leg carries `source_stakeholder="f"`, so the router would match
+    Its sole leg carries `source_member="f"`, so the router would match
     no leg for a husband's row and fall through to that leg — sending him into
     his wife's regime at her state. The number of legs is not what protects
-    against that; checking the seed against this regime's own stakeholders is.
+    against that; checking the seed against this regime's own members is.
     """
     regimes, regime_names_to_ids = _dissolution_setup()
-    wife_only = dataclasses.replace(regimes["married"], stakeholders=("f",))
+    wife_only = dataclasses.replace(regimes["married"], member_axis=("f",))
     regimes = MappingProxyType({**regimes, "married": wife_only})
 
     with pytest.raises(InvalidInitialConditionsError, match="married"):
@@ -337,7 +337,7 @@ def test_a_one_stakeholder_collective_source_rejects_a_role_it_does_not_have():
             regimes=regimes,
             regime_names_to_ids=regime_names_to_ids,
             regime_name="married",
-            role=regimes["married"].stakeholder_names_to_ids["m"],
+            role=regimes["married"].member_names_to_ids["m"],
         )
 
 
@@ -348,7 +348,7 @@ def test_a_collective_source_accepts_a_role_it_does_have():
     collective regime rather than the mismatched ones.
     """
     regimes, regime_names_to_ids = _dissolution_setup()
-    role = regimes["married"].stakeholder_names_to_ids["m"]
+    role = regimes["married"].member_names_to_ids["m"]
 
     seeded = _seed(
         regimes=regimes,

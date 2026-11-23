@@ -16,7 +16,7 @@ Five boundary conditions on the collective-regimes forward-simulation path
   roles, rather than the first declared leg's for the whole population.
 - `to_dataframe()` on a result where every populated regime is collective
   (no scalar `value` column anywhere): builds the frame from the
-  per-stakeholder value columns.
+  per-member value columns.
 - A STATELESS collective regime's simulated `V_arr` / argmax index: carries
   the subject axis that a stateful collective or a stateless singleton
   regime always carries.
@@ -37,7 +37,7 @@ import pytest
 
 from _lcm.regime_building.collective import NO_ROLE
 from _lcm.regime_building.finalize import finalize_regimes
-from _lcm.regime_building.gated_edges import ResolvedStakeholderRoute
+from _lcm.regime_building.gated_edges import ResolvedMemberRoute
 from _lcm.regime_building.Q_and_F import ResolvedProjectedRegimeValue
 from _lcm.regime_building.transition_support import (
     _SupportedDeterministicTransition,
@@ -59,11 +59,11 @@ from lcm import (
     LinearAggregator,
     LinearExpectation,
     LinSpacedGrid,
+    MemberRoute,
     Model,
     ParticipationCheck,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     Transition,
     categorical,
     fixed_transition,
@@ -210,15 +210,15 @@ def _shared_fallback_laws() -> dict[RegimeName, RegimeLawDeclaration | Transitio
                 "married_ir": Gate(
                     predicate=_always_open,
                     routes={
-                        "f": StakeholderRoute(
-                            target_stakeholder="f",
+                        "f": MemberRoute(
+                            target_member="f",
                             fallback=ProjectedRegimeValue(
                                 regime="single_shared",
                                 projection={"wage": _identity_wage},
                             ),
                         ),
-                        "m": StakeholderRoute(
-                            target_stakeholder="m",
+                        "m": MemberRoute(
+                            target_member="m",
                             fallback=ProjectedRegimeValue(
                                 regime="single_shared",
                                 projection={"wage": _reverse_wage},
@@ -273,14 +273,14 @@ def test_two_participation_routes_sharing_a_fallback_regime_each_land_their_own_
     wage and `m` at `4 - wage`, in solve and in simulation.
     """
     routes = {
-        "f": StakeholderRoute(
-            target_stakeholder="f",
+        "f": MemberRoute(
+            target_member="f",
             fallback=ProjectedRegimeValue(
                 regime="single_shared", projection={"wage": _identity_wage}
             ),
         ),
-        "m": StakeholderRoute(
-            target_stakeholder="m",
+        "m": MemberRoute(
+            target_member="m",
             fallback=ProjectedRegimeValue(
                 regime="single_shared", projection={"wage": _reverse_wage}
             ),
@@ -320,7 +320,7 @@ def test_two_participation_routes_sharing_a_fallback_regime_each_land_their_own_
         initial_conditions={
             "age": jnp.zeros(4),
             "wage": jnp.array([1.0, 1.0, 2.0, 2.0]),
-            "own_stakeholder": jnp.array([0, 1, 0, 1], dtype=jnp.int32),
+            "own_member": jnp.array([0, 1, 0, 1], dtype=jnp.int32),
             "regime_id": jnp.full(4, _SharedFallbackId.married, dtype=jnp.int32),
         },
         seed=0,
@@ -371,17 +371,17 @@ _REGIME_IDS = MappingProxyType(
 )
 
 
-def _leg(source_stakeholder: str | None) -> ResolvedStakeholderRoute:
-    """One leg sending its stakeholder home to that stakeholder's own regime."""
-    return ResolvedStakeholderRoute(
-        route=str(source_stakeholder),
-        source_stakeholder=source_stakeholder,
+def _leg(source_member: str | None) -> ResolvedMemberRoute:
+    """One leg sending its member home to that member's own regime."""
+    return ResolvedMemberRoute(
+        route=str(source_member),
+        source_member=source_member,
         target_component_index=None,
-        target_stakeholder=source_stakeholder,
+        target_member=source_member,
         fallback=ResolvedProjectedRegimeValue(
-            regime=f"single_{source_stakeholder}",
+            regime=f"single_{source_member}",
             projection={},
-            stakeholder_index=None,
+            member_index=None,
         ),
     )
 
@@ -390,7 +390,7 @@ def _outcomes(*, legs, roles):
     """Read the per-row outcomes of `legs` for a cohort carrying `roles`."""
     return _per_row_leg_outcomes(
         legs=legs,
-        own_stakeholder=jnp.asarray(roles, dtype=jnp.int32),
+        own_member=jnp.asarray(roles, dtype=jnp.int32),
         regime_names_to_ids=_REGIME_IDS,
         role_ids=_ROLE_IDS,
     )
@@ -414,12 +414,12 @@ def test_each_row_falls_back_to_the_regime_of_the_leg_it_owns():
 
 
 def test_a_row_keeps_its_role_on_the_open_branch_and_drops_it_on_the_closed_one():
-    """The open branch leaves the row a stakeholder; the closed branch does not.
+    """The open branch leaves the row a member; the closed branch does not.
 
     The legs above stay collective when the gate opens and land in singleton
     regimes when it closes, so the two branches' roles differ — and a row
     still carrying a role after moving into a singleton regime would follow a
-    stakeholder's leg the next time an edge routes it.
+    member's leg the next time an edge routes it.
     """
     _fallback_id, open_role, closed_role = _outcomes(
         legs=(_leg("f"), _leg("m")), roles=[_ROLE_IDS["f"], _ROLE_IDS["m"]]
@@ -534,7 +534,7 @@ def _solve_all_collective():
 
 
 def test_to_dataframe_all_collective_result_has_no_scalar_value_column():
-    """An all-collective result's dataframe has per-stakeholder value columns.
+    """An all-collective result's dataframe has per-member value columns.
 
     Every populated regime here is collective, so `_process_regime` never writes
     a scalar `value` column and `_reorder_columns` must not name one.
@@ -546,8 +546,8 @@ def test_to_dataframe_all_collective_result_has_no_scalar_value_column():
             "wage": jnp.array([8.0, 40.0]),
             "age": jnp.array([0.0, 0.0]),
             "regime_id": jnp.array([0, 0], dtype=jnp.int32),
-            "own_stakeholder": jnp.full(
-                2, regimes["couple"].stakeholder_names_to_ids["f"], dtype=jnp.int32
+            "own_member": jnp.full(
+                2, regimes["couple"].member_names_to_ids["f"], dtype=jnp.int32
             ),
         }
     )
@@ -605,8 +605,8 @@ def test_stateless_collective_regime_simulate_carries_subject_axis():
     """A stateless collective regime's simulated V_arr carries the subject axis.
 
     `argmax_and_max_Q_over_a` has no per-subject state array to vmap over, so it
-    returns a single `(n_stakeholders,)` V_arr and a 0-d argmax index. Those must
-    be broadcast to the subject axis: `V_arr` is `(n_subjects, n_stakeholders)`
+    returns a single `(n_members,)` V_arr and a 0-d argmax index. Those must
+    be broadcast to the subject axis: `V_arr` is `(n_subjects, n_members)`
     and every subject's own values/actions round-trip correctly.
     """
     ages = AgeGrid(start=0, inclusive_stop=1, step="Y")
@@ -635,9 +635,9 @@ def test_stateless_collective_regime_simulate_carries_subject_axis():
         {
             "age": jnp.zeros(n_subjects),
             "regime_id": jnp.zeros(n_subjects, dtype=jnp.int32),
-            "own_stakeholder": jnp.full(
+            "own_member": jnp.full(
                 n_subjects,
-                regimes["stateless_couple"].stakeholder_names_to_ids["f"],
+                regimes["stateless_couple"].member_names_to_ids["f"],
                 dtype=jnp.int32,
             ),
         }
@@ -705,8 +705,8 @@ def test_stateful_collective_regime_simulate_shape_is_byte_identical():
             "wage": jnp.array([8.0, 40.0]),
             "age": jnp.array([0.0, 0.0]),
             "regime_id": jnp.array([0, 0], dtype=jnp.int32),
-            "own_stakeholder": jnp.full(
-                2, regimes["couple"].stakeholder_names_to_ids["f"], dtype=jnp.int32
+            "own_member": jnp.full(
+                2, regimes["couple"].member_names_to_ids["f"], dtype=jnp.int32
             ),
         }
     )

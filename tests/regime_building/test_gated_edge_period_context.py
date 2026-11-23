@@ -12,12 +12,12 @@ from lcm import (
     DiscreteGrid,
     Gate,
     LinSpacedGrid,
+    MemberRoute,
     Model,
     ParticipationCheck,
     ParticipationRead,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     Transition,
     categorical,
     fixed_transition,
@@ -147,7 +147,7 @@ def _edge_decision(
                 "target": Gate(
                     predicate=gate,
                     routes={
-                        "only": StakeholderRoute(
+                        "only": MemberRoute(
                             fallback=ProjectedRegimeValue(
                                 regime="fallback", projection={"x": _identity_x}
                             )
@@ -162,7 +162,7 @@ def _edge_decision(
         "target": ParticipationCheck(
             predicate=gate,
             routes={
-                "only": StakeholderRoute(
+                "only": MemberRoute(
                     fallback=ProjectedRegimeValue(
                         regime="fallback", projection={"x": projection}
                     )

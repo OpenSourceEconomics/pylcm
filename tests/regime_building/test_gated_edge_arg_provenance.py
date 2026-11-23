@@ -94,12 +94,12 @@ from lcm import (
     Gate,
     IrregSpacedGrid,
     LinSpacedGrid,
+    MemberRoute,
     Model,
     ParticipationCheck,
     ParticipationRead,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     Transition,
     ValueDependentConstraint,
     categorical,
@@ -306,7 +306,7 @@ def _make_projector_regimes() -> _Spec:
                 "target": Gate(
                     predicate=_always_closed_gate,
                     routes={
-                        "only": StakeholderRoute(
+                        "only": MemberRoute(
                             fallback=ProjectedRegimeValue(
                                 regime="fallback",
                                 projection={"z": _project_x_plus_shift},
@@ -543,8 +543,8 @@ def test_router_writes_the_fold_consistent_fallback_state():
         ),
         subjects_in_regime=jnp.array([True]),
         flat_params=flat_params,
-        own_stakeholder=jnp.full_like(jnp.array([True]), NO_ROLE, dtype=jnp.int32),
-        new_own_stakeholder=jnp.full_like(jnp.array([True]), NO_ROLE, dtype=jnp.int32),
+        own_member=jnp.full_like(jnp.array([True]), NO_ROLE, dtype=jnp.int32),
+        new_own_member=jnp.full_like(jnp.array([True]), NO_ROLE, dtype=jnp.int32),
     )
     # Gate closed by construction -> the row goes to the fallback...
     np.testing.assert_array_equal(
@@ -635,7 +635,7 @@ def test_participation_read_uses_the_reference_regimes_own_runtime_grid() -> Non
                             )
                         },
                         routes={
-                            "only": StakeholderRoute(
+                            "only": MemberRoute(
                                 fallback=ProjectedRegimeValue(
                                     regime="fallback", projection={"x": _identity_x}
                                 )
@@ -686,7 +686,7 @@ def _make_fallback_grid_regimes() -> _Spec:
                 "target": Gate(
                     predicate=_always_closed_gate,
                     routes={
-                        "only": StakeholderRoute(
+                        "only": MemberRoute(
                             fallback=ProjectedRegimeValue(
                                 regime="fallback",
                                 projection={"z": _identity_x_to_z},
@@ -930,7 +930,7 @@ def test_e2_same_period_ref_reads_the_reference_regimes_own_runtime_grid():
         ref=ResolvedProjectedRegimeValue(
             regime="single_f",
             projection={"wage": _project_wage},
-            stakeholder_index=None,
+            member_index=None,
         ),
         v_interpolation_info=create_v_interpolation_info(
             user_regime=regimes_dict["single_f"]
@@ -1016,7 +1016,7 @@ def _make_leg_fallback_target_helper_regimes() -> _Spec:
                 "target": Gate(
                     predicate=_always_closed_gate,
                     routes={
-                        "only": StakeholderRoute(
+                        "only": MemberRoute(
                             fallback=ProjectedRegimeValue(
                                 regime="fallback",
                                 projection={"x": _project_through_target_helper},
@@ -1202,7 +1202,7 @@ def _make_own_param_named_like_target_helper_param_regimes() -> _Spec:
                 "target": Gate(
                     predicate=_gate_reads_own_target_scale,
                     routes={
-                        "only": StakeholderRoute(
+                        "only": MemberRoute(
                             fallback=ProjectedRegimeValue(
                                 regime="fallback", projection={"x": _identity_x}
                             )
@@ -1287,7 +1287,7 @@ def _make_threshold_shadow_regimes() -> _Spec:
                 "target": Gate(
                     predicate=_gate_reads_shadowed_threshold,
                     routes={
-                        "only": StakeholderRoute(
+                        "only": MemberRoute(
                             fallback=ProjectedRegimeValue(
                                 regime="fallback", projection={"x": _identity_x}
                             )
@@ -1413,7 +1413,7 @@ def _make_gate_param_aliases_target_state_regimes(
                 "target": Gate(
                     predicate=_gate_reads_x,
                     routes={
-                        "only": StakeholderRoute(
+                        "only": MemberRoute(
                             fallback=ProjectedRegimeValue(
                                 regime="fallback", projection={"x": _identity_x}
                             )
@@ -1507,7 +1507,7 @@ def _make_gated_source_regimes(gate: UserFunction) -> _Spec:
                 "target": Gate(
                     predicate=gate,
                     routes={
-                        "only": StakeholderRoute(
+                        "only": MemberRoute(
                             fallback=ProjectedRegimeValue(
                                 regime="fallback", projection={"x": _identity_x}
                             )
@@ -1570,7 +1570,7 @@ def _make_target_state_aliases_engine_v_regimes() -> _Spec:
                 "target": Gate(
                     predicate=_gate_reads_v_arg_state,
                     routes={
-                        "only": StakeholderRoute(
+                        "only": MemberRoute(
                             fallback=ProjectedRegimeValue(
                                 regime="fallback",
                                 projection={SAME_PERIOD_V_ARG: _identity_v_arg_state},

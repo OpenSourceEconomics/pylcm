@@ -47,6 +47,7 @@ from lcm import (
     InitialNodes,
     JointTransition,
     LinSpacedGrid,
+    MemberRoute,
     Model,
     ParetoObjective,
     ParticipationCheck,
@@ -54,7 +55,6 @@ from lcm import (
     Periods,
     Phased,
     ProjectedRegimeValue,
-    StakeholderRoute,
     Transition,
     case_boundary,
     categorical,
@@ -1523,9 +1523,7 @@ def _household(*, m_utility: UserFunction | Phased) -> UserRegime:
 
 
 @pytest.mark.parametrize("enable_jit", [False, True])
-def test_phased_stakeholder_utility_without_value_grids_builds_and_solves(
-    *, enable_jit
-):
+def test_phased_member_utility_without_value_grids_builds_and_solves(*, enable_jit):
     """The declared `Phased` body reaches the household check as the same object."""
     phased = Phased(solve=_u_m, simulate=_u_m_simulate)
     terminal = UserRegime(
@@ -1574,7 +1572,7 @@ def _u_single_terminal(*, wealth: ContinuousState, kind: DiscreteState) -> Float
 
 
 @pytest.mark.parametrize("enable_jit", [False, True])
-def test_phased_stakeholder_utility_beside_a_value_grid_elsewhere_builds(*, enable_jit):
+def test_phased_member_utility_beside_a_value_grid_elsewhere_builds(*, enable_jit):
     """A value grid in another regime leaves the household's `Phased` body alone."""
     wealth = LinSpacedGrid(start=1.0, stop=3.0, n_points=3)
     kind = DiscreteGrid(values=np.array([10, 20]))
@@ -1613,7 +1611,7 @@ def test_phased_stakeholder_utility_beside_a_value_grid_elsewhere_builds(*, enab
     assert model.user_regimes["couple"].decomposed_functions["utility_m"] is phased
 
 
-def test_a_really_replaced_phased_stakeholder_body_still_fails_the_identity_check():
+def test_a_really_replaced_phased_member_body_still_fails_the_identity_check():
     """An equal but new `Phased` object is a different body."""
     regime = _household(m_utility=Phased(solve=_u_m, simulate=_u_m_simulate))
     engine = {
@@ -2155,7 +2153,7 @@ def _gated_model(
                             )
                         },
                         routes={
-                            "self": StakeholderRoute(
+                            "self": MemberRoute(
                                 fallback=ProjectedRegimeValue(
                                     regime="fallback",
                                     projection={"kind": _project_kind},
@@ -2315,7 +2313,7 @@ def _between_nodes_model(
                 )
             },
             routes={
-                "self": StakeholderRoute(
+                "self": MemberRoute(
                     fallback=ProjectedRegimeValue(
                         regime="fallback", projection={"kind": _project_kind}
                     )
@@ -2933,7 +2931,7 @@ def _gated_income_model(*, values: bool, enable_jit: bool) -> Model:
             )
         },
         routes={
-            "self": StakeholderRoute(
+            "self": MemberRoute(
                 fallback=ProjectedRegimeValue(
                     regime="fallback",
                     projection={
@@ -2996,7 +2994,7 @@ def test_nonmonotone_participation_window_keeps_only_the_middle_value() -> None:
                             )
                         },
                         routes={
-                            "self": StakeholderRoute(
+                            "self": MemberRoute(
                                 fallback=ProjectedRegimeValue(
                                     regime="fallback",
                                     projection={"income": fixed_transition("income")},

@@ -1,7 +1,7 @@
 """Integration tests for value-aware feasibility, same-period refs, and D.
 
 A collective regime may declare `value_constraints` — predicates masking actions
-on the per-stakeholder action values `Q^s` and on *same-period* reference values
+on the per-member action values `Q^s` and on *same-period* reference values
 of OTHER regimes at projected states (EKL 2019 eq. 11):
 
     F(x) = { a : Q^j(x, a) >= V^j_single(pi_j(x)) - Delta_j  for j = f, m }.
@@ -851,7 +851,7 @@ def _cycle_regimes() -> dict[str, Regime]:
                     "V_b_ref": ProjectedRegimeValue(
                         regime="couple_b",
                         projection={"wage": _project_wage},
-                        stakeholder="f",
+                        member="f",
                     )
                 },
             )
@@ -865,7 +865,7 @@ def _cycle_regimes() -> dict[str, Regime]:
                     "V_a_ref": ProjectedRegimeValue(
                         regime="couple_a",
                         projection={"wage": _project_wage},
-                        stakeholder="f",
+                        member="f",
                     )
                 },
             )
@@ -926,14 +926,14 @@ def test_same_period_ref_cycle_between_unrequired_regimes_does_not_fail():
     assert model.reachability.nodes == {(0, "single_f"), (1, "single_f_terminal")}
 
 
-def test_same_period_ref_to_collective_regime_requires_stakeholder():
-    """Reading a collective reference V without naming a stakeholder is rejected."""
+def test_same_period_ref_to_collective_regime_requires_member():
+    """Reading a collective reference V without naming a member is rejected."""
     regimes = _make_ir_regimes()
     # Point the f-reference at the married regime itself is a cycle; use a second
     # collective island instead: reference the married_terminal... terminal refs
-    # are not the issue here — the ref must name a stakeholder for ANY collective
+    # are not the issue here — the ref must name a member for ANY collective
     # target. Reuse single_m as the m-ref and misdeclare the f-ref onto a
-    # collective regime without a stakeholder.
+    # collective regime without a member.
     couple_b = Regime(
         states={"wage": _WAGE_GRID},
         state_transitions={"wage": fixed_transition("wage")},
@@ -968,25 +968,25 @@ def test_same_period_ref_to_collective_regime_requires_stakeholder():
             )
         },
     )
-    with pytest.raises(ModelInitializationError, match="stakeholder"):
+    with pytest.raises(ModelInitializationError, match="member"):
         _process_ir_variant(regimes, laws=laws)
 
 
-def test_same_period_ref_to_singleton_regime_rejects_stakeholder():
+def test_same_period_ref_to_singleton_regime_rejects_member():
     regimes = _make_ir_regimes()
     regimes["married"] = _married_with_refs(
         {
             "V_single_f_ref": ProjectedRegimeValue(
                 regime="single_f",
                 projection={"wage": _project_wage},
-                stakeholder="f",
+                member="f",
             ),
             "V_single_m_ref": ProjectedRegimeValue(
                 regime="single_m", projection={"wage": _project_wage}
             ),
         }
     )
-    with pytest.raises(ModelInitializationError, match="stakeholder"):
+    with pytest.raises(ModelInitializationError, match="member"):
         _process_ir_variant(regimes, laws=_laws(regimes))
 
 

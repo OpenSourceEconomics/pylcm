@@ -25,6 +25,7 @@ from lcm import (
     ByAge,
     CollectiveUtility,
     DiscreteGrid,
+    MemberRoute,
     Model,
     ParetoObjective,
     ParticipationCheck,
@@ -32,7 +33,6 @@ from lcm import (
     Phased,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     Transition,
     ValueDependentConstraint,
     categorical,
@@ -71,7 +71,7 @@ from tests.regime_building.test_collective_regime_simulate import (
 
 
 class _Snapshot(TypedDict):
-    stakeholders: tuple[str, ...] | None
+    member_axis: tuple[str, ...] | None
     pareto_objective: ParetoObjective | None
     value_constraints: dict[FunctionName, UserFunction]
     same_period_refs: dict[str, ProjectedRegimeValue]
@@ -128,15 +128,15 @@ class RegimeId:
     single_m_terminal: ScalarInt
 
 
-def test_collective_utility_declares_the_regimes_stakeholders() -> None:
-    """The `utilities` keys are the stakeholders, in the order they are written."""
+def test_collective_utility_declares_the_regimes_members() -> None:
+    """The `utilities` keys are the members, in the order they are written."""
     regime = _new_vocabulary_regimes()["married_ir"]
 
-    assert regime.stakeholders == ("f", "m")
+    assert regime.member_axis == ("f", "m")
 
 
-def test_collective_utility_becomes_one_utility_function_per_stakeholder() -> None:
-    """Each stakeholder's flow utility lands under the name the engine reads."""
+def test_collective_utility_becomes_one_utility_function_per_member() -> None:
+    """Each member's flow utility lands under the name the engine reads."""
     regime = _new_vocabulary_regimes()["married_ir"]
 
     assert regime.decomposed_functions["utility_f"] is _u_married_ir_f
@@ -175,15 +175,13 @@ def test_value_dependent_transition_keeps_the_ordinary_transition_entry() -> Non
     assert isinstance(transition["married_ir"], StochasticTransition)
 
 
-def test_value_dependent_transition_routes_each_stakeholder_to_her_own_fallback() -> (
-    None
-):
-    """Each source stakeholder's route keeps all four of its destinations."""
+def test_value_dependent_transition_routes_each_member_to_her_own_fallback() -> None:
+    """Each source member's route keeps all four of its destinations."""
     edge = _bound_laws()["married"].participation["married_ir"]
 
-    assert edge.routes["f"].target_stakeholder == "f"
+    assert edge.routes["f"].target_member == "f"
     assert edge.routes["f"].solve_fallback.regime == "single_f"
-    assert edge.routes["m"].target_stakeholder == "m"
+    assert edge.routes["m"].target_member == "m"
     assert edge.routes["m"].solve_fallback.regime == "single_m"
 
 
@@ -340,7 +338,7 @@ def _new_vocabulary_regimes() -> dict[str, Regime]:
 def _married_transition() -> Transition:
     """`married`'s participation check into `married_ir` after age 0.
 
-    Each stakeholder's route falls back to her own single regime, so a model
+    Each member's route falls back to her own single regime, so a model
     declares `married` with `married_ir`, `single_f` and `single_m` as targets.
     """
     return Transition(
@@ -362,21 +360,21 @@ def _dissolution_participation() -> ParticipationCheck:
         reads={
             "target_support": ParticipationRead(
                 regime="married_ir",
-                stakeholder="f",
+                member="f",
                 kind="Participating",
                 field="support",
                 projection={"wage": _identity_wage},
             )
         },
         routes={
-            "f": StakeholderRoute(
-                target_stakeholder="f",
+            "f": MemberRoute(
+                target_member="f",
                 fallback=ProjectedRegimeValue(
                     regime="single_f", projection={"wage": _identity_wage}
                 ),
             ),
-            "m": StakeholderRoute(
-                target_stakeholder="m",
+            "m": MemberRoute(
+                target_member="m",
                 fallback=ProjectedRegimeValue(
                     regime="single_m", projection={"wage": _identity_wage}
                 ),
@@ -466,7 +464,7 @@ def _derived_snapshot(*, regime: Regime, law: RegimeLaw) -> _Snapshot:
     value, with the declared callables compared by identity.
     """
     return {
-        "stakeholders": regime.stakeholders,
+        "member_axis": regime.member_axis,
         "pareto_objective": regime.pareto_objective,
         "value_constraints": dict(regime.value_constraints),
         "same_period_refs": dict(regime.same_period_refs),
@@ -474,7 +472,7 @@ def _derived_snapshot(*, regime: Regime, law: RegimeLaw) -> _Snapshot:
             target: (
                 decision.predicate,
                 {
-                    source: (route.target_stakeholder, route.solve_fallback)
+                    source: (route.target_member, route.solve_fallback)
                     for source, route in decision.routes.items()
                 },
                 dict(decision.reads),
@@ -496,7 +494,7 @@ def _expected_snapshots() -> dict[RegimeName, _Snapshot]:
         regime="single_m", projection={"wage": _identity_wage}
     )
     plain: _Snapshot = {
-        "stakeholders": None,
+        "member_axis": None,
         "pareto_objective": None,
         "value_constraints": {},
         "same_period_refs": {},
@@ -506,7 +504,7 @@ def _expected_snapshots() -> dict[RegimeName, _Snapshot]:
     return {
         "married": {
             **plain,
-            "stakeholders": ("f", "m"),
+            "member_axis": ("f", "m"),
             "participation": {
                 "married_ir": (
                     _participation_support,
@@ -514,7 +512,7 @@ def _expected_snapshots() -> dict[RegimeName, _Snapshot]:
                     {
                         "target_support": ParticipationRead(
                             regime="married_ir",
-                            stakeholder="f",
+                            member="f",
                             kind="Participating",
                             field="support",
                             projection={"wage": _identity_wage},
@@ -525,7 +523,7 @@ def _expected_snapshots() -> dict[RegimeName, _Snapshot]:
         },
         "married_ir": {
             **plain,
-            "stakeholders": ("f", "m"),
+            "member_axis": ("f", "m"),
             "exit": (
                 "Unilateral",
                 {
@@ -542,7 +540,7 @@ def _expected_snapshots() -> dict[RegimeName, _Snapshot]:
                 },
             ),
         },
-        "married_terminal": {**plain, "stakeholders": ("f", "m")},
+        "married_terminal": {**plain, "member_axis": ("f", "m")},
         "single_f": plain,
     }
 
@@ -572,7 +570,7 @@ def test_the_declarations_determine_every_engine_facing_fact(
 @pytest.mark.parametrize(
     "slot",
     [
-        "stakeholders",
+        "member_axis",
         "pareto_objective",
         "value_constraints",
         "same_period_refs",
@@ -599,7 +597,7 @@ def test_a_derived_slot_cannot_be_declared(slot: str) -> None:
 @pytest.mark.parametrize(
     "slot",
     [
-        "stakeholders",
+        "member_axis",
         "pareto_objective",
         "value_constraints",
         "same_period_refs",

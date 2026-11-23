@@ -18,12 +18,12 @@ from lcm import (
     AgeGrid,
     ByAge,
     LinSpacedGrid,
+    MemberRoute,
     Model,
     ParticipationCheck,
     ParticipationRead,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     StochasticTransition,
     TimeVarying,
     Transition,
@@ -200,7 +200,7 @@ def build_model(
                             ),
                         },
                         routes={
-                            "only": StakeholderRoute(
+                            "only": MemberRoute(
                                 fallback=ProjectedRegimeValue(
                                     regime="fallback",
                                     projection=(
@@ -512,7 +512,7 @@ def _participation_domain_model(
                             )
                         },
                         routes={
-                            "only": StakeholderRoute(
+                            "only": MemberRoute(
                                 fallback=ProjectedRegimeValue(
                                     regime="fallback",
                                     projection={
@@ -757,7 +757,7 @@ def _read_priority_replay(
                             )
                         },
                         routes={
-                            "only": StakeholderRoute(
+                            "only": MemberRoute(
                                 fallback=ProjectedRegimeValue(
                                     regime="fallback",
                                     projection={"w": _priority_fallback_state},
@@ -918,7 +918,7 @@ def test_participation_internal_dependency_preserves_the_declared_physical_state
                     "target": ParticipationCheck(
                         predicate=predicate,
                         routes={
-                            "self": StakeholderRoute(
+                            "self": MemberRoute(
                                 fallback=ProjectedRegimeValue(
                                     regime="fallback",
                                     projection={state_name: projection},

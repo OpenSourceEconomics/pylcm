@@ -10,7 +10,7 @@ from beartype import beartype
 
 from _lcm.beartype_conf import REGIME_CONF
 from _lcm.utils.containers import ensure_containers_are_immutable
-from lcm.collective import ProjectedRegimeValue, StakeholderRoute
+from lcm.collective import MemberRoute, ProjectedRegimeValue
 from lcm.exceptions import RegimeInitializationError
 from lcm.typing import ReferenceName, UserFunction
 
@@ -67,8 +67,8 @@ class ParticipationCheck:
 
     predicate: UserFunction
     """Exact Boolean comparison of participation states and explicitly typed reads."""
-    routes: Mapping[str, StakeholderRoute]
-    """One actual settlement per original source stakeholder.
+    routes: Mapping[str, MemberRoute]
+    """One actual settlement per original source member.
 
     Routes may share a fallback regime: each member lands at its own route's
     projection, since the landing is selected by the row's role.

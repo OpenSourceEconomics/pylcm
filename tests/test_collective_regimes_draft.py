@@ -26,7 +26,7 @@ from lcm.typing import (
 )
 
 # Shared building blocks: a stripped-down couples problem, in which the two
-# stakeholders differ only in their disutility of work.
+# members differ only in their disutility of work.
 
 
 @categorical(ordered=True)
@@ -41,7 +41,7 @@ def _utility_f(
     labor_supply_f: DiscreteAction,
     match_quality: float,
 ) -> FloatND:
-    """Wife's per-stakeholder felicity (illustrative)."""
+    """Wife's per-member felicity (illustrative)."""
     return (
         jnp.log(consumption)
         - 0.3 * (labor_supply_f == LaborSupply.work)
@@ -55,7 +55,7 @@ def _utility_m(
     labor_supply_m: DiscreteAction,
     match_quality: float,
 ) -> FloatND:
-    """Husband's per-stakeholder felicity (illustrative)."""
+    """Husband's per-member felicity (illustrative)."""
     return (
         jnp.log(consumption)
         - 0.5 * (labor_supply_m == LaborSupply.work)
@@ -75,12 +75,12 @@ class _CoupleRegimeId:
     widowed: ScalarInt
 
 
-def test_declaring_non_terminal_stakeholders_constructs():
+def test_declaring_non_terminal_members_constructs():
     """A non-terminal collective regime constructs.
 
-    Declaring `stakeholders` and binding a regime transition law is accepted: the
-    per-stakeholder contract is checked at construction, and the constructed
-    regime keeps both its stakeholder tuple and its non-terminal status. What a
+    Declaring `members` and binding a regime transition law is accepted: the
+    per-member contract is checked at construction, and the constructed
+    regime keeps both its member tuple and its non-terminal status. What a
     collective regime is allowed to route to, and how it solves, is pinned in
     `tests/regime_building/test_nonterminal_collective_solve.py`.
     """
@@ -98,14 +98,14 @@ def test_declaring_non_terminal_stakeholders_constructs():
     )
     law = bind_regime_law(_some_transition)
     validate_regime_law(regime, law=law)
-    assert regime.stakeholders == ("f", "m")
+    assert regime.member_axis == ("f", "m")
     assert not law.terminal
 
 
-def test_terminal_stakeholders_without_per_stakeholder_utility_is_rejected():
-    """A collective regime must carry a body for every stakeholder it names.
+def test_terminal_members_without_per_member_utility_is_rejected():
+    """A collective regime must carry a body for every member it names.
 
-    A household may leave a stakeholder's body to arrive from the model level,
+    A household may leave a member's body to arrive from the model level,
     so a bare `Regime` cannot tell whether one ever will. Completeness is a
     property of the merged regime and is reported when the model finalizes it.
     """
@@ -132,7 +132,7 @@ def test_terminal_stakeholders_without_per_stakeholder_utility_is_rejected():
         },
     )
 
-    with pytest.raises(ModelInitializationError, match="per-stakeholder utility"):
+    with pytest.raises(ModelInitializationError, match="per-member utility"):
         Model(
             regimes={"married": married, "widowed": widowed},
             ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
@@ -143,9 +143,9 @@ def test_terminal_stakeholders_without_per_stakeholder_utility_is_rejected():
 
 
 def test_singleton_default_is_untouched():
-    """A regime that declares no stakeholders is a plain singleton regime.
+    """A regime that declares no members is a plain singleton regime.
 
-    Omitting `stakeholders` leaves the field `None` and construction takes the
+    Omitting `members` leaves the field `None` and construction takes the
     ordinary single-value path — the collective branch is reached only by an
     explicit declaration, never by default.
     """
@@ -158,9 +158,9 @@ def test_singleton_default_is_untouched():
         actions={"consumption": _CONSUMPTION},
         functions={"utility": utility},
     )
-    assert regime.stakeholders is None
+    assert regime.member_axis is None
 
 
-def test_stakeholders_is_not_a_constructor_parameter():
-    """A regime's stakeholders are declared in its utility, and only there."""
-    assert "stakeholders" not in inspect.signature(Regime).parameters
+def test_members_is_not_a_constructor_parameter():
+    """A regime's members are declared in its utility, and only there."""
+    assert "member_axis" not in inspect.signature(Regime).parameters

@@ -245,8 +245,8 @@ class _RegimeSimulationInputs(TypedDict):
     n_subjects: int
     subject_slice: slice | simulate.SubjectRows
     original_n_subjects: NotRequired[int | None]
-    own_stakeholder: simulate.Int1D
-    new_own_stakeholder: simulate.Int1D
+    own_member: simulate.Int1D
+    new_own_member: simulate.Int1D
     gated_edge_fold_age: NotRequired[float | None]
     sim_policy: NotRequired[
         simulate.EGMSimPolicy

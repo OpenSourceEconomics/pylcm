@@ -65,7 +65,7 @@ def _reaches_public_model(*, source: PythonSource) -> bool:
 
 
 #: What a module writes when it exercises the collective / gated-edge surface.
-#: There is one vocabulary: a regime says who its stakeholders are, what a
+#: There is one vocabulary: a regime says who its members are, what a
 #: value-reading constraint is, and where a value-dependent transition routes,
 #: each in the slot it already has.
 _DECLARATIONS = (
@@ -166,7 +166,7 @@ def test_most_of_the_surface_is_covered_through_the_public_route():
         ("lcm.CollectiveUtility(utilities={})", True),
         ("ValueDependentConstraint(predicate=p)", True),
         ("Gate(predicate=g)", True),
-        ('"""A docstring naming CollectiveUtility and stakeholders."""', False),
+        ('"""A docstring naming CollectiveUtility and members."""', False),
         ("# CollectiveUtility(utilities={}) commented out\nx = 1", False),
         ("collective_utility = 1", False),
     ],
@@ -193,11 +193,12 @@ def test_reaching_model_is_a_call_not_a_mention(
 
 
 #: What a regime's declarations and its law decompose into. A model author never
-#: writes one: `stakeholders`, `pareto_objective`, `value_constraints` and
-#: `same_period_refs` are read off a regime, `gated_edges` off the law the model
+#: writes one: `members`, `member_axis`, `pareto_objective`, `value_constraints`
+#: and `same_period_refs` are read off a regime, `gated_edges` off the law the model
 #: binds for it, and `GatedEdge` is the engine's own form of an edge.
 _DECOMPOSED_NAMES = (
-    "stakeholders",
+    "members",
+    "member_axis",
     "pareto_objective",
     "value_constraints",
     "same_period_refs",
@@ -220,7 +221,8 @@ def _writes_a_decomposed_name(source: PythonSource) -> list[str]:
                 called = getattr(node.args[0], "id", None) or getattr(
                     node.args[0], "attr", None
                 )
-            if called in _ENGINE_CONSTRUCTORS:
+            # A `CompositeState` names its own, unrelated `members`.
+            if called in _ENGINE_CONSTRUCTORS or called == "CompositeState":
                 continue
             written += [kw.arg for kw in node.keywords if kw.arg in _DECOMPOSED_NAMES]
         elif isinstance(node, ast.FunctionDef):
@@ -251,14 +253,11 @@ _ENGINE_CONSTRUCTORS = frozenset(
     ("source", "expected"),
     [
         (
-            (
-                "partial(q_and_f_module.get_Q_and_F_terminal_collective, "
-                'stakeholders=("a",))'
-            ),
+            ('partial(q_and_f_module.get_Q_and_F_terminal_collective, members=("a",))'),
             [],
         ),
-        ('Regime(stakeholders=("a",))', ["stakeholders"]),
-        ('partial(Regime, stakeholders=("a",))', ["stakeholders"]),
+        ('Regime(members=("a",))', ["members"]),
+        ('partial(Regime, member_axis=("a",))', ["member_axis"]),
     ],
 )
 def test_partial_binding_preserves_the_engine_vocabulary_boundary(
@@ -270,7 +269,7 @@ def test_partial_binding_preserves_the_engine_vocabulary_boundary(
 
 #: Modules that build or directly exercise the ENGINE form rather than the
 #: author form, and so write the engine vocabulary on purpose. One replaces
-#: `stakeholders` on a canonical regime the solver already produced, one mocks a
+#: `member_axis` on a canonical regime the solver already produced, one mocks a
 #: canonical regime outright, and others unit-test lowered GridSearch reducers,
 #: provider context and mandatory bound integrity at the household kernel owner.
 #: No exempt write reaches `Regime.__init__`, so none is a second way to

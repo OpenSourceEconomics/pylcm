@@ -16,10 +16,9 @@ described in [Dependency facts](regime_facts.md).
 
 - **Dense regimes** (:126-146). Nonterminal regimes of one kind pool according to their
   taste shocks. A regime's kind is its stage, solver, aggregator, certainty equivalent,
-  Pareto objective, stakeholders and exit (rule, tie, comparison, renegotiation,
-  settlement, targets with their roles, observed shocks and availability), so a
-  collective regime never pools with a single-agent one, and regimes with different
-  exits never pool:
+  Pareto objective, members and exit (rule, tie, comparison, renegotiation, settlement,
+  targets with their roles, observed shocks and availability), so a collective regime
+  never pools with a single-agent one, and regimes with different exits never pool:
 
   - Regimes without taste shocks pool together.
   - A regime with taste shocks stays alone.
@@ -49,9 +48,9 @@ described in [Dependency facts](regime_facts.md).
   - an action by its largest grid.
 
   A block pays `|T_B| · |X_B| · |S_B| · |A_B|` evaluations and `|T_B| · |X_B| · |S_B|`
-  stored values, where `T_B` is the set of the block's own periods and `S_B` the
-  stakeholders of its regimes (one for a single-agent regime): a collective regime
-  stores one value and computes one action value per stakeholder.
+  stored values, where `T_B` is the set of the block's own periods and `S_B` the members
+  of its regimes (one for a single-agent regime): a collective regime stores one value
+  and computes one action value per member.
 
 - **Layouts** (:594-617). The lanes of a dense regime are partitioned into groups, which
   stay fixed for all periods. Each group's active periods are cut into intervals. Each

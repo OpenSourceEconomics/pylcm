@@ -41,7 +41,7 @@ from _lcm.user_regime_validation import (
     fail_if_a_joint_target_is_unreachable,
     validate_regimes,
 )
-from lcm.collective import Gate, ProjectedRegimeValue, StakeholderRoute
+from lcm.collective import Gate, MemberRoute, ProjectedRegimeValue
 from lcm.exceptions import (
     InvalidRegimeTransitionProbabilitiesError,
     ModelInitializationError,
@@ -937,10 +937,10 @@ def _role_lowered_transition(
             gates[key] = Gate(
                 predicate=role_gate_is_open,
                 routes={
-                    role: StakeholderRoute(
-                        target_stakeholder=role,
+                    role: MemberRoute(
+                        target_member=role,
                         fallback=ProjectedRegimeValue(
-                            regime=target, projection={}, stakeholder=role
+                            regime=target, projection={}, member=role
                         ),
                     )
                 },
@@ -971,25 +971,25 @@ def _fail_if_role_invalid(
             f"{entry}, and the transition declares both a role and a `{declared}` "
             f"for '{target}'. A role is the always-open gate; declare one of them."
         )
-    stakeholders = regimes[source].stakeholders
-    if stakeholders is not None:
+    member_axis = regimes[source].member_axis
+    if member_axis is not None:
         raise ModelInitializationError(
-            f"{entry}, but '{source}' is collective (stakeholders={stakeholders}): "
+            f"{entry}, but '{source}' is collective (members={member_axis}): "
             "each of its rows already carries a role. Route a collective source "
             "into another layout with a `Gate` or a `ParticipationCheck`."
         )
     if target not in regimes:
         return
-    target_stakeholders = regimes[target].stakeholders
-    if target_stakeholders is None:
+    target_member_axis = regimes[target].member_axis
+    if target_member_axis is None:
         raise ModelInitializationError(
             f"{entry}, but '{target}' is not collective: a role names one of a "
-            "collective target's stakeholders. Reach a singleton target by a "
+            "collective target's members. Reach a singleton target by a "
             "plain edge."
         )
-    if role not in target_stakeholders:
+    if role not in target_member_axis:
         raise ModelInitializationError(
-            f"{entry}, but the stakeholders of '{target}' are {target_stakeholders}."
+            f"{entry}, but the members of '{target}' are {target_member_axis}."
         )
 
 
@@ -1017,8 +1017,8 @@ def _fail_if_a_role_names_no_target(
 
 
 def _identity_fallback_route(
-    *, route: StakeholderRoute, states: tuple[StateName, ...]
-) -> StakeholderRoute:
+    *, route: MemberRoute, states: tuple[StateName, ...]
+) -> MemberRoute:
     """Return `route` with its fallback projecting every state onto itself."""
     return replace(
         route,

@@ -103,18 +103,18 @@ target's [`Gate`](collective_regimes.md#api-gate) decides whether a row stays th
 takes its route's fallback. One gate per target holds at every age the target is reached
 and in both phases; a gate is never wrapped in `ByAge` or `Phased`. Two routes of one
 gate may name the same fallback regime in a phase only when their fallbacks there name
-the same stakeholder and the same projection function for every state, and none of those
+the same member and the same projection function for every state, and none of those
 functions reads a parameter, so that both routes write the same row.
 
-`roles={target: stakeholder}` is the plain edge from a singleton source into a
-collective target: a row taking it continues as that stakeholder of the target, and its
-continuation value toward the target is the target's value for that stakeholder. Like a
-gate, a role holds at every age the target is reached and in both phases. A row that
-lands where the target has no feasible action raises `NoFeasibleActionError`, as on any
-plain edge; a `Gate` is what sends such a row elsewhere. `Model(...)` raises a
-`ModelInitializationError` naming the source, the target and the role for
+`roles={target: member}` is the plain edge from a singleton source into a collective
+target: a row taking it continues as that member of the target, and its continuation
+value toward the target is the target's value for that member. Like a gate, a role holds
+at every age the target is reached and in both phases. A row that lands where the target
+has no feasible action raises `NoFeasibleActionError`, as on any plain edge; a `Gate` is
+what sends such a row elsewhere. `Model(...)` raises a `ModelInitializationError` naming
+the source, the target and the role for
 
-- a target that is not collective, or a role it has no stakeholder of;
+- a target that is not collective, or a role it has no member of;
 - a source that is itself collective;
 - a target the transition never reaches;
 - a target that also has a gate or a participation check.
@@ -366,10 +366,10 @@ differ by phase:
 Constraints, actions and derived categoricals are phase-invariant and reject `Phased`.
 Ordinary nested phase wrappers and wrappers inside per-target transition mappings are
 invalid. Structured declarations own two additional, explicit seams:
-`CollectiveUtility.utilities[stakeholder]` may hold a phase-specific utility, and a
-`StakeholderRoute` may use a phase-specific `fallback`. These field-specific seams and
-the whole-joint-kernel seam above are not permission to place `Phased` arbitrarily
-inside mappings.
+`CollectiveUtility.utilities[member]` may hold a phase-specific utility, and a
+`MemberRoute` may use a phase-specific `fallback`. These field-specific seams and the
+whole-joint-kernel seam above are not permission to place `Phased` arbitrarily inside
+mappings.
 
 A carried state is derived during backward induction, so it adds no solve-grid axis, but
 is seeded and evolved as a genuine simulation state. Its law of motion still belongs in

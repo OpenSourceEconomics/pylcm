@@ -16,10 +16,10 @@ from lcm import (
     ExecutionConfig,
     Gate,
     LinSpacedGrid,
+    MemberRoute,
     Model,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     StochasticTransition,
     Transition,
     categorical,
@@ -111,8 +111,8 @@ def _model(*, budgeted: bool) -> Model:
                     "end": Gate(
                         predicate=_gate,
                         routes={
-                            "only": StakeholderRoute(
-                                target_stakeholder=None,
+                            "only": MemberRoute(
+                                target_member=None,
                                 fallback=ProjectedRegimeValue(
                                     regime="alone",
                                     projection={

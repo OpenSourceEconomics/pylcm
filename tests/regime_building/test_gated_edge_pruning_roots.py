@@ -19,12 +19,12 @@ from lcm import (
     ByAge,
     DiscreteGrid,
     LinSpacedGrid,
+    MemberRoute,
     Model,
     ParticipationCheck,
     ParticipationRead,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     Transition,
     categorical,
     fixed_transition,
@@ -131,8 +131,8 @@ def _make_model_with_a_gate_reading_a_broadcast_state() -> Model:
                     "retired": ParticipationCheck(
                         predicate=_gate_reading_bonus,
                         routes={
-                            "self": StakeholderRoute(
-                                target_stakeholder=None,
+                            "self": MemberRoute(
+                                target_member=None,
                                 fallback=ProjectedRegimeValue(
                                     regime="outside",
                                     projection={"wage": _project_wage_identically},
@@ -199,8 +199,8 @@ def _make_model_with_a_projection_reading_a_target_state() -> Model:
                     "retired": ParticipationCheck(
                         predicate=_gate_comparing_values,
                         routes={
-                            "self": StakeholderRoute(
-                                target_stakeholder=None,
+                            "self": MemberRoute(
+                                target_member=None,
                                 fallback=ProjectedRegimeValue(
                                     regime="outside",
                                     projection={"wage": _project_wage_identically},

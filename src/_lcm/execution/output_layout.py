@@ -261,14 +261,14 @@ def _state_axis_spec(
 
     # PartitionSpec may omit replicated trailing axes. Extend it to the
     # canonical state rank, then deliberately discard anything beyond that
-    # prefix (the collective stakeholder axis).
+    # prefix (the collective member axis).
     template_spec = tuple(value_sharding.spec)
     if len(template_spec) > len(state_order) and any(
         axis is not None for axis in template_spec[len(state_order) :]
     ):
         msg = (
             "The value template shards a non-state trailing output axis; only a "
-            "replicated stakeholder axis can follow the state axes."
+            "replicated member axis can follow the state axes."
         )
         raise ValueError(msg)
     return (*template_spec[: len(state_order)],) + (None,) * max(

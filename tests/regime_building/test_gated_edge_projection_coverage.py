@@ -42,13 +42,13 @@ from lcm import (
     DiscreteGrid,
     Gate,
     LinSpacedGrid,
+    MemberRoute,
     Model,
     ParticipationCheck,
     ParticipationRead,
     Phased,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     Transition,
     categorical,
     fixed_transition,
@@ -233,7 +233,7 @@ def _short_ref() -> ResolvedProjectedRegimeValue:
     return ResolvedProjectedRegimeValue(
         regime="annuity",
         projection=MappingProxyType({}),
-        stakeholder_index=None,
+        member_index=None,
     )
 
 
@@ -285,7 +285,7 @@ def _build_age_specialized_model(*, fallback_projects_principal: bool) -> Model:
                     "src_exit": Gate(
                         predicate=_wage_gate,
                         routes={
-                            "only": StakeholderRoute(
+                            "only": MemberRoute(
                                 fallback=ProjectedRegimeValue(
                                     regime="annuity", projection=projection
                                 )
@@ -366,7 +366,7 @@ def _build_model(
                     "src_exit": ParticipationCheck(
                         predicate=_gate,
                         routes={
-                            "only": StakeholderRoute(
+                            "only": MemberRoute(
                                 fallback=ProjectedRegimeValue(
                                     regime="fallback",
                                     projection=fallback_projection,

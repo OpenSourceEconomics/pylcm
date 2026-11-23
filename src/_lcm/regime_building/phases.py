@@ -392,7 +392,7 @@ def _phase_function_pools(*, user_regime: Regime) -> _PhaseFunctionPools:
         f"the two."
         for name in carried_imputations
         # The engine-facing names, not the declared ones: a carried state
-        # spelled like a stakeholder's utility collides with the entry that
+        # spelled like a member's utility collides with the entry that
         # utility is decomposed into, and the overlay below would win.
         if name in user_regime.decomposed_functions
     ]
@@ -487,7 +487,7 @@ def project_onto_solve_phase(user_regime: Regime) -> Regime:
     A regime that is valued but never visited owes its backward problem only,
     so its declaration keeps the solve variant of every `Phased` slot:
 
-    - a `Phased` function, stakeholder utility, state transition, joint
+    - a `Phased` function, member utility, state transition, joint
       transition or aggregator becomes its solve variant;
     - a carried state becomes its solve-phase imputation, a function under the
       state's name, and its carried law of motion is dropped.

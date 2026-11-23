@@ -44,10 +44,10 @@ from lcm import (
     DiscreteGrid,
     Gate,
     LinSpacedGrid,
+    MemberRoute,
     Model,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     Transition,
     ValueDependentConstraint,
     categorical,
@@ -724,15 +724,15 @@ def _make_dissolution_model() -> tuple[Model, UserParams]:
                     "married_ir": Gate(
                         predicate=_stay_married,
                         routes={
-                            "f": StakeholderRoute(
-                                target_stakeholder="f",
+                            "f": MemberRoute(
+                                target_member="f",
                                 fallback=ProjectedRegimeValue(
                                     regime="single_f",
                                     projection={"wage": _identity_wage},
                                 ),
                             ),
-                            "m": StakeholderRoute(
-                                target_stakeholder="m",
+                            "m": MemberRoute(
+                                target_member="m",
                                 fallback=ProjectedRegimeValue(
                                     regime="single_m",
                                     projection={"wage": _identity_wage},

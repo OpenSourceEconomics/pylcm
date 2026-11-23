@@ -42,10 +42,10 @@ from lcm import (
     ExecutionConfig,
     Gate,
     LinSpacedGrid,
+    MemberRoute,
     Model,
     NormalIIDProcess,
     ProjectedRegimeValue,
-    StakeholderRoute,
     StateConditioned,
     StochasticTransition,
     Transition,
@@ -1699,7 +1699,7 @@ def _collective_model(
     value_dependent: bool,
     enable_jit: bool = True,
 ) -> Model:
-    """Two stakeholders with `Q = 1 - 2a`; action 0 lands at 1, action 1 at `tail`."""
+    """Two members with `Q = 1 - 2a`; action 0 lands at 1, action 1 at `tail`."""
 
     def landing(action: ContinuousAction) -> FloatND:
         return jnp.where(action == 0.0, 1.0, tail)
@@ -1875,7 +1875,7 @@ def _gate_model(*, gate_open: bool, projection: float, enable_jit: bool) -> Mode
                     "target": Gate(
                         predicate=gate,
                         routes={
-                            "only": StakeholderRoute(
+                            "only": MemberRoute(
                                 fallback=ProjectedRegimeValue(
                                     regime="fallback", projection={"wealth": project}
                                 )

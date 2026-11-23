@@ -476,7 +476,7 @@ def test_exit_profiles_keep_every_raw_array_for_every_worker_count(
     expected, actual = exit_observed[1], exit_observed[2]
     assert expected["raw_arrays"]
     assert actual["raw_tree"] == expected["raw_tree"]
-    # Includes every mask, role, state, shock, action and stakeholder value,
+    # Includes every mask, role, state, shock, action and member value,
     # preserving dtype, signed zeros and NaN payloads as well as numeric values.
     assert actual["raw_arrays"] == expected["raw_arrays"]
     pd.testing.assert_frame_equal(actual["panel"], expected["panel"], check_exact=True)

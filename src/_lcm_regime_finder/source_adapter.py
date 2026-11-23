@@ -59,7 +59,9 @@ _CONSTRUCTORS = {
     "TauchenAR1Process", "Phased", "Transition", "StochasticTransition",
     "ExtremeValueTasteShocks", "InitialNodes", "ByAge", "ByPeriod",
     "LinearAggregator", "fixed_transition",
-    "ProjectedRegimeValue", "StakeholderRoute", "Gate",
+    "ProjectedRegimeValue", "MemberRoute", "Gate",
+    # The route's spelling in sources written before it was named `MemberRoute`.
+    "StakeholderRoute",
 }
 _BINARY = {ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul,
            ast.Div: operator.truediv, ast.FloorDiv: operator.floordiv,

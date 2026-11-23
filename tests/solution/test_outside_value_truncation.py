@@ -538,12 +538,12 @@ def _marriage_frame(*, model_level: bool) -> pd.DataFrame:
                 dtype=jnp.int32,
             ),
             "match": jnp.asarray([0, 0, 0, 1], dtype=jnp.int32),
-            "own_stakeholder": jnp.asarray(
+            "own_member": jnp.asarray(
                 [
                     NO_ROLE,
                     NO_ROLE,
-                    model.stakeholder_names_to_ids["f"],
-                    model.stakeholder_names_to_ids["m"],
+                    model.member_names_to_ids["f"],
+                    model.member_names_to_ids["m"],
                 ],
                 dtype=jnp.int32,
             ),

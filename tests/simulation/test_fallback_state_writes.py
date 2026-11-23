@@ -18,7 +18,7 @@ Two properties of that write are pinned here.
   simulation runs, so a household entering that regime needs a landing point on
   it exactly as it does on the regime's solved states.
 
-The model is the same household throughout: `married` is a two-stakeholder
+The model is the same household throughout: `married` is a two-member
 regime whose consent gate keeps the higher-wage households together and sends
 the lowest-wage one to `single_f` (the wife's regime, whose leg the simulated
 cohort follows) and `single_m` (the husband's).
@@ -49,11 +49,11 @@ from lcm import (
     DiscreteGrid,
     Gate,
     LinSpacedGrid,
+    MemberRoute,
     Model,
     Phased,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     Transition,
     categorical,
     fixed_transition,
@@ -212,8 +212,8 @@ def _route_three_households() -> StatesPerRegime:
             ),
         }
     )
-    own_stakeholder = jnp.full(
-        n_households, married.stakeholder_names_to_ids["f"], dtype=jnp.int32
+    own_member = jnp.full(
+        n_households, married.member_names_to_ids["f"], dtype=jnp.int32
     )
     routed_states, _routed_ids, _routed_roles, _closed_masks = route_gated_edges(
         # The source is simulated at period 0, so the gate is decided on
@@ -228,8 +228,8 @@ def _route_three_households() -> StatesPerRegime:
         ),
         subjects_in_regime=jnp.ones(n_households, dtype=bool),
         flat_params=flat_params,
-        own_stakeholder=own_stakeholder,
-        new_own_stakeholder=own_stakeholder,
+        own_member=own_member,
+        new_own_member=own_member,
     )
     return routed_states
 
@@ -264,8 +264,8 @@ def _simulate_three_households():
             "regime_id": jnp.full(
                 n_households, model.regime_names_to_ids["married"], dtype=jnp.int32
             ),
-            "own_stakeholder": jnp.full(
-                n_households, model.stakeholder_names_to_ids["f"], dtype=jnp.int32
+            "own_member": jnp.full(
+                n_households, model.member_names_to_ids["f"], dtype=jnp.int32
             ),
         }
     )
@@ -426,14 +426,14 @@ def _make_laws(
                 "married_terminal": Gate(
                     predicate=_consent_gate,
                     routes={
-                        "f": StakeholderRoute(
-                            target_stakeholder="f",
+                        "f": MemberRoute(
+                            target_member="f",
                             fallback=ProjectedRegimeValue(
                                 regime="single_f", projection=wife_projection
                             ),
                         ),
-                        "m": StakeholderRoute(
-                            target_stakeholder="m",
+                        "m": MemberRoute(
+                            target_member="m",
                             fallback=ProjectedRegimeValue(
                                 regime="single_m",
                                 projection={"wage": _identity_wage},

@@ -66,10 +66,10 @@ class _MockSolutionPhase:
 class _MockRegime(Regime):
     """A `Regime` carrying only what the topology iterator reads."""
 
-    def __init__(self, *, solution, gated_edges, stakeholders=None) -> None:
+    def __init__(self, *, solution, gated_edges, member_axis=None) -> None:
         object.__setattr__(self, "solution", solution)
         object.__setattr__(self, "gated_edges", gated_edges)
-        object.__setattr__(self, "stakeholders", stakeholders)
+        object.__setattr__(self, "member_axis", member_axis)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -186,7 +186,7 @@ def test_the_trailing_axis_is_the_edges_own_channel_count(sharding_plan_calls): 
     regimes["source_a"] = _MockRegime(
         solution=_MockSolutionPhase(states=MappingProxyType({})),
         gated_edges=MappingProxyType({"shared_target": _edge(n_components=2)}),
-        stakeholders=("f", "m"),
+        member_axis=("f", "m"),
     )
     frozen = MappingProxyType(regimes)
     flat_params = MappingProxyType(dict.fromkeys(frozen, MappingProxyType({})))

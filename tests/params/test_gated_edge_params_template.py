@@ -37,13 +37,13 @@ from lcm import (
     CollectiveUtility,
     DiscreteGrid,
     LinSpacedGrid,
+    MemberRoute,
     Model,
     ParticipationCheck,
     ParticipationRead,
     Phased,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     Transition,
     categorical,
     fixed_transition,
@@ -483,20 +483,18 @@ def _build_model(
     single_f_participation = {
         "married_terminal": ParticipationCheck(
             predicate=gate,
-            routes={
-                "f": StakeholderRoute(target_stakeholder="f", fallback=wife_fallback)
-            },
+            routes={"f": MemberRoute(target_member="f", fallback=wife_fallback)},
             reads={
                 "V_target_f": ParticipationRead(
                     kind="IntegratedFull",
                     regime="married_terminal",
-                    stakeholder="f",
+                    member="f",
                     projection={"wage": _wage_itself},
                 ),
                 "V_target_m": ParticipationRead(
                     kind="IntegratedFull",
                     regime="married_terminal",
-                    stakeholder="m",
+                    member="m",
                     projection={"wage": _wage_itself},
                 ),
                 "V_single_f_ref": ParticipationRead(

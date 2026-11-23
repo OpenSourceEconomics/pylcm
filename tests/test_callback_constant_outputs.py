@@ -28,11 +28,11 @@ from lcm import (
     IrregSpacedGrid,
     JointTransition,
     LinSpacedGrid,
+    MemberRoute,
     Model,
     ParticipationCheck,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     StochasticTransition,
     Transition,
     categorical,
@@ -229,7 +229,7 @@ def _integer_utility_m(work: DiscreteAction) -> FloatND:
 
 
 def test_integer_collective_felicities_match_their_float_twins() -> None:
-    """Integer-valued stakeholder felicities solve like their float spellings."""
+    """Integer-valued member felicities solve like their float spellings."""
     couple, couple_terminal = (
         make_stateless_collective_target_model()[0].user_regimes[name]
         for name in ("couple", "couple_terminal")
@@ -764,7 +764,7 @@ def _ten_plus_wealth(*, wealth: ContinuousState) -> FloatND:
 def _gate_model(
     *, predicate: UserFunction, fallback: UserFunction = _stay, gated: bool = False
 ) -> Model:
-    route = StakeholderRoute(
+    route = MemberRoute(
         fallback=ProjectedRegimeValue(
             regime="fallback", projection={"wealth": fallback}
         )

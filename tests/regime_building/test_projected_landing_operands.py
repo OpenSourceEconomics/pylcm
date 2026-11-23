@@ -23,10 +23,10 @@ from lcm import (
     Gate,
     IrregSpacedGrid,
     LinSpacedGrid,
+    MemberRoute,
     Model,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     Transition,
     categorical,
 )
@@ -104,7 +104,7 @@ def _projection_model(projection) -> Model:
                     "target": Gate(
                         predicate=_closed_above_one,
                         routes={
-                            "only": StakeholderRoute(
+                            "only": MemberRoute(
                                 fallback=ProjectedRegimeValue(
                                     regime="fallback", projection={"x": projection}
                                 )

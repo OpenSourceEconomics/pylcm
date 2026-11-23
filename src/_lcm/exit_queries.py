@@ -114,7 +114,7 @@ class _ExitReducer:
     declaration: Exit | None
     """The regime's one exit in the current phase, or None if the query reads none."""
     targets: Mapping[ExitRole, tuple[str, int | None]]
-    """Member to producer operand and destination stakeholder index."""
+    """Member to producer operand and destination member index."""
     adjustments: Mapping[ExitRole, Callable[..., PytreeValue]]
     """Source-context utility adjustments, evaluated once in each payoff."""
     available: Callable[..., PytreeValue] | None
@@ -838,14 +838,14 @@ class _QueryGraphBuilder:
             gated_channels={
                 target: (
                     (None,)
-                    if self.contexts[target].stakeholders is None
+                    if self.contexts[target].member_axis is None
                     else tuple(
                         index
                         for index, member in enumerate(
-                            self.contexts[target].stakeholders or ()
+                            self.contexts[target].member_axis or ()
                         )
                         if any(
-                            route.target_stakeholder == member
+                            route.target_member == member
                             for route in context.laws[owner]
                             .gated_edges[target]
                             .legs.values()
@@ -1007,7 +1007,7 @@ class _QueryGraphBuilder:
                         operands=tuple(names),
                         tie=declaration.rule.tie,
                     )
-        members = context.stakeholders or ("self",)
+        members = context.members
         reducer = _ExitReducer(
             kind=kind,
             members=members,
@@ -1092,7 +1092,7 @@ class _QueryGraphBuilder:
             inputs[operand] = producer
             if not isinstance(declaration.rule, Consent):
                 self.outside_reads[producer] = (owner, f"member {member!r}")
-            destination_members = self.contexts[target.regime].stakeholders
+            destination_members = self.contexts[target.regime].member_axis
             index = (
                 None
                 if destination_members is None
@@ -1165,7 +1165,7 @@ class _QueryGraphBuilder:
                     f"The consent exit of {owner} cannot form a target policy "
                     f"requiring unobserved decision information {sorted(hidden)!r}."
                 )
-            destination_members = self.contexts[target.regime].stakeholders
+            destination_members = self.contexts[target.regime].member_axis
             consent_read = (
                 "own_raw",
                 "counterparty_raw",
@@ -1948,7 +1948,7 @@ def install_exit_policy_queries(
                 context.participation_queries.get(period)
                 or context.user_regimes_at(period=period)[owner].exit is not None
                 or (
-                    context.stakeholders is not None
+                    context.member_axis is not None
                     and context.current_iid_plans.get(period) is not None
                 )
             ):
@@ -2143,18 +2143,18 @@ def _validate_consent_context(
 
     counterparty = cast("Consent", declaration.rule).counterparty
     if (
-        contexts[source].stakeholders is not None
-        or contexts[counterparty.regime].stakeholders is not None
+        contexts[source].member_axis is not None
+        or contexts[counterparty.regime].member_axis is not None
     ):
         raise RegimeInitializationError(
             "Consent requires unambiguous singleton source "
             "and counterparty Raw channels."
         )
     target = declaration.targets["self"]
-    if set(contexts[target.regime].stakeholders or ()) != {
+    if set(contexts[target.regime].member_axis or ()) != {
         target.role,
         counterparty.role,
     }:
         raise RegimeInitializationError(
-            "Consent comparisons must cover every formation-destination stakeholder."
+            "Consent comparisons must cover every formation-destination member."
         )

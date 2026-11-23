@@ -34,7 +34,7 @@ from lcm import (
     categorical,
     fixed_transition,
 )
-from lcm.collective import ProjectedRegimeValue, StakeholderRoute
+from lcm.collective import MemberRoute, ProjectedRegimeValue
 from lcm.exceptions import PyLCMError
 from lcm.participation import ParticipationCheck
 from lcm.result import SimulationResult
@@ -43,7 +43,7 @@ from lcm.typing import BoolND, ContinuousState, DiscreteAction, FloatND, ScalarI
 from tests.collective_fixtures import (
     Work,
     make_couple_initial_conditions,
-    make_two_stakeholder_model,
+    make_two_member_model,
 )
 from tests.mock_regime import MockRegime
 
@@ -89,16 +89,16 @@ def test_mock_regime_carries_no_gated_edges():
     assert not hasattr(MockRegime(), "gated_edges")
 
 
-def test_saved_collective_result_lacking_stakeholder_metadata_names_the_field(
+def test_saved_collective_result_lacking_member_metadata_names_the_field(
     tmp_path: Path,
 ):
     """Reading a saved collective result fails by naming the metadata it lacks.
 
-    A result written without the per-regime stakeholder mapping cannot say
+    A result written without the per-regime member mapping cannot say
     which columns a collective regime's value splits into, so reading it back
-    reports `regime_to_stakeholders` as the missing field.
+    reports `regime_to_member_axis` as the missing field.
     """
-    model, params = make_two_stakeholder_model()
+    model, params = make_two_member_model()
     result = model.simulate(
         params=params,
         initial_conditions=make_couple_initial_conditions(n_subjects=2),
@@ -106,9 +106,9 @@ def test_saved_collective_result_lacking_stakeholder_metadata_names_the_field(
     )
     directory = tmp_path / "result"
     result.save(directory=directory)
-    _drop_stakeholder_metadata(directory=directory)
+    _drop_member_metadata(directory=directory)
 
-    with pytest.raises(PyLCMError, match="regime_to_stakeholders"):
+    with pytest.raises(PyLCMError, match="regime_to_member_axis"):
         SimulationResult.load(directory=directory).to_dataframe()
 
 
@@ -156,15 +156,15 @@ def test_the_route_type_is_exported_and_the_edge_type_is_not():
     """A route is written; an edge is derived, so only the route is public.
 
     The comparison needs the defining module's object on one side, which is why
-    this module imports `StakeholderRoute` from `lcm.collective`: reading both
+    this module imports `MemberRoute` from `lcm.collective`: reading both
     sides off `lcm` would compare the name against itself and pin nothing.
     """
-    assert getattr(lcm, "StakeholderRoute", None) is StakeholderRoute
+    assert getattr(lcm, "MemberRoute", None) is MemberRoute
     assert not hasattr(lcm, "GatedEdge")
 
 
-def _drop_stakeholder_metadata(*, directory: Path) -> None:
-    """Rewrite a saved result's metadata payload without its stakeholder mapping.
+def _drop_member_metadata(*, directory: Path) -> None:
+    """Rewrite a saved result's metadata payload without its member mapping.
 
     Args:
         directory: Directory `SimulationResult.save` wrote to.
@@ -173,7 +173,7 @@ def _drop_stakeholder_metadata(*, directory: Path) -> None:
     path = directory / "metadata.pkl"
     with path.open("rb") as fh:
         metadata = cloudpickle.load(fh)
-    del metadata.result_metadata.__dict__["regime_to_stakeholders"]
+    del metadata.result_metadata.__dict__["regime_to_member_axis"]
     with path.open("wb") as fh:
         cloudpickle.dump(metadata, fh)
 
@@ -226,7 +226,7 @@ def _make_dissolution_gate_transition() -> Transition:
             "target": ParticipationCheck(
                 predicate=_no_dissolution,
                 routes={
-                    "only": StakeholderRoute(
+                    "only": MemberRoute(
                         fallback=ProjectedRegimeValue(
                             regime="fallback",
                             projection={"wage": _identity_wage},

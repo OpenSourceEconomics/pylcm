@@ -43,12 +43,12 @@ from lcm import (
     CollectiveUtility,
     ExecutionConfig,
     LinSpacedGrid,
+    MemberRoute,
     Model,
     ParticipationCheck,
     ParticipationRead,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     load_solution,
 )
 from lcm.exceptions import SolutionIntegrityError
@@ -482,7 +482,7 @@ def _overruled_partner_model(*, n_points: int) -> Model:
         reads={
             "V_target_f": ParticipationRead(
                 regime="couple",
-                stakeholder="f",
+                member="f",
                 kind="Participating",
                 projection={"wealth": _identity},
             ),
@@ -491,8 +491,8 @@ def _overruled_partner_model(*, n_points: int) -> Model:
             ),
         },
         routes={
-            member: StakeholderRoute(
-                target_stakeholder=member,
+            member: MemberRoute(
+                target_member=member,
                 fallback=ProjectedRegimeValue(
                     regime=f"single_{member}", projection={"wealth": _identity}
                 ),

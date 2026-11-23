@@ -1,6 +1,6 @@
 """A subject's role is its own, carried row by row through the simulation.
 
-A collective regime's stakeholders are the roles its members occupy, and which
+A collective regime's members are the roles its members occupy, and which
 role a row occupies decides where that row goes when the household ends: her
 leg's fallback for her, his for him. Fixing one role for a whole `simulate()`
 call makes a mixed cohort inexpressible and, worse, silently simulates every
@@ -33,7 +33,7 @@ from tests.simulation.test_runtime_helpers import bind_eager_simulation
 _NO_ROLE = -1
 
 
-def _simulate_cohort(*, own_stakeholder, wages=(1.0, 2.0, 3.0)):
+def _simulate_cohort(*, own_member, wages=(1.0, 2.0, 3.0)):
     """Simulate the dissolution miniature with one role per subject."""
     ages, regimes, regime_names_to_ids, flat_params, solution = _solve_dissolution()
     initial_conditions = {
@@ -43,10 +43,8 @@ def _simulate_cohort(*, own_stakeholder, wages=(1.0, 2.0, 3.0)):
             [regime_names_to_ids["married"]] * len(wages), dtype=jnp.int32
         ),
     }
-    if own_stakeholder is not None:
-        initial_conditions["own_stakeholder"] = jnp.asarray(
-            own_stakeholder, dtype=jnp.int32
-        )
+    if own_member is not None:
+        initial_conditions["own_member"] = jnp.asarray(own_member, dtype=jnp.int32)
     return simulate(
         flat_params=flat_params,
         initial_conditions=MappingProxyType(initial_conditions),
@@ -62,7 +60,7 @@ def _simulate_cohort(*, own_stakeholder, wages=(1.0, 2.0, 3.0)):
 
 def _role_ids(regimes) -> dict[str, int]:
     """The model-wide role vocabulary, read off the processed regimes."""
-    return dict(regimes["married"].stakeholder_names_to_ids)
+    return dict(regimes["married"].member_names_to_ids)
 
 
 def test_a_mixed_cohort_dissolves_each_row_into_its_own_single_regime() -> None:
@@ -77,7 +75,7 @@ def test_a_mixed_cohort_dissolves_each_row_into_its_own_single_regime() -> None:
     roles = _role_ids(regimes)
 
     result, _solution = _simulate_cohort(
-        own_stakeholder=[roles["f"], roles["m"], roles["f"]]
+        own_member=[roles["f"], roles["m"], roles["f"]]
     )
 
     np.testing.assert_array_equal(
@@ -102,7 +100,7 @@ def test_the_same_cohort_with_the_roles_swapped_dissolves_the_other_way() -> Non
     roles = _role_ids(regimes)
 
     result, _solution = _simulate_cohort(
-        own_stakeholder=[roles["m"], roles["f"], roles["m"]]
+        own_member=[roles["m"], roles["f"], roles["m"]]
     )
 
     np.testing.assert_array_equal(
@@ -118,19 +116,19 @@ def test_the_same_cohort_with_the_roles_swapped_dissolves_the_other_way() -> Non
 def test_a_dissolved_row_stops_carrying_a_role() -> None:
     """Entering a singleton regime leaves the row occupying no role.
 
-    A single person is nobody's stakeholder, so the published role is the
+    A single person is nobody's member, so the published role is the
     no-role sentinel rather than the role the row held while married.
     """
     _ages, regimes, *_rest = _solve_dissolution()
     roles = _role_ids(regimes)
 
     result, _solution = _simulate_cohort(
-        own_stakeholder=[roles["f"], roles["m"], roles["f"]]
+        own_member=[roles["f"], roles["m"], roles["f"]]
     )
 
     published = result.to_dataframe(use_categorical_codes=True)
     dissolved = published.query("period == 1 and regime_name == 'single_m'")
-    assert list(dissolved["own_stakeholder"]) == [_NO_ROLE]
+    assert list(dissolved["own_member"]) == [_NO_ROLE]
 
 
 def test_a_row_that_stays_married_keeps_its_role() -> None:
@@ -139,12 +137,12 @@ def test_a_row_that_stays_married_keeps_its_role() -> None:
     roles = _role_ids(regimes)
 
     result, _solution = _simulate_cohort(
-        own_stakeholder=[roles["f"], roles["m"], roles["f"]]
+        own_member=[roles["f"], roles["m"], roles["f"]]
     )
 
     published = result.to_dataframe(use_categorical_codes=True)
     married = published.query("period == 1 and regime_name == 'married_ir'")
-    assert list(married.sort_values("subject_id")["own_stakeholder"]) == [
+    assert list(married.sort_values("subject_id")["own_member"]) == [
         roles["f"],
         roles["f"],
     ]
@@ -156,14 +154,14 @@ def test_a_collective_start_without_a_role_is_refused() -> None:
     Picking one for it would simulate a whole population as one partner, which
     is a modelling decision and not the engine's to make.
     """
-    with pytest.raises(InvalidInitialConditionsError, match="own_stakeholder"):
-        _simulate_cohort(own_stakeholder=None)
+    with pytest.raises(InvalidInitialConditionsError, match="own_member"):
+        _simulate_cohort(own_member=None)
 
 
 def test_a_role_no_regime_declares_is_refused() -> None:
     """An out-of-vocabulary role code names the vocabulary it is not in."""
-    with pytest.raises(InvalidInitialConditionsError, match="own_stakeholder"):
-        _simulate_cohort(own_stakeholder=[7, 7, 7])
+    with pytest.raises(InvalidInitialConditionsError, match="own_member"):
+        _simulate_cohort(own_member=[7, 7, 7])
 
 
 def test_the_published_role_column_carries_its_labels() -> None:
@@ -172,8 +170,8 @@ def test_the_published_role_column_carries_its_labels() -> None:
     roles = _role_ids(regimes)
 
     result, _solution = _simulate_cohort(
-        own_stakeholder=[roles["f"], roles["m"], roles["f"]]
+        own_member=[roles["f"], roles["m"], roles["f"]]
     )
 
     published = result.to_dataframe()
-    assert set(published.query("period == 0")["own_stakeholder"]) == {"f", "m"}
+    assert set(published.query("period == 0")["own_member"]) == {"f", "m"}

@@ -1,8 +1,8 @@
 """Runtime-compiled simulation of collective and gated-edge models.
 
 Simulation prepares programs from the population and live argument shapes on each
-call. Collective continuation values retain their trailing stakeholder axis;
-gated continuation values select one stakeholder's leg, and routing re-evaluates
+call. Collective continuation values retain their trailing member axis;
+gated continuation values select one member's leg, and routing re-evaluates
 the gate at the realized candidate target state. Repeated calls reuse the
 compiled decisions and population gate evaluators for those shapes.
 
@@ -24,12 +24,12 @@ from lcm import (
     ByAge,
     CollectiveUtility,
     DiscreteGrid,
+    MemberRoute,
     Model,
     ParticipationCheck,
     ParticipationRead,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     Transition,
     categorical,
     fixed_transition,
@@ -37,9 +37,9 @@ from lcm import (
 from lcm.transition import StochasticTransition
 from lcm.typing import BoolND, DiscreteAction, DiscreteState, FloatND, ScalarInt
 from tests.collective_fixtures import (
-    TWO_STAKEHOLDER_V_PERIOD_0,
+    TWO_MEMBER_V_PERIOD_0,
     make_couple_initial_conditions,
-    make_two_stakeholder_model,
+    make_two_member_model,
 )
 from tests.conftest import DECIMAL_PRECISION
 
@@ -58,13 +58,13 @@ CONSENT_PERIOD_1_REGIMES = ("married_terminal", "single_terminal")
 def test_collective_model_simulates_under_the_runtime_program(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A collective runtime program keeps both stakeholders' values.
+    """A collective runtime program keeps both members' values.
 
-    Each subject's period-0 row carries both stakeholders' values at the
+    Each subject's period-0 row carries both members' values at the
     household argmax, and they are the same numbers the model solves to.
     """
     compiled = _capture_compiled_dispatches(monkeypatch=monkeypatch)
-    model, params = make_two_stakeholder_model()
+    model, params = make_two_member_model()
     initial_conditions = make_couple_initial_conditions(n_subjects=_N_SUBJECTS)
 
     result = model.simulate(
@@ -78,7 +78,7 @@ def test_collective_model_simulates_under_the_runtime_program(
     period_0 = simulated.loc[simulated["period"] == 0, ["value_f", "value_m"]]
     aaae(
         period_0.to_numpy(),
-        np.asarray(TWO_STAKEHOLDER_V_PERIOD_0),
+        np.asarray(TWO_MEMBER_V_PERIOD_0),
         decimal=DECIMAL_PRECISION,
     )
 
@@ -221,7 +221,7 @@ def _make_consent_model() -> Model:
     """Build a singleton source consenting into a collective target.
 
     `single` is active at age 0 and transitions with probability one into the
-    two-stakeholder `married_terminal`, but only where the wife consents:
+    two-member `married_terminal`, but only where the wife consents:
     her own value in the marriage has to beat the value of staying single.
     Where it does not, the gated edge routes her to `single_terminal` with her
     education carried across.
@@ -249,7 +249,7 @@ def _make_consent_model() -> Model:
             reads={
                 "V_target_f": ParticipationRead(
                     regime="married_terminal",
-                    stakeholder="f",
+                    member="f",
                     kind="Participating",
                     projection={"education": _identity_education},
                 ),
@@ -260,8 +260,8 @@ def _make_consent_model() -> Model:
                 ),
             },
             routes={
-                "f": StakeholderRoute(
-                    target_stakeholder="f",
+                "f": MemberRoute(
+                    target_member="f",
                     fallback=ProjectedRegimeValue(
                         regime="single_terminal",
                         projection={"education": _identity_education},

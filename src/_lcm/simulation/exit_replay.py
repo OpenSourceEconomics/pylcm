@@ -288,10 +288,10 @@ def prepare_exit_period(  # noqa: C901, PLR0912, PLR0915 - retain replay's order
                         identifier=identifier,
                         source_role=None
                         if member == "self"
-                        else regime.stakeholder_names_to_ids[member],
+                        else regime.member_names_to_ids[member],
                         target_role=NO_ROLE
-                        if destination.stakeholders is None
-                        else destination.stakeholder_names_to_ids[target.role],
+                        if destination.member_axis is None
+                        else destination.member_names_to_ids[target.role],
                         projection=address,
                     )
                 )
@@ -632,11 +632,10 @@ def prepare_exit_period(  # noqa: C901, PLR0912, PLR0915 - retain replay's order
                     for shock, law in binding.group.shocks.items()
                     if isinstance(law, Discrete)
                 ),
-                "stakeholder_ids": tuple(
-                    regime.stakeholder_names_to_ids[member]
-                    for member in regime.stakeholders
+                "member_ids": tuple(
+                    regime.member_names_to_ids[member] for member in regime.member_axis
                 )
-                if regime.stakeholders is not None
+                if regime.member_axis is not None
                 else (),
             },
             arguments={
@@ -1063,12 +1062,12 @@ def _final_decision(
     entry_actors: tuple[tuple[str, RegimeName], ...],
     actor_name: RegimeName,
     categorical_names: tuple[ShockName, ...],
-    stakeholder_ids: tuple[int, ...],
+    member_ids: tuple[int, ...],
 ) -> _FinalDecisionOutput:
     mask = moved[:, None] if source_value.ndim > 1 else moved
-    if stakeholder_ids:
+    if member_ids:
         adjustment = jnp.stack(
-            tuple(jnp.where(roles == role, paid, 0.0) for role in stakeholder_ids),
+            tuple(jnp.where(roles == role, paid, 0.0) for role in member_ids),
             axis=-1,
         )
     else:

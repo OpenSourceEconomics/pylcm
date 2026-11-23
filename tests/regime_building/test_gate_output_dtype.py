@@ -17,10 +17,10 @@ from lcm import (
     DiscreteGrid,
     Gate,
     LinSpacedGrid,
+    MemberRoute,
     Model,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     Transition,
     categorical,
     fixed_transition,
@@ -85,7 +85,7 @@ def _make_model(*, gate) -> Model:
                     "target": Gate(
                         predicate=gate,
                         routes={
-                            "only": StakeholderRoute(
+                            "only": MemberRoute(
                                 fallback=ProjectedRegimeValue(
                                     regime="fallback",
                                     projection={"x": _identity_x},

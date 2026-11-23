@@ -65,8 +65,8 @@ def test_public_current_exit_keeps_the_nonprimary_members_own_projection() -> No
             "regime_id": jnp.full(
                 2, model.regime_names_to_ids["married_ir"], dtype=jnp.int32
             ),
-            "own_stakeholder": jnp.asarray(
-                [model.stakeholder_names_to_ids[member] for member in ("f", "m")],
+            "own_member": jnp.asarray(
+                [model.member_names_to_ids[member] for member in ("f", "m")],
                 dtype=jnp.int32,
             ),
         },

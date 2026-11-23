@@ -35,7 +35,7 @@ from tests.solution._reduced_maximum_probe import (
 
 _N_STATES = 3
 _N_ACTIONS = 10
-_N_STAKEHOLDERS = 2
+_N_MEMBERS = 2
 _SCALE = 0.5
 _PARTITIONS = ((4, 4, 2), (3, 3, 3, 1))
 
@@ -60,12 +60,10 @@ def _values() -> FloatND:
     return values
 
 
-def _stakeholder_values() -> FloatND:
-    """Return per-stakeholder values distinct across actions and stakeholders."""
+def _member_values() -> FloatND:
+    """Return per-member values distinct across actions and members."""
     rng = np.random.default_rng(seed=20260908)
-    drawn = jnp.asarray(
-        rng.integers(0, 9, size=(_N_STATES, _N_ACTIONS, _N_STAKEHOLDERS))
-    )
+    drawn = jnp.asarray(rng.integers(0, 9, size=(_N_STATES, _N_ACTIONS, _N_MEMBERS)))
     values = drawn.astype(jnp.zeros(()).dtype)
     assert bool(jnp.isfinite(values).all())
     return values
@@ -181,15 +179,15 @@ def test_logsumexp_block_fold_matches_the_dense_smoothed_maximum(
 
 
 def _dense_collective(
-    *, objectives: FloatND, stakeholder_values: FloatND, feasible: BoolND
+    *, objectives: FloatND, member_values: FloatND, feasible: BoolND
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Scan the whole axis once for the household winner and its readouts."""
     observed = np.asarray(objectives)
-    own = np.asarray(stakeholder_values)
+    own = np.asarray(member_values)
     live = np.asarray(feasible)
     best_objective = np.full(_N_STATES, -np.inf, dtype=observed.dtype)
     best_identity = np.full(_N_STATES, -1, dtype=np.int32)
-    best_own = np.zeros((_N_STATES, _N_STAKEHOLDERS), dtype=own.dtype)
+    best_own = np.zeros((_N_STATES, _N_MEMBERS), dtype=own.dtype)
     for state in range(_N_STATES):
         for position in range(_N_ACTIONS):
             if not live[state, position]:
@@ -204,16 +202,16 @@ def _dense_collective(
 
 def _folded_collective(*, partition: tuple[int, ...]) -> CollectiveHardMaxResult:
     """Fold the collective action axis in the blocks one partition cuts."""
-    objectives, own, feasible = _values(), _stakeholder_values(), _feasible()
+    objectives, own, feasible = _values(), _member_values(), _feasible()
     action_ids = _action_ids()
     accumulator = COLLECTIVE_HARD_MAX_REDUCTION.initialize(
-        stakeholder_template=jnp.zeros((_N_STATES, _N_STAKEHOLDERS))
+        member_template=jnp.zeros((_N_STATES, _N_MEMBERS))
     )
     for start, stop in _blocks(partition=partition):
         accumulator = COLLECTIVE_HARD_MAX_REDUCTION.add(
             accumulator=accumulator,
             objectives=objectives[:, start:stop],
-            stakeholder_values=own[:, start:stop, :],
+            member_values=own[:, start:stop, :],
             feasible=feasible[:, start:stop],
             action_ids=action_ids[start:stop],
         )
@@ -227,7 +225,7 @@ def test_collective_block_fold_matches_the_dense_household_objective(
     """Blockwise collective choice publishes the objective a single pass would."""
     expected, _identity, _own = _dense_collective(
         objectives=_values(),
-        stakeholder_values=_stakeholder_values(),
+        member_values=_member_values(),
         feasible=_feasible(),
     )
 
@@ -245,7 +243,7 @@ def test_collective_block_fold_selects_the_dense_winner_identity(
     """The household winner's global identity is the dense one, exactly."""
     _objective, expected, _own = _dense_collective(
         objectives=_values(),
-        stakeholder_values=_stakeholder_values(),
+        member_values=_member_values(),
         feasible=_feasible(),
     )
 
@@ -256,18 +254,18 @@ def test_collective_block_fold_selects_the_dense_winner_identity(
 
 
 @pytest.mark.parametrize("partition", _PARTITIONS, ids=("width-four", "width-three"))
-def test_collective_block_fold_reads_stakeholder_values_at_the_winner(
+def test_collective_block_fold_reads_member_values_at_the_winner(
     *, partition: tuple[int, ...]
 ) -> None:
-    """Every stakeholder's value is read at the one action the household picks."""
+    """Every member's value is read at the one action the household picks."""
     _objective, _identity, expected = _dense_collective(
         objectives=_values(),
-        stakeholder_values=_stakeholder_values(),
+        member_values=_member_values(),
         feasible=_feasible(),
     )
 
     aaae(
-        np.asarray(_folded_collective(partition=partition).best_stakeholder_values),
+        np.asarray(_folded_collective(partition=partition).best_member_values),
         expected,
         decimal=DECIMAL_PRECISION,
     )

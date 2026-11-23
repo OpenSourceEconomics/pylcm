@@ -20,7 +20,7 @@ _Avoid_: initial observations, initial population, starting sample
 
 **Initial states**:
 The state part of the initial conditions, i.e. everything except the regime and the
-stakeholder role.
+member role.
 _Avoid_: initial values, start states
 
 ### Model structure
@@ -36,6 +36,12 @@ An action problem: states, actions, constraints, functions and laws of motion,
 valued with next period's regimes and with nothing from the current period. Several
 regimes may share one problem.
 _Avoid_: hidden regime, stage, action regime
+
+**Member**:
+A party of a regime whose value is tracked. Every regime has at least one member: a
+regime declared with a plain utility function has the single member "self", and a
+household names its members in its collective utility.
+_Avoid_: stakeholder
 
 **Outside value**:
 What a member of a regime gets by leaving it in the current period: the value of the

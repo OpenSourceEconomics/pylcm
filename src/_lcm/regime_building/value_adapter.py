@@ -792,28 +792,28 @@ def adapt_collective_utility(
 ) -> CollectiveUtility:
     """Return the household declaration with the bodies the engine runs.
 
-    Each stakeholder's body is the adapted `utility_<s>` the engine holds, so the
+    Each member's body is the adapted `utility_<s>` the engine holds, so the
     declaration and the engine name one object, and each Pareto weight reads
     values. A declaration that reads no value grid is returned as declared.
     """
     utilities = {
-        stakeholder: None
+        member: None
         if body is None
         else cast(
             "UserFunction | Phased",
-            engine_functions.get(f"utility_{stakeholder}", body),
+            engine_functions.get(f"utility_{member}", body),
         )
-        for stakeholder, body in declaration.utilities.items()
+        for member, body in declaration.utilities.items()
     }
     objective = declaration.objective
     if objective is not None:
         weights = {
-            stakeholder: adapt_user_function(
+            member: adapt_user_function(
                 func=weight, value_grids=value_grids, encode=None, adapters=adapters
             )
             if is_user_function(weight)
             else weight
-            for stakeholder, weight in objective.weights.items()
+            for member, weight in objective.weights.items()
         }
         if any(weights[s] is not w for s, w in objective.weights.items()):
             objective = dataclasses.replace(objective, weights=weights)
@@ -912,7 +912,7 @@ def adapt_entry(  # noqa: PLR0911
     """
     # Without value grids nothing changes. A grid declares no function. A
     # condition is a tree of names, not a function; the model refuses one that
-    # reads a value or a code. A household's stakeholder bodies
+    # reads a value or a code. A household's member bodies
     # are adapted as the regime's `utility_<s>` functions. An identity law maps
     # codes to codes exactly as it maps values to values.
     if not value_grids or isinstance(
@@ -971,7 +971,7 @@ def adapt_entry(  # noqa: PLR0911
 
 
 # A container whose parts all come back unchanged is returned as declared: other
-# checks compare declarations, such as a stakeholder's utility, by identity.
+# checks compare declarations, such as a member's utility, by identity.
 
 
 def _adapt_phased(

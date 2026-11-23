@@ -139,7 +139,7 @@ type _FiniteRankOutput = tuple[
 ]
 
 # Output descriptors of a gate route: the per-regime state delta, the routed regime
-# ids and the routed stakeholder roles.
+# ids and the routed member roles.
 type _GateRouteOutput = tuple[
     Mapping[str, ShapeDtypePytree], jax.ShapeDtypeStruct, jax.ShapeDtypeStruct
 ]
@@ -222,7 +222,7 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
             (n_subjects, *array.shape[1:]), array.dtype, sharding=subject
         )
         for name, array in initial_conditions.items()
-        if name not in {"regime_id", "own_stakeholder"}
+        if name not in {"regime_id", "own_member"}
     }
     # These full-population products outlive every chunk. Setup's compiler peak
     # still includes its temporary age-validity summaries.
@@ -304,9 +304,9 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
             function=_empty_subject_membership,
             arguments={
                 "initial_regime_ids": subject_int,
-                "initial_own_stakeholder": subject_int,
+                "initial_own_member": subject_int,
             },
-            subject_arg_names=("initial_regime_ids", "initial_own_stakeholder"),
+            subject_arg_names=("initial_regime_ids", "initial_own_member"),
             subject_outputs=True,
         ),
     )
@@ -333,16 +333,16 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
                     "period": scalar_int,
                     "starting_periods": subject_int,
                     "initial_regime_ids": subject_int,
-                    "initial_own_stakeholder": subject_int,
+                    "initial_own_member": subject_int,
                     "regime_ids": regime_ids,
-                    "own_stakeholder": own_roles,
+                    "own_member": own_roles,
                 },
                 subject_arg_names=(
                     "starting_periods",
                     "initial_regime_ids",
-                    "initial_own_stakeholder",
+                    "initial_own_member",
                     "regime_ids",
-                    "own_stakeholder",
+                    "own_member",
                 ),
                 subject_outputs=True,
             ),
@@ -859,8 +859,8 @@ def _profile_next_subjects(
                 new_subject_regime_ids=new_ids,
                 subjects_in_regime=mask,
                 flat_params=abstract_tree(tree=flat_params, sharding=shared),
-                own_stakeholder=own_roles,
-                new_own_stakeholder=own_roles,
+                own_member=own_roles,
+                new_own_member=own_roles,
                 fold_age=age,
             ),
             period=period,
@@ -1051,7 +1051,7 @@ def _profile_population_roles(
     scalar_int: jax.ShapeDtypeStruct,
 ) -> jax.ShapeDtypeStruct:
     """Profile the existing supplied-role vocabulary and collective-role checks."""
-    if "own_stakeholder" not in initial_conditions:
+    if "own_member" not in initial_conditions:
         return cast(
             "jax.ShapeDtypeStruct",
             inventory.operation(
@@ -1061,7 +1061,7 @@ def _profile_population_roles(
                 subject_outputs=True,
             ),
         )
-    role_ids = next(iter(regimes.values())).stakeholder_names_to_ids
+    role_ids = next(iter(regimes.values())).member_names_to_ids
     roles, _ = cast(
         "tuple[jax.ShapeDtypeStruct, jax.ShapeDtypeStruct]",
         inventory.operation(
@@ -1074,14 +1074,14 @@ def _profile_population_roles(
         ),
     )
     for regime in regimes.values():
-        if regime.stakeholders is not None:
+        if regime.member_axis is not None:
             inventory.operation(
                 function=population_operations.role_mismatch,
                 arguments={
                     "roles": roles,
                     "regime_ids": full_int,
                     "regime_id": scalar_int,
-                    "role_ids": tuple(scalar_int for _ in regime.stakeholders),
+                    "role_ids": tuple(scalar_int for _ in regime.member_axis),
                 },
                 subject_arg_names=("roles", "regime_ids"),
             )

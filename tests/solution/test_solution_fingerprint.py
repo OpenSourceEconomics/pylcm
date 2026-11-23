@@ -1920,7 +1920,7 @@ def _fingerprint_regime(
                 active_regimes_by_period=(frozenset({"alive"}),) * 2
             ),
         ),
-        "stakeholders": None,
+        "member_axis": None,
         "resolved_fixed_params": MappingProxyType({}),
     }.items():
         object.__setattr__(regime, name, value)

@@ -37,17 +37,17 @@ class Work:
 
 
 def _u_f(*, wealth: ContinuousState, work: DiscreteAction) -> FloatND:
-    """The first stakeholder's flow utility."""
+    """The first member's flow utility."""
     return jnp.log(wealth) - 0.1 * work
 
 
 def _u_m(*, wealth: ContinuousState, work: DiscreteAction) -> FloatND:
-    """The second stakeholder's flow utility."""
+    """The second member's flow utility."""
     return 0.5 * jnp.log(wealth) - 0.1 * work
 
 
 def _other_u_m(*, wealth: ContinuousState, work: DiscreteAction) -> FloatND:
-    """A different body for the second stakeholder."""
+    """A different body for the second member."""
     return 0.9 * jnp.log(wealth) - 0.1 * work
 
 
@@ -93,7 +93,7 @@ def test_an_engine_addition_reaches_the_decomposed_view():
     assert written.decomposed_functions["resources"] is _resources
 
 
-def test_a_stakeholders_own_body_is_not_written_into_the_raw_slot():
+def test_a_members_own_body_is_not_written_into_the_raw_slot():
     """A synthesized entry belongs to the declaration, not beside it."""
     regime = _declaring_regime()
     engine_functions = {**regime.decomposed_functions, "resources": _resources}
@@ -103,8 +103,8 @@ def test_a_stakeholders_own_body_is_not_written_into_the_raw_slot():
     assert "utility_f" not in written.functions
 
 
-def test_rewriting_a_stakeholders_body_is_refused():
-    """A stakeholder's utility is hers to declare; the engine may not swap it."""
+def test_rewriting_a_members_body_is_refused():
+    """A member's utility is hers to declare; the engine may not swap it."""
     regime = _declaring_regime()
     engine_functions = {**regime.decomposed_functions, "utility_m": _other_u_m}
 
@@ -121,7 +121,7 @@ def test_replacing_the_declaration_itself_is_refused():
         regime.with_engine_functions(engine_functions=engine_functions)
 
 
-def test_dropping_a_stakeholder_is_refused():
+def test_dropping_a_member_is_refused():
     """The write-back must reproduce what the regime decomposes to, in full."""
     regime = _declaring_regime()
     engine_functions = {
@@ -135,7 +135,7 @@ def test_dropping_a_stakeholder_is_refused():
 
 
 def test_a_delegated_body_may_be_updated_because_it_is_the_regimes_own():
-    """A `None` stakeholder's body is the regime's own, so the engine may compose it."""
+    """A `None` member's body is the regime's own, so the engine may compose it."""
     regime = _couple(
         functions={
             "utility": CollectiveUtility(utilities={"f": _u_f, "m": None}),

@@ -28,8 +28,8 @@ NATIVE_SCHEDULE_TYPES = frozenset(name for name in NATIVE_INPUT_TYPES
     if name.startswith(('_lcm.regime_building.schedules.', '_lcm.regime_building.transition_support.'))
     or name == 'lcm.transition.StochasticTransition')
 
-_PARTICIPATION_FILE = "6563ec4dd3a98aa957e868e0632ac00eb5982b00dd94c1346b6356ccf6aff94f"
-_TRANSITION_FILE = 'b7f52018a3fb050f9847394b68b5d0edeb9cead6f49b6594746c1b63c680b0dc'
+_PARTICIPATION_FILE = "7bf165d61b9817985dcf5917a2d0732ef94e7432e405a388aa8c39a949cfb14e"
+_TRANSITION_FILE = '6cc5139b91c6e767001fa22cfb124d7a626b180d05c71e505c253dd004239b61'
 # Schedule files whose `_PeriodDispatch` and `_ProbabilityConstant` are identical.
 # The second counts every period a gated source reads in `gated_source_periods`.
 _SCHEDULES_FILES = (
@@ -65,7 +65,7 @@ _AUTHORITIES = {
     ),
     '_lcm.regime_building.value_adapter.ValueAdapter': (
         ('bc46eb4aa3919573fa3252f4521a3c01f14ca6b5ff62e31e7c93b34f3ea21718',
-         ('9a35754dd0bdb1b32a82d583f8bdefd0a253bb088e9d581dd41c47afe72ff7ba',)),
+         ('6ae3b430fb49df9cbe15b5c6d109903f695aaca023aacc42a02781bf0c4a3ffd',)),
         ('46d796380a1afe65bf0c94fe9264db510394599c4a34f2adcfd949e94849c5b5',
          ('030fdfaf3842033b43ba4544c9f245c14e44ad24633f352b746100751f0f8e32',)),
     ),
@@ -86,20 +86,20 @@ _AUTHORITIES = {
         (_PARTICIPATION_FILE,),
     ),
     "lcm.participation.ParticipationCheck": (
-        "44c8bb9ec6f04e6e31bd557fe5f58bfbbcb3bb5d8d2ccfedd0e86ba38c38fd36",
+        "4d322b537c61804b4d0097a0cb643f8a323cc4af16afada1dfba2ec297aa9857",
         (_PARTICIPATION_FILE,),
     ),
     # The finder reads `targets`, `law`, `gates`, `arrivals` and `participation` of
     # this class; `validate_original_types` refuses a non-empty `roles`.
     "lcm.transition.Transition": (
-        "d741a82b61117b2d6f17124a63a4a109127fbb5378e3854a1de21be6c020a83e",
+        "917d6898db9f4f5a574480a6769e8a9b654e341ba4577e5ee071546106e7ddc1",
         (_TRANSITION_FILE,),
     ),
 }
 
 _NATIVE_CALL_SOURCES = MappingProxyType({
     '_lcm.regime_building.value_adapter.ValueAdapter': frozenset({
-        ('9a35754dd0bdb1b32a82d583f8bdefd0a253bb088e9d581dd41c47afe72ff7ba',
+        ('6ae3b430fb49df9cbe15b5c6d109903f695aaca023aacc42a02781bf0c4a3ffd',
          '9f680db35e88630edd31b3d42d0abaebd3e82e72fa11aa07d9292a4c6dacca55'),
         ('030fdfaf3842033b43ba4544c9f245c14e44ad24633f352b746100751f0f8e32',
          '991053e32d97e7ea21bf0cb93648389d63d2cb6133e858de90074786457ed618'),

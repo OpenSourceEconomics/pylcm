@@ -1078,8 +1078,8 @@ def test_simulated_formation_uses_mapped_lag_and_fresh_consent(
             frame[["value_f", "value_m"]], 6.0, decimal=DECIMAL_PRECISION
         )
         np.testing.assert_array_equal(
-            frame["own_stakeholder"],
-            model._regimes["couple"].stakeholder_names_to_ids["f"],
+            frame["own_member"],
+            model._regimes["couple"].member_names_to_ids["f"],
         )
         np.testing.assert_array_equal(frame["married_last_period"], 0)
         np.testing.assert_array_equal(frame["action"], 1)
@@ -1289,8 +1289,8 @@ def test_source_taste_freezes_one_consent_choice_before_target_action() -> None:
         frame.loc[moved, "value_m"], 1.0, decimal=DECIMAL_PRECISION
     )
     np.testing.assert_array_equal(
-        frame.loc[moved, "own_stakeholder"],
-        model._regimes["target"].stakeholder_names_to_ids["f"],
+        frame.loc[moved, "own_member"],
+        model._regimes["target"].member_names_to_ids["f"],
     )
 
 

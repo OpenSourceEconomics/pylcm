@@ -24,12 +24,12 @@ from lcm import (
     DiscreteGrid,
     Gate,
     LinSpacedGrid,
+    MemberRoute,
     Model,
     ParticipationCheck,
     ParticipationRead,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     StochasticTransition,
     Transition,
     ValueDependentConstraint,
@@ -139,7 +139,7 @@ def _target_decision(
     *, fallback: Fallback | None, reads_values: bool
 ) -> dict[RegimeName, Decision]:
     """Compare target and reference values on landing, or gate on wealth alone."""
-    routes = {"only": StakeholderRoute(fallback=fallback or _projected("fallback"))}
+    routes = {"only": MemberRoute(fallback=fallback or _projected("fallback"))}
     if not reads_values:
         return {"target": Gate(predicate=_wealth_is_positive, routes=routes)}
     return {
@@ -533,7 +533,7 @@ def _gated_move(*, target: RegimeName, stay: RegimeName) -> Transition:
             target: ParticipationCheck(
                 predicate=_marital_gate,
                 reads={"V_target": _read(target), "V_stay": _read(stay)},
-                routes={"only": StakeholderRoute(fallback=_projected(stay))},
+                routes={"only": MemberRoute(fallback=_projected(stay))},
             )
         },
     )

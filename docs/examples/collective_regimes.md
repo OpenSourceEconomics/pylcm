@@ -16,10 +16,10 @@ exposition and tests, not calibrated.
 
 ## Shared decision: one action, two values
 
-The household chooses work or leisure at a wage of 8 or 40. Stakeholder `f` gains 30
-from leisure and consumes her wage when working; stakeholder `m` values consumption
-twice as strongly and gets nothing from leisure. One `CollectiveUtility` declares both,
-and its keys are the regime's stakeholders in the order written:
+The household chooses work or leisure at a wage of 8 or 40. Member `f` gains 30 from
+leisure and consumes her wage when working; member `m` values consumption twice as
+strongly and gets nothing from leisure. One `CollectiveUtility` declares both, and its
+keys are the regime's members in the order written:
 
 ```python
 couple = Regime(
@@ -34,7 +34,7 @@ couple = Regime(
 )
 ```
 
-No `objective` is declared, so the stakeholders carry equal weight. The couple's only
+No `objective` is declared, so the members carry equal weight. The couple's only
 outgoing edge, `edges={"couple": {"couple_terminal": 0}}`, is its whole transition law.
 
 ```python
@@ -112,7 +112,7 @@ solution.values[1]["married_with_participation"]
 `married` reaches age 1 through a `ParticipationCheck` keyed by
 `married_with_participation` — the branch where the decision is **open** and the couple
 keeps going. Its predicate reads, on landing, whether the couple's participating policy
-has support at that wage. Each stakeholder's route names the role they take inside the
+has support at that wage. Each member's route names the role they take inside the
 surviving couple and the singleton value they fall back to when the decision shuts. The
 law reaches `married_with_participation` from age 0 only.
 
@@ -134,15 +134,15 @@ edges = {
                 reads={
                     "target_support": ParticipationRead(
                         regime="married_with_participation",
-                        stakeholder="f",
+                        member="f",
                         kind="Participating",
                         field="support",
                         projection={"wage": identity_wage},
                     )
                 },
                 routes={
-                    "f": StakeholderRoute(
-                        target_stakeholder="f",
+                    "f": MemberRoute(
+                        target_member="f",
                         fallback=ProjectedRegimeValue(
                             regime="single_f",
                             projection={"wage": identity_wage},
@@ -166,9 +166,9 @@ fallback `0.95 × 5.5 = 5.225` at the middle node.
 
 ## Simulating one role at a time
 
-Stakeholder identity is per subject. Every subject here starts inside a collective
-regime, so each declares a role in `initial_conditions`, and that role decides which
-fallback its row takes if the household dissolves:
+Member identity is per subject. Every subject here starts inside a collective regime, so
+each declares a role in `initial_conditions`, and that role decides which fallback its
+row takes if the household dissolves:
 
 ```python
 import jax.numpy as jnp
@@ -177,9 +177,7 @@ initial_conditions = {
     "wage": jnp.array([1.0, 2.0, 3.0]),
     "age": jnp.zeros(3),
     "regime_id": jnp.full(3, model.regime_names_to_ids["married"], dtype=jnp.int32),
-    "own_stakeholder": jnp.full(
-        3, model.stakeholder_names_to_ids["f"], dtype=jnp.int32
-    ),
+    "own_member": jnp.full(3, model.member_names_to_ids["f"], dtype=jnp.int32),
 }
 
 result = model.simulate(
@@ -194,7 +192,7 @@ result.to_dataframe()
 ```
 
 ```text
-   subject_id  period                 regime_name own_stakeholder  value  value_f  value_m  wage     work  age
+   subject_id  period                 regime_name own_member  value  value_f  value_m  wage     work  age
 0           0       0                     married               f    NaN    1.900     0.95   1.0  leisure    0
 1           0       1  married_with_participation               f    NaN    2.000     1.00   1.0     work    1
 2           0       2            married_terminal               f    NaN    0.000     0.00   1.0  leisure    2
@@ -206,11 +204,11 @@ result.to_dataframe()
 ```
 
 The middle-wage subject leaves for `single_f` at age 1; the other two stay. Collective
-rows publish one value column per stakeholder and carry their role in `own_stakeholder`;
-singleton rows publish the scalar `value` and hold no role. A cohort has a fixed size,
-so a dissolving row does not split into two linked rows — it follows the route belonging
-to the role it carries. Seed a second cohort with `model.stakeholder_names_to_ids["m"]`
-to watch the same wage nodes from the other side.
+rows publish one value column per member and carry their role in `own_member`; singleton
+rows publish the scalar `value` and hold no role. A cohort has a fixed size, so a
+dissolving row does not split into two linked rows — it follows the route belonging to
+the role it carries. Seed a second cohort with `model.member_names_to_ids["m"]` to watch
+the same wage nodes from the other side.
 
 ## Structure
 

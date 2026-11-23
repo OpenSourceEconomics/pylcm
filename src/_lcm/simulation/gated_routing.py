@@ -29,7 +29,7 @@ built from the ALREADY-SOLVED next-period arrays (no new solve-time work):
 
 **Scope fence: one subject row stays one subject row.** A COLLECTIVE
 source's gated edge (e.g. a married couple's dissolution edge) declares one
-leg per stakeholder, each with its OWN fallback regime (wife -> her own
+leg per member, each with its OWN fallback regime (wife -> her own
 single regime, husband -> his). pylcm's forward simulation is a single
 fixed-size population pass: one subject ROW cannot occupy two regimes at
 once, so a dissolution does NOT split a row into two independently tracked
@@ -42,9 +42,9 @@ it recomputes the gate at the realized state, computes EVERY leg's own
 fallback state coordinates via each leg's `fallback_state_projector` and
 writes each into its OWN fallback regime's per-subject state slot (so a
 dissolved household's row-level record of "what regime and state would each
-partner have started at" is complete and correct for every stakeholder),
+partner have started at" is complete and correct for every member),
 and then picks ONE of them as the row's OWN continuing regime membership:
-the leg whose `source_stakeholder` is the role THAT ROW carries. The role
+the leg whose `source_member` is the role THAT ROW carries. The role
 is per subject — seeded in the initial conditions, and set from the branch
 each gated edge actually takes — so one population may hold wives and
 husbands side by side, each following her or his own dissolution path. What
@@ -63,7 +63,7 @@ full-scale collective simulate, and a GENERIC reassignment-hook API
 designed in isolation — without a second, independent consumer to validate
 its shape against — risks guessing wrong about what such a hook needs (e.g.
 whether the externally tracked auxiliary is itself subject to the same
-row-per-couple vs. row-per-stakeholder question the fence above raises).
+row-per-couple vs. row-per-member question the fence above raises).
 Adding one waits on the row-reallocation question being settled; a
 particular study's child-age bookkeeping belongs in that study's
 replication code either way, not in this generic engine layer.
@@ -92,7 +92,7 @@ from _lcm.regime_building.gated_edges import (
     SOURCE_PARAMS,
     TARGET_PARAMS,
     EdgeArgProvenance,
-    ResolvedStakeholderRoute,
+    ResolvedMemberRoute,
     bind_edge_period_context,
     build_reference_params_mapping_for_fold,
     build_same_period_mapping_for_fold,
@@ -216,8 +216,8 @@ def simulation_gate_route(
     new_subject_regime_ids: Int1D,
     subjects_in_regime: Bool1D,
     flat_params: FlatParams,
-    own_stakeholder: Int1D,
-    new_own_stakeholder: Int1D,
+    own_member: Int1D,
+    new_own_member: Int1D,
     fold_age: FoldAge = None,
     subject_devices: tuple[jax.Device, ...] = (),
     subject_width: int | None = None,
@@ -247,8 +247,8 @@ def simulation_gate_route(
         new_subject_regime_ids=new_subject_regime_ids,
         subjects_in_regime=subjects_in_regime,
         flat_params=flat_params,
-        own_stakeholder=own_stakeholder,
-        new_own_stakeholder=new_own_stakeholder,
+        own_member=own_member,
+        new_own_member=new_own_member,
         fold_age=fold_age,
         subject_devices=subject_devices,
         subject_width=subject_width,
@@ -282,8 +282,8 @@ def simulation_gate_route_delta(
     new_subject_regime_ids: Int1D,
     subjects_in_regime: Bool1D,
     flat_params: FlatParams,
-    own_stakeholder: Int1D,
-    new_own_stakeholder: Int1D,
+    own_member: Int1D,
+    new_own_member: Int1D,
     fold_age: FoldAge = None,
     subject_width: int | None = None,
 ) -> tuple[MappingProxyType[RegimeName, GatedRouteDelta], Int1D, Int1D]:
@@ -297,8 +297,8 @@ def simulation_gate_route_delta(
         new_subject_regime_ids=new_subject_regime_ids,
         subjects_in_regime=subjects_in_regime,
         flat_params=flat_params,
-        own_stakeholder=own_stakeholder,
-        new_own_stakeholder=new_own_stakeholder,
+        own_member=own_member,
+        new_own_member=new_own_member,
         fold_age=fold_age,
         subject_width=subject_width,
     )
@@ -525,8 +525,8 @@ def route_gated_edges(
     new_subject_regime_ids: Int1D,
     subjects_in_regime: Bool1D,
     flat_params: FlatParams,
-    own_stakeholder: Int1D,
-    new_own_stakeholder: Int1D,
+    own_member: Int1D,
+    new_own_member: Int1D,
     fold_age: FoldAge = None,
     subject_devices: tuple[jax.Device, ...] = (),
     subject_width: int | None = None,
@@ -553,9 +553,9 @@ def route_gated_edges(
 
     - sets its own continuing regime membership to the target (gate open) or
       to its OWN leg's fallback (gate closed) — the leg is the one whose
-      `source_stakeholder` is the role the row itself carries;
-    - sets the role the row carries onward: the leg's `target_stakeholder` on
-      an open branch, its fallback's `stakeholder` on a closed one, and the
+      `source_member` is the role the row itself carries;
+    - sets the role the row carries onward: the leg's `target_member` on
+      an open branch, its fallback's `member` on a closed one, and the
       no-role sentinel wherever the destination is a singleton regime;
     - writes every leg's own projected fallback state coordinates into that
       leg's fallback regime, for the eligible subjects the gate TURNED AWAY
@@ -577,12 +577,12 @@ def route_gated_edges(
             edge's gate evaluator compiled for that period.
         fold_age: Age corresponding to `fold_period`, supplied only to edge
             callables that declare `age`.
-        own_stakeholder: Each subject's role THIS period, as a code in the
+        own_member: Each subject's role THIS period, as a code in the
             model's role vocabulary, or the no-role sentinel for a subject
             occupying none. A collective source's legs carry roles, so this is
             what decides which leg a row follows — the wife's fallback for her,
             the husband's for him, in one cohort.
-        new_own_stakeholder: The next period's roles as accumulated by the
+        new_own_member: The next period's roles as accumulated by the
             regimes already routed this period, written into for the subjects
             this edge moves. Mirrors `new_subject_regime_ids`: one array is
             filled in regime by regime, so a later regime never resets an
@@ -596,7 +596,7 @@ def route_gated_edges(
         return (
             next_states,
             new_subject_regime_ids,
-            new_own_stakeholder,
+            new_own_member,
             MappingProxyType({}),
         )
 
@@ -611,8 +611,8 @@ def route_gated_edges(
     closed_masks: dict[RegimeName, Bool1D] = {}
     states = next_states
     routed_ids = new_subject_regime_ids
-    routed_roles = new_own_stakeholder
-    role_ids = regime.stakeholder_names_to_ids
+    routed_roles = new_own_member
+    role_ids = regime.member_names_to_ids
     for target_name, edge in regime.gated_edges.items():
         # `same_period_mappings` only carries
         # an entry for a target `substitute_gated_edge_continuations`
@@ -678,7 +678,7 @@ def route_gated_edges(
         # source's sole leg carries no role and answers for every row.
         own_fallback_id, open_role, closed_role = _per_row_leg_outcomes(
             legs=legs,
-            own_stakeholder=own_stakeholder,
+            own_member=own_member,
             regime_names_to_ids=regime_names_to_ids,
             role_ids=role_ids,
         )
@@ -754,8 +754,8 @@ def route_gated_edges(
 
 def _per_row_leg_outcomes(
     *,
-    legs: tuple[ResolvedStakeholderRoute, ...],
-    own_stakeholder: Int1D,
+    legs: tuple[ResolvedMemberRoute, ...],
+    own_member: Int1D,
     regime_names_to_ids: RegimeNamesToIds,
     role_ids: Mapping[str, int],
 ) -> tuple[Int1D, Int1D, Int1D]:
@@ -770,8 +770,8 @@ def _per_row_leg_outcomes(
     A singleton source declares one role-less leg, which answers for every row.
 
     Args:
-        legs: The edge's resolved legs, in source stakeholder order.
-        own_stakeholder: Each subject's role code.
+        legs: The edge's resolved legs, in source member order.
+        own_member: Each subject's role code.
         regime_names_to_ids: Immutable mapping of regime names to codes.
         role_ids: The model's role vocabulary.
 
@@ -781,30 +781,28 @@ def _per_row_leg_outcomes(
     """
     first = legs[0]
     fallback_id = jnp.full_like(
-        own_stakeholder, regime_names_to_ids[first.realized_fallback.regime]
+        own_member, regime_names_to_ids[first.realized_fallback.regime]
     )
     open_role = jnp.full_like(
-        own_stakeholder, _role_code(name=first.target_stakeholder, role_ids=role_ids)
+        own_member, _role_code(name=first.target_member, role_ids=role_ids)
     )
     closed_role = jnp.full_like(
-        own_stakeholder,
-        _role_code(name=first.realized_fallback.stakeholder, role_ids=role_ids),
+        own_member,
+        _role_code(name=first.realized_fallback.member, role_ids=role_ids),
     )
     for leg in legs[1:]:
-        mine = own_stakeholder == _role_code(
-            name=leg.source_stakeholder, role_ids=role_ids
-        )
+        mine = own_member == _role_code(name=leg.source_member, role_ids=role_ids)
         fallback_id = jnp.where(
             mine, regime_names_to_ids[leg.realized_fallback.regime], fallback_id
         )
         open_role = jnp.where(
             mine,
-            _role_code(name=leg.target_stakeholder, role_ids=role_ids),
+            _role_code(name=leg.target_member, role_ids=role_ids),
             open_role,
         )
         closed_role = jnp.where(
             mine,
-            _role_code(name=leg.realized_fallback.stakeholder, role_ids=role_ids),
+            _role_code(name=leg.realized_fallback.member, role_ids=role_ids),
             closed_role,
         )
     return fallback_id, open_role, closed_role
@@ -975,7 +973,7 @@ def _accepted_arg_names(func: _EdgeCallable) -> frozenset[str]:
 
 
 def _role_code(*, name: str | None, role_ids: Mapping[str, int]) -> int:
-    """Return the role code of a stakeholder name; `NO_ROLE` for a role-less leg."""
+    """Return the role code of a member name; `NO_ROLE` for a role-less leg."""
     return NO_ROLE if name is None else role_ids[name]
 
 

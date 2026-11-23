@@ -17,12 +17,12 @@ from lcm import (
     ByAge,
     DiscreteGrid,
     LinSpacedGrid,
+    MemberRoute,
     Model,
     ParticipationCheck,
     ParticipationRead,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     Transition,
     categorical,
     fixed_transition,
@@ -128,7 +128,7 @@ def _build_model(*, with_bystander: bool) -> Model:
                             )
                         },
                         routes={
-                            "only": StakeholderRoute(
+                            "only": MemberRoute(
                                 fallback=ProjectedRegimeValue(
                                     regime="fallback", projection={"x": _identity_x}
                                 )

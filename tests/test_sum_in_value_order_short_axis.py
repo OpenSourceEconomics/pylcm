@@ -2,7 +2,7 @@
 
 `sum_in_value_order` exists because floating-point addition is not associative,
 so a reduction over entries keyed by an economically inert identifier — a regime
-label, a stakeholder name — would otherwise depend on that identifier. Sorting
+label, a member name — would otherwise depend on that identifier. Sorting
 the contributions first makes the reduction order a function of their values.
 
 Associativity is what fails; commutativity does not. A one-entry sum has no

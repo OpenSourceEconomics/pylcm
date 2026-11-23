@@ -39,10 +39,10 @@ from lcm import (
     ExecutionConfig,
     Gate,
     IrregSpacedGrid,
+    MemberRoute,
     Model,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     Transition,
     ValueDependentConstraint,
     categorical,
@@ -63,9 +63,9 @@ def _outcome_arrays(*, outcome: RerouteOutcome) -> FootprintTree:
     return (
         outcome.states,
         outcome.subject_regime_ids,
-        outcome.own_stakeholder,
+        outcome.own_member,
         outcome.new_subject_regime_ids,
-        outcome.new_own_stakeholder,
+        outcome.new_own_member,
         outcome.entered_through,
         outcome.rerouted,
         outcome.fallback_ids,
@@ -328,8 +328,8 @@ def _build_model(
                     "pair": Gate(
                         predicate=_open_onto_pair,
                         routes={
-                            "only": StakeholderRoute(
-                                target_stakeholder="f",
+                            "only": MemberRoute(
+                                target_member="f",
                                 fallback=ProjectedRegimeValue(
                                     regime="alone_m",
                                     projection={"wage": fallback_projection},

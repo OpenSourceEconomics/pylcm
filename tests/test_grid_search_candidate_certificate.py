@@ -40,7 +40,7 @@ by `Q_and_F` are followed route by route into the full reducers and publication.
 The standard-library AST
 proof rejects any extra assignment, branch, slice, index, mask, `where`, rank,
 gap, support-size, shape, or axis transformation. The collective path permits
-only the independently checked split of the trailing stakeholder axis and pins
+only the independently checked split of the trailing member axis and pins
 the shared scalarization, argmax, and gather implementations exactly. The three
 taste-shock routes additionally pin masking, continuous reduction, the reference
 streamed branch-hard-max then dynamically bound log-sum-exp composition,
@@ -542,7 +542,7 @@ def test_the_collective_reduction_treats_every_feasibility_axis_as_an_action(
 ):
     """Both collective reductions scalarize over `tuple(range(F_arr.ndim))`.
 
-    The feasibility array carries one axis per action and no stakeholder axis,
+    The feasibility array carries one axis per action and no member axis,
     so its full rank *is* the action product. Reducing over a prefix of it would
     hand the household an argmax taken over part of its choice set.
     """
@@ -1082,7 +1082,7 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate():
         "streaming_co_map:layout_validation_bypassed",
         "streaming_dispatch:bypass_compiled_core",
         "streaming_collective:builder_dissolution_inverted",
-        "streaming_collective:builder_stakeholder_axis_sliced",
+        "streaming_collective:builder_member_axis_sliced",
         "streaming_ev1:runtime_scale_constant",
         "streaming_ev1:scale_signature_dropped",
         "streaming_ev1:published_value_negated",
@@ -1118,7 +1118,7 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate():
         "streaming_collective_blocks:skip_last_block",
         "streaming_collective_blocks:admit_padded_tail",
         "streaming_collective_blocks:block_local_action_ids",
-        "streaming_collective_blocks:objective_uses_first_stakeholder",
+        "streaming_collective_blocks:objective_uses_first_member",
         "streaming_hard_max:ignore_right_partial",
         "streaming_hard_max:signed_zero_normalization_bypassed",
         "streaming_hard_max:semantic_key_changed",
@@ -1130,7 +1130,7 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate():
         "streaming_collective_hard_max:ignore_right_partial",
         "streaming_collective_hard_max:signed_zero_normalization_bypassed",
         "streaming_collective_hard_max:semantic_key_changed",
-        "streaming_collective_hard_max:stakeholder_gather_decoupled",
+        "streaming_collective_hard_max:member_gather_decoupled",
         "streaming_collective_hard_max:winner_identity_shifted",
         "native_graph:aot_resolved_arguments_bypassed",
         "native_graph:specialization_dropped",
@@ -1202,7 +1202,7 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate():
     assert len(original_names) == 377
     assert (
         hashlib.sha256(("\n".join(sorted(original_names)) + "\n").encode()).hexdigest()
-        == "b6df15e5f213d0ddbc5eebb690ae1718f519c0d1fa75b7f1e8aed53b76028128"
+        == "a7dcf2eee8dc0f47b9c31d4a4e3851ad3ea0a148db4dc69b4aa87c52ce00ccdd"
     )
     historical_names = {
         name
@@ -1218,12 +1218,12 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate():
         hashlib.sha256(
             ("\n".join(sorted(historical_names)) + "\n").encode()
         ).hexdigest()
-        == "2f1f0e0a6ce13bc16159eb8f154cb230e9912ccae149cef245c1b531c8ec03e9"
+        == "40801992863a849eda722b5822328d10700786d5366eaa5e622fc54c0e79a2a9"
     )
     assert len(names) == 412
     assert (
         hashlib.sha256(("\n".join(sorted(names)) + "\n").encode()).hexdigest()
-        == "39b2e6f7ea82047c1b09c454bbe353fb2cc1a89d81a588b5bd8a91f3ee02bb76"
+        == "9fb909fe5a8960c34b9caf1989c87152d2a56251ee9f824cab7509d2427880c9"
     )
 
 
@@ -1374,24 +1374,24 @@ def _peaked_utility(
 def _utility_f(
     *, wealth: ContinuousState, work: DiscreteAction, consumption: ContinuousAction
 ) -> FloatND:
-    """First stakeholder's own value of a candidate."""
+    """First member's own value of a candidate."""
     return wealth + consumption + 10.0 * work
 
 
 def _utility_m(
     *, wealth: ContinuousState, work: DiscreteAction, consumption: ContinuousAction
 ) -> FloatND:
-    """Second stakeholder's own value of the same candidate."""
+    """Second member's own value of the same candidate."""
     return wealth + 2.0 * consumption + 5.0 * work
 
 
 def _zero_f() -> FloatND:
-    """First stakeholder's terminal payoff."""
+    """First member's terminal payoff."""
     return jnp.array(0.0)
 
 
 def _zero_m() -> FloatND:
-    """Second stakeholder's terminal payoff."""
+    """Second member's terminal payoff."""
     return jnp.array(0.0)
 
 
@@ -1588,7 +1588,7 @@ def unique_maximizer_model() -> Model:
 
 @pytest.fixture(scope="module")
 def collective_model() -> Model:
-    """A two-stakeholder model whose params name the one admissible candidate."""
+    """A two-member model whose params name the one admissible candidate."""
     return _build_model(
         utility=CollectiveUtility(utilities={"f": _utility_f, "m": _utility_m}),
         constraints={"only_target": _only_target},
@@ -1630,7 +1630,7 @@ def masked_taste_shock_runtime_model() -> Model:
 
 @pytest.fixture(scope="module")
 def masked_collective_model() -> Model:
-    """Collective model with the same strict ordering for both stakeholders."""
+    """Collective model with the same strict ordering for both members."""
     utility = CollectiveUtility(utilities={"f": _ranked_utility, "m": _ranked_utility})
     return _build_model(
         utility=utility,
@@ -1682,7 +1682,7 @@ def test_every_declared_candidate_can_win_the_maximization(
 def test_every_declared_candidate_can_be_the_household_choice(
     *, collective_model: Model, work: float, consumption: float
 ):
-    """The collective reduction reads each stakeholder's own value at the candidate.
+    """The collective reduction reads each member's own value at the candidate.
 
     The collective path scalarizes and argmaxes on its own code, so exhausting
     the action product there is a separate obligation from the singleton case.
@@ -1789,9 +1789,9 @@ def _params_for_mask(
     params = _mutable_params_template(model=model)
     for name, feasible in zip(_MASK_PARAMETER_NAMES, mask, strict=True):
         params["acting"]["candidate_mask"][name] = float(feasible)
-    for stakeholder in _utility_keys(model):
+    for member in _utility_keys(model):
         for name, rank in zip(_RANK_PARAMETER_NAMES, ranks, strict=True):
-            params["acting"][stakeholder][name] = float(rank)
+            params["acting"][member][name] = float(rank)
     params["acting"]["koopmans_aggregator"]["discount_factor"] = 0.5
     if "taste_shocks" in params["acting"]:
         params["acting"]["taste_shocks"]["scale"] = _TASTE_SCALE
@@ -1799,7 +1799,7 @@ def _params_for_mask(
 
 
 def _utility_keys(model: Model) -> tuple[str, ...]:
-    """Name the params keys carrying the ranked utility, one per stakeholder."""
+    """Name the params keys carrying the ranked utility, one per member."""
     params = _mutable_params_template(model=model)
     return tuple(
         key
@@ -2563,7 +2563,7 @@ def test_taste_shock_simulation_applies_candidate_distinct_noise(
 def test_collective_solve_matches_reference_over_every_nonempty_feasibility_mask(
     masked_collective_model: Model,
 ):
-    """Collective solve selects the same strict winner for both stakeholders."""
+    """Collective solve selects the same strict winner for both members."""
     for ranks in _RANK_VECTORS:
         for mask in _NONEMPTY_FEASIBILITY_MASKS:
             _index, value, _work, _consumption = _reference_for_mask(
@@ -2582,7 +2582,7 @@ def test_collective_solve_matches_reference_over_every_nonempty_feasibility_mask
 def test_collective_simulate_matches_reference_over_every_nonempty_feasibility_mask(
     masked_collective_model: Model,
 ):
-    """Collective simulation agrees on action and each stakeholder's value."""
+    """Collective simulation agrees on action and each member's value."""
     for ranks in _RANK_VECTORS:
         for mask in _NONEMPTY_FEASIBILITY_MASKS:
             _index, value, work, consumption = _reference_for_mask(

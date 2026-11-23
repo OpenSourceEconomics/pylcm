@@ -579,7 +579,7 @@ class _PickledModel(TypedDict):
         MappingProxyType[RegimeName, MappingProxyType[ReferenceName, str]]
     ]
     _regimes: NotRequired[MappingProxyType[RegimeName, Regime]]
-    stakeholder_names_to_ids: MappingProxyType[str, int]
+    member_names_to_ids: MappingProxyType[str, int]
     enable_jit: bool
     simulation_output_dtypes: MappingProxyType[str, pd.CategoricalDtype]
     _model_structure_fingerprint: NotRequired[str]
@@ -997,14 +997,14 @@ class Model:
     regime_names_to_ids: RegimeNamesToIds
     """Immutable mapping from regime names to integer indices."""
 
-    stakeholder_names_to_ids: MappingProxyType[str, int]
-    """Immutable mapping from stakeholder names to integer role codes.
+    member_names_to_ids: MappingProxyType[str, int]
+    """Immutable mapping from member names to integer role codes.
 
     One vocabulary for the whole model, covering every collective regime's
-    stakeholders, so a role means the same thing wherever it is read. Empty for
+    members, so a role means the same thing wherever it is read. Empty for
     a model with no collective regime. This is the vocabulary
-    `initial_conditions["own_stakeholder"]` is written in, and the one the
-    published `own_stakeholder` column is labelled from."""
+    `initial_conditions["own_member"]` is written in, and the one the
+    published `own_member` column is labelled from."""
 
     @property
     def user_regimes(self) -> MappingProxyType[RegimeName, FinalizedUserRegime]:
@@ -1890,8 +1890,8 @@ class Model:
             axis_widths_by_regime=self._execution.axis_widths_by_regime,
             solve_programs=_solve_programs(regimes=self._regimes),
         )
-        self.stakeholder_names_to_ids = next(
-            (regime.stakeholder_names_to_ids for regime in self._regimes.values()),
+        self.member_names_to_ids = next(
+            (regime.member_names_to_ids for regime in self._regimes.values()),
             MappingProxyType({}),
         )
         self.enable_jit = prepared.enable_jit
@@ -2258,7 +2258,7 @@ class Model:
             _shock_registry=self._shock_registry,
             _params_template=self._params_template,
             _param_name_candidates=self._param_name_candidates,
-            stakeholder_names_to_ids=self.stakeholder_names_to_ids,
+            member_names_to_ids=self.member_names_to_ids,
             enable_jit=self.enable_jit,
             simulation_output_dtypes=self.simulation_output_dtypes,
         )
@@ -4529,9 +4529,9 @@ class Model:
                 actual entry period, before fresh draws in subsequent periods.
                 A subject starting in a COLLECTIVE regime that can reach a
                 value-dependent transition declaring more than one route --- its
-                own, or one further along --- also needs an `"own_stakeholder"`
+                own, or one further along --- also needs an `"own_member"`
                 entry naming the role it occupies, as an integer code from the
-                model's role vocabulary (`model.stakeholder_names_to_ids`):
+                model's role vocabulary (`model.member_names_to_ids`):
                 which partner a row is decides which regime it enters when the
                 household dissolves. A collective start that can never arrive at
                 such a transition needs no entry.
@@ -6744,7 +6744,7 @@ def _fail_if_policy_lookup_unsupported(
             "the choice probabilities of its solve."
         )
         raise InvalidSimulationInputError(msg)
-    if keep_intermediates and regime.stakeholders is not None:
+    if keep_intermediates and regime.member_axis is not None:
         msg = (
             "Policy lookup keeps intermediates for singleton regimes only; "
             f"{regime_name!r} is a collective regime."
@@ -7020,7 +7020,7 @@ def _validate_sharded_state_capability(
                 regime=regime, sharded_state=name
             )
             or type(regime.solver) is not GridSearch
-            or regime.stakeholders is not None
+            or regime.member_axis is not None
             or laws[regime_name].gated_edges
             or regime.value_constraints
             or regime.same_period_refs

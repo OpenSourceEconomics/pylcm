@@ -25,10 +25,10 @@ from lcm import (
     DeterministicTransition,
     Gate,
     LinSpacedGrid,
+    MemberRoute,
     Model,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     StochasticTransition,
     Transition,
     categorical,
@@ -935,7 +935,7 @@ def _gated_on_target_state_model() -> Model:
                     "target": Gate(
                         predicate=_below_threshold,
                         routes={
-                            "only": StakeholderRoute(
+                            "only": MemberRoute(
                                 fallback=ProjectedRegimeValue(
                                     regime="fallback", projection={}
                                 )

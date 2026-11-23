@@ -9,11 +9,11 @@ action for two people, it is only viable while both of them want it, and whether
 forms or ends depends on what each member would be worth outside it. Three declarations
 cover that, and each goes in a slot an ordinary model already has.
 
-| Declaration                | Goes in                 | Says                                                                 |
-| -------------------------- | ----------------------- | -------------------------------------------------------------------- |
-| `CollectiveUtility`        | `functions["utility"]`  | who the stakeholders are, and how their action values are traded off |
-| `ValueDependentConstraint` | `constraints`           | where the cell is feasible, reading values as well as states         |
-| `Gate`                     | `Transition(gates=...)` | which branch within a target, from the landing state                 |
+| Declaration                | Goes in                 | Says                                                            |
+| -------------------------- | ----------------------- | --------------------------------------------------------------- |
+| `CollectiveUtility`        | `functions["utility"]`  | who the members are, and how their action values are traded off |
+| `ValueDependentConstraint` | `constraints`           | where the cell is feasible, reading values as well as states    |
+| `Gate`                     | `Transition(gates=...)` | which branch within a target, from the landing state            |
 
 `ProjectedRegimeValue` reads another regime's value in the *same* period, for a value
 constraint's comparison and for a route's fallback. A move decided by comparing values
@@ -25,10 +25,10 @@ through the pieces; the exact declaration contracts are in
 [Collective regimes](../reference/collective_regimes.md), and a staged build-up of one
 is in the [collective example](../examples/collective_regimes.md).
 
-## A household with two stakeholders
+## A household with two members
 
-The `utilities` keys **are** the regime's stakeholders, in the order you write them.
-That order fixes the trailing axis of the regime's value function and of every published
+The `utilities` keys **are** the regime's members, in the order you write them. That
+order fixes the trailing axis of the regime's value function and of every published
 array, so `value_f` comes before `value_m` in the simulated frame.
 
 ```python
@@ -47,16 +47,16 @@ couple = Regime(
 ```
 
 The `CollectiveUtility` remains the raw `functions["utility"]` declaration. Pylcm
-derives the stakeholder metadata from it and gives the numerical engine a
+derives the member metadata from it and gives the numerical engine a
 `decomposed_functions` view with `utility_f` and `utility_m`; it does not replace what
 the model author wrote. Each value in `utilities` can be a callable, a
-`Phased(solve=..., simulate=...)` pair, or `None`. `None` delegates that stakeholder's
-body to a `utility_<stakeholder>` function supplied at regime or model level; successful
-model finalization guarantees that every delegated body arrived.
+`Phased(solve=..., simulate=...)` pair, or `None`. `None` delegates that member's body
+to a `utility_<member>` function supplied at regime or model level; successful model
+finalization guarantees that every delegated body arrived.
 
 The household maximizes one objective over the feasible actions and reads off each
-stakeholder's own action value `Q_s` at that common choice. Omitting `objective` weights
-the stakeholders equally. To weigh them differently, declare a `ParetoObjective`:
+member's own action value `Q_s` at that common choice. Omitting `objective` weights the
+members equally. To weigh them differently, declare a `ParetoObjective`:
 
 ```python
 from lcm import ParetoObjective
@@ -77,11 +77,11 @@ weight that varied with the choice would state a different objective per candida
 whose maximizer is a Pareto optimum of no fixed weighting.
 
 Declaring the weights rather than writing the sum as an ordinary function is what lets
-the engine own what a Pareto weight means — one per stakeholder, finite and
-non-negative, with a strictly positive total, normalized cell by cell, and multiplied in
-zero-safely. That last one matters: a stakeholder carrying zero weight may still hold an
-admissible `-inf` of her own, and `0.0 * -inf` is `NaN`, which through the argmax would
-let the wrong partner decide the household's choice.
+the engine own what a Pareto weight means — one per member, finite and non-negative,
+with a strictly positive total, normalized cell by cell, and multiplied in zero-safely.
+That last one matters: a member carrying zero weight may still hold an admissible `-inf`
+of her own, and `0.0 * -inf` is `NaN`, which through the argmax would let the wrong
+partner decide the household's choice.
 
 Normalization is `"pointwise"` by default, which rescales the declared weights to sum to
 one wherever the objective is evaluated, so a state-dependent weight cannot change the
@@ -117,12 +117,12 @@ constraints = {
 }
 ```
 
-The predicate may read `Q_<s>` for each stakeholder, each key of its **own**
-`references`, and ordinary states, actions, functions and parameters. `projection` owes
-one entry per state of the *referenced* regime; the value is interpolated at the
-resulting coordinates. A constraint-local projection may not introduce free parameters —
-that is checked when the `Regime` is constructed, naming the reference, the projection
-and the offending argument.
+The predicate may read `Q_<s>` for each member, each key of its **own** `references`,
+and ordinary states, actions, functions and parameters. `projection` owes one entry per
+state of the *referenced* regime; the value is interpolated at the resulting
+coordinates. A constraint-local projection may not introduce free parameters — that is
+checked when the `Regime` is constructed, naming the reference, the projection and the
+offending argument.
 
 The regime's mask is the AND of the ordinary constraints and the value-dependent ones. A
 cell whose mask is empty carries the `-inf` sentinel: there is no viable household
@@ -216,9 +216,9 @@ The settlement rule, with outside values evaluated at a settlement:
    `tie="leave"` an indifferent member wants to leave, so this case does not arise.
 1. Otherwise, if exactly one wants to leave, the settlement moves toward the other
    member: among the candidates on that member's side of the default (increasing values
-   favour the first stakeholder), take the nearest at which that member accepts
-   separation. The household separates there if the member who wants to leave still
-   gains, and stays otherwise. Without such a candidate it stays.
+   favour the first member), take the nearest at which that member accepts separation.
+   The household separates there if the member who wants to leave still gains, and stays
+   otherwise. Without such a candidate it stays.
 
 A shifted settlement is searched on the candidates only, never between them. A
 settlement needs a regime with two members. The default reads what `available` reads, at
@@ -286,10 +286,10 @@ couple = Regime(
 ```
 
 The state's grid order is the direction of the bargaining: moving to a higher node
-favours the first stakeholder in `utilities` (`f` here), moving to a lower node the
-second. Here the higher node is the larger weight on her utility, so the grid and the
-objective agree; the engine reads only the order of the nodes, not what the objective
-does with them.
+favours the first member in `utilities` (`f` here), moving to a lower node the second.
+Here the higher node is the larger weight on her utility, so the grid and the objective
+agree; the engine reads only the order of the nodes, not what the objective does with
+them.
 
 At every node of the state the household's optimum is computed ignoring the exit, with
 all other states held at their current values. Each member's value at that optimum is
@@ -324,7 +324,7 @@ renegotiated node, both in the period it moved and in the next one.
 
 What renegotiation requires:
 
-- a regime with exactly two stakeholders;
+- a regime with exactly two members;
 - a state declared on an ordered `DiscreteGrid`: a grid declared by its `values`, or by
   a `@categorical(ordered=True)` class. An unordered or continuous state, or a name that
   is not a state, is refused;
@@ -432,8 +432,8 @@ gate or a participation check instead.
 
 ## Marrying and dissolving: a participation check on landing
 
-Without a role, a raw transition between regimes with different stakeholder structure
-stays rejected — there is no rule that would say who the arriving row is. A
+Without a role, a raw transition between regimes with different member structure stays
+rejected — there is no rule that would say who the arriving row is. A
 `ParticipationCheck` supplies one. It lives on the source's edges in `Model(edges=...)`,
 in the `Transition`'s `participation`, keyed by the destination it decides on. Its
 `reads` name every value the predicate compares, each a `ParticipationRead` of a regime
@@ -444,7 +444,7 @@ from lcm import (
     ParticipationCheck,
     ParticipationRead,
     ProjectedRegimeValue,
-    StakeholderRoute,
+    MemberRoute,
     StochasticTransition,
     Transition,
 )
@@ -466,8 +466,8 @@ edges = {
             "couple": ParticipationCheck(
                 predicate=mutual_consent,
                 routes={
-                    "her": StakeholderRoute(
-                        target_stakeholder="f",
+                    "her": MemberRoute(
+                        target_member="f",
                         fallback=ProjectedRegimeValue(
                             regime="single_f",
                             projection={"wealth": half_of_couple_wealth},
@@ -476,10 +476,10 @@ edges = {
                 },
                 reads={
                     "V_couple_f": ParticipationRead(
-                        kind="IntegratedFull", regime="couple", stakeholder="f"
+                        kind="IntegratedFull", regime="couple", member="f"
                     ),
                     "V_couple_m": ParticipationRead(
-                        kind="IntegratedFull", regime="couple", stakeholder="m"
+                        kind="IntegratedFull", regime="couple", member="m"
                     ),
                     "V_alone_f": ParticipationRead(
                         kind="IntegratedFull", regime="single_f", projection=...
@@ -553,20 +553,20 @@ edges = {
                     "target_support": ParticipationRead(
                         kind="Participating",
                         regime="couple",
-                        stakeholder="f",
+                        member="f",
                         field="support",
                         projection=...,
                     )
                 },
                 routes={
-                    "f": StakeholderRoute(
-                        target_stakeholder="f",
+                    "f": MemberRoute(
+                        target_member="f",
                         fallback=ProjectedRegimeValue(
                             regime="single_f", projection=...
                         ),
                     ),
-                    "m": StakeholderRoute(
-                        target_stakeholder="m",
+                    "m": MemberRoute(
+                        target_member="m",
                         fallback=ProjectedRegimeValue(
                             regime="single_m", projection=...
                         ),
@@ -583,9 +583,9 @@ Keying it by `single_f` instead would send *both* partners to `single_f` wheneve
 couple stays together, because the key is where the open branch goes.
 
 The same rule holds for a `Gate`. Each route owns four destinations, and simulation
-carries all four: the open branch's regime (the key) and role (`target_stakeholder`),
-and the closed branch's regime and role (`fallback.regime` and `fallback.stakeholder`).
-A row landing in a singleton regime carries no role.
+carries all four: the open branch's regime (the key) and role (`target_member`), and the
+closed branch's regime and role (`fallback.regime` and `fallback.member`). A row landing
+in a singleton regime carries no role.
 
 ### Entering on the target's own terms
 
@@ -857,43 +857,41 @@ To check and reduce it:
 
 ## Simulating: every row carries its own role
 
-Stakeholder identity is per subject, not per call. A row's role picks its route on a
+Member identity is per subject, not per call. A row's role picks its route on a
 value-dependent transition; the branch it takes then sets the role it carries onward.
 
 - A subject starting in a **singleton** regime has no role.
 - A subject starting in a **collective** regime declares one, through
-  `initial_conditions["own_stakeholder"]`, whenever a route it can still reach turns on
-  the role — that is, whenever some collective regime in the starting regime's forward
+  `initial_conditions["own_member"]`, whenever a route it can still reach turns on the
+  role — that is, whenever some collective regime in the starting regime's forward
   closure declares a value-dependent transition with more than one route. A row keeps
   its role across an ordinary regime transition, so a two-leg transition the cohort runs
   into later counts; one in a regime the cohort can never arrive at does not, and no
   seed is required for it.
 - Entering a collective regime through `roles` sets the declared role, and through a
-  value-dependent transition the route's `target_stakeholder`; leaving through the
-  closed branch sets it from the fallback's `stakeholder`, or clears it for a singleton
-  destination.
+  value-dependent transition the route's `target_member`; leaving through the closed
+  branch sets it from the fallback's `member`, or clears it for a singleton destination.
 
 ```python
 initial_conditions = {
     "wealth": jnp.asarray([...]),
     "age": jnp.zeros(n_subjects),
     "regime_id": jnp.full(n_subjects, model.regime_names_to_ids["couple"], jnp.int32),
-    "own_stakeholder": jnp.asarray([model.stakeholder_names_to_ids["f"], ...]),
+    "own_member": jnp.asarray([model.member_names_to_ids["f"], ...]),
 }
 ```
 
-The role is published as an `own_stakeholder` column beside the columns that identify a
-row, carrying the stakeholder's label and missing wherever the row occupies no role. One
-cohort can therefore hold both partners, and a model whose collective regimes use
-disjoint role vocabularies — `carer` and `ward` in one, `f` and `m` in another — is
-expressible.
+The role is published as an `own_member` column beside the columns that identify a row,
+carrying the member's label and missing wherever the row occupies no role. One cohort
+can therefore hold both partners, and a model whose collective regimes use disjoint role
+vocabularies — `carer` and `ward` in one, `f` and `m` in another — is expressible.
 
 ## Parameters
 
 Everything lands where the declaration is:
 
 ```python
-template["couple"]["utility_f"]["crra"]  # a stakeholder's own utility
+template["couple"]["utility_f"]["crra"]  # a member's own utility
 template["couple"]["pareto_objective"]["weight_f"]  # the objective's free arguments
 template["couple"]["participation_f"]["slack"]  # a value constraint's predicate
 template["edges"]["single_f"]["couple"]["predicate"]["bonus"]  # one gate's predicate

@@ -24,6 +24,7 @@ from lcm import (
     DeterministicTransition,
     DiscreteGrid,
     Gate,
+    MemberRoute,
     Model,
     NormalIIDProcess,
     ParticipationCheck,
@@ -31,7 +32,6 @@ from lcm import (
     Phased,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     Transition,
     UniformIIDProcess,
     ValueDependentConstraint,
@@ -171,9 +171,7 @@ def _route_model(*, reverse: bool, enable_jit: bool) -> Model:
                     "married": Gate(
                         predicate=_gate,
                         routes={
-                            "only": StakeholderRoute(
-                                target_stakeholder="f", fallback=reference
-                            )
+                            "only": MemberRoute(target_member="f", fallback=reference)
                         },
                     )
                 },
@@ -565,9 +563,7 @@ def _landing_model(
     shock = UniformIIDProcess(
         n_points=3, start=-1.0, stop=None if runtime else 1.0, simulated_draws="nodes"
     )
-    route = StakeholderRoute(
-        fallback=ProjectedRegimeValue(regime="fallback", projection={})
-    )
+    route = MemberRoute(fallback=ProjectedRegimeValue(regime="fallback", projection={}))
     targets = {"target": 0, "fallback": 0}
     law = ByAge(cases={0: {"target": StochasticTransition(func=_one)}})
     transition = (

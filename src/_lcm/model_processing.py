@@ -629,8 +629,8 @@ def _validate_function_usage(
         direct.add("utility")
         direct.update(
             ("utility",)
-            if regime.stakeholders is None
-            else tuple(f"utility_{stakeholder}" for stakeholder in regime.stakeholders)
+            if regime.member_axis is None
+            else tuple(f"utility_{member}" for member in regime.member_axis)
         )
         for phase in ("solve", "simulate"):
             functions = dict(complete.get_all_functions(phase=phase, law=laws[name]))
@@ -831,7 +831,7 @@ def _validate_all_variables_used(
     handed to a reachable target that keeps it. That covers, per regime:
 
     - the concurrent valuation — utility, or a collective regime's
-      per-stakeholder utilities, and the constraints;
+      per-member utilities, and the constraints;
     - a derived-categorical function;
     - the Koopmans aggregator, directly or through a regime function whose
       output it consumes at the Bellman step;

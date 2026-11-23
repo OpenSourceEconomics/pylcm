@@ -32,13 +32,13 @@ from lcm import (
     ByAge,
     DeterministicTransition,
     LinSpacedGrid,
+    MemberRoute,
     Model,
     NormalIIDProcess,
     ParticipationCheck,
     ParticipationRead,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     StochasticTransition,
     Transition,
     categorical,
@@ -290,7 +290,7 @@ def _numeric_gate_model() -> Model:
                     "target": ParticipationCheck(
                         predicate=_numeric_gate,
                         routes={
-                            "self": StakeholderRoute(
+                            "self": MemberRoute(
                                 fallback=ProjectedRegimeValue(
                                     regime="fallback",
                                     projection={"wealth": _identity},

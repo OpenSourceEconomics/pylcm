@@ -14,13 +14,13 @@ from lcm import (
     Exit,
     ExitTarget,
     InitialNodes,
+    MemberRoute,
     Model,
     ParticipationCheck,
     ParticipationRead,
     Periods,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     Transition,
     categorical,
 )
@@ -142,7 +142,7 @@ def counterparty_transition() -> Transition:
                     )
                 },
                 routes={
-                    "self": StakeholderRoute(
+                    "self": MemberRoute(
                         fallback=ProjectedRegimeValue(regime="fallback", projection={})
                     )
                 },

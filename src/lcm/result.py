@@ -16,7 +16,7 @@ import numpy as np
 import orbax.checkpoint as ocp
 import pandas as pd
 
-from _lcm.engine import PeriodRegimeSimulationData, Regime
+from _lcm.engine import PERSISTED_FIELD_NAMES, PeriodRegimeSimulationData, Regime
 from _lcm.regime_building.collective import NO_ROLE
 from _lcm.simulation.additional_targets import (
     _collect_all_available_targets,
@@ -816,7 +816,7 @@ def _raw_results_to_array_tree(
                 "states": dict(data.states),
                 **({"shocks": dict(data.shocks)} if data.shocks else {}),
                 "in_regime": data.in_regime,
-                "own_stakeholder": data.own_stakeholder,
+                PERSISTED_FIELD_NAMES["own_member"]: data.own_member,
                 "nested_policy_fallback": data.nested_policy_fallback,
             }
             for period, data in regime_dict.items()
@@ -845,11 +845,11 @@ def _array_tree_to_raw_results(
 def _restored_period_data(tree: Mapping[str, ArrayTree]) -> PeriodRegimeSimulationData:
     """Rebuild one period's simulation data from its restored checkpoint level.
 
-    A checkpoint without the stakeholder or fallback leaves gets the values a
+    A checkpoint without the member or fallback leaves gets the values a
     singleton regime without nested replay records.
     """
     in_regime = _restored_array(tree["in_regime"])
-    own_stakeholder = tree.get("own_stakeholder")
+    own_member = tree.get(PERSISTED_FIELD_NAMES["own_member"])
     nested_policy_fallback = tree.get("nested_policy_fallback")
     return PeriodRegimeSimulationData(
         V_arr=_restored_array(tree["V_arr"]),
@@ -857,9 +857,9 @@ def _restored_period_data(tree: Mapping[str, ArrayTree]) -> PeriodRegimeSimulati
         states=_restored_arrays(tree["states"]),
         shocks=_restored_arrays(tree.get("shocks", {})),
         in_regime=in_regime,
-        own_stakeholder=jnp.full_like(in_regime, NO_ROLE, dtype=jnp.int32)
-        if own_stakeholder is None
-        else _restored_array(own_stakeholder),
+        own_member=jnp.full_like(in_regime, NO_ROLE, dtype=jnp.int32)
+        if own_member is None
+        else _restored_array(own_member),
         nested_policy_fallback=jnp.zeros_like(in_regime, dtype=bool)
         if nested_policy_fallback is None
         else _restored_array(nested_policy_fallback),

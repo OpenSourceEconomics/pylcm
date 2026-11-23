@@ -10,7 +10,7 @@ reference value on the grid of the period the reading regime is solved in.
 The model: `single_f` carries `wealth` on a grid whose ceiling tightens from
 100 at age 0 to 10 at age 1 and pays `2 * wealth`, so its period-0 value
 function is `[0, 200]` over the nodes `[0, 100]` and its period-1 value
-function `[0, 20]` over `[0, 10]`. `couple` is a two-stakeholder regime on the
+function `[0, 20]` over `[0, 10]`. `couple` is a two-member regime on the
 fixed wealth grid `[1, 5]`, paying the wife `3 + work` and the husband
 `2 * (1 - work)`, and admits an action only where the wife's action value
 clears her single value at the same wealth (`delta_f = 0`). Every regime is
@@ -91,7 +91,7 @@ TIGHTENED_CEILING = 10.0
 # The couple's own wealth grid, fixed across ages.
 COUPLE_GRID = LinSpacedGrid(start=1.0, stop=5.0, n_points=2)
 
-# Period-0 value of `couple`, indexed (wealth, stakeholder).
+# Period-0 value of `couple`, indexed (wealth, member).
 EXPECTED_V_COUPLE = ((3.0, 2.0), (-np.inf, -np.inf))
 
 # Period-0 dissolution flag of `couple`, indexed by wealth.

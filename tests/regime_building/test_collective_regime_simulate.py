@@ -34,12 +34,12 @@ from lcm import (
     DiscreteGrid,
     ExecutionConfig,
     LinSpacedGrid,
+    MemberRoute,
     Model,
     ParticipationCheck,
     ParticipationRead,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     Transition,
     categorical,
     fixed_transition,
@@ -136,7 +136,7 @@ def _solve_and_process(
 
 
 # Test 1: a solved (non-gated) collective regime simulates the recomputed joint
-# argmax over two periods, both stakeholders tracked (reuses the
+# argmax over two periods, both members tracked (reuses the
 # test_nonterminal_collective_solve.py couple model).
 
 
@@ -245,8 +245,8 @@ def test_couple_simulates_recomputed_joint_argmax_two_periods() -> None:
             "wage": jnp.array([8.0, 40.0]),
             "age": jnp.array([0.0, 0.0]),
             "regime_id": jnp.array([0, 0], dtype=jnp.int32),
-            "own_stakeholder": jnp.full(
-                2, regimes["couple"].stakeholder_names_to_ids["f"], dtype=jnp.int32
+            "own_member": jnp.full(
+                2, regimes["couple"].member_names_to_ids["f"], dtype=jnp.int32
             ),
         }
     )
@@ -278,11 +278,11 @@ def test_couple_simulates_recomputed_joint_argmax_two_periods() -> None:
 
 
 def test_couple_simulate_with_runtime_validation_enabled() -> None:
-    """The trailing stakeholder axis on `V_arr` broadcasts against `in_regime`.
+    """The trailing member axis on `V_arr` broadcasts against `in_regime`.
 
     The `validate_V` / NaN-diagnostic code paths compare `V_arr` against
     `in_regime`/`subject_ids_in_regime`, which for a collective regime's
-    `(n_subjects, n_stakeholders)` V needs an explicit broadcast (a singleton
+    `(n_subjects, n_members)` V needs an explicit broadcast (a singleton
     regime's `V_arr` is already `(n_subjects,)`). Pinned at `log_level="debug"`,
     the strictest level, which raises on any validation failure.
     """
@@ -317,8 +317,8 @@ def test_couple_simulate_with_runtime_validation_enabled() -> None:
             "wage": jnp.array([8.0, 40.0]),
             "age": jnp.array([0.0, 0.0]),
             "regime_id": jnp.array([0, 0], dtype=jnp.int32),
-            "own_stakeholder": jnp.full(
-                2, regimes["couple"].stakeholder_names_to_ids["f"], dtype=jnp.int32
+            "own_member": jnp.full(
+                2, regimes["couple"].member_names_to_ids["f"], dtype=jnp.int32
             ),
         }
     )
@@ -395,8 +395,8 @@ def _consent_laws() -> dict[RegimeName, RegimeLawDeclaration | Transition]:
                 "married_terminal": ParticipationCheck(
                     predicate=_consent_gate,
                     routes={
-                        "f": StakeholderRoute(
-                            target_stakeholder="f",
+                        "f": MemberRoute(
+                            target_member="f",
                             fallback=ProjectedRegimeValue(
                                 regime="single_f_terminal",
                                 projection={"wage": _identity_wage},
@@ -406,13 +406,13 @@ def _consent_laws() -> dict[RegimeName, RegimeLawDeclaration | Transition]:
                     reads={
                         "V_target_f": ParticipationRead(
                             regime="married_terminal",
-                            stakeholder="f",
+                            member="f",
                             kind="Participating",
                             projection={"wage": _identity_wage},
                         ),
                         "V_target_m": ParticipationRead(
                             regime="married_terminal",
-                            stakeholder="m",
+                            member="m",
                             kind="Participating",
                             projection={"wage": _identity_wage},
                         ),
@@ -628,7 +628,7 @@ def _participation_support(*, target_support: BoolND) -> BoolND:
 def _married_dissolution_transition() -> Transition:
     """Return the source-owned participation check into `married_ir` after age 0.
 
-    The edge's stakeholder routes fall back to `single_f` / `single_m`, so
+    The edge's member routes fall back to `single_f` / `single_m`, so
     `married` reaches all three at age 0.
     """
     return Transition(
@@ -645,22 +645,22 @@ def _married_dissolution_transition() -> Transition:
                 reads={
                     "target_support": ParticipationRead(
                         regime="married_ir",
-                        stakeholder="f",
+                        member="f",
                         kind="Participating",
                         field="support",
                         projection={"wage": _identity_wage},
                     )
                 },
                 routes={
-                    "f": StakeholderRoute(
-                        target_stakeholder="f",
+                    "f": MemberRoute(
+                        target_member="f",
                         fallback=ProjectedRegimeValue(
                             regime="single_f",
                             projection={"wage": _identity_wage},
                         ),
                     ),
-                    "m": StakeholderRoute(
-                        target_stakeholder="m",
+                    "m": MemberRoute(
+                        target_member="m",
                         fallback=ProjectedRegimeValue(
                             regime="single_m",
                             projection={"wage": _identity_wage},
@@ -839,8 +839,8 @@ def test_dissolution_edge_routes_the_row_to_its_own_roles_single_regime() -> Non
             "regime_id": jnp.array(
                 [regime_names_to_ids["married"]] * 3, dtype=jnp.int32
             ),
-            "own_stakeholder": jnp.full(
-                3, regimes["married"].stakeholder_names_to_ids["f"], dtype=jnp.int32
+            "own_member": jnp.full(
+                3, regimes["married"].member_names_to_ids["f"], dtype=jnp.int32
             ),
         }
     )
@@ -895,9 +895,9 @@ def _simulate_directly_in_married_ir(*, wages: list[float]) -> SimulationResult:
             "regime_id": jnp.full(
                 n_subjects, regime_names_to_ids["married_ir"], dtype=jnp.int32
             ),
-            "own_stakeholder": jnp.full(
+            "own_member": jnp.full(
                 n_subjects,
-                regimes["married_ir"].stakeholder_names_to_ids["f"],
+                regimes["married_ir"].member_names_to_ids["f"],
                 dtype=jnp.int32,
             ),
         }
@@ -1013,8 +1013,8 @@ def _consent_discrete_axis_laws() -> dict[
                 "married_terminal": ParticipationCheck(
                     predicate=_consent_gate,
                     routes={
-                        "f": StakeholderRoute(
-                            target_stakeholder="f",
+                        "f": MemberRoute(
+                            target_member="f",
                             fallback=ProjectedRegimeValue(
                                 regime="single_f_terminal",
                                 projection={
@@ -1027,13 +1027,13 @@ def _consent_discrete_axis_laws() -> dict[
                     reads={
                         "V_target_f": ParticipationRead(
                             regime="married_terminal",
-                            stakeholder="f",
+                            member="f",
                             kind="Participating",
                             projection={"wage": _identity_wage, "educ": _identity_educ},
                         ),
                         "V_target_m": ParticipationRead(
                             regime="married_terminal",
-                            stakeholder="m",
+                            member="m",
                             kind="Participating",
                             projection={"wage": _identity_wage, "educ": _identity_educ},
                         ),
@@ -1286,9 +1286,7 @@ def test_public_model_simulate_routes_dissolution_edge_when_flags_supplied() -> 
             "regime_id": jnp.array(
                 [model.regime_names_to_ids["married"]] * 3, dtype=jnp.int32
             ),
-            "own_stakeholder": jnp.full(
-                3, model.stakeholder_names_to_ids["f"], dtype=jnp.int32
-            ),
+            "own_member": jnp.full(3, model.member_names_to_ids["f"], dtype=jnp.int32),
         }
     )
     result = model.simulate(
@@ -1328,9 +1326,7 @@ def test_public_model_replays_participation_from_values_only() -> None:
             "regime_id": jnp.array(
                 [model.regime_names_to_ids["married"]], dtype=jnp.int32
             ),
-            "own_stakeholder": jnp.full(
-                1, model.stakeholder_names_to_ids["f"], dtype=jnp.int32
-            ),
+            "own_member": jnp.full(1, model.member_names_to_ids["f"], dtype=jnp.int32),
         }
     )
     result = model.simulate(
@@ -1346,13 +1342,13 @@ def test_public_model_replays_participation_from_values_only() -> None:
     )
 
 
-# Test 7: `to_dataframe()` flattens a collective regime's 2D per-stakeholder value
-# into per-stakeholder columns, and leaves a singleton regime's 1D `value` column
+# Test 7: `to_dataframe()` flattens a collective regime's 2D per-member value
+# into per-member columns, and leaves a singleton regime's 1D `value` column
 # as it is — regression pin against the `pd.DataFrame` "must be 1-dimensional"
 # crash in `_lcm.simulation.result_dataframe._process_regime`.
 
 
-def test_to_dataframe_splits_collective_value_into_per_stakeholder_columns() -> None:
+def test_to_dataframe_splits_collective_value_into_per_member_columns() -> None:
     """A mixed singleton+collective topology (consent routing) round-trips.
 
     Reuses the consent fixture (`test_consent_routing_simulate_matches_gate_exactly`):
@@ -1449,7 +1445,7 @@ def _solo_laws() -> dict[RegimeName, RegimeLawDeclaration | Transition]:
 
 def _make_solo_regimes() -> dict[str, Regime]:
     """Singleton-only two-regime model, structurally identical to the couple
-    fixture (`_make_couple_regimes`) minus `stakeholders` and the split
+    fixture (`_make_couple_regimes`) minus `members` and the split
     `utility_f`/`utility_m` pair — isolates the singleton path from the
     collective one for the byte-identical regression check below."""
     solo = Regime(
@@ -1468,7 +1464,7 @@ def _make_solo_regimes() -> dict[str, Regime]:
 def test_to_dataframe_singleton_only_value_column_is_unchanged() -> None:
     """A singleton-only model's `to_dataframe()` keeps a single 1D `value` column.
 
-    No regime here declares `stakeholders`, so `_process_regime` never enters
+    No regime here declares `members`, so `_process_regime` never enters
     the split branch added for collective regimes — this pins that the
     singleton path is untouched by the fix.
     """
@@ -1592,7 +1588,7 @@ def _repeating_self_loop_laws() -> dict[RegimeName, RegimeLawDeclaration | Trans
                         )
                     },
                     routes={
-                        "only": StakeholderRoute(
+                        "only": MemberRoute(
                             fallback=ProjectedRegimeValue(
                                 regime="src_fallback",
                                 projection={"wage": _identity_wage},

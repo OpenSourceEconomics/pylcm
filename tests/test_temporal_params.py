@@ -1148,7 +1148,7 @@ def test_temporal_gate_requires_and_reads_target_period(
                         predicate=lcm.time_varying_params("threshold")(_gate),
                         reads={"V_target": _done_value()},
                         routes={
-                            "only": lcm.StakeholderRoute(
+                            "only": lcm.MemberRoute(
                                 fallback=lcm.ProjectedRegimeValue(
                                     regime="fallback", projection={}
                                 ),
@@ -1291,7 +1291,7 @@ def test_temporal_gate_projection_reads_target_period(
                             ),
                         },
                         routes={
-                            "only": lcm.StakeholderRoute(
+                            "only": lcm.MemberRoute(
                                 fallback=lcm.ProjectedRegimeValue(
                                     regime="fallback", projection=projection
                                 )

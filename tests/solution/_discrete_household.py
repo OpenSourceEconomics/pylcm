@@ -22,12 +22,12 @@ from lcm import (
     CollectiveUtility,
     DiscreteGrid,
     ExecutionConfig,
+    MemberRoute,
     Model,
     ParticipationCheck,
     ParticipationRead,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
 )
 from lcm.exits import Exit, ExitTarget, Unilateral
 from lcm.transition import StochasticTransition, Transition
@@ -50,16 +50,16 @@ def _identity(wealth: DiscreteState) -> DiscreteState:
 
 
 def _consent(
-    *, stakeholder: str, fallback: str, half: Callable[..., DiscreteState]
+    *, member: str, fallback: str, half: Callable[..., DiscreteState]
 ) -> dict[str, ParticipationCheck]:
     """A single's consent to a household, as in the example."""
-    route = "her" if stakeholder == "f" else "his"
+    route = "her" if member == "f" else "his"
     return {
         "couple": ParticipationCheck(
             predicate=household._mutual_consent,
             routes={
-                route: StakeholderRoute(
-                    target_stakeholder=stakeholder,
+                route: MemberRoute(
+                    target_member=member,
                     fallback=ProjectedRegimeValue(
                         regime=fallback, projection={"wealth": half}
                     ),
@@ -68,13 +68,13 @@ def _consent(
             reads={
                 "V_target_f": ParticipationRead(
                     regime="couple",
-                    stakeholder="f",
+                    member="f",
                     kind="Participating",
                     projection={"wealth": _identity},
                 ),
                 "V_target_m": ParticipationRead(
                     regime="couple",
-                    stakeholder="m",
+                    member="m",
                     kind="Participating",
                     projection={"wealth": _identity},
                 ),
@@ -99,15 +99,15 @@ def _couple_participation(
             reads={
                 "target_support": ParticipationRead(
                     regime="couple",
-                    stakeholder="f",
+                    member="f",
                     kind="Participating",
                     field="support",
                     projection={"wealth": _identity},
                 )
             },
             routes={
-                member: StakeholderRoute(
-                    target_stakeholder=member,
+                member: MemberRoute(
+                    target_member=member,
                     fallback=ProjectedRegimeValue(
                         regime=f"single_{member}", projection={"wealth": half}
                     ),
@@ -257,7 +257,7 @@ def get_model(*, n_periods: int, n_points: int = 4) -> Model:
                     },
                     terminal="single_f_terminal",
                 ),
-                participation=_consent(stakeholder="f", fallback="single_f", half=half),
+                participation=_consent(member="f", fallback="single_f", half=half),
             ),
             "single_m": Transition(
                 law=law(
@@ -268,7 +268,7 @@ def get_model(*, n_periods: int, n_points: int = 4) -> Model:
                     },
                     terminal="single_m_terminal",
                 ),
-                participation=_consent(stakeholder="m", fallback="single_m", half=half),
+                participation=_consent(member="m", fallback="single_m", half=half),
             ),
         },
         regimes={

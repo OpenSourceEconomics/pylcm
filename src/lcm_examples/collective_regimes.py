@@ -1,6 +1,6 @@
 """Small collective-regime models for the documentation.
 
-The first model isolates the household's shared argmax with stakeholder-specific
+The first model isolates the household's shared argmax with member-specific
 values, declared as a single `CollectiveUtility`. The second adds same-period outside
 options through a current `Exit` participation rule, and a `ParticipationCheck`
 that reads actual participating-policy support. Either partner can leave, a
@@ -9,8 +9,8 @@ as in the Eckstein-Keane-Lifshitz model. The state and action spaces remain
 hand-checkable.
 
 The participation check belongs to the incoming married edge. Its admitted branch
-is the continuing collective regime; each stakeholder's fallback is that
-stakeholder's own singleton regime.
+is the continuing collective regime; each member's fallback is that
+member's own singleton regime.
 """
 
 import jax.numpy as jnp
@@ -22,12 +22,12 @@ from lcm import (
     CollectiveUtility,
     DiscreteGrid,
     LinSpacedGrid,
+    MemberRoute,
     Model,
     ParticipationCheck,
     ParticipationRead,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     StochasticTransition,
     Transition,
     categorical,
@@ -109,8 +109,8 @@ def _next_shared_wage(work: DiscreteAction) -> ContinuousState:
 def get_shared_decision_model() -> Model:
     """Build a two-period collective model with one shared labor choice.
 
-    Equal stakeholder weights select one household action. The value function keeps
-    both stakeholders' values at that common argmax.
+    Equal member weights select one household action. The value function keeps
+    both members' values at that common argmax.
     """
     shared_utility = CollectiveUtility(
         utilities={"f": _shared_utility_f, "m": _shared_utility_m}
@@ -204,7 +204,7 @@ def get_dissolution_model(
 
     At wage two, neither household action satisfies both participation constraints.
     The participation check reads the couple's participating policy support on
-    landing, and routes each stakeholder to their own singleton fallback where it
+    landing, and routes each member to their own singleton fallback where it
     is empty. `lottery_contraction` is passed to every regime's `GridSearch`
     solver.
     """
@@ -258,22 +258,22 @@ def get_dissolution_model(
             reads={
                 "target_support": ParticipationRead(
                     regime="married_with_participation",
-                    stakeholder="f",
+                    member="f",
                     kind="Participating",
                     field="support",
                     projection={"wage": _identity_wage},
                 )
             },
             routes={
-                "f": StakeholderRoute(
-                    target_stakeholder="f",
+                "f": MemberRoute(
+                    target_member="f",
                     fallback=ProjectedRegimeValue(
                         regime="single_f",
                         projection={"wage": _identity_wage},
                     ),
                 ),
-                "m": StakeholderRoute(
-                    target_stakeholder="m",
+                "m": MemberRoute(
+                    target_member="m",
                     fallback=ProjectedRegimeValue(
                         regime="single_m",
                         projection={"wage": _identity_wage},

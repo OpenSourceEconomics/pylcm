@@ -40,7 +40,7 @@ class _KernelKwargs(TypedDict):
     co_map_v_arr_in_axes: NotRequired[
         tuple[MappingProxyType[RegimeName, int | None], ...]
     ]
-    stakeholders: NotRequired[tuple[str, ...] | None]
+    member_axis: NotRequired[tuple[str, ...] | None]
     pareto_weights: NotRequired[ParetoWeights | None]
     cell_width_keyword: NotRequired[str | None]
     untiled_state_names: NotRequired[tuple[StateName, ...]]
@@ -53,7 +53,7 @@ class _RouteOverrides(TypedDict, total=False):
     discrete_actions: tuple[ActionName, ...]
     Q_and_F: QAndFFunction
     has_taste_shocks: bool
-    stakeholders: tuple[str, ...] | None
+    member_axis: tuple[str, ...] | None
     co_map_state_names: tuple[StateName, ...]
     same_period_ref_regimes: tuple[RegimeName, ...]
     edge_reference_regimes: tuple[RegimeName, ...]
@@ -229,9 +229,9 @@ def _collective_Q_and_F(
 ):
     del next_regime_to_V_arr
     global_id = first * 3 + second
-    stakeholder_f = jnp.array([10.0, 2.0, 40.0, 5.0, 12.0, 20.0])[global_id]
-    stakeholder_m = jnp.array([0.0, 50.0, 0.0, 45.0, 30.0, 20.0])[global_id]
-    return jnp.stack((stakeholder_f, stakeholder_m)), row != 0
+    member_f = jnp.array([10.0, 2.0, 40.0, 5.0, 12.0, 20.0])[global_id]
+    member_m = jnp.array([0.0, 50.0, 0.0, 45.0, 30.0, 20.0])[global_id]
+    return jnp.stack((member_f, member_m)), row != 0
 
 
 def _collective_weights(*, row, base_weight):
@@ -267,7 +267,7 @@ def test_collective_full_V_streaming_matches_dense_with_one_household_winner(
         batch_sizes=batch_sizes,
         action_names=action_names,
         state_names=state_names,
-        stakeholders=("f", "m"),
+        member_axis=("f", "m"),
         pareto_weights=_PARETO_WEIGHTS,
     )
     raw_streamed = get_streaming_max_Q_over_a(
@@ -275,7 +275,7 @@ def test_collective_full_V_streaming_matches_dense_with_one_household_winner(
         batch_sizes=batch_sizes,
         action_names=action_names,
         state_names=state_names,
-        stakeholders=("f", "m"),
+        member_axis=("f", "m"),
         pareto_weights=_PARETO_WEIGHTS,
     )
     streamed = functools.partial(
@@ -708,7 +708,7 @@ def _action_streaming_route_context(
     discrete_actions=(),
     Q_and_F=_co_mapped_Q_and_F,
     has_taste_shocks=False,
-    stakeholders=None,
+    member_axis=None,
     co_map_state_names=(),
     same_period_ref_regimes=(),
     edge_reference_regimes=(),
@@ -750,8 +750,8 @@ def _action_streaming_route_context(
         "Q_and_F_functions": MappingProxyType({0: Q_and_F}),
         "has_taste_shocks": has_taste_shocks,
         "enable_jit": enable_jit,
-        "stakeholders": stakeholders,
-        "pareto_weights": _PARETO_WEIGHTS if stakeholders is not None else None,
+        "member_axis": member_axis,
+        "pareto_weights": _PARETO_WEIGHTS if member_axis is not None else None,
         "co_map_state_names": co_map_state_names,
         "co_map_v_arr_in_axes": tuple(
             MappingProxyType({"target": 0}) for _ in co_map_state_names
@@ -793,7 +793,7 @@ def _width_collision_Q_and_F(*, action, _lcm_action_block_width, next_regime_to_
         ),
         pytest.param(
             {
-                "stakeholders": ("f", "m"),
+                "member_axis": ("f", "m"),
                 "same_period_ref_regimes": ("reference",),
             },
             _ActionStreamingDisposition.DENSE_COLLECTIVE_RESOURCES,
@@ -805,13 +805,13 @@ def _width_collision_Q_and_F(*, action, _lcm_action_block_width, next_regime_to_
             id="width-collision-is-remapped",
         ),
         pytest.param(
-            {"stakeholders": ("f", "m")},
+            {"member_axis": ("f", "m")},
             _ActionStreamingDisposition.DENSE_COLLECTIVE_RESOURCES,
             id="collective-hard-max",
         ),
         pytest.param(
             {
-                "stakeholders": ("f", "m"),
+                "member_axis": ("f", "m"),
                 "co_map_state_names": ("kind", "region"),
             },
             _ActionStreamingDisposition.DENSE_COLLECTIVE_RESOURCES,
@@ -849,7 +849,7 @@ def _width_collision_Q_and_F(*, action, _lcm_action_block_width, next_regime_to_
             id="singleton-hard-max-jit-disabled",
         ),
         pytest.param(
-            {"stakeholders": ("f", "m"), "enable_jit": False},
+            {"member_axis": ("f", "m"), "enable_jit": False},
             _ActionStreamingDisposition.DENSE_COLLECTIVE_RESOURCES,
             id="collective-hard-max-jit-disabled",
         ),
@@ -883,7 +883,7 @@ def _width_collision_Q_and_F(*, action, _lcm_action_block_width, next_regime_to_
         ),
         pytest.param(
             {
-                "stakeholders": ("f", "m"),
+                "member_axis": ("f", "m"),
                 "actions_grid_shapes": (1,),
             },
             _ActionStreamingDisposition.DENSE_TRIVIAL_ACTION_PRODUCT,
@@ -900,7 +900,7 @@ def _width_collision_Q_and_F(*, action, _lcm_action_block_width, next_regime_to_
         ),
         pytest.param(
             {
-                "stakeholders": ("f", "m"),
+                "member_axis": ("f", "m"),
                 "co_map_state_names": ("kind", "region"),
                 "same_period_ref_regimes": ("reference",),
             },
@@ -920,7 +920,7 @@ def _width_collision_Q_and_F(*, action, _lcm_action_block_width, next_regime_to_
         pytest.param(
             {
                 "has_taste_shocks": True,
-                "stakeholders": ("f", "m"),
+                "member_axis": ("f", "m"),
                 "discrete_actions": ("action",),
                 "actions_grid_shapes": (1,),
                 "co_map_state_names": ("kind", "region"),

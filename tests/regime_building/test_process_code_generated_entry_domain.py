@@ -24,13 +24,13 @@ from lcm import (
     AgeGrid,
     ByAge,
     DiscreteGrid,
+    MemberRoute,
     Model,
     NormalIIDProcess,
     ParticipationCheck,
     ParticipationRead,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     Transition,
     categorical,
 )
@@ -188,7 +188,7 @@ def _model(*, route: str, code: bool, on_node: bool, enable_jit: bool) -> Model:
                             )
                         },
                         routes={
-                            "only": StakeholderRoute(
+                            "only": MemberRoute(
                                 fallback=ProjectedRegimeValue(
                                     regime="fallback",
                                     projection={

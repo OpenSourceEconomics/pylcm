@@ -21,6 +21,7 @@ import lcm
 from _lcm import version
 from _lcm.dtypes import canonical_float_dtype
 from _lcm.egm.upper_envelope._exact_affine import ffi
+from _lcm.engine import PERSISTED_FIELD_NAMES
 from _lcm.persistence.solution import _array_checksum
 from _lcm.simulation.current_iid_entry import SuppliedEntryFrames
 from _lcm.simulation.current_iid_overrides import SimulationInitialConditionsInput
@@ -620,7 +621,7 @@ def test_collector_validates_model_owned_fixed_raw_fields(
     field_name = (
         "V_arr"
         if corruption.startswith("value")
-        else "own_stakeholder"
+        else PERSISTED_FIELD_NAMES["own_member"]
         if corruption == "role-dtype"
         else "in_regime"
     )

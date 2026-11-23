@@ -112,9 +112,9 @@ from lcm.certainty_equivalent import (  # noqa: E402
 from lcm.collective import (  # noqa: E402
     CollectiveUtility,
     Gate,
+    MemberRoute,
     ParetoObjective,
     ProjectedRegimeValue,
-    StakeholderRoute,
     ValueDependentConstraint,
 )
 from lcm.composite_state import CompositeState  # noqa: E402
@@ -292,6 +292,7 @@ __all__ = [
     "LogNormalIIDProcess",
     "LogSpacedGrid",
     "LoweredPeriodCandidate",
+    "MemberRoute",
     "Model",
     "ModelDeclarations",
     "MutualConsent",
@@ -323,7 +324,6 @@ __all__ = [
     "SimulateSnapshot",
     "SimulationResult",
     "SolveSnapshot",
-    "StakeholderRoute",
     "StateConditioned",
     "StochasticTransition",
     "TauchenAR1Process",

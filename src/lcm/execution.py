@@ -188,7 +188,7 @@ class ExecutionConfig:
     narrow route: it must be the sole sharded state, a model-level
     `LinSpacedGrid` retained in every regime, solved everywhere with
     `GridSearch` under a singleton hard-max, and the regimes must carry no
-    stakeholders, gated edges, value constraints, same-period references or
+    members, gated edges, value constraints, same-period references or
     taste shocks. Model construction checks every requirement and the error
     lists what a rejected model violates.
     """

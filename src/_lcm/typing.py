@@ -96,7 +96,7 @@ type StatesPerRegime = MappingProxyType[RegimeName, RegimeStates]
 # the way out to preserve immutability at runtime. Values are 1-D arrays
 # of length `n_subjects`; the validator checks the rank-1 invariant.
 type InitialConditions = Mapping[
-    StateName | Literal["regime_id", "own_stakeholder"], Float1D | Int1D
+    StateName | Literal["regime_id", "own_member"], Float1D | Int1D
 ]
 
 # JAX PRNG keys (`jax.random`) carry the dedicated `key<fry>` dtype, which
@@ -661,7 +661,7 @@ class MaxQOverAFunction[
 
     Q is the state-action value function. The MaxQOverCFunction returns the maximum of Q
     over all actions. For a collective regime the core returns the pair
-    `(V, D)` — the stakeholder-axis value array plus the boolean dissolution
+    `(V, D)` — the member-axis value array plus the boolean dissolution
     flag — instead of the plain V array.
 
     Used for both type checking and beartype runtime checks.

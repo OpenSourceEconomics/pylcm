@@ -94,7 +94,7 @@ def check_pareto_weights(
     """Check every collective regime's Pareto weights against its parameters.
 
     What a Pareto weighting is — one finite, non-negative weight per
-    stakeholder, with a strictly positive total — is a property of the *values*
+    member, with a strictly positive total — is a property of the *values*
     when a weight is declared as a function of a parameter or a state. A
     declaration that is admissible for one draw is not for the next, so this
     runs on every solve, on the regime's own grid, at every age the regime is
@@ -108,7 +108,7 @@ def check_pareto_weights(
 
     Raises:
         InvalidParamsError: On the first inadmissible weighting, naming the
-            regime, the stakeholder, and the parameter entry it comes from.
+            regime, the member, and the parameter entry it comes from.
 
     """
     for regime_name, regime in regimes.items():
@@ -193,7 +193,7 @@ def _fail_if_not_a_pareto_weighting(
         arr = jnp.asarray(weight)
         if not bool(jnp.all(jnp.isfinite(arr))):
             msg = (
-                f"The Pareto weight of stakeholder {name!r} in {where} is not "
+                f"The Pareto weight of member {name!r} in {where} is not "
                 f"finite everywhere on the regime's grid (min {float(jnp.min(arr))}, "
                 f"max {float(jnp.max(arr))}). Check the "
                 f"'{PARETO_OBJECTIVE_ENTRY}' entry of this regime's params."
@@ -201,7 +201,7 @@ def _fail_if_not_a_pareto_weighting(
             raise InvalidParamsError(msg)
         if bool(jnp.any(arr < 0)):
             msg = (
-                f"The Pareto weight of stakeholder {name!r} in {where} is "
+                f"The Pareto weight of member {name!r} in {where} is "
                 f"negative somewhere on the regime's grid (min "
                 f"{float(jnp.min(arr))}). A Pareto weighting is non-negative; "
                 f"check the '{PARETO_OBJECTIVE_ENTRY}' entry of this regime's "

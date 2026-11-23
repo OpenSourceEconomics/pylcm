@@ -25,6 +25,7 @@ from lcm import (
     Gate,
     InitialNodes,
     LinSpacedGrid,
+    MemberRoute,
     Model,
     ParetoObjective,
     Periods,
@@ -33,7 +34,6 @@ from lcm import (
     Regime,
     Renegotiate,
     SimulationResult,
-    StakeholderRoute,
     Transition,
     Unilateral,
     categorical,
@@ -226,9 +226,7 @@ def test_renegotiation_carries_selected_state_and_its_action_to_the_next_period(
             "regime_id": jnp.full(
                 4, model.regime_names_to_ids["couple"], dtype=jnp.int32
             ),
-            "own_stakeholder": jnp.full(
-                4, model.stakeholder_names_to_ids["f"], dtype=jnp.int32
-            ),
+            "own_member": jnp.full(4, model.member_names_to_ids["f"], dtype=jnp.int32),
             "mu": jnp.arange(4, dtype=jnp.int32),
         },
         seed=659,
@@ -303,9 +301,9 @@ def _separation_simulation(*, execution_config: ExecutionConfig) -> SimulationRe
             "regime_id": jnp.full(
                 7, model.regime_names_to_ids["couple"], dtype=jnp.int32
             ),
-            "own_stakeholder": jnp.asarray(
+            "own_member": jnp.asarray(
                 [
-                    model.stakeholder_names_to_ids[member]
+                    model.member_names_to_ids[member]
                     for member in ("f", "m", "f", "m", "f", "m", "f")
                 ],
                 dtype=jnp.int32,
@@ -518,8 +516,8 @@ def test_renegotiation_adjusts_after_the_state_weighted_raw_choice() -> None:
             "regime_id": jnp.asarray(
                 [model.regime_names_to_ids["couple"]], dtype=jnp.int32
             ),
-            "own_stakeholder": jnp.asarray(
-                [model.stakeholder_names_to_ids["f"]], dtype=jnp.int32
+            "own_member": jnp.asarray(
+                [model.member_names_to_ids["f"]], dtype=jnp.int32
             ),
             "mu": jnp.asarray([0], dtype=jnp.int32),
         },
@@ -658,8 +656,8 @@ def _gated_outside_model(
                     "landing": Gate(
                         predicate=_low_assets_gate if pointwise else _closed_gate,
                         routes={
-                            member: StakeholderRoute(
-                                target_stakeholder=member,
+                            member: MemberRoute(
+                                target_member=member,
                                 fallback=ProjectedRegimeValue(
                                     regime=f"single_{member}",
                                     projection={"assets": fixed_transition("assets")},
@@ -700,9 +698,7 @@ def test_renegotiation_outside_option_keeps_future_personal_gate_values(
             "regime_id": jnp.full(
                 2, model.regime_names_to_ids["couple"], dtype=jnp.int32
             ),
-            "own_stakeholder": jnp.full(
-                2, model.stakeholder_names_to_ids["f"], dtype=jnp.int32
-            ),
+            "own_member": jnp.full(2, model.member_names_to_ids["f"], dtype=jnp.int32),
             "assets": jnp.asarray([2.0, 4.0]),
             "mu": jnp.zeros(2, dtype=jnp.int32),
         },
@@ -731,9 +727,9 @@ def _gated_outside_simulation(*, execution_config: ExecutionConfig) -> Simulatio
             "regime_id": jnp.full(
                 7, model.regime_names_to_ids["couple"], dtype=jnp.int32
             ),
-            "own_stakeholder": jnp.asarray(
+            "own_member": jnp.asarray(
                 [
-                    model.stakeholder_names_to_ids[member]
+                    model.member_names_to_ids[member]
                     for member in ("f", "m", "f", "m", "f", "m", "f")
                 ],
                 dtype=jnp.int32,
@@ -1136,9 +1132,9 @@ def test_phase_specific_undefined_objective_fails_before_routing(
                 "regime_id": jnp.full(
                     7, model.regime_names_to_ids["couple"], dtype=jnp.int32
                 ),
-                "own_stakeholder": jnp.asarray(
+                "own_member": jnp.asarray(
                     [
-                        model.stakeholder_names_to_ids[member]
+                        model.member_names_to_ids[member]
                         for member in ("f", "m", "f", "m", "f", "m", "f")
                     ],
                     dtype=jnp.int32,
@@ -1209,9 +1205,9 @@ def check_subject_sharded_objective_integrity() -> None:
                 "regime_id": jnp.full(
                     7, model.regime_names_to_ids["couple"], dtype=jnp.int32
                 ),
-                "own_stakeholder": jnp.asarray(
+                "own_member": jnp.asarray(
                     [
-                        model.stakeholder_names_to_ids[member]
+                        model.member_names_to_ids[member]
                         for member in ("f", "m", "f", "m", "f", "m", "f")
                     ],
                     dtype=jnp.int32,

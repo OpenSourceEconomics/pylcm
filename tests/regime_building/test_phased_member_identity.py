@@ -1,4 +1,4 @@
-"""Model construction preserves the exact utility each stakeholder declares."""
+"""Model construction preserves the exact utility each member declares."""
 
 from typing import Literal
 
@@ -53,7 +53,7 @@ def _single_utility(*, bonus: DiscreteState) -> FloatND:
 
 
 @pytest.mark.parametrize("value_grid", [False, True], ids=["codes", "values"])
-def test_model_preserves_an_unchanged_phased_stakeholder(*, value_grid: bool) -> None:
+def test_model_preserves_an_unchanged_phased_member(*, value_grid: bool) -> None:
     """A singleton's value grid cannot replace a household's authored utility."""
     body = Phased(solve=_solve_utility, simulate=_simulate_utility)
     declaration = CollectiveUtility(utilities={"f": _other_utility, "m": body})
@@ -92,10 +92,10 @@ def test_model_preserves_an_unchanged_phased_stakeholder(*, value_grid: bool) ->
 
 
 @pytest.mark.parametrize("changed_phase", ["solve", "simulate"])
-def test_replacing_one_phase_of_an_owned_stakeholder_is_refused(
+def test_replacing_one_phase_of_an_owned_member_is_refused(
     *, changed_phase: Literal["solve", "simulate"]
 ) -> None:
-    """Changing either child of a stakeholder's declared body violates ownership."""
+    """Changing either child of a member's declared body violates ownership."""
     body = Phased(solve=_solve_utility, simulate=_simulate_utility)
     regime = Regime(
         functions={

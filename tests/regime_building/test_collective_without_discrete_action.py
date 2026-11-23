@@ -3,8 +3,8 @@
 The household argmax runs over whatever action product a regime declares. That
 product may be continuous, and it may be empty — a terminal regime whose payoff
 is fully determined by its states has no decision to take. Neither case needs a
-placeholder `DiscreteGrid` action, and both produce the ordinary per-stakeholder
-readout: each stakeholder's own value at the shared household choice.
+placeholder `DiscreteGrid` action, and both produce the ordinary per-member
+readout: each member's own value at the shared household choice.
 
 Both models are stateless and equally weighted, so every value below is an exact
 small-integer expression rather than a tolerance-bounded approximation.
@@ -69,11 +69,11 @@ def _params() -> dict[str, dict[str, dict[str, float]]]:
 
 
 def test_collective_regime_with_no_action_solves_to_its_own_utilities() -> None:
-    """A zero-action collective regime stores each stakeholder's own utility.
+    """A zero-action collective regime stores each member's own utility.
 
     Neither regime offers a choice, so the household argmax is over a single
     empty cell. The terminal pair is the terminal utilities `(10, 4)`, and the
-    period-0 pair adds the discounted continuation to each stakeholder's own
+    period-0 pair adds the discounted continuation to each member's own
     flow payoff: `(1 + 0.95 * 10, 2 + 0.95 * 4) = (10.5, 5.8)`.
     """
     couple = Regime(
@@ -119,7 +119,7 @@ def test_collective_regime_with_no_action_solves_to_its_own_utilities() -> None:
 def test_collective_regime_with_only_a_continuous_action_solves() -> None:
     """A continuous-only collective regime maximizes over the continuous grid.
 
-    Both stakeholders' payoffs rise in `consumption`, so the equally weighted
+    Both members' payoffs rise in `consumption`, so the equally weighted
     household objective is maximized at the top grid point `1.0` in both
     periods. The terminal pair is `(1, 2)`, and the period-0 pair is
     `(1 + 0.95 * 1, 2 + 0.95 * 2) = (1.95, 3.9)`.

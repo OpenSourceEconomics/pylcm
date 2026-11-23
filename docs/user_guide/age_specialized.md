@@ -115,7 +115,7 @@ regime carries **in simulation**, and an age-specialized state is one of those l
 other:
 
 ```python
-StakeholderRoute(
+MemberRoute(
     fallback=ProjectedRegimeValue(
         regime="annuity",
         # `annuity` holds `principal` on an `AgeSpecializedGrid`. The projection

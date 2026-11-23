@@ -23,12 +23,12 @@ from lcm import (
     ByAge,
     Gate,
     LinSpacedGrid,
+    MemberRoute,
     Model,
     ParticipationCheck,
     ParticipationRead,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     StochasticTransition,
     Transition,
     categorical,
@@ -363,7 +363,7 @@ def _gated_fold_model(
     """Gate the target on wealth, or compare target and reference values on landing."""
     fallback = ProjectedRegimeValue(regime="fallback", projection={"wealth": _identity})
     target_law = {"target": StochasticTransition(func=_prob_one)}
-    routes = {"only": StakeholderRoute(fallback=fallback)}
+    routes = {"only": MemberRoute(fallback=fallback)}
     gates: dict[RegimeName, Gate] = {}
     participation: dict[RegimeName, ParticipationCheck] = {}
     if reads_values:

@@ -135,7 +135,7 @@ def validate_capture_route(
         route = f"{kernel_type.__module__}.{kernel_type.__qualname__}"
         if (
             route != _GRID_SEARCH_ROUTE
-            or regime.stakeholders is not None
+            or regime.member_axis is not None
             or regime.gated_edges
         ):
             raise ValueError("Period capture supports ordinary GridSearch values only.")

@@ -1,13 +1,13 @@
-"""Reading a collective continuation value at every stakeholder at once.
+"""Reading a collective continuation value at every member at once.
 
-A collective target's value array carries a trailing stakeholder axis. The
+A collective target's value array carries a trailing member axis. The
 continuation reads it at the landing coordinates, which do not depend on the
-stakeholder, so the read locates the landing once and takes every stakeholder's
+member, so the read locates the landing once and takes every member's
 value from the same cells:
 
-- the traced read holds as many gathers for any number of stakeholders as for
+- the traced read holds as many gathers for any number of members as for
   one;
-- each stakeholder's value is the singleton read of its own slice: the
+- each member's value is the singleton read of its own slice: the
   infeasible (`-inf`) and off-grid (NaN) reads exactly, the finite ones to within
   the few ULP that reading the same slice at another batch width already moves
   them, since the compiler vectorizes the read differently per width.
@@ -21,7 +21,7 @@ import numpy as np
 import pytest
 from jax.extend.core import ClosedJaxpr, Jaxpr
 
-from _lcm.regime_building.Q_and_F import _get_stakeholder_sliced_interpolator
+from _lcm.regime_building.Q_and_F import _get_member_sliced_interpolator
 from _lcm.regime_building.V import VInterpolationInfo, get_V_interpolator
 from lcm import DiscreteGrid, LinSpacedGrid, categorical
 from lcm.typing import FloatND, ScalarInt
@@ -58,12 +58,12 @@ def _base_interpolator():
     )
 
 
-def _stakeholder_values(n_stakeholders: int) -> FloatND:
-    """Distinct values per stakeholder, with one infeasible node each."""
-    shape = (2, WEALTH_GRID.n_points, HEALTH_GRID.n_points, n_stakeholders)
+def _member_values(n_members: int) -> FloatND:
+    """Distinct values per member, with one infeasible node each."""
+    shape = (2, WEALTH_GRID.n_points, HEALTH_GRID.n_points, n_members)
     values = np.random.default_rng(seed=607).normal(size=shape)
-    # Stakeholder `s` finds the state infeasible at a different wealth node.
-    for s in range(n_stakeholders):
+    # Member `s` finds the state infeasible at a different wealth node.
+    for s in range(n_members):
         values[1, 3 - s % 2, 2, s] = -np.inf
     return jnp.asarray(values, dtype=jnp.result_type(float))
 
@@ -101,19 +101,19 @@ def _primitive_count(*, graph: object, name: str) -> int:  # noqa: PAN001 - Fore
     return total
 
 
-def _traced_read(n_stakeholders: int) -> ClosedJaxpr:
-    interpolator = _get_stakeholder_sliced_interpolator(
+def _traced_read(n_members: int) -> ClosedJaxpr:
+    interpolator = _get_member_sliced_interpolator(
         base_interpolator=_base_interpolator(),
         V_arr_name="next_V_arr",
-        n_stakeholders=n_stakeholders,
+        n_members=n_members,
     )
     return jax.make_jaxpr(
         lambda next_V_arr: _read(interpolator=interpolator, next_V_arr=next_V_arr)
-    )(_stakeholder_values(n_stakeholders))
+    )(_member_values(n_members))
 
 
-def test_collective_read_gathers_as_often_for_three_stakeholders_as_for_one():
-    """The landing is located once; every stakeholder is read from its cells."""
+def test_collective_read_gathers_as_often_for_three_members_as_for_one():
+    """The landing is located once; every member is read from its cells."""
     one = _traced_read(1)
     three = _traced_read(3)
     gathers_for_one = _primitive_count(graph=one, name="gather")
@@ -121,23 +121,23 @@ def test_collective_read_gathers_as_often_for_three_stakeholders_as_for_one():
     assert _primitive_count(graph=three, name="gather") == gathers_for_one
 
 
-@pytest.mark.parametrize("n_stakeholders", [1, 2, 3])
-def test_each_stakeholder_reads_its_slice_as_a_singleton(
-    n_stakeholders: int,
+@pytest.mark.parametrize("n_members", [1, 2, 3])
+def test_each_member_reads_its_slice_as_a_singleton(
+    n_members: int,
 ):
-    """Stakeholder `s`'s value is the singleton read of `next_V_arr[..., s]`."""
-    next_V_arr = _stakeholder_values(n_stakeholders)
+    """Member `s`'s value is the singleton read of `next_V_arr[..., s]`."""
+    next_V_arr = _member_values(n_members)
     base = _base_interpolator()
-    interpolator = _get_stakeholder_sliced_interpolator(
+    interpolator = _get_member_sliced_interpolator(
         base_interpolator=base,
         V_arr_name="next_V_arr",
-        n_stakeholders=n_stakeholders,
+        n_members=n_members,
     )
 
     got = np.asarray(_read(interpolator=interpolator, next_V_arr=next_V_arr))
 
-    assert got.shape == (NEXT_WEALTH.shape[0], n_stakeholders)
-    for s in range(n_stakeholders):
+    assert got.shape == (NEXT_WEALTH.shape[0], n_members)
+    for s in range(n_members):
         expected = np.asarray(_read(interpolator=base, next_V_arr=next_V_arr[..., s]))
         assert_agrees_to_ulp(
             got=got[..., s],
@@ -146,7 +146,7 @@ def test_each_stakeholder_reads_its_slice_as_a_singleton(
             operand_magnitude=float(
                 np.max(np.abs(next_V_arr[np.isfinite(next_V_arr)]))
             ),
-            err_msg=f"stakeholder {s}",
+            err_msg=f"member {s}",
         )
     # The witness covers what the read must carry through: an infeasible corner
     # under a nonzero weight, and a code off the discrete axis.

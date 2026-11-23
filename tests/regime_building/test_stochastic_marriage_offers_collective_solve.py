@@ -30,7 +30,7 @@ flavored, self-referential offer) is not representable through this
 primitive.
 
 Memory note: the spouse-type draw here is an ordinary GRID AXIS of the stored
-`married_terminal` V array (`(*states, n_stakeholders)` with a `spouse_type`
+`married_terminal` V array (`(*states, n_members)` with a `spouse_type`
 state axis), exactly like every other stochastic state in this engine. Folding
 a transient categorical shock before storage instead is a MEMORY optimization
 for full-scale EKL (it avoids a node blow-up across married's much larger
@@ -56,12 +56,12 @@ from lcm import (
     ByAge,
     CollectiveUtility,
     DiscreteGrid,
+    MemberRoute,
     Model,
     ParticipationCheck,
     ParticipationRead,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     Transition,
     categorical,
     fixed_transition,
@@ -123,7 +123,7 @@ def _u_single_m_terminal(education: DiscreteState) -> FloatND:
 def _u_married(
     *, education: DiscreteState, spouse_type: DiscreteState, work: DiscreteAction
 ) -> FloatND:
-    """Pooled household income; identical for both stakeholders (symmetric split)."""
+    """Pooled household income; identical for both members (symmetric split)."""
     return _wage(education) + _wage(spouse_type) + 0.0 * work
 
 
@@ -233,13 +233,13 @@ def _single_f_transition() -> Transition:
                 reads={
                     "V_target_f": ParticipationRead(
                         regime="married_terminal",
-                        stakeholder="f",
+                        member="f",
                         kind="Participating",
                         projection=_married_projection(),
                     ),
                     "V_target_m": ParticipationRead(
                         regime="married_terminal",
-                        stakeholder="m",
+                        member="m",
                         kind="Participating",
                         projection=_married_projection(),
                     ),
@@ -255,8 +255,8 @@ def _single_f_transition() -> Transition:
                     ),
                 },
                 routes={
-                    "f": StakeholderRoute(
-                        target_stakeholder="f",
+                    "f": MemberRoute(
+                        target_member="f",
                         fallback=ProjectedRegimeValue(
                             regime="single_f_terminal",
                             projection={"education": _identity_education},
@@ -411,7 +411,7 @@ def test_stochastic_marriage_offer_matches_under_jit():
 # Job-offer stochastic state: feasibility (not just felicity) conditions on a
 # StochasticTransition-drawn discrete state (EKL eq. 24). The collective +
 # StochasticTransition-into-utility case is already covered end-to-end by
-# `test_nonterminal_collective_stochastic_state_expectation_is_per_stakeholder`
+# `test_nonterminal_collective_stochastic_state_expectation_is_per_member`
 # in `test_nonterminal_collective_solve.py` (nothing collective-specific about
 # it); this test pins the FEASIBILITY-gating half.
 

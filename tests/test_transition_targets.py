@@ -18,12 +18,12 @@ from lcm import (
     ByAge,
     CollectiveUtility,
     LinSpacedGrid,
+    MemberRoute,
     Model,
     ParticipationCheck,
     ParticipationRead,
     Phased,
     ProjectedRegimeValue,
-    StakeholderRoute,
     StochasticTransition,
     Transition,
     categorical,
@@ -342,14 +342,14 @@ def _consent_gate(fallback: str = "alive") -> ParticipationCheck:
             f"V_target_{member}": ParticipationRead(
                 kind="Raw",
                 regime="couple",
-                stakeholder=member,
+                member=member,
                 projection={"wealth": _keep_wealth},
             )
             for member in ("f", "m")
         },
         routes={
-            "self": StakeholderRoute(
-                target_stakeholder="f",
+            "self": MemberRoute(
+                target_member="f",
                 fallback=ProjectedRegimeValue(
                     regime=fallback, projection={"wealth": _keep_wealth}
                 ),
@@ -486,6 +486,6 @@ def test_component_comparison_prices_and_replays_less_equal_and_greater() -> Non
         landed.loc[landed["subject_id"] == 0, "value"], [10.0]
     )
     kept = landed.loc[landed["subject_id"] != 0]
-    np.testing.assert_array_equal(kept["own_stakeholder"], ["f", "f"])
+    np.testing.assert_array_equal(kept["own_member"], ["f", "f"])
     np.testing.assert_array_equal(kept["value_f"], [1.0, 2.0])
     np.testing.assert_array_equal(kept["value_m"], [1.0, 0.0])

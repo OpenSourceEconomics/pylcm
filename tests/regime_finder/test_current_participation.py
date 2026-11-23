@@ -66,7 +66,7 @@ def current_spec() -> dict[str, JSONValue]:
         predicate=record("callable"),
         reads={"policy": read},
         observes=["x"],
-        routes={"self": record("StakeholderRoute", fallback=reference("R"))},
+        routes={"self": record("MemberRoute", fallback=reference("R"))},
     )
     json_member(raw, "edges")["A"] = record(
         "Transition", law="B", participation={"B": gate}
@@ -229,7 +229,7 @@ def _model_facts(
 
     reads = {cell_key(c): current_reads(facts, facts.cells[c]) for c in facts.cells}
     relations = sorted(
-        (str(r["kind"]), str(r["phase"]), str(r.get("stakeholder") or ""))
+        (str(r["kind"]), str(r["phase"]), str(r.get("member") or ""))
         for r in json_rows(declarations, "relations")
     )
     return reads, {cell_key(c): states for c, states in live.items()}, relations

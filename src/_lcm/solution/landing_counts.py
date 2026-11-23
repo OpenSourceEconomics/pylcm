@@ -109,7 +109,7 @@ def get_landing_counting_max_Q_over_a(
     has_taste_shocks: bool = False,
     co_map_state_names: tuple[StateName, ...] = (),
     co_map_v_arr_in_axes: tuple[MappingProxyType[RegimeName, int | None], ...] = (),
-    stakeholders: tuple[str, ...] | None = None,
+    member_axis: tuple[str, ...] | None = None,
     pareto_weights: ParetoWeights | None = None,
     cell_width_keyword: str | None = None,
     untiled_state_names: tuple[StateName, ...] = (),
@@ -157,7 +157,7 @@ def get_landing_counting_max_Q_over_a(
         if has_taste_shocks
         else _HardMaxQOverA(
             Q_and_F=action_mapped,
-            stakeholders=stakeholders,
+            member_axis=member_axis,
             pareto_weights=pareto_weights,
             return_feasibility=True,
         )

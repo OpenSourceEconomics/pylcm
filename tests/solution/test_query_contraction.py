@@ -469,7 +469,7 @@ def _simulate(
                     ],
                     dtype=jnp.int32,
                 ),
-                "own_stakeholder": jnp.asarray([0, 0, 0, 0, 1, 1], dtype=jnp.int32),
+                "own_member": jnp.asarray([0, 0, 0, 0, 1, 1], dtype=jnp.int32),
             },
             seed=0,
             log_level="off",

@@ -30,12 +30,12 @@ from lcm import (
     LinearAggregator,
     LinearExpectation,
     LinSpacedGrid,
+    MemberRoute,
     Model,
     ParticipationCheck,
     ParticipationRead,
     Phased,
     ProjectedRegimeValue,
-    StakeholderRoute,
     Transition,
     categorical,
     fixed_transition,
@@ -237,11 +237,11 @@ def test_constraint_name_must_be_a_valid_path_segment(name):
 
 
 @pytest.mark.parametrize("name", INVALID_SEGMENT_NAMES)
-def test_stakeholder_name_must_be_a_valid_path_segment(name):
-    """A stakeholder with `__` or a leading/trailing `_` is rejected by `Regime`."""
+def test_member_name_must_be_a_valid_path_segment(name):
+    """A member with `__` or a leading/trailing `_` is rejected by `Regime`."""
     with pytest.raises(
         RegimeInitializationError,
-        match=_invalid_names_match(kind="Stakeholder", name=name),
+        match=_invalid_names_match(kind="Member", name=name),
     ):
         UserRegime(
             functions={
@@ -400,8 +400,8 @@ def _participation_model(
     )
 
 
-def _outside_route(*, projection: UserFunction) -> StakeholderRoute:
-    return StakeholderRoute(
+def _outside_route(*, projection: UserFunction) -> MemberRoute:
+    return MemberRoute(
         fallback=ProjectedRegimeValue(regime="outside", projection={"wage": projection})
     )
 

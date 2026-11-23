@@ -409,7 +409,7 @@ class GridSearch(Solver):
                         MappingProxyType({name: axes[name] for name in target_regimes})
                         for axes in context.co_map_v_arr_in_axes
                     ),
-                    "stakeholders": context.stakeholders,
+                    "member_axis": context.member_axis,
                     "pareto_weights": context.pareto_weights,
                     "return_feasibility": True,
                 }
@@ -463,7 +463,7 @@ class GridSearch(Solver):
                 reducer = program_functions[q_id]
                 counted = CountedGridSearch(
                     function=cast("Callable[..., tuple[FloatND, BoolND]]", reducer),
-                    collective=context.stakeholders is not None,
+                    collective=context.member_axis is not None,
                     current_iid=current_iid_plan is not None,
                 )
                 program_functions[q_id] = with_signature(
@@ -727,7 +727,7 @@ def _classify_action_streaming(
     from _lcm.solution.landing_counts import landing_checks_of  # noqa: PLC0415
 
     action_extents = context.state_action_space.actions_grid_shapes
-    if context.has_taste_shocks and context.stakeholders is not None:
+    if context.has_taste_shocks and context.member_axis is not None:
         disposition = _ActionStreamingDisposition.UNSUPPORTED_COLLECTIVE_EV1
     elif context.has_taste_shocks and not context.state_action_space.discrete_actions:
         disposition = (
@@ -746,7 +746,7 @@ def _classify_action_streaming(
         disposition = _ActionStreamingDisposition.DENSE_DECOUPLED
     elif context.has_taste_shocks:
         disposition = _ActionStreamingDisposition.DENSE_EV1_NONCANONICAL
-    elif context.stakeholders is not None:
+    elif context.member_axis is not None:
         disposition = _ActionStreamingDisposition.DENSE_COLLECTIVE_RESOURCES
     elif any(map(landing_checks_of, context.Q_and_F_functions.values())):
         # The dense reduction sums each action's raw raise-rule landings over

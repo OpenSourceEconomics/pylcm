@@ -3,7 +3,7 @@
 A source regime declares a `ParticipationCheck` (or a state-only `Gate`) beside the
 law of its `Transition`, keyed by TARGET regime name. After the scheduled landing
 and before the target acts, the decision compares its typed reads, per source
-stakeholder ``s``, and routes the row into the target or into that stakeholder's
+member ``s``, and routes the row into the target or into that member's
 fallback (EKL 2019 eqs. 9/12/27)::
 
     Wbar^s(x) = jnp.where(decision(x), V_target^{route_s}(x), V_fallback^s(pi_s(x)))
@@ -40,12 +40,12 @@ from lcm import (
     DiscreteGrid,
     Gate,
     LinSpacedGrid,
+    MemberRoute,
     Model,
     ParticipationCheck,
     ParticipationRead,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     Transition,
     ValueDependentConstraint,
     categorical,
@@ -178,13 +178,13 @@ def _consent_reads(
         "V_target_f": ParticipationRead(
             kind="IntegratedFull",
             regime=target,
-            stakeholder="f",
+            member="f",
             projection={"wage": _identity_wage},
         ),
         "V_target_m": ParticipationRead(
             kind="IntegratedFull",
             regime=target,
-            stakeholder="m",
+            member="m",
             projection={"wage": _identity_wage},
         ),
         "V_single_f_ref": ParticipationRead(
@@ -201,14 +201,14 @@ def _consent_reads(
 
 
 def _consent_edge(
-    *, fallback_regime: RegimeName = "single_f_terminal", target_stakeholder: str = "f"
+    *, fallback_regime: RegimeName = "single_f_terminal", target_member: str = "f"
 ) -> ParticipationCheck:
     """The consent decision into the couple, routing the wife to her own fallback."""
     return ParticipationCheck(
         predicate=_consent_gate,
         routes={
-            "f": StakeholderRoute(
-                target_stakeholder=target_stakeholder,
+            "f": MemberRoute(
+                target_member=target_member,
                 fallback=ProjectedRegimeValue(
                     regime=fallback_regime,
                     projection={"wage": _identity_wage},
@@ -369,7 +369,7 @@ def test_raw_ungated_mixed_transition_still_rejected() -> None:
     # Drop the gate but keep the singleton -> collective transition.
     laws = _consent_laws(None)
     ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
-    with pytest.raises(NotImplementedError, match="stakeholders"):
+    with pytest.raises(NotImplementedError, match="member_axis"):
         process_regimes(
             prepared_structure=build_prepared_structure(
                 user_regimes=finalize_regimes(
@@ -411,8 +411,8 @@ def test_probabilistic_gate_is_rejected() -> None:
                 Gate(
                     predicate=StochasticTransition(func=_prob_one),
                     routes={
-                        "f": StakeholderRoute(
-                            target_stakeholder="f",
+                        "f": MemberRoute(
+                            target_member="f",
                             fallback=ProjectedRegimeValue(
                                 regime="single_f_terminal",
                                 projection={"wage": _identity_wage},
@@ -470,10 +470,10 @@ def test_edge_fallback_to_unknown_regime_is_rejected() -> None:
         _consent_model(_consent_edge(fallback_regime="no_such_regime"))
 
 
-def test_edge_leg_naming_a_missing_target_stakeholder_is_rejected() -> None:
-    """A participation route naming a stakeholder the target lacks is rejected."""
+def test_edge_leg_naming_a_missing_target_member_is_rejected() -> None:
+    """A participation route naming a member the target lacks is rejected."""
     with pytest.raises(RegimeInitializationError, match="exact role"):
-        _consent_model(_consent_edge(target_stakeholder="not_a_stakeholder"))
+        _consent_model(_consent_edge(target_member="not_a_member"))
 
 
 # Full mini-EKL topology in ONE model via the public API.
@@ -595,20 +595,18 @@ def _full_topology_transitions() -> dict[str, Transition]:
     """
 
     def _consent_leg(
-        *, fallback_regime: RegimeName, stakeholder: str
-    ) -> dict[str, StakeholderRoute]:
+        *, fallback_regime: RegimeName, member: str
+    ) -> dict[str, MemberRoute]:
         return {
-            stakeholder: StakeholderRoute(
-                target_stakeholder=stakeholder,
+            member: MemberRoute(
+                target_member=member,
                 fallback=ProjectedRegimeValue(
                     regime=fallback_regime, projection={"wage": _identity_wage}
                 ),
             )
         }
 
-    def _consent_transition(
-        *, fallback_regime: RegimeName, stakeholder: str
-    ) -> Transition:
+    def _consent_transition(*, fallback_regime: RegimeName, member: str) -> Transition:
         return Transition(
             law=ByAge(
                 cases={
@@ -620,16 +618,14 @@ def _full_topology_transitions() -> dict[str, Transition]:
             gates={
                 "married": Gate(
                     predicate=_consent_where_marriage_pays_both,
-                    routes=_consent_leg(
-                        fallback_regime=fallback_regime, stakeholder=stakeholder
-                    ),
+                    routes=_consent_leg(fallback_regime=fallback_regime, member=member),
                 )
             },
         )
 
     return {
-        "single_f": _consent_transition(fallback_regime="single_f_p1", stakeholder="f"),
-        "single_m": _consent_transition(fallback_regime="single_m_p1", stakeholder="m"),
+        "single_f": _consent_transition(fallback_regime="single_f_p1", member="f"),
+        "single_m": _consent_transition(fallback_regime="single_m_p1", member="m"),
         "married": Transition(
             law=ByAge(
                 cases={
@@ -687,9 +683,7 @@ def _participation_topology_regimes() -> dict[str, Regime]:
     return regimes
 
 
-def _consent_participation(
-    *, fallback_regime: RegimeName, stakeholder: str
-) -> Transition:
+def _consent_participation(*, fallback_regime: RegimeName, member: str) -> Transition:
     """A single's mutual-consent participation check into `married` at age 0."""
     return Transition(
         targets={"married": 0, fallback_regime: 0},
@@ -704,8 +698,8 @@ def _consent_participation(
             "married": ParticipationCheck(
                 predicate=_consent_gate,
                 routes={
-                    stakeholder: StakeholderRoute(
-                        target_stakeholder=stakeholder,
+                    member: MemberRoute(
+                        target_member=member,
                         fallback=ProjectedRegimeValue(
                             regime=fallback_regime,
                             projection={"wage": _identity_wage},
@@ -717,7 +711,7 @@ def _consent_participation(
                         f"V_target_{member}": ParticipationRead(
                             kind="Participating",
                             regime="married",
-                            stakeholder=member,
+                            member=member,
                             projection={"wage": _identity_wage},
                         )
                         for member in ("f", "m")
@@ -757,10 +751,10 @@ def test_full_ekl_topology_via_public_model_api() -> None:
         regimes=_participation_topology_regimes(),
         edges={
             "single_f": _consent_participation(
-                fallback_regime="single_f_p1", stakeholder="f"
+                fallback_regime="single_f_p1", member="f"
             ),
             "single_m": _consent_participation(
-                fallback_regime="single_m_p1", stakeholder="m"
+                fallback_regime="single_m_p1", member="m"
             ),
             "single_f_p1": {"single_f_terminal": 1},
             "single_m_p1": {"single_m_terminal": (0, 1)},
@@ -797,8 +791,8 @@ def test_singleton_source_with_two_legs_is_rejected() -> None:
         reads=edge.reads,
         routes={
             **edge.routes,
-            "extra": StakeholderRoute(
-                target_stakeholder="m",
+            "extra": MemberRoute(
+                target_member="m",
                 fallback=ProjectedRegimeValue(
                     regime="single_m_terminal",
                     projection={"wage": _identity_wage},
@@ -826,7 +820,7 @@ def _edge_with_refs(*, fallback_regime: RegimeName) -> GatedEdge:
         gate=_always_open_gate,
         legs=MappingProxyType(
             {
-                "f": StakeholderRoute(
+                "f": MemberRoute(
                     fallback=ProjectedRegimeValue(
                         regime=fallback_regime,
                         projection={"wage": _identity_wage},

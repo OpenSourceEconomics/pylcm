@@ -9,12 +9,12 @@ Collective analogue of `test_flow_transitions_are_phase_closed.py`.
 
 A collective branch of `_build_Q_and_F_per_period` that dropped
 `continuation_functions` would leave the collective simulator building the current
-per-stakeholder flow from the SOLVE pool — a hybrid sub-DAG that is neither phase, and
+per-member flow from the SOLVE pool — a hybrid sub-DAG that is neither phase, and
 that reverses the household argmax.
 
 Construction mirrors the singleton test: a two-period model whose period-1 continuation
 is FLAT, so `E[V]` is identical across period-0 actions and the household argmax is
-decided purely by whichever variant the FLOW resolves. Each stakeholder's within-period
+decided purely by whichever variant the FLOW resolves. Each member's within-period
 utility reads the stock chosen this period — `new_stock`, an ordinary function of this
 period's states and actions, which the state law then carries forward (the NEGM
 service-flow pattern). That is the only observable exposing which pool the flow sub-DAG
@@ -66,7 +66,7 @@ def _service_flow(
     carries it forward. Flat in `move` and in the CURRENT `stock` (both enter with a
     zero weight, only so that every state and action is used), so the action is decided
     purely by `new_stock` -- i.e. by whichever pool the flow sub-DAG resolves. Shared
-    verbatim by both stakeholders so the household argmax (the `H_linear` sum of the two
+    verbatim by both members so the household argmax (the `H_linear` sum of the two
     `Q^s`) is unambiguous.
     """
     return 1.0 * new_stock + 0.0 * move + 0.0 * stock
@@ -135,7 +135,7 @@ def _simulate(*, live_functions, state_transitions) -> pd.DataFrame:
 
 
 def test_collective_flow_reads_the_simulate_variant_of_a_phased_chosen_stock():
-    """A `Phased` `new_stock` read by a stakeholder utility uses the SIMULATE variant.
+    """A `Phased` `new_stock` read by a member utility uses the SIMULATE variant.
 
     A collective branch that built the flow from the SOLVE pool while its helpers came
     from the simulate pool -- a sub-DAG that is neither phase -- would have every

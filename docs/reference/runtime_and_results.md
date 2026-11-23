@@ -549,7 +549,7 @@ and cannot be `V`, which is reserved for the value. Discrete states carry their 
 as a categorical coordinate in declaration order, with the ordering matching simulation;
 a state declared with `values` carries those numbers as a plain coordinate.
 `use_categorical_codes=True` keeps integer codes. Collective regimes also have a
-`stakeholder` dimension, and a regime without states yields a zero-dimensional array.
+`member` dimension, and a regime without states yields a zero-dimensional array.
 Coordinates are the resolved grid nodes used by the solve, including parameter-dependent
 process grids and period-specialized grids, and remain available after saving and
 loading. The array wraps the stored value without copying it to the host, so select the
@@ -768,7 +768,7 @@ chunk width. The independent `taste_shock_seed` draws per subject key and accept
 integer or a scalar typed key of any implementation. Caller key buffers join the
 budgeted entry inventory, and profiles distinguish the taste root's actual PRNG
 implementation. A collective model may require an addressed dissolution replay artifact
-and `own_stakeholder`; see [Collective regimes](collective_regimes.md).
+and `own_member`; see [Collective regimes](collective_regimes.md).
 
 Under a device-memory budget, the top-first outer-cohort planner profiles the
 whole-population candidate first and descends only on refusal, using either the pinned

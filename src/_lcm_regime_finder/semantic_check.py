@@ -2342,7 +2342,7 @@ def _check_capture(original: dict, normalized: dict, fail, unknown) -> None:
         operators = {key: payload_digest(declaration[key]) if declaration.get(key) is not None else None
                      for key in ("koopmans_aggregator", "certainty_equivalent", "pareto_objective", "taste_shocks")}
         if cell.get("operators") != operators: fail("original decision operators changed", cell=cell["id"])
-        if cell.get("stakeholders") != declaration.get("stakeholders"): fail("original stakeholders changed", cell=cell["id"])
+        if cell.get("member_axis") != declaration.get("member_axis"): fail("original members changed", cell=cell["id"])
         exit_declaration = declaration.get("exit")
         if cell.get("exit_identity") != (payload_digest(exit_declaration) if exit_declaration is not None else None):
             fail("original exit identity changed", cell=cell["id"])
@@ -2434,7 +2434,7 @@ def _check_capture(original: dict, normalized: dict, fail, unknown) -> None:
         for value in structural_roles.values(): expected_roots.append(("structural_margin", "solve", value))
         supported_slots = {"states", "actions", "functions", "constraints", "state_transitions", "joint_transitions", "derived_categoricals",
                            "output_only_functions", "koopmans_aggregator", "certainty_equivalent", "pareto_objective", "value_constraints",
-                           "same_period_refs", "exit", "description", "solver", "taste_shocks", "shocks", "stakeholders", "liquid", "outer_continuous", "semantic_role", "stage"}
+                           "same_period_refs", "exit", "description", "solver", "taste_shocks", "shocks", "member_axis", "liquid", "outer_continuous", "semantic_role", "stage"}
         for slot, value in declaration.items():
             if slot not in supported_slots and value is not None and value != {} and value != []:
                 expected_roots.append(("unresolved_declaration_slot", "both", value))
@@ -2646,7 +2646,7 @@ def _check_capture(original: dict, normalized: dict, fail, unknown) -> None:
                 if any(callbacks.get(cid, {}).get("status") not in allowed_statuses for cid in relation.get("callbacks", [])):
                     fail("unproved policy query factorization was asserted", relation=relation.get("id"))
                 read_type = data.get("kind", "Participating" if short(raw) == "ExitTarget" else "Raw" if short(raw) == "Counterparty" else "value")
-                if relation.get("read_type") != read_type or relation.get("read_field") != data.get("field", "value") or relation.get("stakeholder") != data.get("stakeholder", data.get("role")) or relation.get("observes") != data.get("observes", []):
+                if relation.get("read_type") != read_type or relation.get("read_field") != data.get("field", "value") or relation.get("member") != data.get("member", data.get("role")) or relation.get("observes") != data.get("observes", []):
                     fail("original policy query information/read contract changed", relation=relation.get("id"))
                 try: pointed = _pointer(original, relation.get("source_path", ""))
                 except (KeyError, IndexError, ValueError, TypeError): pointed = None
@@ -2665,7 +2665,7 @@ def _check_capture(original: dict, normalized: dict, fail, unknown) -> None:
             expected_callbacks = [data["utility_adjustment"]] if data.get("utility_adjustment") is not None else []
             if not same_payloads(callback_payloads(relation.get("callbacks", [])), expected_callbacks): fail("original reference adjustment callback changed", relation=relation.get("id"))
             read_type = data.get("kind", "Participating" if short(raw) == "ExitTarget" else "Raw" if short(raw) == "Counterparty" else "value")
-            if relation.get("read_type") != read_type or relation.get("read_field") != data.get("field", "value") or relation.get("stakeholder") != data.get("stakeholder", data.get("role")) or relation.get("observes") != data.get("observes", []): fail("original reference information/read contract changed", relation=relation.get("id"))
+            if relation.get("read_type") != read_type or relation.get("read_field") != data.get("field", "value") or relation.get("member") != data.get("member", data.get("role")) or relation.get("observes") != data.get("observes", []): fail("original reference information/read contract changed", relation=relation.get("id"))
     for cell in cells.values():
         declaration = original_regimes[cell["regime"]]
         keys = ["same_period_refs", "value_constraints", "exit"]

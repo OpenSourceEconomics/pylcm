@@ -30,10 +30,10 @@ from lcm import (
     Gate,
     IrregSpacedGrid,
     LinSpacedGrid,
+    MemberRoute,
     Model,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     Transition,
     categorical,
 )
@@ -158,7 +158,7 @@ def _model(*, state: StateName, role: str) -> Model:
                     "target": Gate(
                         predicate=predicate,
                         routes={
-                            "only": StakeholderRoute(
+                            "only": MemberRoute(
                                 fallback=ProjectedRegimeValue(
                                     regime="target",
                                     projection={

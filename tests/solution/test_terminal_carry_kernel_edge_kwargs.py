@@ -35,12 +35,12 @@ from lcm import (
     ConsumptionSavingsRegime,
     LinSpacedGrid,
     LiquidMargin,
+    MemberRoute,
     Model,
     ParticipationCheck,
     ParticipationRead,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     StochasticTransition,
     Transition,
     categorical,
@@ -158,7 +158,7 @@ def _mover_transition() -> Transition:
             "moved_terminal": ParticipationCheck(
                 predicate=_move_gate,
                 routes={
-                    "self": StakeholderRoute(
+                    "self": MemberRoute(
                         fallback=ProjectedRegimeValue(
                             regime="stay_terminal",
                             projection={"wealth": _identity_wealth},

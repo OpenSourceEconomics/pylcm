@@ -481,14 +481,14 @@ def _chain_constraints(*, reference_regime):
         return constraints
     # The reference regime is collective, so each partner reads her or his own
     # component of it, under a name of her or his own.
-    for stakeholder in ("f", "m"):
-        constraints[f"participation_{stakeholder}"] = ValueDependentConstraint(
-            predicate=kernels[f"participation_{stakeholder}"],
+    for member in ("f", "m"):
+        constraints[f"participation_{member}"] = ValueDependentConstraint(
+            predicate=kernels[f"participation_{member}"],
             references={
-                f"reference_{stakeholder}": ProjectedRegimeValue(
+                f"reference_{member}": ProjectedRegimeValue(
                     regime=reference_regime,
                     projection={"wealth": kernels["identity"]},
-                    stakeholder=stakeholder,
+                    member=member,
                 )
             },
         )

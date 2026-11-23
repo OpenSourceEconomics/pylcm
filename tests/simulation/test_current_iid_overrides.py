@@ -16,6 +16,7 @@ from lcm import (
     ExecutionConfig,
     InitialNodes,
     LinSpacedGrid,
+    MemberRoute,
     Model,
     ParticipationCheck,
     ParticipationRead,
@@ -23,7 +24,6 @@ from lcm import (
     ProjectedRegimeValue,
     Regime,
     SimulationResult,
-    StakeholderRoute,
     Transition,
     categorical,
 )
@@ -793,7 +793,7 @@ def _participation_model(*, observed: bool) -> Model:
                             )
                         },
                         routes={
-                            "self": StakeholderRoute(
+                            "self": MemberRoute(
                                 fallback=ProjectedRegimeValue(
                                     regime="fallback",
                                     projection={"x": _participation_identity},

@@ -1058,8 +1058,8 @@ def _origin_template(
         shape = tuple(
             nodes.size for nodes in context.state_action_space.states.values()
         )
-        if context.stakeholders is not None:
-            shape = (*shape, len(context.stakeholders))
+        if context.member_axis is not None:
+            shape = (*shape, len(context.member_axis))
         return context.place_on_regime_devices(
             template=jnp.zeros(shape, dtype=canonical_float_dtype())
         )
@@ -1404,7 +1404,7 @@ def _make_integrated_read(
             target=read.regime,
             phase=builder.phase,
             period=builder.period,
-            role=read.stakeholder or "",
+            role=read.member or "",
             projection=cast("Mapping[str, UserFunction]", projection),
             state_inputs=frozenset(info.state_names),
             physical_inputs=frozenset(),
@@ -1425,7 +1425,7 @@ def _make_integrated_read(
         decision=with_signature(
             _IntegratedValue(
                 interpolate=interpolate,
-                member=_member_index(context=context, role=read.stakeholder),
+                member=_member_index(context=context, role=read.member),
             ),
             args=list(names),
             enforce=False,
@@ -1501,7 +1501,7 @@ def _clip_landing_states(
 
 def _member_index(*, context: SolverBuildContext, role: str | None) -> int | None:
     """Validate an explicitly declared destination role without picking a member."""
-    members = context.stakeholders
+    members = context.member_axis
     if members is None:
         if role is not None:
             raise RegimeInitializationError(
@@ -1668,9 +1668,9 @@ def _bind_participation(
 ) -> ParticipationQueryPlan:
     """Keep comparison reads and actual acting policy separate in the same frame."""
     context = builder.contexts[target]
-    source_members = builder.contexts[source].stakeholders
-    members = source_members or tuple(declaration.routes)
-    if source_members is None and len(members) != 1:
+    source_member_axis = builder.contexts[source].member_axis
+    members = source_member_axis or tuple(declaration.routes)
+    if source_member_axis is None and len(members) != 1:
         raise RegimeInitializationError(
             "A singleton participation check needs its single source route."
         )
@@ -1752,7 +1752,7 @@ def _bind_participation(
                 projection=projected,
                 guards=(),
                 ancestry=(),
-                role=read.stakeholder or "",
+                role=read.member or "",
                 ancestors=(root,),
                 price_information=information | frozenset(read.observes),
                 source_projection=cast("Mapping[str, UserFunction]", mapped),
@@ -1763,9 +1763,7 @@ def _bind_participation(
             read.field,
             None
             if read.kind == "IntegratedFull"
-            else _member_index(
-                context=builder.contexts[read.regime], role=read.stakeholder
-            ),
+            else _member_index(context=builder.contexts[read.regime], role=read.member),
         )
     target_indices = []
     fallbacks = []
@@ -1818,19 +1816,17 @@ def _bind_participation(
             projection=projected,
             guards=(),
             ancestry=(),
-            role=fallback.stakeholder or "",
+            role=fallback.member or "",
             ancestors=(root,),
             price_information=information,
             source_projection=cast("Mapping[str, UserFunction]", mapped),
         )
-        target_indices.append(
-            _member_index(context=context, role=route.target_stakeholder)
-        )
+        target_indices.append(_member_index(context=context, role=route.target_member))
         fallbacks.append(
             (
                 operand,
                 _member_index(
-                    context=builder.contexts[fallback.regime], role=fallback.stakeholder
+                    context=builder.contexts[fallback.regime], role=fallback.member
                 ),
             )
         )
@@ -1852,7 +1848,7 @@ def _bind_participation(
         reads=reads,
         target_indices=tuple(target_indices),
         fallbacks=tuple(fallbacks),
-        collective=builder.contexts[source].stakeholders is not None,
+        collective=builder.contexts[source].member_axis is not None,
     )
     names = tuple(
         dict.fromkeys(
@@ -1904,7 +1900,7 @@ def _bind_participation(
         decision=with_signature(reducer, args=list(names), enforce=False),
         operand_builder=_ParticipationArguments(period=builder.period, plan=None),
         answer_shape=()
-        if builder.contexts[source].stakeholders is None
+        if builder.contexts[source].member_axis is None
         else (len(members),),
     )
     _bind_observation_sources(nodes=builder.nodes, period=builder.period)

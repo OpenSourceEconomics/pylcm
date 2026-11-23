@@ -414,7 +414,7 @@ def test_terminal_action_evaluation_keeps_bound_status_separate_from_F(
         ]
     ), "Terminal action evaluation must expose mandatory bound validity."
     builder = (
-        partial(q_and_f_module.get_Q_and_F_terminal_collective, stakeholders=("a",))
+        partial(q_and_f_module.get_Q_and_F_terminal_collective, members=("a",))
         if collective
         else q_and_f_module.get_Q_and_F_terminal
     )

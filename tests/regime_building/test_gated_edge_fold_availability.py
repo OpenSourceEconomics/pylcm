@@ -22,7 +22,7 @@ import pytest
 from _lcm.regime_building.gated_edges import (
     CompiledEdgeFold,
     ResolvedGatedEdge,
-    ResolvedStakeholderRoute,
+    ResolvedMemberRoute,
     edge_may_fold_at_period,
     source_reads_folded_wbar,
 )
@@ -56,12 +56,12 @@ def _edge(
         # to the protocol on the modeller's behalf.
         gate=cast("ConstraintFunction", _gate),
         legs=tuple(
-            ResolvedStakeholderRoute(
+            ResolvedMemberRoute(
                 route=f"leg_{index}",
-                source_stakeholder=None,
+                source_member=None,
                 target_component_index=None,
                 fallback=ResolvedProjectedRegimeValue(
-                    regime=fallback, projection={}, stakeholder_index=None
+                    regime=fallback, projection={}, member_index=None
                 ),
             )
             for index, fallback in enumerate(fallbacks)

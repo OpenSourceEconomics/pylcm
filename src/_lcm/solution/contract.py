@@ -520,17 +520,20 @@ class SolverBuildContext:
     continuation carrying the state. Empty when nothing is blocked.
     """
 
-    stakeholders: tuple[str, ...] | None = None
-    """Ordered stakeholder names for a collective regime, or `None` (singleton).
+    members: tuple[str, ...]
+    """The regime's members (`Regime.members`); `("self",)` for a singleton."""
+
+    member_axis: tuple[str, ...] | None = None
+    """Ordered member names for a collective regime, or `None` (singleton).
 
     When set, the grid-search kernel reads off each
-    stakeholder's own value at the shared household argmax of the Pareto-weighted
+    member's own value at the shared household argmax of the Pareto-weighted
     scalarization, and the regime's value-function array gains a trailing
-    stakeholder axis.
+    member axis.
     """
 
     pareto_weights: ParetoWeights | None = None
-    """The household's Pareto weight evaluator; set together with `stakeholders`."""
+    """The household's Pareto weight evaluator; set together with `member_axis`."""
 
     edge_target_regimes: tuple[RegimeName, ...] = ()
     """Target regimes this regime reaches through a gated edge, or empty.

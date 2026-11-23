@@ -307,21 +307,21 @@ participation = ParticipationCheck(
     reads={
         "target_support": ParticipationRead(
             regime="married_with_participation",
-            stakeholder="f",
+            member="f",
             kind="Participating",
             field="support",
             projection={"wage": identity_wage},
         )
     },
-    routes=stakeholder_routes,
+    routes=member_routes,
 )
 ```
 
 Place it under
 `Transition(participation={"married_with_participation": participation}, ...)`. Each
-source stakeholder's route declares its continuing role and its own projected fallback.
-The decision owns only subjects arriving on that incoming edge; unrelated ordinary draws
-and initial occupants do not borrow its fallback.
+source member's route declares its continuing role and its own projected fallback. The
+decision owns only subjects arriving on that incoming edge; unrelated ordinary draws and
+initial occupants do not borrow its fallback.
 
 `ParticipationRead(kind="Raw")` reads the unconstrained-by-participation action problem;
 `kind="Participating"` reads the actions kept by its exit rule. `field="support"`
@@ -353,7 +353,7 @@ State-only gate routing keeps its behavior.
   `ParticipationCheck` with named `ParticipationRead`s when it is made on landing.
 - `Gate(references=...)` raises `TypeError`. Move each reference into the participation
   check's `reads`, as a `ParticipationRead(kind="IntegratedFull", ...)` with the same
-  regime, stakeholder and projection.
+  regime, member and projection.
 - A gate reading `~D_target` becomes a `ParticipationCheck` reading the target's
   `ParticipationRead(kind="Participating", field="support")`, as in the fragment above.
 - `solve()` publishes no dissolution flag under any `ResultRetention`, and the
@@ -469,11 +469,11 @@ functions keep their levels: function, regime, model.
 
 Every user-chosen name that becomes a parameter-path segment contains no `__` and does
 not start or end with `_`: regime (source and target), state, action, function and
-constraint names, participation check `reads` keys, `routes` keys, stakeholder names,
-and the argument names of model functions, which become parameter names. A violation
-raises when the regime or model is built, naming the name and its kind. `edges` is
-reserved: no regime, function or function argument may take that name. A law argument
-may not share its name with a regime.
+constraint names, participation check `reads` keys, `routes` keys, member names, and the
+argument names of model functions, which become parameter names. A violation raises when
+the regime or model is built, naming the name and its kind. `edges` is reserved: no
+regime, function or function argument may take that name. A law argument may not share
+its name with a regime.
 
 (laws-at-every-horizon)=
 

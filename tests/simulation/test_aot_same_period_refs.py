@@ -82,7 +82,7 @@ def test_same_period_ref_model_simulates_to_its_participation_constrained_values
     """Runtime programs preserve participation-constrained values at each population.
 
     Each household works because the wife's participation constraint rules
-    leisure out, and both stakeholders' period-0 values are the ones the model
+    leisure out, and both members' period-0 values are the ones the model
     solves to, including when the runtime population repeats both education levels.
     """
     compiled = _capture_compiled_dispatches(monkeypatch=monkeypatch)

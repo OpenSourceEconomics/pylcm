@@ -9,7 +9,7 @@ its participation check's dissolution route in that same period instead of abort
 simulation.
 
 The model is the smallest one with that geometry. A source regime carries the
-household's wage unchanged into a two-stakeholder `pair` regime whose wage grid
+household's wage unchanged into a two-member `pair` regime whose wage grid
 has nodes 1 and 3. Under the pair's dissolution exit rule the wife participates
 only when her pair payoff strictly beats her outside option of 0.5, and her pair
 payoff is a function of the wage alone, so whether `pair` has a feasible action
@@ -34,12 +34,12 @@ from lcm import (
     ExecutionConfig,
     Gate,
     IrregSpacedGrid,
+    MemberRoute,
     Model,
     ParticipationCheck,
     ParticipationRead,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     Transition,
     categorical,
 )
@@ -153,15 +153,15 @@ def _build_model(
                         reads={
                             "pair_support": ParticipationRead(
                                 regime="pair",
-                                stakeholder="f",
+                                member="f",
                                 kind="Participating",
                                 field="support",
                                 projection={"wage": _identity},
                             )
                         },
                         routes={
-                            "only": StakeholderRoute(
-                                target_stakeholder="f",
+                            "only": MemberRoute(
+                                target_member="f",
                                 fallback=ProjectedRegimeValue(
                                     regime="alone_m",
                                     projection={"wage": fallback_projection},
@@ -482,7 +482,7 @@ def _gated_entry_into_x(
             "x": Gate(
                 predicate=_always_open,
                 routes={
-                    "only": StakeholderRoute(
+                    "only": MemberRoute(
                         fallback=ProjectedRegimeValue(
                             regime=fallback, projection={"wage": projection}
                         )

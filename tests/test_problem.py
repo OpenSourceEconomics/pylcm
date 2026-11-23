@@ -2,7 +2,7 @@
 
 A regime that holds a problem declares none of the problem's slots and takes the
 problem's own objects for them, adding only its exit and description. Everything
-the regime derives afterwards — stakeholders, value constraints, the joint-normal
+the regime derives afterwards — members, value constraints, the joint-normal
 lowering, validation — sees what a regime declaring the same slots by hand gives.
 """
 
@@ -462,10 +462,10 @@ def test_a_problem_is_not_a_regime_of_a_model() -> None:
         )
 
 
-def test_a_collective_problem_gives_its_holders_their_stakeholders() -> None:
+def test_a_collective_problem_gives_its_holders_their_members() -> None:
     """An exit naming the household's roles validates on a holder."""
     regime = Regime(problem=_collective_problem(), exit=_dissolution(Unilateral()))
-    assert regime.stakeholders == ("f", "m")
+    assert regime.member_axis == ("f", "m")
 
 
 @pytest.mark.parametrize("slot", ["states", "functions"])

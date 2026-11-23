@@ -846,10 +846,10 @@ def normalize_declarations(snapshot,production_contract=None):
               'structural_roles':{k:copy.deepcopy(declaration[k]) for k in ('liquid','outer_continuous') if declaration.get(k) is not None},
               'solver_identity':normal.value_digest(declaration['solver']) if declaration.get('solver') is not None else None,
               'operators':{k:(normal.value_digest(declaration[k]) if declaration.get(k) is not None else None) for k in ('koopmans_aggregator','certainty_equivalent','pareto_objective','taste_shocks')},
-              # A collective regime stores one value per stakeholder; the whole
+              # A collective regime stores one value per member; the whole
               # exit is part of the regime's problem, and a renegotiated state
               # links its own codes within the period.
-              'stakeholders':copy.deepcopy(declaration.get('stakeholders')),
+              'member_axis':copy.deepcopy(declaration.get('member_axis')),
               'exit_identity':normal.value_digest(declaration['exit']) if declaration.get('exit') is not None else None,
               'renegotiated_states':renegotiated_states(declaration.get('exit')),
               'role':contract.get('roles',{}).get(name,declaration.get('semantic_role')),
@@ -947,7 +947,7 @@ def normalize_declarations(snapshot,production_contract=None):
             cell['consumers'].append({'kind':'structural_margin','callback':cid,'phase':'solve'})
         known_slots={'states','actions','functions','constraints','state_transitions','joint_transitions','derived_categoricals',
                      'output_only_functions','koopmans_aggregator','certainty_equivalent','pareto_objective','value_constraints',
-                     'same_period_refs','exit','description','solver','taste_shocks','shocks','stakeholders','liquid','outer_continuous',
+                     'same_period_refs','exit','description','solver','taste_shocks','shocks','member_axis','liquid','outer_continuous',
                      'semantic_role','stage'}
         for slot,value in declaration.items():
             if slot not in known_slots and value is not None and value!={} and value!=[]:
@@ -1094,7 +1094,7 @@ def normalize_declarations(snapshot,production_contract=None):
                         normal.relation('policy_query',origin or cell['id'],[],normal.source_path(value,path),p,
                                         query_target=qid,reference_kind=kind,reference_sha256=normal.value_digest(value),
                                         callbacks=[cb],produces=[],ownership=copy.deepcopy(ownership),
-                                        incoming_source=incoming_source,stakeholder=f.get('stakeholder',f.get('role')),
+                                        incoming_source=incoming_source,member=f.get('member',f.get('role')),
                                         read_type=f.get('kind','Participating' if short(value)=='ExitTarget' else 'Raw' if short(value)=='Counterparty' else 'value'),
                                         read_field=f.get('field','value'),observes=copy.deepcopy(f.get('observes',[])))
                     return
@@ -1104,7 +1104,7 @@ def normalize_declarations(snapshot,production_contract=None):
                     projection={axis:normal.callback(cb,pointer(pointer(path,'projection'),axis)) for axis,cb in (mapping or {}).items()}
                     extra_callbacks=[normal.callback(f['utility_adjustment'],pointer(path,'utility_adjustment'))] if f.get('utility_adjustment') is not None else []
                     normal.relation(kind,origin or cell['id'],[tid],normal.source_path(value,path),p,state_updates=projection,produces=sorted(projection),ownership=ownership,
-                                    callbacks=extra_callbacks,incoming_source=incoming_source,stakeholder=f.get('stakeholder',f.get('role')),
+                                    callbacks=extra_callbacks,incoming_source=incoming_source,member=f.get('member',f.get('role')),
                                     read_type=f.get('kind','Participating' if short(value)=='ExitTarget' else 'Raw' if short(value)=='Counterparty' else 'value'),
                                     read_field=f.get('field','value'),observes=f.get('observes',[]),original=copy.deepcopy(value))
                 if ownership is not None:

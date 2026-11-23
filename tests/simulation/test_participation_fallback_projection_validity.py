@@ -9,12 +9,12 @@ from lcm import (
     ExecutionConfig,
     InitialNodes,
     IrregSpacedGrid,
+    MemberRoute,
     Model,
     ParticipationCheck,
     Periods,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     TauchenAR1Process,
     Transition,
     categorical,
@@ -165,7 +165,7 @@ def test_process_code_validation_uses_the_actual_fallback_node(*, accept: bool) 
                     "target": ParticipationCheck(
                         predicate=_accept if accept else _reject,
                         routes={
-                            "self": StakeholderRoute(
+                            "self": MemberRoute(
                                 fallback=ProjectedRegimeValue(
                                     regime="fallback", projection={"z": _node_two}
                                 )

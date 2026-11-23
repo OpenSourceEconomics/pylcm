@@ -373,7 +373,7 @@ def _undemanded_exit_helpers(
     required = set()
     protected = (set(template_functions) - user_regime.decomposed_functions.keys()) | {
         "utility",
-        *(f"utility_{member}" for member in user_regime.stakeholders or ()),
+        *(f"utility_{member}" for member in user_regime.member_axis or ()),
         *user_regime.output_only_functions,
         *user_regime.derived_categoricals,
         *current_iid_helpers,
@@ -940,19 +940,19 @@ def _wired_names(user_regime: UserRegime) -> frozenset[ReferenceName]:
         "age",
         "CE",
     }
-    if user_regime.stakeholders is not None:
-        # A collective regime carries per-stakeholder
+    if user_regime.member_axis is not None:
+        # A collective regime carries per-member
         # `utility_<s>` functions instead of a singleton `utility`, but the
         # Bellman aggregator H still takes a `utility` argument — engine-wired
-        # (the stacked per-stakeholder utilities), exactly like `E_next_V` —
+        # (the stacked per-member utilities), exactly like `E_next_V` —
         # so the name must not surface as a user-facing param.
         variables.add("utility")
         # Value-constraint predicates read the
-        # engine-computed per-stakeholder action values `Q_<s>` and the
+        # engine-computed per-member action values `Q_<s>` and the
         # interpolated same-period reference values (keyed by the
         # `same_period_refs` names) as named arguments — engine-wired, never
         # user-facing params.
-        variables.update(f"Q_{s}" for s in user_regime.stakeholders)
+        variables.update(f"Q_{s}" for s in user_regime.member_axis)
         variables.update(user_regime.same_period_refs)
     # `<name>_code` reads the code of the discrete variable `<name>`.
     variables.update(
@@ -1652,7 +1652,7 @@ def _add_pareto_objective_params(
 ) -> None:
     """Add the Pareto weights' free params under their pseudo-function name.
 
-    Every stakeholder's weight reads one shared namespace, so a weight named
+    Every member's weight reads one shared namespace, so a weight named
     in two of them is one parameter and appears once. A weight argument that
     names a state, or the engine context, is wired at call time and never
     surfaces.

@@ -204,7 +204,7 @@ def test_gate_read_is_query_but_explicit_fallback_is_physical() -> None:
         "Gate",
         predicate=function("def allowed(x):\n    return x > 0\n", ["x"]),
         references={"price": reference("Q")},
-        routes={"self": record("StakeholderRoute", fallback=reference("R"))},
+        routes={"self": record("MemberRoute", fallback=reference("R"))},
     )
     json_member(raw, "edges")["A"] = record("Transition", law="B", gates={"B": gate})
     normalized, _, _ = _check_source(raw)
@@ -217,9 +217,7 @@ def test_unproved_fallback_type_is_not_invented_as_settlement() -> None:
     raw = spec()
     gate = record(
         "Gate",
-        routes={
-            "self": record("StakeholderRoute", fallback=reference("R", "Counterparty"))
-        },
+        routes={"self": record("MemberRoute", fallback=reference("R", "Counterparty"))},
     )
     json_member(raw, "edges")["A"] = record("Transition", law="B", gates={"B": gate})
     result = find_regimes(raw, budget={"seconds": 15}, facts_backend="metadata")

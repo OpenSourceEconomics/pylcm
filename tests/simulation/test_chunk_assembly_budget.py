@@ -29,7 +29,7 @@ def _record(*, start: int) -> PeriodRegimeSimulationData:
             {"state": jnp.asarray([start, start + 1], dtype=jnp.int32)}
         ),
         in_regime=jnp.asarray([True, False]),
-        own_stakeholder=jnp.asarray([0, 1], dtype=jnp.int32),
+        own_member=jnp.asarray([0, 1], dtype=jnp.int32),
         nested_policy_fallback=jnp.asarray([False, True]),
     )
 

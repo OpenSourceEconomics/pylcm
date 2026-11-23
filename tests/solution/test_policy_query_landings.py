@@ -20,13 +20,13 @@ from lcm import (
     ExecutionConfig,
     InitialNodes,
     LinSpacedGrid,
+    MemberRoute,
     Model,
     ParticipationCheck,
     ParticipationRead,
     Periods,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     Transition,
     ValueDependentConstraint,
     categorical,
@@ -57,7 +57,7 @@ def reference_values(  # noqa: C901 - independent literal finite oracle keeps th
     nodes: tuple[int, ...] = (-1, 1),
     masses: tuple[Fraction, ...] = (Fraction(1, 2), Fraction(1, 2)),
 ) -> tuple[tuple[Fraction, Fraction], ...]:
-    """Return the two source-wealth cells' common-policy stakeholder tuples.
+    """Return the two source-wealth cells' common-policy member tuples.
 
     ``infeasible_off_grid`` drops action 1 before the reached-landing check.
     ``zero_mass_off_grid`` must be paired with zero mass on the positive shock.
@@ -90,7 +90,7 @@ def reference_values(  # noqa: C901 - independent literal finite oracle keeps th
                     landing = -1 if action == 0 else 1
                 else:
                     landing = action
-                # beta=1/2, terminal stakeholder values=2*wealth.
+                # beta=1/2, terminal member values=2*wealth.
                 q_f = Fraction(wealth + action + eps + landing)
                 q_m = Fraction(wealth + action - eps + landing)
                 feasible = q_f >= -1000 and (
@@ -379,7 +379,7 @@ def test_participation_pricing_preserves_nested_actual_landing_identity(
                             )
                         },
                         routes={
-                            "self": StakeholderRoute(
+                            "self": MemberRoute(
                                 fallback=ProjectedRegimeValue(
                                     regime="fallback", projection={}
                                 )

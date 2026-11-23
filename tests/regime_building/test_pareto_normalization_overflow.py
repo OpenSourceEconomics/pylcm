@@ -24,17 +24,17 @@ def _working_float_max() -> float:
 
 
 def _normalized(declared: dict[str, float]) -> dict[str, float]:
-    """Compute the normalized share of each stakeholder in `declared`."""
+    """Compute the normalized share of each member in `declared`."""
     built = build_pareto_weights(
         objective=ParetoObjective(weights=dict(declared)),
-        stakeholders=tuple(declared),
+        members=tuple(declared),
         state_names=frozenset(),
     )
     return {name: float(share) for name, share in built.compute().items()}
 
 
 def _equal_weights_at(value: float) -> dict[str, float]:
-    """Compute normalized weights for two stakeholders declared equal at `value`."""
+    """Compute normalized weights for two members declared equal at `value`."""
     return _normalized({"f": value, "m": value})
 
 
@@ -51,7 +51,7 @@ def test_weights_at_the_format_maximum_select_the_intended_action():
     With payoffs `A = (1, 0)` and `B = (0, 2)`, weights of one half each rank
     `B` above `A`. Weights that collapse to zero tie the two and select `A`,
     which is the wrong household choice for a declaration that never said the
-    stakeholders were worthless.
+    members were worthless.
     """
     weights = _equal_weights_at(_working_float_max())
     payoffs = jnp.asarray([[1.0, 0.0], [0.0, 2.0]])
@@ -77,30 +77,30 @@ def test_unequal_weights_keep_their_declared_ratio(*, name, expected):
     aaae(weights[name], expected, decimal=DECIMAL_PRECISION)
 
 
-@pytest.mark.parametrize("n_stakeholders", range(2, 9))
+@pytest.mark.parametrize("n_members", range(2, 9))
 def test_equal_weights_at_the_format_maximum_share_evenly_at_any_household_size(
-    n_stakeholders,
+    n_members,
 ):
-    """`n` stakeholders declared equal each take `1/n`, at any household size.
+    """`n` members declared equal each take `1/n`, at any household size.
 
-    The raw total leaves the working format from two stakeholders upward, so
+    The raw total leaves the working format from two members upward, so
     every size in this range exercises the overflow, not just the pair.
     """
-    names = [f"s{index}" for index in range(n_stakeholders)]
+    names = [f"s{index}" for index in range(n_members)]
     weights = _normalized(dict.fromkeys(names, _working_float_max()))
 
     aaae(
         [weights[name] for name in names],
-        [1.0 / n_stakeholders] * n_stakeholders,
+        [1.0 / n_members] * n_members,
         decimal=DECIMAL_PRECISION,
     )
 
 
 @pytest.mark.parametrize("order", list(itertools.permutations(range(3))))
 def test_relabelling_the_household_leaves_every_share_untouched(order):
-    """A stakeholder's share depends on her declared weight, not on her position.
+    """A member's share depends on her declared weight, not on her position.
 
-    Stakeholder names are economically inert, so declaring the same three
+    Member names are economically inert, so declaring the same three
     weights in a different order has to return the same three shares.
     """
     maximum = _working_float_max()

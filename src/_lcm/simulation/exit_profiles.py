@@ -393,10 +393,10 @@ def profile_exit_period(  # noqa: C901, PLR0912, PLR0915 - retain replay's order
                         identifier,
                         None
                         if member == "self"
-                        else regime.stakeholder_names_to_ids[member],
+                        else regime.member_names_to_ids[member],
                         -1
-                        if destination.stakeholders is None
-                        else destination.stakeholder_names_to_ids[target.role],
+                        if destination.member_axis is None
+                        else destination.member_names_to_ids[target.role],
                         address,
                     )
                 )
@@ -644,11 +644,11 @@ def profile_exit_period(  # noqa: C901, PLR0912, PLR0915 - retain replay's order
                         for shock, law in binding.group.shocks.items()
                         if isinstance(law, Discrete)
                     ),
-                    "stakeholder_ids": tuple(
-                        regime.stakeholder_names_to_ids[member]
-                        for member in regime.stakeholders
+                    "member_ids": tuple(
+                        regime.member_names_to_ids[member]
+                        for member in regime.member_axis
                     )
-                    if regime.stakeholders is not None
+                    if regime.member_axis is not None
                     else (),
                 },
                 subject_arg_names=(

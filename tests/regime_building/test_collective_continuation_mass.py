@@ -2,17 +2,17 @@
 
 A regime's continuation is a lottery over the targets it can reach, weighted by
 the regime-transition probabilities. Two properties hold whether or not the
-regime carries stakeholders:
+regime carries members:
 
-- The single target's unit mass prices each stakeholder as its singleton twin.
+- The single target's unit mass prices each member as its singleton twin.
 - Regime selection refuses a non-unit mass and a negative probability at the
   `off`, `warning` and `debug` log levels, including probabilities that sum to one
   only because one is negative.
 
-Every model here pairs a two-stakeholder regime with singleton twins carrying one
-stakeholder's utility each. The husband's payoff is twice the wife's, so the
+Every model here pairs a two-member regime with singleton twins carrying one
+member's utility each. The husband's payoff is twice the wife's, so the
 household argmax of the equally weighted scalarization and each twin's own argmax
-select the same action, and each stakeholder slice of the collective value must
+select the same action, and each member slice of the collective value must
 equal its twin's value.
 """
 
@@ -51,8 +51,8 @@ from tests.collective_fixtures import (
 )
 from tests.conftest import DECIMAL_PRECISION
 
-# The stakeholders every collective regime in this module carries, wife first.
-STAKEHOLDERS = ("f", "m")
+# The members every collective regime in this module carries, wife first.
+MEMBERS = ("f", "m")
 
 # A regime-transition probability just above one, which regime selection refuses.
 INFLATED_MASS = 1.0 + 1e-4
@@ -68,23 +68,23 @@ LEAVE_PROBABILITY = -0.5
 EXPECTED_TWIN_V = {"f": (3808.0, 3840.0), "m": (7616.0, 7680.0)}
 
 
-def test_collective_continuation_prices_each_stakeholder_as_its_singleton_twin():
-    """Every stakeholder slice of a collective value equals its singleton twin's.
+def test_collective_continuation_prices_each_member_as_its_singleton_twin():
+    """Every member slice of a collective value equals its singleton twin's.
 
     The single outgoing edge carries the regime's whole unit mass, so each twin's
     value is the hand-computed `EXPECTED_TWIN_V`.
     """
     rtol = 10.0**-DECIMAL_PRECISION
 
-    collective = _build_single_target_model(household=STAKEHOLDERS)
+    collective = _build_single_target_model(household=MEMBERS)
     collective_V = collective.solve(
         params=_single_target_params(),
         log_level="off",
     ).values[0]["couple"]
 
     twin_values = []
-    for stakeholder in STAKEHOLDERS:
-        twin = _build_single_target_model(household=None, stakeholder=stakeholder)
+    for member in MEMBERS:
+        twin = _build_single_target_model(household=None, member=member)
         twin_values.append(
             twin.solve(
                 params=_single_target_params(),
@@ -101,8 +101,8 @@ def test_collective_continuation_prices_each_stakeholder_as_its_singleton_twin()
         rtol=rtol,
     )
     # A collective value function carries one axis per solve state plus the
-    # trailing stakeholder axis, so the comparison is aligned.
-    assert collective_V.shape == (WAGE_GRID.n_points, len(STAKEHOLDERS))
+    # trailing member axis, so the comparison is aligned.
+    assert collective_V.shape == (WAGE_GRID.n_points, len(MEMBERS))
 
     assert_allclose(collective_V, expected_V, rtol=rtol)
 
@@ -133,7 +133,7 @@ def test_collective_regime_selection_refuses_a_non_unit_mass(
     log_level: LogLevel,
 ) -> None:
     """A regime-transition mass other than one is refused at the source's age 0."""
-    collective = _build_two_target_model(household=STAKEHOLDERS)
+    collective = _build_two_target_model(household=MEMBERS)
     params = _two_target_params(
         stay_probability=stay_probability, leave_probability=leave_probability
     )
@@ -142,7 +142,7 @@ def test_collective_regime_selection_refuses_a_non_unit_mass(
 
 
 @pytest.mark.parametrize("log_level", ["off", "warning", "debug"])
-@pytest.mark.parametrize("household", [STAKEHOLDERS, None])
+@pytest.mark.parametrize("household", [MEMBERS, None])
 def test_collective_regime_selection_refuses_a_negative_probability(
     *, household: tuple[str, ...] | None, log_level: LogLevel
 ) -> None:
@@ -165,7 +165,7 @@ def test_two_target_model_with_a_distribution_has_a_finite_last_source_period():
     """
     params = _two_target_params(stay_probability=0.5, leave_probability=0.5)
     values = (
-        _build_two_target_model(household=STAKEHOLDERS)
+        _build_two_target_model(household=MEMBERS)
         .solve(params=params, log_level="off")
         .values
     )
@@ -173,7 +173,7 @@ def test_two_target_model_with_a_distribution_has_a_finite_last_source_period():
 
 
 def _build_single_target_model(
-    *, household: tuple[str, ...] | None, stakeholder: str = "f"
+    *, household: tuple[str, ...] | None, member: str = "f"
 ) -> Model:
     """Build a source regime whose only target carries the whole mass.
 
@@ -181,9 +181,9 @@ def _build_single_target_model(
     outgoing edge at age 0, so the edge is the regime's entire transition mass.
 
     Args:
-        household: Stakeholder names of both regimes, or `None` for the
+        household: Member names of both regimes, or `None` for the
             singleton twin.
-        stakeholder: Whose utility the singleton twin carries. Ignored when
+        member: Whose utility the singleton twin carries. Ignored when
             `household` is not `None`.
 
     Returns:
@@ -193,13 +193,13 @@ def _build_single_target_model(
     return _build_model(
         law=None,
         household=household,
-        stakeholder=stakeholder,
+        member=member,
         source_ends_at_age=1,
     )
 
 
 def _build_two_target_model(
-    *, household: tuple[str, ...] | None, stakeholder: str = "f"
+    *, household: tuple[str, ...] | None, member: str = "f"
 ) -> Model:
     """Build a source regime reaching two targets, one of them itself.
 
@@ -209,9 +209,9 @@ def _build_two_target_model(
     all of it.
 
     Args:
-        household: Stakeholder names of both regimes, or `None` for the
+        household: Member names of both regimes, or `None` for the
             singleton twin.
-        stakeholder: Whose utility the singleton twin carries. Ignored when
+        member: Whose utility the singleton twin carries. Ignored when
             `household` is not `None`.
 
     Returns:
@@ -224,7 +224,7 @@ def _build_two_target_model(
             "couple_terminal": StochasticTransition(func=_leave_probability),
         },
         household=household,
-        stakeholder=stakeholder,
+        member=member,
         source_ends_at_age=2,
     )
 
@@ -233,10 +233,10 @@ def _build_model(
     *,
     law: Mapping[RegimeName, StochasticTransition] | None,
     household: tuple[str, ...] | None,
-    stakeholder: str,
+    member: str,
     source_ends_at_age: int,
 ) -> Model:
-    """Build the collective model, or the singleton twin of one stakeholder.
+    """Build the collective model, or the singleton twin of one member.
 
     Both regimes carry the same two-point wage grid and the same binary action;
     only the flow payoffs and the regime transition differ between the models
@@ -246,9 +246,9 @@ def _build_model(
         law: Regime transition law of the source regime, as a per-target dict
             whose targets are reachable before its last age, or `None` when
             the terminal regime is its only target.
-        household: Stakeholder names of both regimes, or `None` for a
+        household: Member names of both regimes, or `None` for a
             singleton twin.
-        stakeholder: Whose utility a singleton twin carries.
+        member: Whose utility a singleton twin carries.
         source_ends_at_age: First age at which the source regime is not solved.
 
     Returns:
@@ -259,12 +259,12 @@ def _build_model(
         states={"wage": WAGE_GRID},
         state_transitions={"wage": _next_wage},
         actions={"work": DiscreteGrid(category_class=Work)},
-        functions=_source_functions(household=household, stakeholder=stakeholder),
+        functions=_source_functions(household=household, member=member),
     )
     couple_terminal = Regime(
         states={"wage": WAGE_GRID},
         actions={"work": DiscreteGrid(category_class=Work)},
-        functions=_terminal_functions(household=household, stakeholder=stakeholder),
+        functions=_terminal_functions(household=household, member=member),
     )
     # Every target is reachable before the last source age; only the terminal
     # regime is reachable at it, where it takes the whole mass.
@@ -295,29 +295,29 @@ def _build_model(
 
 
 def _source_functions(
-    *, household: tuple[str, ...] | None, stakeholder: str
+    *, household: tuple[str, ...] | None, member: str
 ) -> Mapping[FunctionName, UserFunction | CollectiveUtility]:
     """Return the source regime's flow payoffs, as a household or as one agent."""
-    per_stakeholder = {"f": _source_utility_f, "m": _source_utility_m}
+    per_member = {"f": _source_utility_f, "m": _source_utility_m}
     if household is None:
-        return {"utility": per_stakeholder[stakeholder]}
+        return {"utility": per_member[member]}
     return {
         "utility": CollectiveUtility(
-            utilities={name: per_stakeholder[name] for name in household}
+            utilities={name: per_member[name] for name in household}
         )
     }
 
 
 def _terminal_functions(
-    *, household: tuple[str, ...] | None, stakeholder: str
+    *, household: tuple[str, ...] | None, member: str
 ) -> Mapping[FunctionName, UserFunction | CollectiveUtility]:
     """Return the terminal regime's payoffs, as a household or as one agent."""
-    per_stakeholder = {"f": _terminal_utility_f, "m": _terminal_utility_m}
+    per_member = {"f": _terminal_utility_f, "m": _terminal_utility_m}
     if household is None:
-        return {"utility": per_stakeholder[stakeholder]}
+        return {"utility": per_member[member]}
     return {
         "utility": CollectiveUtility(
-            utilities={name: per_stakeholder[name] for name in household}
+            utilities={name: per_member[name] for name in household}
         )
     }
 

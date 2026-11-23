@@ -46,9 +46,9 @@ def finite_backward(
                     )
                     candidates.append(
                         tuple(
-                            Fraction(flow[stakeholder])
-                            + Fraction(1, 2) * continuation[stakeholder]
-                            for stakeholder in range(channels)
+                            Fraction(flow[member])
+                            + Fraction(1, 2) * continuation[member]
+                            for member in range(channels)
                         )
                     )
                 objectives = [sum(candidate) for candidate in candidates]
@@ -64,8 +64,8 @@ def finite_backward(
                     )
                 else:
                     selected = candidates[choice]
-                for stakeholder in range(channels):
-                    integrated[stakeholder] += weight * selected[stakeholder]
+                for member in range(channels):
+                    integrated[member] += weight * selected[member]
             values[period, wealth] = tuple(integrated)
     return values, policies
 

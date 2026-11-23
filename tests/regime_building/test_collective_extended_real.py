@@ -1,7 +1,7 @@
 """Extended-real (0 * -inf -> nan) regression tests for the collective solve core.
 
 On-path `-inf` is admissible throughout the collective-regimes extension (a
-feasible zero-consumption action, a stakeholder excluded via a zero Pareto
+feasible zero-consumption action, a member excluded via a zero Pareto
 weight, ...), and an exact-zero weight is equally admissible (a zero Pareto
 weight, a zero-probability regime-transition target, a zero-weight quadrature
 node). Naive floating-point arithmetic computes `0.0 * -inf = nan`, which then
@@ -518,12 +518,12 @@ def test_sum_regime_mixture_accuracy_scales_with_summand_magnitude_not_result_ul
     assert abs(got - exact) <= 1e-15 + 1e-14 * summand_scale
 
 
-def test_sum_regime_mixture_weights_the_target_axis_not_the_stakeholder_axis():
-    """At the COLLECTIVE site each per-target continuation is a STAKEHOLDER vector,
+def test_sum_regime_mixture_weights_the_target_axis_not_the_member_axis():
+    """At the COLLECTIVE site each per-target continuation is a MEMBER vector,
     so stacking gives values (K, S) while the scalar regime probabilities stack to
     (K,). The reduction must weight the TARGET axis (axis 0)
-    and hold the weight constant across the trailing stakeholder axis. Without the
-    rank-align, trailing-axis broadcasting weights the stakeholder axis instead:
+    and hold the weight constant across the trailing member axis. Without the
+    rank-align, trailing-axis broadcasting weights the member axis instead:
     K=S=2 with p=[0.25, 0.75] and values=[[0, 4], [4, 0]] returns [1, 3] rather
     than the correct [3, 1] -- silently reversing the household action.
     """
@@ -535,9 +535,9 @@ def test_sum_regime_mixture_weights_the_target_axis_not_the_stakeholder_axis():
     assert [float(x) for x in out] == pytest.approx([3.0, 1.0])
 
 
-def test_sum_regime_mixture_is_zero_mass_safe_on_the_stakeholder_axis():
-    """A zero-probability target with an admissible -inf stakeholder vector
-    contributes exactly 0 across ALL stakeholders, and does not leak -inf through
+def test_sum_regime_mixture_is_zero_mass_safe_on_the_member_axis():
+    """A zero-probability target with an admissible -inf member vector
+    contributes exactly 0 across ALL members, and does not leak -inf through
     a misaligned broadcast (which would return [-inf, 0])."""
     terms = [
         ("r0", jnp.asarray(1.0), jnp.asarray([1.0, 2.0])),
@@ -548,7 +548,7 @@ def test_sum_regime_mixture_is_zero_mass_safe_on_the_stakeholder_axis():
     assert [float(x) for x in out] == pytest.approx([1.0, 2.0])
 
 
-def test_sum_regime_mixture_collective_allows_unequal_target_and_stakeholder_counts():
+def test_sum_regime_mixture_collective_allows_unequal_target_and_member_counts():
     """K != S must not raise -- a misaligned trailing-axis broadcast crashes with
     a ValueError when K=3, S=2."""
     terms = [
@@ -735,22 +735,22 @@ def test_map_coordinates_is_bit_identical_to_the_raw_corner_sum_off_grid():
 # `_weighted_sum` — the household Pareto scalarization
 
 
-def test_weighted_sum_zero_weight_minus_inf_stakeholder_stays_finite():
-    # Stakeholder "f" is excluded (weight 0); its Q is -inf (an admissible
+def test_weighted_sum_zero_weight_minus_inf_member_stays_finite():
+    # Member "f" is excluded (weight 0); its Q is -inf (an admissible
     # on-path value, e.g. a feasible zero-consumption action). The
     # scalarization must equal m's Q alone, not nan.
-    stakeholder_Q = {
+    member_Q = {
         "f": jnp.array([-jnp.inf, 0.0, 0.0]),
         "m": jnp.array([1.0, 5.0, 3.0]),
     }
     weights = {"f": 0.0, "m": 1.0}
-    objective = _weighted_sum(stakeholder_Q=stakeholder_Q, weights=weights)
+    objective = _weighted_sum(member_Q=member_Q, weights=weights)
     assert bool(jnp.all(jnp.isfinite(objective)))
     np.testing.assert_allclose(np.asarray(objective), [1.0, 5.0, 3.0])
 
 
 def test_zero_pareto_weight_with_minus_inf_does_not_flip_the_argmax():
-    """A zero-weighted stakeholder's `-inf` must not corrupt the household argmax.
+    """A zero-weighted member's `-inf` must not corrupt the household argmax.
 
     Without the guard, `objective = 0.0 * Q_f + 1.0 * Q_m`. At action 0, where
     `Q_f = -inf`, `0.0 * -inf = nan`, so `objective[0] = nan`. `jnp.maximum`
@@ -761,7 +761,7 @@ def test_zero_pareto_weight_with_minus_inf_does_not_flip_the_argmax():
     at the wrong action, `f`'s value would incorrectly be `-inf` and `m`'s
     would incorrectly be `1.0` instead of `5.0`.
     """
-    stakeholder_Q = {
+    member_Q = {
         "f": jnp.array([-jnp.inf, 0.0, 0.0]),
         "m": jnp.array([1.0, 5.0, 3.0]),
     }
@@ -769,7 +769,7 @@ def test_zero_pareto_weight_with_minus_inf_does_not_flip_the_argmax():
     weights = {"f": 0.0, "m": 1.0}
 
     argmax_flat, values, dissolution = collective_argmax_and_readout(
-        stakeholder_Q=stakeholder_Q,
+        member_Q=member_Q,
         feasibility=feasibility,
         weights=weights,
         action_axes=(0,),
@@ -790,7 +790,7 @@ def test_zero_pareto_weight_minus_inf_batched_over_states():
     weights = {"f": 0.0, "m": 1.0}
 
     argmax_flat, values, dissolution = collective_argmax_and_readout(
-        stakeholder_Q={"f": q_f, "m": q_m},
+        member_Q={"f": q_f, "m": q_m},
         feasibility=feasibility,
         weights=weights,
         action_axes=(1,),
@@ -806,13 +806,13 @@ def test_zero_pareto_weight_minus_inf_batched_over_states():
 
 
 def test_onpath_minus_inf_with_a_feasible_action_leaves_dissolution_false():
-    stakeholder_Q = {
+    member_Q = {
         "f": jnp.array([-jnp.inf, 0.0, 0.0]),
         "m": jnp.array([1.0, 5.0, 3.0]),
     }
     feasibility = jnp.array([True, True, True])
     values, dissolution = collective_readout(
-        stakeholder_Q=stakeholder_Q,
+        member_Q=member_Q,
         feasibility=feasibility,
         weights={"f": 0.5, "m": 0.5},
         action_axes=(0,),
@@ -822,13 +822,13 @@ def test_onpath_minus_inf_with_a_feasible_action_leaves_dissolution_false():
 
 
 def test_empty_feasible_mask_sets_dissolution_true():
-    stakeholder_Q = {
+    member_Q = {
         "f": jnp.array([-jnp.inf, 0.0, 0.0]),
         "m": jnp.array([1.0, 5.0, 3.0]),
     }
     feasibility = jnp.array([False, False, False])
     _values, dissolution = collective_readout(
-        stakeholder_Q=stakeholder_Q,
+        member_Q=member_Q,
         feasibility=feasibility,
         weights={"f": 0.5, "m": 0.5},
         action_axes=(0,),
@@ -836,7 +836,7 @@ def test_empty_feasible_mask_sets_dissolution_true():
     assert bool(dissolution) is True
 
 
-# Collective weight / stakeholder validation at `Regime` construction.
+# Collective weight / member validation at `Regime` construction.
 
 _WEALTH = LinSpacedGrid(start=1, stop=10, n_points=5)
 
@@ -863,7 +863,7 @@ def _build_terminal_regime(
     objective: ParetoObjective | None = None,
     **kwargs: Unpack[RegimeReplacement],
 ) -> Regime:
-    """Build the two-stakeholder terminal regime, overriding one slot by keyword.
+    """Build the two-member terminal regime, overriding one slot by keyword.
 
     The regime is validated against the law of a regime without outgoing edges.
 
@@ -886,9 +886,9 @@ def _build_terminal_regime(
     return regime
 
 
-def test_a_household_with_no_stakeholders_is_rejected():
+def test_a_household_with_no_members_is_rejected():
     """A `CollectiveUtility` naming nobody is not a household."""
-    with pytest.raises(RegimeInitializationError, match="at least one stakeholder"):
+    with pytest.raises(RegimeInitializationError, match="at least one member"):
         _build_terminal_regime(utilities={})
 
 

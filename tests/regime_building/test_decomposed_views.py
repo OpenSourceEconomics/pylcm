@@ -2,7 +2,7 @@
 
 A regime's `functions` and `constraints` are what the author wrote —
 declarations included. The two decomposed views are what the engine runs: one
-utility per stakeholder, and the ordinary constraints alone. The
+utility per member, and the ordinary constraints alone. The
 transformations are tested on raw mappings, because that is the input they
 exist to handle.
 """
@@ -20,17 +20,17 @@ from lcm.typing import ContinuousState, FloatND
 
 
 def _u_f(wealth: ContinuousState) -> FloatND:
-    """The first stakeholder's flow utility."""
+    """The first member's flow utility."""
     return jnp.log(wealth)
 
 
 def _u_m(wealth: ContinuousState) -> FloatND:
-    """The second stakeholder's flow utility."""
+    """The second member's flow utility."""
     return 0.5 * jnp.log(wealth)
 
 
 def _u_m_simulate(wealth: ContinuousState) -> FloatND:
-    """The second stakeholder's flow utility as simulation realizes it."""
+    """The second member's flow utility as simulation realizes it."""
     return 0.25 * jnp.log(wealth)
 
 
@@ -40,7 +40,7 @@ def _budget(wealth: ContinuousState) -> FloatND:
 
 
 def _ir_f(*, Q_f: FloatND, V_alone_f: FloatND) -> FloatND:
-    """The first stakeholder's participation constraint."""
+    """The first member's participation constraint."""
     return Q_f >= V_alone_f
 
 
@@ -54,8 +54,8 @@ _REFERENCE = ProjectedRegimeValue(
 )
 
 
-def test_a_collective_utility_becomes_one_entry_per_stakeholder():
-    """Each stakeholder's body lands under the name the engine reads."""
+def test_a_collective_utility_becomes_one_entry_per_member():
+    """Each member's body lands under the name the engine reads."""
     raw = {"utility": CollectiveUtility(utilities={"f": _u_f, "m": _u_m})}
 
     assert dict(decompose_functions(raw)) == {"utility_f": _u_f, "utility_m": _u_m}
@@ -78,7 +78,7 @@ def test_a_delegated_body_is_taken_from_the_entry_it_delegates_to():
     assert decompose_functions(raw)["utility_f"] is _u_f
 
 
-def test_stakeholder_entries_follow_the_declaration_not_the_mapping():
+def test_member_entries_follow_the_declaration_not_the_mapping():
     """The household's own order survives however the entries arrived."""
     raw = {
         "utility_m": _u_m,
@@ -103,7 +103,7 @@ def test_decomposing_functions_twice_changes_nothing():
     assert dict(decompose_functions(once)) == dict(once)
 
 
-def test_a_phased_stakeholder_body_reaches_the_engine_whole():
+def test_a_phased_member_body_reaches_the_engine_whole():
     """The phase split happens downstream, so the container survives intact."""
     body = Phased(solve=_u_m, simulate=_u_m_simulate)
     raw = {"utility": CollectiveUtility(utilities={"m": body, "f": _u_f})}

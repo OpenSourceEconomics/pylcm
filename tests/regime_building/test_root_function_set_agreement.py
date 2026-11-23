@@ -26,11 +26,11 @@ from lcm import (
     DiscreteGrid,
     Gate,
     LinSpacedGrid,
+    MemberRoute,
     Model,
     Phased,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     Transition,
     ValueDependentConstraint,
     categorical,
@@ -306,7 +306,7 @@ def _make_regimes() -> dict[str, Regime]:
 def _couple_transition() -> Transition:
     """The couple's age-0 transition: a gated edge into `couple_ir`.
 
-    The gate reads the target's wage; each stakeholder's route falls back to
+    The gate reads the target's wage; each member's route falls back to
     her own single regime.
     """
     return Transition(
@@ -322,15 +322,15 @@ def _couple_transition() -> Transition:
             "couple_ir": Gate(
                 predicate=_above_the_lowest_wage,
                 routes={
-                    "f": StakeholderRoute(
-                        target_stakeholder="f",
+                    "f": MemberRoute(
+                        target_member="f",
                         fallback=ProjectedRegimeValue(
                             regime="single_f",
                             projection={"wage": _identity_wage},
                         ),
                     ),
-                    "m": StakeholderRoute(
-                        target_stakeholder="m",
+                    "m": MemberRoute(
+                        target_member="m",
                         fallback=ProjectedRegimeValue(
                             regime="single_m",
                             projection={"wage": _identity_wage},
@@ -374,7 +374,7 @@ def _utility_m_simulate(*, wage: ContinuousState, work: DiscreteAction) -> Float
 
 
 def _utility_collective(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
-    """A stakeholder's payoff: the wage when working, nothing otherwise."""
+    """A member's payoff: the wage when working, nothing otherwise."""
     return wage * work
 
 

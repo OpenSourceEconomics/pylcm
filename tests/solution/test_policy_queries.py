@@ -52,7 +52,7 @@ from lcm import (
     Regime,
     categorical,
 )
-from lcm.collective import ProjectedRegimeValue, StakeholderRoute
+from lcm.collective import MemberRoute, ProjectedRegimeValue
 from lcm.participation import ParticipationCheck, ParticipationRead
 from lcm.shocks import Normal, ShockGroup, UserNodes
 from lcm.solvers import EGM, GridSearch
@@ -485,17 +485,17 @@ def test_bound_participation_strict_hurdle_uses_one_household_participating_tupl
             "benchmark": ParticipationRead(
                 regime="target",
                 projection={"wealth": _identity},
-                stakeholder="f",
+                member="f",
                 kind="Participating",
             )
         },
         routes={
-            member: StakeholderRoute(
-                target_stakeholder=member,
+            member: MemberRoute(
+                target_member=member,
                 fallback=ProjectedRegimeValue(
                     regime="root",
                     projection={"wealth": _identity},
-                    stakeholder=member,
+                    member=member,
                 ),
             )
             for member in ("f", "m")
@@ -1002,7 +1002,7 @@ def _vector_keep(*, q: FloatND, outside: PolicyAnswer) -> jax.Array:
 
 
 def test_query_kept_set_requires_one_scalar_per_action() -> None:
-    """A stakeholder-shaped predicate must never become an extra action axis."""
+    """A member-shaped predicate must never become an extra action axis."""
     model = _native_model(enable_jit=True)
     original = model._regimes["root"]
     kernel = original.solution.period_kernels[0]

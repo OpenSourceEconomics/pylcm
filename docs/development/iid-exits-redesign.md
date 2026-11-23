@@ -372,10 +372,10 @@ capability refusal.
 
 Keep target prescribed-policy information separate from caller pricing information.
 Additional caller knowledge does not change the target's participation policy. Evaluate
-that policy at each hidden node before pricing its selected action and stakeholder
-tuple. Independent hidden shocks, including target taste shocks, are integrated before
-the source decision and revealed only when the destination acts. A supplied hidden
-override does not become an observed pricing operand.
+that policy at each hidden node before pricing its selected action and member tuple.
+Independent hidden shocks, including target taste shocks, are integrated before the
+source decision and revealed only when the destination acts. A supplied hidden override
+does not become an observed pricing operand.
 
 For a wholly hidden group, use its original joint forward operator, preserving row
 order, weights, duplicates and dependence. For independent observed/hidden coordinates,

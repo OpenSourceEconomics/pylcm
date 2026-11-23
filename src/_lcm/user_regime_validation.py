@@ -171,7 +171,7 @@ def validate_exit_targets(
                         f"{context} names unknown destination {target.regime!r}."
                     )
                 destination = regimes[target.regime]
-                if target.role not in (destination.stakeholders or (None,)):
+                if target.role not in (destination.member_axis or (None,)):
                     raise RegimeInitializationError(
                         f"{context} has invalid destination role {target.role!r}."
                     )
@@ -200,10 +200,8 @@ def _validate_renegotiation(
         or declaration.rule.renegotiate is None
     ):
         return
-    if len(regime.stakeholders or ()) != 2:  # noqa: PLR2004 - directional two-member rule
-        raise RegimeInitializationError(
-            "Renegotiate requires two collective stakeholders."
-        )
+    if len(regime.member_axis or ()) != 2:  # noqa: PLR2004 - directional two-member rule
+        raise RegimeInitializationError("Renegotiate requires two collective members.")
     spec = normalize_regime_phases(regime, law=law)
     grid = getattr(
         spec, "solution" if phase == "solve" else "simulation"
@@ -254,12 +252,10 @@ def _validate_settlement(*, declaration: Exit, regime: Regime) -> None:
     if not isinstance(rule, MutualConsent) or rule.settle is None:
         return
     name = rule.settle.name
-    if len(regime.stakeholders or ()) != 2:  # noqa: PLR2004 - directional two-member rule
-        raise RegimeInitializationError(
-            "Settlement requires two collective stakeholders."
-        )
+    if len(regime.member_axis or ()) != 2:  # noqa: PLR2004 - directional two-member rule
+        raise RegimeInitializationError("Settlement requires two collective members.")
     # The author's names and the engine's: a household's `utility` is bound as
-    # `utility_<s>` per stakeholder, and a settlement may shadow neither.
+    # `utility_<s>` per member, and a settlement may shadow neither.
     taken = {
         *regime.states,
         *regime.actions,
@@ -312,8 +308,8 @@ def _validate_counterparty(
     for target in declaration.targets.values():
         destination = regimes[target.regime]
         if (
-            destination.stakeholders is None
-            or counterparty.role not in destination.stakeholders
+            destination.member_axis is None
+            or counterparty.role not in destination.member_axis
             or counterparty.role == target.role
         ):
             raise RegimeInitializationError(
@@ -361,27 +357,28 @@ def validate_regime(regime: Regime) -> None:
     Raises:
         RegimeInitializationError: On the first group of violated declarations.
     """
-    if regime.stakeholders is not None:
+    if regime.member_axis is not None:
         _validate_collective_regime(regime)
     elif regime.pareto_objective is not None:
         raise RegimeInitializationError(
             "`pareto_objective` declares how a collective regime's "
-            "household weighs its stakeholders; it is only meaningful "
-            "together with `stakeholders`. Omit it for a singleton regime."
+            "household weighs its members; it is only meaningful "
+            "for a household declared with a `CollectiveUtility`. Omit it "
+            "for a singleton regime."
         )
     elif regime.value_constraints:
         raise RegimeInitializationError(
             "`value_constraints` are value-aware feasibility predicates for "
-            "a collective regime; they read the per-stakeholder action "
-            "values `Q_<s>`, which only exist when `stakeholders` is set. "
+            "a collective regime; they read the per-member action "
+            "values `Q_<s>`, which only exist for a household. "
             "Use ordinary `constraints` for a singleton regime."
         )
     elif regime.same_period_refs:
         raise RegimeInitializationError(
             "`same_period_refs` declares same-period reference values for a "
             "collective regime's `value_constraints`; it is only "
-            "meaningful together with `stakeholders`. Omit it for a "
-            "singleton regime."
+            "meaningful for a household declared with a `CollectiveUtility`. "
+            "Omit it for a singleton regime."
         )
 
     _validate_mapping_contents(regime)
@@ -391,10 +388,10 @@ def validate_regime(regime: Regime) -> None:
 
 
 def _validate_exits(regime: Regime) -> None:
-    """Require a destination for each of the source's stakeholders."""
+    """Require a destination for each of the source's members."""
     if regime.exit is None:
         return
-    expected = set(regime.stakeholders or ("self",))
+    expected = set(regime.members)
     if set(regime.exit.targets) != expected:
         raise RegimeInitializationError(f"Exit targets must name {sorted(expected)!r}.")
 
@@ -465,13 +462,13 @@ def fail_if_a_joint_target_is_unreachable(
 
 
 def _validate_collective_regime(regime: Regime) -> None:
-    """Validate a collective (stakeholder-valued) regime.
+    """Validate a collective (member-valued) regime.
 
     Both the terminal and the non-terminal continuation cases are implemented.
     Checked here are the properties a bare `Regime` already
-    determines on its own: a non-empty, duplicate-free `stakeholders` tuple,
+    determines on its own: a non-empty, duplicate-free `members` tuple,
     the regime-local `value_constraints` / `same_period_refs` grammar, and — if
-    `pareto_objective` is given — weight keys matching the stakeholder names,
+    `pareto_objective` is given — weight keys matching the member names,
     with every constant weight finite, non-negative, and a positive total (the
     zero-safe scalarization in `collective._weighted_sum` treats an exact-zero
     weight as a deliberate exclusion, so a non-finite or negative weight, or an
@@ -479,7 +476,7 @@ def _validate_collective_regime(regime: Regime) -> None:
     household objective rather than erroring).
 
     What a collective regime needs but a model-level slot may supply — the
-    per-stakeholder `utility_<s>` functions — is completeness, so
+    per-member `utility_<s>` functions — is completeness, so
     `_validate_completeness` checks it once the regimes are finalized at model
     build. The household argmax runs over whatever action product the regime
     declares, which may be continuous or empty.
@@ -487,17 +484,17 @@ def _validate_collective_regime(regime: Regime) -> None:
     Features the collective solve does not implement raise `NotImplementedError`:
     EV1 taste shocks
     (the collective argmax is the hard household maximum), a nonlinear
-    certainty equivalent (the per-stakeholder continuation is the linear
+    certainty equivalent (the per-member continuation is the linear
     expectation), and any solver other than `GridSearch`.
 
-    Called from `Regime.__post_init__` only when `stakeholders is not None`, so
+    Called from `Regime.__post_init__` only when `member_axis is not None`, so
     the default singleton path never reaches it.
     """
-    stakeholders = cast("tuple[str, ...]", regime.stakeholders)
+    members = cast("tuple[str, ...]", regime.member_axis)
 
     if regime.taste_shocks is not None:
         raise NotImplementedError(
-            "EV1 taste shocks on a collective (stakeholder-valued) regime are "
+            "EV1 taste shocks on a collective (member-valued) regime are "
             "not yet implemented: the collective solve takes the hard household "
             "argmax of the Pareto-weighted objective, not a smoothed maximum. "
             "Drop `taste_shocks` on this regime, or model the choice as a "
@@ -509,55 +506,51 @@ def _validate_collective_regime(regime: Regime) -> None:
     if aggregates_nonlinearly(regime.certainty_equivalent):
         raise NotImplementedError(
             "A nonlinear certainty equivalent on a collective "
-            "(stakeholder-valued) regime is not yet implemented: the "
-            "per-stakeholder continuation is the linear expectation "
+            "(member-valued) regime is not yet implemented: the "
+            "per-member continuation is the linear expectation "
             "E[V'^s]. Use `certainty_equivalent=LinearExpectation()` on this "
             "regime."
         )
     if not isinstance(regime.solver, GridSearch):
         raise NotImplementedError(
-            "Collective (stakeholder-valued) regimes are only implemented for "
-            "the GridSearch solver: the household argmax and per-stakeholder "
+            "Collective (member-valued) regimes are only implemented for "
+            "the GridSearch solver: the household argmax and per-member "
             "value readout run over the full action product. Use "
             "`solver=GridSearch()` for this regime."
         )
     error_messages: list[str] = []
     error_messages.extend(_collective_value_constraint_errors(regime))
-    error_messages.extend(_stakeholders_tuple_errors(stakeholders))
-    error_messages.extend(
-        path_segment_name_errors(kind="Stakeholder", names=stakeholders)
-    )
-    error_messages.extend(
-        _collective_weights_errors(regime=regime, stakeholders=stakeholders)
-    )
+    error_messages.extend(_members_tuple_errors(members))
+    error_messages.extend(path_segment_name_errors(kind="Member", names=members))
+    error_messages.extend(_collective_weights_errors(regime=regime, members=members))
 
     if error_messages:
         raise RegimeInitializationError(format_messages(error_messages))
 
 
-def _stakeholders_tuple_errors(stakeholders: tuple[str, ...]) -> tuple[str, ...]:
-    """Collect errors for an empty or duplicate-containing `stakeholders` tuple."""
-    if not stakeholders:
-        return ("`stakeholders` must be a non-empty tuple for a collective regime.",)
+def _members_tuple_errors(members: tuple[str, ...]) -> tuple[str, ...]:
+    """Collect errors for an empty or duplicate-containing `members` tuple."""
+    if not members:
+        return ("`members` must be a non-empty tuple for a collective regime.",)
 
-    duplicate_counts = Counter(stakeholders)
+    duplicate_counts = Counter(members)
     duplicates = sorted(name for name, count in duplicate_counts.items() if count > 1)
     if duplicates:
         return (
             (
-                f"`stakeholders` must not contain duplicate names; got "
-                f"{stakeholders} (duplicated: {duplicates})."
+                f"`members` must not contain duplicate names; got "
+                f"{members} (duplicated: {duplicates})."
             ),
         )
     return ()
 
 
 def _collective_weights_errors(
-    *, regime: Regime, stakeholders: tuple[str, ...]
+    *, regime: Regime, members: tuple[str, ...]
 ) -> tuple[str, ...]:
     """Collect errors for a collective regime's `pareto_objective`.
 
-    Weight keys must match `stakeholders`, and a weight declared as a constant
+    Weight keys must match `members`, and a weight declared as a constant
     must be finite, non-negative, and — across the constants — leave a positive
     total. The zero-safe scalarization treats an exact-zero weight as a
     deliberate exclusion, so a non-finite or negative weight, or an all-zero
@@ -570,13 +563,13 @@ def _collective_weights_errors(
         return ()
 
     declared = set(objective.weights)
-    if declared != set(stakeholders):
-        missing = sorted(set(stakeholders) - declared)
-        extra = sorted(declared - set(stakeholders))
+    if declared != set(members):
+        missing = sorted(set(members) - declared)
+        extra = sorted(declared - set(members))
         return (
             (
                 f"`pareto_objective.weights` weighs {sorted(declared)}, but "
-                f"this regime's stakeholders are {sorted(stakeholders)}: "
+                f"this regime's members are {sorted(members)}: "
                 f"missing {missing}, unknown {extra}."
             ),
         )
@@ -595,7 +588,7 @@ def _collective_weights_errors(
         return (
             (
                 "`pareto_objective.weights` must be finite and non-negative "
-                f"for every stakeholder; got {non_finite_or_negative}."
+                f"for every member; got {non_finite_or_negative}."
             ),
         )
     if len(constants) == len(objective.weights) and sum(constants.values()) <= 0:
@@ -613,11 +606,11 @@ def _collective_value_constraint_errors(regime: Regime) -> tuple[str, ...]:
     """Collect the regime-local errors of `value_constraints` / `same_period_refs`.
 
     Cross-regime properties — the reference regime's
-    existence, its stakeholder layout, projection coverage, co-activity, and
+    existence, its member layout, projection coverage, co-activity, and
     reference cycles — are validated at model processing, where the other
     regimes are known.
     """
-    stakeholders = cast("tuple[str, ...]", regime.stakeholders)
+    members = cast("tuple[str, ...]", regime.member_axis)
     error_messages: list[str] = []
 
     if regime.same_period_refs and not regime.value_constraints:
@@ -657,10 +650,10 @@ def _collective_value_constraint_errors(regime: Regime) -> tuple[str, ...]:
     error_messages.extend(_reference_projection_free_param_errors(regime))
 
     if regime.value_constraints:
-        shadowed_q = sorted({f"Q_{s}" for s in stakeholders} & taken)
+        shadowed_q = sorted({f"Q_{s}" for s in members} & taken)
         if shadowed_q:
             error_messages.append(
-                f"Name(s) {shadowed_q} are reserved for the per-stakeholder "
+                f"Name(s) {shadowed_q} are reserved for the per-member "
                 "action values that `value_constraints` predicates read; the "
                 "regime declares a function, constraint, state, or action of "
                 "the same name. Rename it."
@@ -733,10 +726,10 @@ def _validate_gated_edges(*, regime: Regime, law: RegimeLaw) -> None:
     Checks the properties knowable without the other
     regimes: the gate is a plain boolean callable (a stochastic, probabilistic
     gate — a `StochasticTransition` — is not implemented); the legs cover the
-    SOURCE's stakeholder structure (exactly one leg for a singleton source, one
-    per stakeholder for a collective source); route keys are valid
+    SOURCE's member structure (exactly one leg for a singleton source, one
+    per member for a collective source); route keys are valid
     parameter-path segments. Cross-regime properties — the
-    target and fallback regimes exist, the stakeholder names resolve, the
+    target and fallback regimes exist, the member names resolve, the
     projections cover the reference states — are validated at model processing.
 
     A gated-edge SOURCE is restricted to the `GridSearch` solver with no taste
@@ -750,7 +743,7 @@ def _validate_gated_edges(*, regime: Regime, law: RegimeLaw) -> None:
     _fail_if_gated_edge_source_out_of_scope(regime)
 
     error_messages: list[str] = []
-    source_stakeholders = regime.stakeholders
+    source_member_axis = regime.member_axis
 
     for target_name, edge in law.gated_edges.items():
         prefix = f"the value-dependent transition into {target_name!r}: "
@@ -767,16 +760,16 @@ def _validate_gated_edges(*, regime: Regime, law: RegimeLaw) -> None:
         )
         if not edge.legs:
             error_messages.append(f"{prefix}must declare at least one leg.")
-        elif source_stakeholders is None:
+        elif source_member_axis is None:
             if len(edge.legs) != 1:
                 error_messages.append(
                     f"{prefix}a singleton source regime must declare exactly one "
                     f"leg (got {sorted(edge.legs)})."
                 )
-        elif set(edge.legs) != set(source_stakeholders):
+        elif set(edge.legs) != set(source_member_axis):
             error_messages.append(
                 f"{prefix}the legs must be keyed by exactly the source "
-                f"stakeholders {sorted(source_stakeholders)}; got "
+                f"members {sorted(source_member_axis)}; got "
                 f"{sorted(edge.legs)}."
             )
 
@@ -1160,7 +1153,7 @@ def _validate_completeness(
     Args:
         regime: The finalized regime to check.
         law: The regime's law, which says whether it is terminal.
-        reserved_value_columns: The `value_<stakeholder>` names published by
+        reserved_value_columns: The `value_<member>` names published by
             the model's collective regimes — the whole model's, not this
             regime's, because the published frame is one table over all of
             them.
@@ -1169,10 +1162,10 @@ def _validate_completeness(
     a bare user `Regime` may legitimately lack them until model-level slots
     are merged in:
 
-    - a `utility` entry in `functions` — a per-stakeholder `utility_<s>` for
-      each stakeholder of a collective regime
+    - a `utility` entry in `functions` — a per-member `utility_<s>` for
+      each member of a collective regime
     - no declaration under a name any of the model's collective regimes
-      publishes as a `value_<stakeholder>` column
+      publishes as a `value_<member>` column
     - state-transition coverage (every non-process state has a law; terminal
       regimes have none; identity laws refer to existing states)
     - no state/action name overlap
@@ -1181,18 +1174,18 @@ def _validate_completeness(
     """
     error_messages: list[str] = []
 
-    if regime.stakeholders is not None:
-        # A collective regime supplies a per-stakeholder `utility_<s>` in place
+    if regime.member_axis is not None:
+        # A collective regime supplies a per-member `utility_<s>` in place
         # of a single `utility`.
         missing = [
             s
-            for s in regime.stakeholders
+            for s in regime.member_axis
             if f"utility_{s}" not in regime.decomposed_functions
         ]
         if missing:
             error_messages.append(
-                "A collective regime must provide a per-stakeholder utility "
-                f"function for each stakeholder. Missing: "
+                "A collective regime must provide a per-member utility "
+                f"function for each member. Missing: "
                 f"{[f'utility_{s}' for s in missing]}.",
             )
     elif "utility" not in regime.decomposed_functions:
@@ -1226,14 +1219,14 @@ def _published_value_column_errors(
 ) -> tuple[str, ...]:
     """Collect errors for declarations that shadow a published value column.
 
-    A collective regime publishes one `value_<stakeholder>` column per
-    stakeholder, unconditionally, and the published frame is a single table
+    A collective regime publishes one `value_<member>` column per
+    member, unconditionally, and the published frame is a single table
     over every regime — so a singleton regime standing beside a collective one
     claims the same column with a state of that name. A declaration that
     collides neither wins the column nor errors at publication: the frame
-    carries the stakeholder's value under that name twice and the declared
+    carries the member's value under that name twice and the declared
     variable is absent. The collision is refused here, where the name is still
-    the author's, and against the model's stakeholders rather than the
+    the author's, and against the model's members rather than the
     declaring regime's.
     """
     declared = (
@@ -1248,8 +1241,8 @@ def _published_value_column_errors(
         return ()
     return (
         (
-            "A collective regime publishes a `value_<stakeholder>` column for "
-            "each of its stakeholders, so those names are reserved. Rename the "
+            "A collective regime publishes a `value_<member>` column for "
+            "each of its members, so those names are reserved. Rename the "
             f"following declarations: {colliding}."
         ),
     )
@@ -1309,7 +1302,7 @@ def _decoupled_errors(regime: Regime) -> tuple[str, ...]:
             "and storing another needs the full action product. Use "
             "`solver=GridSearch()` for this regime."
         )
-    if regime.stakeholders is not None:
+    if regime.member_axis is not None:
         error_messages.append(
             "A collective regime cannot declare a `Decoupled` Koopmans "
             "aggregator: the household chooses with its Pareto-weighted "
@@ -1610,7 +1603,7 @@ def _joint_transition_grammar_errors(regime: Regime) -> tuple[str, ...]:  # noqa
     # A joint node's name may not clash with anything already spoken for,
     # and that is both what the author wrote and what the engine binds: a
     # value constraint's own key is a live name, and so is each
-    # stakeholder's `utility_<s>`. Neither set contains the other.
+    # member's `utility_<s>`. Neither set contains the other.
     declared_names = (
         set(regime.states)
         | set(regime.actions)

@@ -14,12 +14,12 @@ from lcm import (
     ByAge,
     DeterministicTransition,
     LinSpacedGrid,
+    MemberRoute,
     Model,
     ParticipationCheck,
     ParticipationRead,
     Phased,
     ProjectedRegimeValue,
-    StakeholderRoute,
     StochasticTransition,
     Transition,
     categorical,
@@ -398,7 +398,7 @@ def test_value_only_source_age_does_not_activate_dormant_simulation_participatio
                 )
             },
             routes={
-                "only": StakeholderRoute(
+                "only": MemberRoute(
                     fallback=ProjectedRegimeValue(
                         regime="fallback", projection={"x": identity}
                     )

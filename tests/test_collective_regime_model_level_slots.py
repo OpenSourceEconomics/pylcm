@@ -1,6 +1,6 @@
 """A collective regime fills its slots from the model level like any other regime.
 
-A collective regime carries a body for each stakeholder its household names, and
+A collective regime carries a body for each member its household names, and
 may carry actions. Both are ordinary regime slots, so a household whose regimes
 share them may declare them once on the `Model` and let the broadcast supply
 every regime — completeness is a property of the regime the model runs, not of a
@@ -14,24 +14,24 @@ from numpy.testing import assert_array_almost_equal as aaae
 from lcm import DiscreteGrid, Model
 from tests.collective_fixtures import (
     AGES,
-    TWO_STAKEHOLDER_V_PERIOD_0,
+    TWO_MEMBER_V_PERIOD_0,
     CoupleRegimeId,
     Work,
-    make_two_stakeholder_model,
+    make_two_member_model,
 )
 from tests.conftest import DECIMAL_PRECISION
 
 
 def test_collective_utilities_may_come_from_the_model_level_slot():
-    """Per-stakeholder utilities declared on the model solve the collective regime.
+    """Per-member utilities declared on the model solve the collective regime.
 
     Model-level `functions=` accepts exactly what the regime slot accepts, so a
     couple whose regimes share `utility_f` and `utility_m` may declare the pair
     once. The household then solves to the values those utilities produce when
     each regime declares them itself.
     """
-    model, params = make_two_stakeholder_model()
-    # The per-stakeholder utilities the fixture declares on each regime.
+    model, params = make_two_member_model()
+    # The per-member utilities the fixture declares on each regime.
     utilities = dict(model.user_regimes["couple"].functions)
 
     broadcast_model = Model(
@@ -48,7 +48,7 @@ def test_collective_utilities_may_come_from_the_model_level_slot():
 
     solution = broadcast_model.solve(params=params, log_level="debug").values
 
-    aaae(solution[0]["couple"], TWO_STAKEHOLDER_V_PERIOD_0, decimal=DECIMAL_PRECISION)
+    aaae(solution[0]["couple"], TWO_MEMBER_V_PERIOD_0, decimal=DECIMAL_PRECISION)
 
 
 def test_collective_discrete_action_may_come_from_the_model_level_slot():
@@ -59,7 +59,7 @@ def test_collective_discrete_action_may_come_from_the_model_level_slot():
     only action solves to the values that action produces when each regime
     declares it itself.
     """
-    model, params = make_two_stakeholder_model()
+    model, params = make_two_member_model()
 
     broadcast_model = Model(
         edges=model.edges,
@@ -75,4 +75,4 @@ def test_collective_discrete_action_may_come_from_the_model_level_slot():
 
     solution = broadcast_model.solve(params=params, log_level="debug").values
 
-    aaae(solution[0]["couple"], TWO_STAKEHOLDER_V_PERIOD_0, decimal=DECIMAL_PRECISION)
+    aaae(solution[0]["couple"], TWO_MEMBER_V_PERIOD_0, decimal=DECIMAL_PRECISION)

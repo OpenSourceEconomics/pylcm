@@ -241,7 +241,7 @@ def twin_solution(twin: Model) -> SolutionResult:
 
 
 def _simulate(*, model: Model, solution: SolutionResult) -> pd.DataFrame:
-    roles = [model.stakeholder_names_to_ids[member] for member in ("f", "m")] * 4
+    roles = [model.member_names_to_ids[member] for member in ("f", "m")] * 4
     result: SimulationResult = model.simulate(
         params=_PARAMS,
         solution=solution,
@@ -253,7 +253,7 @@ def _simulate(*, model: Model, solution: SolutionResult) -> pd.DataFrame:
                 [_Household.couple_u] * 4 + [_Household.couple_m] * 4,
                 dtype=jnp.int32,
             ),
-            "own_stakeholder": jnp.asarray(roles, dtype=jnp.int32),
+            "own_member": jnp.asarray(roles, dtype=jnp.int32),
         },
         seed=0,
         log_level="off",

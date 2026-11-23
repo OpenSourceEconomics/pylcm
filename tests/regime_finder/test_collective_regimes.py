@@ -34,7 +34,7 @@ from lcm import (
 )
 from lcm.typing import BoolND, DiscreteState, FloatND, RegimeName, ScalarInt
 from tests import test_transition_roles as transition_roles
-from tests.collective_fixtures import make_two_stakeholder_model
+from tests.collective_fixtures import make_two_member_model
 from tests.regime_building import test_gate_shared_fallback as gate_fallback
 from tests.regime_finder import native_conditional_current_shocks as observed_offer
 from tests.simulation import test_query_only_participation_actors as value_readers
@@ -129,7 +129,7 @@ _MODELS: dict[str, Callable[[], Model]] = {
     "renegotiate_2p": lambda: renegotiation._model(
         values=renegotiation._VALUES, n_periods=2
     ),
-    "two_stakeholder": lambda: make_two_stakeholder_model()[0],
+    "two_member": lambda: make_two_member_model()[0],
     "role": _role_model,
     "observed_offer": observed_offer.model,
     "settle": lambda: settlement._settlement_model(division="transfer"),
@@ -215,7 +215,7 @@ def test_collective_regime_does_not_pool_with_a_single_agent_regime(
 def test_single_agent_regimes_of_one_kind_still_pool(
     backend: FactsBackendName,
 ) -> None:
-    """Without stakeholders, the same couple and single pool as one dense regime."""
+    """Without members, the same couple and single pool as one dense regime."""
     assert _pooled(_report("plain", backend), "couple", "single")
 
 
@@ -227,14 +227,14 @@ def test_regimes_with_different_exits_do_not_pool(backend: FactsBackendName) -> 
 
 @pytest.mark.parametrize("backend", BACKENDS)
 def test_regimes_with_equal_exits_still_pool(backend: FactsBackendName) -> None:
-    """Two couples with one stakeholder tuple and one exit pool."""
+    """Two couples with one member tuple and one exit pool."""
     assert _pooled(_report("equal_exits", backend), "couple_m", "couple_u")
 
 
-def test_normalized_cells_carry_their_stakeholders() -> None:
-    """Each cell names its regime's stakeholders, `None` for a single agent."""
+def test_normalized_cells_carry_their_members() -> None:
+    """Each cell names its regime's members, `None` for a single agent."""
     cells = _report("roles", "dense")["analysis"]["declarations"]["cells"]
-    assert {c["regime"]: c.get("stakeholders", "absent") for c in cells} == {
+    assert {c["regime"]: c.get("member_axis", "absent") for c in cells} == {
         "single": None,
         "couple": ["f", "m"],
         "single_end": None,
@@ -245,7 +245,7 @@ def test_normalized_cells_carry_their_stakeholders() -> None:
 @pytest.mark.parametrize(
     ("label", "key", "regimes"),
     [
-        ("roles", "stakeholders", ("couple", "single")),
+        ("roles", "member_axis", ("couple", "single")),
         ("twin", "exit_identity", ("couple_m", "couple_u")),
     ],
 )
@@ -266,7 +266,7 @@ def test_certificate_rejects_a_layout_that_pools_unequal_regimes(
 @pytest.mark.parametrize(
     ("label", "regime", "key", "value"),
     [
-        ("roles", "couple", "stakeholders", None),
+        ("roles", "couple", "member_axis", None),
         ("twin", "couple_m", "exit_identity", None),
         ("renegotiate_2p", "couple", "renegotiated_states", []),
     ],
@@ -274,7 +274,7 @@ def test_certificate_rejects_a_layout_that_pools_unequal_regimes(
 def test_certificate_rejects_cells_that_lose_their_kind(
     label: str, regime: RegimeName, key: str, value: JSONValue
 ) -> None:
-    """The source check rejects cells whose stakeholders, exit or renegotiation changed."""
+    """The source check rejects cells whose members, exit or renegotiation changed."""
     genuine = verify_certificate(_captured(label), _report(label, "dense"))
     verified = _verify_with_cells(label, "dense", regime=regime, key=key, value=value)
     assert (
@@ -342,31 +342,31 @@ def test_certificate_rejects_a_layout_that_splits_the_renegotiation_state() -> N
 
 
 def _engine_counts() -> tuple[int, int]:
-    """Solve the two-stakeholder model; return its stored values and action values.
+    """Solve the two-member model; return its stored values and action values.
 
     The collective readout runs once per state node of each regime-period and
-    receives every stakeholder's action values there; the stored value carries
-    the state axes and a trailing stakeholder axis.
+    receives every member's action values there; the stored value carries
+    the state axes and a trailing member axis.
     """
     per_node: list[int] = []
     readout = max_Q_over_a.collective_readout
 
     def recording(
         *,
-        stakeholder_Q: Mapping[str, FloatND],
+        member_Q: Mapping[str, FloatND],
         feasibility: BoolND,
         weights: Mapping[str, FloatND | float],
         action_axes: tuple[int, ...],
     ) -> tuple[dict[str, FloatND], BoolND]:
-        per_node.append(sum(prod(q.shape) for q in stakeholder_Q.values()))
+        per_node.append(sum(prod(q.shape) for q in member_Q.values()))
         return readout(
-            stakeholder_Q=stakeholder_Q,
+            member_Q=member_Q,
             feasibility=feasibility,
             weights=weights,
             action_axes=action_axes,
         )
 
-    model, params = make_two_stakeholder_model()
+    model, params = make_two_member_model()
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(max_Q_over_a, "collective_readout", recording)
         values = model.solve(params=params, log_level="off").values
@@ -379,10 +379,10 @@ def _engine_counts() -> tuple[int, int]:
 
 
 @pytest.mark.parametrize("backend", BACKENDS)
-def test_storage_counts_the_stakeholder_axis(backend: FactsBackendName) -> None:
+def test_storage_counts_the_member_axis(backend: FactsBackendName) -> None:
     """The finder's stored values of the model as written equal the solve's."""
     stored, _ = _engine_counts()
-    report = _report("two_stakeholder", backend)
+    report = _report("two_member", backend)
     assert (
         report["original_cost"]["storage"],
         report["layouts"]["curve"][0]["storage"],
@@ -390,10 +390,10 @@ def test_storage_counts_the_stakeholder_axis(backend: FactsBackendName) -> None:
 
 
 @pytest.mark.parametrize("backend", BACKENDS)
-def test_evaluations_count_the_stakeholder_axis(backend: FactsBackendName) -> None:
+def test_evaluations_count_the_member_axis(backend: FactsBackendName) -> None:
     """The finder's evaluations of the model as written equal the solve's action values."""
     _, evaluated = _engine_counts()
-    report = _report("two_stakeholder", backend)
+    report = _report("two_member", backend)
     assert (report["original_cost"]["work"], report["layouts"]["original_count"]) == (
         evaluated,
         evaluated,
@@ -427,7 +427,7 @@ def test_exit_role_keeps_the_projected_state_live_and_is_reported(
         for c, v in report["analysis"]["dependency_closure"].items()
     }
     roles = {
-        r.get("stakeholder")
+        r.get("member")
         for r in report["analysis"]["declarations"]["relations"]
         if r["kind"] == "exit" and r["targets"]
     }
@@ -465,7 +465,7 @@ def test_settlement_reads_stay_live(backend: FactsBackendName) -> None:
 
 @pytest.mark.parametrize("label", ["survivor_gate", "shared_fallback"])
 def test_gates_with_legs_and_shared_fallbacks_stay_complete(label: str) -> None:
-    """A gate with stakeholder legs and fallbacks, one of them shared, is checked."""
+    """A gate with member legs and fallbacks, one of them shared, is checked."""
     report = _report(label, "dense")
     fallbacks = [
         r

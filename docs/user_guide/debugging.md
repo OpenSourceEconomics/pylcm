@@ -406,8 +406,8 @@ from lcm.exceptions import ExecutionPlanningError, PyLCMError
 
 - **`InvalidInitialConditionsError`**: The initial states or regime codes handed to
   `simulate` are invalid --- a wrongly shaped or wrongly typed array, a value off its
-  grid, an invalid discrete or regime code, or a missing `own_stakeholder` entry where
-  roles are required.
+  grid, an invalid discrete or regime code, or a missing `own_member` entry where roles
+  are required.
 
 - **`InvalidAdditionalTargetsError`**: A requested additional DAG target is not
   available on the result.

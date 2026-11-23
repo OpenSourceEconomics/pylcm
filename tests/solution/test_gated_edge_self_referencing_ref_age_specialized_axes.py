@@ -15,12 +15,12 @@ from lcm import (
     AgeSpecializedGrid,
     ByAge,
     LinSpacedGrid,
+    MemberRoute,
     Model,
     ParticipationCheck,
     ParticipationRead,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     StochasticTransition,
     Transition,
     categorical,
@@ -177,7 +177,7 @@ def _build_model(*, reference_regime: RegimeName) -> Model:
         "account": ParticipationCheck(
             predicate=_clears_the_hurdle,
             routes={
-                "only": StakeholderRoute(
+                "only": MemberRoute(
                     fallback=ProjectedRegimeValue(
                         regime="annuity",
                         projection={"principal": _same_balance},

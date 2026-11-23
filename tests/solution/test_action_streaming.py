@@ -318,7 +318,7 @@ def sin_Q_and_F(*, choice: jax.Array) -> tuple[jax.Array, jax.Array]:
 
 
 def _sin_collective_Q_and_F(*, choice: jax.Array) -> tuple[jax.Array, jax.Array]:
-    """Two stakeholders' Q from one `sin` per evaluation."""
+    """Two members' Q from one `sin` per evaluation."""
     return jnp.sin(choice) * jnp.array([1.0, 2.0]), jnp.ones((), dtype=bool)
 
 
@@ -345,7 +345,7 @@ def _collective_jaxpr() -> ClosedJaxpr:
         Q_and_F=_sin_collective_Q_and_F,
         action_names=("choice",),
         block_width=3,
-        stakeholders=("first", "second"),
+        members=("first", "second"),
         weights={"first": jnp.asarray(0.5), "second": jnp.asarray(0.5)},
     )
     return jax.make_jaxpr(lambda choice: streamed(choice=choice))(_CHOICE)
@@ -397,7 +397,7 @@ def _shifted_Q_and_F(
 def _shifted_collective_Q_and_F(
     *, choice: jax.Array, shift: jax.Array
 ) -> tuple[jax.Array, jax.Array]:
-    """Two stakeholders' Q from the action and one per-device state."""
+    """Two members' Q from the action and one per-device state."""
     return (jnp.sin(choice) + shift) * jnp.array([1.0, 2.0]), jnp.ones((), dtype=bool)
 
 
@@ -416,7 +416,7 @@ _SHIFTED_ROUTES = {
         Q_and_F=_shifted_collective_Q_and_F,
         action_names=("choice",),
         block_width=3,
-        stakeholders=("first", "second"),
+        members=("first", "second"),
         weights={"first": jnp.asarray(0.5), "second": jnp.asarray(0.5)},
     )(choice=_CHOICE, shift=shift),
     "ev1": lambda shift: build_streaming_ev1_max_Q_over_a(

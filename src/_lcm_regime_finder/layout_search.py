@@ -18,7 +18,7 @@ def regime_kinds(declarations: Record) -> dict[str, Record]:
 
     A regime is terminal if none of its cells has a successor. Its kind is its
     stage, solver, operators (aggregator, certainty equivalent, Pareto
-    objective), stakeholders and exit (rule, tie, comparison, renegotiation,
+    objective), members and exit (rule, tie, comparison, renegotiation,
     settlement, targets with roles, observed shocks, availability), so a
     collective regime never pools with a single-agent one and regimes with
     different exits never pool; its law is its taste-shock declaration. It has a
@@ -30,7 +30,7 @@ def regime_kinds(declarations: Record) -> dict[str, Record]:
         operators = cell.get("operators", {})
         key = canonical([cell.get("stage"), cell.get("solver_identity"),
                          {k: v for k, v in operators.items() if k != "taste_shocks"},
-                         cell.get("stakeholders"), cell.get("exit_identity")])
+                         cell.get("member_axis"), cell.get("exit_identity")])
         record = kinds.setdefault(cell["regime"], {
             "terminal": True, "key": key, "taste_shocks": operators.get("taste_shocks"),
             "discrete_choice": False})
@@ -71,9 +71,9 @@ def dense_regimes(kinds: Mapping[str, Record]) -> list[tuple[str, ...]]:
     return sorted(groups)
 
 
-def stakeholder_count(cell: Record) -> int:
-    """A collective regime stores one value and one action value per stakeholder."""
-    return len(cell.get("stakeholders") or ()) or 1
+def member_count(cell: Record) -> int:
+    """A collective regime stores one value and one action value per member."""
+    return len(cell.get("member_axis") or ()) or 1
 
 
 type Point = tuple[tuple[str, int], ...]
@@ -317,7 +317,7 @@ class LayoutProblem:
         The block keeps the union of its fibres' coordinates. A status is
         charged by the values it takes on the block's fibres in any period; an
         ordinary coordinate by its whole grid; the regime label of a pooled dense
-        regime by the regimes present; a collective regime by its stakeholders,
+        regime by the regimes present; a collective regime by its members,
         each of which has its own value and action values. No action value is excluded: pylcm
         establishes no infeasible values, so N is empty.
         """
@@ -336,8 +336,8 @@ class LayoutProblem:
                 grids[name] = max(self._size(c["states"][name]) for c in cells if name in c["states"])
         action_grids = {name: max(self._size(c["actions"][name]) for c in cells if name in c["actions"])
                         for name in sorted(actions)}
-        # Members of one dense regime share their stakeholders (`regime_kinds`).
-        rows = prod([len(g) if isinstance(g, list) else g for g in grids.values()]) * stakeholder_count(cells[0])
+        # Members of one dense regime share their member axis (`regime_kinds`).
+        rows = prod([len(g) if isinstance(g, list) else g for g in grids.values()]) * member_count(cells[0])
         storage = len(periods) * rows
         # Infeasible values (Supplement :289-294) under the fill rule: at a member
         # without action j every value but the first is infeasible. A block in
@@ -417,7 +417,7 @@ class LayoutProblem:
     def original_count(self) -> int:
         """The count of the model as written: each original regime on its own grids."""
         return sum(prod(self._size(d) for d in c["states"].values()) * prod(self._size(d) for d in c["actions"].values())
-                   * stakeholder_count(c) for c in self.cells.values())
+                   * member_count(c) for c in self.cells.values())
 
     def dense_count(self) -> int:
         """ev^0 (:851-859): each dense regime charges its whole grid in every active period.
@@ -428,7 +428,7 @@ class LayoutProblem:
         total = 0
         for members in self.dense:
             cells = [c for c in self.cells.values() if c["regime"] in members]
-            rows = (len(members) if len(members) > 1 else 1) * stakeholder_count(cells[0])
+            rows = (len(members) if len(members) > 1 else 1) * member_count(cells[0])
             for kind in ("states", "actions"):
                 for name in sorted({n for c in cells for n in c[kind]}):
                     domains = [self.domains[c[kind][name]] for c in cells if name in c[kind]]

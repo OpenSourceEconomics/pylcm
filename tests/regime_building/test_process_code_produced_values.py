@@ -24,13 +24,13 @@ from lcm import (
     CollectiveUtility,
     DiscreteGrid,
     Gate,
+    MemberRoute,
     Model,
     NormalIIDProcess,
     ParticipationCheck,
     ParticipationRead,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     Transition,
     categorical,
 )
@@ -215,7 +215,7 @@ def _gate_model(*, on_node: bool, enable_jit: bool) -> Model:
                     "landing": Gate(
                         predicate=_closed_by_code,
                         routes={
-                            "only": StakeholderRoute(
+                            "only": MemberRoute(
                                 fallback=ProjectedRegimeValue(
                                     regime="fallback", projection={"z": _project_zero}
                                 )
@@ -240,16 +240,16 @@ def _dissolution_model(*, on_node: bool, enable_jit: bool) -> Model:
     """
     work = DiscreteGrid(category_class=Work)
     routes = {
-        "f": StakeholderRoute(
-            target_stakeholder="f",
+        "f": MemberRoute(
+            target_member="f",
             fallback=ProjectedRegimeValue(
                 regime="a",
-                stakeholder="f",
+                member="f",
                 projection={"z": _project_one if on_node else _project_off_node},
             ),
         ),
-        "m": StakeholderRoute(
-            target_stakeholder="m",
+        "m": MemberRoute(
+            target_member="m",
             fallback=ProjectedRegimeValue(regime="b", projection={"z": _project_one}),
         ),
     }
@@ -259,7 +259,7 @@ def _dissolution_model(*, on_node: bool, enable_jit: bool) -> Model:
             reads={
                 "target_support": ParticipationRead(
                     regime="a",
-                    stakeholder="f",
+                    member="f",
                     kind="Participating",
                     field="support",
                     projection={"z": _landed_z},
@@ -344,8 +344,8 @@ def _simulate_from_source(*, model: Model, roles: tuple[str, ...] = ()) -> pd.Da
         ),
     }
     if roles:
-        initial["own_stakeholder"] = jnp.asarray(
-            [model.stakeholder_names_to_ids[role] for role in roles], dtype=jnp.int32
+        initial["own_member"] = jnp.asarray(
+            [model.member_names_to_ids[role] for role in roles], dtype=jnp.int32
         )
     return (
         model.simulate(

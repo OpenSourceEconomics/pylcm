@@ -19,12 +19,12 @@ from lcm import (
     AgeRange,
     ByAge,
     LinSpacedGrid,
+    MemberRoute,
     Model,
     ParticipationCheck,
     ParticipationRead,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     StochasticTransition,
     Transition,
     categorical,
@@ -364,7 +364,7 @@ def _gated_model(*, phased_fallback: bool) -> Model:
                     ("V_reference", "reference"),
                 )
             },
-            routes={"only": StakeholderRoute(fallback=fallback)},
+            routes={"only": MemberRoute(fallback=fallback)},
         )
     }
     return Model(

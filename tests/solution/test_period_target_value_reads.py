@@ -37,11 +37,11 @@ from lcm import (
     DiscreteGrid,
     ExecutionConfig,
     LinSpacedGrid,
+    MemberRoute,
     Model,
     ParticipationCheck,
     ParticipationRead,
     ProjectedRegimeValue,
-    StakeholderRoute,
     Transition,
     categorical,
     fixed_transition,
@@ -194,7 +194,7 @@ def _gated_model(
                             )
                         },
                         routes={
-                            "only": StakeholderRoute(
+                            "only": MemberRoute(
                                 fallback=ProjectedRegimeValue(
                                     regime="fb",
                                     projection={

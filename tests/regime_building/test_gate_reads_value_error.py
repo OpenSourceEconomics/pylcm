@@ -9,12 +9,12 @@ landing.
 
 import pytest
 
-from lcm import Gate, ProjectedRegimeValue, StakeholderRoute
+from lcm import Gate, MemberRoute, ProjectedRegimeValue
 from lcm.exceptions import GateReadsValueError, RegimeInitializationError
 from lcm.typing import BoolND, ContinuousState, FloatND, UserFunction
 
 _ROUTES = {
-    "only": StakeholderRoute(
+    "only": MemberRoute(
         fallback=ProjectedRegimeValue(regime="fallback", projection={})
     ),
 }
@@ -24,7 +24,7 @@ def _reads_V_target(V_target: FloatND) -> BoolND:
     return V_target > 0.0
 
 
-def _reads_stakeholder_component(*, V_target_f: FloatND, x: ContinuousState) -> BoolND:
+def _reads_member_component(*, V_target_f: FloatND, x: ContinuousState) -> BoolND:
     return V_target_f > x
 
 
@@ -40,7 +40,7 @@ def _reads_state(*, x: ContinuousState, threshold: float) -> BoolND:
     ("predicate", "operand"),
     [
         (_reads_V_target, "V_target"),
-        (_reads_stakeholder_component, "V_target_f"),
+        (_reads_member_component, "V_target_f"),
         (_reads_dissolution_flag, "D_target"),
     ],
 )

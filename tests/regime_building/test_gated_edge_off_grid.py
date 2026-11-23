@@ -29,6 +29,7 @@ from lcm import (
     Gate,
     IrregSpacedGrid,
     LinSpacedGrid,
+    MemberRoute,
     Model,
     NormalIIDProcess,
     ParetoObjective,
@@ -37,7 +38,6 @@ from lcm import (
     Phased,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     Transition,
     categorical,
 )
@@ -153,7 +153,7 @@ def _make_model(
                     "target": Gate(
                         predicate=_gate,
                         routes={
-                            "only": StakeholderRoute(
+                            "only": MemberRoute(
                                 fallback=ProjectedRegimeValue(
                                     regime="fallback",
                                     projection={
@@ -257,7 +257,7 @@ def _make_categorical_process_fallback_model(
                     "target": Gate(
                         predicate=_gate,
                         routes={
-                            "only": StakeholderRoute(
+                            "only": MemberRoute(
                                 fallback=ProjectedRegimeValue(
                                     regime="fallback",
                                     projection={
@@ -501,7 +501,7 @@ def _make_discrete_target_model(*, off_grid: Literal["pointwise", "reject"]) -> 
                     "target": Gate(
                         predicate=_healthy_gate,
                         routes={
-                            "only": StakeholderRoute(
+                            "only": MemberRoute(
                                 fallback=ProjectedRegimeValue(
                                     regime="fallback",
                                     projection={"health": _keep_health},
@@ -611,7 +611,7 @@ def _witness_model() -> Model:
                     "target": ParticipationCheck(
                         predicate=_witness_gate,
                         routes={
-                            "only": StakeholderRoute(
+                            "only": MemberRoute(
                                 fallback=ProjectedRegimeValue(
                                     regime="fallback",
                                     projection={"x": _identity_x},
@@ -749,7 +749,7 @@ def _participation_floor_model(
                             )
                         },
                         routes={
-                            "only": StakeholderRoute(
+                            "only": MemberRoute(
                                 fallback=ProjectedRegimeValue(
                                     regime="fallback", projection={"x": _identity_x}
                                 )
@@ -878,7 +878,7 @@ def _future_participation_floor_model(
                             )
                         },
                         routes={
-                            "only": StakeholderRoute(
+                            "only": MemberRoute(
                                 fallback=Phased(
                                     solve=ProjectedRegimeValue(
                                         regime="fallback",
@@ -1090,17 +1090,17 @@ def test_public_collective_participation_prices_one_actual_target_policy_tuple()
                             f"V_target_{member}": ParticipationRead(
                                 kind="Participating",
                                 regime="target",
-                                stakeholder=member,
+                                member=member,
                                 projection={"x": _identity_x},
                             )
                             for member in ("f", "m")
                         },
                         routes={
-                            member: StakeholderRoute(
-                                target_stakeholder=member,
+                            member: MemberRoute(
+                                target_member=member,
                                 fallback=ProjectedRegimeValue(
                                     regime="fallback",
-                                    stakeholder=member,
+                                    member=member,
                                     projection={"x": _identity_x},
                                 ),
                             )
@@ -1293,16 +1293,16 @@ def test_distinct_incoming_sources_keep_their_own_tuple_routes() -> None:
                             "V_target": ParticipationRead(
                                 kind="Participating",
                                 regime="target",
-                                stakeholder="m",
+                                member="m",
                                 projection={"x": _identity_x},
                             )
                         },
                         routes={
-                            "only": StakeholderRoute(
-                                target_stakeholder="m",
+                            "only": MemberRoute(
+                                target_member="m",
                                 fallback=ProjectedRegimeValue(
                                     regime="fallback",
-                                    stakeholder="f",
+                                    member="f",
                                     projection={"x": _identity_x},
                                 ),
                             )
@@ -1319,24 +1319,24 @@ def test_distinct_incoming_sources_keep_their_own_tuple_routes() -> None:
                             "V_target_f": ParticipationRead(
                                 kind="Participating",
                                 regime="target",
-                                stakeholder="f",
+                                member="f",
                                 projection={"x": _identity_x},
                             )
                         },
                         routes={
-                            "f": StakeholderRoute(
-                                target_stakeholder="f",
+                            "f": MemberRoute(
+                                target_member="f",
                                 fallback=ProjectedRegimeValue(
                                     regime="fallback",
-                                    stakeholder="m",
+                                    member="m",
                                     projection={"x": _settlement_x},
                                 ),
                             ),
-                            "m": StakeholderRoute(
-                                target_stakeholder="m",
+                            "m": MemberRoute(
+                                target_member="m",
                                 fallback=ProjectedRegimeValue(
                                     regime="fallback",
-                                    stakeholder="f",
+                                    member="f",
                                     projection={"x": _shared_participation_eighth},
                                 ),
                             ),
@@ -1354,7 +1354,7 @@ def test_distinct_incoming_sources_keep_their_own_tuple_routes() -> None:
     np.testing.assert_array_equal(
         np.asarray(solution.values[0]["pair"]), [10.875, 5.5625]
     )
-    role = model.stakeholder_names_to_ids
+    role = model.member_names_to_ids
     frame = (
         model.simulate(
             params=params,
@@ -1368,7 +1368,7 @@ def test_distinct_incoming_sources_keep_their_own_tuple_routes() -> None:
                         _SharedParticipationRegimeId.pair,
                     ]
                 ),
-                "own_stakeholder": jnp.asarray([-1, role["f"], role["m"]]),
+                "own_member": jnp.asarray([-1, role["f"], role["m"]]),
                 "x": jnp.asarray([0.0, 0.0, 0.0]),
             },
             log_level="off",
@@ -1382,7 +1382,7 @@ def test_distinct_incoming_sources_keep_their_own_tuple_routes() -> None:
         participation["regime_name"], ["target", "fallback", "fallback"]
     )
     np.testing.assert_array_equal(
-        participation["own_stakeholder"], [role["m"], role["m"], role["f"]]
+        participation["own_member"], [role["m"], role["m"], role["f"]]
     )
     np.testing.assert_array_equal(participation["x"], [0.5, 0.75, 0.625])
     np.testing.assert_array_equal(participation["value_f"], [2.5, 11.25, 11.125])
@@ -1394,7 +1394,7 @@ def test_distinct_incoming_sources_keep_their_own_tuple_routes() -> None:
     np.testing.assert_array_equal(final["subject_id"], [0, 1, 2])
     np.testing.assert_array_equal(final["regime_name"], ["done", "done", "done"])
     np.testing.assert_array_equal(
-        final["own_stakeholder"], [role["m"], role["m"], role["f"]]
+        final["own_member"], [role["m"], role["m"], role["f"]]
     )
     np.testing.assert_array_equal(final["x"], [0.75, 0.875, 0.75])
     np.testing.assert_array_equal(final["value_f"], [1.0, 1.0, 1.0])
@@ -1462,7 +1462,7 @@ def _extra_origin_participation_model() -> Model:
                             )
                         },
                         routes={
-                            "only": StakeholderRoute(
+                            "only": MemberRoute(
                                 fallback=ProjectedRegimeValue(
                                     regime="fallback",
                                     projection={"x": _identity_x},

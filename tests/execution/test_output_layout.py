@@ -68,7 +68,7 @@ def _template(*, collective: bool = False):
 
 
 def _state_mask() -> StateAxesLeading:
-    """A Boolean leaf on the collective template's state axes, stakeholders dropped."""
+    """A Boolean leaf on the collective template's state axes, members dropped."""
     return StateAxesLeading(
         state_names=("kind", "wealth"),
         dtype=jnp.bool_,
@@ -94,7 +94,7 @@ def test_resolver_maps_singleton_value_to_exact_template_sharding():
     assert resolved.expected_leaves[0].shape == template.shape
 
 
-def test_resolver_drops_collective_stakeholder_axis_from_state_leaf_spec():
+def test_resolver_drops_collective_member_axis_from_state_leaf_spec():
     template = _template(collective=True)
 
     resolved = resolve_output_layout(
@@ -117,7 +117,7 @@ def test_resolver_drops_collective_stakeholder_axis_from_state_leaf_spec():
     assert resolved.expected_leaves[1].dtype == jnp.bool_
 
 
-def test_collective_template_may_omit_replicated_stakeholder_spec_entry():
+def test_collective_template_may_omit_replicated_member_spec_entry():
     template = jax.device_put(
         jnp.zeros((len(jax.devices()), 3, 2)),
         jax.NamedSharding(mesh=_mesh(), spec=jax.P("kind", None)),

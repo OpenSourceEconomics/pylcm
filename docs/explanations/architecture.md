@@ -144,7 +144,7 @@ The mapping of public names to files:
 | `execution.py`                                                        | `ExecutionConfig` — devices, sharded states, planner-owned axis widths, the device-memory budget and its headroom fraction.                                                                                                                                |
 | `phased.py`                                                           | `Phased`, the container for phase-specific variants of a regime-slot value.                                                                                                                                                                                |
 | `transition.py`                                                       | `fixed_transition`, `StochasticTransition`, `JointTransition`.                                                                                                                                                                                             |
-| `collective.py`                                                       | `Gate`, `StakeholderRoute`, `ProjectedRegimeValue`, `ValueDependentConstraint`, `CollectiveUtility`, `ParetoObjective`.                                                                                                                                    |
+| `collective.py`                                                       | `Gate`, `MemberRoute`, `ProjectedRegimeValue`, `ValueDependentConstraint`, `CollectiveUtility`, `ParetoObjective`.                                                                                                                                         |
 | `koopmans_aggregation.py`                                             | `KoopmansAggregator`, `LinearAggregator`, `CESAggregator`.                                                                                                                                                                                                 |
 | `certainty_equivalent.py`, `branch_aggregation.py`, `outer_search.py` | Re-export façades for classes whose definitions live in `_lcm/`.                                                                                                                                                                                           |
 | `condition.py`                                                        | `lcm.ref` and the declared-condition vocabulary every solver reads the same way.                                                                                                                                                                           |
@@ -323,7 +323,7 @@ _lcm/regime_building/
 ├── next_state.py         ← compose per-state transitions into a single
 │                            next_state function for simulation
 ├── ndimage.py            ← map-coordinates wrapper for continuous interp
-├── collective.py         ← the stakeholder value gather at the household
+├── collective.py         ← the member value gather at the household
 │                            argmax
 ├── gated_edges.py        ← the gated-edge objects behind mutual-consent
 │                            marriage / dissolution routing
@@ -659,9 +659,9 @@ The two halves of a gated edge use this to split differently:
   empty tuple — and is *replicated* wherever the population is spread over several
   devices.
 - The **gate route** declares `_GATE_ROUTE_SUBJECT_ARG_NAMES` — `next_states`,
-  `new_subject_regime_ids`, `subjects_in_regime`, `own_stakeholder`,
-  `new_own_stakeholder` — and is *partitioned* across the subject devices. The grids the
-  fold published stay shared operands of it.
+  `new_subject_regime_ids`, `subjects_in_regime`, `own_member`, `new_own_member` — and
+  is *partitioned* across the subject devices. The grids the fold published stay shared
+  operands of it.
 
 ### The prepared unbudgeted dispatch route
 

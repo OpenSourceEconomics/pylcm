@@ -25,12 +25,12 @@ from lcm import (
     CollectiveUtility,
     DiscreteGrid,
     IrregSpacedGrid,
+    MemberRoute,
     Model,
     ParticipationCheck,
     ParticipationRead,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     Transition,
     categorical,
 )
@@ -177,10 +177,10 @@ def _self_route_model(
     off_grid: Literal["extrapolate", "clip_state"] = "extrapolate",
 ) -> Model:
     """The participation check into `a` falls back to `a`, projecting the wage to 3."""
-    route = StakeholderRoute(
-        target_stakeholder="f",
+    route = MemberRoute(
+        target_member="f",
         fallback=ProjectedRegimeValue(
-            regime="a", stakeholder="f", projection={"wage": projection}
+            regime="a", member="f", projection={"wage": projection}
         ),
     )
     participation = {
@@ -189,7 +189,7 @@ def _self_route_model(
             reads={
                 "target_support": ParticipationRead(
                     regime="a",
-                    stakeholder="f",
+                    member="f",
                     kind="Participating",
                     field="support",
                     projection={"wage": _identity},

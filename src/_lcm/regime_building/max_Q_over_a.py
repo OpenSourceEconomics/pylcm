@@ -121,7 +121,7 @@ def get_max_Q_over_a(
     has_taste_shocks: bool = False,
     co_map_state_names: tuple[StateName, ...] = (),
     co_map_v_arr_in_axes: tuple[MappingProxyType[RegimeName, int | None], ...] = (),
-    stakeholders: tuple[str, ...] | None = None,
+    member_axis: tuple[str, ...] | None = None,
     pareto_weights: ParetoWeights | None = None,
     cell_width_keyword: str | None = None,
     untiled_state_names: tuple[StateName, ...] = (),
@@ -182,16 +182,16 @@ def get_max_Q_over_a(
             regime name to `0` (the leaf carries that state as its current leading
             axis — slice it) or `None` (the leaf does not carry it — pass it through,
             e.g. a target regime where the state is pruned).
-        stakeholders: Ordered stakeholder names for a collective regime, or `None`
+        member_axis: Ordered member names for a collective regime, or `None`
             (the singleton default). When set, `Q_and_F` returns a stacked
-            per-stakeholder `Q` (trailing stakeholder axis) and the inner reduction
-            reads off each stakeholder's own value at the shared household argmax
+            per-member `Q` (trailing member axis) and the inner reduction
+            reads off each member's own value at the shared household argmax
             (`collective_readout`) instead of the plain masked max; the returned
-            function then yields the pair `(V, D)` — the stakeholder-axis value
+            function then yields the pair `(V, D)` — the member-axis value
             array plus the boolean dissolution flag `D = 1[mask empty]` on the state
             axes — distinct from a numeric `-inf`, which occurs on-path.
         pareto_weights: The household's Pareto weight evaluator; required (and
-            only used) when `stakeholders` is set. Called at each cell with the
+            only used) when `member_axis` is set. Called at each cell with the
             states and parameters its declaration reads.
 
     Returns:
@@ -250,7 +250,7 @@ def get_max_Q_over_a(
         max_Q_over_a = with_signature(
             _HardMaxQOverA(
                 Q_and_F=mapped_action_kernel,
-                stakeholders=stakeholders,
+                member_axis=member_axis,
                 pareto_weights=pareto_weights,
                 return_feasibility=return_feasibility,
             ),
@@ -262,7 +262,7 @@ def get_max_Q_over_a(
             ],
             return_annotation=(
                 "tuple[FloatND, BoolND]"
-                if stakeholders is not None or return_feasibility
+                if member_axis is not None or return_feasibility
                 else "FloatND"
             ),
             enforce=False,
@@ -390,8 +390,8 @@ class _HardMaxQOverA:
     Q_and_F: ActionFunction
     """The regime's action value and feasibility, mapped over the action product."""
 
-    stakeholders: tuple[str, ...] | None
-    """Ordered stakeholder names of a collective regime, or `None` for a singleton."""
+    member_axis: tuple[str, ...] | None
+    """Ordered member names of a collective regime, or `None` for a singleton."""
 
     pareto_weights: ParetoWeights | None
     """The household's Pareto weight evaluator, or `None` for a singleton."""
@@ -413,26 +413,26 @@ class _HardMaxQOverA:
             "tuple[FloatND, BoolND]",
             evaluated.output if type(evaluated) is BoundedResult else evaluated,
         )
-        if self.stakeholders is not None:
+        if self.member_axis is not None:
             # Q_arr carries a trailing
-            # stakeholder axis (the action product-map keeps it last);
+            # member axis (the action product-map keeps it last);
             # F_arr does not — where the regime declares value constraints
             # F_arr already includes them, ANDed in by Q_and_F AFTER computing
-            # Q^s. Split Q_arr per stakeholder, take the household argmax
+            # Q^s. Split Q_arr per member, take the household argmax
             # of the scalarization over the masked action axes, and read
-            # off each stakeholder's OWN value at that shared argmax. The
-            # returned pair is the stakeholder value vector (re-stacked on
+            # off each member's OWN value at that shared argmax. The
+            # returned pair is the member value vector (re-stacked on
             # a trailing axis, which the outer state product-map turns
-            # into `(*states, n_stakeholders)`) plus the dissolution flag D —
+            # into `(*states, n_members)`) plus the dissolution flag D —
             # `True` where NO action is feasible (empty mask), published
             # alongside V and never conflated with a numeric -inf value
             # (which occurs on-path).
             action_axes = tuple(range(F_arr.ndim))
-            stakeholder_Q = {
-                name: Q_arr[..., index] for index, name in enumerate(self.stakeholders)
+            member_Q = {
+                name: Q_arr[..., index] for index, name in enumerate(self.member_axis)
             }
             values, dissolution = collective_readout(
-                stakeholder_Q=stakeholder_Q,
+                member_Q=member_Q,
                 feasibility=F_arr,
                 weights=_evaluate_pareto_weights(
                     pareto_weights=self.pareto_weights,
@@ -441,7 +441,7 @@ class _HardMaxQOverA:
                 action_axes=action_axes,
             )
             output: MaxOutput = (
-                jnp.stack([values[name] for name in self.stakeholders], axis=-1),
+                jnp.stack([values[name] for name in self.member_axis], axis=-1),
                 dissolution,
             )
             return _with_bound_summary(
@@ -465,7 +465,7 @@ def get_streaming_max_Q_over_a(
     has_taste_shocks: bool = False,
     co_map_state_names: tuple[StateName, ...] = (),
     co_map_v_arr_in_axes: tuple[MappingProxyType[RegimeName, int | None], ...] = (),
-    stakeholders: tuple[str, ...] | None = None,
+    member_axis: tuple[str, ...] | None = None,
     pareto_weights: ParetoWeights | None = None,
     action_width_keyword: str = "_lcm_action_block_width",
     cell_width_keyword: str | None = None,
@@ -481,7 +481,7 @@ def get_streaming_max_Q_over_a(
     binds that width before tracing. For each state cell, the fixed-cell reducer
     evaluates actions in canonical C order. A hard-max singleton publishes its best
     value; an EV1 singleton first hard-maxes each discrete-prefix branch and then
-    log-sums the branch values; a collective regime publishes each stakeholder's
+    log-sums the branch values; a collective regime publishes each member's
     value at one shared household winner plus the empty-feasible-set flag. Ordinary
     states use the existing state productmap. Fixed distributed states retain the
     dense route co-map access law: each state axis is mapped in lockstep with axis
@@ -494,7 +494,7 @@ def get_streaming_max_Q_over_a(
     )
     _fail_if_full_V_streaming_route_is_unsupported(
         has_taste_shocks=has_taste_shocks,
-        stakeholders=stakeholders,
+        member_axis=member_axis,
         pareto_weights=pareto_weights,
     )
     if has_taste_shocks and return_feasibility:
@@ -532,7 +532,7 @@ def get_streaming_max_Q_over_a(
             action_names=action_names,
             n_discrete_action_axes=n_discrete_action_axes,
             has_taste_shocks=has_taste_shocks,
-            stakeholders=stakeholders,
+            member_axis=member_axis,
             pareto_weights=pareto_weights,
             q_and_f_arg_names=q_and_f_arg_names,
             action_width_keyword=action_width_keyword,
@@ -552,7 +552,7 @@ def get_streaming_max_Q_over_a(
         ],
         return_annotation=(
             "tuple[FloatND, BoolND]"
-            if stakeholders is not None or return_feasibility
+            if member_axis is not None or return_feasibility
             else "FloatND"
         ),
         enforce=False,
@@ -632,8 +632,8 @@ class _StreamedMaxQOverA:
     has_taste_shocks: bool
     """Whether the regime declares EV1 taste shocks on its discrete actions."""
 
-    stakeholders: tuple[str, ...] | None
-    """Ordered stakeholder names of a collective regime, or `None` for a singleton."""
+    member_axis: tuple[str, ...] | None
+    """Ordered member names of a collective regime, or `None` for a singleton."""
 
     pareto_weights: ParetoWeights | None
     """The household's Pareto weight evaluator, or `None` for a singleton."""
@@ -668,7 +668,7 @@ class _StreamedMaxQOverA:
         if (
             has_action_integrity(function=self.Q_and_F)
             and not self.has_taste_shocks
-            and self.stakeholders is None
+            and self.member_axis is None
         ):
             fixed_cell = build_streaming_max_Q_over_a(
                 Q_and_F=self.Q_and_F,
@@ -717,7 +717,7 @@ class _StreamedMaxQOverA:
                 ev1_output = ev1_result.smoothed_value
             return cast("BoundedMaxOutput", ev1_output)
 
-        if self.stakeholders is None:
+        if self.member_axis is None:
             n_actions = math.prod(
                 jnp.shape(cast("Array", states_actions_params[name]))[0]
                 for name in self.action_names
@@ -771,7 +771,7 @@ class _StreamedMaxQOverA:
             Q_and_F=self.Q_and_F,
             action_names=self.action_names,
             block_width=action_block_width,
-            stakeholders=self.stakeholders,
+            members=self.member_axis,
             weights=_evaluate_pareto_weights(
                 pareto_weights=self.pareto_weights,
                 states_actions_params=states_actions_params,
@@ -784,12 +784,12 @@ class _StreamedMaxQOverA:
         if isinstance(collective_result, BoundedResult):
             result = collective_result.output
             return BoundedResult(
-                output=(result.best_stakeholder_values, ~result.any_feasible),
+                output=(result.best_member_values, ~result.any_feasible),
                 bound_status=collective_result.bound_status,
                 query_status=collective_result.query_status,
             )
         return (
-            collective_result.best_stakeholder_values,
+            collective_result.best_member_values,
             ~collective_result.any_feasible,
         )
 
@@ -1050,17 +1050,17 @@ def _fail_if_action_width_keyword_collides(
 def _fail_if_full_V_streaming_route_is_unsupported(
     *,
     has_taste_shocks: bool,
-    stakeholders: tuple[str, ...] | None,
+    member_axis: tuple[str, ...] | None,
     pareto_weights: ParetoWeights | None,
 ) -> None:
     """Reject routes unsupported by full-value action streaming."""
-    if has_taste_shocks and stakeholders is not None:
+    if has_taste_shocks and member_axis is not None:
         raise NotImplementedError(
             "Full-V action streaming does not support collective EV1 regimes."
         )
-    if (stakeholders is None) != (pareto_weights is None):
+    if (member_axis is None) != (pareto_weights is None):
         raise ValueError(
-            "Collective action streaming requires stakeholders and Pareto weights."
+            "Collective action streaming requires members and Pareto weights."
         )
 
 
@@ -1132,7 +1132,7 @@ def get_argmax_and_max_Q_over_a(
     state_names: tuple[StateName, ...],
     n_discrete_action_axes: int = 0,
     has_taste_shocks: bool = False,
-    stakeholders: tuple[str, ...] | None = None,
+    member_axis: tuple[str, ...] | None = None,
     pareto_weights: ParetoWeights | None = None,
 ) -> ArgmaxQOverAFunction[BoundedArgmaxOutput]:
     r"""Get the function returning the arguments maximizing Q over all actions.
@@ -1169,18 +1169,18 @@ def get_argmax_and_max_Q_over_a(
             combination mean-zero `scale * (Gumbel(0, 1) - EULER_GAMMA)` noise
             is added to the masked maxima over the continuous axes before the
             discrete argmax — exactly logit-consistent with the smoothed solve.
-        stakeholders: Ordered stakeholder names for a collective regime, or
+        member_axis: Ordered member names for a collective regime, or
             `None` (the singleton default). When
-            set, `Q_and_F` returns a stacked per-stakeholder `Q` (trailing
-            stakeholder axis); the household argmax of the weighted
+            set, `Q_and_F` returns a stacked per-member `Q` (trailing
+            member axis); the household argmax of the weighted
             scalarization is computed once (`collective_argmax_and_readout`)
-            and each stakeholder's own value is gathered at that shared
+            and each member's own value is gathered at that shared
             index — mirrors the solve-side `get_max_Q_over_a` collective
             branch so simulate recomputes the identical argmax. Mutually
             exclusive with `has_taste_shocks` (rejected at regime
             construction for collective regimes).
         pareto_weights: The household's Pareto weight evaluator; required (and
-            only used) when `stakeholders` is set. Called at each cell with the
+            only used) when `member_axis` is set. Called at each cell with the
             states and parameters its declaration reads.
 
     Returns:
@@ -1233,7 +1233,7 @@ def get_argmax_and_max_Q_over_a(
         argmax_and_max_Q_over_a = with_signature(
             _HardMaxArgmaxQOverA(
                 Q_and_F=mapped_action_kernel,
-                stakeholders=stakeholders,
+                member_axis=member_axis,
                 pareto_weights=pareto_weights,
             ),
             args=[
@@ -1323,8 +1323,8 @@ class _HardMaxArgmaxQOverA:
     Q_and_F: ActionFunction
     """The regime's action value and feasibility, mapped over the action product."""
 
-    stakeholders: tuple[str, ...] | None
-    """Ordered stakeholder names of a collective regime, or `None` for a singleton."""
+    member_axis: tuple[str, ...] | None
+    """Ordered member names of a collective regime, or `None` for a singleton."""
 
     pareto_weights: ParetoWeights | None
     """The household's Pareto weight evaluator, or `None` for a singleton."""
@@ -1343,22 +1343,22 @@ class _HardMaxArgmaxQOverA:
             "tuple[FloatND, BoolND]",
             evaluated.output if type(evaluated) is BoundedResult else evaluated,
         )
-        if self.stakeholders is not None:
+        if self.member_axis is not None:
             # Mirrors the solve-side collective
             # branch in `get_max_Q_over_a` — split the stacked Q by
-            # stakeholder, argmax the household scalarization once over
+            # member, argmax the household scalarization once over
             # the value-masked feasible action set, and gather
-            # each stakeholder's OWN value at that shared index. The
+            # each member's OWN value at that shared index. The
             # simulate-only addition vs. the solve readout
             # (`collective_readout`) is the argmax index itself, needed
-            # to look up which JOINT action both stakeholders actually
+            # to look up which JOINT action both members actually
             # took (`_lookup_values_from_indices` in `simulate.py`).
             action_axes = tuple(range(F_arr.ndim))
-            stakeholder_Q = {
-                name: Q_arr[..., index] for index, name in enumerate(self.stakeholders)
+            member_Q = {
+                name: Q_arr[..., index] for index, name in enumerate(self.member_axis)
             }
             argmax_flat, values, _dissolution = collective_argmax_and_readout(
-                stakeholder_Q=stakeholder_Q,
+                member_Q=member_Q,
                 feasibility=F_arr,
                 weights=_evaluate_pareto_weights(
                     pareto_weights=self.pareto_weights,
@@ -1366,7 +1366,7 @@ class _HardMaxArgmaxQOverA:
                 ),
                 action_axes=action_axes,
             )
-            V_stacked = jnp.stack([values[name] for name in self.stakeholders], axis=-1)
+            V_stacked = jnp.stack([values[name] for name in self.member_axis], axis=-1)
             return _with_bound_summary(
                 evaluated=evaluated,
                 output=(jnp.where(_dissolution, -1, argmax_flat), V_stacked),

@@ -208,7 +208,7 @@ deliberately dense, unsupported, or trivial declares no `action_product` axis.
 The separate `cell` axis tiles the flattened Cartesian product of inner states.
 `ExecutionConfig(axis_widths={"cell": n})` bounds the number of state cells evaluated
 together. Each output leaf recovers its state axes; collective values also retain their
-trailing stakeholder axis.
+trailing member axis.
 Sharded states stay outside this loop; fixed states also retain their co-mapping with
 continuation values, preserving device-local reads. Empty and singleton state products
 declare no `cell` axis. A core
@@ -222,7 +222,7 @@ This matrix uses exactly three disposition labels:
 | Route shape | Disposition | Meaning |
 | --- | --- | --- |
 | Singleton hard max | streamed | Action blocks feed the hard-max reduction. |
-| Collective hard max | deliberately dense | Dense action reduction preserves candidate identity, stakeholder readout, and dissolution; the streamed reference currently regresses the measured resource envelope. |
+| Collective hard max | deliberately dense | Dense action reduction preserves candidate identity, member readout, and dissolution; the streamed reference currently regresses the measured resource envelope. |
 | Singleton EV1 with at least one discrete action | deliberately dense | Dense action reduction preserves canonical floating-point reduction order and winner identity; the blocked reference does not yet preserve that contract. |
 | Same-period references, edge references, or gated targets without a co-mapped state | streamed | Each target artifact and its exact source argument path is declared; the resolved transfer supplies it as a dynamic input to the streamed solve core. |
 | Ordinary co-mapped state route without a separate reference channel | streamed | Continuation leaves co-map with the state cell while actions stream. |

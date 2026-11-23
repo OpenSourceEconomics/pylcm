@@ -21,11 +21,11 @@ def test_stateless_collective_target_enters_the_continuation():
 
     The `couple` regime chooses work or leisure over a two-point wage grid and
     transitions with probability one into a collective terminal regime whose
-    household value is `(10, 0)` over the stakeholders `("f", "m")`. With
-    `beta = 0.95`, each stakeholder's action value is
+    household value is `(10, 0)` over the members `("f", "m")`. With
+    `beta = 0.95`, each member's action value is
     `Q^s = u^s + 0.95 * V_terminal^s`, so leisure wins at the low wage and work
     at the high wage, and the period-0 value function over
-    `(wage, stakeholder)` is `((39.5, 0), (49.5, 80))`.
+    `(wage, member)` is `((39.5, 0), (49.5, 80))`.
     """
     model, params = make_stateless_collective_target_model()
 

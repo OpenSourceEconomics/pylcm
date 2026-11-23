@@ -1,13 +1,13 @@
 """Integration test for the terminal collective-regime solve.
 
-A terminal `Regime(stakeholders=("f", "m"))` solved end-to-end through the real
+A terminal `Regime(members=("f", "m"))` solved end-to-end through the real
 processing + backward-induction path produces a value-function array carrying a
-trailing stakeholder axis, with each stakeholder's value read off its OWN
+trailing member axis, with each member's value read off its OWN
 utility at the shared household argmax.
 
 The economics mirror `test_collective_readout.test_terminal_e1_end_to_end_with_
 real_utilities`: a binary work choice and a two-point wage state where the
-household's joint argmax differs from either stakeholder's own preferred action
+household's joint argmax differs from either member's own preferred action
 (at the low wage the wife's leisure taste dominates the joint objective; at the
 high wage her working wins jointly).
 """
@@ -48,7 +48,7 @@ def _utility_m(*, wage: FloatND, work: DiscreteAction) -> FloatND:
     return 2.0 * consumption
 
 
-def test_terminal_collective_regime_solves_with_stakeholder_axis():
+def test_terminal_collective_regime_solves_with_member_axis():
     regime = Regime(
         states={"wage": LinSpacedGrid(start=10.0, stop=40.0, n_points=2)},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -94,14 +94,14 @@ def test_terminal_collective_regime_solves_with_stakeholder_axis():
     _sim_policies = _bi_result.simulation_policies
 
     V = solution[0]["couple"]
-    # V carries a trailing stakeholder axis: (wage grid = 2) x (stakeholders = 2).
+    # V carries a trailing member axis: (wage grid = 2) x (members = 2).
     assert V.shape == (2, 2)
 
-    # Each stakeholder's value is its OWN utility at the shared household argmax
+    # Each member's value is its OWN utility at the shared household argmax
     # of O = 1/2 (u_f + u_m):
     #   wage=10: a=0 -> u_f=30, u_m=0 (O=15);  a=1 -> u_f=10, u_m=20 (O=15) tie -> a=0.
     #   wage=40: a=0 -> u_f=30, u_m=0 (O=15);  a=1 -> u_f=40, u_m=80 (O=60)      -> a=1.
     np.testing.assert_allclose(np.asarray(V[:, 0]), [30.0, 40.0])  # wife (f)
     np.testing.assert_allclose(np.asarray(V[:, 1]), [0.0, 80.0])  # husband (m)
-    # The two stakeholder value arrays genuinely differ (not the scalarization).
+    # The two member value arrays genuinely differ (not the scalarization).
     assert not np.allclose(np.asarray(V[:, 0]), np.asarray(V[:, 1]))

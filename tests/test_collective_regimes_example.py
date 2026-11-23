@@ -14,8 +14,8 @@ from lcm_examples.collective_regimes import (
 from tests.conftest import DECIMAL_PRECISION
 
 
-def test_shared_decision_values_are_the_stakeholders_values_at_one_argmax() -> None:
-    """Both stakeholder values are read at the household's shared work choice."""
+def test_shared_decision_values_are_the_members_values_at_one_argmax() -> None:
+    """Both member values are read at the household's shared work choice."""
     model = get_shared_decision_model()
 
     solution = model.solve(params=get_params(), log_level="debug")
@@ -60,9 +60,9 @@ def test_dissolution_routes_the_simulated_person_to_their_single_regime() -> Non
         # Every subject starts in the collective regime, so each one occupies a
         # household role from the first period on, and that role decides which
         # fallback a dissolving row takes.
-        "own_stakeholder": jnp.full(
+        "own_member": jnp.full(
             3,
-            model.stakeholder_names_to_ids["f"],
+            model.member_names_to_ids["f"],
             dtype=jnp.int32,
         ),
     }
@@ -101,9 +101,7 @@ def test_participation_support_routes_without_retained_dissolution_artifacts() -
             "regime_id": jnp.full(
                 3, model.regime_names_to_ids["married"], dtype=jnp.int32
             ),
-            "own_stakeholder": jnp.full(
-                3, model.stakeholder_names_to_ids["f"], dtype=jnp.int32
-            ),
+            "own_member": jnp.full(3, model.member_names_to_ids["f"], dtype=jnp.int32),
         },
         seed=0,
         log_level="off",

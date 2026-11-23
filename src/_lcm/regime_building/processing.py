@@ -159,7 +159,7 @@ from _lcm.regime_building.gated_edges import (
     EDGE_PERIOD_CONTEXT_ARGS,
     CompiledEdgeFold,
     ResolvedGatedEdge,
-    ResolvedStakeholderRoute,
+    ResolvedMemberRoute,
     build_fallback_state_projector,
     get_edge_fold,
     get_edge_simulate_gate_evaluator,
@@ -799,7 +799,7 @@ def prepare_regime_builder(
     )
 
     # Same-period reference declarations are a
-    # cross-regime contract — validate it (existence, stakeholder layout,
+    # cross-regime contract — validate it (existence, member layout,
     # projection coverage, co-activity) and reject reference cycles before any
     # kernel is built.
     _fail_if_same_period_refs_invalid(
@@ -813,7 +813,7 @@ def prepare_regime_builder(
     )
 
     # Gated-edge declarations are a cross-regime
-    # contract — validate endpoints, stakeholder layout, and projection coverage
+    # contract — validate endpoints, member layout, and projection coverage
     # before any kernel is built.
     _fail_if_gated_edges_invalid(
         user_regimes=user_regimes,
@@ -1426,10 +1426,10 @@ class _CanonicalRegimeBuilder:
         ]
 
         # Resolve the household Pareto weights once (equal weights when
-        # undeclared) and thread the stakeholder names / weights into both
+        # undeclared) and thread the member names / weights into both
         # phase builds. Both are `None` for a singleton (non-collective)
         # regime, which is what the downstream builds branch on.
-        stakeholders = user_regime.stakeholders
+        member_axis = user_regime.member_axis
         pareto_weights = _resolve_pareto_weights(user_regime=user_regime, spec=spec)
         # The (deduplicated, order-preserving) regimes
         # whose same-period V this regime reads; drives the within-period
@@ -1533,7 +1533,7 @@ class _CanonicalRegimeBuilder:
             continuation_demanded=regime_name in self.egm_continuation_targets,
             has_taste_shocks=user_regime.taste_shocks is not None,
             value_aware_feasibility=value_aware_feasibility,
-            stakeholders=stakeholders,
+            member_axis=member_axis,
             pareto_weights=pareto_weights,
             same_period_ref_regimes=same_period_ref_regimes,
             edge_reference_regimes=edge_reference_regimes,
@@ -1558,7 +1558,7 @@ class _CanonicalRegimeBuilder:
         regime_name: RegimeName,
         prepared: _PreparedCanonicalSolution,
         solution_build: _SolutionBuild,
-        stakeholder_names_to_ids: MappingProxyType[str, int],
+        member_names_to_ids: MappingProxyType[str, int],
     ) -> tuple[Regime, _SimulationBuild]:
         """Reuse original simulation/context assembly with the real solve phase."""
         user_regime = self.representative_user_regimes[regime_name]
@@ -1569,7 +1569,7 @@ class _CanonicalRegimeBuilder:
         granular_param_expansions = self.regime_to_granular_param_expansions[
             regime_name
         ]
-        stakeholders = user_regime.stakeholders
+        member_axis = user_regime.member_axis
         pareto_weights = prepared.solution.pareto_weights
         same_period_ref_regimes = prepared.solution.context.same_period_ref_regimes
         edge_reference_regimes = prepared.solution.context.edge_reference_regimes
@@ -1653,7 +1653,7 @@ class _CanonicalRegimeBuilder:
             solver=solution_build.solver,
             certainty_equivalent=user_regime.certainty_equivalent,
             value_aware_feasibility=value_aware_feasibility,
-            stakeholders=stakeholders,
+            member_axis=member_axis,
             pareto_weights=pareto_weights,
             post_decision_shocks=self.post_decision_shocks.get(
                 regime_name, MappingProxyType({})
@@ -1680,8 +1680,8 @@ class _CanonicalRegimeBuilder:
             granular_param_expansions=granular_param_expansions,
             has_taste_shocks=user_regime.taste_shocks is not None,
             certainty_equivalent=user_regime.certainty_equivalent,
-            stakeholders=stakeholders,
-            stakeholder_names_to_ids=stakeholder_names_to_ids,
+            member_axis=member_axis,
+            member_names_to_ids=member_names_to_ids,
             same_period_ref_regimes=same_period_ref_regimes,
             edge_reference_regimes=edge_reference_regimes,
         )
@@ -1712,9 +1712,9 @@ class _CanonicalRegimeBuilder:
         """
         # One role vocabulary for the whole model, carried on every regime so
         # a simulated row's role means the same thing wherever it goes.
-        stakeholder_names_to_ids = build_role_vocabulary(
+        member_names_to_ids = build_role_vocabulary(
             {
-                name: regime.stakeholders
+                name: regime.member_axis
                 for name, regime in self.representative_user_regimes.items()
             }
         )
@@ -1742,7 +1742,7 @@ class _CanonicalRegimeBuilder:
                 regime_name=regime_name,
                 prepared=prepared,
                 solution_build=solution_build,
-                stakeholder_names_to_ids=stakeholder_names_to_ids,
+                member_names_to_ids=member_names_to_ids,
             )
             canonical_regimes[regime_name] = regime
             simulation_builds[regime_name] = simulation_build
@@ -1784,7 +1784,7 @@ class _CanonicalRegimeBuilder:
         if not any(
             regime.exit is not None
             or (
-                regime.stakeholders is not None
+                regime.member_axis is not None
                 and any(solution_builds[name].context.current_iid_plans.values())
             )
             for name, regime in self.representative_user_regimes.items()
@@ -2881,7 +2881,7 @@ def _attach_gated_edge_folds(
                     target_functions=target_solution.functions,
                     target_deterministic_transitions=target_deterministic_transitions,
                     reference_v_info=v_info,
-                    target_stakeholders=user_regimes[target_name].stakeholders,
+                    target_member_axis=user_regimes[target_name].member_axis,
                 )
                 # Only the grid-level half is jitted here. The combiner runs
                 # inside the source's own decision kernel, which is jitted as a
@@ -2906,7 +2906,7 @@ def _attach_gated_edge_folds(
                     target_v_info=v_info[target_name],
                     target_functions=target_solution.functions,
                     target_deterministic_transitions=target_deterministic_transitions,
-                    target_stakeholders=user_regimes[target_name].stakeholders,
+                    target_member_axis=user_regimes[target_name].member_axis,
                 )
             folds_by_period = expand_groups_to_periods(
                 grouped_periods=grouped_fold_periods, built_by_group=folds_by_group
@@ -3064,54 +3064,50 @@ def _resolve_gated_edge(
     """Resolve one user `GatedEdge` to its engine form.
 
     Validated already by `_fail_if_gated_edges_invalid`, so every named regime
-    and stakeholder exists. Legs are ordered by the SOURCE's stakeholder tuple
-    (a singleton source has one leg with `source_stakeholder=None`); each leg's
-    OPEN-branch target component and its fallback stakeholder become trailing-
+    and member exists. Legs are ordered by the SOURCE's member tuple
+    (a singleton source has one leg with `source_member=None`); each leg's
+    OPEN-branch target component and its fallback member become trailing-
     axis indices.
     """
-    target_stakeholders = user_regimes[target_name].stakeholders
-    source_stakeholders = user_regimes[source_name].stakeholders
+    target_member_axis = user_regimes[target_name].member_axis
+    source_member_axis = user_regimes[source_name].member_axis
 
-    def _stakeholder_index(
-        *, regime_name: RegimeName, stakeholder: str | None
-    ) -> int | None:
-        regime_stakeholders = user_regimes[regime_name].stakeholders
-        if regime_stakeholders is None:
+    def _member_index(*, regime_name: RegimeName, member: str | None) -> int | None:
+        regime_member_axis = user_regimes[regime_name].member_axis
+        if regime_member_axis is None:
             return None
-        return regime_stakeholders.index(cast("str", stakeholder))
+        return regime_member_axis.index(cast("str", member))
 
     def _resolve_ref(ref: ProjectedRegimeValue) -> ResolvedProjectedRegimeValue:
         return ResolvedProjectedRegimeValue(
             regime=ref.regime,
             projection=ref.projection,
-            stakeholder_index=_stakeholder_index(
-                regime_name=ref.regime, stakeholder=ref.stakeholder
-            ),
-            stakeholder=ref.stakeholder,
+            member_index=_member_index(regime_name=ref.regime, member=ref.member),
+            member=ref.member,
         )
 
-    # A collective source's legs are iterated in its stakeholder order so
-    # `Wbar`'s trailing axis matches the source's stakeholder axis; a singleton
+    # A collective source's legs are iterated in its member order so
+    # `Wbar`'s trailing axis matches the source's member axis; a singleton
     # source has exactly one leg (keyed arbitrarily), stored with source
-    # stakeholder `None`.
-    if source_stakeholders is None:
+    # member `None`.
+    if source_member_axis is None:
         leg_order: list[tuple[str, str | None]] = [(next(iter(edge.legs)), None)]
     else:
-        leg_order = [(s, s) for s in source_stakeholders]
+        leg_order = [(s, s) for s in source_member_axis]
 
-    legs: list[ResolvedStakeholderRoute] = []
-    for leg_key, source_stakeholder in leg_order:
+    legs: list[ResolvedMemberRoute] = []
+    for leg_key, source_member in leg_order:
         leg = edge.legs[leg_key]
         legs.append(
-            ResolvedStakeholderRoute(
+            ResolvedMemberRoute(
                 route=leg_key,
-                source_stakeholder=source_stakeholder,
+                source_member=source_member,
                 target_component_index=(
                     None
-                    if target_stakeholders is None
-                    else target_stakeholders.index(cast("str", leg.target_stakeholder))
+                    if target_member_axis is None
+                    else target_member_axis.index(cast("str", leg.target_member))
                 ),
-                target_stakeholder=leg.target_stakeholder,
+                target_member=leg.target_member,
                 fallback=_resolve_ref(leg.solve_fallback),
                 simulate_fallback=(
                     _resolve_ref(leg.simulate_fallback)
@@ -3180,13 +3176,13 @@ def _resolve_pareto_weights(
         ModelInitializationError: If a weight reads one of the regime's
             actions.
     """
-    stakeholders = user_regime.stakeholders
-    if stakeholders is None:
+    member_axis = user_regime.member_axis
+    if member_axis is None:
         return None
     _fail_if_a_pareto_weight_reads_an_action(user_regime)
     return build_pareto_weights(
         objective=user_regime.pareto_objective,
-        stakeholders=stakeholders,
+        members=member_axis,
         state_names=frozenset(user_regime.states),
         carried_imputations=MappingProxyType(
             {
@@ -3219,12 +3215,12 @@ def _fail_if_a_pareto_weight_reads_an_action(user_regime: UserRegime) -> None:
         read = sorted(actions & set(get_union_of_args([weight])))
         if read:
             msg = (
-                f"The Pareto weight of stakeholder {name!r} reads the "
+                f"The Pareto weight of member {name!r} reads the "
                 f"action(s) {read}. A weight that varies with the choice it "
                 "helps make states a different household objective per "
                 "candidate, whose maximizer is a Pareto optimum of no fixed "
                 "weighting. Read a state instead, or move the dependence into "
-                "the stakeholders' own utilities."
+                "the members' own utilities."
             )
             raise ModelInitializationError(msg)
 
@@ -3235,17 +3231,17 @@ def _fail_if_collective_regime_targets_unsupported(
     laws: RegimeLaws,
     nested_transitions_by_regime: Mapping[RegimeName, _TransitionBundles],
 ) -> None:
-    """Reject regime transitions mixing collective and mismatched stakeholders.
+    """Reject regime transitions mixing collective and mismatched members.
 
     The continuation reads each target's
-    `next_V_arr` with the SOURCE regime's stakeholder layout: a collective
+    `next_V_arr` with the SOURCE regime's member layout: a collective
     source expects every target leaf to carry the identical trailing
-    stakeholder axis, and a singleton source expects none. Per-stakeholder
-    routing across stakeholder layouts (dissolution into `single_f`/`single_m`,
+    member axis, and a singleton source expects none. Per-member
+    routing across member layouts (dissolution into `single_f`/`single_m`,
     marriage formation) requires a declared gated edge or typed participation check.
-    Each returns a continuation in the original source's stakeholder layout.
+    Each returns a continuation in the original source's member layout.
     An ordinary non-terminal transition whose reachable target declares a
-    different `stakeholders` tuple is rejected here. Both-`None` (the singleton default)
+    different `member_axis` tuple is rejected here. Both-`None` (the singleton default)
     never enters the comparison, so today's path is untouched.
 
     Args:
@@ -3256,7 +3252,7 @@ def _fail_if_collective_regime_targets_unsupported(
 
     Raises:
         NotImplementedError: If a non-terminal regime's reachable target
-            declares a different `stakeholders` tuple.
+            declares a different `member_axis` tuple.
 
     """
     for regime_name, user_regime in user_regimes.items():
@@ -3266,7 +3262,7 @@ def _fail_if_collective_regime_targets_unsupported(
             target_regime = user_regimes.get(target_regime_name)
             if target_regime is None:
                 continue
-            if user_regime.stakeholders is None and target_regime.stakeholders is None:
+            if user_regime.member_axis is None and target_regime.member_axis is None:
                 continue
             # Declared gates and participation checks return source-owned continuation
             # values through explicit member routes. Ordinary transitions still
@@ -3277,19 +3273,19 @@ def _fail_if_collective_regime_targets_unsupported(
                 or target_regime_name in laws[regime_name].participation
             ):
                 continue
-            if user_regime.stakeholders != target_regime.stakeholders:
+            if user_regime.member_axis != target_regime.member_axis:
                 msg = (
-                    f"Regime '{regime_name}' (stakeholders="
-                    f"{user_regime.stakeholders}) can reach regime "
-                    f"'{target_regime_name}' (stakeholders="
-                    f"{target_regime.stakeholders}), but every transition "
+                    f"Regime '{regime_name}' (member_axis="
+                    f"{user_regime.member_axis}) can reach regime "
+                    f"'{target_regime_name}' (member_axis="
+                    f"{target_regime.member_axis}), but every transition "
                     "target of a collective regime must be a collective regime "
-                    "with the identical `stakeholders` tuple (and a singleton "
+                    "with the identical `members` tuple (and a singleton "
                     "regime cannot target a collective one). A singleton source "
                     "names the role it enters this target in with "
-                    "`Transition(roles=...)`; other per-stakeholder routing "
+                    "`Transition(roles=...)`; other per-member routing "
                     "across these layouts requires a `Gate` or a "
-                    "`ParticipationCheck` with explicit stakeholder routes for "
+                    "`ParticipationCheck` with explicit member routes for "
                     "this target."
                 )
                 raise NotImplementedError(msg)
@@ -3305,7 +3301,7 @@ class _ValueAwareFeasibility:
     is what makes that structural rather than a synchronization duty.
 
     A singleton regime declares neither (`Regime.__post_init__` rejects both
-    unless `stakeholders` is set), so both mappings are empty there.
+    unless `member_axis` is set), so both mappings are empty there.
     """
 
     value_constraints: ConstraintFunctionsMapping = MappingProxyType({})
@@ -3329,13 +3325,13 @@ def _resolve_value_aware_feasibility(
 
     Value-constraint predicates carry user params exactly like ordinary
     constraints, so they are renamed to their qnames; the user's same-period
-    reference declarations become the engine-side form (the stakeholder name
-    becomes the index on the reference V's trailing stakeholder axis).
+    reference declarations become the engine-side form (the member name
+    becomes the index on the reference V's trailing member axis).
 
     Args:
         user_regime: The finalized user regime whose declarations are resolved.
         user_regimes: Mapping of regime names to finalized user regimes, read
-            for each reference regime's stakeholder layout.
+            for each reference regime's member layout.
         regime_params_template: The regime's parameter template, supplying the
             qname prefix of each predicate's params.
 
@@ -3369,23 +3365,23 @@ def _resolve_same_period_refs(
 
     The declarations were validated by
     `_fail_if_same_period_refs_invalid`, so the reference regime exists and its
-    stakeholder naming is consistent; here the named stakeholder becomes the
-    index on the reference V's trailing stakeholder axis (`None` for a
+    member naming is consistent; here the named member becomes the
+    index on the reference V's trailing member axis (`None` for a
     singleton reference).
     """
     resolved: dict[str, ResolvedProjectedRegimeValue] = {}
     for ref_name, ref in user_regime.same_period_refs.items():
-        ref_stakeholders = user_regimes[ref.regime].stakeholders
-        stakeholder_index = (
+        ref_member_axis = user_regimes[ref.regime].member_axis
+        member_index = (
             None
-            if ref_stakeholders is None
-            else ref_stakeholders.index(cast("str", ref.stakeholder))
+            if ref_member_axis is None
+            else ref_member_axis.index(cast("str", ref.member))
         )
         resolved[ref_name] = ResolvedProjectedRegimeValue(
             regime=ref.regime,
             projection=ref.projection,
-            stakeholder_index=stakeholder_index,
-            stakeholder=ref.stakeholder,
+            member_index=member_index,
+            member=ref.member,
         )
     return MappingProxyType(resolved)
 
@@ -3399,7 +3395,7 @@ def _fail_if_same_period_refs_invalid(
     """Validate every `same_period_refs` declaration against the other regimes.
 
     Checks, per reference: the reference regime
-    exists; a collective reference names one of its stakeholders while a
+    exists; a collective reference names one of its members while a
     singleton reference names none; the projection covers exactly the reference
     regime's solve states (the coordinates its V is interpolated over); and the
     reference regime is active in every period the declaring regime is active
@@ -3423,27 +3419,27 @@ def _fail_if_same_period_refs_invalid(
                     f"Known regimes: {sorted(user_regimes)}."
                 )
                 raise ModelInitializationError(msg)
-            if target_regime.stakeholders is None:
-                if ref.stakeholder is not None:
+            if target_regime.member_axis is None:
+                if ref.member is not None:
                     msg = (
-                        f"{prefix}names stakeholder '{ref.stakeholder}', but "
+                        f"{prefix}names member '{ref.member}', but "
                         "the reference regime is a singleton — its V carries "
-                        "no stakeholder axis. Drop the `stakeholder`."
+                        "no member axis. Drop the `member`."
                     )
                     raise ModelInitializationError(msg)
-            elif ref.stakeholder is None:
+            elif ref.member is None:
                 msg = (
                     f"{prefix}the reference regime is collective "
-                    f"(stakeholders={target_regime.stakeholders}), so the "
+                    f"(members={target_regime.member_axis}), so the "
                     "reference must name WHOSE value to read via "
-                    "`stakeholder=...`."
+                    "`member=...`."
                 )
                 raise ModelInitializationError(msg)
-            elif ref.stakeholder not in target_regime.stakeholders:
+            elif ref.member not in target_regime.member_axis:
                 msg = (
-                    f"{prefix}names stakeholder '{ref.stakeholder}', which is "
-                    "not one of the reference regime's stakeholders "
-                    f"{target_regime.stakeholders}."
+                    f"{prefix}names member '{ref.member}', which is "
+                    "not one of the reference regime's members "
+                    f"{target_regime.member_axis}."
                 )
                 raise ModelInitializationError(msg)
             # A reader solved at no age never reads its reference, so neither
@@ -3502,9 +3498,9 @@ def _fail_if_gated_edges_invalid(
     """Validate every `gated_edges` declaration against the other regimes.
 
     Checks, per edge: the target regime exists; each
-    leg's OPEN-branch target component names a target stakeholder (or is `None`
+    leg's OPEN-branch target component names a target member (or is `None`
     for a singleton target); each fallback names an existing
-    regime, with a stakeholder iff that regime is collective, and a projection
+    regime, with a member iff that regime is collective, and a projection
     covering exactly the states that reference's own consumer needs
     (`_fail_if_ref_invalid`); and every regime the edge reads
     (its fallbacks) is active in every period its target is active
@@ -3529,11 +3525,11 @@ def _fail_if_gated_edges_invalid(
                 raise ModelInitializationError(msg)
             for leg_key, leg in edge.legs.items():
                 leg_prefix = f"{prefix}leg '{leg_key}': "
-                _fail_if_target_stakeholder_invalid(
+                _fail_if_target_member_invalid(
                     leg_prefix=leg_prefix,
                     target=target,
                     target_name=target_name,
-                    target_stakeholder=leg.target_stakeholder,
+                    target_member=leg.target_member,
                 )
                 # A single reference serves both phases and so owes the wider
                 # (simulate) projection; a `Phased` one is checked against the
@@ -3752,7 +3748,7 @@ def _fail_if_duplicate_fallback_regimes(
     leg) can never trigger this; only a multi-leg (collective) source can.
 
     Two legs write the same value exactly when their references name the same
-    stakeholder and the same projection function per state, and no such
+    member and the same projection function per state, and no such
     function reads a parameter: a parameter is qualified by the leg's route
     (`_route_fallback_with_qualified_params`), so each leg may bind its own
     value, while every other argument is the target's realized state or the
@@ -3775,7 +3771,7 @@ def _fail_if_duplicate_fallback_regimes(
                 continue
             first = first_by_regime[ref.regime]
             same = (
-                first.stakeholder == ref.stakeholder
+                first.member == ref.member
                 and first.projection.keys() == ref.projection.keys()
                 and all(first.projection[s] is f for s, f in ref.projection.items())
             )
@@ -3805,7 +3801,7 @@ def _fail_if_duplicate_fallback_regimes(
             "one leg's write silently overwrite the other's for every "
             "subject, regardless of which leg is actually selected. Give "
             "each leg its own fallback regime. Legs may share one only where "
-            "their fallbacks name the same stakeholder and the same "
+            "their fallbacks name the same member and the same "
             "projection function for every state, and none of those "
             "functions reads a parameter (any argument other than the "
             "target's states, `period` and `age`)"
@@ -3820,33 +3816,33 @@ def _fail_if_duplicate_fallback_regimes(
         raise ModelInitializationError(f"{msg}.")
 
 
-def _fail_if_target_stakeholder_invalid(
+def _fail_if_target_member_invalid(
     *,
     leg_prefix: str,
     target: UserRegime,
     target_name: RegimeName,
-    target_stakeholder: str | None,
+    target_member: str | None,
 ) -> None:
     """Reject an edge leg whose OPEN-branch target component is inconsistent."""
-    if target.stakeholders is None:
-        if target_stakeholder is not None:
+    if target.member_axis is None:
+        if target_member is not None:
             msg = (
-                f"{leg_prefix}names target_stakeholder "
-                f"'{target_stakeholder}', but the target regime "
+                f"{leg_prefix}names target_member "
+                f"'{target_member}', but the target regime "
                 f"'{target_name}' is a singleton — drop it."
             )
             raise ModelInitializationError(msg)
-    elif target_stakeholder is None:
+    elif target_member is None:
         msg = (
             f"{leg_prefix}the target regime '{target_name}' is collective "
-            f"(stakeholders={target.stakeholders}); the leg must name which "
-            "component the gate-open branch takes via `target_stakeholder=...`."
+            f"(members={target.member_axis}); the leg must name which "
+            "component the gate-open branch takes via `target_member=...`."
         )
         raise ModelInitializationError(msg)
-    elif target_stakeholder not in target.stakeholders:
+    elif target_member not in target.member_axis:
         msg = (
-            f"{leg_prefix}names target_stakeholder '{target_stakeholder}', "
-            f"which is not one of the target's stakeholders {target.stakeholders}."
+            f"{leg_prefix}names target_member '{target_member}', "
+            f"which is not one of the target's members {target.member_axis}."
         )
         raise ModelInitializationError(msg)
 
@@ -3870,7 +3866,7 @@ def _fail_if_ref_invalid(
       function, whose axes are that regime's solve states. A coordinate on a
       state the solve grid has no axis for would have nothing to index.
     - `"simulate"` — a LEG FALLBACK additionally writes the dissolved
-      stakeholder's next-period row into the fallback regime, and forward
+      member's next-period row into the fallback regime, and forward
       simulation carries every one of that regime's simulate states per
       subject. A state left unprojected keeps whatever the row held before
       the edge routed it there. The solve states are a subset, so the same
@@ -3884,24 +3880,24 @@ def _fail_if_ref_invalid(
             f"Known regimes: {sorted(user_regimes)}."
         )
         raise ModelInitializationError(msg)
-    if reference.stakeholders is None:
-        if ref.stakeholder is not None:
+    if reference.member_axis is None:
+        if ref.member is not None:
             msg = (
-                f"{prefix}names stakeholder '{ref.stakeholder}', but the "
+                f"{prefix}names member '{ref.member}', but the "
                 f"reference regime '{ref.regime}' is a singleton. Drop it."
             )
             raise ModelInitializationError(msg)
-    elif ref.stakeholder is None:
+    elif ref.member is None:
         msg = (
             f"{prefix}the reference regime '{ref.regime}' is collective "
-            f"(stakeholders={reference.stakeholders}); name whose value to read "
-            "via `stakeholder=...`."
+            f"(members={reference.member_axis}); name whose value to read "
+            "via `member=...`."
         )
         raise ModelInitializationError(msg)
-    elif ref.stakeholder not in reference.stakeholders:
+    elif ref.member not in reference.member_axis:
         msg = (
-            f"{prefix}names stakeholder '{ref.stakeholder}', not one of the "
-            f"reference regime's stakeholders {reference.stakeholders}."
+            f"{prefix}names member '{ref.member}', not one of the "
+            f"reference regime's members {reference.member_axis}."
         )
         raise ModelInitializationError(msg)
     if projection_phase == "simulate":
@@ -4785,7 +4781,7 @@ def _prepare_solution_phase(
     continuation_demanded: bool,
     has_taste_shocks: bool,
     value_aware_feasibility: _ValueAwareFeasibility,
-    stakeholders: tuple[str, ...] | None = None,
+    member_axis: tuple[str, ...] | None = None,
     pareto_weights: ParetoWeights | None = None,
     same_period_ref_regimes: tuple[RegimeName, ...] = (),
     edge_reference_regimes: tuple[RegimeName, ...] = (),
@@ -4882,7 +4878,7 @@ def _prepare_solution_phase(
         continuation_demanded=continuation_demanded,
         has_taste_shocks=has_taste_shocks,
         value_aware_feasibility=value_aware_feasibility,
-        stakeholders=stakeholders,
+        member_axis=member_axis,
         pareto_weights=pareto_weights,
         same_period_ref_regimes=same_period_ref_regimes,
         edge_reference_regimes=edge_reference_regimes,
@@ -4936,7 +4932,7 @@ def _prepare_numerical_solution_phase(  # noqa: PLR0915 - native route admission
     continuation_demanded: bool,
     has_taste_shocks: bool,
     value_aware_feasibility: _ValueAwareFeasibility,
-    stakeholders: tuple[str, ...] | None = None,
+    member_axis: tuple[str, ...] | None = None,
     pareto_weights: ParetoWeights | None = None,
     same_period_ref_regimes: tuple[RegimeName, ...] = (),
     edge_reference_regimes: tuple[RegimeName, ...] = (),
@@ -5088,10 +5084,10 @@ def _prepare_numerical_solution_phase(  # noqa: PLR0915 - native route admission
     elif laws[regime_name].terminal:
         compute_regime_transition_probs = None
         validation_regime_transition_probs = None
-        if stakeholders is not None:
+        if member_axis is not None:
             # The collective terminal kernel builds one
-            # `U^s`-and-`F` per stakeholder and stacks the utilities on a trailing
-            # stakeholder axis. Separate builder so the singleton path is untouched.
+            # `U^s`-and-`F` per member and stacks the utilities on a trailing
+            # member axis. Separate builder so the singleton path is untouched.
             Q_and_F_functions = _build_terminal_collective_Q_and_F_per_period(
                 bound_specs=tuple(
                     bound for bound in post_decision_bounds if bound.kind == "dag"
@@ -5100,7 +5096,7 @@ def _prepare_numerical_solution_phase(  # noqa: PLR0915 - native route admission
                 flat_param_names=flat_param_names,
                 functions=core.functions,
                 constraints=core.constraints,
-                stakeholders=stakeholders,
+                members=member_axis,
                 value_constraints=value_aware_feasibility.value_constraints,
                 same_period_refs=value_aware_feasibility.same_period_refs,
                 regime_to_v_interpolation_info=regime_to_v_interpolation_info,
@@ -5198,7 +5194,7 @@ def _prepare_numerical_solution_phase(  # noqa: PLR0915 - native route admission
             koopmans_aggregator=cast("EconFunction", core.koopmans_aggregator),
             objective_aggregator=core.objective_aggregator,
             certainty_equivalent=certainty_equivalent,
-            stakeholders=stakeholders,
+            member_axis=member_axis,
             value_constraints=value_aware_feasibility.value_constraints,
             same_period_refs=value_aware_feasibility.same_period_refs,
             grid_schedule=grid_schedule,
@@ -5265,7 +5261,7 @@ def _prepare_numerical_solution_phase(  # noqa: PLR0915 - native route admission
             else MappingProxyType({})
         )
         decision_group_key = grouped_Q_and_F.group_key
-        if stakeholders is not None:
+        if member_axis is not None:
             # The NaN-diagnostics intermediates mirror
             # the singleton Q evaluation (one `utility` target), which a
             # collective regime does not carry. The failure path handles a
@@ -5359,7 +5355,8 @@ def _prepare_numerical_solution_phase(  # noqa: PLR0915 - native route admission
         co_map_state_names=co_map_state_names,
         co_map_v_arr_in_axes=co_map_v_arr_in_axes,
         invariant_bindings=invariant_bindings,
-        stakeholders=stakeholders,
+        members=user_regimes[regime_name].members,
+        member_axis=member_axis,
         pareto_weights=pareto_weights,
         same_period_ref_regimes=same_period_ref_regimes,
         edge_reference_regimes=edge_reference_regimes,
@@ -6245,7 +6242,7 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
     solver: Solver,
     certainty_equivalent: CertaintyEquivalent | None,
     value_aware_feasibility: _ValueAwareFeasibility,
-    stakeholders: tuple[str, ...] | None = None,
+    member_axis: tuple[str, ...] | None = None,
     pareto_weights: ParetoWeights | None = None,
     post_decision_shocks: Mapping[StateName, _IIDProcess] = MappingProxyType({}),
     gated_continuations: Mapping[RegimeName, GatedContinuationSchedule] = (
@@ -6319,10 +6316,10 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
             built with, so the simulate-phase Q_and_F masks exactly the
             actions the solved value function excluded and the simulated
             argmax can never pick one of them. Empty for a singleton regime.
-        stakeholders: Ordered stakeholder names for a collective regime, or
+        member_axis: Ordered member names for a collective regime, or
             `None` (the singleton default).
         pareto_weights: The household's Pareto weight evaluator; required (and
-            only used) when `stakeholders` is set — feeds the simulate-side
+            only used) when `member_axis` is set — feeds the simulate-side
             argmax's household scalarization.
         gated_continuations: Mapping of target regime names to the gated-edge
             continuation schedule that target's leaf is read under, keyed by the
@@ -6483,8 +6480,8 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
     # an action the solved value function excluded. Only the ARGMAX step
     # differs from the singleton path — `get_argmax_and_max_Q_over_a`'s
     # collective branch (below) recomputes the household argmax and gathers
-    # each stakeholder's own value at it.
-    collective = stakeholders is not None
+    # each member's own value at it.
+    collective = member_axis is not None
     type_local_Q_and_F_functions: MappingProxyType[int, QAndFFunction] = (
         MappingProxyType({})
     )
@@ -6509,7 +6506,7 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
                 flat_param_names=flat_param_names,
                 functions=functions,
                 constraints=constraints,
-                stakeholders=stakeholders,
+                members=member_axis,
                 value_constraints=value_aware_feasibility.value_constraints,
                 same_period_refs=value_aware_feasibility.same_period_refs,
                 regime_to_v_interpolation_info=regime_to_v_interpolation_info,
@@ -6630,7 +6627,7 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
             koopmans_aggregator=cast("EconFunction", core.koopmans_aggregator),
             objective_aggregator=core.objective_aggregator,
             certainty_equivalent=certainty_equivalent,
-            stakeholders=stakeholders,
+            member_axis=member_axis,
             value_constraints=value_aware_feasibility.value_constraints,
             same_period_refs=value_aware_feasibility.same_period_refs,
             continuation_functions=solve_functions,
@@ -6704,14 +6701,14 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
         state_action_space=state_action_space,
         Q_and_F_functions=Q_and_F_functions,
         has_taste_shocks=has_taste_shocks,
-        stakeholders=stakeholders,
+        member_axis=member_axis,
         pareto_weights=pareto_weights,
     )
     type_local_per_subject_decisions = _build_per_subject_decisions_per_period(
         state_action_space=state_action_space,
         Q_and_F_functions=type_local_Q_and_F_functions,
         has_taste_shocks=has_taste_shocks,
-        stakeholders=stakeholders,
+        member_axis=member_axis,
         pareto_weights=pareto_weights,
     )
 
@@ -10347,7 +10344,7 @@ def _build_terminal_collective_Q_and_F_per_period(
     flat_param_names: frozenset[QualifiedName],
     functions: EconFunctionsMapping,
     constraints: ConstraintFunctionsMapping,
-    stakeholders: tuple[str, ...],
+    members: tuple[str, ...],
     value_constraints: ConstraintFunctionsMapping,
     same_period_refs: MappingProxyType[str, ResolvedProjectedRegimeValue],
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
@@ -10368,10 +10365,10 @@ def _build_terminal_collective_Q_and_F_per_period(
         n_periods: Number of periods in the model.
         flat_param_names: Frozenset of flat parameter names for the regime.
         functions: Immutable mapping of function names to internal user
-            functions; carries `utility_<s>` per stakeholder.
+            functions; carries `utility_<s>` per member.
         constraints: Immutable mapping of constraint names to internal user
             functions.
-        stakeholders: Ordered stakeholder names.
+        members: Ordered member names.
         value_constraints: Value-aware feasibility predicates, params already
             renamed to qnames.
         same_period_refs: Resolved same-period reference declarations.
@@ -10389,7 +10386,7 @@ def _build_terminal_collective_Q_and_F_per_period(
             flat_param_names=flat_param_names,
             functions=functions,
             constraints=constraints,
-            stakeholders=stakeholders,
+            members=members,
         )
         return MappingProxyType(dict.fromkeys(range(n_periods), shared))
 
@@ -10407,7 +10404,7 @@ def _build_terminal_collective_Q_and_F_per_period(
                 flat_param_names=flat_param_names,
                 functions=functions,
                 constraints=constraints,
-                stakeholders=stakeholders,
+                members=members,
                 value_constraints=value_constraints,
                 same_period_refs=same_period_refs,
                 same_period_v_interpolation_info=continuation_info(period - 1),
@@ -10449,7 +10446,7 @@ def _build_Q_and_F_per_period(
         MappingProxyType[int, MappingProxyType[RegimeName, VInterpolationInfo]] | None
     ) = None,
     co_map_state_names: tuple[StateName, ...] = (),
-    stakeholders: tuple[str, ...] | None = None,
+    member_axis: tuple[str, ...] | None = None,
     value_constraints: ConstraintFunctionsMapping = MappingProxyType({}),
     same_period_refs: MappingProxyType[str, ResolvedProjectedRegimeValue] = (
         MappingProxyType({})
@@ -10496,10 +10493,10 @@ def _build_Q_and_F_per_period(
             renamed, or `None` when the Bellman aggregator also chooses.
         certainty_equivalent: Nonlinear certainty equivalent declared by the
             regime, or `None`.
-        stakeholders: Ordered stakeholder names for a collective regime, or
+        member_axis: Ordered member names for a collective regime, or
             `None` (the singleton default). When set, the per-period closures
-            come from `get_Q_and_F_collective` (per-stakeholder continuation,
-            trailing stakeholder axis on Q); only the solve site passes this.
+            come from `get_Q_and_F_collective` (per-member continuation,
+            trailing member axis on Q); only the solve site passes this.
         value_constraints: Value-aware feasibility predicates, params
             already renamed; only used for collective regimes.
         same_period_refs: Resolved same-period reference declarations;
@@ -10567,7 +10564,7 @@ def _build_Q_and_F_per_period(
         representative_period = periods[0]
         # Every period in a group shares one compiled Q_and_F, so the group's
         # continuation grids must agree across its periods — a property of the
-        # group alone, independent of stakeholder cardinality. Hence the split
+        # group alone, independent of member cardinality. Hence the split
         # and the assertion run BEFORE the collective/singleton branch, so both
         # branches are built against the same checked target partition.
         stateful_targets, scalar_targets = partition_continuation_targets(
@@ -10593,11 +10590,11 @@ def _build_Q_and_F_per_period(
                 if landing_period in schedule.by_period
             }
         )
-        if stakeholders is not None:
+        if member_axis is not None:
             # A collective regime gets its own builder: the household objective
-            # and the per-stakeholder value readout differ from the singleton
+            # and the per-member value readout differ from the singleton
             # kernel. It takes no certainty equivalent — a nonlinear one is
-            # rejected at regime construction, and the per-stakeholder
+            # rejected at regime construction, and the per-member
             # continuation is the linear expectation. Functions and constraints
             # are resolved at the group's representative age exactly as in the
             # singleton branch; with no age-specialized node the resolution is a
@@ -10636,7 +10633,7 @@ def _build_Q_and_F_per_period(
                 same_period_v_interpolation_info=continuation_info(
                     representative_period - 1
                 ),
-                stakeholders=stakeholders,
+                members=member_axis,
                 co_map_state_names=co_map_state_names,
                 value_constraints=value_constraints,
                 same_period_refs=same_period_refs,
@@ -10720,7 +10717,7 @@ def _build_per_subject_decisions_per_period(
     state_action_space: StateActionSpace,
     Q_and_F_functions: MappingProxyType[int, QAndFFunction],
     has_taste_shocks: bool = False,
-    stakeholders: tuple[str, ...] | None = None,
+    member_axis: tuple[str, ...] | None = None,
     pareto_weights: ParetoWeights | None = None,
 ) -> MappingProxyType[int, ArgmaxQOverAFunction[BoundedArgmaxOutput]]:
     """Build the canonical argmax reducer at one subject's state cell, per period.
@@ -10753,7 +10750,7 @@ def _build_per_subject_decisions_per_period(
                 state_names=state_action_space.state_names,
                 n_discrete_action_axes=len(state_action_space.discrete_actions),
                 has_taste_shocks=has_taste_shocks,
-                stakeholders=stakeholders,
+                member_axis=member_axis,
                 pareto_weights=pareto_weights,
             )
             if current_iid_draw_plan is not None:

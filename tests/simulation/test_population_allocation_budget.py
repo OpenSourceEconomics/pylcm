@@ -14,7 +14,7 @@ import pytest
 from _lcm.simulation.host_operations import ProfiledSimulationOperations
 from _lcm.simulation.memory import SimulationMemory
 from _lcm.simulation.residency import measure_buffer_footprint
-from _lcm.simulation.simulate import _compute_starting_periods, _initial_own_stakeholder
+from _lcm.simulation.simulate import _compute_starting_periods, _initial_own_member
 from _lcm.typing import FootprintTree
 from lcm import AgeGrid
 from lcm.exceptions import ExecutionPlanningError
@@ -76,14 +76,14 @@ def test_default_roles_are_admitted_before_allocation(
         with pytest.raises(_UnadmittedAllocationError):
             jnp.zeros(3)
         with pytest.raises(ExecutionPlanningError):
-            _initial_own_stakeholder(
+            _initial_own_member(
                 initial_conditions=initial,
                 regimes=model._regimes,
                 regime_names_to_ids=model.regime_names_to_ids,
                 memory=memory,
             )
     generous = _memory(inputs=initial, budget=1_000_000)
-    actual = _initial_own_stakeholder(
+    actual = _initial_own_member(
         initial_conditions=initial,
         regimes=model._regimes,
         regime_names_to_ids=model.regime_names_to_ids,

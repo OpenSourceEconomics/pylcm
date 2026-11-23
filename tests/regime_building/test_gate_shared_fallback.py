@@ -25,11 +25,11 @@ from lcm import (
     DiscreteGrid,
     Gate,
     LinSpacedGrid,
+    MemberRoute,
     Model,
     Phased,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     StochasticTransition,
     Transition,
     categorical,
@@ -118,11 +118,11 @@ def _survivor(projection: Mapping[str, UserFunction]) -> ProjectedRegimeValue:
     return ProjectedRegimeValue(regime="single_f_ret", projection=projection)
 
 
-def _routes(route_form: RouteForm) -> dict[str, StakeholderRoute]:
+def _routes(route_form: RouteForm) -> dict[str, MemberRoute]:
     if route_form == "survivor":
         return {
-            "f": StakeholderRoute(fallback=_survivor(SURVIVOR_PROJECTION)),
-            "m": StakeholderRoute(
+            "f": MemberRoute(fallback=_survivor(SURVIVOR_PROJECTION)),
+            "m": MemberRoute(
                 fallback=Phased(
                     solve=ProjectedRegimeValue(
                         regime="dead_single", projection={"wealth": keep_wealth}
@@ -133,18 +133,18 @@ def _routes(route_form: RouteForm) -> dict[str, StakeholderRoute]:
         }
     if route_form == "both_phases":
         return {
-            "f": StakeholderRoute(fallback=_survivor(SURVIVOR_PROJECTION)),
-            "m": StakeholderRoute(fallback=_survivor(SURVIVOR_PROJECTION)),
+            "f": MemberRoute(fallback=_survivor(SURVIVOR_PROJECTION)),
+            "m": MemberRoute(fallback=_survivor(SURVIVOR_PROJECTION)),
         }
     if route_form == "free_parameter":
         shifted = {"wealth": shifted_wealth}
         return {
-            "f": StakeholderRoute(fallback=_survivor(shifted)),
-            "m": StakeholderRoute(fallback=_survivor(shifted)),
+            "f": MemberRoute(fallback=_survivor(shifted)),
+            "m": MemberRoute(fallback=_survivor(shifted)),
         }
     return {
-        "f": StakeholderRoute(fallback=_survivor(SURVIVOR_PROJECTION)),
-        "m": StakeholderRoute(fallback=_survivor({"wealth": keep_wealth_too})),
+        "f": MemberRoute(fallback=_survivor(SURVIVOR_PROJECTION)),
+        "m": MemberRoute(fallback=_survivor({"wealth": keep_wealth_too})),
     }
 
 
@@ -208,14 +208,14 @@ def test_survivor_legs_price_each_spouse_at_their_own_solve_fallback() -> None:
 def test_rows_following_either_spouse_land_in_the_shared_regime() -> None:
     """At period 1 every row is in the survivor's regime at its own wealth."""
     model = build_model(route_form="survivor")
-    roles = model.stakeholder_names_to_ids
+    roles = model.member_names_to_ids
     result = model.simulate(
         params=PARAMS,
         initial_conditions={
             "regime_id": jnp.zeros(4, dtype=jnp.int32),
             "age": jnp.zeros(4),
             "wealth": jnp.asarray([1.0, 2.0, 3.0, 2.0]),
-            "own_stakeholder": jnp.asarray(
+            "own_member": jnp.asarray(
                 [roles["f"], roles["f"], roles["m"], roles["m"]], dtype=jnp.int32
             ),
         },

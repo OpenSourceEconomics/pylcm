@@ -56,8 +56,8 @@ machines and backends. A level is defended by the ASV history on one machine.
   surface.
 - **Warm solve** is `O(periods × regimes × cells)`, the same order as a singleton model
   of the same total grid size. A collective regime multiplies the cell count by its
-  stakeholder count; a gated edge adds one fold over the target's grid per period. It
-  may not grow with the *number of subjects*, which appears nowhere in the solve.
+  member count; a gated edge adds one fold over the target's grid per period. It may not
+  grow with the *number of subjects*, which appears nowhere in the solve.
 - **Simulation** is `O(periods × (regimes + edges) × subjects)` and therefore linear in
   the cohort. The two cohort sizes exist to make a super-linear term visible; a slope
   above one between them is the regression this workload is for. They are two orders of

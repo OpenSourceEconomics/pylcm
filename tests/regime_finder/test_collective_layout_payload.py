@@ -19,16 +19,16 @@ from _lcm_regime_finder.facts import FactsBackendName, Record
 from _lcm_regime_finder.model_snapshot import read_model
 from lcm import Model
 from lcm.typing import ActionName, StateName
-from tests.collective_fixtures import make_two_stakeholder_model
+from tests.collective_fixtures import make_two_member_model
 from tests.solution import test_renegotiation as renegotiation
 
 BACKENDS: tuple[FactsBackendName, ...] = ("dense", "metadata")
 
-type Label = Literal["two_stakeholder", "renegotiate_2p"]
+type Label = Literal["two_member", "renegotiate_2p"]
 type Table = Literal["exact", "curve"]
 
 _MODELS: dict[Label, Callable[[], Model]] = {
-    "two_stakeholder": lambda: make_two_stakeholder_model()[0],
+    "two_member": lambda: make_two_member_model()[0],
     "renegotiate_2p": lambda: renegotiation._model(
         values=renegotiation._VALUES, n_periods=2
     ),
@@ -72,11 +72,11 @@ def _blocks(report: Record) -> list[Record]:
 
 
 @pytest.mark.parametrize("backend", BACKENDS)
-@pytest.mark.parametrize("label", ["two_stakeholder", "renegotiate_2p"])
+@pytest.mark.parametrize("label", ["two_member", "renegotiate_2p"])
 def test_genuine_block_payloads_pass(label: Label, backend: FactsBackendName) -> None:
     """The finder's own blocks and lanes pass; the source verdict is the fixture's own."""
     verified = _verify(label, _report(label, backend))
-    expected = "PASS" if label == "two_stakeholder" else "UNRESOLVED"
+    expected = "PASS" if label == "two_member" else "UNRESOLVED"
     assert (verified["layout_check"]["status"], verified["status"]) == (
         "PASS",
         expected,
@@ -87,7 +87,7 @@ def test_genuine_block_payloads_pass(label: Label, backend: FactsBackendName) ->
 @pytest.mark.parametrize("table", ["exact", "curve"])
 @pytest.mark.parametrize(
     ("label", "state", "action"),
-    [("two_stakeholder", "wage", "work"), ("renegotiate_2p", "mu", "choice")],
+    [("two_member", "wage", "work"), ("renegotiate_2p", "mu", "choice")],
 )
 @pytest.mark.parametrize("mutation", list(_FIELD))
 def test_block_with_altered_payload_fails_the_layout_check(
@@ -178,7 +178,7 @@ def test_altered_lane_listing_fails_the_layout_check(
 @pytest.mark.parametrize("backend", BACKENDS)
 def test_reordered_fibre_listing_passes(backend: FactsBackendName) -> None:
     """The check binds which fibres a block holds, not the order it lists them in."""
-    # The two-stakeholder blocks hold one fibre each, so only this fixture reorders.
+    # The two-member blocks hold one fibre each, so only this fixture reorders.
     label = "renegotiate_2p"
     original = _report(label, backend)
     altered = deepcopy(original)

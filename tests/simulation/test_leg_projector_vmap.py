@@ -48,9 +48,9 @@ from lcm import (
     DiscreteGrid,
     Gate,
     LinSpacedGrid,
+    MemberRoute,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     Transition,
     categorical,
 )
@@ -189,7 +189,7 @@ def _laws() -> RegimeLaws:
                     "target": Gate(
                         predicate=_gate_dissolves_everywhere,
                         routes={
-                            "own": StakeholderRoute(
+                            "own": MemberRoute(
                                 fallback=ProjectedRegimeValue(
                                     regime="fallback",
                                     projection={"settlement": _settlement_from_health},
@@ -384,12 +384,8 @@ def test_router_writes_each_subject_its_own_projected_fallback_state():
         ),
         subjects_in_regime=jnp.array([True, True]),
         flat_params=flat_params,
-        own_stakeholder=jnp.full_like(
-            jnp.array([True, True]), NO_ROLE, dtype=jnp.int32
-        ),
-        new_own_stakeholder=jnp.full_like(
-            jnp.array([True, True]), NO_ROLE, dtype=jnp.int32
-        ),
+        own_member=jnp.full_like(jnp.array([True, True]), NO_ROLE, dtype=jnp.int32),
+        new_own_member=jnp.full_like(jnp.array([True, True]), NO_ROLE, dtype=jnp.int32),
     )
     aaae(
         np.asarray(states["fallback"]["settlement"]),
@@ -432,12 +428,8 @@ def test_router_sends_every_dissolving_household_to_the_fallback_regime():
         ),
         subjects_in_regime=jnp.array([True, True]),
         flat_params=flat_params,
-        own_stakeholder=jnp.full_like(
-            jnp.array([True, True]), NO_ROLE, dtype=jnp.int32
-        ),
-        new_own_stakeholder=jnp.full_like(
-            jnp.array([True, True]), NO_ROLE, dtype=jnp.int32
-        ),
+        own_member=jnp.full_like(jnp.array([True, True]), NO_ROLE, dtype=jnp.int32),
+        new_own_member=jnp.full_like(jnp.array([True, True]), NO_ROLE, dtype=jnp.int32),
     )
     np.testing.assert_array_equal(
         np.asarray(routed_ids),

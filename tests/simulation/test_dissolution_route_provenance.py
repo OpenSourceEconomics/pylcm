@@ -23,10 +23,10 @@ from lcm import (
     DiscreteGrid,
     Gate,
     IrregSpacedGrid,
+    MemberRoute,
     Model,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     Transition,
     categorical,
 )
@@ -92,7 +92,7 @@ def _route(*, fallback: str, predicate: Callable[..., BoolND] = _gate_open) -> G
     return Gate(
         predicate=predicate,
         routes={
-            "only": StakeholderRoute(
+            "only": MemberRoute(
                 fallback=ProjectedRegimeValue(
                     regime=fallback, projection={"wage": _identity}
                 )

@@ -145,7 +145,7 @@ class QueryRead:
     period: int = 0
     """Computational period; an age is never inferred from this integer."""
     role: str = ""
-    """Destination stakeholder role in the producing projection context."""
+    """Destination member role in the producing projection context."""
     law_identity: tuple[Hashable, ...] = ()
     """Canonical law, node and information-representation declaration identities."""
 
@@ -421,8 +421,8 @@ class QueryNode:
         """Return the answer owner's tuple shape, independent of physical laws."""
         if self.answer_shape is not None:
             return self.answer_shape
-        stakeholders = self.context.stakeholders
-        return () if stakeholders is None else (len(stakeholders),)
+        member_axis = self.context.member_axis
+        return () if member_axis is None else (len(member_axis),)
 
 
 def gated_query_targets(
@@ -915,12 +915,12 @@ def build_policy_query_kernel(
     chunk_size = min(chunk_size, size)
     row_batch = _row_batch(chunk_size=chunk_size, halvings=halvings)
     bank_size = _get_padded_query_bank_size(size=size, chunk_size=chunk_size)
-    stakeholders = root_context.stakeholders
-    stakeholder_shape = () if stakeholders is None else (len(stakeholders),)
+    member_axis = root_context.member_axis
+    member_shape = () if member_axis is None else (len(member_axis),)
     value_shape = (
-        tuple(value.size for value in root_space.states.values()) + stakeholder_shape
+        tuple(value.size for value in root_space.states.values()) + member_shape
     )
-    bank_shape = (bank_size, *stakeholder_shape)
+    bank_shape = (bank_size, *member_shape)
     dtype = jnp.asarray(0.0).dtype
     host_buffers = MappingProxyType(
         {"query_banks": jax.ShapeDtypeStruct((2, *bank_shape), dtype)}
@@ -1174,7 +1174,7 @@ def _own_raw_evaluation_sources(
         node.read.kind is not QueryKind.FULL
         or raw.read.kind is not QueryKind.RAW
         or raw.context is not context
-        or context.stakeholders is not None
+        or context.member_axis is not None
         or context.koopmans_aggregator is not None
         or context.state_action_space.action_names
         or context.has_taste_shocks
@@ -1293,9 +1293,9 @@ def _admit_node(
         raise ValueError("The target action problem is inactive at this period.")
     _admit_query_objective(context=context, period=period)
     _fail_if_projection_incomplete(node=node, reader="A query")
-    if context.has_taste_shocks and context.stakeholders is not None:
+    if context.has_taste_shocks and context.member_axis is not None:
         raise UnsupportedOperationError(
-            "A collective query does not declare an EV1 stakeholder-taste law."
+            "A collective query does not declare an EV1 member-taste law."
         )
     if context.invariant_bindings or context.action_partitions != 1:
         raise UnsupportedOperationError(
@@ -2370,11 +2370,11 @@ def _active_query_cell(
             arguments=arguments,
         )
         valid &= taste_valid
-    elif context.stakeholders is not None:
+    elif context.member_axis is not None:
         pareto_weights = cast("ParetoWeights", context.pareto_weights)
         action, values, _ = collective_argmax_and_readout(
-            stakeholder_Q={
-                name: q[..., index] for index, name in enumerate(context.stakeholders)
+            member_Q={
+                name: q[..., index] for index, name in enumerate(context.member_axis)
             },
             feasibility=feasible,
             weights=_evaluate_pareto_weights(
@@ -2386,7 +2386,7 @@ def _active_query_cell(
             ),
             action_axes=axes,
         )
-        value = jnp.stack(tuple(values[name] for name in context.stakeholders))
+        value = jnp.stack(tuple(values[name] for name in context.member_axis))
     else:
         action, value = argmax_and_max(a=q, where=feasible, initial=-jnp.inf)
     valid = (
@@ -2604,10 +2604,10 @@ def _query_action(
         ordinary, _evaluated_query_landings(node=node, evaluated=evaluated), 0
     )
     expected_q_shape = (
-        () if node.context.stakeholders is None else (len(node.context.stakeholders),)
+        () if node.context.member_axis is None else (len(node.context.member_axis),)
     )
     if q.shape != expected_q_shape:
-        raise ValueError("Query Q must be scalar or the canonical stakeholder tuple.")
+        raise ValueError("Query Q must be scalar or the canonical member tuple.")
     if ordinary.dtype != jnp.bool_:
         raise TypeError("Canonical query feasibility must be boolean.")
     if ordinary.ndim != 0:

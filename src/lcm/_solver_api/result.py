@@ -176,7 +176,7 @@ class SolutionResult:
         """Return one value-function array with its state coordinates, named `V`.
 
         Dimensions follow the stored value schema's axis order, including a
-        trailing `stakeholder` dimension for collective values; a regime without
+        trailing `member` dimension for collective values; a regime without
         states yields a zero-dimensional array. Coordinates are the resolved
         process and period-specific grid nodes used by this solve. By default, a
         category-class state carries its labels as an (ordered) categorical index
@@ -245,7 +245,7 @@ class SolutionResult:
         in the same order and with the same coordinates and categorical labels,
         followed by `V`.
 
-        This explicit call materializes one row per grid point and stakeholder,
+        This explicit call materializes one row per grid point and member,
         so large grids produce large frames; select a slice of `value_array`
         first to convert only part of it. For values between nodes, use
         `Model.lookup_policy`, which uses simulation's interpolation.

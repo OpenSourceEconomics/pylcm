@@ -33,13 +33,13 @@ from lcm import (
     DiscreteGrid,
     Gate,
     LinSpacedGrid,
+    MemberRoute,
     Model,
     ParticipationCheck,
     ParticipationRead,
     Phased,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     categorical,
     fixed_transition,
 )
@@ -132,7 +132,7 @@ def _src_transition() -> Transition:
             "src": Gate(
                 predicate=_repeat_at_high_wage,
                 routes={
-                    "only": StakeholderRoute(
+                    "only": MemberRoute(
                         fallback=ProjectedRegimeValue(
                             regime="src_fallback",
                             projection={"wage": _identity_wage},
@@ -211,7 +211,7 @@ def test_public_repeated_participation_carries_career_once_before_ordinary_exit(
                             )
                         },
                         routes={
-                            "self": StakeholderRoute(
+                            "self": MemberRoute(
                                 fallback=ProjectedRegimeValue(
                                     regime="src_fallback",
                                     projection={"wage": _identity_wage},

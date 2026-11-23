@@ -301,7 +301,7 @@ class ValueArraySchema:
     """Logical identity of one stored value-function array.
 
     ``axis_names`` names the canonical state axes in order and, for a
-    collective regime, the trailing ``"stakeholder"`` axis. The schema is
+    collective regime, the trailing ``"member"`` axis. The schema is
     deliberately lightweight: it describes an in-memory result array without
     importing any engine-private grid or layout type.
     """

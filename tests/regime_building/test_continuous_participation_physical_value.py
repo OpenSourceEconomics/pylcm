@@ -17,12 +17,12 @@ import pytest
 from lcm import (
     AgeGrid,
     ByAge,
+    MemberRoute,
     Model,
     ParticipationCheck,
     ParticipationRead,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     Transition,
     categorical,
 )
@@ -127,7 +127,7 @@ def _offer_model(*, shocked_source: bool = False) -> Model:
                             )
                         },
                         routes={
-                            "self": StakeholderRoute(
+                            "self": MemberRoute(
                                 fallback=ProjectedRegimeValue(
                                     regime="fallback", projection={}
                                 )
@@ -263,7 +263,7 @@ def _information_model(*, predicate: UserFunction, observed: bool) -> Model:
                             )
                         },
                         routes={
-                            "self": StakeholderRoute(
+                            "self": MemberRoute(
                                 fallback=ProjectedRegimeValue(
                                     regime="fallback", projection={}
                                 )
@@ -407,7 +407,7 @@ def _discrete_information_model(
                         if read_name is not None
                         else {},
                         routes={
-                            "self": StakeholderRoute(
+                            "self": MemberRoute(
                                 fallback=ProjectedRegimeValue(
                                     regime="fallback", projection={}
                                 )

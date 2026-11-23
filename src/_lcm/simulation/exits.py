@@ -224,7 +224,7 @@ def install_exit_simulation_queries(
                     ParticipationEntryPlan(
                         queries=entry.queries,
                         target_roles={
-                            member: route.target_stakeholder
+                            member: route.target_member
                             for member, route in declaration.routes.items()
                         },
                     )
@@ -1140,12 +1140,12 @@ def participation_entry_routes(
             addresses[address] = query
             role = (
                 None
-                if regimes[source].stakeholders is None
-                else regimes[source].stakeholder_names_to_ids[member]
+                if regimes[source].member_axis is None
+                else regimes[source].member_names_to_ids[member]
             )
             codes.append((role, branch, code))
             target_role = entry.target_roles[member] if branch == 0 else read.role
-            if regimes[read.target].stakeholders is not None and target_role is None:
+            if regimes[read.target].member_axis is not None and target_role is None:
                 raise ValueError(
                     "A collective participation route needs its declared role."
                 )
@@ -1156,8 +1156,8 @@ def participation_entry_routes(
                     identifier=code,
                     source_role=None,
                     target_role=NO_ROLE
-                    if regimes[read.target].stakeholders is None
-                    else regimes[read.target].stakeholder_names_to_ids[
+                    if regimes[read.target].member_axis is None
+                    else regimes[read.target].member_names_to_ids[
                         cast("str", target_role)
                     ],
                     projection=address,

@@ -1177,7 +1177,7 @@ def test_value_transfer_copies_a_named_target_onto_a_single_device_source() -> N
 
 @_skip_pytest_parallel
 def test_collective_grid_search_value_has_planned_state_layout() -> None:
-    """Collective V keeps its stakeholder axis replicated.
+    """Collective V keeps its member axis replicated.
 
     Values agree across differently fused device topologies to dtype-scale rounding;
     layout remains exact.
@@ -1209,7 +1209,7 @@ def test_collective_grid_search_value_has_planned_state_layout() -> None:
         for regime_name, value in regime_to_value.items():
             assert value.shape == (4, 4, 2)
             # `_RegimeSharding.V_arr_sharding` names only state axes: the
-            # replicated stakeholder entry is intentionally omitted.
+            # replicated member entry is intentionally omitted.
             assert isinstance(value.sharding, NamedSharding)
             assert value.sharding.spec == PartitionSpec("type1", None)
             reference = single_values.values[period][regime_name]

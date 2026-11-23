@@ -104,8 +104,8 @@ or a DataFrame with a `"regime_name"` column, ages and categorical labels — an
 A subject is feasible when at least one combination of its regime's declared action-grid
 points satisfies every constraint jointly or, in a regime without actions, when every
 state-only constraint holds. Both methods apply every initial-condition check `simulate`
-applies, including the `own_stakeholder` declaration a collective start needs, and take
-no `log_level`: they always raise. The verdict does not depend on how the check is
+applies, including the `own_member` declaration a collective start needs, and take no
+`log_level`: they always raise. The verdict does not depend on how the check is
 executed; at present both run in one eager pass on the default device, without
 device-memory admission or subject padding. When a constraint depends on an
 age-specialized function, each subject is checked against the constraints and functions
@@ -354,11 +354,11 @@ regimes = {
 most one exit; its parameters live under `exit`. Scheduled next-period transitions
 remain in `Model(edges=...)`.
 
-- `Exit(targets=..., rule=..., available=None, observes=())` names each source
-  stakeholder's destination. A singleton uses the key `"self"`.
+- `Exit(targets=..., rule=..., available=None, observes=())` names each source member's
+  destination. A singleton uses the key `"self"`.
 - `ExitTarget(regime=..., projection=..., role=None, utility_adjustment=None)` names a
   real destination and maps its complete current state. A collective destination
-  requires its stakeholder `role`. The adjustment reads source states and parameters and
+  requires its member `role`. The adjustment reads source states and parameters and
   enters the exit payoff once. A projection may use `Phased(solve=..., simulate=...)`
   settlements; it does not change information. A projection names every state its
   destination declares, model-level ones included. Where the destination does not read a
@@ -400,8 +400,8 @@ outside values of that exit the same way, as problem values.
 
 `Unilateral(renegotiate=Renegotiate(state="mu"))` first optimizes the Raw stay policy at
 every node of the ordered discrete state. It supports a collective pair: increasing node
-order favors the first stakeholder in the utility mapping, decreasing order the second.
-If both accept the incumbent, it stays. If one refuses, walk one node toward that member
+order favors the first member in the utility mapping, decreasing order the second. If
+both accept the incumbent, it stays. If one refuses, walk one node toward that member
 and stop at the first node both accept. Simultaneous refusal, reaching the grid edge or
 encountering the other member's refusal separates the pair; a later feasible island does
 not reopen the path. Equality follows the rule's `tie`. Outside payoffs use the original
@@ -412,11 +412,11 @@ of members shift the division on separation before deciding. Every exit target's
 projection functions and utility adjustment may read the settlement as the argument
 `name`; a settlement no target reads, and a name that is a state, action, function or
 shock of the source, are refused when the model is built. `candidates` is a continuous
-grid with fixed points; increasing values favour the first stakeholder. `default` reads
-what `available` reads and is clipped to the candidates' range. With `O_i(s)` member
-`i`'s outside value at settlement `s` (its destination's problem value at the
-projections evaluated with `s`, plus its adjustment evaluated with `s`), `W_i` its value
-at the household optimum and `d` the default:
+grid with fixed points; increasing values favour the first member. `default` reads what
+`available` reads and is clipped to the candidates' range. With `O_i(s)` member `i`'s
+outside value at settlement `s` (its destination's problem value at the projections
+evaluated with `s`, plus its adjustment evaluated with `s`), `W_i` its value at the
+household optimum and `d` the default:
 
 1. A member refuses to stay when `O_i(d)` is above `W_i`, or equal to it under
    `tie="leave"`.
@@ -510,8 +510,8 @@ invariant or co-mapped state layouts, action partitioning, stored Full-value ref
 and runtime-bound query status adapters.
 
 Collective current-IID decisions select one common action and route exits at each node,
-then integrate each member's selected value. Stored values retain the stakeholder axis
-and carry no current-shock axis. This also applies to collective regimes without exits.
+then integrate each member's selected value. Stored values retain the member axis and
+carry no current-shock axis. This also applies to collective regimes without exits.
 Collective EV1 tastes and custom source selectors combined with source EV1 tastes are
 explicitly refused.
 
@@ -539,15 +539,15 @@ acceptance; it is not replaced by a maximization over the compared values. Accep
 also requires the target's Participating policy to have support. `observes` names the
 target physical shocks visible at this comparison.
 
-`routes` maps every original source stakeholder to a
-[`StakeholderRoute`](collective_regimes.md#api-stakeholder-route); a singleton has its
-single route. On acceptance, `target_stakeholder` selects the role in the scheduled
-target. On rejection, `fallback` names the destination, role and complete state
-projection from the landed target state. A collective destination requires its exact
-stakeholder name; a singleton has no stakeholder role. A
-`Phased(solve=..., simulate=...)` fallback prices the source decision using the solve
-settlement and routes simulation using the simulate settlement. The incoming source and
-role remain attached to this settlement, so another edge's fallback cannot replace it.
+`routes` maps every original source member to a
+[`MemberRoute`](collective_regimes.md#api-member-route); a singleton has its single
+route. On acceptance, `target_member` selects the role in the scheduled target. On
+rejection, `fallback` names the destination, role and complete state projection from the
+landed target state. A collective destination requires its exact member name; a
+singleton has no member role. A `Phased(solve=..., simulate=...)` fallback prices the
+source decision using the solve settlement and routes simulation using the simulate
+settlement. The incoming source and role remain attached to this settlement, so another
+edge's fallback cannot replace it.
 
 Participation callbacks use the target's actual participation `period` and `age`. Their
 runtime parameters belong under `params["edges"][source][target]`: the predicate uses
@@ -568,9 +568,9 @@ fall on nodes, approximate between them; see
 
 ### `ParticipationRead`
 
-`ParticipationRead(regime=..., projection=..., kind=..., stakeholder=None, field="value", observes=())`
+`ParticipationRead(regime=..., projection=..., kind=..., member=None, field="value", observes=())`
 names the represented object supplied to the predicate. `projection` provides every
-state of the referenced regime from the landed target state, and `stakeholder` selects a
+state of the referenced regime from the landed target state, and `member` selects a
 collective reference's exact role. The `reads` mapping key is the argument name the
 predicate receives.
 

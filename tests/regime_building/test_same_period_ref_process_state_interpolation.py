@@ -372,7 +372,7 @@ def test_same_period_ref_value_matches_hand_computed_interpolation():
     D_married = np.asarray(dissolution_flags[0]["married"])
 
     np.testing.assert_array_equal(D_married, [False, False])
-    # f-component (stakeholder axis index 0) equals the hand-computed target.
+    # f-component (member axis index 0) equals the hand-computed target.
     np.testing.assert_allclose(V_married[:, 0], _TARGET, atol=1e-6)
     # m-component: utility_m(work=1) = 1.0, the unique feasible action.
     np.testing.assert_allclose(V_married[:, 1], [1.0, 1.0], atol=1e-6)
