@@ -206,7 +206,6 @@ def _regime_failures(
             f"is solved by {type(regime.solver).__name__}, not GridSearch",
         ),
         (regime.taste_shocks is not None, "declares taste shocks"),
-        (regime.member_axis is not None, "is a collective regime"),
         (bool(law.gated_edges), "declares gated edges"),
         *(
             (

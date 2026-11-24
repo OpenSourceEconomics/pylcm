@@ -227,9 +227,9 @@ The request is checked at model construction. It is refused, naming every reason
 - more than one state is named, or a width other than 1 is given;
 - the state is also in `sharded_states`, or no regime declares it;
 - the state's value can change, or a value read crosses its codes;
-- a non-terminal regime carrying it is not solved by `GridSearch`, is a collective
-  regime, declares taste shocks or gated edges, folds a process, reads a gated-edge
-  reference value, or carries the state on a non-discrete grid.
+- a non-terminal regime carrying it is not solved by `GridSearch`, declares taste shocks
+  or gated edges, folds a process, reads a gated-edge reference value, or carries the
+  state on a non-discrete grid.
 
 A blocked regime-period cannot be captured or replayed with the period-replay tools.
 

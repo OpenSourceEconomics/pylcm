@@ -16,6 +16,7 @@ from typing import NotRequired, TypedDict, Unpack
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pandas as pd
 import pytest
 
 from _lcm.engine import SolutionPhase
@@ -28,8 +29,10 @@ from _lcm.state_action_space import StateActionSpace
 from _lcm.typing import FlatRegimeParams
 from lcm import (
     AgeGrid,
+    CollectiveUtility,
     DiscreteGrid,
     ExecutionConfig,
+    InvariantBlockSchedule,
     LinSpacedGrid,
     Model,
     categorical,
@@ -732,6 +735,137 @@ def test_a_reset_of_the_blocked_state_is_refused_at_construction() -> None:
             typed_terminal=True,
             execution_config=ExecutionConfig(invariant_block_widths={"sector": 1}),
         )
+
+
+def _household_utility_f(
+    *, consumption: ContinuousAction, pref_type: DiscreteState
+) -> FloatND:
+    return (1.0 + 0.1 * pref_type) * jnp.log(1.0 + consumption)
+
+
+def _household_utility_m(
+    *, consumption: ContinuousAction, pref_type: DiscreteState
+) -> FloatND:
+    return (1.3 - 0.1 * pref_type) * jnp.sqrt(1.0 + consumption)
+
+
+def _household_bequest_f(
+    *, wealth: ContinuousState, pref_type: DiscreteState
+) -> FloatND:
+    return (0.5 + 0.2 * pref_type) * jnp.log(1.0 + wealth)
+
+
+def _household_bequest_m(
+    *, wealth: ContinuousState, pref_type: DiscreteState
+) -> FloatND:
+    return (0.9 - 0.2 * pref_type) * jnp.sqrt(1.0 + wealth)
+
+
+def _household_model(*, execution_config: ExecutionConfig) -> Model:
+    """A household of `f` and `m` carrying `pref_type` into a typed terminal household.
+
+    The members' utilities differ in their dependence on the type, so every
+    type's block has its own household choice and member values.
+    """
+    ages = AgeGrid(start=0, inclusive_stop=3, step="Y")
+    wealth = LinSpacedGrid(start=0, stop=10, n_points=11)
+    pref_type = DiscreteGrid(category_class=independent_types.PrefType)
+    return Model(
+        regimes={
+            "working": Regime(
+                states={"pref_type": pref_type, "wealth": wealth},
+                state_transitions={
+                    "pref_type": fixed_transition("pref_type"),
+                    "wealth": _next_wealth,
+                },
+                actions={"consumption": wealth},
+                functions={
+                    "utility": CollectiveUtility(
+                        utilities={
+                            "f": _household_utility_f,
+                            "m": _household_utility_m,
+                        }
+                    )
+                },
+                constraints={"affordable": _affordable},
+            ),
+            "terminal": Regime(
+                states={"pref_type": pref_type, "wealth": wealth},
+                functions={
+                    "utility": CollectiveUtility(
+                        utilities={
+                            "f": _household_bequest_f,
+                            "m": _household_bequest_m,
+                        }
+                    )
+                },
+            ),
+        },
+        edges={
+            "working": {
+                "working": tuple(ages.exact_values[:-2]),
+                "terminal": (ages.exact_values[-2],),
+            }
+        },
+        ages=ages,
+        regime_id_class=_RegimeId,
+        initial_nodes={ages.exact_values[0]: "working"},
+        execution_config=execution_config,
+    )
+
+
+@pytest.mark.parametrize("schedule", list(InvariantBlockSchedule))
+def test_blocked_household_solve_agrees_with_the_unblocked_solve(
+    schedule: InvariantBlockSchedule,
+) -> None:
+    """A household's member values agree with the unblocked ones within eight ULP."""
+    params = {"discount_factor": 0.9}
+    config = ExecutionConfig(
+        invariant_block_widths={"pref_type": 1}, invariant_block_schedule=schedule
+    )
+
+    got = _values(model=_household_model(execution_config=config), params=params)
+
+    assert np.shape(got[0]["working"])[-1] == 2
+    assert_general_values_agree(
+        got=got,
+        expected=_values(
+            model=_household_model(execution_config=ExecutionConfig()), params=params
+        ),
+    )
+
+
+def test_blocked_household_simulation_equals_the_unblocked_panel() -> None:
+    """A blocked household simulates the unblocked choices, states and member values."""
+    n_wealth = 4
+    types = np.repeat(np.arange(_N_TYPES), n_wealth)
+    initial_conditions = {
+        "regime_id": jnp.full(types.size, _RegimeId.working),
+        "age": jnp.zeros(types.size),
+        "wealth": jnp.asarray(np.tile(np.arange(n_wealth, dtype=float), _N_TYPES)),
+        "pref_type": jnp.asarray(types, dtype=jnp.int32),
+    }
+    blocked, unblocked = (
+        _household_model(execution_config=config).simulate(
+            params={"discount_factor": 0.9},
+            initial_conditions=initial_conditions,
+            seed=0,
+            log_level="off",
+        )
+        for config in (_blocked(), ExecutionConfig())
+    )
+    got, want = blocked.to_dataframe(), unblocked.to_dataframe()
+    values = ["value_f", "value_m"]
+
+    assert grouped_simulation._subject_grouping(result=blocked) == "pref_type"
+    assert got.columns.equals(want.columns)
+    pd.testing.assert_frame_equal(
+        got.drop(columns=values), want.drop(columns=values), check_exact=True
+    )
+    assert_general_values_agree(
+        got={0: {name: got[name].to_numpy() for name in values}},
+        expected={0: {name: want[name].to_numpy() for name in values}},
+    )
 
 
 @categorical(ordered=False)

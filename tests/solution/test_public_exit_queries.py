@@ -29,6 +29,7 @@ from _lcm.policy_queries import (
     _QueryCore,
     build_policy_query_kernel,
 )
+from _lcm.regime_building import processing
 from _lcm.regime_building.Q_and_F import CanonicalActionKernel, EvaluatedQAndF
 from _lcm.solution.fingerprint import _semantic_fingerprint
 from _lcm.typing import FlatParams, PytreeValue
@@ -2025,6 +2026,58 @@ def test_static_single_sharing_preserves_uninstrumented_chunks(
     assert np.all(np.isneginf(outputs[1][0][state_count:]))
     np.testing.assert_array_equal(outputs[1][1], np.ones(len(source.definitions), bool))
     assert len(outputs[1][2]) == len(source.definitions)
+
+
+@pytest.mark.parametrize("chunk_size", [1, 2])
+def test_own_raw_sharing_serves_a_source_with_a_member_axis(
+    *, chunk_size: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A terminal no-action source of one member shares its own Raw evaluation.
+
+    Built on the household kernels, the single's value carries the member axis
+    `("self",)`; the shared loop returns the bytes of the unshared one.
+    The couple reads the single's outside value at its point.
+    """
+    monkeypatch.setattr(exit_queries, "_READ_STORED_OUTSIDE_VALUES", False)
+    monkeypatch.setattr(processing, "_SINGLE_ON_HOUSEHOLD_PATH", True)
+    model = _sharing_control_model(state_count=3)
+    source = model._regimes["single_f"].solution.period_kernels[0]
+    assert isinstance(source, _PolicyQueryKernel)
+    assert source.root_context.member_axis == ("self",)
+    definitions = dict(source.definitions)
+    root = definitions[source.root]
+    outputs = []
+    for reuse in (False, True):
+        definitions[source.root] = root if reuse else replace(root, own_raw=None)
+        kernel = build_policy_query_kernel(
+            root_context=source.root_context,
+            period=0,
+            definitions=definitions.copy(),
+            root=source.root,
+            chunk_size=chunk_size,
+        ).with_fixed_params(fixed_flat_params=source.fixed_flat_params)
+        function = cast("_QueryChunks", kernel.programs["_chunks"].function)
+        assert bool(function.raw_sources) is reuse
+        arguments = _sharing_chunk_arguments(kernel=kernel)
+        outputs.append(
+            jax.block_until_ready(
+                jax.jit(function)(
+                    bank=jnp.zeros((4 if chunk_size == 2 else 3, 1)),
+                    states=cast("Mapping[str, FloatND | IntND]", arguments["states"]),
+                    query_arguments=cast(
+                        "Mapping[str, Mapping[str, PytreeValue]]",
+                        arguments["query_arguments"],
+                    ),
+                )
+            )
+        )
+    for control, shared in zip(
+        jax.tree.leaves(outputs[0]), jax.tree.leaves(outputs[1]), strict=True
+    ):
+        assert (shared.shape, shared.dtype) == (control.shape, control.dtype)
+        assert np.asarray(shared).tobytes() == np.asarray(control).tobytes()
+    expected = np.asarray([[5.0], [6.0], [7.0]], dtype=outputs[1][0].dtype)
+    assert np.asarray(outputs[1][0][:3]).tobytes() == expected.tobytes()
 
 
 @pytest.mark.parametrize(

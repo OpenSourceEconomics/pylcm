@@ -1196,7 +1196,6 @@ def _own_raw_evaluation_sources(
         node.read.kind is not QueryKind.FULL
         or raw.read.kind is not QueryKind.RAW
         or raw.context is not context
-        or context.member_axis is not None
         or context.koopmans_aggregator is not None
         or context.state_action_space.action_names
         or context.has_taste_shocks

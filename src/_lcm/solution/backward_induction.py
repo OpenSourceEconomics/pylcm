@@ -189,6 +189,7 @@ from _lcm.regime_building.Q_and_F import (
     SAME_PERIOD_PARAMS_ARG,
     SAME_PERIOD_V_ARG,
 )
+from _lcm.solution.artifacts import _canonical_value_axis_names
 from _lcm.solution.continuation_reads import published_continuation_template
 from _lcm.solution.contract import (
     BackwardInductionResult,
@@ -7800,7 +7801,10 @@ def _value_axis_names(
 ) -> MappingProxyType[RegimeName, tuple[StateName, ...]]:
     """Name the axes of every regime's stored value, in stored order."""
     return MappingProxyType(
-        {name: tuple(regime.solution.state_names) for name, regime in regimes.items()}
+        {
+            name: _canonical_value_axis_names(regime=regime)
+            for name, regime in regimes.items()
+        }
     )
 
 

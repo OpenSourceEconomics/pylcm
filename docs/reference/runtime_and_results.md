@@ -221,10 +221,10 @@ Admission preserves the production planner's represented-allocation charge: the 
 compiler reservation plus the recorded external residency must fit the same effective
 budget and headroom. It does not recreate unrelated production buffers, allocator state,
 cache pressure or physical peak memory. The initial public route excludes invariant
-blocks, donated inputs, continuation payloads, collective/gated kernels and selected
-artifacts. Capture never changes the model's economic support, horizon, precision or
-result retention to make a route fit. Private environment-selected pickle captures
-retain their separate legacy format.
+blocks, donated inputs, continuation payloads, gated kernels and selected artifacts.
+Capture never changes the model's economic support, horizon, precision or result
+retention to make a route fit. Private environment-selected pickle captures retain their
+separate legacy format.
 
 (execution-configuration)=
 

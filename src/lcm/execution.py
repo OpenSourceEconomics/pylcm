@@ -254,9 +254,8 @@ class ExecutionConfig:
     Only width 1 and one state are supported. Model construction refuses, before
     anything is lowered, a state that is not provably invariant, a sharded state, a
     state no regime declares, and regimes the route does not serve: another solver,
-    taste shocks, collective regimes, gated edges, edge-reference reads and a
-    non-discrete grid for the state. Terminal regimes, which read no continuation, are
-    solved unblocked.
+    taste shocks, gated edges, edge-reference reads and a non-discrete grid for the
+    state. Terminal regimes, which read no continuation, are solved unblocked.
 
     When the simulate phase provably keeps the state fixed too, and no regime
     declares taste shocks, gated edges or a policy replay, `simulate` groups

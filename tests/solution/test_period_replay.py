@@ -35,16 +35,23 @@ from _lcm.execution.core_program import CoreProgram
 from _lcm.execution.output_layout import PlannedCore
 from _lcm.execution.workspace_planning import _tiled_bootstrap_cap, bootstrap_width
 from _lcm.params.edges import regime_kernel_params
+from _lcm.regime_building import processing
 from _lcm.solution import backward_induction, period_replay, public_period_capture
 from _lcm.typing import PytreeValue
 from lcm import AgeGrid, ExecutionConfig, LinSpacedGrid, Model
 from lcm.persistence import PeriodCapture, load_period_capture, replay_period
 from lcm.solver_api import ArtifactKey, ResultRetention
-from lcm.typing import FloatND, RegimeName
+from lcm.typing import FloatND, RegimeName, UserParamsNode
 from tests.regime_building.test_gated_edges_collective_solve import (
     EKLRegimeId,
     _make_full_topology_regimes,
     _with_full_topology_laws,
+)
+from tests.regime_building.test_nonterminal_collective_solve import (
+    RegimeId as CoupleRegimeId,
+)
+from tests.regime_building.test_nonterminal_collective_solve import (
+    _make_couple_regimes,
 )
 from tests.solution._callback_types import CompileFunctionsKwargs
 from tests.test_models.deterministic import base as retirement_model
@@ -744,6 +751,85 @@ def test_an_ungated_regime_in_a_gated_edge_model_replays_bit_for_bit(
         replay.optimized_hlo_matches,
     )
     assert observed == (True, True, True)
+
+
+def _couple_capture_model() -> Model:
+    """The two-period work/leisure couple, a household of the members f and m."""
+    ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
+    return Model(
+        regimes=_make_couple_regimes(),
+        edges={"couple": {"couple_terminal": 0}},
+        ages=ages,
+        regime_id_class=CoupleRegimeId,
+        initial_nodes={ages.exact_values[0]: "couple"},
+        execution_config=ExecutionConfig(device_memory_bytes=None),
+    )
+
+
+def _single_on_household_path_capture_model() -> Model:
+    """The public retirement fixture built through the household kernels."""
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(processing, "_SINGLE_ON_HOUSEHOLD_PATH", True)
+        return _make_public_capture_model()
+
+
+_MEMBER_AXIS_CAPTURES: dict[
+    str,
+    tuple[
+        Callable[[], Model],
+        dict[str, UserParamsNode],
+        tuple[tuple[RegimeName, int], ...],
+        int,
+    ],
+] = {
+    "couple": (
+        _couple_capture_model,
+        {"discount_factor": 0.95},
+        (("couple", 0), ("couple_terminal", 1)),
+        2,
+    ),
+    "single_on_household_path": (
+        _single_on_household_path_capture_model,
+        retirement_model.get_params(n_periods=_N_PERIODS),
+        (("retirement", 1), ("working_life", 0)),
+        1,
+    ),
+}
+
+
+@pytest.mark.parametrize("case", sorted(_MEMBER_AXIS_CAPTURES))
+@pytest.mark.parametrize("persistent_compilation_cache", [False], indirect=True)
+def test_a_value_with_a_member_axis_replays_bit_for_bit(
+    *, tmp_path: Path, case: str, persistent_compilation_cache: bool
+) -> None:
+    """A regime whose value carries a member axis captures and replays exactly.
+
+    A fresh model's strict replay of each captured period returns the in-context
+    array, member axis included, and matches the completed reference.
+    """
+    assert jax.config.jax_enable_compilation_cache is persistent_compilation_cache
+    build, params, periods, n_members = _MEMBER_AXIS_CAPTURES[case]
+    capture = PeriodCapture(
+        directory=tmp_path, periods=periods, source_identity={"model": case}
+    )
+    result = build().solve(params=params, log_level="off", period_capture=capture)
+    fresh = build()
+    for regime_name, period in periods:
+        replay = fresh.replay_period(
+            directory=tmp_path / f"{regime_name}@{period}",
+            params=params,
+            source_identity=capture.source_identity,
+        )
+        expected = np.asarray(result.values[period][regime_name])
+        observed = (
+            np.shape(replay.value),
+            np.asarray(replay.value).dtype,
+            np.asarray(replay.value).tobytes() == expected.tobytes(),
+            replay.reference_matches,
+            replay.optimized_hlo_matches,
+        )
+        assert observed == (expected.shape, expected.dtype, True, True, True)
+        assert expected.shape[-1] == n_members
 
 
 _ATTRIBUTE_BACKEND_CONFIG = re.compile(r"backend_config=(\{[A-Za-z_]\w* = [^}]*\})")
