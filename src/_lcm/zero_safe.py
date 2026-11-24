@@ -64,9 +64,11 @@ not interchangeable and one of them carries a claim about what the caller has
 already established, so the call site says which is which.
 """
 
+import jax
 import jax.numpy as jnp
 
 from _lcm.probability import (
+    _magnitude_bits,
     _significand_in_unit_range,
     _unbiased_exponent,
     balanced_product,
@@ -297,12 +299,20 @@ def scaled_lottery_mean(
     Every finite operand is held as a significand in `[1, 2)` and an integer
     exponent. A node's weighted value is the product of two significands,
     which is always a normal number, and its exponent is the sum
-    `coefficient - shift + value`. The numerator is placed so its largest
-    term sits in `[1, 4)`, and the mass so its likeliest node sits in
-    `[1, 2)`. Each term is lowered from there by its own distance to the
-    largest one. When no live finite nonzero value contributes, the numerator
-    uses the mass's anchor: a zero numerator then has zero relative exponent,
-    while live infinities and NaNs retain their original products.
+    `coefficient - shift + value`. One reduction over the nodes carries the
+    numerator as a sum with an exponent, together with the bounds of the live
+    support; a second, over the weights alone, carries the mass the same way.
+    Merging two partial sums lowers the one on the smaller scale by its
+    distance to the larger, so the numerator ends with its largest term in
+    `[1, 4)` and the mass with its likeliest node in `[1, 2)`. Lowering by a
+    power of two is exact until a term leaves the normal range, so the sums
+    carry the bits of lowering every node on its own and adding the nodes in
+    the same order. The first reduction is the only reader of anything
+    derived from the values node by node, so the compiler has no per-node
+    intermediate to keep whole for a second reader. When no live finite
+    nonzero value contributes, the numerator is zero, infinite or NaN and
+    carries no scale: the mean is then the plain ratio, so a zero numerator
+    stays zero while live infinities and NaNs retain their original products.
 
     A term that leaves the format on the way down is therefore smaller than
     the largest term by the whole normal range. Without cancellation it
@@ -355,50 +365,111 @@ def scaled_lottery_mean(
         jnp.copysign(_significand_in_unit_range(values), values),
         values,
     )
-    contributes = live & finite_value
-    term_exponent = weight_exponent + jnp.where(
-        finite_value, _unbiased_exponent(values), 0
-    )
-    mass_exponent = _largest_selected(selected=live, exponents=weight_exponent)
-    numerator_exponent = _largest_selected(
-        selected=contributes, exponents=term_exponent, fallback=mass_exponent
-    )
+    # A node contributes exactly where its product is finite and nonzero, and
+    # the reduction ignores the exponent everywhere else.
+    term_exponent = weight_exponent + _unbiased_exponent(values)
     products = zero_safe_weighted_term(
         weight=unit_coefficients, value=unit_values, subnormal_is_accounted_for=True
     )
-    value_terms = scaled_down_by_power_of_two(
-        values=products,
-        shift=jnp.where(contributes, term_exponent - numerator_exponent, 0),
+    mass_exponent, mass = jax.lax.reduce(
+        (weight_exponent, unit_coefficients),
+        (
+            jnp.zeros((), dtype=weight_exponent.dtype),
+            jnp.zeros((), dtype=unit_coefficients.dtype),
+        ),
+        _merge_scaled_pairs,
+        (weight_exponent.ndim - 1,),
+    )
+    # A normalized nonnegative mean cannot exceed its live support.
+    operands = jnp.broadcast_arrays(
+        term_exponent,
+        products,
+        jnp.where(live, values, jnp.inf),
+        jnp.where(live, values, -jnp.inf),
+    )
+    numerator_exponent, numerator, lower, upper = jax.lax.reduce(
+        operands,
+        (
+            jnp.zeros((), dtype=term_exponent.dtype),
+            jnp.zeros((), dtype=products.dtype),
+            jnp.asarray(jnp.inf, dtype=values.dtype),
+            jnp.asarray(-jnp.inf, dtype=values.dtype),
+        ),
+        _merge_value_partials,
+        (operands[0].ndim - 1,),
     )
 
-    weight_terms = scaled_down_by_power_of_two(
-        values=unit_coefficients,
-        shift=jnp.where(live, weight_exponent - mass_exponent, 0),
+    ratio = numerator / mass
+    exponent = jnp.where(
+        _holds_a_scale(numerator), numerator_exponent - mass_exponent, 0
     )
-
-    mass = jnp.sum(weight_terms, axis=-1)
-    ratio = jnp.sum(value_terms, axis=-1) / mass
-    exponent = (numerator_exponent - mass_exponent)[..., 0]
     upward = scaled_by_power_of_two(
         values=jnp.ones_like(ratio), shift=jnp.maximum(exponent, 0)
     )
     mean = scaled_down_by_power_of_two(
         values=ratio * upward, shift=jnp.minimum(exponent, 0)
     )
-    # A normalized nonnegative mean cannot exceed its live support.
-    lower = jnp.min(jnp.where(live, values, jnp.inf), axis=-1)
-    upper = jnp.max(jnp.where(live, values, -jnp.inf), axis=-1)
     mean = jnp.where(jnp.isinf(mean), jnp.where(jnp.signbit(mean), lower, upper), mean)
     nan = jnp.asarray(jnp.nan, dtype=coefficients.dtype)
     invalid_row = jnp.any(invalid, axis=-1)
     return jnp.where(invalid_row, nan, mean), jnp.where(invalid_row, nan, mass)
 
 
-def _largest_selected(
-    *, selected: BoolND, exponents: IntND, fallback: IntND | None = None
-) -> IntND:
-    """Return each row's largest selected exponent, using the fallback only if empty."""
-    absent = jnp.iinfo(exponents.dtype).min
-    largest = jnp.max(jnp.where(selected, exponents, absent), axis=-1, keepdims=True)
-    has_selected = jnp.any(selected, axis=-1, keepdims=True)
-    return jnp.where(has_selected, largest, 0 if fallback is None else fallback)
+type _ScaledSum = tuple[IntND, FloatND]
+type _ValuePartials = tuple[IntND, FloatND, FloatND, FloatND]
+
+
+# keyword-only-exempt: library-callback=jax.lax.reduce
+def _merge_scaled_pairs(left: _ScaledSum, right: _ScaledSum) -> _ScaledSum:
+    """Merge two partial scaled sums of a lottery's nodes."""
+    return _merge_scaled_sums(left=left, right=right)
+
+
+# keyword-only-exempt: library-callback=jax.lax.reduce
+def _merge_value_partials(
+    left: _ValuePartials, right: _ValuePartials
+) -> _ValuePartials:
+    """Merge two partial reductions of a lottery's weighted values and support."""
+    numerator_exponent, numerator = _merge_scaled_sums(
+        left=(left[0], left[1]), right=(right[0], right[1])
+    )
+    return (
+        numerator_exponent,
+        numerator,
+        jnp.minimum(left[2], right[2]),
+        jnp.maximum(left[3], right[3]),
+    )
+
+
+def _merge_scaled_sums(
+    *, left: tuple[IntND, FloatND], right: tuple[IntND, FloatND]
+) -> tuple[IntND, FloatND]:
+    """Add two sums that each stand for `sum * 2**exponent`, on the larger scale.
+
+    A sum that is zero, infinite or NaN has no scale to keep, so its exponent
+    is ignored and the sum is added as it is: scaling would not change it. A
+    single node enters as its own product and exponent, so the result is the
+    sum of every node lowered to the largest exponent among the partial sums
+    that carry a scale. Lowering by a power of two is exact until a term
+    leaves the normal range, so up to that point the result has the bits of
+    the same sum taken after every node is lowered on its own.
+    """
+    left_exponent, left_sum = left
+    right_exponent, right_sum = right
+    left_has_scale = _holds_a_scale(left_sum)
+    right_has_scale = _holds_a_scale(right_sum)
+    exponent = jnp.where(
+        right_has_scale & (~left_has_scale | (right_exponent > left_exponent)),
+        right_exponent,
+        left_exponent,
+    )
+    left_shift = jnp.where(left_has_scale, left_exponent - exponent, 0)
+    right_shift = jnp.where(right_has_scale, right_exponent - exponent, 0)
+    return exponent, scaled_down_by_power_of_two(
+        values=left_sum, shift=left_shift
+    ) + scaled_down_by_power_of_two(values=right_sum, shift=right_shift)
+
+
+def _holds_a_scale(sums: FloatND) -> BoolND:
+    """Whether each sum is finite and nonzero in its bits, so its scale matters."""
+    return jnp.isfinite(sums) & (_magnitude_bits(sums) != 0)
