@@ -361,7 +361,7 @@ def test_scaled_average_keeps_a_finite_mean_when_its_numerator_overflows(
     assert_allclose(result, expected, rtol=10.0**-DECIMAL_PRECISION)
 
 
-def test_zero_safe_average_prices_a_downscaled_node_against_a_near_max_value():
+def test_zero_safe_average_prices_a_downscaled_node_against_a_near_max_value() -> None:
     """A node whose scale keeps it in range is priced, not sent to infinity.
 
     Both nodes here carry probability `2**-8`, so the mean is half the larger
@@ -383,7 +383,7 @@ def test_zero_safe_average_prices_a_downscaled_node_against_a_near_max_value():
     assert_allclose(result, largest / 2, rtol=10.0**-DECIMAL_PRECISION)
 
 
-def test_zero_safe_average_prices_a_downscaled_node_along_a_reduced_axis():
+def test_zero_safe_average_prices_a_downscaled_node_along_a_reduced_axis() -> None:
     """The same holds when the average reduces one axis of a larger array.
 
     Each row carries the two nodes at equal probability, so each row's mean is
